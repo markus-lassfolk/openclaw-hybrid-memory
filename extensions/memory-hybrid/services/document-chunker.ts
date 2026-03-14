@@ -68,11 +68,7 @@ function splitByHeadings(markdown: string): Array<{ heading: string | null; body
  * Split a text block into chunks by paragraph boundaries, respecting maxSize.
  * Each chunk starts with the optional headingPrefix for context.
  */
-function splitByParagraphs(
-  text: string,
-  headingPrefix: string,
-  maxSize: number,
-): string[] {
+function splitByParagraphs(text: string, headingPrefix: string, maxSize: number): string[] {
   const paragraphs = text.split(/\n{2,}/);
   const chunks: string[] = [];
   let current = headingPrefix;
@@ -103,7 +99,10 @@ function splitByParagraphs(
     }
   }
 
-  if (current.trim().length > headingPrefix.trim().length || (current.trim().length > 0 && headingPrefix.trim().length === 0)) {
+  if (
+    current.trim().length > headingPrefix.trim().length ||
+    (current.trim().length > 0 && headingPrefix.trim().length === 0)
+  ) {
     chunks.push(current.trim());
   } else if (current.trim().length > 0 && current.trim() !== headingPrefix.trim()) {
     chunks.push(current.trim());
@@ -158,10 +157,7 @@ export function chunkMarkdown(markdown: string, options: ChunkerOptions = {}): D
     }
   } else {
     for (const section of sections) {
-      const headingPrefix =
-        section.heading !== null
-          ? `## ${section.heading}`.slice(0, overlapSize)
-          : "";
+      const headingPrefix = section.heading !== null ? `## ${section.heading}`.slice(0, overlapSize) : "";
 
       if (!section.body.trim() && section.heading) {
         // Heading-only section — include just the heading
@@ -170,10 +166,7 @@ export function chunkMarkdown(markdown: string, options: ChunkerOptions = {}): D
       }
 
       // Combine heading + body; check if it fits in one chunk
-      const full =
-        headingPrefix.length > 0
-          ? `${headingPrefix}\n\n${section.body}`.trim()
-          : section.body.trim();
+      const full = headingPrefix.length > 0 ? `${headingPrefix}\n\n${section.body}`.trim() : section.body.trim();
 
       if (full.length <= maxSize) {
         rawChunks.push({ text: full, heading: section.heading });

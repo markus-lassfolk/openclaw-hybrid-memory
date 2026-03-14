@@ -3,7 +3,17 @@
  * Append-only NDJSON format; fsync after each write for durability.
  */
 
-import { mkdirSync, existsSync, readFileSync, rmSync, writeFileSync, appendFileSync, openSync, fsyncSync, closeSync } from "node:fs";
+import {
+  mkdirSync,
+  existsSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+  appendFileSync,
+  openSync,
+  fsyncSync,
+  closeSync,
+} from "node:fs";
 import { dirname } from "node:path";
 import type { DecayClass } from "../config.js";
 import { capturePluginError } from "../services/error-reporter.js";
@@ -66,8 +76,8 @@ export class WriteAheadLog {
       this.fsyncAfterWrite();
     } catch (err) {
       capturePluginError(err as Error, {
-        operation: 'wal-write',
-        subsystem: 'wal'
+        operation: "wal-write",
+        subsystem: "wal",
       });
       throw new Error(`WAL write failed: ${err}`);
     }
@@ -85,9 +95,9 @@ export class WriteAheadLog {
         return Array.isArray(entries) ? entries : [];
       } catch (err) {
         capturePluginError(err as Error, {
-          operation: 'wal-parse-array',
-          severity: 'info',
-          subsystem: 'wal'
+          operation: "wal-parse-array",
+          severity: "info",
+          subsystem: "wal",
         });
         // Fall back to NDJSON parsing if the array is corrupted.
         console.warn(`WAL readAll: failed to parse JSON array format, falling back to line-by-line parsing: ${err}`);
@@ -103,9 +113,9 @@ export class WriteAheadLog {
         if (obj.op === "remove" && obj.id) removedIds.add(obj.id);
       } catch (err) {
         capturePluginError(err as Error, {
-          operation: 'wal-parse-remove',
-          severity: 'info',
-          subsystem: 'wal'
+          operation: "wal-parse-remove",
+          severity: "info",
+          subsystem: "wal",
         });
         console.warn(`WAL readAll: failed to parse remove line, skipping: ${err}`);
       }
@@ -120,9 +130,9 @@ export class WriteAheadLog {
         if (isWalEntry(obj) && !removedIds.has(obj.id)) entries.push(obj);
       } catch (err) {
         capturePluginError(err as Error, {
-          operation: 'wal-parse-entry',
-          severity: 'info',
-          subsystem: 'wal'
+          operation: "wal-parse-entry",
+          severity: "info",
+          subsystem: "wal",
         });
         console.warn(`WAL readAll: failed to parse WAL entry line, skipping: ${err}`);
       }
@@ -139,8 +149,8 @@ export class WriteAheadLog {
       if (this.readAll().length === 0) this.clear();
     } catch (err) {
       capturePluginError(err as Error, {
-        operation: 'wal-remove',
-        subsystem: 'wal'
+        operation: "wal-remove",
+        subsystem: "wal",
       });
       throw new Error(`WAL remove failed: ${err}`);
     }
@@ -151,8 +161,8 @@ export class WriteAheadLog {
       if (existsSync(this.walPath)) rmSync(this.walPath, { force: true });
     } catch (err) {
       capturePluginError(err as Error, {
-        operation: 'wal-clear',
-        subsystem: 'wal'
+        operation: "wal-clear",
+        subsystem: "wal",
       });
       throw new Error(`WAL clear failed: ${err}`);
     }

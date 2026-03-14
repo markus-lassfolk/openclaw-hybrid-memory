@@ -4,13 +4,7 @@
  * Structured problem→resolution memory with state machine transitions.
  */
 
-export type IssueStatus =
-  | "open"
-  | "diagnosed"
-  | "fix-attempted"
-  | "resolved"
-  | "verified"
-  | "wont-fix";
+export type IssueStatus = "open" | "diagnosed" | "fix-attempted" | "resolved" | "verified" | "wont-fix";
 
 export type IssueSeverity = "low" | "medium" | "high" | "critical";
 

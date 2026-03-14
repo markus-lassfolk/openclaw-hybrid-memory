@@ -110,7 +110,7 @@ describe("parseVariantsFromResponse", () => {
   });
 
   it("handles JSON in a code-fenced response (matches first array)", () => {
-    const response = "```json\n[\"phrasing a\", \"phrasing b\"]\n```";
+    const response = '```json\n["phrasing a", "phrasing b"]\n```';
     const result = parseVariantsFromResponse(response, 5);
     expect(result).toEqual(["phrasing a", "phrasing b"]);
   });
@@ -169,7 +169,9 @@ describe("ContextualVariantGenerator — disabled", () => {
     const gen = new ContextualVariantGenerator(DISABLED_CFG, openai as never);
     const result = await gen.generateVariants("HA runs on Proxmox VM 100", "fact", "contextual-means");
     expect(result).toEqual([]);
-    expect((openai as { chat: { completions: { create: ReturnType<typeof vi.fn> } } }).chat.completions.create).not.toHaveBeenCalled();
+    expect(
+      (openai as { chat: { completions: { create: ReturnType<typeof vi.fn> } } }).chat.completions.create,
+    ).not.toHaveBeenCalled();
   });
 });
 
@@ -207,7 +209,11 @@ describe("ContextualVariantGenerator — LLM call", () => {
   it("generates contextual-search variants", async () => {
     const openai = makeMockOpenAI('["home automation search", "proxmox vm 100 ip", "ha server details"]');
     const gen = new ContextualVariantGenerator(ENABLED_CFG, openai as never);
-    const result = await gen.generateVariants("HA runs on Proxmox VM 100 at 192.168.1.212", "fact", "contextual-search");
+    const result = await gen.generateVariants(
+      "HA runs on Proxmox VM 100 at 192.168.1.212",
+      "fact",
+      "contextual-search",
+    );
     expect(result).toEqual(["home automation search", "proxmox vm 100 ip", "ha server details"]);
   });
 
@@ -296,16 +302,8 @@ describe("VariantGenerationQueue", () => {
     // Wait for async processing
     await new Promise((r) => setTimeout(r, 50));
 
-    expect(onVariantsGenerated).toHaveBeenCalledWith(
-      "fact-1",
-      "contextual-means",
-      ["generated variant"],
-    );
-    expect(onVariantsGenerated).toHaveBeenCalledWith(
-      "fact-1",
-      "contextual-search",
-      ["generated variant"],
-    );
+    expect(onVariantsGenerated).toHaveBeenCalledWith("fact-1", "contextual-means", ["generated variant"]);
+    expect(onVariantsGenerated).toHaveBeenCalledWith("fact-1", "contextual-search", ["generated variant"]);
   });
 
   it("does not call onVariantsGenerated when generator returns empty array", async () => {
@@ -382,7 +380,10 @@ describe("VariantGenerationQueue", () => {
     queue.enqueue({ factId, text: "some fact", category: "fact" });
     await new Promise((r) => setTimeout(r, 100));
 
-    const stored = localDb.getEmbeddings(factId).map((r) => r.variant).sort();
+    const stored = localDb
+      .getEmbeddings(factId)
+      .map((r) => r.variant)
+      .sort();
     expect(stored).toEqual(["contextual-means", "contextual-search"]);
 
     localDb.close();

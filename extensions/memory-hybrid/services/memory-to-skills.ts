@@ -209,7 +209,9 @@ function loadExistingRecipeKeys(dir: string): Map<string, string> {
       try {
         const raw = readFileSync(recipePath, "utf-8");
         const arr = JSON.parse(raw) as Array<{ tool?: string }>;
-        const tools = Array.isArray(arr) ? arr.map((s) => (s && typeof s.tool === "string" ? s.tool : "")).filter(Boolean) : [];
+        const tools = Array.isArray(arr)
+          ? arr.map((s) => (s && typeof s.tool === "string" ? s.tool : "")).filter(Boolean)
+          : [];
         const key = JSON.stringify(tools);
         if (key.length > 0) out.set(key, e.name);
       } catch {
@@ -241,7 +243,10 @@ export function parseSynthesizedSkill(raw: string): { name: string; description:
   let description = "";
   let body = raw.trim();
   // Strip optional markdown code block wrapper (LLMs often wrap in ```markdown ... ```)
-  body = body.replace(/^```[a-z]*\r?\n/i, "").replace(/\r?\n```\s*$/, "").trim();
+  body = body
+    .replace(/^```[a-z]*\r?\n/i, "")
+    .replace(/\r?\n```\s*$/, "")
+    .trim();
   const fmMatch = body.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n([\s\S]*)$/);
   if (fmMatch) {
     const yaml = fmMatch[1];
@@ -341,9 +346,7 @@ export async function runMemoryToSkills(
     logger.warn("memory-to-skills: no workspace root; skipping write");
     return result;
   }
-  const basePath = opts.outputDir.startsWith("/")
-    ? opts.outputDir
-    : join(workspaceRoot, opts.outputDir);
+  const basePath = opts.outputDir.startsWith("/") ? opts.outputDir : join(workspaceRoot, opts.outputDir);
   const existingSlugs = getExistingSkillSlugs(workspaceRoot);
   /** Recipe key -> existing slug (from disk + skills written this run). Used to skip duplicate tool sequences. */
   const existingRecipeKeys = getExistingRecipeKeys(workspaceRoot);
@@ -372,7 +375,9 @@ export async function runMemoryToSkills(
     }
     const repTask = procs[0].taskPattern;
     if (isLikelyBoilerplateTaskPattern(repTask)) {
-      logger.info(`memory-to-skills: skip cluster (task pattern looks like injected context: "${repTask.slice(0, 50)}…")`);
+      logger.info(
+        `memory-to-skills: skip cluster (task pattern looks like injected context: "${repTask.slice(0, 50)}…")`,
+      );
       result.skippedOther++;
       continue;
     }
@@ -421,7 +426,9 @@ export async function runMemoryToSkills(
     const genericName = name.toLowerCase().trim() === "skill";
     const genericDesc = !description || /auto-generated from \d+ procedure/i.test(description);
     if (genericName && genericDesc) {
-      logger.info(`memory-to-skills: skip cluster (LLM returned generic name/description; ask for a specific skill name and one-line description)`);
+      logger.info(
+        `memory-to-skills: skip cluster (LLM returned generic name/description; ask for a specific skill name and one-line description)`,
+      );
       result.skippedOther++;
       continue;
     }

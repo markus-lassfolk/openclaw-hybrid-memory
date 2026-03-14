@@ -24,10 +24,7 @@ export function parseVerificationConfig(cfg: Record<string, unknown>): Verificat
         : 30,
     autoClassify: verifRaw?.autoClassify !== false,
     continuousVerification: verifRaw?.continuousVerification === true,
-    cycleDays:
-      typeof verifRaw?.cycleDays === "number" && verifRaw.cycleDays > 0
-        ? Math.floor(verifRaw.cycleDays)
-        : 30,
+    cycleDays: typeof verifRaw?.cycleDays === "number" && verifRaw.cycleDays > 0 ? Math.floor(verifRaw.cycleDays) : 30,
     verificationModel:
       typeof verifRaw?.verificationModel === "string" && verifRaw.verificationModel.trim().length > 0
         ? verifRaw.verificationModel.trim()
@@ -40,9 +37,7 @@ export function parseProvenanceConfig(cfg: Record<string, unknown>): ProvenanceC
   return {
     enabled: provRaw?.enabled === true,
     retentionDays:
-      typeof provRaw?.retentionDays === "number" && provRaw.retentionDays > 0
-        ? Math.floor(provRaw.retentionDays)
-        : 365,
+      typeof provRaw?.retentionDays === "number" && provRaw.retentionDays > 0 ? Math.floor(provRaw.retentionDays) : 365,
   };
 }
 
@@ -50,21 +45,28 @@ export function parseNightlyCycleConfig(cfg: Record<string, unknown>): NightlyCy
   const nightlyCycleRaw = cfg.nightlyCycle as Record<string, unknown> | undefined;
   return {
     enabled: nightlyCycleRaw?.enabled === true,
-    schedule: typeof nightlyCycleRaw?.schedule === "string" && nightlyCycleRaw.schedule.trim().length > 0
-      ? nightlyCycleRaw.schedule.trim()
-      : "45 2 * * *",
-    reflectWindowDays: typeof nightlyCycleRaw?.reflectWindowDays === "number" && nightlyCycleRaw.reflectWindowDays >= 1
-      ? Math.min(90, Math.floor(nightlyCycleRaw.reflectWindowDays))
-      : 7,
-    pruneMode: (nightlyCycleRaw?.pruneMode === "expired" || nightlyCycleRaw?.pruneMode === "decay" || nightlyCycleRaw?.pruneMode === "both")
-      ? nightlyCycleRaw.pruneMode as "expired" | "decay" | "both"
-      : "both",
-    model: typeof nightlyCycleRaw?.model === "string" && nightlyCycleRaw.model.trim().length > 0
-      ? nightlyCycleRaw.model.trim()
-      : undefined,
-    consolidateAfterDays: typeof nightlyCycleRaw?.consolidateAfterDays === "number" && nightlyCycleRaw.consolidateAfterDays >= 1
-      ? Math.min(365, Math.floor(nightlyCycleRaw.consolidateAfterDays))
-      : 7,
+    schedule:
+      typeof nightlyCycleRaw?.schedule === "string" && nightlyCycleRaw.schedule.trim().length > 0
+        ? nightlyCycleRaw.schedule.trim()
+        : "45 2 * * *",
+    reflectWindowDays:
+      typeof nightlyCycleRaw?.reflectWindowDays === "number" && nightlyCycleRaw.reflectWindowDays >= 1
+        ? Math.min(90, Math.floor(nightlyCycleRaw.reflectWindowDays))
+        : 7,
+    pruneMode:
+      nightlyCycleRaw?.pruneMode === "expired" ||
+      nightlyCycleRaw?.pruneMode === "decay" ||
+      nightlyCycleRaw?.pruneMode === "both"
+        ? (nightlyCycleRaw.pruneMode as "expired" | "decay" | "both")
+        : "both",
+    model:
+      typeof nightlyCycleRaw?.model === "string" && nightlyCycleRaw.model.trim().length > 0
+        ? nightlyCycleRaw.model.trim()
+        : undefined,
+    consolidateAfterDays:
+      typeof nightlyCycleRaw?.consolidateAfterDays === "number" && nightlyCycleRaw.consolidateAfterDays >= 1
+        ? Math.min(365, Math.floor(nightlyCycleRaw.consolidateAfterDays))
+        : 7,
     maxUnconsolidatedAgeDays:
       typeof nightlyCycleRaw?.maxUnconsolidatedAgeDays === "number" && nightlyCycleRaw.maxUnconsolidatedAgeDays >= 1
         ? Math.min(3650, Math.floor(nightlyCycleRaw.maxUnconsolidatedAgeDays))
@@ -89,7 +91,9 @@ export function parseHealthConfig(cfg: Record<string, unknown>): HealthConfig {
 }
 
 export function parseCouncilConfig(cfg: Record<string, unknown>): CouncilConfig {
-  const councilRaw = (cfg.maintenance as Record<string, unknown> | undefined)?.council as Record<string, unknown> | undefined;
+  const councilRaw = (cfg.maintenance as Record<string, unknown> | undefined)?.council as
+    | Record<string, unknown>
+    | undefined;
   const validModes: CouncilProvenanceMode[] = ["meta+receipt", "meta", "receipt", "none"];
   const provenance: CouncilProvenanceMode =
     typeof councilRaw?.provenance === "string" && validModes.includes(councilRaw.provenance as CouncilProvenanceMode)

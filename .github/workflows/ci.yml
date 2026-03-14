@@ -30,7 +30,7 @@ jobs:
         with:
           filters: |
             code:
-              - 'extensions/memory-hybrid/src/**'
+              - 'extensions/memory-hybrid/**'
               - 'extensions/memory-hybrid/package*.json'
               - 'extensions/memory-hybrid/tsconfig*.json'
               - '.github/workflows/ci.yml'
@@ -159,7 +159,7 @@ jobs:
       - name: Install dependencies
         run: cd extensions/memory-hybrid && npm install
       - name: Run jscpd
-        run: npx jscpd extensions/memory-hybrid/src --format typescript --min-lines 12 --min-tokens 80 --reporters console --gitignore
+        run: npx jscpd extensions/memory-hybrid --format typescript --min-lines 12 --min-tokens 80 --reporters console --gitignore --ignore "**/node_modules/**" --ignore "**/dist/**" --ignore "**/coverage/**"
 
   dead-code:
     name: Dead Code Analysis (knip)
@@ -205,7 +205,7 @@ jobs:
       - name: Install dependencies
         run: cd extensions/memory-hybrid && npm install
       - name: Check formatting
-        run: cd extensions/memory-hybrid && npx prettier --check 'src/**/*.ts'
+        run: cd extensions/memory-hybrid && npx prettier --check '**/*.ts'
 
   strict-typecheck:
     name: Strict TypeScript Check

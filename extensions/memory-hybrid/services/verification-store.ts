@@ -71,7 +71,7 @@ function containsHostname(text: string): boolean {
   const hostnamePattern = /\b[a-z0-9-]{1,63}(?:\.[a-z0-9-]{1,63})+\b/gi;
   const matches = text.match(hostnamePattern);
   if (!matches) return false;
-  
+
   for (const match of matches) {
     if (/[a-z]/i.test(match)) {
       return true;
@@ -158,10 +158,7 @@ export function shouldAutoVerify(fact: {
   }
 
   // Infrastructure + technical category
-  if (
-    fact.tags.map((t) => t.toLowerCase()).includes("infrastructure") &&
-    fact.category === "technical"
-  ) {
+  if (fact.tags.map((t) => t.toLowerCase()).includes("infrastructure") && fact.category === "technical") {
     return true;
   }
 
@@ -243,25 +240,15 @@ export class VerificationStore {
   // verify — add a fact to the verification store
   // -------------------------------------------------------------------------
 
-  verify(
-    factId: string,
-    text: string,
-    verifiedBy: "agent" | "user" | "system",
-  ): string {
-    const existing = this.db
-      .prepare(`SELECT 1 FROM verified_facts WHERE fact_id = ? LIMIT 1`)
-      .get(factId);
+  verify(factId: string, text: string, verifiedBy: "agent" | "user" | "system"): string {
+    const existing = this.db.prepare(`SELECT 1 FROM verified_facts WHERE fact_id = ? LIMIT 1`).get(factId);
     if (existing) {
-      throw new VerificationError(
-        `Fact ${factId} is already verified; use update() to create a new version`,
-      );
+      throw new VerificationError(`Fact ${factId} is already verified; use update() to create a new version`);
     }
 
     const id = randomUUID();
     const now = toISODate(new Date());
-    const nextVerification = toISODate(
-      addDays(new Date(), this.reverificationDays),
-    );
+    const nextVerification = toISODate(addDays(new Date(), this.reverificationDays));
     const checksum = computeChecksum(text);
 
     this.db
@@ -297,14 +284,10 @@ export class VerificationStore {
     let rows: VerifiedFactRow[];
     if (factId !== undefined) {
       rows = this.db
-        .prepare(
-          `SELECT * FROM verified_facts WHERE fact_id = ? ORDER BY version DESC`,
-        )
+        .prepare(`SELECT * FROM verified_facts WHERE fact_id = ? ORDER BY version DESC`)
         .all(factId) as VerifiedFactRow[];
     } else {
-      rows = this.db
-        .prepare(`SELECT * FROM verified_facts`)
-        .all() as VerifiedFactRow[];
+      rows = this.db.prepare(`SELECT * FROM verified_facts`).all() as VerifiedFactRow[];
     }
 
     const corrupted: string[] = [];
@@ -329,17 +312,14 @@ export class VerificationStore {
 
   getVerified(factId: string): VerifiedFact | null {
     const row = this.db
-      .prepare(
-        `SELECT * FROM verified_facts WHERE fact_id = ? ORDER BY version DESC LIMIT 1`,
-      )
+      .prepare(`SELECT * FROM verified_facts WHERE fact_id = ? ORDER BY version DESC LIMIT 1`)
       .get(factId) as VerifiedFactRow | undefined;
 
     if (!row) return null;
 
     const live = computeChecksum(row.canonical_text);
     if (live !== row.checksum) {
-      const message =
-        `Checksum mismatch for verified fact ${row.id} (fact_id=${factId}): stored checksum does not match canonical_text`;
+      const message = `Checksum mismatch for verified fact ${row.id} (fact_id=${factId}): stored checksum does not match canonical_text`;
       this.logCorruption(message);
       throw new VerificationError(message);
     }
@@ -370,9 +350,7 @@ export class VerificationStore {
       )
       .all(now, cutoff) as VerifiedFactRow[];
 
-    return rows
-      .filter((row) => this.validateRowChecksum(row))
-      .map(rowToVerifiedFact);
+    return rows.filter((row) => this.validateRowChecksum(row)).map(rowToVerifiedFact);
   }
 
   // -------------------------------------------------------------------------
@@ -394,32 +372,24 @@ export class VerificationStore {
       )
       .all() as VerifiedFactRow[];
 
-    return rows
-      .filter((row) => this.validateRowChecksum(row))
-      .map(rowToVerifiedFact);
+    return rows.filter((row) => this.validateRowChecksum(row)).map(rowToVerifiedFact);
   }
 
   // -------------------------------------------------------------------------
   // update — create a new version, linking to the superseded one
   // -------------------------------------------------------------------------
 
-  update(
-    id: string,
-    newText: string,
-    verifiedBy: "agent" | "user" | "system",
-  ): string {
-    const existing = this.db
-      .prepare(`SELECT * FROM verified_facts WHERE id = ?`)
-      .get(id) as VerifiedFactRow | undefined;
+  update(id: string, newText: string, verifiedBy: "agent" | "user" | "system"): string {
+    const existing = this.db.prepare(`SELECT * FROM verified_facts WHERE id = ?`).get(id) as
+      | VerifiedFactRow
+      | undefined;
 
     if (!existing) {
       throw new VerificationError(`No verified fact found with id=${id}`);
     }
 
     const latest = this.db
-      .prepare(
-        `SELECT id FROM verified_facts WHERE fact_id = ? ORDER BY version DESC LIMIT 1`,
-      )
+      .prepare(`SELECT id FROM verified_facts WHERE fact_id = ? ORDER BY version DESC LIMIT 1`)
       .get(existing.fact_id) as { id: string } | undefined;
     if (!latest || latest.id !== id) {
       throw new VerificationError(
@@ -429,9 +399,7 @@ export class VerificationStore {
 
     const newId = randomUUID();
     const now = toISODate(new Date());
-    const nextVerification = toISODate(
-      addDays(new Date(), this.reverificationDays),
-    );
+    const nextVerification = toISODate(addDays(new Date(), this.reverificationDays));
     const checksum = computeChecksum(newText);
     const newVersion = existing.version + 1;
 
@@ -442,18 +410,7 @@ export class VerificationStore {
           (id, fact_id, canonical_text, checksum, verified_at, verified_by, next_verification, version, previous_version_id, created_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
-        .run(
-          newId,
-          existing.fact_id,
-          newText,
-          checksum,
-          now,
-          verifiedBy,
-          nextVerification,
-          newVersion,
-          id,
-          now,
-        );
+        .run(newId, existing.fact_id, newText, checksum, now, verifiedBy, nextVerification, newVersion, id, now);
       this.db.prepare(`UPDATE verified_facts SET next_verification = NULL WHERE id = ?`).run(id);
     })();
 
@@ -487,8 +444,7 @@ export class VerificationStore {
   private validateRowChecksum(row: VerifiedFactRow): boolean {
     const live = computeChecksum(row.canonical_text);
     if (live !== row.checksum) {
-      const message =
-        `Checksum mismatch for verified fact ${row.id} (fact_id=${row.fact_id}): stored checksum does not match canonical_text`;
+      const message = `Checksum mismatch for verified fact ${row.id} (fact_id=${row.fact_id}): stored checksum does not match canonical_text`;
       this.logCorruption(message);
       return false;
     }

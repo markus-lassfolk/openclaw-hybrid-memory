@@ -14,11 +14,7 @@ const SENSITIVE_PATTERNS = [
   /credentials?/i,
 ];
 
-export function shouldCapture(
-  text: string,
-  captureMaxChars: number,
-  memoryTriggers: RegExp[],
-): boolean {
+export function shouldCapture(text: string, captureMaxChars: number, memoryTriggers: RegExp[]): boolean {
   if (text.length < 10 || text.length > captureMaxChars) return false;
   if (text.includes("<relevant-memories>")) return false;
   if (text.startsWith("<") && text.includes("</")) return false;

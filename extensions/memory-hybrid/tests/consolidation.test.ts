@@ -53,7 +53,9 @@ describe("runConsolidate", () => {
       "Merged fact": [1, 0],
     });
     const openai = {
-      chat: { completions: { create: vi.fn().mockResolvedValue({ choices: [{ message: { content: "Merged fact" } }] }) } },
+      chat: {
+        completions: { create: vi.fn().mockResolvedValue({ choices: [{ message: { content: "Merged fact" } }] }) },
+      },
     } as never;
 
     await runConsolidate(
@@ -65,18 +67,13 @@ describe("runConsolidate", () => {
       { info: () => undefined, warn: () => undefined },
     );
 
-    expect(factsDb.store).toHaveBeenCalledWith(
-      expect.objectContaining({ key: "language", value: "Rust" }),
-    );
+    expect(factsDb.store).toHaveBeenCalledWith(expect.objectContaining({ key: "language", value: "Rust" }));
   });
 
   it("treats similarity at the threshold as a merge candidate", async () => {
     const v1 = [1, 0];
     const v2 = [0.9, Math.sqrt(1 - 0.9 ** 2)];
-    const entries = [
-      makeEntry({ id: "a", text: "Fact A" }),
-      makeEntry({ id: "b", text: "Fact B" }),
-    ];
+    const entries = [makeEntry({ id: "a", text: "Fact A" }), makeEntry({ id: "b", text: "Fact B" })];
     const factsDb = makeFactsDb(entries);
     const vectorDb = { store: vi.fn().mockResolvedValue(undefined) };
     const embeddings = makeEmbeddings({
@@ -85,7 +82,9 @@ describe("runConsolidate", () => {
       "Merged fact": v1,
     });
     const openai = {
-      chat: { completions: { create: vi.fn().mockResolvedValue({ choices: [{ message: { content: "Merged fact" } }] }) } },
+      chat: {
+        completions: { create: vi.fn().mockResolvedValue({ choices: [{ message: { content: "Merged fact" } }] }) },
+      },
     } as never;
 
     const result = await runConsolidate(
@@ -102,10 +101,7 @@ describe("runConsolidate", () => {
   });
 
   it("skips merging when LLM returns empty content", async () => {
-    const entries = [
-      makeEntry({ id: "a", text: "Fact A" }),
-      makeEntry({ id: "b", text: "Fact B" }),
-    ];
+    const entries = [makeEntry({ id: "a", text: "Fact A" }), makeEntry({ id: "b", text: "Fact B" })];
     const factsDb = makeFactsDb(entries);
     const vectorDb = { store: vi.fn().mockResolvedValue(undefined) };
     const embeddings = makeEmbeddings({ "Fact A": [1, 0], "Fact B": [1, 0] });

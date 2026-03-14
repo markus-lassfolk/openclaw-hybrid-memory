@@ -64,10 +64,7 @@ describe("memory-to-skills stepConsistency", () => {
   });
 
   it("returns 0 when no procedures have steps", () => {
-    const procs = [
-      makeProcedure("[]"),
-      makeProcedure("[]"),
-    ];
+    const procs = [makeProcedure("[]"), makeProcedure("[]")];
     expect(stepConsistency(procs)).toBe(0);
   });
 

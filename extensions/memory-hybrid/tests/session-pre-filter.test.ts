@@ -6,11 +6,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import {
-  preFilterSessions,
-  extractSessionSample,
-  type PreFilterConfig,
-} from "../services/session-pre-filter.js";
+import { preFilterSessions, extractSessionSample, type PreFilterConfig } from "../services/session-pre-filter.js";
 
 function msg(role: string, text: string): string {
   return JSON.stringify({
@@ -34,16 +30,24 @@ describe("extractSessionSample", () => {
   });
 
   afterEach(() => {
-    try { rmSync(tmpDir, { recursive: true }); } catch { /* ignore */ }
+    try {
+      rmSync(tmpDir, { recursive: true });
+    } catch {
+      /* ignore */
+    }
   });
 
   it("extracts user messages from session JSONL", async () => {
     const path = join(tmpDir, "session.jsonl");
-    writeFileSync(path, [
-      msg("user", "Remember that I prefer dark mode"),
-      msg("assistant", "Got it."),
-      msg("user", "And always use TypeScript"),
-    ].join("\n"), "utf-8");
+    writeFileSync(
+      path,
+      [
+        msg("user", "Remember that I prefer dark mode"),
+        msg("assistant", "Got it."),
+        msg("user", "And always use TypeScript"),
+      ].join("\n"),
+      "utf-8",
+    );
 
     const sample = await extractSessionSample(path, 2000);
     expect(sample).toContain("Remember that I prefer dark mode");
@@ -59,10 +63,11 @@ describe("extractSessionSample", () => {
 
   it("skips heartbeat user messages", async () => {
     const path = join(tmpDir, "session.jsonl");
-    writeFileSync(path, [
-      msg("user", "HEARTBEAT — please confirm active"),
-      msg("assistant", "HEARTBEAT_OK"),
-    ].join("\n"), "utf-8");
+    writeFileSync(
+      path,
+      [msg("user", "HEARTBEAT — please confirm active"), msg("assistant", "HEARTBEAT_OK")].join("\n"),
+      "utf-8",
+    );
 
     const sample = await extractSessionSample(path, 2000);
     expect(sample.trim()).toBe("");
@@ -71,11 +76,7 @@ describe("extractSessionSample", () => {
   it("respects maxChars limit", async () => {
     const path = join(tmpDir, "session.jsonl");
     const longText = "A".repeat(500);
-    writeFileSync(path, [
-      msg("user", longText),
-      msg("user", longText),
-      msg("user", longText),
-    ].join("\n"), "utf-8");
+    writeFileSync(path, [msg("user", longText), msg("user", longText), msg("user", longText)].join("\n"), "utf-8");
 
     const sample = await extractSessionSample(path, 600);
     expect(sample.length).toBeLessThanOrEqual(600);
@@ -83,10 +84,14 @@ describe("extractSessionSample", () => {
 
   it("returns empty for session with only short messages", async () => {
     const path = join(tmpDir, "session.jsonl");
-    writeFileSync(path, [
-      msg("user", "ok"),  // < 10 chars
-      msg("user", "yes"),
-    ].join("\n"), "utf-8");
+    writeFileSync(
+      path,
+      [
+        msg("user", "ok"), // < 10 chars
+        msg("user", "yes"),
+      ].join("\n"),
+      "utf-8",
+    );
 
     const sample = await extractSessionSample(path, 2000);
     expect(sample.trim()).toBe("");
@@ -101,7 +106,11 @@ describe("preFilterSessions", () => {
   });
 
   afterEach(() => {
-    try { rmSync(tmpDir, { recursive: true }); } catch { /* ignore */ }
+    try {
+      rmSync(tmpDir, { recursive: true });
+    } catch {
+      /* ignore */
+    }
     vi.restoreAllMocks();
   });
 
@@ -187,10 +196,7 @@ describe("preFilterSessions", () => {
   });
 
   it("returns ollamaUnavailable=true and keeps all sessions on ECONNREFUSED", async () => {
-    const paths = [
-      join(tmpDir, "session1.jsonl"),
-      join(tmpDir, "session2.jsonl"),
-    ];
+    const paths = [join(tmpDir, "session1.jsonl"), join(tmpDir, "session2.jsonl")];
     for (const p of paths) {
       writeFileSync(p, msg("user", "Remember that I like TypeScript always"), "utf-8");
     }
@@ -233,10 +239,11 @@ describe("preFilterSessions", () => {
 
   it("skips sessions with no extractable user messages", async () => {
     const path = join(tmpDir, "empty.jsonl");
-    writeFileSync(path, [
-      msg("assistant", "Running cron job..."),
-      msg("user", "HEARTBEAT — confirm active"),
-    ].join("\n"), "utf-8");
+    writeFileSync(
+      path,
+      [msg("assistant", "Running cron job..."), msg("user", "HEARTBEAT — confirm active")].join("\n"),
+      "utf-8",
+    );
 
     const mockClient = {
       chat: {
@@ -256,11 +263,7 @@ describe("preFilterSessions", () => {
   });
 
   it("handles multiple sessions with mixed YES/NO responses", async () => {
-    const paths = [
-      join(tmpDir, "session1.jsonl"),
-      join(tmpDir, "session2.jsonl"),
-      join(tmpDir, "session3.jsonl"),
-    ];
+    const paths = [join(tmpDir, "session1.jsonl"), join(tmpDir, "session2.jsonl"), join(tmpDir, "session3.jsonl")];
     for (const p of paths) {
       writeFileSync(p, msg("user", "Remember I always want proper error handling"), "utf-8");
     }
@@ -270,9 +273,9 @@ describe("preFilterSessions", () => {
     const mockClient = {
       chat: {
         completions: {
-          create: vi.fn().mockImplementation(() =>
-            Promise.resolve({ choices: [{ message: { content: responses[callIdx++] } }] }),
-          ),
+          create: vi
+            .fn()
+            .mockImplementation(() => Promise.resolve({ choices: [{ message: { content: responses[callIdx++] } }] })),
         },
       },
     } as unknown as import("openai").default;

@@ -64,11 +64,7 @@ export class ContextualVariantGenerator {
    * Generate 0-N contextual variant phrasings for the given fact text.
    * Returns empty array when disabled, rate-limited, or on LLM error.
    */
-  async generateVariants(
-    text: string,
-    category: string,
-    variantType: ContextualVariantType,
-  ): Promise<string[]> {
+  async generateVariants(text: string, category: string, variantType: ContextualVariantType): Promise<string[]> {
     if (!this.config.enabled) return [];
 
     // Category filter: skip if categories list is set and this category is not in it.
@@ -96,9 +92,7 @@ export class ContextualVariantGenerator {
         ? Math.max(1, Math.min(5, this.config.maxVariantsPerFact))
         : Math.max(1, this.config.maxVariantsPerFact);
     const promptTemplate =
-      variantType === "contextual-search"
-        ? CONTEXTUAL_SEARCH_PROMPT_TEMPLATE
-        : CONTEXTUAL_MEANS_PROMPT_TEMPLATE;
+      variantType === "contextual-search" ? CONTEXTUAL_SEARCH_PROMPT_TEMPLATE : CONTEXTUAL_MEANS_PROMPT_TEMPLATE;
     const prompt = promptTemplate
       .replace("{text}", () => text)
       .replace("{category}", () => category)
@@ -116,10 +110,7 @@ export class ContextualVariantGenerator {
         timeoutMs: 15_000,
       });
 
-      const maxVariants =
-        variantType === "contextual-search"
-          ? 5
-          : this.config.maxVariantsPerFact;
+      const maxVariants = variantType === "contextual-search" ? 5 : this.config.maxVariantsPerFact;
       return parseVariantsFromResponse(response, maxVariants);
     } catch (err) {
       // Graceful degradation — log but never throw (fact already stored)
@@ -209,11 +200,7 @@ export class VariantGenerationQueue {
         for (const item of batch) {
           for (const variantType of VARIANT_TYPES) {
             try {
-              const variants = await this.generator.generateVariants(
-                item.text,
-                item.category,
-                variantType,
-              );
+              const variants = await this.generator.generateVariants(item.text, item.category, variantType);
               if (variants.length > 0) {
                 await this.onVariantsGenerated(item.factId, variantType, variants);
               }

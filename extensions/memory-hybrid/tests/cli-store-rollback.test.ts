@@ -173,9 +173,7 @@ describe("runStoreForCli pointer write failure with compensating delete", () => 
     expect(result.outcome).toBe("credential_db_error");
 
     // Verify warning was logged for compensating delete failure
-    expect(warnSpy).toHaveBeenCalledWith(
-      expect.stringContaining("Failed to clean up orphaned credential")
-    );
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("Failed to clean up orphaned credential"));
 
     // Restore
     factsDb.store = originalFactsStore;
@@ -238,11 +236,11 @@ describe("runStoreForCli credential parse failure", () => {
     // This text matches isCredentialLike but tryParseCredentialForVault returns null
     // because the secret value is too short or doesn't match patterns
     const opts: StoreCliOpts = {
-      text: "API Key: xyz",  // Too short to be a valid credential
+      text: "API Key: xyz", // Too short to be a valid credential
       category: "technical",
       entity: "TestService",
       key: "api_key",
-      value: "xyz",  // Too short
+      value: "xyz", // Too short
     };
 
     const result: StoreCliResult = await runStoreForCli(mockCtx, opts, { warn: vi.fn() });

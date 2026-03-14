@@ -210,7 +210,12 @@ describe("WorkflowStore.list", () => {
   beforeEach(() => {
     store.record({ goal: "deploy server", toolSequence: ["exec", "exec"], outcome: "success", sessionId: "s1" });
     store.record({ goal: "read config file", toolSequence: ["read"], outcome: "failure", sessionId: "s2" });
-    store.record({ goal: "write summary", toolSequence: ["write", "memory_store"], outcome: "unknown", sessionId: "s1" });
+    store.record({
+      goal: "write summary",
+      toolSequence: ["write", "memory_store"],
+      outcome: "unknown",
+      sessionId: "s1",
+    });
   });
 
   it("lists all traces", () => {
@@ -250,8 +255,16 @@ describe("WorkflowStore.list", () => {
 
 describe("WorkflowStore.getByGoal", () => {
   beforeEach(() => {
-    store.record({ goal: "deploy the application to production", toolSequence: ["exec"], goalKeywords: ["deploy", "application", "production"] });
-    store.record({ goal: "read config file contents", toolSequence: ["read"], goalKeywords: ["read", "config", "file"] });
+    store.record({
+      goal: "deploy the application to production",
+      toolSequence: ["exec"],
+      goalKeywords: ["deploy", "application", "production"],
+    });
+    store.record({
+      goal: "read config file contents",
+      toolSequence: ["read"],
+      goalKeywords: ["read", "config", "file"],
+    });
   });
 
   it("finds traces matching keywords", () => {
@@ -290,7 +303,12 @@ describe("WorkflowStore.getSuccessRate", () => {
 describe("WorkflowStore.getPatterns", () => {
   beforeEach(() => {
     store.record({ goal: "deploy app", toolSequence: ["exec", "exec", "read"], outcome: "success", durationMs: 1000 });
-    store.record({ goal: "also deploy app", toolSequence: ["exec", "exec", "read"], outcome: "success", durationMs: 2000 });
+    store.record({
+      goal: "also deploy app",
+      toolSequence: ["exec", "exec", "read"],
+      outcome: "success",
+      durationMs: 2000,
+    });
     store.record({ goal: "read file", toolSequence: ["read"], outcome: "failure", durationMs: 100 });
   });
 

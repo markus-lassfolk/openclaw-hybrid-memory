@@ -71,32 +71,23 @@ function storeMinimalFact(
     validUntil = null,
     expiresAt = null,
   } = overrides;
-  raw.prepare(
-    `INSERT INTO facts (id, text, category, importance, source, created_at, decay_class, confidence, tier, valid_until, expires_at)
+  raw
+    .prepare(
+      `INSERT INTO facts (id, text, category, importance, source, created_at, decay_class, confidence, tier, valid_until, expires_at)
      VALUES (?, ?, ?, 0.7, ?, ?, ?, ?, ?, ?, ?)`,
-  ).run(id, text, category, source, nowSec, decayClass, confidence, tier, validUntil, expiresAt);
+    )
+    .run(id, text, category, source, nowSec, decayClass, confidence, tier, validUntil, expiresAt);
   return id;
 }
 
-function addLink(
-  db: InstanceType<typeof FactsDB>,
-  sourceId: string,
-  targetId: string,
-  linkType = "RELATED_TO",
-) {
+function addLink(db: InstanceType<typeof FactsDB>, sourceId: string, targetId: string, linkType = "RELATED_TO") {
   const raw = db.getRawDb();
   raw
     .prepare(
       `INSERT INTO memory_links (id, source_fact_id, target_fact_id, link_type, strength, created_at)
        VALUES (?, ?, ?, ?, 1.0, ?)`,
     )
-    .run(
-      `link-${Math.random().toString(36).slice(2)}`,
-      sourceId,
-      targetId,
-      linkType,
-      Math.floor(Date.now() / 1000),
-    );
+    .run(`link-${Math.random().toString(36).slice(2)}`, sourceId, targetId, linkType, Math.floor(Date.now() / 1000));
 }
 
 // ---------------------------------------------------------------------------
@@ -288,9 +279,7 @@ describe("buildHealthReport", () => {
 
   it("storageSizeBytes.total is sqlite + lance", () => {
     const report = buildHealthReport(factsDb, join(tmpDir, "facts.db"), join(tmpDir, "lance"));
-    expect(report.storageSizeBytes.total).toBe(
-      report.storageSizeBytes.sqlite + report.storageSizeBytes.lance,
-    );
+    expect(report.storageSizeBytes.total).toBe(report.storageSizeBytes.sqlite + report.storageSizeBytes.lance);
   });
 });
 
@@ -314,7 +303,9 @@ describe("registerHealthTools", () => {
   it("does not register tool when health.enabled is false", () => {
     const registered: string[] = [];
     const fakeApi = {
-      registerTool: (def: { name: string }) => { registered.push(def.name); },
+      registerTool: (def: { name: string }) => {
+        registered.push(def.name);
+      },
       logger: { info: () => {}, warn: () => {} },
     } as unknown as Parameters<typeof registerHealthTools>[1];
 
@@ -334,7 +325,9 @@ describe("registerHealthTools", () => {
   it("registers memory_health tool when health.enabled is true", () => {
     const registered: string[] = [];
     const fakeApi = {
-      registerTool: (def: { name: string }) => { registered.push(def.name); },
+      registerTool: (def: { name: string }) => {
+        registered.push(def.name);
+      },
       logger: { info: () => {}, warn: () => {} },
     } as unknown as Parameters<typeof registerHealthTools>[1];
 

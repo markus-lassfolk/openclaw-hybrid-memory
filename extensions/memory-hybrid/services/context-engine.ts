@@ -127,7 +127,9 @@ export class HybridMemoryContextEngine implements MinimalContextEngine {
           walCommitted = result.committed;
           walSkipped = result.skipped;
           if (walCommitted > 0 || walSkipped > 0) {
-            logger.info?.(`memory-hybrid: context-engine compact — WAL replay complete: ${walCommitted} committed, ${walSkipped} skipped (already present)`);
+            logger.info?.(
+              `memory-hybrid: context-engine compact — WAL replay complete: ${walCommitted} committed, ${walSkipped} skipped (already present)`,
+            );
           }
         } catch {
           // Non-fatal — WAL replay failure should not block compaction
@@ -237,7 +239,9 @@ export class HybridMemoryContextEngine implements MinimalContextEngine {
       return {
         rollback: async () => {
           // No state was mutated; rollback is a no-op.
-          logger.debug?.(`memory-hybrid: prepareSubagentSpawn rollback — no state to revert for child=${params.childSessionKey}`);
+          logger.debug?.(
+            `memory-hybrid: prepareSubagentSpawn rollback — no state to revert for child=${params.childSessionKey}`,
+          );
         },
         // Extended field: injected into sub-agent context by SDK ≥ 2026.3.8
         contextAddition,

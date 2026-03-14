@@ -158,8 +158,24 @@ describe("FactsDB.count", () => {
   });
 
   it("returns correct count after stores", () => {
-    db.store({ text: "Fact one", category: "fact", importance: 0.7, entity: null, key: null, value: null, source: "test" });
-    db.store({ text: "Fact two", category: "fact", importance: 0.7, entity: null, key: null, value: null, source: "test" });
+    db.store({
+      text: "Fact one",
+      category: "fact",
+      importance: 0.7,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+    });
+    db.store({
+      text: "Fact two",
+      category: "fact",
+      importance: 0.7,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+    });
     expect(db.count()).toBe(2);
   });
 });
@@ -170,7 +186,15 @@ describe("FactsDB.count", () => {
 
 describe("FactsDB.delete", () => {
   it("deletes an existing fact", () => {
-    const entry = db.store({ text: "Delete me", category: "fact", importance: 0.7, entity: null, key: null, value: null, source: "test" });
+    const entry = db.store({
+      text: "Delete me",
+      category: "fact",
+      importance: 0.7,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+    });
     expect(db.delete(entry.id)).toBe(true);
     expect(db.getById(entry.id)).toBeNull();
     expect(db.count()).toBe(0);
@@ -187,8 +211,24 @@ describe("FactsDB.delete", () => {
 
 describe("FactsDB.search", () => {
   it("finds fact by keyword", () => {
-    db.store({ text: "The Vitest framework is excellent for testing", category: "fact", importance: 0.8, entity: null, key: null, value: null, source: "test" });
-    db.store({ text: "SQLite is a lightweight database", category: "fact", importance: 0.7, entity: null, key: null, value: null, source: "test" });
+    db.store({
+      text: "The Vitest framework is excellent for testing",
+      category: "fact",
+      importance: 0.8,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+    });
+    db.store({
+      text: "SQLite is a lightweight database",
+      category: "fact",
+      importance: 0.7,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+    });
 
     const results = db.search("Vitest");
     expect(results.length).toBeGreaterThan(0);
@@ -198,14 +238,30 @@ describe("FactsDB.search", () => {
   });
 
   it("returns empty for no matches", () => {
-    db.store({ text: "Something about cats", category: "fact", importance: 0.7, entity: null, key: null, value: null, source: "test" });
+    db.store({
+      text: "Something about cats",
+      category: "fact",
+      importance: 0.7,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+    });
     const results = db.search("xylophone");
     expect(results).toEqual([]);
   });
 
   it("respects limit", () => {
     for (let i = 0; i < 10; i++) {
-      db.store({ text: `Fact number ${i} about TypeScript`, category: "fact", importance: 0.7, entity: null, key: null, value: null, source: "test" });
+      db.store({
+        text: `Fact number ${i} about TypeScript`,
+        category: "fact",
+        importance: 0.7,
+        entity: null,
+        key: null,
+        value: null,
+        source: "test",
+      });
     }
     const results = db.search("TypeScript", 3);
     expect(results.length).toBeLessThanOrEqual(3);
@@ -255,9 +311,33 @@ describe("FactsDB.search", () => {
 
 describe("FactsDB.lookup", () => {
   it("finds facts by entity", () => {
-    db.store({ text: "User name is Markus", category: "fact", importance: 0.8, entity: "user", key: "name", value: "Markus", source: "test" });
-    db.store({ text: "User email is test@example.com", category: "fact", importance: 0.8, entity: "user", key: "email", value: "test@example.com", source: "test" });
-    db.store({ text: "System version 3", category: "fact", importance: 0.7, entity: "system", key: "version", value: "3", source: "test" });
+    db.store({
+      text: "User name is Markus",
+      category: "fact",
+      importance: 0.8,
+      entity: "user",
+      key: "name",
+      value: "Markus",
+      source: "test",
+    });
+    db.store({
+      text: "User email is test@example.com",
+      category: "fact",
+      importance: 0.8,
+      entity: "user",
+      key: "email",
+      value: "test@example.com",
+      source: "test",
+    });
+    db.store({
+      text: "System version 3",
+      category: "fact",
+      importance: 0.7,
+      entity: "system",
+      key: "version",
+      value: "3",
+      source: "test",
+    });
 
     const results = db.lookup("user");
     expect(results.length).toBe(2);
@@ -265,8 +345,24 @@ describe("FactsDB.lookup", () => {
   });
 
   it("finds facts by entity + key", () => {
-    db.store({ text: "User name is Markus", category: "fact", importance: 0.8, entity: "user", key: "name", value: "Markus", source: "test" });
-    db.store({ text: "User email is test@example.com", category: "fact", importance: 0.8, entity: "user", key: "email", value: "test@example.com", source: "test" });
+    db.store({
+      text: "User name is Markus",
+      category: "fact",
+      importance: 0.8,
+      entity: "user",
+      key: "name",
+      value: "Markus",
+      source: "test",
+    });
+    db.store({
+      text: "User email is test@example.com",
+      category: "fact",
+      importance: 0.8,
+      entity: "user",
+      key: "email",
+      value: "test@example.com",
+      source: "test",
+    });
 
     const results = db.lookup("user", "name");
     expect(results.length).toBe(1);
@@ -274,7 +370,15 @@ describe("FactsDB.lookup", () => {
   });
 
   it("is case-insensitive", () => {
-    db.store({ text: "User info", category: "fact", importance: 0.8, entity: "User", key: "Name", value: "Test", source: "test" });
+    db.store({
+      text: "User info",
+      category: "fact",
+      importance: 0.8,
+      entity: "User",
+      key: "Name",
+      value: "Test",
+      source: "test",
+    });
     const results = db.lookup("user", "name");
     expect(results.length).toBe(1);
   });
@@ -295,8 +399,24 @@ describe("FactsDB.lookup", () => {
   });
 
   it("excludes superseded facts", () => {
-    const old = db.store({ text: "Old user fact", category: "fact", importance: 0.8, entity: "user", key: "pref", value: "old", source: "test" });
-    const newer = db.store({ text: "New user fact", category: "fact", importance: 0.8, entity: "user", key: "pref", value: "new", source: "test" });
+    const old = db.store({
+      text: "Old user fact",
+      category: "fact",
+      importance: 0.8,
+      entity: "user",
+      key: "pref",
+      value: "old",
+      source: "test",
+    });
+    const newer = db.store({
+      text: "New user fact",
+      category: "fact",
+      importance: 0.8,
+      entity: "user",
+      key: "pref",
+      value: "new",
+      source: "test",
+    });
     db.supersede(old.id, newer.id);
 
     const results = db.lookup("user", "pref");
@@ -305,8 +425,26 @@ describe("FactsDB.lookup", () => {
   });
 
   it("frequently recalled fact scores higher (dynamic salience)", () => {
-    const a = db.store({ text: "User prefers dark mode", category: "preference", importance: 0.7, entity: "user", key: "theme", value: "dark", source: "test", confidence: 0.8 });
-    const b = db.store({ text: "User prefers TypeScript", category: "preference", importance: 0.7, entity: "user", key: "language", value: "TypeScript", source: "test", confidence: 0.8 });
+    const a = db.store({
+      text: "User prefers dark mode",
+      category: "preference",
+      importance: 0.7,
+      entity: "user",
+      key: "theme",
+      value: "dark",
+      source: "test",
+      confidence: 0.8,
+    });
+    const b = db.store({
+      text: "User prefers TypeScript",
+      category: "preference",
+      importance: 0.7,
+      entity: "user",
+      key: "language",
+      value: "TypeScript",
+      source: "test",
+      confidence: 0.8,
+    });
 
     for (let i = 0; i < 15; i++) {
       db.refreshAccessedFacts([a.id]);
@@ -326,8 +464,25 @@ describe("FactsDB.lookup", () => {
 
 describe("FactsDB tiering", () => {
   it("stores with default tier warm and getHotFacts returns only hot", () => {
-    const a = db.store({ text: "Hot blocker", category: "fact", importance: 0.9, entity: null, key: null, value: null, source: "test", tags: ["blocker"] });
-    const b = db.store({ text: "Warm fact", category: "fact", importance: 0.7, entity: null, key: null, value: null, source: "test" });
+    const a = db.store({
+      text: "Hot blocker",
+      category: "fact",
+      importance: 0.9,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+      tags: ["blocker"],
+    });
+    const b = db.store({
+      text: "Warm fact",
+      category: "fact",
+      importance: 0.7,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+    });
     expect(a.tier).toBe("warm");
     expect(b.tier).toBe("warm");
     expect(db.getHotFacts(2000).length).toBe(0);
@@ -338,8 +493,24 @@ describe("FactsDB tiering", () => {
   });
 
   it("getHotFacts caps by token budget", () => {
-    const id1 = db.store({ text: "Short.", category: "fact", importance: 0.8, entity: null, key: null, value: null, source: "test" }).id;
-    const id2 = db.store({ text: "Also short.", category: "fact", importance: 0.8, entity: null, key: null, value: null, source: "test" }).id;
+    const id1 = db.store({
+      text: "Short.",
+      category: "fact",
+      importance: 0.8,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+    }).id;
+    const id2 = db.store({
+      text: "Also short.",
+      category: "fact",
+      importance: 0.8,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+    }).id;
     db.setTier(id1, "hot");
     db.setTier(id2, "hot");
     const hot = db.getHotFacts(2);
@@ -347,8 +518,24 @@ describe("FactsDB tiering", () => {
   });
 
   it("search with tierFilter warm excludes cold", () => {
-    const w = db.store({ text: "Warm preference", category: "preference", importance: 0.8, entity: "user", key: null, value: null, source: "test" });
-    const c = db.store({ text: "Cold decision", category: "decision", importance: 0.7, entity: null, key: null, value: null, source: "test" });
+    const w = db.store({
+      text: "Warm preference",
+      category: "preference",
+      importance: 0.8,
+      entity: "user",
+      key: null,
+      value: null,
+      source: "test",
+    });
+    const c = db.store({
+      text: "Cold decision",
+      category: "decision",
+      importance: 0.7,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+    });
     db.setTier(c.id, "cold");
     const warmResults = db.search("preference", 5, { tierFilter: "warm" });
     expect(warmResults.some((r) => r.entry.id === w.id)).toBe(true);
@@ -358,7 +545,16 @@ describe("FactsDB tiering", () => {
   });
 
   it("runCompaction returns counts and promotes blockers to hot", () => {
-    const blocker = db.store({ text: "Active blocker", category: "fact", importance: 0.9, entity: null, key: null, value: null, source: "test", tags: ["blocker"] });
+    const blocker = db.store({
+      text: "Active blocker",
+      category: "fact",
+      importance: 0.9,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+      tags: ["blocker"],
+    });
     const counts = db.runCompaction({ inactivePreferenceDays: 7, hotMaxTokens: 2000, hotMaxFacts: 50 });
     expect(counts).toMatchObject({ hot: expect.any(Number), warm: expect.any(Number), cold: expect.any(Number) });
     const hotFact = db.getById(blocker.id);
@@ -366,7 +562,15 @@ describe("FactsDB tiering", () => {
   });
 
   it("runCompaction moves completed tasks (decision) to COLD", () => {
-    const task = db.store({ text: "Decided to use SQLite", category: "decision", importance: 0.7, entity: null, key: null, value: null, source: "test" });
+    const task = db.store({
+      text: "Decided to use SQLite",
+      category: "decision",
+      importance: 0.7,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+    });
     expect(db.getById(task.id)?.tier).toBe("warm");
     db.runCompaction({ inactivePreferenceDays: 7, hotMaxTokens: 2000, hotMaxFacts: 50 });
     const coldFact = db.getById(task.id);
@@ -374,7 +578,15 @@ describe("FactsDB tiering", () => {
   });
 
   it("runCompaction moves inactive hot preferences to WARM", () => {
-    const pref = db.store({ text: "User prefers TypeScript", category: "preference", importance: 0.8, entity: "user", key: null, value: null, source: "test" });
+    const pref = db.store({
+      text: "User prefers TypeScript",
+      category: "preference",
+      importance: 0.8,
+      entity: "user",
+      key: null,
+      value: null,
+      source: "test",
+    });
     db.setTier(pref.id, "hot");
     expect(db.getById(pref.id)?.tier).toBe("hot");
     db.runCompaction({ inactivePreferenceDays: 7, hotMaxTokens: 2000, hotMaxFacts: 50 });
@@ -399,24 +611,72 @@ describe("FactsDB fuzzy deduplication", () => {
   });
 
   it("hasDuplicate detects exact text", () => {
-    dedupeDb.store({ text: "Exact match text", category: "fact", importance: 0.7, entity: null, key: null, value: null, source: "test" });
+    dedupeDb.store({
+      text: "Exact match text",
+      category: "fact",
+      importance: 0.7,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+    });
     expect(dedupeDb.hasDuplicate("Exact match text")).toBe(true);
   });
 
   it("hasDuplicate detects normalized match", () => {
-    dedupeDb.store({ text: "  Hello   World  ", category: "fact", importance: 0.7, entity: null, key: null, value: null, source: "test" });
+    dedupeDb.store({
+      text: "  Hello   World  ",
+      category: "fact",
+      importance: 0.7,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+    });
     expect(dedupeDb.hasDuplicate("hello world")).toBe(true);
   });
 
   it("store skips duplicate when fuzzyDedupe is on", () => {
-    dedupeDb.store({ text: "Unique fact", category: "fact", importance: 0.7, entity: null, key: null, value: null, source: "test" });
-    dedupeDb.store({ text: "  unique   fact  ", category: "fact", importance: 0.9, entity: null, key: null, value: null, source: "test" });
+    dedupeDb.store({
+      text: "Unique fact",
+      category: "fact",
+      importance: 0.7,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+    });
+    dedupeDb.store({
+      text: "  unique   fact  ",
+      category: "fact",
+      importance: 0.9,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+    });
     expect(dedupeDb.count()).toBe(1);
   });
 
   it("store allows different text", () => {
-    dedupeDb.store({ text: "Fact alpha", category: "fact", importance: 0.7, entity: null, key: null, value: null, source: "test" });
-    dedupeDb.store({ text: "Fact beta", category: "fact", importance: 0.7, entity: null, key: null, value: null, source: "test" });
+    dedupeDb.store({
+      text: "Fact alpha",
+      category: "fact",
+      importance: 0.7,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+    });
+    dedupeDb.store({
+      text: "Fact beta",
+      category: "fact",
+      importance: 0.7,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+    });
     expect(dedupeDb.count()).toBe(2);
   });
 });
@@ -427,8 +687,24 @@ describe("FactsDB fuzzy deduplication", () => {
 
 describe("FactsDB.supersede", () => {
   it("marks old fact as superseded", () => {
-    const old = db.store({ text: "Old info", category: "fact", importance: 0.7, entity: null, key: null, value: null, source: "test" });
-    const newer = db.store({ text: "New info", category: "fact", importance: 0.7, entity: null, key: null, value: null, source: "test" });
+    const old = db.store({
+      text: "Old info",
+      category: "fact",
+      importance: 0.7,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+    });
+    const newer = db.store({
+      text: "New info",
+      category: "fact",
+      importance: 0.7,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+    });
     const result = db.supersede(old.id, newer.id);
     expect(result).toBe(true);
 
@@ -438,9 +714,33 @@ describe("FactsDB.supersede", () => {
   });
 
   it("does not supersede already-superseded fact", () => {
-    const a = db.store({ text: "A", category: "fact", importance: 0.7, entity: null, key: null, value: null, source: "test" });
-    const b = db.store({ text: "B", category: "fact", importance: 0.7, entity: null, key: null, value: null, source: "test" });
-    const c = db.store({ text: "C", category: "fact", importance: 0.7, entity: null, key: null, value: null, source: "test" });
+    const a = db.store({
+      text: "A",
+      category: "fact",
+      importance: 0.7,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+    });
+    const b = db.store({
+      text: "B",
+      category: "fact",
+      importance: 0.7,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+    });
+    const c = db.store({
+      text: "C",
+      category: "fact",
+      importance: 0.7,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+    });
     db.supersede(a.id, b.id);
     expect(db.supersede(a.id, c.id)).toBe(false);
   });
@@ -698,7 +998,15 @@ describe("FactsDB bi-temporal", () => {
 describe.skip("FactsDB.updateFact", () => {
   // updateFact not implemented; use supersede + store for updates
   it("updates text and normalized hash", () => {
-    const entry = db.store({ text: "Original text", category: "fact", importance: 0.7, entity: null, key: null, value: null, source: "test" });
+    const entry = db.store({
+      text: "Original text",
+      category: "fact",
+      importance: 0.7,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+    });
     // @ts-expect-error updateFact not in FactsDB
     db.updateFact(entry.id, { text: "Updated text" });
     const updated = db.getById(entry.id);
@@ -707,7 +1015,15 @@ describe.skip("FactsDB.updateFact", () => {
   });
 
   it("updates value", () => {
-    const entry = db.store({ text: "Some fact", category: "fact", importance: 0.7, entity: "user", key: "color", value: "blue", source: "test" });
+    const entry = db.store({
+      text: "Some fact",
+      category: "fact",
+      importance: 0.7,
+      entity: "user",
+      key: "color",
+      value: "blue",
+      source: "test",
+    });
     // @ts-expect-error updateFact not in FactsDB
     db.updateFact(entry.id, { value: "green" });
     const updated = db.getById(entry.id);
@@ -730,7 +1046,9 @@ describe("FactsDB.pruneExpired", () => {
       text: "Will expire",
       category: "fact",
       importance: 0.5,
-      entity: null, key: null, value: null,
+      entity: null,
+      key: null,
+      value: null,
       source: "test",
       decayClass: "session",
       expiresAt: Math.floor(Date.now() / 1000) - 100,
@@ -739,7 +1057,9 @@ describe("FactsDB.pruneExpired", () => {
       text: "Will not expire",
       category: "fact",
       importance: 0.8,
-      entity: null, key: null, value: null,
+      entity: null,
+      key: null,
+      value: null,
       source: "test",
       decayClass: "permanent",
     });
@@ -750,7 +1070,16 @@ describe("FactsDB.pruneExpired", () => {
   });
 
   it("returns 0 when nothing to prune", () => {
-    db.store({ text: "Permanent fact", category: "fact", importance: 0.8, entity: null, key: null, value: null, source: "test", decayClass: "permanent" });
+    db.store({
+      text: "Permanent fact",
+      category: "fact",
+      importance: 0.8,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+      decayClass: "permanent",
+    });
     expect(db.pruneExpired()).toBe(0);
   });
 });
@@ -765,7 +1094,9 @@ describe("FactsDB.decayConfidence", () => {
       text: "Low confidence fact",
       category: "fact",
       importance: 0.5,
-      entity: null, key: null, value: null,
+      entity: null,
+      key: null,
+      value: null,
       source: "test",
       decayClass: "active",
       confidence: 0.05,
@@ -782,45 +1113,134 @@ describe("FactsDB.decayConfidence", () => {
 
 describe("FactsDB.pruneOrphanedLinks", () => {
   it("returns 0 when no orphaned links exist", () => {
-    const a = db.store({ text: "Fact A", category: "fact", importance: 0.5, entity: null, key: null, value: null, source: "test", decayClass: "permanent" });
-    const b = db.store({ text: "Fact B", category: "fact", importance: 0.5, entity: null, key: null, value: null, source: "test", decayClass: "permanent" });
+    const a = db.store({
+      text: "Fact A",
+      category: "fact",
+      importance: 0.5,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+      decayClass: "permanent",
+    });
+    const b = db.store({
+      text: "Fact B",
+      category: "fact",
+      importance: 0.5,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+      decayClass: "permanent",
+    });
     db.createLink(a.id, b.id, "RELATED_TO");
     const deleted = db.pruneOrphanedLinks();
     expect(deleted).toBe(0);
   });
 
   it("deletes links where target_fact_id references a non-existent fact", () => {
-    const a = db.store({ text: "Fact A (target test)", category: "fact", importance: 0.5, entity: null, key: null, value: null, source: "test", decayClass: "permanent" });
-    const b = db.store({ text: "Fact B (target test)", category: "fact", importance: 0.5, entity: null, key: null, value: null, source: "test", decayClass: "permanent" });
+    const a = db.store({
+      text: "Fact A (target test)",
+      category: "fact",
+      importance: 0.5,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+      decayClass: "permanent",
+    });
+    const b = db.store({
+      text: "Fact B (target test)",
+      category: "fact",
+      importance: 0.5,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+      decayClass: "permanent",
+    });
     db.createLink(a.id, b.id, "RELATED_TO");
     // Delete the target fact directly — no CASCADE on target_fact_id, so the link remains orphaned
-    (db as unknown as { liveDb: { prepare: (s: string) => { run: (...args: unknown[]) => void } } }).liveDb.prepare("DELETE FROM facts WHERE id = ?").run(b.id);
+    (db as unknown as { liveDb: { prepare: (s: string) => { run: (...args: unknown[]) => void } } }).liveDb
+      .prepare("DELETE FROM facts WHERE id = ?")
+      .run(b.id);
     const deleted = db.pruneOrphanedLinks();
     expect(deleted).toBe(1);
   });
 
   it("deletes links where source_fact_id references a non-existent fact", () => {
-    const b = db.store({ text: "Fact B (source test)", category: "fact", importance: 0.5, entity: null, key: null, value: null, source: "test", decayClass: "permanent" });
+    const b = db.store({
+      text: "Fact B (source test)",
+      category: "fact",
+      importance: 0.5,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+      decayClass: "permanent",
+    });
     const fakeSourceId = "00000000-0000-0000-0000-000000000001";
     // Insert a link with a non-existent source_fact_id directly, bypassing FK constraints
-    const rawDb = (db as unknown as { liveDb: { pragma: (s: string) => void; prepare: (s: string) => { run: (...args: unknown[]) => void } } }).liveDb;
+    const rawDb = (
+      db as unknown as {
+        liveDb: { pragma: (s: string) => void; prepare: (s: string) => { run: (...args: unknown[]) => void } };
+      }
+    ).liveDb;
     rawDb.pragma("foreign_keys = OFF");
-    rawDb.prepare("INSERT INTO memory_links (id, source_fact_id, target_fact_id, link_type, strength, created_at) VALUES (?,?,?,?,?,?)").run(
-      "00000000-0000-0000-0000-dead00000001", fakeSourceId, b.id, "RELATED_TO", 1.0, Math.floor(Date.now() / 1000)
-    );
+    rawDb
+      .prepare(
+        "INSERT INTO memory_links (id, source_fact_id, target_fact_id, link_type, strength, created_at) VALUES (?,?,?,?,?,?)",
+      )
+      .run(
+        "00000000-0000-0000-0000-dead00000001",
+        fakeSourceId,
+        b.id,
+        "RELATED_TO",
+        1.0,
+        Math.floor(Date.now() / 1000),
+      );
     rawDb.pragma("foreign_keys = ON");
     const deleted = db.pruneOrphanedLinks();
     expect(deleted).toBe(1);
   });
 
   it("preserves valid links when orphaned links also exist", () => {
-    const a = db.store({ text: "Fact A (preserve test)", category: "fact", importance: 0.5, entity: null, key: null, value: null, source: "test", decayClass: "permanent" });
-    const b = db.store({ text: "Fact B (preserve test)", category: "fact", importance: 0.5, entity: null, key: null, value: null, source: "test", decayClass: "permanent" });
-    const c = db.store({ text: "Fact C (preserve test)", category: "fact", importance: 0.5, entity: null, key: null, value: null, source: "test", decayClass: "permanent" });
+    const a = db.store({
+      text: "Fact A (preserve test)",
+      category: "fact",
+      importance: 0.5,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+      decayClass: "permanent",
+    });
+    const b = db.store({
+      text: "Fact B (preserve test)",
+      category: "fact",
+      importance: 0.5,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+      decayClass: "permanent",
+    });
+    const c = db.store({
+      text: "Fact C (preserve test)",
+      category: "fact",
+      importance: 0.5,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+      decayClass: "permanent",
+    });
     db.createLink(a.id, b.id, "RELATED_TO"); // valid link — should be kept
     db.createLink(a.id, c.id, "RELATED_TO"); // will become orphaned (target deleted, no cascade)
     // Delete fact C so the a→c link becomes orphaned (no cascade on target_fact_id)
-    (db as unknown as { liveDb: { prepare: (s: string) => { run: (...args: unknown[]) => void } } }).liveDb.prepare("DELETE FROM facts WHERE id = ?").run(c.id);
+    (db as unknown as { liveDb: { prepare: (s: string) => { run: (...args: unknown[]) => void } } }).liveDb
+      .prepare("DELETE FROM facts WHERE id = ?")
+      .run(c.id);
     const linksBefore = db.linksCount();
     const deleted = db.pruneOrphanedLinks();
     expect(deleted).toBe(1); // only the orphaned link deleted
@@ -838,7 +1258,9 @@ describe("FactsDB.confirmFact", () => {
       text: "Confirmable fact",
       category: "fact",
       importance: 0.7,
-      entity: null, key: null, value: null,
+      entity: null,
+      key: null,
+      value: null,
       source: "test",
       decayClass: "stable",
     });
@@ -886,8 +1308,24 @@ describe("FactsDB checkpoint", () => {
 
 describe("FactsDB.statsBreakdown", () => {
   it("groups by decay class", () => {
-    db.store({ text: "Permanent fact", category: "fact", importance: 0.8, entity: "decision", key: "test", value: "yes", source: "test" });
-    db.store({ text: "Working on something right now", category: "fact", importance: 0.7, entity: null, key: null, value: null, source: "test" });
+    db.store({
+      text: "Permanent fact",
+      category: "fact",
+      importance: 0.8,
+      entity: "decision",
+      key: "test",
+      value: "yes",
+      source: "test",
+    });
+    db.store({
+      text: "Working on something right now",
+      category: "fact",
+      importance: 0.7,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+    });
     const stats = db.statsBreakdown();
     expect(typeof stats).toBe("object");
     const total = Object.values(stats).reduce((a, b) => a + b, 0);
@@ -897,8 +1335,24 @@ describe("FactsDB.statsBreakdown", () => {
 
 describe("FactsDB.statsBreakdownByTier", () => {
   it("groups by tier (hot/warm/cold)", () => {
-    const a = db.store({ text: "Hot fact", category: "fact", importance: 0.8, entity: null, key: null, value: null, source: "test" });
-    const b = db.store({ text: "Warm fact", category: "fact", importance: 0.7, entity: null, key: null, value: null, source: "test" });
+    const a = db.store({
+      text: "Hot fact",
+      category: "fact",
+      importance: 0.8,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+    });
+    const b = db.store({
+      text: "Warm fact",
+      category: "fact",
+      importance: 0.7,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+    });
     db.setTier(a.id, "hot");
     db.setTier(b.id, "cold");
     const stats = db.statsBreakdownByTier();
@@ -910,8 +1364,24 @@ describe("FactsDB.statsBreakdownByTier", () => {
 
 describe("FactsDB.statsBreakdownBySource", () => {
   it("groups by source", () => {
-    db.store({ text: "From conversation", category: "fact", importance: 0.7, entity: null, key: null, value: null, source: "conversation" });
-    db.store({ text: "From CLI", category: "fact", importance: 0.7, entity: null, key: null, value: null, source: "cli" });
+    db.store({
+      text: "From conversation",
+      category: "fact",
+      importance: 0.7,
+      entity: null,
+      key: null,
+      value: null,
+      source: "conversation",
+    });
+    db.store({
+      text: "From CLI",
+      category: "fact",
+      importance: 0.7,
+      entity: null,
+      key: null,
+      value: null,
+      source: "cli",
+    });
     const stats = db.statsBreakdownBySource();
     expect(stats.conversation).toBeGreaterThanOrEqual(1);
     expect(stats.cli).toBeGreaterThanOrEqual(1);
@@ -920,9 +1390,33 @@ describe("FactsDB.statsBreakdownBySource", () => {
 
 describe("FactsDB.statsBreakdownByCategory", () => {
   it("groups non-superseded facts by category", () => {
-    db.store({ text: "A preference", category: "preference", importance: 0.7, entity: null, key: null, value: null, source: "test" });
-    db.store({ text: "A fact", category: "fact", importance: 0.7, entity: null, key: null, value: null, source: "test" });
-    db.store({ text: "Another preference", category: "preference", importance: 0.7, entity: null, key: null, value: null, source: "test" });
+    db.store({
+      text: "A preference",
+      category: "preference",
+      importance: 0.7,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+    });
+    db.store({
+      text: "A fact",
+      category: "fact",
+      importance: 0.7,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+    });
+    db.store({
+      text: "Another preference",
+      category: "preference",
+      importance: 0.7,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+    });
     const stats = db.statsBreakdownByCategory();
     expect(stats.preference).toBe(2);
     expect(stats.fact).toBeGreaterThanOrEqual(1);
@@ -978,8 +1472,24 @@ describe("FactsDB.metaPatternsCount", () => {
 
 describe("FactsDB.entityCount", () => {
   it("returns distinct entity count for non-superseded facts", () => {
-    db.store({ text: "About user", category: "fact", importance: 0.7, entity: "user", key: null, value: null, source: "test" });
-    db.store({ text: "About org", category: "fact", importance: 0.7, entity: "org", key: null, value: null, source: "test" });
+    db.store({
+      text: "About user",
+      category: "fact",
+      importance: 0.7,
+      entity: "user",
+      key: null,
+      value: null,
+      source: "test",
+    });
+    db.store({
+      text: "About org",
+      category: "fact",
+      importance: 0.7,
+      entity: "org",
+      key: null,
+      value: null,
+      source: "test",
+    });
     const n = db.entityCount();
     expect(typeof n).toBe("number");
     expect(n).toBeGreaterThanOrEqual(2);
@@ -988,8 +1498,24 @@ describe("FactsDB.entityCount", () => {
 
 describe("FactsDB.listFactsByCategory", () => {
   it("returns non-superseded facts by category with limit", () => {
-    db.store({ text: "P1", category: "pattern", importance: 0.8, entity: null, key: null, value: null, source: "test" });
-    db.store({ text: "P2", category: "pattern", importance: 0.8, entity: null, key: null, value: null, source: "test" });
+    db.store({
+      text: "P1",
+      category: "pattern",
+      importance: 0.8,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+    });
+    db.store({
+      text: "P2",
+      category: "pattern",
+      importance: 0.8,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+    });
     const items = db.listFactsByCategory("pattern", 10);
     expect(Array.isArray(items)).toBe(true);
     expect(items.length).toBeGreaterThanOrEqual(2);
@@ -1037,7 +1563,15 @@ describe("FactsDB.listProceduresUpdatedInLastNDays", () => {
 
 describe("FactsDB.estimateStoredTokens", () => {
   it("returns positive token estimate for stored facts", () => {
-    db.store({ text: "A short fact", category: "fact", importance: 0.7, entity: null, key: null, value: null, source: "test" });
+    db.store({
+      text: "A short fact",
+      category: "fact",
+      importance: 0.7,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+    });
     const tokens = db.estimateStoredTokens();
     expect(tokens).toBeGreaterThan(0);
   });
@@ -1045,9 +1579,33 @@ describe("FactsDB.estimateStoredTokens", () => {
 
 describe("FactsDB.getByCategory", () => {
   it("returns facts of specific category", () => {
-    db.store({ text: "A preference", category: "preference", importance: 0.7, entity: null, key: null, value: null, source: "test" });
-    db.store({ text: "A fact", category: "fact", importance: 0.7, entity: null, key: null, value: null, source: "test" });
-    db.store({ text: "Another preference", category: "preference", importance: 0.7, entity: null, key: null, value: null, source: "test" });
+    db.store({
+      text: "A preference",
+      category: "preference",
+      importance: 0.7,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+    });
+    db.store({
+      text: "A fact",
+      category: "fact",
+      importance: 0.7,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+    });
+    db.store({
+      text: "Another preference",
+      category: "preference",
+      importance: 0.7,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+    });
 
     const prefs = db.getByCategory("preference");
     expect(prefs.length).toBe(2);
@@ -1057,10 +1615,42 @@ describe("FactsDB.getByCategory", () => {
 
 describe("FactsDB.getRecentFacts", () => {
   it("returns facts from window and excludes pattern/rule by default", () => {
-    db.store({ text: "Preference A", category: "preference", importance: 0.7, entity: null, key: null, value: null, source: "test" });
-    db.store({ text: "Pattern B", category: "pattern", importance: 0.9, entity: null, key: null, value: null, source: "reflection" });
-    db.store({ text: "Decision C", category: "decision", importance: 0.8, entity: null, key: null, value: null, source: "test" });
-    db.store({ text: "Rule D", category: "rule", importance: 0.9, entity: null, key: null, value: null, source: "reflection" });
+    db.store({
+      text: "Preference A",
+      category: "preference",
+      importance: 0.7,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+    });
+    db.store({
+      text: "Pattern B",
+      category: "pattern",
+      importance: 0.9,
+      entity: null,
+      key: null,
+      value: null,
+      source: "reflection",
+    });
+    db.store({
+      text: "Decision C",
+      category: "decision",
+      importance: 0.8,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+    });
+    db.store({
+      text: "Rule D",
+      category: "rule",
+      importance: 0.9,
+      entity: null,
+      key: null,
+      value: null,
+      source: "reflection",
+    });
 
     const recent = db.getRecentFacts(14);
     expect(recent.length).toBe(2);
@@ -1068,7 +1658,15 @@ describe("FactsDB.getRecentFacts", () => {
   });
 
   it("respects excludeCategories option", () => {
-    db.store({ text: "Pref", category: "preference", importance: 0.7, entity: null, key: null, value: null, source: "test" });
+    db.store({
+      text: "Pref",
+      category: "preference",
+      importance: 0.7,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+    });
     db.store({ text: "Fact", category: "fact", importance: 0.7, entity: null, key: null, value: null, source: "test" });
 
     const withoutPref = db.getRecentFacts(14, { excludeCategories: ["preference"] });
@@ -1079,7 +1677,15 @@ describe("FactsDB.getRecentFacts", () => {
 
 describe("FactsDB.updateCategory", () => {
   it("changes category of a fact", () => {
-    const entry = db.store({ text: "Miscategorized", category: "other", importance: 0.7, entity: null, key: null, value: null, source: "test" });
+    const entry = db.store({
+      text: "Miscategorized",
+      category: "other",
+      importance: 0.7,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+    });
     expect(db.updateCategory(entry.id, "preference")).toBe(true);
     const updated = db.getById(entry.id);
     expect(updated?.category).toBe("preference");
@@ -1096,8 +1702,24 @@ describe("FactsDB.updateCategory", () => {
 
 describe("FactsDB.findSimilarForClassification", () => {
   it("finds facts by entity + key", () => {
-    db.store({ text: "Theme is dark", category: "preference", importance: 0.8, entity: "user", key: "theme", value: "dark", source: "test" });
-    db.store({ text: "Other info", category: "fact", importance: 0.7, entity: null, key: null, value: null, source: "test" });
+    db.store({
+      text: "Theme is dark",
+      category: "preference",
+      importance: 0.8,
+      entity: "user",
+      key: "theme",
+      value: "dark",
+      source: "test",
+    });
+    db.store({
+      text: "Other info",
+      category: "fact",
+      importance: 0.7,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+    });
 
     const similar = db.findSimilarForClassification("Theme changed to light", "user", "theme");
     expect(similar.length).toBeGreaterThan(0);
@@ -1106,7 +1728,15 @@ describe("FactsDB.findSimilarForClassification", () => {
   });
 
   it("falls back to FTS when no entity match", () => {
-    db.store({ text: "TypeScript is the best language for this project", category: "fact", importance: 0.7, entity: null, key: null, value: null, source: "test" });
+    db.store({
+      text: "TypeScript is the best language for this project",
+      category: "fact",
+      importance: 0.7,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+    });
 
     const similar = db.findSimilarForClassification("TypeScript project configuration", null, null);
     expect(similar.length).toBeGreaterThan(0);
@@ -1125,13 +1755,24 @@ describe("FactsDB.findSimilarForClassification", () => {
 describe("FactsDB.countExpired", () => {
   it("counts expired facts", () => {
     db.store({
-      text: "Expired", category: "fact", importance: 0.5,
-      entity: null, key: null, value: null, source: "test",
-      decayClass: "session", expiresAt: Math.floor(Date.now() / 1000) - 100,
+      text: "Expired",
+      category: "fact",
+      importance: 0.5,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+      decayClass: "session",
+      expiresAt: Math.floor(Date.now() / 1000) - 100,
     });
     db.store({
-      text: "Not expired", category: "fact", importance: 0.5,
-      entity: null, key: null, value: null, source: "test",
+      text: "Not expired",
+      category: "fact",
+      importance: 0.5,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
     });
     expect(db.countExpired()).toBe(1);
   });
@@ -1141,8 +1782,11 @@ describe("FactsDB.backfillDecayClasses", () => {
   it("reclassifies stable facts", () => {
     db.store({
       text: "decided to use SQLite for everything",
-      category: "decision", importance: 0.9,
-      entity: "decision", key: "database", value: "SQLite",
+      category: "decision",
+      importance: 0.9,
+      entity: "decision",
+      key: "database",
+      value: "SQLite",
       source: "test",
       decayClass: "stable",
     });
@@ -1157,8 +1801,24 @@ describe("FactsDB.backfillDecayClasses", () => {
 
 describe("FactsDB.createOrStrengthenRelatedLink", () => {
   it("creates RELATED_TO link when none exists", () => {
-    const a = db.store({ text: "Fact A", category: "fact", importance: 0.7, entity: null, key: null, value: null, source: "test" });
-    const b = db.store({ text: "Fact B", category: "fact", importance: 0.7, entity: null, key: null, value: null, source: "test" });
+    const a = db.store({
+      text: "Fact A",
+      category: "fact",
+      importance: 0.7,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+    });
+    const b = db.store({
+      text: "Fact B",
+      category: "fact",
+      importance: 0.7,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+    });
 
     db.createOrStrengthenRelatedLink(a.id, b.id);
 
@@ -1173,8 +1833,24 @@ describe("FactsDB.createOrStrengthenRelatedLink", () => {
   });
 
   it("strengthens existing RELATED_TO link on repeated co-recall", () => {
-    const a = db.store({ text: "Fact A", category: "fact", importance: 0.7, entity: null, key: null, value: null, source: "test" });
-    const b = db.store({ text: "Fact B", category: "fact", importance: 0.7, entity: null, key: null, value: null, source: "test" });
+    const a = db.store({
+      text: "Fact A",
+      category: "fact",
+      importance: 0.7,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+    });
+    const b = db.store({
+      text: "Fact B",
+      category: "fact",
+      importance: 0.7,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+    });
 
     db.createOrStrengthenRelatedLink(a.id, b.id);
     const afterFirst = db.getLinksFrom(a.id < b.id ? a.id : b.id).find((l) => l.linkType === "RELATED_TO");
@@ -1188,7 +1864,15 @@ describe("FactsDB.createOrStrengthenRelatedLink", () => {
   });
 
   it("does nothing when fact IDs are the same", () => {
-    const a = db.store({ text: "Fact A", category: "fact", importance: 0.7, entity: null, key: null, value: null, source: "test" });
+    const a = db.store({
+      text: "Fact A",
+      category: "fact",
+      importance: 0.7,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+    });
     db.createOrStrengthenRelatedLink(a.id, a.id);
     const links = db.getLinksFrom(a.id);
     expect(links.length).toBe(0);
@@ -1572,7 +2256,14 @@ describe("FactsDB searchProcedures reinforcement ranking", () => {
 });
 
 describe("FactsDB.findByIdPrefix", () => {
-  const storeOpts = { category: "fact" as const, importance: 0.7, entity: null, key: null, value: null, source: "test" };
+  const storeOpts = {
+    category: "fact" as const,
+    importance: 0.7,
+    entity: null,
+    key: null,
+    value: null,
+    source: "test",
+  };
 
   it("returns full ID for unique prefix", () => {
     const entry = db.store({ text: "test fact for prefix", ...storeOpts });
@@ -1816,8 +2507,24 @@ describe("FactsDB migration #237: access_count and last_accessed_at", () => {
   });
 
   it("access_count and recall_count stay in sync after multiple recalls", () => {
-    const a = db.store({ text: "Fact A", category: "fact", importance: 0.5, entity: null, key: null, value: null, source: "test" });
-    const b = db.store({ text: "Fact B", category: "fact", importance: 0.5, entity: null, key: null, value: null, source: "test" });
+    const a = db.store({
+      text: "Fact A",
+      category: "fact",
+      importance: 0.5,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+    });
+    const b = db.store({
+      text: "Fact B",
+      category: "fact",
+      importance: 0.5,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+    });
 
     db.refreshAccessedFacts([a.id]);
     db.refreshAccessedFacts([a.id, b.id]);
@@ -1836,24 +2543,21 @@ describe("FactsDB migration #237: access_count and last_accessed_at", () => {
 // ---------------------------------------------------------------------------
 
 describe("FactsDB new decay classes (#237)", () => {
-  it.each(["ephemeral", "short", "normal", "durable"] as const)(
-    "stores and retrieves decay_class=%s",
-    (dc) => {
-      const entry = db.store({
-        text: `Fact with decay class ${dc}`,
-        category: "fact",
-        importance: 0.5,
-        entity: null,
-        key: null,
-        value: null,
-        source: "test",
-        decayClass: dc,
-      });
-      expect(entry.decayClass).toBe(dc);
-      const retrieved = db.getById(entry.id);
-      expect(retrieved?.decayClass).toBe(dc);
-    },
-  );
+  it.each(["ephemeral", "short", "normal", "durable"] as const)("stores and retrieves decay_class=%s", (dc) => {
+    const entry = db.store({
+      text: `Fact with decay class ${dc}`,
+      category: "fact",
+      importance: 0.5,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+      decayClass: dc,
+    });
+    expect(entry.decayClass).toBe(dc);
+    const retrieved = db.getById(entry.id);
+    expect(retrieved?.decayClass).toBe(dc);
+  });
 
   it("normal decay class has 2-week TTL", () => {
     const entry = db.store({

@@ -17,7 +17,15 @@ import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
 
 import type { MemoryCategory, HybridMemoryConfig, CredentialType, ConfigMode } from "../config.js";
-import { hybridConfigSchema, getDefaultCronModel, getCronModelConfig, getLLMModelPreference, getProvidersWithKeys, isCompactVerbosity, type CronModelConfig } from "../config.js";
+import {
+  hybridConfigSchema,
+  getDefaultCronModel,
+  getCronModelConfig,
+  getLLMModelPreference,
+  getProvidersWithKeys,
+  isCompactVerbosity,
+  type CronModelConfig,
+} from "../config.js";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
 import type { EmbeddingProvider } from "../services/embeddings.js";
@@ -47,7 +55,12 @@ import type {
   VerifyCliSink,
 } from "./register.js";
 import type { SelfCorrectionRunResult, CredentialsAuditResult, CredentialsPruneResult } from "./types.js";
-import { chatComplete, distillBatchTokenLimit, distillMaxOutputTokens, chatCompleteWithRetry } from "../services/chat.js";
+import {
+  chatComplete,
+  distillBatchTokenLimit,
+  distillMaxOutputTokens,
+  chatCompleteWithRetry,
+} from "../services/chat.js";
 import { extractProceduresFromSessions } from "../services/procedure-extractor.js";
 import { generateAutoSkills } from "../services/procedure-skill-generator.js";
 import { runMemoryToSkills, type SkillsSuggestResult } from "../services/memory-to-skills.js";
@@ -55,8 +68,19 @@ import { loadPrompt, fillPrompt } from "../utils/prompt-loader.js";
 import { estimateTokens, chunkSessionText, chunkTextByChars } from "../utils/text.js";
 import { parseSourceDate } from "../utils/dates.js";
 import { extractTags } from "../utils/tags.js";
-import { getExtractionTemplates, getCorrectionSignalRegex, getDirectiveSignalRegex, getReinforcementSignalRegex, loadUserFeedbackPhrases, saveUserFeedbackPhrases } from "../utils/language-keywords.js";
-import { runSelfCorrectionExtract, type CorrectionIncident, type SelfCorrectionExtractResult } from "../services/self-correction-extract.js";
+import {
+  getExtractionTemplates,
+  getCorrectionSignalRegex,
+  getDirectiveSignalRegex,
+  getReinforcementSignalRegex,
+  loadUserFeedbackPhrases,
+  saveUserFeedbackPhrases,
+} from "../utils/language-keywords.js";
+import {
+  runSelfCorrectionExtract,
+  type CorrectionIncident,
+  type SelfCorrectionExtractResult,
+} from "../services/self-correction-extract.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { insertRulesUnderSection } from "../services/tools-md-section.js";
 import { tryExtractionFromTemplates } from "../utils/extraction-from-template.js";
@@ -78,14 +102,14 @@ import { getFileSnapshot } from "../utils/file-snapshot.js";
 import { isNanoModel, isHeavyModel, isLightModel } from "../utils/model-tier.js";
 import { capProposalConfidence } from "./proposals.js";
 import { relativeTime } from "./shared.js";
-import {
-  CLI_STORE_IMPORTANCE,
-  BATCH_STORE_IMPORTANCE,
-  PLUGIN_ID,
-  getRestartPendingPath,
-} from "../utils/constants.js";
+import { CLI_STORE_IMPORTANCE, BATCH_STORE_IMPORTANCE, PLUGIN_ID, getRestartPendingPath } from "../utils/constants.js";
 import { runCrossAgentLearning } from "../services/cross-agent-learning.js";
-import { computeToolEffectiveness, formatToolEffectivenessReport, ToolEffectivenessStore, generateMonthlyReport } from "../services/tool-effectiveness.js";
+import {
+  computeToolEffectiveness,
+  formatToolEffectivenessReport,
+  ToolEffectivenessStore,
+  generateMonthlyReport,
+} from "../services/tool-effectiveness.js";
 import type { CostTracker } from "../backends/cost-tracker.js";
 import type { EventBus } from "../backends/event-bus.js";
 import { getModeCostEstimates } from "../services/model-pricing.js";
@@ -99,10 +123,7 @@ import { preFilterSessions, type PreFilterConfig } from "../services/session-pre
  */
 function buildPreFilterConfig(cfg: HybridMemoryConfig): PreFilterConfig {
   const pf = cfg.extraction?.preFilter;
-  const ollamaEndpoint =
-    pf?.endpoint ??
-    cfg.llm?.providers?.ollama?.baseURL ??
-    "http://localhost:11434";
+  const ollamaEndpoint = pf?.endpoint ?? cfg.llm?.providers?.ollama?.baseURL ?? "http://localhost:11434";
   return {
     enabled: pf?.enabled === true,
     model: pf?.model ?? "qwen3:8b",
@@ -124,43 +145,159 @@ const PLUGIN_JOB_ID_PREFIX = "hybrid-mem:";
  * Guard files are stored persistently in ~/.openclaw/cron/guard/ (issue #305).
  */
 const MIN_INTERVAL_MS: Record<string, number> = {
-  daily: 20 * 60 * 60 * 1000,    // 20 hours (daily jobs)
+  daily: 20 * 60 * 60 * 1000, // 20 hours (daily jobs)
   weekly: 5 * 24 * 60 * 60 * 1000, // 5 days (weekly jobs)
   monthly: 25 * 24 * 60 * 60 * 1000, // 25 days (monthly jobs)
 };
 
 // buildGuardPrefix is imported from services/cron-guard.ts (issue #305).
 
-const MAINTENANCE_CRON_JOBS: Array<Record<string, unknown> & { modelTier?: "nano" | "default" | "heavy"; minIntervalMs?: number; featureGate?: string }> = [
+const MAINTENANCE_CRON_JOBS: Array<
+  Record<string, unknown> & { modelTier?: "nano" | "default" | "heavy"; minIntervalMs?: number; featureGate?: string }
+> = [
   // Daily 02:00 | nightly-memory-sweep | prune → distill --days 3 → extract-daily
-  { pluginJobId: PLUGIN_JOB_ID_PREFIX + "nightly-distill", name: "nightly-memory-sweep", schedule: { kind: "cron", expr: "0 2 * * *" }, channel: "system", message: "Nightly memory maintenance. Run in order:\n1. openclaw hybrid-mem prune\n2. openclaw hybrid-mem distill --days 3\n3. openclaw hybrid-mem extract-daily\n4. openclaw hybrid-mem resolve-contradictions\nCheck if distill is enabled (config distill.enabled !== false) before steps 2 and 3. If disabled, skip steps 2 and 3 and exit 0. Report counts.", isolated: true, modelTier: "default", enabled: true, minIntervalMs: MIN_INTERVAL_MS.daily },
+  {
+    pluginJobId: PLUGIN_JOB_ID_PREFIX + "nightly-distill",
+    name: "nightly-memory-sweep",
+    schedule: { kind: "cron", expr: "0 2 * * *" },
+    channel: "system",
+    message:
+      "Nightly memory maintenance. Run in order:\n1. openclaw hybrid-mem prune\n2. openclaw hybrid-mem distill --days 3\n3. openclaw hybrid-mem extract-daily\n4. openclaw hybrid-mem resolve-contradictions\nCheck if distill is enabled (config distill.enabled !== false) before steps 2 and 3. If disabled, skip steps 2 and 3 and exit 0. Report counts.",
+    isolated: true,
+    modelTier: "default",
+    enabled: true,
+    minIntervalMs: MIN_INTERVAL_MS.daily,
+  },
   // Daily 02:30 | self-correction-analysis | self-correction-run
-  { pluginJobId: PLUGIN_JOB_ID_PREFIX + "self-correction-analysis", name: "self-correction-analysis", schedule: { kind: "cron", expr: "30 2 * * *" }, channel: "system", message: "Run self-correction analysis: openclaw hybrid-mem self-correction-run. Check if self-correction is enabled (config selfCorrection is truthy). Exit 0 if disabled.", isolated: true, modelTier: "heavy", enabled: true, minIntervalMs: MIN_INTERVAL_MS.daily },
+  {
+    pluginJobId: PLUGIN_JOB_ID_PREFIX + "self-correction-analysis",
+    name: "self-correction-analysis",
+    schedule: { kind: "cron", expr: "30 2 * * *" },
+    channel: "system",
+    message:
+      "Run self-correction analysis: openclaw hybrid-mem self-correction-run. Check if self-correction is enabled (config selfCorrection is truthy). Exit 0 if disabled.",
+    isolated: true,
+    modelTier: "heavy",
+    enabled: true,
+    minIntervalMs: MIN_INTERVAL_MS.daily,
+  },
   // Sunday 03:00 | weekly-reflection | reflect --verbose → reflect-rules → reflect-meta
-  { pluginJobId: PLUGIN_JOB_ID_PREFIX + "weekly-reflection", name: "weekly-reflection", schedule: { kind: "cron", expr: "0 3 * * 0" }, channel: "system", message: "Run weekly reflection pipeline:\n1. openclaw hybrid-mem reflect --verbose\n2. openclaw hybrid-mem reflect-rules --verbose\n3. openclaw hybrid-mem reflect-meta --verbose\nCheck reflection.enabled. Exit 0 if disabled.", isolated: true, modelTier: "default", enabled: true, minIntervalMs: MIN_INTERVAL_MS.weekly },
+  {
+    pluginJobId: PLUGIN_JOB_ID_PREFIX + "weekly-reflection",
+    name: "weekly-reflection",
+    schedule: { kind: "cron", expr: "0 3 * * 0" },
+    channel: "system",
+    message:
+      "Run weekly reflection pipeline:\n1. openclaw hybrid-mem reflect --verbose\n2. openclaw hybrid-mem reflect-rules --verbose\n3. openclaw hybrid-mem reflect-meta --verbose\nCheck reflection.enabled. Exit 0 if disabled.",
+    isolated: true,
+    modelTier: "default",
+    enabled: true,
+    minIntervalMs: MIN_INTERVAL_MS.weekly,
+  },
   // Sunday 04:00 | weekly-extract-procedures (nano = background model, avoids locking main AI)
-  { pluginJobId: PLUGIN_JOB_ID_PREFIX + "weekly-extract-procedures", name: "weekly-extract-procedures", schedule: { kind: "cron", expr: "0 4 * * 0" }, channel: "system", message: "Run weekly extraction pipeline:\n1. openclaw hybrid-mem extract-procedures --days 7\n2. openclaw hybrid-mem extract-directives --days 7\n3. openclaw hybrid-mem extract-reinforcement --days 7\n4. openclaw hybrid-mem generate-auto-skills\nCheck feature configs. Exit 0 if all disabled.", isolated: true, modelTier: "nano", enabled: true, minIntervalMs: MIN_INTERVAL_MS.weekly },
+  {
+    pluginJobId: PLUGIN_JOB_ID_PREFIX + "weekly-extract-procedures",
+    name: "weekly-extract-procedures",
+    schedule: { kind: "cron", expr: "0 4 * * 0" },
+    channel: "system",
+    message:
+      "Run weekly extraction pipeline:\n1. openclaw hybrid-mem extract-procedures --days 7\n2. openclaw hybrid-mem extract-directives --days 7\n3. openclaw hybrid-mem extract-reinforcement --days 7\n4. openclaw hybrid-mem generate-auto-skills\nCheck feature configs. Exit 0 if all disabled.",
+    isolated: true,
+    modelTier: "nano",
+    enabled: true,
+    minIntervalMs: MIN_INTERVAL_MS.weekly,
+  },
   // Daily 02:15 | nightly-memory-to-skills | skills-suggest (issue #114)
-  { pluginJobId: PLUGIN_JOB_ID_PREFIX + "nightly-memory-to-skills", name: "nightly-memory-to-skills", schedule: { kind: "cron", expr: "15 2 * * *" }, channel: "system", message: "Run: openclaw hybrid-mem skills-suggest. This clusters procedural memories and drafts new skills under skills/auto-generated/. If new skill drafts were generated, notify the user in this system channel with a concise summary and paths. Exit 0 if memoryToSkills.enabled is false.", isolated: true, modelTier: "default", enabled: true, minIntervalMs: MIN_INTERVAL_MS.daily },
+  {
+    pluginJobId: PLUGIN_JOB_ID_PREFIX + "nightly-memory-to-skills",
+    name: "nightly-memory-to-skills",
+    schedule: { kind: "cron", expr: "15 2 * * *" },
+    channel: "system",
+    message:
+      "Run: openclaw hybrid-mem skills-suggest. This clusters procedural memories and drafts new skills under skills/auto-generated/. If new skill drafts were generated, notify the user in this system channel with a concise summary and paths. Exit 0 if memoryToSkills.enabled is false.",
+    isolated: true,
+    modelTier: "default",
+    enabled: true,
+    minIntervalMs: MIN_INTERVAL_MS.daily,
+  },
   // Saturday 04:00 | weekly-deep-maintenance | compact → vectordb-optimize → scope promote
-  { pluginJobId: PLUGIN_JOB_ID_PREFIX + "weekly-deep-maintenance", name: "weekly-deep-maintenance", schedule: { kind: "cron", expr: "0 4 * * 6" }, channel: "system", message: "Run weekly deep maintenance:\n1. openclaw hybrid-mem compact\n2. openclaw hybrid-mem vectordb-optimize\n3. openclaw hybrid-mem scope promote\nReport counts for each step.", isolated: true, modelTier: "heavy", enabled: true, minIntervalMs: MIN_INTERVAL_MS.weekly },
+  {
+    pluginJobId: PLUGIN_JOB_ID_PREFIX + "weekly-deep-maintenance",
+    name: "weekly-deep-maintenance",
+    schedule: { kind: "cron", expr: "0 4 * * 6" },
+    channel: "system",
+    message:
+      "Run weekly deep maintenance:\n1. openclaw hybrid-mem compact\n2. openclaw hybrid-mem vectordb-optimize\n3. openclaw hybrid-mem scope promote\nReport counts for each step.",
+    isolated: true,
+    modelTier: "heavy",
+    enabled: true,
+    minIntervalMs: MIN_INTERVAL_MS.weekly,
+  },
   // Sunday 10:00 | weekly-persona-proposals | generate-proposals → notify if pending
-  { pluginJobId: PLUGIN_JOB_ID_PREFIX + "weekly-persona-proposals", name: "weekly-persona-proposals", schedule: { kind: "cron", expr: "0 10 * * 0" }, channel: "system", message: "Run: openclaw hybrid-mem generate-proposals. This creates persona proposals from recent reflection insights. If there are pending proposals, notify the user in this system channel with a concise summary of the proposals. Exit 0 if personaProposals disabled.", isolated: true, modelTier: "heavy", enabled: true, minIntervalMs: MIN_INTERVAL_MS.weekly },
+  {
+    pluginJobId: PLUGIN_JOB_ID_PREFIX + "weekly-persona-proposals",
+    name: "weekly-persona-proposals",
+    schedule: { kind: "cron", expr: "0 10 * * 0" },
+    channel: "system",
+    message:
+      "Run: openclaw hybrid-mem generate-proposals. This creates persona proposals from recent reflection insights. If there are pending proposals, notify the user in this system channel with a concise summary of the proposals. Exit 0 if personaProposals disabled.",
+    isolated: true,
+    modelTier: "heavy",
+    enabled: true,
+    minIntervalMs: MIN_INTERVAL_MS.weekly,
+  },
   // 1st of month 05:00 | monthly-consolidation | consolidate → build-languages → backfill-decay
-  { pluginJobId: PLUGIN_JOB_ID_PREFIX + "monthly-consolidation", name: "monthly-consolidation", schedule: { kind: "cron", expr: "0 5 1 * *" }, channel: "system", message: "Run monthly consolidation:\n1. openclaw hybrid-mem consolidate --threshold 0.92\n2. openclaw hybrid-mem build-languages\n3. openclaw hybrid-mem backfill-decay\nReport what was merged, languages detected. Check feature configs. Exit 0 if all disabled.", isolated: true, modelTier: "heavy", enabled: true, minIntervalMs: MIN_INTERVAL_MS.monthly },
+  {
+    pluginJobId: PLUGIN_JOB_ID_PREFIX + "monthly-consolidation",
+    name: "monthly-consolidation",
+    schedule: { kind: "cron", expr: "0 5 1 * *" },
+    channel: "system",
+    message:
+      "Run monthly consolidation:\n1. openclaw hybrid-mem consolidate --threshold 0.92\n2. openclaw hybrid-mem build-languages\n3. openclaw hybrid-mem backfill-decay\nReport what was merged, languages detected. Check feature configs. Exit 0 if all disabled.",
+    isolated: true,
+    modelTier: "heavy",
+    enabled: true,
+    minIntervalMs: MIN_INTERVAL_MS.monthly,
+  },
   // Daily 02:45 | nightly-dream-cycle | dream-cycle (prune → consolidate → reflect)
   // Default schedule; overridden by cfg.nightlyCycle.schedule during install/verify/upgrade.
-  { pluginJobId: PLUGIN_JOB_ID_PREFIX + "nightly-dream-cycle", name: "nightly-dream-cycle", schedule: { kind: "cron", expr: "45 2 * * *" }, channel: "system", message: "Run nightly dream cycle: openclaw hybrid-mem dream-cycle\nThis runs in order: (1) prune expired/decayed facts, (2) consolidate old episodic events into facts, (3) reflect on recent facts to extract patterns, (4) extract rules if enough patterns accumulated.\nCheck if nightlyCycle.enabled is true in config before running. Exit 0 if disabled. Report counts: facts pruned, events consolidated, patterns found, rules generated.", isolated: true, modelTier: "default", enabled: true, minIntervalMs: MIN_INTERVAL_MS.daily },
+  {
+    pluginJobId: PLUGIN_JOB_ID_PREFIX + "nightly-dream-cycle",
+    name: "nightly-dream-cycle",
+    schedule: { kind: "cron", expr: "45 2 * * *" },
+    channel: "system",
+    message:
+      "Run nightly dream cycle: openclaw hybrid-mem dream-cycle\nThis runs in order: (1) prune expired/decayed facts, (2) consolidate old episodic events into facts, (3) reflect on recent facts to extract patterns, (4) extract rules if enough patterns accumulated.\nCheck if nightlyCycle.enabled is true in config before running. Exit 0 if disabled. Report counts: facts pruned, events consolidated, patterns found, rules generated.",
+    isolated: true,
+    modelTier: "default",
+    enabled: true,
+    minIntervalMs: MIN_INTERVAL_MS.daily,
+  },
   // Every 4h | sensor-sweep | tier-1 + tier-2 data collection (no LLM, Issue #236)
   // Default schedule; overridden by cfg.sensorSweep.schedule during install/verify/upgrade.
-  { pluginJobId: PLUGIN_JOB_ID_PREFIX + "sensor-sweep", name: "sensor-sweep", schedule: { kind: "cron", expr: "0 */4 * * *" }, channel: "system", message: "Run sensor sweep data collection (no LLM):\n1. openclaw hybrid-mem sensor-sweep --tier 1\n2. openclaw hybrid-mem sensor-sweep --tier 2\nCheck if sensorSweep.enabled is true in config before running. Exit 0 if disabled. Report events written and skipped per sensor.", isolated: true, modelTier: "nano", enabled: true, minIntervalMs: 3 * 60 * 60 * 1000, featureGate: "sensorSweep.enabled" },
+  {
+    pluginJobId: PLUGIN_JOB_ID_PREFIX + "sensor-sweep",
+    name: "sensor-sweep",
+    schedule: { kind: "cron", expr: "0 */4 * * *" },
+    channel: "system",
+    message:
+      "Run sensor sweep data collection (no LLM):\n1. openclaw hybrid-mem sensor-sweep --tier 1\n2. openclaw hybrid-mem sensor-sweep --tier 2\nCheck if sensorSweep.enabled is true in config before running. Exit 0 if disabled. Report events written and skipped per sensor.",
+    isolated: true,
+    modelTier: "nano",
+    enabled: true,
+    minIntervalMs: 3 * 60 * 60 * 1000,
+    featureGate: "sensorSweep.enabled",
+  },
 ];
 
 /** Resolve model for a cron job def and return a job record suitable for the store (has model, no modelTier).
  * Strips the top-level `channel` field (maintenance jobs don't need user delivery) and sets delivery.mode = "none"
  * so the job runner never tries to send a WhatsApp/channel notification for plugin-internal jobs.
  * If the def has minIntervalMs, prepends a guard prefix to the message to prevent re-runs on gateway restart (#304). */
-function resolveCronJob(def: Record<string, unknown> & { modelTier?: "nano" | "default" | "heavy"; minIntervalMs?: number }, pluginConfig: CronModelConfig | undefined): Record<string, unknown> {
+function resolveCronJob(
+  def: Record<string, unknown> & { modelTier?: "nano" | "default" | "heavy"; minIntervalMs?: number },
+  pluginConfig: CronModelConfig | undefined,
+): Record<string, unknown> {
   const { modelTier, channel: _channel, minIntervalMs, featureGate: _featureGate, ...rest } = def;
   const tier = modelTier ?? "default";
   const model = getDefaultCronModel(pluginConfig, tier);
@@ -173,13 +310,22 @@ function resolveCronJob(def: Record<string, unknown> & { modelTier?: "nano" | "d
 }
 
 const LEGACY_JOB_MATCHERS: Record<string, (j: Record<string, unknown>) => boolean> = {
-  [PLUGIN_JOB_ID_PREFIX + "nightly-distill"]: (j) => String(j.name ?? "").toLowerCase().includes("nightly-memory-sweep"),
-  [PLUGIN_JOB_ID_PREFIX + "weekly-reflection"]: (j) => /weekly-reflection|memory reflection|pattern synthesis/i.test(String(j.name ?? "")),
-  [PLUGIN_JOB_ID_PREFIX + "weekly-extract-procedures"]: (j) => /extract-procedures|weekly-extract-procedures|procedural memory/i.test(String(j.name ?? "")),
-  [PLUGIN_JOB_ID_PREFIX + "nightly-memory-to-skills"]: (j) => /nightly-memory-to-skills|memory-to-skills|skills-suggest/i.test(String(j.name ?? "")),
-  [PLUGIN_JOB_ID_PREFIX + "self-correction-analysis"]: (j) => /self-correction-analysis|self-correction\b/i.test(String(j.name ?? "")),
-  [PLUGIN_JOB_ID_PREFIX + "weekly-deep-maintenance"]: (j) => /weekly-deep-maintenance|deep maintenance/i.test(String(j.name ?? "")),
-  [PLUGIN_JOB_ID_PREFIX + "weekly-persona-proposals"]: (j) => /weekly-persona-proposals|persona proposals/i.test(String(j.name ?? "")),
+  [PLUGIN_JOB_ID_PREFIX + "nightly-distill"]: (j) =>
+    String(j.name ?? "")
+      .toLowerCase()
+      .includes("nightly-memory-sweep"),
+  [PLUGIN_JOB_ID_PREFIX + "weekly-reflection"]: (j) =>
+    /weekly-reflection|memory reflection|pattern synthesis/i.test(String(j.name ?? "")),
+  [PLUGIN_JOB_ID_PREFIX + "weekly-extract-procedures"]: (j) =>
+    /extract-procedures|weekly-extract-procedures|procedural memory/i.test(String(j.name ?? "")),
+  [PLUGIN_JOB_ID_PREFIX + "nightly-memory-to-skills"]: (j) =>
+    /nightly-memory-to-skills|memory-to-skills|skills-suggest/i.test(String(j.name ?? "")),
+  [PLUGIN_JOB_ID_PREFIX + "self-correction-analysis"]: (j) =>
+    /self-correction-analysis|self-correction\b/i.test(String(j.name ?? "")),
+  [PLUGIN_JOB_ID_PREFIX + "weekly-deep-maintenance"]: (j) =>
+    /weekly-deep-maintenance|deep maintenance/i.test(String(j.name ?? "")),
+  [PLUGIN_JOB_ID_PREFIX + "weekly-persona-proposals"]: (j) =>
+    /weekly-persona-proposals|persona proposals/i.test(String(j.name ?? "")),
   [PLUGIN_JOB_ID_PREFIX + "monthly-consolidation"]: (j) => /monthly-consolidation/i.test(String(j.name ?? "")),
   [PLUGIN_JOB_ID_PREFIX + "nightly-dream-cycle"]: (j) => /nightly-dream-cycle|dream.cycle/i.test(String(j.name ?? "")),
 };
@@ -189,8 +335,10 @@ const LEGACY_JOB_MATCHERS: Record<string, (j: Record<string, unknown>) => boolea
  * When notify is false, omit the user-notification instruction from the job message.
  */
 function buildMemoryToSkillsMessage(notify: boolean): string {
-  const base = "Run: openclaw hybrid-mem skills-suggest. This clusters procedural memories and drafts new skills under skills/auto-generated/.";
-  const notifyClause = " If new skill drafts were generated, notify the user in this system channel with a concise summary and paths.";
+  const base =
+    "Run: openclaw hybrid-mem skills-suggest. This clusters procedural memories and drafts new skills under skills/auto-generated/.";
+  const notifyClause =
+    " If new skill drafts were generated, notify the user in this system channel with a concise summary and paths.";
   const exitClause = " Exit 0 if memoryToSkills.enabled is false.";
   return notify ? `${base}${notifyClause}${exitClause}` : `${base}${exitClause}`;
 }
@@ -204,15 +352,29 @@ function buildMemoryToSkillsMessage(notify: boolean): string {
 function ensureMaintenanceCronJobs(
   openclawDir: string,
   pluginConfig: CronModelConfig | undefined,
-  options: { normalizeExisting?: boolean; reEnableDisabled?: boolean; scheduleOverrides?: Record<string, string>; messageOverrides?: Record<string, string>; featureGates?: Record<string, boolean> } = {},
+  options: {
+    normalizeExisting?: boolean;
+    reEnableDisabled?: boolean;
+    scheduleOverrides?: Record<string, string>;
+    messageOverrides?: Record<string, string>;
+    featureGates?: Record<string, boolean>;
+  } = {},
 ): { added: string[]; normalized: string[] } {
-  const { normalizeExisting = false, reEnableDisabled = false, scheduleOverrides, messageOverrides, featureGates } = options;
+  const {
+    normalizeExisting = false,
+    reEnableDisabled = false,
+    scheduleOverrides,
+    messageOverrides,
+    featureGates,
+  } = options;
   const added: string[] = [];
   const normalized: string[] = [];
   const cronDir = join(openclawDir, "cron");
   const cronStorePath = join(cronDir, "jobs.json");
   mkdirSync(cronDir, { recursive: true });
-  const store: { jobs?: unknown[] } = existsSync(cronStorePath) ? (JSON.parse(readFileSync(cronStorePath, "utf-8")) as { jobs?: unknown[] }) : {};
+  const store: { jobs?: unknown[] } = existsSync(cronStorePath)
+    ? (JSON.parse(readFileSync(cronStorePath, "utf-8")) as { jobs?: unknown[] })
+    : {};
   if (!Array.isArray(store.jobs)) store.jobs = [];
   const jobsArr = store.jobs as Array<Record<string, unknown>>;
   let jobsChanged = false;
@@ -234,7 +396,14 @@ function ensureMaintenanceCronJobs(
     }
     // Feature gate evaluates to true: re-enable the job ONLY if it was previously disabled by the
     // feature gate (featureGateDisabled === true). Never re-enable jobs the user disabled manually.
-    if (def.featureGate && featureGates && featureGates[def.featureGate] === true && existing && existing.enabled === false && existing.featureGateDisabled === true) {
+    if (
+      def.featureGate &&
+      featureGates &&
+      featureGates[def.featureGate] === true &&
+      existing &&
+      existing.enabled === false &&
+      existing.featureGateDisabled === true
+    ) {
       existing.enabled = true;
       delete existing.featureGateDisabled;
       jobsChanged = true;
@@ -469,7 +638,13 @@ export async function runStoreForCli(
           const vector = await embeddings.embed(pointerText);
           factsDb.setEmbeddingModel(pointerEntry.id, embeddings.modelName);
           if (!(await vectorDb.hasDuplicate(vector))) {
-            await vectorDb.store({ text: pointerText, vector, importance: CLI_STORE_IMPORTANCE, category: "technical", id: pointerEntry.id });
+            await vectorDb.store({
+              text: pointerText,
+              vector,
+              importance: CLI_STORE_IMPORTANCE,
+              category: "technical",
+              id: pointerEntry.id,
+            });
           }
         } catch (err) {
           log.warn(`memory-hybrid: vector store failed: ${err}`);
@@ -481,7 +656,10 @@ export async function runStoreForCli(
           credentialsDb.delete(parsed.service, parsed.type as any);
         } catch (cleanupErr) {
           log.warn(`memory-hybrid: Failed to clean up orphaned credential for ${parsed.service}: ${cleanupErr}`);
-          capturePluginError(cleanupErr as Error, { subsystem: "cli", operation: "runStoreForCli:credential-compensating-delete" });
+          capturePluginError(cleanupErr as Error, {
+            subsystem: "cli",
+            operation: "runStoreForCli:credential-compensating-delete",
+          });
         }
         capturePluginError(err as Error, { subsystem: "cli", operation: "runStoreForCli:credential-db-store" });
         return { outcome: "credential_db_error" };
@@ -492,7 +670,10 @@ export async function runStoreForCli(
   }
 
   const tags = opts.tags
-    ? opts.tags.split(",").map((t) => t.trim().toLowerCase()).filter(Boolean)
+    ? opts.tags
+        .split(",")
+        .map((t) => t.trim().toLowerCase())
+        .filter(Boolean)
     : undefined;
   const category = (opts.category ?? "other") as MemoryCategory;
 
@@ -516,7 +697,13 @@ export async function runStoreForCli(
       if (similarFacts.length > 0) {
         try {
           const classification = await classifyMemoryOperation(
-            text, entity, key, similarFacts, openai, cfg.store.classifyModel ?? getDefaultCronModel(getCronModelConfig(cfg), "nano"), log,
+            text,
+            entity,
+            key,
+            similarFacts,
+            openai,
+            cfg.store.classifyModel ?? getDefaultCronModel(getCronModelConfig(cfg), "nano"),
+            log,
           );
           if (classification.action === "NOOP") return { outcome: "noop", reason: classification.reason ?? "" };
           if (classification.action === "DELETE" && classification.targetId) {
@@ -554,7 +741,12 @@ export async function runStoreForCli(
                 log.warn(`memory-hybrid: vector store failed: ${err}`);
                 capturePluginError(err as Error, { subsystem: "cli", operation: "runStoreForCli:vector-store-update" });
               }
-              return { outcome: "updated", id: newEntry.id, supersededId: classification.targetId, reason: classification.reason ?? "" };
+              return {
+                outcome: "updated",
+                id: newEntry.id,
+                supersededId: classification.targetId,
+                reason: classification.reason ?? "",
+              };
             }
           }
         } catch (err) {
@@ -591,13 +783,24 @@ export async function runStoreForCli(
       const vector = await embeddings.embed(text);
       factsDb.setEmbeddingModel(entry.id, embeddings.modelName);
       if (!(await vectorDb.hasDuplicate(vector))) {
-        await vectorDb.store({ text, vector, importance: CLI_STORE_IMPORTANCE, category: opts.category ?? "other", id: entry.id });
+        await vectorDb.store({
+          text,
+          vector,
+          importance: CLI_STORE_IMPORTANCE,
+          category: opts.category ?? "other",
+          id: entry.id,
+        });
       }
     } catch (err) {
       log.warn(`memory-hybrid: vector store failed: ${err}`);
       capturePluginError(err as Error, { subsystem: "cli", operation: "runStoreForCli:vector-store-final" });
     }
-    return { outcome: "stored", id: entry.id, textPreview: text.slice(0, 80) + (text.length > 80 ? "..." : ""), ...(supersedesId ? { supersededId: supersedesId } : {}) };
+    return {
+      outcome: "stored",
+      id: entry.id,
+      textPreview: text.slice(0, 80) + (text.length > 80 ? "..." : ""),
+      ...(supersedesId ? { supersededId: supersedesId } : {}),
+    };
   } catch (err) {
     capturePluginError(err as Error, { subsystem: "cli", operation: "runStoreForCli:store" });
     throw err;
@@ -607,7 +810,7 @@ export async function runStoreForCli(
 /**
  * Deep merge utility that safely merges source into target, skipping prototype-related keys.
  * Exported for testing purposes.
- * 
+ *
  * @param target - The target object to merge into
  * @param source - The source object to merge from
  */
@@ -619,7 +822,14 @@ export function deepMerge(target: Record<string, unknown>, source: Record<string
     }
     const srcVal = source[key];
     const tgtVal = target[key];
-    if (srcVal !== null && typeof srcVal === "object" && !Array.isArray(srcVal) && tgtVal !== null && typeof tgtVal === "object" && !Array.isArray(tgtVal)) {
+    if (
+      srcVal !== null &&
+      typeof srcVal === "object" &&
+      !Array.isArray(srcVal) &&
+      tgtVal !== null &&
+      typeof tgtVal === "object" &&
+      !Array.isArray(tgtVal)
+    ) {
       deepMerge(tgtVal as Record<string, unknown>, srcVal as Record<string, unknown>);
     } else if (tgtVal === undefined) {
       (target as Record<string, unknown>)[key] = srcVal;
@@ -658,7 +868,13 @@ export function runInstallForCli(opts: { dryRun: boolean }): InstallCliResult {
               autoClassify: true,
             },
             categories: [] as string[],
-            credentials: { enabled: false, store: "sqlite" as const, encryptionKey: "", autoDetect: false, expiryWarningDays: 7 },
+            credentials: {
+              enabled: false,
+              store: "sqlite" as const,
+              encryptionKey: "",
+              autoDetect: false,
+              expiryWarningDays: 7,
+            },
             languageKeywords: { autoBuild: true, weeklyIntervalDays: 7 },
             reflection: { enabled: true, defaultWindow: 14, minObservations: 2 },
             selfCorrection: {
@@ -691,8 +907,10 @@ export function runInstallForCli(opts: { dryRun: boolean }): InstallCliResult {
             enabled: true,
             softThresholdTokens: 4000,
             flushEveryCompaction: true,
-            systemPrompt: "Session nearing compaction. You MUST save all important context NOW using BOTH memory systems before it is lost. This is your last chance to preserve this information.",
-            prompt: "URGENT: Context is about to be compacted. Scan the full conversation and:\n1. Use memory_store for each important fact, preference, decision, or entity (structured storage survives compaction)\n2. Write a session summary to memory/YYYY-MM-DD.md with key topics, decisions, and open items\n3. Update any relevant memory/ files if project state or technical details changed\n\nDo NOT skip this. Reply NO_REPLY only if there is truly nothing worth saving.",
+            systemPrompt:
+              "Session nearing compaction. You MUST save all important context NOW using BOTH memory systems before it is lost. This is your last chance to preserve this information.",
+            prompt:
+              "URGENT: Context is about to be compacted. Scan the full conversation and:\n1. Use memory_store for each important fact, preference, decision, or entity (structured storage survives compaction)\n2. Write a session summary to memory/YYYY-MM-DD.md with key topics, decisions, and open items\n3. Update any relevant memory/ files if project state or technical details changed\n\nDo NOT skip this. Reply NO_REPLY only if there is truly nothing worth saving.",
           },
         },
         // NOTE: agents.defaults.pruning is intentionally NOT included here.
@@ -711,8 +929,38 @@ export function runInstallForCli(opts: { dryRun: boolean }): InstallCliResult {
       return { ok: false, error: `Could not read ${configPath}: ${e}` };
     }
   }
-  const existingApiKey = (config?.plugins as Record<string, unknown>)?.["entries"] && ((config.plugins as Record<string, unknown>).entries as Record<string, unknown>)?.[PLUGIN_ID] && (((config.plugins as Record<string, unknown>).entries as Record<string, unknown>)[PLUGIN_ID] as Record<string, unknown>)?.config && ((((config.plugins as Record<string, unknown>).entries as Record<string, unknown>)[PLUGIN_ID] as Record<string, unknown>).config as Record<string, unknown>)?.embedding && (((((config.plugins as Record<string, unknown>).entries as Record<string, unknown>)[PLUGIN_ID] as Record<string, unknown>).config as Record<string, unknown>).embedding as Record<string, unknown>)?.apiKey;
-  const isRealKey = typeof existingApiKey === "string" && existingApiKey.length >= 10 && existingApiKey !== "YOUR_OPENAI_API_KEY" && existingApiKey !== "<OPENAI_API_KEY>";
+  const existingApiKey =
+    (config?.plugins as Record<string, unknown>)?.["entries"] &&
+    ((config.plugins as Record<string, unknown>).entries as Record<string, unknown>)?.[PLUGIN_ID] &&
+    (
+      ((config.plugins as Record<string, unknown>).entries as Record<string, unknown>)[PLUGIN_ID] as Record<
+        string,
+        unknown
+      >
+    )?.config &&
+    (
+      (
+        ((config.plugins as Record<string, unknown>).entries as Record<string, unknown>)[PLUGIN_ID] as Record<
+          string,
+          unknown
+        >
+      ).config as Record<string, unknown>
+    )?.embedding &&
+    (
+      (
+        (
+          ((config.plugins as Record<string, unknown>).entries as Record<string, unknown>)[PLUGIN_ID] as Record<
+            string,
+            unknown
+          >
+        ).config as Record<string, unknown>
+      ).embedding as Record<string, unknown>
+    )?.apiKey;
+  const isRealKey =
+    typeof existingApiKey === "string" &&
+    existingApiKey.length >= 10 &&
+    existingApiKey !== "YOUR_OPENAI_API_KEY" &&
+    existingApiKey !== "<OPENAI_API_KEY>";
 
   if (!config.plugins || typeof config.plugins !== "object") config.plugins = {};
   if (!(config.agents && typeof config.agents === "object")) config.agents = { defaults: {} };
@@ -738,15 +986,25 @@ export function runInstallForCli(opts: { dryRun: boolean }): InstallCliResult {
       const pluginCfg = getPluginEntryConfig(config);
       const pluginConfig = pluginCfg as CronModelConfig | undefined;
       const memToSkills = pluginCfg?.memoryToSkills as Record<string, unknown> | undefined;
-      const schedule = typeof memToSkills?.schedule === "string" && (memToSkills.schedule as string).trim().length > 0 ? (memToSkills.schedule as string).trim() : undefined;
+      const schedule =
+        typeof memToSkills?.schedule === "string" && (memToSkills.schedule as string).trim().length > 0
+          ? (memToSkills.schedule as string).trim()
+          : undefined;
       const notify = memToSkills?.notify !== false;
       const dreamCycleRaw = pluginCfg?.nightlyCycle as Record<string, unknown> | undefined;
-      const dreamCycleSchedule = typeof dreamCycleRaw?.schedule === "string" && (dreamCycleRaw.schedule as string).trim().length > 0 ? (dreamCycleRaw.schedule as string).trim() : undefined;
+      const dreamCycleSchedule =
+        typeof dreamCycleRaw?.schedule === "string" && (dreamCycleRaw.schedule as string).trim().length > 0
+          ? (dreamCycleRaw.schedule as string).trim()
+          : undefined;
       const sensorSweepRaw = pluginCfg?.sensorSweep as Record<string, unknown> | undefined;
-      const sensorSweepSchedule = typeof sensorSweepRaw?.schedule === "string" && (sensorSweepRaw.schedule as string).trim().length > 0 ? (sensorSweepRaw.schedule as string).trim() : undefined;
+      const sensorSweepSchedule =
+        typeof sensorSweepRaw?.schedule === "string" && (sensorSweepRaw.schedule as string).trim().length > 0
+          ? (sensorSweepRaw.schedule as string).trim()
+          : undefined;
       const installScheduleOverrides: Record<string, string> = {};
       if (schedule) installScheduleOverrides[PLUGIN_JOB_ID_PREFIX + "nightly-memory-to-skills"] = schedule;
-      if (dreamCycleSchedule) installScheduleOverrides[PLUGIN_JOB_ID_PREFIX + "nightly-dream-cycle"] = dreamCycleSchedule;
+      if (dreamCycleSchedule)
+        installScheduleOverrides[PLUGIN_JOB_ID_PREFIX + "nightly-dream-cycle"] = dreamCycleSchedule;
       if (sensorSweepSchedule) installScheduleOverrides[PLUGIN_JOB_ID_PREFIX + "sensor-sweep"] = sensorSweepSchedule;
       ensureMaintenanceCronJobs(openclawDir, pluginConfig, {
         normalizeExisting: false,
@@ -806,10 +1064,15 @@ export async function runVerifyForCli(
 
   log("\n───── Infrastructure ─────");
 
-  if (cfg.embedding.provider === "openai" && (!cfg.embedding.apiKey || cfg.embedding.apiKey === "YOUR_OPENAI_API_KEY" || cfg.embedding.apiKey.length < 10)) {
+  if (
+    cfg.embedding.provider === "openai" &&
+    (!cfg.embedding.apiKey || cfg.embedding.apiKey === "YOUR_OPENAI_API_KEY" || cfg.embedding.apiKey.length < 10)
+  ) {
     issues.push("embedding.apiKey is missing, placeholder, or too short");
     loadBlocking.push("embedding.apiKey is missing, placeholder, or too short");
-    fixes.push(`LOAD-BLOCKING: Set plugins.entries["${PLUGIN_ID}"].config.embedding.apiKey to a valid OpenAI key (and embedding.model to "text-embedding-3-small"). Edit ~/.openclaw/openclaw.json or set OPENAI_API_KEY and use env:OPENAI_API_KEY in config.`);
+    fixes.push(
+      `LOAD-BLOCKING: Set plugins.entries["${PLUGIN_ID}"].config.embedding.apiKey to a valid OpenAI key (and embedding.model to "text-embedding-3-small"). Edit ~/.openclaw/openclaw.json or set OPENAI_API_KEY and use env:OPENAI_API_KEY in config.`,
+    );
     configOk = false;
   }
   if (!cfg.embedding.model) {
@@ -821,9 +1084,10 @@ export async function runVerifyForCli(
   const openclawDir = join(homedir(), ".openclaw");
   const defaultConfigPath = join(openclawDir, "openclaw.json");
   if (configOk) {
-    const msg = cfg.embedding.provider === "openai"
-      ? "Config: embedding.apiKey and model present"
-      : "Config: embedding.model present";
+    const msg =
+      cfg.embedding.provider === "openai"
+        ? "Config: embedding.apiKey and model present"
+        : "Config: embedding.model present";
     log(`${OK} ${msg}`);
   } else {
     log(`${FAIL} Config: issues found`);
@@ -833,13 +1097,19 @@ export async function runVerifyForCli(
   try {
     if (existsSync(defaultConfigPath)) {
       const rawConfig = JSON.parse(readFileSync(defaultConfigPath, "utf-8")) as Record<string, unknown>;
-      const agentsDefaults = (rawConfig.agents as Record<string, unknown>)?.defaults as Record<string, unknown> | undefined;
-      if (agentsDefaults != null && 'pruning' in agentsDefaults) {
+      const agentsDefaults = (rawConfig.agents as Record<string, unknown>)?.defaults as
+        | Record<string, unknown>
+        | undefined;
+      if (agentsDefaults != null && "pruning" in agentsDefaults) {
         const WARN = noEmoji ? "[WARN]" : "⚠️";
         log(`${WARN} Config: agents.defaults.pruning is set but not supported by OpenClaw core — it has no effect`);
-        log(`  Fix: Remove "pruning" from agents.defaults in openclaw.json. Memory pruning is handled automatically by the plugin (every 60 min).`);
+        log(
+          `  Fix: Remove "pruning" from agents.defaults in openclaw.json. Memory pruning is handled automatically by the plugin (every 60 min).`,
+        );
         issues.push("agents.defaults.pruning is set but unsupported (has no effect)");
-        fixes.push('Remove "pruning" from agents.defaults in openclaw.json. Memory pruning is handled automatically by the plugin (every 60 min).');
+        fixes.push(
+          'Remove "pruning" from agents.defaults in openclaw.json. Memory pruning is handled automatically by the plugin (every 60 min).',
+        );
         if (opts.fix) {
           delete agentsDefaults.pruning;
           writeFileSync(defaultConfigPath, JSON.stringify(rawConfig, null, 2), "utf-8");
@@ -855,7 +1125,9 @@ export async function runVerifyForCli(
 
   const extDir = join(dirname(fileURLToPath(import.meta.url)), "..");
   const isBindingsError = (msg: string) =>
-    /bindings|better_sqlite3\.node|compiled against|ABI|NODE_MODULE_VERSION|@lancedb\/lancedb|Cannot find module/.test(msg);
+    /bindings|better_sqlite3\.node|compiled against|ABI|NODE_MODULE_VERSION|@lancedb\/lancedb|Cannot find module/.test(
+      msg,
+    );
   let sqliteBindingsFailed = false;
   let lanceBindingsFailed = false;
 
@@ -870,7 +1142,9 @@ export async function runVerifyForCli(
       sqliteBindingsFailed = true;
       fixes.push(`Native module (better-sqlite3) needs rebuild. Run: cd ${extDir} && npm rebuild better-sqlite3`);
     } else {
-      fixes.push(`SQLite: Ensure path is writable and not corrupted. Path: ${resolvedSqlitePath}. If corrupted, back up and remove the file to recreate, or run from a process with write access.`);
+      fixes.push(
+        `SQLite: Ensure path is writable and not corrupted. Path: ${resolvedSqlitePath}. If corrupted, back up and remove the file to recreate, or run from a process with write access.`,
+      );
     }
     log(`${FAIL} SQLite: FAIL — ${msg}`);
     capturePluginError(e as Error, { subsystem: "cli", operation: "runVerifyForCli:sqlite-check" });
@@ -887,7 +1161,9 @@ export async function runVerifyForCli(
       lanceBindingsFailed = true;
       fixes.push(`Native module (@lancedb/lancedb) needs rebuild. Run: cd ${extDir} && npm rebuild @lancedb/lancedb`);
     } else {
-      fixes.push(`LanceDB: Ensure path is writable. Path: ${resolvedLancePath}. If corrupted, back up and remove the directory to recreate. Restart gateway after fix.`);
+      fixes.push(
+        `LanceDB: Ensure path is writable. Path: ${resolvedLancePath}. If corrupted, back up and remove the directory to recreate. Restart gateway after fix.`,
+      );
     }
     log(`${FAIL} LanceDB: FAIL — ${msg}`);
     capturePluginError(e as Error, { subsystem: "cli", operation: "runVerifyForCli:lancedb-check" });
@@ -900,19 +1176,27 @@ export async function runVerifyForCli(
   } catch (e) {
     issues.push(`Embedding API: ${String(e)}`);
     if (cfg.embedding.provider === "openai") {
-      fixes.push(`Embedding API: Check key at platform.openai.com; ensure it has access to the embedding model (${cfg.embedding.model}). Set plugins.entries[\"openclaw-hybrid-memory\"].config.embedding.apiKey and restart. 401/403 = invalid or revoked key.`);
+      fixes.push(
+        `Embedding API: Check key at platform.openai.com; ensure it has access to the embedding model (${cfg.embedding.model}). Set plugins.entries[\"openclaw-hybrid-memory\"].config.embedding.apiKey and restart. 401/403 = invalid or revoked key.`,
+      );
     } else if (cfg.embedding.provider === "ollama") {
-      fixes.push(`Embedding API: Ensure Ollama is running at ${cfg.embedding.endpoint ?? "http://localhost:11434"} and the model "${cfg.embedding.model}" is available. Run 'ollama pull ${cfg.embedding.model}' if needed.`);
+      fixes.push(
+        `Embedding API: Ensure Ollama is running at ${cfg.embedding.endpoint ?? "http://localhost:11434"} and the model "${cfg.embedding.model}" is available. Run 'ollama pull ${cfg.embedding.model}' if needed.`,
+      );
     } else if (cfg.embedding.provider === "google") {
-      fixes.push(`Embedding API: Set distill.apiKey or llm.providers.google.apiKey in plugin config (Gemini API key). Restart gateway after updating.`);
+      fixes.push(
+        `Embedding API: Set distill.apiKey or llm.providers.google.apiKey in plugin config (Gemini API key). Restart gateway after updating.`,
+      );
     } else {
-      fixes.push(`Embedding API: Check your ${cfg.embedding.provider} provider configuration and ensure the model "${cfg.embedding.model}" is accessible.`);
+      fixes.push(
+        `Embedding API: Check your ${cfg.embedding.provider} provider configuration and ensure the model "${cfg.embedding.model}" is accessible.`,
+      );
     }
     log(`${FAIL} Embedding API: FAIL — ${String(e)}`);
     capturePluginError(e as Error, { subsystem: "cli", operation: "runVerifyForCli:embedding-check" });
   }
 
-  const bool = (b: boolean) => b ? ON : OFF;
+  const bool = (b: boolean) => (b ? ON : OFF);
   const restartPending = existsSync(getRestartPendingPath());
   const modeLabel = cfg.mode
     ? cfg.mode === "custom"
@@ -926,7 +1210,9 @@ export async function runVerifyForCli(
   log("\n───── Core Features ─────");
   log(`  autoCapture: ${bool(cfg.autoCapture)}`);
   log(`  autoRecall: ${bool(cfg.autoRecall.enabled)}`);
-  log(`  autoClassify: ${cfg.autoClassify.enabled ? (cfg.autoClassify.model ? cfg.autoClassify.model : `${getDefaultCronModel(getCronModelConfig(cfg), "nano")} (from llm.${cfg.llm?.nano ? "nano" : "default"})`) : "false"}`);
+  log(
+    `  autoClassify: ${cfg.autoClassify.enabled ? (cfg.autoClassify.model ? cfg.autoClassify.model : `${getDefaultCronModel(getCronModelConfig(cfg), "nano")} (from llm.${cfg.llm?.nano ? "nano" : "default"})`) : "false"}`,
+  );
   log(`  autoClassify.suggestCategories: ${bool(cfg.autoClassify.suggestCategories !== false)}`);
   log(`  credentials: ${bool(cfg.credentials.enabled)}`);
 
@@ -936,7 +1222,9 @@ export async function runVerifyForCli(
     const vaultEncrypted = (cfg.credentials.encryptionKey?.length ?? 0) >= 16;
     log(`  → Credentials vault: ${vaultEncrypted ? "encrypted" : "plaintext (secure by other means)"}`);
   } else if (cfg.mode === "expert" || cfg.mode === "full") {
-    log(`  → Credentials (vault): off — set credentials.enabled to use vault (optionally set credentials.encryptionKey for encryption).`);
+    log(
+      `  → Credentials (vault): off — set credentials.enabled to use vault (optionally set credentials.encryptionKey for encryption).`,
+    );
   }
 
   log(`  store.fuzzyDedupe: ${bool(cfg.store.fuzzyDedupe)}`);
@@ -952,7 +1240,7 @@ export async function runVerifyForCli(
   log(`  procedures.requireApprovalForPromote: ${bool(cfg.procedures.requireApprovalForPromote)}`);
   log(`  memoryToSkills: ${bool(cfg.memoryToSkills.enabled)}`);
   const reflectionModelDisplay = cfg.reflection.enabled
-    ? ` (model: ${cfg.reflection.model ?? `${getDefaultCronModel(getCronModelConfig(cfg), "default")} (from llm.default)`})`  // reflection uses default, not nano
+    ? ` (model: ${cfg.reflection.model ?? `${getDefaultCronModel(getCronModelConfig(cfg), "default")} (from llm.default)`})` // reflection uses default, not nano
     : "";
   log(`  reflection: ${bool(cfg.reflection.enabled)}${reflectionModelDisplay}`);
   log(`  wal: ${bool(cfg.wal.enabled)}`);
@@ -1053,7 +1341,9 @@ export async function runVerifyForCli(
   log(`  queryExpansion.enabled: ${bool(cfg.queryExpansion.enabled)}`);
   if (cfg.queryExpansion.enabled) {
     const effectiveQEModel = cfg.queryExpansion.model ?? getDefaultCronModel(getCronModelConfig(cfg), "nano");
-    log(`  queryExpansion.model: ${cfg.queryExpansion.model != null ? cfg.queryExpansion.model : `${effectiveQEModel} (nano tier)`}`);
+    log(
+      `  queryExpansion.model: ${cfg.queryExpansion.model != null ? cfg.queryExpansion.model : `${effectiveQEModel} (nano tier)`}`,
+    );
   }
   if (cfg.errorReporting) {
     log(`  errorReporting: ${bool(cfg.errorReporting.enabled)} (consent: ${bool(cfg.errorReporting.consent)})`);
@@ -1069,7 +1359,8 @@ export async function runVerifyForCli(
   let defaultOrder = getLLMModelPreference(cronCfgForVerify, "default");
   let heavyOrder = getLLMModelPreference(cronCfgForVerify, "heavy");
   const providersWithKeys = getProvidersWithKeys(cronCfgForVerify);
-  const llmSource = cfg.llm?._source === "gateway" ? " (auto from agents.defaults.model)" : cfg.llm ? " (from plugin config)" : "";
+  const llmSource =
+    cfg.llm?._source === "gateway" ? " (auto from agents.defaults.model)" : cfg.llm ? " (from plugin config)" : "";
   const nanoOrder = getLLMModelPreference(cronCfgForVerify, "nano");
   const hasExplicitNano = Array.isArray(cfg.llm?.nano) && (cfg.llm.nano as string[]).length > 0;
   const nanoSameAsDefault = nanoOrder[0] === defaultOrder[0];
@@ -1077,12 +1368,25 @@ export async function runVerifyForCli(
   // Build effective tier lists: append one model per provider that has a key but no model in config tiers
   // (so verify shows and tests Anthropic, Minimax, etc. when keys come from gateway merge)
   const hasModelFrom = (list: string[], prefix: string) =>
-    list.some((m) => m.startsWith(`${prefix}/`) || (prefix === "anthropic" && m.startsWith("claude-")) || (prefix === "google" && m.startsWith("gemini-")));
+    list.some(
+      (m) =>
+        m.startsWith(`${prefix}/`) ||
+        (prefix === "anthropic" && m.startsWith("claude-")) ||
+        (prefix === "google" && m.startsWith("gemini-")),
+    );
   const apiConfigForVerify = ctx.api?.config as Record<string, unknown> | undefined;
-  const gwProv = (apiConfigForVerify?.models as Record<string, unknown> | undefined)?.providers
-    ?? (apiConfigForVerify?.llm as Record<string, unknown> | undefined)?.providers;
-  const gwProvRecord = (gwProv && typeof gwProv === "object" && !Array.isArray(gwProv)) ? gwProv as Record<string, Record<string, unknown>> : undefined;
-  const knownDefault: Record<string, string> = { anthropic: "anthropic/claude-sonnet-4-6", openai: "openai/gpt-4.1-mini", google: "google/gemini-2.5-flash" };
+  const gwProv =
+    (apiConfigForVerify?.models as Record<string, unknown> | undefined)?.providers ??
+    (apiConfigForVerify?.llm as Record<string, unknown> | undefined)?.providers;
+  const gwProvRecord =
+    gwProv && typeof gwProv === "object" && !Array.isArray(gwProv)
+      ? (gwProv as Record<string, Record<string, unknown>>)
+      : undefined;
+  const knownDefault: Record<string, string> = {
+    anthropic: "anthropic/claude-sonnet-4-6",
+    openai: "openai/gpt-4.1-mini",
+    google: "google/gemini-2.5-flash",
+  };
   for (const p of providersWithKeys) {
     if (hasModelFrom(defaultOrder, p) && hasModelFrom(heavyOrder, p)) continue;
     let model: string | null = knownDefault[p] ?? null;
@@ -1131,19 +1435,34 @@ export async function runVerifyForCli(
   for (const p of providersWithKeys) {
     if (!providersInTiers.has(p)) {
       const name = knownPrefixes[p] ?? p;
-      const example = p === "anthropic" ? "anthropic/claude-opus-4-6" : p === "google" ? "google/gemini-3.1-pro-preview" : `${p}/<model>`;
-      log(`  ℹ️  You have an API key for ${name} but no ${name} models in llm tiers — add e.g. ${example} to llm.default or llm.heavy to use and test it.`);
+      const example =
+        p === "anthropic"
+          ? "anthropic/claude-opus-4-6"
+          : p === "google"
+            ? "google/gemini-3.1-pro-preview"
+            : `${p}/<model>`;
+      log(
+        `  ℹ️  You have an API key for ${name} but no ${name} models in llm tiers — add e.g. ${example} to llm.default or llm.heavy to use and test it.`,
+      );
     }
   }
   // Gateway providers (for reference): plugin only uses providers with keys in plugin config
   const apiConfig = ctx.api?.config as Record<string, unknown> | undefined;
-  const gatewayProviders = apiConfig?.models && typeof apiConfig.models === "object" && (apiConfig.models as Record<string, unknown>).providers && typeof (apiConfig.models as Record<string, unknown>).providers === "object"
-    ? Object.keys((apiConfig.models as Record<string, unknown>).providers as Record<string, unknown>).filter(Boolean).sort()
-    : [];
+  const gatewayProviders =
+    apiConfig?.models &&
+    typeof apiConfig.models === "object" &&
+    (apiConfig.models as Record<string, unknown>).providers &&
+    typeof (apiConfig.models as Record<string, unknown>).providers === "object"
+      ? Object.keys((apiConfig.models as Record<string, unknown>).providers as Record<string, unknown>)
+          .filter(Boolean)
+          .sort()
+      : [];
   if (gatewayProviders.length > 0) {
     const onlyInGateway = gatewayProviders.filter((g) => !allProviders.includes(g));
     if (onlyInGateway.length > 0) {
-      log(`  Gateway also has providers: ${onlyInGateway.join(", ")} (plugin uses only providers with keys in plugin config; add llm.providers.<name> and <name>/model to llm tiers to use them here).`);
+      log(
+        `  Gateway also has providers: ${onlyInGateway.join(", ")} (plugin uses only providers with keys in plugin config; add llm.providers.<name> and <name>/model to llm tiers to use them here).`,
+      );
     }
   }
   if (defaultOrder.length > 1 || heavyOrder.length > 1) {
@@ -1156,7 +1475,7 @@ export async function runVerifyForCli(
   const defaultPrimary = defaultOrder[0];
   const nanoIsHeavy = nanoPrimary ? isHeavyModel(nanoPrimary) : false;
   const hasNanoModel = nanoOrder.some(isNanoModel);
-  const hasExplicitClassifyOverride = !!(cfg.autoClassify.model);
+  const hasExplicitClassifyOverride = !!cfg.autoClassify.model;
   const hasExplicitHydeOverride = !!(cfg.queryExpansion?.model || cfg.search?.hydeModel);
 
   if (nanoIsHeavy && !hasNanoModel && !hasExplicitClassifyOverride) {
@@ -1179,7 +1498,7 @@ export async function runVerifyForCli(
     let anyUnconfigured = false;
     log("\n  LLM reachability (--test-llm):");
     const isNonChatModel = (m: string) => {
-      const bare = m.includes("/") ? m.split("/")[1] ?? m : m;
+      const bare = m.includes("/") ? (m.split("/")[1] ?? m) : m;
       return bare.toLowerCase().includes("-codex");
     };
     for (const model of allModels) {
@@ -1208,7 +1527,9 @@ export async function runVerifyForCli(
       }
     }
     if (anyUnconfigured) {
-      log(`  → To enable skipped providers, add their API key to llm.providers.<provider>.apiKey in plugin config, or set env vars.`);
+      log(
+        `  → To enable skipped providers, add their API key to llm.providers.<provider>.apiKey in plugin config, or set env vars.`,
+      );
       log(`    Anthropic: llm.providers.anthropic.apiKey in config, or ANTHROPIC_API_KEY in the environment.`);
     }
   }
@@ -1282,9 +1603,13 @@ export async function runVerifyForCli(
         issues.push(`Credentials vault: ${String(e)}`);
         const encrypted = (cfg.credentials.encryptionKey?.length ?? 0) >= 16;
         if (encrypted) {
-          fixes.push(`Credentials vault: Wrong encryption key or corrupted DB. Set OPENCLAW_CRED_KEY to the key used when credentials were stored, or use a new vault path for plaintext. See docs/CREDENTIALS.md.`);
+          fixes.push(
+            `Credentials vault: Wrong encryption key or corrupted DB. Set OPENCLAW_CRED_KEY to the key used when credentials were stored, or use a new vault path for plaintext. See docs/CREDENTIALS.md.`,
+          );
         } else {
-          fixes.push(`Credentials vault: ${String(e)}. If this vault was created with encryption, set credentials.encryptionKey. See docs/CREDENTIALS.md.`);
+          fixes.push(
+            `Credentials vault: ${String(e)}. If this vault was created with encryption, set credentials.encryptionKey. See docs/CREDENTIALS.md.`,
+          );
         }
         credentialsOk = false;
         log(`\nCredentials (vault): FAIL — ${String(e)}`);
@@ -1307,8 +1632,12 @@ export async function runVerifyForCli(
     }
   } else {
     log("\nSession distillation: last run not recorded (optional).");
-    log("  If you use session distillation (extracting facts from old logs): after each run, run: openclaw hybrid-mem record-distill");
-    log("  If you have a nightly distillation cron job: add a final step to that job to run openclaw hybrid-mem record-distill so this is recorded.");
+    log(
+      "  If you use session distillation (extracting facts from old logs): after each run, run: openclaw hybrid-mem record-distill",
+    );
+    log(
+      "  If you have a nightly distillation cron job: add a final step to that job to run openclaw hybrid-mem record-distill so this is recorded.",
+    );
     log("  If you don't use it, ignore this.");
   }
 
@@ -1324,8 +1653,14 @@ export async function runVerifyForCli(
   const monthlyConsolidationRe = /monthly[- ]?consolidation/i;
 
   const knownJobSlugs = new Set([
-    "nightly-memory-sweep", "nightly-memory-to-skills", "weekly-reflection", "weekly-extract-procedures",
-    "self-correction-analysis", "weekly-deep-maintenance", "monthly-consolidation", "weekly-persona-proposals",
+    "nightly-memory-sweep",
+    "nightly-memory-to-skills",
+    "weekly-reflection",
+    "weekly-extract-procedures",
+    "self-correction-analysis",
+    "weekly-deep-maintenance",
+    "monthly-consolidation",
+    "weekly-persona-proposals",
   ]);
 
   /** Normalize job name to slug for matching: lowercase, spaces to single hyphen. */
@@ -1337,7 +1672,10 @@ export async function runVerifyForCli(
   function getCanonicalJobKey(name: string, msg?: string): string | null {
     const nameLower = name.toLowerCase();
     const normalized = nameToSlug(name);
-    if (nightlyMemorySweepRe.test(nameLower) || (msg && /nightly memory distillation|memory distillation pipeline/i.test(msg))) {
+    if (
+      nightlyMemorySweepRe.test(nameLower) ||
+      (msg && /nightly memory distillation|memory distillation pipeline/i.test(msg))
+    ) {
       return "nightly-memory-sweep";
     } else if (weeklyReflectionRe.test(nameLower)) {
       return "weekly-reflection";
@@ -1425,7 +1763,9 @@ export async function runVerifyForCli(
           const job = j as Record<string, unknown>;
           const name = String(job.name ?? "");
           const enabled = job.enabled !== false;
-          const state = job.state as { nextRunAtMs?: number; lastRunAtMs?: number; lastStatus?: string; lastError?: string } | undefined;
+          const state = job.state as
+            | { nextRunAtMs?: number; lastRunAtMs?: number; lastStatus?: string; lastError?: string }
+            | undefined;
 
           // Extract payload message for fallback matching
           const payload = job.payload as Record<string, unknown> | undefined;
@@ -1485,7 +1825,11 @@ export async function runVerifyForCli(
 
   // Display each job with its status
   const jobsToDisplay = [
-    { key: "nightly-memory-sweep", description: "session distillation", docsPath: "docs/SESSION-DISTILLATION.md § Nightly Cron Setup" },
+    {
+      key: "nightly-memory-sweep",
+      description: "session distillation",
+      docsPath: "docs/SESSION-DISTILLATION.md § Nightly Cron Setup",
+    },
     { key: "nightly-memory-to-skills", description: "memory-to-skills", docsPath: "docs/MEMORY-TO-SKILLS.md" },
     { key: "weekly-reflection", description: "pattern synthesis", docsPath: "docs/REFLECTION.md § Scheduled Job" },
     { key: "weekly-extract-procedures", description: "procedural memory", docsPath: "docs/PROCEDURAL-MEMORY.md" },
@@ -1521,7 +1865,9 @@ export async function runVerifyForCli(
     }
   }
 
-  log("\nBackground jobs (when gateway is running): prune every 60min, auto-classify every 24h if enabled. No external cron required.");
+  log(
+    "\nBackground jobs (when gateway is running): prune every 60min, auto-classify every 24h if enabled. No external cron required.",
+  );
 
   if (opts.logFile && existsSync(opts.logFile)) {
     try {
@@ -1547,9 +1893,13 @@ export async function runVerifyForCli(
     if (restartPending) {
       process.exitCode = 2; // Scripting: 2 = restart pending (gateway restart recommended)
     }
-    log("Note: If you see 'plugins.allow is empty' above, it is from OpenClaw. Optional: set plugins.allow to [\"openclaw-hybrid-memory\"] in openclaw.json for an explicit allow-list.");
+    log(
+      "Note: If you see 'plugins.allow is empty' above, it is from OpenClaw. Optional: set plugins.allow to [\"openclaw-hybrid-memory\"] in openclaw.json for an explicit allow-list.",
+    );
     if (!allJobs.has("nightly-memory-sweep")) {
-      log("Optional: Set up nightly session distillation via OpenClaw's scheduled jobs or system cron. See docs/SESSION-DISTILLATION.md.");
+      log(
+        "Optional: Set up nightly session distillation via OpenClaw's scheduled jobs or system cron. See docs/SESSION-DISTILLATION.md.",
+      );
     }
   } else {
     log("\n--- Issues ---");
@@ -1564,7 +1914,11 @@ export async function runVerifyForCli(
     }
     log("\n--- Fixes for detected issues ---");
     fixes.forEach((f) => log(`  • ${f}`));
-    log("\nEdit config: " + defaultConfigPath + " (or OPENCLAW_HOME/openclaw.json). Restart gateway after changing plugin config.");
+    log(
+      "\nEdit config: " +
+        defaultConfigPath +
+        " (or OPENCLAW_HOME/openclaw.json). Restart gateway after changing plugin config.",
+    );
   }
 
   if (opts.fix) {
@@ -1598,14 +1952,19 @@ export async function runVerifyForCli(
         const plugins = fixConfig.plugins as Record<string, unknown>;
         if (!plugins.entries || typeof plugins.entries !== "object") plugins.entries = {};
         const entries = plugins.entries as Record<string, unknown>;
-        if (!entries[PLUGIN_ID] || typeof entries[PLUGIN_ID] !== "object") entries[PLUGIN_ID] = { enabled: true, config: {} };
+        if (!entries[PLUGIN_ID] || typeof entries[PLUGIN_ID] !== "object")
+          entries[PLUGIN_ID] = { enabled: true, config: {} };
         const mh = entries[PLUGIN_ID] as Record<string, unknown>;
         if (!mh.config || typeof mh.config !== "object") mh.config = {};
         const cfgFix = mh.config as Record<string, unknown>;
         if (!cfgFix.embedding || typeof cfgFix.embedding !== "object") cfgFix.embedding = {};
         const emb = cfgFix.embedding as Record<string, unknown>;
         const curKey = emb.apiKey;
-        const placeholder = typeof curKey !== "string" || curKey.length < 10 || curKey === "YOUR_OPENAI_API_KEY" || curKey === "<OPENAI_API_KEY>";
+        const placeholder =
+          typeof curKey !== "string" ||
+          curKey.length < 10 ||
+          curKey === "YOUR_OPENAI_API_KEY" ||
+          curKey === "<OPENAI_API_KEY>";
         if (placeholder) {
           emb.apiKey = "YOUR_OPENAI_API_KEY";
           emb.model = emb.model || "text-embedding-3-small";
@@ -1637,7 +1996,11 @@ export async function runVerifyForCli(
             normalizeExisting: true,
             reEnableDisabled: false,
             scheduleOverrides: Object.keys(scheduleOverrides).length > 0 ? scheduleOverrides : undefined,
-            messageOverrides: { [PLUGIN_JOB_ID_PREFIX + "nightly-memory-to-skills"]: buildMemoryToSkillsMessage(cfg.memoryToSkills?.notify !== false) },
+            messageOverrides: {
+              [PLUGIN_JOB_ID_PREFIX + "nightly-memory-to-skills"]: buildMemoryToSkillsMessage(
+                cfg.memoryToSkills?.notify !== false,
+              ),
+            },
             featureGates: { "sensorSweep.enabled": cfg.sensorSweep?.enabled === true },
           });
           added.forEach((name) => applied.push(`Added ${name} job to ${cronStorePath}`));
@@ -1670,7 +2033,9 @@ export async function runVerifyForCli(
       }
     } else {
       log("\n--- Fix (--fix) ---");
-      log("Config file not found. Run 'openclaw hybrid-mem install' to create it with full defaults, then set your API key and restart.");
+      log(
+        "Config file not found. Run 'openclaw hybrid-mem install' to create it with full defaults, then set your API key and restart.",
+      );
     }
   }
 }
@@ -1678,10 +2043,7 @@ export async function runVerifyForCli(
 /**
  * Calculate distillation window (full vs incremental)
  */
-export function runDistillWindowForCli(
-  ctx: HandlerContext,
-  _opts: { json: boolean },
-): DistillWindowResult {
+export function runDistillWindowForCli(ctx: HandlerContext, _opts: { json: boolean }): DistillWindowResult {
   const { resolvedSqlitePath } = ctx;
   const memoryDir = dirname(resolvedSqlitePath);
   const distillLastRunPath = join(memoryDir, ".distill_last_run");
@@ -1770,9 +2132,7 @@ const SCAN_MIN_INTERVAL_MS = 23 * 60 * 60 * 1000;
  */
 function getSessionFilePathsSince(sessionDir: string, days: number, sinceTimestamp?: number): string[] {
   if (!existsSync(sessionDir)) return [];
-  const cutoff = sinceTimestamp !== undefined
-    ? sinceTimestamp
-    : Date.now() - days * 24 * 60 * 60 * 1000;
+  const cutoff = sinceTimestamp !== undefined ? sinceTimestamp : Date.now() - days * 24 * 60 * 60 * 1000;
   try {
     const files = readdirSync(sessionDir);
     return files
@@ -1783,9 +2143,9 @@ function getSessionFilePathsSince(sessionDir: string, days: number, sinceTimesta
           return statSync(p).mtimeMs > cutoff;
         } catch (err) {
           capturePluginError(err as Error, {
-            operation: 'stat-check',
-            severity: 'info',
-            subsystem: 'cli'
+            operation: "stat-check",
+            severity: "info",
+            subsystem: "cli",
           });
           return false;
         }
@@ -1862,7 +2222,15 @@ export async function runExtractProceduresForCli(
   // Startup guard + concurrency lock (skip when not full mode)
   if (!opts.full && !opts.dryRun) {
     const skip = acquireScanSlot(SCAN_TYPE, cursor?.lastRunAt, logger);
-    if (skip) return { sessionsScanned: 0, proceduresStored: 0, positiveCount: 0, negativeCount: 0, dryRun: false, skipped: true };
+    if (skip)
+      return {
+        sessionsScanned: 0,
+        proceduresStored: 0,
+        positiveCount: 0,
+        negativeCount: 0,
+        dryRun: false,
+        skipped: true,
+      };
   }
 
   let filePaths: string[] | undefined;
@@ -2002,7 +2370,11 @@ export async function runExtractDirectivesForCli(
   // Startup guard + concurrency lock (skip when not full mode)
   if (!opts.full && !opts.dryRun) {
     const skip = acquireScanSlot(SCAN_TYPE, cursor?.lastRunAt, logger);
-    if (skip) return { incidents: [], sessionsScanned: 0, stored: 0, skipped: true } as DirectiveExtractResult & { stored?: number; skipped?: boolean };
+    if (skip)
+      return { incidents: [], sessionsScanned: 0, stored: 0, skipped: true } as DirectiveExtractResult & {
+        stored?: number;
+        skipped?: boolean;
+      };
   }
 
   try {
@@ -2022,7 +2394,9 @@ export async function runExtractDirectivesForCli(
     if (pfCfgDir.enabled && filePaths.length > 0) {
       const pfResult = await preFilterSessions(filePaths, pfCfgDir);
       if (!pfResult.ollamaUnavailable) {
-        logger.info?.(`memory-hybrid: ${SCAN_TYPE} pre-filter: ${pfResult.kept.length}/${filePaths.length} sessions flagged as interesting`);
+        logger.info?.(
+          `memory-hybrid: ${SCAN_TYPE} pre-filter: ${pfResult.kept.length}/${filePaths.length} sessions flagged as interesting`,
+        );
         extractionPaths = pfResult.kept;
       } else {
         logger.info?.(`memory-hybrid: ${SCAN_TYPE} pre-filter: Ollama unavailable — scanning all sessions`);
@@ -2044,15 +2418,25 @@ export async function runExtractDirectivesForCli(
       for (const incident of result.incidents) {
         try {
           if (factsDb.hasDuplicate(incident.extractedRule)) continue;
-          const category = incident.categories.includes("preference") ? "preference" :
-                          incident.categories.includes("absolute_rule") ? "rule" :
-                          incident.categories.includes("conditional_rule") ? "rule" :
-                          incident.categories.includes("warning") ? "rule" :
-                          incident.categories.includes("future_behavior") ? "rule" :
-                          incident.categories.includes("procedural") ? "pattern" :
-                          incident.categories.includes("correction") ? "decision" :
-                          incident.categories.includes("implicit_correction") ? "decision" :
-                          incident.categories.includes("explicit_memory") ? "fact" : "other";
+          const category = incident.categories.includes("preference")
+            ? "preference"
+            : incident.categories.includes("absolute_rule")
+              ? "rule"
+              : incident.categories.includes("conditional_rule")
+                ? "rule"
+                : incident.categories.includes("warning")
+                  ? "rule"
+                  : incident.categories.includes("future_behavior")
+                    ? "rule"
+                    : incident.categories.includes("procedural")
+                      ? "pattern"
+                      : incident.categories.includes("correction")
+                        ? "decision"
+                        : incident.categories.includes("implicit_correction")
+                          ? "decision"
+                          : incident.categories.includes("explicit_memory")
+                            ? "fact"
+                            : "other";
           factsDb.store({
             text: incident.extractedRule,
             category: category as MemoryCategory,
@@ -2097,7 +2481,8 @@ export async function runExtractReinforcementForCli(
   // Startup guard + concurrency lock
   if (!opts.full && !opts.dryRun) {
     const skip = acquireScanSlot(SCAN_TYPE, cursor?.lastRunAt, logger);
-    if (skip) return { incidents: [], sessionsScanned: 0, skipped: true } as ReinforcementExtractResult & { skipped?: boolean };
+    if (skip)
+      return { incidents: [], sessionsScanned: 0, skipped: true } as ReinforcementExtractResult & { skipped?: boolean };
   }
 
   try {
@@ -2118,204 +2503,264 @@ export async function runExtractReinforcementForCli(
     if (pfCfgReinf.enabled && filePaths.length > 0) {
       const pfResult = await preFilterSessions(filePaths, pfCfgReinf);
       if (!pfResult.ollamaUnavailable) {
-        logger.info?.(`memory-hybrid: ${SCAN_TYPE} pre-filter: ${pfResult.kept.length}/${filePaths.length} sessions flagged as interesting`);
+        logger.info?.(
+          `memory-hybrid: ${SCAN_TYPE} pre-filter: ${pfResult.kept.length}/${filePaths.length} sessions flagged as interesting`,
+        );
         extractionPaths = pfResult.kept;
       } else {
         logger.info?.(`memory-hybrid: ${SCAN_TYPE} pre-filter: Ollama unavailable — scanning all sessions`);
       }
     }
 
-  const reinforcementRegex = getReinforcementSignalRegex();
-  const result = runReinforcementExtract({ filePaths: extractionPaths, reinforcementRegex });
+    const reinforcementRegex = getReinforcementSignalRegex();
+    const result = runReinforcementExtract({ filePaths: extractionPaths, reinforcementRegex });
 
-  if (opts.verbose) {
-    for (const incident of result.incidents) {
-      console.log(`[${incident.sessionFile}] Confidence ${incident.confidence.toFixed(2)}: ${incident.userMessage.slice(0, 80)}`);
-    }
-  }
-
-  const scCfg = cfg.selfCorrection;
-  const runLLMAnalysis = scCfg?.reinforcementLLMAnalysis !== false && result.incidents.length > 0 && !opts.dryRun;
-  let analysisCategory: string | undefined;
-
-  // LLM analysis step — mirrors self-correction pipeline (#260)
-  if (runLLMAnalysis) {
-    type ReinforcementRemediation = {
-      category: string;
-      severity: string;
-      remediationType: string;
-      remediationContent: string | { text?: string; entity?: string; key?: string; tags?: string[]; taskPattern?: string; targetFile?: string; suggestedChange?: string };
-    };
-    let analysed: ReinforcementRemediation[] = [];
-    try {
-      const prompt = fillPrompt(loadPrompt("reinforcement-analyze"), {
-        incidents_json: JSON.stringify(result.incidents),
-      });
-      const extractionTier = cfg.distill?.extractionModelTier ?? "nano";
-      const cronCfg = getCronModelConfig(cfg);
-      const tierPref = getLLMModelPreference(cronCfg, extractionTier);
-      const model = tierPref[0] ?? getDefaultCronModel(cronCfg, extractionTier);
-      const fallbackModels = tierPref.length > 1 ? tierPref.slice(1) : (cfg.distill?.fallbackModels ?? []);
-      const content = await chatCompleteWithRetry({
-        model,
-        content: prompt,
-        temperature: 0.2,
-        maxTokens: distillMaxOutputTokens(model),
-        openai,
-        fallbackModels,
-        label: "memory-hybrid: reinforcement analyze",
-      });
-      const jsonMatch = content.match(/\[[\s\S]*\]/);
-      if (jsonMatch) {
-        analysed = JSON.parse(jsonMatch[0]) as ReinforcementRemediation[];
-        analysisCategory = analysed.find((a) => a.category && a.remediationType !== "NO_ACTION")?.category;
+    if (opts.verbose) {
+      for (const incident of result.incidents) {
+        console.log(
+          `[${incident.sessionFile}] Confidence ${incident.confidence.toFixed(2)}: ${incident.userMessage.slice(0, 80)}`,
+        );
       }
-    } catch (e) {
-      capturePluginError(e as Error, { subsystem: "cli", operation: "runExtractReinforcementForCli:llm-analysis" });
     }
 
-    const toolsPath = join(workspaceRoot, "TOOLS.md");
-    const positiveRulesSection = scCfg?.positiveRulesSection ?? "Positive Reinforcement Rules";
-    const semanticThreshold = scCfg?.semanticDedupThreshold ?? 0.92;
-    const semanticDedup = scCfg?.semanticDedup !== false;
-    const toProposals = scCfg?.reinforcementToProposals !== false;
+    const scCfg = cfg.selfCorrection;
+    const runLLMAnalysis = scCfg?.reinforcementLLMAnalysis !== false && result.incidents.length > 0 && !opts.dryRun;
+    let analysisCategory: string | undefined;
 
-    for (const a of analysed) {
-      if (a.remediationType === "NO_ACTION") continue;
+    // LLM analysis step — mirrors self-correction pipeline (#260)
+    if (runLLMAnalysis) {
+      type ReinforcementRemediation = {
+        category: string;
+        severity: string;
+        remediationType: string;
+        remediationContent:
+          | string
+          | {
+              text?: string;
+              entity?: string;
+              key?: string;
+              tags?: string[];
+              taskPattern?: string;
+              targetFile?: string;
+              suggestedChange?: string;
+            };
+      };
+      let analysed: ReinforcementRemediation[] = [];
       try {
-        if (a.remediationType === "POSITIVE_RULE") {
-          const line = typeof a.remediationContent === "string" ? a.remediationContent : (a.remediationContent as { text?: string })?.text ?? "";
-          if (!line.trim()) continue;
+        const prompt = fillPrompt(loadPrompt("reinforcement-analyze"), {
+          incidents_json: JSON.stringify(result.incidents),
+        });
+        const extractionTier = cfg.distill?.extractionModelTier ?? "nano";
+        const cronCfg = getCronModelConfig(cfg);
+        const tierPref = getLLMModelPreference(cronCfg, extractionTier);
+        const model = tierPref[0] ?? getDefaultCronModel(cronCfg, extractionTier);
+        const fallbackModels = tierPref.length > 1 ? tierPref.slice(1) : (cfg.distill?.fallbackModels ?? []);
+        const content = await chatCompleteWithRetry({
+          model,
+          content: prompt,
+          temperature: 0.2,
+          maxTokens: distillMaxOutputTokens(model),
+          openai,
+          fallbackModels,
+          label: "memory-hybrid: reinforcement analyze",
+        });
+        const jsonMatch = content.match(/\[[\s\S]*\]/);
+        if (jsonMatch) {
+          analysed = JSON.parse(jsonMatch[0]) as ReinforcementRemediation[];
+          analysisCategory = analysed.find((a) => a.category && a.remediationType !== "NO_ACTION")?.category;
+        }
+      } catch (e) {
+        capturePluginError(e as Error, { subsystem: "cli", operation: "runExtractReinforcementForCli:llm-analysis" });
+      }
 
-          // Exact text dedup: skip if the rule already appears in TOOLS.md
-          if (existsSync(toolsPath)) {
-            const currentTools = readFileSync(toolsPath, "utf-8");
-            if (currentTools.includes(line.trim())) continue;
-          }
+      const toolsPath = join(workspaceRoot, "TOOLS.md");
+      const positiveRulesSection = scCfg?.positiveRulesSection ?? "Positive Reinforcement Rules";
+      const semanticThreshold = scCfg?.semanticDedupThreshold ?? 0.92;
+      const semanticDedup = scCfg?.semanticDedup !== false;
+      const toProposals = scCfg?.reinforcementToProposals !== false;
 
-          // Semantic dedup: skip if a similar rule exists in the vector store (#260)
-          let ruleVec: number[] | null = null;
-          if (semanticDedup) {
-            try {
-              ruleVec = await embeddings.embed(line.trim());
-              if (await vectorDb.hasDuplicate(ruleVec, semanticThreshold)) {
-                logger?.info?.(`memory-hybrid: reinforcement POSITIVE_RULE skipped (semantic duplicate): ${line.slice(0, 80)}`);
-                continue;
-              }
-            } catch (err) {
-              capturePluginError(err as Error, { subsystem: "cli", operation: "reinforcement:positive-rule-dedup" });
-              // Fail open: still insert the rule if dedup check fails
+      for (const a of analysed) {
+        if (a.remediationType === "NO_ACTION") continue;
+        try {
+          if (a.remediationType === "POSITIVE_RULE") {
+            const line =
+              typeof a.remediationContent === "string"
+                ? a.remediationContent
+                : ((a.remediationContent as { text?: string })?.text ?? "");
+            if (!line.trim()) continue;
+
+            // Exact text dedup: skip if the rule already appears in TOOLS.md
+            if (existsSync(toolsPath)) {
+              const currentTools = readFileSync(toolsPath, "utf-8");
+              if (currentTools.includes(line.trim())) continue;
             }
-          }
 
-          if (existsSync(toolsPath)) {
-            insertRulesUnderSection(toolsPath, positiveRulesSection, [line.trim()]);
-            // Store the rule embedding in vector DB for future dedup (#260)
-            if (ruleVec) {
+            // Semantic dedup: skip if a similar rule exists in the vector store (#260)
+            let ruleVec: number[] | null = null;
+            if (semanticDedup) {
               try {
-                await vectorDb.store({ text: line.trim(), vector: ruleVec, importance: CLI_STORE_IMPORTANCE, category: "technical", id: `rule-${Date.now()}-${Math.random()}` });
+                ruleVec = await embeddings.embed(line.trim());
+                if (await vectorDb.hasDuplicate(ruleVec, semanticThreshold)) {
+                  logger?.info?.(
+                    `memory-hybrid: reinforcement POSITIVE_RULE skipped (semantic duplicate): ${line.slice(0, 80)}`,
+                  );
+                  continue;
+                }
               } catch (err) {
-                capturePluginError(err as Error, { subsystem: "cli", operation: "reinforcement:positive-rule-store" });
+                capturePluginError(err as Error, { subsystem: "cli", operation: "reinforcement:positive-rule-dedup" });
+                // Fail open: still insert the rule if dedup check fails
               }
             }
-          }
-        } else if (a.remediationType === "MEMORY_STORE" || a.remediationType === "PATTERN_FACT") {
-          const c = a.remediationContent;
-          const isPattern = a.remediationType === "PATTERN_FACT";
-          const obj = typeof c === "object" && c && "text" in c ? c as { text?: string; entity?: string; key?: string; tags?: string[] } : { text: String(c) };
-          const text = (obj.text ?? "").trim();
-          if (!text || factsDb.hasDuplicate(text)) continue;
-          let vector: number[] | null = null;
-          try {
-            vector = await embeddings.embed(text);
-            if (semanticDedup && (await vectorDb.hasDuplicate(vector, semanticThreshold))) continue;
-          } catch (err) {
-            capturePluginError(err as Error, { subsystem: "cli", operation: "runExtractReinforcementForCli:embed-dedup" });
-            continue;
-          }
-          const tags: string[] = Array.isArray(obj.tags) ? obj.tags : [];
-          if (isPattern && !tags.includes("reinforcement")) tags.push("reinforcement");
-          if (isPattern && !tags.includes("behavioral")) tags.push("behavioral");
-          const entry = factsDb.store({
-            text,
-            category: isPattern ? "pattern" : "technical",
-            importance: CLI_STORE_IMPORTANCE,
-            entity: obj.entity ?? null,
-            key: typeof obj.key === "string" ? obj.key : null,
-            value: text.slice(0, 200),
-            source: "reinforcement-analysis",
-            tags,
-          });
-          if (vector) {
-            await vectorDb.store({ text, vector, importance: CLI_STORE_IMPORTANCE, category: isPattern ? "pattern" : "technical", id: entry.id });
-            factsDb.setEmbeddingModel(entry.id, embeddings.modelName);
-          }
-        } else if (a.remediationType === "PROCEDURE_BOOST") {
-          const c = a.remediationContent;
-          const taskPattern = typeof c === "object" && c && "taskPattern" in c ? String((c as { taskPattern?: string }).taskPattern ?? "") : String(c);
-          if (taskPattern.trim()) {
-            const procs = factsDb.searchProcedures(taskPattern, 3, cfg.distill?.reinforcementProcedureBoost ?? 0.1);
-            for (const proc of procs) {
-              factsDb.reinforceProcedure(proc.id, taskPattern, cfg.distill?.reinforcementPromotionThreshold ?? 2);
+
+            if (existsSync(toolsPath)) {
+              insertRulesUnderSection(toolsPath, positiveRulesSection, [line.trim()]);
+              // Store the rule embedding in vector DB for future dedup (#260)
+              if (ruleVec) {
+                try {
+                  await vectorDb.store({
+                    text: line.trim(),
+                    vector: ruleVec,
+                    importance: CLI_STORE_IMPORTANCE,
+                    category: "technical",
+                    id: `rule-${Date.now()}-${Math.random()}`,
+                  });
+                } catch (err) {
+                  capturePluginError(err as Error, {
+                    subsystem: "cli",
+                    operation: "reinforcement:positive-rule-store",
+                  });
+                }
+              }
+            }
+          } else if (a.remediationType === "MEMORY_STORE" || a.remediationType === "PATTERN_FACT") {
+            const c = a.remediationContent;
+            const isPattern = a.remediationType === "PATTERN_FACT";
+            const obj =
+              typeof c === "object" && c && "text" in c
+                ? (c as { text?: string; entity?: string; key?: string; tags?: string[] })
+                : { text: String(c) };
+            const text = (obj.text ?? "").trim();
+            if (!text || factsDb.hasDuplicate(text)) continue;
+            let vector: number[] | null = null;
+            try {
+              vector = await embeddings.embed(text);
+              if (semanticDedup && (await vectorDb.hasDuplicate(vector, semanticThreshold))) continue;
+            } catch (err) {
+              capturePluginError(err as Error, {
+                subsystem: "cli",
+                operation: "runExtractReinforcementForCli:embed-dedup",
+              });
+              continue;
+            }
+            const tags: string[] = Array.isArray(obj.tags) ? obj.tags : [];
+            if (isPattern && !tags.includes("reinforcement")) tags.push("reinforcement");
+            if (isPattern && !tags.includes("behavioral")) tags.push("behavioral");
+            const entry = factsDb.store({
+              text,
+              category: isPattern ? "pattern" : "technical",
+              importance: CLI_STORE_IMPORTANCE,
+              entity: obj.entity ?? null,
+              key: typeof obj.key === "string" ? obj.key : null,
+              value: text.slice(0, 200),
+              source: "reinforcement-analysis",
+              tags,
+            });
+            if (vector) {
+              await vectorDb.store({
+                text,
+                vector,
+                importance: CLI_STORE_IMPORTANCE,
+                category: isPattern ? "pattern" : "technical",
+                id: entry.id,
+              });
+              factsDb.setEmbeddingModel(entry.id, embeddings.modelName);
+            }
+          } else if (a.remediationType === "PROCEDURE_BOOST") {
+            const c = a.remediationContent;
+            const taskPattern =
+              typeof c === "object" && c && "taskPattern" in c
+                ? String((c as { taskPattern?: string }).taskPattern ?? "")
+                : String(c);
+            if (taskPattern.trim()) {
+              const procs = factsDb.searchProcedures(taskPattern, 3, cfg.distill?.reinforcementProcedureBoost ?? 0.1);
+              for (const proc of procs) {
+                factsDb.reinforceProcedure(proc.id, taskPattern, cfg.distill?.reinforcementPromotionThreshold ?? 2);
+              }
+            }
+          } else if (a.remediationType === "PROPOSAL" && toProposals && proposalsDb) {
+            const c = a.remediationContent;
+            const obj = typeof c === "object" && c ? (c as { targetFile?: string; suggestedChange?: string }) : {};
+            const suggestedChange = obj.suggestedChange ?? (typeof c === "string" ? c : "");
+            const targetFile = obj.targetFile ?? inferTargetFile(suggestedChange);
+            if (suggestedChange.trim()) {
+              proposalsDb.create({
+                targetFile,
+                title: `Reinforcement: ${a.category}`,
+                observation: `Positive signal from reinforcement analysis`,
+                suggestedChange: suggestedChange.trim(),
+                confidence: 0.7,
+                evidenceSessions: result.incidents
+                  .map((i) => i.sessionFile)
+                  .filter((v, idx, arr) => arr.indexOf(v) === idx),
+              });
             }
           }
-        } else if (a.remediationType === "PROPOSAL" && toProposals && proposalsDb) {
-          const c = a.remediationContent;
-          const obj = typeof c === "object" && c ? c as { targetFile?: string; suggestedChange?: string } : {};
-          const suggestedChange = obj.suggestedChange ?? (typeof c === "string" ? c : "");
-          const targetFile = obj.targetFile ?? inferTargetFile(suggestedChange);
-          if (suggestedChange.trim()) {
-            proposalsDb.create({
-              targetFile,
-              title: `Reinforcement: ${a.category}`,
-              observation: `Positive signal from reinforcement analysis`,
-              suggestedChange: suggestedChange.trim(),
-              confidence: 0.7,
-              evidenceSessions: result.incidents.map((i) => i.sessionFile).filter((v, idx, arr) => arr.indexOf(v) === idx),
+        } catch (err) {
+          capturePluginError(err as Error, {
+            subsystem: "cli",
+            operation: "runExtractReinforcementForCli:apply-remediation",
+          });
+        }
+      }
+    }
+
+    // Annotate facts/procedures with reinforcement if not dry-run
+    if (!opts.dryRun) {
+      const trackContext = cfg.reinforcement?.trackContext !== false;
+      const maxEventsPerFact = cfg.reinforcement?.maxEventsPerFact ?? 50;
+      for (const incident of result.incidents) {
+        try {
+          const context: ReinforcementContext = {
+            querySnippet: incident.precedingUserMessage.slice(0, 200) || incident.userMessage.slice(0, 200),
+            topic: analysisCategory,
+            toolSequence: incident.toolCallSequence.length > 0 ? incident.toolCallSequence : undefined,
+            sessionFile: incident.sessionFile,
+          };
+
+          // Reinforce recalled memories with rich context, boosted by diversity score (#259)
+          const diversityWeight = cfg.reinforcement?.diversityWeight ?? 1.0;
+          const baseBoost = cfg.reinforcement?.boostAmount ?? 1.0;
+          for (const memId of incident.recalledMemoryIds) {
+            const diversityScore = factsDb.calculateDiversityScore(memId);
+            const effectiveBoost = baseBoost * (1 - diversityWeight + diversityWeight * diversityScore);
+            factsDb.reinforceFact(memId, incident.userMessage, context, {
+              trackContext,
+              maxEventsPerFact,
+              boostAmount: effectiveBoost,
             });
           }
-        }
-      } catch (err) {
-        capturePluginError(err as Error, { subsystem: "cli", operation: "runExtractReinforcementForCli:apply-remediation" });
-      }
-    }
-  }
 
-  // Annotate facts/procedures with reinforcement if not dry-run
-  if (!opts.dryRun) {
-    const trackContext = cfg.reinforcement?.trackContext !== false;
-    const maxEventsPerFact = cfg.reinforcement?.maxEventsPerFact ?? 50;
-    for (const incident of result.incidents) {
-      try {
-        const context: ReinforcementContext = {
-          querySnippet: incident.precedingUserMessage.slice(0, 200) || incident.userMessage.slice(0, 200),
-          topic: analysisCategory,
-          toolSequence: incident.toolCallSequence.length > 0 ? incident.toolCallSequence : undefined,
-          sessionFile: incident.sessionFile,
-        };
-
-        // Reinforce recalled memories with rich context, boosted by diversity score (#259)
-        const diversityWeight = cfg.reinforcement?.diversityWeight ?? 1.0;
-        const baseBoost = cfg.reinforcement?.boostAmount ?? 1.0;
-        for (const memId of incident.recalledMemoryIds) {
-          const diversityScore = factsDb.calculateDiversityScore(memId);
-          const effectiveBoost = baseBoost * (1 - diversityWeight + diversityWeight * diversityScore);
-          factsDb.reinforceFact(memId, incident.userMessage, context, { trackContext, maxEventsPerFact, boostAmount: effectiveBoost });
-        }
-
-        // Reinforce procedures based on tool call sequence
-        if (incident.toolCallSequence.length >= 2) {
-          const taskPattern = incident.toolCallSequence.join(" -> ");
-          const procedures = factsDb.searchProcedures(taskPattern, 3, cfg.distill?.reinforcementProcedureBoost ?? 0.1);
-          for (const proc of procedures) {
-            factsDb.reinforceProcedure(proc.id, incident.userMessage, cfg.distill?.reinforcementPromotionThreshold ?? 2);
+          // Reinforce procedures based on tool call sequence
+          if (incident.toolCallSequence.length >= 2) {
+            const taskPattern = incident.toolCallSequence.join(" -> ");
+            const procedures = factsDb.searchProcedures(
+              taskPattern,
+              3,
+              cfg.distill?.reinforcementProcedureBoost ?? 0.1,
+            );
+            for (const proc of procedures) {
+              factsDb.reinforceProcedure(
+                proc.id,
+                incident.userMessage,
+                cfg.distill?.reinforcementPromotionThreshold ?? 2,
+              );
+            }
           }
+        } catch (err) {
+          capturePluginError(err as Error, { subsystem: "cli", operation: "runExtractReinforcementForCli" });
         }
-      } catch (err) {
-        capturePluginError(err as Error, { subsystem: "cli", operation: "runExtractReinforcementForCli" });
       }
     }
-  }
 
     if (!opts.dryRun) {
       const lastSessionTs = getMaxMtime(filePaths);
@@ -2342,9 +2787,14 @@ export async function runGenerateProposalsForCli(
   }
   const nowSec = Math.floor(Date.now() / 1000);
   const scopeFilter = cfg.autoRecall?.scopeFilter ?? undefined;
-  const allRelevant = factsDb.getAll({ scopeFilter }).filter(
-    (f) => (f.category === "pattern" || f.category === "rule") && !f.supersededAt && (f.expiresAt === null || f.expiresAt > nowSec),
-  );
+  const allRelevant = factsDb
+    .getAll({ scopeFilter })
+    .filter(
+      (f) =>
+        (f.category === "pattern" || f.category === "rule") &&
+        !f.supersededAt &&
+        (f.expiresAt === null || f.expiresAt > nowSec),
+    );
   if (!scopeFilter && allRelevant.length > 0) {
     ctx.logger.warn?.(
       "memory-hybrid: generate-proposals — autoRecall.scopeFilter is not set; all stored facts are included regardless of which agent or user created them. Set autoRecall.scopeFilter (e.g. agentId/userId) to restrict proposals to a specific user/agent and avoid cross-user contamination.",
@@ -2355,16 +2805,35 @@ export async function runGenerateProposalsForCli(
   const metaPatterns = patterns.filter((f) => f.tags?.includes("meta"));
   const insights: string[] = [];
   if (patterns.length) {
-    insights.push("Patterns:\n" + patterns.slice(0, 30).map((f) => `- ${f.text}`).join("\n"));
+    insights.push(
+      "Patterns:\n" +
+        patterns
+          .slice(0, 30)
+          .map((f) => `- ${f.text}`)
+          .join("\n"),
+    );
   }
   if (rules.length) {
-    insights.push("Rules:\n" + rules.slice(0, 30).map((f) => `- ${f.text}`).join("\n"));
+    insights.push(
+      "Rules:\n" +
+        rules
+          .slice(0, 30)
+          .map((f) => `- ${f.text}`)
+          .join("\n"),
+    );
   }
   if (metaPatterns.length) {
-    insights.push("Meta-patterns:\n" + metaPatterns.slice(0, 10).map((f) => `- ${f.text}`).join("\n"));
+    insights.push(
+      "Meta-patterns:\n" +
+        metaPatterns
+          .slice(0, 10)
+          .map((f) => `- ${f.text}`)
+          .join("\n"),
+    );
   }
   if (insights.length === 0) {
-    if (opts.verbose) ctx.logger.info?.("memory-hybrid: generate-proposals — no patterns/rules/meta in memory; skipping.");
+    if (opts.verbose)
+      ctx.logger.info?.("memory-hybrid: generate-proposals — no patterns/rules/meta in memory; skipping.");
     return { created: 0 };
   }
   const insightsBlock = insights.join("\n\n");
@@ -2380,7 +2849,11 @@ export async function runGenerateProposalsForCli(
         identityFilesContent.push(`--- ${file} ---\n(file not found)\n`);
       }
     } catch (err) {
-      capturePluginError(err instanceof Error ? err : new Error(String(err)), { subsystem: "cli", operation: "runGenerateProposalsForCli:read-file", file });
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        subsystem: "cli",
+        operation: "runGenerateProposalsForCli:read-file",
+        file,
+      });
       identityFilesContent.push(`--- ${file} ---\n(error reading file)\n`);
     }
   }
@@ -2394,7 +2867,7 @@ export async function runGenerateProposalsForCli(
   const cronCfg = getCronModelConfig(cfg);
   const pref = getLLMModelPreference(cronCfg, "heavy");
   const model = pref[0];
-  const fallbackModels = pref.length > 1 ? pref.slice(1) : (cfg.llm ? [] : (cfg.distill?.fallbackModels ?? []));
+  const fallbackModels = pref.length > 1 ? pref.slice(1) : cfg.llm ? [] : (cfg.distill?.fallbackModels ?? []);
   let rawResponse: string;
   try {
     rawResponse = await chatCompleteWithRetry({
@@ -2408,31 +2881,48 @@ export async function runGenerateProposalsForCli(
     });
   } catch (err) {
     const errMsg = err instanceof Error ? err.message : String(err);
-    console.error(`memory-hybrid: generate-proposals LLM call failed (model=${model}, fallbacks=${JSON.stringify(fallbackModels)}): ${errMsg}`);
-    capturePluginError(err instanceof Error ? err : new Error(String(err)), { subsystem: "cli", operation: "runGenerateProposalsForCli:llm" });
+    console.error(
+      `memory-hybrid: generate-proposals LLM call failed (model=${model}, fallbacks=${JSON.stringify(fallbackModels)}): ${errMsg}`,
+    );
+    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+      subsystem: "cli",
+      operation: "runGenerateProposalsForCli:llm",
+    });
     return { created: 0 };
   }
-  let items: Array<{ targetFile: string; title: string; observation: string; suggestedChange: string; confidence: number }>;
+  let items: Array<{
+    targetFile: string;
+    title: string;
+    observation: string;
+    suggestedChange: string;
+    confidence: number;
+  }>;
   try {
     const firstBracket = rawResponse.indexOf("[");
     const lastBracket = rawResponse.lastIndexOf("]");
-    const trimmed = firstBracket !== -1 && lastBracket !== -1 && lastBracket >= firstBracket
-      ? rawResponse.substring(firstBracket, lastBracket + 1)
-      : rawResponse;
+    const trimmed =
+      firstBracket !== -1 && lastBracket !== -1 && lastBracket >= firstBracket
+        ? rawResponse.substring(firstBracket, lastBracket + 1)
+        : rawResponse;
     items = JSON.parse(trimmed);
     if (!Array.isArray(items)) items = [];
   } catch (err) {
-    if (opts.verbose) ctx.logger.warn?.(`memory-hybrid: generate-proposals — LLM output was not valid JSON: ${rawResponse.slice(0, 200)}`);
+    if (opts.verbose)
+      ctx.logger.warn?.(
+        `memory-hybrid: generate-proposals — LLM output was not valid JSON: ${rawResponse.slice(0, 200)}`,
+      );
     return { created: 0 };
   }
   const weekDays = 7;
   const recentCount = proposalsDb.countRecentProposals(weekDays);
   const limit = cfg.personaProposals.maxProposalsPerWeek;
   const minConf = cfg.personaProposals.minConfidence;
-  const evidenceSessions = Array.from({ length: Math.max(1, cfg.personaProposals.minSessionEvidence) }, () => "reflection-pipeline");
-  const expiresAt = cfg.personaProposals.proposalTTLDays > 0
-    ? nowSec + cfg.personaProposals.proposalTTLDays * 24 * 3600
-    : null;
+  const evidenceSessions = Array.from(
+    { length: Math.max(1, cfg.personaProposals.minSessionEvidence) },
+    () => "reflection-pipeline",
+  );
+  const expiresAt =
+    cfg.personaProposals.proposalTTLDays > 0 ? nowSec + cfg.personaProposals.proposalTTLDays * 24 * 3600 : null;
   let created = 0;
   for (const item of items) {
     if (recentCount + created >= limit) break;
@@ -2444,7 +2934,9 @@ export async function runGenerateProposalsForCli(
     if (!Number.isFinite(confidence)) continue;
     confidence = capProposalConfidence(confidence, targetFile, String(item.suggestedChange ?? ""));
     if (confidence < minConf) {
-      ctx.logger.info?.(`memory-hybrid: proposal dropped — confidence ${confidence < Number(item.confidence) ? `capped to ${confidence.toFixed(2)} (below minConf ${minConf})` : `below minConf ${minConf}`}: ${String(item.title ?? "").slice(0, 80)} -> ${targetFile}`);
+      ctx.logger.info?.(
+        `memory-hybrid: proposal dropped — confidence ${confidence < Number(item.confidence) ? `capped to ${confidence.toFixed(2)} (below minConf ${minConf})` : `below minConf ${minConf}`}: ${String(item.title ?? "").slice(0, 80)} -> ${targetFile}`,
+      );
       continue;
     }
     const title = String(item.title ?? "Update from reflection").slice(0, 256);
@@ -2471,7 +2963,10 @@ export async function runGenerateProposalsForCli(
       created++;
       if (opts.verbose) ctx.logger.info?.(`memory-hybrid: proposal created: ${title} -> ${targetFile}`);
     } catch (err) {
-      capturePluginError(err instanceof Error ? err : new Error(String(err)), { subsystem: "cli", operation: "runGenerateProposalsForCli:create" });
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        subsystem: "cli",
+        operation: "runGenerateProposalsForCli:create",
+      });
     }
   }
   return { created };
@@ -2542,11 +3037,20 @@ export async function runExtractDailyForCli(
                   const vector = await embeddings.embed(pointerText);
                   factsDb.setEmbeddingModel(pointerEntry.id, embeddings.modelName);
                   if (!(await vectorDb.hasDuplicate(vector))) {
-                    await vectorDb.store({ text: pointerText, vector, importance: BATCH_STORE_IMPORTANCE, category: "technical", id: pointerEntry.id });
+                    await vectorDb.store({
+                      text: pointerText,
+                      vector,
+                      importance: BATCH_STORE_IMPORTANCE,
+                      category: "technical",
+                      id: pointerEntry.id,
+                    });
                   }
                 } catch (err) {
                   sink.warn(`memory-hybrid: extract-daily vector store failed: ${err}`);
-                  capturePluginError(err as Error, { subsystem: "cli", operation: "runExtractDailyForCli:vector-store" });
+                  capturePluginError(err as Error, {
+                    subsystem: "cli",
+                    operation: "runExtractDailyForCli:vector-store",
+                  });
                 }
                 totalStored++;
               } catch (err) {
@@ -2554,11 +3058,19 @@ export async function runExtractDailyForCli(
                   try {
                     credentialsDb.delete(parsed.service, parsed.type as any);
                   } catch (cleanupErr) {
-                    sink.warn(`memory-hybrid: Failed to clean up orphaned credential for ${parsed.service}: ${cleanupErr}`);
-                    capturePluginError(cleanupErr as Error, { subsystem: "cli", operation: "runExtractDailyForCli:credential-compensating-delete" });
+                    sink.warn(
+                      `memory-hybrid: Failed to clean up orphaned credential for ${parsed.service}: ${cleanupErr}`,
+                    );
+                    capturePluginError(cleanupErr as Error, {
+                      subsystem: "cli",
+                      operation: "runExtractDailyForCli:credential-compensating-delete",
+                    });
                   }
                 }
-                capturePluginError(err as Error, { subsystem: "cli", operation: "runExtractDailyForCli:credential-store" });
+                capturePluginError(err as Error, {
+                  subsystem: "cli",
+                  operation: "runExtractDailyForCli:credential-store",
+                });
               }
             }
             // Skip normal fact-storage path — this line has been handled as a credential.
@@ -2607,8 +3119,13 @@ export async function runExtractDailyForCli(
           if (similarFacts.length > 0) {
             try {
               const classification = await classifyMemoryOperation(
-                trimmed, extracted.entity, extracted.key, similarFacts,
-                openai, cfg.store.classifyModel ?? getDefaultCronModel(getCronModelConfig(cfg), "nano"), sink,
+                trimmed,
+                extracted.entity,
+                extracted.key,
+                similarFacts,
+                openai,
+                cfg.store.classifyModel ?? getDefaultCronModel(getCronModelConfig(cfg), "nano"),
+                sink,
               );
               if (classification.action === "NOOP") continue;
               if (classification.action === "DELETE" && classification.targetId) {
@@ -2632,11 +3149,20 @@ export async function runExtractDailyForCli(
                   try {
                     factsDb.setEmbeddingModel(newEntry.id, embeddings.modelName);
                     if (!(await vectorDb.hasDuplicate(vecForStore))) {
-                      await vectorDb.store({ text: trimmed, vector: vecForStore, importance: BATCH_STORE_IMPORTANCE, category, id: newEntry.id });
+                      await vectorDb.store({
+                        text: trimmed,
+                        vector: vecForStore,
+                        importance: BATCH_STORE_IMPORTANCE,
+                        category,
+                        id: newEntry.id,
+                      });
                     }
                   } catch (err) {
                     sink.warn(`memory-hybrid: extract-daily vector store failed: ${err}`);
-                    capturePluginError(err as Error, { subsystem: "cli", operation: "runExtractDailyForCli:vector-store-update" });
+                    capturePluginError(err as Error, {
+                      subsystem: "cli",
+                      operation: "runExtractDailyForCli:vector-store-update",
+                    });
                   }
                   totalStored++;
                   continue;
@@ -2651,7 +3177,7 @@ export async function runExtractDailyForCli(
       }
       const entry = factsDb.store(storePayload);
       try {
-        const vector = vecForStore ?? await embeddings.embed(trimmed);
+        const vector = vecForStore ?? (await embeddings.embed(trimmed));
         factsDb.setEmbeddingModel(entry.id, embeddings.modelName);
         if (!(await vectorDb.hasDuplicate(vector))) {
           await vectorDb.store({ text: trimmed, vector, importance: BATCH_STORE_IMPORTANCE, category, id: entry.id });
@@ -2685,9 +3211,9 @@ function gatherBackfillFiles(workspaceRoot: string): Array<{ path: string; label
           walk(full, relPath);
         } catch (err) {
           capturePluginError(err as Error, {
-            operation: 'walk-directory',
-            severity: 'info',
-            subsystem: 'cli'
+            operation: "walk-directory",
+            severity: "info",
+            subsystem: "cli",
           });
           /* ignore */
         }
@@ -2701,7 +3227,14 @@ function gatherBackfillFiles(workspaceRoot: string): Array<{ path: string; label
 /**
  * Extract fact from backfill line
  */
-function extractBackfillFact(line: string): { text: string; category: string; entity: string | null; key: string | null; value: string; source_date: string | null } | null {
+function extractBackfillFact(line: string): {
+  text: string;
+  category: string;
+  entity: string | null;
+  key: string | null;
+  value: string;
+  source_date: string | null;
+} | null {
   let t = line.replace(/^[-*#>\s]+/, "").trim();
   const datePrefix = /^\[(\d{4}-\d{2}-\d{2})\]\s*/;
   let source_date: string | null = null;
@@ -2721,10 +3254,10 @@ function extractBackfillFact(line: string): { text: string; category: string; en
   let category = "other";
 
   const decisionMatch = t.match(
-    /(?:decided|chose|picked|went with)\s+(?:to\s+)?(?:use\s+)?(.+?)(?:\s+(?:because|since|for)\s+(.+?))?\.?$/i
+    /(?:decided|chose|picked|went with)\s+(?:to\s+)?(?:use\s+)?(.+?)(?:\s+(?:because|since|for)\s+(.+?))?\.?$/i,
   );
   const decisionMatchSv = t.match(
-    /(?:bestämde|valde)\s+(?:att\s+(?:använda\s+)?)?(.+?)(?:\s+(?:eftersom|för att)\s+(.+?))?\.?$/i
+    /(?:bestämde|valde)\s+(?:att\s+(?:använda\s+)?)?(.+?)(?:\s+(?:eftersom|för att)\s+(.+?))?\.?$/i,
   );
   if (decisionMatch) {
     entity = "decision";
@@ -2744,9 +3277,7 @@ function extractBackfillFact(line: string): { text: string; category: string; en
       value = lower.includes("never") || lower.includes("aldrig") ? "never" : "always";
       category = "preference";
     } else {
-      const possessiveMatch = t.match(
-        /(?:(\w+(?:\s+\w+)?)'s|[Mm]y)\s+(.+?)\s+(?:is|are|was)\s+(.+?)\.?$/
-      );
+      const possessiveMatch = t.match(/(?:(\w+(?:\s+\w+)?)'s|[Mm]y)\s+(.+?)\s+(?:is|are|was)\s+(.+?)\.?$/);
       const possessiveMatchSv = t.match(/(?:mitt|min)\s+(\S+)\s+är\s+(.+?)\.?$/i);
       if (possessiveMatch) {
         entity = possessiveMatch[1] || "user";
@@ -2759,9 +3290,7 @@ function extractBackfillFact(line: string): { text: string; category: string; en
         value = possessiveMatchSv[2].trim();
         category = "fact";
       } else {
-        const preferMatch = t.match(
-          /[Ii]\s+(prefer|like|love|hate|want|need|use)\s+(.+?)\.?$/
-        );
+        const preferMatch = t.match(/[Ii]\s+(prefer|like|love|hate|want|need|use)\s+(.+?)\.?$/);
         const preferMatchSv = t.match(/jag\s+(föredrar|gillar|ogillar|vill ha|behöver)\s+(.+?)\.?$/i);
         if (preferMatch) {
           entity = "user";
@@ -2808,7 +3337,15 @@ export async function runBackfillForCli(
     sink.log(`No MEMORY.md or memory/**/*.md under ${workspaceRoot}`);
     return { stored: 0, skipped: 0, candidates: 0, files: 0, dryRun: opts.dryRun };
   }
-  const allCandidates: Array<{ text: string; category: string; entity: string | null; key: string | null; value: string; source_date: string | null; source: string }> = [];
+  const allCandidates: Array<{
+    text: string;
+    category: string;
+    entity: string | null;
+    key: string | null;
+    value: string;
+    source_date: string | null;
+    source: string;
+  }> = [];
   for (const { path: filePath, label } of files) {
     try {
       const content = readFileSync(filePath, "utf-8");
@@ -2889,7 +3426,12 @@ export async function runBackfillForCli(
  * Gather session files from agents directory.
  * When `sinceTimestampMs` is provided (watermark mode), returns only files with mtime > sinceTimestampMs.
  */
-function gatherSessionFiles(opts: { all?: boolean; days?: number; since?: string; sinceTimestampMs?: number }): Array<{ path: string; mtime: number }> {
+function gatherSessionFiles(opts: {
+  all?: boolean;
+  days?: number;
+  since?: string;
+  sinceTimestampMs?: number;
+}): Array<{ path: string; mtime: number }> {
   const openclawDir = join(homedir(), ".openclaw");
   const agentsDir = join(openclawDir, "agents");
   if (!existsSync(agentsDir)) return [];
@@ -2933,7 +3475,10 @@ function extractTextFromSessionJsonl(filePath: string): string {
     const trimmed = line.trim();
     if (!trimmed) continue;
     try {
-      const obj = JSON.parse(trimmed) as { type?: string; message?: { role?: string; content?: Array<{ type?: string; text?: string }> } };
+      const obj = JSON.parse(trimmed) as {
+        type?: string;
+        message?: { role?: string; content?: Array<{ type?: string; text?: string }> };
+      };
       if (obj.type !== "message" || !obj.message) continue;
       const msg = obj.message;
       if (msg.role !== "user" && msg.role !== "assistant") continue;
@@ -2961,7 +3506,10 @@ function extractUserMessageTextsFromSessionJsonl(filePath: string): string[] {
     const trimmed = line.trim();
     if (!trimmed) continue;
     try {
-      const obj = JSON.parse(trimmed) as { type?: string; message?: { role?: string; content?: Array<{ type?: string; text?: string }> } };
+      const obj = JSON.parse(trimmed) as {
+        type?: string;
+        message?: { role?: string; content?: Array<{ type?: string; text?: string }> };
+      };
       if (!obj || typeof obj !== "object") continue;
       if (obj.type !== "message" || !obj.message || obj.message.role !== "user") continue;
       const content = obj.message.content;
@@ -2990,13 +3538,24 @@ const SENTIMENT_MSG_MAX_CHARS = 200;
 export async function runAnalyzeFeedbackPhrasesForCli(
   ctx: HandlerContext,
   opts: { days?: number; model?: string; outputPath?: string; learn?: boolean },
-): Promise<{ reinforcement: string[]; correction: string[]; sessionsScanned: number; learned?: boolean; error?: string }> {
+): Promise<{
+  reinforcement: string[];
+  correction: string[];
+  sessionsScanned: number;
+  learned?: boolean;
+  error?: string;
+}> {
   const { cfg, logger, openai } = ctx;
   const existing = loadUserFeedbackPhrases();
   const effectiveDays = opts.days ?? (existing.initialRunDone ? 3 : 30);
   const sessionFiles = gatherSessionFiles({ days: effectiveDays });
   if (sessionFiles.length === 0) {
-    return { reinforcement: [], correction: [], sessionsScanned: 0, error: "No session files found under ~/.openclaw/agents/*/sessions/ in the last " + effectiveDays + " days." };
+    return {
+      reinforcement: [],
+      correction: [],
+      sessionsScanned: 0,
+      error: "No session files found under ~/.openclaw/agents/*/sessions/ in the last " + effectiveDays + " days.",
+    };
   }
 
   const reinforcementRegex = getReinforcementSignalRegex();
@@ -3038,7 +3597,9 @@ export async function runAnalyzeFeedbackPhrasesForCli(
         });
         const lines = (content ?? "").split(/\r?\n/).map((l) => l.trim().toLowerCase());
         if (lines.length < batch.length) {
-          logger.warn?.(`memory-hybrid: sentiment model returned ${lines.length} lines for batch of ${batch.length}; some messages may default to neutral`);
+          logger.warn?.(
+            `memory-hybrid: sentiment model returned ${lines.length} lines for batch of ${batch.length}; some messages may default to neutral`,
+          );
         }
         for (let j = 0; j < batch.length; j++) {
           const word = lines[j] ?? "";
@@ -3060,7 +3621,8 @@ export async function runAnalyzeFeedbackPhrasesForCli(
 
   const maxChars = 400_000;
   const userMessagesBlock = toAnalyze.map((t) => "User: " + t).join("\n");
-  const truncatedBlock = userMessagesBlock.length > maxChars ? userMessagesBlock.slice(0, maxChars) + "\n[truncated...]" : userMessagesBlock;
+  const truncatedBlock =
+    userMessagesBlock.length > maxChars ? userMessagesBlock.slice(0, maxChars) + "\n[truncated...]" : userMessagesBlock;
   const prompt = fillPrompt(loadPrompt("analyze-feedback-phrases"), { user_messages: truncatedBlock });
   const cronCfg = getCronModelConfig(cfg);
   const defaultPref = getLLMModelPreference(cronCfg, "default");
@@ -3073,7 +3635,12 @@ export async function runAnalyzeFeedbackPhrasesForCli(
     // Build args conditionally: only add --model if model is truthy (avoids passing "undefined" string)
     const spawnArgs = ["sessions", "spawn"];
     if (model) spawnArgs.push("--model", model);
-    spawnArgs.push("--message", "Analyze the attached file and output ONLY a JSON object with keys reinforcement and correction (arrays of strings). No markdown, no code fences.", "--attach", promptPath);
+    spawnArgs.push(
+      "--message",
+      "Analyze the attached file and output ONLY a JSON object with keys reinforcement and correction (arrays of strings). No markdown, no code fences.",
+      "--attach",
+      promptPath,
+    );
     // Use async spawn to avoid blocking the event loop during the LLM call (which may take 60–120+ seconds).
     // Stream accumulation removes the 2 MB maxBuffer ceiling of spawnSync.
     const r = await new Promise<{ stdout: string; stderr: string; status: number | null; error?: Error }>((resolve) => {
@@ -3083,25 +3650,42 @@ export async function runAnalyzeFeedbackPhrasesForCli(
       child.stdout.on("data", (chunk: Buffer) => stdoutChunks.push(chunk));
       child.stderr.on("data", (chunk: Buffer) => stderrChunks.push(chunk));
       child.on("error", (err: Error) => resolve({ stdout: "", stderr: "", status: null, error: err }));
-      child.on("close", (code: number | null) => resolve({
-        stdout: Buffer.concat(stdoutChunks).toString("utf-8"),
-        stderr: Buffer.concat(stderrChunks).toString("utf-8"),
-        status: code,
-      }));
+      child.on("close", (code: number | null) =>
+        resolve({
+          stdout: Buffer.concat(stdoutChunks).toString("utf-8"),
+          stderr: Buffer.concat(stderrChunks).toString("utf-8"),
+          status: code,
+        }),
+      );
     });
     if (r.error) {
-      return { reinforcement: [], correction: [], sessionsScanned: sessionFiles.length, error: `sessions spawn failed: ${r.error.message}` };
+      return {
+        reinforcement: [],
+        correction: [],
+        sessionsScanned: sessionFiles.length,
+        error: `sessions spawn failed: ${r.error.message}`,
+      };
     }
     const content = (r.stdout ?? "") + (r.stderr ?? "");
     if (r.status !== 0) {
-      return { reinforcement: [], correction: [], sessionsScanned: sessionFiles.length, error: `sessions spawn exited ${r.status}: ${content.slice(0, 500)}` };
+      return {
+        reinforcement: [],
+        correction: [],
+        sessionsScanned: sessionFiles.length,
+        error: `sessions spawn exited ${r.status}: ${content.slice(0, 500)}`,
+      };
     }
     // Robust JSON extraction: try full parse first, then locate first {...} block regardless of key order
     let reinforcement: string[] = [];
     let correction: string[] = [];
     const trimmedContent = content.trim();
     if (!trimmedContent) {
-      return { reinforcement: [], correction: [], sessionsScanned: sessionFiles.length, error: "LLM returned empty output" };
+      return {
+        reinforcement: [],
+        correction: [],
+        sessionsScanned: sessionFiles.length,
+        error: "LLM returned empty output",
+      };
     }
     let parsedOutput: unknown;
     try {
@@ -3110,12 +3694,22 @@ export async function runAnalyzeFeedbackPhrasesForCli(
       const braceStart = trimmedContent.indexOf("{");
       const braceEnd = trimmedContent.lastIndexOf("}");
       if (braceStart === -1 || braceEnd === -1 || braceEnd <= braceStart) {
-        return { reinforcement: [], correction: [], sessionsScanned: sessionFiles.length, error: "Failed to locate JSON object in LLM output: " + trimmedContent.slice(0, 500) };
+        return {
+          reinforcement: [],
+          correction: [],
+          sessionsScanned: sessionFiles.length,
+          error: "Failed to locate JSON object in LLM output: " + trimmedContent.slice(0, 500),
+        };
       }
       try {
         parsedOutput = JSON.parse(trimmedContent.slice(braceStart, braceEnd + 1));
       } catch (e) {
-        return { reinforcement: [], correction: [], sessionsScanned: sessionFiles.length, error: "Failed to parse LLM JSON: " + String(e) };
+        return {
+          reinforcement: [],
+          correction: [],
+          sessionsScanned: sessionFiles.length,
+          error: "Failed to parse LLM JSON: " + String(e),
+        };
       }
     }
     if (parsedOutput !== null && typeof parsedOutput === "object") {
@@ -3130,7 +3724,11 @@ export async function runAnalyzeFeedbackPhrasesForCli(
     if (opts.outputPath) {
       try {
         mkdirSync(dirname(opts.outputPath), { recursive: true });
-        writeFileSync(opts.outputPath, JSON.stringify({ reinforcement, correction, sessionsScanned: sessionFiles.length }, null, 2), "utf-8");
+        writeFileSync(
+          opts.outputPath,
+          JSON.stringify({ reinforcement, correction, sessionsScanned: sessionFiles.length }, null, 2),
+          "utf-8",
+        );
       } catch (e) {
         capturePluginError(e as Error, { subsystem: "cli", operation: "runAnalyzeFeedbackPhrasesForCli:write-output" });
       }
@@ -3144,7 +3742,9 @@ export async function runAnalyzeFeedbackPhrasesForCli(
       saveUserFeedbackPhrases(merged);
       learned = reinforcement.length > 0 || correction.length > 0;
       if (learned) {
-        logger.info?.(`memory-hybrid: saved ${merged.reinforcement.length} reinforcement and ${merged.correction.length} correction phrases to .user-feedback-phrases.json`);
+        logger.info?.(
+          `memory-hybrid: saved ${merged.reinforcement.length} reinforcement and ${merged.correction.length} correction phrases to .user-feedback-phrases.json`,
+        );
       }
     } else if (!existing.initialRunDone) {
       // Persist initialRunDone even without --learn so the 30→3-day auto-window works on subsequent runs
@@ -3171,11 +3771,7 @@ export async function runIngestFilesForCli(
   const { factsDb, vectorDb, embeddings, openai, cfg } = ctx;
   const workspaceRoot = opts.workspace ?? process.env.OPENCLAW_WORKSPACE ?? process.cwd();
   const ingestCfg = cfg.ingest;
-  const patterns = opts.paths?.length
-    ? opts.paths
-    : ingestCfg?.paths?.length
-      ? ingestCfg.paths
-      : DEFAULT_INGEST_PATHS;
+  const patterns = opts.paths?.length ? opts.paths : ingestCfg?.paths?.length ? ingestCfg.paths : DEFAULT_INGEST_PATHS;
   const chunkSize = ingestCfg?.chunkSize ?? 800;
   const overlap = ingestCfg?.overlap ?? 100;
 
@@ -3188,7 +3784,8 @@ export async function runIngestFilesForCli(
   const cronCfgIngest = getCronModelConfig(cfg);
   const ingestPref = getLLMModelPreference(cronCfgIngest, "default");
   const model = ingestPref[0] ?? cfg.distill?.defaultModel ?? "gemini-3-pro-preview";
-  const ingestFallbacks = ingestPref.length > 1 ? ingestPref.slice(1) : (cfg.llm ? undefined : cfg.distill?.fallbackModels);
+  const ingestFallbacks =
+    ingestPref.length > 1 ? ingestPref.slice(1) : cfg.llm ? undefined : cfg.distill?.fallbackModels;
   const ingestPrompt = loadPrompt("ingest-files");
   const batches: string[] = [];
   let currentBatch = "";
@@ -3220,7 +3817,14 @@ export async function runIngestFilesForCli(
   }
   if (currentBatch.trim()) batches.push(currentBatch);
 
-  const allFacts: Array<{ category: string; text: string; entity?: string; key?: string; value?: string; tags?: string[] }> = [];
+  const allFacts: Array<{
+    category: string;
+    text: string;
+    entity?: string;
+    key?: string;
+    value?: string;
+    tags?: string[];
+  }> = [];
   for (let b = 0; b < batches.length; b++) {
     sink.log(`Processing batch ${b + 1}/${batches.length}...`);
     const userContent = ingestPrompt + "\n\n" + batches[b];
@@ -3245,7 +3849,7 @@ export async function runIngestFilesForCli(
           if (!text || text.length < 10) continue;
           const entity = typeof obj.entity === "string" ? obj.entity : null;
           const key = typeof obj.key === "string" ? obj.key : null;
-          const value = typeof obj.value === "string" ? obj.value : (entity && key ? text.slice(0, 200) : "");
+          const value = typeof obj.value === "string" ? obj.value : entity && key ? text.slice(0, 200) : "";
           const tags = Array.isArray(obj.tags) ? (obj.tags as string[]).filter((t) => typeof t === "string") : [];
           allFacts.push({
             category: isValidCategory(category) ? category : "technical",
@@ -3321,7 +3925,17 @@ export async function runIngestFilesForCli(
  */
 export async function runDistillForCli(
   ctx: HandlerContext,
-  opts: { dryRun: boolean; all?: boolean; days?: number; since?: string; model?: string; verbose?: boolean; maxSessions?: number; maxSessionTokens?: number; full?: boolean },
+  opts: {
+    dryRun: boolean;
+    all?: boolean;
+    days?: number;
+    since?: string;
+    model?: string;
+    verbose?: boolean;
+    maxSessions?: number;
+    maxSessionTokens?: number;
+    full?: boolean;
+  },
   sink: DistillCliSink,
 ): Promise<DistillCliResult> {
   const { factsDb, vectorDb, embeddings, openai, cfg, credentialsDb, logger } = ctx;
@@ -3332,251 +3946,318 @@ export async function runDistillForCli(
   const useWatermark = !opts.full && !opts.all && !opts.since;
   if (useWatermark && !opts.dryRun) {
     const skip = acquireScanSlot(SCAN_TYPE, cursor?.lastRunAt, logger);
-    if (skip) return { sessionsScanned: 0, factsExtracted: 0, stored: 0, dedupSkipped: 0, dryRun: false, skipped: true };
+    if (skip)
+      return { sessionsScanned: 0, factsExtracted: 0, stored: 0, dedupSkipped: 0, dryRun: false, skipped: true };
   }
 
   try {
-  const gatherOpts = useWatermark && cursor && cursor.lastSessionTs > 0
-    ? { sinceTimestampMs: cursor.lastSessionTs }
-    : { all: opts.all, days: opts.days ?? (opts.all ? 90 : 3), since: opts.since };
+    const gatherOpts =
+      useWatermark && cursor && cursor.lastSessionTs > 0
+        ? { sinceTimestampMs: cursor.lastSessionTs }
+        : { all: opts.all, days: opts.days ?? (opts.all ? 90 : 3), since: opts.since };
 
-  if (useWatermark && cursor && cursor.lastSessionTs > 0) {
-    logger.info?.(`memory-hybrid: distill incremental — sessions since last run (${new Date(cursor.lastSessionTs).toISOString()})`);
-  }
-
-  const sessionFiles = gatherSessionFiles(gatherOpts);
-  const maxSessions = opts.maxSessions ?? 0;
-  let filesToProcess = maxSessions > 0 ? sessionFiles.slice(0, maxSessions) : sessionFiles;
-  if (filesToProcess.length === 0) {
-    sink.log("No session files found under ~/.openclaw/agents/*/sessions/");
-    if (useWatermark && !opts.dryRun) {
-      factsDb.updateScanCursor(SCAN_TYPE, 0, 0);
-      clearScanLock(SCAN_TYPE);
-    }
-    return { sessionsScanned: 0, factsExtracted: 0, stored: 0, dedupSkipped: 0, dryRun: opts.dryRun };
-  }
-
-  // Two-tier pre-filter: use local Ollama to triage sessions before cloud LLM (Issue #290).
-  // allCandidatePaths captures the full candidate set BEFORE pre-filtering so the cursor
-  // watermark always advances past skipped sessions, preventing infinite re-processing loops.
-  const allCandidatePaths = filesToProcess.map((f) => f.path);
-  const pfCfg = buildPreFilterConfig(cfg);
-  if (pfCfg.enabled && filesToProcess.length > 0) {
-    const pfResult = await preFilterSessions(allCandidatePaths, pfCfg);
-    if (!pfResult.ollamaUnavailable) {
-      const keptSet = new Set(pfResult.kept);
-      const originalCount = filesToProcess.length;
-      filesToProcess = filesToProcess.filter((f) => keptSet.has(f.path));
-      sink.log(
-        `memory-hybrid: distill pre-filter: ${filesToProcess.length}/${originalCount} sessions flagged as interesting (${pfResult.skipped.length} skipped by local model)`,
+    if (useWatermark && cursor && cursor.lastSessionTs > 0) {
+      logger.info?.(
+        `memory-hybrid: distill incremental — sessions since last run (${new Date(cursor.lastSessionTs).toISOString()})`,
       );
-    } else {
-      sink.log("memory-hybrid: distill pre-filter: Ollama unavailable — processing all sessions");
     }
-  }
 
-  const cronCfgDistill = getCronModelConfig(cfg);
-  const heavyPref = getLLMModelPreference(cronCfgDistill, "heavy");
-  const model = opts.model ?? heavyPref[0] ?? cfg.distill?.defaultModel ?? getDefaultCronModel(cronCfgDistill, "heavy");
-  const distillFallbacks = heavyPref.length > 1 ? heavyPref.slice(1) : (cfg.llm ? undefined : cfg.distill?.fallbackModels);
-  const batches: string[] = [];
-  let currentBatch = "";
-  const batchTokenLimit = distillBatchTokenLimit(model);
-  const maxSessionTokens = opts.maxSessionTokens ?? batchTokenLimit;
-  for (let i = 0; i < filesToProcess.length; i++) {
-    const { path: fp } = filesToProcess[i];
-    try {
-      const text = extractTextFromSessionJsonl(fp);
-      if (!text.trim()) continue;
-      const textTokens = Math.ceil(text.length / 4);
-      const chunks = chunkSessionText(text, maxSessionTokens);
-      if (chunks.length > 1) {
-        sink.log(`memory-hybrid: distill: session too large (${textTokens} tokens), splitting into ${chunks.length} chunks`);
+    const sessionFiles = gatherSessionFiles(gatherOpts);
+    const maxSessions = opts.maxSessions ?? 0;
+    let filesToProcess = maxSessions > 0 ? sessionFiles.slice(0, maxSessions) : sessionFiles;
+    if (filesToProcess.length === 0) {
+      sink.log("No session files found under ~/.openclaw/agents/*/sessions/");
+      if (useWatermark && !opts.dryRun) {
+        factsDb.updateScanCursor(SCAN_TYPE, 0, 0);
+        clearScanLock(SCAN_TYPE);
       }
-
-      // Safety check: ensure chunks don't exceed model-specific batch limits
-      const safeLimit = batchTokenLimit; // Use model-specific limit instead of hardcoded 350k
-      const validChunks = chunks.filter((chunk, idx) => {
-        const chunkTokens = Math.ceil(chunk.length / 4);
-        if (chunkTokens > safeLimit) {
-          sink.warn(`memory-hybrid: distill: chunk ${idx + 1} too large (${chunkTokens} tokens), skipping`);
-          return false;
-        }
-        return true;
-      });
-
-      for (let c = 0; c < validChunks.length; c++) {
-        const header =
-          validChunks.length === 1
-            ? `\n--- SESSION: ${basename(fp)} ---\n\n`
-            : `\n--- SESSION: ${basename(fp)} (chunk ${c + 1}/${validChunks.length}) ---\n\n`;
-        const block = header + validChunks[c];
-        const blockTokens = Math.ceil(block.length / 4);
-        if (currentBatch.length > 0 && (estimateTokens(currentBatch) + blockTokens > batchTokenLimit)) {
-          batches.push(currentBatch);
-          currentBatch = block;
-        } else {
-          currentBatch += (currentBatch ? "\n" : "") + block;
-        }
-      }
-    } catch (err) {
-      capturePluginError(err as Error, { subsystem: "cli", operation: "runDistillForCli:extract-text", filePath: fp });
+      return { sessionsScanned: 0, factsExtracted: 0, stored: 0, dedupSkipped: 0, dryRun: opts.dryRun };
     }
-  }
-  if (currentBatch.trim()) batches.push(currentBatch);
-  const distillPrompt = loadPrompt("distill-sessions");
-  const allFacts: Array<{ category: string; text: string; entity?: string; key?: string; value?: string; source_date?: string; tags?: string[] }> = [];
-  const progress = createProgressReporter(sink, batches.length, "Distilling sessions");
-  for (let b = 0; b < batches.length; b++) {
-    progress.update(b + 1);
-    const userContent = distillPrompt + "\n\n" + batches[b];
-    try {
-      const content = await chatCompleteWithRetry({
-        model,
-        content: userContent,
-        temperature: 0.2,
-        maxTokens: distillMaxOutputTokens(model),
-        openai,
-        fallbackModels: distillFallbacks,
-        label: `memory-hybrid: distill batch ${b + 1}/${batches.length}`,
-      });
-      const lines = content.split("\n").filter((l) => l.trim());
-      for (const line of lines) {
-        const jsonMatch = line.match(/\{[\s\S]*\}/);
-        if (!jsonMatch) continue;
-        try {
-          const obj = JSON.parse(jsonMatch[0]) as Record<string, unknown>;
-          const category = String(obj.category || "other").toLowerCase();
-          const text = String(obj.text || "").trim();
-          if (!text || text.length < 10) continue;
-          const entity = typeof obj.entity === "string" ? obj.entity : null;
-          const key = typeof obj.key === "string" ? obj.key : null;
-          const value = typeof obj.value === "string" ? obj.value : (entity && key ? text.slice(0, 200) : "");
-          const source_date = typeof obj.source_date === "string" ? obj.source_date : null;
-          const tags = Array.isArray(obj.tags) ? (obj.tags as string[]).filter((t) => typeof t === "string") : undefined;
-          allFacts.push({ category, text, entity: entity ?? undefined, key: key ?? undefined, value, source_date: source_date ?? undefined, tags });
-        } catch (err) {
-          capturePluginError(err as Error, { subsystem: "cli", operation: "runDistillForCli:parse-json" });
-        }
+
+    // Two-tier pre-filter: use local Ollama to triage sessions before cloud LLM (Issue #290).
+    // allCandidatePaths captures the full candidate set BEFORE pre-filtering so the cursor
+    // watermark always advances past skipped sessions, preventing infinite re-processing loops.
+    const allCandidatePaths = filesToProcess.map((f) => f.path);
+    const pfCfg = buildPreFilterConfig(cfg);
+    if (pfCfg.enabled && filesToProcess.length > 0) {
+      const pfResult = await preFilterSessions(allCandidatePaths, pfCfg);
+      if (!pfResult.ollamaUnavailable) {
+        const keptSet = new Set(pfResult.kept);
+        const originalCount = filesToProcess.length;
+        filesToProcess = filesToProcess.filter((f) => keptSet.has(f.path));
+        sink.log(
+          `memory-hybrid: distill pre-filter: ${filesToProcess.length}/${originalCount} sessions flagged as interesting (${pfResult.skipped.length} skipped by local model)`,
+        );
+      } else {
+        sink.log("memory-hybrid: distill pre-filter: Ollama unavailable — processing all sessions");
       }
-    } catch (err) {
-      sink.warn(`memory-hybrid: distill LLM batch ${b + 1} failed: ${err}`);
-      capturePluginError(err as Error, { subsystem: "cli", operation: "runDistillForCli:llm-batch" });
     }
-  }
-  progress.done();
-  if (opts.dryRun) {
-    sink.log(`Would extract ${allFacts.length} facts from ${filesToProcess.length} sessions`);
-    return { sessionsScanned: filesToProcess.length, factsExtracted: allFacts.length, stored: 0, dedupSkipped: 0, dryRun: true };
-  }
-  const sourceDateSec = (s: string | null | undefined) => {
-    if (!s || typeof s !== "string") return null;
-    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s.trim());
-    if (!m) return null;
-    return Math.floor(Date.UTC(+m[1], +m[2] - 1, +m[3]) / 1000);
-  };
-  let stored = 0;
-  let skipped = 0;
-  for (const fact of allFacts) {
-    const isCred = isCredentialLike(fact.text, fact.entity ?? null, fact.key ?? null, fact.value);
-    if (isCred && cfg.credentials.enabled && credentialsDb) {
-      const parsed = tryParseCredentialForVault(fact.text, fact.entity ?? null, fact.key ?? null, fact.value, {
-        requirePatternMatch: cfg.credentials.autoCapture?.requirePatternMatch === true,
-      });
-      if (parsed) {
-        if (!opts.dryRun) {
-          let storedInVault = false;
-          try {
-            const storeResult = credentialsDb.storeIfNew({ service: parsed.service, type: parsed.type as any, value: parsed.secretValue, url: parsed.url, notes: parsed.notes });
-            if (!storeResult) {
-              continue;
-            }
-            storedInVault = true;
-            const pointerText = `Credential for ${parsed.service} (${parsed.type}) — stored in vault.`;
-            const entry = factsDb.store({
-              text: pointerText,
-              category: "technical",
-              importance: BATCH_STORE_IMPORTANCE,
-              entity: "Credentials",
-              key: parsed.service,
-              value: `${VAULT_POINTER_PREFIX}${parsed.service}:${parsed.type}`,
-              source: "distillation",
-              sourceDate: sourceDateSec(fact.source_date),
-            });
-            try {
-              const vector = await embeddings.embed(pointerText);
-              factsDb.setEmbeddingModel(entry.id, embeddings.modelName);
-              if (!(await vectorDb.hasDuplicate(vector, DISTILL_DEDUP_THRESHOLD))) {
-                await vectorDb.store({ text: pointerText, vector, importance: BATCH_STORE_IMPORTANCE, category: "technical", id: entry.id });
-              }
-            } catch (err) {
-              capturePluginError(err as Error, { subsystem: "cli", operation: "runDistillForCli:credential-vector-store" });
-            }
-            stored++;
-            if (opts.verbose) sink.log(`  stored credential: ${parsed.service}`);
-          } catch (err) {
-            if (storedInVault) {
-              try {
-                credentialsDb.delete(parsed.service, parsed.type as any);
-              } catch (cleanupErr) {
-                if (opts.verbose) sink.log(`  failed to clean up orphaned credential for ${parsed.service}: ${cleanupErr}`);
-                capturePluginError(cleanupErr as Error, { subsystem: "cli", operation: "runDistillForCli:credential-compensating-delete" });
-              }
-            }
-            capturePluginError(err as Error, { subsystem: "cli", operation: "runDistillForCli:credential-store" });
+
+    const cronCfgDistill = getCronModelConfig(cfg);
+    const heavyPref = getLLMModelPreference(cronCfgDistill, "heavy");
+    const model =
+      opts.model ?? heavyPref[0] ?? cfg.distill?.defaultModel ?? getDefaultCronModel(cronCfgDistill, "heavy");
+    const distillFallbacks =
+      heavyPref.length > 1 ? heavyPref.slice(1) : cfg.llm ? undefined : cfg.distill?.fallbackModels;
+    const batches: string[] = [];
+    let currentBatch = "";
+    const batchTokenLimit = distillBatchTokenLimit(model);
+    const maxSessionTokens = opts.maxSessionTokens ?? batchTokenLimit;
+    for (let i = 0; i < filesToProcess.length; i++) {
+      const { path: fp } = filesToProcess[i];
+      try {
+        const text = extractTextFromSessionJsonl(fp);
+        if (!text.trim()) continue;
+        const textTokens = Math.ceil(text.length / 4);
+        const chunks = chunkSessionText(text, maxSessionTokens);
+        if (chunks.length > 1) {
+          sink.log(
+            `memory-hybrid: distill: session too large (${textTokens} tokens), splitting into ${chunks.length} chunks`,
+          );
+        }
+
+        // Safety check: ensure chunks don't exceed model-specific batch limits
+        const safeLimit = batchTokenLimit; // Use model-specific limit instead of hardcoded 350k
+        const validChunks = chunks.filter((chunk, idx) => {
+          const chunkTokens = Math.ceil(chunk.length / 4);
+          if (chunkTokens > safeLimit) {
+            sink.warn(`memory-hybrid: distill: chunk ${idx + 1} too large (${chunkTokens} tokens), skipping`);
+            return false;
           }
+          return true;
+        });
+
+        for (let c = 0; c < validChunks.length; c++) {
+          const header =
+            validChunks.length === 1
+              ? `\n--- SESSION: ${basename(fp)} ---\n\n`
+              : `\n--- SESSION: ${basename(fp)} (chunk ${c + 1}/${validChunks.length}) ---\n\n`;
+          const block = header + validChunks[c];
+          const blockTokens = Math.ceil(block.length / 4);
+          if (currentBatch.length > 0 && estimateTokens(currentBatch) + blockTokens > batchTokenLimit) {
+            batches.push(currentBatch);
+            currentBatch = block;
+          } else {
+            currentBatch += (currentBatch ? "\n" : "") + block;
+          }
+        }
+      } catch (err) {
+        capturePluginError(err as Error, {
+          subsystem: "cli",
+          operation: "runDistillForCli:extract-text",
+          filePath: fp,
+        });
+      }
+    }
+    if (currentBatch.trim()) batches.push(currentBatch);
+    const distillPrompt = loadPrompt("distill-sessions");
+    const allFacts: Array<{
+      category: string;
+      text: string;
+      entity?: string;
+      key?: string;
+      value?: string;
+      source_date?: string;
+      tags?: string[];
+    }> = [];
+    const progress = createProgressReporter(sink, batches.length, "Distilling sessions");
+    for (let b = 0; b < batches.length; b++) {
+      progress.update(b + 1);
+      const userContent = distillPrompt + "\n\n" + batches[b];
+      try {
+        const content = await chatCompleteWithRetry({
+          model,
+          content: userContent,
+          temperature: 0.2,
+          maxTokens: distillMaxOutputTokens(model),
+          openai,
+          fallbackModels: distillFallbacks,
+          label: `memory-hybrid: distill batch ${b + 1}/${batches.length}`,
+        });
+        const lines = content.split("\n").filter((l) => l.trim());
+        for (const line of lines) {
+          const jsonMatch = line.match(/\{[\s\S]*\}/);
+          if (!jsonMatch) continue;
+          try {
+            const obj = JSON.parse(jsonMatch[0]) as Record<string, unknown>;
+            const category = String(obj.category || "other").toLowerCase();
+            const text = String(obj.text || "").trim();
+            if (!text || text.length < 10) continue;
+            const entity = typeof obj.entity === "string" ? obj.entity : null;
+            const key = typeof obj.key === "string" ? obj.key : null;
+            const value = typeof obj.value === "string" ? obj.value : entity && key ? text.slice(0, 200) : "";
+            const source_date = typeof obj.source_date === "string" ? obj.source_date : null;
+            const tags = Array.isArray(obj.tags)
+              ? (obj.tags as string[]).filter((t) => typeof t === "string")
+              : undefined;
+            allFacts.push({
+              category,
+              text,
+              entity: entity ?? undefined,
+              key: key ?? undefined,
+              value,
+              source_date: source_date ?? undefined,
+              tags,
+            });
+          } catch (err) {
+            capturePluginError(err as Error, { subsystem: "cli", operation: "runDistillForCli:parse-json" });
+          }
+        }
+      } catch (err) {
+        sink.warn(`memory-hybrid: distill LLM batch ${b + 1} failed: ${err}`);
+        capturePluginError(err as Error, { subsystem: "cli", operation: "runDistillForCli:llm-batch" });
+      }
+    }
+    progress.done();
+    if (opts.dryRun) {
+      sink.log(`Would extract ${allFacts.length} facts from ${filesToProcess.length} sessions`);
+      return {
+        sessionsScanned: filesToProcess.length,
+        factsExtracted: allFacts.length,
+        stored: 0,
+        dedupSkipped: 0,
+        dryRun: true,
+      };
+    }
+    const sourceDateSec = (s: string | null | undefined) => {
+      if (!s || typeof s !== "string") return null;
+      const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s.trim());
+      if (!m) return null;
+      return Math.floor(Date.UTC(+m[1], +m[2] - 1, +m[3]) / 1000);
+    };
+    let stored = 0;
+    let skipped = 0;
+    for (const fact of allFacts) {
+      const isCred = isCredentialLike(fact.text, fact.entity ?? null, fact.key ?? null, fact.value);
+      if (isCred && cfg.credentials.enabled && credentialsDb) {
+        const parsed = tryParseCredentialForVault(fact.text, fact.entity ?? null, fact.key ?? null, fact.value, {
+          requirePatternMatch: cfg.credentials.autoCapture?.requirePatternMatch === true,
+        });
+        if (parsed) {
+          if (!opts.dryRun) {
+            let storedInVault = false;
+            try {
+              const storeResult = credentialsDb.storeIfNew({
+                service: parsed.service,
+                type: parsed.type as any,
+                value: parsed.secretValue,
+                url: parsed.url,
+                notes: parsed.notes,
+              });
+              if (!storeResult) {
+                continue;
+              }
+              storedInVault = true;
+              const pointerText = `Credential for ${parsed.service} (${parsed.type}) — stored in vault.`;
+              const entry = factsDb.store({
+                text: pointerText,
+                category: "technical",
+                importance: BATCH_STORE_IMPORTANCE,
+                entity: "Credentials",
+                key: parsed.service,
+                value: `${VAULT_POINTER_PREFIX}${parsed.service}:${parsed.type}`,
+                source: "distillation",
+                sourceDate: sourceDateSec(fact.source_date),
+              });
+              try {
+                const vector = await embeddings.embed(pointerText);
+                factsDb.setEmbeddingModel(entry.id, embeddings.modelName);
+                if (!(await vectorDb.hasDuplicate(vector, DISTILL_DEDUP_THRESHOLD))) {
+                  await vectorDb.store({
+                    text: pointerText,
+                    vector,
+                    importance: BATCH_STORE_IMPORTANCE,
+                    category: "technical",
+                    id: entry.id,
+                  });
+                }
+              } catch (err) {
+                capturePluginError(err as Error, {
+                  subsystem: "cli",
+                  operation: "runDistillForCli:credential-vector-store",
+                });
+              }
+              stored++;
+              if (opts.verbose) sink.log(`  stored credential: ${parsed.service}`);
+            } catch (err) {
+              if (storedInVault) {
+                try {
+                  credentialsDb.delete(parsed.service, parsed.type as any);
+                } catch (cleanupErr) {
+                  if (opts.verbose)
+                    sink.log(`  failed to clean up orphaned credential for ${parsed.service}: ${cleanupErr}`);
+                  capturePluginError(cleanupErr as Error, {
+                    subsystem: "cli",
+                    operation: "runDistillForCli:credential-compensating-delete",
+                  });
+                }
+              }
+              capturePluginError(err as Error, { subsystem: "cli", operation: "runDistillForCli:credential-store" });
+            }
+          }
+          continue;
         }
         continue;
       }
-      continue;
-    }
-    if (factsDb.hasDuplicate(fact.text)) {
-      skipped++;
-      continue;
-    }
-    try {
-      const vector = await embeddings.embed(fact.text);
-      if (await vectorDb.hasDuplicate(vector, DISTILL_DEDUP_THRESHOLD)) {
+      if (factsDb.hasDuplicate(fact.text)) {
         skipped++;
         continue;
       }
-      const entry = factsDb.store({
-        text: fact.text,
-        category: (isValidCategory(fact.category) ? fact.category : "other") as MemoryCategory,
-        importance: BATCH_STORE_IMPORTANCE,
-        entity: fact.entity ?? null,
-        key: fact.key ?? null,
-        value: fact.value ?? fact.text.slice(0, 200),
-        source: "distillation",
-        sourceDate: sourceDateSec(fact.source_date),
-        tags: fact.tags?.length ? fact.tags : extractTags(fact.text, fact.entity ?? undefined),
-      });
       try {
-        await vectorDb.store({ text: fact.text, vector, importance: BATCH_STORE_IMPORTANCE, category: fact.category, id: entry.id });
-        factsDb.setEmbeddingModel(entry.id, embeddings.modelName);
+        const vector = await embeddings.embed(fact.text);
+        if (await vectorDb.hasDuplicate(vector, DISTILL_DEDUP_THRESHOLD)) {
+          skipped++;
+          continue;
+        }
+        const entry = factsDb.store({
+          text: fact.text,
+          category: (isValidCategory(fact.category) ? fact.category : "other") as MemoryCategory,
+          importance: BATCH_STORE_IMPORTANCE,
+          entity: fact.entity ?? null,
+          key: fact.key ?? null,
+          value: fact.value ?? fact.text.slice(0, 200),
+          source: "distillation",
+          sourceDate: sourceDateSec(fact.source_date),
+          tags: fact.tags?.length ? fact.tags : extractTags(fact.text, fact.entity ?? undefined),
+        });
+        try {
+          await vectorDb.store({
+            text: fact.text,
+            vector,
+            importance: BATCH_STORE_IMPORTANCE,
+            category: fact.category,
+            id: entry.id,
+          });
+          factsDb.setEmbeddingModel(entry.id, embeddings.modelName);
+        } catch (err) {
+          sink.warn(`memory-hybrid: distill vector store failed for "${fact.text.slice(0, 40)}...": ${err}`);
+          capturePluginError(err as Error, { subsystem: "cli", operation: "runDistillForCli:vector-store" });
+        }
+        stored++;
+        if (opts.verbose) sink.log(`  stored: [${fact.category}] ${fact.text.slice(0, 60)}...`);
       } catch (err) {
-        sink.warn(`memory-hybrid: distill vector store failed for "${fact.text.slice(0, 40)}...": ${err}`);
-        capturePluginError(err as Error, { subsystem: "cli", operation: "runDistillForCli:vector-store" });
+        sink.warn(`memory-hybrid: distill store failed for "${fact.text.slice(0, 40)}...": ${err}`);
+        capturePluginError(err as Error, { subsystem: "cli", operation: "runDistillForCli:store-fact" });
       }
-      stored++;
-      if (opts.verbose) sink.log(`  stored: [${fact.category}] ${fact.text.slice(0, 60)}...`);
-    } catch (err) {
-      sink.warn(`memory-hybrid: distill store failed for "${fact.text.slice(0, 40)}...": ${err}`);
-      capturePluginError(err as Error, { subsystem: "cli", operation: "runDistillForCli:store-fact" });
     }
-  }
-  try {
-    runRecordDistillForCli(ctx);
-  } catch (err) {
-    sink.warn(`memory-hybrid: failed to record distill timestamp: ${err}`);
-    capturePluginError(err as Error, { subsystem: "cli", operation: "runDistillForCli:record-timestamp" });
-  }
-  if (!opts.dryRun) {
-    // Use allCandidatePaths (pre-filter input) so skipped sessions advance the watermark.
-    const lastSessionTs = getMaxMtime(allCandidatePaths);
-    factsDb.updateScanCursor(SCAN_TYPE, lastSessionTs ?? 0, allCandidatePaths.length);
-  }
-  return { sessionsScanned: filesToProcess.length, factsExtracted: allFacts.length, stored, dedupSkipped: skipped, dryRun: false };
+    try {
+      runRecordDistillForCli(ctx);
+    } catch (err) {
+      sink.warn(`memory-hybrid: failed to record distill timestamp: ${err}`);
+      capturePluginError(err as Error, { subsystem: "cli", operation: "runDistillForCli:record-timestamp" });
+    }
+    if (!opts.dryRun) {
+      // Use allCandidatePaths (pre-filter input) so skipped sessions advance the watermark.
+      const lastSessionTs = getMaxMtime(allCandidatePaths);
+      factsDb.updateScanCursor(SCAN_TYPE, lastSessionTs ?? 0, allCandidatePaths.length);
+    }
+    return {
+      sessionsScanned: filesToProcess.length,
+      factsExtracted: allFacts.length,
+      stored,
+      dedupSkipped: skipped,
+      dryRun: false,
+    };
   } finally {
     if (useWatermark && !opts.dryRun) clearScanLock(SCAN_TYPE);
   }
@@ -3659,7 +4340,9 @@ export function runCredentialsAuditForCli(ctx: HandlerContext): CredentialsAudit
  * List credentials metadata (service, type, url) without decryption.
  * Used by the `credentials list` CLI command.
  */
-export function runCredentialsListForCli(ctx: HandlerContext): Array<{ service: string; type: string; url: string | null }> {
+export function runCredentialsListForCli(
+  ctx: HandlerContext,
+): Array<{ service: string; type: string; url: string | null }> {
   const { credentialsDb } = ctx;
   if (!credentialsDb) return [];
   return credentialsDb.list();
@@ -3780,281 +4463,336 @@ export async function runSelfCorrectionRunForCli(
   }
 
   try {
-  const workspaceRoot = opts.workspace ?? process.env.OPENCLAW_WORKSPACE ?? join(homedir(), ".openclaw", "workspace");
-  const scCfg = cfg.selfCorrection ?? DEFAULT_SELF_CORRECTION;
-  const reportDir = join(workspaceRoot, "memory", "reports");
-  const today = new Date().toISOString().slice(0, 10);
-  const reportPath = join(reportDir, `self-correction-${today}.md`);
-  let incidents: CorrectionIncident[];
-  if (opts.incidents && opts.incidents.length > 0) {
-    incidents = opts.incidents;
-  } else if (opts.extractPath) {
-    try {
-      const raw = readFileSync(opts.extractPath, "utf-8");
-      incidents = JSON.parse(raw) as CorrectionIncident[];
-    } catch (e) {
-      capturePluginError(e as Error, { subsystem: "cli", operation: "runSelfCorrectionRunForCli:read-extract" });
-      return { incidentsFound: 0, analysed: 0, autoFixed: 0, proposals: [], reportPath: null, error: String(e) };
-    }
-  } else {
-    // Two-tier pre-filter: use local Ollama to triage sessions before extraction (Issue #290).
-    let scFilePaths: string[] | undefined;
-    const pfCfgSC = buildPreFilterConfig(cfg);
-    if (pfCfgSC.enabled) {
-      const sessionFiles = gatherSessionFiles({ days: 3 });
-      const allPaths = sessionFiles.map((f) => f.path);
-      if (allPaths.length > 0) {
-        const pfResult = await preFilterSessions(allPaths, pfCfgSC);
-        if (!pfResult.ollamaUnavailable) {
-          logger.info?.(`memory-hybrid: ${SCAN_TYPE} pre-filter: ${pfResult.kept.length}/${allPaths.length} sessions flagged as interesting`);
-          scFilePaths = pfResult.kept;
-        } else {
-          logger.info?.(`memory-hybrid: ${SCAN_TYPE} pre-filter: Ollama unavailable — scanning all sessions`);
-          scFilePaths = allPaths; // avoid redundant gatherSessionFiles inside runSelfCorrectionExtractForCli
-        }
-      }
-    }
-    const extractResult = runSelfCorrectionExtractForCli(ctx, { days: 3, filePaths: scFilePaths });
-    incidents = extractResult.incidents;
-  }
-  if (incidents.length === 0) {
-    const emptyReport = `# Self-Correction Analysis (${today})\n\nScanned sessions: 3 days.\nIncidents found: 0.\n`;
-    try {
-      mkdirSync(reportDir, { recursive: true });
-      writeFileSync(reportPath, emptyReport, "utf-8");
-    } catch (err) {
-      capturePluginError(err as Error, { subsystem: "cli", operation: "runSelfCorrectionRunForCli:write-empty-report" });
-    }
-    if (!opts.dryRun && !opts.incidents && !opts.extractPath) {
-      factsDb.updateScanCursor(SCAN_TYPE, 0, 0);
-      clearScanLock(SCAN_TYPE);
-    }
-    return { incidentsFound: 0, analysed: 0, autoFixed: 0, proposals: [], reportPath };
-  }
-  const prompt = fillPrompt(loadPrompt("self-correction-analyze"), {
-    incidents_json: JSON.stringify(incidents),
-  });
-  const heavyPref = getLLMModelPreference(getCronModelConfig(cfg), "heavy");
-  const model = opts.model ?? heavyPref[0] ?? getDefaultCronModel(getCronModelConfig(cfg), "heavy");
-  const scFallbackModels = opts.model ? [] : (heavyPref.length > 1 ? heavyPref.slice(1) : (cfg.llm ? [] : (cfg.distill?.fallbackModels ?? [])));
-  let analysed: Array<{
-    category: string;
-    severity: string;
-    remediationType: string;
-    remediationContent: string | { text?: string; entity?: string; key?: string; tags?: string[] };
-    repeated?: boolean;
-  }> = [];
-  const useSpawn = scCfg.analyzeViaSpawn && incidents.length > scCfg.spawnThreshold;
-  try {
-    let content: string;
-    if (useSpawn) {
-      const { spawnSync } = await import("node:child_process");
-      const { tmpdir: osTmp } = await import("node:os");
-      const promptPath = join(osTmp(), `self-correction-prompt-${Date.now()}.txt`);
-      writeFileSync(promptPath, prompt, "utf-8");
-      const spawnModel = (scCfg.spawnModel?.trim() || getDefaultCronModel(getCronModelConfig(cfg), "default"));
-      const r = spawnSync(
-        "openclaw",
-        ["sessions", "spawn", "--model", spawnModel, "--message", "Analyze the attached incidents and output ONLY a JSON array (no markdown, no code fences). Use the instructions in the attached file.", "--attach", promptPath],
-        { encoding: "utf-8", maxBuffer: 2 * 1024 * 1024 },
-      );
+    const workspaceRoot = opts.workspace ?? process.env.OPENCLAW_WORKSPACE ?? join(homedir(), ".openclaw", "workspace");
+    const scCfg = cfg.selfCorrection ?? DEFAULT_SELF_CORRECTION;
+    const reportDir = join(workspaceRoot, "memory", "reports");
+    const today = new Date().toISOString().slice(0, 10);
+    const reportPath = join(reportDir, `self-correction-${today}.md`);
+    let incidents: CorrectionIncident[];
+    if (opts.incidents && opts.incidents.length > 0) {
+      incidents = opts.incidents;
+    } else if (opts.extractPath) {
       try {
-        if (existsSync(promptPath)) rmSync(promptPath, { force: true });
-      } catch (err) {
-        capturePluginError(err as Error, { subsystem: "cli", operation: "runSelfCorrectionRunForCli:cleanup-tmp" });
+        const raw = readFileSync(opts.extractPath, "utf-8");
+        incidents = JSON.parse(raw) as CorrectionIncident[];
+      } catch (e) {
+        capturePluginError(e as Error, { subsystem: "cli", operation: "runSelfCorrectionRunForCli:read-extract" });
+        return { incidentsFound: 0, analysed: 0, autoFixed: 0, proposals: [], reportPath: null, error: String(e) };
       }
-      content = (r.stdout ?? "") + (r.stderr ?? "");
-      if (r.status !== 0) throw new Error(`sessions spawn exited ${r.status}: ${content.slice(0, 500)}`);
     } else {
-      content = await chatCompleteWithRetry({
-        model,
-        content: prompt,
-        temperature: 0.2,
-        maxTokens: distillMaxOutputTokens(model),
-        openai,
-        fallbackModels: scFallbackModels,
-        label: "memory-hybrid: self-correction analyze",
-      });
-    }
-    const jsonMatch = content.match(/\[[\s\S]*\]/);
-    if (jsonMatch) {
-      analysed = JSON.parse(jsonMatch[0]) as typeof analysed;
-    }
-  } catch (e) {
-    capturePluginError(e as Error, { subsystem: "cli", operation: "runSelfCorrectionRunForCli:llm-analysis" });
-    return {
-      incidentsFound: incidents.length,
-      analysed: 0,
-      autoFixed: 0,
-      proposals: [],
-      reportPath: null,
-      error: String(e),
-    };
-  }
-  const proposals: string[] = [];
-  const toolsSuggestions: string[] = [];
-  let autoFixed = 0;
-  let toolsApplied = 0;
-  const toApply = analysed.filter((a) => a.remediationType !== "NO_ACTION" && !a.repeated).slice(0, SELF_CORRECTION_CAP);
-  const toolsPath = join(workspaceRoot, "TOOLS.md");
-  const toolsSection = scCfg.toolsSection;
-  const semanticThreshold = scCfg.semanticDedupThreshold ?? 0.92;
-
-  for (const a of toApply) {
-    if (a.remediationType === "MEMORY_STORE") {
-      const c = a.remediationContent;
-      const obj = typeof c === "object" && c && "text" in c ? c : { text: String(c), entity: "Fact", tags: [] as string[] };
-      const text = (obj.text ?? "").trim();
-      if (!text || factsDb.hasDuplicate(text)) continue;
-      let vector: number[] | null = null;
-      if (scCfg.semanticDedup || !opts.dryRun) {
-        try {
-          vector = await embeddings.embed(text);
-          if (scCfg.semanticDedup && (await vectorDb.hasDuplicate(vector, semanticThreshold))) continue;
-        } catch (err) {
-          logger.warn?.(`memory-hybrid: self-correction embed/semantic dedup failed: ${err}`);
-          capturePluginError(err as Error, { subsystem: "cli", operation: "runSelfCorrectionRunForCli:embed-dedup" });
-          continue;
+      // Two-tier pre-filter: use local Ollama to triage sessions before extraction (Issue #290).
+      let scFilePaths: string[] | undefined;
+      const pfCfgSC = buildPreFilterConfig(cfg);
+      if (pfCfgSC.enabled) {
+        const sessionFiles = gatherSessionFiles({ days: 3 });
+        const allPaths = sessionFiles.map((f) => f.path);
+        if (allPaths.length > 0) {
+          const pfResult = await preFilterSessions(allPaths, pfCfgSC);
+          if (!pfResult.ollamaUnavailable) {
+            logger.info?.(
+              `memory-hybrid: ${SCAN_TYPE} pre-filter: ${pfResult.kept.length}/${allPaths.length} sessions flagged as interesting`,
+            );
+            scFilePaths = pfResult.kept;
+          } else {
+            logger.info?.(`memory-hybrid: ${SCAN_TYPE} pre-filter: Ollama unavailable — scanning all sessions`);
+            scFilePaths = allPaths; // avoid redundant gatherSessionFiles inside runSelfCorrectionExtractForCli
+          }
         }
       }
-      if (opts.dryRun) continue;
+      const extractResult = runSelfCorrectionExtractForCli(ctx, { days: 3, filePaths: scFilePaths });
+      incidents = extractResult.incidents;
+    }
+    if (incidents.length === 0) {
+      const emptyReport = `# Self-Correction Analysis (${today})\n\nScanned sessions: 3 days.\nIncidents found: 0.\n`;
       try {
-        const entry = factsDb.store({
-          text,
-          category: "technical",
-          importance: CLI_STORE_IMPORTANCE,
-          entity: obj.entity ?? null,
-          key: typeof obj.key === "string" ? obj.key : null,
-          value: text.slice(0, 200),
-          source: "self-correction",
-          tags: Array.isArray(obj.tags) ? obj.tags : [],
-        });
-        if (vector) {
-          await vectorDb.store({ text, vector, importance: CLI_STORE_IMPORTANCE, category: "technical", id: entry.id });
-          factsDb.setEmbeddingModel(entry.id, embeddings.modelName);
-        }
-        autoFixed++;
+        mkdirSync(reportDir, { recursive: true });
+        writeFileSync(reportPath, emptyReport, "utf-8");
       } catch (err) {
-        logger.warn?.(`memory-hybrid: self-correction MEMORY_STORE failed: ${err}`);
-        capturePluginError(err as Error, { subsystem: "cli", operation: "runSelfCorrectionRunForCli:memory-store" });
+        capturePluginError(err as Error, {
+          subsystem: "cli",
+          operation: "runSelfCorrectionRunForCli:write-empty-report",
+        });
       }
-    } else if (a.remediationType === "TOOLS_RULE") {
-      const line = typeof a.remediationContent === "string" ? a.remediationContent : (a.remediationContent as { text?: string })?.text ?? "";
-      if (line.trim()) toolsSuggestions.push(line.trim());
-    } else if (a.remediationType === "AGENTS_RULE" || a.remediationType === "SKILL_UPDATE") {
-      const line = typeof a.remediationContent === "string" ? a.remediationContent : (a.remediationContent as { text?: string })?.text ?? "";
-      if (line.trim()) {
-        proposals.push(`[${a.remediationType}] ${line.trim()}`);
-        // Wire AGENTS_RULE into proposals DB (#260) — closes the dead end
-        if (a.remediationType === "AGENTS_RULE" && proposalsDb && (scCfg as { agentsRuleToProposals?: boolean }).agentsRuleToProposals !== false && !opts.dryRun) {
+      if (!opts.dryRun && !opts.incidents && !opts.extractPath) {
+        factsDb.updateScanCursor(SCAN_TYPE, 0, 0);
+        clearScanLock(SCAN_TYPE);
+      }
+      return { incidentsFound: 0, analysed: 0, autoFixed: 0, proposals: [], reportPath };
+    }
+    const prompt = fillPrompt(loadPrompt("self-correction-analyze"), {
+      incidents_json: JSON.stringify(incidents),
+    });
+    const heavyPref = getLLMModelPreference(getCronModelConfig(cfg), "heavy");
+    const model = opts.model ?? heavyPref[0] ?? getDefaultCronModel(getCronModelConfig(cfg), "heavy");
+    const scFallbackModels = opts.model
+      ? []
+      : heavyPref.length > 1
+        ? heavyPref.slice(1)
+        : cfg.llm
+          ? []
+          : (cfg.distill?.fallbackModels ?? []);
+    let analysed: Array<{
+      category: string;
+      severity: string;
+      remediationType: string;
+      remediationContent: string | { text?: string; entity?: string; key?: string; tags?: string[] };
+      repeated?: boolean;
+    }> = [];
+    const useSpawn = scCfg.analyzeViaSpawn && incidents.length > scCfg.spawnThreshold;
+    try {
+      let content: string;
+      if (useSpawn) {
+        const { spawnSync } = await import("node:child_process");
+        const { tmpdir: osTmp } = await import("node:os");
+        const promptPath = join(osTmp(), `self-correction-prompt-${Date.now()}.txt`);
+        writeFileSync(promptPath, prompt, "utf-8");
+        const spawnModel = scCfg.spawnModel?.trim() || getDefaultCronModel(getCronModelConfig(cfg), "default");
+        const r = spawnSync(
+          "openclaw",
+          [
+            "sessions",
+            "spawn",
+            "--model",
+            spawnModel,
+            "--message",
+            "Analyze the attached incidents and output ONLY a JSON array (no markdown, no code fences). Use the instructions in the attached file.",
+            "--attach",
+            promptPath,
+          ],
+          { encoding: "utf-8", maxBuffer: 2 * 1024 * 1024 },
+        );
+        try {
+          if (existsSync(promptPath)) rmSync(promptPath, { force: true });
+        } catch (err) {
+          capturePluginError(err as Error, { subsystem: "cli", operation: "runSelfCorrectionRunForCli:cleanup-tmp" });
+        }
+        content = (r.stdout ?? "") + (r.stderr ?? "");
+        if (r.status !== 0) throw new Error(`sessions spawn exited ${r.status}: ${content.slice(0, 500)}`);
+      } else {
+        content = await chatCompleteWithRetry({
+          model,
+          content: prompt,
+          temperature: 0.2,
+          maxTokens: distillMaxOutputTokens(model),
+          openai,
+          fallbackModels: scFallbackModels,
+          label: "memory-hybrid: self-correction analyze",
+        });
+      }
+      const jsonMatch = content.match(/\[[\s\S]*\]/);
+      if (jsonMatch) {
+        analysed = JSON.parse(jsonMatch[0]) as typeof analysed;
+      }
+    } catch (e) {
+      capturePluginError(e as Error, { subsystem: "cli", operation: "runSelfCorrectionRunForCli:llm-analysis" });
+      return {
+        incidentsFound: incidents.length,
+        analysed: 0,
+        autoFixed: 0,
+        proposals: [],
+        reportPath: null,
+        error: String(e),
+      };
+    }
+    const proposals: string[] = [];
+    const toolsSuggestions: string[] = [];
+    let autoFixed = 0;
+    let toolsApplied = 0;
+    const toApply = analysed
+      .filter((a) => a.remediationType !== "NO_ACTION" && !a.repeated)
+      .slice(0, SELF_CORRECTION_CAP);
+    const toolsPath = join(workspaceRoot, "TOOLS.md");
+    const toolsSection = scCfg.toolsSection;
+    const semanticThreshold = scCfg.semanticDedupThreshold ?? 0.92;
+
+    for (const a of toApply) {
+      if (a.remediationType === "MEMORY_STORE") {
+        const c = a.remediationContent;
+        const obj =
+          typeof c === "object" && c && "text" in c ? c : { text: String(c), entity: "Fact", tags: [] as string[] };
+        const text = (obj.text ?? "").trim();
+        if (!text || factsDb.hasDuplicate(text)) continue;
+        let vector: number[] | null = null;
+        if (scCfg.semanticDedup || !opts.dryRun) {
           try {
-            const targetFile = inferTargetFile(line);
-            const incidentContext = incidents.length > 0 ? `Correction incident: "${incidents[0].userMessage.slice(0, 200)}"` : "Self-correction analysis";
-            proposalsDb.create({
-              targetFile,
-              title: `Self-correction: ${a.category ?? "behavior"}`,
-              observation: incidentContext,
-              suggestedChange: line.trim(),
-              confidence: 0.7,
-              evidenceSessions: incidents.map((inc) => inc.sessionFile).filter((v, idx, arr) => arr.indexOf(v) === idx),
-            });
+            vector = await embeddings.embed(text);
+            if (scCfg.semanticDedup && (await vectorDb.hasDuplicate(vector, semanticThreshold))) continue;
           } catch (err) {
-            capturePluginError(err as Error, { subsystem: "cli", operation: "runSelfCorrectionRunForCli:agents-rule-proposal" });
+            logger.warn?.(`memory-hybrid: self-correction embed/semantic dedup failed: ${err}`);
+            capturePluginError(err as Error, { subsystem: "cli", operation: "runSelfCorrectionRunForCli:embed-dedup" });
+            continue;
+          }
+        }
+        if (opts.dryRun) continue;
+        try {
+          const entry = factsDb.store({
+            text,
+            category: "technical",
+            importance: CLI_STORE_IMPORTANCE,
+            entity: obj.entity ?? null,
+            key: typeof obj.key === "string" ? obj.key : null,
+            value: text.slice(0, 200),
+            source: "self-correction",
+            tags: Array.isArray(obj.tags) ? obj.tags : [],
+          });
+          if (vector) {
+            await vectorDb.store({
+              text,
+              vector,
+              importance: CLI_STORE_IMPORTANCE,
+              category: "technical",
+              id: entry.id,
+            });
+            factsDb.setEmbeddingModel(entry.id, embeddings.modelName);
+          }
+          autoFixed++;
+        } catch (err) {
+          logger.warn?.(`memory-hybrid: self-correction MEMORY_STORE failed: ${err}`);
+          capturePluginError(err as Error, { subsystem: "cli", operation: "runSelfCorrectionRunForCli:memory-store" });
+        }
+      } else if (a.remediationType === "TOOLS_RULE") {
+        const line =
+          typeof a.remediationContent === "string"
+            ? a.remediationContent
+            : ((a.remediationContent as { text?: string })?.text ?? "");
+        if (line.trim()) toolsSuggestions.push(line.trim());
+      } else if (a.remediationType === "AGENTS_RULE" || a.remediationType === "SKILL_UPDATE") {
+        const line =
+          typeof a.remediationContent === "string"
+            ? a.remediationContent
+            : ((a.remediationContent as { text?: string })?.text ?? "");
+        if (line.trim()) {
+          proposals.push(`[${a.remediationType}] ${line.trim()}`);
+          // Wire AGENTS_RULE into proposals DB (#260) — closes the dead end
+          if (
+            a.remediationType === "AGENTS_RULE" &&
+            proposalsDb &&
+            (scCfg as { agentsRuleToProposals?: boolean }).agentsRuleToProposals !== false &&
+            !opts.dryRun
+          ) {
+            try {
+              const targetFile = inferTargetFile(line);
+              const incidentContext =
+                incidents.length > 0
+                  ? `Correction incident: "${incidents[0].userMessage.slice(0, 200)}"`
+                  : "Self-correction analysis";
+              proposalsDb.create({
+                targetFile,
+                title: `Self-correction: ${a.category ?? "behavior"}`,
+                observation: incidentContext,
+                suggestedChange: line.trim(),
+                confidence: 0.7,
+                evidenceSessions: incidents
+                  .map((inc) => inc.sessionFile)
+                  .filter((v, idx, arr) => arr.indexOf(v) === idx),
+              });
+            } catch (err) {
+              capturePluginError(err as Error, {
+                subsystem: "cli",
+                operation: "runSelfCorrectionRunForCli:agents-rule-proposal",
+              });
+            }
           }
         }
       }
     }
-  }
 
-  const noApplyTools = opts.applyTools === false;
-  const shouldApplyTools = !opts.dryRun && (scCfg.applyToolsByDefault !== false || opts.approve) && !noApplyTools;
-  if (toolsSuggestions.length > 0 && !opts.dryRun) {
-    if (scCfg.autoRewriteTools && shouldApplyTools && existsSync(toolsPath)) {
-      try {
-        const currentTools = readFileSync(toolsPath, "utf-8");
-        const rewritePrompt = fillPrompt(loadPrompt("self-correction-rewrite-tools"), {
-          current_tools: currentTools,
-          new_rules: toolsSuggestions.join("\n"),
-        });
-        const rewritten = await chatCompleteWithRetry({
-          model,
-          content: rewritePrompt,
-          temperature: 0.2,
-          maxTokens: 16000,
-          openai,
-          fallbackModels: scFallbackModels,
-          label: "memory-hybrid: self-correction rewrite-tools",
-        });
-        const cleaned = rewritten.trim().replace(/^```\w*\n?|```\s*$/g, "").trim();
-        if (cleaned.length > 50) {
-          writeFileSync(toolsPath, cleaned, "utf-8");
-          toolsApplied = toolsSuggestions.length;
-          autoFixed += toolsApplied;
+    const noApplyTools = opts.applyTools === false;
+    const shouldApplyTools = !opts.dryRun && (scCfg.applyToolsByDefault !== false || opts.approve) && !noApplyTools;
+    if (toolsSuggestions.length > 0 && !opts.dryRun) {
+      if (scCfg.autoRewriteTools && shouldApplyTools && existsSync(toolsPath)) {
+        try {
+          const currentTools = readFileSync(toolsPath, "utf-8");
+          const rewritePrompt = fillPrompt(loadPrompt("self-correction-rewrite-tools"), {
+            current_tools: currentTools,
+            new_rules: toolsSuggestions.join("\n"),
+          });
+          const rewritten = await chatCompleteWithRetry({
+            model,
+            content: rewritePrompt,
+            temperature: 0.2,
+            maxTokens: 16000,
+            openai,
+            fallbackModels: scFallbackModels,
+            label: "memory-hybrid: self-correction rewrite-tools",
+          });
+          const cleaned = rewritten
+            .trim()
+            .replace(/^```\w*\n?|```\s*$/g, "")
+            .trim();
+          if (cleaned.length > 50) {
+            writeFileSync(toolsPath, cleaned, "utf-8");
+            toolsApplied = toolsSuggestions.length;
+            autoFixed += toolsApplied;
+          }
+        } catch (err) {
+          logger.warn?.(`memory-hybrid: self-correction TOOLS rewrite failed: ${err}`);
+          capturePluginError(err as Error, { subsystem: "cli", operation: "runSelfCorrectionRunForCli:tools-rewrite" });
         }
-      } catch (err) {
-        logger.warn?.(`memory-hybrid: self-correction TOOLS rewrite failed: ${err}`);
-        capturePluginError(err as Error, { subsystem: "cli", operation: "runSelfCorrectionRunForCli:tools-rewrite" });
-      }
-    } else if (shouldApplyTools && existsSync(toolsPath)) {
-      try {
-        const { inserted } = insertRulesUnderSection(toolsPath, toolsSection, toolsSuggestions);
-        toolsApplied = inserted;
-        autoFixed += inserted;
-      } catch (err) {
-        capturePluginError(err as Error, { subsystem: "cli", operation: "runSelfCorrectionRunForCli:insert-tools" });
+      } else if (shouldApplyTools && existsSync(toolsPath)) {
+        try {
+          const { inserted } = insertRulesUnderSection(toolsPath, toolsSection, toolsSuggestions);
+          toolsApplied = inserted;
+          autoFixed += inserted;
+        } catch (err) {
+          capturePluginError(err as Error, { subsystem: "cli", operation: "runSelfCorrectionRunForCli:insert-tools" });
+        }
       }
     }
-  }
 
-  const reportLines = [
-    `# Self-Correction Analysis (${today})`,
-    "",
-    `Scanned: last 3 days. Incidents found: ${incidents.length}.`,
-    `Analysed: ${analysed.length}. Auto-fixed: ${autoFixed}. Needs review: ${proposals.length}.`,
-    "",
-    ...(autoFixed > 0 ? ["## Auto-applied", "", `- ${autoFixed} memory store(s) and/or TOOLS.md rule(s).`, ""] : []),
-    ...(toolsSuggestions.length > 0 && toolsApplied === 0 && !scCfg.autoRewriteTools
-      ? [
-          "## Suggested TOOLS.md rules (not applied this run). To apply: config applyToolsByDefault is true by default, or use --approve. To skip applying: --no-apply-tools.",
-          "",
-          ...toolsSuggestions.map((s) => `- ${s}`),
-          "",
-        ]
-      : []),
-    ...(toolsApplied > 0 ? ["## TOOLS.md updated", "", `- ${toolsApplied} rule(s) inserted under section \"${toolsSection}\".`, ""] : []),
-    ...(proposals.length > 0 ? ["## Proposed (review before applying)", "", ...proposals.map((p) => `- ${p}`), ""] : []),
-  ];
-  try {
-    mkdirSync(reportDir, { recursive: true });
-    writeFileSync(reportPath, reportLines.join("\n"), "utf-8");
-  } catch (e) {
-    logger.warn?.(`memory-hybrid: could not write report: ${e}`);
-    capturePluginError(e as Error, { subsystem: "cli", operation: "runSelfCorrectionRunForCli:write-report" });
-  }
-  // Record savings: each auto-fixed incident avoided ~2 manual LLM round-trips
-  if (autoFixed > 0 && ctx.costTracker && !opts?.dryRun) {
-    ctx.costTracker.recordSavings({
-      feature: "self-correction",
-      action: "auto-fixed incident",
-      countAvoided: autoFixed,
-      estimatedSavingUsd: autoFixed * 0.002,
-      note: `${autoFixed} incident(s) auto-remediated`,
-    });
-  }
+    const reportLines = [
+      `# Self-Correction Analysis (${today})`,
+      "",
+      `Scanned: last 3 days. Incidents found: ${incidents.length}.`,
+      `Analysed: ${analysed.length}. Auto-fixed: ${autoFixed}. Needs review: ${proposals.length}.`,
+      "",
+      ...(autoFixed > 0 ? ["## Auto-applied", "", `- ${autoFixed} memory store(s) and/or TOOLS.md rule(s).`, ""] : []),
+      ...(toolsSuggestions.length > 0 && toolsApplied === 0 && !scCfg.autoRewriteTools
+        ? [
+            "## Suggested TOOLS.md rules (not applied this run). To apply: config applyToolsByDefault is true by default, or use --approve. To skip applying: --no-apply-tools.",
+            "",
+            ...toolsSuggestions.map((s) => `- ${s}`),
+            "",
+          ]
+        : []),
+      ...(toolsApplied > 0
+        ? ["## TOOLS.md updated", "", `- ${toolsApplied} rule(s) inserted under section \"${toolsSection}\".`, ""]
+        : []),
+      ...(proposals.length > 0
+        ? ["## Proposed (review before applying)", "", ...proposals.map((p) => `- ${p}`), ""]
+        : []),
+    ];
+    try {
+      mkdirSync(reportDir, { recursive: true });
+      writeFileSync(reportPath, reportLines.join("\n"), "utf-8");
+    } catch (e) {
+      logger.warn?.(`memory-hybrid: could not write report: ${e}`);
+      capturePluginError(e as Error, { subsystem: "cli", operation: "runSelfCorrectionRunForCli:write-report" });
+    }
+    // Record savings: each auto-fixed incident avoided ~2 manual LLM round-trips
+    if (autoFixed > 0 && ctx.costTracker && !opts?.dryRun) {
+      ctx.costTracker.recordSavings({
+        feature: "self-correction",
+        action: "auto-fixed incident",
+        countAvoided: autoFixed,
+        estimatedSavingUsd: autoFixed * 0.002,
+        note: `${autoFixed} incident(s) auto-remediated`,
+      });
+    }
 
-  if (!opts.dryRun && !opts.incidents && !opts.extractPath) {
-    factsDb.updateScanCursor(SCAN_TYPE, Date.now(), incidents.length);
-  }
+    if (!opts.dryRun && !opts.incidents && !opts.extractPath) {
+      factsDb.updateScanCursor(SCAN_TYPE, Date.now(), incidents.length);
+    }
 
-  return {
-    incidentsFound: incidents.length,
-    analysed: analysed.length,
-    autoFixed,
-    proposals,
-    reportPath,
-    toolsSuggestions: toolsSuggestions.length > 0 ? toolsSuggestions : undefined,
-    toolsApplied: toolsApplied > 0 ? toolsApplied : undefined,
-  };
+    return {
+      incidentsFound: incidents.length,
+      analysed: analysed.length,
+      autoFixed,
+      proposals,
+      reportPath,
+      toolsSuggestions: toolsSuggestions.length > 0 ? toolsSuggestions : undefined,
+      toolsApplied: toolsApplied > 0 ? toolsApplied : undefined,
+    };
   } finally {
     if (!opts.full && !opts.dryRun && !opts.incidents && !opts.extractPath) clearScanLock(SCAN_TYPE);
   }
@@ -4063,10 +4801,7 @@ export async function runSelfCorrectionRunForCli(
 /**
  * Upgrade plugin to latest version
  */
-export async function runUpgradeForCli(
-  ctx: HandlerContext,
-  requestedVersion?: string,
-): Promise<UpgradeCliResult> {
+export async function runUpgradeForCli(ctx: HandlerContext, requestedVersion?: string): Promise<UpgradeCliResult> {
   const { cfg, logger } = ctx;
   const extDir = join(dirname(fileURLToPath(import.meta.url)), "..");
   const { spawnSync } = await import("node:child_process");
@@ -4121,11 +4856,17 @@ export async function runUpgradeForCli(
       normalizeExisting: true,
       reEnableDisabled: false,
       scheduleOverrides: Object.keys(scheduleOverrides).length > 0 ? scheduleOverrides : undefined,
-      messageOverrides: { [PLUGIN_JOB_ID_PREFIX + "nightly-memory-to-skills"]: buildMemoryToSkillsMessage(cfg.memoryToSkills?.notify !== false) },
+      messageOverrides: {
+        [PLUGIN_JOB_ID_PREFIX + "nightly-memory-to-skills"]: buildMemoryToSkillsMessage(
+          cfg.memoryToSkills?.notify !== false,
+        ),
+      },
       featureGates: { "sensorSweep.enabled": cfg.sensorSweep?.enabled === true },
     });
     if (added.length > 0 || normalized.length > 0) {
-      logger?.info?.(`memory-hybrid: upgrade — cron jobs: ${added.length} added, ${normalized.length} normalized (disabled jobs left as-is). Run openclaw hybrid-mem verify to confirm.`);
+      logger?.info?.(
+        `memory-hybrid: upgrade — cron jobs: ${added.length} added, ${normalized.length} normalized (disabled jobs left as-is). Run openclaw hybrid-mem verify to confirm.`,
+      );
     }
   } catch (err) {
     capturePluginError(err as Error, { subsystem: "cli", operation: "runUpgradeForCli:ensure-cron-jobs" });
@@ -4140,13 +4881,17 @@ function getPluginEntryConfig(root: Record<string, unknown>): Record<string, unk
   const entries = plugins?.entries as Record<string, unknown> | undefined;
   const entry = entries?.[PLUGIN_ID] as Record<string, unknown> | undefined;
   const config = entry?.config;
-  return config && typeof config === "object" && !Array.isArray(config) ? (config as Record<string, unknown>) : undefined;
+  return config && typeof config === "object" && !Array.isArray(config)
+    ? (config as Record<string, unknown>)
+    : undefined;
 }
 
 /**
  * Get plugin config from file
  */
-function getPluginConfigFromFile(configPath: string): { config: Record<string, unknown>; root: Record<string, unknown> } | { error: string } {
+function getPluginConfigFromFile(
+  configPath: string,
+): { config: Record<string, unknown>; root: Record<string, unknown> } | { error: string } {
   if (!existsSync(configPath)) return { error: `Config not found: ${configPath}` };
   let root: Record<string, unknown>;
   try {
@@ -4219,10 +4964,7 @@ function getNested(obj: Record<string, unknown>, path: string): unknown {
 /**
  * Show help for config key
  */
-export function runConfigSetHelpForCli(
-  ctx: HandlerContext,
-  key: string,
-): ConfigCliResult {
+export function runConfigSetHelpForCli(ctx: HandlerContext, key: string): ConfigCliResult {
   const k = key.trim();
   if (!k) return { ok: false, error: "Key is required (e.g. autoCapture, credentials.enabled)" };
   const openclawDir = join(homedir(), ".openclaw");
@@ -4230,13 +4972,16 @@ export function runConfigSetHelpForCli(
   const out = getPluginConfigFromFile(configPath);
   if ("error" in out) return { ok: false, error: out.error };
   const current = getNested(out.config, k);
-  const currentStr = current === undefined ? "(not set)" : typeof current === "string" ? current : JSON.stringify(current);
+  const currentStr =
+    current === undefined ? "(not set)" : typeof current === "string" ? current : JSON.stringify(current);
   let desc = "";
   try {
     const extDir = join(dirname(fileURLToPath(import.meta.url)), "..");
     const pluginPath = join(extDir, "openclaw.plugin.json");
     if (existsSync(pluginPath)) {
-      const plugin = JSON.parse(readFileSync(pluginPath, "utf-8")) as { uiHints?: Record<string, { help?: string; label?: string }> };
+      const plugin = JSON.parse(readFileSync(pluginPath, "utf-8")) as {
+        uiHints?: Record<string, { help?: string; label?: string }>;
+      };
       const hint = plugin.uiHints?.[k];
       if (hint?.help) {
         desc = hint.help.length > MAX_DESC_LEN ? hint.help.slice(0, MAX_DESC_LEN - 3) + "..." : hint.help;
@@ -4255,10 +5000,7 @@ export function runConfigSetHelpForCli(
 /**
  * Set config mode
  */
-export function runConfigModeForCli(
-  ctx: HandlerContext,
-  mode: string,
-): ConfigCliResult {
+export function runConfigModeForCli(ctx: HandlerContext, mode: string): ConfigCliResult {
   const valid: ConfigMode[] = ["essential", "normal", "expert", "full"];
   if (!valid.includes(mode as ConfigMode)) {
     return { ok: false, error: `Invalid mode: ${mode}. Use one of: ${valid.join(", ")}` };
@@ -4275,18 +5017,23 @@ export function runConfigModeForCli(
     capturePluginError(e as Error, { subsystem: "cli", operation: "runConfigModeForCli:write" });
     return { ok: false, error: `Could not write config: ${e}` };
   }
-  return { ok: true, configPath, message: `Set mode to "${mode}". Restart the gateway for changes to take effect. Run openclaw hybrid-mem verify to confirm.` };
+  return {
+    ok: true,
+    configPath,
+    message: `Set mode to "${mode}". Restart the gateway for changes to take effect. Run openclaw hybrid-mem verify to confirm.`,
+  };
 }
 
 /**
  * Set config value
  */
-export function runConfigSetForCli(
-  ctx: HandlerContext,
-  key: string,
-  value: string,
-): ConfigCliResult {
-  if (!key.trim()) return { ok: false, error: "Key is required (e.g. autoCapture, credentials.enabled, store.fuzzyDedupe, errorReporting.botName, errorReporting.botId)" };
+export function runConfigSetForCli(ctx: HandlerContext, key: string, value: string): ConfigCliResult {
+  if (!key.trim())
+    return {
+      ok: false,
+      error:
+        "Key is required (e.g. autoCapture, credentials.enabled, store.fuzzyDedupe, errorReporting.botName, errorReporting.botId)",
+    };
   const k = key.trim();
   const openclawDir = join(homedir(), ".openclaw");
   const configPath = join(openclawDir, "openclaw.json");
@@ -4322,7 +5069,10 @@ export function runConfigSetForCli(
     try {
       hybridConfigSchema.parse(out.config);
     } catch (schemaErr: unknown) {
-      capturePluginError(schemaErr instanceof Error ? schemaErr : new Error(String(schemaErr)), { subsystem: "cli", operation: "runConfigSetForCli:validation-errorReporting" });
+      capturePluginError(schemaErr instanceof Error ? schemaErr : new Error(String(schemaErr)), {
+        subsystem: "cli",
+        operation: "runConfigSetForCli:validation-errorReporting",
+      });
       return { ok: false, error: `Invalid config value: ${schemaErr}` };
     }
     try {
@@ -4332,7 +5082,11 @@ export function runConfigSetForCli(
       capturePluginError(e as Error, { subsystem: "cli", operation: "runConfigSetForCli:write-errorReporting" });
       return { ok: false, error: `Could not write config: ${e}` };
     }
-    return { ok: true, configPath, message: `Set errorReporting.enabled and errorReporting.consent = ${written}. Restart the gateway for changes to take effect. Run openclaw hybrid-mem verify to confirm.` };
+    return {
+      ok: true,
+      configPath,
+      message: `Set errorReporting.enabled and errorReporting.consent = ${written}. Restart the gateway for changes to take effect. Run openclaw hybrid-mem verify to confirm.`,
+    };
   }
   // memoryToSkills must stay an object (schema); "config-set memoryToSkills true" → memoryToSkills.enabled = true
   if (k === "memoryToSkills" && !k.includes(".")) {
@@ -4345,7 +5099,10 @@ export function runConfigSetForCli(
     try {
       hybridConfigSchema.parse(out.config);
     } catch (schemaErr: unknown) {
-      capturePluginError(schemaErr instanceof Error ? schemaErr : new Error(String(schemaErr)), { subsystem: "cli", operation: "runConfigSetForCli:validation-memoryToSkills" });
+      capturePluginError(schemaErr instanceof Error ? schemaErr : new Error(String(schemaErr)), {
+        subsystem: "cli",
+        operation: "runConfigSetForCli:validation-memoryToSkills",
+      });
       return { ok: false, error: `Invalid config value: ${schemaErr}` };
     }
     try {
@@ -4355,7 +5112,11 @@ export function runConfigSetForCli(
       capturePluginError(e as Error, { subsystem: "cli", operation: "runConfigSetForCli:write-memoryToSkills" });
       return { ok: false, error: `Could not write config: ${e}` };
     }
-    return { ok: true, configPath, message: `Set memoryToSkills.enabled = ${written}. Restart the gateway for changes to take effect. Run: openclaw hybrid-mem skills-suggest. Use openclaw hybrid-mem verify to confirm.` };
+    return {
+      ok: true,
+      configPath,
+      message: `Set memoryToSkills.enabled = ${written}. Restart the gateway for changes to take effect. Run: openclaw hybrid-mem skills-suggest. Use openclaw hybrid-mem verify to confirm.`,
+    };
   }
   // credentials must stay an object (schema); "config-set credentials true" → credentials.enabled = true
   if (k === "credentials" && !k.includes(".")) {
@@ -4371,7 +5132,10 @@ export function runConfigSetForCli(
     try {
       hybridConfigSchema.parse(out.config);
     } catch (schemaErr: unknown) {
-      capturePluginError(schemaErr instanceof Error ? schemaErr : new Error(String(schemaErr)), { subsystem: "cli", operation: "runConfigSetForCli:validation-credentials" });
+      capturePluginError(schemaErr instanceof Error ? schemaErr : new Error(String(schemaErr)), {
+        subsystem: "cli",
+        operation: "runConfigSetForCli:validation-credentials",
+      });
       return { ok: false, error: `Invalid config value: ${schemaErr}` };
     }
     try {
@@ -4381,7 +5145,11 @@ export function runConfigSetForCli(
       capturePluginError(e as Error, { subsystem: "cli", operation: "runConfigSetForCli:write-credentials" });
       return { ok: false, error: `Could not write config: ${e}` };
     }
-    return { ok: true, configPath, message: `Set credentials.enabled = ${written}. Restart the gateway for changes to take effect. Run openclaw hybrid-mem verify to confirm.` };
+    return {
+      ok: true,
+      configPath,
+      message: `Set credentials.enabled = ${written}. Restart the gateway for changes to take effect. Run openclaw hybrid-mem verify to confirm.`,
+    };
   }
   // Object toggles: "config-set <key> enabled" must set <key>: { enabled: true }, never replace with boolean (parsers expect cfg.<key>?.enabled === true).
   const boolVal = value === "true" || value === "enabled";
@@ -4428,7 +5196,10 @@ export function runConfigSetForCli(
       try {
         hybridConfigSchema.parse(out.config);
       } catch (schemaErr: unknown) {
-        capturePluginError(schemaErr instanceof Error ? schemaErr : new Error(String(schemaErr)), { subsystem: "cli", operation: "runConfigSetForCli:validation-" + key });
+        capturePluginError(schemaErr instanceof Error ? schemaErr : new Error(String(schemaErr)), {
+          subsystem: "cli",
+          operation: "runConfigSetForCli:validation-" + key,
+        });
         return { ok: false, error: `Invalid config value: ${schemaErr}` };
       }
       try {
@@ -4438,7 +5209,11 @@ export function runConfigSetForCli(
         capturePluginError(e as Error, { subsystem: "cli", operation: "runConfigSetForCli:write-" + key });
         return { ok: false, error: `Could not write config: ${e}` };
       }
-      return { ok: true, configPath, message: `Set ${key}.${prop} = ${boolVal}. Restart the gateway for changes to take effect. Run openclaw hybrid-mem verify to confirm.` };
+      return {
+        ok: true,
+        configPath,
+        message: `Set ${key}.${prop} = ${boolVal}. Restart the gateway for changes to take effect. Run openclaw hybrid-mem verify to confirm.`,
+      };
     }
   }
   // extraction uses .extractionPasses not .enabled
@@ -4450,7 +5225,10 @@ export function runConfigSetForCli(
     try {
       hybridConfigSchema.parse(out.config);
     } catch (schemaErr: unknown) {
-      capturePluginError(schemaErr instanceof Error ? schemaErr : new Error(String(schemaErr)), { subsystem: "cli", operation: "runConfigSetForCli:validation-extraction" });
+      capturePluginError(schemaErr instanceof Error ? schemaErr : new Error(String(schemaErr)), {
+        subsystem: "cli",
+        operation: "runConfigSetForCli:validation-extraction",
+      });
       return { ok: false, error: `Invalid config value: ${schemaErr}` };
     }
     try {
@@ -4460,7 +5238,11 @@ export function runConfigSetForCli(
       capturePluginError(e as Error, { subsystem: "cli", operation: "runConfigSetForCli:write-extraction" });
       return { ok: false, error: `Could not write config: ${e}` };
     }
-    return { ok: true, configPath, message: `Set extraction.extractionPasses = ${boolVal}. Restart the gateway for changes to take effect. Run openclaw hybrid-mem verify to confirm.` };
+    return {
+      ok: true,
+      configPath,
+      message: `Set extraction.extractionPasses = ${boolVal}. Restart the gateway for changes to take effect. Run openclaw hybrid-mem verify to confirm.`,
+    };
   }
   // verbosity: must be one of the valid levels
   if (k === "verbosity") {
@@ -4472,7 +5254,10 @@ export function runConfigSetForCli(
     try {
       hybridConfigSchema.parse(out.config);
     } catch (schemaErr: unknown) {
-      capturePluginError(schemaErr instanceof Error ? schemaErr : new Error(String(schemaErr)), { subsystem: "cli", operation: "runConfigSetForCli:validation-verbosity" });
+      capturePluginError(schemaErr instanceof Error ? schemaErr : new Error(String(schemaErr)), {
+        subsystem: "cli",
+        operation: "runConfigSetForCli:validation-verbosity",
+      });
       return { ok: false, error: `Invalid config value: ${schemaErr}` };
     }
     try {
@@ -4482,7 +5267,11 @@ export function runConfigSetForCli(
       capturePluginError(e as Error, { subsystem: "cli", operation: "runConfigSetForCli:write-verbosity" });
       return { ok: false, error: `Could not write config: ${e}` };
     }
-    return { ok: true, configPath, message: `Set verbosity = "${value}". Restart the gateway for changes to take effect. Run openclaw hybrid-mem verify to confirm.` };
+    return {
+      ok: true,
+      configPath,
+      message: `Set verbosity = "${value}". Restart the gateway for changes to take effect. Run openclaw hybrid-mem verify to confirm.`,
+    };
   }
   // Enum-like keys: normalize value to lowercase so "Nano" → "nano" for schema validation
   const enumKeys: Record<string, string[]> = {
@@ -4506,7 +5295,10 @@ export function runConfigSetForCli(
   try {
     hybridConfigSchema.parse(out.config);
   } catch (schemaErr: unknown) {
-    capturePluginError(schemaErr instanceof Error ? schemaErr : new Error(String(schemaErr)), { subsystem: "cli", operation: "runConfigSetForCli:validation" });
+    capturePluginError(schemaErr instanceof Error ? schemaErr : new Error(String(schemaErr)), {
+      subsystem: "cli",
+      operation: "runConfigSetForCli:validation",
+    });
     return { ok: false, error: `Invalid config value: ${schemaErr}` };
   }
 
@@ -4517,7 +5309,11 @@ export function runConfigSetForCli(
     capturePluginError(e as Error, { subsystem: "cli", operation: "runConfigSetForCli:write" });
     return { ok: false, error: `Could not write config: ${e}` };
   }
-  return { ok: true, configPath, message: `Set ${key} = ${writtenStr}. Restart the gateway for changes to take effect. Run openclaw hybrid-mem verify to confirm.` };
+  return {
+    ok: true,
+    configPath,
+    message: `Set ${key} = ${writtenStr}. Restart the gateway for changes to take effect. Run openclaw hybrid-mem verify to confirm.`,
+  };
 }
 
 /**
@@ -4655,7 +5451,9 @@ export async function runExtractImplicitFeedbackForCli(
 
     if (opts.verbose) {
       for (const sig of signals) {
-        logger?.info?.(`[${sessionFile}] ${sig.type} (${sig.polarity}, conf ${sig.confidence.toFixed(2)}): ${sig.context.userMessage.slice(0, 60)}`);
+        logger?.info?.(
+          `[${sessionFile}] ${sig.type} (${sig.polarity}, conf ${sig.confidence.toFixed(2)}): ${sig.context.userMessage.slice(0, 60)}`,
+        );
       }
     }
 
@@ -4816,9 +5614,16 @@ export async function runExtractImplicitFeedbackForCli(
 
             const row = serializeTrajectory(traj);
             insertTraj.run(
-              row.id, row.session_file, row.turns_json, row.outcome,
-              row.outcome_signal, row.key_pivot, row.lessons_json,
-              row.topic, row.tools_used, row.turn_count,
+              row.id,
+              row.session_file,
+              row.turns_json,
+              row.outcome,
+              row.outcome_signal,
+              row.key_pivot,
+              row.lessons_json,
+              row.topic,
+              row.tools_used,
+              row.turn_count,
             );
             // Store lessons as PATTERN_FACT entries in factsDb
             for (const lesson of traj.lessonsExtracted) {
@@ -4871,7 +5676,9 @@ export async function runExtractImplicitFeedbackForCli(
           if (opts.verbose) {
             closedLoopReport = getEffectivenessReport(factsDb);
           }
-          logger?.info?.(`Closed-loop: analyzed ${report.rulesAnalyzed} rules, deprecated ${report.deprecated}, boosted ${report.boosted}`);
+          logger?.info?.(
+            `Closed-loop: analyzed ${report.rulesAnalyzed} rules, deprecated ${report.deprecated}, boosted ${report.boosted}`,
+          );
         }
       }
     } catch (err) {
@@ -4911,7 +5718,14 @@ export async function runCrossAgentLearningForCli(ctx: HandlerContext): Promise<
   const caCfg = cfg.crossAgentLearning;
 
   if (!caCfg?.enabled) {
-    return { agentsScanned: 0, lessonsConsidered: 0, generalisedStored: 0, linksCreated: 0, skippedDuplicates: 0, errors: 0 };
+    return {
+      agentsScanned: 0,
+      lessonsConsidered: 0,
+      generalisedStored: 0,
+      linksCreated: 0,
+      skippedDuplicates: 0,
+      errors: 0,
+    };
   }
 
   // Build OpenAI proxy
@@ -4955,12 +5769,7 @@ export async function runToolEffectivenessForCli(
 
   const effStore = new ToolEffectivenessStore(effectivenessDbPath);
   try {
-    const report = await computeToolEffectiveness(
-      workflowDbPath,
-      effStore,
-      teCfg ?? {},
-      ctx.logger ?? {},
-    );
+    const report = await computeToolEffectiveness(workflowDbPath, effStore, teCfg ?? {}, ctx.logger ?? {});
 
     // Gap 3 (#263): Generate monthly report, gated to once per calendar month
     const month = new Date().toISOString().slice(0, 7); // YYYY-MM
@@ -5029,20 +5838,12 @@ export function runCostReportForCli(
     const modeW = 12;
     const descW = 58;
     const costW = 20;
-    const header = [
-      "Mode".padEnd(modeW),
-      "Description".padEnd(descW),
-      "Est. $/month".padStart(costW),
-    ].join("  ");
+    const header = ["Mode".padEnd(modeW), "Description".padEnd(descW), "Est. $/month".padStart(costW)].join("  ");
     log(header);
     log("─".repeat(header.length));
     for (const e of estimates) {
       const costRange = `$${e.monthlyLow.toFixed(2)} – $${e.monthlyHigh.toFixed(2)}`;
-      log([
-        e.mode.padEnd(modeW),
-        e.description.padEnd(descW),
-        costRange.padStart(costW),
-      ].join("  "));
+      log([e.mode.padEnd(modeW), e.description.padEnd(descW), costRange.padStart(costW)].join("  "));
       if (!compact) {
         log(`${"".padEnd(modeW)}  Features: ${e.features.join(", ")}`);
         log("");
@@ -5095,7 +5896,12 @@ export function runCostReportForCli(
       return;
     }
     const total = breakdown.reduce(
-      (acc, r) => ({ calls: acc.calls + r.calls, inputTokens: acc.inputTokens + r.inputTokens, outputTokens: acc.outputTokens + r.outputTokens, estimatedCostUsd: acc.estimatedCostUsd + r.estimatedCostUsd }),
+      (acc, r) => ({
+        calls: acc.calls + r.calls,
+        inputTokens: acc.inputTokens + r.inputTokens,
+        outputTokens: acc.outputTokens + r.outputTokens,
+        estimatedCostUsd: acc.estimatedCostUsd + r.estimatedCostUsd,
+      }),
       { calls: 0, inputTokens: 0, outputTokens: 0, estimatedCostUsd: 0 },
     );
     if (!compact) {
@@ -5105,10 +5911,7 @@ export function runCostReportForCli(
     } else {
       log(`\n───── LLM Cost by Model (last ${days} days) ─────`);
     }
-    const colW = [
-      Math.max(20, ...breakdown.map((r) => r.model.length)) + 2,
-      8, 12, 12, 12, 5,
-    ];
+    const colW = [Math.max(20, ...breakdown.map((r) => r.model.length)) + 2, 8, 12, 12, 12, 5];
     const header = [
       "Model".padEnd(colW[0]!),
       "Calls".padStart(colW[1]!),
@@ -5120,24 +5923,28 @@ export function runCostReportForCli(
     log(header);
     log("─".repeat(header.length));
     for (const r of breakdown) {
-      log([
-        r.model.padEnd(colW[0]!),
-        String(r.calls).padStart(colW[1]!),
-        fmtNum(r.inputTokens).padStart(colW[2]!),
-        fmtNum(r.outputTokens).padStart(colW[3]!),
-        fmtCost(r.estimatedCostUsd).padStart(colW[4]!),
-        ...(compact ? [] : [pct(r.estimatedCostUsd, total.estimatedCostUsd).padStart(colW[5]!)]),
-      ].join("  "));
+      log(
+        [
+          r.model.padEnd(colW[0]!),
+          String(r.calls).padStart(colW[1]!),
+          fmtNum(r.inputTokens).padStart(colW[2]!),
+          fmtNum(r.outputTokens).padStart(colW[3]!),
+          fmtCost(r.estimatedCostUsd).padStart(colW[4]!),
+          ...(compact ? [] : [pct(r.estimatedCostUsd, total.estimatedCostUsd).padStart(colW[5]!)]),
+        ].join("  "),
+      );
     }
     log("─".repeat(header.length));
-    log([
-      "Total".padEnd(colW[0]!),
-      String(total.calls).padStart(colW[1]!),
-      fmtNum(total.inputTokens).padStart(colW[2]!),
-      fmtNum(total.outputTokens).padStart(colW[3]!),
-      fmtCost(total.estimatedCostUsd).padStart(colW[4]!),
-      ...(compact ? [] : ["100%".padStart(colW[5]!)]),
-    ].join("  "));
+    log(
+      [
+        "Total".padEnd(colW[0]!),
+        String(total.calls).padStart(colW[1]!),
+        fmtNum(total.inputTokens).padStart(colW[2]!),
+        fmtNum(total.outputTokens).padStart(colW[3]!),
+        fmtCost(total.estimatedCostUsd).padStart(colW[4]!),
+        ...(compact ? [] : ["100%".padStart(colW[5]!)]),
+      ].join("  "),
+    );
   } else {
     // Feature breakdown
     const report = costTracker.getReport({ days, feature: opts.feature });
@@ -5158,7 +5965,9 @@ export function runCostReportForCli(
       }
       // Still show savings if any exist (value delivered without cost)
       if (savingsReport.total.estimatedSavingUsd > 0 && !compact) {
-        log(`\n💚 Automation savings (last ${days} days): ${fmtCost(savingsReport.total.estimatedSavingUsd)} (${savingsReport.total.countAvoided} ops avoided)`);
+        log(
+          `\n💚 Automation savings (last ${days} days): ${fmtCost(savingsReport.total.estimatedSavingUsd)} (${savingsReport.total.countAvoided} ops avoided)`,
+        );
       }
       return;
     }
@@ -5166,7 +5975,9 @@ export function runCostReportForCli(
       log("feature,calls,input_tokens,output_tokens,est_cost_usd,est_savings_usd,net_cost_usd");
       for (const r of report.features) {
         const savings = savingsByFeature.get(r.feature) ?? 0;
-        log(`${r.feature},${r.calls},${r.inputTokens},${r.outputTokens},${r.estimatedCostUsd.toFixed(6)},${savings.toFixed(6)},${(r.estimatedCostUsd - savings).toFixed(6)}`);
+        log(
+          `${r.feature},${r.calls},${r.inputTokens},${r.outputTokens},${r.estimatedCostUsd.toFixed(6)},${savings.toFixed(6)},${(r.estimatedCostUsd - savings).toFixed(6)}`,
+        );
       }
       return;
     }
@@ -5177,7 +5988,9 @@ export function runCostReportForCli(
     if (!compact) {
       const featureCount = report.features.length;
       log(`\n📊 LLM Cost Report — last ${days} days`);
-      log(`💰 Gross cost: ${fmtCost(report.total.estimatedCostUsd)} across ${featureCount} feature${featureCount === 1 ? "" : "s"} (${report.total.calls} LLM calls)`);
+      log(
+        `💰 Gross cost: ${fmtCost(report.total.estimatedCostUsd)} across ${featureCount} feature${featureCount === 1 ? "" : "s"} (${report.total.calls} LLM calls)`,
+      );
       if (totalSavings > 0) {
         log(`💚 Automation savings: ${fmtCost(totalSavings)} (${savingsReport.total.countAvoided} ops avoided)`);
         log(`📉 Net cost: ${fmtCost(Math.max(0, netCost))}`);
@@ -5191,7 +6004,10 @@ export function runCostReportForCli(
     // Column widths: Feature | Calls | In-Tokens | Out-Tokens | Est.Cost | [Savings] | [Net] | [%]
     const colW = [
       Math.max(20, ...report.features.map((r) => r.feature.length)) + 2,
-      8, 12, 12, 12,
+      8,
+      12,
+      12,
+      12,
       ...(hasSavings ? [12, 12] : []),
       ...(compact ? [] : [5]),
     ];
@@ -5240,7 +6056,7 @@ export function runCostReportForCli(
       fmtCost(report.total.estimatedCostUsd).padStart(colW[4]!),
     ];
     if (hasSavings) {
-      totalParts.push((`-$${totalSavings.toFixed(4)}`).padStart(colW[5]!));
+      totalParts.push(`-$${totalSavings.toFixed(4)}`.padStart(colW[5]!));
       totalParts.push(fmtCost(Math.max(0, netCost)).padStart(colW[6]!));
     }
     if (!compact) {
@@ -5250,24 +6066,25 @@ export function runCostReportForCli(
     log("");
     // Unknown-model warning
     if (report.unknownModelCalls > 0) {
-      log(`⚠️  ${report.unknownModelCalls} call(s) used unrecognized models (cost unknown): ${report.unknownModels.join(", ")}`);
+      log(
+        `⚠️  ${report.unknownModelCalls} call(s) used unrecognized models (cost unknown): ${report.unknownModels.join(", ")}`,
+      );
     }
     // Model summary line
     const modelBreakdown = costTracker.getModelBreakdown(days);
     if (modelBreakdown.length > 0) {
-      const modelSummary = modelBreakdown
-        .map((m) => `${m.model} (${m.calls} calls)`)
-        .join(", ");
+      const modelSummary = modelBreakdown.map((m) => `${m.model} (${m.calls} calls)`).join(", ");
       log(`Models used: ${modelSummary}`);
     }
     // Savings breakdown if any (and we have savings not already shown inline)
     if (!hasSavings && savingsReport.features.length > 0) {
       log("");
-      log(`💚 Automation savings (last ${days} days): ${fmtCost(savingsReport.total.estimatedSavingUsd)} (${savingsReport.total.countAvoided} ops avoided)`);
+      log(
+        `💚 Automation savings (last ${days} days): ${fmtCost(savingsReport.total.estimatedSavingUsd)} (${savingsReport.total.countAvoided} ops avoided)`,
+      );
     }
   }
   log("");
   log("ℹ️  Costs are estimates based on published model pricing. Actual costs may vary.");
   log("   Embedding calls are not included in this report.");
 }
-

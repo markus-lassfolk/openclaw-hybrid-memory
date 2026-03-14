@@ -35,7 +35,7 @@ async function auditProposal(
   proposalId: string,
   resolvedSqlitePath: string,
   details?: any,
-  logger?: { warn?: (msg: string) => void; error?: (msg: string) => void }
+  logger?: { warn?: (msg: string) => void; error?: (msg: string) => void },
 ): Promise<void> {
   const auditDir = join(dirname(resolvedSqlitePath), "decisions");
   await mkdir(auditDir, { recursive: true });
@@ -51,8 +51,8 @@ async function auditProposal(
     await writeFile(auditPath, JSON.stringify(entry) + "\n", { flag: "a" });
   } catch (err) {
     capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-      operation: 'proposals-audit',
-      subsystem: 'proposals',
+      operation: "proposals-audit",
+      subsystem: "proposals",
       proposalId,
     });
     const msg = `Audit log write failed: ${err}`;
@@ -148,7 +148,17 @@ export function buildUnifiedDiff(currentContent: string, proposedContent: string
     writeFileSync(proposedPath, proposedContent, "utf-8");
     const result = spawnSync(
       "git",
-      ["diff", "--no-index", "--label", `${targetFile} (current)`, "--label", `${targetFile} (proposed)`, "--", currentPath, proposedPath],
+      [
+        "diff",
+        "--no-index",
+        "--label",
+        `${targetFile} (current)`,
+        "--label",
+        `${targetFile} (proposed)`,
+        "--",
+        currentPath,
+        proposedPath,
+      ],
       { encoding: "utf-8" },
     );
     if (result.status !== 0 && result.status !== 1) {
@@ -283,11 +293,17 @@ export function registerProposalsCli(program: Chainable, ctx: ProposalsCliContex
       const newStatus = action === "approve" ? "approved" : "rejected";
       ctx.proposalsDb.updateStatus(proposalId, newStatus, opts.reviewedBy);
 
-      await auditProposal(action, proposalId, ctx.resolvedSqlitePath, {
-        reviewedBy: opts.reviewedBy ?? "cli-user",
-        previousStatus: "pending",
-        newStatus,
-      }, { error: console.error });
+      await auditProposal(
+        action,
+        proposalId,
+        ctx.resolvedSqlitePath,
+        {
+          reviewedBy: opts.reviewedBy ?? "cli-user",
+          previousStatus: "pending",
+          newStatus,
+        },
+        { error: console.error },
+      );
 
       console.log(`Proposal ${proposalId} ${action}d.`);
       if (action === "approve") {
@@ -295,7 +311,9 @@ export function registerProposalsCli(program: Chainable, ctx: ProposalsCliContex
         if (applyResult.ok) {
           console.log(`Applied to ${applyResult.targetFile}. Backup: ${applyResult.backupPath}`);
         } else {
-          console.error(`Apply failed: ${applyResult.error}. Proposal remains approved. Run 'openclaw hybrid-mem proposals apply ${proposalId}' after fixing.`);
+          console.error(
+            `Apply failed: ${applyResult.error}. Proposal remains approved. Run 'openclaw hybrid-mem proposals apply ${proposalId}' after fixing.`,
+          );
         }
       }
     });
@@ -329,13 +347,18 @@ export type ApplyProposalContext = {
 export async function applyApprovedProposal(
   ctx: ApplyProposalContext,
   proposalId: string,
-): Promise<{ ok: true; targetFile: string; backupPath: string; suggestedChange: string } | { ok: false; error: string }> {
+): Promise<
+  { ok: true; targetFile: string; backupPath: string; suggestedChange: string } | { ok: false; error: string }
+> {
   const proposal = ctx.proposalsDb.get(proposalId);
   if (!proposal) {
     return { ok: false, error: `Proposal ${proposalId} not found` };
   }
   if (proposal.status !== "approved") {
-    return { ok: false, error: `Proposal ${proposalId} is ${proposal.status}. Only approved proposals can be applied.` };
+    return {
+      ok: false,
+      error: `Proposal ${proposalId} is ${proposal.status}. Only approved proposals can be applied.`,
+    };
   }
   if (!ctx.cfg.personaProposals.allowedFiles.includes(proposal.targetFile as IdentityFileType)) {
     return {
@@ -362,7 +385,12 @@ export async function applyApprovedProposal(
         error: `Target file ${proposal.targetFile} has changed since proposal creation (hash mismatch). Review and re-approve.`,
       };
     }
-    if (!proposal.targetHash && proposal.targetMtimeMs != null && currentSnapshot?.mtimeMs != null && proposal.targetMtimeMs !== currentSnapshot.mtimeMs) {
+    if (
+      !proposal.targetHash &&
+      proposal.targetMtimeMs != null &&
+      currentSnapshot?.mtimeMs != null &&
+      proposal.targetMtimeMs !== currentSnapshot.mtimeMs
+    ) {
       return {
         ok: false,
         error: `Target file ${proposal.targetFile} has changed since proposal creation (mtime mismatch). Review and re-approve.`,
@@ -395,13 +423,19 @@ export async function applyApprovedProposal(
       }
     }
     ctx.proposalsDb.markApplied(proposalId);
-    await auditProposal("applied", proposalId, ctx.resolvedSqlitePath, {
-      targetFile: proposal.targetFile,
-      targetPath,
-      backupPath,
-      timestamp,
-      changeType: applied.changeType,
-    }, { error: console.error });
+    await auditProposal(
+      "applied",
+      proposalId,
+      ctx.resolvedSqlitePath,
+      {
+        targetFile: proposal.targetFile,
+        targetPath,
+        backupPath,
+        timestamp,
+        changeType: applied.changeType,
+      },
+      { error: console.error },
+    );
     return {
       ok: true,
       targetFile: proposal.targetFile,

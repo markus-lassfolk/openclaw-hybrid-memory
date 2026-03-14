@@ -77,7 +77,7 @@ export function normalizeVector(v: number[]): number[] {
  * Compute dot product between two PRE-NORMALIZED vectors.
  * This is an optimized version that assumes both vectors are already unit-length.
  * Returns the dot product, which equals cosine similarity for normalized vectors.
- * 
+ *
  * IMPORTANT: Use this ONLY when vectors are normalized via normalizeVector() first.
  * For arbitrary (non-normalized) vectors, use cosineSimilarity from ambient-retrieval.ts instead.
  */
@@ -171,8 +171,8 @@ export async function runReflection(
     logger.warn(`memory-hybrid: reflection LLM failed: ${err}`);
     const retryAttempt = err instanceof LLMRetryError ? err.attemptNumber : 1;
     capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-      operation: 'reflection-llm',
-      subsystem: 'openai',
+      operation: "reflection-llm",
+      subsystem: "openai",
       windowDays,
       retryAttempt,
     });
@@ -195,9 +195,9 @@ export async function runReflection(
 
   // Existing patterns (non-superseded, still valid) for dedupe
   const nowSec = Math.floor(Date.now() / 1000);
-  const existingPatternFacts = factsDb.getByCategory("pattern").filter(
-    (f) => !f.supersededAt && (f.expiresAt === null || f.expiresAt > nowSec),
-  );
+  const existingPatternFacts = factsDb
+    .getByCategory("pattern")
+    .filter((f) => !f.supersededAt && (f.expiresAt === null || f.expiresAt > nowSec));
   const existingVectors: (number[] | null)[] = [];
   if (existingPatternFacts.length > 0) {
     for (let i = 0; i < existingPatternFacts.length; i += 20) {
@@ -208,8 +208,8 @@ export async function runReflection(
           existingVectors.push(normalizeVector(vec));
         } catch (err) {
           capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-            operation: 'reflection-embed-existing',
-            subsystem: 'embeddings',
+            operation: "reflection-embed-existing",
+            subsystem: "embeddings",
             factId: f.id,
           });
           existingVectors.push(null);
@@ -227,9 +227,9 @@ export async function runReflection(
       vec = await embeddings.embed(patternText);
     } catch (err) {
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-        operation: 'embed-pattern',
-        severity: 'info',
-        subsystem: 'reflection'
+        operation: "embed-pattern",
+        severity: "info",
+        subsystem: "reflection",
       });
       continue; // Skip this pattern on embed failure
     }
@@ -285,7 +285,9 @@ export async function runReflection(
     }
 
     if (opts.verbose) {
-      logger.info(`memory-hybrid: reflection — stored pattern (importance ${REFLECTION_IMPORTANCE}): ${patternText.slice(0, 80)}${patternText.length > 80 ? '...' : ''}`);
+      logger.info(
+        `memory-hybrid: reflection — stored pattern (importance ${REFLECTION_IMPORTANCE}): ${patternText.slice(0, 80)}${patternText.length > 80 ? "..." : ""}`,
+      );
     }
     try {
       await vectorDb.store({
@@ -299,8 +301,8 @@ export async function runReflection(
     } catch (err) {
       logger.warn(`memory-hybrid: reflection vector store failed: ${err}`);
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-        operation: 'reflection-vector-store',
-        subsystem: 'vector',
+        operation: "reflection-vector-store",
+        subsystem: "vector",
         factId: entry.id,
       });
     }
@@ -329,9 +331,9 @@ export async function runReflectionRules(
   provenanceService?: ProvenanceService | null,
 ): Promise<ReflectionRulesResult> {
   const nowSec = Math.floor(Date.now() / 1000);
-  const patternFacts = factsDb.getByCategory("pattern").filter(
-    (f) => !f.supersededAt && (f.expiresAt === null || f.expiresAt > nowSec),
-  );
+  const patternFacts = factsDb
+    .getByCategory("pattern")
+    .filter((f) => !f.supersededAt && (f.expiresAt === null || f.expiresAt > nowSec));
   const patterns = patternFacts.slice(0, REFLECTION_MAX_PATTERNS_FOR_RULES).map((f) => f.text);
   if (patterns.length < 2) {
     logger.info(`memory-hybrid: reflect-rules — need at least 2 patterns, have ${patterns.length}`);
@@ -354,8 +356,8 @@ export async function runReflectionRules(
     logger.warn(`memory-hybrid: reflect-rules LLM failed: ${err}`);
     const retryAttempt = err instanceof LLMRetryError ? err.attemptNumber : 1;
     capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-      operation: 'reflection-rules-llm',
-      subsystem: 'openai',
+      operation: "reflection-rules-llm",
+      subsystem: "openai",
       retryAttempt,
     });
     return { rulesExtracted: 0, rulesStored: 0 };
@@ -386,9 +388,9 @@ export async function runReflectionRules(
       logger.info(`  RULE: ${rule}`);
     }
   }
-  const existingRuleFacts = factsDb.getByCategory("rule").filter(
-    (f) => !f.supersededAt && (f.expiresAt === null || f.expiresAt > nowSec),
-  );
+  const existingRuleFacts = factsDb
+    .getByCategory("rule")
+    .filter((f) => !f.supersededAt && (f.expiresAt === null || f.expiresAt > nowSec));
   const existingVectors: (number[] | null)[] = [];
   for (let i = 0; i < existingRuleFacts.length; i += 20) {
     const batch = existingRuleFacts.slice(i, i + 20);
@@ -397,8 +399,8 @@ export async function runReflectionRules(
         existingVectors.push(normalizeVector(await embeddings.embed(f.text)));
       } catch (err) {
         capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-          operation: 'reflection-rules-embed-existing',
-          subsystem: 'embeddings',
+          operation: "reflection-rules-embed-existing",
+          subsystem: "embeddings",
           factId: f.id,
         });
         existingVectors.push(null);
@@ -414,9 +416,9 @@ export async function runReflectionRules(
       vec = await embeddings.embed(ruleText);
     } catch (err) {
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-        operation: 'embed-rule',
-        severity: 'info',
-        subsystem: 'reflection'
+        operation: "embed-rule",
+        severity: "info",
+        subsystem: "reflection",
       });
       continue; // Skip this rule on embed failure
     }
@@ -470,16 +472,24 @@ export async function runReflectionRules(
     }
 
     if (opts.verbose) {
-      logger.info(`memory-hybrid: reflect-rules — stored rule: ${ruleText.slice(0, 100)}${ruleText.length > 100 ? '...' : ''}`);
+      logger.info(
+        `memory-hybrid: reflect-rules — stored rule: ${ruleText.slice(0, 100)}${ruleText.length > 100 ? "..." : ""}`,
+      );
     }
     try {
-      await vectorDb.store({ text: ruleText, vector: vec, importance: REFLECTION_IMPORTANCE, category: "rule", id: entry.id });
+      await vectorDb.store({
+        text: ruleText,
+        vector: vec,
+        importance: REFLECTION_IMPORTANCE,
+        category: "rule",
+        id: entry.id,
+      });
       factsDb.setEmbeddingModel(entry.id, embeddings.modelName);
     } catch (err) {
       logger.warn(`memory-hybrid: reflect-rules vector store failed: ${err}`);
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-        operation: 'reflection-rules-vector-store',
-        subsystem: 'vector',
+        operation: "reflection-rules-vector-store",
+        subsystem: "vector",
         factId: entry.id,
       });
     }
@@ -502,9 +512,9 @@ export async function runReflectionMeta(
   provenanceService?: ProvenanceService | null,
 ): Promise<ReflectionMetaResult> {
   const nowSec = Math.floor(Date.now() / 1000);
-  const patternFacts = factsDb.getByCategory("pattern").filter(
-    (f) => !f.supersededAt && (f.expiresAt === null || f.expiresAt > nowSec),
-  );
+  const patternFacts = factsDb
+    .getByCategory("pattern")
+    .filter((f) => !f.supersededAt && (f.expiresAt === null || f.expiresAt > nowSec));
   const patterns = patternFacts.slice(0, REFLECTION_MAX_PATTERNS_FOR_META).map((f) => f.text);
   if (patterns.length < 3) {
     logger.info(`memory-hybrid: reflect-meta — need at least 3 patterns, have ${patterns.length}`);
@@ -527,8 +537,8 @@ export async function runReflectionMeta(
     logger.warn(`memory-hybrid: reflect-meta LLM failed: ${err}`);
     const retryAttempt = err instanceof LLMRetryError ? err.attemptNumber : 1;
     capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-      operation: 'reflection-meta-llm',
-      subsystem: 'openai',
+      operation: "reflection-meta-llm",
+      subsystem: "openai",
       retryAttempt,
     });
     return { metaExtracted: 0, metaStored: 0 };
@@ -559,9 +569,11 @@ export async function runReflectionMeta(
       logger.info(`  META: ${meta}`);
     }
   }
-  const existingMetaFacts = factsDb.getByCategory("pattern").filter(
-    (f) => !f.supersededAt && (f.expiresAt === null || f.expiresAt > nowSec) && (f.tags?.includes("meta") === true),
-  );
+  const existingMetaFacts = factsDb
+    .getByCategory("pattern")
+    .filter(
+      (f) => !f.supersededAt && (f.expiresAt === null || f.expiresAt > nowSec) && f.tags?.includes("meta") === true,
+    );
   const existingVectors: (number[] | null)[] = [];
   for (let i = 0; i < existingMetaFacts.length; i += 20) {
     const batch = existingMetaFacts.slice(i, i + 20);
@@ -570,8 +582,8 @@ export async function runReflectionMeta(
         existingVectors.push(normalizeVector(await embeddings.embed(f.text)));
       } catch (err) {
         capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-          operation: 'reflection-meta-embed-existing',
-          subsystem: 'embeddings',
+          operation: "reflection-meta-embed-existing",
+          subsystem: "embeddings",
           factId: f.id,
         });
         existingVectors.push(null);
@@ -587,9 +599,9 @@ export async function runReflectionMeta(
       vec = await embeddings.embed(metaText);
     } catch (err) {
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-        operation: 'embed-meta',
-        severity: 'info',
-        subsystem: 'reflection'
+        operation: "embed-meta",
+        severity: "info",
+        subsystem: "reflection",
       });
       continue; // Skip this meta-pattern on embed failure
     }
@@ -643,16 +655,24 @@ export async function runReflectionMeta(
     }
 
     if (opts.verbose) {
-      logger.info(`memory-hybrid: reflect-meta — stored meta-pattern: ${metaText.slice(0, 100)}${metaText.length > 100 ? '...' : ''}`);
+      logger.info(
+        `memory-hybrid: reflect-meta — stored meta-pattern: ${metaText.slice(0, 100)}${metaText.length > 100 ? "..." : ""}`,
+      );
     }
     try {
-      await vectorDb.store({ text: metaText, vector: vec, importance: REFLECTION_IMPORTANCE, category: "pattern", id: entry.id });
+      await vectorDb.store({
+        text: metaText,
+        vector: vec,
+        importance: REFLECTION_IMPORTANCE,
+        category: "pattern",
+        id: entry.id,
+      });
       factsDb.setEmbeddingModel(entry.id, embeddings.modelName);
     } catch (err) {
       logger.warn(`memory-hybrid: reflect-meta vector store failed: ${err}`);
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-        operation: 'reflection-meta-vector-store',
-        subsystem: 'vector',
+        operation: "reflection-meta-vector-store",
+        subsystem: "vector",
         factId: entry.id,
       });
     }

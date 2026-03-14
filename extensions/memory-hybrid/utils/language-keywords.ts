@@ -14,14 +14,48 @@ const LANG_FILE_NAME = ".language-keywords.json";
 /** English-only keywords (single source of truth). Other languages are added from file. */
 export const ENGLISH_KEYWORDS = {
   triggers: [
-    "remember", "prefer", "decided", "my", "is my", "i like", "i prefer", "i hate", "i love", "i want", "i need",
-    "always", "never", "important", "born on", "birthday", "lives in", "works at",
-    "password is", "api key", "token is", "chose", "selected", "went with", "picked",
-    "because", "since", "for", "architecture", "stack", "approach",
+    "remember",
+    "prefer",
+    "decided",
+    "my",
+    "is my",
+    "i like",
+    "i prefer",
+    "i hate",
+    "i love",
+    "i want",
+    "i need",
+    "always",
+    "never",
+    "important",
+    "born on",
+    "birthday",
+    "lives in",
+    "works at",
+    "password is",
+    "api key",
+    "token is",
+    "chose",
+    "selected",
+    "went with",
+    "picked",
+    "because",
+    "since",
+    "for",
+    "architecture",
+    "stack",
+    "approach",
   ],
   categoryDecision: [
-    "decided", "chose", "went with", "selected", "always use", "never use",
-    "over because", "instead of since", "will use",
+    "decided",
+    "chose",
+    "went with",
+    "selected",
+    "always use",
+    "never use",
+    "over because",
+    "instead of since",
+    "will use",
   ],
   categoryPreference: ["prefer", "like", "love", "hate", "want"],
   categoryEntity: ["is called", "email", "phone"],
@@ -129,11 +163,28 @@ export const ENGLISH_KEYWORDS = {
     "whenever",
   ],
   /** Explicit memory request keywords (subset of directiveSignals for category detection). */
-  directiveExplicitMemory: ["remember that", "remember", "don't forget", "keep in mind", "store this", "write this down", "make a note", "take note"],
+  directiveExplicitMemory: [
+    "remember that",
+    "remember",
+    "don't forget",
+    "keep in mind",
+    "store this",
+    "write this down",
+    "make a note",
+    "take note",
+  ],
   /** Future behavior keywords (subset of directiveSignals for category detection). */
   directiveFutureBehavior: ["from now on", "in the future", "next time", "going forward", "moving forward", "onwards"],
   /** Absolute rule keywords (subset of directiveSignals for category detection). */
-  directiveAbsoluteRule: ["always", "never", "make sure to", "under no circumstances", "you must", "you should always", "you should never"],
+  directiveAbsoluteRule: [
+    "always",
+    "never",
+    "make sure to",
+    "under no circumstances",
+    "you must",
+    "you should always",
+    "you should never",
+  ],
   /** Preference keywords (subset of directiveSignals for category detection). */
   directivePreference: ["i prefer", "i'd rather", "use this instead", "default to", "stick with"],
   /** Warning keywords (subset of directiveSignals for category detection). */
@@ -209,9 +260,28 @@ export const ENGLISH_KEYWORDS = {
     "will share this",
   ],
   /** Strong praise keywords (subset of reinforcementSignals for confidence scoring). */
-  reinforcementStrongPraise: ["perfect", "brilliant", "amazing", "excellent", "you nailed it", "spot on", "love it", "really appreciate", "i really appreciate", "good job", "great job", "wow, that was great", "wow that was fantastic"],
+  reinforcementStrongPraise: [
+    "perfect",
+    "brilliant",
+    "amazing",
+    "excellent",
+    "you nailed it",
+    "spot on",
+    "love it",
+    "really appreciate",
+    "i really appreciate",
+    "good job",
+    "great job",
+    "wow, that was great",
+    "wow that was fantastic",
+  ],
   /** Method confirmation keywords (subset of reinforcementSignals for confidence scoring). */
-  reinforcementMethodConfirmation: ["keep this format", "yes, like that", "this is how it should be", "do it like this"],
+  reinforcementMethodConfirmation: [
+    "keep this format",
+    "yes, like that",
+    "this is how it should be",
+    "do it like this",
+  ],
   /** Relief keywords (subset of reinforcementSignals for confidence scoring). */
   reinforcementRelief: ["finally!", "now you get it", "at last", "there we go"],
   /** Comparative praise keywords (subset of reinforcementSignals for confidence scoring). */
@@ -308,23 +378,27 @@ export type UserFeedbackPhrases = {
 export function loadUserFeedbackPhrases(): UserFeedbackPhrases {
   const filePath = getUserFeedbackPhrasesPath();
   if (!filePath) return { reinforcement: [], correction: [] };
-  
+
   if (userFeedbackPhrasesCache && userFeedbackPhrasesCache.path === filePath) {
     return userFeedbackPhrasesCache.data;
   }
-  
+
   if (!existsSync(filePath)) {
     const emptyData = { reinforcement: [], correction: [] };
     userFeedbackPhrasesCache = { data: emptyData, path: filePath };
     return emptyData;
   }
-  
+
   try {
     const raw = readFileSync(filePath, "utf-8");
     const data = JSON.parse(raw) as UserFeedbackPhrases;
     const parsed = {
-      reinforcement: Array.isArray(data.reinforcement) ? data.reinforcement.filter((s) => typeof s === "string" && s.trim()) : [],
-      correction: Array.isArray(data.correction) ? data.correction.filter((s) => typeof s === "string" && s.trim()) : [],
+      reinforcement: Array.isArray(data.reinforcement)
+        ? data.reinforcement.filter((s) => typeof s === "string" && s.trim())
+        : [],
+      correction: Array.isArray(data.correction)
+        ? data.correction.filter((s) => typeof s === "string" && s.trim())
+        : [],
       updatedAt: data.updatedAt,
       initialRunDone: data.initialRunDone === true,
     };
@@ -412,9 +486,9 @@ export function loadMergedKeywords(): MergedKeywords {
       data = JSON.parse(raw) as LanguageKeywordsFile;
     } catch (err) {
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-        operation: 'load-language-keywords',
-        severity: 'info',
-        subsystem: 'utils'
+        operation: "load-language-keywords",
+        severity: "info",
+        subsystem: "utils",
       });
       // invalid or missing: use English only
     }
@@ -449,11 +523,14 @@ export function loadMergedKeywords(): MergedKeywords {
   const triggerStructures: string[] = [];
   if (data?.triggerStructures && typeof data.triggerStructures === "object") {
     for (const list of Object.values(data.triggerStructures)) {
-      if (Array.isArray(list)) for (const s of list) if (typeof s === "string" && s.trim()) triggerStructures.push(s.trim());
+      if (Array.isArray(list))
+        for (const s of list) if (typeof s === "string" && s.trim()) triggerStructures.push(s.trim());
     }
   }
   const extraction: Record<string, LanguageExtractionTemplate> =
-    data?.extraction && typeof data.extraction === "object" ? (data.extraction as Record<string, LanguageExtractionTemplate>) : {};
+    data?.extraction && typeof data.extraction === "object"
+      ? (data.extraction as Record<string, LanguageExtractionTemplate>)
+      : {};
   const reinforcementGenericPoliteness =
     data?.reinforcementCategories && Array.isArray(data.reinforcementCategories.genericPoliteness)
       ? (data.reinforcementCategories.genericPoliteness as string[]).filter((s) => typeof s === "string" && s.trim())
@@ -472,9 +549,9 @@ export async function clearKeywordCache(): Promise<void> {
     clearDirectiveCategoryCache();
   } catch (err) {
     capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-      operation: 'clear-directive-cache',
-      severity: 'info',
-      subsystem: 'utils'
+      operation: "clear-directive-cache",
+      severity: "info",
+      subsystem: "utils",
     });
   }
   try {
@@ -482,9 +559,9 @@ export async function clearKeywordCache(): Promise<void> {
     clearReinforcementRegexCache();
   } catch (err) {
     capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-      operation: 'clear-reinforcement-cache',
-      severity: 'info',
-      subsystem: 'utils'
+      operation: "clear-reinforcement-cache",
+      severity: "info",
+      subsystem: "utils",
     });
   }
 }
@@ -500,15 +577,15 @@ export function getMemoryTriggerRegexes(): RegExp[] {
   const merged = loadMergedKeywords();
   const triggerWords = merged.triggers;
   const phraseRegex = buildRegexFromKeywords(triggerWords);
-  const list: RegExp[] = [
-    phraseRegex,
-    /\+\d{10,}/,
-    /[\w.-]+@[\w.-]+\.\w+/,
-  ];
+  const list: RegExp[] = [phraseRegex, /\+\d{10,}/, /[\w.-]+@[\w.-]+\.\w+/];
   if (cache?.triggerStructures && cache.triggerStructures.length > 0) {
     list.push(buildRegexFromKeywords(cache.triggerStructures));
   } else {
-    list.push(/\bmy\s+\w+\s+is\b|\bis\s+my\b/i, /\bi\s+(like|prefer|hate|love|want|need)\b/i, /\balways\b.*\buse\b|\bnever\b.*\buse\b/i);
+    list.push(
+      /\bmy\s+\w+\s+is\b|\bis\s+my\b/i,
+      /\bi\s+(like|prefer|hate|love|want|need)\b/i,
+      /\balways\b.*\buse\b|\bnever\b.*\buse\b/i,
+    );
   }
   return list;
 }
@@ -532,10 +609,7 @@ export function getCategoryPreferenceRegex(): RegExp {
 export function getCategoryEntityRegex(): RegExp {
   const merged = loadMergedKeywords();
   const entityWords = merged.categoryEntity;
-  return new RegExp(
-    `\\+\\d{10,}|@[\\w.-]+\\.\\w+|${entityWords.map(escapeRegex).join("|")}`,
-    "i",
-  );
+  return new RegExp(`\\+\\d{10,}|@[\\w.-]+\\.\\w+|${entityWords.map(escapeRegex).join("|")}`, "i");
 }
 
 export function getCategoryFactRegex(): RegExp {
@@ -576,7 +650,11 @@ export function getDirectiveSignalRegex(): RegExp {
 export function getReinforcementSignalRegex(): RegExp {
   const merged = loadMergedKeywords();
   const user = loadUserFeedbackPhrases();
-  return buildRegexFromKeywords([...(merged.reinforcementSignals || []), ...REINFORCEMENT_EMOJIS, ...user.reinforcement]);
+  return buildRegexFromKeywords([
+    ...(merged.reinforcementSignals || []),
+    ...REINFORCEMENT_EMOJIS,
+    ...user.reinforcement,
+  ]);
 }
 
 /** Get category-specific directive regexes for multilingual detection. */
@@ -602,10 +680,7 @@ export function getReinforcementCategoryRegexes(): Record<string, RegExp> {
     cache?.reinforcementGenericPoliteness && cache.reinforcementGenericPoliteness.length > 0
       ? cache.reinforcementGenericPoliteness
       : ["thanks", "thank you", "ok", "okay", "got it"];
-  const genericPolitenessRegex = new RegExp(
-    `^(${genericPolitenessPhrases.map(escapeRegex).join("|")})\\.?$`,
-    "i",
-  );
+  const genericPolitenessRegex = new RegExp(`^(${genericPolitenessPhrases.map(escapeRegex).join("|")})\\.?$`, "i");
   return {
     strongPraise: buildRegexFromKeywords(merged.reinforcementStrongPraise || []),
     methodConfirmation: buildRegexFromKeywords(merged.reinforcementMethodConfirmation || []),

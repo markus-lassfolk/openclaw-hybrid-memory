@@ -58,7 +58,11 @@ export async function runMemoryDiagnostics(opts: {
     let semanticResults: SearchResult[] = [];
     try {
       semanticResults = await vectorDb.search(vector, 5, minScore);
-      semanticResults = filterByScope(semanticResults, (id, opts) => factsDb.getById(id, opts), scopeFilter ?? undefined);
+      semanticResults = filterByScope(
+        semanticResults,
+        (id, opts) => factsDb.getById(id, opts),
+        scopeFilter ?? undefined,
+      );
     } catch (err) {
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
         subsystem: "diagnostics",

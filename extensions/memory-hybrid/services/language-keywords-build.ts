@@ -18,11 +18,7 @@ import {
   clearKeywordCache,
 } from "../utils/language-keywords.js";
 import { capturePluginError } from "./error-reporter.js";
-import {
-  KEYWORD_GROUP_INTENTS,
-  STRUCTURAL_TRIGGER_INTENTS,
-  EXTRACTION_INTENTS,
-} from "./intent-template.js";
+import { KEYWORD_GROUP_INTENTS, STRUCTURAL_TRIGGER_INTENTS, EXTRACTION_INTENTS } from "./intent-template.js";
 
 const LANG_FILE_NAME = ".language-keywords.json";
 const MAX_SAMPLES = 50;
@@ -30,12 +26,14 @@ const CHARS_PER_SAMPLE = 400;
 
 const KEYWORD_GROUPS = Object.keys(ENGLISH_KEYWORDS) as KeywordGroup[];
 
-export type BuildLanguageKeywordsResult = {
-  ok: true;
-  path: string;
-  topLanguages: string[];
-  languagesAdded: number;
-} | { ok: false; error: string };
+export type BuildLanguageKeywordsResult =
+  | {
+      ok: true;
+      path: string;
+      topLanguages: string[];
+      languagesAdded: number;
+    }
+  | { ok: false; error: string };
 
 /**
  * Collect text samples from facts (for language detection).
@@ -62,11 +60,7 @@ export function collectSamplesFromFacts(
 /**
  * Ask LLM to detect the 3 most common languages in the samples. Returns ISO 639-1 codes (e.g. en, sv, de).
  */
-export async function detectTopLanguages(
-  samples: string[],
-  openai: OpenAI,
-  model: string,
-): Promise<string[]> {
+export async function detectTopLanguages(samples: string[], openai: OpenAI, model: string): Promise<string[]> {
   if (samples.length === 0) return [];
   const block = samples
     .slice(0, 30)
@@ -81,13 +75,14 @@ ${block}`;
   try {
     const { withLLMRetry } = await import("./chat.js");
     const resp = await withLLMRetry(
-      () => openai.chat.completions.create({
-        model,
-        messages: [{ role: "user", content: prompt }],
-        temperature: 0,
-        max_tokens: 100,
-      }),
-      { maxRetries: 2 }
+      () =>
+        openai.chat.completions.create({
+          model,
+          messages: [{ role: "user", content: prompt }],
+          temperature: 0,
+          max_tokens: 100,
+        }),
+      { maxRetries: 2 },
     );
     const content = (resp.choices[0]?.message?.content ?? "").trim();
     const match = content.match(/\[[\s\S]*?\]/);
@@ -100,9 +95,9 @@ ${block}`;
       .filter((x) => x.length >= 2);
   } catch (err) {
     capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-      operation: 'parse-language-codes',
-      severity: 'info',
-      subsystem: 'language-keywords',
+      operation: "parse-language-codes",
+      severity: "info",
+      subsystem: "language-keywords",
     });
     return [];
   }
@@ -114,16 +109,21 @@ ${block}`;
  * and extraction building blocks.
  */
 function buildIntentPrompt(langCodes: string[], englishPayload: string): string {
-  const intentsBlock = KEYWORD_GROUPS.map(
-    (g) => `- ${g}: ${KEYWORD_GROUP_INTENTS[g]}`,
-  ).join("\n");
+  const intentsBlock = KEYWORD_GROUPS.map((g) => `- ${g}: ${KEYWORD_GROUP_INTENTS[g]}`).join("\n");
   const structureBlock = Object.entries(STRUCTURAL_TRIGGER_INTENTS)
     .map(([k, v]) => `- ${k}: ${v}`)
     .join("\n");
   const extractionBlock = Object.entries(EXTRACTION_INTENTS)
     .map(([k, v]) => {
-      const desc = typeof v === "object" && v !== null && "description" in v ? (v as { description: string }).description : "";
-      const rest = typeof v === "object" && v !== null ? Object.entries(v).filter(([key]) => key !== "description").map(([key, val]) => `  ${key}: ${val}`).join("\n") : "";
+      const desc =
+        typeof v === "object" && v !== null && "description" in v ? (v as { description: string }).description : "";
+      const rest =
+        typeof v === "object" && v !== null
+          ? Object.entries(v)
+              .filter(([key]) => key !== "description")
+              .map(([key, val]) => `  ${key}: ${val}`)
+              .join("\n")
+          : "";
       return `- ${k}: ${desc}\n${rest}`;
     })
     .join("\n\n");
@@ -179,14 +179,18 @@ function normalizeExtraction(raw: unknown): LanguageExtractionTemplate | null {
   if (o.decision && typeof o.decision === "object") {
     const d = o.decision as Record<string, unknown>;
     const verbs = Array.isArray(d.verbs) ? d.verbs.filter((x): x is string => typeof x === "string") : [];
-    const connectors = Array.isArray(d.connectors) ? d.connectors.filter((x): x is string => typeof x === "string") : [];
+    const connectors = Array.isArray(d.connectors)
+      ? d.connectors.filter((x): x is string => typeof x === "string")
+      : [];
     if (verbs.length > 0) out.decision = { verbs, connectors };
   }
   if (o.choiceOver && typeof o.choiceOver === "object") {
     const c = o.choiceOver as Record<string, unknown>;
     const verbs = Array.isArray(c.verbs) ? c.verbs.filter((x): x is string => typeof x === "string") : [];
     const rejectors = Array.isArray(c.rejectors) ? c.rejectors.filter((x): x is string => typeof x === "string") : [];
-    const connectors = Array.isArray(c.connectors) ? c.connectors.filter((x): x is string => typeof x === "string") : [];
+    const connectors = Array.isArray(c.connectors)
+      ? c.connectors.filter((x): x is string => typeof x === "string")
+      : [];
     if (verbs.length > 0 && rejectors.length > 0) out.choiceOver = { verbs, rejectors, connectors };
   }
   if (o.convention && typeof o.convention === "object") {
@@ -197,7 +201,9 @@ function normalizeExtraction(raw: unknown): LanguageExtractionTemplate | null {
   }
   if (o.possessive && typeof o.possessive === "object") {
     const p = o.possessive as Record<string, unknown>;
-    const possessiveWords = Array.isArray(p.possessiveWords) ? p.possessiveWords.filter((x): x is string => typeof x === "string") : [];
+    const possessiveWords = Array.isArray(p.possessiveWords)
+      ? p.possessiveWords.filter((x): x is string => typeof x === "string")
+      : [];
     const isWords = Array.isArray(p.isWords) ? p.isWords.filter((x): x is string => typeof x === "string") : [];
     if (possessiveWords.length > 0 && isWords.length > 0) out.possessive = { possessiveWords, isWords };
   }
@@ -242,13 +248,14 @@ export async function generateIntentBasedLanguages(
   try {
     const { withLLMRetry } = await import("./chat.js");
     const resp = await withLLMRetry(
-      () => openai.chat.completions.create({
-        model,
-        messages: [{ role: "user", content: prompt }],
-        temperature: 0.2,
-        max_tokens: 6000,
-      }),
-      { maxRetries: 2 }
+      () =>
+        openai.chat.completions.create({
+          model,
+          messages: [{ role: "user", content: prompt }],
+          temperature: 0.2,
+          max_tokens: 6000,
+        }),
+      { maxRetries: 2 },
     );
     const content = (resp.choices[0]?.message?.content ?? "").trim();
     const jsonMatch = content.match(/\{[\s\S]*\}/);
@@ -288,9 +295,9 @@ export async function generateIntentBasedLanguages(
     return { translations, triggerStructures, extraction };
   } catch (err) {
     capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-      operation: 'parse-intent-response',
-      severity: 'info',
-      subsystem: 'language-keywords',
+      operation: "parse-intent-response",
+      severity: "info",
+      subsystem: "language-keywords",
     });
     return { translations: {}, triggerStructures: {}, extraction: {} };
   }
@@ -307,9 +314,9 @@ export async function translateKeywordsToLanguages(
   const toTranslate = langCodes.filter((c) => c !== "en");
   if (toTranslate.length === 0) return {};
 
-  const payload = KEYWORD_GROUPS.map(
-    (g) => `${g}:\n${(ENGLISH_KEYWORDS[g] as readonly string[]).join("\n")}`,
-  ).join("\n---\n");
+  const payload = KEYWORD_GROUPS.map((g) => `${g}:\n${(ENGLISH_KEYWORDS[g] as readonly string[]).join("\n")}`).join(
+    "\n---\n",
+  );
 
   const prompt = `You are a translator for a memory/capture system. Translate the following English keywords and short phrases into the given languages.
 Each section is a category name followed by one phrase per line. For each language, output the SAME structure with translated phrases (one per line).
@@ -326,13 +333,14 @@ Each value must be an array of translated strings in the same order as the Engli
   try {
     const { withLLMRetry } = await import("./chat.js");
     const resp = await withLLMRetry(
-      () => openai.chat.completions.create({
-        model,
-        messages: [{ role: "user", content: prompt }],
-        temperature: 0.2,
-        max_tokens: 4000,
-      }),
-      { maxRetries: 2 }
+      () =>
+        openai.chat.completions.create({
+          model,
+          messages: [{ role: "user", content: prompt }],
+          temperature: 0.2,
+          max_tokens: 4000,
+        }),
+      { maxRetries: 2 },
     );
     const content = (resp.choices[0]?.message?.content ?? "").trim();
     const jsonMatch = content.match(/\{[\s\S]*\}/);
@@ -352,9 +360,9 @@ Each value must be an array of translated strings in the same order as the Engli
     return result;
   } catch (err) {
     capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-      operation: 'parse-translation-response',
-      severity: 'info',
-      subsystem: 'language-keywords',
+      operation: "parse-translation-response",
+      severity: "info",
+      subsystem: "language-keywords",
     });
     return {};
   }
@@ -419,7 +427,8 @@ export async function runBuildLanguageKeywords(
     translations,
     triggerStructures: Object.keys(triggerStructures).length > 0 ? triggerStructures : undefined,
     extraction: Object.keys(extraction).length > 0 ? extraction : undefined,
-    directiveSignalsByCategory: Object.keys(directiveSignalsByCategory).length > 0 ? directiveSignalsByCategory : undefined,
+    directiveSignalsByCategory:
+      Object.keys(directiveSignalsByCategory).length > 0 ? directiveSignalsByCategory : undefined,
     reinforcementCategories: Object.keys(reinforcementCategories).length > 0 ? reinforcementCategories : undefined,
   };
 

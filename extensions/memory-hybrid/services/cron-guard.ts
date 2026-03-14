@@ -158,11 +158,8 @@ export function syncCronLastRunFromGuards(logger: Logger, openclawDir?: string):
     const guardTs = guardTimestamps.get(jobName);
     if (guardTs === undefined) continue;
 
-    const state = (
-      typeof job.state === "object" && job.state !== null ? job.state : {}
-    ) as Record<string, unknown>;
-    const currentLastRun =
-      typeof state.lastRunAtMs === "number" ? state.lastRunAtMs : 0;
+    const state = (typeof job.state === "object" && job.state !== null ? job.state : {}) as Record<string, unknown>;
+    const currentLastRun = typeof state.lastRunAtMs === "number" ? state.lastRunAtMs : 0;
 
     if (guardTs > currentLastRun) {
       job.state = { ...state, lastRunAtMs: guardTs };
@@ -173,9 +170,7 @@ export function syncCronLastRunFromGuards(logger: Logger, openclawDir?: string):
   if (synced > 0) {
     try {
       writeFileSync(cronStorePath, JSON.stringify(store, null, 2), "utf-8");
-      logger.info(
-        `memory-hybrid: synced lastRunAtMs for ${synced} cron job(s) from persistent guard files`,
-      );
+      logger.info(`memory-hybrid: synced lastRunAtMs for ${synced} cron job(s) from persistent guard files`);
     } catch (err) {
       logger.warn(`memory-hybrid: failed to write cron guard sync to jobs.json: ${err}`);
     }

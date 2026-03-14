@@ -79,9 +79,30 @@ describe("detectTrajectoryBoundaries", () => {
 describe("classifyTrajectoryOutcome", () => {
   it("classifies 'success' when last user turn is positive with no corrections", () => {
     const turns: TrajectoryTurn[] = [
-      { role: "user", content: "How do I deploy", summary: "How do I deploy", sentiment: "neutral", wasCorrection: false, wasRephrase: false },
-      { role: "assistant", content: "Use kubectl", summary: "Use kubectl", sentiment: "neutral", wasCorrection: false, wasRephrase: false },
-      { role: "user", content: "That worked great, thanks!", summary: "That worked great, thanks!", sentiment: "positive", wasCorrection: false, wasRephrase: false },
+      {
+        role: "user",
+        content: "How do I deploy",
+        summary: "How do I deploy",
+        sentiment: "neutral",
+        wasCorrection: false,
+        wasRephrase: false,
+      },
+      {
+        role: "assistant",
+        content: "Use kubectl",
+        summary: "Use kubectl",
+        sentiment: "neutral",
+        wasCorrection: false,
+        wasRephrase: false,
+      },
+      {
+        role: "user",
+        content: "That worked great, thanks!",
+        summary: "That worked great, thanks!",
+        sentiment: "positive",
+        wasCorrection: false,
+        wasRephrase: false,
+      },
     ] as unknown as TrajectoryTurn[];
     const { outcome, signal } = classifyTrajectoryOutcome(turns);
     expect(outcome).toBe("success");
@@ -91,7 +112,13 @@ describe("classifyTrajectoryOutcome", () => {
   it("classifies 'partial' when corrections happened but ends positively", () => {
     const turns: TrajectoryTurn[] = [
       { role: "user", summary: "deploy please", sentiment: "neutral", wasCorrection: false, wasRephrase: false },
-      { role: "assistant", summary: "Here is the answer", sentiment: "neutral", wasCorrection: false, wasRephrase: false },
+      {
+        role: "assistant",
+        summary: "Here is the answer",
+        sentiment: "neutral",
+        wasCorrection: false,
+        wasRephrase: false,
+      },
       { role: "user", summary: "No that is wrong", sentiment: "negative", wasCorrection: true, wasRephrase: false },
       { role: "assistant", summary: "Let me fix that", sentiment: "neutral", wasCorrection: false, wasRephrase: false },
       { role: "user", summary: "That worked thanks!", sentiment: "positive", wasCorrection: false, wasRephrase: false },
@@ -105,8 +132,20 @@ describe("classifyTrajectoryOutcome", () => {
   it("classifies 'failure' when ends with correction", () => {
     const turns: TrajectoryTurn[] = [
       { role: "user", summary: "deploy this", sentiment: "neutral", wasCorrection: false, wasRephrase: false },
-      { role: "assistant", summary: "Here is the result", sentiment: "neutral", wasCorrection: false, wasRephrase: false },
-      { role: "user", summary: "Wrong, not what I asked for", sentiment: "negative", wasCorrection: true, wasRephrase: false },
+      {
+        role: "assistant",
+        summary: "Here is the result",
+        sentiment: "neutral",
+        wasCorrection: false,
+        wasRephrase: false,
+      },
+      {
+        role: "user",
+        summary: "Wrong, not what I asked for",
+        sentiment: "negative",
+        wasCorrection: true,
+        wasRephrase: false,
+      },
     ] as TrajectoryTurn[];
     const { outcome, signal } = classifyTrajectoryOutcome(turns);
     expect(outcome).toBe("failure");
@@ -115,9 +154,27 @@ describe("classifyTrajectoryOutcome", () => {
 
   it("classifies 'failure' when user says they'll do it themselves", () => {
     const turns: TrajectoryTurn[] = [
-      { role: "user", summary: "help me configure this", sentiment: "neutral", wasCorrection: false, wasRephrase: false },
-      { role: "assistant", summary: "Sure, here is how", sentiment: "neutral", wasCorrection: false, wasRephrase: false },
-      { role: "user", summary: "Never mind, I'll do it myself", sentiment: "neutral", wasCorrection: false, wasRephrase: false },
+      {
+        role: "user",
+        summary: "help me configure this",
+        sentiment: "neutral",
+        wasCorrection: false,
+        wasRephrase: false,
+      },
+      {
+        role: "assistant",
+        summary: "Sure, here is how",
+        sentiment: "neutral",
+        wasCorrection: false,
+        wasRephrase: false,
+      },
+      {
+        role: "user",
+        summary: "Never mind, I'll do it myself",
+        sentiment: "neutral",
+        wasCorrection: false,
+        wasRephrase: false,
+      },
     ] as TrajectoryTurn[];
     const { outcome, signal } = classifyTrajectoryOutcome(turns);
     expect(outcome).toBe("failure");
@@ -126,7 +183,13 @@ describe("classifyTrajectoryOutcome", () => {
 
   it("returns failure for empty user turns", () => {
     const turns: TrajectoryTurn[] = [
-      { role: "assistant", summary: "Here is the answer", sentiment: "neutral", wasCorrection: false, wasRephrase: false },
+      {
+        role: "assistant",
+        summary: "Here is the answer",
+        sentiment: "neutral",
+        wasCorrection: false,
+        wasRephrase: false,
+      },
     ] as TrajectoryTurn[];
     const { outcome } = classifyTrajectoryOutcome(turns);
     expect(outcome).toBe("failure");
@@ -179,9 +242,27 @@ describe("extractTrajectoryLessons", () => {
       outcomeSignal: "corrections_then_success",
       keyPivot: 3,
       turns: [
-        { role: "user", summary: "deploy", sentiment: "neutral", wasCorrection: false, wasRephrase: false } as TrajectoryTurn,
-        { role: "assistant", summary: "here", sentiment: "neutral", wasCorrection: false, wasRephrase: false } as TrajectoryTurn,
-        { role: "user", summary: "wrong", sentiment: "negative", wasCorrection: true, wasRephrase: false } as TrajectoryTurn,
+        {
+          role: "user",
+          summary: "deploy",
+          sentiment: "neutral",
+          wasCorrection: false,
+          wasRephrase: false,
+        } as TrajectoryTurn,
+        {
+          role: "assistant",
+          summary: "here",
+          sentiment: "neutral",
+          wasCorrection: false,
+          wasRephrase: false,
+        } as TrajectoryTurn,
+        {
+          role: "user",
+          summary: "wrong",
+          sentiment: "negative",
+          wasCorrection: true,
+          wasRephrase: false,
+        } as TrajectoryTurn,
         pivotTurn,
       ],
     });
@@ -195,11 +276,41 @@ describe("extractTrajectoryLessons", () => {
       outcome: "failure",
       outcomeSignal: "ended_with_correction",
       turns: [
-        { role: "user", summary: "request", sentiment: "neutral", wasCorrection: false, wasRephrase: false } as TrajectoryTurn,
-        { role: "assistant", summary: "answer", sentiment: "neutral", wasCorrection: false, wasRephrase: false } as TrajectoryTurn,
-        { role: "user", summary: "wrong", sentiment: "negative", wasCorrection: true, wasRephrase: false } as TrajectoryTurn,
-        { role: "assistant", summary: "retry", sentiment: "neutral", wasCorrection: false, wasRephrase: false } as TrajectoryTurn,
-        { role: "user", summary: "still wrong", sentiment: "negative", wasCorrection: true, wasRephrase: false } as TrajectoryTurn,
+        {
+          role: "user",
+          summary: "request",
+          sentiment: "neutral",
+          wasCorrection: false,
+          wasRephrase: false,
+        } as TrajectoryTurn,
+        {
+          role: "assistant",
+          summary: "answer",
+          sentiment: "neutral",
+          wasCorrection: false,
+          wasRephrase: false,
+        } as TrajectoryTurn,
+        {
+          role: "user",
+          summary: "wrong",
+          sentiment: "negative",
+          wasCorrection: true,
+          wasRephrase: false,
+        } as TrajectoryTurn,
+        {
+          role: "assistant",
+          summary: "retry",
+          sentiment: "neutral",
+          wasCorrection: false,
+          wasRephrase: false,
+        } as TrajectoryTurn,
+        {
+          role: "user",
+          summary: "still wrong",
+          sentiment: "negative",
+          wasCorrection: true,
+          wasRephrase: false,
+        } as TrajectoryTurn,
       ],
       turnCount: 5,
     });

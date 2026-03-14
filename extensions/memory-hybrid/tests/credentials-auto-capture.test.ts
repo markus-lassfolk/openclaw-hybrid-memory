@@ -330,11 +330,11 @@ describe("council review fixes", () => {
       // Test with SQL injection attempt
       const result1 = extractHostFromUrl("https://'; DROP TABLE users; --/api");
       expect(result1).toBe("api"); // Should fall back to safe default
-      
+
       // Test with path traversal
       const result2 = extractHostFromUrl("https://../../../etc/passwd");
       expect(result2).toBe("api");
-      
+
       // Valid hostname should work
       const result3 = extractHostFromUrl("https://api.example.com/path");
       expect(result3).toBe("api.example.com");

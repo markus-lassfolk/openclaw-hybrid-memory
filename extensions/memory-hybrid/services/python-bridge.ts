@@ -253,9 +253,7 @@ export class PythonBridge {
           return {
             ok: false,
             missing,
-            spawnError: new Error(
-              `Python import check failed (status=${result.status}): ${output.slice(0, 200)}`,
-            ),
+            spawnError: new Error(`Python import check failed (status=${result.status}): ${output.slice(0, 200)}`),
           };
         }
       }

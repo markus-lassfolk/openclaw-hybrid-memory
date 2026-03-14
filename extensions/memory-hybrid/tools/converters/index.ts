@@ -90,14 +90,14 @@ function sniffJsonConverter(content: string): Converter | null {
       candidates.push(converter);
     }
   }
-  
+
   // Try content-based selection first (fileName not available for JSON path)
   for (const converter of candidates) {
     if (converter.canHandle && converter.canHandle(content, "")) {
       return converter;
     }
   }
-  
+
   // Fall back to first converter without canHandle method (accepts all files of this extension)
   const fallbackCandidate = candidates.find((c) => !c.canHandle);
   return fallbackCandidate ?? null;

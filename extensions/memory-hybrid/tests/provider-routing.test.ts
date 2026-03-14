@@ -34,7 +34,12 @@ vi.mock("../services/error-reporter.js", async (importOriginal) => {
 });
 
 import OpenAI from "openai";
-import { initializeDatabases, closeOldDatabases, MINIMAX_BASE_URL, OPENROUTER_BASE_URL } from "../setup/init-databases.js";
+import {
+  initializeDatabases,
+  closeOldDatabases,
+  MINIMAX_BASE_URL,
+  OPENROUTER_BASE_URL,
+} from "../setup/init-databases.js";
 import { hybridConfigSchema } from "../config.js";
 
 /** Restore an env var to its original value, or delete it if it was originally unset. */
@@ -119,7 +124,13 @@ describe("MiniMax provider routing — direct API key", () => {
 
   afterEach(() => {
     // Always close db handles before removing the temp dir
-    if (ctx) { try { closeOldDatabases(ctx); } catch { /* best effort */ } }
+    if (ctx) {
+      try {
+        closeOldDatabases(ctx);
+      } catch {
+        /* best effort */
+      }
+    }
     rmSync(tmpDir, { recursive: true, force: true });
     // Restore original env vars
     restoreEnv("OPENCLAW_GATEWAY_PORT", origGatewayPort);
@@ -156,7 +167,6 @@ describe("MiniMax provider routing — direct API key", () => {
     expect(minimaxCall).toBeDefined();
     expect((minimaxCall![0] as Record<string, unknown>).apiKey).toBe("sk-cp-minimax-test-key-1234");
     expect((minimaxCall![0] as Record<string, unknown>).baseURL).toBe("https://api.minimax.io/v1");
-
   });
 
   it("routes to custom baseURL when explicitly overridden in llm.providers.minimax", async () => {
@@ -186,7 +196,6 @@ describe("MiniMax provider routing — direct API key", () => {
     );
     expect(minimaxCall).toBeDefined();
     expect((minimaxCall![0] as Record<string, unknown>).baseURL).toBe(customURL);
-
   });
 
   it("uses MINIMAX_API_KEY env var as fallback when no apiKey in config", async () => {
@@ -238,7 +247,6 @@ describe("MiniMax provider routing — direct API key", () => {
         messages: [{ role: "user", content: "hello" }],
       }),
     ).toThrow("Provider 'minimax' is not configured");
-
   });
 
   it("sends bare model name MiniMax-M2.5 (not full provider/model) to the MiniMax API", async () => {
@@ -276,17 +284,14 @@ describe("MiniMax provider routing — direct API key", () => {
     const createCalls = instance?.chat?.completions?.create?.mock?.calls ?? [];
 
     // The proxy strips the "minimax/" prefix and sends bare "MiniMax-M2.5" to the API
-    const callWithBareModel = createCalls.find(
-      ([body]) => (body as { model?: string })?.model === "MiniMax-M2.5",
-    );
+    const callWithBareModel = createCalls.find(([body]) => (body as { model?: string })?.model === "MiniMax-M2.5");
     expect(callWithBareModel).toBeDefined();
-
   });
 
   it("auto-prefixes bare MiniMax-M2.5 (no provider/ prefix) to minimax/MiniMax-M2.5 and routes correctly", async () => {
     const cfg = getTestConfig(tmpDir, {
       llm: {
-        default: ["MiniMax-M2.5"],  // bare — no minimax/ prefix
+        default: ["MiniMax-M2.5"], // bare — no minimax/ prefix
         heavy: ["MiniMax-M2.5"],
         providers: {
           minimax: { apiKey: "sk-cp-bare-prefix-test" },
@@ -320,7 +325,7 @@ describe("MiniMax provider routing — direct API key", () => {
     // the invalid "minimax-m2.5:cloud" that produces a 404).
     const cfg = getTestConfig(tmpDir, {
       llm: {
-        default: ["minimax-m2.5:cloud"],  // Ollama-style alias — should be canonicalized
+        default: ["minimax-m2.5:cloud"], // Ollama-style alias — should be canonicalized
         heavy: ["minimax-m2.5:cloud"],
         providers: {
           minimax: { apiKey: "sk-cp-issue400-test" },
@@ -385,7 +390,13 @@ describe("MiniMax provider routing — gateway key auto-merge", () => {
   });
 
   afterEach(() => {
-    if (ctx) { try { closeOldDatabases(ctx); } catch { /* best effort */ } }
+    if (ctx) {
+      try {
+        closeOldDatabases(ctx);
+      } catch {
+        /* best effort */
+      }
+    }
     rmSync(tmpDir, { recursive: true, force: true });
     restoreEnv("OPENCLAW_GATEWAY_PORT", origGatewayPort);
     restoreEnv("OPENCLAW_GATEWAY_TOKEN", origGatewayToken);
@@ -429,7 +440,6 @@ describe("MiniMax provider routing — gateway key auto-merge", () => {
         (args as Record<string, unknown>)?.apiKey === "sk-cp-from-gateway-no-baseurl",
     );
     expect(wrongCall).toBeUndefined();
-
   });
 
   it("appends minimax/MiniMax-Text-01 to tier lists when gateway provides minimax key but no minimax model is configured", () => {
@@ -576,9 +586,7 @@ describe("MiniMax provider routing — gateway key auto-merge", () => {
           providers: {
             minimax: {
               apiKey: "sk-cp-non-chat-defaultmodel-test",
-              models: [
-                { id: "MiniMax-Embed-01", type: "embedding" },
-              ],
+              models: [{ id: "MiniMax-Embed-01", type: "embedding" }],
               defaultModel: "MiniMax-Embed-01",
             },
           },
@@ -627,7 +635,6 @@ describe("MiniMax provider routing — gateway key auto-merge", () => {
     expect(defaultList).not.toContain("openai/gpt-image-1");
     expect(heavyList).not.toContain("openai/gpt-image-1");
   });
-
 
   it("hasModelFrom recognises bare MiniMax-* names (case-insensitive) so minimax is not double-appended", () => {
     // If the user already has a bare MiniMax-M2.5 in their tier list (which normalizeModelId
@@ -683,7 +690,13 @@ describe("OpenRouter provider routing (issue #380)", () => {
   });
 
   afterEach(() => {
-    if (ctx) { try { closeOldDatabases(ctx); } catch { /* best effort */ } }
+    if (ctx) {
+      try {
+        closeOldDatabases(ctx);
+      } catch {
+        /* best effort */
+      }
+    }
     rmSync(tmpDir, { recursive: true, force: true });
     restoreEnv("OPENROUTER_API_KEY", origOpenrouterApiKey);
     restoreEnv("OPENCLAW_GATEWAY_PORT", origGatewayPort);
@@ -833,9 +846,7 @@ describe("OpenRouter provider routing (issue #380)", () => {
       messages: [{ role: "user", content: "hello" }],
     });
 
-    const customCall = MockOpenAI.mock.calls.find(
-      ([args]) => (args as Record<string, unknown>)?.baseURL === customURL,
-    );
+    const customCall = MockOpenAI.mock.calls.find(([args]) => (args as Record<string, unknown>)?.baseURL === customURL);
     expect(customCall).toBeDefined();
   });
 });
@@ -867,7 +878,13 @@ describe("Anthropic provider routing — issue #386", () => {
   });
 
   afterEach(() => {
-    if (ctx) { try { closeOldDatabases(ctx); } catch { /* best effort */ } }
+    if (ctx) {
+      try {
+        closeOldDatabases(ctx);
+      } catch {
+        /* best effort */
+      }
+    }
     rmSync(tmpDir, { recursive: true, force: true });
     restoreEnv("ANTHROPIC_API_KEY", origAnthropicApiKey);
     restoreEnv("OPENCLAW_GATEWAY_PORT", origGatewayPort);
@@ -1047,7 +1064,13 @@ describe("OpenRouter gateway merge — issue #392", () => {
   });
 
   afterEach(() => {
-    if (ctx) { try { closeOldDatabases(ctx); } catch { /* best effort */ } }
+    if (ctx) {
+      try {
+        closeOldDatabases(ctx);
+      } catch {
+        /* best effort */
+      }
+    }
     rmSync(tmpDir, { recursive: true, force: true });
     restoreEnv("OPENROUTER_API_KEY", origOpenrouterApiKey);
     restoreEnv("OPENCLAW_GATEWAY_PORT", origGatewayPort);
@@ -1192,9 +1215,7 @@ describe("OpenRouter gateway merge — issue #392", () => {
     const createCalls = instance?.chat?.completions?.create?.mock?.calls ?? [];
 
     // The proxy strips only "openrouter/" prefix; bareModel must be "qwen/qwen3-14b" (not "qwen3-14b")
-    const callWithBareModel = createCalls.find(
-      ([body]) => (body as { model?: string })?.model === "qwen/qwen3-14b",
-    );
+    const callWithBareModel = createCalls.find(([body]) => (body as { model?: string })?.model === "qwen/qwen3-14b");
     expect(callWithBareModel).toBeDefined();
   });
 });

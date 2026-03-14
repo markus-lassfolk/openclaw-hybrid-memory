@@ -3,8 +3,8 @@ export type AutoRecallInjectionFormat = "full" | "short" | "minimal" | "progress
 
 export type AutoClassifyConfig = {
   enabled: boolean;
-  model?: string;      // when unset, runtime uses getDefaultCronModel(cfg, "nano")
-  batchSize: number;   // facts per LLM call (default 20)
+  model?: string; // when unset, runtime uses getDefaultCronModel(cfg, "nano")
+  batchSize: number; // facts per LLM call (default 20)
   /** When true, LLM can suggest new categories from "other" facts; labels with at least minFactsForNewCategory become real categories (default true) */
   suggestCategories?: boolean;
   /** Minimum facts with the same suggested label before we create that category (default 10). Not told to the LLM. */
@@ -14,8 +14,8 @@ export type AutoClassifyConfig = {
 /** Entity-centric recall: when prompt mentions an entity from the list, merge lookup(entity) facts into candidates */
 export type EntityLookupConfig = {
   enabled: boolean;
-  entities: string[];           // e.g. ["user", "owner", "decision"]; prompt matched case-insensitively
-  maxFactsPerEntity: number;    // max facts to merge per matched entity (default 2)
+  entities: string[]; // e.g. ["user", "owner", "decision"]; prompt matched case-insensitively
+  maxFactsPerEntity: number; // max facts to merge per matched entity (default 2)
 };
 
 /** Auto-recall on authentication failures (reactive memory trigger) */
@@ -59,11 +59,11 @@ export type AutoRecallConfig = {
   entityLookup: EntityLookupConfig;
   /** Targeted recall directives (entity mention, keyword, task type, session start). */
   retrievalDirectives: RetrievalDirectivesConfig;
-  summaryThreshold: number;      // facts longer than this get a summary stored; 0 = disabled (default 300)
-  summaryMaxChars: number;       // summary length when generated (default 80)
-  useSummaryInInjection: boolean;  // inject summary instead of full text when present (default true)
-  summarizeWhenOverBudget: boolean;  // when token cap forces dropping memories, LLM-summarize all into 2-3 sentences (1.4)
-  summarizeModel?: string;       // when unset, runtime uses getDefaultCronModel(cfg, "nano")
+  summaryThreshold: number; // facts longer than this get a summary stored; 0 = disabled (default 300)
+  summaryMaxChars: number; // summary length when generated (default 80)
+  useSummaryInInjection: boolean; // inject summary instead of full text when present (default true)
+  summarizeWhenOverBudget: boolean; // when token cap forces dropping memories, LLM-summarize all into 2-3 sentences (1.4)
+  summarizeModel?: string; // when unset, runtime uses getDefaultCronModel(cfg, "nano")
   /** Max candidates for progressive index (default 15). Only when injectionFormat is progressive or progressive_hybrid. */
   progressiveMaxCandidates?: number;
   /** Max tokens for the index block in progressive mode (default: 300 when injectionFormat is progressive or progressive_hybrid). */

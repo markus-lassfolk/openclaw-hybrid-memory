@@ -64,13 +64,14 @@ async function discoverCategoriesFromOther(
     try {
       const { withLLMRetry } = await import("./chat.js");
       const resp = await withLLMRetry(
-        () => openai.chat.completions.create({
-          model: config.model,
-          messages: [{ role: "user", content: prompt }],
-          temperature: 0,
-          max_tokens: batch.length * 24,
-        }),
-        { maxRetries: 2 }
+        () =>
+          openai.chat.completions.create({
+            model: config.model,
+            messages: [{ role: "user", content: prompt }],
+            temperature: 0,
+            max_tokens: batch.length * 24,
+          }),
+        { maxRetries: 2 },
       );
       const content = resp.choices[0]?.message?.content?.trim() || "[]";
       const jsonMatch = content.match(/\[[\s\S]*\]/);
@@ -113,7 +114,9 @@ async function discoverCategoriesFromOther(
   if (newCategoryNames.length === 0) return [];
 
   setMemoryCategories([...getMemoryCategories(), ...newCategoryNames]);
-  logger.info(`memory-hybrid: discovered ${newCategoryNames.length} new categories: ${newCategoryNames.join(", ")} (${newCategoryNames.reduce((acc, c) => acc + (labelToIds.get(c)?.length ?? 0), 0)} facts reclassified)`);
+  logger.info(
+    `memory-hybrid: discovered ${newCategoryNames.length} new categories: ${newCategoryNames.join(", ")} (${newCategoryNames.reduce((acc, c) => acc + (labelToIds.get(c)?.length ?? 0), 0)} facts reclassified)`,
+  );
 
   await mkdir(dirname(discoveredCategoriesPath), { recursive: true });
   let existingList: string[] = [];
@@ -121,9 +124,9 @@ async function discoverCategoriesFromOther(
     existingList = JSON.parse(await readFile(discoveredCategoriesPath, "utf-8")) as string[];
   } catch (err) {
     capturePluginError(err as Error, {
-      operation: 'read-discovered-categories',
-      severity: 'info',
-      subsystem: 'classifier'
+      operation: "read-discovered-categories",
+      severity: "info",
+      subsystem: "classifier",
     });
     // file doesn't exist yet
   }
@@ -144,9 +147,7 @@ async function classifyBatch(
   categories: readonly string[],
 ): Promise<Map<string, string>> {
   const catList = categories.filter((c) => c !== "other").join(", ");
-  const factLines = facts
-    .map((f, i) => `${i + 1}. ${f.text.slice(0, 300)}`)
-    .join("\n");
+  const factLines = facts.map((f, i) => `${i + 1}. ${f.text.slice(0, 300)}`).join("\n");
 
   const prompt = `You are a memory classifier. Categorize each fact into exactly one category.
 
@@ -161,13 +162,14 @@ Respond with ONLY a JSON array of category strings, one per fact, in order. Exam
   try {
     const { withLLMRetry } = await import("./chat.js");
     const resp = await withLLMRetry(
-      () => openai.chat.completions.create({
-        model,
-        messages: [{ role: "user", content: prompt }],
-        temperature: 0,
-        max_tokens: facts.length * 20,
-      }),
-      { maxRetries: 2 }
+      () =>
+        openai.chat.completions.create({
+          model,
+          messages: [{ role: "user", content: prompt }],
+          temperature: 0,
+          max_tokens: facts.length * 20,
+        }),
+      { maxRetries: 2 },
     );
 
     const content = resp.choices[0]?.message?.content?.trim() || "[]";
@@ -196,9 +198,9 @@ Respond with ONLY a JSON array of category strings, one per fact, in order. Exam
       /timed out|llm request timeout|request was aborted|econnrefused/i.test(classifyErr.message);
     if (!isTransient) {
       capturePluginError(classifyErr, {
-        operation: 'classify-batch',
-        severity: 'info',
-        subsystem: 'classifier'
+        operation: "classify-batch",
+        severity: "info",
+        subsystem: "classifier",
       });
     }
     return new Map();
@@ -310,7 +312,9 @@ async function runAutoClassify(
 ): Promise<{ reclassified: number; suggested: string[] }> {
   const model = opts?.model ?? config.model;
   if (!model) {
-    throw new Error("auto-classify model required: set autoClassify.model or pass opts.model (e.g. from getDefaultCronModel)");
+    throw new Error(
+      "auto-classify model required: set autoClassify.model or pass opts.model (e.g. from getDefaultCronModel)",
+    );
   }
   const configWithModel = { ...config, model };
   const categories = getMemoryCategories();
@@ -358,9 +362,4 @@ async function runAutoClassify(
 // Exports
 // ============================================================================
 
-export {
-  runAutoClassify,
-  runClassifyForCli,
-  normalizeSuggestedLabel,
-  type ClassifyProgressReporter,
-};
+export { runAutoClassify, runClassifyForCli, normalizeSuggestedLabel, type ClassifyProgressReporter };

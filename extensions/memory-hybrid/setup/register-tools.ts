@@ -77,13 +77,13 @@ export interface ToolsContext {
   buildToolScopeFilter: (
     params: { userId?: string | null; agentId?: string | null; sessionId?: string | null },
     currentAgent: string | null,
-    config: { multiAgent: { orchestratorId: string }; autoRecall: { scopeFilter?: ScopeFilter } }
+    config: { multiAgent: { orchestratorId: string }; autoRecall: { scopeFilter?: ScopeFilter } },
   ) => ScopeFilter | undefined;
   walWrite: (
     wal: WriteAheadLog | null,
     operation: "store" | "update",
     data: Record<string, unknown>,
-    logger: { warn: (msg: string) => void }
+    logger: { warn: (msg: string) => void },
   ) => string;
   walRemove: (wal: WriteAheadLog | null, id: string, logger: { warn: (msg: string) => void }) => void;
   findSimilarByEmbedding: (
@@ -91,7 +91,7 @@ export interface ToolsContext {
     factsDb: { getById(id: string): MemoryEntry | null },
     vector: number[],
     limit: number,
-    minScore?: number
+    minScore?: number,
   ) => Promise<MemoryEntry[]>;
   runReflection: RunReflectionFn;
   runReflectionRules: RunReflectionRulesFn;
@@ -139,12 +139,29 @@ export function registerTools(ctx: ToolsContext, api: ClawdbotPluginApi): void {
 
   // Memory tools (core recall, store, forget operations)
   registerMemoryTools(
-    { factsDb, vectorDb, cfg, embeddings, embeddingRegistry, openai, wal, credentialsDb, eventLog, provenanceService, aliasDb, verificationStore, variantQueue, lastProgressiveIndexIds, currentAgentIdRef, pendingLLMWarnings },
+    {
+      factsDb,
+      vectorDb,
+      cfg,
+      embeddings,
+      embeddingRegistry,
+      openai,
+      wal,
+      credentialsDb,
+      eventLog,
+      provenanceService,
+      aliasDb,
+      verificationStore,
+      variantQueue,
+      lastProgressiveIndexIds,
+      currentAgentIdRef,
+      pendingLLMWarnings,
+    },
     api,
     buildToolScopeFilter,
     (operation, data, logger) => walWrite(wal, operation, data, logger),
     (id, logger) => walRemove(wal, id, logger),
-    findSimilarByEmbedding
+    findSimilarByEmbedding,
   );
 
   // Graph tools (memory linking and traversal)
@@ -173,22 +190,25 @@ export function registerTools(ctx: ToolsContext, api: ClawdbotPluginApi): void {
 
     // Periodic cleanup of expired proposals (stored in module-level variable for cleanup on stop).
     // Guard: only call pruneExpired when DB is still open to avoid "database connection is not open" after stop() (issue #130).
-    timers.proposalsPruneTimer.value = setInterval(() => {
-      try {
-        if (proposalsDb?.isOpen()) {
-          const pruned = proposalsDb.pruneExpired();
-          if (pruned > 0) {
-            api.logger.info(`memory-hybrid: pruned ${pruned} expired proposal(s)`);
+    timers.proposalsPruneTimer.value = setInterval(
+      () => {
+        try {
+          if (proposalsDb?.isOpen()) {
+            const pruned = proposalsDb.pruneExpired();
+            if (pruned > 0) {
+              api.logger.info(`memory-hybrid: pruned ${pruned} expired proposal(s)`);
+            }
           }
+        } catch (err) {
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+            subsystem: "proposals",
+            operation: "periodic-prune",
+          });
+          api.logger.warn(`memory-hybrid: proposal prune failed: ${err}`);
         }
-      } catch (err) {
-        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-          subsystem: "proposals",
-          operation: "periodic-prune",
-        });
-        api.logger.warn(`memory-hybrid: proposal prune failed: ${err}`);
-      }
-    }, 24 * 60 * 60_000); // daily
+      },
+      24 * 60 * 60_000,
+    ); // daily
 
     // Proposals CLI (list/show/approve/reject) is registered under hybrid-mem in manage.ts only
   }
@@ -201,15 +221,12 @@ export function registerTools(ctx: ToolsContext, api: ClawdbotPluginApi): void {
     runReflectionRules,
     runReflectionMeta,
     (operation, data) => walWrite(wal, operation, data, api.logger),
-    (id) => walRemove(wal, id, api.logger)
+    (id) => walRemove(wal, id, api.logger),
   );
 
   // Document ingestion tool (opt-in, requires Python + markitdown)
   if (cfg.documents.enabled && pythonBridge) {
-    registerDocumentTools(
-      { factsDb, vectorDb, cfg, embeddings, pythonBridge, openai, provenanceService },
-      api,
-    );
+    registerDocumentTools({ factsDb, vectorDb, cfg, embeddings, pythonBridge, openai, provenanceService }, api);
   }
 
   // Verification tools (Issue #162)

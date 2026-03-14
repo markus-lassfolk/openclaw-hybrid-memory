@@ -54,19 +54,21 @@ function insertAgentFact(
 ): string {
   const id = opts.id ?? Math.random().toString(36).slice(2, 12);
   const now = Math.floor(Date.now() / 1000);
-  rawDb(db).prepare(
-    `INSERT INTO facts (id, text, category, scope, scope_target, confidence, importance, source, created_at, last_confirmed_at, decay_class)
+  rawDb(db)
+    .prepare(
+      `INSERT INTO facts (id, text, category, scope, scope_target, confidence, importance, source, created_at, last_confirmed_at, decay_class)
      VALUES (?, ?, ?, 'agent', ?, ?, ?, 'test', ?, ?, 'stable')`,
-  ).run(
-    id,
-    opts.text,
-    opts.category ?? "pattern",
-    opts.agentId,
-    opts.confidence ?? 0.7,
-    opts.importance ?? 0.7,
-    now,
-    now,
-  );
+    )
+    .run(
+      id,
+      opts.text,
+      opts.category ?? "pattern",
+      opts.agentId,
+      opts.confidence ?? 0.7,
+      opts.importance ?? 0.7,
+      now,
+      now,
+    );
   return id;
 }
 
@@ -162,10 +164,12 @@ describe("getCrossAgentFacts", () => {
 
   it("returns facts stored with cross-agent-learning source", () => {
     const now = Math.floor(Date.now() / 1000);
-    rawDb(db).prepare(
-      `INSERT INTO facts (id, text, category, scope, source, confidence, importance, created_at, last_confirmed_at, decay_class)
+    rawDb(db)
+      .prepare(
+        `INSERT INTO facts (id, text, category, scope, source, confidence, importance, created_at, last_confirmed_at, decay_class)
        VALUES (?, ?, 'pattern', 'global', 'cross-agent-learning', 0.75, 0.8, ?, ?, 'permanent')`,
-    ).run("test-id-1", "Always verify before applying changes", now, now);
+      )
+      .run("test-id-1", "Always verify before applying changes", now, now);
 
     const facts = getCrossAgentFacts(db);
     expect(facts).toHaveLength(1);
@@ -174,10 +178,12 @@ describe("getCrossAgentFacts", () => {
 
   it("does not return superseded facts", () => {
     const now = Math.floor(Date.now() / 1000);
-    rawDb(db).prepare(
-      `INSERT INTO facts (id, text, category, scope, source, confidence, importance, created_at, last_confirmed_at, decay_class, superseded_at)
+    rawDb(db)
+      .prepare(
+        `INSERT INTO facts (id, text, category, scope, source, confidence, importance, created_at, last_confirmed_at, decay_class, superseded_at)
        VALUES (?, ?, 'pattern', 'global', 'cross-agent-learning', 0.75, 0.8, ?, ?, 'permanent', ?)`,
-    ).run("superseded-id", "Old superseded fact", now, now, now);
+      )
+      .run("superseded-id", "Old superseded fact", now, now, now);
 
     const facts = getCrossAgentFacts(db);
     expect(facts).toHaveLength(0);
@@ -253,15 +259,19 @@ describe("runCrossAgentLearning — LLM mock", () => {
   it("stores generalised facts when LLM returns valid lessons", async () => {
     // Insert agent-scoped facts
     const now = Math.floor(Date.now() / 1000);
-    rawDb(db).prepare(
-      `INSERT INTO facts (id, text, category, scope, scope_target, confidence, importance, source, created_at, last_confirmed_at, decay_class)
+    rawDb(db)
+      .prepare(
+        `INSERT INTO facts (id, text, category, scope, scope_target, confidence, importance, source, created_at, last_confirmed_at, decay_class)
        VALUES (?, ?, 'pattern', 'agent', 'forge', 0.8, 0.7, 'test', ?, ?, 'stable')`,
-    ).run("agent-fact-1", "Always run tests before committing", now, now);
+      )
+      .run("agent-fact-1", "Always run tests before committing", now, now);
 
-    rawDb(db).prepare(
-      `INSERT INTO facts (id, text, category, scope, scope_target, confidence, importance, source, created_at, last_confirmed_at, decay_class)
+    rawDb(db)
+      .prepare(
+        `INSERT INTO facts (id, text, category, scope, scope_target, confidence, importance, source, created_at, last_confirmed_at, decay_class)
        VALUES (?, ?, 'rule', 'agent', 'scholar', 0.75, 0.65, 'test', ?, ?, 'stable')`,
-    ).run("agent-fact-2", "Verify sources before citing them", now, now);
+      )
+      .run("agent-fact-2", "Verify sources before citing them", now, now);
 
     const generalisedLesson = {
       text: "Always validate inputs before executing critical operations",
@@ -311,10 +321,12 @@ describe("runCrossAgentLearning — LLM mock", () => {
 
   it("skips duplicate facts in second run", async () => {
     const now = Math.floor(Date.now() / 1000);
-    rawDb(db).prepare(
-      `INSERT INTO facts (id, text, category, scope, scope_target, confidence, importance, source, created_at, last_confirmed_at, decay_class)
+    rawDb(db)
+      .prepare(
+        `INSERT INTO facts (id, text, category, scope, scope_target, confidence, importance, source, created_at, last_confirmed_at, decay_class)
        VALUES (?, ?, 'pattern', 'agent', 'forge', 0.8, 0.7, 'test', ?, ?, 'stable')`,
-    ).run("agent-f-1", "Always run tests before committing code changes", now, now);
+      )
+      .run("agent-f-1", "Always run tests before committing code changes", now, now);
 
     const generalisedLesson = {
       text: "Always validate before executing to prevent errors",
@@ -355,10 +367,12 @@ describe("runCrossAgentLearning — LLM mock", () => {
 
   it("handles LLM returning empty array", async () => {
     const now = Math.floor(Date.now() / 1000);
-    rawDb(db).prepare(
-      `INSERT INTO facts (id, text, category, scope, scope_target, confidence, importance, source, created_at, last_confirmed_at, decay_class)
+    rawDb(db)
+      .prepare(
+        `INSERT INTO facts (id, text, category, scope, scope_target, confidence, importance, source, created_at, last_confirmed_at, decay_class)
        VALUES (?, ?, 'pattern', 'agent', 'hearth', 0.8, 0.7, 'test', ?, ?, 'stable')`,
-    ).run("agent-h-1", "Check HA entity state before toggling lights", now, now);
+      )
+      .run("agent-h-1", "Check HA entity state before toggling lights", now, now);
 
     const mockOpenAI = {
       chat: {
@@ -386,10 +400,12 @@ describe("runCrossAgentLearning — LLM mock", () => {
 
   it("handles LLM returning invalid JSON gracefully", async () => {
     const now = Math.floor(Date.now() / 1000);
-    rawDb(db).prepare(
-      `INSERT INTO facts (id, text, category, scope, scope_target, confidence, importance, source, created_at, last_confirmed_at, decay_class)
+    rawDb(db)
+      .prepare(
+        `INSERT INTO facts (id, text, category, scope, scope_target, confidence, importance, source, created_at, last_confirmed_at, decay_class)
        VALUES (?, ?, 'pattern', 'agent', 'warden', 0.8, 0.7, 'test', ?, ?, 'stable')`,
-    ).run("agent-w-1", "Always audit credentials before deploying", now, now);
+      )
+      .run("agent-w-1", "Always audit credentials before deploying", now, now);
 
     const mockOpenAI = {
       chat: {
@@ -543,26 +559,15 @@ describe("getCrossAgentLessons", () => {
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  function insertCrossAgentFact(
-    opts: {
-      text: string;
-      tags?: string[];
-      confidence?: number;
-    },
-  ): void {
+  function insertCrossAgentFact(opts: { text: string; tags?: string[]; confidence?: number }): void {
     const now = Math.floor(Date.now() / 1000);
     const tagsStr = (opts.tags ?? ["cross-agent"]).join(",");
-    rawDb(db).prepare(
-      `INSERT INTO facts (id, text, category, scope, source, confidence, importance, tags, created_at, last_confirmed_at, decay_class)
+    rawDb(db)
+      .prepare(
+        `INSERT INTO facts (id, text, category, scope, source, confidence, importance, tags, created_at, last_confirmed_at, decay_class)
        VALUES (?, ?, 'pattern', 'global', 'cross-agent-learning', ?, 0.8, ?, ?, ?, 'permanent')`,
-    ).run(
-      Math.random().toString(36).slice(2, 12),
-      opts.text,
-      opts.confidence ?? 0.8,
-      tagsStr,
-      now,
-      now,
-    );
+      )
+      .run(Math.random().toString(36).slice(2, 12), opts.text, opts.confidence ?? 0.8, tagsStr, now, now);
   }
 
   it("returns empty array when no cross-agent facts", async () => {
@@ -647,7 +652,9 @@ describe("formatBriefInjection", () => {
   });
 
   it("formats lessons with header and bullet points", () => {
-    const lessons = [makeLesson("1", "Always verify before committing", { tags: ["cross-agent", "forge"], confidence: 0.85 })];
+    const lessons = [
+      makeLesson("1", "Always verify before committing", { tags: ["cross-agent", "forge"], confidence: 0.85 }),
+    ];
     const output = formatBriefInjection(lessons);
     expect(output).toContain("## Lessons from previous tasks");
     expect(output).toContain("Always verify before committing");
@@ -670,10 +677,7 @@ describe("formatBriefInjection", () => {
   });
 
   it("formats multiple lessons as multiple bullet points", () => {
-    const output = formatBriefInjection([
-      makeLesson("1", "Lesson A"),
-      makeLesson("2", "Lesson B"),
-    ]);
+    const output = formatBriefInjection([makeLesson("1", "Lesson A"), makeLesson("2", "Lesson B")]);
     const bulletMatches = output.match(/^- /gm);
     expect(bulletMatches).toHaveLength(2);
   });
@@ -700,17 +704,21 @@ describe("verifyLessonForAgent", () => {
   function insertCrossAgentFact(text: string, confidence = 0.7): string {
     const id = Math.random().toString(36).slice(2, 12);
     const now = Math.floor(Date.now() / 1000);
-    rawDb(db).prepare(
-      `INSERT INTO facts (id, text, category, scope, source, confidence, importance, tags, created_at, last_confirmed_at, decay_class)
+    rawDb(db)
+      .prepare(
+        `INSERT INTO facts (id, text, category, scope, source, confidence, importance, tags, created_at, last_confirmed_at, decay_class)
        VALUES (?, ?, 'pattern', 'global', 'cross-agent-learning', ?, 0.8, 'cross-agent', ?, ?, 'permanent')`,
-    ).run(id, text, confidence, now, now);
+      )
+      .run(id, text, confidence, now, now);
     return id;
   }
 
   it("boosts confidence by default amount (0.1)", async () => {
     const id = insertCrossAgentFact("Verify before committing", 0.7);
     await verifyLessonForAgent(db, id, "scholar");
-    const row = rawDb(db).prepare(`SELECT confidence FROM facts WHERE id = ?`).get(id) as { confidence: number } | undefined;
+    const row = rawDb(db).prepare(`SELECT confidence FROM facts WHERE id = ?`).get(id) as
+      | { confidence: number }
+      | undefined;
     expect(row?.confidence).toBeCloseTo(0.8, 3);
   });
 
@@ -733,7 +741,9 @@ describe("verifyLessonForAgent", () => {
   it("caps confidence at 1.0", async () => {
     const id = insertCrossAgentFact("High confidence lesson", 0.95);
     await verifyLessonForAgent(db, id, "scholar", 0.2);
-    const row = rawDb(db).prepare(`SELECT confidence FROM facts WHERE id = ?`).get(id) as { confidence: number } | undefined;
+    const row = rawDb(db).prepare(`SELECT confidence FROM facts WHERE id = ?`).get(id) as
+      | { confidence: number }
+      | undefined;
     expect(row?.confidence).toBeLessThanOrEqual(1.0);
     expect(row?.confidence).toBeCloseTo(1.0, 3);
   });
@@ -741,7 +751,9 @@ describe("verifyLessonForAgent", () => {
   it("accepts custom boost value", async () => {
     const id = insertCrossAgentFact("Custom boost lesson", 0.6);
     await verifyLessonForAgent(db, id, "warden", 0.2);
-    const row = rawDb(db).prepare(`SELECT confidence FROM facts WHERE id = ?`).get(id) as { confidence: number } | undefined;
+    const row = rawDb(db).prepare(`SELECT confidence FROM facts WHERE id = ?`).get(id) as
+      | { confidence: number }
+      | undefined;
     expect(row?.confidence).toBeCloseTo(0.8, 3);
   });
 

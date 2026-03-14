@@ -83,7 +83,11 @@ describe("chatComplete — reasoning field fallback (Qwen3/Ollama thinking mode)
   });
 
   it("prefers reasoning_content over reasoning when both are present", async () => {
-    const openai = makeMockOpenAI({ content: "", reasoning_content: "From reasoning_content", reasoning: "From reasoning" });
+    const openai = makeMockOpenAI({
+      content: "",
+      reasoning_content: "From reasoning_content",
+      reasoning: "From reasoning",
+    });
     const result = await chatComplete({ model: "ollama/qwen3:8b", content: "test", openai });
     expect(result).toBe("From reasoning_content");
   });

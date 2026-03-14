@@ -78,9 +78,9 @@ export function generateAutoSkills(
       recipe = JSON.parse(proc.recipeJson);
     } catch (err) {
       capturePluginError(err as Error, {
-        operation: 'parse-recipe',
-        severity: 'info',
-        subsystem: 'procedures'
+        operation: "parse-recipe",
+        severity: "info",
+        subsystem: "procedures",
       });
       recipe = [];
     }

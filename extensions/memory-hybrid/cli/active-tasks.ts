@@ -46,9 +46,7 @@ export type ActiveTaskContext = {
 // ---------------------------------------------------------------------------
 
 /** List all active tasks */
-export async function runActiveTaskList(
-  ctx: ActiveTaskContext,
-): Promise<ActiveTaskListResult> {
+export async function runActiveTaskList(ctx: ActiveTaskContext): Promise<ActiveTaskListResult> {
   const taskFile = await readActiveTaskFile(ctx.activeTaskFilePath, ctx.staleMinutes);
   if (!taskFile) {
     return {
@@ -81,9 +79,7 @@ export async function runActiveTaskList(
 }
 
 /** Show tasks that are stale (not updated within the configured staleThreshold) */
-export async function runActiveTaskStale(
-  ctx: ActiveTaskContext,
-): Promise<ActiveTaskStaleResult> {
+export async function runActiveTaskStale(ctx: ActiveTaskContext): Promise<ActiveTaskStaleResult> {
   const taskFile = await readActiveTaskFile(ctx.activeTaskFilePath, ctx.staleMinutes);
   if (!taskFile) {
     return { tasks: [], total: 0, filePath: ctx.activeTaskFilePath };
@@ -93,9 +89,7 @@ export async function runActiveTaskStale(
     .filter((t) => t.stale)
     .map((t) => {
       const updatedMs = new Date(t.updated).getTime();
-      const hoursStale = isNaN(updatedMs)
-        ? 0
-        : Math.floor((now - updatedMs) / (1000 * 60 * 60));
+      const hoursStale = isNaN(updatedMs) ? 0 : Math.floor((now - updatedMs) / (1000 * 60 * 60));
       return {
         label: t.label,
         description: t.description,
@@ -112,10 +106,7 @@ export async function runActiveTaskStale(
 }
 
 /** Mark a task complete and flush to memory log */
-export async function runActiveTaskComplete(
-  ctx: ActiveTaskContext,
-  label: string,
-): Promise<ActiveTaskCompleteResult> {
+export async function runActiveTaskComplete(ctx: ActiveTaskContext, label: string): Promise<ActiveTaskCompleteResult> {
   const taskFile = await readActiveTaskFile(ctx.activeTaskFilePath, ctx.staleMinutes);
   if (!taskFile) {
     return { ok: false, error: `ACTIVE-TASK.md not found at ${ctx.activeTaskFilePath}` };
@@ -129,10 +120,7 @@ export async function runActiveTaskComplete(
 
   // Write back to file (completed task moves to ## Completed section)
   const existingCompleted = taskFile.completed;
-  await writeActiveTaskFile(ctx.activeTaskFilePath, updated, [
-    ...existingCompleted,
-    completed,
-  ]);
+  await writeActiveTaskFile(ctx.activeTaskFilePath, updated, [...existingCompleted, completed]);
 
   // Flush to memory log if configured
   let flushedTo: string | undefined;
@@ -210,16 +198,11 @@ export async function runActiveTaskAdd(
 // Commander registration
 // ---------------------------------------------------------------------------
 
-export function registerActiveTaskCommands(
-  mem: Chainable,
-  ctx: ActiveTaskContext,
-): void {
+export function registerActiveTaskCommands(mem: Chainable, ctx: ActiveTaskContext): void {
   // Parent command: `hybrid-mem active-tasks` — lists tasks by default
   const activeTasks = mem
     .command("active-tasks")
-    .description(
-      "Working memory: manage active tasks in ACTIVE-TASK.md. Subcommands: complete, stale, add",
-    )
+    .description("Working memory: manage active tasks in ACTIVE-TASK.md. Subcommands: complete, stale, add")
     .action(async () => {
       const result = await runActiveTaskList(ctx);
       if (!result.fileExists) {

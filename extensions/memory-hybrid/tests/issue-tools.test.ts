@@ -88,10 +88,10 @@ describe("registerIssueTools — tool registration", () => {
 
 describe("memory_issue_create", () => {
   it("creates an issue and returns content + details", async () => {
-    const result = await api.callTool("memory_issue_create", {
+    const result = (await api.callTool("memory_issue_create", {
       title: "Login fails after deploy",
       symptoms: ["500 error on POST /auth", "JWT malformed"],
-    }) as any;
+    })) as any;
 
     expect(result.content[0].text).toContain("Login fails after deploy");
     expect(result.details.status).toBe("open");
@@ -101,31 +101,31 @@ describe("memory_issue_create", () => {
   });
 
   it("creates with explicit severity", async () => {
-    const result = await api.callTool("memory_issue_create", {
+    const result = (await api.callTool("memory_issue_create", {
       title: "Prod database down",
       symptoms: ["Connection refused"],
       severity: "critical",
-    }) as any;
+    })) as any;
 
     expect(result.details.severity).toBe("critical");
     expect(result.details.status).toBe("open");
   });
 
   it("creates with tags", async () => {
-    const result = await api.callTool("memory_issue_create", {
+    const result = (await api.callTool("memory_issue_create", {
       title: "Slow queries",
       symptoms: ["p99 > 3s"],
       tags: ["database", "performance"],
-    }) as any;
+    })) as any;
 
     expect(result.details.tags).toEqual(["database", "performance"]);
   });
 
   it("creates with empty symptoms", async () => {
-    const result = await api.callTool("memory_issue_create", {
+    const result = (await api.callTool("memory_issue_create", {
       title: "Unknown anomaly",
       symptoms: [],
-    }) as any;
+    })) as any;
 
     expect(result.details.symptoms).toEqual([]);
     expect(result.details.status).toBe("open");
@@ -138,90 +138,88 @@ describe("memory_issue_create", () => {
 
 describe("memory_issue_update", () => {
   it("updates rootCause without status change", async () => {
-    const created = await api.callTool("memory_issue_create", {
+    const created = (await api.callTool("memory_issue_create", {
       title: "API latency spike",
       symptoms: ["p99 > 2s"],
-    }) as any;
+    })) as any;
     const id = created.details.id;
 
-    const result = await api.callTool("memory_issue_update", {
+    const result = (await api.callTool("memory_issue_update", {
       id,
       rootCause: "Unindexed query in user service",
-    }) as any;
+    })) as any;
 
     expect(result.details.rootCause).toBe("Unindexed query in user service");
     expect(result.details.status).toBe("open"); // status unchanged
   });
 
   it("transitions status with update tool", async () => {
-    const created = await api.callTool("memory_issue_create", {
+    const created = (await api.callTool("memory_issue_create", {
       title: "Memory leak",
       symptoms: ["RSS grows"],
-    }) as any;
+    })) as any;
     const id = created.details.id;
 
-    const result = await api.callTool("memory_issue_update", {
+    const result = (await api.callTool("memory_issue_update", {
       id,
       status: "diagnosed",
       rootCause: "Event listener not cleaned up",
-    }) as any;
+    })) as any;
 
     expect(result.details.status).toBe("diagnosed");
     expect(result.details.rootCause).toBe("Event listener not cleaned up");
   });
 
   it("auto-sets resolvedAt when transitioning to resolved", async () => {
-    const created = await api.callTool("memory_issue_create", {
+    const created = (await api.callTool("memory_issue_create", {
       title: "Deployment crash",
       symptoms: ["App exits immediately"],
-    }) as any;
+    })) as any;
     const id = created.details.id;
 
     await api.callTool("memory_issue_update", { id, status: "fix-attempted" });
-    const result = await api.callTool("memory_issue_update", { id, status: "resolved" }) as any;
+    const result = (await api.callTool("memory_issue_update", { id, status: "resolved" })) as any;
 
     expect(result.details.resolvedAt).toBeDefined();
     expect(typeof result.details.resolvedAt).toBe("string");
   });
 
   it("auto-sets verifiedAt when transitioning to verified", async () => {
-    const created = await api.callTool("memory_issue_create", {
+    const created = (await api.callTool("memory_issue_create", {
       title: "Race condition",
       symptoms: ["Intermittent failure"],
-    }) as any;
+    })) as any;
     const id = created.details.id;
 
     await api.callTool("memory_issue_update", { id, status: "fix-attempted" });
     await api.callTool("memory_issue_update", { id, status: "resolved" });
-    const result = await api.callTool("memory_issue_update", { id, status: "verified" }) as any;
+    const result = (await api.callTool("memory_issue_update", { id, status: "verified" })) as any;
 
     expect(result.details.verifiedAt).toBeDefined();
   });
 
   it("throws on invalid state transition", async () => {
-    const created = await api.callTool("memory_issue_create", {
+    const created = (await api.callTool("memory_issue_create", {
       title: "Test issue",
       symptoms: ["s"],
-    }) as any;
+    })) as any;
     const id = created.details.id;
 
-    await expect(
-      api.callTool("memory_issue_update", { id, status: "verified" })
-    ).rejects.toThrow();
+    await expect(api.callTool("memory_issue_update", { id, status: "verified" })).rejects.toThrow();
   });
 
   it("updates fix and rollback fields", async () => {
-    const created = await api.callTool("memory_issue_create", {
+    const created = (await api.callTool("memory_issue_create", {
       title: "Bad migration",
       symptoms: ["Table missing"],
-    }) as any;
+    })) as any;
     const id = created.details.id;
 
-    const result = await api.callTool("memory_issue_update", {
+    const result = (await api.callTool("memory_issue_update", {
       id,
       fix: "Run migration 003",
       rollback: "Restore from backup",
-    }) as any;
+    })) as any;
 
     expect(result.details.fix).toBe("Run migration 003");
     expect(result.details.rollback).toBe("Restore from backup");
@@ -237,22 +235,22 @@ describe("memory_issue_list", () => {
     await api.callTool("memory_issue_create", { title: "A", symptoms: ["s"] });
     await api.callTool("memory_issue_create", { title: "B", symptoms: ["s"] });
 
-    const result = await api.callTool("memory_issue_list", {}) as any;
+    const result = (await api.callTool("memory_issue_list", {})) as any;
     expect(result.details).toHaveLength(2);
     expect(result.content[0].text).toContain("2 issue(s)");
   });
 
   it("returns 'No issues found' when empty", async () => {
-    const result = await api.callTool("memory_issue_list", {}) as any;
+    const result = (await api.callTool("memory_issue_list", {})) as any;
     expect(result.content[0].text).toContain("No issues found");
   });
 
   it("filters by status", async () => {
-    const c1 = await api.callTool("memory_issue_create", { title: "Issue A", symptoms: ["s"] }) as any;
+    const c1 = (await api.callTool("memory_issue_create", { title: "Issue A", symptoms: ["s"] })) as any;
     await api.callTool("memory_issue_create", { title: "Issue B", symptoms: ["s"] });
     await api.callTool("memory_issue_update", { id: c1.details.id, status: "diagnosed" });
 
-    const result = await api.callTool("memory_issue_list", { status: ["diagnosed"] }) as any;
+    const result = (await api.callTool("memory_issue_list", { status: ["diagnosed"] })) as any;
     expect(result.details).toHaveLength(1);
     expect(result.details[0].title).toBe("Issue A");
   });
@@ -261,7 +259,7 @@ describe("memory_issue_list", () => {
     await api.callTool("memory_issue_create", { title: "Low", symptoms: ["s"], severity: "low" });
     await api.callTool("memory_issue_create", { title: "Critical", symptoms: ["s"], severity: "critical" });
 
-    const result = await api.callTool("memory_issue_list", { severity: ["critical"] }) as any;
+    const result = (await api.callTool("memory_issue_list", { severity: ["critical"] })) as any;
     expect(result.details).toHaveLength(1);
     expect(result.details[0].title).toBe("Critical");
   });
@@ -270,7 +268,7 @@ describe("memory_issue_list", () => {
     await api.callTool("memory_issue_create", { title: "API issue", symptoms: ["s"], tags: ["api"] });
     await api.callTool("memory_issue_create", { title: "DB issue", symptoms: ["s"], tags: ["database"] });
 
-    const result = await api.callTool("memory_issue_list", { tags: ["api"] }) as any;
+    const result = (await api.callTool("memory_issue_list", { tags: ["api"] })) as any;
     expect(result.details).toHaveLength(1);
     expect(result.details[0].title).toBe("API issue");
   });
@@ -279,7 +277,7 @@ describe("memory_issue_list", () => {
     for (let i = 0; i < 5; i++) {
       await api.callTool("memory_issue_create", { title: `Issue ${i}`, symptoms: ["s"] });
     }
-    const result = await api.callTool("memory_issue_list", { limit: 2 }) as any;
+    const result = (await api.callTool("memory_issue_list", { limit: 2 })) as any;
     expect(result.details).toHaveLength(2);
   });
 });
@@ -293,7 +291,7 @@ describe("memory_issue_search", () => {
     await api.callTool("memory_issue_create", { title: "Database timeout", symptoms: ["p99 > 5s"] });
     await api.callTool("memory_issue_create", { title: "CPU spike", symptoms: ["100% usage"] });
 
-    const result = await api.callTool("memory_issue_search", { query: "database" }) as any;
+    const result = (await api.callTool("memory_issue_search", { query: "database" })) as any;
     expect(result.details).toHaveLength(1);
     expect(result.details[0].title).toBe("Database timeout");
   });
@@ -304,14 +302,14 @@ describe("memory_issue_search", () => {
       symptoms: ["JWT signature invalid"],
     });
 
-    const result = await api.callTool("memory_issue_search", { query: "JWT" }) as any;
+    const result = (await api.callTool("memory_issue_search", { query: "JWT" })) as any;
     expect(result.details.length).toBeGreaterThan(0);
     expect(result.details[0].title).toBe("Auth failure");
   });
 
   it("returns 'No issues found' message when no match", async () => {
     await api.callTool("memory_issue_create", { title: "Unrelated", symptoms: ["other"] });
-    const result = await api.callTool("memory_issue_search", { query: "xyznotfound" }) as any;
+    const result = (await api.callTool("memory_issue_search", { query: "xyznotfound" })) as any;
     expect(result.content[0].text).toContain("No issues found");
     expect(result.details).toHaveLength(0);
   });
@@ -323,16 +321,16 @@ describe("memory_issue_search", () => {
 
 describe("memory_issue_link_fact", () => {
   it("links a fact to an issue", async () => {
-    const created = await api.callTool("memory_issue_create", {
+    const created = (await api.callTool("memory_issue_create", {
       title: "Auth bug",
       symptoms: ["401"],
-    }) as any;
+    })) as any;
     const id = created.details.id;
 
-    const result = await api.callTool("memory_issue_link_fact", {
+    const result = (await api.callTool("memory_issue_link_fact", {
       issueId: id,
       factId: "fact-abc-123",
-    }) as any;
+    })) as any;
 
     expect(result.content[0].text).toContain("fact-abc-123");
     expect(result.details.issueId).toBe(id);
@@ -345,7 +343,7 @@ describe("memory_issue_link_fact", () => {
 
   it("throws on nonexistent issue id", async () => {
     await expect(
-      api.callTool("memory_issue_link_fact", { issueId: "nonexistent", factId: "fact-001" })
+      api.callTool("memory_issue_link_fact", { issueId: "nonexistent", factId: "fact-001" }),
     ).rejects.toThrow();
   });
 });
@@ -357,45 +355,45 @@ describe("memory_issue_link_fact", () => {
 describe("End-to-end issue lifecycle via tools", () => {
   it("full lifecycle: create → diagnose → fix-attempt → resolve → verify", async () => {
     // 1. Create
-    const created = await api.callTool("memory_issue_create", {
+    const created = (await api.callTool("memory_issue_create", {
       title: "Prod auth outage",
       symptoms: ["All login attempts return 500", "Error logs show NullPointerException"],
       severity: "critical",
       tags: ["production", "auth"],
-    }) as any;
+    })) as any;
 
     const id = created.details.id;
     expect(created.details.status).toBe("open");
 
     // 2. Diagnose
-    const diagnosed = await api.callTool("memory_issue_update", {
+    const diagnosed = (await api.callTool("memory_issue_update", {
       id,
       status: "diagnosed",
       rootCause: "Null session manager after container restart",
-    }) as any;
+    })) as any;
     expect(diagnosed.details.status).toBe("diagnosed");
 
     // 3. Attempt fix
-    const fixed = await api.callTool("memory_issue_update", {
+    const fixed = (await api.callTool("memory_issue_update", {
       id,
       status: "fix-attempted",
       fix: "Added null check and fallback session initialization",
       rollback: "Restart auth service with previous image",
-    }) as any;
+    })) as any;
     expect(fixed.details.status).toBe("fix-attempted");
 
     // 4. Resolve
-    const resolved = await api.callTool("memory_issue_update", { id, status: "resolved" }) as any;
+    const resolved = (await api.callTool("memory_issue_update", { id, status: "resolved" })) as any;
     expect(resolved.details.status).toBe("resolved");
     expect(resolved.details.resolvedAt).toBeDefined();
 
     // 5. Verify
-    const verified = await api.callTool("memory_issue_update", { id, status: "verified" }) as any;
+    const verified = (await api.callTool("memory_issue_update", { id, status: "verified" })) as any;
     expect(verified.details.status).toBe("verified");
     expect(verified.details.verifiedAt).toBeDefined();
 
     // 6. Confirm via list (status=verified)
-    const listResult = await api.callTool("memory_issue_list", { status: ["verified"] }) as any;
+    const listResult = (await api.callTool("memory_issue_list", { status: ["verified"] })) as any;
     expect(listResult.details).toHaveLength(1);
     expect(listResult.details[0].id).toBe(id);
   });

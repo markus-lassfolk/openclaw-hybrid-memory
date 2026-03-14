@@ -29,7 +29,7 @@ export async function replayWalEntries(
   wal: WriteAheadLog,
   factsDb: FactsDB,
   vectorDb?: VectorDB,
-  embeddings?: EmbeddingProvider | null
+  embeddings?: EmbeddingProvider | null,
 ): Promise<WalReplayResult> {
   let committed = 0;
   let skipped = 0;

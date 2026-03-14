@@ -39,8 +39,7 @@ export const KEYWORD_GROUP_INTENTS: Record<KeywordGroup, string> = {
     "Absolute rule phrases: 'always', 'never', 'you must', 'under no circumstances'. Strict constraints on behavior.",
   directivePreference:
     "Preference phrases (directive): 'I prefer', 'use this instead', 'default to', 'I'd rather'. User stating a choice.",
-  directiveWarning:
-    "Warning phrases: 'be careful with', 'watch out for', 'avoid', 'don't ever'. Safety instructions.",
+  directiveWarning: "Warning phrases: 'be careful with', 'watch out for', 'avoid', 'don't ever'. Safety instructions.",
   directiveProcedural:
     "Procedural instruction phrases: 'first check', 'before you do', 'step 1 is', 'the order should be'. Defining a process.",
   directiveImplicitCorrection:
@@ -82,10 +81,10 @@ export const EXTRACTION_INTENTS = {
   },
   choiceOver: {
     description:
-        "Explicit choice: ' use X over Y ' or ' prefer X instead of Y '. Capture: (1) chosen thing, (2) rejected thing, (3) optional reason.",
-      verbs: "Verbs: use, using, chose, prefer, picked.",
-      rejectors: "Phrases: over, instead of, rather than.",
-      connectors: "Reason: because, since, for.",
+      "Explicit choice: ' use X over Y ' or ' prefer X instead of Y '. Capture: (1) chosen thing, (2) rejected thing, (3) optional reason.",
+    verbs: "Verbs: use, using, chose, prefer, picked.",
+    rejectors: "Phrases: over, instead of, rather than.",
+    connectors: "Reason: because, since, for.",
   },
   convention: {
     description: "Always/never rule: ' always X ' or ' never X '. Capture: (1) the rule. Value is 'always' or 'never'.",
@@ -93,7 +92,8 @@ export const EXTRACTION_INTENTS = {
     never: "Words for 'never' (and formal variants).",
   },
   possessive: {
-    description: "Possessive fact: ' my X is Y ' or ' X's Y is Z '. Capture: (1) possessor or 'user', (2) key, (3) value.",
+    description:
+      "Possessive fact: ' my X is Y ' or ' X's Y is Z '. Capture: (1) possessor or 'user', (2) key, (3) value.",
     possessiveWords: "Words for 'my', 'our', or possessive marker; or proper noun + possessive.",
     isWords: "Copula: is, are, was (and equivalents).",
   },

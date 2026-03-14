@@ -159,7 +159,8 @@ export function createPluginService(ctx: PluginServiceContext) {
           for (const entry of pendingEntries) {
             try {
               if (entry.operation === "store" || entry.operation === "update") {
-                const { text, category, importance, entity, key, value, source, decayClass, summary, tags } = entry.data;
+                const { text, category, importance, entity, key, value, source, decayClass, summary, tags } =
+                  entry.data;
 
                 // Check if already stored (idempotency)
                 if (!factsDb.hasDuplicate(text)) {
@@ -179,28 +180,35 @@ export function createPluginService(ctx: PluginServiceContext) {
 
                   // Store to LanceDB (async, best effort) with same fact id for classification
                   if (entry.data.vector) {
-                    void vectorDb.store({
-                      text,
-                      vector: entry.data.vector,
-                      importance: importance ?? 0.5,
-                      category: category || "other",
-                      id: stored.id,
-                    }).then(() => {
-                      factsDb.setEmbeddingModel(stored.id, embeddings.modelName);
-                    }).catch((err) => {
-                      api.logger.warn(`memory-hybrid: WAL recovery vector store failed for entry ${entry.id}: ${err}`);
-                      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-                        subsystem: "plugin-service",
-                        operation: "wal-recovery-vector-store",
+                    void vectorDb
+                      .store({
+                        text,
+                        vector: entry.data.vector,
+                        importance: importance ?? 0.5,
+                        category: category || "other",
+                        id: stored.id,
+                      })
+                      .then(() => {
+                        factsDb.setEmbeddingModel(stored.id, embeddings.modelName);
+                      })
+                      .catch((err) => {
+                        api.logger.warn(
+                          `memory-hybrid: WAL recovery vector store failed for entry ${entry.id}: ${err}`,
+                        );
+                        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+                          subsystem: "plugin-service",
+                          operation: "wal-recovery-vector-store",
+                        });
                       });
-                    });
                   }
 
                   recovered++;
                 }
               } else {
                 // Known but unhandled operation type (e.g., "delete")
-                api.logger.warn(`memory-hybrid: WAL recovery skipping unsupported operation "${entry.operation}" (entry ${entry.id})`);
+                api.logger.warn(
+                  `memory-hybrid: WAL recovery skipping unsupported operation "${entry.operation}" (entry ${entry.id})`,
+                );
               }
 
               walRemove(wal, entry.id, api.logger);
@@ -215,7 +223,9 @@ export function createPluginService(ctx: PluginServiceContext) {
           }
 
           if (recovered > 0 || failed > 0) {
-            api.logger.info(`memory-hybrid: WAL recovery completed — recovered ${recovered} operation(s), ${failed} failed`);
+            api.logger.info(
+              `memory-hybrid: WAL recovery completed — recovered ${recovered} operation(s), ${failed} failed`,
+            );
           }
 
           // Prune any remaining stale entries
@@ -246,7 +256,15 @@ export function createPluginService(ctx: PluginServiceContext) {
       if (cfg.dashboard.enabled) {
         try {
           dashboardServer = await createDashboardServer(
-            { factsDb, vectorDb, resolvedSqlitePath, resolvedLancePath, gitRepo: cfg.dashboard.gitRepo, costTracker, logger: api.logger },
+            {
+              factsDb,
+              vectorDb,
+              resolvedSqlitePath,
+              resolvedLancePath,
+              gitRepo: cfg.dashboard.gitRepo,
+              costTracker,
+              logger: api.logger,
+            },
             cfg.dashboard.port,
           );
           api.logger.info(`memory-hybrid: dashboard started on http://127.0.0.1:${dashboardServer.port}`);
@@ -265,9 +283,7 @@ export function createPluginService(ctx: PluginServiceContext) {
           const hardPruned = factsDb.pruneExpired();
           const softPruned = factsDb.decayConfidence();
           if (hardPruned > 0 || softPruned > 0) {
-            api.logger.info(
-              `memory-hybrid: periodic prune — ${hardPruned} expired, ${softPruned} decayed`,
-            );
+            api.logger.info(`memory-hybrid: periodic prune — ${hardPruned} expired, ${softPruned} decayed`);
           }
         } catch (err) {
           api.logger.warn(`memory-hybrid: periodic prune failed: ${err}`);
@@ -326,12 +342,10 @@ export function createPluginService(ctx: PluginServiceContext) {
         const runBuild = async () => {
           try {
             const facts = factsDb.getFactsForConsolidation(300);
-            const result = await runBuildLanguageKeywords(
-              facts,
-              openai,
-              dirname(resolvedSqlitePath),
-              { model: cfg.autoClassify.model ?? getDefaultCronModel(getCronModelConfig(cfg), "default"), dryRun: false },
-            );
+            const result = await runBuildLanguageKeywords(facts, openai, dirname(resolvedSqlitePath), {
+              model: cfg.autoClassify.model ?? getDefaultCronModel(getCronModelConfig(cfg), "default"),
+              dryRun: false,
+            });
             if (result.ok && result.languagesAdded > 0) {
               api.logger.info(
                 `memory-hybrid: language keywords updated (${result.topLanguages.join(", ")}, +${result.languagesAdded} languages)`,
@@ -387,14 +401,22 @@ export function createPluginService(ctx: PluginServiceContext) {
               openai,
               cfg.passiveObserver,
               cfg.categories,
-              { model: observerModel, fallbackModels: observerFallbacks, dbDir, proceduresSessionsDir: cfg.procedures.sessionsDir, reinforcement: cfg.reinforcement, provenanceService, eventLog },
+              {
+                model: observerModel,
+                fallbackModels: observerFallbacks,
+                dbDir,
+                proceduresSessionsDir: cfg.procedures.sessionsDir,
+                reinforcement: cfg.reinforcement,
+                provenanceService,
+                eventLog,
+              },
               api.logger,
             );
             if (result.factsStored > 0 || result.factsExtracted > 0 || result.factsReinforced > 0) {
               api.logger.info(
                 `memory-hybrid: passive-observer — scanned ${result.sessionsScanned} sessions, ` +
-                `${result.chunksProcessed} chunks, ${result.factsExtracted} extracted, ` +
-                `${result.factsStored} stored, ${result.factsReinforced} reinforced`,
+                  `${result.chunksProcessed} chunks, ${result.factsExtracted} extracted, ` +
+                  `${result.factsStored} stored, ${result.factsReinforced} reinforced`,
               );
             }
           } catch (err) {
@@ -426,9 +448,7 @@ export function createPluginService(ctx: PluginServiceContext) {
       // Expand literal $HOME or leading ~ if the sqlite path wasn't fully resolved before being stored.
       // Both forms can appear when the plugin config is serialized from user input before normalization.
       const _home = process.env.HOME ?? homedir();
-      const versionFile = rawVersionFilePath
-        .replace(/\$HOME/g, _home)
-        .replace(/^~(?=\/|$)/, _home);
+      const versionFile = rawVersionFilePath.replace(/\$HOME/g, _home).replace(/^~(?=\/|$)/, _home);
       timers.postUpgradeTimeout.value = setTimeout(() => {
         timers.postUpgradeTimeout.value = null;
         let lastVer = "";
@@ -439,9 +459,9 @@ export function createPluginService(ctx: PluginServiceContext) {
           const code = (err as NodeJS.ErrnoException).code;
           if (code !== "ENOENT") {
             capturePluginError(err as Error, {
-              operation: 'read-version-file',
-              severity: 'warning',
-              subsystem: 'plugin-service'
+              operation: "read-version-file",
+              severity: "warning",
+              subsystem: "plugin-service",
             });
           }
           /* ignore */
@@ -509,22 +529,44 @@ export function createPluginService(ctx: PluginServiceContext) {
       if (isErrorReporterActive()) {
         flushErrorReporter(2000).catch(() => {});
       }
-      if (timers.pruneTimer.value) { clearInterval(timers.pruneTimer.value); timers.pruneTimer.value = null; }
-      if (timers.classifyStartupTimeout.value) { clearTimeout(timers.classifyStartupTimeout.value); timers.classifyStartupTimeout.value = null; }
-      if (timers.classifyTimer.value) { clearInterval(timers.classifyTimer.value); timers.classifyTimer.value = null; }
-      if (timers.proposalsPruneTimer.value) { clearInterval(timers.proposalsPruneTimer.value); timers.proposalsPruneTimer.value = null; }
+      if (timers.pruneTimer.value) {
+        clearInterval(timers.pruneTimer.value);
+        timers.pruneTimer.value = null;
+      }
+      if (timers.classifyStartupTimeout.value) {
+        clearTimeout(timers.classifyStartupTimeout.value);
+        timers.classifyStartupTimeout.value = null;
+      }
+      if (timers.classifyTimer.value) {
+        clearInterval(timers.classifyTimer.value);
+        timers.classifyTimer.value = null;
+      }
+      if (timers.proposalsPruneTimer.value) {
+        clearInterval(timers.proposalsPruneTimer.value);
+        timers.proposalsPruneTimer.value = null;
+      }
       if (timers.languageKeywordsStartupTimeout.value) {
         clearTimeout(timers.languageKeywordsStartupTimeout.value);
         timers.languageKeywordsStartupTimeout.value = null;
       }
-      if (timers.languageKeywordsTimer.value) { clearInterval(timers.languageKeywordsTimer.value); timers.languageKeywordsTimer.value = null; }
-      if (timers.passiveObserverTimer.value) { clearInterval(timers.passiveObserverTimer.value); timers.passiveObserverTimer.value = null; }
+      if (timers.languageKeywordsTimer.value) {
+        clearInterval(timers.languageKeywordsTimer.value);
+        timers.languageKeywordsTimer.value = null;
+      }
+      if (timers.passiveObserverTimer.value) {
+        clearInterval(timers.passiveObserverTimer.value);
+        timers.passiveObserverTimer.value = null;
+      }
       if (timers.postUpgradeTimeout.value) {
         clearTimeout(timers.postUpgradeTimeout.value);
         timers.postUpgradeTimeout.value = null;
       }
       if (dashboardServer) {
-        try { dashboardServer.close(); } catch { /* non-fatal */ }
+        try {
+          dashboardServer.close();
+        } catch {
+          /* non-fatal */
+        }
         dashboardServer = null;
       }
       api.logger.info("memory-hybrid: stopping...");
@@ -543,8 +585,12 @@ export function createPluginService(ctx: PluginServiceContext) {
       }
       factsDb.close();
       vectorDb.close();
-      if (credentialsDb) { credentialsDb.close(); }
-      if (proposalsDb) { proposalsDb.close(); }
+      if (credentialsDb) {
+        credentialsDb.close();
+      }
+      if (proposalsDb) {
+        proposalsDb.close();
+      }
     },
   };
 }

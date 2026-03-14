@@ -40,11 +40,7 @@ export function walWrite(
   return id;
 }
 
-export function walRemove(
-  wal: WriteAheadLog | null,
-  id: string,
-  logger: { warn: (msg: string) => void },
-): void {
+export function walRemove(wal: WriteAheadLog | null, id: string, logger: { warn: (msg: string) => void }): void {
   if (wal) {
     try {
       wal.remove(id);

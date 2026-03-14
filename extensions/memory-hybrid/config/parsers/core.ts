@@ -37,11 +37,7 @@ export const EMBEDDING_DIMENSIONS: Record<string, number> = {
   "bge-large": 1024,
 };
 
-export const OPENAI_MODELS = new Set([
-  "text-embedding-3-small",
-  "text-embedding-3-large",
-  "text-embedding-ada-002",
-]);
+export const OPENAI_MODELS = new Set(["text-embedding-3-small", "text-embedding-3-large", "text-embedding-ada-002"]);
 
 const MAX_ENV_RESOLVE_LENGTH = 10000;
 
@@ -126,9 +122,10 @@ function parseCredentialOptions(credRaw: Record<string, unknown> | undefined): {
   return {
     autoCapture,
     autoDetect: credRaw?.autoDetect === true,
-    expiryWarningDays: typeof credRaw?.expiryWarningDays === "number" && credRaw.expiryWarningDays >= 0
-      ? Math.floor(credRaw.expiryWarningDays)
-      : 7,
+    expiryWarningDays:
+      typeof credRaw?.expiryWarningDays === "number" && credRaw.expiryWarningDays >= 0
+        ? Math.floor(credRaw.expiryWarningDays)
+        : 7,
   };
 }
 
@@ -186,30 +183,20 @@ export function parseActiveTaskConfig(cfg: Record<string, unknown>): ActiveTaskC
   // Resolve staleThreshold — support both new string format and legacy staleHours number.
   // Priority: staleThreshold string > staleHours number > default "24h".
   let resolvedStaleThreshold = "24h";
-  if (
-    typeof activeTaskRaw?.staleThreshold === "string" &&
-    activeTaskRaw.staleThreshold.trim().length > 0
-  ) {
+  if (typeof activeTaskRaw?.staleThreshold === "string" && activeTaskRaw.staleThreshold.trim().length > 0) {
     try {
       parseDuration(activeTaskRaw.staleThreshold.trim());
     } catch (err: unknown) {
-      throw new Error(
-        `activeTask.staleThreshold is invalid: ${err instanceof Error ? err.message : String(err)}`,
-      );
+      throw new Error(`activeTask.staleThreshold is invalid: ${err instanceof Error ? err.message : String(err)}`);
     }
     resolvedStaleThreshold = activeTaskRaw.staleThreshold.trim();
-  } else if (
-    typeof activeTaskRaw?.staleHours === "number" &&
-    activeTaskRaw.staleHours > 0
-  ) {
+  } else if (typeof activeTaskRaw?.staleHours === "number" && activeTaskRaw.staleHours > 0) {
     // Backward compat: convert legacy staleHours number → "Xh" string.
     const converted = `${activeTaskRaw.staleHours}h`;
     try {
       parseDuration(converted);
     } catch (err: unknown) {
-      throw new Error(
-        `activeTask.staleHours is invalid: ${err instanceof Error ? err.message : String(err)}`,
-      );
+      throw new Error(`activeTask.staleHours is invalid: ${err instanceof Error ? err.message : String(err)}`);
     }
     resolvedStaleThreshold = converted;
   }
@@ -240,7 +227,9 @@ export function parseSelfCorrectionConfig(cfg: Record<string, unknown>): SelfCor
   return {
     semanticDedup: scRaw.semanticDedup !== false,
     semanticDedupThreshold:
-      typeof scRaw.semanticDedupThreshold === "number" && scRaw.semanticDedupThreshold >= 0 && scRaw.semanticDedupThreshold <= 1
+      typeof scRaw.semanticDedupThreshold === "number" &&
+      scRaw.semanticDedupThreshold >= 0 &&
+      scRaw.semanticDedupThreshold <= 1
         ? scRaw.semanticDedupThreshold
         : 0.92,
     toolsSection:
@@ -251,9 +240,7 @@ export function parseSelfCorrectionConfig(cfg: Record<string, unknown>): SelfCor
     autoRewriteTools: scRaw.autoRewriteTools === true,
     analyzeViaSpawn: scRaw.analyzeViaSpawn === true,
     spawnThreshold:
-      typeof scRaw.spawnThreshold === "number" && scRaw.spawnThreshold >= 1
-        ? Math.floor(scRaw.spawnThreshold)
-        : 15,
+      typeof scRaw.spawnThreshold === "number" && scRaw.spawnThreshold >= 1 ? Math.floor(scRaw.spawnThreshold) : 15,
     spawnModel: typeof scRaw.spawnModel === "string" ? scRaw.spawnModel : "",
     positiveRulesSection:
       typeof scRaw.positiveRulesSection === "string" && scRaw.positiveRulesSection.trim().length > 0
@@ -268,10 +255,12 @@ export function parseSelfCorrectionConfig(cfg: Record<string, unknown>): SelfCor
 /** Returns true when the key looks like a placeholder rather than a real credential. */
 function isPlaceholderApiKey(key: string): boolean {
   if (key.length < 10) return true;
-  return /YOUR_.*_HERE|REPLACE_ME|INSERT_.*_HERE|<.*API.*KEY.*>|^x+$|^sk-x+$|^placeholder$/i.test(key)
+  return (
+    /YOUR_.*_HERE|REPLACE_ME|INSERT_.*_HERE|<.*API.*KEY.*>|^x+$|^sk-x+$|^placeholder$/i.test(key) ||
     // Also reject values that are entirely repeated single characters (e.g. "aaaaaaaaaa", "1111111111")
     // but NOT all-lowercase/uppercase alphanumeric real keys.
-    || /^(.)\1{9,}$/.test(key);
+    /^(.)\1{9,}$/.test(key)
+  );
 }
 
 /**
@@ -300,8 +289,14 @@ export function parseAuthConfig(cfg: Record<string, unknown>): AuthOrderConfig |
 
 export function parseLLMConfig(cfg: Record<string, unknown>): LLMConfig | undefined {
   const llmRaw = cfg.llm as Record<string, unknown> | undefined;
-  const defaultList = llmRaw && Array.isArray(llmRaw.default) ? (llmRaw.default as string[]).filter((m) => typeof m === "string" && m.trim().length > 0) : [];
-  const heavyList = llmRaw && Array.isArray(llmRaw.heavy) ? (llmRaw.heavy as string[]).filter((m) => typeof m === "string" && m.trim().length > 0) : [];
+  const defaultList =
+    llmRaw && Array.isArray(llmRaw.default)
+      ? (llmRaw.default as string[]).filter((m) => typeof m === "string" && m.trim().length > 0)
+      : [];
+  const heavyList =
+    llmRaw && Array.isArray(llmRaw.heavy)
+      ? (llmRaw.heavy as string[]).filter((m) => typeof m === "string" && m.trim().length > 0)
+      : [];
   const llmProvidersRaw = llmRaw?.providers;
   const llmProviders: Record<string, LLMProviderConfig | undefined> | undefined =
     llmProvidersRaw && typeof llmProvidersRaw === "object" && !Array.isArray(llmProvidersRaw)
@@ -312,27 +307,40 @@ export function parseLLMConfig(cfg: Record<string, unknown>): LLMConfig | undefi
             const rawKey = typeof pv.apiKey === "string" && pv.apiKey.trim().length > 0 ? pv.apiKey.trim() : undefined;
             const validKey = rawKey && !isPlaceholderApiKey(rawKey) ? rawKey : undefined;
             if (rawKey && !validKey) {
-              console.warn(`memory-hybrid: Provider '${k}' has an invalid API key (looks like a placeholder) — skipping`);
+              console.warn(
+                `memory-hybrid: Provider '${k}' has an invalid API key (looks like a placeholder) — skipping`,
+              );
             }
-            return [k.toLowerCase(), {
-              apiKey: validKey,
-              baseURL: typeof pv.baseURL === "string" && pv.baseURL.trim().length > 0 ? pv.baseURL.trim() : undefined,
-            } as LLMProviderConfig];
+            return [
+              k.toLowerCase(),
+              {
+                apiKey: validKey,
+                baseURL: typeof pv.baseURL === "string" && pv.baseURL.trim().length > 0 ? pv.baseURL.trim() : undefined,
+              } as LLMProviderConfig,
+            ];
           }),
         )
       : undefined;
-  const nanoList = llmRaw && Array.isArray(llmRaw.nano)
-    ? (llmRaw.nano as string[]).filter((m) => typeof m === "string" && m.trim().length > 0)
-    : [];
+  const nanoList =
+    llmRaw && Array.isArray(llmRaw.nano)
+      ? (llmRaw.nano as string[]).filter((m) => typeof m === "string" && m.trim().length > 0)
+      : [];
   const localAutoStart = llmRaw?.localAutoStart === true;
   const llm: LLMConfig | undefined =
-    defaultList.length > 0 || heavyList.length > 0 || nanoList.length > 0 || llmProviders !== undefined || localAutoStart
+    defaultList.length > 0 ||
+    heavyList.length > 0 ||
+    nanoList.length > 0 ||
+    llmProviders !== undefined ||
+    localAutoStart
       ? {
           default: defaultList,
           heavy: heavyList,
           ...(nanoList.length > 0 ? { nano: nanoList } : {}),
           fallbackToDefault: llmRaw?.fallbackToDefault === true,
-          fallbackModel: typeof llmRaw?.fallbackModel === "string" && (llmRaw.fallbackModel as string).trim().length > 0 ? (llmRaw.fallbackModel as string).trim() : undefined,
+          fallbackModel:
+            typeof llmRaw?.fallbackModel === "string" && (llmRaw.fallbackModel as string).trim().length > 0
+              ? (llmRaw.fallbackModel as string).trim()
+              : undefined,
           providers: llmProviders,
           localAutoStart,
         }

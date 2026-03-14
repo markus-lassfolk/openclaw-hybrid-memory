@@ -23,10 +23,7 @@ export interface SelfExtensionToolsContext {
   cfg: HybridMemoryConfig;
 }
 
-export function registerSelfExtensionTools(
-  ctx: SelfExtensionToolsContext,
-  api: ClawdbotPluginApi,
-): void {
+export function registerSelfExtensionTools(ctx: SelfExtensionToolsContext, api: ClawdbotPluginApi): void {
   const { toolProposalStore, workflowStore, cfg } = ctx;
 
   // -------------------------------------------------------------------------
@@ -41,15 +38,13 @@ export function registerSelfExtensionTools(
       minFrequency: Type.Optional(
         Type.Integer({
           minimum: 1,
-          description:
-            "Override: minimum times a gap must be observed (default from config).",
+          description: "Override: minimum times a gap must be observed (default from config).",
         }),
       ),
       minToolSavings: Type.Optional(
         Type.Integer({
           minimum: 1,
-          description:
-            "Override: minimum tool calls saved per invocation (default from config).",
+          description: "Override: minimum tool calls saved per invocation (default from config).",
         }),
       ),
     }),
@@ -107,12 +102,7 @@ export function registerSelfExtensionTools(
     parameters: Type.Object({
       status: Type.Optional(
         Type.Union(
-          [
-            Type.Literal("proposed"),
-            Type.Literal("approved"),
-            Type.Literal("rejected"),
-            Type.Literal("implemented"),
-          ],
+          [Type.Literal("proposed"), Type.Literal("approved"), Type.Literal("rejected"), Type.Literal("implemented")],
           {
             description: "Filter by proposal status. Omit to list all proposals.",
           },
@@ -171,10 +161,7 @@ export function registerSelfExtensionTools(
         });
 
         const summary =
-          `Found ${proposals.length} proposal(s)` +
-          (status ? ` (${status})` : "") +
-          ":\n\n" +
-          lines.join("\n\n");
+          `Found ${proposals.length} proposal(s)` + (status ? ` (${status})` : "") + ":\n\n" + lines.join("\n\n");
 
         return {
           content: [{ type: "text", text: summary }],

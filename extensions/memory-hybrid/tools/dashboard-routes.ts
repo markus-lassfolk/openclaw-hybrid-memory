@@ -50,10 +50,7 @@ export const DASHBOARD_PATHS = {
  *
  * No-ops when `cfg.health.enabled` is false.
  */
-export function registerDashboardHttpRoutes(
-  ctx: DashboardRoutesContext,
-  api: ClawdbotPluginApi,
-): void {
+export function registerDashboardHttpRoutes(ctx: DashboardRoutesContext, api: ClawdbotPluginApi): void {
   if (!ctx.cfg.health.enabled) return;
 
   if (typeof api.registerHttpRoute !== "function") return;
@@ -66,11 +63,7 @@ export function registerDashboardHttpRoutes(
   // requirement. Do not pass different options to any of these calls.
 
   // GET /plugins/memory-dashboard/ — dashboard HTML shell
-  (api.registerHttpRoute as (
-    path: string,
-    handler: HttpRequestHandler,
-    opts: HttpRouteOptions,
-  ) => void)(
+  (api.registerHttpRoute as (path: string, handler: HttpRequestHandler, opts: HttpRouteOptions) => void)(
     `${DASHBOARD_PREFIX}${DASHBOARD_PATHS.root}`,
     async (_req) => ({
       status: 200,
@@ -81,11 +74,7 @@ export function registerDashboardHttpRoutes(
   );
 
   // GET /plugins/memory-dashboard/api/health — JSON health summary
-  (api.registerHttpRoute as (
-    path: string,
-    handler: HttpRequestHandler,
-    opts: HttpRouteOptions,
-  ) => void)(
+  (api.registerHttpRoute as (path: string, handler: HttpRequestHandler, opts: HttpRouteOptions) => void)(
     `${DASHBOARD_PREFIX}${DASHBOARD_PATHS.healthApi}`,
     async (_req) => ({
       status: 200,

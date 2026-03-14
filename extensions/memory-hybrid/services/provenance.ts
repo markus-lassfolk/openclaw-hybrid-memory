@@ -208,9 +208,7 @@ export class ProvenanceService {
 
   prune(retentionDays: number): number {
     const cutoff = new Date(Date.now() - retentionDays * 24 * 3600 * 1000).toISOString();
-    const result = this.db
-      .prepare(`DELETE FROM provenance_edges WHERE created_at < ?`)
-      .run(cutoff);
+    const result = this.db.prepare(`DELETE FROM provenance_edges WHERE created_at < ?`).run(cutoff);
     return result.changes;
   }
 

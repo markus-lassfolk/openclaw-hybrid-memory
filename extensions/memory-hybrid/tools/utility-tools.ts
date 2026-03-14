@@ -34,7 +34,7 @@ export type RunReflectionFn = (
   config: { defaultWindow: number; minObservations: number; enabled?: boolean },
   opts: { window: number; dryRun: boolean; model: string; fallbackModels?: string[] },
   logger: { info: (msg: string) => void; warn: (msg: string) => void },
-  provenanceService?: ProvenanceService | null
+  provenanceService?: ProvenanceService | null,
 ) => Promise<{ factsAnalyzed: number; patternsExtracted: number; patternsStored: number; window: number }>;
 
 export type RunReflectionRulesFn = (
@@ -44,7 +44,7 @@ export type RunReflectionRulesFn = (
   openai: OpenAI,
   opts: { dryRun: boolean; model: string; fallbackModels?: string[] },
   logger: { info: (msg: string) => void; warn: (msg: string) => void },
-  provenanceService?: ProvenanceService | null
+  provenanceService?: ProvenanceService | null,
 ) => Promise<{ rulesExtracted: number; rulesStored: number }>;
 
 export type RunReflectionMetaFn = (
@@ -54,7 +54,7 @@ export type RunReflectionMetaFn = (
   openai: OpenAI,
   opts: { dryRun: boolean; model: string; fallbackModels?: string[] },
   logger: { info: (msg: string) => void; warn: (msg: string) => void },
-  provenanceService?: ProvenanceService | null
+  provenanceService?: ProvenanceService | null,
 ) => Promise<{ metaExtracted: number; metaStored: number }>;
 
 export function registerUtilityTools(
@@ -73,19 +73,12 @@ export function registerUtilityTools(
     {
       name: "memory_checkpoint",
       label: "Memory Checkpoint",
-      description:
-        "Save or restore pre-flight checkpoints before risky/long operations. Auto-expires after 4 hours.",
+      description: "Save or restore pre-flight checkpoints before risky/long operations. Auto-expires after 4 hours.",
       parameters: Type.Object({
         action: stringEnum(["save", "restore"] as const),
-        intent: Type.Optional(
-          Type.String({ description: "What you're about to do (for save)" }),
-        ),
-        state: Type.Optional(
-          Type.String({ description: "Current state/context (for save)" }),
-        ),
-        expectedOutcome: Type.Optional(
-          Type.String({ description: "What should happen if successful" }),
-        ),
+        intent: Type.Optional(Type.String({ description: "What you're about to do (for save)" })),
+        state: Type.Optional(Type.String({ description: "Current state/context (for save)" })),
+        expectedOutcome: Type.Optional(Type.String({ description: "What should happen if successful" })),
         workingFiles: Type.Optional(
           Type.Array(Type.String(), {
             description: "Files being modified",
@@ -93,14 +86,13 @@ export function registerUtilityTools(
         ),
       }),
       async execute(_toolCallId: string, params: Record<string, unknown>) {
-        const { action, intent, state, expectedOutcome, workingFiles } =
-          params as {
-            action: "save" | "restore";
-            intent?: string;
-            state?: string;
-            expectedOutcome?: string;
-            workingFiles?: string[];
-          };
+        const { action, intent, state, expectedOutcome, workingFiles } = params as {
+          action: "save" | "restore";
+          intent?: string;
+          state?: string;
+          expectedOutcome?: string;
+          workingFiles?: string[];
+        };
 
         if (action === "save") {
           if (!intent || !state) {
@@ -163,12 +155,9 @@ export function registerUtilityTools(
     {
       name: "memory_prune",
       label: "Memory Prune",
-      description:
-        "Prune expired memories and decay confidence of aging facts.",
+      description: "Prune expired memories and decay confidence of aging facts.",
       parameters: Type.Object({
-        mode: Type.Optional(
-          stringEnum(["hard", "soft", "both"] as const),
-        ),
+        mode: Type.Optional(stringEnum(["hard", "soft", "both"] as const)),
       }),
       async execute(_toolCallId: string, params: Record<string, unknown>) {
         const { mode = "both" } = params as { mode?: "hard" | "soft" | "both" };
@@ -442,9 +431,7 @@ export function registerUtilityTools(
             factsDb.saveClusters(result.clusters);
           }
 
-          const summary = result.clusters
-            .map((c) => `  • ${c.label} (${c.factCount} facts)`)
-            .join("\n");
+          const summary = result.clusters.map((c) => `  • ${c.label} (${c.factCount} facts)`).join("\n");
 
           const text =
             result.clusters.length === 0
@@ -486,10 +473,9 @@ export function registerUtilityTools(
         "Analyze the memory graph to surface knowledge gaps (orphans, weakly linked facts, suggested links).",
       parameters: Type.Object({
         mode: Type.Optional(
-          Type.Union(
-            [Type.Literal("orphans"), Type.Literal("weak"), Type.Literal("all")],
-            { description: "Which gap types to return (default: all)." },
-          ),
+          Type.Union([Type.Literal("orphans"), Type.Literal("weak"), Type.Literal("all")], {
+            description: "Which gap types to return (default: all).",
+          }),
         ),
         limit: Type.Optional(
           Type.Number({
@@ -511,10 +497,7 @@ export function registerUtilityTools(
           };
         }
 
-        const mode =
-          params.mode === "orphans" || params.mode === "weak" || params.mode === "all"
-            ? params.mode
-            : "all";
+        const mode = params.mode === "orphans" || params.mode === "weak" || params.mode === "all" ? params.mode : "all";
         const limit =
           typeof params.limit === "number" && Number.isFinite(params.limit) && params.limit > 0
             ? Math.min(200, Math.floor(params.limit))

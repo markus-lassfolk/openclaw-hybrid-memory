@@ -10,13 +10,8 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { FactsDB } from "../backends/facts-db.js";
-import {
-  EmbeddingRegistry,
-} from "../services/embedding-registry.js";
-import {
-  runRetrievalPipeline,
-  type FactsDbWithEmbeddings,
-} from "../services/retrieval-orchestrator.js";
+import { EmbeddingRegistry } from "../services/embedding-registry.js";
+import { runRetrievalPipeline, type FactsDbWithEmbeddings } from "../services/retrieval-orchestrator.js";
 import type { EmbeddingProvider } from "../services/embeddings.js";
 import type { VectorDB } from "../backends/vector-db.js";
 
@@ -46,7 +41,15 @@ function makeMockVectorDb(): VectorDB {
 }
 
 function storeTestFact(db: FactsDB, text: string): string {
-  const result = db.store({ text, category: "fact", importance: 0.7, source: "test", entity: null, key: null, value: null });
+  const result = db.store({
+    text,
+    category: "fact",
+    importance: 0.7,
+    source: "test",
+    entity: null,
+    key: null,
+    value: null,
+  });
   return result.id;
 }
 
@@ -102,11 +105,14 @@ describe("EmbeddingRegistry isMultiModel()", () => {
     const primary = makeMockProvider("text-embedding-3-small", 4);
     const registry = new EmbeddingRegistry(primary, "text-embedding-3-small");
 
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
-      ok: true,
-      json: async () => ({ embeddings: [[0.1, 0.2, 0.3]] }),
-      text: async () => "",
-    }));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ embeddings: [[0.1, 0.2, 0.3]] }),
+        text: async () => "",
+      }),
+    );
 
     registry.register({ name: "nomic-embed-text", provider: "ollama", dimensions: 3, role: "domain" });
     expect(registry.isMultiModel()).toBe(true);
@@ -124,13 +130,7 @@ describe("runRetrievalPipeline — single-model backward compatibility", () => {
     const rawDb = factsDb.getRawDb();
     const vectorDb = makeMockVectorDb();
 
-    const result = await runRetrievalPipeline(
-      "test query",
-      null,
-      rawDb,
-      vectorDb,
-      factsDb,
-    );
+    const result = await runRetrievalPipeline("test query", null, rawDb, vectorDb, factsDb);
 
     expect(result).toHaveProperty("fused");
     expect(result).toHaveProperty("packed");
@@ -142,13 +142,7 @@ describe("runRetrievalPipeline — single-model backward compatibility", () => {
     const rawDb = factsDb.getRawDb();
     const vectorDb = makeMockVectorDb();
 
-    const result = await runRetrievalPipeline(
-      "anything",
-      null,
-      rawDb,
-      vectorDb,
-      factsDb,
-    );
+    const result = await runRetrievalPipeline("anything", null, rawDb, vectorDb, factsDb);
 
     expect(result.fused).toHaveLength(0);
     expect(result.packed).toHaveLength(0);
@@ -270,9 +264,23 @@ describe("Multi-model semantic search via fact_embeddings", () => {
       rawDb,
       vectorDb,
       factsDb,
-      { strategies: ["semantic"], rrf_k: 60, ambientBudgetTokens: 2000, explicitBudgetTokens: 4000, graphWalkDepth: 0, semanticTopK: 10, fts5TopK: 10 },
+      {
+        strategies: ["semantic"],
+        rrf_k: 60,
+        ambientBudgetTokens: 2000,
+        explicitBudgetTokens: 4000,
+        graphWalkDepth: 0,
+        semanticTopK: 10,
+        fts5TopK: 10,
+      },
       4000,
-      undefined, undefined, undefined, undefined, undefined, null, undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      null,
+      undefined,
       registry,
       factsDb,
     );
@@ -320,9 +328,23 @@ describe("Multi-model semantic search via fact_embeddings", () => {
       rawDb,
       vectorDb,
       factsDb,
-      { strategies: ["semantic"], rrf_k: 60, ambientBudgetTokens: 2000, explicitBudgetTokens: 4000, graphWalkDepth: 0, semanticTopK: 10, fts5TopK: 10 },
+      {
+        strategies: ["semantic"],
+        rrf_k: 60,
+        ambientBudgetTokens: 2000,
+        explicitBudgetTokens: 4000,
+        graphWalkDepth: 0,
+        semanticTopK: 10,
+        fts5TopK: 10,
+      },
       4000,
-      undefined, undefined, undefined, undefined, undefined, null, undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      null,
+      undefined,
       registry,
       factsDb,
     );
@@ -347,16 +369,16 @@ describe("Multi-model semantic search via fact_embeddings", () => {
     // Expected order: factShared first, then factOnlyA and factOnlyB (tied, any order).
 
     const factShared = storeTestFact(factsDb, "Machine learning fundamentals");
-    const factOnlyA  = storeTestFact(factsDb, "Python syntax guide");
-    const factOnlyB  = storeTestFact(factsDb, "Neural network architecture");
+    const factOnlyA = storeTestFact(factsDb, "Python syntax guide");
+    const factOnlyB = storeTestFact(factsDb, "Neural network architecture");
 
     // model-1 embedding space: factShared ≈ query, factOnlyA second
     factsDb.storeEmbedding(factShared, "model-1", "canonical", new Float32Array([1, 0, 0, 0]), 4);
-    factsDb.storeEmbedding(factOnlyA,  "model-1", "canonical", new Float32Array([0.9, 0.1, 0, 0]), 4);
+    factsDb.storeEmbedding(factOnlyA, "model-1", "canonical", new Float32Array([0.9, 0.1, 0, 0]), 4);
 
     // model-2 embedding space: factShared ≈ query, factOnlyB second
     factsDb.storeEmbedding(factShared, "model-2", "canonical", new Float32Array([1, 0, 0, 0]), 4);
-    factsDb.storeEmbedding(factOnlyB,  "model-2", "canonical", new Float32Array([0.9, 0.1, 0, 0]), 4);
+    factsDb.storeEmbedding(factOnlyB, "model-2", "canonical", new Float32Array([0.9, 0.1, 0, 0]), 4);
 
     const primary = makeMockProvider("text-embedding-3-small", 4, [0, 0, 0, 0]);
     const registry = new EmbeddingRegistry(primary, "text-embedding-3-small");
@@ -381,9 +403,23 @@ describe("Multi-model semantic search via fact_embeddings", () => {
       rawDb,
       vectorDb,
       factsDb,
-      { strategies: ["semantic"], rrf_k: 60, ambientBudgetTokens: 2000, explicitBudgetTokens: 4000, graphWalkDepth: 0, semanticTopK: 10, fts5TopK: 10 },
+      {
+        strategies: ["semantic"],
+        rrf_k: 60,
+        ambientBudgetTokens: 2000,
+        explicitBudgetTokens: 4000,
+        graphWalkDepth: 0,
+        semanticTopK: 10,
+        fts5TopK: 10,
+      },
       4000,
-      undefined, undefined, undefined, undefined, undefined, null, undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      null,
+      undefined,
       registry,
       factsDb,
     );
@@ -397,15 +433,15 @@ describe("Multi-model semantic search via fact_embeddings", () => {
 
     // factShared must appear before both single-model facts (RRF cross-model boost)
     const idxShared = foundIds.indexOf(factShared);
-    const idxOnlyA  = foundIds.indexOf(factOnlyA);
-    const idxOnlyB  = foundIds.indexOf(factOnlyB);
+    const idxOnlyA = foundIds.indexOf(factOnlyA);
+    const idxOnlyB = foundIds.indexOf(factOnlyB);
     expect(idxShared).toBeLessThan(idxOnlyA);
     expect(idxShared).toBeLessThan(idxOnlyB);
 
     // Verify the raw RRF scores satisfy the expected math
     const scoreShared = result.fused.find((r) => r.factId === factShared)!.rrfScore;
-    const scoreOnlyA  = result.fused.find((r) => r.factId === factOnlyA)!.rrfScore;
-    const scoreOnlyB  = result.fused.find((r) => r.factId === factOnlyB)!.rrfScore;
+    const scoreOnlyA = result.fused.find((r) => r.factId === factOnlyA)!.rrfScore;
+    const scoreOnlyB = result.fused.find((r) => r.factId === factOnlyB)!.rrfScore;
 
     // factShared gets contributions from two model lanes; each single-model fact gets one
     expect(scoreShared).toBeGreaterThan(scoreOnlyA);
@@ -440,9 +476,23 @@ describe("Multi-model semantic search via fact_embeddings", () => {
       rawDb,
       vectorDb,
       factsDb,
-      { strategies: ["semantic"], rrf_k: 60, ambientBudgetTokens: 2000, explicitBudgetTokens: 4000, graphWalkDepth: 0, semanticTopK: 10, fts5TopK: 10 },
+      {
+        strategies: ["semantic"],
+        rrf_k: 60,
+        ambientBudgetTokens: 2000,
+        explicitBudgetTokens: 4000,
+        graphWalkDepth: 0,
+        semanticTopK: 10,
+        fts5TopK: 10,
+      },
       4000,
-      undefined, undefined, undefined, undefined, undefined, null, undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      null,
+      undefined,
       registry,
       factsDb,
     );

@@ -46,7 +46,7 @@ describe("UnconfiguredProviderError guard with mocked Sentry", () => {
         maxBreadcrumbs: 0,
         sampleRate: 1.0,
       },
-      "test"
+      "test",
     );
 
     // Verify init was called

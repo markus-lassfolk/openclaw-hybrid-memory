@@ -37,14 +37,18 @@ export interface HooksContext {
   lastProgressiveIndexIds: string[];
   restartPendingClearedRef: { value: boolean };
   resolvedSqlitePath: string;
-  walWrite: (operation: "store" | "update", data: Record<string, unknown>, logger: { warn: (msg: string) => void }) => string;
+  walWrite: (
+    operation: "store" | "update",
+    data: Record<string, unknown>,
+    logger: { warn: (msg: string) => void },
+  ) => string;
   walRemove: (id: string, logger: { warn: (msg: string) => void }) => void;
   findSimilarByEmbedding: (
     vectorDb: VectorDB,
     factsDb: { getById(id: string): MemoryEntry | null },
     vector: number[],
     limit: number,
-    minScore?: number
+    minScore?: number,
   ) => Promise<MemoryEntry[]>;
   shouldCapture: (text: string) => boolean;
   detectCategory: (text: string) => import("../config.js").MemoryCategory;
@@ -90,7 +94,10 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
       issueStore: ctx.issueStore,
     };
   } catch (err) {
-    capturePluginError(err instanceof Error ? err : new Error(String(err)), { subsystem: "registration", operation: "register-hooks:context" });
+    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+      subsystem: "registration",
+      operation: "register-hooks:context",
+    });
     throw err;
   }
 
@@ -98,7 +105,10 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
   try {
     hooks = createLifecycleHooks(lifecycleContext);
   } catch (err) {
-    capturePluginError(err instanceof Error ? err : new Error(String(err)), { subsystem: "registration", operation: "register-hooks:create" });
+    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+      subsystem: "registration",
+      operation: "register-hooks:create",
+    });
     throw err;
   }
   try {
@@ -106,7 +116,10 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
     hooks.onAgentEnd(api);
     hooks.onFrustrationDetect?.(api);
   } catch (err) {
-    capturePluginError(err instanceof Error ? err : new Error(String(err)), { subsystem: "registration", operation: "register-hooks:attach" });
+    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+      subsystem: "registration",
+      operation: "register-hooks:attach",
+    });
     hooks.dispose();
     throw err;
   }
@@ -124,7 +137,7 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
       "<llm-config-warning>",
       ...warnings,
       "Note: These configuration warnings will not repeat in this session.",
-      "</llm-config-warning>"
+      "</llm-config-warning>",
     ].join("\n");
 
     return { prependContext: wrappedWarnings };
@@ -164,13 +177,14 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
     // Build once and cache — these never change within a gateway session.
     const buildStaticInstructions = (): string => {
       const cats = getMemoryCategories();
-      const catList = cats.length > 0 ? cats.join(", ") : "preference, fact, decision, entity, pattern, rule, other, technical";
+      const catList =
+        cats.length > 0 ? cats.join(", ") : "preference, fact, decision, entity, pattern, rule, other, technical";
       return [
         "<!-- memory-hybrid: capability hints -->",
         "You have access to long-term memory tools for this session.",
         `Available categories: ${catList}.`,
         "Use memory_store to save important facts, preferences, and decisions.",
-        "Use memory_recall(\"query\") or memory_recall(id: N) to retrieve specific memories.",
+        'Use memory_recall("query") or memory_recall(id: N) to retrieve specific memories.',
         "Use memory_forget(memoryId) to remove stale or incorrect memories.",
         "Memories are scoped (global / user / agent / session) — prefer global unless scoped context is needed.",
         "<!-- /memory-hybrid: capability hints -->",

@@ -37,9 +37,11 @@ export interface TrajectoryBoundary {
 }
 
 // Patterns indicating positive sentiment in user messages
-const POSITIVE_RE = /\b(thanks|thank you|cheers|perfect|great|awesome|brilliant|excellent|wonderful|worked|done|fixed|solved|got it|success|that'?s it|exactly|correct|yes|nice|good)\b/i;
+const POSITIVE_RE =
+  /\b(thanks|thank you|cheers|perfect|great|awesome|brilliant|excellent|wonderful|worked|done|fixed|solved|got it|success|that'?s it|exactly|correct|yes|nice|good)\b/i;
 // Patterns indicating correction
-const CORRECTION_RE = /\b(no(?!\s+(problem|worries|need|issue|issues|questions?|thanks?))|nope|wrong|incorrect|not what i (said|meant|asked)|that'?s not|i said|not right|you misunderstood|not quite)\b/i;
+const CORRECTION_RE =
+  /\b(no(?!\s+(problem|worries|need|issue|issues|questions?|thanks?))|nope|wrong|incorrect|not what i (said|meant|asked)|that'?s not|i said|not right|you misunderstood|not quite)\b/i;
 
 /**
  * Classify sentiment of a user message.
@@ -79,7 +81,8 @@ export function detectTrajectoryBoundaries(turns: ConversationTurn[]): Trajector
 
       // Check if topic changed significantly
       const sim = computeSimpleSimilarity(turn.content, lastTopicContent);
-      const isGrateful = /\b(thanks|thank you|cheers|perfect|great|awesome)\b/i.test(turn.content) && turn.content.length < 60;
+      const isGrateful =
+        /\b(thanks|thank you|cheers|perfect|great|awesome)\b/i.test(turn.content) && turn.content.length < 60;
 
       if (isGrateful || sim < 0.2) {
         // End current trajectory (include this turn)
@@ -107,17 +110,17 @@ export function detectTrajectoryBoundaries(turns: ConversationTurn[]): Trajector
 /**
  * Build TrajectoryTurn array from raw ConversationTurns in a boundary.
  */
-function buildTrajectoryTurns(
-  turns: ConversationTurn[],
-  boundary: TrajectoryBoundary,
-): TrajectoryTurn[] {
+function buildTrajectoryTurns(turns: ConversationTurn[], boundary: TrajectoryBoundary): TrajectoryTurn[] {
   const slice = turns.slice(boundary.startIndex, boundary.endIndex + 1);
   return slice.map((t, idx) => {
     const wasCorrection = t.role === "user" && CORRECTION_RE.test(t.content);
     // Rephrase: high similarity to previous user message but not identical
     let wasRephrase = false;
     if (t.role === "user" && idx > 0) {
-      const prevUser = slice.slice(0, idx).reverse().find((x) => x.role === "user");
+      const prevUser = slice
+        .slice(0, idx)
+        .reverse()
+        .find((x) => x.role === "user");
       if (prevUser) {
         const sim = computeSimpleSimilarity(t.content, prevUser.content);
         wasRephrase = sim > 0.6 && t.content.trim() !== prevUser.content.trim();
@@ -248,9 +251,7 @@ export function extractTrajectoryLessons(trajectory: FeedbackTrajectory): string
  * Extract the dominant topic from trajectory turns.
  */
 function extractTopic(turns: ConversationTurn[], boundary: TrajectoryBoundary): string {
-  const firstUserMsg = turns
-    .slice(boundary.startIndex, boundary.endIndex + 1)
-    .find((t) => t.role === "user");
+  const firstUserMsg = turns.slice(boundary.startIndex, boundary.endIndex + 1).find((t) => t.role === "user");
   if (!firstUserMsg) return "";
   // Take first 60 chars as topic proxy
   return firstUserMsg.content.slice(0, 60).trim();
@@ -272,10 +273,7 @@ function extractToolsUsed(turns: ConversationTurn[], boundary: TrajectoryBoundar
 /**
  * Build FeedbackTrajectory objects from raw conversation turns.
  */
-export function buildTrajectories(
-  turns: ConversationTurn[],
-  sessionFile: string,
-): FeedbackTrajectory[] {
+export function buildTrajectories(turns: ConversationTurn[], sessionFile: string): FeedbackTrajectory[] {
   const trajectories: FeedbackTrajectory[] = [];
   try {
     const boundaries = detectTrajectoryBoundaries(turns);
@@ -384,11 +382,7 @@ export async function analyzeTrajectoriesWithLLM(
     const parsed = JSON.parse(raw.trim()) as TrajectoryLLMAnalysis;
 
     // Validate minimal shape
-    if (
-      typeof parsed.outcome === "string" &&
-      typeof parsed.keyLesson === "string" &&
-      Array.isArray(parsed.patterns)
-    ) {
+    if (typeof parsed.outcome === "string" && typeof parsed.keyLesson === "string" && Array.isArray(parsed.patterns)) {
       return parsed;
     }
     return null;

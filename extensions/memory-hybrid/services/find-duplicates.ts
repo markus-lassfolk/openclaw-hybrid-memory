@@ -30,7 +30,9 @@ export async function runFindDuplicates(
   logger: { info: (msg: string) => void; warn: (msg: string) => void },
 ): Promise<FindDuplicatesResult> {
   const facts = factsDb.getFactsForConsolidation(opts.limit);
-  const skippedStructured = opts.includeStructured ? 0 : facts.filter((f) => isStructuredForConsolidation(f.text, f.entity, f.key)).length;
+  const skippedStructured = opts.includeStructured
+    ? 0
+    : facts.filter((f) => isStructuredForConsolidation(f.text, f.entity, f.key)).length;
   const candidateFacts = opts.includeStructured
     ? facts
     : facts.filter((f) => !isStructuredForConsolidation(f.text, f.entity, f.key));

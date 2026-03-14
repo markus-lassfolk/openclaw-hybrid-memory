@@ -34,9 +34,11 @@ export function parseAutoRecallConfig(cfg: Record<string, unknown>): AutoRecallC
 
   if (typeof arRaw === "object" && arRaw !== null && !Array.isArray(arRaw)) {
     const ar = arRaw as Record<string, unknown>;
-    const format = typeof ar.injectionFormat === "string" && VALID_FORMATS.includes(ar.injectionFormat as typeof VALID_FORMATS[number])
-      ? (ar.injectionFormat as AutoRecallInjectionFormat)
-      : "full";
+    const format =
+      typeof ar.injectionFormat === "string" &&
+      VALID_FORMATS.includes(ar.injectionFormat as (typeof VALID_FORMATS)[number])
+        ? (ar.injectionFormat as AutoRecallInjectionFormat)
+        : "full";
     const limit = typeof ar.limit === "number" && ar.limit > 0 ? Math.floor(ar.limit) : 10;
     const minScore = typeof ar.minScore === "number" && ar.minScore >= 0 && ar.minScore <= 1 ? ar.minScore : 0.3;
     const preferLongTerm = ar.preferLongTerm === true;
@@ -71,7 +73,9 @@ export function parseAutoRecallConfig(cfg: Record<string, unknown>): AutoRecallC
             Object.entries(taskTypesRaw as Record<string, unknown>)
               .map(([k, v]) => {
                 if (!Array.isArray(v)) return null;
-                const list = (v as string[]).filter((item) => typeof item === "string" && item.trim().length > 0).map((item) => item.trim());
+                const list = (v as string[])
+                  .filter((item) => typeof item === "string" && item.trim().length > 0)
+                  .map((item) => item.trim());
                 return list.length > 0 ? [k, list] : null;
               })
               .filter((v): v is [string, string[]] => v !== null),
@@ -83,10 +87,7 @@ export function parseAutoRecallConfig(cfg: Record<string, unknown>): AutoRecallC
       keywords,
       taskTypes,
       sessionStart: directivesRaw?.sessionStart === true,
-      limit:
-        typeof directivesRaw?.limit === "number" && directivesRaw.limit > 0
-          ? Math.floor(directivesRaw.limit)
-          : 3,
+      limit: typeof directivesRaw?.limit === "number" && directivesRaw.limit > 0 ? Math.floor(directivesRaw.limit) : 3,
       maxPerPrompt:
         typeof directivesRaw?.maxPerPrompt === "number" && directivesRaw.maxPerPrompt > 0
           ? Math.floor(directivesRaw.maxPerPrompt)
@@ -113,9 +114,18 @@ export function parseAutoRecallConfig(cfg: Record<string, unknown>): AutoRecallC
     const scopeFilter =
       scopeFilterRaw && typeof scopeFilterRaw === "object" && !Array.isArray(scopeFilterRaw)
         ? {
-            userId: typeof scopeFilterRaw.userId === "string" && scopeFilterRaw.userId.trim().length > 0 ? scopeFilterRaw.userId.trim() : undefined,
-            agentId: typeof scopeFilterRaw.agentId === "string" && scopeFilterRaw.agentId.trim().length > 0 ? scopeFilterRaw.agentId.trim() : undefined,
-            sessionId: typeof scopeFilterRaw.sessionId === "string" && scopeFilterRaw.sessionId.trim().length > 0 ? scopeFilterRaw.sessionId.trim() : undefined,
+            userId:
+              typeof scopeFilterRaw.userId === "string" && scopeFilterRaw.userId.trim().length > 0
+                ? scopeFilterRaw.userId.trim()
+                : undefined,
+            agentId:
+              typeof scopeFilterRaw.agentId === "string" && scopeFilterRaw.agentId.trim().length > 0
+                ? scopeFilterRaw.agentId.trim()
+                : undefined,
+            sessionId:
+              typeof scopeFilterRaw.sessionId === "string" && scopeFilterRaw.sessionId.trim().length > 0
+                ? scopeFilterRaw.sessionId.trim()
+                : undefined,
           }
         : undefined;
     // Auth failure recall config
@@ -125,15 +135,17 @@ export function parseAutoRecallConfig(cfg: Record<string, unknown>): AutoRecallC
       patterns: Array.isArray(authFailureRaw?.patterns)
         ? (authFailureRaw.patterns as string[]).filter((p) => typeof p === "string" && p.length > 0)
         : [],
-      maxRecallsPerTarget: typeof authFailureRaw?.maxRecallsPerTarget === "number" && authFailureRaw.maxRecallsPerTarget >= 0
-        ? Math.floor(authFailureRaw.maxRecallsPerTarget)
-        : 1,
+      maxRecallsPerTarget:
+        typeof authFailureRaw?.maxRecallsPerTarget === "number" && authFailureRaw.maxRecallsPerTarget >= 0
+          ? Math.floor(authFailureRaw.maxRecallsPerTarget)
+          : 1,
       includeVaultHints: authFailureRaw?.includeVaultHints !== false,
     };
     return {
       enabled: ar.enabled !== false,
       maxTokens: typeof ar.maxTokens === "number" && ar.maxTokens > 0 ? ar.maxTokens : 800,
-      maxPerMemoryChars: typeof ar.maxPerMemoryChars === "number" && ar.maxPerMemoryChars >= 0 ? ar.maxPerMemoryChars : 0,
+      maxPerMemoryChars:
+        typeof ar.maxPerMemoryChars === "number" && ar.maxPerMemoryChars >= 0 ? ar.maxPerMemoryChars : 0,
       injectionFormat: format,
       limit,
       minScore,
@@ -195,19 +207,15 @@ export function parseAutoRecallConfig(cfg: Record<string, unknown>): AutoRecallC
 export function parseRetrievalConfig(cfg: Record<string, unknown>): RetrievalConfig {
   const retrievalRaw = cfg.retrieval as Record<string, unknown> | undefined;
   const VALID_STRATEGIES = ["semantic", "fts5", "graph"] as const;
-  const parsedStrategies =
-    Array.isArray(retrievalRaw?.strategies)
-      ? (retrievalRaw.strategies as string[]).filter(
-          (s): s is "semantic" | "fts5" | "graph" =>
-            typeof s === "string" && VALID_STRATEGIES.includes(s as typeof VALID_STRATEGIES[number]),
-        )
-      : (["semantic", "fts5"] as Array<"semantic" | "fts5" | "graph">);
+  const parsedStrategies = Array.isArray(retrievalRaw?.strategies)
+    ? (retrievalRaw.strategies as string[]).filter(
+        (s): s is "semantic" | "fts5" | "graph" =>
+          typeof s === "string" && VALID_STRATEGIES.includes(s as (typeof VALID_STRATEGIES)[number]),
+      )
+    : (["semantic", "fts5"] as Array<"semantic" | "fts5" | "graph">);
   return {
     strategies: parsedStrategies.length > 0 ? parsedStrategies : ["semantic", "fts5"],
-    rrf_k:
-      typeof retrievalRaw?.rrf_k === "number" && retrievalRaw.rrf_k > 0
-        ? Math.floor(retrievalRaw.rrf_k)
-        : 60,
+    rrf_k: typeof retrievalRaw?.rrf_k === "number" && retrievalRaw.rrf_k > 0 ? Math.floor(retrievalRaw.rrf_k) : 60,
     ambientBudgetTokens:
       typeof retrievalRaw?.ambientBudgetTokens === "number" && retrievalRaw.ambientBudgetTokens > 0
         ? Math.floor(retrievalRaw.ambientBudgetTokens)
@@ -225,9 +233,7 @@ export function parseRetrievalConfig(cfg: Record<string, unknown>): RetrievalCon
         ? Math.floor(retrievalRaw.semanticTopK)
         : 20,
     fts5TopK:
-      typeof retrievalRaw?.fts5TopK === "number" && retrievalRaw.fts5TopK > 0
-        ? Math.floor(retrievalRaw.fts5TopK)
-        : 20,
+      typeof retrievalRaw?.fts5TopK === "number" && retrievalRaw.fts5TopK > 0 ? Math.floor(retrievalRaw.fts5TopK) : 20,
   };
 }
 
@@ -255,9 +261,9 @@ export function parseQueryExpansionConfig(cfg: Record<string, unknown>): QueryEx
   if (hydeEnabled) {
     console.warn(
       "memory-hybrid: search.hydeEnabled is DEPRECATED — use queryExpansion.enabled instead. " +
-      (qeExplicitlySet
-        ? "Both are set; queryExpansion config takes precedence. Remove search.hydeEnabled from your config."
-        : "Auto-migrating: queryExpansion.enabled has been set to true. Update your config to silence this warning."),
+        (qeExplicitlySet
+          ? "Both are set; queryExpansion config takes precedence. Remove search.hydeEnabled from your config."
+          : "Auto-migrating: queryExpansion.enabled has been set to true. Update your config to silence this warning."),
     );
   }
 
@@ -265,18 +271,12 @@ export function parseQueryExpansionConfig(cfg: Record<string, unknown>): QueryEx
   const enabled = qeExplicitlySet ? qeRaw.enabled === true : hydeEnabled;
 
   const rawMode = typeof qeRaw?.mode === "string" ? qeRaw.mode.trim() : "";
-  const parsedMode =
-    rawMode === "always" || rawMode === "conditional" || rawMode === "off"
-      ? rawMode
-      : undefined;
+  const parsedMode = rawMode === "always" || rawMode === "conditional" || rawMode === "off" ? rawMode : undefined;
 
-  const mode: "always" | "conditional" | "off" =
-    !enabled ? "off" : (parsedMode ?? "always");
+  const mode: "always" | "conditional" | "off" = !enabled ? "off" : (parsedMode ?? "always");
 
   const threshold =
-    typeof qeRaw?.threshold === "number" && qeRaw.threshold >= 0 && qeRaw.threshold <= 1
-      ? qeRaw.threshold
-      : 0.03;
+    typeof qeRaw?.threshold === "number" && qeRaw.threshold >= 0 && qeRaw.threshold <= 1 ? qeRaw.threshold : 0.03;
 
   // queryExpansion.model wins when set; fall back to search.hydeModel when model is missing and expansion is enabled (migration compat)
   const hydeModel =
@@ -286,23 +286,20 @@ export function parseQueryExpansionConfig(cfg: Record<string, unknown>): QueryEx
   const model =
     typeof qeRaw?.model === "string" && qeRaw.model.trim().length > 0
       ? qeRaw.model.trim()
-      : (enabled ? hydeModel : undefined);
+      : enabled
+        ? hydeModel
+        : undefined;
 
   const maxVariants =
-    typeof qeRaw?.maxVariants === "number" && qeRaw.maxVariants > 0
-      ? Math.min(10, Math.floor(qeRaw.maxVariants))
-      : 4;
+    typeof qeRaw?.maxVariants === "number" && qeRaw.maxVariants > 0 ? Math.min(10, Math.floor(qeRaw.maxVariants)) : 4;
 
-  const cacheSize =
-    typeof qeRaw?.cacheSize === "number" && qeRaw.cacheSize > 0
-      ? Math.floor(qeRaw.cacheSize)
-      : 100;
+  const cacheSize = typeof qeRaw?.cacheSize === "number" && qeRaw.cacheSize > 0 ? Math.floor(qeRaw.cacheSize) : 100;
 
   // When auto-migrating from search.hydeEnabled, preserve the original 25s timeout for pure legacy
   // migrations (i.e. no queryExpansion key in the merged config, including via preset). Once a preset
   // or explicit queryExpansion config is present, the new 15s default applies — this is intentional
   // because the new QE path has its own minimum floor enforcement (#384).
-  const defaultTimeout = (hydeEnabled && !qeExplicitlySet) ? 25000 : 15000;
+  const defaultTimeout = hydeEnabled && !qeExplicitlySet ? 25000 : 15000;
 
   const rawQeTimeoutRaw = qeRaw?.timeoutMs;
   // Treat 0 or negative as an explicit "no config-level floor" bypass: caller receives undefined
@@ -320,15 +317,16 @@ export function parseQueryExpansionConfig(cfg: Record<string, unknown>): QueryEx
     };
   }
 
-  const rawQeTimeout = typeof rawQeTimeoutRaw === "number" && Number.isFinite(rawQeTimeoutRaw) && rawQeTimeoutRaw > 0
-    ? Math.floor(rawQeTimeoutRaw)
-    : null;
+  const rawQeTimeout =
+    typeof rawQeTimeoutRaw === "number" && Number.isFinite(rawQeTimeoutRaw) && rawQeTimeoutRaw > 0
+      ? Math.floor(rawQeTimeoutRaw)
+      : null;
 
   if (rawQeTimeout !== null && rawQeTimeout < MIN_QE_TIMEOUT_MS) {
     console.warn(
       `memory-hybrid: queryExpansion.timeoutMs=${rawQeTimeout} is below the minimum floor of ${MIN_QE_TIMEOUT_MS}ms` +
-      ` and has been raised to ${MIN_QE_TIMEOUT_MS}ms to prevent spurious timeouts on thinking models (#384).` +
-      ` Set timeoutMs to 0 or a negative value to bypass the floor entirely.`,
+        ` and has been raised to ${MIN_QE_TIMEOUT_MS}ms to prevent spurious timeouts on thinking models (#384).` +
+        ` Set timeoutMs to 0 or a negative value to bypass the floor entirely.`,
     );
   }
 
@@ -349,13 +347,9 @@ export function parseRerankingConfig(cfg: Record<string, unknown>): RerankingCon
   const enabled = rrRaw?.enabled === true;
   const model = typeof rrRaw?.model === "string" && rrRaw.model.trim().length > 0 ? rrRaw.model.trim() : undefined;
   const candidateCount =
-    typeof rrRaw?.candidateCount === "number" && rrRaw.candidateCount > 0
-      ? Math.floor(rrRaw.candidateCount)
-      : 50;
+    typeof rrRaw?.candidateCount === "number" && rrRaw.candidateCount > 0 ? Math.floor(rrRaw.candidateCount) : 50;
   const outputCount =
-    typeof rrRaw?.outputCount === "number" && rrRaw.outputCount > 0
-      ? Math.floor(rrRaw.outputCount)
-      : 20;
+    typeof rrRaw?.outputCount === "number" && rrRaw.outputCount > 0 ? Math.floor(rrRaw.outputCount) : 20;
 
   const rawRerankTimeoutRaw = rrRaw?.timeoutMs;
   // Treat 0 or negative as an explicit "no config-level floor" bypass: caller receives undefined
@@ -370,14 +364,15 @@ export function parseRerankingConfig(cfg: Record<string, unknown>): RerankingCon
       timeoutMs: undefined,
     };
   }
-  const rawRerankTimeout = typeof rawRerankTimeoutRaw === "number" && Number.isFinite(rawRerankTimeoutRaw) && rawRerankTimeoutRaw > 0
-    ? Math.floor(rawRerankTimeoutRaw)
-    : null;
+  const rawRerankTimeout =
+    typeof rawRerankTimeoutRaw === "number" && Number.isFinite(rawRerankTimeoutRaw) && rawRerankTimeoutRaw > 0
+      ? Math.floor(rawRerankTimeoutRaw)
+      : null;
   if (rawRerankTimeout !== null && rawRerankTimeout < MIN_RERANK_TIMEOUT_MS) {
     console.warn(
       `memory-hybrid: reranking.timeoutMs=${rawRerankTimeout} is below the minimum floor of ${MIN_RERANK_TIMEOUT_MS}ms` +
-      ` and has been raised to ${MIN_RERANK_TIMEOUT_MS}ms to prevent spurious timeouts (#384).` +
-      ` Set timeoutMs to 0 or a negative value to bypass the floor entirely.`,
+        ` and has been raised to ${MIN_RERANK_TIMEOUT_MS}ms to prevent spurious timeouts (#384).` +
+        ` Set timeoutMs to 0 or a negative value to bypass the floor entirely.`,
     );
   }
   return {
@@ -399,9 +394,7 @@ export function parseContextualVariantsConfig(cfg: Record<string, unknown>): Con
         ? Math.min(5, Math.floor(cvRaw.maxVariantsPerFact))
         : 2,
     maxPerMinute:
-      typeof cvRaw?.maxPerMinute === "number" && cvRaw.maxPerMinute > 0
-        ? Math.floor(cvRaw.maxPerMinute)
-        : 30,
+      typeof cvRaw?.maxPerMinute === "number" && cvRaw.maxPerMinute > 0 ? Math.floor(cvRaw.maxPerMinute) : 30,
     categories:
       Array.isArray(cvRaw?.categories) && (cvRaw.categories as unknown[]).length > 0
         ? (cvRaw.categories as unknown[]).filter((c): c is string => typeof c === "string" && c.trim().length > 0)

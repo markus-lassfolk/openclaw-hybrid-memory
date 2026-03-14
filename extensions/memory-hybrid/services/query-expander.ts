@@ -169,12 +169,11 @@ export class QueryExpander {
     if (cached) return cached;
 
     try {
-      const contextLine = context
-        ? `\nContext: ${context.slice(0, 300)}`
-        : "";
-      const prompt = EXPANSION_PROMPT_TEMPLATE
-        .replace("{query}", () => query)
-        .replace("{contextLine}", () => contextLine);
+      const contextLine = context ? `\nContext: ${context.slice(0, 300)}` : "";
+      const prompt = EXPANSION_PROMPT_TEMPLATE.replace("{query}", () => query).replace(
+        "{contextLine}",
+        () => contextLine,
+      );
 
       const model = this.config.model ?? "openai/gpt-4.1-nano";
 
@@ -189,9 +188,7 @@ export class QueryExpander {
 
       const variants = parseExpansionsFromResponse(response, this.config.maxVariants);
       // Deduplicate: remove variants identical to the original query.
-      const filtered = variants.filter(
-        (v) => v.toLowerCase() !== query.toLowerCase(),
-      );
+      const filtered = variants.filter((v) => v.toLowerCase() !== query.toLowerCase());
 
       const result = [query, ...filtered];
       this.cache.set(cacheKey, result);

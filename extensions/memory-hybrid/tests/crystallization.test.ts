@@ -232,12 +232,28 @@ describe("computePatternId", () => {
 
 describe("scorePattern", () => {
   it("is totalCount × successRate", () => {
-    const pattern = { totalCount: 10, successRate: 0.8, successCount: 8, failureCount: 2, avgDurationMs: 100, exampleGoals: [], toolSequence: [] };
+    const pattern = {
+      totalCount: 10,
+      successRate: 0.8,
+      successCount: 8,
+      failureCount: 2,
+      avgDurationMs: 100,
+      exampleGoals: [],
+      toolSequence: [],
+    };
     expect(scorePattern(pattern)).toBeCloseTo(8);
   });
 
   it("is 0 for 0 success rate", () => {
-    const pattern = { totalCount: 5, successRate: 0, successCount: 0, failureCount: 5, avgDurationMs: 0, exampleGoals: [], toolSequence: [] };
+    const pattern = {
+      totalCount: 5,
+      successRate: 0,
+      successCount: 0,
+      failureCount: 5,
+      avgDurationMs: 0,
+      exampleGoals: [],
+      toolSequence: [],
+    };
     expect(scorePattern(pattern)).toBe(0);
   });
 });
@@ -447,7 +463,9 @@ describe("SkillCrystallizer.crystallize", () => {
 
 describe("SkillValidator", () => {
   let validator: any;
-  beforeEach(() => { validator = new SkillValidator(); });
+  beforeEach(() => {
+    validator = new SkillValidator();
+  });
 
   it("passes valid SKILL.md content", () => {
     const content = `# my-skill\n\nUse when deploying.\n\n## Steps\n\n1. Call exec.\n`;

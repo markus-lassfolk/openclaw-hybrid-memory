@@ -1,6 +1,6 @@
 /**
  * Test suite for error-reporter service
- * 
+ *
  * These tests ensure the privacy-first error reporting implementation
  * does NOT leak sensitive data like prompts, API keys, home paths, IPs, or emails.
  */
@@ -16,7 +16,9 @@ describe("Error Reporter", () => {
   describe("Module Loading", () => {
     it("should load successfully with @sentry/node as a required dependency", async () => {
       // @sentry/node is now a required dependency (moved from optionalDependencies to dependencies)
-      const { initErrorReporter, isErrorReporterActive, DEFAULT_GLITCHTIP_DSN } = await import("../services/error-reporter.js");
+      const { initErrorReporter, isErrorReporterActive, DEFAULT_GLITCHTIP_DSN } = await import(
+        "../services/error-reporter.js"
+      );
       expect(typeof initErrorReporter).toBe("function");
       expect(typeof isErrorReporterActive).toBe("function");
       expect(typeof DEFAULT_GLITCHTIP_DSN).toBe("string");
@@ -32,7 +34,7 @@ describe("Error Reporter", () => {
   describe("Configuration Validation", () => {
     it("should not initialize without consent", async () => {
       const { initErrorReporter, isErrorReporterActive } = await import("../services/error-reporter.js");
-      
+
       // Try to init without consent
       await initErrorReporter(
         {
@@ -43,16 +45,16 @@ describe("Error Reporter", () => {
           maxBreadcrumbs: 0,
           sampleRate: 1.0,
         },
-        "1.0.0"
+        "1.0.0",
       );
-      
+
       // Should NOT be active
       expect(isErrorReporterActive()).toBe(false);
     });
 
     it("should not initialize when disabled", async () => {
       const { initErrorReporter, isErrorReporterActive } = await import("../services/error-reporter.js");
-      
+
       await initErrorReporter(
         {
           enabled: false, // DISABLED
@@ -62,21 +64,21 @@ describe("Error Reporter", () => {
           maxBreadcrumbs: 0,
           sampleRate: 1.0,
         },
-        "1.0.0"
+        "1.0.0",
       );
-      
+
       // Should NOT be active
       expect(isErrorReporterActive()).toBe(false);
     });
 
     it("should not initialize self-hosted mode without DSN", async () => {
       const { initErrorReporter, isErrorReporterActive } = await import("../services/error-reporter.js");
-      
+
       const mockLogger = {
         info: vi.fn(),
         warn: vi.fn(),
       };
-      
+
       await initErrorReporter(
         {
           enabled: true,
@@ -86,14 +88,12 @@ describe("Error Reporter", () => {
           sampleRate: 1.0,
         },
         "1.0.0",
-        mockLogger
+        mockLogger,
       );
-      
+
       // Should NOT be active
       expect(isErrorReporterActive()).toBe(false);
-      expect(mockLogger.warn).toHaveBeenCalledWith(
-        expect.stringContaining("Self-hosted mode requires a DSN")
-      );
+      expect(mockLogger.warn).toHaveBeenCalledWith(expect.stringContaining("Self-hosted mode requires a DSN"));
     });
 
     it("should use community DSN in community mode", async () => {
@@ -113,13 +113,11 @@ describe("Error Reporter", () => {
           sampleRate: 1.0,
         },
         "1.0.0",
-        mockLogger
+        mockLogger,
       );
 
       // Community mode should log that it's using community mode
-      expect(mockLogger.info).toHaveBeenCalledWith(
-        expect.stringContaining("Using community mode")
-      );
+      expect(mockLogger.info).toHaveBeenCalledWith(expect.stringContaining("Using community mode"));
     });
 
     it("should allow DSN override in community mode", async () => {
@@ -140,13 +138,11 @@ describe("Error Reporter", () => {
           sampleRate: 1.0,
         },
         "1.0.0",
-        mockLogger
+        mockLogger,
       );
 
       // Should still log community mode but use custom DSN
-      expect(mockLogger.info).toHaveBeenCalledWith(
-        expect.stringContaining("Using community mode")
-      );
+      expect(mockLogger.info).toHaveBeenCalledWith(expect.stringContaining("Using community mode"));
     });
 
     it("should initialize by default with no config (opt-out: enabled+consent default to true)", async () => {
@@ -170,13 +166,11 @@ describe("Error Reporter", () => {
           sampleRate: 1.0,
         },
         "test",
-        mockLogger
+        mockLogger,
       );
 
       // Should NOT have logged a disabled message — the guard should pass
-      expect(mockLogger.info).not.toHaveBeenCalledWith(
-        expect.stringContaining("Disabled:")
-      );
+      expect(mockLogger.info).not.toHaveBeenCalledWith(expect.stringContaining("Disabled:"));
     });
 
     it("should respect explicit opt-out via consent: false", async () => {
@@ -197,7 +191,7 @@ describe("Error Reporter", () => {
           sampleRate: 1.0,
         },
         "test",
-        mockLogger
+        mockLogger,
       );
 
       // When consent=false, the reporter logs Disabled and returns early.
@@ -207,7 +201,7 @@ describe("Error Reporter", () => {
       expect(mockLogger.info).toHaveBeenCalledWith(
         expect.stringContaining("Disabled:"),
         expect.anything(),
-        expect.anything()
+        expect.anything(),
       );
     });
 
@@ -231,13 +225,11 @@ describe("Error Reporter", () => {
           sampleRate: 1.0,
         },
         "test",
-        mockLogger
+        mockLogger,
       );
 
       // Should log community mode (not self-hosted)
-      expect(mockLogger.info).toHaveBeenCalledWith(
-        expect.stringContaining("Using community mode")
-      );
+      expect(mockLogger.info).toHaveBeenCalledWith(expect.stringContaining("Using community mode"));
     });
   });
 
@@ -246,14 +238,22 @@ describe("Error Reporter", () => {
       const { scrubString } = await import("../services/error-reporter.js");
 
       expect(scrubString("Error with key sk-1234567890abcdefghij")).toBe("Error with key [REDACTED]");
-      expect(scrubString("Error with key sk-proj-abcdefghijklmnopqrstuvwxyz1234567890")).toBe("Error with key [REDACTED]");
-      expect(scrubString("Error with key sk-ant-api03-1234567890abcdefghijklmnopqrstuvwxyz")).toBe("Error with key [REDACTED]");
+      expect(scrubString("Error with key sk-proj-abcdefghijklmnopqrstuvwxyz1234567890")).toBe(
+        "Error with key [REDACTED]",
+      );
+      expect(scrubString("Error with key sk-ant-api03-1234567890abcdefghijklmnopqrstuvwxyz")).toBe(
+        "Error with key [REDACTED]",
+      );
     });
 
     it("should scrub JWT tokens", async () => {
       const { scrubString } = await import("../services/error-reporter.js");
 
-      expect(scrubString("Token: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c")).toBe("Token: [REDACTED]");
+      expect(
+        scrubString(
+          "Token: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c",
+        ),
+      ).toBe("Token: [REDACTED]");
     });
 
     it("should scrub database connection strings", async () => {
@@ -262,19 +262,21 @@ describe("Error Reporter", () => {
       expect(scrubString("Error: postgres://user:pass@localhost/db")).toBe("Error: postgres://[REDACTED]");
       expect(scrubString("Error: mysql://admin:secret@db.example.com/prod")).toBe("Error: mysql://[REDACTED]");
       expect(scrubString("Error: redis://default:password@redis.local:6379")).toBe("Error: redis://[REDACTED]");
-      expect(scrubString("Error: mongodb://root:pass123@mongo.example.com:27017/mydb")).toBe("Error: mongodb://[REDACTED]");
+      expect(scrubString("Error: mongodb://root:pass123@mongo.example.com:27017/mydb")).toBe(
+        "Error: mongodb://[REDACTED]",
+      );
     });
 
     it("should scrub GitHub tokens and Bearer tokens", async () => {
       const { scrubString } = await import("../services/error-reporter.js");
-      
+
       expect(scrubString("Token: ghp_" + "a".repeat(36))).toBe("Token: [REDACTED]");
       expect(scrubString("Authorization: Bearer abc123.def456.ghi789")).toBe("Authorization: [REDACTED]");
     });
 
     it("should scrub home paths and PII", async () => {
       const { scrubString } = await import("../services/error-reporter.js");
-      
+
       expect(scrubString("File at /home/alice/file.txt")).toBe("File at $HOME/file.txt");
       expect(scrubString("File at /Users/bob/file.txt")).toBe("File at $HOME/file.txt");
       expect(scrubString("Email: user@example.com")).toBe("Email: [EMAIL]");
@@ -284,9 +286,15 @@ describe("Error Reporter", () => {
     it("should sanitize file paths with multiple directory markers", async () => {
       const { sanitizePath } = await import("../services/error-reporter.js");
 
-      expect(sanitizePath("/home/alice/project/extensions/memory-hybrid/index.ts")).toBe("extensions/memory-hybrid/index.ts");
-      expect(sanitizePath("/home/alice/project/extensions/openclaw-hybrid-memory/index.ts")).toBe("extensions/openclaw-hybrid-memory/index.ts");
-      expect(sanitizePath("/some/path/openclaw-hybrid-memory/services/error-reporter.ts")).toBe("openclaw-hybrid-memory/services/error-reporter.ts");
+      expect(sanitizePath("/home/alice/project/extensions/memory-hybrid/index.ts")).toBe(
+        "extensions/memory-hybrid/index.ts",
+      );
+      expect(sanitizePath("/home/alice/project/extensions/openclaw-hybrid-memory/index.ts")).toBe(
+        "extensions/openclaw-hybrid-memory/index.ts",
+      );
+      expect(sanitizePath("/some/path/openclaw-hybrid-memory/services/error-reporter.ts")).toBe(
+        "openclaw-hybrid-memory/services/error-reporter.ts",
+      );
       expect(sanitizePath("/home/bob/other.ts")).toBe("$HOME/other.ts");
       expect(sanitizePath("/Users/charlie/file.ts")).toBe("$HOME/file.ts");
     });
@@ -300,17 +308,21 @@ describe("Error Reporter", () => {
         level: "error",
         fingerprint: ["custom", "fingerprint"],
         exception: {
-          values: [{
-            type: "Error",
-            value: "Failed with key sk-proj-abc123def456ghi789jkl012mno345pqr678",
-            stacktrace: {
-              frames: [{
-                filename: "/home/user/project/extensions/memory-hybrid/index.ts",
-                function: "test",
-                lineno: 10,
-              }]
-            }
-          }]
+          values: [
+            {
+              type: "Error",
+              value: "Failed with key sk-proj-abc123def456ghi789jkl012mno345pqr678",
+              stacktrace: {
+                frames: [
+                  {
+                    filename: "/home/user/project/extensions/memory-hybrid/index.ts",
+                    function: "test",
+                    lineno: 10,
+                  },
+                ],
+              },
+            },
+          ],
         },
         tags: {
           subsystem: "sqlite",
@@ -321,16 +333,16 @@ describe("Error Reporter", () => {
         contexts: {
           config_shape: {
             provider: "openai",
-            apiKey: "sk-ant-api03-1234567890abcdefghijklmnopqrstuvwxyz"
+            apiKey: "sk-ant-api03-1234567890abcdefghijklmnopqrstuvwxyz",
           },
           runtime: {
             name: "node",
-            version: "v20.10.0"
+            version: "v20.10.0",
           },
           os: {
             name: "linux",
-            version: "6.6.87"
-          }
+            version: "6.6.87",
+          },
         },
         user: { id: "secret" },
         request: { url: "http://example.com" },
@@ -340,7 +352,9 @@ describe("Error Reporter", () => {
 
       expect(sanitized?.fingerprint).toEqual(["custom", "fingerprint"]);
       expect(sanitized?.exception?.values?.[0]?.value).toBe("Failed with key [REDACTED]");
-      expect(sanitized?.exception?.values?.[0]?.stacktrace?.frames?.[0]?.filename).toBe("extensions/memory-hybrid/index.ts");
+      expect(sanitized?.exception?.values?.[0]?.stacktrace?.frames?.[0]?.filename).toBe(
+        "extensions/memory-hybrid/index.ts",
+      );
       expect(sanitized?.tags?.subsystem).toBe("sqlite");
       expect(sanitized?.tags?.operation).toBe("store-fact");
       expect(sanitized?.tags?.phase).toBe("runtime");
@@ -374,14 +388,16 @@ describe("Error Reporter", () => {
 
   describe("Security Boundaries", () => {
     it("should verify initErrorReporter enforces security config", async () => {
-      const serviceCode = await import("fs").then(fs =>
-        fs.promises.readFile(new URL("../services/error-reporter.ts", import.meta.url), "utf-8")
+      const serviceCode = await import("fs").then((fs) =>
+        fs.promises.readFile(new URL("../services/error-reporter.ts", import.meta.url), "utf-8"),
       );
 
       expect(serviceCode).toContain("maxBreadcrumbs: 10");
       expect(serviceCode).toContain("sendDefaultPii: false");
       expect(serviceCode).toContain("autoSessionTracking: false");
-      expect(serviceCode).toContain('filter(i => ["LinkedErrors", "InboundFilters", "FunctionToString"].includes(i.name))');
+      expect(serviceCode).toContain(
+        'filter((i) => ["LinkedErrors", "InboundFilters", "FunctionToString"].includes(i.name))',
+      );
       expect(serviceCode).toContain("beforeBreadcrumb(breadcrumb)");
       expect(serviceCode).toContain("plugin.");
     });
@@ -400,13 +416,13 @@ describe("Error Reporter", () => {
         backend: "sqlite",
         retryAttempt: 2,
         memoryCount: 42,
-        configShape: { key: "sk-ant-api03-secret123456789012345678901234567890" }
+        configShape: { key: "sk-ant-api03-secret123456789012345678901234567890" },
       });
 
       // When initialized (from previous test), should return event ID string or undefined (if rate limited)
       // When not initialized, should return undefined
       if (isErrorReporterActive()) {
-        expect(typeof eventId === 'string' || eventId === undefined).toBe(true);
+        expect(typeof eventId === "string" || eventId === undefined).toBe(true);
       } else {
         expect(eventId).toBeUndefined();
       }
@@ -670,12 +686,10 @@ describe("Error Reporter", () => {
           botName: "TestBot",
         },
         "2026.3.110",
-        mockLogger
+        mockLogger,
       );
 
-      expect(mockLogger.debug).toHaveBeenCalledWith(
-        expect.stringContaining("Bot name set (opt-in)")
-      );
+      expect(mockLogger.debug).toHaveBeenCalledWith(expect.stringContaining("Bot name set (opt-in)"));
     });
 
     it("logs when botName is NOT set", async () => {
@@ -693,12 +707,10 @@ describe("Error Reporter", () => {
           // botName intentionally omitted
         },
         "2026.3.111",
-        mockLogger
+        mockLogger,
       );
 
-      expect(mockLogger.debug).toHaveBeenCalledWith(
-        expect.stringContaining("Bot name omitted")
-      );
+      expect(mockLogger.debug).toHaveBeenCalledWith(expect.stringContaining("Bot name omitted"));
     });
 
     it("sanitizeEvent passes bot_name tag when present in event", async () => {
@@ -755,9 +767,12 @@ describe("UnconfiguredProviderError suppression", () => {
     const { capturePluginError } = await import("../services/error-reporter.js");
 
     // Construct the error by name to avoid a circular import (chat.ts → error-reporter.ts)
-    const err = Object.assign(new Error("Provider 'openrouter' is not configured for model openrouter/qwen/qwen3-14b"), {
-      name: "UnconfiguredProviderError",
-    });
+    const err = Object.assign(
+      new Error("Provider 'openrouter' is not configured for model openrouter/qwen/qwen3-14b"),
+      {
+        name: "UnconfiguredProviderError",
+      },
+    );
 
     const result = capturePluginError(err, { operation: "test-suppression", subsystem: "auto-classifier" });
 
@@ -771,7 +786,7 @@ describe("UnconfiguredProviderError suppression", () => {
     // comprehensive test that verifies:
     // 1. Regular errors DO call Sentry.captureException (guard does not suppress)
     // 2. UnconfiguredProviderError does NOT call Sentry.captureException (guard suppresses)
-    
+
     // This placeholder test ensures the test count remains stable
     expect(true).toBe(true);
   });

@@ -54,7 +54,11 @@ function isSecretRef(val: unknown): val is { __ha_secret: string } {
   return typeof val === "object" && val !== null && "__ha_secret" in val;
 }
 function isIncludeDirRef(val: unknown): boolean {
-  return typeof val === "object" && val !== null && ("__ha_include_dir" in val || "__ha_include_dir_list" in val || "__ha_include_dir_named" in val);
+  return (
+    typeof val === "object" &&
+    val !== null &&
+    ("__ha_include_dir" in val || "__ha_include_dir_list" in val || "__ha_include_dir_named" in val)
+  );
 }
 
 function renderRef(val: unknown): string {
@@ -90,14 +94,10 @@ function renderAutomation(auto: unknown, idx: number): string {
     : "";
 
   const conditionList = asArray(a["condition"]);
-  const conditions = conditionList.length
-    ? `\n  - Conditions: ${conditionList.length} condition(s)`
-    : "";
+  const conditions = conditionList.length ? `\n  - Conditions: ${conditionList.length} condition(s)` : "";
 
   const actionList = asArray(a["action"]);
-  const actions = actionList.length
-    ? `\n  - Actions: ${actionList.map((ac) => summariseAction(ac)).join(", ")}`
-    : "";
+  const actions = actionList.length ? `\n  - Actions: ${actionList.map((ac) => summariseAction(ac)).join(", ")}` : "";
 
   return `- **${alias}**${id}${description}${triggers}${conditions}${actions}`;
 }
@@ -236,9 +236,18 @@ export const haYamlConverter: Converter = {
     function collectIncludes(obj: unknown, depth = 0): void {
       if (depth > 5) return;
       if (typeof obj !== "object" || obj === null) return;
-      if (isIncludeRef(obj)) { includeRefs.push(obj.__ha_include); return; }
-      if (isIncludeDirRef(obj)) { includeRefs.push("*(directory)*"); return; }
-      if (Array.isArray(obj)) { obj.forEach((v) => collectIncludes(v, depth + 1)); return; }
+      if (isIncludeRef(obj)) {
+        includeRefs.push(obj.__ha_include);
+        return;
+      }
+      if (isIncludeDirRef(obj)) {
+        includeRefs.push("*(directory)*");
+        return;
+      }
+      if (Array.isArray(obj)) {
+        obj.forEach((v) => collectIncludes(v, depth + 1));
+        return;
+      }
       Object.values(obj).forEach((v) => collectIncludes(v, depth + 1));
     }
     collectIncludes(doc);
@@ -257,9 +266,10 @@ export const haYamlConverter: Converter = {
         source: "ha-yaml-converter",
         filePath,
         automationCount: asArray(doc["automation"]).length,
-        scriptCount: typeof doc["script"] === "object" && doc["script"] !== null && !Array.isArray(doc["script"])
-          ? Object.keys(doc["script"]).length
-          : 0,
+        scriptCount:
+          typeof doc["script"] === "object" && doc["script"] !== null && !Array.isArray(doc["script"])
+            ? Object.keys(doc["script"]).length
+            : 0,
         sceneCount: asArray(doc["scene"]).length,
       },
     };

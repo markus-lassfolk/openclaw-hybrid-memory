@@ -157,9 +157,7 @@ function agentFactAlreadyGeneralised(factsDb: FactsDB, agentFactId: string): boo
 }
 
 /** Build prompt for LLM generalisation. */
-function buildGeneralisePrompt(
-  lessons: AgentLesson[],
-): string {
+function buildGeneralisePrompt(lessons: AgentLesson[]): string {
   let template: string;
   try {
     template = loadPromptSync("cross-agent-generalize");
@@ -218,7 +216,10 @@ async function callLLMForGeneralisation(
   if (!text || text.trim().length === 0) return [];
 
   // Strip markdown fences if present
-  const jsonStr = text.replace(/^```(?:json)?\n?/, "").replace(/\n?```$/, "").trim();
+  const jsonStr = text
+    .replace(/^```(?:json)?\n?/, "")
+    .replace(/\n?```$/, "")
+    .trim();
   try {
     const parsed = JSON.parse(jsonStr);
     if (!Array.isArray(parsed)) return [];
@@ -345,12 +346,7 @@ export async function runCrossAgentLearning(
           // Link new global fact → source agent facts via DERIVED_FROM
           for (const sourceFact of sourceFacts) {
             try {
-              factsDb.createLink(
-                newFact.id,
-                sourceFact.factId,
-                "DERIVED_FROM",
-                0.8,
-              );
+              factsDb.createLink(newFact.id, sourceFact.factId, "DERIVED_FROM", 0.8);
               result.linksCreated++;
             } catch {
               // Non-fatal: link already exists or fact deleted
@@ -359,7 +355,9 @@ export async function runCrossAgentLearning(
         }
       } catch (batchErr) {
         result.errors++;
-        capturePluginError(batchErr instanceof Error ? batchErr : new Error(String(batchErr)), { operation: "cross-agent-learning-batch" });
+        capturePluginError(batchErr instanceof Error ? batchErr : new Error(String(batchErr)), {
+          operation: "cross-agent-learning-batch",
+        });
         logger.warn?.(`cross-agent-learning: batch error: ${batchErr}`);
       }
     }
@@ -482,13 +480,13 @@ export async function getCrossAgentLessons(
     );
 
     const scored = candidates.map((row) => {
-      const text = (row.text as string ?? "").toLowerCase();
+      const text = ((row.text as string) ?? "").toLowerCase();
       let overlap = 0;
       for (const word of contextWords) {
         if (text.includes(word)) overlap++;
       }
-      const confidence = row.confidence as number ?? 0;
-      const importance = row.importance as number ?? 0;
+      const confidence = (row.confidence as number) ?? 0;
+      const importance = (row.importance as number) ?? 0;
       const score = overlap * 0.5 + confidence * 0.3 + importance * 0.2;
       return { row, score };
     });
@@ -522,9 +520,7 @@ export function formatBriefInjection(lessons: MemoryEntry[]): string {
   for (const lesson of lessons) {
     const tags = lesson.tags ?? [];
     // sourceAgent is stored as a tag (the agent IDs contributing to this lesson)
-    const agentTags = tags.filter(
-      (t) => t !== CROSS_AGENT_TAG && t !== "*" && !t.startsWith("verified-by:"),
-    );
+    const agentTags = tags.filter((t) => t !== CROSS_AGENT_TAG && t !== "*" && !t.startsWith("verified-by:"));
     const sourceAgent = agentTags[0] ?? "unknown";
     const confidence = lesson.confidence?.toFixed(2) ?? "?";
     lines.push(`- ${lesson.text} (learned by ${sourceAgent}, confidence: ${confidence})`);
@@ -566,9 +562,7 @@ export async function verifyLessonForAgent(
     const existingTags = parseTags(row.tags);
 
     // Only add tag if not already present
-    const updatedTags = existingTags.includes(verifiedByTag)
-      ? existingTags
-      : [...existingTags, verifiedByTag];
+    const updatedTags = existingTags.includes(verifiedByTag) ? existingTags : [...existingTags, verifiedByTag];
 
     // Boost confidence, cap at 1.0
     const newConfidence = Math.min(1.0, (row.confidence ?? 0.6) + boost);

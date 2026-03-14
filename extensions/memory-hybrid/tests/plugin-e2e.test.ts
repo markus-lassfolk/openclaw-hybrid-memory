@@ -475,7 +475,16 @@ describe("Advanced features e2e", () => {
       sqlitePath,
       lanceDbPath: lancePath,
       store: { fuzzyDedupe: false, classifyBeforeWrite: false },
-      graph: { enabled: true, autoLink: false, autoLinkLimit: 5, autoLinkMinScore: 0.5, useInRecall: false, maxTraversalDepth: 2, coOccurrenceWeight: 0.5, autoSupersede: false },
+      graph: {
+        enabled: true,
+        autoLink: false,
+        autoLinkLimit: 5,
+        autoLinkMinScore: 0.5,
+        useInRecall: false,
+        maxTraversalDepth: 2,
+        coOccurrenceWeight: 0.5,
+        autoSupersede: false,
+      },
       path: { enabled: true, maxPathDepth: 10 },
       verification: { enabled: true, backupPath: join(tmpDir, "verified-backup.json"), reverificationDays: 30 },
       clusters: { enabled: true, minClusterSize: 2, refreshIntervalDays: 0, labelModel: null },
@@ -499,8 +508,16 @@ describe("Advanced features e2e", () => {
     const storeTool = api.getTool("memory_store");
     const linkTool = api.getTool("memory_link");
     const graphTool = api.getTool("memory_graph");
-    const a = (await storeTool!.execute("call-1", { text: "Fact A for graph link", importance: 0.8, category: "fact" })) as { details?: { id: string } };
-    const b = (await storeTool!.execute("call-2", { text: "Fact B for graph link", importance: 0.8, category: "fact" })) as { details?: { id: string } };
+    const a = (await storeTool!.execute("call-1", {
+      text: "Fact A for graph link",
+      importance: 0.8,
+      category: "fact",
+    })) as { details?: { id: string } };
+    const b = (await storeTool!.execute("call-2", {
+      text: "Fact B for graph link",
+      importance: 0.8,
+      category: "fact",
+    })) as { details?: { id: string } };
     const linkResult = (await linkTool!.execute("call-3", {
       sourceFact: a.details!.id,
       targetFact: b.details!.id,
@@ -523,18 +540,22 @@ describe("Advanced features e2e", () => {
       backupPath: join(tmpDir, "verified-backup.json"),
       reverificationDays: 30,
     });
-    registerTools(
-      buildE2EContext({ tmpDir, factsDb, vectorDb, cfg, api, verificationStore }) as never,
-      api as never,
-    );
+    registerTools(buildE2EContext({ tmpDir, factsDb, vectorDb, cfg, api, verificationStore }) as never, api as never);
     const storeTool = api.getTool("memory_store");
     const verifyTool = api.getTool("memory_verify");
     const listTool = api.getTool("memory_verified_list");
-    const storeResult = (await storeTool!.execute("call-1", { text: "Critical fact to verify", importance: 0.9, category: "fact" })) as { details?: { id: string } };
+    const storeResult = (await storeTool!.execute("call-1", {
+      text: "Critical fact to verify",
+      importance: 0.9,
+      category: "fact",
+    })) as { details?: { id: string } };
     const factId = storeResult.details!.id;
     const verifyResult = (await verifyTool!.execute("call-2", { factId })) as { details?: { status: string } };
     expect(verifyResult.details?.status).toBe("verified");
-    const listResult = (await listTool!.execute("call-3", {})) as { details?: { count: number }; content?: { text: string }[] };
+    const listResult = (await listTool!.execute("call-3", {})) as {
+      details?: { count: number };
+      content?: { text: string }[];
+    };
     expect(listResult.details?.count).toBe(1);
     expect(listResult.content?.[0]?.text).toContain(factId);
     verificationStore.close();
@@ -542,10 +563,7 @@ describe("Advanced features e2e", () => {
 
   it("memory_issue_create and memory_issue_list: create issue then list", async () => {
     const issueStore = new IssueStore(join(tmpDir, "issues.db"));
-    registerTools(
-      buildE2EContext({ tmpDir, factsDb, vectorDb, cfg, api, issueStore }) as never,
-      api as never,
-    );
+    registerTools(buildE2EContext({ tmpDir, factsDb, vectorDb, cfg, api, issueStore }) as never, api as never);
     const createTool = api.getTool("memory_issue_create");
     const listTool = api.getTool("memory_issue_list");
     const createResult = (await createTool!.execute("call-1", {
@@ -571,8 +589,12 @@ describe("Advanced features e2e", () => {
     const storeTool = api.getTool("memory_store");
     const linkTool = api.getTool("memory_link");
     const clustersTool = api.getTool("memory_clusters");
-    const a = (await storeTool!.execute("call-1", { text: "Cluster fact one", importance: 0.7, category: "fact" })) as { details?: { id: string } };
-    const b = (await storeTool!.execute("call-2", { text: "Cluster fact two", importance: 0.7, category: "fact" })) as { details?: { id: string } };
+    const a = (await storeTool!.execute("call-1", { text: "Cluster fact one", importance: 0.7, category: "fact" })) as {
+      details?: { id: string };
+    };
+    const b = (await storeTool!.execute("call-2", { text: "Cluster fact two", importance: 0.7, category: "fact" })) as {
+      details?: { id: string };
+    };
     await linkTool!.execute("call-3", { sourceFact: a.details!.id, targetFact: b.details!.id, linkType: "RELATED_TO" });
     const result = (await clustersTool!.execute("call-4", { minClusterSize: 2, save: true })) as {
       details?: { clusterCount?: number; error?: string };
@@ -588,8 +610,12 @@ describe("Advanced features e2e", () => {
     const storeTool = api.getTool("memory_store");
     const linkTool = api.getTool("memory_link");
     const pathTool = api.getTool("memory_path");
-    const a = (await storeTool!.execute("call-1", { text: "Path start fact", importance: 0.8, category: "fact" })) as { details?: { id: string } };
-    const b = (await storeTool!.execute("call-2", { text: "Path end fact", importance: 0.8, category: "fact" })) as { details?: { id: string } };
+    const a = (await storeTool!.execute("call-1", { text: "Path start fact", importance: 0.8, category: "fact" })) as {
+      details?: { id: string };
+    };
+    const b = (await storeTool!.execute("call-2", { text: "Path end fact", importance: 0.8, category: "fact" })) as {
+      details?: { id: string };
+    };
     await linkTool!.execute("call-3", { sourceFact: a.details!.id, targetFact: b.details!.id, linkType: "RELATED_TO" });
     const pathResult = (await pathTool!.execute("call-4", { from: a.details!.id, to: b.details!.id, maxDepth: 5 })) as {
       details?: { found: boolean; hops?: number };

@@ -75,7 +75,16 @@ function makeMockApi() {
 // Minimal HybridMemoryConfig subset
 // ---------------------------------------------------------------------------
 
-function makeCfg(overrides: Partial<{ chunkSize: number; chunkOverlap: number; autoTag: boolean; maxDocumentSize: number; visionEnabled: boolean; visionModel: string }> = {}) {
+function makeCfg(
+  overrides: Partial<{
+    chunkSize: number;
+    chunkOverlap: number;
+    autoTag: boolean;
+    maxDocumentSize: number;
+    visionEnabled: boolean;
+    visionModel: string;
+  }> = {},
+) {
   return {
     documents: {
       enabled: true,

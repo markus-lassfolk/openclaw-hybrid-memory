@@ -1,10 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import {
-  MIN_OPENCLAW_VERSION,
-  parseVersion,
-  isVersionAtLeast,
-  checkOpenClawVersion,
-} from "../utils/version-check.js";
+import { MIN_OPENCLAW_VERSION, parseVersion, isVersionAtLeast, checkOpenClawVersion } from "../utils/version-check.js";
 
 describe("MIN_OPENCLAW_VERSION", () => {
   it("is 2026.3.8", () => {
@@ -96,9 +91,7 @@ describe("checkOpenClawVersion", () => {
     const logger = { warn: vi.fn() };
     checkOpenClawVersion(undefined, logger);
     expect(logger.warn).toHaveBeenCalledOnce();
-    expect(logger.warn).toHaveBeenCalledWith(
-      expect.stringContaining(MIN_OPENCLAW_VERSION),
-    );
+    expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining(MIN_OPENCLAW_VERSION));
   });
 
   it("does nothing when version meets the minimum", () => {
@@ -117,12 +110,8 @@ describe("checkOpenClawVersion", () => {
     const logger = { warn: vi.fn() };
     checkOpenClawVersion("2026.3.2", logger);
     expect(logger.warn).toHaveBeenCalledOnce();
-    expect(logger.warn).toHaveBeenCalledWith(
-      expect.stringContaining("OpenClaw v2026.3.2 detected"),
-    );
-    expect(logger.warn).toHaveBeenCalledWith(
-      expect.stringContaining("minimum recommended is v2026.3.8"),
-    );
+    expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining("OpenClaw v2026.3.2 detected"));
+    expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining("minimum recommended is v2026.3.8"));
   });
 
   it("warning message includes guidance about affected features", () => {
@@ -145,9 +134,7 @@ describe("checkOpenClawVersion", () => {
     // 2026.3.7-rc1 is below minimum — should warn
     checkOpenClawVersion("2026.3.7-rc1", logger);
     expect(logger.warn).toHaveBeenCalledOnce();
-    expect(logger.warn).toHaveBeenCalledWith(
-      expect.stringContaining("2026.3.7-rc1"),
-    );
+    expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining("2026.3.7-rc1"));
   });
 
   it("accepts versions with leading v prefix", () => {

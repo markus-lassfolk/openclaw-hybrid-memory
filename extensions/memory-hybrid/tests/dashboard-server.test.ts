@@ -57,11 +57,15 @@ async function httpGet(port: number, path: string): Promise<{ status: number; bo
   return new Promise((resolve, reject) => {
     const req = request({ hostname: "127.0.0.1", port, path, method: "GET" }, (res) => {
       let body = "";
-      res.on("data", (chunk: Buffer) => { body += chunk.toString(); });
+      res.on("data", (chunk: Buffer) => {
+        body += chunk.toString();
+      });
       res.on("end", () => resolve({ status: res.statusCode ?? 0, body }));
     });
     req.on("error", reject);
-    req.setTimeout(3000, () => { req.destroy(new Error("timeout")); });
+    req.setTimeout(3000, () => {
+      req.destroy(new Error("timeout"));
+    });
     req.end();
   });
 }
@@ -108,8 +112,16 @@ describe("collectStatus", () => {
   });
 
   afterEach(() => {
-    try { ctx.factsDb.close(); } catch { /* ignore */ }
-    try { ctx.vectorDb.close(); } catch { /* ignore */ }
+    try {
+      ctx.factsDb.close();
+    } catch {
+      /* ignore */
+    }
+    try {
+      ctx.vectorDb.close();
+    } catch {
+      /* ignore */
+    }
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
@@ -146,9 +158,7 @@ describe("collectStatus", () => {
 
   it("memory.totalSizeBytes equals sqlite + lance sizes", async () => {
     const status = await collectStatus(ctx);
-    expect(status.memory.totalSizeBytes).toBe(
-      status.memory.sqliteSizeBytes + status.memory.lanceSizeBytes
-    );
+    expect(status.memory.totalSizeBytes).toBe(status.memory.sqliteSizeBytes + status.memory.lanceSizeBytes);
   });
 
   it("generatedAt is a valid ISO date string", async () => {
@@ -216,9 +226,21 @@ describe("createDashboardServer", () => {
   });
 
   afterEach(() => {
-    try { server.close(); } catch { /* ignore */ }
-    try { ctx.factsDb.close(); } catch { /* ignore */ }
-    try { ctx.vectorDb.close(); } catch { /* ignore */ }
+    try {
+      server.close();
+    } catch {
+      /* ignore */
+    }
+    try {
+      ctx.factsDb.close();
+    } catch {
+      /* ignore */
+    }
+    try {
+      ctx.vectorDb.close();
+    } catch {
+      /* ignore */
+    }
     rmSync(tmpDir, { recursive: true, force: true });
   });
 

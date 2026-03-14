@@ -55,7 +55,10 @@ describe("parseClassificationResponse", () => {
 
   it("parses UPDATE with valid target id and reason", () => {
     const id = existingFacts[0].id;
-    const r = parseClassificationResponse(`UPDATE ${id} | user changed their preferred IDE from VS Code to Cursor`, existingFacts);
+    const r = parseClassificationResponse(
+      `UPDATE ${id} | user changed their preferred IDE from VS Code to Cursor`,
+      existingFacts,
+    );
     expect(r.action).toBe("UPDATE");
     expect(r.targetId).toBe(id);
     expect(r.reason).toContain("Cursor");
@@ -63,7 +66,10 @@ describe("parseClassificationResponse", () => {
 
   it("parses DELETE with valid target id and reason", () => {
     const id = existingFacts[1].id;
-    const r = parseClassificationResponse(`DELETE ${id} | user explicitly stated they no longer use Docker`, existingFacts);
+    const r = parseClassificationResponse(
+      `DELETE ${id} | user explicitly stated they no longer use Docker`,
+      existingFacts,
+    );
     expect(r.action).toBe("DELETE");
     expect(r.targetId).toBe(id);
     expect(r.reason).toContain("no longer");

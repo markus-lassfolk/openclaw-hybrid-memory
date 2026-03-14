@@ -19,7 +19,13 @@ import type { EmbeddingProvider } from "../services/embeddings.js";
 import type { PythonBridge } from "../services/python-bridge.js";
 import { chunkMarkdown } from "../services/document-chunker.js";
 import { capturePluginError } from "../services/error-reporter.js";
-import { getCronModelConfig, getLLMModelPreference, getMemoryCategories, type HybridMemoryConfig, type MemoryCategory } from "../config.js";
+import {
+  getCronModelConfig,
+  getLLMModelPreference,
+  getMemoryCategories,
+  type HybridMemoryConfig,
+  type MemoryCategory,
+} from "../config.js";
 import { extractTags } from "../utils/tags.js";
 import { stringEnum } from "openclaw/plugin-sdk";
 import type { ProvenanceService } from "../services/provenance.js";
@@ -61,16 +67,7 @@ type IngestSummary = {
   response: IngestResult;
 };
 
-const IMAGE_EXTENSIONS = new Set([
-  ".png",
-  ".jpg",
-  ".jpeg",
-  ".gif",
-  ".webp",
-  ".bmp",
-  ".tif",
-  ".tiff",
-]);
+const IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".tif", ".tiff"]);
 
 const SUPPORTED_EXTENSIONS = new Set([
   ".pdf",
@@ -127,12 +124,14 @@ function isUnderAllowedPaths(realPath: string, allowedPaths?: string[]): boolean
 }
 
 function normalizeExtensions(exts: string[]): string[] {
-  return [...new Set(
-    exts
-      .map((e) => e.trim().toLowerCase())
-      .filter(Boolean)
-      .map((e) => (e.startsWith(".") ? e : `.${e}`)),
-  )];
+  return [
+    ...new Set(
+      exts
+        .map((e) => e.trim().toLowerCase())
+        .filter(Boolean)
+        .map((e) => (e.startsWith(".") ? e : `.${e}`)),
+    ),
+  ];
 }
 
 function globToRegex(pattern: string): RegExp {
@@ -209,9 +208,7 @@ async function describeImageWithVision(opts: {
   const pref = getLLMModelPreference(cronCfg, "default");
   const configuredModel = cfg.documents.visionModel?.trim();
   const primaryModel = configuredModel || pref[0];
-  const fallbackModels = configuredModel
-    ? pref.filter((m) => m !== configuredModel)
-    : pref.slice(1);
+  const fallbackModels = configuredModel ? pref.filter((m) => m !== configuredModel) : pref.slice(1);
   const modelsToTry = [primaryModel, ...fallbackModels].filter(Boolean);
 
   if (modelsToTry.length === 0) {
@@ -272,29 +269,25 @@ export function registerDocumentTools(ctx: DocumentToolsContext, api: ClawdbotPl
   const docCfg = cfg.documents;
 
   const tagSafe = (s: string): string =>
-    s
-      .toLowerCase()
-      .trim()
-      .replace(/\s+/g, "-")
-      .replace(/,/g, "-")
-      .replace(/-+/g, "-")
-      .replace(/^-|-$/g, "") || "tag";
+    s.toLowerCase().trim().replace(/\s+/g, "-").replace(/,/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "") || "tag";
 
   const headingTagSafe = (s: string): string => {
-    const t = s
-      .toLowerCase()
-      .replace(/\s+/g, "-")
-      .replace(/,/g, "-")
-      .replace(/-+/g, "-")
-      .replace(/^-|-$/g, "");
+    const t = s.toLowerCase().replace(/\s+/g, "-").replace(/,/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "");
     return t || s.toLowerCase();
   };
 
   function normalizeExtraTags(tags: unknown): string[] {
-    const rawTags = Array.isArray(tags)
-      ? (tags as string[]).filter((t) => typeof t === "string")
-      : [];
-    return [...new Set(rawTags.flatMap((t) => t.split(",").map((p) => tagSafe(p.trim())).filter(Boolean)))];
+    const rawTags = Array.isArray(tags) ? (tags as string[]).filter((t) => typeof t === "string") : [];
+    return [
+      ...new Set(
+        rawTags.flatMap((t) =>
+          t
+            .split(",")
+            .map((p) => tagSafe(p.trim()))
+            .filter(Boolean),
+        ),
+      ),
+    ];
   }
 
   function makeErrorResponse(message: string, details: Record<string, unknown>): IngestResult {
@@ -407,10 +400,11 @@ export function registerDocumentTools(ctx: DocumentToolsContext, api: ClawdbotPl
         status: "error",
         error: "file_too_large",
         progress: progress.steps,
-        response: makeErrorResponse(
-          `Error: File too large (${fileMB} MB). Maximum allowed: ${maxMB} MB.`,
-          { error: "file_too_large", fileSize, maxDocumentSize: docCfg.maxDocumentSize },
-        ),
+        response: makeErrorResponse(`Error: File too large (${fileMB} MB). Maximum allowed: ${maxMB} MB.`, {
+          error: "file_too_large",
+          fileSize,
+          maxDocumentSize: docCfg.maxDocumentSize,
+        }),
       };
     }
 
@@ -467,7 +461,10 @@ export function registerDocumentTools(ctx: DocumentToolsContext, api: ClawdbotPl
         phase: "runtime",
       });
       const msg = err instanceof Error ? err.message : String(err);
-      const response = makeErrorResponse(`Error converting document: ${msg}`, { error: "conversion_failed", path: realPath });
+      const response = makeErrorResponse(`Error converting document: ${msg}`, {
+        error: "conversion_failed",
+        path: realPath,
+      });
       return {
         path: filePath,
         realPath,
@@ -481,7 +478,10 @@ export function registerDocumentTools(ctx: DocumentToolsContext, api: ClawdbotPl
     }
 
     if (!markdown || !markdown.trim()) {
-      const response = makeErrorResponse("Document converted but produced no text content.", { error: "empty_content", path: realPath });
+      const response = makeErrorResponse("Document converted but produced no text content.", {
+        error: "empty_content",
+        path: realPath,
+      });
       return {
         path: filePath,
         realPath,
@@ -500,7 +500,10 @@ export function registerDocumentTools(ctx: DocumentToolsContext, api: ClawdbotPl
     });
 
     if (chunks.length === 0) {
-      const response = makeErrorResponse("Document produced no storable chunks after chunking.", { error: "no_chunks", path: realPath });
+      const response = makeErrorResponse("Document produced no storable chunks after chunking.", {
+        error: "no_chunks",
+        path: realPath,
+      });
       return {
         path: filePath,
         realPath,
@@ -519,7 +522,10 @@ export function registerDocumentTools(ctx: DocumentToolsContext, api: ClawdbotPl
     if (opts.dryRun) {
       const preview = chunks
         .slice(0, 3)
-        .map((c, i) => `Chunk ${i + 1}/${chunks.length} [${c.sectionHeading ?? "no heading"}]:\n${c.text.slice(0, 200)}...`)
+        .map(
+          (c, i) =>
+            `Chunk ${i + 1}/${chunks.length} [${c.sectionHeading ?? "no heading"}]:\n${c.text.slice(0, 200)}...`,
+        )
         .join("\n\n");
       progress.add("Done (dry run)");
       opts.onProgress?.({ stage: "complete", pct: 100, message: "Done (dry run)" });
@@ -551,11 +557,7 @@ export function registerDocumentTools(ctx: DocumentToolsContext, api: ClawdbotPl
     const fileName = basename(realPath);
     const sourceName = `document:${fingerprint}`;
     const extraTags = normalizeExtraTags(opts.tags);
-    const baseTags: string[] = [
-      ...(docCfg.autoTag ? [headingTagSafe(fileName)] : []),
-      "document",
-      ...extraTags,
-    ];
+    const baseTags: string[] = [...(docCfg.autoTag ? [headingTagSafe(fileName)] : []), "document", ...extraTags];
 
     let storedCount = 0;
     let errorCount = 0;
@@ -563,11 +565,7 @@ export function registerDocumentTools(ctx: DocumentToolsContext, api: ClawdbotPl
     for (let i = 0; i < chunks.length; i++) {
       const chunk = chunks[i];
       const headingTag = chunk.sectionHeading ? headingTagSafe(chunk.sectionHeading) : null;
-      const chunkTags = [
-        ...baseTags,
-        ...(headingTag ? [headingTag] : []),
-        ...extractTags(chunk.text, title),
-      ];
+      const chunkTags = [...baseTags, ...(headingTag ? [headingTag] : []), ...extractTags(chunk.text, title)];
 
       const chunkText = chunk.text;
       let entry;
@@ -700,9 +698,7 @@ export function registerDocumentTools(ctx: DocumentToolsContext, api: ClawdbotPl
             description: "Additional tags to attach to each stored fact",
           }),
         ),
-        category: Type.Optional(
-          stringEnum(getMemoryCategories() as unknown as readonly string[]),
-        ),
+        category: Type.Optional(stringEnum(getMemoryCategories() as unknown as readonly string[])),
         dryRun: Type.Optional(
           Type.Boolean({
             description: "When true, convert and chunk but do NOT store — returns preview only",
@@ -757,9 +753,7 @@ export function registerDocumentTools(ctx: DocumentToolsContext, api: ClawdbotPl
             description: "Additional tags to attach to each stored fact",
           }),
         ),
-        category: Type.Optional(
-          stringEnum(getMemoryCategories() as unknown as readonly string[]),
-        ),
+        category: Type.Optional(stringEnum(getMemoryCategories() as unknown as readonly string[])),
         dryRun: Type.Optional(
           Type.Boolean({
             description: "When true, only list matching files without ingesting",
@@ -782,7 +776,8 @@ export function registerDocumentTools(ctx: DocumentToolsContext, api: ClawdbotPl
         try {
           realFolder = realpathSync.native(folderPath);
         } catch (err: unknown) {
-          const code = err && typeof err === "object" && "code" in err ? (err as NodeJS.ErrnoException).code : undefined;
+          const code =
+            err && typeof err === "object" && "code" in err ? (err as NodeJS.ErrnoException).code : undefined;
           const isNotFound = code === "ENOENT";
           return makeErrorResponse(
             `Error: ${isNotFound ? "Folder not found" : "Path does not exist or is not accessible"}. Got: ${folderPath}`,
