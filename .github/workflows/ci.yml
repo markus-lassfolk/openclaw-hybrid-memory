@@ -228,8 +228,7 @@ jobs:
       - name: Install dependencies
         run: cd extensions/memory-hybrid && npm install
       - name: Strict type check
-        # Non-blocking until noUnusedLocals/noUnusedParameters are fixed across the codebase
-        run: cd extensions/memory-hybrid && npx tsc --noEmit -p tsconfig.strict.json || true
+        run: cd extensions/memory-hybrid && (npx tsc --noEmit -p tsconfig.strict.json || true)
 
   install-smoke:
     name: Install Smoke Test
