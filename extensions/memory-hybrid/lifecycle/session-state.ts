@@ -79,10 +79,7 @@ export function createSessionState(): SessionState {
     }
   }
 
-  function resolveSessionKey(
-    event: unknown,
-    api?: { context?: { sessionId?: string } },
-  ): string | null {
+  function resolveSessionKey(event: unknown, api?: { context?: { sessionId?: string } }): string | null {
     const ev = event as { session?: Record<string, unknown>; sessionKey?: string };
     const sessionId =
       ev?.session?.id ??
