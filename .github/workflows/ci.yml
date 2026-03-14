@@ -205,7 +205,11 @@ jobs:
       - name: Install dependencies
         run: cd extensions/memory-hybrid && npm install
       - name: Check formatting
-        run: cd extensions/memory-hybrid && npx prettier --check 'backends/**/*.ts' 'cli/**/*.ts' 'config/**/*.ts' 'lifecycle/**/*.ts' 'routes/**/*.ts' 'services/**/*.ts' 'setup/**/*.ts' 'tools/**/*.ts' 'utils/**/*.ts' 'types/**/*.ts' 'tests/**/*.ts' '*.ts'
+        run: |
+          cd extensions/memory-hybrid
+          find backends cli config lifecycle routes services setup tools utils types tests -name '*.ts' -not -path '*/node_modules/*' 2>/dev/null | sort -u > /tmp/tsfiles.txt
+          find . -maxdepth 1 -name '*.ts' 2>/dev/null >> /tmp/tsfiles.txt
+          xargs -r npx prettier --check < /tmp/tsfiles.txt
 
   strict-typecheck:
     name: Strict TypeScript Check
