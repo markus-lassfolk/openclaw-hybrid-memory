@@ -18,11 +18,16 @@ import { withLLMRetry, is404Like, is403Like, is429OrWrapped, LLMRetryError } fro
  * Callers should catch this and degrade gracefully (e.g. store without a vector)
  * rather than reporting to error monitoring, since this is expected when all
  * configured embedding backends are temporarily unavailable.
+ *
+ * `causes` contains the per-provider errors; callers can inspect them to decide
+ * whether to suppress error monitoring (e.g. all are config errors → no report).
  */
 export class AllEmbeddingProvidersFailed extends Error {
-  constructor() {
+  readonly causes: Error[];
+  constructor(causes: Error[] = []) {
     super("All embedding providers in the chain failed.");
     this.name = "AllEmbeddingProvidersFailed";
+    this.causes = causes;
   }
 }
 
@@ -53,6 +58,16 @@ export interface EmbeddingConfig {
 
 /** Google Gemini OpenAI-compatible embeddings base URL (same as chat). */
 const GOOGLE_EMBEDDING_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/";
+
+/**
+ * Known Google Gemini embedding models accepted at the OpenAI-compatible endpoint.
+ * Only these are passed to the Google endpoint; any other value falls back to the default.
+ *
+ * WARNING: Changing the default from text-embedding-004 to text-embedding-005 produces
+ * different vectors — existing LanceDB tables indexed with 004 will see degraded retrieval
+ * quality until re-indexed. Run the hybrid-mem re-index command after upgrading (#385).
+ */
+const KNOWN_GOOGLE_EMBED_MODELS = new Set(["text-embedding-005", "text-embedding-004"]);
 
 /** Max cached embeddings (LRU eviction). Reduces redundant API calls for repeated text. */
 const EMBEDDING_CACHE_MAX = 500;
@@ -587,6 +602,38 @@ function is403OrWrapped(err: Error): boolean {
   return false;
 }
 
+/** Helper: check if an error is a 401 auth failure.
+ * Uses the same regex as withLLMRetry (/\b401\b|unauthorized/i) to ensure consistency. */
+function is401Like(err: unknown): boolean {
+  if (err && typeof err === "object") {
+    const status = (err as { status?: unknown }).status;
+    if (status === 401 || status === "401") return true;
+  }
+  if (err instanceof Error) {
+    // Match the same pattern as withLLMRetry: bare "401" as word boundary OR "unauthorized"
+    if (/\b401\b|unauthorized/i.test(err.message)) return true;
+    // Also match specific auth failure phrases for robustness
+    if (/incorrect api key|invalid api key|authentication failed/i.test(err.message)) return true;
+  }
+  return false;
+}
+
+/** Returns true when the error is a 401 (auth failure) — either directly or wrapped in LLMRetryError.
+ * Handles both direct status and message-only auth errors (e.g. Ollama plain Error with "HTTP 401 Unauthorized").
+ * Note: withLLMRetry short-circuits on 401 and rethrows directly, so 401s rarely arrive wrapped,
+ * but we handle both forms for robustness (consistent with is404OrWrapped and is403OrWrapped). */
+function is401OrWrapped(err: Error): boolean {
+  if (is401Like(err)) return true;
+  if (err instanceof LLMRetryError && is401Like(err.cause)) return true;
+  return false;
+}
+
+/** Returns true when err is a configuration error (404 model-not-found, 403 country/region restriction, or 401 auth failure).
+ * Used to suppress capturePluginError for errors that are always operator config issues (#329, #394, #385). */
+function isConfigError(err: Error): boolean {
+  return is404OrWrapped(err) || is403OrWrapped(err) || is401OrWrapped(err);
+}
+
 /** Returns true when the error is an Ollama circuit breaker open — provider is temporarily disabled,
  * not a real embedding failure. Should be treated as a transient "provider unavailable" condition.
  */
@@ -701,8 +748,8 @@ export class Embeddings implements EmbeddingProvider {
     // lastErr is always defined here: constructor enforces models.length >= 1, so
     // the loop always runs at least once; either it returns early (success) or
     // sets lastErr on every iteration before reaching this point.
-    // Skip reporting 404 (model not found), 403 (country/region restriction), and 429 (rate limit) — operator config issues or transient errors, not bugs (#329, #394, #397).
-    if (!is404OrWrapped(lastErr!) && !is403OrWrapped(lastErr!) && !is429OrWrapped(lastErr!)) {
+    // Skip reporting config errors (404 model-not-found, 403 country/region restriction, 401 auth failure) and 429 (rate limit) — operator config issues or transient errors, not bugs (#329, #394, #397, #385).
+    if (!isConfigError(lastErr!) && !is429OrWrapped(lastErr!)) {
       capturePluginError(lastErr!, {
         subsystem: "embeddings",
         operation: "embed",
@@ -752,8 +799,8 @@ export class Embeddings implements EmbeddingProvider {
         );
       }
       if (lastErr !== undefined && allResults.length === i) {
-        // Skip reporting 404 (model not found), 403 (country/region restriction), and 429 (rate limit) — operator config issues or transient errors, not bugs (#329, #394, #397).
-        if (!is404OrWrapped(lastErr) && !is403OrWrapped(lastErr) && !is429OrWrapped(lastErr)) {
+        // Skip reporting config errors (404 model-not-found, 403 country/region restriction, 401 auth failure) and 429 (rate limit) — operator config issues or transient errors, not bugs (#329, #394, #397, #385).
+        if (!isConfigError(lastErr) && !is429OrWrapped(lastErr)) {
           capturePluginError(lastErr, {
             subsystem: "embeddings",
             operation: "embedBatch",
@@ -965,8 +1012,8 @@ export class FallbackEmbeddingProvider implements EmbeddingProvider {
         return result;
       } catch (err) {
         const asErr = err instanceof Error ? err : new Error(String(err));
-        // Skip reporting 403 (country/region restriction), 404 (model not found), 429 (rate limit), and circuit breaker open — operator config issues or transient/expected errors, not bugs (#394, #329, #397, #458)
-        if (!is403OrWrapped(asErr) && !is404OrWrapped(asErr) && !is429OrWrapped(asErr) && !isOllamaCircuitBreakerOpen(asErr)) {
+        // Skip reporting config errors (404/403/401 — operator issues), 429 (rate limit), and circuit breaker open — not bugs (#329, #394, #385, #397, #458).
+        if (!isConfigError(asErr) && !is429OrWrapped(asErr) && !isOllamaCircuitBreakerOpen(asErr)) {
           capturePluginError(asErr, {
             subsystem: "embeddings",
             operation: "fallback-retry-primary",
@@ -983,8 +1030,8 @@ export class FallbackEmbeddingProvider implements EmbeddingProvider {
       return await this.active.embed(text);
     } catch (err) {
       const asErr = err instanceof Error ? err : new Error(String(err));
-      // Skip reporting 403 (country/region restriction), 404 (model not found), 429 (rate limit), and circuit breaker open — operator config issues or transient/expected errors, not bugs (#394, #329, #397, #458)
-      if (!is403OrWrapped(asErr) && !is404OrWrapped(asErr) && !is429OrWrapped(asErr) && !isOllamaCircuitBreakerOpen(asErr)) {
+      // Skip reporting config errors (404/403/401 — operator issues), 429 (rate limit), and circuit breaker open — not bugs (#329, #394, #385, #397, #458).
+      if (!isConfigError(asErr) && !is429OrWrapped(asErr) && !isOllamaCircuitBreakerOpen(asErr)) {
         capturePluginError(asErr, {
           subsystem: "embeddings",
           operation: "fallback-switch",
@@ -1014,8 +1061,8 @@ export class FallbackEmbeddingProvider implements EmbeddingProvider {
         return result;
       } catch (err) {
         const asErr = err instanceof Error ? err : new Error(String(err));
-        // Skip reporting 403 (country/region restriction), 404 (model not found), 429 (rate limit), and circuit breaker open — operator config issues or transient/expected errors, not bugs (#394, #329, #397, #458)
-        if (!is403OrWrapped(asErr) && !is404OrWrapped(asErr) && !is429OrWrapped(asErr) && !isOllamaCircuitBreakerOpen(asErr)) {
+        // Skip reporting config errors (404/403/401 — operator issues), 429 (rate limit), and circuit breaker open — not bugs (#329, #394, #385, #397, #458).
+        if (!isConfigError(asErr) && !is429OrWrapped(asErr) && !isOllamaCircuitBreakerOpen(asErr)) {
           capturePluginError(asErr, {
             subsystem: "embeddings",
             operation: "fallback-retry-primary",
@@ -1032,8 +1079,8 @@ export class FallbackEmbeddingProvider implements EmbeddingProvider {
       return await this.active.embedBatch(texts);
     } catch (err) {
       const asErr = err instanceof Error ? err : new Error(String(err));
-      // Skip reporting 403 (country/region restriction), 404 (model not found), 429 (rate limit), and circuit breaker open — operator config issues or transient/expected errors, not bugs (#394, #329, #397, #458)
-      if (!is403OrWrapped(asErr) && !is404OrWrapped(asErr) && !is429OrWrapped(asErr) && !isOllamaCircuitBreakerOpen(asErr)) {
+      // Skip reporting config errors (404/403/401 — operator issues), 429 (rate limit), and circuit breaker open — not bugs (#329, #394, #385, #397, #458).
+      if (!isConfigError(asErr) && !is429OrWrapped(asErr) && !isOllamaCircuitBreakerOpen(asErr)) {
         capturePluginError(asErr, {
           subsystem: "embeddings",
           operation: "fallback-switch",
@@ -1058,6 +1105,11 @@ export class ChainEmbeddingProvider implements EmbeddingProvider {
   private readonly providers: EmbeddingProvider[];
   private readonly labels: string[];
   private activeIndex = 0;
+  /** Per-provider cooldown: maps provider index → { timestamp until which it should be skipped, original error }.
+   *  Config errors (401/403/404) mark a provider as failed for CHAIN_PROVIDER_COOLDOWN_MS so we
+   *  don't waste a round-trip retrying a known-broken provider on every call (#385 Bug 4). */
+  private readonly failedUntil = new Map<number, { expiry: number; error: Error }>();
+  private static readonly COOLDOWN_MS = 60_000; // 60s, matches FallbackEmbeddingProvider.retryIntervalMs
   readonly dimensions: number;
   modelName: string;
   get activeProvider(): string {
@@ -1078,60 +1130,72 @@ export class ChainEmbeddingProvider implements EmbeddingProvider {
     this.modelName = providers[0].modelName;
   }
 
-  async embed(text: string): Promise<number[]> {
-    while (this.activeIndex < this.providers.length) {
+  private async tryProviders<T>(
+    fn: (provider: EmbeddingProvider) => Promise<T>,
+    phase: string,
+  ): Promise<T> {
+    let currentIndex = 0;
+    this.modelName = this.providers[0].modelName;
+    const collectedErrors: Error[] = [];
+    while (currentIndex < this.providers.length) {
+      // Skip providers in cooldown (config errors like 401/403/404 or transient errors). Expire stale entries.
+      const cooldownEntry = this.failedUntil.get(currentIndex);
+      if (cooldownEntry !== undefined) {
+        if (Date.now() < cooldownEntry.expiry) {
+          // Still in cooldown — add the original error to collectedErrors so safeEmbed can suppress correctly
+          collectedErrors.push(cooldownEntry.error);
+          currentIndex++;
+          if (currentIndex < this.providers.length) {
+            this.modelName = this.providers[currentIndex].modelName;
+          }
+          continue;
+        }
+        // Cooldown expired — let this provider retry
+        this.failedUntil.delete(currentIndex);
+      }
       try {
-        return await this.providers[this.activeIndex].embed(text);
+        const result = await fn(this.providers[currentIndex]);
+        // Success — clear any lingering cooldown (belt-and-suspenders)
+        this.failedUntil.delete(currentIndex);
+        this.activeIndex = currentIndex;
+        return result;
       } catch (err) {
+        const asErr = err instanceof Error ? err : new Error(String(err));
+        collectedErrors.push(asErr);
+        // Mark provider as failed for cooldown period when it's a config error
+        if (isConfigError(asErr)) {
+          this.failedUntil.set(currentIndex, { expiry: Date.now() + ChainEmbeddingProvider.COOLDOWN_MS, error: asErr });
+        }
         // Only capture individual provider failures when there are remaining fallbacks.
         // When this is the last provider, we'll degrade gracefully via AllEmbeddingProvidersFailed.
-        const isLast = this.activeIndex + 1 >= this.providers.length;
+        const isLast = currentIndex + 1 >= this.providers.length;
         if (!isLast) {
-          const asErr = err instanceof Error ? err : new Error(String(err));
-          // Skip reporting 403 (country/region restriction), 404 (model not found), 429 (rate limit), and circuit breaker open — operator config issues or transient/expected errors, not bugs (#394, #329, #397, #458)
-          if (!is403OrWrapped(asErr) && !is404OrWrapped(asErr) && !is429OrWrapped(asErr) && !isOllamaCircuitBreakerOpen(asErr)) {
+          // Skip reporting config errors (404/403/401 — operator issues), 429 (rate limit), and circuit breaker open — not bugs (#329, #394, #385, #397, #458)
+          if (!isConfigError(asErr) && !is429OrWrapped(asErr) && !isOllamaCircuitBreakerOpen(asErr)) {
             capturePluginError(asErr, {
               subsystem: "embeddings",
               operation: "chain-failover",
-              phase: "embed",
+              phase,
             });
           }
         }
-        this.activeIndex++;
-        if (this.activeIndex < this.providers.length) {
-          this.modelName = this.providers[this.activeIndex].modelName;
+        currentIndex++;
+        if (currentIndex < this.providers.length) {
+          this.modelName = this.providers[currentIndex].modelName;
         }
       }
     }
     // All providers exhausted — throw a typed error so callers can degrade gracefully
     // without reporting noise to error monitoring.
-    throw new AllEmbeddingProvidersFailed();
+    throw new AllEmbeddingProvidersFailed(collectedErrors);
+  }
+
+  async embed(text: string): Promise<number[]> {
+    return this.tryProviders((provider) => provider.embed(text), "embed");
   }
 
   async embedBatch(texts: string[]): Promise<number[][]> {
-    while (this.activeIndex < this.providers.length) {
-      try {
-        return await this.providers[this.activeIndex].embedBatch(texts);
-      } catch (err) {
-        const isLast = this.activeIndex + 1 >= this.providers.length;
-        if (!isLast) {
-          const asErr = err instanceof Error ? err : new Error(String(err));
-          // Skip reporting 403 (country/region restriction), 404 (model not found), 429 (rate limit), and circuit breaker open — operator config issues or transient/expected errors, not bugs (#394, #329, #397, #458)
-          if (!is403OrWrapped(asErr) && !is404OrWrapped(asErr) && !is429OrWrapped(asErr) && !isOllamaCircuitBreakerOpen(asErr)) {
-            capturePluginError(asErr, {
-              subsystem: "embeddings",
-              operation: "chain-failover",
-              phase: "embedBatch",
-            });
-          }
-        }
-        this.activeIndex++;
-        if (this.activeIndex < this.providers.length) {
-          this.modelName = this.providers[this.activeIndex].modelName;
-        }
-      }
-    }
-    throw new AllEmbeddingProvidersFailed();
+    return this.tryProviders((provider) => provider.embedBatch(texts), "embedBatch");
   }
 }
 
@@ -1156,7 +1220,9 @@ export function createEmbeddingProvider(
     const ollamaModel = model && !["text-embedding-3-small", "text-embedding-3-large", "text-embedding-ada-002"].includes(model)
       ? model
       : "nomic-embed-text";
-    const googleModel = "text-embedding-004"; // Gemini API embedding model (OpenAI-compat endpoint)
+    // Use cfg.model if it is a known Google embed model; otherwise default to text-embedding-005 (#385).
+    // Non-Google model names are rejected to prevent sending them to the Google endpoint.
+    const googleModel = (model && KNOWN_GOOGLE_EMBED_MODELS.has(model)) ? model : "text-embedding-005";
     for (const name of preferredProviders) {
       if (name === "ollama") {
         try {
@@ -1223,7 +1289,10 @@ export function createEmbeddingProvider(
       throw new Error("Google embedding provider requires distill.apiKey or llm.providers.google.apiKey.");
     }
     const client = new OpenAI({ apiKey: cfg.googleApiKey, baseURL: GOOGLE_EMBEDDING_BASE_URL });
-    return new Embeddings(client, "text-embedding-004", dimensions, batchSize);
+    // Use configured model only when it is a known Google embedding model; otherwise default to text-embedding-005.
+    // Non-Google model names are rejected here to prevent sending them to the Google endpoint (#385).
+    const googleEmbedModel = (model && KNOWN_GOOGLE_EMBED_MODELS.has(model)) ? model : "text-embedding-005";
+    return new Embeddings(client, googleEmbedModel, dimensions, batchSize);
   }
 
   if (provider === "onnx") {
@@ -1263,12 +1332,19 @@ export async function safeEmbed(
     return await provider.embed(text);
   } catch (err) {
     const asErr = err instanceof Error ? err : new Error(String(err));
-    // Skip reporting 403 (country/region restriction), 404 (model not found), 429 (rate limit), circuit breaker open, and AllEmbeddingProvidersFailed
-    // — all are operator config issues, transient errors, or expected degradation, not bugs (#394, #329, #397, #458)
-    if (!(err instanceof AllEmbeddingProvidersFailed) && !is403OrWrapped(asErr) && !is404OrWrapped(asErr) && !is429OrWrapped(asErr) && !isOllamaCircuitBreakerOpen(asErr)) {
+    // Skip reporting config errors (404/403/401 — operator issues), 429 (rate limit), and circuit breaker open
+    // — all are operator config issues, transient errors, or expected degradation, not bugs (#394, #329, #385, #397, #458)
+    // For AllEmbeddingProvidersFailed, only suppress when all causes are config errors; report if any cause is transient
+    const shouldReport = !(
+      (err instanceof AllEmbeddingProvidersFailed && err.causes.length > 0 && err.causes.every(isConfigError)) ||
+      isConfigError(asErr) ||
+      is429OrWrapped(asErr) ||
+      isOllamaCircuitBreakerOpen(asErr)
+    );
+    if (shouldReport) {
       capturePluginError(asErr, {
-        operation: 'safe-embed',
-        subsystem: 'embeddings',
+        operation: "safe-embed",
+        subsystem: "embeddings",
       });
     }
     if (logWarn) logWarn(`memory-hybrid: embedding failed: ${err}`);
