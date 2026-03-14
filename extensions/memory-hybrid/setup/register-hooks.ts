@@ -54,6 +54,7 @@ export interface HooksContext {
   detectCategory: (text: string) => import("../config.js").MemoryCategory;
   pendingLLMWarnings: PendingLLMWarnings;
   issueStore: import("../backends/issue-store.js").IssueStore | null;
+  recallInFlightRef: { value: number };
 }
 
 /** Issue #463: Returned handle for lifecycle hook cleanup. */
@@ -92,6 +93,7 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
       detectCategory: ctx.detectCategory,
       pendingLLMWarnings: ctx.pendingLLMWarnings,
       issueStore: ctx.issueStore,
+      recallInFlightRef: ctx.recallInFlightRef,
     };
   } catch (err) {
     capturePluginError(err instanceof Error ? err : new Error(String(err)), {

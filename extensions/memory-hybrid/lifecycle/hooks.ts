@@ -111,6 +111,8 @@ export interface LifecycleContext {
   detectCategory: (text: string) => MemoryCategory;
   pendingLLMWarnings: PendingLLMWarnings;
   issueStore: import("../backends/issue-store.js").IssueStore | null;
+  /** Phase 2.1: In-flight recall count for degradation (queue depth). */
+  recallInFlightRef: { value: number };
 }
 
 // ---------------------------------------------------------------------------
@@ -556,13 +558,13 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
         // Log successful detection at debug level to reduce log noise
         api.logger.debug?.(`memory-hybrid: Detected agentId: ${detectedAgentId}`);
       } else {
-        // Issue #9: Log when agent detection fails - fall back to orchestrator or keep current
-        api.logger.warn(
+        // Issue #9 / Phase 2.5: Log at debug to cut noise; fall back to orchestrator or keep current
+        api.logger.debug?.(
           "memory-hybrid: Agent detection failed - no agentId in event payload or api.context, falling back to orchestrator",
         );
         currentAgentIdRef.value = currentAgentIdRef.value || ctx.cfg.multiAgent.orchestratorId;
         if (ctx.cfg.multiAgent.defaultStoreScope === "agent" || ctx.cfg.multiAgent.defaultStoreScope === "auto") {
-          api.logger.warn(
+          api.logger.debug?.(
             `memory-hybrid: Agent detection failed but defaultStoreScope is "${ctx.cfg.multiAgent.defaultStoreScope}" - memories may be incorrectly scoped`,
           );
         }
@@ -593,9 +595,11 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
 
         if (!e.prompt || e.prompt.length < 5) return;
 
-        api.logger.debug?.(`memory-hybrid: auto-recall start (prompt length ${e.prompt.length})`);
-
+        ctx.recallInFlightRef.value++;
+        const recallStartMs = Date.now();
         try {
+          api.logger.debug?.(`memory-hybrid: auto-recall start (prompt length ${e.prompt.length})`);
+
           // Use configurable candidate pool for progressive disclosure
           const fmt = ctx.cfg.autoRecall.injectionFormat;
           const isProgressive = fmt === "progressive" || fmt === "progressive_hybrid";
@@ -631,6 +635,45 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
           } else {
             // No filter — orchestrator sees all (backward compatible)
             scopeFilter = undefined;
+          }
+
+          // Phase 2.1: Hard degradation — queue depth or latency triggers FTS-only + HOT
+          const degradationQueueDepth = ctx.cfg.autoRecall.degradationQueueDepth ?? 0;
+          const degradationMaxLatencyMs = ctx.cfg.autoRecall.degradationMaxLatencyMs ?? 0;
+          const forceDegraded =
+            degradationQueueDepth > 0 && ctx.recallInFlightRef.value > degradationQueueDepth;
+          if (forceDegraded) {
+            const recallOpts = {
+              tierFilter: ctx.cfg.memoryTiering.enabled ? ("warm" as const) : ("all" as const),
+              scopeFilter,
+              reinforcementBoost: ctx.cfg.distill?.reinforcementBoost ?? 0.1,
+              diversityWeight: ctx.cfg.reinforcement?.diversityWeight ?? 1.0,
+            };
+            const degradedLimit = ctx.cfg.autoRecall.limit;
+            const trimmed = e.prompt.trim();
+            const ftsOnly = ctx.factsDb.search(trimmed, degradedLimit, recallOpts);
+            let hotPart = "";
+            if (ctx.cfg.memoryTiering.enabled && ctx.cfg.memoryTiering.hotMaxTokens > 0) {
+              const hotResults = ctx.factsDb.getHotFacts(ctx.cfg.memoryTiering.hotMaxTokens, scopeFilter);
+              if (hotResults.length > 0) {
+                const hotLines = hotResults.map(
+                  (r) =>
+                    `- [hot/${r.entry.category}] ${(r.entry.summary || r.entry.text).slice(0, 200)}${(r.entry.summary || r.entry.text).length > 200 ? "…" : ""}`,
+                );
+                hotPart = "Hot memories:\n" + hotLines.join("\n") + "\n\n";
+              }
+            }
+            const memoryLines = ftsOnly.slice(0, degradedLimit).map(
+              (r) => `- [${r.backend}/${r.entry.category}] ${(r.entry.summary || r.entry.text).slice(0, 200)}${(r.entry.summary || r.entry.text).length > 200 ? "…" : ""}`,
+            );
+            const inner = hotPart + (memoryLines.length ? "Recalled (FTS-only):\n" + memoryLines.join("\n") : "");
+            const block = inner ? `<recalled-context>\n${inner}\n</recalled-context>` : "";
+            const degradedMarker = "<!-- recall degraded: queue -->\n";
+            api.logger.debug?.(`memory-hybrid: recall degraded (queue depth ${ctx.recallInFlightRef.value} > ${degradationQueueDepth}), using FTS-only + HOT`);
+            if (block) {
+              return { prependContext: degradedMarker + block + "\n\n" };
+            }
+            return { prependContext: degradedMarker + "\n\n" };
           }
 
           // Procedural memory: inject relevant procedures and negative warnings
@@ -707,6 +750,21 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
           }
           const withProcedures = (s: string) => (procedureBlock ? procedureBlock + "\n" + s : s);
 
+          /** Phase 2.4: Single recalled-context block (max 3 blocks: recalled-context, active-task, optional warning). */
+          const wrapRecalledContext = (content: string): string =>
+            content ? `<recalled-context>\n${content}\n</recalled-context>` : "";
+
+          /** Phase 2.1: Prepend latency degraded marker when recall took longer than threshold. */
+          const markDegradedLatency = (content: string): string => {
+            if (degradationMaxLatencyMs > 0 && Date.now() - recallStartMs > degradationMaxLatencyMs) {
+              api.logger.debug?.(
+                `memory-hybrid: recall degraded (latency ${Date.now() - recallStartMs}ms > ${degradationMaxLatencyMs}ms)`,
+              );
+              return "<!-- recall degraded: latency -->\n" + content;
+            }
+            return content;
+          };
+
           // HOT tier — always inject first (cap by hotMaxTokens)
           let hotBlock = "";
           if (ctx.cfg.memoryTiering.enabled && ctx.cfg.memoryTiering.hotMaxTokens > 0) {
@@ -742,11 +800,15 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
               reinforcementBoost: ctx.cfg.distill?.reinforcementBoost ?? 0.1,
               diversityWeight: ctx.cfg.reinforcement?.diversityWeight ?? 1.0,
             };
+            // Phase 2.2: Per-stage timing (debug)
+            const stageMs = { fts: 0, embed: 0, vector: 0, merge: 0 };
+            let t0 = Date.now();
             let sqliteResults: SearchResult[] = [];
             if (opts?.entity) {
               sqliteResults = ctx.factsDb.lookup(opts.entity, undefined, undefined, { scopeFilter }).slice(0, limit);
             }
             const ftsResults = ctx.factsDb.search(trimmed, limit, recallOpts);
+            stageMs.fts = Date.now() - t0;
             sqliteResults = [...sqliteResults, ...ftsResults];
 
             let lanceResults: SearchResult[] = [];
@@ -755,6 +817,7 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
               const vectorStepPromise = (async (): Promise<SearchResult[]> => {
                 let textToEmbed = trimmed;
                 const allowHyde = ctx.cfg.queryExpansion.enabled && (!opts?.limitHydeOnce || !directiveHydeUsed);
+                t0 = Date.now();
                 if (allowHyde) {
                   if (opts?.limitHydeOnce) directiveHydeUsed = true;
                   try {
@@ -810,7 +873,10 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
                   opts?.precomputedVector && textToEmbed === trimmed
                     ? opts.precomputedVector
                     : await ctx.embeddings.embed(textToEmbed);
+                stageMs.embed = Date.now() - t0;
+                t0 = Date.now();
                 let results = await ctx.vectorDb.search(vector, limit * 2, minScore);
+                stageMs.vector = Date.now() - t0;
                 results = filterByScope(results, (id, opts) => ctx.factsDb.getById(id, opts), scopeFilter);
                 results = results.map((r) => {
                   const fullEntry = ctx.factsDb.getById(r.entry.id);
@@ -855,7 +921,9 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
               }
             }
 
+            t0 = Date.now();
             let results = mergeResults(sqliteResults, lanceResults, limit, ctx.factsDb);
+            stageMs.merge = Date.now() - t0;
             if (ctx.cfg.memoryTiering.enabled && results.length > 0) {
               results = results
                 .filter((r) => {
@@ -864,6 +932,10 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
                 })
                 .slice(0, limit);
             }
+            const totalMs = stageMs.fts + stageMs.embed + stageMs.vector + stageMs.merge;
+            api.logger.debug?.(
+              `memory-hybrid: recall pipeline timing (ms) — FTS: ${stageMs.fts}, embed: ${stageMs.embed}, vector: ${stageMs.vector}, merge: ${stageMs.merge}, total: ${totalMs}`,
+            );
             return results;
           }
 
@@ -1326,7 +1398,7 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
             api.logger.info?.(
               `memory-hybrid: progressive_hybrid — ${pinnedPart.length} pinned in full, index of ${indexIds.length} (~${pinnedTokens + estimateTokens(indexContent)} tokens)`,
             );
-            return { prependContext: issueBlock + hotBlock + withProcedures(fullContent) };
+            return { prependContext: markDegradedLatency(wrapRecalledContext(issueBlock + hotBlock + withProcedures(fullContent))) };
           }
 
           if (injectionFormat === "progressive") {
@@ -1339,10 +1411,10 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
             } = buildProgressiveIndex(candidates, indexCap - estimateTokens(indexHeader + indexFooter), 1);
             if (indexLines.length === 0) {
               if (procedureBlock) {
-                return { prependContext: issueBlock + hotBlock + procedureBlock };
+                return { prependContext: markDegradedLatency(wrapRecalledContext(issueBlock + hotBlock + procedureBlock)) };
               }
               const combinedContext = issueBlock + hotBlock;
-              return combinedContext ? { prependContext: combinedContext } : undefined;
+              return combinedContext ? { prependContext: markDegradedLatency(wrapRecalledContext(combinedContext)) } : undefined;
             }
             lastProgressiveIndexIds = indexIds;
             ctx.lastProgressiveIndexIds = indexIds;
@@ -1365,7 +1437,9 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
               `memory-hybrid: progressive disclosure — injecting index of ${indexLines.length} memories (~${indexTokens} tokens)`,
             );
             return {
-              prependContext: issueBlock + hotBlock + withProcedures(`${indexHeader}${indexContent}${indexFooter}`),
+              prependContext: markDegradedLatency(
+                wrapRecalledContext(issueBlock + hotBlock + withProcedures(`${indexHeader}${indexContent}${indexFooter}`)),
+              ),
             };
           }
 
@@ -1395,10 +1469,10 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
 
           if (lines.length === 0) {
             if (procedureBlock) {
-              return { prependContext: issueBlock + hotBlock + procedureBlock };
+              return { prependContext: markDegradedLatency(wrapRecalledContext(issueBlock + hotBlock + procedureBlock)) };
             }
             const combinedContext = issueBlock + hotBlock;
-            return combinedContext ? { prependContext: combinedContext } : undefined;
+            return combinedContext ? { prependContext: markDegradedLatency(wrapRecalledContext(combinedContext)) } : undefined;
           }
 
           // Access tracking for injected memories
@@ -1466,10 +1540,10 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
 
           if (!memoryContext) {
             if (procedureBlock) {
-              return { prependContext: issueBlock + hotBlock + procedureBlock };
+              return { prependContext: markDegradedLatency(wrapRecalledContext(issueBlock + hotBlock + procedureBlock)) };
             }
             const combinedContext = issueBlock + hotBlock;
-            return combinedContext ? { prependContext: combinedContext } : undefined;
+            return combinedContext ? { prependContext: markDegradedLatency(wrapRecalledContext(combinedContext)) } : undefined;
           }
 
           if (!summarizeWhenOverBudget || lines.length >= candidates.length) {
@@ -1477,7 +1551,9 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
           }
 
           return {
-            prependContext: issueBlock + hotBlock + withProcedures(`${header}${memoryContext}${footer}`),
+            prependContext: markDegradedLatency(
+              wrapRecalledContext(issueBlock + hotBlock + withProcedures(`${header}${memoryContext}${footer}`)),
+            ),
           };
         } catch (err) {
           capturePluginError(err instanceof Error ? err : new Error(String(err)), {
@@ -1485,6 +1561,8 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
             subsystem: "auto-recall",
           });
           api.logger.warn(`memory-hybrid: recall failed: ${String(err)}`);
+        } finally {
+          ctx.recallInFlightRef.value--;
         }
       });
     }
