@@ -600,6 +600,7 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
 
         ctx.recallInFlightRef.value++;
         const recallStartMs = Date.now();
+        let forceDegraded = false;
         try {
           api.logger.debug?.(`memory-hybrid: auto-recall start (prompt length ${e.prompt.length})`);
 
@@ -643,7 +644,7 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
           // Phase 2.1: Hard degradation — queue depth or latency triggers FTS-only + HOT
           const degradationQueueDepth = ctx.cfg.autoRecall.degradationQueueDepth ?? 0;
           const degradationMaxLatencyMs = ctx.cfg.autoRecall.degradationMaxLatencyMs ?? 0;
-          let forceDegraded =
+          forceDegraded =
             (degradationQueueDepth > 0 && ctx.recallInFlightRef.value > degradationQueueDepth) ||
             (degradationMaxLatencyMs > 0 && lastRecallLatencyMs > degradationMaxLatencyMs);
           if (forceDegraded) {
@@ -1236,7 +1237,7 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
 
           if (candidates.length === 0) {
             const combinedContext = issueBlock + hotBlock;
-            return combinedContext ? { prependContext: combinedContext } : undefined;
+            return combinedContext ? { prependContext: wrapRecalledContext(combinedContext) } : undefined;
           }
 
           {
