@@ -312,6 +312,51 @@ describe("MiniMax provider routing — direct API key", () => {
     expect(minimaxCall).toBeDefined();
     expect((minimaxCall![0] as Record<string, unknown>).apiKey).toBe("sk-cp-bare-prefix-test");
   });
+
+  it("normalizes Ollama-style 'minimax-m2.5:cloud' to MiniMax-M2.5 and routes to MINIMAX_BASE_URL (issue #400)", async () => {
+    // Users may inadvertently configure an Ollama-style model tag (e.g. "minimax-m2.5:cloud")
+    // when setting up MiniMax. The normalizeModelId / canonicalizeMiniMaxModelId helpers must
+    // strip the ":cloud" tag and fix the casing so the MiniMax API receives "MiniMax-M2.5" (not
+    // the invalid "minimax-m2.5:cloud" that produces a 404).
+    const cfg = getTestConfig(tmpDir, {
+      llm: {
+        default: ["minimax-m2.5:cloud"],  // Ollama-style alias — should be canonicalized
+        heavy: ["minimax-m2.5:cloud"],
+        providers: {
+          minimax: { apiKey: "sk-cp-issue400-test" },
+        },
+      },
+    });
+    const api = makeMockApi({
+      resolvePath: (p: string) => (p.startsWith("/") ? p : join(tmpDir, p)),
+    });
+
+    ctx = initializeDatabases(cfg, api as never);
+
+    await ctx.openai.chat.completions.create({
+      model: "minimax-m2.5:cloud",
+      messages: [{ role: "user", content: "issue 400 repro" }],
+    });
+
+    // Verify the request was routed to the MiniMax endpoint
+    const minimaxCall = MockOpenAI.mock.calls.find(
+      ([args]) => (args as Record<string, unknown>)?.baseURL === MINIMAX_BASE_URL,
+    );
+    expect(minimaxCall).toBeDefined();
+    expect((minimaxCall![0] as Record<string, unknown>).apiKey).toBe("sk-cp-issue400-test");
+
+    // The model sent to the MiniMax API must be the canonical "MiniMax-M2.5", not "minimax-m2.5:cloud"
+    const minimaxClientIdx = MockOpenAI.mock.calls.findIndex(
+      ([args]) => (args as Record<string, unknown>)?.baseURL === MINIMAX_BASE_URL,
+    );
+    const minimaxInstance = MockOpenAI.mock.results[minimaxClientIdx];
+    expect(minimaxInstance?.type).toBe("return");
+    const instance = minimaxInstance?.value as { chat: { completions: { create: ReturnType<typeof vi.fn> } } };
+    const createCalls = instance.chat.completions.create.mock.calls;
+    expect(createCalls.length).toBeGreaterThan(0);
+    const callBody = createCalls[0]?.[0] as { model?: string } | undefined;
+    expect(callBody?.model).toBe("MiniMax-M2.5");
+  });
 });
 
 // ---------------------------------------------------------------------------

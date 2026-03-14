@@ -161,6 +161,29 @@ const ANTHROPIC_VERSION_HEADER = "2023-06-01";
 /** Built-in OpenAI-compatible base URL for MiniMax API (global endpoint). */
 export const MINIMAX_BASE_URL = "https://api.minimax.io/v1";
 
+/**
+ * Canonical MiniMax model name mapping (lowercase key → proper-case value).
+ * Covers Ollama-style aliases (e.g. "minimax-m2.5:cloud") that users may configure
+ * and that would otherwise produce a 404 from the MiniMax API (issue #400).
+ */
+const MINIMAX_MODEL_ALIASES: Record<string, string> = {
+  "minimax-m2.5": "MiniMax-M2.5",
+  "minimax-text-01": "MiniMax-Text-01",
+};
+
+/**
+ * Canonicalize a bare MiniMax model name.
+ * - Strips Ollama-style `:tag` suffixes (e.g. `:cloud`, `:latest`) which are invalid on the MiniMax API.
+ * - Looks up the result in MINIMAX_MODEL_ALIASES to restore correct casing (e.g. "minimax-m2.5" → "MiniMax-M2.5").
+ * - Falls back to the original bare name (without tag) if no alias matches.
+ */
+function canonicalizeMiniMaxModelId(bare: string): string {
+  // Strip Ollama-style ":tag" suffix (e.g. "minimax-m2.5:cloud" → "minimax-m2.5")
+  const withoutTag = bare.includes(":") ? bare.slice(0, bare.indexOf(":")) : bare;
+  const canonical = MINIMAX_MODEL_ALIASES[withoutTag.toLowerCase()];
+  return canonical ?? withoutTag;
+}
+
 /** OpenRouter OpenAI-compatible base URL. */
 export const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
 
@@ -241,7 +264,7 @@ function buildMultiProviderOpenAI(cfg: HybridMemoryConfig, api: ClawdbotPluginAp
     if (lower.startsWith("gemini-")) return `google/${trimmed}`;
     if (lower.startsWith("claude-")) return `anthropic/${trimmed}`;
     if (lower.startsWith("gpt-") || /^o[0-9]+/.test(lower)) return `openai/${trimmed}`;
-    if (lower.startsWith("minimax-")) return `minimax/${trimmed}`;
+    if (lower.startsWith("minimax-")) return `minimax/${canonicalizeMiniMaxModelId(trimmed)}`;
     return trimmed;
   }
 
@@ -257,7 +280,7 @@ function buildMultiProviderOpenAI(cfg: HybridMemoryConfig, api: ClawdbotPluginAp
     if (lower.startsWith("gemini-")) return `google/${bare}`;
     if (lower.startsWith("claude-")) return `anthropic/${bare}`;
     if (lower.startsWith("gpt-") || /^o[0-9]+/.test(lower)) return `openai/${bare}`;
-    if (lower.startsWith("minimax-")) return `minimax/${bare}`;
+    if (lower.startsWith("minimax-")) return `minimax/${canonicalizeMiniMaxModelId(bare)}`;
     return trimmed.includes("/") ? trimmed : `openai/${trimmed}`;
   }
 
@@ -385,7 +408,10 @@ function buildMultiProviderOpenAI(cfg: HybridMemoryConfig, api: ClawdbotPluginAp
         ?? (process.env.MINIMAX_API_KEY?.trim() || undefined);
       if (!apiKey) throw new UnconfiguredProviderError("minimax", trimmed);
       const baseURL = providerCfg?.baseURL ?? MINIMAX_BASE_URL;
-      return { client: getOrCreate(`minimax:${baseURL}`, () => new OpenAI({ apiKey, baseURL })), bareModel };
+      // Canonicalize the bare model name: strip Ollama-style ":tag" suffixes and fix casing
+      // so that e.g. "minimax-m2.5:cloud" → "MiniMax-M2.5" (issue #400).
+      const canonicalBareModel = canonicalizeMiniMaxModelId(bareModel);
+      return { client: getOrCreate(`minimax:${baseURL}`, () => new OpenAI({ apiKey, baseURL })), bareModel: canonicalBareModel };
     }
 
     if (providerCfg?.apiKey || providerCfg?.baseURL) {
