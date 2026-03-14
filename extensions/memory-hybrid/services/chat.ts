@@ -113,6 +113,21 @@ export function is403Like(err: unknown): boolean {
  * message pattern matching. Rate limits are transient — suppress GlitchTip reporting.
  * Exported so embeddings.ts can suppress capturePluginError for 429 errors.
  */
+/**
+ * Detects permanent rate limits (e.g., weekly usage limits, insufficient quota)
+ * that will not be resolved by exponential backoff.
+ */
+export function isPermanentRateLimit(err: unknown): boolean {
+  if (err instanceof Error) {
+    const msg = err.message.toLowerCase();
+    return msg.includes('weekly usage limit') ||
+           msg.includes('insufficient_quota') ||
+           msg.includes('exceeded your current quota') ||
+           msg.includes('insufficient balance');
+  }
+  return false;
+}
+
 export function is429Like(err: unknown): boolean {
   if (err && typeof err === "object") {
     const status = (err as { status?: unknown }).status;
@@ -379,6 +394,16 @@ export async function withLLMRetry<T>(
         throw lastError;
       }
       const is429 = is429Like(lastError);
+      
+      // If it's a permanent rate limit (like Ollama weekly limit), don't retry.
+      // chatCompleteWithRetry will catch this and try the next fallback model.
+      if (is429 && isPermanentRateLimit(lastError)) {
+        console.warn(
+          `memory-hybrid: Permanent rate limit hit — ${lastError.message}. ` +
+          `Skipping retries; will try next fallback model.`
+        );
+        throw lastError;
+      }
       // Timeouts: only retry once (attempt 0 → attempt 1), then throw so chatCompleteWithRetry can try next model.
       // (attempt is 0-based: attempt >= 1 means we've already retried once.)
       const isTimeout = /timed out|llm request timeout|request was aborted|Request was aborted|ETIMEDOUT|ECONNREFUSED/i.test(lastError.message);  // #339: include our own "LLM request timeout" pattern

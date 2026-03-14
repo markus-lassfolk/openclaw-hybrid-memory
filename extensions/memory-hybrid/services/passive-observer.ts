@@ -25,7 +25,15 @@ import type OpenAI from 'openai'
 import type { MemoryCategory, ReinforcementConfig } from '../config.js'
 import { chunkTextByChars } from '../utils/text.js'
 import { loadPrompt, fillPrompt } from '../utils/prompt-loader.js'
-import { chatCompleteWithRetry, LLMRetryError } from './chat.js'
+import { 
+  chatCompleteWithRetry, 
+  LLMRetryError, 
+  is429OrWrapped, 
+  is404Like, 
+  is403Like, 
+  is500Like,
+  isOllamaOOM
+} from './chat.js'
 import { capturePluginError } from './error-reporter.js'
 import { normalizeVector, dotProductSimilarity } from './reflection.js'
 
@@ -521,11 +529,19 @@ export async function runPassiveObserver(
       } catch (err) {
         logger.warn(`memory-hybrid: passive-observer — LLM failed for session ${sessionId}: ${err}`)
         const retryAttempt = err instanceof LLMRetryError ? err.attemptNumber : 1
-        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-          operation: 'passive-observer-llm',
-          subsystem: 'passive-observer',
-          retryAttempt,
-        })
+        const errObj = err instanceof Error ? err : new Error(String(err));
+        
+        const isTimeout = /timed out|llm request timeout|request was aborted|Request was aborted|ETIMEDOUT|ECONNREFUSED/i.test(errObj.message);
+        
+        // Skip reporting transient provider errors to GlitchTip
+        if (!is500Like(errObj) && !isOllamaOOM(errObj) && !isTimeout && !is403Like(errObj) && !is429OrWrapped(errObj)) {
+          capturePluginError(errObj, {
+            operation: 'passive-observer-llm',
+            subsystem: 'passive-observer',
+            retryAttempt,
+          })
+        }
+        
         result.errors++
         continue
       }
