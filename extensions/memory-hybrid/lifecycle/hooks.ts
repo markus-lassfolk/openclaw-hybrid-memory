@@ -2485,11 +2485,7 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
     }
 
     // VectorDB is single long-lived; no per-session refcount (Phase 1). Session state cleanup
-    // is handled by clearSessionState() in sweepStaleSessions and in agent_end below.
-    api.on("agent_end", async (event: unknown) => {
-      const sessionKey = resolveSessionKey(event, api) ?? currentAgentIdRef.value ?? "default";
-      clearSessionState(sessionKey);
-    });
+    // is handled by clearSessionState() in sweepStaleSessions and in the centralized agent_end handler above.
   };
 
   /**

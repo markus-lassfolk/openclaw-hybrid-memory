@@ -243,14 +243,15 @@ export function parseSearchConfig(cfg: Record<string, unknown>): SearchConfig | 
   };
 }
 
-export function parseQueryExpansionConfig(cfg: Record<string, unknown>): QueryExpansionConfig {
+export function parseQueryExpansionConfig(cfg: Record<string, unknown>, userRaw?: Record<string, unknown>): QueryExpansionConfig {
   const qeRaw = cfg.queryExpansion as Record<string, unknown> | undefined;
   const searchRaw = cfg.search as Record<string, unknown> | undefined;
 
   // Migration shim: if the legacy search.hydeEnabled flag is set, emit a deprecation warning
   // and auto-enable queryExpansion when it has not been explicitly enabled.
   const hydeEnabled = searchRaw?.hydeEnabled === true;
-  const qeExplicitlySet = qeRaw?.enabled !== undefined;
+  const userQeRaw = userRaw?.queryExpansion as Record<string, unknown> | undefined;
+  const qeExplicitlySet = userQeRaw?.enabled !== undefined;
 
   if (hydeEnabled) {
     console.warn(

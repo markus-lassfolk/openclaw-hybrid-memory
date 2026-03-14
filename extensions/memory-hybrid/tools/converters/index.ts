@@ -78,7 +78,8 @@ function sniffYamlConverter(content: string, fileName: string, ext: string): Con
       return converter;
     }
   }
-  return candidates[0] ?? null;
+  const fallbackCandidate = candidates.find((c) => !c.canHandle);
+  return fallbackCandidate ?? null;
 }
 
 /** Sniff JSON: only registered (extra) converters; no builtin domain converters. */
@@ -97,6 +98,7 @@ function sniffJsonConverter(content: string): Converter | null {
     }
   }
   
-  // Fall back to first match if no converter claims it via canHandle
-  return candidates[0] ?? null;
+  // Fall back to first converter without canHandle method (accepts all files of this extension)
+  const fallbackCandidate = candidates.find((c) => !c.canHandle);
+  return fallbackCandidate ?? null;
 }
