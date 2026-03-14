@@ -5,7 +5,7 @@
  * Converters transform configs into structured Markdown for ingestion.
  *
  * Domain converters (Home Assistant, ESPHome, Victron VRM, Zigbee2MQTT) have been
- * removed from the memory plugin; use a separate plugin (e.g. openclaw-ha-converters)
+ * removed from the built-in registry; use a separate plugin (e.g. openclaw-ha-converters)
  * and registerConverter() to add them back.
  */
 
@@ -52,7 +52,7 @@ export function getConverter(filePath: string, content?: string): Converter | nu
 
   if (ext === ".yaml" || ext === ".yml") {
     if (content === undefined) return null;
-    return sniffYamlConverter(content, fileName);
+    return sniffYamlConverter(content, fileName, ext);
   }
 
   if (ext === ".json") {
@@ -70,23 +70,14 @@ export function getConverter(filePath: string, content?: string): Converter | nu
   return null;
 }
 
-/** Sniff YAML: only registered (extra) converters; no builtin domain converters. */
-function sniffYamlConverter(content: string, fileName: string): Converter | null {
-  const candidates: Converter[] = [];
-  for (const converter of extraConverters) {
-    if (converter.extensions.includes(".yaml") || converter.extensions.includes(".yml")) {
-      candidates.push(converter);
-    }
-  }
-  
-  // Try content-based selection first
+/** Sniff YAML: only registered converters that support this file's extension. */
+function sniffYamlConverter(content: string, fileName: string, ext: string): Converter | null {
+  const candidates = extraConverters.filter((c) => c.extensions.includes(ext));
   for (const converter of candidates) {
     if (converter.canHandle && converter.canHandle(content, fileName)) {
       return converter;
     }
   }
-  
-  // Fall back to first match if no converter claims it via canHandle
   return candidates[0] ?? null;
 }
 

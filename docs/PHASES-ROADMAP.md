@@ -1,6 +1,6 @@
 # Hybrid Memory — Phases Roadmap
 
-This document tracks the phased cleanup and improvement plan from the [combined recommendations](hybrid-memory-combined-recommendations). Phase 1 is implemented; Phase 2 and 3 are planned.
+This document tracks the phased cleanup and improvement plan from the combined recommendations report. Phase 1 is implemented; Phase 2 and 3 are planned.
 
 ---
 
