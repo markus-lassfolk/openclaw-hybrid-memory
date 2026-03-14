@@ -108,12 +108,6 @@ export function is403Like(err: unknown): boolean {
 }
 
 /**
- * 429 Too Many Requests / rate-limit detection helper.
- * Checks the HTTP status code property first (reliable), then falls back to
- * message pattern matching. Rate limits are transient — suppress GlitchTip reporting.
- * Exported so embeddings.ts can suppress capturePluginError for 429 errors.
- */
-/**
  * Detects permanent rate limits (e.g., weekly usage limits, insufficient quota)
  * that will not be resolved by exponential backoff.
  */
@@ -128,6 +122,12 @@ export function isPermanentRateLimit(err: unknown): boolean {
   return false;
 }
 
+/**
+ * 429 Too Many Requests / rate-limit detection helper.
+ * Checks the HTTP status code property first (reliable), then falls back to
+ * message pattern matching. Rate limits are transient — suppress GlitchTip reporting.
+ * Exported so embeddings.ts can suppress capturePluginError for 429 errors.
+ */
 export function is429Like(err: unknown): boolean {
   if (err && typeof err === "object") {
     const status = (err as { status?: unknown }).status;
