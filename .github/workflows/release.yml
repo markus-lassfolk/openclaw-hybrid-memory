@@ -36,9 +36,9 @@ jobs:
           INPUT_VERSION: ${{ github.event.inputs.version }}
         run: |
           if [[ "${{ github.event_name }}" == "push" ]]; then
-            echo "tag=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+            echo "tag=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
           else
-            echo "tag=${INPUT_VERSION}" >> $GITHUB_OUTPUT
+            echo "tag=${INPUT_VERSION}" >> "$GITHUB_OUTPUT"
           fi
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
@@ -68,7 +68,7 @@ jobs:
         id: version
         run: |
           TAG="${{ needs.release.outputs.tag }}"
-          echo "version=${TAG#v}" >> $GITHUB_OUTPUT
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
       - name: Set package version
         run: |
           VERSION="${{ steps.version.outputs.version }}"
