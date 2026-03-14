@@ -21,6 +21,8 @@ export interface Converter {
   /** File extensions this converter handles (lowercase, with dot, e.g. ".yaml") */
   extensions: string[];
   mimeTypes?: string[];
+  /** Optional: inspect content/fileName to determine if this converter should handle the file */
+  canHandle?(content: string, fileName: string): boolean;
   convert(content: string, filePath: string): ConversionResult;
 }
 
@@ -69,21 +71,41 @@ export function getConverter(filePath: string, content?: string): Converter | nu
 }
 
 /** Sniff YAML: only registered (extra) converters; no builtin domain converters. */
-function sniffYamlConverter(_content: string, _fileName: string): Converter | null {
+function sniffYamlConverter(content: string, fileName: string): Converter | null {
+  const candidates: Converter[] = [];
   for (const converter of extraConverters) {
     if (converter.extensions.includes(".yaml") || converter.extensions.includes(".yml")) {
+      candidates.push(converter);
+    }
+  }
+  
+  // Try content-based selection first
+  for (const converter of candidates) {
+    if (converter.canHandle && converter.canHandle(content, fileName)) {
       return converter;
     }
   }
-  return null;
+  
+  // Fall back to first match if no converter claims it via canHandle
+  return candidates[0] ?? null;
 }
 
 /** Sniff JSON: only registered (extra) converters; no builtin domain converters. */
-function sniffJsonConverter(_content: string): Converter | null {
+function sniffJsonConverter(content: string): Converter | null {
+  const candidates: Converter[] = [];
   for (const converter of extraConverters) {
     if (converter.extensions.includes(".json")) {
+      candidates.push(converter);
+    }
+  }
+  
+  // Try content-based selection first (fileName not available for JSON path)
+  for (const converter of candidates) {
+    if (converter.canHandle && converter.canHandle(content, "")) {
       return converter;
     }
   }
-  return null;
+  
+  // Fall back to first match if no converter claims it via canHandle
+  return candidates[0] ?? null;
 }
