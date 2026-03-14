@@ -634,6 +634,14 @@ function isConfigError(err: Error): boolean {
   return is404OrWrapped(err) || is403OrWrapped(err) || is401OrWrapped(err);
 }
 
+/** Returns true when the error is an Ollama circuit breaker open — provider is temporarily disabled,
+ * not a real embedding failure. Should be treated as a transient "provider unavailable" condition.
+ */
+export function isOllamaCircuitBreakerOpen(err: Error): boolean {
+  return err.message.startsWith("Ollama circuit breaker open");
+}
+
+
 /**
  * OpenAI-based embedding provider.
  * Uses a cache, supports model preference lists (try in order on failure).
@@ -1004,8 +1012,8 @@ export class FallbackEmbeddingProvider implements EmbeddingProvider {
         return result;
       } catch (err) {
         const asErr = err instanceof Error ? err : new Error(String(err));
-        // Skip reporting config errors (404 model-not-found, 403 country/region restriction, 401 auth failure) and 429 (rate limit) — operator config issues or transient errors, not bugs (#329, #394, #397, #385).
-        if (!isConfigError(asErr) && !is429OrWrapped(asErr)) {
+        // Skip reporting config errors (404/403/401 — operator issues), 429 (rate limit), and circuit breaker open — not bugs (#329, #394, #385, #397, #458).
+        if (!isConfigError(asErr) && !is429OrWrapped(asErr) && !isOllamaCircuitBreakerOpen(asErr)) {
           capturePluginError(asErr, {
             subsystem: "embeddings",
             operation: "fallback-retry-primary",
@@ -1022,8 +1030,8 @@ export class FallbackEmbeddingProvider implements EmbeddingProvider {
       return await this.active.embed(text);
     } catch (err) {
       const asErr = err instanceof Error ? err : new Error(String(err));
-      // Skip reporting config errors (404 model-not-found, 403 country/region restriction, 401 auth failure) and 429 (rate limit) — operator config issues or transient errors, not bugs (#329, #394, #397, #385).
-      if (!isConfigError(asErr) && !is429OrWrapped(asErr)) {
+      // Skip reporting config errors (404/403/401 — operator issues), 429 (rate limit), and circuit breaker open — not bugs (#329, #394, #385, #397, #458).
+      if (!isConfigError(asErr) && !is429OrWrapped(asErr) && !isOllamaCircuitBreakerOpen(asErr)) {
         capturePluginError(asErr, {
           subsystem: "embeddings",
           operation: "fallback-switch",
@@ -1053,8 +1061,8 @@ export class FallbackEmbeddingProvider implements EmbeddingProvider {
         return result;
       } catch (err) {
         const asErr = err instanceof Error ? err : new Error(String(err));
-        // Skip reporting config errors (404 model-not-found, 403 country/region restriction, 401 auth failure) and 429 (rate limit) — operator config issues or transient errors, not bugs (#329, #394, #397, #385).
-        if (!isConfigError(asErr) && !is429OrWrapped(asErr)) {
+        // Skip reporting config errors (404/403/401 — operator issues), 429 (rate limit), and circuit breaker open — not bugs (#329, #394, #385, #397, #458).
+        if (!isConfigError(asErr) && !is429OrWrapped(asErr) && !isOllamaCircuitBreakerOpen(asErr)) {
           capturePluginError(asErr, {
             subsystem: "embeddings",
             operation: "fallback-retry-primary",
@@ -1071,8 +1079,8 @@ export class FallbackEmbeddingProvider implements EmbeddingProvider {
       return await this.active.embedBatch(texts);
     } catch (err) {
       const asErr = err instanceof Error ? err : new Error(String(err));
-      // Skip reporting config errors (404 model-not-found, 403 country/region restriction, 401 auth failure) and 429 (rate limit) — operator config issues or transient errors, not bugs (#329, #394, #397, #385).
-      if (!isConfigError(asErr) && !is429OrWrapped(asErr)) {
+      // Skip reporting config errors (404/403/401 — operator issues), 429 (rate limit), and circuit breaker open — not bugs (#329, #394, #385, #397, #458).
+      if (!isConfigError(asErr) && !is429OrWrapped(asErr) && !isOllamaCircuitBreakerOpen(asErr)) {
         capturePluginError(asErr, {
           subsystem: "embeddings",
           operation: "fallback-switch",
@@ -1154,19 +1162,17 @@ export class ChainEmbeddingProvider implements EmbeddingProvider {
       } catch (err) {
         // Only capture individual provider failures when there are remaining fallbacks.
         // When this is the last provider, we'll degrade gracefully via AllEmbeddingProvidersFailed.
-        // Skip config errors (404 model-not-found, 403 country/region restriction, 401 auth failure) — always operator issues (#329, #394, #385).
-        const asErr = err instanceof Error ? err : new Error(String(err));
-        collectedErrors.push(asErr);
-        // Mark failed providers for cooldown so we don't waste round-trips on them every call.
-        // Config errors (401/403/404) and transient errors both get cooldowns to avoid repeated latency penalties.
-        this.failedUntil.set(currentIndex, { expiry: Date.now() + ChainEmbeddingProvider.COOLDOWN_MS, error: asErr });
-        const isLast = currentIndex + 1 >= this.providers.length;
-        if (!isLast && !isConfigError(asErr) && !is429OrWrapped(asErr)) {
-          capturePluginError(asErr, {
-            subsystem: "embeddings",
-            operation: "chain-failover",
-            phase,
-          });
+        const isLast = this.activeIndex + 1 >= this.providers.length;
+        if (!isLast) {
+          const asErr = err instanceof Error ? err : new Error(String(err));
+          // Skip reporting config errors (404/403/401 — operator issues), 429 (rate limit), and circuit breaker open — not bugs (#329, #394, #385, #397, #458)
+          if (!isConfigError(asErr) && !is429OrWrapped(asErr) && !isOllamaCircuitBreakerOpen(asErr)) {
+            capturePluginError(asErr, {
+              subsystem: "embeddings",
+              operation: "chain-failover",
+              phase: "embed",
+            });
+          }
         }
         currentIndex++;
         if (currentIndex < this.providers.length) {
@@ -1184,7 +1190,29 @@ export class ChainEmbeddingProvider implements EmbeddingProvider {
   }
 
   async embedBatch(texts: string[]): Promise<number[][]> {
-    return this.tryProviders((provider) => provider.embedBatch(texts), "embedBatch");
+    while (this.activeIndex < this.providers.length) {
+      try {
+        return await this.providers[this.activeIndex].embedBatch(texts);
+      } catch (err) {
+        const isLast = this.activeIndex + 1 >= this.providers.length;
+        if (!isLast) {
+          const asErr = err instanceof Error ? err : new Error(String(err));
+          // Skip reporting config errors (404/403/401 — operator issues), 429 (rate limit), and circuit breaker open — not bugs (#329, #394, #385, #397, #458)
+          if (!isConfigError(asErr) && !is429OrWrapped(asErr) && !isOllamaCircuitBreakerOpen(asErr)) {
+            capturePluginError(asErr, {
+              subsystem: "embeddings",
+              operation: "chain-failover",
+              phase: "embedBatch",
+            });
+          }
+        }
+        this.activeIndex++;
+        if (this.activeIndex < this.providers.length) {
+          this.modelName = this.providers[this.activeIndex].modelName;
+        }
+      }
+    }
+    throw new AllEmbeddingProvidersFailed();
   }
 }
 
@@ -1321,19 +1349,9 @@ export async function safeEmbed(
     return await provider.embed(text);
   } catch (err) {
     const asErr = err instanceof Error ? err : new Error(String(err));
-    if (err instanceof AllEmbeddingProvidersFailed) {
-      // Only suppress when all individual causes are config errors (404/401/403) or 429 rate-limit errors.
-      // If any cause is a transient failure (network, 5xx, etc.), still report so operators are informed.
-      // When causes is empty (e.g. from non-chain providers), default to reporting.
-      const allConfigOrRateLimitErrors = err.causes.length > 0 && err.causes.every(e => isConfigError(e) || is429OrWrapped(e));
-      if (!allConfigOrRateLimitErrors) {
-        capturePluginError(asErr, {
-          operation: "safe-embed",
-          subsystem: "embeddings",
-        });
-      }
-    } else if (!isConfigError(asErr) && !is429OrWrapped(asErr)) {
-      // Single-provider path: suppress 404/403/401 config errors and 429 rate-limit errors to avoid double-reporting.
+    // Skip reporting AllEmbeddingProvidersFailed, config errors (404/403/401 — operator issues), 429 (rate limit), and circuit breaker open
+    // — all are operator config issues, transient errors, or expected degradation, not bugs (#394, #329, #385, #397, #458)
+    if (!(err instanceof AllEmbeddingProvidersFailed) && !isConfigError(asErr) && !is429OrWrapped(asErr) && !isOllamaCircuitBreakerOpen(asErr)) {
       capturePluginError(asErr, {
         operation: "safe-embed",
         subsystem: "embeddings",

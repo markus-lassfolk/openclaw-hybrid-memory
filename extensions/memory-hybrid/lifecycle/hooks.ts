@@ -17,6 +17,7 @@ import { getCronModelConfig, getDefaultCronModel, getLLMModelPreference } from "
 import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
 import type { EmbeddingProvider } from "../services/embeddings.js";
+import { isOllamaCircuitBreakerOpen } from "../services/embeddings.js";
 import type { EmbeddingRegistry } from "../services/embedding-registry.js";
 import type { WriteAheadLog } from "../backends/wal.js";
 import type { CredentialsDB } from "../backends/credentials-db.js";
@@ -2222,10 +2223,14 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
             try {
               vector = await ctx.embeddings.embed(textToStore);
             } catch (err) {
-              capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-                operation: "auto-capture-embedding",
-                subsystem: "auto-capture",
-              });
+              const asErr = err instanceof Error ? err : new Error(String(err));
+              // Circuit breaker open = provider temporarily unavailable, not a real failure — skip error reporting (#458)
+              if (!isOllamaCircuitBreakerOpen(asErr)) {
+                capturePluginError(asErr, {
+                  operation: "auto-capture-embedding",
+                  subsystem: "auto-capture",
+                });
+              }
               api.logger.warn(`memory-hybrid: auto-capture embedding failed: ${err}`);
             }
 
@@ -2501,10 +2506,14 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
                       });
                     }
                   } catch (err) {
-                    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-                      operation: "tool-call-credential-vector-store",
-                      subsystem: "credentials",
-                    });
+                    const asErr = err instanceof Error ? err : new Error(String(err));
+                    // Circuit breaker open = provider temporarily unavailable, not a real failure (#458)
+                    if (!isOllamaCircuitBreakerOpen(asErr)) {
+                      capturePluginError(asErr, {
+                        operation: "tool-call-credential-vector-store",
+                        subsystem: "credentials",
+                      });
+                    }
                     api.logger.warn(`memory-hybrid: vector store for credential fact failed: ${err}`);
                   }
                   if (logCaptures) {
