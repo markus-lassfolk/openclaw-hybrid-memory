@@ -7,11 +7,7 @@
 
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk";
 import { getCronModelConfig, getDefaultCronModel } from "../config.js";
-import {
-  estimateTokens,
-  estimateTokensForDisplay,
-  formatProgressiveIndexLine,
-} from "../utils/text.js";
+import { estimateTokens, estimateTokensForDisplay, formatProgressiveIndexLine } from "../utils/text.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import type { LifecycleContext, RecallResult } from "./types.js";
 
@@ -68,10 +64,7 @@ async function runInjection(
     cap: number,
     startPosition: number,
   ): { lines: string[]; ids: string[]; usedTokens: number } {
-    const totalTokens = list.reduce(
-      (sum, x) => sum + estimateTokensForDisplay(x.entry.summary || x.entry.text),
-      0,
-    );
+    const totalTokens = list.reduce((sum, x) => sum + estimateTokensForDisplay(x.entry.summary || x.entry.text), 0);
     const header = `📋 Available memories (${list.length} matches, ~${totalTokens} tokens total):\n`;
     let usedTokens = estimateTokens(header);
     const indexEntries: { line: string; id: string; category: string; position: number }[] = [];
@@ -126,7 +119,8 @@ async function runInjection(
     const pinnedBudget = Math.min(maxTokens, Math.floor(maxTokens * 0.6));
     for (const x of pinned) {
       let text = useSummaryInInjection && x.entry.summary ? x.entry.summary : x.entry.text;
-      if (maxPerMemoryChars > 0 && text.length > maxPerMemoryChars) text = text.slice(0, maxPerMemoryChars).trim() + "…";
+      if (maxPerMemoryChars > 0 && text.length > maxPerMemoryChars)
+        text = text.slice(0, maxPerMemoryChars).trim() + "…";
       const line = `- [${x.backend}/${x.entry.category}] ${text}`;
       const lineTokens = estimateTokens(line + "\n");
       if (pinnedTokens + lineTokens > pinnedBudget) break;
@@ -138,8 +132,7 @@ async function runInjection(
         ? `\nOther memories (index — use memory_recall(id: N) or memory_recall("query") to fetch):\n`
         : `<relevant-memories format="index">\n`;
     const indexFooter = `\n→ Use memory_recall("query"), memory_recall(id: N), or entity/key to fetch full details.\n</relevant-memories>`;
-    const indexBudget =
-      indexCap - estimateTokens(pinnedHeader + pinnedPart.join("\n") + indexIntro + indexFooter);
+    const indexBudget = indexCap - estimateTokens(pinnedHeader + pinnedPart.join("\n") + indexIntro + indexFooter);
     const { lines: indexLines, ids: indexIds } = buildProgressiveIndex(rest, Math.max(100, indexBudget), 1);
     lastProgressiveIndexIdsRef.length = 0;
     lastProgressiveIndexIdsRef.push(...indexIds);
@@ -162,23 +155,27 @@ async function runInjection(
     api.logger.info?.(
       `memory-hybrid: progressive_hybrid — ${pinnedPart.length} pinned in full, index of ${indexIds.length} (~${pinnedTokens + estimateTokens(indexContent)} tokens)`,
     );
-    return { prependContext: markDegradedLatency(wrapRecalledContext(issueBlock + hotBlock + withProcedures(fullContent))) };
+    return {
+      prependContext: markDegradedLatency(wrapRecalledContext(issueBlock + hotBlock + withProcedures(fullContent))),
+    };
   }
 
   if (injectionFormat === "progressive") {
     const indexHeader = `<relevant-memories format="index">\n`;
     const indexFooter = `\n→ Use memory_recall("query"), memory_recall(id: N), or entity/key to fetch full details.\n</relevant-memories>`;
-    const { lines: indexLines, ids: indexIds, usedTokens: indexTokens } = buildProgressiveIndex(
-      candidates,
-      indexCap - estimateTokens(indexHeader + indexFooter),
-      1,
-    );
+    const {
+      lines: indexLines,
+      ids: indexIds,
+      usedTokens: indexTokens,
+    } = buildProgressiveIndex(candidates, indexCap - estimateTokens(indexHeader + indexFooter), 1);
     if (indexLines.length === 0) {
       if (procedureBlock) {
         return { prependContext: markDegradedLatency(wrapRecalledContext(issueBlock + hotBlock + procedureBlock)) };
       }
       const combinedContext = issueBlock + hotBlock;
-      return combinedContext ? { prependContext: markDegradedLatency(wrapRecalledContext(combinedContext)) } : undefined;
+      return combinedContext
+        ? { prependContext: markDegradedLatency(wrapRecalledContext(combinedContext)) }
+        : undefined;
     }
     lastProgressiveIndexIdsRef.length = 0;
     lastProgressiveIndexIdsRef.push(...indexIds);
@@ -247,7 +244,8 @@ async function runInjection(
     const fullBullets = candidates
       .map((x) => {
         let text = useSummaryInInjection && x.entry.summary ? x.entry.summary : x.entry.text;
-        if (maxPerMemoryChars > 0 && text.length > maxPerMemoryChars) text = text.slice(0, maxPerMemoryChars).trim() + "…";
+        if (maxPerMemoryChars > 0 && text.length > maxPerMemoryChars)
+          text = text.slice(0, maxPerMemoryChars).trim() + "…";
         return injectionFormat === "minimal"
           ? `- ${text}`
           : injectionFormat === "short"
@@ -307,8 +305,5 @@ async function runInjection(
 }
 
 function withTimeout<T>(ms: number, fn: () => Promise<T>): Promise<T | undefined> {
-  return Promise.race([
-    fn(),
-    new Promise<undefined>((resolve) => setTimeout(() => resolve(undefined), ms)),
-  ]);
+  return Promise.race([fn(), new Promise<undefined>((resolve) => setTimeout(() => resolve(undefined), ms))]);
 }

@@ -104,8 +104,5 @@ async function runSetup(
 }
 
 function withTimeout<T>(ms: number, fn: () => Promise<T>): Promise<T | null> {
-  return Promise.race([
-    fn(),
-    new Promise<null>((resolve) => setTimeout(() => resolve(null), ms)),
-  ]);
+  return Promise.race([fn(), new Promise<null>((resolve) => setTimeout(() => resolve(null), ms))]);
 }

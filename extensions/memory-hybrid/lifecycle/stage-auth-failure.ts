@@ -22,12 +22,7 @@ export function registerAuthFailureRecall(
   ctx: LifecycleContext,
   sessionState: SessionState,
 ): void {
-  if (
-    !ctx.cfg.autoRecall.enabled ||
-    !ctx.cfg.autoRecall.authFailure.enabled ||
-    ctx.cfg.verbosity === "silent"
-  )
-    return;
+  if (!ctx.cfg.autoRecall.enabled || !ctx.cfg.autoRecall.authFailure.enabled || ctx.cfg.verbosity === "silent") return;
 
   const customPatterns: AuthFailurePattern[] = [];
   for (const p of ctx.cfg.autoRecall.authFailure.patterns) {
@@ -121,9 +116,7 @@ export function registerAuthFailureRecall(
         if (fact.category === "technical") return true;
         if (fact.entity?.toLowerCase() === "credentials") return true;
         const tags = fact.tags || [];
-        return tags.some((t) =>
-          ["credential", "ssh", "token", "api", "auth", "password"].includes(t.toLowerCase()),
-        );
+        return tags.some((t) => ["credential", "ssh", "token", "api", "auth", "password"].includes(t.toLowerCase()));
       });
 
       if (!ctx.cfg.autoRecall.authFailure.includeVaultHints) {

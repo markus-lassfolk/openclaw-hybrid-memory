@@ -101,7 +101,9 @@ export async function consumePendingTaskSignals(
       return byDescription[0];
     }
     if (byDescription.length > 1) {
-      logger?.warn?.(`memory-hybrid: multiple active tasks match description ${signal.taskRef}; leaving signal pending`);
+      logger?.warn?.(
+        `memory-hybrid: multiple active tasks match description ${signal.taskRef}; leaving signal pending`,
+      );
       return null;
     }
     return null;
@@ -150,7 +152,10 @@ export async function consumePendingTaskSignals(
 
         if (signal.signal !== "blocked" && signal.signal !== "escalate" && signal.signal !== "update") {
           if (isSignalExpired(signal)) expiredSignals.push(signal);
-          else logger?.warn?.(`memory-hybrid: unhandled task signal "${signal.signal}" for ${signal.taskRef}; leaving pending`);
+          else
+            logger?.warn?.(
+              `memory-hybrid: unhandled task signal "${signal.signal}" for ${signal.taskRef}; leaving pending`,
+            );
           continue;
         }
 
@@ -255,10 +260,7 @@ export function createStaleSweepTimer(sessionState: SessionState): ReturnType<ty
 /**
  * Return a dispose function that clears the sweep timer and all session maps.
  */
-export function getDispose(
-  timerRef: ReturnType<typeof setInterval> | null,
-  sessionState: SessionState,
-): () => void {
+export function getDispose(timerRef: ReturnType<typeof setInterval> | null, sessionState: SessionState): () => void {
   return () => {
     if (timerRef) clearInterval(timerRef);
     sessionState.clearAll?.();
@@ -380,7 +382,9 @@ export function registerCleanupHandlers(
               const memoryDir = join(workspaceRoot, "memory");
               await flushCompletedTaskToMemory(completed, memoryDir).catch(() => {});
             }
-            api.logger.info?.(`memory-hybrid: auto-checkpoint — updated task [${label}] to ${newStatus} on subagent_end`);
+            api.logger.info?.(
+              `memory-hybrid: auto-checkpoint — updated task [${label}] to ${newStatus} on subagent_end`,
+            );
           }
         }
       } else {

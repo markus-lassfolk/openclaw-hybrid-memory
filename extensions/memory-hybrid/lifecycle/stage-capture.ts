@@ -26,9 +26,7 @@ const CAPTURE_STAGE_TIMEOUT_MS = 60_000;
 function withTimeout<T>(ms: number, fn: () => Promise<T>): Promise<T | null> {
   return Promise.race([
     fn(),
-    new Promise<null>((_, reject) =>
-      setTimeout(() => reject(new Error(`stage-capture timeout after ${ms}ms`)), ms),
-    ),
+    new Promise<null>((_, reject) => setTimeout(() => reject(new Error(`stage-capture timeout after ${ms}ms`)), ms)),
   ]).catch(() => null);
 }
 
@@ -124,9 +122,7 @@ async function runCapture(
         hotMaxFacts: ctx.cfg.memoryTiering.hotMaxFacts,
       });
       if (counts.hot + counts.warm + counts.cold > 0) {
-        api.logger.info?.(
-          `memory-hybrid: tier compaction — hot=${counts.hot} warm=${counts.warm} cold=${counts.cold}`,
-        );
+        api.logger.info?.(`memory-hybrid: tier compaction — hot=${counts.hot} warm=${counts.warm} cold=${counts.cold}`);
       }
     } catch (err) {
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
@@ -194,16 +190,9 @@ async function runCapture(
             api.logger.warn(`memory-hybrid: auto-capture embedding failed: ${err}`);
           }
           if (ctx.cfg.store.classifyBeforeWrite) {
-            let similarFacts = vector
-              ? await ctx.findSimilarByEmbedding(ctx.vectorDb, ctx.factsDb, vector, 3)
-              : [];
+            let similarFacts = vector ? await ctx.findSimilarByEmbedding(ctx.vectorDb, ctx.factsDb, vector, 3) : [];
             if (similarFacts.length === 0) {
-              similarFacts = ctx.factsDb.findSimilarForClassification(
-                textToStore,
-                extracted.entity,
-                extracted.key,
-                3,
-              );
+              similarFacts = ctx.factsDb.findSimilarForClassification(textToStore, extracted.entity, extracted.key, 3);
             }
             if (similarFacts.length > 0) {
               try {

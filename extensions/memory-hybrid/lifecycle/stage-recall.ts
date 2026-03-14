@@ -265,7 +265,9 @@ async function runRecall(
                   });
                 }
                 if (!isOllamaOOM(hydeErr)) {
-                  api.logger.warn?.(`memory-hybrid: ${opts?.errorPrefix ?? ""}HyDE generation failed, using raw query: ${err}`);
+                  api.logger.warn?.(
+                    `memory-hybrid: ${opts?.errorPrefix ?? ""}HyDE generation failed, using raw query: ${err}`,
+                  );
                 }
               }
             }
@@ -559,9 +561,7 @@ async function runRecall(
     }
 
     if (directiveMatches.length > 0) {
-      candidates = candidates.map((r) =>
-        directivePriorityIds.has(r.entry.id) ? { ...r, score: r.score * 1.25 } : r,
-      );
+      candidates = candidates.map((r) => (directivePriorityIds.has(r.entry.id) ? { ...r, score: r.score * 1.25 } : r));
       candidates.sort((a, b) => {
         const s = b.score - a.score;
         if (s !== 0) return s;

@@ -2006,9 +2006,9 @@ export async function runVerifyForCli(
               ),
             },
             featureGates: {
-            "sensorSweep.enabled": cfg.sensorSweep?.enabled === true,
-            "nightlyCycle.enabled": cfg.nightlyCycle?.enabled === true,
-          },
+              "sensorSweep.enabled": cfg.sensorSweep?.enabled === true,
+              "nightlyCycle.enabled": cfg.nightlyCycle?.enabled === true,
+            },
           });
           added.forEach((name) => applied.push(`Added ${name} job to ${cronStorePath}`));
           normalized.forEach((name) => applied.push(`Normalized ${name} job (schedule/pluginJobId)`));
@@ -4869,9 +4869,9 @@ export async function runUpgradeForCli(ctx: HandlerContext, requestedVersion?: s
         ),
       },
       featureGates: {
-            "sensorSweep.enabled": cfg.sensorSweep?.enabled === true,
-            "nightlyCycle.enabled": cfg.nightlyCycle?.enabled === true,
-          },
+        "sensorSweep.enabled": cfg.sensorSweep?.enabled === true,
+        "nightlyCycle.enabled": cfg.nightlyCycle?.enabled === true,
+      },
     });
     if (added.length > 0 || normalized.length > 0) {
       logger?.info?.(

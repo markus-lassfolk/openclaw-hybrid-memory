@@ -4,11 +4,7 @@
 
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk";
 import { capturePluginError } from "../services/error-reporter.js";
-import {
-  detectFrustration,
-  buildFrustrationHint,
-  exportAsImplicitSignals,
-} from "../services/frustration-detector.js";
+import { detectFrustration, buildFrustrationHint, exportAsImplicitSignals } from "../services/frustration-detector.js";
 import { generateToolHint, ToolEffectivenessStore } from "../services/tool-effectiveness.js";
 import type { LifecycleContext, SessionState } from "./types.js";
 

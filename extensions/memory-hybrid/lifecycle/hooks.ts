@@ -12,11 +12,7 @@ import { runSetupStage } from "./stage-setup.js";
 import { runRecallStage } from "./stage-recall.js";
 import { runInjectionStage } from "./stage-injection.js";
 import { runCaptureStage } from "./stage-capture.js";
-import {
-  registerCleanupHandlers,
-  createStaleSweepTimer,
-  getDispose,
-} from "./stage-cleanup.js";
+import { registerCleanupHandlers, createStaleSweepTimer, getDispose } from "./stage-cleanup.js";
 import { registerActiveTaskInjection } from "./stage-active-task.js";
 import { registerAuthFailureRecall } from "./stage-auth-failure.js";
 import { registerCredentialHint } from "./stage-credential-hint.js";
