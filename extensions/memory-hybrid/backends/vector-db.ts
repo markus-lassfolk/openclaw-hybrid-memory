@@ -456,6 +456,8 @@ export class VectorDB {
    * Increment the session refcount. Called when an agent session begins using this VectorDB.
    * If the DB was previously closed (e.g. by a premature stop()), resets the closed flag so
    * the next operation auto-reconnects via ensureInitialized().
+   * Note: The main plugin lifecycle uses a single long-lived connection and no longer calls
+   * open()/removeSession() per turn; these remain for tests and backward compatibility.
    */
   open(): void {
     this.sessionCount++;

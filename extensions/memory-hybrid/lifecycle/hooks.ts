@@ -381,8 +381,6 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
   const STALE_SESSION_TTL_MS = 30 * 60 * 1000; // 30 minutes
   /** How often to run the stale session sweep (ms). */
   const STALE_SWEEP_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
-  /** Track sessions that were swept to prevent double-decrement of VectorDB refcount. */
-  const sweptSessions = new Set<string>();
   /** Counter to generate unique session instance IDs. */
   let sessionInstanceCounter = 0;
   /** Map session keys to their current instance ID to distinguish reused keys. */
@@ -477,16 +475,6 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
       }
     }
 
-    // Issue #463: Bound sweptSessions
-    if (sweptSessions.size > MAX_TRACKED_SESSIONS) {
-      const excess = sweptSessions.size - MAX_TRACKED_SESSIONS;
-      const keys = sweptSessions.keys();
-      for (let i = 0; i < excess; i++) {
-        const { value } = keys.next();
-        if (value) sweptSessions.delete(value);
-      }
-    }
-
     // Issue #463: Bound sessionKeyToInstance
     if (sessionKeyToInstance.size > MAX_TRACKED_SESSIONS) {
       const excess = sessionKeyToInstance.size - MAX_TRACKED_SESSIONS;
@@ -510,22 +498,7 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
 
     for (const [sessionKey, lastActive] of sessionLastActivity) {
       if (lastActive < cutoff) {
-        // Capture the instance ID before clearing state
-        const instanceId = sessionKeyToInstance.get(sessionKey);
         clearSessionState(sessionKey);
-        // Decrement VectorDB refcount for orphaned sessions (open() was called
-        // on before_agent_start but removeSession() never fired on agent_end)
-        try {
-          ctx.vectorDb.removeSession();
-          // Track that this session instance's refcount was already decremented to prevent
-          // double-decrement if agent_end fires later for a long-running turn.
-          // Use composite key (sessionKey:instanceId) to distinguish reused session keys.
-          if (instanceId !== undefined) {
-            sweptSessions.add(`${sessionKey}:${instanceId}`);
-          }
-        } catch {
-          // Non-fatal — refcount may already be 0
-        }
         swept++;
       }
     }
@@ -572,9 +545,7 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
     // Agent detection must run independently of autoRecall
     // to support multi-agent scoping even when autoRecall is disabled
     api.on("before_agent_start", async (event: unknown) => {
-      // Increment VectorDB refcount so a concurrent session teardown does not prematurely
-      // close the shared singleton while this session is still active (fixes issue #106).
-      ctx.vectorDb.open();
+      // VectorDB is single long-lived connection; no per-session open/close (Phase 1 lifecycle fix).
 
       // Issue #463: Track session activity for stale session sweep.
       const touchKey = resolveSessionKey(event, api) ?? currentAgentIdRef.value ?? "default";
@@ -1333,8 +1304,8 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
             if (ambientCfg.enabled && ambientCfg.multiQuery && allIds.length > 0) {
               ambientSeenFacts.markSeen(allIds);
             }
-            // Hebbian: Strengthen RELATED_TO links between facts recalled together
-            if (ctx.cfg.graph.enabled && allIds.length >= 2) {
+            // Hebbian: Strengthen RELATED_TO links between facts recalled together (opt-in; default off)
+            if (ctx.cfg.graph.enabled && ctx.cfg.graph.strengthenOnRecall && allIds.length >= 2) {
               for (let i = 0; i < allIds.length; i++) {
                 for (let j = i + 1; j < allIds.length; j++) {
                   ctx.factsDb.createOrStrengthenRelatedLink(allIds[i], allIds[j]);
@@ -1375,8 +1346,8 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
             if (ambientCfg.enabled && ambientCfg.multiQuery && includedIds.length > 0) {
               ambientSeenFacts.markSeen(includedIds);
             }
-            // Hebbian: Strengthen RELATED_TO links between facts recalled together
-            if (ctx.cfg.graph.enabled && includedIds.length >= 2) {
+            // Hebbian: Strengthen RELATED_TO links between facts recalled together (opt-in; default off)
+            if (ctx.cfg.graph.enabled && ctx.cfg.graph.strengthenOnRecall && includedIds.length >= 2) {
               for (let i = 0; i < includedIds.length; i++) {
                 for (let j = i + 1; j < includedIds.length; j++) {
                   ctx.factsDb.createOrStrengthenRelatedLink(includedIds[i], includedIds[j]);
@@ -1431,8 +1402,8 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
           if (ambientCfg.enabled && ambientCfg.multiQuery) {
             ambientSeenFacts.markSeen(injectedIds);
           }
-          // Hebbian: Strengthen RELATED_TO links between facts recalled together
-          if (ctx.cfg.graph.enabled && injectedIds.length >= 2) {
+          // Hebbian: Strengthen RELATED_TO links between facts recalled together (opt-in; default off)
+          if (ctx.cfg.graph.enabled && ctx.cfg.graph.strengthenOnRecall && injectedIds.length >= 2) {
             for (let i = 0; i < injectedIds.length; i++) {
               for (let j = i + 1; j < injectedIds.length; j++) {
                 ctx.factsDb.createOrStrengthenRelatedLink(injectedIds[i], injectedIds[j]);
@@ -2534,25 +2505,11 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
       });
     }
 
-    // Decrement VectorDB refcount on session end. Uses removeSession() instead of close() so the
-    // shared singleton stays open while other concurrent sessions are still active (fixes issue #106).
-    // Registered last so all agent_end handlers that use vectorDb (auto-capture, credential
-    // auto-detect, tool-call credential) run first; otherwise the last session would close the DB
-    // before they run, causing an unnecessary close-reconnect cycle and DB left open with refcount zero.
-    // OpenClaw's event emitter awaits each handler in registration order, so being registered last
-    // guarantees this fires only after the async handlers above have fully resolved.
+    // VectorDB is single long-lived; no per-session refcount (Phase 1). Session state cleanup
+    // is handled by clearSessionState() in sweepStaleSessions and in agent_end below.
     api.on("agent_end", async (event: unknown) => {
       const sessionKey = resolveSessionKey(event, api) ?? currentAgentIdRef.value ?? "default";
-      // Only decrement if this session instance wasn't already swept by sweepStaleSessions().
-      // Use composite key (sessionKey:instanceId) to distinguish reused session keys.
-      const instanceId = sessionKeyToInstance.get(sessionKey);
-      const compositeKey = instanceId !== undefined ? `${sessionKey}:${instanceId}` : sessionKey;
-      if (!sweptSessions.has(compositeKey)) {
-        ctx.vectorDb.removeSession();
-      } else {
-        // Clean up the swept marker now that agent_end has fired
-        sweptSessions.delete(compositeKey);
-      }
+      clearSessionState(sessionKey);
     });
   };
 
@@ -2573,7 +2530,6 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
     frustrationStateMap.clear();
     authFailureRecallsThisSession.clear();
     sessionLastActivity.clear();
-    sweptSessions.clear();
   };
 
   return { onAgentStart, onAgentEnd, onFrustrationDetect, dispose };

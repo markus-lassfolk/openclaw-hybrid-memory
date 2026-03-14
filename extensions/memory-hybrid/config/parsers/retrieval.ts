@@ -261,7 +261,7 @@ export function parseQueryExpansionConfig(cfg: Record<string, unknown>): QueryEx
     );
   }
 
-  // queryExpansion.enabled wins when explicitly set; otherwise fall through to HyDE migration
+  // Default: disabled. Enable only when explicitly set or via legacy search.hydeEnabled migration.
   const enabled = qeExplicitlySet ? qeRaw.enabled === true : hydeEnabled;
 
   const rawMode = typeof qeRaw?.mode === "string" ? qeRaw.mode.trim() : "";

@@ -47,6 +47,7 @@ export function parseGraphConfig(cfg: Record<string, unknown>): GraphConfig {
       ? graphRaw.coOccurrenceWeight
       : 0.3,
     autoSupersede: graphRaw?.autoSupersede !== false,
+    strengthenOnRecall: graphRaw?.strengthenOnRecall === true,
   };
 }
 
@@ -562,7 +563,7 @@ export function parseFrustrationDetectionConfig(cfg: Record<string, unknown>): F
   const thresholdsRaw = raw?.adaptationThresholds as Record<string, unknown> | undefined;
 
   return {
-    enabled: raw?.enabled !== false,
+    enabled: raw?.enabled === true,
     windowSize:
       typeof raw?.windowSize === "number" && raw.windowSize >= 2 && raw.windowSize <= 50
         ? Math.floor(raw.windowSize)

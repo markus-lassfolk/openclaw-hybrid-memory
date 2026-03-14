@@ -1371,9 +1371,9 @@ describe("hybridConfigSchema.parse", () => {
     expect(result.queryExpansion.model).toBe("new-model");
   });
 
-  it("migration shim (#160): queryExpansion enabled by default when no mode (full preset)", () => {
+  it("migration shim (#160): queryExpansion disabled by default when no mode (Phase 1: full preset no longer enables it)", () => {
     const result = hybridConfigSchema.parse({ ...validBase });
-    expect(result.queryExpansion.enabled).toBe(true);
+    expect(result.queryExpansion.enabled).toBe(false);
   });
 
   it("migration shim (#160): explicit queryExpansion.enabled=false overrides search.hydeEnabled=true", () => {
@@ -1640,9 +1640,8 @@ describe("hybridConfigSchema.parse", () => {
         mode: "full" as ConfigMode,
       });
       expect(result.mode).toBe("full");
-      // The full preset now sets queryExpansion.enabled directly (not via deprecated search.hydeEnabled)
-      expect(result.queryExpansion.enabled).toBe(true);
-      // No deprecated search block should be set by the preset
+      // Phase 1: full preset no longer enables query expansion by default
+      expect(result.queryExpansion.enabled).toBe(false);
       expect(result.search?.hydeEnabled).toBeFalsy();
     });
 

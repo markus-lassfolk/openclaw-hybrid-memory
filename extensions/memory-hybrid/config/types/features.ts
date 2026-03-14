@@ -4,12 +4,14 @@ export type GraphConfig = {
   autoLink: boolean;            // Auto-create RELATED_TO links during storage
   autoLinkMinScore: number;     // Min similarity score for auto-linking (default 0.7)
   autoLinkLimit: number;        // Max similar facts to link per storage (default 3)
-  maxTraversalDepth: number;    // Max hops for graph traversal in recall (default 2)
+  maxTraversalDepth: number;   // Max hops for graph traversal in recall (default 2)
   useInRecall: boolean;         // Enable graph traversal in memory_recall (default true)
   /** Weight for temporal co-occurrence RELATES_TO edges (default 0.3) */
   coOccurrenceWeight: number;
   /** When true, auto-create SUPERSEDES edge + supersede old fact when entity+key conflict detected (default true) */
   autoSupersede: boolean;
+  /** When true, strengthen RELATED_TO links between facts recalled together (Hebbian). Default false to avoid read-path mutation. */
+  strengthenOnRecall: boolean;
 };
 
 /** GraphRAG retrieval configuration (Issue #145). */
