@@ -534,7 +534,7 @@ export async function runPassiveObserver(
         const isTimeout = /timed out|llm request timeout|request was aborted|Request was aborted|ETIMEDOUT|ECONNREFUSED/i.test(errObj.message);
         
         // Skip reporting transient provider errors to GlitchTip
-        if (!is500Like(errObj) && !isOllamaOOM(errObj) && !isTimeout && !is403Like(errObj) && !is429OrWrapped(errObj)) {
+        if (!is500Like(errObj) && !isOllamaOOM(errObj) && !isTimeout && !is403Like(errObj) && !is404Like(errObj) && !is429OrWrapped(errObj)) {
           capturePluginError(errObj, {
             operation: 'passive-observer-llm',
             subsystem: 'passive-observer',
