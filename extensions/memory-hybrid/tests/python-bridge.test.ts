@@ -41,11 +41,14 @@ class FakeProcess extends EventEmitter {
 
 let fakeProc: FakeProcess;
 
+const { spawnSyncMock } = vi.hoisted(() => ({ spawnSyncMock: vi.fn() }));
+
 vi.mock("node:child_process", () => ({
   spawn: vi.fn(() => {
     fakeProc = new FakeProcess();
     return fakeProc;
   }),
+  spawnSync: spawnSyncMock,
 }));
 
 // PythonBridge uses readline over stdout — re-export readline to pass through
@@ -220,6 +223,73 @@ describe("PythonBridge", () => {
     proc2.emit("exit", 2, null);
 
     await expect(convertPromise).rejects.toThrow(/Python worker exited.*code=1/i);
+  });
+
+  // ---------------------------------------------------------------------------
+  // checkDependencies()
+  // ---------------------------------------------------------------------------
+
+  describe("checkDependencies", () => {
+    beforeEach(() => {
+      spawnSyncMock.mockReset();
+    });
+
+    it("returns ok=true when all packages import successfully", () => {
+      spawnSyncMock.mockReturnValue({ status: 0, stderr: "", stdout: "", error: undefined });
+      const result = bridge.checkDependencies();
+      expect(result.ok).toBe(true);
+      expect(result.missing).toEqual([]);
+      expect(result.spawnError).toBeUndefined();
+    });
+
+    it("returns missing package when stderr contains ModuleNotFoundError", () => {
+      spawnSyncMock.mockReturnValue({
+        status: 1,
+        stderr: "ModuleNotFoundError: No module named 'markitdown'",
+        stdout: "",
+        error: undefined,
+      });
+      const result = bridge.checkDependencies();
+      expect(result.ok).toBe(false);
+      expect(result.missing).toContain("markitdown");
+      expect(result.spawnError).toBeUndefined();
+    });
+
+    it("returns missing package when stderr contains ImportError", () => {
+      spawnSyncMock.mockReturnValue({
+        status: 1,
+        stderr: "ImportError: cannot import name 'markitdown'",
+        stdout: "",
+        error: undefined,
+      });
+      const result = bridge.checkDependencies();
+      expect(result.ok).toBe(false);
+      expect(result.missing).toContain("markitdown");
+      expect(result.spawnError).toBeUndefined();
+    });
+
+    it("returns spawnError when Python binary is not found", () => {
+      const spawnErr = new Error("spawnSync python3 ENOENT");
+      spawnSyncMock.mockReturnValue({ status: null, stderr: "", stdout: "", error: spawnErr });
+      const result = bridge.checkDependencies();
+      expect(result.ok).toBe(false);
+      expect(result.missing).toEqual([]);
+      expect(result.spawnError).toBe(spawnErr);
+    });
+
+    it("returns spawnError for non-zero exit without ImportError (e.g. permissions)", () => {
+      spawnSyncMock.mockReturnValue({
+        status: 1,
+        stderr: "PermissionError: [Errno 13] Permission denied",
+        stdout: "",
+        error: undefined,
+      });
+      const result = bridge.checkDependencies();
+      expect(result.ok).toBe(false);
+      expect(result.missing).toEqual([]);
+      expect(result.spawnError).toBeInstanceOf(Error);
+      expect(result.spawnError!.message).toMatch(/status=1/);
+    });
   });
 
   it("shutdown sends shutdown RPC then kills process", async () => {

@@ -10,7 +10,7 @@
  *   - Gracefully shut down via shutdown()
  */
 
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { createInterface } from "node:readline";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { dirname, join } from "node:path";
@@ -221,5 +221,45 @@ export class PythonBridge {
 
   get isRunning(): boolean {
     return this.proc !== null && !this.proc.killed;
+  }
+
+  /**
+   * Checks that required Python packages are installed.
+   *
+   * Runs synchronously (fast — just a python import check) so it can be called
+   * at plugin startup to surface missing dependencies early rather than on first use.
+   *
+   * @returns Object with `ok` flag and list of any `missing` packages.
+   */
+  checkDependencies(): { ok: boolean; missing: string[]; spawnError?: Error } {
+    const required = ["markitdown"];
+    const missing: string[] = [];
+    for (const pkg of required) {
+      const result = spawnSync(this.pythonPath, ["-c", `import ${pkg}`], {
+        timeout: 5_000,
+        encoding: "utf8",
+      });
+      if (result.error) {
+        return { ok: false, missing, spawnError: result.error };
+      }
+      if (result.status !== 0) {
+        const output = (result.stderr ?? "") + (result.stdout ?? "");
+        if (output.includes("ImportError") || output.includes("ModuleNotFoundError")) {
+          missing.push(pkg);
+        } else {
+          // Non-zero exit for a reason other than a missing import (e.g. permissions,
+          // bad Python installation). Treat as a spawn-level failure so callers can
+          // surface a more actionable message.
+          return {
+            ok: false,
+            missing,
+            spawnError: new Error(
+              `Python import check failed (status=${result.status}): ${output.slice(0, 200)}`,
+            ),
+          };
+        }
+      }
+    }
+    return { ok: missing.length === 0, missing };
   }
 }
