@@ -271,3 +271,53 @@ jobs:
       - uses: actions/checkout@v6
       - name: Run architectural lint
         run: cd extensions/memory-hybrid && npm run lint:arch
+
+  # Passthrough jobs: satisfy required status checks when no code changes detected
+  # (e.g. CI-only, docs, or dependency PRs where path filter skips the real jobs)
+  typecheck-pass-22:
+    name: Type Check (Node 22)
+    needs: changes
+    if: needs.changes.outputs.code != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "No code changes detected — required check satisfied"
+
+  typecheck-pass-24:
+    name: Type Check (Node 24)
+    needs: changes
+    if: needs.changes.outputs.code != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "No code changes detected — required check satisfied"
+
+  lint-pass-22:
+    name: Lint (Node 22)
+    needs: changes
+    if: needs.changes.outputs.code != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "No code changes detected — required check satisfied"
+
+  lint-pass-24:
+    name: Lint (Node 24)
+    needs: changes
+    if: needs.changes.outputs.code != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "No code changes detected — required check satisfied"
+
+  test-pass-22:
+    name: Test (Node 22)
+    needs: changes
+    if: needs.changes.outputs.code != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "No code changes detected — required check satisfied"
+
+  test-pass-24:
+    name: Test (Node 24)
+    needs: changes
+    if: needs.changes.outputs.code != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "No code changes detected — required check satisfied"
