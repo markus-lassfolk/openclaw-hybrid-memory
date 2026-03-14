@@ -1129,12 +1129,11 @@ export class ChainEmbeddingProvider implements EmbeddingProvider {
     let currentIndex = 0;
     this.modelName = this.providers[0].modelName;
     const collectedErrors: Error[] = [];
-    const now = Date.now();
     while (currentIndex < this.providers.length) {
       // Skip providers in cooldown (config errors like 401/403/404 or transient errors). Expire stale entries.
       const cooldownEntry = this.failedUntil.get(currentIndex);
       if (cooldownEntry !== undefined) {
-        if (now < cooldownEntry.expiry) {
+        if (Date.now() < cooldownEntry.expiry) {
           // Still in cooldown — add the original error to collectedErrors so safeEmbed can suppress correctly
           collectedErrors.push(cooldownEntry.error);
           currentIndex++;
