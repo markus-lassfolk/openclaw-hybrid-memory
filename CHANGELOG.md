@@ -18,6 +18,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.3.151] - 2026-03-15
+
+### Fixed
+
+- **Plugin config schema (OpenClaw validation):** `config.mode` enum in `openclaw.plugin.json` now includes `local`, `minimal`, `enhanced`, `complete` so configs using the new preset names pass OpenClaw validation. Legacy values (`essential`, `normal`, `expert`, `full`) remain accepted.
+
+### Changed
+
+- **Verify output:** Full embedding and LLM tables always visible (not suppressed in quiet). LLM table shows one row per model (from config + reference list), with Model, Provider, Auth, Source, In config, Enabled. Reference models (Opus, GPT-5.4, Codex, o3, etc.) always listed.
+
+---
+
 ## [2026.3.150] - 2026-03-15
 
 ### Release summary (user-friendly)
@@ -726,7 +738,8 @@ Major feature release including procedural memory, directive extraction, reinfor
 
 ---
 
-[Unreleased]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.3.150...HEAD
+[Unreleased]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.3.151...HEAD
+[2026.3.151]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/releases/tag/v2026.3.151
 [2026.3.150]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/releases/tag/v2026.3.150
 [2026.3.140]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/releases/tag/v2026.3.140
 [2026.3.110]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/releases/tag/v2026.3.110
