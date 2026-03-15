@@ -210,15 +210,21 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
   const validModes: ConfigMode[] = ["local", "minimal", "enhanced", "complete"];
   const defaultMode: ConfigMode = "local"; // cost-safety: no LLM by default; set minimal/enhanced/complete to enable
   const deprecatedModeNames = ["essential", "normal", "expert", "full"] as const;
+  const deprecatedModeMapping: Record<string, ConfigMode> = {
+    essential: "local",
+    normal: "minimal",
+    expert: "enhanced",
+    full: "complete",
+  };
   let appliedMode: ConfigMode;
   if (typeof modeRaw === "string" && modeRaw.trim() !== "") {
     const trimmed = modeRaw.trim();
     if (validModes.includes(trimmed as ConfigMode)) {
       appliedMode = trimmed as ConfigMode;
     } else if (deprecatedModeNames.includes(trimmed as (typeof deprecatedModeNames)[number])) {
-      appliedMode = "local";
+      appliedMode = deprecatedModeMapping[trimmed] ?? "local";
       console.warn(
-        `memory-hybrid: Config mode "${trimmed}" is deprecated and has been interpreted as "local" for cost-safety. Set mode to "minimal", "enhanced", or "complete" to enable LLM features. Update your config to use the new mode names.`,
+        `memory-hybrid: Config mode "${trimmed}" is deprecated and has been mapped to "${appliedMode}". Update your config to use the new mode names: local, minimal, enhanced, or complete.`,
       );
     } else {
       throw new Error(`memory-hybrid config: invalid mode "${modeRaw}"; expected one of: ${validModes.join(", ")}`);

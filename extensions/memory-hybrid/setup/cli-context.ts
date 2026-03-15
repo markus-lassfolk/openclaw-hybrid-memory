@@ -82,7 +82,6 @@ Commands by category:
     extract-directives   Extract directive rules from sessions
     extract-reinforcement  Extract reinforcement from praise
     generate-auto-skills   Generate skills from procedures
-    skills-suggest         Cluster procedures, draft skills to auto-generated/ (--days, --dry-run)
     generate-proposals    Generate persona proposals from reflection (--dry-run, --verbose)
 
   Reflection & classification
@@ -147,7 +146,6 @@ export const HYBRID_MEM_CLI_COMMANDS = [
   "hybrid-mem extract-daily",
   "hybrid-mem extract-procedures",
   "hybrid-mem generate-auto-skills",
-  "hybrid-mem skills-suggest",
   "hybrid-mem generate-proposals",
   "hybrid-mem extract-directives",
   "hybrid-mem extract-reinforcement",
