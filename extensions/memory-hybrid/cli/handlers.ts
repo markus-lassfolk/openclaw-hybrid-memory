@@ -1316,6 +1316,22 @@ export async function runVerifyForCli(
     ...getLLMModelPreference(cronCfg, "default"),
     ...getLLMModelPreference(cronCfg, "heavy"),
   ];
+  // Reference models always shown in verify so users see Opus, GPT-5.4, Codex, o3, etc. with auth/source
+  const VERIFY_REFERENCE_MODELS: string[] = [
+    "anthropic/claude-opus-4-6",
+    "anthropic/claude-sonnet-4-6",
+    "anthropic/claude-haiku-4-5-20251001",
+    "openai/gpt-5.4",
+    "openai/gpt-4.1-mini",
+    "openai/gpt-4.1-nano",
+    "openai/o3",
+    "openai/o1",
+    "openai/codex",
+    "google/gemini-3.1-pro-preview",
+    "google/gemini-2.5-flash",
+    "google/gemini-2.0-flash-lite",
+    "minimax/MiniMax-M2.5",
+  ];
   const providerFromModel = (m: string) => {
     if (m.includes("/")) {
       return m.split("/")[0].toLowerCase();
@@ -1387,8 +1403,9 @@ export async function runVerifyForCli(
     if (provider === "anthropic") opts.defaultHeaders = { "anthropic-version": "2023-06-01" };
     return new OpenAI(opts);
   }
-  // One row per model (all models from nano/default/heavy; deduplicated)
-  const uniqueModels = [...new Set(allModelsUnfiltered)];
+  // One row per model: configured models + reference models (Opus, GPT-5.4, Codex, o3, etc.)
+  const configModelSet = new Set(allModelsUnfiltered);
+  const uniqueModels = [...new Set([...allModelsUnfiltered, ...VERIFY_REFERENCE_MODELS])];
   uniqueModels.sort((a, b) => providerFromModel(a).localeCompare(providerFromModel(b)) || a.localeCompare(b));
   const llmRows: {
     model: string;
@@ -1397,6 +1414,7 @@ export async function runVerifyForCli(
     hasApi: boolean;
     enabled: boolean;
     source: string;
+    inConfig: boolean;
     oauthResult?: boolean;
     apiResult?: boolean;
   }[] = [];
@@ -1407,6 +1425,7 @@ export async function runVerifyForCli(
     const hasOAuth = gatewayAvailable && Boolean(hasOAuthProfiles(authOrder?.order?.[provider], provider));
     const enabled = !disabledSet.has(provider);
     const source = llmCredentialSource(provider);
+    const inConfig = configModelSet.has(model);
     let oauthResult: boolean | undefined = undefined;
     let apiResult: boolean | undefined = undefined;
     if (opts.testLlm && enabled && !testedProviders.has(provider)) {
@@ -1467,6 +1486,7 @@ export async function runVerifyForCli(
       hasApi,
       enabled,
       source,
+      inConfig,
       oauthResult,
       apiResult,
     });
@@ -1479,23 +1499,26 @@ export async function runVerifyForCli(
       "Provider",
       "Auth (OAuth / API key)",
       "Source",
+      "In config",
       "Enabled",
       ...(opts.testLlm ? ["OAuth Result", "API Result"] : []),
     ];
-    const llmW1 = Math.max(8, ...llmRows.map((r) => r.model.length), 24);
+    const llmW1 = Math.max(8, ...llmRows.map((r) => r.model.length), 28);
     const llmW2 = Math.max(6, ...llmRows.map((r) => r.provider.length), 10);
     const llmW3 = Math.max(22, 24);
     const llmW4 = 8;
-    const llmW5 = 8;
-    const llmW6 = opts.testLlm ? 14 : 0;
-    const llmW7 = opts.testLlm ? 12 : 0;
+    const llmW5 = 9;
+    const llmW6 = 8;
+    const llmW7 = opts.testLlm ? 14 : 0;
+    const llmW8 = opts.testLlm ? 12 : 0;
     tableLog(
-      `  ${llmCols[0].padEnd(llmW1)}  ${llmCols[1].padEnd(llmW2)}  ${llmCols[2].padEnd(llmW3)}  ${llmCols[3].padEnd(llmW4)}  ${llmCols[4].padEnd(llmW5)}${opts.testLlm ? `  ${llmCols[5].padEnd(llmW6)}  ${llmCols[6]}` : ""}`,
+      `  ${llmCols[0].padEnd(llmW1)}  ${llmCols[1].padEnd(llmW2)}  ${llmCols[2].padEnd(llmW3)}  ${llmCols[3].padEnd(llmW4)}  ${llmCols[4].padEnd(llmW5)}  ${llmCols[5].padEnd(llmW6)}${opts.testLlm ? `  ${llmCols[6].padEnd(llmW7)}  ${llmCols[7]}` : ""}`,
     );
-    const llmSepLen = llmW1 + llmW2 + llmW3 + llmW4 + llmW5 + 10 + (opts.testLlm ? llmW6 + llmW7 + 4 : 0);
+    const llmSepLen = llmW1 + llmW2 + llmW3 + llmW4 + llmW5 + llmW6 + 12 + (opts.testLlm ? llmW7 + llmW8 + 4 : 0);
     tableLog("  " + "-".repeat(llmSepLen));
     for (const row of llmRows) {
       const credStr = `OAuth:${row.hasOAuth ? "True" : "False"} / API:${row.hasApi ? "True" : "False"}`;
+      const inConfigStr = row.inConfig ? (noEmoji ? "Yes" : "✅ Yes") : noEmoji ? "No" : "—";
       const enabledStr = row.enabled ? (noEmoji ? "Enabled" : "✅ Enabled") : noEmoji ? "Disabled" : "❌ Disabled";
       const oauthStr =
         row.oauthResult === undefined
@@ -1518,7 +1541,7 @@ export async function runVerifyForCli(
               ? "Failed"
               : "❌ Failed";
       tableLog(
-        `  ${row.model.padEnd(llmW1)}  ${row.provider.padEnd(llmW2)}  ${credStr.padEnd(llmW3)}  ${row.source.padEnd(llmW4)}  ${enabledStr.padEnd(llmW5)}${opts.testLlm ? `  ${oauthStr.padEnd(llmW6)}  ${apiStr}` : ""}`,
+        `  ${row.model.padEnd(llmW1)}  ${row.provider.padEnd(llmW2)}  ${credStr.padEnd(llmW3)}  ${row.source.padEnd(llmW4)}  ${inConfigStr.padEnd(llmW5)}  ${enabledStr.padEnd(llmW6)}${opts.testLlm ? `  ${oauthStr.padEnd(llmW7)}  ${apiStr}` : ""}`,
       );
     }
   }
