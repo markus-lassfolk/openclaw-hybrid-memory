@@ -1296,6 +1296,11 @@ export async function runVerifyForCli(
       "Configure at least one embedding provider: embedding.apiKey (OpenAI), llm.providers.google.apiKey or distill.apiKey (Google), or use Local/Ollama or Local/ONNX. See docs/LLM-AND-PROVIDERS.md.",
     );
   }
+  tableLog(
+    anyEmbOk
+      ? "  Embeddings: OK — at least one provider has credentials."
+      : "  Embeddings: no working provider — see fixes below if listed.",
+  );
 
   // ───── LLM / models table: one row per model from llm.nano / llm.default / llm.heavy; auth + source ─────
   tableLog("\n───── LLM / Models (from llm.nano, llm.default, llm.heavy) ─────");
@@ -1425,7 +1430,9 @@ export async function runVerifyForCli(
     const hasApi = providersWithKeys.includes(provider);
     const hasOAuth = gatewayAvailable && Boolean(hasOAuthProfiles(authOrder?.order?.[provider], provider));
     const enabled = !disabledSet.has(provider);
-    const source = llmCredentialSource(provider);
+    let source = llmCredentialSource(provider);
+    if (!source && gatewayAvailable && (hasOAuth || hasApi)) source = "gateway";
+    if (!source) source = "—";
     const inConfig = configModelSet.has(model);
     let oauthResult: boolean | undefined = undefined;
     let apiResult: boolean | undefined = undefined;
@@ -1494,6 +1501,9 @@ export async function runVerifyForCli(
   }
   if (llmRows.length === 0) {
     tableLog("  No LLM models configured (add llm.nano / llm.default / llm.heavy or API keys / OAuth).");
+    tableLog("  LLMs: add model tiers or API keys in config. See docs/LLM-AND-PROVIDERS.md.");
+    tableLog("");
+    tableLog("  Summary: Configure LLM tiers or API keys to use memory and cron jobs.");
   } else {
     const llmCols = [
       "Model",
@@ -1519,7 +1529,7 @@ export async function runVerifyForCli(
     tableLog("  " + "-".repeat(llmSepLen));
     for (const row of llmRows) {
       const credStr = `OAuth:${row.hasOAuth ? "True" : "False"} / API:${row.hasApi ? "True" : "False"}`;
-      const inConfigStr = row.inConfig ? (noEmoji ? "Yes" : "✅ Yes") : noEmoji ? "No" : "—";
+      const inConfigStr = row.inConfig ? (noEmoji ? "Yes" : "✅ Yes") : noEmoji ? "No" : "No";
       const enabledStr = row.enabled ? (noEmoji ? "Enabled" : "✅ Enabled") : noEmoji ? "Disabled" : "❌ Disabled";
       const oauthStr =
         row.oauthResult === undefined
@@ -1544,6 +1554,28 @@ export async function runVerifyForCli(
       tableLog(
         `  ${row.model.padEnd(llmW1)}  ${row.provider.padEnd(llmW2)}  ${credStr.padEnd(llmW3)}  ${row.source.padEnd(llmW4)}  ${inConfigStr.padEnd(llmW5)}  ${enabledStr.padEnd(llmW6)}${opts.testLlm ? `  ${oauthStr.padEnd(llmW7)}  ${apiStr}` : ""}`,
       );
+    }
+    tableLog(
+      "  (Source = where API key is set: plugin | env | file | gateway. In config = model listed in llm.nano/default/heavy.)",
+    );
+    const llmProvidersWithCreds = new Set(llmRows.filter((r) => r.hasApi || r.hasOAuth).map((r) => r.provider)).size;
+    const llmOk = llmProvidersWithCreds >= 1;
+    if (llmOk) {
+      tableLog(
+        `  LLMs: OK — credentials available for ${llmProvidersWithCreds} provider(s). Source "—" or "gateway" = key from OpenClaw/env (fine).`,
+      );
+    } else {
+      tableLog(
+        "  LLMs: no credentials for any provider — set llm.providers.<provider>.apiKey in config or use gateway OAuth. See docs/LLM-AND-PROVIDERS.md.",
+      );
+    }
+    tableLog("");
+    if (anyEmbOk && llmOk) {
+      tableLog(
+        "  Summary: Ready. Embeddings and LLM are configured. Use memory and cron jobs as needed. Run 'openclaw hybrid-mem config' to toggle features.",
+      );
+    } else {
+      tableLog("  Summary: Fix the issue(s) above (or in --- Fixes --- below) before using memory features.");
     }
   }
 
