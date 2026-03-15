@@ -1308,7 +1308,16 @@ export async function runVerifyForCli(
     ...getLLMModelPreference(cronCfg, "default"),
     ...getLLMModelPreference(cronCfg, "heavy"),
   ];
-  const providerFromModel = (m: string) => (m.includes("/") ? m.split("/")[0].toLowerCase() : "openai");
+  const providerFromModel = (m: string) => {
+    if (m.includes("/")) {
+      return m.split("/")[0].toLowerCase();
+    }
+    const bare = m.trim().toLowerCase();
+    if (bare.startsWith("gemini-")) return "google";
+    if (bare.startsWith("claude-")) return "anthropic";
+    if (bare.startsWith("gpt-") || bare.match(/^o[0-9]/)) return "openai";
+    return "openai";
+  };
   const disabledSet = new Set((cfg.llm?.disabledProviders ?? []).map((p) => String(p).trim().toLowerCase()));
   const providersInConfig = new Set(allModelsUnfiltered.map(providerFromModel));
   const providersToShow = new Set<string>(providersWithKeys);

@@ -135,10 +135,25 @@ function getDisabledProviderSet(pluginConfig: CronModelConfig | undefined): Set<
   return new Set(disabled.map((p) => String(p).trim().toLowerCase()));
 }
 
+/**
+ * Infer provider from model name.
+ * Supports bare model names (e.g., gemini-2.5-flash -> google, claude-sonnet-4-6 -> anthropic, gpt-4 -> openai).
+ */
+function inferProviderFromModel(model: string): string {
+  if (model.includes("/")) {
+    return model.split("/")[0].trim().toLowerCase();
+  }
+  const bare = model.trim().toLowerCase();
+  if (bare.startsWith("gemini-")) return "google";
+  if (bare.startsWith("claude-")) return "anthropic";
+  if (bare.startsWith("gpt-") || bare.match(/^o[0-9]/)) return "openai";
+  return "openai";
+}
+
 function filterModelsByDisabled(models: string[], disabledSet: Set<string>): string[] {
   if (disabledSet.size === 0) return models;
   return models.filter((m) => {
-    const prefix = m.includes("/") ? m.split("/")[0].trim().toLowerCase() : "openai";
+    const prefix = inferProviderFromModel(m);
     return !disabledSet.has(prefix);
   });
 }
