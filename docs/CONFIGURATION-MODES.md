@@ -1,6 +1,6 @@
 # Configuration Modes
 
-You can set a **mode** in plugin config to apply a preset of feature toggles. **If you don't set `mode`, the default is `local`** (cost-safety: no external LLM). Set `minimal`, `enhanced`, or `complete` to enable LLM features.
+You can set a **mode** in plugin config to apply a preset of feature toggles. **If you don't set `mode`, the default is `complete`** (backward compatibility: full features, including external LLM). Set `local`, `minimal`, or `enhanced` to reduce cost or run without external APIs.
 
 ```json
 {
@@ -17,9 +17,9 @@ You can set a **mode** in plugin config to apply a preset of feature toggles. **
 }
 ```
 
-Valid values: **`local`** | **`minimal`** | **`enhanced`** | **`complete`**. Default when omitted: **`local`**. If you change any feature away from the preset, the effective mode is reported as **Custom** in `openclaw hybrid-mem config`.
+Valid values: **`local`** | **`minimal`** | **`enhanced`** | **`complete`**. Default when omitted: **`complete`**. If you change any feature away from the preset, the effective mode is reported as **Custom** in `openclaw hybrid-mem config`.
 
-**Migration from older versions:** If your config still has a deprecated mode name (`essential`, `normal`, `expert`, or `full`), the plugin interprets it as **`local`** and logs a one-time warning. Update your config to use the new names (`local`, `minimal`, `enhanced`, `complete`) and set the mode you want (e.g. `minimal`) to re-enable LLM features.
+**Migration from older versions:** If your config still has a deprecated mode name (`essential`, `normal`, `expert`, or `full`), the plugin maps it to the closest new mode and logs a one-time warning: `essential` → `minimal`, `normal` → `enhanced`, `expert` → `complete`, `full` → `complete`. Update your config to use the new names (`local`, `minimal`, `enhanced`, `complete`) when convenient.
 
 ---
 
@@ -27,7 +27,7 @@ Valid values: **`local`** | **`minimal`** | **`enhanced`** | **`complete`**. Def
 
 | Mode | Best for | Description |
 |------|----------|-------------|
-| **Complete** | **Default — best experience** | Everything enabled: capture, recall, classification, graph, procedures, reflection, tiering, persona proposals, self-correction, query expansion, ingest, dream-cycle, passive observer, workflow tracking, tool/skill proposals, verification, provenance, documents, aliases, cross-agent learning, reranking, contextual variants. Credentials vault and tool I/O capture on when vault is configured. Highest capability and API use. |
+| **Complete** | **Default when mode omitted — best experience** | Everything enabled: capture, recall, classification, graph, procedures, reflection, tiering, persona proposals, self-correction, query expansion, ingest, dream-cycle, passive observer, workflow tracking, tool/skill proposals, verification, provenance, documents, aliases, cross-agent learning, reranking, contextual variants. Credentials vault and tool I/O capture on when vault is configured. Highest capability and API use. |
 | **Enhanced** | Like Complete with slightly less | Same as Complete but no query expansion and no documents (no MarkItDown-based doc ingestion). Includes ingest, verification, provenance, aliases, cross-agent learning, reranking, contextual variants, dream-cycle, passive observer, workflow tracking, tool/skill proposals. Good if you want most features but want to trim a few. |
 | **Minimal** | Low cost, nano/flash only | Balanced: capture, recall, auto-classify, graph, procedures, ingest (run ingest-files when you want to seed from docs); no reflection, no persona proposals, no credential capture from tool I/O. **All LLM use (distill, auto-classify, ingest) is restricted to nano or flash-tier models** to keep cost very low. Credentials vault off unless you set an encryption key. |
 | **Local** | No external LLM | Only core memory: auto-capture and auto-recall with **FTS-only** retrieval. No embeddings, no classification, graph, procedures, or reflection. Zero external API calls — local SQLite + files only. Ideal for Raspberry Pi or fully offline setups. |

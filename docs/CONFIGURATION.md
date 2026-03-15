@@ -10,7 +10,7 @@ All settings live in `~/.openclaw/openclaw.json`. Merge these into your existing
 
 **Quick setup:** Run `openclaw hybrid-mem install` to apply all recommended defaults at once. Then customise as needed below.
 
-**Configuration modes:** Default is **Local** (cost-safety: no external LLM). You can set `"mode": "local" | "minimal" | "enhanced" | "complete"` to apply a preset. See [CONFIGURATION-MODES.md](CONFIGURATION-MODES.md) and [FEATURES-AND-TIERS.md](FEATURES-AND-TIERS.md) for the matrix and which tier each feature uses.
+**Configuration modes:** Default is **Complete** (backward compatibility: full features). You can set `"mode": "local" | "minimal" | "enhanced" | "complete"` to apply a preset. See [CONFIGURATION-MODES.md](CONFIGURATION-MODES.md) and [FEATURES-AND-TIERS.md](FEATURES-AND-TIERS.md) for the matrix and which tier each feature uses.
 
 ---
 

@@ -7,11 +7,6 @@
 
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk";
 import type { MemoryPluginAPI } from "../api/memory-plugin-api.js";
-import type { FactsDB } from "../backends/facts-db.js";
-import type { VectorDB } from "../backends/vector-db.js";
-import type { WriteAheadLog } from "../backends/wal.js";
-import type { CredentialsDB } from "../backends/credentials-db.js";
-import type { ProposalsDB } from "../backends/proposals-db.js";
 import type { EventLog } from "../backends/event-log.js";
 import type { EmbeddingProvider } from "../services/embeddings.js";
 import type { EmbeddingRegistry } from "../services/embedding-registry.js";

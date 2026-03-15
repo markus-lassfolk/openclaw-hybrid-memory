@@ -1622,7 +1622,7 @@ describe("hybridConfigSchema.parse", () => {
       expect(result.credentials.enabled).toBe(false);
       expect(result.graph.autoLink).toBe(false);
       expect(result.store.classifyBeforeWrite).toBe(false);
-      expect(result.distill.extractionModelTier).toBe("default");
+      expect(result.distill?.extractionModelTier).toBe("default");
       expect(result.ingest?.paths).toEqual(["skills/**/*.md", "TOOLS.md", "AGENTS.md"]);
     });
 
