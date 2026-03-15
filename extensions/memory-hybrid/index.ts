@@ -224,8 +224,9 @@ import { findSimilarByEmbedding } from "./services/vector-search.js";
 import { migrateCredentialsToVault, CREDENTIAL_REDACTION_MIGRATION_FLAG } from "./services/credential-migration.js";
 import { createPluginService, type PluginServiceContext } from "./setup/plugin-service.js";
 import { initializeDatabases, closeOldDatabases } from "./setup/init-databases.js";
+import type { MemoryPluginAPI } from "./api/memory-plugin-api.js";
 import { registerTools } from "./setup/register-tools.js";
-import { registerLifecycleHooks, type HooksContext, type LifecycleHooksHandle } from "./setup/register-hooks.js";
+import { registerLifecycleHooks, type LifecycleHooksHandle } from "./setup/register-hooks.js";
 import { capturePluginError } from "./services/error-reporter.js";
 import { PythonBridge } from "./services/python-bridge.js";
 import type { EmbeddingRegistry } from "./services/embedding-registry.js";
@@ -527,8 +528,8 @@ const memoryHybridPlugin = {
       variantQueue = null;
     }
 
-    // Phase 2.6: Single PluginContext passed into subsystems (prep for concurrency and testing).
-    const pluginContext = {
+    // Phase 2.6 / Phase 3: Single plugin context satisfying MemoryPluginAPI (stable internal API).
+    const pluginContext: MemoryPluginAPI = {
       factsDb,
       vectorDb,
       cfg,

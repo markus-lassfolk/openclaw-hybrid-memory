@@ -9,8 +9,8 @@ This document tracks the phased cleanup and improvement plan from the combined r
 - **Domain converters removed from builtin**  
   Home Assistant, ESPHome, Victron VRM, and Zigbee2MQTT converters are no longer shipped with the memory plugin. Use a separate plugin (e.g. `openclaw-ha-converters`) and `registerConverter()` to add them back.
 
-- **HyDE / query expansion disabled by default**  
-  `queryExpansion.enabled` defaults to `false` in all presets. Set `queryExpansion: { enabled: true }` explicitly if you want HyDE-style query expansion.
+- **HyDE / query expansion removed from use (Phase 1)**  
+  HyDE was a major source of timeouts (1,491/day). In 2026.3.140+ the Phase 1 migration **forces** `queryExpansion.enabled: false` for all configs — you cannot turn it back on in this version. The code path remains for a future opt-in; config and recall paths still check `queryExpansion.enabled` and skip the LLM call when false.
 
 - **Non-core features disabled by default**  
   Frustration detection, Hebbian link strengthening on recall, and all optional modules (nightly cycle, passive observer, workflow tracking, self-extension, crystallization, verification, provenance, aliases, cross-agent learning, reranking, contextual variants, documents) are off in every preset. Enable only what you need.
@@ -43,14 +43,14 @@ Focus: **performance and stability** without large structural changes.
 
 Focus: **optional features as modules or separate plugins**.
 
-| Area | Suggested action |
-|------|------------------|
-| **Domain converters** | Already removed from builtin. Ship as optional plugin `openclaw-ha-converters` (or similar). |
-| **Analysis & maintenance** | Dream cycle, monthly review, topic clusters, knowledge gaps, cross-agent learning, retrieval-aliases generation → optional “analysis” module, triggered by cron/CLI only. |
-| **Learning & procedures** | Procedure extraction, workflow tracking, pattern detection, trajectory tracking, reinforcement extraction → optional “learning” module; procedure injection in core stays but capped and off by default. |
-| **Self-extension** | Skill crystallization, tool proposals, memory-to-skills, self-correction extraction, persona proposals, contextual variants → optional “self-extension” module, batch/CLI only. |
-| **Observability** | Issue store, verification store, provenance, memory diagnostics, context audit, cost tracking, health dashboard → optional “observability” module. |
-| **Stable internal API** | Define a well-typed `MemoryPluginAPI` that optional modules depend on, to avoid circular deps and make modules testable. |
+| Area | Suggested action | Status |
+|------|------------------|--------|
+| **Domain converters** | Already removed from builtin. Ship as optional plugin `openclaw-ha-converters` (or similar). | **Done** — Built-in registry is empty; implementations remain in-tree for tests; use `registerConverter()` to add back. |
+| **Analysis & maintenance** | Dream cycle, monthly review, topic clusters, knowledge gaps, cross-agent learning, retrieval-aliases generation → optional “analysis” module, triggered by cron/CLI only. | — |
+| **Learning & procedures** | Procedure extraction, workflow tracking, pattern detection, trajectory tracking, reinforcement extraction → optional “learning” module; procedure injection in core stays but capped and off by default. | — |
+| **Self-extension** | Skill crystallization, tool proposals, memory-to-skills, self-correction extraction, persona proposals, contextual variants → optional “self-extension” module, batch/CLI only. | — |
+| **Observability** | Issue store, verification store, provenance, memory diagnostics, context audit, cost tracking, health dashboard → optional “observability” module. | — |
+| **Stable internal API** | Define a well-typed `MemoryPluginAPI` that optional modules depend on, to avoid circular deps and make modules testable. | **Done** — `api/memory-plugin-api.ts` defines `MemoryPluginAPI`; index builds one implementation; `registerTools` and `registerLifecycleHooks` accept it; optional modules can depend on this type only. |
 
 ---
 
@@ -60,7 +60,7 @@ After Phase 1+2, targets:
 
 | Metric | Before Phase 1 | Target |
 |--------|----------------|--------|
-| HyDE timeouts/day | 1,491 | 0 (disabled by default) |
+| HyDE timeouts/day | 1,491 | 0 (Phase 1: forced off in 2026.3.140+) |
 | Recall pipeline timeouts/day | 808 | &lt;50 |
 | VectorDB reconnects/day | 490 | &lt;10 |
 | VectorDB refcount underflows/day | 148 | 0 |
@@ -70,3 +70,46 @@ After Phase 1+2, targets:
 | `hooks.ts` lines | 2,580 | &lt;200 (dispatcher) + stage files |
 
 After Phase 3: core plugin ~35–40 source files, ~15K–20K lines; non-core features cannot cause recall failure.
+
+---
+
+## Recall hot path (default / tight ship)
+
+The reports called out **overlapping recall features** causing delays, lag, and diminishing returns. After Phase 1+2 the default path is optimized:
+
+**Always off (forced or default):**
+- **HyDE / query expansion** — forced off (2026.3.140+). No LLM call on recall.
+- **Ambient multi-query** — default off (no preset enables it). Topic-shift multi-query and issue retrieval only run if user enables `ambient.enabled`.
+- **Frustration detection** — forced off. No frustration hint injection.
+- **Hebbian on read** — forced off. No graph mutation during recall.
+- **Reranking, cross-agent learning, contextual variants, etc.** — forced off.
+
+**When overloaded (hard degradation):**
+- If queue depth &gt; 10 or recall latency &gt; 5s → **FTS-only + HOT facts** only. No vector, graph, procedures, or ambient.
+
+**Capped / bounded:**
+- **Procedure injection** — `procedures.maxInjectionTokens` (default 500). Cannot dominate the prompt.
+- **Prompt blocks** — max 3: one `<recalled-context>`, optional `<active-task>`, one optional warning.
+
+**Still on by preset (user can turn off):**
+- **Entity lookup** — expert/full presets set `autoRecall.entityLookup.enabled: true`. Essential/normal keep it off.
+- **Graph in recall** — normal+ have `graph.useInRecall: true` (zero-LLM expansion from seeds).
+- **Procedures** — normal+ have procedures enabled (but capped).
+- **HOT tier** — normal+ have memory tiering (bounded by `hotMaxTokens`).
+
+**Essential mode = local-only, zero LLM/API calls.**  
+Essential preset sets `retrieval.strategies: ["fts5"]`. Recall and capture then use **only** SQLite FTS and local files — no embedding, no vector search, no HyDE, no chat LLM. You get persistent structured memory, auto-capture, auto-recall by keyword, and WAL — still well above vanilla OpenClaw (which has no durable memory). Normal/expert/full add semantic (embedding + LanceDB) and the optional layers above; the worst latency sources (HyDE, ambient, frustration, Hebbian) remain removed or default-off.
+
+---
+
+## Recommendations alignment (combined report)
+
+Compared with `hybrid-memory-combined-recommendations.md`:
+
+**Phase 1 (all done):** 1.1 HyDE → forced off. 1.2 Hard degradation → done (Phase 2). 1.3 Ambient by default → default off (no preset enables it). 1.4 Frustration by default → forced off. 1.5 Hebbian by default → `strengthenOnRecall: false`. 1.6 Agent detection → debug log. 1.7 Per-stage timing → done.
+
+**Phase 2 (all done):** 2.1 Decompose hooks → staged pipeline. 2.2 Max 3 blocks → single `<recalled-context>`. 2.3 VectorDB lifecycle → single long-lived connection. 2.4 PluginContext → single `pluginContext` + Phase 3 `MemoryPluginAPI`.
+
+**Optional fast fixes (done):**
+- **Credential auto-detect:** Forced `credentials.autoDetect: false` in Phase 1 migration (2026.3.140+). User must set explicitly to enable; aligns with "make auto-detect opt-in".
+- **Procedure injection cap:** Added `procedures.maxInjectionTokens` (default 500). Procedure block is trimmed from the end until within cap before injection so procedure context cannot dominate recall.
