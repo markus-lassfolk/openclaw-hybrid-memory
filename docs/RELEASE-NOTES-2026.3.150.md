@@ -32,8 +32,8 @@ Configuration **modes** have new names and a single default:
 | **minimal**  | Low cost, nano/flash only | LLM restricted to nano/flash tier.       |
 | **local**    | No external LLM        | FTS-only; zero API calls.                  |
 
-- **If you don’t set `mode`**, the default is **`complete`** (backward compatible).
-- Old names (`essential`, `normal`, `expert`, `full`) are **mapped** to the closest new mode and a one-time warning is logged. You can update your config to the new names when convenient.
+- **If you don’t set `mode`**, the default is **`local`** (cost-safety: no external LLM).
+- Old names (`essential`, `normal`, `expert`, `full`) are **reset to `local`** and a one-time warning is logged. Set `"mode": "minimal"`, `"enhanced"`, or `"complete"` explicitly to enable LLM and other features.
 
 See [CONFIGURATION-MODES.md](CONFIGURATION-MODES.md) and [FEATURES-AND-TIERS.md](FEATURES-AND-TIERS.md).
 

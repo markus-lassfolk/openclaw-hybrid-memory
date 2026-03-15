@@ -534,7 +534,7 @@ export type HybridMemoryConfig = {
   /**
    * Output verbosity level for CLI commands and tool responses (Issue #282).
    * quiet: counts/totals only. normal: balanced default. verbose: full detail.
-   * Defaults: essential→quiet, normal→normal, expert→normal, full→verbose.
+   * Defaults: local→quiet, minimal→normal, enhanced→normal, complete→verbose.
    */
   verbosity: VerbosityLevel;
   /** Set when user specified a mode in config; used by verify to show "Mode: Normal" etc. */

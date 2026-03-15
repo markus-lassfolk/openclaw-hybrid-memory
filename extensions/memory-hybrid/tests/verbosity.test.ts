@@ -60,11 +60,11 @@ function parseWithVerbosity(verbosity?: string) {
 // ---------------------------------------------------------------------------
 
 describe("VerbosityLevel — hybridConfigSchema", () => {
-  it("defaults to 'verbose' when verbosity is not set (default mode is 'complete')", () => {
-    // When no mode is specified, the config parser applies the 'complete' preset by default,
-    // which sets verbosity to 'verbose'.
+  it("defaults to 'quiet' when verbosity is not set (default mode is 'local')", () => {
+    // When no mode is specified, the config parser applies the 'local' preset by default,
+    // which sets verbosity to 'quiet'.
     const cfg = parseWithVerbosity();
-    expect(cfg.verbosity).toBe("verbose");
+    expect(cfg.verbosity).toBe("quiet");
   });
 
   it("accepts 'silent'", () => {

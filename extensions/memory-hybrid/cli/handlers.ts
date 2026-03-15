@@ -837,7 +837,7 @@ export function runInstallForCli(opts: { dryRun: boolean }): InstallCliResult {
         [PLUGIN_ID]: {
           enabled: true,
           config: {
-            mode: "complete",
+            mode: "local",
             embedding: { apiKey: "YOUR_OPENAI_API_KEY", model: "text-embedding-3-small" },
             distill: { defaultModel: "gemini-3.1-pro-preview" },
             autoCapture: true,

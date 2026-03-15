@@ -213,9 +213,9 @@ describe("hybridConfigSchema.parse", () => {
     expect(result.autoRecall.retrievalDirectives.maxPerPrompt).toBe(6);
   });
 
-  it("memoryTiering defaults when omitted (no mode → complete: tiering on)", () => {
+  it("memoryTiering defaults when omitted (no mode → local: tiering off)", () => {
     const result = hybridConfigSchema.parse(validBase);
-    expect(result.memoryTiering.enabled).toBe(true);
+    expect(result.memoryTiering.enabled).toBe(false);
     expect(result.memoryTiering.hotMaxTokens).toBe(2000);
     expect(result.memoryTiering.compactionOnSessionEnd).toBe(true);
     expect(result.memoryTiering.inactivePreferenceDays).toBe(7);
@@ -574,14 +574,14 @@ describe("hybridConfigSchema.parse", () => {
     expect(result.captureMaxChars).toBe(10000);
   });
 
-  it("no mode applies complete preset: store.fuzzyDedupe is true", () => {
+  it("no mode applies local preset: store.fuzzyDedupe is true", () => {
     const result = hybridConfigSchema.parse(validBase);
     expect(result.store.fuzzyDedupe).toBe(true);
   });
 
-  it("no mode applies complete preset: store.classifyBeforeWrite is true", () => {
+  it("no mode applies local preset: store.classifyBeforeWrite is false", () => {
     const result = hybridConfigSchema.parse(validBase);
-    expect(result.store.classifyBeforeWrite).toBe(true);
+    expect(result.store.classifyBeforeWrite).toBe(false);
   });
 
   it("defaults store.classifyModel to undefined", () => {
@@ -800,9 +800,9 @@ describe("hybridConfigSchema.parse", () => {
     expect(result.categories).toContain("fact");
   });
 
-  it("no mode applies complete preset: autoClassify.enabled is true", () => {
+  it("no mode applies local preset: autoClassify.enabled is false", () => {
     const result = hybridConfigSchema.parse(validBase);
-    expect(result.autoClassify.enabled).toBe(true);
+    expect(result.autoClassify.enabled).toBe(false);
     expect(result.autoClassify.model).toBeUndefined();
     expect(result.autoClassify.batchSize).toBe(20);
   });
@@ -1022,11 +1022,11 @@ describe("hybridConfigSchema.parse", () => {
     expect(result.embedding.googleApiKey).toBe("AIzaSy-value-containing-${literal}-suffix-123456");
   });
 
-  it("no mode applies complete preset: distill has extractDirectives true, extractReinforcement true", () => {
+  it("no mode applies local preset: distill has extractDirectives true, extractReinforcement false", () => {
     const result = hybridConfigSchema.parse(validBase);
     expect(result.distill).toBeDefined();
     expect(result.distill?.extractDirectives).toBe(true);
-    expect(result.distill?.extractReinforcement).toBe(true);
+    expect(result.distill?.extractReinforcement).toBe(false);
   });
 
   it("parses distill.extractionModelTier (nano | default | heavy)", () => {
@@ -1315,16 +1315,16 @@ describe("hybridConfigSchema.parse", () => {
     expect(result.selfCorrection?.applyToolsByDefault).toBe(false);
   });
 
-  it("no mode applies complete preset: selfCorrection set by preset", () => {
+  it("no mode applies local preset: selfCorrection set by preset", () => {
     const result = hybridConfigSchema.parse(validBase);
-    // Complete preset enables reflection and graph
-    expect(result.reflection.enabled).toBe(true);
-    expect(result.graph.enabled).toBe(true);
+    // Local preset has reflection and graph disabled
+    expect(result.reflection.enabled).toBe(false);
+    expect(result.graph.enabled).toBe(false);
   });
 
-  it("languageKeywords defaults when omitted (no mode → complete preset: autoBuild true)", () => {
+  it("languageKeywords defaults when omitted (no mode → local preset: autoBuild false)", () => {
     const result = hybridConfigSchema.parse(validBase);
-    expect(result.languageKeywords.autoBuild).toBe(true);
+    expect(result.languageKeywords.autoBuild).toBe(false);
     expect(result.languageKeywords.weeklyIntervalDays).toBe(7);
   });
 
@@ -1403,7 +1403,7 @@ describe("hybridConfigSchema.parse", () => {
     expect(result.queryExpansion.enabled).toBe(false);
   });
 
-  it("migration shim (#160): queryExpansion disabled by default when no mode (Phase 1: complete preset no longer enables it)", () => {
+  it("migration shim (#160): queryExpansion disabled by default when no mode (Phase 1; local preset)", () => {
     const result = hybridConfigSchema.parse({ ...validBase });
     expect(result.queryExpansion.enabled).toBe(false);
   });
@@ -1672,21 +1672,21 @@ describe("hybridConfigSchema.parse", () => {
       expect(result.autoClassify.enabled).toBe(false);
     });
 
-    it("no mode: result.mode is 'complete' (default for backward compatibility)", () => {
+    it("no mode: result.mode is 'local' (default)", () => {
       const result = hybridConfigSchema.parse(validBase);
-      expect(result.mode).toBe("complete");
+      expect(result.mode).toBe("local");
     });
 
-    it("deprecated mode name 'normal' is interpreted as enhanced and warns", () => {
+    it("deprecated mode name 'normal' is interpreted as local and warns", () => {
       const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
       try {
         const result = hybridConfigSchema.parse({
           ...validBase,
           mode: "normal",
         });
-        expect(result.mode).toBe("enhanced");
+        expect(result.mode).toBe("local");
         expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("deprecated"));
-        expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("enhanced"));
+        expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("local"));
       } finally {
         warnSpy.mockRestore();
       }
@@ -1695,10 +1695,10 @@ describe("hybridConfigSchema.parse", () => {
     it("no mode but user overrides preset: result.mode is 'custom'", () => {
       const result = hybridConfigSchema.parse({
         ...validBase,
-        graph: { enabled: false },
+        graph: { enabled: true },
       });
-      expect(result.mode).toBe("custom"); // overrides complete preset (graph.enabled false)
-      expect(result.graph.enabled).toBe(false);
+      expect(result.mode).toBe("custom"); // overrides local preset (graph.enabled true)
+      expect(result.graph.enabled).toBe(true);
     });
   });
 });

@@ -25,7 +25,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 This release adds **Phase 3 modularization** and **Phase 2.3 lifecycle staging**, plus **OAuth-first auth with smart failover** and clearer **configuration modes**.
 
 - **OAuth preferred when both OAuth and API key exist** — The plugin now tries OAuth first when a provider has both. If OAuth fails (e.g. gateway down), it automatically falls back to your API key and uses **incremental backoff** (5 min → 30 min → 1 h → 2 h → 4 h) before retrying OAuth. You can clear backoff anytime with `openclaw hybrid-mem reset-auth-backoff`. See [LLM-AND-PROVIDERS.md](docs/LLM-AND-PROVIDERS.md).
-- **Configuration mode names updated** — Modes are now `local` | `minimal` | `enhanced` | `complete`. **Default when omitted is `complete`** (backward compatible with previous “full” behavior). Deprecated names (`essential`, `normal`, `expert`, `full`) are mapped to the closest new mode and a one-time warning is logged. See [CONFIGURATION-MODES.md](docs/CONFIGURATION-MODES.md).
+- **Configuration mode names updated** — Modes are now `local` | `minimal` | `enhanced` | `complete`. **Default when omitted is `local`** (backward compatible with previous “full” behavior). Deprecated names (`essential`, `normal`, `expert`, `full`) are reset to **`local`** and a one-time warning is logged; set the new mode explicitly to enable LLM or other features. See [CONFIGURATION-MODES.md](docs/CONFIGURATION-MODES.md).
 - **New CLI** — `openclaw hybrid-mem config` shows effective config and mode; `openclaw hybrid-mem reset-auth-backoff` clears OAuth failover state. `verify` gains `--test-llm` and richer Embeddings/LLM tables (credential source, OAuth vs API results, disabled providers).
 - **Memory-to-skills removed** — The `skills-suggest` command, cron job, and related config/docs have been removed. Use workflow crystallization and tool proposals instead.
 - **Stable internal API** — Optional modules can depend on `MemoryPluginAPI` (see `api/memory-plugin-api.ts`) for tool and lifecycle registration without circular dependencies.
@@ -42,8 +42,8 @@ This release adds **Phase 3 modularization** and **Phase 2.3 lifecycle staging**
 
 ### Changed
 
-- **Default mode:** When `mode` is omitted, the plugin now uses **`complete`** (backward compatible with previous “full” behavior). To use a cost-safe preset with no external LLM, set `"mode": "local"` explicitly.
-- **Deprecated mode mapping:** `essential` → `minimal`, `normal` → `enhanced`, `expert` → `complete`, `full` → `complete`. A one-time warning is logged; update config to the new names when convenient.
+- **Default mode:** When `mode` is omitted, the plugin uses **`local`** (cost-safety: no external LLM, FTS-only). Set `"mode": "minimal"`, `"enhanced"`, or `"complete"` to enable LLM and other features.
+- **Deprecated mode mapping:** All deprecated names (`essential`, `normal`, `expert`, `full`) are **reset to `local`**. A one-time warning is logged; set the new mode explicitly to restore higher tiers.
 - **Lifecycle:** Single `pluginContext` (typed as `MemoryPluginAPI`) is passed into `registerLifecycleHooks` and `registerTools`. Hooks are implemented as staged pipeline (setup, recall, injection, capture, cleanup) with config toggles and timeouts.
 - **Local / FTS-only:** When mode is `local`, retrieval uses FTS-only (no embeddings or vector DB). Capture and recall skip embedding/vector work when semantic retrieval is disabled.
 - **Procedure injection:** Capped by `procedures.maxInjectionTokens`; blocks are trimmed to stay within the cap.
@@ -60,7 +60,7 @@ This release adds **Phase 3 modularization** and **Phase 2.3 lifecycle staging**
 
 ### Migration notes
 
-- If you used **deprecated mode names** (`essential`, `normal`, `expert`, `full`), the plugin maps them as above. Set the new names explicitly when you edit config.
+- If you used **deprecated mode names** (`essential`, `normal`, `expert`, `full`), the plugin resets them to **`local`**. Set `"mode": "minimal"`, `"enhanced"`, or `"complete"` explicitly to enable LLM and other features.
 - If you relied on **memory-to-skills** or **skills-suggest**, remove those from cron/config; use workflow crystallization and tool proposals instead.
 - **OAuth + API key** users: no change required; OAuth is preferred by default and API key is used on failure with backoff. Use `openclaw hybrid-mem reset-auth-backoff` to clear backoff if needed.
 
