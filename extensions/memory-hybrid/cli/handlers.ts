@@ -1152,7 +1152,7 @@ export async function runVerifyForCli(
   const rawPluginConfigResult = getPluginConfigFromFile(defaultConfigPath);
   const rawPluginConfig = "error" in rawPluginConfigResult ? undefined : rawPluginConfigResult.config;
   function credentialSource(rawKey: unknown): string {
-    if (typeof rawKey !== "string" || !rawKey.trim()) return "plugin";
+    if (typeof rawKey !== "string" || !rawKey.trim()) return "";
     const v = rawKey.trim();
     if (v.startsWith("env:")) return "env";
     if (v.startsWith("file:")) return "file";
@@ -1373,7 +1373,7 @@ export async function runVerifyForCli(
     if (!baseURL) return undefined;
     const opts: { apiKey: string; baseURL: string; defaultHeaders?: Record<string, string> } = {
       apiKey,
-      baseURL: /\/v1\/?$/.test(baseURL) ? baseURL : `${baseURL.replace(/\/$/, "")}/v1`,
+      baseURL,
     };
     if (provider === "anthropic") opts.defaultHeaders = { "anthropic-version": "2023-06-01" };
     return new OpenAI(opts);
