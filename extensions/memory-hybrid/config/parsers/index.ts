@@ -208,12 +208,12 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
   let cfg = value as Record<string, unknown>;
   const modeRaw = cfg.mode;
   const validModes: ConfigMode[] = ["local", "minimal", "enhanced", "complete"];
-  const defaultMode: ConfigMode = "local"; // cost-safety: no LLM by default; set minimal/enhanced/complete to enable
+  const defaultMode: ConfigMode = "complete"; // backward compatibility: existing users without explicit mode get full features (was "full" before)
   const deprecatedModeNames = ["essential", "normal", "expert", "full"] as const;
   const deprecatedModeMapping: Record<string, ConfigMode> = {
-    essential: "local",
-    normal: "minimal",
-    expert: "enhanced",
+    essential: "minimal",
+    normal: "enhanced",
+    expert: "complete",
     full: "complete",
   };
   let appliedMode: ConfigMode;

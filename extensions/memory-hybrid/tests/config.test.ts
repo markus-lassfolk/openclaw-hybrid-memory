@@ -213,9 +213,9 @@ describe("hybridConfigSchema.parse", () => {
     expect(result.autoRecall.retrievalDirectives.maxPerPrompt).toBe(6);
   });
 
-  it("memoryTiering defaults when omitted (no mode → local: tiering off)", () => {
+  it("memoryTiering defaults when omitted (no mode → complete: tiering on)", () => {
     const result = hybridConfigSchema.parse(validBase);
-    expect(result.memoryTiering.enabled).toBe(false);
+    expect(result.memoryTiering.enabled).toBe(true);
     expect(result.memoryTiering.hotMaxTokens).toBe(2000);
     expect(result.memoryTiering.compactionOnSessionEnd).toBe(true);
     expect(result.memoryTiering.inactivePreferenceDays).toBe(7);
@@ -574,14 +574,14 @@ describe("hybridConfigSchema.parse", () => {
     expect(result.captureMaxChars).toBe(10000);
   });
 
-  it("no mode applies local preset: store.fuzzyDedupe is true", () => {
+  it("no mode applies complete preset: store.fuzzyDedupe is true", () => {
     const result = hybridConfigSchema.parse(validBase);
     expect(result.store.fuzzyDedupe).toBe(true);
   });
 
-  it("no mode applies local preset: store.classifyBeforeWrite is false", () => {
+  it("no mode applies complete preset: store.classifyBeforeWrite is true", () => {
     const result = hybridConfigSchema.parse(validBase);
-    expect(result.store.classifyBeforeWrite).toBe(false);
+    expect(result.store.classifyBeforeWrite).toBe(true);
   });
 
   it("defaults store.classifyModel to undefined", () => {
@@ -800,9 +800,9 @@ describe("hybridConfigSchema.parse", () => {
     expect(result.categories).toContain("fact");
   });
 
-  it("no mode applies local preset: autoClassify.enabled is false", () => {
+  it("no mode applies complete preset: autoClassify.enabled is true", () => {
     const result = hybridConfigSchema.parse(validBase);
-    expect(result.autoClassify.enabled).toBe(false);
+    expect(result.autoClassify.enabled).toBe(true);
     expect(result.autoClassify.model).toBeUndefined();
     expect(result.autoClassify.batchSize).toBe(20);
   });
@@ -1022,11 +1022,11 @@ describe("hybridConfigSchema.parse", () => {
     expect(result.embedding.googleApiKey).toBe("AIzaSy-value-containing-${literal}-suffix-123456");
   });
 
-  it("no mode applies local preset: distill has extractDirectives true, extractReinforcement false", () => {
+  it("no mode applies complete preset: distill has extractDirectives true, extractReinforcement true", () => {
     const result = hybridConfigSchema.parse(validBase);
     expect(result.distill).toBeDefined();
     expect(result.distill?.extractDirectives).toBe(true);
-    expect(result.distill?.extractReinforcement).toBe(false);
+    expect(result.distill?.extractReinforcement).toBe(true);
   });
 
   it("parses distill.extractionModelTier (nano | default | heavy)", () => {
@@ -1315,16 +1315,16 @@ describe("hybridConfigSchema.parse", () => {
     expect(result.selfCorrection?.applyToolsByDefault).toBe(false);
   });
 
-  it("no mode applies local preset: selfCorrection not set by preset (parser may still output default)", () => {
+  it("no mode applies complete preset: selfCorrection set by preset", () => {
     const result = hybridConfigSchema.parse(validBase);
-    // Local preset does not enable self-correction; parser may still define the key with defaults
-    expect(result.reflection.enabled).toBe(false);
-    expect(result.graph.enabled).toBe(false);
+    // Complete preset enables reflection and graph
+    expect(result.reflection.enabled).toBe(true);
+    expect(result.graph.enabled).toBe(true);
   });
 
-  it("languageKeywords defaults when omitted (no mode → local preset: autoBuild false)", () => {
+  it("languageKeywords defaults when omitted (no mode → complete preset: autoBuild true)", () => {
     const result = hybridConfigSchema.parse(validBase);
-    expect(result.languageKeywords.autoBuild).toBe(false);
+    expect(result.languageKeywords.autoBuild).toBe(true);
     expect(result.languageKeywords.weeklyIntervalDays).toBe(7);
   });
 
@@ -1672,22 +1672,21 @@ describe("hybridConfigSchema.parse", () => {
       expect(result.autoClassify.enabled).toBe(false);
     });
 
-    it("no mode: result.mode is 'local' (default for cost-safety)", () => {
+    it("no mode: result.mode is 'complete' (default for backward compatibility)", () => {
       const result = hybridConfigSchema.parse(validBase);
-      expect(result.mode).toBe("local");
+      expect(result.mode).toBe("complete");
     });
 
-    it("deprecated mode name 'normal' is interpreted as local and warns", () => {
+    it("deprecated mode name 'normal' is interpreted as enhanced and warns", () => {
       const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
       try {
         const result = hybridConfigSchema.parse({
           ...validBase,
           mode: "normal",
         });
-        expect(result.mode).toBe("local");
+        expect(result.mode).toBe("enhanced");
         expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("deprecated"));
-        expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("local"));
-        expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("cost-safety"));
+        expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("enhanced"));
       } finally {
         warnSpy.mockRestore();
       }
@@ -1696,10 +1695,10 @@ describe("hybridConfigSchema.parse", () => {
     it("no mode but user overrides preset: result.mode is 'custom'", () => {
       const result = hybridConfigSchema.parse({
         ...validBase,
-        graph: { enabled: true },
+        graph: { enabled: false },
       });
-      expect(result.mode).toBe("custom"); // overrides local preset (graph.enabled true)
-      expect(result.graph.enabled).toBe(true);
+      expect(result.mode).toBe("custom"); // overrides complete preset (graph.enabled false)
+      expect(result.graph.enabled).toBe(false);
     });
   });
 });
