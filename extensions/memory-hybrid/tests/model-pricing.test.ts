@@ -106,10 +106,10 @@ describe("getModeCostEstimates()", () => {
 
   it("covers all four config modes", () => {
     const modes = getModeCostEstimates().map((e) => e.mode);
-    expect(modes).toContain("essential");
-    expect(modes).toContain("normal");
-    expect(modes).toContain("expert");
-    expect(modes).toContain("full");
+    expect(modes).toContain("local");
+    expect(modes).toContain("minimal");
+    expect(modes).toContain("enhanced");
+    expect(modes).toContain("complete");
   });
 
   it("has non-negative monthlyLow for all modes", () => {
@@ -124,11 +124,11 @@ describe("getModeCostEstimates()", () => {
     }
   });
 
-  it("modes are ordered by cost (essential cheapest, full most expensive)", () => {
+  it("modes are ordered by cost (local cheapest, complete most expensive)", () => {
     const estimates = getModeCostEstimates();
-    const essential = estimates.find((e) => e.mode === "essential")!;
-    const full = estimates.find((e) => e.mode === "full")!;
-    expect(full.monthlyHigh).toBeGreaterThan(essential.monthlyHigh);
+    const local = estimates.find((e) => e.mode === "local")!;
+    const complete = estimates.find((e) => e.mode === "complete")!;
+    expect(complete.monthlyHigh).toBeGreaterThan(local.monthlyHigh);
   });
 
   it("each mode has a non-empty description and features list", () => {
@@ -138,12 +138,12 @@ describe("getModeCostEstimates()", () => {
     }
   });
 
-  it("full mode includes all expert mode features", () => {
+  it("complete mode includes all enhanced mode features", () => {
     const estimates = getModeCostEstimates();
-    const expert = estimates.find((e) => e.mode === "expert")!;
-    const full = estimates.find((e) => e.mode === "full")!;
-    for (const feature of expert.features) {
-      expect(full.features).toContain(feature);
+    const enhanced = estimates.find((e) => e.mode === "enhanced")!;
+    const complete = estimates.find((e) => e.mode === "complete")!;
+    for (const feature of enhanced.features) {
+      expect(complete.features).toContain(feature);
     }
   });
 });

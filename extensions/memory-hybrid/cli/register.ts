@@ -91,6 +91,7 @@ export type HybridMemCliContext = {
   runStore: (opts: StoreCliOpts) => Promise<StoreCliResult>;
   runInstall: (opts: { dryRun: boolean }) => Promise<InstallCliResult>;
   runVerify: (opts: { fix: boolean; logFile?: string; testLlm?: boolean }, sink: VerifyCliSink) => Promise<void>;
+  runResetAuthBackoff: () => Promise<void>;
   runDistillWindow: (opts: { json: boolean }) => Promise<DistillWindowResult>;
   runRecordDistill: () => Promise<RecordDistillResult>;
   runExtractDaily: (
@@ -105,12 +106,6 @@ export type HybridMemCliContext = {
     full?: boolean;
   }) => Promise<ExtractProceduresResult>;
   runGenerateAutoSkills: (opts: { dryRun: boolean; verbose?: boolean }) => Promise<GenerateAutoSkillsResult>;
-  runSkillsSuggest: (opts: {
-    dryRun?: boolean;
-    apply?: boolean;
-    days?: number;
-    verbose?: boolean;
-  }) => Promise<import("../services/memory-to-skills.js").SkillsSuggestResult>;
   runBackfill: (
     opts: { dryRun: boolean; workspace?: string; limit?: number },
     sink: BackfillCliSink,
@@ -143,6 +138,7 @@ export type HybridMemCliContext = {
   runCredentialsPrune: (opts: { dryRun: boolean; yes?: boolean; onlyFlags?: string[] }) => CredentialsPruneResult;
   runUninstall: (opts: { cleanAll: boolean; leaveConfig: boolean }) => Promise<UninstallCliResult>;
   runUpgrade: (version?: string) => Promise<UpgradeCliResult>;
+  runConfigView: (sink: VerifyCliSink) => void;
   runConfigMode: (mode: string) => ConfigCliResult | Promise<ConfigCliResult>;
   runConfigSet: (key: string, value: string) => ConfigCliResult | Promise<ConfigCliResult>;
   runConfigSetHelp: (key: string) => ConfigCliResult | Promise<ConfigCliResult>;
@@ -319,6 +315,7 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
   const verifyContext: VerifyContext = {
     runVerify: ctx.runVerify,
     runInstall: ctx.runInstall,
+    runResetAuthBackoff: ctx.runResetAuthBackoff,
   };
   try {
     registerVerifyCommands(mem, verifyContext);
@@ -336,7 +333,6 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
     runExtractDaily: ctx.runExtractDaily,
     runExtractProcedures: ctx.runExtractProcedures,
     runGenerateAutoSkills: ctx.runGenerateAutoSkills,
-    runSkillsSuggest: ctx.runSkillsSuggest,
     runDistill: ctx.runDistill,
     runExtractDirectives: ctx.runExtractDirectives,
     runExtractReinforcement: ctx.runExtractReinforcement,

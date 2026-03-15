@@ -38,35 +38,3 @@ export type PersonaProposalsConfig = {
   /** Require minimum session evidence count (default: 10) */
   minSessionEvidence: number;
 };
-
-/** Memory-to-skills: nightly synthesis of skill drafts from clustered procedures (issue #114). */
-export type MemoryToSkillsConfig = {
-  /** Enable memory-to-skills pipeline (default: false; set true to run clustering/synthesis). */
-  enabled: boolean;
-  /** Cron schedule for nightly run (default: "15 2 * * *" = 2:15 AM) */
-  schedule: string;
-  /** Procedures updated in last N days (default: 30) */
-  windowDays: number;
-  /** Minimum procedure instances per cluster (default: 3) */
-  minInstances: number;
-  /** Step consistency threshold 0–1 (default: 0.7) */
-  consistencyThreshold: number;
-  /** Output directory relative to workspace (default: "skills/auto-generated") */
-  outputDir: string;
-  /**
-   * Whether cron message asks agent to notify on new drafts (default: true).
-   * NOTE: Reserved for future use; currently not consumed by the plugin/CLI.
-   * External tooling may read this flag, but changing it has no effect on pipeline behavior.
-   */
-  notify: boolean;
-  /**
-   * Control for auto-publishing synthesized skills (default: false).
-   * NOTE: Reserved for future use; currently a no-op and does not affect promotion
-   * or review behavior. Kept for configuration schema stability and documentation.
-   */
-  autoPublish: boolean;
-  /** Optional: path to post-generation validation script (e.g. quick_validate.py). Not invoked by plugin; for user/documentation. */
-  validateScript?: string;
-  /** When false (default), skills-suggest only previews; use --apply to write. When true, writes by default (--dry-run to preview). */
-  writeByDefault?: boolean;
-};

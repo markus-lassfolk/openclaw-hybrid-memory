@@ -22,6 +22,12 @@ import {
 } from "../config.js";
 import { UnconfiguredProviderError } from "../services/chat.js";
 import { hasOAuthProfiles } from "../utils/auth.js";
+import {
+  isOAuthInBackoff,
+  recordOAuthFailure,
+  DEFAULT_BACKOFF_MINUTES,
+  DEFAULT_RESET_AFTER_HOURS,
+} from "../utils/auth-failover.js";
 import { setKeywordsPath } from "../utils/language-keywords.js";
 import { setMemoryCategories, getMemoryCategories } from "../config.js";
 import { migrateCredentialsToVault, CREDENTIAL_REDACTION_MIGRATION_FLAG } from "../services/credential-migration.js";
@@ -162,10 +168,6 @@ function inferFeatureLabel(body: Record<string, unknown>, _model: string): strin
   // consolidate.txt: "You are a memory consolidator"
   if (content.includes("memory consolidator") || content.includes("merge the following facts")) return "consolidation";
 
-  // memory-to-skills-synthesize.txt: "synthesizing a reusable skill"
-  if (content.includes("synthesizing a reusable skill") || content.includes("memory.to.skills"))
-    return "memory-to-skills";
-
   // generate-proposals.txt: "generating persona file update proposals"
   if (
     content.includes("persona file update proposals") ||
@@ -226,6 +228,7 @@ function buildMultiProviderOpenAI(
   cfg: HybridMemoryConfig,
   api: ClawdbotPluginApi,
   costTracker: CostTracker | null,
+  authBackoffStatePath?: string,
 ): OpenAI {
   const clientCache = new Map<string, OpenAI>();
   /** Resolve env:VAR / file:/path / ${VAR} SecretRef strings so all llm.providers keys work with SecretRef format (Issue #344).
@@ -320,19 +323,48 @@ function buildMultiProviderOpenAI(
 
   /** The configured auth.order map from plugin config (issue #311). */
   const authOrder = cfg.auth?.order;
+  const preferOAuthWhenBoth = cfg.auth?.preferOAuthWhenBoth !== false;
+  const failoverOpts = authBackoffStatePath
+    ? {
+        statePath: authBackoffStatePath,
+        backoffScheduleMinutes: cfg.auth?.backoffScheduleMinutes?.length
+          ? cfg.auth.backoffScheduleMinutes
+          : DEFAULT_BACKOFF_MINUTES,
+        resetBackoffAfterHours: cfg.auth?.resetBackoffAfterHours ?? DEFAULT_RESET_AFTER_HOURS,
+      }
+    : undefined;
+
+  function hasApiKeyForProvider(prefix: string): boolean {
+    const prov = cfg.llm?.providers as Record<string, { apiKey?: string }> | undefined;
+    if (prefix === "google") {
+      const k = resolveApiKey(prov?.google?.apiKey ?? cfg.distill?.apiKey);
+      return Boolean(k && k.length >= 10);
+    }
+    if (prefix === "openai") {
+      const k = resolveApiKey(prov?.openai?.apiKey) ?? resolveApiKey(cfg.embedding?.apiKey);
+      return Boolean(k && k.length >= 10);
+    }
+    if (prefix === "anthropic") {
+      const claude = (cfg as Record<string, unknown>).claude as { apiKey?: string } | undefined;
+      const k = resolveApiKey(prov?.anthropic?.apiKey) ?? resolveApiKey(claude?.apiKey);
+      return Boolean(k && k.length >= 10);
+    }
+    const k = resolveApiKey(prov?.[prefix]?.apiKey);
+    return Boolean(k && k.length >= 10);
+  }
 
   function resolveClient(model: string): {
     client: OpenAI;
     bareModel: string;
     ollamaBaseUrl?: string;
     useFullModel?: boolean;
+    authType?: "oauth";
   } {
     const normalized = normalizeModelId(model);
     const trimmed = normalized.trim();
     const slashIdx = trimmed.indexOf("/");
 
     if (slashIdx <= 0) {
-      // Still bare — use default OpenAI client
       return { client: defaultOpenAIClient(), bareModel: trimmed };
     }
 
@@ -342,20 +374,22 @@ function buildMultiProviderOpenAI(
       cfg.llm?.providers as Record<string, LLMProviderConfig | undefined> | undefined
     )?.[prefix];
 
-    // Generic OAuth → gateway routing for any provider.
-    // If OAuth profiles are configured for a provider and the local gateway is available,
-    // route through the gateway so it can resolve the OAuth token before falling back to an API key.
-    // This ensures auth.order behaves consistently across all providers (google, anthropic, minimax, etc.).
+    // OAuth + optional failover: when both OAuth and API key exist, prefer OAuth unless in backoff.
     if (hasOAuthProfiles(authOrder?.[prefix], prefix) && gatewayBaseUrl && gatewayToken) {
-      return {
-        client: getOrCreate(
-          `gateway:oauth:${gatewayBaseUrl}:${prefix}`,
-          () => new OpenAI({ apiKey: gatewayToken, baseURL: gatewayBaseUrl }),
-        ),
-        bareModel,
-        // The gateway expects the full "provider/model" identifier.
-        useFullModel: true,
-      };
+      const hasApi = hasApiKeyForProvider(prefix);
+      const useOAuth = !hasApi || (preferOAuthWhenBoth && (!failoverOpts || !isOAuthInBackoff(prefix, failoverOpts)));
+      if (useOAuth) {
+        return {
+          client: getOrCreate(
+            `gateway:oauth:${gatewayBaseUrl}:${prefix}`,
+            () => new OpenAI({ apiKey: gatewayToken, baseURL: gatewayBaseUrl }),
+          ),
+          bareModel,
+          useFullModel: true,
+          authType: "oauth",
+        };
+      }
+      // Fall through to use API client (OAuth in backoff or preferOAuthWhenBoth false).
     }
 
     if (prefix === "google") {
@@ -538,7 +572,7 @@ function buildMultiProviderOpenAI(
             ) {
               const rawModel: string = (body as { model?: string }).model ?? "";
               const model = normalizeModelId(rawModel);
-              const { client, bareModel, ollamaBaseUrl, useFullModel } = resolveClient(model);
+              const { client, bareModel, ollamaBaseUrl, useFullModel, authType } = resolveClient(model);
               const prefix = model.trim().split("/")[0]?.toLowerCase();
               const isOpenAI = prefix === "openai" || !model.includes("/");
               // When gateway-routed for non-OpenAI providers (auth.order OAuth), send the full "provider/model"
@@ -555,7 +589,7 @@ function buildMultiProviderOpenAI(
                   adjustedBody as unknown as Parameters<OpenAI["chat"]["completions"]["create"]>[0],
                   opts,
                 );
-              const promise: ReturnType<typeof makeCall> = ollamaBaseUrl
+              let promise: ReturnType<typeof makeCall> = ollamaBaseUrl
                 ? ((async () => {
                     const available = await probeOllamaEndpoint(ollamaBaseUrl);
                     if (!available) {
@@ -568,6 +602,12 @@ function buildMultiProviderOpenAI(
                     return makeCall();
                   })() as ReturnType<typeof makeCall>)
                 : makeCall();
+              if (authType === "oauth" && failoverOpts) {
+                promise = promise.catch((err: unknown) => {
+                  recordOAuthFailure(prefix, failoverOpts);
+                  throw err;
+                }) as ReturnType<typeof makeCall>;
+              }
               // Fire-and-forget cost tracking — never blocks or modifies the returned promise
               if (costTracker) {
                 const feature = inferFeatureLabel(body as unknown as Record<string, unknown>, model);
@@ -980,7 +1020,8 @@ export function initializeDatabases(cfg: HybridMemoryConfig, api: ClawdbotPlugin
   // openai/* or bare names → OpenAI API (uses embedding.apiKey or llm.providers.openai.apiKey)
   // ollama/* → local Ollama server (http://127.0.0.1:11434/v1 by default)
   // Other providers → require llm.providers.<provider>.apiKey + optionally baseURL
-  const openai = buildMultiProviderOpenAI(cfg, api, costTracker);
+  const authBackoffStatePath = join(dirname(resolvedSqlitePath), ".auth-backoff.json");
+  const openai = buildMultiProviderOpenAI(cfg, api, costTracker, authBackoffStatePath);
 
   let credentialsDb: CredentialsDB | null = null;
   if (cfg.credentials.enabled) {

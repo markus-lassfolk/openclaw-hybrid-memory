@@ -58,7 +58,6 @@ import {
   parseFutureDateProtectionConfig,
   parseDocumentsConfig,
   parsePersonaProposalsConfig,
-  parseMemoryToSkillsConfig,
   parseMultiAgentConfig,
   parseErrorReportingConfig,
   parseWorkflowTrackingConfig,
@@ -208,15 +207,25 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
   }
   let cfg = value as Record<string, unknown>;
   const modeRaw = cfg.mode;
-  const validModes: ConfigMode[] = ["essential", "normal", "expert", "full"];
-  const defaultMode: ConfigMode = "full"; // best experience out of the box; use essential/normal for low-resource or cost-conscious setups
-  // Fail fast on typos/invalid modes rather than silently applying full preset
-  if (typeof modeRaw === "string" && modeRaw.trim() !== "" && !validModes.includes(modeRaw as ConfigMode)) {
-    throw new Error(`memory-hybrid config: invalid mode "${modeRaw}"; expected one of: ${validModes.join(", ")}`);
+  const validModes: ConfigMode[] = ["local", "minimal", "enhanced", "complete"];
+  const defaultMode: ConfigMode = "local"; // cost-safety: no LLM by default; set minimal/enhanced/complete to enable
+  const deprecatedModeNames = ["essential", "normal", "expert", "full"] as const;
+  let appliedMode: ConfigMode;
+  if (typeof modeRaw === "string" && modeRaw.trim() !== "") {
+    const trimmed = modeRaw.trim();
+    if (validModes.includes(trimmed as ConfigMode)) {
+      appliedMode = trimmed as ConfigMode;
+    } else if (deprecatedModeNames.includes(trimmed as (typeof deprecatedModeNames)[number])) {
+      appliedMode = "local";
+      console.warn(
+        `memory-hybrid: Config mode "${trimmed}" is deprecated and has been interpreted as "local" for cost-safety. Set mode to "minimal", "enhanced", or "complete" to enable LLM features. Update your config to use the new mode names.`,
+      );
+    } else {
+      throw new Error(`memory-hybrid config: invalid mode "${modeRaw}"; expected one of: ${validModes.join(", ")}`);
+    }
+  } else {
+    appliedMode = defaultMode;
   }
-  // Resolve the mode to apply: use the specified valid mode or fall back to default
-  const appliedMode: ConfigMode =
-    typeof modeRaw === "string" && validModes.includes(modeRaw as ConfigMode) ? (modeRaw as ConfigMode) : defaultMode;
   let hasPresetOverrides = false; // true when user explicitly overrode a preset value (show "Custom" in verify)
   // Apply preset for resolved mode (covers both explicit mode and default-mode paths, eliminating duplication)
   const preset = PRESET_OVERRIDES[appliedMode];
@@ -631,7 +640,6 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
     reflection: parseReflectionConfig(cfg),
     procedures: parseProceduresConfig(cfg),
     extraction: parseExtractionConfig(cfg),
-    memoryToSkills: parseMemoryToSkillsConfig(cfg),
     memoryTiering: parseMemoryTieringConfig(cfg),
     llm: parseLLMConfig(cfg),
     auth: parseAuthConfig(cfg),

@@ -48,7 +48,7 @@ Focus: **optional features as modules or separate plugins**.
 | **Domain converters** | Already removed from builtin. Ship as optional plugin `openclaw-ha-converters` (or similar). | **Done** — Built-in registry is empty; implementations remain in-tree for tests; use `registerConverter()` to add back. |
 | **Analysis & maintenance** | Dream cycle, monthly review, topic clusters, knowledge gaps, cross-agent learning, retrieval-aliases generation → optional “analysis” module, triggered by cron/CLI only. | — |
 | **Learning & procedures** | Procedure extraction, workflow tracking, pattern detection, trajectory tracking, reinforcement extraction → optional “learning” module; procedure injection in core stays but capped and off by default. | — |
-| **Self-extension** | Skill crystallization, tool proposals, memory-to-skills, self-correction extraction, persona proposals, contextual variants → optional “self-extension” module, batch/CLI only. | — |
+| **Self-extension** | Skill crystallization, tool proposals, self-correction extraction, persona proposals, contextual variants → optional “self-extension” module, batch/CLI only. | — |
 | **Observability** | Issue store, verification store, provenance, memory diagnostics, context audit, cost tracking, health dashboard → optional “observability” module. | — |
 | **Stable internal API** | Define a well-typed `MemoryPluginAPI` that optional modules depend on, to avoid circular deps and make modules testable. | **Done** — `api/memory-plugin-api.ts` defines `MemoryPluginAPI`; index builds one implementation; `registerTools` and `registerLifecycleHooks` accept it; optional modules can depend on this type only. |
 
@@ -92,13 +92,13 @@ The reports called out **overlapping recall features** causing delays, lag, and 
 - **Prompt blocks** — max 3: one `<recalled-context>`, optional `<active-task>`, one optional warning.
 
 **Still on by preset (user can turn off):**
-- **Entity lookup** — expert/full presets set `autoRecall.entityLookup.enabled: true`. Essential/normal keep it off.
-- **Graph in recall** — normal+ have `graph.useInRecall: true` (zero-LLM expansion from seeds).
-- **Procedures** — normal+ have procedures enabled (but capped).
-- **HOT tier** — normal+ have memory tiering (bounded by `hotMaxTokens`).
+- **Entity lookup** — enhanced/complete presets set `autoRecall.entityLookup.enabled: true`. Local/minimal keep it off.
+- **Graph in recall** — minimal+ have `graph.useInRecall: true` (zero-LLM expansion from seeds).
+- **Procedures** — minimal+ have procedures enabled (but capped).
+- **HOT tier** — minimal+ have memory tiering (bounded by `hotMaxTokens`).
 
 **Essential mode = local-only, zero LLM/API calls.**  
-Essential preset sets `retrieval.strategies: ["fts5"]`. Recall and capture then use **only** SQLite FTS and local files — no embedding, no vector search, no HyDE, no chat LLM. You get persistent structured memory, auto-capture, auto-recall by keyword, and WAL — still well above vanilla OpenClaw (which has no durable memory). Normal/expert/full add semantic (embedding + LanceDB) and the optional layers above; the worst latency sources (HyDE, ambient, frustration, Hebbian) remain removed or default-off.
+Local preset sets `retrieval.strategies: ["fts5"]`. Recall and capture then use **only** SQLite FTS and local files — no embedding, no vector search, no HyDE, no chat LLM. You get persistent structured memory, auto-capture, auto-recall by keyword, and WAL — still well above vanilla OpenClaw (which has no durable memory). Minimal/enhanced/complete add semantic (embedding + LanceDB) and the optional layers above; Minimal uses only nano/flash-tier LLM for distill and auto-classify. The worst latency sources (HyDE, ambient, frustration, Hebbian) remain removed or default-off.
 
 ---
 

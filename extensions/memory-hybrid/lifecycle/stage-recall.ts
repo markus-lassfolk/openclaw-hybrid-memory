@@ -236,7 +236,7 @@ async function runRecall(
       let lanceResults: SearchResult[] = [];
       const useSemantic = ctx.cfg.retrieval.strategies.includes("semantic");
       if (!useSemantic) {
-        // FTS-only mode (e.g. essential): no embedding or vector search — local DB only, zero LLM/API calls.
+        // FTS-only mode (e.g. local): no embedding or vector search — local DB only, zero LLM/API calls.
       } else {
         const directiveAbort = new AbortController();
         try {

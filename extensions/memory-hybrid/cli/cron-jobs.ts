@@ -3,7 +3,7 @@
  *
  * **Canonical source:** The jobs actually created by install and verify --fix
  * are defined in handlers.ts as MAINTENANCE_CRON_JOBS (agent-run with messages).
- * This file provides the same 9 jobs as shell commands for reference or for
+ * This file provides the same 8 jobs as shell commands for reference or for
  * runners that execute CLI commands directly. See docs/CLI-REFERENCE.md and
  * docs/MAINTENANCE-TASKS-MATRIX.md.
  */
@@ -38,13 +38,6 @@ export const PLUGIN_CRON_JOBS: PluginCronJob[] = [
     schedule: { kind: "cron", expr: "30 2 * * *" },
     command: "hybrid-mem self-correction-run",
     featureGate: null,
-  },
-  {
-    pluginJobId: "hybrid-mem:nightly-memory-to-skills",
-    name: "nightly-memory-to-skills",
-    schedule: { kind: "cron", expr: "15 2 * * *" },
-    command: "hybrid-mem skills-suggest",
-    featureGate: "memoryToSkills.enabled",
   },
   {
     pluginJobId: "hybrid-mem:nightly-dream-cycle",

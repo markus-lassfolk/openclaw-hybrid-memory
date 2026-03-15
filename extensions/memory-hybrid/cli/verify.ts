@@ -9,10 +9,11 @@ import { withExit, type Chainable } from "./shared.js";
 export type VerifyContext = {
   runVerify: (opts: { fix: boolean; logFile?: string; testLlm?: boolean }, sink: VerifyCliSink) => Promise<void>;
   runInstall: (opts: { dryRun: boolean }) => Promise<InstallCliResult>;
+  runResetAuthBackoff: () => Promise<void>;
 };
 
 export function registerVerifyCommands(mem: Chainable, ctx: VerifyContext): void {
-  const { runVerify, runInstall } = ctx;
+  const { runVerify, runInstall, runResetAuthBackoff } = ctx;
 
   mem
     .command("verify")
@@ -36,6 +37,17 @@ export function registerVerifyCommands(mem: Chainable, ctx: VerifyContext): void
           });
           throw err;
         }
+      }),
+    );
+
+  mem
+    .command("reset-auth-backoff")
+    .description(
+      "Clear OAuth failover backoff so the next LLM call will try OAuth again for providers that have both OAuth and API key.",
+    )
+    .action(
+      withExit(async () => {
+        await runResetAuthBackoff();
       }),
     );
 

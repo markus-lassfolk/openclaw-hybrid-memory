@@ -284,7 +284,22 @@ export function parseAuthConfig(cfg: Record<string, unknown>): AuthOrderConfig |
       order[trimmedProvider.toLowerCase()] = validProfiles;
     }
   }
-  return Object.keys(order).length > 0 ? { order } : undefined;
+  if (Object.keys(order).length === 0) return undefined;
+  const preferOAuthWhenBoth = authRaw.preferOAuthWhenBoth !== false;
+  const backoffScheduleRaw = authRaw.backoffScheduleMinutes;
+  const backoffScheduleMinutes =
+    Array.isArray(backoffScheduleRaw) && backoffScheduleRaw.length > 0
+      ? (backoffScheduleRaw as number[]).filter((n) => typeof n === "number" && n > 0)
+      : undefined;
+  const resetHoursRaw = authRaw.resetBackoffAfterHours;
+  const resetBackoffAfterHours =
+    typeof resetHoursRaw === "number" && resetHoursRaw > 0 ? Math.min(168, resetHoursRaw) : undefined;
+  return {
+    order,
+    preferOAuthWhenBoth,
+    ...(backoffScheduleMinutes && backoffScheduleMinutes.length > 0 ? { backoffScheduleMinutes } : {}),
+    ...(resetBackoffAfterHours != null ? { resetBackoffAfterHours } : {}),
+  };
 }
 
 export function parseLLMConfig(cfg: Record<string, unknown>): LLMConfig | undefined {
@@ -326,12 +341,20 @@ export function parseLLMConfig(cfg: Record<string, unknown>): LLMConfig | undefi
       ? (llmRaw.nano as string[]).filter((m) => typeof m === "string" && m.trim().length > 0)
       : [];
   const localAutoStart = llmRaw?.localAutoStart === true;
+  const disabledProvidersRaw = llmRaw?.disabledProviders;
+  const disabledProviders: string[] =
+    Array.isArray(disabledProvidersRaw) && disabledProvidersRaw.length > 0
+      ? disabledProvidersRaw
+          .filter((p): p is string => typeof p === "string" && p.trim().length > 0)
+          .map((p) => p.trim().toLowerCase())
+      : [];
   const llm: LLMConfig | undefined =
     defaultList.length > 0 ||
     heavyList.length > 0 ||
     nanoList.length > 0 ||
     llmProviders !== undefined ||
-    localAutoStart
+    localAutoStart ||
+    disabledProviders.length > 0
       ? {
           default: defaultList,
           heavy: heavyList,
@@ -343,6 +366,7 @@ export function parseLLMConfig(cfg: Record<string, unknown>): LLMConfig | undefi
               : undefined,
           providers: llmProviders,
           localAutoStart,
+          ...(disabledProviders.length > 0 ? { disabledProviders } : {}),
         }
       : undefined;
   return llm;

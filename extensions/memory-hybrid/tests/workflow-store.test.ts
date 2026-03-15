@@ -518,7 +518,7 @@ describe("parseWorkflowTrackingConfig", () => {
 
   it("defaults to disabled with sensible values when omitted", async () => {
     const { hybridConfigSchema } = await import("../config.js");
-    const cfg = hybridConfigSchema.parse({ ...BASE_CFG, mode: "normal" });
+    const cfg = hybridConfigSchema.parse({ ...BASE_CFG, mode: "minimal" });
     expect(cfg.workflowTracking.enabled).toBe(false);
     expect(cfg.workflowTracking.maxTracesPerDay).toBe(100);
     expect(cfg.workflowTracking.retentionDays).toBe(90);

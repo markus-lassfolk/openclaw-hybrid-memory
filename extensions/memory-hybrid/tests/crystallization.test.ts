@@ -694,7 +694,7 @@ describe("parseCrystallizationConfig", () => {
 
   it("defaults to disabled with sensible values when omitted", async () => {
     const { hybridConfigSchema } = await import("../config.js");
-    const cfg = hybridConfigSchema.parse({ ...BASE_CFG, mode: "normal" });
+    const cfg = hybridConfigSchema.parse({ ...BASE_CFG, mode: "minimal" });
     expect(cfg.crystallization.enabled).toBe(false);
     expect(cfg.crystallization.minUsageCount).toBe(5);
     expect(cfg.crystallization.minSuccessRate).toBe(0.7);

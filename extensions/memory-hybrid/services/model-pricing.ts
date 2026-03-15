@@ -69,7 +69,7 @@ export function estimateCost(model: string, inputTokens: number, outputTokens: n
 // ---------------------------------------------------------------------------
 
 export interface ModeEstimate {
-  mode: "essential" | "normal" | "expert" | "full";
+  mode: "local" | "minimal" | "enhanced" | "complete";
   /** Human-readable description of features enabled in this mode. */
   description: string;
   /** List of features enabled (for display). */
@@ -83,63 +83,60 @@ export interface ModeEstimate {
 /**
  * Return cost estimates ($/month) for each config mode.
  *
- * Estimates are based on typical usage patterns with the default cheapest model
- * (openai/gpt-4.1-nano at $0.10/$0.40 per 1M tokens). Actual costs depend on
- * usage volume and model selection.
+ * Local: no external LLM. Minimal: nano/flash-tier only (distill, auto-classify).
+ * Enhanced/Complete: broader model use. Estimates use openai/gpt-4.1-nano equivalents.
  */
 export function getModeCostEstimates(): ModeEstimate[] {
   return [
     {
-      mode: "essential",
-      description: "Minimal — embeddings only, no LLM features",
-      features: ["embeddings", "structured-recall"],
+      mode: "local",
+      description: "No external LLM — FTS-only recall, local SQLite + files",
+      features: ["structured-recall", "auto-capture"],
       monthlyLow: 0.0,
-      monthlyHigh: 0.05,
+      monthlyHigh: 0.0,
     },
     {
-      mode: "normal",
-      description: "Standard — auto-classify + query-expansion + HyDE",
-      features: ["embeddings", "auto-classify", "query-expansion", "hyde", "structured-recall"],
-      monthlyLow: 0.05,
-      monthlyHigh: 0.5,
+      mode: "minimal",
+      description: "Nano for classify, flash for distill — good value at low cost",
+      features: ["embeddings", "auto-classify", "distill", "structured-recall", "graph", "procedures"],
+      monthlyLow: 0.02,
+      monthlyHigh: 0.3,
     },
     {
-      mode: "expert",
-      description: "Full intelligence — adds reflection, self-correction, cross-agent learning",
+      mode: "enhanced",
+      description: "Reflection, self-correction, entity lookup, classify-at-write",
       features: [
         "embeddings",
         "auto-classify",
-        "query-expansion",
-        "hyde",
         "structured-recall",
         "reflection",
         "self-correction",
-        "cross-agent-learning",
-        "tool-effectiveness",
+        "entity-lookup",
+        "classify-before-write",
       ],
-      monthlyLow: 0.5,
-      monthlyHigh: 3.0,
+      monthlyLow: 0.3,
+      monthlyHigh: 2.5,
     },
     {
-      mode: "full",
-      description: "Everything — all features including distill, dream-cycle, extract-daily",
+      mode: "complete",
+      description: "Everything — query expansion, ingest, dream-cycle, extract-daily",
       features: [
         "embeddings",
         "auto-classify",
         "query-expansion",
-        "hyde",
         "structured-recall",
         "reflection",
         "self-correction",
-        "cross-agent-learning",
-        "tool-effectiveness",
+        "entity-lookup",
+        "classify-before-write",
         "distill",
         "dream-cycle",
         "extract-daily",
         "extract-implicit",
         "consolidate",
+        "ingest",
       ],
-      monthlyLow: 3.0,
+      monthlyLow: 2.0,
       monthlyHigh: 15.0,
     },
   ];
