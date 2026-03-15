@@ -23,7 +23,7 @@ import type {
   CostTrackingConfig,
   DashboardConfig,
 } from "../types/features.js";
-import type { PersonaProposalsConfig, MemoryToSkillsConfig } from "../types/agents.js";
+import type { PersonaProposalsConfig } from "../types/agents.js";
 import { IDENTITY_FILE_TYPES, type IdentityFileType } from "../types/agents.js";
 import type { ErrorReportingConfig, MultiAgentConfig } from "../types/index.js";
 import { DEFAULT_GLITCHTIP_DSN } from "../../services/error-reporter.js";
@@ -292,42 +292,6 @@ export function parsePersonaProposalsConfig(cfg: Record<string, unknown>): Perso
   };
 }
 
-export function parseMemoryToSkillsConfig(cfg: Record<string, unknown>): MemoryToSkillsConfig {
-  const memoryToSkillsRaw = cfg.memoryToSkills as Record<string, unknown> | undefined;
-  return {
-    enabled: memoryToSkillsRaw?.enabled === true,
-    schedule:
-      typeof memoryToSkillsRaw?.schedule === "string" && memoryToSkillsRaw.schedule.trim().length > 0
-        ? memoryToSkillsRaw.schedule.trim()
-        : "15 2 * * *",
-    windowDays:
-      typeof memoryToSkillsRaw?.windowDays === "number" && memoryToSkillsRaw.windowDays >= 1
-        ? Math.min(365, Math.floor(memoryToSkillsRaw.windowDays))
-        : 30,
-    minInstances:
-      typeof memoryToSkillsRaw?.minInstances === "number" && memoryToSkillsRaw.minInstances >= 1
-        ? Math.floor(memoryToSkillsRaw.minInstances)
-        : 3,
-    consistencyThreshold:
-      typeof memoryToSkillsRaw?.consistencyThreshold === "number" &&
-      memoryToSkillsRaw.consistencyThreshold >= 0 &&
-      memoryToSkillsRaw.consistencyThreshold <= 1
-        ? memoryToSkillsRaw.consistencyThreshold
-        : 0.7,
-    outputDir:
-      typeof memoryToSkillsRaw?.outputDir === "string" && memoryToSkillsRaw.outputDir.length > 0
-        ? memoryToSkillsRaw.outputDir
-        : "skills/auto-generated",
-    notify: memoryToSkillsRaw?.notify !== false,
-    autoPublish: memoryToSkillsRaw?.autoPublish === true,
-    validateScript:
-      typeof memoryToSkillsRaw?.validateScript === "string" && memoryToSkillsRaw.validateScript.trim().length > 0
-        ? memoryToSkillsRaw.validateScript.trim()
-        : undefined,
-    writeByDefault: memoryToSkillsRaw?.writeByDefault === true,
-  };
-}
-
 export function parseMultiAgentConfig(cfg: Record<string, unknown>): MultiAgentConfig {
   const multiAgentRaw = cfg.multiAgent as Record<string, unknown> | undefined;
   return {
@@ -345,10 +309,15 @@ export function parseMultiAgentConfig(cfg: Record<string, unknown>): MultiAgentC
   };
 }
 
+/**
+ * Parse error reporting config. Sentinel/GlitchTip is enabled by default (opt-out) and reports to
+ * the public community DSN. Presets do not set errorReporting — this parser is the single source
+ * of defaults. Do not change to opt-in or remove the public DSN default without explicit product decision.
+ */
 export function parseErrorReportingConfig(cfg: Record<string, unknown>): ErrorReportingConfig {
   const errorReportingRaw = cfg.errorReporting as Record<string, unknown> | undefined;
 
-  // When errorReporting is not specified, use opt-out defaults (enabled + consent are true)
+  // When errorReporting is not specified: opt-out defaults (enabled + consent true, community DSN)
   if (!errorReportingRaw || typeof errorReportingRaw !== "object") {
     return {
       enabled: true,

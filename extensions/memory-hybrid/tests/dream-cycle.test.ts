@@ -540,7 +540,7 @@ describe("NightlyCycleConfig parsing", () => {
   };
 
   it("defaults to disabled with sensible defaults", () => {
-    const cfg = hybridConfigSchema.parse({ ...minimalConfig, mode: "normal" });
+    const cfg = hybridConfigSchema.parse({ ...minimalConfig, mode: "minimal" });
     expect(cfg.nightlyCycle.enabled).toBe(false);
     expect(cfg.nightlyCycle.schedule).toBe("45 2 * * *");
     expect(cfg.nightlyCycle.reflectWindowDays).toBe(7);

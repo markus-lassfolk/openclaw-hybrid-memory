@@ -12,7 +12,6 @@ import type {
   DistillCliResult,
   DistillCliSink,
 } from "./types.js";
-import type { SkillsSuggestResult } from "../services/memory-to-skills.js";
 import { withExit, type Chainable } from "./shared.js";
 
 export type DistillContext = {
@@ -30,12 +29,6 @@ export type DistillContext = {
     full?: boolean;
   }) => Promise<ExtractProceduresResult>;
   runGenerateAutoSkills: (opts: { dryRun: boolean; verbose?: boolean }) => Promise<GenerateAutoSkillsResult>;
-  runSkillsSuggest: (opts: {
-    dryRun?: boolean;
-    apply?: boolean;
-    days?: number;
-    verbose?: boolean;
-  }) => Promise<SkillsSuggestResult>;
   runDistill: (
     opts: {
       dryRun: boolean;
@@ -87,7 +80,6 @@ export function registerDistillCommands(mem: Chainable, ctx: DistillContext): vo
     runExtractDaily,
     runExtractProcedures,
     runGenerateAutoSkills,
-    runSkillsSuggest,
     runDistill,
     runExtractDirectives,
     runExtractReinforcement,
@@ -261,55 +253,6 @@ export function registerDistillCommands(mem: Chainable, ctx: DistillContext): vo
             `\nGenerated ${result.generated} auto-skills${result.skipped > 0 ? ` (${result.skipped} skipped)` : ""}`,
           );
           for (const p of result.paths) console.log(`  ${p}`);
-        }
-      }),
-    );
-
-  mem
-    .command("skills-suggest")
-    .description("Cluster procedures, synthesize SKILL.md drafts to skills/auto-generated/ (memory-to-skills)")
-    .option("--dry-run", "Show what would be generated without writing")
-    .option("--apply", "Write skills to disk (default: preview only unless memoryToSkills.writeByDefault is true)")
-    .option("--days <n>", "Procedures updated in last N days (default: config memoryToSkills.windowDays)", "")
-    .option("--verbose", "Log clustering and synthesis steps")
-    .action(
-      withExit(async (opts: { dryRun?: boolean; apply?: boolean; days?: string; verbose?: boolean }) => {
-        const days = opts.days != null && opts.days !== "" ? parseInt(opts.days, 10) : undefined;
-        const result = await runSkillsSuggest({
-          dryRun: !!opts.dryRun,
-          apply: !!opts.apply,
-          days: Number.isFinite(days) ? days : undefined,
-          verbose: !!opts.verbose,
-        });
-        if (!result.proceduresCollected && !result.pathsWritten.length) {
-          console.log("\nNo procedures in window or memoryToSkills disabled.");
-          return;
-        }
-        console.log(
-          `\nProcedures: ${result.proceduresCollected}; clusters: ${result.clustersConsidered}; qualifying: ${result.qualifyingClusters}.`,
-        );
-        if (result.skippedOther) console.log(`Skipped (other): ${result.skippedOther}.`);
-        if (result.skippedDuplicate) console.log(`Skipped (duplicate recipe): ${result.skippedDuplicate}.`);
-        for (const p of result.pathsWritten) console.log(`  ${p}`);
-        for (const d of result.drafts) {
-          console.log(
-            `\nI noticed you've done "${d.pattern}${d.pattern.length >= 60 ? "…" : ""}" ${d.count} times. I drafted a skill — review at \`${d.path}\`.`,
-          );
-        }
-        if (result.draftPreviews?.length) {
-          console.log(
-            "\n" + "─".repeat(60) + "\n  Draft content that would be written (--dry-run --verbose)\n" + "─".repeat(60),
-          );
-          for (const prev of result.draftPreviews) {
-            console.log(`\n▼ Would write: ${prev.path}\n`);
-            console.log(prev.skillMd);
-            console.log("\n▼ Would write: " + prev.path.replace(/SKILL\.md$/, "recipe.json") + "\n");
-            console.log(prev.recipeJson);
-            console.log("\n" + "─".repeat(60));
-          }
-        }
-        if (result.dryRun && result.pathsWritten.length > 0) {
-          console.log("\nPreview only. Use --apply to write skills to disk.");
         }
       }),
     );

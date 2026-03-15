@@ -42,7 +42,8 @@ Commands by category:
 
   Setup & installation
     install              Apply recommended config and defaults (run after first setup)
-    verify               Verify config and databases; use --fix to apply defaults
+    verify               Verify infrastructure and functionality (DBs, embedding API, jobs); use --fix to apply defaults
+    config               Show current configuration and feature toggles (use config-set to change)
 
   Maintenance (run regularly or use run-all)
     run-all              Run all maintenance tasks in optimal order (see below)
@@ -81,7 +82,6 @@ Commands by category:
     extract-directives   Extract directive rules from sessions
     extract-reinforcement  Extract reinforcement from praise
     generate-auto-skills   Generate skills from procedures
-    skills-suggest         Cluster procedures, draft skills to auto-generated/ (--days, --dry-run)
     generate-proposals    Generate persona proposals from reflection (--dry-run, --verbose)
 
   Reflection & classification
@@ -101,6 +101,7 @@ Commands by category:
 
   Export & config
     export               Export to MEMORY.md / memory/ (--output)
+    config               View configuration and feature toggles
     config-mode <mode>   Set memory mode
     config-set <key> <value>
 
@@ -145,7 +146,6 @@ export const HYBRID_MEM_CLI_COMMANDS = [
   "hybrid-mem extract-daily",
   "hybrid-mem extract-procedures",
   "hybrid-mem generate-auto-skills",
-  "hybrid-mem skills-suggest",
   "hybrid-mem generate-proposals",
   "hybrid-mem extract-directives",
   "hybrid-mem extract-reinforcement",
@@ -174,6 +174,7 @@ export const HYBRID_MEM_CLI_COMMANDS = [
   "hybrid-mem reflect-meta",
   "hybrid-mem dream-cycle",
   "hybrid-mem resolve-contradictions",
+  "hybrid-mem config",
   "hybrid-mem verify",
   "hybrid-mem credentials migrate-to-vault",
   "hybrid-mem distill-window",
@@ -775,12 +776,12 @@ export function createHybridMemCliContext(
     runStore: (opts) => handlers.runStoreForCli(handlerCtx, opts, log),
     runInstall: (opts) => Promise.resolve(handlers.runInstallForCli(opts)),
     runVerify: (opts, sink) => handlers.runVerifyForCli(handlerCtx, opts, sink),
+    runResetAuthBackoff: () => handlers.runResetAuthBackoffForCli(handlerCtx),
     runDistillWindow: (opts) => Promise.resolve(handlers.runDistillWindowForCli(handlerCtx, opts)),
     runRecordDistill: () => Promise.resolve(handlers.runRecordDistillForCli(handlerCtx)),
     runExtractDaily: (opts, sink) => handlers.runExtractDailyForCli(handlerCtx, opts, sink),
     runExtractProcedures: (opts) => handlers.runExtractProceduresForCli(handlerCtx, opts),
     runGenerateAutoSkills: (opts) => handlers.runGenerateAutoSkillsForCli(handlerCtx, opts),
-    runSkillsSuggest: (opts) => handlers.runSkillsSuggestForCli(handlerCtx, opts),
     runBackfill: (opts, sink) => handlers.runBackfillForCli(handlerCtx, opts, sink),
     runIngestFiles: (opts, sink) => handlers.runIngestFilesForCli(handlerCtx, opts, sink),
     runDistill: (opts, sink) => handlers.runDistillForCli(handlerCtx, opts, sink),
@@ -791,6 +792,7 @@ export function createHybridMemCliContext(
     runCredentialsPrune: (opts) => handlers.runCredentialsPruneForCli(handlerCtx, opts),
     runUninstall: (opts) => Promise.resolve(handlers.runUninstallForCli(handlerCtx, opts)),
     runUpgrade: (v?) => handlers.runUpgradeForCli(handlerCtx, v),
+    runConfigView: (sink) => handlers.runConfigViewForCli(handlerCtx, sink),
     runConfigMode: (mode) => Promise.resolve(handlers.runConfigModeForCli(handlerCtx, mode)),
     runConfigSet: (key, value) => Promise.resolve(handlers.runConfigSetForCli(handlerCtx, key, value)),
     runConfigSetHelp: (key) => Promise.resolve(handlers.runConfigSetHelpForCli(handlerCtx, key)),

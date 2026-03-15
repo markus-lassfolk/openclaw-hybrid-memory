@@ -3,7 +3,7 @@
  *
  * Covers:
  * - VerbosityLevel type parsing via hybridConfigSchema.parse
- * - Preset defaults: essential → quiet, full → verbose, normal/expert → normal
+ * - Preset defaults: local → quiet, complete → verbose, minimal/enhanced → normal
  * - parseVerbosityLevel standalone function
  * - config-set verbosity validation (runConfigSetForCli)
  * - memory_prune output at each verbosity level
@@ -60,8 +60,8 @@ function parseWithVerbosity(verbosity?: string) {
 // ---------------------------------------------------------------------------
 
 describe("VerbosityLevel — hybridConfigSchema", () => {
-  it("defaults to 'verbose' when verbosity is not set (default mode is 'full')", () => {
-    // When no mode is specified, the config parser applies the 'full' preset by default,
+  it("defaults to 'verbose' when verbosity is not set (default mode is 'complete')", () => {
+    // When no mode is specified, the config parser applies the 'complete' preset by default,
     // which sets verbosity to 'verbose'.
     const cfg = parseWithVerbosity();
     expect(cfg.verbosity).toBe("verbose");
@@ -101,41 +101,41 @@ describe("VerbosityLevel — hybridConfigSchema", () => {
 // ---------------------------------------------------------------------------
 
 describe("VerbosityLevel — preset defaults", () => {
-  it("essential mode defaults verbosity to 'quiet'", () => {
-    const cfg = hybridConfigSchema.parse({ ...BASE_CONFIG, mode: "essential" });
+  it("local mode defaults verbosity to 'quiet'", () => {
+    const cfg = hybridConfigSchema.parse({ ...BASE_CONFIG, mode: "local" });
     expect(cfg.verbosity).toBe("quiet");
   });
 
-  it("full mode defaults verbosity to 'verbose'", () => {
-    const cfg = hybridConfigSchema.parse({ ...BASE_CONFIG, mode: "full" });
+  it("complete mode defaults verbosity to 'verbose'", () => {
+    const cfg = hybridConfigSchema.parse({ ...BASE_CONFIG, mode: "complete" });
     expect(cfg.verbosity).toBe("verbose");
   });
 
-  it("normal mode defaults verbosity to 'normal'", () => {
-    const cfg = hybridConfigSchema.parse({ ...BASE_CONFIG, mode: "normal" });
+  it("minimal mode defaults verbosity to 'normal'", () => {
+    const cfg = hybridConfigSchema.parse({ ...BASE_CONFIG, mode: "minimal" });
     expect(cfg.verbosity).toBe("normal");
   });
 
-  it("expert mode defaults verbosity to 'normal' (no verbosity override in expert preset)", () => {
-    const cfg = hybridConfigSchema.parse({ ...BASE_CONFIG, mode: "expert" });
-    // expert preset doesn't set verbosity, so the merged result should be 'normal'
+  it("enhanced mode defaults verbosity to 'normal' (no verbosity override in expert preset)", () => {
+    const cfg = hybridConfigSchema.parse({ ...BASE_CONFIG, mode: "enhanced" });
+    // enhanced preset doesn't set verbosity, so the merged result should be 'normal'
     expect(cfg.verbosity).toBe("normal");
   });
 
-  it("user can override preset verbosity (essential + verbosity=verbose → custom mode)", () => {
+  it("user can override preset verbosity (local + verbosity=verbose → custom mode)", () => {
     const cfg = hybridConfigSchema.parse({
       ...BASE_CONFIG,
-      mode: "essential",
+      mode: "local",
       verbosity: "verbose",
     });
     expect(cfg.verbosity).toBe("verbose");
     expect(cfg.mode).toBe("custom"); // user overrode a preset key
   });
 
-  it("user can override preset verbosity (full + verbosity=quiet)", () => {
+  it("user can override preset verbosity (complete + verbosity=quiet)", () => {
     const cfg = hybridConfigSchema.parse({
       ...BASE_CONFIG,
-      mode: "full",
+      mode: "complete",
       verbosity: "quiet",
     });
     expect(cfg.verbosity).toBe("quiet");
@@ -190,7 +190,7 @@ describe("runVerifyForCli — quiet-mode sink filtering", () => {
    */
   it("suppresses ✅ OK lines in quiet mode", async () => {
     const { runVerifyForCli } = await import("../cli/handlers.js");
-    const cfg = hybridConfigSchema.parse({ ...BASE_CONFIG, mode: "essential", verbosity: "quiet" });
+    const cfg = hybridConfigSchema.parse({ ...BASE_CONFIG, mode: "local", verbosity: "quiet" });
 
     const lines: string[] = [];
     const sink = { log: (msg: string) => lines.push(msg) };
@@ -240,7 +240,7 @@ describe("runVerifyForCli — quiet-mode sink filtering", () => {
 
   it("passes ❌ failure lines through in quiet mode", async () => {
     const { runVerifyForCli } = await import("../cli/handlers.js");
-    const cfg = hybridConfigSchema.parse({ ...BASE_CONFIG, mode: "essential", verbosity: "quiet" });
+    const cfg = hybridConfigSchema.parse({ ...BASE_CONFIG, mode: "local", verbosity: "quiet" });
 
     const lines: string[] = [];
     const sink = { log: (msg: string) => lines.push(msg) };
@@ -664,7 +664,7 @@ describe("runCostReportForCli — compact=true when verbosity=quiet", () => {
     const emptyLines = lines.filter((l) => l.trim() === "");
     expect(emptyLines).toHaveLength(0);
     // Should still output mode names in the table
-    expect(lines.some((l) => /essential|normal|full/i.test(l))).toBe(true);
+    expect(lines.some((l) => /local|minimal|complete/i.test(l))).toBe(true);
   });
 });
 
@@ -685,7 +685,7 @@ describe("VerbosityLevel — silent mode", () => {
   it("silent verbosity still allows user override (sets mode to custom)", () => {
     const cfg = hybridConfigSchema.parse({
       ...BASE_CONFIG,
-      mode: "full",
+      mode: "complete",
       verbosity: "silent",
     });
     expect(cfg.verbosity).toBe("silent");

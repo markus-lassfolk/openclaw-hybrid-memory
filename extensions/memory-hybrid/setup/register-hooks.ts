@@ -6,52 +6,15 @@
  */
 
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk";
-import type { FactsDB } from "../backends/facts-db.js";
-import type { VectorDB } from "../backends/vector-db.js";
-import type { WriteAheadLog } from "../backends/wal.js";
-import type { CredentialsDB } from "../backends/credentials-db.js";
-import type { EmbeddingProvider } from "../services/embeddings.js";
-import type { EmbeddingRegistry } from "../services/embedding-registry.js";
-import type OpenAI from "openai";
-import type { HybridMemoryConfig } from "../config.js";
+import type { MemoryPluginAPI } from "../api/memory-plugin-api.js";
 import { getMemoryCategories } from "../config.js";
-import type { MemoryEntry, ScopeFilter } from "../types/memory.js";
 import { createLifecycleHooks, type LifecycleContext } from "../lifecycle/hooks.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { sanitizeMessagesForClaude, type MessageLike } from "../utils/sanitize-messages.js";
-import type { PendingLLMWarnings } from "../services/chat.js";
 import { replayWalEntries } from "../utils/wal-replay.js";
 
-export interface HooksContext {
-  factsDb: FactsDB;
-  vectorDb: VectorDB;
-  embeddings: EmbeddingProvider;
-  embeddingRegistry?: EmbeddingRegistry | null;
-  openai: OpenAI;
-  cfg: HybridMemoryConfig;
-  credentialsDb: CredentialsDB | null;
-  aliasDb: import("../services/retrieval-aliases.js").AliasDB | null;
-  wal: WriteAheadLog | null;
-  eventLog: import("../backends/event-log.js").EventLog | null;
-  currentAgentIdRef: { value: string | null };
-  lastProgressiveIndexIds: string[];
-  restartPendingClearedRef: { value: boolean };
-  resolvedSqlitePath: string;
-  walWrite: typeof import("../services/wal-helpers.js").walWrite;
-  walRemove: typeof import("../services/wal-helpers.js").walRemove;
-  findSimilarByEmbedding: (
-    vectorDb: VectorDB,
-    factsDb: { getById(id: string): MemoryEntry | null },
-    vector: number[],
-    limit: number,
-    minScore?: number,
-  ) => Promise<MemoryEntry[]>;
-  shouldCapture: (text: string) => boolean;
-  detectCategory: (text: string) => import("../config.js").MemoryCategory;
-  pendingLLMWarnings: PendingLLMWarnings;
-  issueStore: import("../backends/issue-store.js").IssueStore | null;
-  recallInFlightRef: { value: number };
-}
+/** Lifecycle hooks receive the stable plugin API (Phase 3). */
+export type HooksContext = MemoryPluginAPI;
 
 /** Issue #463: Returned handle for lifecycle hook cleanup. */
 export interface LifecycleHooksHandle {

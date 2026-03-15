@@ -12,6 +12,8 @@ import {
   getDefaultCronModel,
   getCronModelConfig,
   getLLMModelPreference,
+  getLLMModelPreferenceUnfiltered,
+  getProvidersWithKeys,
   resolveReflectionModelAndFallbacks,
   type DecayClass,
   type HybridMemoryConfig,
@@ -211,7 +213,7 @@ describe("hybridConfigSchema.parse", () => {
     expect(result.autoRecall.retrievalDirectives.maxPerPrompt).toBe(6);
   });
 
-  it("memoryTiering defaults when omitted", () => {
+  it("memoryTiering defaults when omitted (no mode → complete: tiering on)", () => {
     const result = hybridConfigSchema.parse(validBase);
     expect(result.memoryTiering.enabled).toBe(true);
     expect(result.memoryTiering.hotMaxTokens).toBe(2000);
@@ -572,12 +574,12 @@ describe("hybridConfigSchema.parse", () => {
     expect(result.captureMaxChars).toBe(10000);
   });
 
-  it("no mode applies full preset: store.fuzzyDedupe is true", () => {
+  it("no mode applies complete preset: store.fuzzyDedupe is true", () => {
     const result = hybridConfigSchema.parse(validBase);
     expect(result.store.fuzzyDedupe).toBe(true);
   });
 
-  it("no mode applies full preset: store.classifyBeforeWrite is true", () => {
+  it("no mode applies complete preset: store.classifyBeforeWrite is true", () => {
     const result = hybridConfigSchema.parse(validBase);
     expect(result.store.classifyBeforeWrite).toBe(true);
   });
@@ -798,7 +800,7 @@ describe("hybridConfigSchema.parse", () => {
     expect(result.categories).toContain("fact");
   });
 
-  it("no mode applies full preset: autoClassify.enabled is true", () => {
+  it("no mode applies complete preset: autoClassify.enabled is true", () => {
     const result = hybridConfigSchema.parse(validBase);
     expect(result.autoClassify.enabled).toBe(true);
     expect(result.autoClassify.model).toBeUndefined();
@@ -1020,12 +1022,11 @@ describe("hybridConfigSchema.parse", () => {
     expect(result.embedding.googleApiKey).toBe("AIzaSy-value-containing-${literal}-suffix-123456");
   });
 
-  it("no mode applies full preset: distill is defined with preset defaults", () => {
+  it("no mode applies complete preset: distill has extractDirectives true, extractReinforcement true", () => {
     const result = hybridConfigSchema.parse(validBase);
     expect(result.distill).toBeDefined();
     expect(result.distill?.extractDirectives).toBe(true);
     expect(result.distill?.extractReinforcement).toBe(true);
-    expect(result.distill?.extractionModelTier).toBe("default");
   });
 
   it("parses distill.extractionModelTier (nano | default | heavy)", () => {
@@ -1110,6 +1111,30 @@ describe("hybridConfigSchema.parse", () => {
     expect(getLLMModelPreference(cronCfg, "heavy")).toEqual(["gpt-4o", "gpt-4o-mini"]);
     expect(getDefaultCronModel(cronCfg, "default")).toBe("gemini-2.0-flash");
     expect(getDefaultCronModel(cronCfg, "heavy")).toBe("gpt-4o");
+  });
+
+  it("getLLMModelPreference and getProvidersWithKeys exclude llm.disabledProviders", () => {
+    const cfg = hybridConfigSchema.parse({
+      ...validBase,
+      llm: {
+        default: ["google/gemini-2.5-flash", "anthropic/claude-sonnet-4-6", "openai/gpt-4.1-mini"],
+        heavy: ["anthropic/claude-opus-4-6"],
+        disabledProviders: ["anthropic"],
+      },
+      distill: { apiKey: "google-key-10ch" },
+      claude: { apiKey: "anthropic-key-10ch" },
+      embedding: { provider: "openai", apiKey: "openai-key-10ch", model: "text-embedding-3-small" },
+    });
+    const cronCfg = getCronModelConfig(cfg);
+    expect(getLLMModelPreferenceUnfiltered(cronCfg, "default")).toEqual([
+      "google/gemini-2.5-flash",
+      "anthropic/claude-sonnet-4-6",
+      "openai/gpt-4.1-mini",
+    ]);
+    expect(getLLMModelPreference(cronCfg, "default")).toEqual(["google/gemini-2.5-flash", "openai/gpt-4.1-mini"]);
+    expect(getLLMModelPreference(cronCfg, "heavy")).toEqual([]);
+    expect(getProvidersWithKeys(cronCfg)).toEqual(expect.arrayContaining(["google", "openai"]));
+    expect(getProvidersWithKeys(cronCfg)).not.toContain("anthropic");
   });
 
   it("getLLMModelPreference when llm is undefined uses legacy single model (OpenClaw provider/model IDs)", () => {
@@ -1290,15 +1315,17 @@ describe("hybridConfigSchema.parse", () => {
     expect(result.selfCorrection?.applyToolsByDefault).toBe(false);
   });
 
-  it("no mode applies full preset: selfCorrection is defined with preset defaults", () => {
+  it("no mode applies complete preset: selfCorrection set by preset", () => {
     const result = hybridConfigSchema.parse(validBase);
-    expect(result.selfCorrection).toBeDefined();
-    expect(result.selfCorrection?.applyToolsByDefault).toBe(true);
+    // Complete preset enables reflection and graph
+    expect(result.reflection.enabled).toBe(true);
+    expect(result.graph.enabled).toBe(true);
   });
 
-  it("languageKeywords defaults when omitted", () => {
+  it("languageKeywords defaults when omitted (no mode → complete preset: autoBuild true)", () => {
     const result = hybridConfigSchema.parse(validBase);
-    expect(result.languageKeywords).toEqual({ autoBuild: true, weeklyIntervalDays: 7 });
+    expect(result.languageKeywords.autoBuild).toBe(true);
+    expect(result.languageKeywords.weeklyIntervalDays).toBe(7);
   });
 
   it("parses languageKeywords when provided", () => {
@@ -1376,7 +1403,7 @@ describe("hybridConfigSchema.parse", () => {
     expect(result.queryExpansion.enabled).toBe(false);
   });
 
-  it("migration shim (#160): queryExpansion disabled by default when no mode (Phase 1: full preset no longer enables it)", () => {
+  it("migration shim (#160): queryExpansion disabled by default when no mode (Phase 1: complete preset no longer enables it)", () => {
     const result = hybridConfigSchema.parse({ ...validBase });
     expect(result.queryExpansion.enabled).toBe(false);
   });
@@ -1560,12 +1587,13 @@ describe("hybridConfigSchema.parse", () => {
   });
 
   describe("config mode presets", () => {
-    it("mode essential: disables autoClassify, graph, procedures, reflection, credentials", () => {
+    it("mode local: FTS-only retrieval (no embed/LLM), disables autoClassify, graph, procedures, reflection", () => {
       const result = hybridConfigSchema.parse({
         ...validBase,
-        mode: "essential" as ConfigMode,
+        mode: "local" as ConfigMode,
       });
-      expect(result.mode).toBe("essential");
+      expect(result.mode).toBe("local");
+      expect(result.retrieval.strategies).toEqual(["fts5"]);
       expect(result.autoClassify.enabled).toBe(false);
       expect(result.graph.enabled).toBe(false);
       expect(result.procedures.enabled).toBe(false);
@@ -1579,15 +1607,14 @@ describe("hybridConfigSchema.parse", () => {
       expect(result.memoryTiering.enabled).toBe(false);
       expect(result.autoRecall.entityLookup.enabled).toBe(false);
       expect(result.autoRecall.authFailure.enabled).toBe(false);
-      expect(result.memoryToSkills.enabled).toBe(false);
     });
 
-    it("mode normal: enables autoClassify, graph, procedures; disables reflection", () => {
+    it("mode minimal: enables autoClassify, graph, procedures, ingest paths; disables reflection; distill uses default (flash) tier", () => {
       const result = hybridConfigSchema.parse({
         ...validBase,
-        mode: "normal" as ConfigMode,
+        mode: "minimal" as ConfigMode,
       });
-      expect(result.mode).toBe("normal");
+      expect(result.mode).toBe("minimal");
       expect(result.autoClassify.enabled).toBe(true);
       expect(result.graph.enabled).toBe(true);
       expect(result.procedures.enabled).toBe(true);
@@ -1595,76 +1622,49 @@ describe("hybridConfigSchema.parse", () => {
       expect(result.credentials.enabled).toBe(false);
       expect(result.graph.autoLink).toBe(false);
       expect(result.store.classifyBeforeWrite).toBe(false);
-      expect(result.memoryToSkills.enabled).toBe(false);
-      expect(result.memoryToSkills.schedule).toBe("15 2 * * *");
-      expect(result.memoryToSkills.outputDir).toBe("skills/auto-generated");
+      expect(result.distill?.extractionModelTier).toBe("default");
+      expect(result.ingest?.paths).toEqual(["skills/**/*.md", "TOOLS.md", "AGENTS.md"]);
     });
 
-    it("parses memoryToSkills.validateScript when provided", () => {
-      const result = hybridConfigSchema.parse({
-        ...validBase,
-        memoryToSkills: { validateScript: "  scripts/quick_validate.py  " },
-      });
-      expect(result.memoryToSkills.validateScript).toBe("scripts/quick_validate.py");
-    });
-
-    it("allows memoryToSkills.enabled true when procedures disabled (explicit)", () => {
-      const result = hybridConfigSchema.parse({
-        ...validBase,
-        procedures: { enabled: false },
-        memoryToSkills: { enabled: true },
-      });
-      expect(result.procedures.enabled).toBe(false);
-      expect(result.memoryToSkills.enabled).toBe(true);
-    });
-
-    it("memoryToSkills.enabled true in normal mode enables pipeline (opt-in)", () => {
-      const result = hybridConfigSchema.parse({
-        ...validBase,
-        mode: "normal" as ConfigMode,
-        memoryToSkills: { enabled: true },
-      });
-      expect(result.procedures.enabled).toBe(true);
-      expect(result.memoryToSkills.enabled).toBe(true);
-    });
-
-    it("mode expert: enables reflection, classifyBeforeWrite, graph.autoLink, credential sub-options when vault on", () => {
+    it("mode enhanced: enables reflection, classifyBeforeWrite, graph.autoLink, credential sub-options when vault on", () => {
       process.env.OPENCLAW_CRED_KEY = "a-long-secret-key-at-least-16-chars";
       try {
         const result = hybridConfigSchema.parse({
           ...validBase,
-          mode: "expert" as ConfigMode,
+          mode: "enhanced" as ConfigMode,
           credentials: {
             encryptionKey: "env:OPENCLAW_CRED_KEY",
           },
         });
-        expect(result.mode).toBe("expert");
+        expect(result.mode).toBe("enhanced");
         expect(result.reflection.enabled).toBe(true);
         expect(result.store.classifyBeforeWrite).toBe(true);
         expect(result.graph.autoLink).toBe(true);
         expect(result.credentials.enabled).toBe(true);
-        expect(result.credentials.autoDetect).toBe(true);
+        // Phase 1: credentials.autoDetect forced off (opt-in); user must set explicitly to enable
+        expect(result.credentials.autoDetect).toBe(false);
         expect(result.credentials.autoCapture?.toolCalls).toBe(true);
       } finally {
         delete process.env.OPENCLAW_CRED_KEY;
       }
     });
 
-    it("mode full: enables queryExpansion (replaces deprecated search.hydeEnabled, #160)", () => {
+    it("mode complete: queryExpansion off by default (Phase 1); ingest paths set", () => {
       const result = hybridConfigSchema.parse({
         ...validBase,
-        mode: "full" as ConfigMode,
+        mode: "complete" as ConfigMode,
       });
-      expect(result.mode).toBe("full");
-      // Phase 1: full preset no longer enables query expansion by default
+      expect(result.mode).toBe("complete");
+      // Phase 1: complete preset no longer enables query expansion by default
       expect(result.queryExpansion.enabled).toBe(false);
       expect(result.search?.hydeEnabled).toBeFalsy();
+      expect(result.ingest?.paths).toEqual(["skills/**/*.md", "TOOLS.md", "AGENTS.md"]);
     });
 
-    it("user overrides win over preset (mode essential + graph.enabled true); mode becomes Custom for verify", () => {
+    it("user overrides win over preset (mode local + graph.enabled true); mode becomes Custom for verify", () => {
       const result = hybridConfigSchema.parse({
         ...validBase,
-        mode: "essential" as ConfigMode,
+        mode: "local" as ConfigMode,
         graph: { enabled: true },
       });
       expect(result.mode).toBe("custom"); // overrides → show "Custom" in verify
@@ -1672,9 +1672,24 @@ describe("hybridConfigSchema.parse", () => {
       expect(result.autoClassify.enabled).toBe(false);
     });
 
-    it("no mode: result.mode is 'full' (default)", () => {
+    it("no mode: result.mode is 'complete' (default for backward compatibility)", () => {
       const result = hybridConfigSchema.parse(validBase);
-      expect(result.mode).toBe("full");
+      expect(result.mode).toBe("complete");
+    });
+
+    it("deprecated mode name 'normal' is interpreted as enhanced and warns", () => {
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+      try {
+        const result = hybridConfigSchema.parse({
+          ...validBase,
+          mode: "normal",
+        });
+        expect(result.mode).toBe("enhanced");
+        expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("deprecated"));
+        expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("enhanced"));
+      } finally {
+        warnSpy.mockRestore();
+      }
     });
 
     it("no mode but user overrides preset: result.mode is 'custom'", () => {
@@ -1682,7 +1697,7 @@ describe("hybridConfigSchema.parse", () => {
         ...validBase,
         graph: { enabled: false },
       });
-      expect(result.mode).toBe("custom"); // overrides full preset's graph.enabled: true
+      expect(result.mode).toBe("custom"); // overrides complete preset (graph.enabled false)
       expect(result.graph.enabled).toBe(false);
     });
   });

@@ -84,6 +84,12 @@ export function parseProceduresConfig(cfg: Record<string, unknown>): ProceduresC
         ? proceduresRaw.skillsAutoPath
         : "skills/auto",
     requireApprovalForPromote: proceduresRaw?.requireApprovalForPromote !== false,
+    maxInjectionTokens:
+      typeof proceduresRaw?.maxInjectionTokens === "number" &&
+      proceduresRaw.maxInjectionTokens > 0 &&
+      Number.isFinite(proceduresRaw.maxInjectionTokens)
+        ? Math.floor(proceduresRaw.maxInjectionTokens)
+        : 500,
   };
 }
 

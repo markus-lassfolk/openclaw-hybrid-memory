@@ -171,17 +171,19 @@ async function runCapture(
               ? textToStore.slice(0, ctx.cfg.autoRecall.summaryMaxChars).trim() + "…"
               : undefined;
           let vector: number[] | undefined;
-          try {
-            vector = await ctx.embeddings.embed(textToStore);
-          } catch (err) {
-            const asErr = err instanceof Error ? err : new Error(String(err));
-            if (!isOllamaCircuitBreakerOpen(asErr)) {
-              capturePluginError(asErr, {
-                operation: "auto-capture-embedding",
-                subsystem: "auto-capture",
-              });
+          if (ctx.cfg.retrieval.strategies.includes("semantic")) {
+            try {
+              vector = await ctx.embeddings.embed(textToStore);
+            } catch (err) {
+              const asErr = err instanceof Error ? err : new Error(String(err));
+              if (!isOllamaCircuitBreakerOpen(asErr)) {
+                capturePluginError(asErr, {
+                  operation: "auto-capture-embedding",
+                  subsystem: "auto-capture",
+                });
+              }
+              api.logger.warn(`memory-hybrid: auto-capture embedding failed: ${err}`);
             }
-            api.logger.warn(`memory-hybrid: auto-capture embedding failed: ${err}`);
           }
           if (ctx.cfg.store.classifyBeforeWrite) {
             let similarFacts = vector ? await ctx.findSimilarByEmbedding(ctx.vectorDb, ctx.factsDb, vector, 3) : [];
@@ -453,27 +455,29 @@ async function runCapture(
                 decayClass: "permanent",
                 tags: ["auth", "credential"],
               });
-              try {
-                const vector = await ctx.embeddings.embed(text);
-                ctx.factsDb.setEmbeddingModel(entry.id, ctx.embeddings.modelName);
-                if (!(await ctx.vectorDb.hasDuplicate(vector))) {
-                  await ctx.vectorDb.store({
-                    text,
-                    vector,
-                    importance: 0.9,
-                    category: "technical",
-                    id: entry.id,
-                  });
+              if (ctx.cfg.retrieval.strategies.includes("semantic")) {
+                try {
+                  const vector = await ctx.embeddings.embed(text);
+                  ctx.factsDb.setEmbeddingModel(entry.id, ctx.embeddings.modelName);
+                  if (!(await ctx.vectorDb.hasDuplicate(vector))) {
+                    await ctx.vectorDb.store({
+                      text,
+                      vector,
+                      importance: 0.9,
+                      category: "technical",
+                      id: entry.id,
+                    });
+                  }
+                } catch (err) {
+                  const asErr = err instanceof Error ? err : new Error(String(err));
+                  if (!isOllamaCircuitBreakerOpen(asErr)) {
+                    capturePluginError(asErr, {
+                      operation: "tool-call-credential-vector-store",
+                      subsystem: "credentials",
+                    });
+                  }
+                  api.logger.warn(`memory-hybrid: vector store for credential fact failed: ${err}`);
                 }
-              } catch (err) {
-                const asErr = err instanceof Error ? err : new Error(String(err));
-                if (!isOllamaCircuitBreakerOpen(asErr)) {
-                  capturePluginError(asErr, {
-                    operation: "tool-call-credential-vector-store",
-                    subsystem: "credentials",
-                  });
-                }
-                api.logger.warn(`memory-hybrid: vector store for credential fact failed: ${err}`);
               }
               if (logCaptures) {
                 api.logger.info(`memory-hybrid: auto-captured credential for ${cred.service} (${cred.type})`);

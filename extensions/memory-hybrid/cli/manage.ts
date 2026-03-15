@@ -35,6 +35,7 @@ import type { SearchResult } from "../types/memory.js";
 import { mergeResults, filterByScope } from "../services/merge-results.js";
 import type { ScopeFilter } from "../types/memory.js";
 import type { HybridMemoryConfig } from "../config.js";
+import { getCronModelConfig, getDefaultCronModel } from "../config.js";
 import { parseSourceDate } from "../utils/dates.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { withExit, type Chainable } from "./shared.js";
@@ -72,6 +73,7 @@ export type ManageContext = {
   runCredentialsPrune: (opts: { dryRun: boolean; yes?: boolean; onlyFlags?: string[] }) => CredentialsPruneResult;
   runUninstall: (opts: { cleanAll: boolean; leaveConfig: boolean }) => Promise<UninstallCliResult>;
   runUpgrade: (version?: string) => Promise<UpgradeCliResult>;
+  runConfigView: (sink: import("./types.js").VerifyCliSink) => void;
   runConfigMode: (mode: string) => ConfigCliResult | Promise<ConfigCliResult>;
   runConfigSet: (key: string, value: string) => ConfigCliResult | Promise<ConfigCliResult>;
   runConfigSetHelp: (key: string) => ConfigCliResult | Promise<ConfigCliResult>;
@@ -252,6 +254,7 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
     runCredentialsPrune,
     runUpgrade,
     runUninstall,
+    runConfigView,
     runConfigMode,
     runConfigSet,
     runConfigSetHelp,
@@ -1324,8 +1327,25 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
     );
 
   mem
+    .command("config")
+    .description("Show current configuration and feature toggles (use config-set to change)")
+    .action(
+      withExit(async () => {
+        try {
+          runConfigView({ log: (s) => console.log(s), error: (s) => console.error(s) });
+        } catch (err) {
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+            subsystem: "cli",
+            operation: "config",
+          });
+          throw err;
+        }
+      }),
+    );
+
+  mem
     .command("config-mode <mode>")
-    .description("Set memory mode (essential, normal, expert, full). Writes memory/.config if needed.")
+    .description("Set memory mode (local, minimal, enhanced, complete). Writes memory/.config if needed.")
     .action(
       withExit(async (mode: string) => {
         let res;
@@ -1350,7 +1370,7 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
   mem
     .command("config-set <key> <value>")
     .description(
-      'Set a config key in memory/.config. E.g. memoryToSkills true, memoryToSkills.enabled false, errorReporting.botName "Doris". For help: hybrid-mem help config-set <key>',
+      'Set a config key in memory/.config. E.g. errorReporting.botName "Doris". For help: hybrid-mem help config-set <key>',
     )
     .action(
       withExit(async (key: string, value: string) => {
@@ -1540,7 +1560,7 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
     .option("--include-structured", "Include structured facts (kv, credentials) in consolidation")
     .option("--dry-run", "Show what would be consolidated without consolidating")
     .option("--limit <n>", "Max clusters to process (default 10)", "10")
-    .option("--model <m>", "LLM model for merging (default from autoClassify config)")
+    .option("--model <m>", "LLM model for merging (default: default tier from config)")
     .action(
       withExit(
         async (opts?: {
@@ -1554,7 +1574,7 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
           const includeStructured = !!opts?.includeStructured;
           const dryRun = !!opts?.dryRun;
           const limit = parseInt(opts?.limit ?? "10", 10);
-          const model = opts?.model ?? ctx.autoClassifyConfig.model;
+          const model = opts?.model ?? getDefaultCronModel(getCronModelConfig(ctx.cfg), "default");
           let res;
           try {
             res = await runConsolidate({ threshold, includeStructured, dryRun, limit, model });
@@ -2092,7 +2112,7 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
     .option("--feature <name>", "Filter to a specific feature (e.g. auto-classify)")
     .option("--csv", "Output as CSV")
     .option("--format <format>", "Output format: pretty (default, emoji+%) or compact (terse)", "pretty")
-    .option("--modes", "Show estimated $/month cost ranges for each config mode (essential/normal/expert/full)")
+    .option("--modes", "Show estimated $/month cost ranges for each config mode (local/minimal/enhanced/complete)")
     .action(
       withExit(
         async (opts?: {

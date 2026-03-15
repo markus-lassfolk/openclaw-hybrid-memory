@@ -10,7 +10,7 @@ All settings live in `~/.openclaw/openclaw.json`. Merge these into your existing
 
 **Quick setup:** Run `openclaw hybrid-mem install` to apply all recommended defaults at once. Then customise as needed below.
 
-**Configuration modes:** Default is **Full** (best experience). You can set `"mode": "essential" | "normal" | "expert" | "full"` to apply a preset (e.g. **Essential** or **Normal** to reduce API cost or for low-resource hosts). See [CONFIGURATION-MODES.md](CONFIGURATION-MODES.md) for the matrix.
+**Configuration modes:** Default is **Complete** (backward compatibility: full features). You can set `"mode": "local" | "minimal" | "enhanced" | "complete"` to apply a preset. See [CONFIGURATION-MODES.md](CONFIGURATION-MODES.md) and [FEATURES-AND-TIERS.md](FEATURES-AND-TIERS.md) for the matrix and which tier each feature uses.
 
 ---
 
@@ -69,9 +69,9 @@ The plugin supports four verbosity levels for CLI commands and tool output, conf
 ```
 
 - **`silent`**: Suppresses all unsolicited context blocks injected into prompts (e.g. capability hints, `<relevant-memories>`, `<relevant-procedures>`, and credential-hint blocks). Memory tools (`memory_store`, `memory_recall`, etc.) remain fully functional. Ideal for users who want the plugin to work entirely in the background without cluttering the context window.
-- **`quiet`**: Minimal output. For CLI commands, shows only counts/totals without decorative headers. (Default for `essential` mode).
-- **`normal`**: Balanced output with key details. (Default for `normal` and `expert` modes).
-- **`verbose`**: Extra detail. Full breakdowns, all fields, and config summaries. Ideal for debugging. (Default for `full` mode).
+- **`quiet`**: Minimal output. For CLI commands, shows only counts/totals without decorative headers. (Default for `local` mode).
+- **`normal`**: Balanced output with key details. (Default for `minimal` and `enhanced` modes).
+- **`verbose`**: Extra detail. Full breakdowns, all fields, and config summaries. Ideal for debugging. (Default for `complete` mode).
 
 You can change this on the fly using the CLI:
 
@@ -435,49 +435,6 @@ Pattern synthesis from session history. See [REFLECTION.md](REFLECTION.md) for f
 | `model` | `"openai/gpt-4.1-nano"` | LLM for reflection analysis |
 | `defaultWindow` | `14` | Time window in days for fact gathering |
 | `minObservations` | `2` | Minimum observations to support a pattern |
-
----
-
-## Memory-to-skills (issue #114)
-
-Cluster procedural memories and synthesize SKILL.md drafts into `skills/auto-generated/`. See [MEMORY-TO-SKILLS.md](MEMORY-TO-SKILLS.md) for full documentation.
-
-```json
-{
-  "plugins": {
-    "entries": {
-      "openclaw-hybrid-memory": {
-        "config": {
-          "memoryToSkills": {
-            "enabled": true,
-            "schedule": "15 2 * * *",
-            "windowDays": 30,
-            "minInstances": 3,
-            "consistencyThreshold": 0.7,
-            "outputDir": "skills/auto-generated",
-            "notify": true,
-            "autoPublish": false
-          }
-        }
-      }
-    }
-  }
-}
-```
-
-| Key | Default | Description |
-|-----|---------|-------------|
-| `enabled` | same as procedures | Enable memory-to-skills pipeline |
-| `schedule` | `"15 2 * * *"` | Cron for nightly run (2:15 AM, staggered after nightly-distill) |
-| `windowDays` | `30` | Procedures updated in last N days |
-| `minInstances` | `3` | Minimum procedure instances per cluster |
-| `consistencyThreshold` | `0.7` | Step consistency 0–1 required |
-| `outputDir` | `"skills/auto-generated"` | Output path relative to workspace |
-| `notify` | `true` | Intended hint that the agent should notify on new drafts; currently informational only (nightly cron/publish flow does not yet consult this). |
-| `autoPublish` | `false` | Intended toggle for auto-publishing vs. always requiring human review; currently informational only (nightly cron/publish flow does not yet consult this). |
-| `validateScript` | — | Optional path to post-generation validation script (e.g. quick_validate.py). Not invoked by the plugin; for documentation/workflow only. |
-
-When you run `install` or `verify --fix`, the **nightly-memory-to-skills** cron job is added or updated; its schedule is taken from `memoryToSkills.schedule` when available.
 
 ---
 

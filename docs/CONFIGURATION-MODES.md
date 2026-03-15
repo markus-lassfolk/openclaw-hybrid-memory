@@ -1,6 +1,6 @@
 # Configuration Modes
 
-You can set a **mode** in plugin config to apply a preset of feature toggles. **If you don't set `mode`, the default is `full`** — everything enabled for the best experience. Set `essential` or `normal` only if you want to reduce API cost or run on low-resource hardware.
+You can set a **mode** in plugin config to apply a preset of feature toggles. **If you don't set `mode`, the default is `complete`** (backward compatibility: full features, including external LLM). Set `local`, `minimal`, or `enhanced` to reduce cost or run without external APIs.
 
 ```json
 {
@@ -8,7 +8,7 @@ You can set a **mode** in plugin config to apply a preset of feature toggles. **
     "entries": {
       "openclaw-hybrid-memory": {
         "config": {
-          "mode": "full",
+          "mode": "minimal",
           "embedding": { "apiKey": "env:OPENAI_API_KEY", "model": "text-embedding-3-small" }
         }
       }
@@ -17,21 +17,34 @@ You can set a **mode** in plugin config to apply a preset of feature toggles. **
 }
 ```
 
-Valid values: **`essential`** | **`normal`** | **`expert`** | **`full`**. Default when omitted: **`full`**. If you change any feature away from the preset, the effective mode is reported as **Custom** in `openclaw hybrid-mem verify`.
+Valid values: **`local`** | **`minimal`** | **`enhanced`** | **`complete`**. Default when omitted: **`complete`**. If you change any feature away from the preset, the effective mode is reported as **Custom** in `openclaw hybrid-mem config`.
+
+**Migration from older versions:** If your config still has a deprecated mode name (`essential`, `normal`, `expert`, or `full`), the plugin maps it to the closest new mode and logs a one-time warning: `essential` → `minimal`, `normal` → `enhanced`, `expert` → `complete`, `full` → `complete`. Update your config to use the new names (`local`, `minimal`, `enhanced`, `complete`) when convenient.
 
 ---
 
 ## What each mode does
 
 | Mode | Best for | Description |
-|------|----------|--------------|
-| **Full** | **Default — best experience** | Everything enabled: capture, recall, classification, graph, procedures, reflection, tiering, persona proposals, self-correction, query expansion, ingest, dream-cycle, passive observer, workflow tracking, tool/skill proposals, verification, provenance, documents, aliases, memory-to-skills, cross-agent learning, reranking, contextual variants. Credentials vault and tool I/O capture on when vault is configured. Highest capability and API use. |
-| **Expert** | Like Full with slightly less | Same as Full but no query expansion, no ingest paths, and no documents (no MarkItDown-based doc ingestion). Includes verification, provenance, aliases, memory-to-skills, cross-agent learning, reranking, contextual variants, dream-cycle, passive observer, workflow tracking, tool/skill proposals. Good if you want most features but want to trim a few. |
-| **Normal** | Lower cost or simpler setup | Balanced: capture, recall, auto-classify, graph, procedures; no reflection, no persona proposals, no credential capture from tool I/O. Credentials vault off unless you set an encryption key. |
-| **Essential** | Raspberry Pi, minimal API cost | Only core memory: auto-capture and auto-recall. No classification, graph, procedures, or reflection. Keeps CPU, memory, and LLM calls to a minimum. |
+|------|----------|-------------|
+| **Complete** | **Default when mode omitted — best experience** | Everything enabled: capture, recall, classification, graph, procedures, reflection, tiering, persona proposals, self-correction, query expansion, ingest, dream-cycle, passive observer, workflow tracking, tool/skill proposals, verification, provenance, documents, aliases, cross-agent learning, reranking, contextual variants. Credentials vault and tool I/O capture on when vault is configured. Highest capability and API use. |
+| **Enhanced** | Like Complete with slightly less | Same as Complete but no query expansion and no documents (no MarkItDown-based doc ingestion). Includes ingest, verification, provenance, aliases, cross-agent learning, reranking, contextual variants, dream-cycle, passive observer, workflow tracking, tool/skill proposals. Good if you want most features but want to trim a few. |
+| **Minimal** | Low cost, nano/flash only | Balanced: capture, recall, auto-classify, graph, procedures, ingest (run ingest-files when you want to seed from docs); no reflection, no persona proposals, no credential capture from tool I/O. **All LLM use (distill, auto-classify, ingest) is restricted to nano or flash-tier models** to keep cost very low. Credentials vault off unless you set an encryption key. |
+| **Local** | No external LLM | Only core memory: auto-capture and auto-recall with **FTS-only** retrieval. No embeddings, no classification, graph, procedures, or reflection. Zero external API calls — local SQLite + files only. Ideal for Raspberry Pi or fully offline setups. |
 | **Custom** | Your own mix | Reported when your config does not match any preset (you changed at least one toggle). Your explicit settings are used. |
 
-To reduce API or compute usage, set `"mode": "normal"` or `"mode": "essential"` in your plugin config.
+To reduce API or compute usage, set `"mode": "minimal"` or `"mode": "local"` in your plugin config.
+
+---
+
+## Minimal mode: nano + flash
+
+In **Minimal** mode, the preset uses:
+
+- **Distill** (session logs → facts): `distill.extractionModelTier` is set to **default (flash)** so extraction quality is good while cost stays low.
+- **Auto-classify**: uses the **nano** tier (e.g. `llm.nano` or lightest configured model).
+
+This gives good value at low cost. For even lower cost or fully offline use, use **Local** (no external LLM). See [FEATURES-AND-TIERS.md](FEATURES-AND-TIERS.md) for the full feature/tier matrix.
 
 ---
 
@@ -41,21 +54,21 @@ To reduce API or compute usage, set `"mode": "normal"` or `"mode": "essential"` 
 
   | Mode    | Vault default | Note |
   |---------|----------------|------|
-  | Essential | Off  | No vault; use env vars for secrets if needed. |
-  | Normal  | Off  | Opt-in: set encryption key to enable. |
-  | Expert  | On (if key set) | Preset turns vault on when key is present. |
-  | Full   | On (if key set) | Same as Expert. |
+  | Local   | Off  | No vault; use env vars for secrets if needed. |
+  | Minimal | Off  | Opt-in: set encryption key to enable. |
+  | Enhanced | On (if key set) | Preset turns vault on when key is present. |
+  | Complete | On (if key set) | Same as Enhanced. |
 
-- **Credentials auto-detect** (`credentials.autoDetect`): Detects credential-like content in conversation and prompts to store in the vault. **Expert / Full** enable this when the vault is on.
+- **Credentials auto-detect** (`credentials.autoDetect`): Detects credential-like content in conversation and prompts to store in the vault. **Enhanced / Complete** enable this when the vault is on.
 
-- **Credentials capture from tool I/O** (`credentials.autoCapture.toolCalls`): Scans **tool call inputs and outputs** for credential patterns and stores them in the vault. Useful when the agent receives API keys or tokens via tools. **Expert and Full** enable this when the vault is on; **Essential and Normal** leave it off** (you can still turn it on manually).
+- **Credentials capture from tool I/O** (`credentials.autoCapture.toolCalls`): Scans **tool call inputs and outputs** for credential patterns and stores them in the vault. **Local and Minimal** leave it off; **Enhanced and Complete** enable it when the vault is on (you can still turn it on manually in Local/Minimal).
 
   | Mode     | credentials.autoCapture.toolCalls |
   |----------|-----------------------------------|
-  | Essential | Off (vault off)                   |
-  | Normal   | Off                               |
-  | Expert   | On (when vault enabled)           |
-  | Full    | On (when vault enabled)           |
+  | Local    | Off (vault off)                   |
+  | Minimal  | Off                               |
+  | Enhanced | On (when vault enabled)           |
+  | Complete | On (when vault enabled)           |
 
 ---
 
@@ -63,8 +76,8 @@ To reduce API or compute usage, set `"mode": "normal"` or `"mode": "essential"` 
 
 Below, **✓** = enabled by preset, **—** = disabled by preset, **opt** = optional / depends on other config (e.g. vault only when key set).
 
-| Feature | Essential | Normal | Expert | Full |
-|---------|:--------:|:------:|:------:|:----:|
+| Feature | Local | Minimal | Enhanced | Complete |
+|---------|:-----:|:-------:|:--------:|:--------:|
 | **Core** |
 | autoCapture | ✓ | ✓ | ✓ | ✓ |
 | autoRecall | ✓ | ✓ | ✓ | ✓ |
@@ -98,9 +111,10 @@ Below, **✓** = enabled by preset, **—** = disabled by preset, **opt** = opti
 | autoRecall.entityLookup | — | — | ✓ | ✓ |
 | autoRecall.authFailure | — | ✓ | ✓ | ✓ |
 | queryExpansion.enabled | — | — | — | ✓ |
-| ingest (paths) | — | — | — | ✓ |
+| ingest (paths) | — | ✓ | ✓ | ✓ |
 | distill.extractDirectives | ✓ | ✓ | ✓ | ✓ |
 | distill.extractReinforcement | — | ✓ | ✓ | ✓ |
+| distill.extractionModelTier | — | **default (flash)** | default | default |
 | errorReporting | — | — | opt | opt |
 | **Advanced / opt-in** |
 | workflowTracking | — | — | ✓ | ✓ |
@@ -114,7 +128,6 @@ Below, **✓** = enabled by preset, **—** = disabled by preset, **opt** = opti
 | provenance | — | — | ✓ | ✓ |
 | documents | — | — | — | ✓ |
 | aliases | — | — | ✓ | ✓ |
-| memoryToSkills | — | — | ✓ | ✓ |
 | crossAgentLearning | — | — | ✓ | ✓ |
 | reranking | — | — | ✓ | ✓ |
 | contextualVariants | — | — | ✓ | ✓ |
@@ -122,11 +135,11 @@ Below, **✓** = enabled by preset, **—** = disabled by preset, **opt** = opti
 
 **Notes:**
 
-- **opt**: Credentials vault is on only when `credentials.encryptionKey` is set (or env). In Expert/Full, `autoDetect` and `autoCapture.toolCalls` apply when the vault is enabled.
-- **personaProposals.autoApply**: Never set by any preset (always **—**). When enabled, approved persona proposals are applied to identity files without human review. **Opt-in only** — no mode turns this on by default; enabling it bypasses the usual safety guarantee that identity files are never modified by the agent automatically.
-- **Normal** keeps current product defaults (e.g. graph on, procedures on, reflection off). Essential strips down for low-resource; Expert/Full add reflection, self-correction, and credential capture.
-- **Advanced / opt-in** (workflowTracking, nightlyCycle, passiveObserver, extraction, selfExtension, crystallization, verification, provenance, aliases, memoryToSkills, crossAgentLearning, reranking, contextualVariants) are **off** for Essential and Normal; **Expert** and **Full** enable them by preset. **documents** is Full-only (requires Python/MarkItDown). Users on Essential/Normal can enable any of these explicitly via config or `openclaw hybrid-mem config-set <key>.enabled true`.
-- **personaProposals.autoApply** is `false` in **all** presets including Expert and Full — it is never set automatically. Enable it only if you want the agent to modify identity files (SOUL.md, IDENTITY.md, USER.md) without human review. See [PERSONA-PROPOSALS.md](PERSONA-PROPOSALS.md) for risks and the audit trail.
+- **opt**: Credentials vault is on only when `credentials.encryptionKey` is set (or env). In Enhanced/Complete, `autoDetect` and `autoCapture.toolCalls` apply when the vault is enabled.
+- **personaProposals.autoApply**: Never set by any preset (always **—**). When enabled, approved persona proposals are applied to identity files without human review. **Opt-in only** — no mode turns this on by default.
+- **Minimal** uses only nano/flash-tier models for distill, auto-classify, and ingest to keep cost very low. **Local** uses no external LLM (FTS-only recall).
+- **Advanced / opt-in** (workflowTracking, nightlyCycle, passiveObserver, extraction, selfExtension, crystallization, verification, provenance, aliases, crossAgentLearning, reranking, contextualVariants) are **off** for Local and Minimal; **Enhanced** and **Complete** enable them by preset. **documents** is Complete-only (requires Python/MarkItDown). Users on Local/Minimal can enable any of these explicitly via config or `openclaw hybrid-mem config-set <key>.enabled true`.
+- **personaProposals.autoApply** is `false` in **all** presets — it is never set automatically. Enable it only if you want the agent to modify identity files without human review. See [PERSONA-PROPOSALS.md](PERSONA-PROPOSALS.md) for risks and the audit trail.
 
 ---
 
@@ -137,14 +150,14 @@ Any key you set in config **overrides** the preset. So you can start from a mode
 ```json
 {
   "config": {
-    "mode": "normal",
+    "mode": "minimal",
     "embedding": { "apiKey": "env:OPENAI_API_KEY", "model": "text-embedding-3-small" },
     "reflection": { "enabled": true }
   }
 }
 ```
 
-Here you get Normal preset but with reflection enabled. Verify will report **Mode: Custom** because the resolved config no longer matches the Normal preset.
+Here you get Minimal preset but with reflection enabled. Verify will report **Mode: Custom** because the resolved config no longer matches the Minimal preset.
 
 ### Array override behavior
 

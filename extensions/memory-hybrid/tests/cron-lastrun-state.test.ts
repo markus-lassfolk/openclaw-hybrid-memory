@@ -354,7 +354,6 @@ describe("guard prefix format — persistent path", () => {
       "self-correction-analysis",
       "weekly-reflection",
       "weekly-extract-procedures",
-      "nightly-memory-to-skills",
       "weekly-deep-maintenance",
       "weekly-persona-proposals",
       "monthly-consolidation",

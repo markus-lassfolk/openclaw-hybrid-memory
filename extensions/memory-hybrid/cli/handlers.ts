@@ -22,6 +22,7 @@ import {
   getDefaultCronModel,
   getCronModelConfig,
   getLLMModelPreference,
+  getLLMModelPreferenceUnfiltered,
   getProvidersWithKeys,
   isCompactVerbosity,
   type CronModelConfig,
@@ -63,7 +64,6 @@ import {
 } from "../services/chat.js";
 import { extractProceduresFromSessions } from "../services/procedure-extractor.js";
 import { generateAutoSkills } from "../services/procedure-skill-generator.js";
-import { runMemoryToSkills, type SkillsSuggestResult } from "../services/memory-to-skills.js";
 import { loadPrompt, fillPrompt } from "../utils/prompt-loader.js";
 import { estimateTokens, chunkSessionText, chunkTextByChars } from "../utils/text.js";
 import { parseSourceDate } from "../utils/dates.js";
@@ -82,6 +82,9 @@ import {
   type SelfCorrectionExtractResult,
 } from "../services/self-correction-extract.js";
 import { capturePluginError } from "../services/error-reporter.js";
+import { hasOAuthProfiles } from "../utils/auth.js";
+import { resetAllBackoff } from "../utils/auth-failover.js";
+import { createEmbeddingProvider, type EmbeddingConfig } from "../services/embeddings.js";
 import { insertRulesUnderSection } from "../services/tools-md-section.js";
 import { tryExtractionFromTemplates } from "../utils/extraction-from-template.js";
 import { runDirectiveExtract, type DirectiveExtractResult } from "../services/directive-extract.js";
@@ -207,19 +210,6 @@ const MAINTENANCE_CRON_JOBS: Array<
     enabled: true,
     minIntervalMs: MIN_INTERVAL_MS.weekly,
   },
-  // Daily 02:15 | nightly-memory-to-skills | skills-suggest (issue #114)
-  {
-    pluginJobId: PLUGIN_JOB_ID_PREFIX + "nightly-memory-to-skills",
-    name: "nightly-memory-to-skills",
-    schedule: { kind: "cron", expr: "15 2 * * *" },
-    channel: "system",
-    message:
-      "Run: openclaw hybrid-mem skills-suggest. This clusters procedural memories and drafts new skills under skills/auto-generated/. If new skill drafts were generated, notify the user in this system channel with a concise summary and paths. Exit 0 if memoryToSkills.enabled is false.",
-    isolated: true,
-    modelTier: "default",
-    enabled: true,
-    minIntervalMs: MIN_INTERVAL_MS.daily,
-  },
   // Saturday 04:00 | weekly-deep-maintenance | compact → vectordb-optimize → scope promote
   {
     pluginJobId: PLUGIN_JOB_ID_PREFIX + "weekly-deep-maintenance",
@@ -319,8 +309,6 @@ const LEGACY_JOB_MATCHERS: Record<string, (j: Record<string, unknown>) => boolea
     /weekly-reflection|memory reflection|pattern synthesis/i.test(String(j.name ?? "")),
   [PLUGIN_JOB_ID_PREFIX + "weekly-extract-procedures"]: (j) =>
     /extract-procedures|weekly-extract-procedures|procedural memory/i.test(String(j.name ?? "")),
-  [PLUGIN_JOB_ID_PREFIX + "nightly-memory-to-skills"]: (j) =>
-    /nightly-memory-to-skills|memory-to-skills|skills-suggest/i.test(String(j.name ?? "")),
   [PLUGIN_JOB_ID_PREFIX + "self-correction-analysis"]: (j) =>
     /self-correction-analysis|self-correction\b/i.test(String(j.name ?? "")),
   [PLUGIN_JOB_ID_PREFIX + "weekly-deep-maintenance"]: (j) =>
@@ -332,23 +320,10 @@ const LEGACY_JOB_MATCHERS: Record<string, (j: Record<string, unknown>) => boolea
 };
 
 /**
- * Build the nightly-memory-to-skills cron job message based on memoryToSkills.notify config.
- * When notify is false, omit the user-notification instruction from the job message.
- */
-function buildMemoryToSkillsMessage(notify: boolean): string {
-  const base =
-    "Run: openclaw hybrid-mem skills-suggest. This clusters procedural memories and drafts new skills under skills/auto-generated/.";
-  const notifyClause =
-    " If new skill drafts were generated, notify the user in this system channel with a concise summary and paths.";
-  const exitClause = " Exit 0 if memoryToSkills.enabled is false.";
-  return notify ? `${base}${notifyClause}${exitClause}` : `${base}${exitClause}`;
-}
-
-/**
  * Ensure maintenance cron jobs exist in ~/.openclaw/cron/jobs.json. Add any missing jobs; optionally normalize existing (schedule, pluginJobId).
  * Never re-enables jobs the user has disabled unless reEnableDisabled is true (callers should pass false to honor disabled jobs).
- * scheduleOverrides: optional map pluginJobId -> cron expr (e.g. memoryToSkills.schedule for nightly-memory-to-skills).
- * messageOverrides: optional map pluginJobId -> cron job message string (e.g. memoryToSkills.notify for nightly-memory-to-skills).
+ * scheduleOverrides: optional map pluginJobId -> cron expr.
+ * messageOverrides: optional map pluginJobId -> cron job message string.
  */
 function ensureMaintenanceCronJobs(
   openclawDir: string,
@@ -841,6 +816,14 @@ export function deepMerge(target: Record<string, unknown>, source: Record<string
 /**
  * Install plugin configuration and cron jobs
  */
+export async function runResetAuthBackoffForCli(ctx: HandlerContext): Promise<void> {
+  const statePath = join(dirname(ctx.resolvedSqlitePath), ".auth-backoff.json");
+  resetAllBackoff({ statePath });
+  console.log(
+    "OAuth failover backoff cleared. Next LLM calls will try OAuth again for providers with both OAuth and API key.",
+  );
+}
+
 export function runInstallForCli(opts: { dryRun: boolean }): InstallCliResult {
   const openclawDir = join(homedir(), ".openclaw");
   const configPath = join(openclawDir, "openclaw.json");
@@ -854,7 +837,7 @@ export function runInstallForCli(opts: { dryRun: boolean }): InstallCliResult {
         [PLUGIN_ID]: {
           enabled: true,
           config: {
-            mode: "full",
+            mode: "complete",
             embedding: { apiKey: "YOUR_OPENAI_API_KEY", model: "text-embedding-3-small" },
             distill: { defaultModel: "gemini-3.1-pro-preview" },
             autoCapture: true,
@@ -986,12 +969,6 @@ export function runInstallForCli(opts: { dryRun: boolean }): InstallCliResult {
     try {
       const pluginCfg = getPluginEntryConfig(config);
       const pluginConfig = pluginCfg as CronModelConfig | undefined;
-      const memToSkills = pluginCfg?.memoryToSkills as Record<string, unknown> | undefined;
-      const schedule =
-        typeof memToSkills?.schedule === "string" && (memToSkills.schedule as string).trim().length > 0
-          ? (memToSkills.schedule as string).trim()
-          : undefined;
-      const notify = memToSkills?.notify !== false;
       const dreamCycleRaw = pluginCfg?.nightlyCycle as Record<string, unknown> | undefined;
       const dreamCycleSchedule =
         typeof dreamCycleRaw?.schedule === "string" && (dreamCycleRaw.schedule as string).trim().length > 0
@@ -1003,7 +980,6 @@ export function runInstallForCli(opts: { dryRun: boolean }): InstallCliResult {
           ? (sensorSweepRaw.schedule as string).trim()
           : undefined;
       const installScheduleOverrides: Record<string, string> = {};
-      if (schedule) installScheduleOverrides[PLUGIN_JOB_ID_PREFIX + "nightly-memory-to-skills"] = schedule;
       if (dreamCycleSchedule)
         installScheduleOverrides[PLUGIN_JOB_ID_PREFIX + "nightly-dream-cycle"] = dreamCycleSchedule;
       if (sensorSweepSchedule) installScheduleOverrides[PLUGIN_JOB_ID_PREFIX + "sensor-sweep"] = sensorSweepSchedule;
@@ -1011,7 +987,6 @@ export function runInstallForCli(opts: { dryRun: boolean }): InstallCliResult {
         normalizeExisting: false,
         reEnableDisabled: false,
         scheduleOverrides: Object.keys(installScheduleOverrides).length > 0 ? installScheduleOverrides : undefined,
-        messageOverrides: { [PLUGIN_JOB_ID_PREFIX + "nightly-memory-to-skills"]: buildMemoryToSkillsMessage(notify) },
         featureGates: {
           "sensorSweep.enabled": (sensorSweepRaw?.enabled as boolean | undefined) === true,
           "nightlyCycle.enabled": (dreamCycleRaw?.enabled as boolean | undefined) === true,
@@ -1173,424 +1148,381 @@ export async function runVerifyForCli(
     capturePluginError(e as Error, { subsystem: "cli", operation: "runVerifyForCli:lancedb-check" });
   }
 
-  try {
-    await embeddings.embed("verify test");
-    embeddingOk = true;
-    log(`${OK} Embedding API: OK`);
-  } catch (e) {
-    issues.push(`Embedding API: ${String(e)}`);
-    if (cfg.embedding.provider === "openai") {
-      fixes.push(
-        `Embedding API: Check key at platform.openai.com; ensure it has access to the embedding model (${cfg.embedding.model}). Set plugins.entries[\"openclaw-hybrid-memory\"].config.embedding.apiKey and restart. 401/403 = invalid or revoked key.`,
-      );
-    } else if (cfg.embedding.provider === "ollama") {
-      fixes.push(
-        `Embedding API: Ensure Ollama is running at ${cfg.embedding.endpoint ?? "http://localhost:11434"} and the model "${cfg.embedding.model}" is available. Run 'ollama pull ${cfg.embedding.model}' if needed.`,
-      );
-    } else if (cfg.embedding.provider === "google") {
-      fixes.push(
-        `Embedding API: Set distill.apiKey or llm.providers.google.apiKey in plugin config (Gemini API key). Restart gateway after updating.`,
-      );
-    } else {
-      fixes.push(
-        `Embedding API: Check your ${cfg.embedding.provider} provider configuration and ensure the model "${cfg.embedding.model}" is accessible.`,
-      );
+  // Raw plugin config (from file) for credential Source column
+  const rawPluginConfigResult = getPluginConfigFromFile(defaultConfigPath);
+  const rawPluginConfig = "error" in rawPluginConfigResult ? undefined : rawPluginConfigResult.config;
+  function credentialSource(rawKey: unknown): string {
+    if (typeof rawKey !== "string" || !rawKey.trim()) return "";
+    const v = rawKey.trim();
+    if (v.startsWith("env:")) return "env";
+    if (v.startsWith("file:")) return "file";
+    return "plugin";
+  }
+  function rawEmbeddingApiKey(): unknown {
+    const emb = rawPluginConfig?.embedding as Record<string, unknown> | undefined;
+    return emb?.apiKey;
+  }
+  function rawDistillApiKey(): unknown {
+    const d = rawPluginConfig?.distill as Record<string, unknown> | undefined;
+    return d?.apiKey;
+  }
+  function rawLlmProviderApiKey(provider: string): unknown {
+    const prov = (rawPluginConfig?.llm as Record<string, unknown>)?.providers as Record<string, unknown> | undefined;
+    const p = prov?.[provider] as Record<string, unknown> | undefined;
+    return p?.apiKey;
+  }
+  function rawClaudeApiKey(): unknown {
+    const c = rawPluginConfig?.claude as Record<string, unknown> | undefined;
+    return c?.apiKey;
+  }
+
+  // ───── Embeddings Tests (Critical) ─────
+  log("\n───── Embeddings Tests (Critical) ─────");
+  const embProvidersToShow: ("openai" | "ollama" | "onnx" | "google")[] =
+    cfg.embedding.preferredProviders && cfg.embedding.preferredProviders.length > 0
+      ? [...new Set(cfg.embedding.preferredProviders)]
+      : [cfg.embedding.provider];
+  const hasOpenAiKey =
+    typeof cfg.embedding.apiKey === "string" &&
+    cfg.embedding.apiKey.length >= 10 &&
+    cfg.embedding.apiKey !== "YOUR_OPENAI_API_KEY" &&
+    cfg.embedding.apiKey !== "<OPENAI_API_KEY>";
+  const hasGoogleKey =
+    typeof (cfg.embedding as Record<string, unknown>).googleApiKey === "string" &&
+    ((cfg.embedding as Record<string, unknown>).googleApiKey as string).length >= 10;
+  const embTableRows: {
+    label: string;
+    oauth: boolean;
+    api: string;
+    source: string;
+    success?: boolean;
+  }[] = [];
+  for (const p of embProvidersToShow) {
+    const oauth = false;
+    const api =
+      p === "openai" ? (hasOpenAiKey ? "True" : "False") : p === "google" ? (hasGoogleKey ? "True" : "False") : "Local";
+    const source =
+      p === "openai"
+        ? hasOpenAiKey
+          ? credentialSource(rawEmbeddingApiKey())
+          : "—"
+        : p === "google"
+          ? hasGoogleKey
+            ? (credentialSource(rawDistillApiKey()) !== "plugin"
+                ? credentialSource(rawDistillApiKey())
+                : credentialSource(rawLlmProviderApiKey("google"))) || "plugin"
+            : "—"
+          : "local";
+    const label =
+      p === "openai"
+        ? `OpenAI/${cfg.embedding.model || "text-embedding-3-small"}`
+        : p === "google"
+          ? `Google/${cfg.embedding.model || "text-embedding-004"}`
+          : p === "ollama"
+            ? `Local/Ollama (${cfg.embedding.model || "nomic-embed-text"})`
+            : `Local/ONNX (${cfg.embedding.model || "all-MiniLM-L6-v2"})`;
+    let success: boolean | undefined = undefined;
+    if (!opts.testLlm && (api === "True" || api === "Local")) {
+      embeddingOk = true;
     }
-    log(`${FAIL} Embedding API: FAIL — ${String(e)}`);
-    capturePluginError(e as Error, { subsystem: "cli", operation: "runVerifyForCli:embedding-check" });
-  }
-
-  const bool = (b: boolean) => (b ? ON : OFF);
-  const restartPending = existsSync(getRestartPendingPath());
-  const modeLabel = cfg.mode
-    ? cfg.mode === "custom"
-      ? "Mode: Custom"
-      : `Mode: ${cfg.mode.charAt(0).toUpperCase() + cfg.mode.slice(1)} (preset)`
-    : "Mode: Custom";
-  log(`\n───── Memory Mode ─────`);
-  log(`${modeLabel}${restartPending ? " — restart pending" : ""}`);
-  log(`  verbosity: ${cfg.verbosity ?? "normal"}`);
-
-  log("\n───── Core Features ─────");
-  log(`  autoCapture: ${bool(cfg.autoCapture)}`);
-  log(`  autoRecall: ${bool(cfg.autoRecall.enabled)}`);
-  log(
-    `  autoClassify: ${cfg.autoClassify.enabled ? (cfg.autoClassify.model ? cfg.autoClassify.model : `${getDefaultCronModel(getCronModelConfig(cfg), "nano")} (from llm.${cfg.llm?.nano ? "nano" : "default"})`) : "false"}`,
-  );
-  log(`  autoClassify.suggestCategories: ${bool(cfg.autoClassify.suggestCategories !== false)}`);
-  log(`  credentials: ${bool(cfg.credentials.enabled)}`);
-
-  if (cfg.credentials.enabled) {
-    log(`  credentials.autoDetect: ${bool(cfg.credentials.autoDetect === true)}`);
-    log(`  credentials.autoCapture.toolCalls (tool I/O): ${bool(cfg.credentials.autoCapture?.toolCalls === true)}`);
-    const vaultEncrypted = (cfg.credentials.encryptionKey?.length ?? 0) >= 16;
-    log(`  → Credentials vault: ${vaultEncrypted ? "encrypted" : "plaintext (secure by other means)"}`);
-  } else if (cfg.mode === "expert" || cfg.mode === "full") {
-    log(
-      `  → Credentials (vault): off — set credentials.enabled to use vault (optionally set credentials.encryptionKey for encryption).`,
-    );
-  }
-
-  log(`  store.fuzzyDedupe: ${bool(cfg.store.fuzzyDedupe)}`);
-  log(`  store.classifyBeforeWrite: ${bool(cfg.store.classifyBeforeWrite === true)}`);
-  log(`  graph: ${bool(cfg.graph.enabled)}`);
-
-  if (cfg.graph.enabled) {
-    log(`  graph.autoLink: ${bool(cfg.graph.autoLink)}`);
-    log(`  graph.useInRecall: ${bool(cfg.graph.useInRecall)}`);
-  }
-
-  log(`  procedures: ${bool(cfg.procedures.enabled)}`);
-  log(`  procedures.requireApprovalForPromote: ${bool(cfg.procedures.requireApprovalForPromote)}`);
-  log(`  memoryToSkills: ${bool(cfg.memoryToSkills.enabled)}`);
-  const reflectionModelDisplay = cfg.reflection.enabled
-    ? ` (model: ${cfg.reflection.model ?? `${getDefaultCronModel(getCronModelConfig(cfg), "default")} (from llm.default)`})` // reflection uses default, not nano
-    : "";
-  log(`  reflection: ${bool(cfg.reflection.enabled)}${reflectionModelDisplay}`);
-  log(`  wal: ${bool(cfg.wal.enabled)}`);
-  log(`  languageKeywords.autoBuild: ${bool(cfg.languageKeywords.autoBuild)}`);
-  log(`  personaProposals: ${bool(cfg.personaProposals.enabled)}`);
-  log(`  memoryTiering: ${bool(cfg.memoryTiering.enabled)}`);
-  log(`  memoryTiering.compactionOnSessionEnd: ${bool(cfg.memoryTiering.compactionOnSessionEnd)}`);
-  if (cfg.memoryTiering.enabled) {
-    log(`    hotMaxTokens: ${cfg.memoryTiering.hotMaxTokens}`);
-    log(`    inactivePreferenceDays: ${cfg.memoryTiering.inactivePreferenceDays}`);
-    log(`    hotMaxFacts: ${cfg.memoryTiering.hotMaxFacts}`);
-  }
-
-  if (cfg.selfCorrection) {
-    log(`  selfCorrection: true`);
-    log(`  selfCorrection.semanticDedup: ${bool(cfg.selfCorrection.semanticDedup)}`);
-    log(`  selfCorrection.applyToolsByDefault: ${bool(cfg.selfCorrection.applyToolsByDefault)}`);
-    log(`  selfCorrection.autoRewriteTools: ${bool(cfg.selfCorrection.autoRewriteTools)}`);
-    log(`  selfCorrection.analyzeViaSpawn: ${bool(cfg.selfCorrection.analyzeViaSpawn)}`);
-  } else {
-    log(`  selfCorrection: false`);
-  }
-
-  log(`  autoRecall.entityLookup: ${bool(cfg.autoRecall.entityLookup.enabled)}`);
-  log(`  autoRecall.authFailure (reactive recall): ${bool(cfg.autoRecall.authFailure.enabled)}`);
-  log(`  autoRecall.retrievalDirectives: ${bool(cfg.autoRecall.retrievalDirectives?.enabled)}`);
-
-  log(`  activeTask (ACTIVE-TASK.md): ${bool(cfg.activeTask.enabled)}`);
-  if (cfg.activeTask.enabled) {
-    log(`    filePath: ${cfg.activeTask.filePath}`);
-    log(`    staleThreshold: ${cfg.activeTask.staleThreshold}`);
-    log(`    injectionBudget: ${cfg.activeTask.injectionBudget}`);
-    log(`    autoCheckpoint: ${bool(cfg.activeTask.autoCheckpoint)}`);
-    log(`    flushOnComplete: ${bool(cfg.activeTask.flushOnComplete)}`);
-    log(`    staleWarning: ${bool(cfg.activeTask.staleWarning.enabled)}`);
-  }
-
-  log(`  nightlyCycle (dream-cycle): ${bool(cfg.nightlyCycle?.enabled)}`);
-  log(`  passiveObserver: ${bool(cfg.passiveObserver?.enabled)}`);
-  log(`  extraction (multi-pass): ${bool(cfg.extraction?.extractionPasses)}`);
-  log(`  selfExtension (tool proposals): ${bool(cfg.selfExtension?.enabled)}`);
-  log(`  crystallization (skill proposals): ${bool(cfg.crystallization?.enabled)}`);
-
-  log(`  reinforcement (confidence boost): ${bool(cfg.reinforcement.enabled)}`);
-  if (cfg.reinforcement.enabled) {
-    log(`    passiveBoost: ${cfg.reinforcement.passiveBoost}`);
-    log(`    activeBoost: ${cfg.reinforcement.activeBoost}`);
-  }
-
-  log(`  implicitFeedback: ${bool(cfg.implicitFeedback.enabled)}`);
-  if (cfg.implicitFeedback.enabled) {
-    log(`    feedToReinforcement: ${bool(cfg.implicitFeedback.feedToReinforcement)}`);
-    log(`    feedToSelfCorrection: ${bool(cfg.implicitFeedback.feedToSelfCorrection)}`);
-    log(`    trajectoryLLMAnalysis: ${bool(cfg.implicitFeedback.trajectoryLLMAnalysis)}`);
-  }
-
-  log(`  closedLoop: ${bool(cfg.closedLoop.enabled)}`);
-  if (cfg.closedLoop.enabled) {
-    log(`    runInNightlyCycle: ${bool(cfg.closedLoop.runInNightlyCycle)}`);
-    log(`    measurementWindowDays: ${cfg.closedLoop.measurementWindowDays}`);
-    log(`    minSampleSize: ${cfg.closedLoop.minSampleSize}`);
-  }
-
-  log(`  frustrationDetection: ${bool(cfg.frustrationDetection.enabled)}`);
-  if (cfg.frustrationDetection.enabled) {
-    log(`    windowSize: ${cfg.frustrationDetection.windowSize}`);
-    log(`    injectionThreshold: ${cfg.frustrationDetection.injectionThreshold}`);
-    log(`    decayRate: ${cfg.frustrationDetection.decayRate}`);
-  }
-
-  log(`  crossAgentLearning: ${bool(cfg.crossAgentLearning.enabled)}`);
-  if (cfg.crossAgentLearning.enabled) {
-    log(`    runInNightlyCycle: ${bool(cfg.crossAgentLearning.runInNightlyCycle)}`);
-    log(`    windowDays: ${cfg.crossAgentLearning.windowDays}`);
-    log(`    minSourceConfidence: ${cfg.crossAgentLearning.minSourceConfidence}`);
-  }
-
-  log(`  toolEffectiveness: ${bool(cfg.toolEffectiveness.enabled)}`);
-  if (cfg.toolEffectiveness.enabled) {
-    log(`    runInNightlyCycle: ${bool(cfg.toolEffectiveness.runInNightlyCycle)}`);
-  }
-
-  log(`  documents (MarkItDown): ${bool(cfg.documents.enabled)}`);
-  if (cfg.documents.enabled) {
-    log(`    visionEnabled: ${bool(cfg.documents.visionEnabled)}`);
-    log(`    model: ${cfg.documents.visionModel ?? "(from llm.default)"}`);
-  }
-
-  log(`  provenance (DERIVED_FROM): ${bool(cfg.provenance.enabled)}`);
-
-  log("\n───── Advanced Features ─────");
-  if (cfg.search?.hydeEnabled) {
-    log(`  search.hydeEnabled: DEPRECATED — use queryExpansion.enabled instead (auto-migrated)`);
-    if (cfg.search.hydeModel) {
-      log(`  search.hydeModel: DEPRECATED — use queryExpansion.model instead (value: ${cfg.search.hydeModel})`);
-    }
-  }
-  log(`  queryExpansion.enabled: ${bool(cfg.queryExpansion.enabled)}`);
-  if (cfg.queryExpansion.enabled) {
-    const effectiveQEModel = cfg.queryExpansion.model ?? getDefaultCronModel(getCronModelConfig(cfg), "nano");
-    log(
-      `  queryExpansion.model: ${cfg.queryExpansion.model != null ? cfg.queryExpansion.model : `${effectiveQEModel} (nano tier)`}`,
-    );
-  }
-  if (cfg.errorReporting) {
-    log(`  errorReporting: ${bool(cfg.errorReporting.enabled)} (consent: ${bool(cfg.errorReporting.consent)})`);
-    if (cfg.errorReporting.enabled) {
-      log(`    mode: ${cfg.errorReporting.mode ?? "community"}`);
-      if (cfg.errorReporting.dsn) log(`    dsn: ${cfg.errorReporting.dsn}`);
-      if (cfg.errorReporting.botId) log(`    botId: ${cfg.errorReporting.botId}`);
-      if (cfg.errorReporting.botName) log(`    botName: ${cfg.errorReporting.botName}`);
-    }
-  }
-
-  const cronCfgForVerify = getCronModelConfig(cfg);
-  let defaultOrder = getLLMModelPreference(cronCfgForVerify, "default");
-  let heavyOrder = getLLMModelPreference(cronCfgForVerify, "heavy");
-  const providersWithKeys = getProvidersWithKeys(cronCfgForVerify);
-  const llmSource =
-    cfg.llm?._source === "gateway" ? " (auto from agents.defaults.model)" : cfg.llm ? " (from plugin config)" : "";
-  const nanoOrder = getLLMModelPreference(cronCfgForVerify, "nano");
-  const hasExplicitNano = Array.isArray(cfg.llm?.nano) && (cfg.llm.nano as string[]).length > 0;
-  const nanoSameAsDefault = nanoOrder[0] === defaultOrder[0];
-
-  // Build effective tier lists: append one model per provider that has a key but no model in config tiers
-  // (so verify shows and tests Anthropic, Minimax, etc. when keys come from gateway merge)
-  const hasModelFrom = (list: string[], prefix: string) =>
-    list.some(
-      (m) =>
-        m.startsWith(`${prefix}/`) ||
-        (prefix === "anthropic" && m.startsWith("claude-")) ||
-        (prefix === "google" && m.startsWith("gemini-")),
-    );
-  const apiConfigForVerify = ctx.api?.config as Record<string, unknown> | undefined;
-  const gwProv =
-    (apiConfigForVerify?.models as Record<string, unknown> | undefined)?.providers ??
-    (apiConfigForVerify?.llm as Record<string, unknown> | undefined)?.providers;
-  const gwProvRecord =
-    gwProv && typeof gwProv === "object" && !Array.isArray(gwProv)
-      ? (gwProv as Record<string, Record<string, unknown>>)
-      : undefined;
-  const knownDefault: Record<string, string> = {
-    anthropic: "anthropic/claude-sonnet-4-6",
-    openai: "openai/gpt-4.1-mini",
-    google: "google/gemini-2.5-flash",
-  };
-  for (const p of providersWithKeys) {
-    if (hasModelFrom(defaultOrder, p) && hasModelFrom(heavyOrder, p)) continue;
-    let model: string | null = knownDefault[p] ?? null;
-    if (!model && gwProvRecord && gwProvRecord[p] && typeof gwProvRecord[p] === "object") {
-      const g = gwProvRecord[p];
-      const gm = typeof g.defaultModel === "string" ? g.defaultModel : typeof g.model === "string" ? g.model : null;
-      if (gm?.trim()) model = `${p}/${gm.trim()}`;
-    }
-    if (!model) continue;
-    if (!hasModelFrom(defaultOrder, p)) defaultOrder = [...defaultOrder, model];
-    const heavyModel = p === "anthropic" ? "anthropic/claude-opus-4-6" : model;
-    if (!hasModelFrom(heavyOrder, p)) heavyOrder = [...heavyOrder, heavyModel];
-  }
-
-  // Include providers that appear in failover lists (e.g. anthropic when keys are in gateway)
-  const providersInFailover = new Set<string>();
-  for (const model of [...nanoOrder, ...defaultOrder, ...heavyOrder]) {
-    const prefix = model.includes("/") ? model.split("/")[0]!.trim() : "";
-    if (prefix) providersInFailover.add(prefix);
-  }
-  const allProviders = [...new Set([...providersWithKeys, ...providersInFailover])].sort();
-  log("\n───── LLM / Failover ─────");
-  const nanoDisplay = hasExplicitNano
-    ? nanoOrder.join(" → ")
-    : `${nanoOrder[0] ?? "none"}${nanoSameAsDefault ? " (from llm.default — no nano model found)" : ""}`;
-  log(`  nano tier (autoClassify, HyDE, classifyBeforeWrite, summarize): ${nanoDisplay}${llmSource}`);
-  log(`  default tier (reflection, general): ${defaultOrder.join(" → ")}${llmSource}`);
-  log(`  heavy tier (distill, self-correction): ${heavyOrder.join(" → ")}${llmSource}`);
-  log(`  providers with keys: ${allProviders.length ? allProviders.join(", ") : "none"}`);
-  // Hint when a provider has a key but no models in the tier lists (e.g. Anthropic key but no Claude/Opus in llm tiers)
-  const inferProvider = (m: string): string => {
-    const t = m.trim();
-    if (t.includes("/")) return t.split("/")[0]!.trim().toLowerCase();
-    const lower = t.toLowerCase();
-    if (lower.startsWith("gemini-")) return "google";
-    if (lower.startsWith("claude-")) return "anthropic";
-    if (lower.startsWith("gpt-") || /^o[0-9]+/.test(lower)) return "openai";
-    return "";
-  };
-  const providersInTiers = new Set<string>();
-  for (const model of [...nanoOrder, ...defaultOrder, ...heavyOrder]) {
-    const p = inferProvider(model);
-    if (p) providersInTiers.add(p);
-  }
-  const knownPrefixes: Record<string, string> = { google: "Google", openai: "OpenAI", anthropic: "Anthropic" };
-  for (const p of providersWithKeys) {
-    if (!providersInTiers.has(p)) {
-      const name = knownPrefixes[p] ?? p;
-      const example =
-        p === "anthropic"
-          ? "anthropic/claude-opus-4-6"
-          : p === "google"
-            ? "google/gemini-3.1-pro-preview"
-            : `${p}/<model>`;
-      log(
-        `  ℹ️  You have an API key for ${name} but no ${name} models in llm tiers — add e.g. ${example} to llm.default or llm.heavy to use and test it.`,
-      );
-    }
-  }
-  // Gateway providers (for reference): plugin only uses providers with keys in plugin config
-  const apiConfig = ctx.api?.config as Record<string, unknown> | undefined;
-  const gatewayProviders =
-    apiConfig?.models &&
-    typeof apiConfig.models === "object" &&
-    (apiConfig.models as Record<string, unknown>).providers &&
-    typeof (apiConfig.models as Record<string, unknown>).providers === "object"
-      ? Object.keys((apiConfig.models as Record<string, unknown>).providers as Record<string, unknown>)
-          .filter(Boolean)
-          .sort()
-      : [];
-  if (gatewayProviders.length > 0) {
-    const onlyInGateway = gatewayProviders.filter((g) => !allProviders.includes(g));
-    if (onlyInGateway.length > 0) {
-      log(
-        `  Gateway also has providers: ${onlyInGateway.join(", ")} (plugin uses only providers with keys in plugin config; add llm.providers.<name> and <name>/model to llm tiers to use them here).`,
-      );
-    }
-  }
-  if (defaultOrder.length > 1 || heavyOrder.length > 1) {
-    log(`  (if a model fails, the next in the list is tried)`);
-  }
-
-  // Cost advisory
-  const isLightOrNano = (m: string) => isNanoModel(m) || isLightModel(m);
-  const nanoPrimary = nanoOrder[0];
-  const defaultPrimary = defaultOrder[0];
-  const nanoIsHeavy = nanoPrimary ? isHeavyModel(nanoPrimary) : false;
-  const hasNanoModel = nanoOrder.some(isNanoModel);
-  const hasExplicitClassifyOverride = !!cfg.autoClassify.model;
-  const hasExplicitHydeOverride = !!(cfg.queryExpansion?.model || cfg.search?.hydeModel);
-
-  if (nanoIsHeavy && !hasNanoModel && !hasExplicitClassifyOverride) {
-    log(`  ⚠️  No nano/mini model for lightweight ops — autoClassify, query expansion, and summarize`);
-    log(`     will use ${nanoPrimary} (a heavy model) for short, cheap tasks. This may increase costs.`);
-    log(`     Fix: add llm.nano in plugin config, or set autoClassify.model and queryExpansion.model`);
-    log(`     explicitly. Good options: openai/gpt-4.1-nano, google/gemini-2.0-flash-lite, anthropic/claude-haiku-*`);
-  } else if (!hasNanoModel && !hasExplicitClassifyOverride && defaultPrimary && !isLightOrNano(defaultPrimary)) {
-    log(`  ℹ️  Nano tier uses ${nanoPrimary ?? "default"}. For lower cost on classify/query-expansion/summarize,`);
-    log(`     add llm.nano: ["openai/gpt-4.1-nano"] (OpenAI) or other nano/mini model to plugin config.`);
-  }
-
-  if (opts.testLlm) {
-    const { chatComplete, UnconfiguredProviderError } = await import("../services/chat.js");
-    const WARN = noEmoji ? "[WARN] " : "⚠️ ";
-    const OK = noEmoji ? "[OK]" : "✅";
-    const FAIL = noEmoji ? "[FAIL]" : "❌";
-    const allModels = [...new Set([...nanoOrder, ...defaultOrder, ...heavyOrder])];
-    const TEST_LLM_TIMEOUT_MS = 15_000;
-    let anyUnconfigured = false;
-    log("\n  LLM reachability (--test-llm):");
-    const isNonChatModel = (m: string) => {
-      const bare = m.includes("/") ? (m.split("/")[1] ?? m) : m;
-      return bare.toLowerCase().includes("-codex");
-    };
-    for (const model of allModels) {
-      if (isNonChatModel(model)) {
-        log(`    ${model}: ${WARN}skipped — Codex/agentic models use a different API (not chat/completions)`);
-        continue;
-      }
+    if (opts.testLlm) {
       try {
-        await chatComplete({
-          model,
-          content: "Reply with exactly: OK",
-          temperature: 0,
-          maxTokens: 10,
-          openai,
-          timeoutMs: TEST_LLM_TIMEOUT_MS,
-        });
-        log(`    ${model}: ${OK}`);
+        const minimalEmbCfg: EmbeddingConfig = {
+          provider: p,
+          model:
+            cfg.embedding.model ||
+            (p === "openai"
+              ? "text-embedding-3-small"
+              : p === "google"
+                ? "text-embedding-004"
+                : p === "ollama"
+                  ? "nomic-embed-text"
+                  : "all-MiniLM-L6-v2"),
+          dimensions: cfg.embedding.dimensions,
+          batchSize: cfg.embedding.batchSize ?? 32,
+          ...(p === "openai" && { apiKey: cfg.embedding.apiKey }),
+          ...(p === "google" && {
+            googleApiKey: (cfg.embedding as Record<string, unknown>).googleApiKey as string,
+          }),
+          ...(p === "ollama" && { endpoint: cfg.embedding.endpoint }),
+        };
+        const singleEmb = createEmbeddingProvider(minimalEmbCfg);
+        await singleEmb.embed("verify test");
+        success = true;
       } catch (e) {
-        if (e instanceof UnconfiguredProviderError) {
-          log(`    ${model}: ${WARN}skipped — ${e.message}`);
-          anyUnconfigured = true;
+        capturePluginError(e as Error, { subsystem: "cli", operation: "runVerifyForCli:embedding-test", phase: p });
+        success = false;
+      }
+      if (success) embeddingOk = true;
+    }
+    embTableRows.push({ label, oauth, api, source, success });
+  }
+  const embCols = ["Model", "Credentials Available", "Source", ...(opts.testLlm ? ["Test Result"] : [])];
+  const embW1 = Math.max(8, ...embTableRows.map((r) => r.label.length), 20);
+  const embW2 = Math.max(20, 35);
+  const embW3 = 8;
+  const embW4 = opts.testLlm ? 12 : 0;
+  log(
+    `  ${embCols[0].padEnd(embW1)}  ${embCols[1].padEnd(embW2)}  ${embCols[2].padEnd(embW3)}${opts.testLlm ? `  ${embCols[3]}` : ""}`,
+  );
+  log("  " + "-".repeat(embW1 + embW2 + embW3 + 4 + (opts.testLlm ? embW4 + 2 : 0)));
+  for (const row of embTableRows) {
+    const credStr = `OAuth:${row.oauth ? "True" : "False"} / API:${row.api}`;
+    const line =
+      `  ${row.label.padEnd(embW1)}  ${credStr.padEnd(embW2)}  ${row.source.padEnd(embW3)}` +
+      (opts.testLlm
+        ? `  ${row.success ? (noEmoji ? "Success" : "✅ Success") : noEmoji ? "Failed" : "❌ Failed"}`
+        : "");
+    log(line);
+  }
+  const anyEmbOk = opts.testLlm
+    ? embTableRows.some((r) => r.success)
+    : embTableRows.some((r) => r.api === "True" || r.api === "Local");
+  if (!anyEmbOk && opts.testLlm) {
+    issues.push("No supported providers with Embedding support available");
+    loadBlocking.push("No supported providers with Embedding support available");
+    const WARN = noEmoji ? "[WARNING]" : "⚠️";
+    log(`\n${WARN} No supported providers with Embedding support available. Plugin disabled.`);
+    fixes.push(
+      "Configure at least one embedding provider: embedding.apiKey (OpenAI), llm.providers.google.apiKey or distill.apiKey (Google), or use Local/Ollama or Local/ONNX. See docs/LLM-AND-PROVIDERS.md.",
+    );
+  }
+
+  // ───── LLM providers table (always shown; test only when --test-llm) ─────
+  log("\n───── LLM Providers ─────");
+  const cronCfg = getCronModelConfig(cfg);
+  const providersWithKeys = getProvidersWithKeys(cronCfg);
+  const authOrder = (cfg as Record<string, unknown>).auth as { order?: Record<string, string[]> } | undefined;
+  const gatewayPort = process.env.OPENCLAW_GATEWAY_PORT;
+  const gatewayToken = process.env.OPENCLAW_GATEWAY_TOKEN;
+  const gatewayAvailable = Boolean(
+    gatewayPort && Number(gatewayPort) >= 1 && Number(gatewayPort) <= 65535 && gatewayToken,
+  );
+  const allModelsUnfiltered: string[] = [
+    ...getLLMModelPreferenceUnfiltered(cronCfg, "nano"),
+    ...getLLMModelPreferenceUnfiltered(cronCfg, "default"),
+    ...getLLMModelPreferenceUnfiltered(cronCfg, "heavy"),
+  ];
+  const allModelsFiltered: string[] = [
+    ...getLLMModelPreference(cronCfg, "nano"),
+    ...getLLMModelPreference(cronCfg, "default"),
+    ...getLLMModelPreference(cronCfg, "heavy"),
+  ];
+  const providerFromModel = (m: string) => {
+    if (m.includes("/")) {
+      return m.split("/")[0].toLowerCase();
+    }
+    const bare = m.trim().toLowerCase();
+    if (bare.startsWith("gemini-")) return "google";
+    if (bare.startsWith("claude-")) return "anthropic";
+    if (bare.startsWith("gpt-") || bare.match(/^o[0-9]/)) return "openai";
+    return "openai";
+  };
+  const disabledSet = new Set((cfg.llm?.disabledProviders ?? []).map((p) => String(p).trim().toLowerCase()));
+  const providersInConfig = new Set(allModelsUnfiltered.map(providerFromModel));
+  const providersToShow = new Set<string>(providersWithKeys);
+  for (const p of providersInConfig) {
+    if (gatewayAvailable && hasOAuthProfiles(authOrder?.order?.[p], p)) providersToShow.add(p);
+  }
+  for (const p of disabledSet) {
+    providersToShow.add(p);
+  }
+  const defaultTestModel: Record<string, string> = {
+    openai: "openai/gpt-4.1-nano",
+    google: "google/gemini-2.0-flash-lite",
+    anthropic: "anthropic/claude-haiku-4-5-20251001",
+    ollama: "ollama/llama3.2",
+    minimax: "minimax/minimax-01",
+  };
+  function llmCredentialSource(provider: string): string {
+    if (gatewayAvailable && hasOAuthProfiles(authOrder?.order?.[provider], provider)) return "gateway";
+    if (provider === "openai")
+      return credentialSource(rawEmbeddingApiKey()) || credentialSource(rawLlmProviderApiKey("openai"));
+    if (provider === "google")
+      return credentialSource(rawDistillApiKey()) || credentialSource(rawLlmProviderApiKey("google"));
+    if (provider === "anthropic")
+      return credentialSource(rawClaudeApiKey()) || credentialSource(rawLlmProviderApiKey("anthropic"));
+    return credentialSource(rawLlmProviderApiKey(provider)) || "plugin";
+  }
+  const gatewayBaseUrl =
+    gatewayPort && Number(gatewayPort) >= 1 && Number(gatewayPort) <= 65535
+      ? `http://127.0.0.1:${Number(gatewayPort)}/v1`
+      : undefined;
+  const VERIFY_LLM_BASE_URLS: Record<string, string> = {
+    openai: "https://api.openai.com/v1",
+    google: "https://generativelanguage.googleapis.com/v1beta/openai/",
+    anthropic: "https://api.anthropic.com/v1",
+    ollama: "http://127.0.0.1:11434/v1",
+    minimax: "https://api.minimax.chat/v1",
+  };
+  function getDirectApiKey(provider: string): string | undefined {
+    const prov = cronCfg.llm?.providers as Record<string, { apiKey?: string }> | undefined;
+    if (provider === "openai") {
+      const k = prov?.openai?.apiKey ?? cronCfg.embedding?.apiKey;
+      return typeof k === "string" && k.length >= 10 ? k : undefined;
+    }
+    if (provider === "google") {
+      const k = prov?.google?.apiKey ?? cronCfg.distill?.apiKey;
+      return typeof k === "string" && k.length >= 10 ? k : undefined;
+    }
+    if (provider === "anthropic") {
+      const k = prov?.anthropic?.apiKey ?? (cronCfg.claude as { apiKey?: string } | undefined)?.apiKey;
+      return typeof k === "string" && k.length >= 10 ? k : undefined;
+    }
+    if (provider === "ollama") return "ollama";
+    const k = prov?.[provider]?.apiKey;
+    return typeof k === "string" && k.length >= 10 ? k : undefined;
+  }
+  function buildDirectClient(provider: string): OpenAI | undefined {
+    const apiKey = getDirectApiKey(provider);
+    if (!apiKey) return undefined;
+    const baseURL =
+      (cronCfg.llm?.providers as Record<string, { baseURL?: string }> | undefined)?.[provider]?.baseURL ??
+      VERIFY_LLM_BASE_URLS[provider];
+    if (!baseURL) return undefined;
+    const opts: { apiKey: string; baseURL: string; defaultHeaders?: Record<string, string> } = {
+      apiKey,
+      baseURL,
+    };
+    if (provider === "anthropic") opts.defaultHeaders = { "anthropic-version": "2023-06-01" };
+    return new OpenAI(opts);
+  }
+  const llmRows: {
+    model: string;
+    provider: string;
+    hasOAuth: boolean;
+    hasApi: boolean;
+    enabled: boolean;
+    source: string;
+    oauthResult?: boolean;
+    apiResult?: boolean;
+  }[] = [];
+  for (const provider of providersToShow) {
+    const hasApi = providersWithKeys.includes(provider);
+    const hasOAuth = gatewayAvailable && Boolean(hasOAuthProfiles(authOrder?.order?.[provider], provider));
+    const enabled = !disabledSet.has(provider);
+    const source = llmCredentialSource(provider);
+    const modelToTest =
+      allModelsFiltered.find((m) => providerFromModel(m) === provider) ??
+      allModelsUnfiltered.find((m) => providerFromModel(m) === provider) ??
+      defaultTestModel[provider] ??
+      `${provider}/default`;
+    const bareModel = modelToTest.includes("/") ? modelToTest.slice(modelToTest.indexOf("/") + 1) : modelToTest;
+    let oauthResult: boolean | undefined = undefined;
+    let apiResult: boolean | undefined = undefined;
+    if (opts.testLlm && enabled) {
+      if (hasOAuth && gatewayBaseUrl && gatewayToken) {
+        try {
+          const oauthClient = new OpenAI({ apiKey: gatewayToken, baseURL: gatewayBaseUrl });
+          await chatComplete({
+            model: modelToTest,
+            content: "Reply with exactly: OK",
+            maxTokens: 10,
+            openai: oauthClient,
+          });
+          oauthResult = true;
+        } catch (e) {
+          capturePluginError(e as Error, {
+            subsystem: "cli",
+            operation: "runVerifyForCli:llm-test-oauth",
+            phase: provider,
+          });
+          oauthResult = false;
+        }
+      }
+      if (hasApi) {
+        const directClient = buildDirectClient(provider);
+        if (!directClient) {
+          apiResult = false;
         } else {
-          const msg = e instanceof Error ? e.message : String(e);
-          log(`    ${model}: ${FAIL} ${msg}`);
+          try {
+            await chatComplete({
+              model: bareModel,
+              content: "Reply with exactly: OK",
+              maxTokens: 10,
+              openai: directClient,
+            });
+            apiResult = true;
+          } catch (e) {
+            capturePluginError(e as Error, {
+              subsystem: "cli",
+              operation: "runVerifyForCli:llm-test-api",
+              phase: provider,
+            });
+            apiResult = false;
+          }
         }
       }
     }
-    if (anyUnconfigured) {
+    llmRows.push({
+      model: modelToTest,
+      provider,
+      hasOAuth,
+      hasApi,
+      enabled,
+      source,
+      oauthResult,
+      apiResult,
+    });
+  }
+  if (llmRows.length === 0) {
+    log("  No LLM providers configured (add llm.nano / llm.default / llm.heavy or API keys / OAuth).");
+  } else {
+    const llmCols = [
+      "Model",
+      "Credentials Available",
+      "Source",
+      "Enabled",
+      ...(opts.testLlm ? ["OAuth Result", "API Result"] : []),
+    ];
+    const llmW1 = Math.max(8, ...llmRows.map((r) => r.model.length), 24);
+    const llmW2 = Math.max(20, 35);
+    const llmW3 = 8;
+    const llmW4 = 8;
+    const llmW5 = opts.testLlm ? 14 : 0;
+    const llmW6 = opts.testLlm ? 12 : 0;
+    log(
+      `  ${llmCols[0].padEnd(llmW1)}  ${llmCols[1].padEnd(llmW2)}  ${llmCols[2].padEnd(llmW3)}  ${llmCols[3].padEnd(llmW4)}${opts.testLlm ? `  ${llmCols[4].padEnd(llmW5)}  ${llmCols[5]}` : ""}`,
+    );
+    log("  " + "-".repeat(llmW1 + llmW2 + llmW3 + llmW4 + 4 + (opts.testLlm ? llmW5 + llmW6 + 2 : 0)));
+    for (const row of llmRows) {
+      const credStr = `OAuth:${row.hasOAuth ? "True" : "False"} / API:${row.hasApi ? "True" : "False"}`;
+      const enabledStr = row.enabled ? (noEmoji ? "Enabled" : "✅ Enabled") : noEmoji ? "Disabled" : "❌ Disabled";
+      const oauthStr =
+        row.oauthResult === undefined
+          ? "—"
+          : row.oauthResult
+            ? noEmoji
+              ? "Success"
+              : "✅ Success"
+            : noEmoji
+              ? "Failed"
+              : "❌ Failed";
+      const apiStr =
+        row.apiResult === undefined
+          ? "—"
+          : row.apiResult
+            ? noEmoji
+              ? "Success"
+              : "✅ Success"
+            : noEmoji
+              ? "Failed"
+              : "❌ Failed";
       log(
-        `  → To enable skipped providers, add their API key to llm.providers.<provider>.apiKey in plugin config, or set env vars.`,
+        `  ${row.model.padEnd(llmW1)}  ${credStr.padEnd(llmW2)}  ${row.source.padEnd(llmW3)}  ${enabledStr.padEnd(llmW4)}${opts.testLlm ? `  ${oauthStr.padEnd(llmW5)}  ${apiStr}` : ""}`,
       );
-      log(`    Anthropic: llm.providers.anthropic.apiKey in config, or ANTHROPIC_API_KEY in the environment.`);
     }
   }
 
-  // ───── Cost Tracking ─────
-  log("\n───── Cost Tracking ─────");
-  if (!ctx.cfg.costTracking.enabled) {
-    log(`  Cost tracking: ⏸ Disabled`);
-    log(`  Enable: openclaw hybrid-mem config-set costTracking.enabled true`);
-  } else if (ctx.costTracker) {
-    const totalCost = ctx.costTracker.getTotalCost(7);
-    if (totalCost.calls === 0) {
-      log(`  Cost tracking: ✅ Active — collecting data (first report available after ~1 hour of use)`);
-    } else {
-      const topFeatures = ctx.costTracker.getReport({ days: 7 });
-      const totalUsd = totalCost.estimatedCostUsd;
-      const topSpenders = topFeatures.features.slice(0, 3).map((f) => {
-        const p = totalUsd > 0 ? Math.round((f.estimatedCostUsd / totalUsd) * 100) : 0;
-        return `${f.feature}: ${p}%`;
-      });
-      log(`  Cost tracking: ✅ Active — $${totalUsd.toFixed(3)} last 7 days (${totalCost.calls} LLM calls)`);
-      if (topSpenders.length > 0) {
-        log(`  Top features: ${topSpenders.join(", ")}`);
-      }
-      log(`  Run 'openclaw hybrid-mem cost-report' for full breakdown.`);
-    }
-  } else {
-    log(`  Cost tracking: ⚠️  Enabled in config but tracker failed to initialize`);
-    log(`  Check logs or run 'openclaw hybrid-mem verify --fix' to diagnose.`);
-  }
-
-  // ───── Estimated Monthly Cost by Mode ─────
-  log("\n───── Estimated Monthly Cost by Mode ─────");
-  const modeEstimates = getModeCostEstimates();
-  for (const est of modeEstimates) {
-    const low = est.monthlyLow.toFixed(2);
-    const high = est.monthlyHigh.toFixed(2);
-    log(`  ${est.mode.padEnd(10)}: ~$${low}-${high}/mo  (${est.description})`);
-  }
-  log(`  ℹ️  Estimates assume ~100 conversations/month with nano-tier models.`);
-  log(`     Heavy models (Opus, GPT-5.4) for distill/self-correction increase costs 5-10×.`);
-
-  log("\n───── Ingestion & Distillation ─────");
-  if (cfg.ingest) {
-    log(`  ingest (paths configured): ${bool(true)}`);
-  } else {
-    log(`  ingest: ${bool(false)}`);
-  }
-  if (cfg.distill) {
-    log(`  distill.extractDirectives: ${bool(cfg.distill.extractDirectives !== false)}`);
-    log(`  distill.extractReinforcement: ${bool(cfg.distill.extractReinforcement !== false)}`);
-    if (cfg.distill.extractionModelTier) {
-      log(`  distill.extractionModelTier: ${cfg.distill.extractionModelTier}`);
-    }
-  } else {
-    log(`  distill: ${bool(false)}`);
-  }
+  const restartPending = existsSync(getRestartPendingPath());
+  const modeLabel = cfg.mode
+    ? cfg.mode === "custom"
+      ? "Custom"
+      : cfg.mode.charAt(0).toUpperCase() + cfg.mode.slice(1)
+    : "Custom";
+  log(`\n───── Config ─────`);
+  log(`  Mode: ${modeLabel}${restartPending ? " (restart pending)" : ""}`);
+  log(`  Run 'openclaw hybrid-mem config' to view or change settings.`);
 
   let credentialsOk = true;
   if (cfg.credentials.enabled) {
@@ -1650,7 +1582,6 @@ export async function runVerifyForCli(
   const nightlyMemorySweepRe = /nightly[- ]?memory[- ]?sweep|memory distillation.*nightly|nightly.*memory.*distill/i;
   const weeklyReflectionRe = /weekly[- ]?reflection|memory reflection|pattern synthesis/i;
   const extractProceduresRe = /extract[- ]?procedures|weekly[- ]?extract[- ]?procedures|procedural memory/i;
-  const nightlyMemoryToSkillsRe = /nightly[- ]?memory[- ]?to[- ]?skills|memory[- ]?to[- ]?skills|skills[- ]?suggest/i;
   const selfCorrectionRe = /self[- ]?correction[- ]?analysis|self[- ]?correction\b/i;
   const weeklyDeepMaintenanceRe = /weekly[- ]?deep[- ]?maintenance|deep maintenance/i;
   const weeklyPersonaProposalsRe = /weekly[- ]?persona[- ]?proposals|persona proposals/i;
@@ -1658,7 +1589,6 @@ export async function runVerifyForCli(
 
   const knownJobSlugs = new Set([
     "nightly-memory-sweep",
-    "nightly-memory-to-skills",
     "weekly-reflection",
     "weekly-extract-procedures",
     "self-correction-analysis",
@@ -1685,8 +1615,6 @@ export async function runVerifyForCli(
       return "weekly-reflection";
     } else if (extractProceduresRe.test(nameLower)) {
       return "weekly-extract-procedures";
-    } else if (nightlyMemoryToSkillsRe.test(nameLower) || (msg && /skills-suggest/i.test(msg))) {
-      return "nightly-memory-to-skills";
     } else if (selfCorrectionRe.test(nameLower)) {
       return "self-correction-analysis";
     } else if (weeklyDeepMaintenanceRe.test(nameLower)) {
@@ -1834,7 +1762,6 @@ export async function runVerifyForCli(
       description: "session distillation",
       docsPath: "docs/SESSION-DISTILLATION.md § Nightly Cron Setup",
     },
-    { key: "nightly-memory-to-skills", description: "memory-to-skills", docsPath: "docs/MEMORY-TO-SKILLS.md" },
     { key: "weekly-reflection", description: "pattern synthesis", docsPath: "docs/REFLECTION.md § Scheduled Job" },
     { key: "weekly-extract-procedures", description: "procedural memory", docsPath: "docs/PROCEDURAL-MEMORY.md" },
     { key: "self-correction-analysis", description: "self-correction", docsPath: "docs/SELF-CORRECTION-PIPELINE.md" },
@@ -1987,9 +1914,6 @@ export async function runVerifyForCli(
 
         try {
           const scheduleOverrides: Record<string, string> = {};
-          if (typeof cfg.memoryToSkills?.schedule === "string" && cfg.memoryToSkills.schedule.trim().length > 0) {
-            scheduleOverrides[PLUGIN_JOB_ID_PREFIX + "nightly-memory-to-skills"] = cfg.memoryToSkills.schedule;
-          }
           if (typeof cfg.nightlyCycle?.schedule === "string" && cfg.nightlyCycle.schedule.trim().length > 0) {
             scheduleOverrides[PLUGIN_JOB_ID_PREFIX + "nightly-dream-cycle"] = cfg.nightlyCycle.schedule;
           }
@@ -2000,11 +1924,6 @@ export async function runVerifyForCli(
             normalizeExisting: true,
             reEnableDisabled: false,
             scheduleOverrides: Object.keys(scheduleOverrides).length > 0 ? scheduleOverrides : undefined,
-            messageOverrides: {
-              [PLUGIN_JOB_ID_PREFIX + "nightly-memory-to-skills"]: buildMemoryToSkillsMessage(
-                cfg.memoryToSkills?.notify !== false,
-              ),
-            },
             featureGates: {
               "sensorSweep.enabled": cfg.sensorSweep?.enabled === true,
               "nightlyCycle.enabled": cfg.nightlyCycle?.enabled === true,
@@ -2303,60 +2222,6 @@ export async function runGenerateAutoSkillsForCli(
     );
   } catch (err) {
     capturePluginError(err as Error, { subsystem: "cli", operation: "runGenerateAutoSkillsForCli" });
-    throw err;
-  }
-}
-
-/**
- * Memory-to-skills: cluster procedures, synthesize SKILL.md drafts (issue #114).
- */
-export async function runSkillsSuggestForCli(
-  ctx: HandlerContext,
-  opts: { dryRun?: boolean; apply?: boolean; days?: number; verbose?: boolean },
-): Promise<SkillsSuggestResult> {
-  const { factsDb, embeddings, openai, cfg, logger } = ctx;
-  if (!cfg.memoryToSkills.enabled) {
-    return {
-      proceduresCollected: 0,
-      clustersConsidered: 0,
-      qualifyingClusters: 0,
-      pathsWritten: [],
-      skippedOther: 0,
-      skippedDuplicate: 0,
-      drafts: [],
-    };
-  }
-  const cronCfg = getCronModelConfig(cfg);
-  const defaultPref = getLLMModelPreference(cronCfg, "default");
-  const model = defaultPref[0] ?? getDefaultCronModel(cronCfg, "default");
-  const fallbackModels = defaultPref.length > 1 ? defaultPref.slice(1) : [];
-  const info = opts.verbose ? (s: string) => logger.info?.(s) ?? console.log(s) : () => {};
-  const warn = (s: string) => logger.warn?.(s) ?? console.warn(s);
-  const windowDays = opts.days ?? cfg.memoryToSkills.windowDays;
-  const workspaceRoot = process.env.OPENCLAW_WORKSPACE || process.cwd();
-  const writeByDefault = cfg.memoryToSkills.writeByDefault === true;
-  const dryRun = opts.dryRun === true ? true : opts.apply === true ? false : !writeByDefault;
-  try {
-    return await runMemoryToSkills(
-      factsDb,
-      embeddings,
-      openai,
-      cfg.memoryToSkills,
-      {
-        windowDays,
-        minInstances: cfg.memoryToSkills.minInstances,
-        consistencyThreshold: cfg.memoryToSkills.consistencyThreshold,
-        outputDir: cfg.memoryToSkills.outputDir,
-        workspaceRoot: workspaceRoot || undefined,
-        dryRun,
-        verbose: opts.verbose,
-        model,
-        fallbackModels,
-      },
-      { info, warn },
-    );
-  } catch (err) {
-    capturePluginError(err as Error, { subsystem: "cli", operation: "runSkillsSuggestForCli" });
     throw err;
   }
 }
@@ -4850,9 +4715,6 @@ export async function runUpgradeForCli(ctx: HandlerContext, requestedVersion?: s
     const openclawDir = join(homedir(), ".openclaw");
     const pluginConfig = getCronModelConfig(cfg);
     const scheduleOverrides: Record<string, string> = {};
-    if (typeof cfg.memoryToSkills?.schedule === "string" && cfg.memoryToSkills.schedule.trim().length > 0) {
-      scheduleOverrides[PLUGIN_JOB_ID_PREFIX + "nightly-memory-to-skills"] = cfg.memoryToSkills.schedule;
-    }
     if (typeof cfg.nightlyCycle?.schedule === "string" && cfg.nightlyCycle.schedule.trim().length > 0) {
       scheduleOverrides[PLUGIN_JOB_ID_PREFIX + "nightly-dream-cycle"] = cfg.nightlyCycle.schedule;
     }
@@ -4863,11 +4725,6 @@ export async function runUpgradeForCli(ctx: HandlerContext, requestedVersion?: s
       normalizeExisting: true,
       reEnableDisabled: false,
       scheduleOverrides: Object.keys(scheduleOverrides).length > 0 ? scheduleOverrides : undefined,
-      messageOverrides: {
-        [PLUGIN_JOB_ID_PREFIX + "nightly-memory-to-skills"]: buildMemoryToSkillsMessage(
-          cfg.memoryToSkills?.notify !== false,
-        ),
-      },
       featureGates: {
         "sensorSweep.enabled": cfg.sensorSweep?.enabled === true,
         "nightlyCycle.enabled": cfg.nightlyCycle?.enabled === true,
@@ -4972,6 +4829,63 @@ function getNested(obj: Record<string, unknown>, path: string): unknown {
 }
 
 /**
+ * Config view — show current settings in a simple, scannable format.
+ * Focus on what's on/off so users can understand and change via config-set.
+ */
+export function runConfigViewForCli(ctx: HandlerContext, sink: VerifyCliSink): void {
+  const { cfg } = ctx;
+  const log = sink.log;
+  const noEmoji = process.env.HYBRID_MEM_NO_EMOJI === "1";
+  const ON = noEmoji ? "[on]" : "on";
+  const OFF = noEmoji ? "[off]" : "off";
+  const on = (b: boolean) => (b ? ON : OFF);
+
+  const modeLabel = cfg.mode && cfg.mode !== "custom" ? cfg.mode.charAt(0).toUpperCase() + cfg.mode.slice(1) : "Custom";
+  log("Memory mode: " + modeLabel);
+  log("Verbosity: " + (cfg.verbosity ?? "normal"));
+  log("");
+
+  log("Core");
+  log("  Auto-capture: " + on(cfg.autoCapture));
+  log("  Auto-recall: " + on(cfg.autoRecall.enabled));
+  log("  Credentials vault: " + on(cfg.credentials.enabled));
+  log("  Procedures: " + on(cfg.procedures.enabled));
+  log("  Memory tiering: " + on(cfg.memoryTiering.enabled));
+  log("  Graph (links between facts): " + on(cfg.graph.enabled));
+  log("  Auto-classify: " + on(cfg.autoClassify.enabled));
+  log("");
+
+  log("Optional features");
+  log("  Nightly dream cycle: " + on(cfg.nightlyCycle?.enabled ?? false));
+  log("  Passive observer: " + on(cfg.passiveObserver?.enabled ?? false));
+  log("  Reflection (patterns/rules): " + on(cfg.reflection.enabled));
+  log("  Persona proposals: " + on(cfg.personaProposals.enabled));
+  log("  Self-correction: " + on(!!cfg.selfCorrection));
+  log("  Self-extension (tool proposals): " + on(cfg.selfExtension?.enabled ?? false));
+  log("  Crystallization (skill proposals): " + on(cfg.crystallization?.enabled ?? false));
+  log("  Extraction (multi-pass): " + on(cfg.extraction?.extractionPasses ?? false));
+  log("  Active task (ACTIVE-TASK.md): " + on(cfg.activeTask.enabled));
+  log("  Frustration detection: " + on(cfg.frustrationDetection.enabled));
+  log("  Cross-agent learning: " + on(cfg.crossAgentLearning.enabled));
+  log("  Tool effectiveness: " + on(cfg.toolEffectiveness.enabled));
+  log("  Documents (MarkItDown): " + on(cfg.documents.enabled));
+  log("  Provenance: " + on(cfg.provenance.enabled));
+  log("  Error reporting: " + on(cfg.errorReporting?.enabled ?? false));
+  log("  Cost tracking: " + on(cfg.costTracking?.enabled ?? false));
+  log("");
+
+  log("Advanced");
+  log("  Query expansion: " + on(cfg.queryExpansion.enabled));
+  log("  Retrieval directives: " + on(cfg.autoRecall.retrievalDirectives?.enabled ?? false));
+  log("  Entity lookup: " + on(cfg.autoRecall.entityLookup.enabled));
+  log("");
+
+  log("To change a setting: openclaw hybrid-mem config-set <key> <true|false>");
+  log("Example: openclaw hybrid-mem config-set nightlyCycle.enabled true");
+  log("Help for a key: openclaw hybrid-mem help config-set <key>");
+}
+
+/**
  * Show help for config key
  */
 export function runConfigSetHelpForCli(ctx: HandlerContext, key: string): ConfigCliResult {
@@ -5011,7 +4925,7 @@ export function runConfigSetHelpForCli(ctx: HandlerContext, key: string): Config
  * Set config mode
  */
 export function runConfigModeForCli(ctx: HandlerContext, mode: string): ConfigCliResult {
-  const valid: ConfigMode[] = ["essential", "normal", "expert", "full"];
+  const valid: ConfigMode[] = ["local", "minimal", "enhanced", "complete"];
   if (!valid.includes(mode as ConfigMode)) {
     return { ok: false, error: `Invalid mode: ${mode}. Use one of: ${valid.join(", ")}` };
   }
@@ -5059,14 +4973,6 @@ export function runConfigSetForCli(ctx: HandlerContext, key: string, value: stri
     if (!("enabled" in er)) (er as Record<string, unknown>).enabled = false;
     if (!("consent" in er)) (er as Record<string, unknown>).consent = false;
   }
-  // When setting any memoryToSkills.* key, ensure memoryToSkills object exists
-  if (k.startsWith("memoryToSkills.")) {
-    let mts = out.config.memoryToSkills as Record<string, unknown> | undefined;
-    if (typeof mts !== "object" || mts === null) {
-      mts = {};
-      out.config.memoryToSkills = mts;
-    }
-  }
   // errorReporting must stay an object (schema); "config-set errorReporting true" → errorReporting.enabled + consent = true
   if (k === "errorReporting" && !k.includes(".")) {
     const boolVal = value === "true" || value === "enabled";
@@ -5096,36 +5002,6 @@ export function runConfigSetForCli(ctx: HandlerContext, key: string, value: stri
       ok: true,
       configPath,
       message: `Set errorReporting.enabled and errorReporting.consent = ${written}. Restart the gateway for changes to take effect. Run openclaw hybrid-mem verify to confirm.`,
-    };
-  }
-  // memoryToSkills must stay an object (schema); "config-set memoryToSkills true" → memoryToSkills.enabled = true
-  if (k === "memoryToSkills" && !k.includes(".")) {
-    const boolVal = value === "true" || value === "enabled";
-    let mts = out.config.memoryToSkills as Record<string, unknown> | undefined;
-    if (typeof mts !== "object" || mts === null) mts = {};
-    (mts as Record<string, unknown>).enabled = boolVal;
-    out.config.memoryToSkills = mts;
-    const written = (mts as Record<string, unknown>).enabled;
-    try {
-      hybridConfigSchema.parse(out.config);
-    } catch (schemaErr: unknown) {
-      capturePluginError(schemaErr instanceof Error ? schemaErr : new Error(String(schemaErr)), {
-        subsystem: "cli",
-        operation: "runConfigSetForCli:validation-memoryToSkills",
-      });
-      return { ok: false, error: `Invalid config value: ${schemaErr}` };
-    }
-    try {
-      writeFileSync(configPath, JSON.stringify(out.root, null, 2), "utf-8");
-      writeFileSync(getRestartPendingPath(), "", "utf-8");
-    } catch (e) {
-      capturePluginError(e as Error, { subsystem: "cli", operation: "runConfigSetForCli:write-memoryToSkills" });
-      return { ok: false, error: `Could not write config: ${e}` };
-    }
-    return {
-      ok: true,
-      configPath,
-      message: `Set memoryToSkills.enabled = ${written}. Restart the gateway for changes to take effect. Run: openclaw hybrid-mem skills-suggest. Use openclaw hybrid-mem verify to confirm.`,
     };
   }
   // credentials must stay an object (schema); "config-set credentials true" → credentials.enabled = true

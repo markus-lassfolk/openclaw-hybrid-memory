@@ -129,15 +129,47 @@ function getDefaultPreferredModelList(pluginConfig: CronModelConfig | undefined,
  * - "heavy": distill, self-correction, spawn.
  * First working model wins.
  */
-export function getLLMModelPreference(pluginConfig: CronModelConfig | undefined, tier: CronModelTier): string[] {
+function getDisabledProviderSet(pluginConfig: CronModelConfig | undefined): Set<string> {
+  const disabled = pluginConfig?.llm?.disabledProviders;
+  if (!Array.isArray(disabled) || disabled.length === 0) return new Set();
+  return new Set(disabled.map((p) => String(p).trim().toLowerCase()));
+}
+
+/**
+ * Infer provider from model name.
+ * Supports bare model names (e.g., gemini-2.5-flash -> google, claude-sonnet-4-6 -> anthropic, gpt-4 -> openai).
+ */
+function inferProviderFromModel(model: string): string {
+  if (model.includes("/")) {
+    return model.split("/")[0].trim().toLowerCase();
+  }
+  const bare = model.trim().toLowerCase();
+  if (bare.startsWith("gemini-")) return "google";
+  if (bare.startsWith("claude-")) return "anthropic";
+  if (bare.startsWith("gpt-") || bare.match(/^o[0-9]/)) return "openai";
+  return "openai";
+}
+
+function filterModelsByDisabled(models: string[], disabledSet: Set<string>): string[] {
+  if (disabledSet.size === 0) return models;
+  return models.filter((m) => {
+    const prefix = inferProviderFromModel(m);
+    return !disabledSet.has(prefix);
+  });
+}
+
+/** Same as getLLMModelPreference but does not exclude disabledProviders. Use for verify table so disabled providers are still listed. */
+export function getLLMModelPreferenceUnfiltered(
+  pluginConfig: CronModelConfig | undefined,
+  tier: CronModelTier,
+): string[] {
   if (tier === "nano") {
     const nanoList = pluginConfig?.llm?.nano;
     if (Array.isArray(nanoList) && nanoList.length > 0) {
       const trimmed = nanoList.map((m) => (typeof m === "string" ? m.trim() : "")).filter(Boolean);
       if (trimmed.length > 0) return trimmed;
     }
-    // No nano list configured — fall back to default tier
-    return getLLMModelPreference(pluginConfig, "default");
+    return getLLMModelPreferenceUnfiltered(pluginConfig, "default");
   }
   const list = tier === "heavy" ? pluginConfig?.llm?.heavy : pluginConfig?.llm?.default;
   if (Array.isArray(list) && list.length > 0) {
@@ -145,15 +177,18 @@ export function getLLMModelPreference(pluginConfig: CronModelConfig | undefined,
     if (trimmed.length > 0) {
       if (pluginConfig?.llm?.fallbackToDefault) {
         const fallback = pluginConfig.llm.fallbackModel?.trim();
-        if (fallback && !trimmed.includes(fallback)) {
-          return [...trimmed, fallback];
-        }
-        return trimmed;
+        if (fallback && !trimmed.includes(fallback)) return [...trimmed, fallback];
       }
       return trimmed;
     }
   }
   return getDefaultPreferredModelList(pluginConfig, tier);
+}
+
+export function getLLMModelPreference(pluginConfig: CronModelConfig | undefined, tier: CronModelTier): string[] {
+  const disabledSet = getDisabledProviderSet(pluginConfig);
+  const unfiltered = getLLMModelPreferenceUnfiltered(pluginConfig, tier);
+  return filterModelsByDisabled(unfiltered, disabledSet);
 }
 
 /**
@@ -163,12 +198,15 @@ export function getLLMModelPreference(pluginConfig: CronModelConfig | undefined,
  */
 export function getProvidersWithKeys(pluginConfig: CronModelConfig | undefined): string[] {
   if (!pluginConfig) return [];
+  const disabledSet = getDisabledProviderSet(pluginConfig);
   const seen = new Set<string>();
   const out: string[] = [];
 
   function add(name: string) {
-    if (!seen.has(name)) {
-      seen.add(name);
+    const lower = name.toLowerCase();
+    if (disabledSet.has(lower)) return;
+    if (!seen.has(lower)) {
+      seen.add(lower);
       out.push(name);
     }
   }
@@ -182,10 +220,7 @@ export function getProvidersWithKeys(pluginConfig: CronModelConfig | undefined):
   const providers = pluginConfig.llm?.providers;
   if (providers && typeof providers === "object") {
     for (const [prefix, pCfg] of Object.entries(providers)) {
-      if (pCfg && hasKey(pCfg.apiKey)) {
-        // Use provider prefixes consistently (google, openai, anthropic)
-        add(prefix);
-      }
+      if (pCfg && hasKey(pCfg.apiKey)) add(prefix);
     }
   }
 

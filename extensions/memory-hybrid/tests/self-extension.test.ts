@@ -605,7 +605,7 @@ describe("Config parsing — selfExtension", () => {
 
   it("uses safe defaults when selfExtension config is absent", async () => {
     const { hybridConfigSchema } = await import("../config/index.js");
-    const parsed = hybridConfigSchema.parse({ ...BASE_CFG, mode: "normal" });
+    const parsed = hybridConfigSchema.parse({ ...BASE_CFG, mode: "minimal" });
     expect(parsed.selfExtension.enabled).toBe(false);
     expect(parsed.selfExtension.minGapFrequency).toBe(3);
     expect(parsed.selfExtension.minToolSavings).toBe(2);

@@ -103,7 +103,7 @@ describe("config maintenance.cronReliability parsing", () => {
   });
 
   it("cronReliability is present in all presets", () => {
-    for (const mode of ["essential", "normal", "expert", "full"] as const) {
+    for (const mode of ["local", "minimal", "enhanced", "complete"] as const) {
       const cfg = hybridConfigSchema.parse({ ...baseConfig, mode });
       expect(cfg.maintenance.cronReliability).toBeDefined();
       expect(typeof cfg.maintenance.cronReliability.staleThresholdHours).toBe("number");

@@ -97,6 +97,7 @@ describe("parseAuthConfig — single provider", () => {
       order: {
         anthropic: ["anthropic:claude-cli", "anthropic:api"],
       },
+      preferOAuthWhenBoth: true,
     });
   });
 
@@ -112,6 +113,7 @@ describe("parseAuthConfig — single provider", () => {
       order: {
         openai: ["openai-codex", "openai:api"],
       },
+      preferOAuthWhenBoth: true,
     });
   });
 
@@ -127,6 +129,7 @@ describe("parseAuthConfig — single provider", () => {
       order: {
         google: ["google-gemini-cli", "google:default"],
       },
+      preferOAuthWhenBoth: true,
     });
   });
 
@@ -142,6 +145,7 @@ describe("parseAuthConfig — single provider", () => {
       order: {
         anthropic: ["anthropic:api"],
       },
+      preferOAuthWhenBoth: true,
     });
   });
 });
@@ -167,6 +171,7 @@ describe("parseAuthConfig — multi-provider (OAuth-first example from issue #31
         openai: ["openai-codex", "openai:api"],
         google: ["google-gemini-cli", "google:default"],
       },
+      preferOAuthWhenBoth: true,
     });
   });
 
@@ -184,6 +189,7 @@ describe("parseAuthConfig — multi-provider (OAuth-first example from issue #31
         anthropic: ["anthropic:claude-cli", "anthropic:api"],
         minimax: ["minimax-portal:minimax-cli"],
       },
+      preferOAuthWhenBoth: true,
     });
   });
 
@@ -201,6 +207,7 @@ describe("parseAuthConfig — multi-provider (OAuth-first example from issue #31
       order: {
         anthropic: ["anthropic:claude-cli"],
       },
+      preferOAuthWhenBoth: true,
     });
   });
 });
