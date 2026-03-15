@@ -1070,6 +1070,12 @@ export async function runVerifyForCli(
     log(`${OK} ${msg}`);
   } else {
     log(`${FAIL} Config: issues found`);
+    const WARN = noEmoji ? "[WARN]" : "⚠️";
+    if (loadBlocking.some((s) => s.includes("embedding"))) {
+      log(
+        `${WARN} Embedding: missing or invalid — retrieval and indexing will not work. Set embedding.apiKey and embedding.model in plugin config.`,
+      );
+    }
   }
 
   // Check for unsupported agents.defaults.pruning config (#105)
@@ -1178,10 +1184,6 @@ export async function runVerifyForCli(
 
   // ───── Embeddings Tests (Critical) ─────
   log("\n───── Embeddings Tests (Critical) ─────");
-  const embProvidersToShow: ("openai" | "ollama" | "onnx" | "google")[] =
-    cfg.embedding.preferredProviders && cfg.embedding.preferredProviders.length > 0
-      ? [...new Set(cfg.embedding.preferredProviders)]
-      : [cfg.embedding.provider];
   const hasOpenAiKey =
     typeof cfg.embedding.apiKey === "string" &&
     cfg.embedding.apiKey.length >= 10 &&
@@ -1190,6 +1192,32 @@ export async function runVerifyForCli(
   const hasGoogleKey =
     typeof (cfg.embedding as Record<string, unknown>).googleApiKey === "string" &&
     ((cfg.embedding as Record<string, unknown>).googleApiKey as string).length >= 10;
+  const embPrimary =
+    cfg.embedding.model &&
+    (cfg.embedding.provider === "ollama" || cfg.embedding.provider === "onnx" || hasOpenAiKey || hasGoogleKey)
+      ? `${cfg.embedding.provider}/${cfg.embedding.model}`
+      : null;
+  if (!embPrimary) {
+    log(
+      "Embedding: missing or invalid — set embedding.apiKey and embedding.model in plugin config (use --test-llm to test once set).",
+    );
+  } else {
+    const embCreds =
+      cfg.embedding.provider === "openai"
+        ? hasOpenAiKey
+          ? "credentials OK"
+          : "no API key"
+        : cfg.embedding.provider === "google"
+          ? hasGoogleKey
+            ? "credentials OK"
+            : "no API key"
+          : "local";
+    log(`Embedding: ${embPrimary} (${embCreds}; use --test-llm to test).`);
+  }
+  const embProvidersToShow: ("openai" | "ollama" | "onnx" | "google")[] =
+    cfg.embedding.preferredProviders && cfg.embedding.preferredProviders.length > 0
+      ? [...new Set(cfg.embedding.preferredProviders)]
+      : [cfg.embedding.provider];
   const embTableRows: {
     label: string;
     oauth: boolean;
@@ -1468,6 +1496,8 @@ export async function runVerifyForCli(
   if (llmRows.length === 0) {
     log("  No LLM providers configured (add llm.nano / llm.default / llm.heavy or API keys / OAuth).");
   } else {
+    const llmSummary = llmRows.map((r) => `${r.provider} (${r.enabled ? "enabled" : "disabled"})`).join(", ");
+    log(`LLM providers: ${llmSummary}`);
     const llmCols = [
       "Model",
       "Credentials Available",
@@ -1521,6 +1551,7 @@ export async function runVerifyForCli(
       : cfg.mode.charAt(0).toUpperCase() + cfg.mode.slice(1)
     : "Custom";
   log(`\n───── Config ─────`);
+  log(`  Config source: ${defaultConfigPath} (plugins.entries["${PLUGIN_ID}"].config)`);
   log(`  Mode: ${modeLabel}${restartPending ? " (restart pending)" : ""}`);
   log(`  Run 'openclaw hybrid-mem config' to view or change settings.`);
 
