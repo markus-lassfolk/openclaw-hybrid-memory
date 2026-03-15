@@ -18,6 +18,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.3.152] - 2026-03-15
+
+### Changed
+
+- **config-set:** Simpler toggle syntax: use `openclaw hybrid-mem config-set <feature> enabled|disabled` (e.g. `config-set nightlyCycle enabled`) instead of `config-set nightlyCycle.enabled true`. Values validated; unknown values return a clear error. `costTracking` added to object toggles.
+- **verify:** Clear summary and guidance after Embeddings/LLM tables. "Embeddings: OK" / "LLMs: OK" lines and a single "Summary: Ready" or "Summary: Fix the issue(s)…" so users know at a glance if setup is good. Source column no longer blank (shows "gateway" or "—" when key is not in plugin config). "In config" shows "No" instead of "—" for reference models. Legend explains Source and In config.
+
+### Fixed
+
+- **verify:** Empty Source column when API keys come from gateway/env; now shows "gateway" or "—". "In config" column now explicitly "No" when model is not in llm.nano/default/heavy.
+
+---
+
 ## [2026.3.151] - 2026-03-15
 
 ### Fixed
