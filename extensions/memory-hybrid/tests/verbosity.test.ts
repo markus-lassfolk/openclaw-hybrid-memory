@@ -233,9 +233,12 @@ describe("runVerifyForCli — quiet-mode sink filtering", () => {
     const okLines = lines.filter((l) => /^✅|^\[OK\]/.test(l.trimStart()));
     expect(okLines).toHaveLength(0);
 
-    // Header lines (─────) should also be suppressed
+    // Decorative headers are suppressed except for the Embedding and LLM table section headers,
+    // which are always shown (tableLog) so the full tables are visible even in quiet mode.
     const headerLines = lines.filter((l) => /^─{3,}/.test(l.trimStart()));
-    expect(headerLines).toHaveLength(0);
+    const tableSectionHeaders = headerLines.filter((l) => l.includes("Embeddings Tests") || l.includes("LLM / Models"));
+    expect(headerLines.length).toBeLessThanOrEqual(2);
+    expect(headerLines).toEqual(tableSectionHeaders);
   });
 
   it("passes ❌ failure lines through in quiet mode", async () => {

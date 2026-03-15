@@ -1026,6 +1026,8 @@ export async function runVerifyForCli(
         if (!isOkLine && !isHeader && !isIndentedStatus) rawLog(msg);
       }
     : rawLog;
+  /** Always print tables (embedding + LLM) so they are never suppressed in quiet mode. */
+  const tableLog = rawLog;
   const err = sink.error ?? rawLog;
   const noEmoji = process.env.HYBRID_MEM_NO_EMOJI === "1";
   const OK = noEmoji ? "[OK]" : "✅";
@@ -1183,7 +1185,7 @@ export async function runVerifyForCli(
   }
 
   // ───── Embeddings Tests (Critical) ─────
-  log("\n───── Embeddings Tests (Critical) ─────");
+  tableLog("\n───── Embeddings Tests (Critical) ─────");
   const hasOpenAiKey =
     typeof cfg.embedding.apiKey === "string" &&
     cfg.embedding.apiKey.length >= 10 &&
@@ -1192,28 +1194,6 @@ export async function runVerifyForCli(
   const hasGoogleKey =
     typeof (cfg.embedding as Record<string, unknown>).googleApiKey === "string" &&
     ((cfg.embedding as Record<string, unknown>).googleApiKey as string).length >= 10;
-  const embPrimary =
-    cfg.embedding.model &&
-    (cfg.embedding.provider === "ollama" || cfg.embedding.provider === "onnx" || hasOpenAiKey || hasGoogleKey)
-      ? `${cfg.embedding.provider}/${cfg.embedding.model}`
-      : null;
-  if (!embPrimary) {
-    log(
-      "Embedding: missing or invalid — set embedding.apiKey and embedding.model in plugin config (use --test-llm to test once set).",
-    );
-  } else {
-    const embCreds =
-      cfg.embedding.provider === "openai"
-        ? hasOpenAiKey
-          ? "credentials OK"
-          : "no API key"
-        : cfg.embedding.provider === "google"
-          ? hasGoogleKey
-            ? "credentials OK"
-            : "no API key"
-          : "local";
-    log(`Embedding: ${embPrimary} (${embCreds}; use --test-llm to test).`);
-  }
   const embProvidersToShow: ("openai" | "ollama" | "onnx" | "google")[] =
     cfg.embedding.preferredProviders && cfg.embedding.preferredProviders.length > 0
       ? [...new Set(cfg.embedding.preferredProviders)]
@@ -1290,10 +1270,10 @@ export async function runVerifyForCli(
   const embW2 = Math.max(20, 35);
   const embW3 = 8;
   const embW4 = opts.testLlm ? 12 : 0;
-  log(
+  tableLog(
     `  ${embCols[0].padEnd(embW1)}  ${embCols[1].padEnd(embW2)}  ${embCols[2].padEnd(embW3)}${opts.testLlm ? `  ${embCols[3]}` : ""}`,
   );
-  log("  " + "-".repeat(embW1 + embW2 + embW3 + 4 + (opts.testLlm ? embW4 + 2 : 0)));
+  tableLog("  " + "-".repeat(embW1 + embW2 + embW3 + 4 + (opts.testLlm ? embW4 + 2 : 0)));
   for (const row of embTableRows) {
     const credStr = `OAuth:${row.oauth ? "True" : "False"} / API:${row.api}`;
     const line =
@@ -1301,7 +1281,7 @@ export async function runVerifyForCli(
       (opts.testLlm
         ? `  ${row.success ? (noEmoji ? "Success" : "✅ Success") : noEmoji ? "Failed" : "❌ Failed"}`
         : "");
-    log(line);
+    tableLog(line);
   }
   const anyEmbOk = opts.testLlm
     ? embTableRows.some((r) => r.success)
@@ -1316,8 +1296,8 @@ export async function runVerifyForCli(
     );
   }
 
-  // ───── LLM providers table (always shown; test only when --test-llm) ─────
-  log("\n───── LLM Providers ─────");
+  // ───── LLM / models table: one row per model from llm.nano / llm.default / llm.heavy; auth + source ─────
+  tableLog("\n───── LLM / Models (from llm.nano, llm.default, llm.heavy) ─────");
   const cronCfg = getCronModelConfig(cfg);
   const providersWithKeys = getProvidersWithKeys(cronCfg);
   const authOrder = (cfg as Record<string, unknown>).auth as { order?: Record<string, string[]> } | undefined;
@@ -1347,14 +1327,6 @@ export async function runVerifyForCli(
     return "openai";
   };
   const disabledSet = new Set((cfg.llm?.disabledProviders ?? []).map((p) => String(p).trim().toLowerCase()));
-  const providersInConfig = new Set(allModelsUnfiltered.map(providerFromModel));
-  const providersToShow = new Set<string>(providersWithKeys);
-  for (const p of providersInConfig) {
-    if (gatewayAvailable && hasOAuthProfiles(authOrder?.order?.[p], p)) providersToShow.add(p);
-  }
-  for (const p of disabledSet) {
-    providersToShow.add(p);
-  }
   const defaultTestModel: Record<string, string> = {
     openai: "openai/gpt-4.1-nano",
     google: "google/gemini-2.0-flash-lite",
@@ -1415,6 +1387,9 @@ export async function runVerifyForCli(
     if (provider === "anthropic") opts.defaultHeaders = { "anthropic-version": "2023-06-01" };
     return new OpenAI(opts);
   }
+  // One row per model (all models from nano/default/heavy; deduplicated)
+  const uniqueModels = [...new Set(allModelsUnfiltered)];
+  uniqueModels.sort((a, b) => providerFromModel(a).localeCompare(providerFromModel(b)) || a.localeCompare(b));
   const llmRows: {
     model: string;
     provider: string;
@@ -1425,20 +1400,23 @@ export async function runVerifyForCli(
     oauthResult?: boolean;
     apiResult?: boolean;
   }[] = [];
-  for (const provider of providersToShow) {
+  const testedProviders = new Set<string>();
+  for (const model of uniqueModels) {
+    const provider = providerFromModel(model);
     const hasApi = providersWithKeys.includes(provider);
     const hasOAuth = gatewayAvailable && Boolean(hasOAuthProfiles(authOrder?.order?.[provider], provider));
     const enabled = !disabledSet.has(provider);
     const source = llmCredentialSource(provider);
-    const modelToTest =
-      allModelsFiltered.find((m) => providerFromModel(m) === provider) ??
-      allModelsUnfiltered.find((m) => providerFromModel(m) === provider) ??
-      defaultTestModel[provider] ??
-      `${provider}/default`;
-    const bareModel = modelToTest.includes("/") ? modelToTest.slice(modelToTest.indexOf("/") + 1) : modelToTest;
     let oauthResult: boolean | undefined = undefined;
     let apiResult: boolean | undefined = undefined;
-    if (opts.testLlm && enabled) {
+    if (opts.testLlm && enabled && !testedProviders.has(provider)) {
+      testedProviders.add(provider);
+      const modelToTest =
+        allModelsFiltered.find((m) => providerFromModel(m) === provider) ??
+        allModelsUnfiltered.find((m) => providerFromModel(m) === provider) ??
+        defaultTestModel[provider] ??
+        model;
+      const bareModel = modelToTest.includes("/") ? modelToTest.slice(modelToTest.indexOf("/") + 1) : modelToTest;
       if (hasOAuth && gatewayBaseUrl && gatewayToken) {
         try {
           const oauthClient = new OpenAI({ apiKey: gatewayToken, baseURL: gatewayBaseUrl });
@@ -1483,7 +1461,7 @@ export async function runVerifyForCli(
       }
     }
     llmRows.push({
-      model: modelToTest,
+      model,
       provider,
       hasOAuth,
       hasApi,
@@ -1494,27 +1472,28 @@ export async function runVerifyForCli(
     });
   }
   if (llmRows.length === 0) {
-    log("  No LLM providers configured (add llm.nano / llm.default / llm.heavy or API keys / OAuth).");
+    tableLog("  No LLM models configured (add llm.nano / llm.default / llm.heavy or API keys / OAuth).");
   } else {
-    const llmSummary = llmRows.map((r) => `${r.provider} (${r.enabled ? "enabled" : "disabled"})`).join(", ");
-    log(`LLM providers: ${llmSummary}`);
     const llmCols = [
       "Model",
-      "Credentials Available",
+      "Provider",
+      "Auth (OAuth / API key)",
       "Source",
       "Enabled",
       ...(opts.testLlm ? ["OAuth Result", "API Result"] : []),
     ];
     const llmW1 = Math.max(8, ...llmRows.map((r) => r.model.length), 24);
-    const llmW2 = Math.max(20, 35);
-    const llmW3 = 8;
+    const llmW2 = Math.max(6, ...llmRows.map((r) => r.provider.length), 10);
+    const llmW3 = Math.max(22, 24);
     const llmW4 = 8;
-    const llmW5 = opts.testLlm ? 14 : 0;
-    const llmW6 = opts.testLlm ? 12 : 0;
-    log(
-      `  ${llmCols[0].padEnd(llmW1)}  ${llmCols[1].padEnd(llmW2)}  ${llmCols[2].padEnd(llmW3)}  ${llmCols[3].padEnd(llmW4)}${opts.testLlm ? `  ${llmCols[4].padEnd(llmW5)}  ${llmCols[5]}` : ""}`,
+    const llmW5 = 8;
+    const llmW6 = opts.testLlm ? 14 : 0;
+    const llmW7 = opts.testLlm ? 12 : 0;
+    tableLog(
+      `  ${llmCols[0].padEnd(llmW1)}  ${llmCols[1].padEnd(llmW2)}  ${llmCols[2].padEnd(llmW3)}  ${llmCols[3].padEnd(llmW4)}  ${llmCols[4].padEnd(llmW5)}${opts.testLlm ? `  ${llmCols[5].padEnd(llmW6)}  ${llmCols[6]}` : ""}`,
     );
-    log("  " + "-".repeat(llmW1 + llmW2 + llmW3 + llmW4 + 4 + (opts.testLlm ? llmW5 + llmW6 + 2 : 0)));
+    const llmSepLen = llmW1 + llmW2 + llmW3 + llmW4 + llmW5 + 10 + (opts.testLlm ? llmW6 + llmW7 + 4 : 0);
+    tableLog("  " + "-".repeat(llmSepLen));
     for (const row of llmRows) {
       const credStr = `OAuth:${row.hasOAuth ? "True" : "False"} / API:${row.hasApi ? "True" : "False"}`;
       const enabledStr = row.enabled ? (noEmoji ? "Enabled" : "✅ Enabled") : noEmoji ? "Disabled" : "❌ Disabled";
@@ -1538,8 +1517,8 @@ export async function runVerifyForCli(
             : noEmoji
               ? "Failed"
               : "❌ Failed";
-      log(
-        `  ${row.model.padEnd(llmW1)}  ${credStr.padEnd(llmW2)}  ${row.source.padEnd(llmW3)}  ${enabledStr.padEnd(llmW4)}${opts.testLlm ? `  ${oauthStr.padEnd(llmW5)}  ${apiStr}` : ""}`,
+      tableLog(
+        `  ${row.model.padEnd(llmW1)}  ${row.provider.padEnd(llmW2)}  ${credStr.padEnd(llmW3)}  ${row.source.padEnd(llmW4)}  ${enabledStr.padEnd(llmW5)}${opts.testLlm ? `  ${oauthStr.padEnd(llmW6)}  ${apiStr}` : ""}`,
       );
     }
   }
