@@ -182,6 +182,11 @@ function applyPhase1CoreOnlyMigration(cfg: Record<string, unknown>): void {
   if (g && typeof g === "object") {
     cfg.graph = { ...g, strengthenOnRecall: false };
   }
+  // Credential auto-detect: make opt-in (recommendations §2 resolution)
+  const cred = cfg.credentials as Record<string, unknown> | undefined;
+  if (cred && typeof cred === "object") {
+    cfg.credentials = { ...cred, autoDetect: false };
+  }
 }
 
 export function vectorDimsForModel(model: string, fallback?: number): number {

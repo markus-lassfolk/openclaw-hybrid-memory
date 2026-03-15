@@ -1560,12 +1560,13 @@ describe("hybridConfigSchema.parse", () => {
   });
 
   describe("config mode presets", () => {
-    it("mode essential: disables autoClassify, graph, procedures, reflection, credentials", () => {
+    it("mode essential: FTS-only retrieval (no embed/LLM), disables autoClassify, graph, procedures, reflection", () => {
       const result = hybridConfigSchema.parse({
         ...validBase,
         mode: "essential" as ConfigMode,
       });
       expect(result.mode).toBe("essential");
+      expect(result.retrieval.strategies).toEqual(["fts5"]);
       expect(result.autoClassify.enabled).toBe(false);
       expect(result.graph.enabled).toBe(false);
       expect(result.procedures.enabled).toBe(false);
@@ -1643,7 +1644,8 @@ describe("hybridConfigSchema.parse", () => {
         expect(result.store.classifyBeforeWrite).toBe(true);
         expect(result.graph.autoLink).toBe(true);
         expect(result.credentials.enabled).toBe(true);
-        expect(result.credentials.autoDetect).toBe(true);
+        // Phase 1: credentials.autoDetect forced off (opt-in); user must set explicitly to enable
+        expect(result.credentials.autoDetect).toBe(false);
         expect(result.credentials.autoCapture?.toolCalls).toBe(true);
       } finally {
         delete process.env.OPENCLAW_CRED_KEY;

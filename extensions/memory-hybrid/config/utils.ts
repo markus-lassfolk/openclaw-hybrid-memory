@@ -44,6 +44,8 @@ export const PRESET_OVERRIDES: Record<ConfigMode, Record<string, unknown>> = {
     memoryTiering: { enabled: false },
     distill: { extractDirectives: true, extractReinforcement: false },
     verbosity: "quiet",
+    /** FTS-only recall and capture: no embedding/vector/LLM calls; local SQLite + files only. */
+    retrieval: { strategies: ["fts5"] },
   },
   normal: {
     autoCapture: true,

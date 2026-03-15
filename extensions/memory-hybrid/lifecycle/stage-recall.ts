@@ -21,6 +21,7 @@ import {
 } from "../services/ambient-retrieval.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { withTimeout } from "../utils/timeout.js";
+import { estimateTokens } from "../utils/text.js";
 import type { LifecycleContext, RecallResult, RecallStageResult, SessionState } from "./types.js";
 
 export const RECALL_STAGE_TIMEOUT_MS = 35_000;
@@ -174,7 +175,16 @@ async function runRecall(
         }
       }
       if (procLines.length > 0) {
-        procedureBlock = "<relevant-procedures>\n" + procLines.join("\n") + "\n</relevant-procedures>";
+        const wrapper = "<relevant-procedures>\n";
+        const wrapperEnd = "\n</relevant-procedures>";
+        const maxTokens = ctx.cfg.procedures.maxInjectionTokens;
+        let lines = [...procLines];
+        let block = wrapper + lines.join("\n") + wrapperEnd;
+        while (lines.length > 0 && estimateTokens(block) > maxTokens) {
+          lines.pop();
+          block = lines.length > 0 ? wrapper + lines.join("\n") + wrapperEnd : "";
+        }
+        procedureBlock = block;
       }
     }
     const withProcedures = (s: string) => (procedureBlock ? procedureBlock + "\n" + s : s);
@@ -224,106 +234,111 @@ async function runRecall(
       sqliteResults = [...sqliteResults, ...ftsResults];
 
       let lanceResults: SearchResult[] = [];
-      const directiveAbort = new AbortController();
-      try {
-        const vectorStepPromise = (async (): Promise<SearchResult[]> => {
-          let textToEmbed = trimmed;
-          const allowHyde = ctx.cfg.queryExpansion.enabled && (!opts?.limitHydeOnce || !directiveHydeUsed);
-          t0 = Date.now();
-          if (allowHyde) {
-            if (opts?.limitHydeOnce) directiveHydeUsed = true;
-            try {
-              const cronCfg = getCronModelConfig(ctx.cfg);
-              const pref = getLLMModelPreference(cronCfg, "nano");
-              const hydeModel = ctx.cfg.queryExpansion.model ?? pref[0];
-              const fallbackModels = ctx.cfg.queryExpansion.model ? [] : pref.slice(1);
-              const hydeContent = await chatCompleteWithRetry({
-                model: hydeModel,
-                fallbackModels,
-                content: `Write a short factual statement (1-2 sentences) that answers: ${trimmed}\n\nOutput only the statement, no preamble.`,
-                temperature: 0.3,
-                maxTokens: 150,
-                openai: ctx.openai,
-                label: opts?.hydeLabel ?? "HyDE",
-                timeoutMs: ctx.cfg.queryExpansion.timeoutMs,
-                signal: directiveAbort.signal,
-                pendingWarnings: ctx.pendingLLMWarnings,
-              });
-              const hydeText = hydeContent.trim();
-              if (hydeText.length > 10) textToEmbed = hydeText;
-            } catch (err) {
-              if (!directiveAbort.signal.aborted) {
-                const hydeErr = err instanceof Error ? err : new Error(String(err));
-                const isTransient =
-                  isOllamaOOM(hydeErr) ||
-                  is500Like(hydeErr) ||
-                  is404Like(hydeErr) ||
-                  /timed out|llm request timeout|request was aborted|econnrefused/i.test(hydeErr.message);
-                if (!isTransient) {
-                  capturePluginError(hydeErr, {
-                    operation: `${opts?.errorPrefix ?? ""}hyde-generation`,
-                    subsystem: "auto-recall",
-                  });
-                }
-                if (isOllamaOOM(hydeErr)) {
-                  api.logger.warn?.(
-                    `memory-hybrid: Ollama model OOM during HyDE generation — model requires more memory than available. ` +
-                      `Using raw query. Consider using a smaller model or configuring a cloud fallback.`,
-                  );
-                } else {
-                  api.logger.warn?.(
-                    `memory-hybrid: ${opts?.errorPrefix ?? ""}HyDE generation failed, using raw query: ${err}`,
-                  );
+      const useSemantic = ctx.cfg.retrieval.strategies.includes("semantic");
+      if (!useSemantic) {
+        // FTS-only mode (e.g. essential): no embedding or vector search — local DB only, zero LLM/API calls.
+      } else {
+        const directiveAbort = new AbortController();
+        try {
+          const vectorStepPromise = (async (): Promise<SearchResult[]> => {
+            let textToEmbed = trimmed;
+            const allowHyde = ctx.cfg.queryExpansion.enabled && (!opts?.limitHydeOnce || !directiveHydeUsed);
+            t0 = Date.now();
+            if (allowHyde) {
+              if (opts?.limitHydeOnce) directiveHydeUsed = true;
+              try {
+                const cronCfg = getCronModelConfig(ctx.cfg);
+                const pref = getLLMModelPreference(cronCfg, "nano");
+                const hydeModel = ctx.cfg.queryExpansion.model ?? pref[0];
+                const fallbackModels = ctx.cfg.queryExpansion.model ? [] : pref.slice(1);
+                const hydeContent = await chatCompleteWithRetry({
+                  model: hydeModel,
+                  fallbackModels,
+                  content: `Write a short factual statement (1-2 sentences) that answers: ${trimmed}\n\nOutput only the statement, no preamble.`,
+                  temperature: 0.3,
+                  maxTokens: 150,
+                  openai: ctx.openai,
+                  label: opts?.hydeLabel ?? "HyDE",
+                  timeoutMs: ctx.cfg.queryExpansion.timeoutMs,
+                  signal: directiveAbort.signal,
+                  pendingWarnings: ctx.pendingLLMWarnings,
+                });
+                const hydeText = hydeContent.trim();
+                if (hydeText.length > 10) textToEmbed = hydeText;
+              } catch (err) {
+                if (!directiveAbort.signal.aborted) {
+                  const hydeErr = err instanceof Error ? err : new Error(String(err));
+                  const isTransient =
+                    isOllamaOOM(hydeErr) ||
+                    is500Like(hydeErr) ||
+                    is404Like(hydeErr) ||
+                    /timed out|llm request timeout|request was aborted|econnrefused/i.test(hydeErr.message);
+                  if (!isTransient) {
+                    capturePluginError(hydeErr, {
+                      operation: `${opts?.errorPrefix ?? ""}hyde-generation`,
+                      subsystem: "auto-recall",
+                    });
+                  }
+                  if (isOllamaOOM(hydeErr)) {
+                    api.logger.warn?.(
+                      `memory-hybrid: Ollama model OOM during HyDE generation — model requires more memory than available. ` +
+                        `Using raw query. Consider using a smaller model or configuring a cloud fallback.`,
+                    );
+                  } else {
+                    api.logger.warn?.(
+                      `memory-hybrid: ${opts?.errorPrefix ?? ""}HyDE generation failed, using raw query: ${err}`,
+                    );
+                  }
                 }
               }
             }
+            const vector =
+              opts?.precomputedVector && textToEmbed === trimmed
+                ? opts.precomputedVector
+                : await ctx.embeddings.embed(textToEmbed);
+            stageMs.embed = Date.now() - t0;
+            t0 = Date.now();
+            let results = await ctx.vectorDb.search(vector, limitNum * 2, minScore);
+            stageMs.vector = Date.now() - t0;
+            results = filterByScope(results, (id, o) => ctx.factsDb.getById(id, o), scopeFilter);
+            results = results.map((r) => {
+              const fullEntry = ctx.factsDb.getById(r.entry.id);
+              if (fullEntry) return { ...r, entry: fullEntry, score: computeDynamicSalience(r.score, fullEntry) };
+              return r;
+            });
+            return results;
+          })();
+          let timeoutId: NodeJS.Timeout | undefined;
+          const timeoutPromise = new Promise<never>((_, reject) => {
+            timeoutId = setTimeout(() => {
+              directiveAbort.abort();
+              reject(new Error(`recall pipeline timed out after ${VECTOR_STEP_TIMEOUT_MS}ms`));
+            }, VECTOR_STEP_TIMEOUT_MS);
+          });
+          try {
+            lanceResults = await Promise.race([vectorStepPromise, timeoutPromise]);
+          } finally {
+            if (timeoutId !== undefined) clearTimeout(timeoutId);
+            vectorStepPromise.catch((err) => {
+              if (!directiveAbort.signal.aborted) {
+                capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+                  operation: `${opts?.errorPrefix ?? ""}vector-recall-post-timeout`,
+                  subsystem: "auto-recall",
+                });
+              }
+            });
           }
-          const vector =
-            opts?.precomputedVector && textToEmbed === trimmed
-              ? opts.precomputedVector
-              : await ctx.embeddings.embed(textToEmbed);
-          stageMs.embed = Date.now() - t0;
-          t0 = Date.now();
-          let results = await ctx.vectorDb.search(vector, limitNum * 2, minScore);
-          stageMs.vector = Date.now() - t0;
-          results = filterByScope(results, (id, o) => ctx.factsDb.getById(id, o), scopeFilter);
-          results = results.map((r) => {
-            const fullEntry = ctx.factsDb.getById(r.entry.id);
-            if (fullEntry) return { ...r, entry: fullEntry, score: computeDynamicSalience(r.score, fullEntry) };
-            return r;
-          });
-          return results;
-        })();
-        let timeoutId: NodeJS.Timeout | undefined;
-        const timeoutPromise = new Promise<never>((_, reject) => {
-          timeoutId = setTimeout(() => {
-            directiveAbort.abort();
-            reject(new Error(`recall pipeline timed out after ${VECTOR_STEP_TIMEOUT_MS}ms`));
-          }, VECTOR_STEP_TIMEOUT_MS);
-        });
-        try {
-          lanceResults = await Promise.race([vectorStepPromise, timeoutPromise]);
-        } finally {
-          if (timeoutId !== undefined) clearTimeout(timeoutId);
-          vectorStepPromise.catch((err) => {
-            if (!directiveAbort.signal.aborted) {
-              capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-                operation: `${opts?.errorPrefix ?? ""}vector-recall-post-timeout`,
-                subsystem: "auto-recall",
-              });
-            }
-          });
-        }
-      } catch (err) {
-        const isTimeout = err instanceof Error && err.message.includes("timed out");
-        if (isTimeout) api.logger.warn?.(`memory-hybrid: ${err.message}, using FTS-only recall`);
-        else {
-          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-            operation: `${opts?.errorPrefix ?? ""}vector-recall`,
-            subsystem: "auto-recall",
-            backend: "lancedb",
-          });
-          api.logger.warn(`memory-hybrid: ${opts?.errorPrefix ?? ""}vector recall failed: ${err}`);
+        } catch (err) {
+          const isTimeout = err instanceof Error && err.message.includes("timed out");
+          if (isTimeout) api.logger.warn?.(`memory-hybrid: ${err.message}, using FTS-only recall`);
+          else {
+            capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+              operation: `${opts?.errorPrefix ?? ""}vector-recall`,
+              subsystem: "auto-recall",
+              backend: "lancedb",
+            });
+            api.logger.warn(`memory-hybrid: ${opts?.errorPrefix ?? ""}vector recall failed: ${err}`);
+          }
         }
       }
 
@@ -362,7 +377,7 @@ async function runRecall(
     const ambientLastEmbedding = ambientLastEmbeddingMap.get(sessionScopeKey) ?? null;
 
     let promptEmbedding: number[] | null = null;
-    if (ambientCfg.enabled && ambientCfg.multiQuery) {
+    if (ambientCfg.enabled && ambientCfg.multiQuery && ctx.cfg.retrieval.strategies.includes("semantic")) {
       try {
         promptEmbedding = await ctx.embeddings.embed(e.prompt);
       } catch {

@@ -449,10 +449,10 @@ export function registerMemoryTools(
       entityResults = factsDb.lookup(entity, undefined, tag, { ...recallOpts, limit: 100 });
     }
 
-    // Compute embedding for semantic strategy (with optional HyDE query expansion)
+    // Compute embedding for semantic strategy (with optional HyDE query expansion). Skip when FTS-only.
     let queryVector: number[] | null = null;
     let semanticWarning: string | null = null;
-    if (!tag) {
+    if (!tag && cfg.retrieval.strategies.includes("semantic")) {
       try {
         addOperationBreadcrumb("search", "vector-recall");
         let textToEmbed = query;

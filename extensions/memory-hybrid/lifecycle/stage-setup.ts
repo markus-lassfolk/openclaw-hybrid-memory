@@ -19,7 +19,7 @@ export function runSetupStage(
   ctx: LifecycleContext,
   sessionState: SessionState,
 ): Promise<void> {
-  return withTimeout(SETUP_TIMEOUT_MS, () => runSetup(event, api, ctx, sessionState));
+  return withTimeout(SETUP_TIMEOUT_MS, () => runSetup(event, api, ctx, sessionState)).then(() => {});
 }
 
 async function runSetup(

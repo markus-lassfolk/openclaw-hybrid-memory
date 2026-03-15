@@ -6,6 +6,7 @@
  */
 
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk";
+import type { MemoryPluginAPI } from "../api/memory-plugin-api.js";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
 import type { WriteAheadLog } from "../backends/wal.js";
@@ -47,51 +48,8 @@ import { capturePluginError } from "../services/error-reporter.js";
 import type { ProvenanceService } from "../services/provenance.js";
 import type { VariantGenerationQueue } from "../services/contextual-variants.js";
 
-export interface ToolsContext {
-  factsDb: FactsDB;
-  vectorDb: VectorDB;
-  cfg: HybridMemoryConfig;
-  embeddings: EmbeddingProvider;
-  embeddingRegistry?: EmbeddingRegistry | null;
-  openai: OpenAI;
-  wal: WriteAheadLog | null;
-  credentialsDb: CredentialsDB | null;
-  proposalsDb: ProposalsDB | null;
-  eventLog: EventLog | null;
-  provenanceService?: ProvenanceService | null;
-  lastProgressiveIndexIds: string[];
-  currentAgentIdRef: { value: string | null };
-  pendingLLMWarnings: PendingLLMWarnings;
-  aliasDb?: AliasDB | null;
-  issueStore?: IssueStore | null;
-  workflowStore?: WorkflowStore | null;
-  crystallizationStore?: CrystallizationStore | null;
-  toolProposalStore?: ToolProposalStore | null;
-  verificationStore?: VerificationStore | null;
-  variantQueue?: VariantGenerationQueue | null;
-  resolvedSqlitePath: string;
-  pythonBridge?: PythonBridge | null;
-  timers: {
-    proposalsPruneTimer: { value: ReturnType<typeof setInterval> | null };
-  };
-  buildToolScopeFilter: (
-    params: { userId?: string | null; agentId?: string | null; sessionId?: string | null },
-    currentAgent: string | null,
-    config: { multiAgent: { orchestratorId: string }; autoRecall: { scopeFilter?: ScopeFilter } },
-  ) => ScopeFilter | undefined;
-  walWrite: typeof import("../services/wal-helpers.js").walWrite;
-  walRemove: typeof import("../services/wal-helpers.js").walRemove;
-  findSimilarByEmbedding: (
-    vectorDb: VectorDB,
-    factsDb: { getById(id: string): MemoryEntry | null },
-    vector: number[],
-    limit: number,
-    minScore?: number,
-  ) => Promise<MemoryEntry[]>;
-  runReflection: RunReflectionFn;
-  runReflectionRules: RunReflectionRulesFn;
-  runReflectionMeta: RunReflectionMetaFn;
-}
+/** Tool registration receives the stable plugin API (Phase 3). */
+export type ToolsContext = MemoryPluginAPI;
 
 /**
  * Register all plugin tools with the OpenClaw API.
