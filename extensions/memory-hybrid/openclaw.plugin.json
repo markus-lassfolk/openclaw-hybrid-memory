@@ -42,10 +42,10 @@
       "help": "Embedding output dimensions for the ONNX model",
       "advanced": true
     },
-    "mode": {
-      "label": "Configuration preset",
-      "placeholder": "normal",
-      "help": "essential | normal | expert | full. See CONFIGURATION-MODES.md."
+"mode": {
+        "label": "Configuration preset",
+      "placeholder": "local",
+      "help": "local | minimal | enhanced | complete (or legacy: essential | normal | expert | full, mapped to local). See CONFIGURATION-MODES.md."
     },
     "lanceDbPath": {
       "label": "LanceDB Path",
@@ -433,8 +433,8 @@
     "properties": {
       "mode": {
         "type": "string",
-        "enum": ["essential", "normal", "expert", "full"],
-        "description": "Configuration preset. See docs/CONFIGURATION-MODES.md."
+        "enum": ["essential", "normal", "expert", "full", "local", "minimal", "enhanced", "complete"],
+        "description": "Configuration preset: local | minimal | enhanced | complete. Legacy values (essential, normal, expert, full) are accepted and mapped to local. See docs/CONFIGURATION-MODES.md."
       },
       "embedding": {
         "type": "object",
