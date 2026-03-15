@@ -4914,8 +4914,8 @@ export function runConfigViewForCli(ctx: HandlerContext, sink: VerifyCliSink): v
   log("  Entity lookup: " + on(cfg.autoRecall.entityLookup.enabled));
   log("");
 
-  log("To change a setting: openclaw hybrid-mem config-set <key> <true|false>");
-  log("Example: openclaw hybrid-mem config-set nightlyCycle.enabled true");
+  log("To change a setting: openclaw hybrid-mem config-set <key> <value>");
+  log("Example (toggle): openclaw hybrid-mem config-set nightlyCycle enabled");
   log("Help for a key: openclaw hybrid-mem help config-set <key>");
 }
 
@@ -4997,8 +4997,7 @@ export function runConfigSetForCli(ctx: HandlerContext, key: string, value: stri
   if (!key.trim())
     return {
       ok: false,
-      error:
-        "Key is required (e.g. autoCapture, credentials.enabled, store.fuzzyDedupe, errorReporting.botName, errorReporting.botId)",
+      error: "Key is required (e.g. nightlyCycle, extraction, credentials, errorReporting.botName, store.fuzzyDedupe)",
     };
   const k = key.trim();
   const openclawDir = join(homedir(), ".openclaw");
@@ -5079,9 +5078,20 @@ export function runConfigSetForCli(ctx: HandlerContext, key: string, value: stri
       message: `Set credentials.enabled = ${written}. Restart the gateway for changes to take effect. Run openclaw hybrid-mem verify to confirm.`,
     };
   }
-  // Object toggles: "config-set <key> enabled" must set <key>: { enabled: true }, never replace with boolean (parsers expect cfg.<key>?.enabled === true).
-  const boolVal = value === "true" || value === "enabled";
+  // Object toggles: "config-set <key> enabled|disabled" (or true|false, on|off) — sets <key>.enabled. No need for .enabled in the key.
+  const valueLower = value.trim().toLowerCase();
+  const enableValues = ["true", "enabled", "on", "1"];
+  const disableValues = ["false", "disabled", "off", "0"];
+  let boolVal: boolean;
+  if (enableValues.includes(valueLower)) {
+    boolVal = true;
+  } else if (disableValues.includes(valueLower)) {
+    boolVal = false;
+  } else {
+    boolVal = value === "true" || value === "enabled"; // unknown value → false for other code paths
+  }
   const objectToggles: Array<{ key: string; prop: string }> = [
+    { key: "costTracking", prop: "enabled" },
     { key: "nightlyCycle", prop: "enabled" },
     { key: "passiveObserver", prop: "enabled" },
     { key: "selfExtension", prop: "enabled" },
@@ -5117,9 +5127,16 @@ export function runConfigSetForCli(ctx: HandlerContext, key: string, value: stri
   ];
   for (const { key, prop } of objectToggles) {
     if (k === key && !k.includes(".")) {
+      if (!enableValues.includes(valueLower) && !disableValues.includes(valueLower)) {
+        return {
+          ok: false,
+          error: `Use "enabled" or "disabled" (or true/false, on/off). Example: openclaw hybrid-mem config-set ${key} enabled`,
+        };
+      }
+      const toggleVal = enableValues.includes(valueLower);
       let obj = out.config[key] as Record<string, unknown> | undefined;
       if (typeof obj !== "object" || obj === null) obj = {};
-      (obj as Record<string, unknown>)[prop] = boolVal;
+      (obj as Record<string, unknown>)[prop] = toggleVal;
       out.config[key] = obj;
       try {
         hybridConfigSchema.parse(out.config);
@@ -5140,15 +5157,22 @@ export function runConfigSetForCli(ctx: HandlerContext, key: string, value: stri
       return {
         ok: true,
         configPath,
-        message: `Set ${key}.${prop} = ${boolVal}. Restart the gateway for changes to take effect. Run openclaw hybrid-mem verify to confirm.`,
+        message: `Set ${key} = ${toggleVal ? "enabled" : "disabled"}. Restart the gateway for changes to take effect. Run openclaw hybrid-mem verify to confirm.`,
       };
     }
   }
   // extraction uses .extractionPasses not .enabled
   if (k === "extraction" && !k.includes(".")) {
+    if (!enableValues.includes(valueLower) && !disableValues.includes(valueLower)) {
+      return {
+        ok: false,
+        error: `Use "enabled" or "disabled". Example: openclaw hybrid-mem config-set extraction enabled`,
+      };
+    }
+    const toggleVal = enableValues.includes(valueLower);
     const ext = out.config.extraction as Record<string, unknown> | undefined;
     const obj = typeof ext === "object" && ext !== null ? { ...ext } : {};
-    (obj as Record<string, unknown>).extractionPasses = boolVal;
+    (obj as Record<string, unknown>).extractionPasses = toggleVal;
     out.config.extraction = obj;
     try {
       hybridConfigSchema.parse(out.config);
@@ -5169,7 +5193,7 @@ export function runConfigSetForCli(ctx: HandlerContext, key: string, value: stri
     return {
       ok: true,
       configPath,
-      message: `Set extraction.extractionPasses = ${boolVal}. Restart the gateway for changes to take effect. Run openclaw hybrid-mem verify to confirm.`,
+      message: `Set extraction = ${toggleVal ? "enabled" : "disabled"}. Restart the gateway for changes to take effect. Run openclaw hybrid-mem verify to confirm.`,
     };
   }
   // verbosity: must be one of the valid levels
@@ -5786,7 +5810,7 @@ export function runCostReportForCli(
   if (!costTracker) {
     if (!ctx.cfg.costTracking.enabled) {
       log("Cost tracking is disabled.");
-      log("Enable it: openclaw hybrid-mem config-set costTracking.enabled true");
+      log("Enable it: openclaw hybrid-mem config-set costTracking enabled");
     } else {
       log("Cost tracking is not available (costTracker not initialized).");
     }

@@ -1370,7 +1370,7 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
   mem
     .command("config-set <key> <value>")
     .description(
-      'Set a config key in memory/.config. E.g. errorReporting.botName "Doris". For help: hybrid-mem help config-set <key>',
+      'Set a config key in memory/.config. Toggles: config-set <feature> enabled|disabled (e.g. nightlyCycle, extraction). Other keys: errorReporting.botName "Doris". For help: hybrid-mem help config-set <key>',
     )
     .action(
       withExit(async (key: string, value: string) => {
