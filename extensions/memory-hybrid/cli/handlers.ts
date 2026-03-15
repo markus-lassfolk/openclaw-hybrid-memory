@@ -25,6 +25,7 @@ import {
   getLLMModelPreferenceUnfiltered,
   getProvidersWithKeys,
   isCompactVerbosity,
+  PRESET_OVERRIDES,
   type CronModelConfig,
 } from "../config.js";
 import type { FactsDB } from "../backends/facts-db.js";
@@ -4955,7 +4956,7 @@ export function runConfigSetHelpForCli(ctx: HandlerContext, key: string): Config
 }
 
 /**
- * Set config mode
+ * Set config mode and apply the full preset so the file matches the preset (avoids "Custom" when parser sees overrides).
  */
 export function runConfigModeForCli(ctx: HandlerContext, mode: string): ConfigCliResult {
   const valid: ConfigMode[] = ["local", "minimal", "enhanced", "complete"];
@@ -4966,6 +4967,14 @@ export function runConfigModeForCli(ctx: HandlerContext, mode: string): ConfigCl
   const configPath = join(openclawDir, "openclaw.json");
   const out = getPluginConfigFromFile(configPath);
   if ("error" in out) return { ok: false, error: out.error };
+  const preset = PRESET_OVERRIDES[mode as ConfigMode];
+  for (const key of Object.keys(preset)) {
+    const presetVal = preset[key];
+    out.config[key] =
+      typeof presetVal === "object" && presetVal !== null && !Array.isArray(presetVal)
+        ? JSON.parse(JSON.stringify(presetVal))
+        : presetVal;
+  }
   out.config.mode = mode;
   try {
     writeFileSync(configPath, JSON.stringify(out.root, null, 2), "utf-8");
@@ -4977,7 +4986,7 @@ export function runConfigModeForCli(ctx: HandlerContext, mode: string): ConfigCl
   return {
     ok: true,
     configPath,
-    message: `Set mode to "${mode}". Restart the gateway for changes to take effect. Run openclaw hybrid-mem verify to confirm.`,
+    message: `Set mode to "${mode}" and wrote full preset to config. Restart the gateway, then run 'openclaw hybrid-mem config' — you should see "Memory mode: ${mode.charAt(0).toUpperCase() + mode.slice(1)}".`,
   };
 }
 
