@@ -297,8 +297,8 @@ describe("Passive observer — reinforcement on similarity", () => {
     };
   }
 
-  function makeVectorDb() {
-    return { store: vi.fn() };
+  function makeVectorDb(searchResults: unknown[] = []) {
+    return { store: vi.fn(), search: vi.fn().mockResolvedValue(searchResults) };
   }
 
   function makeEmbeddings(vec = [1, 0, 0]) {
@@ -323,7 +323,7 @@ describe("Passive observer — reinforcement on similarity", () => {
     expect(result.factsReinforced).toBe(0);
   });
 
-  it("reinforcement config disabled does not call boostConfidence", async () => {
+  it("reinforcement config disabled does not call boostConfidence even when vectorDb.search finds a match", async () => {
     const sessionFile = join(sessionsDir, "session-abc.jsonl");
     writeFileSync(
       sessionFile,
@@ -340,9 +340,12 @@ describe("Passive observer — reinforcement on similarity", () => {
 
     const { runPassiveObserver: runFn } = await import("../services/passive-observer.js");
 
+    // vectorDb.search returns a match — the duplicate is found, but reinforcement is disabled
+    const vectorDbWithMatch = makeVectorDb([{ entry: { id: "existing-fact-1" }, score: 0.95 }]);
+
     const result = await runFn(
       factsDb as never,
-      makeVectorDb() as never,
+      vectorDbWithMatch as never,
       makeEmbeddings([1, 0, 0]) as never,
       {} as never,
       makeConfig(),

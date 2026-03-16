@@ -27,7 +27,6 @@ import { chunkTextByChars } from "../utils/text.js";
 import { loadPrompt, fillPrompt } from "../utils/prompt-loader.js";
 import { chatCompleteWithRetry, LLMRetryError } from "./chat.js";
 import { capturePluginError } from "./error-reporter.js";
-import { normalizeVector, dotProductSimilarity } from "./reflection.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -366,42 +365,6 @@ export async function runPassiveObserver(
 
   if (!hasNewContent) return result;
 
-  // ---------------------------------------------------------------------------
-  // Phase 2: load recent fact vectors for dedup (only once per run, now that
-  // we know there is new content to process).
-  // ---------------------------------------------------------------------------
-  const recentFacts = factsDb.getRecentFacts(7, { excludeCategories: [] }); // last 7 days
-  const recentVectors: (number[] | null)[] = [];
-  const recentFactIds: (string | null)[] = [];
-  // Cap at 50 facts — sufficient for dedup without excessive API calls.
-  const dedupePool = recentFacts.slice(0, 50);
-  try {
-    // Use a 30-second hard timeout to prevent blocking the timer indefinitely on slow providers.
-    const embedBatchPromise = embeddings.embedBatch(dedupePool.map((f) => f.text));
-    let timeoutId: ReturnType<typeof setTimeout> | undefined;
-    const timeoutPromise = new Promise<never>((_, reject) => {
-      timeoutId = setTimeout(() => reject(new Error("embed-batch timeout")), 30_000);
-    });
-    let batchResult: number[][];
-    try {
-      batchResult = (await Promise.race([embedBatchPromise, timeoutPromise])) as number[][];
-    } finally {
-      if (timeoutId !== undefined) {
-        clearTimeout(timeoutId);
-      }
-    }
-    for (let i = 0; i < dedupePool.length; i++) {
-      recentVectors.push(normalizeVector(batchResult[i]));
-      recentFactIds.push(dedupePool[i].id);
-    }
-  } catch {
-    // On timeout or error, proceed without dedup vectors — a few duplicates are acceptable.
-    for (const f of dedupePool) {
-      recentVectors.push(null);
-      recentFactIds.push(f.id);
-    }
-  }
-
   const reinforcementEnabled = opts.reinforcement?.enabled !== false && opts.reinforcement != null;
   const passiveBoost = opts.reinforcement?.passiveBoost ?? 0.1;
   const maxConfidence = opts.reinforcement?.maxConfidence ?? 1.0;
@@ -529,18 +492,18 @@ export async function runPassiveObserver(
           continue;
         }
 
-        const normVec = normalizeVector(vec);
-
-        // Dedup check against recent facts — reinforce instead of skip when enabled
+        // Dedup check via LanceDB ANN search — O(log n) instead of O(n*m) brute-force.
+        // Replaces the old recentVectors[] linear scan and eliminates the embedBatch()
+        // call on the recent-facts pool. LanceDB is the single source of truth.
+        // Use vec (raw embedding) — same vector space as what is stored in LanceDB.
         let isDuplicate = false;
-        for (let ri = 0; ri < recentVectors.length; ri++) {
-          const rv = recentVectors[ri];
-          if (!rv || rv.length === 0) continue;
-          if (dotProductSimilarity(normVec, rv) >= similarityThreshold) {
+        try {
+          const dupeResults = await vectorDb.search(vec, 1, similarityThreshold);
+          if (dupeResults.length > 0) {
             isDuplicate = true;
             // Confidence reinforcement: boost the matched fact instead of silently skipping (Issue #147)
             if (reinforcementEnabled && !opts.dryRun) {
-              const matchedId = recentFactIds[ri];
+              const matchedId = dupeResults[0].entry.id;
               if (matchedId) {
                 try {
                   const boosted = factsDb.boostConfidence(matchedId, passiveBoost, maxConfidence);
@@ -550,8 +513,9 @@ export async function runPassiveObserver(
                 }
               }
             }
-            break;
           }
+        } catch {
+          // On search failure, proceed without dedup — a few duplicates are acceptable
         }
         if (isDuplicate) continue;
 
@@ -560,8 +524,6 @@ export async function runPassiveObserver(
             `memory-hybrid: passive-observer [dry-run] would store: ${fact.text.slice(0, 60)}... (importance=${fact.importance.toFixed(2)}, category=${fact.category})`,
           );
           result.factsStored++;
-          recentVectors.push(normVec);
-          recentFactIds.push(null);
           continue;
         }
 
@@ -653,8 +615,6 @@ export async function runPassiveObserver(
           });
         }
 
-        recentVectors.push(normVec);
-        recentFactIds.push(stored.id);
         result.factsStored++;
       }
     }
