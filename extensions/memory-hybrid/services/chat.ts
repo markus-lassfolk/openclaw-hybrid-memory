@@ -441,6 +441,7 @@ export async function withLLMRetry<T>(
           isServerError ||  // #302: 5xx server errors are transient
           is404Like(lastError) ||  // #329: defensive safety net — 404 = model not found, config issue, not a bug
           is403Like(lastError) ||  // #394: defensive safety net — 403 = country/region restriction, config issue, not a bug
+          is401Like(lastError) ||  // #475: defensive safety net — 401 = invalid API key, config issue, not a bug
           causeMsg.includes("request was aborted") ||
           fullMsg.includes("request was aborted") ||
           causeMsg.includes("request timed out") ||
