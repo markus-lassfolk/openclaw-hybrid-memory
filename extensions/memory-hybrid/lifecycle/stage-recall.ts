@@ -174,7 +174,7 @@ async function runRecall(
         const wrapper = "<relevant-procedures>\n";
         const wrapperEnd = "\n</relevant-procedures>";
         const maxTokens = ctx.cfg.procedures.maxInjectionTokens;
-        let lines = [...procLines];
+        const lines = [...procLines];
         let block = wrapper + lines.join("\n") + wrapperEnd;
         while (lines.length > 0 && estimateTokens(block) > maxTokens) {
           lines.pop();

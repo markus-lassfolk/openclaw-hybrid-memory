@@ -157,7 +157,7 @@ function parseSequence(ctx: ParseCtx, baseIndent: number): YAMLValue[] {
 function parseSeqMapItem(ctx: ParseCtx, firstPair: string, seqIndent: number): Record<string, YAMLValue> {
   const result: Record<string, YAMLValue> = {};
 
-  parsePairInto(ctx, firstPair, seqIndent, result);
+  parsePairInto(ctx, firstPair, seqIndent + 2, result);
 
   while (true) {
     skipBlanks(ctx);
