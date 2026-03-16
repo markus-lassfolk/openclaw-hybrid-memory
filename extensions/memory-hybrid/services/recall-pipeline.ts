@@ -201,7 +201,7 @@ export async function runRecallPipelineQuery(
       }
     } catch (err) {
       const isTimeout = err instanceof Error && err.message.includes("timed out");
-      if (isTimeout) logger.warn?.(`memory-hybrid: ${err.message}, using FTS-only recall`);
+      if (isTimeout) logger.warn(`memory-hybrid: ${err.message}, using FTS-only recall`);
       else {
         capturePluginError(err instanceof Error ? err : new Error(String(err)), {
           operation: `${opts?.errorPrefix ?? ""}vector-recall`,
