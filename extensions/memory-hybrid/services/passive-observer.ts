@@ -27,6 +27,7 @@ import { chunkTextByChars } from "../utils/text.js";
 import { loadPrompt, fillPrompt } from "../utils/prompt-loader.js";
 import { chatCompleteWithRetry, LLMRetryError } from "./chat.js";
 import { capturePluginError } from "./error-reporter.js";
+import { normalizeVector } from "./reflection.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -533,10 +534,11 @@ export async function runPassiveObserver(
         // facts extracted earlier in the same batch. Compare against dryRunVectors[] to ensure
         // dry-run output accurately reflects real-run deduplication behavior (Issue #499).
         if (!isDuplicate && opts.dryRun) {
+          const normVec = normalizeVector(vec);
           for (const recentVec of dryRunVectors) {
             let dotProduct = 0;
-            for (let i = 0; i < vec.length; i++) {
-              dotProduct += vec[i] * recentVec[i];
+            for (let i = 0; i < normVec.length; i++) {
+              dotProduct += normVec[i] * recentVec[i];
             }
             const cosineSim = dotProduct;
             if (cosineSim >= cosineSimilarityThreshold) {
@@ -553,7 +555,7 @@ export async function runPassiveObserver(
             `memory-hybrid: passive-observer [dry-run] would store: ${fact.text.slice(0, 60)}... (importance=${fact.importance.toFixed(2)}, category=${fact.category})`,
           );
           result.factsStored++;
-          dryRunVectors.push(vec);
+          dryRunVectors.push(normalizeVector(vec));
           continue;
         }
 
