@@ -18,7 +18,8 @@ interface ParseCtx {
 
 export function parseYaml(text: string): YAMLValue {
   if (!text || !text.trim()) return null;
-  const ctx: ParseCtx = { lines: text.split("\n"), pos: 0 };
+  const normalized = text.replace(/\r/g, "");
+  const ctx: ParseCtx = { lines: normalized.split("\n"), pos: 0 };
   skipBlanks(ctx);
   if (ctx.pos >= ctx.lines.length) return null;
   return parseNode(ctx, -1) ?? null;
@@ -134,7 +135,8 @@ function parseSequence(ctx: ParseCtx, baseIndent: number): YAMLValue[] {
 
     ctx.pos++;
 
-    if (content === "-") {
+    const afterDash = content.substring(2).trim();
+    if (afterDash === "") {
       skipBlanks(ctx);
       const next = ctx.pos < ctx.lines.length ? ctx.lines[ctx.pos] : null;
       if (next && getIndent(next) > baseIndent) {
@@ -142,15 +144,10 @@ function parseSequence(ctx: ParseCtx, baseIndent: number): YAMLValue[] {
       } else {
         result.push(null);
       }
+    } else if (hasMappingColon(afterDash)) {
+      result.push(parseSeqMapItem(ctx, afterDash, baseIndent));
     } else {
-      const afterDash = content.substring(2).trim();
-      if (afterDash === "") {
-        result.push(null);
-      } else if (hasMappingColon(afterDash)) {
-        result.push(parseSeqMapItem(ctx, afterDash, baseIndent));
-      } else {
-        result.push(parseScalar(removeInlineComment(afterDash)));
-      }
+      result.push(parseScalar(removeInlineComment(afterDash)));
     }
   }
 
@@ -241,7 +238,7 @@ function removeInlineComment(s: string): string {
   return s;
 }
 
-export function parseScalar(s: string): YAMLValue {
+function parseScalar(s: string): YAMLValue {
   if (s === "") return null;
 
   // Flow sequence
