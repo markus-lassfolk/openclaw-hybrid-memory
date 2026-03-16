@@ -2,13 +2,13 @@
   "$schema": "https://unpkg.com/knip@latest/schema.json",
   "entry": ["index.ts", "config.ts"],
   "project": [
-    "{backends,cli,config,lifecycle,prompts,routes,scripts,services,setup,tests,tools,types,utils}/**/*.ts",
+    "{api,backends,cli,config,lifecycle,prompts,routes,scripts,services,setup,tests,tools,types,utils}/**/*.ts",
     "index.ts",
     "config.ts"
   ],
   "ignore": [
-    "{backends,cli,config,lifecycle,prompts,routes,scripts,services,setup,tests,tools,types,utils}/**/*.test.ts",
-    "{backends,cli,config,lifecycle,prompts,routes,scripts,services,setup,tests,tools,types,utils}/**/*.spec.ts"
+    "{api,backends,cli,config,lifecycle,prompts,routes,scripts,services,setup,tests,tools,types,utils}/**/*.test.ts",
+    "{api,backends,cli,config,lifecycle,prompts,routes,scripts,services,setup,tests,tools,types,utils}/**/*.spec.ts"
   ],
   "ignoreDependencies": ["openclaw"]
 }
