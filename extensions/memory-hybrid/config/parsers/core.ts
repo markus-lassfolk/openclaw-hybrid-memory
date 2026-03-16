@@ -35,9 +35,19 @@ export const EMBEDDING_DIMENSIONS: Record<string, number> = {
   "snowflake-arctic-embed": 1024,
   "bge-m3": 1024,
   "bge-large": 1024,
+  // Alibaba Cloud models
+  "text-embedding-v3": 1024,
+  "text-embedding-v4": 1024,
 };
 
-export const OPENAI_MODELS = new Set(["text-embedding-3-small", "text-embedding-3-large", "text-embedding-ada-002"]);
+export const OPENAI_MODELS = new Set([
+  "text-embedding-3-small",
+  "text-embedding-3-large",
+  "text-embedding-ada-002",
+  // Alibaba Cloud models (OpenAI compatible API)
+  "text-embedding-v3",
+  "text-embedding-v4",
+]);
 
 const MAX_ENV_RESOLVE_LENGTH = 10000;
 
