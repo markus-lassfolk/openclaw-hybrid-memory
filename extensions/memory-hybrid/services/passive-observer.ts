@@ -368,7 +368,11 @@ export async function runPassiveObserver(
   const reinforcementEnabled = opts.reinforcement?.enabled !== false && opts.reinforcement != null;
   const passiveBoost = opts.reinforcement?.passiveBoost ?? 0.1;
   const maxConfidence = opts.reinforcement?.maxConfidence ?? 1.0;
-  const similarityThreshold = opts.reinforcement?.similarityThreshold ?? config.deduplicationThreshold;
+  const cosineSimilarityThreshold = opts.reinforcement?.similarityThreshold ?? config.deduplicationThreshold;
+  // Convert cosine similarity threshold to L2-based score for vectorDb.search().
+  // VectorDB uses score = 1/(1+L2_distance). For normalized vectors, L2 = sqrt(2*(1-cosine)).
+  // This conversion ensures the dedup threshold behaves as originally calibrated (issue #499).
+  const similarityThreshold = 1 / (1 + Math.sqrt(2 * (1 - cosineSimilarityThreshold)));
 
   const prompt = loadPrompt("passive-observer");
 
