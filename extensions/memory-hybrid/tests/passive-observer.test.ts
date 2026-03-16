@@ -614,8 +614,10 @@ describe("runPassiveObserver — LanceDB dedup (Issue #499)", () => {
       makeLogger(),
     );
 
-    // The third argument to search is the similarity threshold
-    expect(vectorDb.search).toHaveBeenCalledWith(expect.any(Array), 1, threshold);
+    // The third argument to search is the L2-based similarity threshold.
+    // Production code converts cosine similarity to L2-based score: 1/(1+sqrt(2*(1-cosine)))
+    const expectedL2Threshold = 1 / (1 + Math.sqrt(2 * (1 - threshold)));
+    expect(vectorDb.search).toHaveBeenCalledWith(expect.any(Array), 1, expectedL2Threshold);
 
     chatSpy.mockRestore();
   });
