@@ -1,7 +1,14 @@
 {
   "$schema": "https://unpkg.com/knip@latest/schema.json",
-  "entry": ["src/index.ts"],
-  "project": ["src/**/*.ts"],
-  "ignore": ["src/**/*.test.ts", "src/**/*.spec.ts"],
+  "entry": ["index.ts", "config.ts"],
+  "project": [
+    "{backends,cli,config,lifecycle,prompts,routes,scripts,services,setup,tests,tools,types,utils}/**/*.ts",
+    "index.ts",
+    "config.ts"
+  ],
+  "ignore": [
+    "{backends,cli,config,lifecycle,prompts,routes,scripts,services,setup,tests,tools,types,utils}/**/*.test.ts",
+    "{backends,cli,config,lifecycle,prompts,routes,scripts,services,setup,tests,tools,types,utils}/**/*.spec.ts"
+  ],
   "ignoreDependencies": ["openclaw"]
 }
