@@ -8,10 +8,6 @@
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk";
 import type { ScopeFilter } from "../types/memory.js";
 import type { SearchResult } from "../types/memory.js";
-import { getCronModelConfig, getLLMModelPreference } from "../config.js";
-import { mergeResults, filterByScope } from "../services/merge-results.js";
-import { chatCompleteWithRetry, is500Like, is404Like, isOllamaOOM, type PendingLLMWarnings } from "../services/chat.js";
-import { computeDynamicSalience } from "../utils/salience.js";
 import {
   generateAmbientQueries,
   detectTopicShift,
@@ -23,9 +19,9 @@ import { capturePluginError } from "../services/error-reporter.js";
 import { withTimeout } from "../utils/timeout.js";
 import { estimateTokens } from "../utils/text.js";
 import type { LifecycleContext, RecallResult, RecallStageResult, SessionState } from "./types.js";
+import { runRecallPipelineQuery, type RecallPipelineDeps } from "../services/recall-pipeline.js";
 
 export const RECALL_STAGE_TIMEOUT_MS = 35_000;
-const VECTOR_STEP_TIMEOUT_MS = 30_000;
 
 export async function runRecallStage(
   event: unknown,
@@ -202,162 +198,29 @@ async function runRecall(
       }
     }
 
-    let directiveHydeUsed = false;
     const recallOpts = {
       tierFilter,
       scopeFilter,
       reinforcementBoost: ctx.cfg.distill?.reinforcementBoost ?? 0.1,
       diversityWeight: ctx.cfg.reinforcement?.diversityWeight ?? 1.0,
     };
-
-    async function runRecallPipeline(
-      query: string,
-      limitNum: number,
-      opts?: {
-        entity?: string;
-        hydeLabel?: string;
-        errorPrefix?: string;
-        limitHydeOnce?: boolean;
-        precomputedVector?: number[];
+    const hydeUsedRef = { value: false };
+    const pipelineDeps: RecallPipelineDeps = {
+      factsDb: ctx.factsDb,
+      vectorDb: ctx.vectorDb,
+      embeddings: ctx.embeddings,
+      openai: ctx.openai,
+      cfg: {
+        queryExpansion: ctx.cfg.queryExpansion,
+        retrievalStrategies: ctx.cfg.retrieval.strategies,
+        memoryTieringEnabled: ctx.cfg.memoryTiering.enabled,
+        rawCfg: ctx.cfg,
       },
-    ): Promise<SearchResult[]> {
-      const trimmed = query.trim();
-      if (!trimmed) return [];
-      const stageMs = { fts: 0, embed: 0, vector: 0, merge: 0 };
-      let t0 = Date.now();
-      let sqliteResults: SearchResult[] = [];
-      if (opts?.entity) {
-        sqliteResults = ctx.factsDb.lookup(opts.entity, undefined, undefined, { scopeFilter }).slice(0, limitNum);
-      }
-      const ftsResults = ctx.factsDb.search(trimmed, limitNum, recallOpts);
-      stageMs.fts = Date.now() - t0;
-      sqliteResults = [...sqliteResults, ...ftsResults];
-
-      let lanceResults: SearchResult[] = [];
-      const useSemantic = ctx.cfg.retrieval.strategies.includes("semantic");
-      if (!useSemantic) {
-        // FTS-only mode (e.g. local): no embedding or vector search — local DB only, zero LLM/API calls.
-      } else {
-        const directiveAbort = new AbortController();
-        try {
-          const vectorStepPromise = (async (): Promise<SearchResult[]> => {
-            let textToEmbed = trimmed;
-            const allowHyde = ctx.cfg.queryExpansion.enabled && (!opts?.limitHydeOnce || !directiveHydeUsed);
-            t0 = Date.now();
-            if (allowHyde) {
-              if (opts?.limitHydeOnce) directiveHydeUsed = true;
-              try {
-                const cronCfg = getCronModelConfig(ctx.cfg);
-                const pref = getLLMModelPreference(cronCfg, "nano");
-                const hydeModel = ctx.cfg.queryExpansion.model ?? pref[0];
-                const fallbackModels = ctx.cfg.queryExpansion.model ? [] : pref.slice(1);
-                const hydeContent = await chatCompleteWithRetry({
-                  model: hydeModel,
-                  fallbackModels,
-                  content: `Write a short factual statement (1-2 sentences) that answers: ${trimmed}\n\nOutput only the statement, no preamble.`,
-                  temperature: 0.3,
-                  maxTokens: 150,
-                  openai: ctx.openai,
-                  label: opts?.hydeLabel ?? "HyDE",
-                  timeoutMs: ctx.cfg.queryExpansion.timeoutMs,
-                  signal: directiveAbort.signal,
-                  pendingWarnings: ctx.pendingLLMWarnings,
-                });
-                const hydeText = hydeContent.trim();
-                if (hydeText.length > 10) textToEmbed = hydeText;
-              } catch (err) {
-                if (!directiveAbort.signal.aborted) {
-                  const hydeErr = err instanceof Error ? err : new Error(String(err));
-                  const isTransient =
-                    isOllamaOOM(hydeErr) ||
-                    is500Like(hydeErr) ||
-                    is404Like(hydeErr) ||
-                    /timed out|llm request timeout|request was aborted|econnrefused/i.test(hydeErr.message);
-                  if (!isTransient) {
-                    capturePluginError(hydeErr, {
-                      operation: `${opts?.errorPrefix ?? ""}hyde-generation`,
-                      subsystem: "auto-recall",
-                    });
-                  }
-                  if (isOllamaOOM(hydeErr)) {
-                    api.logger.warn?.(
-                      `memory-hybrid: Ollama model OOM during HyDE generation — model requires more memory than available. ` +
-                        `Using raw query. Consider using a smaller model or configuring a cloud fallback.`,
-                    );
-                  } else {
-                    api.logger.warn?.(
-                      `memory-hybrid: ${opts?.errorPrefix ?? ""}HyDE generation failed, using raw query: ${err}`,
-                    );
-                  }
-                }
-              }
-            }
-            const vector =
-              opts?.precomputedVector && textToEmbed === trimmed
-                ? opts.precomputedVector
-                : await ctx.embeddings.embed(textToEmbed);
-            stageMs.embed = Date.now() - t0;
-            t0 = Date.now();
-            let results = await ctx.vectorDb.search(vector, limitNum * 2, minScore);
-            stageMs.vector = Date.now() - t0;
-            results = filterByScope(results, (id, o) => ctx.factsDb.getById(id, o), scopeFilter);
-            results = results.map((r) => {
-              const fullEntry = ctx.factsDb.getById(r.entry.id);
-              if (fullEntry) return { ...r, entry: fullEntry, score: computeDynamicSalience(r.score, fullEntry) };
-              return r;
-            });
-            return results;
-          })();
-          let timeoutId: NodeJS.Timeout | undefined;
-          const timeoutPromise = new Promise<never>((_, reject) => {
-            timeoutId = setTimeout(() => {
-              directiveAbort.abort();
-              reject(new Error(`recall pipeline timed out after ${VECTOR_STEP_TIMEOUT_MS}ms`));
-            }, VECTOR_STEP_TIMEOUT_MS);
-          });
-          try {
-            lanceResults = await Promise.race([vectorStepPromise, timeoutPromise]);
-          } finally {
-            if (timeoutId !== undefined) clearTimeout(timeoutId);
-            vectorStepPromise.catch((err) => {
-              if (!directiveAbort.signal.aborted) {
-                capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-                  operation: `${opts?.errorPrefix ?? ""}vector-recall-post-timeout`,
-                  subsystem: "auto-recall",
-                });
-              }
-            });
-          }
-        } catch (err) {
-          const isTimeout = err instanceof Error && err.message.includes("timed out");
-          if (isTimeout) api.logger.warn?.(`memory-hybrid: ${err.message}, using FTS-only recall`);
-          else {
-            capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-              operation: `${opts?.errorPrefix ?? ""}vector-recall`,
-              subsystem: "auto-recall",
-              backend: "lancedb",
-            });
-            api.logger.warn(`memory-hybrid: ${opts?.errorPrefix ?? ""}vector recall failed: ${err}`);
-          }
-        }
-      }
-
-      t0 = Date.now();
-      let results = mergeResults(sqliteResults, lanceResults, limitNum, ctx.factsDb);
-      stageMs.merge = Date.now() - t0;
-      if (ctx.cfg.memoryTiering.enabled && results.length > 0) {
-        results = results
-          .filter((r) => {
-            const full = ctx.factsDb.getById(r.entry.id);
-            return full && full.tier !== "cold";
-          })
-          .slice(0, limitNum);
-      }
-      api.logger.debug?.(
-        `memory-hybrid: recall pipeline timing (ms) — FTS: ${stageMs.fts}, embed: ${stageMs.embed}, vector: ${stageMs.vector}, merge: ${stageMs.merge}, total: ${stageMs.fts + stageMs.embed + stageMs.vector + stageMs.merge}`,
-      );
-      return results;
-    }
+      recallOpts,
+      minScore,
+      pendingLLMWarnings: ctx.pendingLLMWarnings,
+      logger: api.logger,
+    };
 
     const ambientCfg = ctx.cfg.ambient;
     const sessionScopeKey = resolveSessionKey(e, api) ?? "default";
@@ -385,7 +248,7 @@ async function runRecall(
       }
     }
 
-    let candidates = await runRecallPipeline(e.prompt, limit, {
+    let candidates = await runRecallPipelineQuery(e.prompt, limit, pipelineDeps, hydeUsedRef, {
       hydeLabel: "HyDE",
       errorPrefix: "auto-recall-",
       precomputedVector: promptEmbedding ?? undefined,
@@ -412,7 +275,7 @@ async function runRecall(
           const extraResultSets: SearchResult[][] = [candidates];
           for (const q of extraQueries) {
             try {
-              const qResults = await runRecallPipeline(q.text, Math.ceil(limit / 2), {
+              const qResults = await runRecallPipelineQuery(q.text, Math.ceil(limit / 2), pipelineDeps, hydeUsedRef, {
                 entity: q.type === "entity" ? q.entity : undefined,
                 hydeLabel: "HyDE",
                 errorPrefix: `ambient-${q.type}-`,
@@ -526,7 +389,7 @@ async function runRecall(
           for (const entity of entityLookup.entities) {
             if (!promptLower.includes(entity.toLowerCase())) continue;
             if (!canRunDirective()) break;
-            const results = await runRecallPipeline(entity, directiveLimit, {
+            const results = await runRecallPipelineQuery(entity, directiveLimit, pipelineDeps, hydeUsedRef, {
               entity,
               hydeLabel: "HyDE",
               errorPrefix: "directive-",
@@ -540,7 +403,7 @@ async function runRecall(
           for (const keyword of directivesCfg.keywords) {
             if (!promptLower.includes(keyword.toLowerCase())) continue;
             if (!canRunDirective()) break;
-            const results = await runRecallPipeline(keyword, directiveLimit, {
+            const results = await runRecallPipelineQuery(keyword, directiveLimit, pipelineDeps, hydeUsedRef, {
               hydeLabel: "HyDE",
               errorPrefix: "directive-",
               limitHydeOnce: true,
@@ -552,7 +415,7 @@ async function runRecall(
         for (const [taskType, triggers] of Object.entries(directivesCfg.taskTypes)) {
           const hit = triggers.some((t) => promptLower.includes(t.toLowerCase()));
           if (!hit || !canRunDirective()) continue;
-          const results = await runRecallPipeline(taskType, directiveLimit, {
+          const results = await runRecallPipelineQuery(taskType, directiveLimit, pipelineDeps, hydeUsedRef, {
             hydeLabel: "HyDE",
             errorPrefix: "directive-",
             limitHydeOnce: true,
@@ -563,7 +426,7 @@ async function runRecall(
         if (directivesCfg.sessionStart) {
           const sessionKey = resolveSessionKey(e, api) ?? currentAgentIdRef.value ?? "default";
           if (!sessionStartSeen.has(sessionKey) && canRunDirective()) {
-            const results = await runRecallPipeline("session start", directiveLimit, {
+            const results = await runRecallPipelineQuery("session start", directiveLimit, pipelineDeps, hydeUsedRef, {
               hydeLabel: "HyDE",
               errorPrefix: "directive-",
               limitHydeOnce: true,
