@@ -454,8 +454,8 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
     if (!EMBEDDING_DIMENSIONS[model]) {
       throw new Error(
         `memory-hybrid: embedding model '${model}' is not in the known-models list. ` +
-        `Set embedding.dimensions explicitly to the vector size your model produces. ` +
-        `Known models: ${Object.keys(EMBEDDING_DIMENSIONS).join(", ")}.`
+          `Set embedding.dimensions explicitly to the vector size your model produces. ` +
+          `Known models: ${Object.keys(EMBEDDING_DIMENSIONS).join(", ")}.`,
       );
     }
     resolvedDimensions = vectorDimsForModel(model);
