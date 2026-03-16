@@ -1,86 +1,71 @@
 /**
- * Test suite specifically for UnconfiguredProviderError guard behavior
- * This file uses vi.mock() at the top level to properly mock Sentry
+ * Test suite specifically for UnconfiguredProviderError guard behavior.
+ * Uses vi.stubGlobal to mock native fetch so we can verify whether events
+ * are sent or suppressed without making real HTTP calls.
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeAll, beforeEach, afterAll } from "vitest";
 
-// Mock Sentry at the module level BEFORE any imports
-const mockCaptureException = vi.fn().mockReturnValue("mock-event-id");
-const mockWithScope = vi.fn((callback) => {
-  const mockScope = {
-    setTag: vi.fn(),
-    setContext: vi.fn(),
-  };
-  callback(mockScope);
-});
-const mockInit = vi.fn();
-const mockSetTag = vi.fn();
-const mockAddBreadcrumb = vi.fn();
-const mockFlush = vi.fn().mockResolvedValue(true);
+// Stub fetch globally before any imports so the reporter never makes real HTTP calls
+const mockFetch = vi.fn().mockResolvedValue({ ok: true, status: 200 });
+vi.stubGlobal("fetch", mockFetch);
 
-vi.mock("@sentry/node", () => ({
-  init: mockInit,
-  captureException: mockCaptureException,
-  withScope: mockWithScope,
-  setTag: mockSetTag,
-  addBreadcrumb: mockAddBreadcrumb,
-  flush: mockFlush,
-}));
-
-describe("UnconfiguredProviderError guard with mocked Sentry", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-  });
-
-  it("capturePluginError still reports regular errors (non-UnconfiguredProviderError)", async () => {
-    const { initErrorReporter, capturePluginError } = await import("../services/error-reporter.js");
-
-    // Initialize the reporter to enable error capture
+describe("UnconfiguredProviderError guard with mocked fetch", () => {
+  beforeAll(async () => {
+    // Initialize the reporter once for the whole describe block
+    const { initErrorReporter } = await import("../services/error-reporter.js");
     await initErrorReporter(
       {
         enabled: true,
         consent: true,
         mode: "community",
-        dsn: "https://test@example.com/1",
+        dsn: "https://testguardkey@example.com/1",
         maxBreadcrumbs: 0,
         sampleRate: 1.0,
       },
-      "test",
+      "guard-test",
     );
+  });
 
-    // Verify init was called
-    expect(mockInit).toHaveBeenCalled();
+  beforeEach(() => {
+    mockFetch.mockClear();
+  });
 
-    // Clear mocks to focus on capturePluginError behavior
-    vi.clearAllMocks();
+  afterAll(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("capturePluginError still reports regular errors (non-UnconfiguredProviderError)", async () => {
+    const { capturePluginError, flushErrorReporter } = await import("../services/error-reporter.js");
 
     const regularErr = new Error("Something unexpected broke");
     capturePluginError(regularErr, { operation: "test-regular-error" });
 
-    // Verify that captureException WAS called (guard did not suppress)
-    expect(mockCaptureException).toHaveBeenCalledWith(regularErr);
-    expect(mockWithScope).toHaveBeenCalled();
+    // Wait for the fire-and-forget fetch to complete
+    await flushErrorReporter(500);
+
+    // Verify that fetch WAS called (guard did not suppress)
+    expect(mockFetch).toHaveBeenCalled();
+    expect(mockFetch).toHaveBeenCalledWith(
+      expect.stringContaining("/api/"),
+      expect.objectContaining({ method: "POST" }),
+    );
   });
 
-  it("capturePluginError suppresses UnconfiguredProviderError without calling Sentry", async () => {
-    const { capturePluginError } = await import("../services/error-reporter.js");
+  it("capturePluginError suppresses UnconfiguredProviderError without calling fetch", async () => {
+    const { capturePluginError, flushErrorReporter } = await import("../services/error-reporter.js");
 
-    // Clear mocks from previous test
-    vi.clearAllMocks();
-
-    // Construct UnconfiguredProviderError
     const err = Object.assign(new Error("Provider 'openrouter' is not configured"), {
       name: "UnconfiguredProviderError",
     });
 
     const result = capturePluginError(err, { operation: "test-suppression" });
 
+    await flushErrorReporter(500);
+
     // Must return undefined
     expect(result).toBeUndefined();
-
-    // Verify that captureException was NOT called (guard suppressed it)
-    expect(mockCaptureException).not.toHaveBeenCalled();
-    expect(mockWithScope).not.toHaveBeenCalled();
+    // Verify that fetch was NOT called (guard suppressed it)
+    expect(mockFetch).not.toHaveBeenCalled();
   });
 });

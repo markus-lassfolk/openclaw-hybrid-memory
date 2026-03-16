@@ -1,17 +1,18 @@
 /**
- * Error Reporter Service for GlitchTip/Sentry Integration
+ * Error Reporter Service for GlitchTip Integration
  *
  * SECURITY REQUIREMENTS (NON-NEGOTIABLE):
  * - consent: true by default — user must explicitly opt OUT
- * - sendDefaultPii: false always
- * - maxBreadcrumbs: 10 — only plugin.* category allowed, message/data stripped
- * - Only safe Sentry integrations enabled: LinkedErrors, InboundFilters, FunctionToString
+ * - No PII transmission: events rebuilt from scratch using allowlist
+ * - MAX_BREADCRUMBS: 10 — only plugin.* category allowed, message/data stripped
  * - beforeSend rebuilds event from scratch using allowlist
  * - NEVER include: memory text, prompts, API keys, home paths, IPs, emails
  * - Rate limiting: 60s dedup window for same error fingerprint
+ *
+ * Uses native fetch (Node 20+) — no @sentry/node dependency.
  */
 
-import * as SentryType from "@sentry/node";
+const MAX_BREADCRUMBS = 10;
 
 /**
  * Default GlitchTip DSN for anonymous crash reporting.
@@ -28,7 +29,7 @@ export interface ErrorReporterConfig {
   /** "community" (default): use hardcoded community DSN. "self-hosted": require custom DSN from config. */
   mode: "community" | "self-hosted";
   environment?: string; // "production" | "development"
-  maxBreadcrumbs: number; // PRIVACY: Hard-coded to 10 in Sentry.init (limited plugin.* breadcrumbs only). Not user-configurable.
+  maxBreadcrumbs: number; // PRIVACY: Hard-coded to MAX_BREADCRUMBS (limited plugin.* breadcrumbs only). Not user-configurable.
   sampleRate: number; // 0.0-1.0, default 1.0
   consent: boolean; // explicit opt-in required
   /**
@@ -52,6 +53,51 @@ export interface ErrorReporterConfig {
 
 /** Hardcoded DSN for community error reporting (anonymous telemetry) */
 const COMMUNITY_DSN = DEFAULT_GLITCHTIP_DSN;
+
+// --- Internal wire-protocol types (GlitchTip / Sentry envelope format) ---
+
+interface ReportFrame {
+  filename?: string;
+  function?: string;
+  lineno?: number;
+  colno?: number;
+  in_app?: boolean;
+}
+
+interface ReportStacktrace {
+  frames?: ReportFrame[];
+}
+
+interface ReportExceptionValue {
+  type?: string;
+  value?: string;
+  stacktrace?: ReportStacktrace;
+}
+
+interface ReportBreadcrumb {
+  category?: string;
+  level?: string;
+  timestamp?: number;
+  type?: string;
+}
+
+export interface GlitchTipEvent {
+  event_id?: string;
+  timestamp?: number;
+  platform?: string;
+  level?: string;
+  release?: string;
+  environment?: string;
+  fingerprint?: string[];
+  exception?: { values?: ReportExceptionValue[] };
+  tags?: Record<string, string | undefined>;
+  contexts?: Record<string, Record<string, unknown>>;
+  breadcrumbs?: ReportBreadcrumb[];
+  user?: { id?: string; username?: string };
+  [key: string]: unknown;
+}
+
+// --- Pure utility functions ---
 
 /**
  * Extract version string from a release identifier.
@@ -102,13 +148,13 @@ export function compareVersions(a: string, b: string): number {
  * Returns true (drop) only when: fingerprint matches AND version < fixedInVersion.
  * If event release can't be parsed, returns false (safe default: let through).
  *
- * NOTE: `errValue` is read from the event and passed through `scrubString()` before
- * building the fingerprint. When called from `beforeSend`, the event has already been
- * through `sanitizeEvent()` (which also applies `scrubString()`), so `resolvedIssues`
+ * NOTE: errValue is read from the event and passed through scrubString() before
+ * building the fingerprint. When called from the send pipeline, the event has already been
+ * through sanitizeEvent() (which also applies scrubString()), so resolvedIssues
  * keys must use the post-sanitize (scrubbed) form of the error message.
  */
 export function shouldDropForResolvedIssue(
-  event: SentryType.Event,
+  event: GlitchTipEvent,
   resolvedIssues: Record<string, string>,
   fallbackRelease?: string,
 ): boolean {
@@ -132,118 +178,78 @@ export function shouldDropForResolvedIssue(
   return compareVersions(eventVersion, fixedInVersion) < 0;
 }
 
-const Sentry: typeof SentryType | null = SentryType;
-let initialized = false;
-let logger: any = console; // Default fallback to console
-const errorDedup = new Map<string, number>(); // Rate limiting: fingerprint -> timestamp
+/**
+ * Scrub sensitive data from strings
+ */
+export function scrubString(input: string): string {
+  return (
+    input
+      // API keys (OpenAI, Anthropic, GitHub)
+      .replace(/sk-(?:proj-[A-Za-z0-9_-]{20,}|[A-Za-z0-9_]{20,})/g, "[REDACTED]") // OpenAI (sk-, sk-proj-)
+      .replace(/sk-ant-[A-Za-z0-9_-]{20,}/g, "[REDACTED]") // Anthropic
+      .replace(/ghp_[A-Za-z0-9]{36}/g, "[REDACTED]") // GitHub PAT
+      .replace(/gho_[A-Za-z0-9]{36}/g, "[REDACTED]") // GitHub OAuth
+      .replace(/Bearer\s+[\w.-]+/gi, "[REDACTED]")
+      // JWT tokens (eyJ...)
+      .replace(/eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g, "[REDACTED]")
+      // AWS and other cloud credentials
+      .replace(/AKIA[0-9A-Z]{16}/g, "[REDACTED]") // AWS access keys
+      // Slack tokens
+      .replace(/xox[baprs]-[A-Za-z0-9-]{10,}/g, "[REDACTED]") // Slack tokens
+      // Private keys
+      .replace(/-----BEGIN .*PRIVATE KEY/g, "[REDACTED]") // Private key headers
+      // Connection strings with embedded passwords (generic + specific)
+      .replace(/:\/\/[^\s:@]+:[^\s@]+@[^\s/]+/g, "://[REDACTED]@")
+      .replace(/postgres:\/\/[^\s]+/g, "postgres://[REDACTED]")
+      .replace(/mysql:\/\/[^\s]+/g, "mysql://[REDACTED]")
+      .replace(/redis:\/\/[^\s]+/g, "redis://[REDACTED]")
+      .replace(/mongodb:\/\/[^\s]+/g, "mongodb://[REDACTED]")
+      // Paths
+      .replace(/\/home\/[^/\s]+/g, "$HOME")
+      .replace(/\/Users\/[^/\s]+/g, "$HOME")
+      .replace(/C:\\Users\\[^\\\s]+/g, "%USERPROFILE%")
+      // PII
+      .replace(/\b[\w.-]+@[\w.-]+\.\w{2,}\b/g, "[EMAIL]")
+      .replace(/\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b/g, "[IP]")
+      // Truncate
+      .slice(0, 500)
+  );
+}
 
 /**
- * Initialize error reporter with STRICT privacy settings.
- * Optionally pass runtimeBotId from OpenClaw plugin context (e.g. api.context?.agentId) to use as bot UUID when config.botId is not set.
+ * Sanitize file paths: keep only relative plugin paths
  */
-export async function initErrorReporter(
-  config: ErrorReporterConfig,
-  pluginVersion: string,
-  loggerInstance?: any,
-  runtimeBotId?: string,
-): Promise<void> {
-  if (loggerInstance) {
-    logger = loggerInstance;
-  }
+export function sanitizePath(path: string): string {
+  // Try multiple possible plugin directory markers
+  const markers = ["extensions/openclaw-hybrid-memory/", "extensions/memory-hybrid/", "openclaw-hybrid-memory/"];
 
-  if (!config.enabled || !config.consent) {
-    logger.info?.("[ErrorReporter] Disabled: enabled=%s, consent=%s", config.enabled, config.consent);
-    return;
-  }
-
-  // Resolve DSN based on mode
-  let resolvedDsn: string;
-  if (config.mode === "community") {
-    // Community mode: allow override via config.dsn, otherwise use COMMUNITY_DSN
-    resolvedDsn = config.dsn || COMMUNITY_DSN;
-    logger.info?.("[ErrorReporter] Using community mode (anonymous telemetry)");
-  } else {
-    // self-hosted mode
-    if (!config.dsn) {
-      logger.warn?.("[ErrorReporter] Self-hosted mode requires a DSN but none was provided. Error reporting disabled.");
-      return;
+  for (const marker of markers) {
+    const idx = path.indexOf(marker);
+    if (idx >= 0) {
+      return path.slice(idx);
     }
-    resolvedDsn = config.dsn;
-    logger.info?.("[ErrorReporter] Using self-hosted mode");
   }
 
-  if (!Sentry) return;
-
-  const releaseStr = `openclaw-hybrid-memory@${pluginVersion}`;
-  const resolvedIssues = config.resolvedIssues;
-
-  Sentry.init({
-    dsn: resolvedDsn,
-    release: releaseStr,
-    environment: config.environment || "production",
-    sampleRate: config.sampleRate ?? 1.0,
-    maxBreadcrumbs: 10, // Limited safe breadcrumbs for plugin operations
-    sendDefaultPii: false, // NO PII
-    autoSessionTracking: false, // NO session tracking
-    integrations: (defaults) =>
-      defaults.filter((i) => ["LinkedErrors", "InboundFilters", "FunctionToString"].includes(i.name)), // Keep only safe integrations
-    beforeSend(event): SentryType.ErrorEvent | PromiseLike<SentryType.ErrorEvent | null> | null {
-      // Sanitize first (allowlist rebuild; event.release is preserved from Sentry.init)
-      const sanitized = sanitizeEvent(event) as SentryType.ErrorEvent | null;
-      if (!sanitized) return null;
-
-      // Version-aware filtering: drop events already fixed in a newer release
-      if (resolvedIssues && shouldDropForResolvedIssue(sanitized, resolvedIssues, releaseStr)) {
-        return null;
-      }
-
-      return sanitized;
-    },
-    beforeBreadcrumb(breadcrumb) {
-      // Only allow breadcrumbs with category starting with "plugin."
-      if (breadcrumb.category?.startsWith("plugin.")) {
-        // Strip message and data to prevent leaking user content
-        return {
-          ...breadcrumb,
-          message: undefined,
-          data: undefined,
-        };
-      }
-      return null; // Drop all other breadcrumbs
-    },
-  });
-
-  // Bot identity: config first, then OpenClaw context (e.g. api.context?.agentId).
-  // When neither is configured, bot_id is omitted entirely — no hostname fallback to prevent leaks.
-  const botUuid =
-    config.botId || (typeof runtimeBotId === "string" && runtimeBotId.trim() ? runtimeBotId.trim() : undefined);
-  const botName = config.botName
-    ? scrubString(config.botName)
-        .slice(0, 64)
-        .replace(/[\x00-\x1f\x7f]/g, "")
-    : undefined;
-  if (botUuid) {
-    Sentry.setTag("bot_id", botUuid);
-  }
-  if (botName) {
-    Sentry.setTag("bot_name", botName);
-    logger.debug?.("[ErrorReporter] Bot name set (opt-in)");
-  } else {
-    logger.debug?.("[ErrorReporter] Bot name omitted (not configured — privacy default)");
+  // Fallback: if path contains node_modules or extensions, return basename
+  if (path.includes("node_modules") || path.includes("extensions")) {
+    const parts = path.split(/[/\\]/);
+    return parts[parts.length - 1] || path;
   }
 
-  initialized = true;
-  const dsnHost = resolvedDsn.split("@")[1] || "***";
-  logger.info?.("[ErrorReporter] Initialized with DSN host:", dsnHost);
+  // Scrub user-specific paths
+  return path
+    .replace(/\/home\/[^/]+/g, "$HOME")
+    .replace(/\/Users\/[^/]+/g, "$HOME")
+    .replace(/C:\\Users\\[^\\]+/g, "%USERPROFILE%");
 }
 
 /**
  * Sanitize event using ALLOWLIST approach: rebuild event with only safe fields
  */
-export function sanitizeEvent(event: SentryType.Event): SentryType.Event | null {
+export function sanitizeEvent(event: GlitchTipEvent): GlitchTipEvent | null {
   if (!event) return null;
 
-  const safe: SentryType.Event = {
+  const safe: GlitchTipEvent = {
     event_id: event.event_id,
     timestamp: event.timestamp,
     platform: "node",
@@ -324,69 +330,264 @@ export function sanitizeEvent(event: SentryType.Event): SentryType.Event | null 
   return safe;
 }
 
-/**
- * Scrub sensitive data from strings
- */
-export function scrubString(input: string): string {
-  return (
-    input
-      // API keys (OpenAI, Anthropic, GitHub)
-      .replace(/sk-(?:proj-[A-Za-z0-9_-]{20,}|[A-Za-z0-9_]{20,})/g, "[REDACTED]") // OpenAI (sk-, sk-proj-)
-      .replace(/sk-ant-[A-Za-z0-9_-]{20,}/g, "[REDACTED]") // Anthropic
-      .replace(/ghp_[A-Za-z0-9]{36}/g, "[REDACTED]") // GitHub PAT
-      .replace(/gho_[A-Za-z0-9]{36}/g, "[REDACTED]") // GitHub OAuth
-      .replace(/Bearer\s+[\w.-]+/gi, "[REDACTED]")
-      // JWT tokens (eyJ...)
-      .replace(/eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g, "[REDACTED]")
-      // AWS and other cloud credentials
-      .replace(/AKIA[0-9A-Z]{16}/g, "[REDACTED]") // AWS access keys
-      // Slack tokens
-      .replace(/xox[baprs]-[A-Za-z0-9-]{10,}/g, "[REDACTED]") // Slack tokens
-      // Private keys
-      .replace(/-----BEGIN .*PRIVATE KEY/g, "[REDACTED]") // Private key headers
-      // Connection strings with embedded passwords (generic + specific)
-      .replace(/:\/\/[^\s:@]+:[^\s@]+@[^\s/]+/g, "://[REDACTED]@")
-      .replace(/postgres:\/\/[^\s]+/g, "postgres://[REDACTED]")
-      .replace(/mysql:\/\/[^\s]+/g, "mysql://[REDACTED]")
-      .replace(/redis:\/\/[^\s]+/g, "redis://[REDACTED]")
-      .replace(/mongodb:\/\/[^\s]+/g, "mongodb://[REDACTED]")
-      // Paths
-      .replace(/\/home\/[^/\s]+/g, "$HOME")
-      .replace(/\/Users\/[^/\s]+/g, "$HOME")
-      .replace(/C:\\Users\\[^\\\s]+/g, "%USERPROFILE%")
-      // PII
-      .replace(/\b[\w.-]+@[\w.-]+\.\w{2,}\b/g, "[EMAIL]")
-      .replace(/\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b/g, "[IP]")
-      // Truncate
-      .slice(0, 500)
-  );
+// --- GlitchTipReporter: lightweight native-fetch reporter ---
+
+function generateEventId(): string {
+  return crypto.randomUUID().replace(/-/g, "");
 }
 
-/**
- * Sanitize file paths: keep only relative plugin paths
- */
-export function sanitizePath(path: string): string {
-  // Try multiple possible plugin directory markers
-  const markers = ["extensions/openclaw-hybrid-memory/", "extensions/memory-hybrid/", "openclaw-hybrid-memory/"];
+interface ScopeInterface {
+  setTag(key: string, value: string): void;
+  setContext(key: string, value: Record<string, unknown>): void;
+}
 
-  for (const marker of markers) {
-    const idx = path.indexOf(marker);
-    if (idx >= 0) {
-      return path.slice(idx);
+class GlitchTipReporter {
+  private readonly storeUrl: string;
+  private readonly publicKey: string;
+  private readonly release: string;
+  private readonly environment: string;
+  private readonly sampleRate: number;
+  private readonly resolvedIssues: Record<string, string>;
+
+  private globalTags: Record<string, string> = {};
+  private breadcrumbs: ReportBreadcrumb[] = [];
+  private pendingFetches: Promise<void>[] = [];
+
+  // Current scope — set synchronously during withScope callback
+  private currentScopeTags: Record<string, string> = {};
+  private currentScopeContexts: Record<string, Record<string, unknown>> = {};
+
+  constructor(
+    dsn: string,
+    release: string,
+    environment: string,
+    sampleRate: number,
+    resolvedIssues?: Record<string, string>,
+  ) {
+    const url = new URL(dsn);
+    this.publicKey = url.username;
+    const projectId = url.pathname.replace(/^\//, "");
+    this.storeUrl = `${url.protocol}//${url.host}/api/${projectId}/store/`;
+    this.release = release;
+    this.environment = environment;
+    this.sampleRate = sampleRate;
+    this.resolvedIssues = resolvedIssues ?? {};
+  }
+
+  setTag(key: string, value: string): void {
+    this.globalTags[key] = value;
+  }
+
+  addBreadcrumb(breadcrumb: { category?: string; level?: string; type?: string }): void {
+    // Only allow plugin.* breadcrumbs — strip message/data to prevent leaking user content
+    if (!breadcrumb.category?.startsWith("plugin.")) return;
+    if (this.breadcrumbs.length >= MAX_BREADCRUMBS) {
+      this.breadcrumbs.shift();
+    }
+    this.breadcrumbs.push({
+      category: breadcrumb.category,
+      level: breadcrumb.level,
+      timestamp: Date.now() / 1000,
+      type: breadcrumb.type,
+    });
+  }
+
+  withScope(callback: (scope: ScopeInterface) => void): void {
+    this.currentScopeTags = {};
+    this.currentScopeContexts = {};
+    callback({
+      setTag: (k, v) => {
+        this.currentScopeTags[k] = v;
+      },
+      setContext: (k, v) => {
+        this.currentScopeContexts[k] = v;
+      },
+    });
+    // Clear after callback — captureException captured the snapshot during the callback
+    this.currentScopeTags = {};
+    this.currentScopeContexts = {};
+  }
+
+  captureException(error: Error): string {
+    // Snapshot scope synchronously (called inside withScope callback)
+    const scopeTags = { ...this.currentScopeTags };
+    const scopeContexts = { ...this.currentScopeContexts };
+    const eventId = generateEventId();
+
+    // Sample rate check
+    if (this.sampleRate < 1.0 && Math.random() > this.sampleRate) {
+      return eventId;
+    }
+
+    const rawEvent: GlitchTipEvent = {
+      event_id: eventId,
+      timestamp: Date.now() / 1000,
+      platform: "node",
+      level: "error",
+      release: this.release,
+      environment: this.environment,
+      exception: {
+        values: [
+          {
+            type: error.name || "Error",
+            value: error.message,
+            stacktrace: this.extractStacktrace(error),
+          },
+        ],
+      },
+      tags: { ...this.globalTags, ...scopeTags },
+      contexts: {
+        ...scopeContexts,
+        runtime: { name: "node", version: process.version },
+      },
+      breadcrumbs: [...this.breadcrumbs],
+    };
+
+    // Sanitize (allowlist rebuild; same privacy guarantees as beforeSend)
+    const sanitized = sanitizeEvent(rawEvent);
+    if (!sanitized) return eventId;
+
+    // Version-aware filter: drop events already fixed in a newer release
+    if (shouldDropForResolvedIssue(sanitized, this.resolvedIssues, this.release)) {
+      return eventId;
+    }
+
+    const p = this.send(sanitized).catch(() => {
+      // Fire-and-forget: never throw from error reporter
+    });
+    this.pendingFetches.push(p);
+
+    // Prevent unbounded growth: prune every 20 entries
+    if (this.pendingFetches.length > 20) {
+      this.pendingFetches = this.pendingFetches.slice(-20);
+    }
+
+    return eventId;
+  }
+
+  async flush(timeoutMs: number): Promise<boolean> {
+    const pending = [...this.pendingFetches];
+    this.pendingFetches = [];
+    if (pending.length === 0) return true;
+    try {
+      await Promise.race([
+        Promise.all(pending),
+        new Promise<never>((_, reject) => setTimeout(() => reject(new Error("Flush timeout")), timeoutMs)),
+      ]);
+      return true;
+    } catch {
+      return false;
     }
   }
 
-  // Fallback: if path contains node_modules or extensions, return basename
-  if (path.includes("node_modules") || path.includes("extensions")) {
-    const parts = path.split(/[/\\]/);
-    return parts[parts.length - 1] || path;
+  private extractStacktrace(error: Error): ReportStacktrace | undefined {
+    if (!error.stack) return undefined;
+    const lines = error.stack.split("\n").slice(1); // skip "Error: message" first line
+    const frames: ReportFrame[] = lines
+      .map((line): ReportFrame | null => {
+        const match = line.match(/at (?:(.+?) \()?(.+?):(\d+):(\d+)\)?/);
+        if (!match) return null;
+        return {
+          function: match[1] || "<anonymous>",
+          filename: sanitizePath(match[2]),
+          lineno: parseInt(match[3], 10),
+          colno: parseInt(match[4], 10),
+          in_app: !match[2].includes("node_modules"),
+        };
+      })
+      .filter((f): f is ReportFrame => f !== null);
+    return frames.length > 0 ? { frames } : undefined;
   }
 
-  // Scrub user-specific paths
-  return path
-    .replace(/\/home\/[^/]+/g, "$HOME")
-    .replace(/\/Users\/[^/]+/g, "$HOME")
-    .replace(/C:\\Users\\[^\\]+/g, "%USERPROFILE%");
+  private async send(event: GlitchTipEvent): Promise<void> {
+    const timestamp = Math.floor(Date.now() / 1000);
+    const authHeader = `Sentry sentry_version=7, sentry_timestamp=${timestamp}, sentry_client=openclaw-hybrid-memory/native, sentry_key=${this.publicKey}`;
+    await fetch(this.storeUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Sentry-Auth": authHeader,
+      },
+      body: JSON.stringify(event),
+      signal: AbortSignal.timeout(5000),
+    });
+  }
+}
+
+// --- Module-level singleton state ---
+
+let reporter: GlitchTipReporter | null = null;
+let initialized = false;
+let logger: any = console; // Default fallback to console
+const errorDedup = new Map<string, number>(); // Rate limiting: fingerprint -> timestamp
+
+/**
+ * Initialize error reporter with STRICT privacy settings.
+ * Optionally pass runtimeBotId from OpenClaw plugin context (e.g. api.context?.agentId) to use as bot UUID when config.botId is not set.
+ */
+export async function initErrorReporter(
+  config: ErrorReporterConfig,
+  pluginVersion: string,
+  loggerInstance?: any,
+  runtimeBotId?: string,
+): Promise<void> {
+  if (loggerInstance) {
+    logger = loggerInstance;
+  }
+
+  if (!config.enabled || !config.consent) {
+    logger.info?.("[ErrorReporter] Disabled: enabled=%s, consent=%s", config.enabled, config.consent);
+    return;
+  }
+
+  // Resolve DSN based on mode
+  let resolvedDsn: string;
+  if (config.mode === "community") {
+    // Community mode: allow override via config.dsn, otherwise use COMMUNITY_DSN
+    resolvedDsn = config.dsn || COMMUNITY_DSN;
+    logger.info?.("[ErrorReporter] Using community mode (anonymous telemetry)");
+  } else {
+    // self-hosted mode
+    if (!config.dsn) {
+      logger.warn?.("[ErrorReporter] Self-hosted mode requires a DSN but none was provided. Error reporting disabled.");
+      return;
+    }
+    resolvedDsn = config.dsn;
+    logger.info?.("[ErrorReporter] Using self-hosted mode");
+  }
+
+  const releaseStr = `openclaw-hybrid-memory@${pluginVersion}`;
+
+  reporter = new GlitchTipReporter(
+    resolvedDsn,
+    releaseStr,
+    config.environment || "production",
+    config.sampleRate ?? 1.0,
+    config.resolvedIssues,
+  );
+
+  // Bot identity: config first, then OpenClaw context (e.g. api.context?.agentId).
+  // When neither is configured, bot_id is omitted entirely — no hostname fallback to prevent leaks.
+  const botUuid =
+    config.botId || (typeof runtimeBotId === "string" && runtimeBotId.trim() ? runtimeBotId.trim() : undefined);
+  const botName = config.botName
+    ? scrubString(config.botName)
+        .slice(0, 64)
+        .replace(/[\x00-\x1f\x7f]/g, "")
+    : undefined;
+  if (botUuid) {
+    reporter.setTag("bot_id", botUuid);
+  }
+  if (botName) {
+    reporter.setTag("bot_name", botName);
+    logger.debug?.("[ErrorReporter] Bot name set (opt-in)");
+  } else {
+    logger.debug?.("[ErrorReporter] Bot name omitted (not configured — privacy default)");
+  }
+
+  initialized = true;
+  const dsnHost = resolvedDsn.split("@")[1] || "***";
+  logger.info?.("[ErrorReporter] Initialized with DSN host:", dsnHost);
 }
 
 /**
@@ -403,7 +604,7 @@ export function capturePluginError(
     backend?: string;
     retryAttempt?: number;
     memoryCount?: number;
-    /** Severity level (e.g. "info", "warning", "error"). Not sent to Sentry, used for local logging/filtering. */
+    /** Severity level (e.g. "info", "warning", "error"). Not sent to reporter, used for local logging/filtering. */
     severity?: string;
     /** Additional context fields for specific operations */
     [key: string]: unknown;
@@ -413,7 +614,7 @@ export function capturePluginError(
   // Suppress here to protect all current and future call sites centrally.
   if (error.name === "UnconfiguredProviderError") return undefined;
 
-  if (!initialized || !Sentry) {
+  if (!initialized || !reporter) {
     return undefined;
   }
 
@@ -435,7 +636,7 @@ export function capturePluginError(
 
   const subsystem = context.subsystem ?? "plugin";
   let eventId: string | undefined;
-  Sentry.withScope((scope) => {
+  reporter.withScope((scope) => {
     scope.setTag("subsystem", subsystem);
     scope.setTag("operation", context.operation);
     if (context.phase) scope.setTag("phase", context.phase);
@@ -445,7 +646,7 @@ export function capturePluginError(
     if (context.configShape) {
       scope.setContext("config_shape", context.configShape);
     }
-    eventId = Sentry!.captureException(error);
+    eventId = reporter!.captureException(error);
   });
 
   return eventId;
@@ -462,11 +663,11 @@ export function isErrorReporterActive(): boolean {
  * Flush pending error reports with timeout
  */
 export async function flushErrorReporter(timeoutMs = 2000): Promise<boolean> {
-  if (!initialized || !Sentry) {
+  if (!initialized || !reporter) {
     return false;
   }
   try {
-    return await Sentry.flush(timeoutMs);
+    return await reporter.flush(timeoutMs);
   } catch (err) {
     logger.warn?.("[ErrorReporter] Flush failed:", err);
     return false;
@@ -477,10 +678,7 @@ export async function flushErrorReporter(timeoutMs = 2000): Promise<boolean> {
  * Test error reporter diagnostics
  */
 export function testErrorReporter(): { ok: boolean; error?: string } {
-  if (!Sentry) {
-    return { ok: false, error: "@sentry/node not loaded" };
-  }
-  if (!initialized) {
+  if (!initialized || !reporter) {
     return { ok: false, error: "Error reporter not initialized (consent or disabled)" };
   }
   return { ok: true };
@@ -490,12 +688,12 @@ export function testErrorReporter(): { ok: boolean; error?: string } {
  * Capture a test error to verify reporting works
  */
 export function captureTestError(): string | null {
-  if (!initialized || !Sentry) {
+  if (!initialized || !reporter) {
     return null;
   }
   try {
     const testError = new Error("Test error from captureTestError()");
-    return Sentry.captureException(testError);
+    return reporter.captureException(testError);
   } catch (err) {
     logger.warn?.("[ErrorReporter] captureTestError failed:", err);
     return null;
@@ -506,8 +704,8 @@ export function captureTestError(): string | null {
  * Add operation breadcrumb for plugin subsystems
  */
 export function addOperationBreadcrumb(subsystem: string, operation: string): void {
-  if (!Sentry || !initialized) return;
-  Sentry.addBreadcrumb({
+  if (!reporter || !initialized) return;
+  reporter.addBreadcrumb({
     category: `plugin.${subsystem}.${operation}`,
     level: "info",
   });
