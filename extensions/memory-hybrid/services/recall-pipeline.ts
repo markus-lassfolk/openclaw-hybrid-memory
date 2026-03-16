@@ -214,7 +214,7 @@ export async function runRecallPipelineQuery(
   }
 
   t0 = Date.now();
-  let results = mergeResults(sqliteResults, lanceResults, limitNum, factsDb as FactsDB);
+  let results = mergeResults(sqliteResults, lanceResults, limitNum, factsDb);
   stageMs.merge = Date.now() - t0;
 
   if (cfg.memoryTieringEnabled && results.length > 0) {
