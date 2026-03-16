@@ -130,8 +130,8 @@ describe("memory tools embedding registry wiring", () => {
     const runMock = vi.mocked(runRetrievalPipeline);
     expect(runMock).toHaveBeenCalled();
     const call = runMock.mock.calls[0];
-    expect(call[14]).toBe(embeddingRegistry);
-    expect(call[15]).toBe(factsDb);
+    expect(call[5]?.embeddingRegistry).toBe(embeddingRegistry);
+    expect(call[5]?.factsDbForEmbeddings).toBe(factsDb);
   });
 
   it("stores embeddings for all registered models", async () => {
