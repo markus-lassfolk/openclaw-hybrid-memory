@@ -338,12 +338,13 @@ export async function chatComplete(opts: {
       is429Like(err) || // #397: rate limit is transient
       /^\d+\s*internal\s*error$/i.test(msg.trim()) ||
       /^5\d{2}\s/.test(msg.trim()) ||
-      is500Like(err) ||  // #302: OpenAI SDK InternalServerError has no numeric prefix
-      isOllamaOOM(err);  // #387: Ollama OOM — model too large for available RAM, not a bug
-    const isConfigError = err instanceof UnconfiguredProviderError ||
-      is404Like(err) ||  // #303: model not found = wrong model name in config, not a bug
-      is403Like(err) ||  // #394: country/region restriction = operator config issue, not a bug
-      is401Like(err);    // #475: invalid API key = operator config issue, not a bug
+      is500Like(err) || // #302: OpenAI SDK InternalServerError has no numeric prefix
+      isOllamaOOM(err); // #387: Ollama OOM — model too large for available RAM, not a bug
+    const isConfigError =
+      err instanceof UnconfiguredProviderError ||
+      is404Like(err) || // #303: model not found = wrong model name in config, not a bug
+      is403Like(err) || // #394: country/region restriction = operator config issue, not a bug
+      is401Like(err); // #475: invalid API key = operator config issue, not a bug
     if (!isTransient && !isConfigError) {
       capturePluginError(error, {
         subsystem: "chat",
@@ -462,10 +463,10 @@ export async function withLLMRetry<T>(
         const fullMsg = retryError.message.toLowerCase();
         const isTransient =
           is429 ||
-          isServerError ||  // #302: 5xx server errors are transient
-          is404Like(lastError) ||  // #329: defensive safety net — 404 = model not found, config issue, not a bug
-          is403Like(lastError) ||  // #394: defensive safety net — 403 = country/region restriction, config issue, not a bug
-          is401Like(lastError) ||  // #475: defensive safety net — 401 = invalid API key, config issue, not a bug
+          isServerError || // #302: 5xx server errors are transient
+          is404Like(lastError) || // #329: defensive safety net — 404 = model not found, config issue, not a bug
+          is403Like(lastError) || // #394: defensive safety net — 403 = country/region restriction, config issue, not a bug
+          is401Like(lastError) || // #475: defensive safety net — 401 = invalid API key, config issue, not a bug
           causeMsg.includes("request was aborted") ||
           fullMsg.includes("request was aborted") ||
           causeMsg.includes("request timed out") ||
@@ -581,20 +582,24 @@ export async function chatCompleteWithRetry(opts: {
       const is404 = is404Like(lastError);
       const is403 = is403Like(lastError);
       const is401 = is401Like(lastError);
-      const is500 = is500Like(lastError);  // #302
+      const is500 = is500Like(lastError); // #302
       if (isUnconfigured) unconfiguredCount++;
       if (i < modelsToTry.length - 1 && !signal?.aborted) {
         if (!isUnconfigured) {
-          const reason = is429 ? "rate limited (429)"
-            : isTimeout ? "timed out"
-            : is404 ? "model not found (404)"
-            : is403 ? "access denied (403)"
-            : is401 ? "unauthorized (401)"
-            : is500 ? "server error (500)"  // #302
-            : "failed after retries";
-          console.warn(
-            `${label}: model ${currentModel} ${reason}, trying fallback model ${modelsToTry[i + 1]}...`,
-          );
+          const reason = is429
+            ? "rate limited (429)"
+            : isTimeout
+              ? "timed out"
+              : is404
+                ? "model not found (404)"
+                : is403
+                  ? "access denied (403)"
+                  : is401
+                    ? "unauthorized (401)"
+                    : is500
+                      ? "server error (500)" // #302
+                      : "failed after retries";
+          console.warn(`${label}: model ${currentModel} ${reason}, trying fallback model ${modelsToTry[i + 1]}...`);
         }
       }
     }
@@ -603,11 +608,14 @@ export async function chatCompleteWithRetry(opts: {
   const finalError = lastError ?? new Error("All models failed");
   const finalIs500 = is500Like(finalError);
   const finalIs404 = is404Like(finalError);
-  const finalIs403 = is403Like(finalError);  // #394: country/region restriction = operator config issue
-  const finalIs401 = is401OrWrapped(finalError);  // #475: invalid API key = operator config issue
-  const finalIsOOM = isOllamaOOM(finalError);  // #387: OOM is expected when model too large for RAM
-  const finalIs429 = is429OrWrapped(finalError);  // #397
-  const finalIsTimeout = /timed out|llm request timeout|request was aborted|Request was aborted|ETIMEDOUT|ECONNREFUSED/i.test(finalError.message);
+  const finalIs403 = is403Like(finalError); // #394: country/region restriction = operator config issue
+  const finalIs401 = is401OrWrapped(finalError); // #475: invalid API key = operator config issue
+  const finalIsOOM = isOllamaOOM(finalError); // #387: OOM is expected when model too large for RAM
+  const finalIs429 = is429OrWrapped(finalError); // #397
+  const finalIsTimeout =
+    /timed out|llm request timeout|request was aborted|Request was aborted|ETIMEDOUT|ECONNREFUSED/i.test(
+      finalError.message,
+    );
 
   // When every model failed because provider keys are missing, queue a user-visible chat warning
   // and skip Sentry (this is a config issue, not a bug).
@@ -630,7 +638,15 @@ export async function chatCompleteWithRetry(opts: {
     const finalIsUnconfigured =
       finalError instanceof UnconfiguredProviderError ||
       (finalError instanceof LLMRetryError && finalError.cause instanceof UnconfiguredProviderError);
-    if (!finalIs500 && !finalIsOOM && !finalIsUnconfigured && !finalIsTimeout && !finalIs403 && !finalIs401 && !finalIs429) {
+    if (
+      !finalIs500 &&
+      !finalIsOOM &&
+      !finalIsUnconfigured &&
+      !finalIsTimeout &&
+      !finalIs403 &&
+      !finalIs401 &&
+      !finalIs429
+    ) {
       capturePluginError(finalError, {
         subsystem: "chat",
         operation: "chatCompleteWithRetry",
@@ -664,7 +680,7 @@ export async function chatCompleteWithRetry(opts: {
     // #475: invalid API key = operator config issue, not a bug — skip GlitchTip
     pendingWarnings?.add(
       `⚠️ Memory plugin: LLM unauthorized (401) — your API key is invalid or expired. Check provider settings. ` +
-      `Run: openclaw hybrid-mem verify --test-llm`
+        `Run: openclaw hybrid-mem verify --test-llm`,
     );
   } else if (finalIsTimeout) {
     // #339: timeout errors are transient — don't report to GlitchTip
