@@ -27,10 +27,7 @@ function parseHaConfig(raw: Record<string, unknown> | undefined): HomeAssistantS
   const baseUrl = typeof raw.baseUrl === "string" ? raw.baseUrl.trim() : "";
   const token = typeof raw.token === "string" ? raw.token.trim() : "";
   if (!baseUrl || !token) return undefined;
-  const timeoutMs =
-    typeof raw.timeoutMs === "number" && raw.timeoutMs > 0
-      ? Math.floor(raw.timeoutMs)
-      : 10_000;
+  const timeoutMs = typeof raw.timeoutMs === "number" && raw.timeoutMs > 0 ? Math.floor(raw.timeoutMs) : 10_000;
   return { baseUrl, token, timeoutMs };
 }
 
@@ -43,14 +40,10 @@ export function parseSensorSweepConfig(cfg: Record<string, unknown>): SensorSwee
   }
 
   const schedule =
-    typeof raw?.schedule === "string" && raw.schedule.trim().length > 0
-      ? raw.schedule.trim()
-      : "0 */4 * * *";
+    typeof raw?.schedule === "string" && raw.schedule.trim().length > 0 ? raw.schedule.trim() : "0 */4 * * *";
 
   const dedupCooldownHours =
-    typeof raw?.dedupCooldownHours === "number" && raw.dedupCooldownHours > 0
-      ? raw.dedupCooldownHours
-      : 4; // Default matches the 4-hour cron interval so the dedup window covers at least one full cycle
+    typeof raw?.dedupCooldownHours === "number" && raw.dedupCooldownHours > 0 ? raw.dedupCooldownHours : 4; // Default matches the 4-hour cron interval so the dedup window covers at least one full cycle
 
   const haRaw = raw?.homeAssistant as Record<string, unknown> | undefined;
   const homeAssistant = parseHaConfig(haRaw);

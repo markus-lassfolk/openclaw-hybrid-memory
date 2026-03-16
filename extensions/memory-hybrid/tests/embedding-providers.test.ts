@@ -117,7 +117,7 @@ describe("Embeddings (OpenAI) implements EmbeddingProvider interface", () => {
   it("embedBatch() makes a single batched API call (not N calls)", async () => {
     const vec = [0.5, 0.6];
     const client = makeMockOpenAI(vec);
-    const mockCreate = (client.embeddings.create as ReturnType<typeof vi.fn>);
+    const mockCreate = client.embeddings.create as ReturnType<typeof vi.fn>;
     const provider = new Embeddings(client, "text-embedding-3-small", 2);
     await provider.embedBatch(["a", "b", "c"]);
     expect(mockCreate).toHaveBeenCalledOnce();
@@ -128,7 +128,7 @@ describe("Embeddings (OpenAI) implements EmbeddingProvider interface", () => {
   it("embedBatch() splits into multiple API calls when count exceeds batchSize", async () => {
     const vec = [0.5, 0.6];
     const client = makeMockOpenAI(vec);
-    const mockCreate = (client.embeddings.create as ReturnType<typeof vi.fn>);
+    const mockCreate = client.embeddings.create as ReturnType<typeof vi.fn>;
     const provider = new Embeddings(client, "text-embedding-3-small", 2, 2);
     const texts = ["a", "b", "c", "d", "e"];
     const results = await provider.embedBatch(texts);
@@ -155,7 +155,9 @@ describe("Embeddings (OpenAI) implements EmbeddingProvider interface", () => {
   it("throws when non-text-embedding-3 model is used with custom dimensions", () => {
     const client = makeMockOpenAI([]);
     expect(() => new Embeddings(client, "text-embedding-ada-002", 768)).toThrow(/does not support custom dimensions/);
-    expect(() => new Embeddings(client, ["text-embedding-3-small", "text-embedding-ada-002"], 768)).toThrow(/does not support custom dimensions/);
+    expect(() => new Embeddings(client, ["text-embedding-3-small", "text-embedding-ada-002"], 768)).toThrow(
+      /does not support custom dimensions/,
+    );
   });
 
   it("#329: Google API 404 fails fast (no retry) and does not report to GlitchTip", async () => {
@@ -163,7 +165,9 @@ describe("Embeddings (OpenAI) implements EmbeddingProvider interface", () => {
     try {
       // Simulate OpenAI SDK v6 NotFoundError from Google Generative Language API
       const googleError = Object.assign(
-        new Error("404 models/text-embedding-004 is not found for API version v1beta, or is not supported for embeddings. Call ListModels to see the list of available models and their supported methods."),
+        new Error(
+          "404 models/text-embedding-004 is not found for API version v1beta, or is not supported for embeddings. Call ListModels to see the list of available models and their supported methods.",
+        ),
         { status: 404 },
       );
       const mockCreate = vi.fn().mockRejectedValue(googleError);
@@ -195,10 +199,7 @@ describe("Embeddings (OpenAI) implements EmbeddingProvider interface", () => {
   it("#393: Google 403 country/region restriction fails fast and does not report to GlitchTip", async () => {
     vi.useFakeTimers();
     try {
-      const googleError = Object.assign(
-        new Error("403 Country, region, or territory not supported"),
-        { status: 403 },
-      );
+      const googleError = Object.assign(new Error("403 Country, region, or territory not supported"), { status: 403 });
       const mockCreate = vi.fn().mockRejectedValue(googleError);
       const client = { embeddings: { create: mockCreate } } as unknown as import("openai").default;
       const provider = new Embeddings(client, "text-embedding-004", 768);
@@ -284,7 +285,10 @@ describe("OllamaEmbeddingProvider", () => {
   });
 
   it("embedBatch() sends texts in one batch when count <= batchSize", async () => {
-    const vecs = [[0.1, 0.2], [0.3, 0.4]];
+    const vecs = [
+      [0.1, 0.2],
+      [0.3, 0.4],
+    ];
     vi.stubGlobal("fetch", mockOllamaFetch(vecs));
     const p = new OllamaEmbeddingProvider({ model: "nomic-embed-text", dimensions: 2, batchSize: 50 });
     const results = await p.embedBatch(["a", "b"]);
@@ -295,9 +299,14 @@ describe("OllamaEmbeddingProvider", () => {
   it("embedBatch() splits into multiple HTTP calls when count > batchSize", async () => {
     const batch1 = [[0.1], [0.2]];
     const batch2 = [[0.3]];
-    const mockFetch = vi.fn()
+    const mockFetch = vi
+      .fn()
       .mockResolvedValueOnce({ ok: true, json: async () => ({ embeddings: batch1 }), text: async () => "" } as Response)
-      .mockResolvedValueOnce({ ok: true, json: async () => ({ embeddings: batch2 }), text: async () => "" } as Response);
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ embeddings: batch2 }),
+        text: async () => "",
+      } as Response);
     vi.stubGlobal("fetch", mockFetch);
     const p = new OllamaEmbeddingProvider({ model: "nomic-embed-text", dimensions: 1, batchSize: 2 });
     const results = await p.embedBatch(["a", "b", "c"]);
@@ -318,31 +327,40 @@ describe("OllamaEmbeddingProvider", () => {
   });
 
   it("embed() throws when response has no embeddings array", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
-      ok: true,
-      json: async () => ({ unexpected: "format" }),
-      text: async () => "",
-    } as unknown as Response));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ unexpected: "format" }),
+        text: async () => "",
+      } as unknown as Response),
+    );
     const p = new OllamaEmbeddingProvider({ model: "nomic-embed-text", dimensions: 3 });
     await expect(p.embed("text")).rejects.toThrow(/missing 'embeddings'/);
   });
 
   it("embedBatch() throws when Ollama returns wrong number of embeddings", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
-      ok: true,
-      json: async () => ({ embeddings: [[0.1]] }), // 1 returned, 2 expected
-      text: async () => "",
-    } as Response));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ embeddings: [[0.1]] }), // 1 returned, 2 expected
+        text: async () => "",
+      } as Response),
+    );
     const p = new OllamaEmbeddingProvider({ model: "nomic-embed-text", dimensions: 1 });
     await expect(p.embedBatch(["a", "b"])).rejects.toThrow(/returned 1 embeddings for 2 inputs/);
   });
 
   it("embedBatch() throws on empty embeddings array in response", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
-      ok: true,
-      json: async () => ({ embeddings: [] }),
-      text: async () => "",
-    } as Response));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ embeddings: [] }),
+        text: async () => "",
+      } as Response),
+    );
     const p = new OllamaEmbeddingProvider({ model: "nomic-embed-text", dimensions: 3 });
     await expect(p.embedBatch(["a"])).rejects.toThrow(/empty 'embeddings' array/);
   });
@@ -362,18 +380,26 @@ describe("OllamaEmbeddingProvider", () => {
 
   it("#387: OOM response (HTTP 500 with OOM body) trips circuit breaker immediately", async () => {
     const oomBody = "model requires more system memory (18.2 GiB) than is available (8.0 GiB)";
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
-      ok: false,
-      status: 500,
-      statusText: "Internal Server Error",
-      text: async () => oomBody,
-    } as unknown as Response));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: false,
+        status: 500,
+        statusText: "Internal Server Error",
+        text: async () => oomBody,
+      } as unknown as Response),
+    );
     const p = new OllamaEmbeddingProvider({ model: "qwen3:8b", dimensions: 4096 });
     // First call: OOM — should throw and trip circuit breaker
     await expect(p.embed("test")).rejects.toThrow(/Ollama embed failed.*500/);
     // Second call: circuit breaker should be open — should throw without making HTTP request
     vi.unstubAllGlobals();
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => ({ embeddings: [[0.1]] }), text: async () => "" } as Response));
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValue({ ok: true, json: async () => ({ embeddings: [[0.1]] }), text: async () => "" } as Response),
+    );
     await expect(p.embed("test")).rejects.toThrow(/circuit breaker open/i);
     // fetch was NOT called for the second attempt (blocked by circuit breaker)
     expect(fetch).not.toHaveBeenCalled();
@@ -381,12 +407,15 @@ describe("OllamaEmbeddingProvider", () => {
 
   it("#387: generic HTTP 500 (non-OOM) does not trip circuit breaker immediately", async () => {
     const genericBody = "Internal Server Error";
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
-      ok: false,
-      status: 500,
-      statusText: "Internal Server Error",
-      text: async () => genericBody,
-    } as unknown as Response));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: false,
+        status: 500,
+        statusText: "Internal Server Error",
+        text: async () => genericBody,
+      } as unknown as Response),
+    );
     const p = new OllamaEmbeddingProvider({ model: "nomic-embed-text", dimensions: 768 });
     // Generic 500: circuit breaker should NOT be immediately tripped (only on OLLAMA_MAX_FAILS connection failures)
     await expect(p.embed("test")).rejects.toThrow(/Ollama embed failed.*500/);
@@ -415,8 +444,16 @@ describe("FallbackEmbeddingProvider", () => {
     const fallbackVec = [0.9, 0.9];
     const primary = new OllamaEmbeddingProvider({ model: "nomic-embed-text", dimensions: 2 });
     vi.stubGlobal("fetch", mockOllamaFetch([primaryVec]));
-    const fallback = { embed: vi.fn().mockResolvedValue(fallbackVec), embedBatch: vi.fn(), dimensions: 2, modelName: "fallback" };
-    const wrapper = new FallbackEmbeddingProvider(primary, fallback as unknown as import("../services/embeddings.js").EmbeddingProvider);
+    const fallback = {
+      embed: vi.fn().mockResolvedValue(fallbackVec),
+      embedBatch: vi.fn(),
+      dimensions: 2,
+      modelName: "fallback",
+    };
+    const wrapper = new FallbackEmbeddingProvider(
+      primary,
+      fallback as unknown as import("../services/embeddings.js").EmbeddingProvider,
+    );
     const result = await wrapper.embed("test");
     expect(result).toEqual(primaryVec);
     expect(fallback.embed).not.toHaveBeenCalled();
@@ -426,7 +463,12 @@ describe("FallbackEmbeddingProvider", () => {
     vi.stubGlobal("fetch", mockOllamaFetchFail("ECONNREFUSED"));
     const primary = new OllamaEmbeddingProvider({ model: "nomic-embed-text", dimensions: 2 });
     const fallbackVec = [0.5, 0.6];
-    const fallback = { embed: vi.fn().mockResolvedValue(fallbackVec), embedBatch: vi.fn(), dimensions: 2, modelName: "fallback" };
+    const fallback = {
+      embed: vi.fn().mockResolvedValue(fallbackVec),
+      embedBatch: vi.fn(),
+      dimensions: 2,
+      modelName: "fallback",
+    };
     const onSwitch = vi.fn();
     const wrapper = new FallbackEmbeddingProvider(
       primary,
@@ -442,8 +484,16 @@ describe("FallbackEmbeddingProvider", () => {
     vi.stubGlobal("fetch", mockOllamaFetchFail("ECONNREFUSED"));
     const primary = new OllamaEmbeddingProvider({ model: "nomic-embed-text", dimensions: 2 });
     const fallbackVec = [0.5, 0.6];
-    const fallback = { embed: vi.fn().mockResolvedValue(fallbackVec), embedBatch: vi.fn(), dimensions: 2, modelName: "fallback" };
-    const wrapper = new FallbackEmbeddingProvider(primary, fallback as unknown as import("../services/embeddings.js").EmbeddingProvider);
+    const fallback = {
+      embed: vi.fn().mockResolvedValue(fallbackVec),
+      embedBatch: vi.fn(),
+      dimensions: 2,
+      modelName: "fallback",
+    };
+    const wrapper = new FallbackEmbeddingProvider(
+      primary,
+      fallback as unknown as import("../services/embeddings.js").EmbeddingProvider,
+    );
     await wrapper.embed("first");
     await wrapper.embed("second");
     expect(fallback.embed).toHaveBeenCalledTimes(2);
@@ -459,7 +509,10 @@ describe("FallbackEmbeddingProvider", () => {
   it("exposes dimensions and modelName from the active provider", () => {
     const primary = new OllamaEmbeddingProvider({ model: "nomic-embed-text", dimensions: 768 });
     const fallback = { embed: vi.fn(), embedBatch: vi.fn(), dimensions: 768, modelName: "text-embedding-3-small" };
-    const wrapper = new FallbackEmbeddingProvider(primary, fallback as unknown as import("../services/embeddings.js").EmbeddingProvider);
+    const wrapper = new FallbackEmbeddingProvider(
+      primary,
+      fallback as unknown as import("../services/embeddings.js").EmbeddingProvider,
+    );
     expect(wrapper.dimensions).toBe(768);
     expect(wrapper.modelName).toBe("nomic-embed-text");
   });
@@ -468,7 +521,11 @@ describe("FallbackEmbeddingProvider", () => {
     const primary = new OllamaEmbeddingProvider({ model: "nomic-embed-text", dimensions: 768 });
     const fallback = { embed: vi.fn(), embedBatch: vi.fn(), dimensions: 1536, modelName: "text-embedding-3-small" };
     expect(
-      () => new FallbackEmbeddingProvider(primary, fallback as unknown as import("../services/embeddings.js").EmbeddingProvider),
+      () =>
+        new FallbackEmbeddingProvider(
+          primary,
+          fallback as unknown as import("../services/embeddings.js").EmbeddingProvider,
+        ),
     ).toThrow(/must have matching dimensions/);
   });
 });
@@ -717,10 +774,7 @@ describe("FallbackEmbeddingProvider — 403 suppression (#394)", () => {
   });
 
   it("#394: does not report to GlitchTip when primary fails with 403 on embed", async () => {
-    const err403 = Object.assign(
-      new Error("403 Country, region, or territory not supported"),
-      { status: 403 },
-    );
+    const err403 = Object.assign(new Error("403 Country, region, or territory not supported"), { status: 403 });
     const primary = {
       embed: vi.fn().mockRejectedValue(err403),
       embedBatch: vi.fn(),
@@ -774,10 +828,7 @@ describe("ChainEmbeddingProvider — 403 suppression (#394)", () => {
   });
 
   it("#394: does not report to GlitchTip when a non-last provider fails with 403 on embed", async () => {
-    const err403 = Object.assign(
-      new Error("403 Country, region, or territory not supported"),
-      { status: 403 },
-    );
+    const err403 = Object.assign(new Error("403 Country, region, or territory not supported"), { status: 403 });
     const p1 = { embed: vi.fn().mockRejectedValue(err403), embedBatch: vi.fn(), dimensions: 768, modelName: "p1" };
     const p2 = { embed: vi.fn().mockResolvedValue([0.5, 0.6]), embedBatch: vi.fn(), dimensions: 768, modelName: "p2" };
     const chain = new ChainEmbeddingProvider(
@@ -791,7 +842,12 @@ describe("ChainEmbeddingProvider — 403 suppression (#394)", () => {
   it("#394: does not report to GlitchTip when a non-last provider fails with 403 on embedBatch", async () => {
     const err403 = new Error("403 Country, region, or territory not supported");
     const p1 = { embed: vi.fn(), embedBatch: vi.fn().mockRejectedValue(err403), dimensions: 768, modelName: "p1" };
-    const p2 = { embed: vi.fn(), embedBatch: vi.fn().mockResolvedValue([[0.5, 0.6]]), dimensions: 768, modelName: "p2" };
+    const p2 = {
+      embed: vi.fn(),
+      embedBatch: vi.fn().mockResolvedValue([[0.5, 0.6]]),
+      dimensions: 768,
+      modelName: "p2",
+    };
     const chain = new ChainEmbeddingProvider(
       [p1, p2] as unknown as import("../services/embeddings.js").EmbeddingProvider[],
       ["provider1", "provider2"],
@@ -807,10 +863,7 @@ describe("safeEmbed — 403 suppression (#394)", () => {
   });
 
   it("#394: does not report to GlitchTip when embed fails with 403", async () => {
-    const err403 = Object.assign(
-      new Error("403 Country, region, or territory not supported"),
-      { status: 403 },
-    );
+    const err403 = Object.assign(new Error("403 Country, region, or territory not supported"), { status: 403 });
     const provider = {
       embed: vi.fn().mockRejectedValue(err403),
       embedBatch: vi.fn(),
@@ -887,10 +940,7 @@ describe("#385: Embeddings 401 auth error does not report to GlitchTip", () => {
   it("embed() skips capturePluginError for 401 auth failure (direct .status field)", async () => {
     vi.useFakeTimers();
     try {
-      const authError = Object.assign(
-        new Error("401 Incorrect API key provided: AIzaSyDp..."),
-        { status: 401 },
-      );
+      const authError = Object.assign(new Error("401 Incorrect API key provided: AIzaSyDp..."), { status: 401 });
       const mockCreate = vi.fn().mockRejectedValue(authError);
       const client = { embeddings: { create: mockCreate } } as unknown as import("openai").default;
       const provider = new Embeddings(client, "text-embedding-005", 768);
@@ -936,10 +986,7 @@ describe("#385: Embeddings 401 auth error does not report to GlitchTip", () => {
 
 describe("#385: safeEmbed suppresses capturePluginError for config-error-only chain failures", () => {
   it("returns null and does NOT report when all causes are config errors (404)", async () => {
-    const configErr = Object.assign(
-      new Error("404 models/text-embedding-004 is not found"),
-      { status: 404 },
-    );
+    const configErr = Object.assign(new Error("404 models/text-embedding-004 is not found"), { status: 404 });
     const p1 = { embed: vi.fn().mockRejectedValue(configErr), embedBatch: vi.fn(), dimensions: 768, modelName: "p1" };
     const chain = new ChainEmbeddingProvider(
       [p1] as unknown as import("../services/embeddings.js").EmbeddingProvider[],
@@ -968,7 +1015,12 @@ describe("#385: safeEmbed suppresses capturePluginError for config-error-only ch
 
   it("returns null and DOES report when causes include transient failures", async () => {
     // Transient error (not 404/401) — safeEmbed should still report so operators see it
-    const p1 = { embed: vi.fn().mockRejectedValue(new Error("network timeout")), embedBatch: vi.fn(), dimensions: 768, modelName: "p1" };
+    const p1 = {
+      embed: vi.fn().mockRejectedValue(new Error("network timeout")),
+      embedBatch: vi.fn(),
+      dimensions: 768,
+      modelName: "p1",
+    };
     const chain = new ChainEmbeddingProvider(
       [p1] as unknown as import("../services/embeddings.js").EmbeddingProvider[],
       ["p1"],
@@ -982,12 +1034,16 @@ describe("#385: safeEmbed suppresses capturePluginError for config-error-only ch
 
 describe("#385: ChainEmbeddingProvider does not report 404/401 config errors", () => {
   it("does not capturePluginError for 404 from non-last provider", async () => {
-    const notFoundErr = Object.assign(
-      new Error("404 models/text-embedding-004 is not found for API version v1beta"),
-      { status: 404 },
-    );
+    const notFoundErr = Object.assign(new Error("404 models/text-embedding-004 is not found for API version v1beta"), {
+      status: 404,
+    });
     const vec = [0.1, 0.2];
-    const p1 = { embed: vi.fn().mockRejectedValue(notFoundErr), embedBatch: vi.fn(), dimensions: 2, modelName: "google" };
+    const p1 = {
+      embed: vi.fn().mockRejectedValue(notFoundErr),
+      embedBatch: vi.fn(),
+      dimensions: 2,
+      modelName: "google",
+    };
     const p2 = { embed: vi.fn().mockResolvedValue(vec), embedBatch: vi.fn(), dimensions: 2, modelName: "openai" };
     const chain = new ChainEmbeddingProvider(
       [p1, p2] as unknown as import("../services/embeddings.js").EmbeddingProvider[],
@@ -1000,10 +1056,7 @@ describe("#385: ChainEmbeddingProvider does not report 404/401 config errors", (
   });
 
   it("does not capturePluginError for 401 from non-last provider", async () => {
-    const authErr = Object.assign(
-      new Error("401 Incorrect API key provided"),
-      { status: 401 },
-    );
+    const authErr = Object.assign(new Error("401 Incorrect API key provided"), { status: 401 });
     const vec = [0.5, 0.6];
     const p1 = { embed: vi.fn().mockRejectedValue(authErr), embedBatch: vi.fn(), dimensions: 2, modelName: "google" };
     const p2 = { embed: vi.fn().mockResolvedValue(vec), embedBatch: vi.fn(), dimensions: 2, modelName: "openai" };
@@ -1021,7 +1074,12 @@ describe("#385: ChainEmbeddingProvider does not report 404/401 config errors", (
   it("does not capturePluginError for 401 message-based (Ollama HTTP 401 Unauthorized)", async () => {
     const ollamaAuthErr = new Error("Ollama embed failed: HTTP 401 Unauthorized");
     const vec = [0.7, 0.8];
-    const p1 = { embed: vi.fn().mockRejectedValue(ollamaAuthErr), embedBatch: vi.fn(), dimensions: 2, modelName: "ollama" };
+    const p1 = {
+      embed: vi.fn().mockRejectedValue(ollamaAuthErr),
+      embedBatch: vi.fn(),
+      dimensions: 2,
+      modelName: "ollama",
+    };
     const p2 = { embed: vi.fn().mockResolvedValue(vec), embedBatch: vi.fn(), dimensions: 2, modelName: "openai" };
     const chain = new ChainEmbeddingProvider(
       [p1, p2] as unknown as import("../services/embeddings.js").EmbeddingProvider[],
@@ -1035,8 +1093,18 @@ describe("#385: ChainEmbeddingProvider does not report 404/401 config errors", (
   });
 
   it("throws AllEmbeddingProvidersFailed when all providers exhaust", async () => {
-    const p1 = { embed: vi.fn().mockRejectedValue(new Error("fail")), embedBatch: vi.fn(), dimensions: 2, modelName: "p1" };
-    const p2 = { embed: vi.fn().mockRejectedValue(new Error("fail")), embedBatch: vi.fn(), dimensions: 2, modelName: "p2" };
+    const p1 = {
+      embed: vi.fn().mockRejectedValue(new Error("fail")),
+      embedBatch: vi.fn(),
+      dimensions: 2,
+      modelName: "p1",
+    };
+    const p2 = {
+      embed: vi.fn().mockRejectedValue(new Error("fail")),
+      embedBatch: vi.fn(),
+      dimensions: 2,
+      modelName: "p2",
+    };
     const chain = new ChainEmbeddingProvider(
       [p1, p2] as unknown as import("../services/embeddings.js").EmbeddingProvider[],
       ["p1", "p2"],

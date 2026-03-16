@@ -165,11 +165,7 @@ describe("EventLog.getByTimeRange", () => {
     log.append({ sessionId: "s", timestamp: ts, eventType: "fact_learned", content: {} });
     log.append({ sessionId: "s", timestamp: ts, eventType: "decision_made", content: {} });
 
-    const results = log.getByTimeRange(
-      "2024-01-01T00:00:00.000Z",
-      "2025-01-01T00:00:00.000Z",
-      "fact_learned",
-    );
+    const results = log.getByTimeRange("2024-01-01T00:00:00.000Z", "2025-01-01T00:00:00.000Z", "fact_learned");
     expect(results).toHaveLength(1);
     expect(results[0].eventType).toBe("fact_learned");
   });

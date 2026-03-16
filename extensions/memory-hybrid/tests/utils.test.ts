@@ -251,12 +251,12 @@ describe("estimateTokensForDisplay", () => {
 describe("formatProgressiveIndexLine", () => {
   it("formats line as position, category, title, and token cost", () => {
     const line = formatProgressiveIndexLine("preference", "IDE settings", 48, 1);
-    expect(line).toBe('  1. [preference] IDE settings (48 tok)');
+    expect(line).toBe("  1. [preference] IDE settings (48 tok)");
   });
 
   it("uses correct position and category", () => {
     const line = formatProgressiveIndexLine("technical", "PostgreSQL connection config for prod", 185, 2);
-    expect(line).toBe('  2. [technical] PostgreSQL connection config for prod (185 tok)');
+    expect(line).toBe("  2. [technical] PostgreSQL connection config for prod (185 tok)");
   });
 
   it("matches index format [category] title/key (N tok)", () => {
@@ -342,76 +342,52 @@ describe("calculateExpiry", () => {
 
 describe("extractStructuredFields", () => {
   it("extracts decision with rationale", () => {
-    const result = extractStructuredFields(
-      "decided to use Vitest because it has native ESM support",
-      "decision",
-    );
+    const result = extractStructuredFields("decided to use Vitest because it has native ESM support", "decision");
     expect(result.entity).toBe("decision");
     expect(result.key).toContain("Vitest");
     expect(result.value).toContain("ESM");
   });
 
   it("extracts choice (X over Y)", () => {
-    const result = extractStructuredFields(
-      "prefer Vitest over Jest because of speed",
-      "preference",
-    );
+    const result = extractStructuredFields("prefer Vitest over Jest because of speed", "preference");
     expect(result.entity).toBe("decision");
     expect(result.key).toContain("over");
   });
 
   it("extracts rule (always/never)", () => {
-    const result = extractStructuredFields(
-      "always use strict TypeScript",
-      "preference",
-    );
+    const result = extractStructuredFields("always use strict TypeScript", "preference");
     expect(result.entity).toBe("convention");
     expect(result.value).toBe("always");
   });
 
   it("extracts possessive (my X is Y)", () => {
-    const result = extractStructuredFields(
-      "My favorite color is blue",
-      "preference",
-    );
+    const result = extractStructuredFields("My favorite color is blue", "preference");
     expect(result.entity).toBe("user");
     expect(result.key).toBe("favorite color");
     expect(result.value).toBe("blue");
   });
 
   it("extracts preference (I prefer X)", () => {
-    const result = extractStructuredFields(
-      "I prefer dark mode",
-      "preference",
-    );
+    const result = extractStructuredFields("I prefer dark mode", "preference");
     expect(result.entity).toBe("user");
     expect(result.key).toBe("prefer");
     expect(result.value).toBe("dark mode");
   });
 
   it("extracts email", () => {
-    const result = extractStructuredFields(
-      "Contact me at john@example.com",
-      "entity",
-    );
+    const result = extractStructuredFields("Contact me at john@example.com", "entity");
     expect(result.key).toBe("email");
     expect(result.value).toBe("john@example.com");
   });
 
   it("extracts phone number", () => {
-    const result = extractStructuredFields(
-      "Call me at +1234567890123",
-      "entity",
-    );
+    const result = extractStructuredFields("Call me at +1234567890123", "entity");
     expect(result.key).toBe("phone");
     expect(result.value).toBe("+1234567890123");
   });
 
   it("returns nulls for unstructured text", () => {
-    const result = extractStructuredFields(
-      "The weather is nice today",
-      "fact",
-    );
+    const result = extractStructuredFields("The weather is nice today", "fact");
     expect(result.entity).toBeNull();
     expect(result.key).toBeNull();
     expect(result.value).toBeNull();
@@ -573,7 +549,10 @@ describe("unionFind / getRoot", () => {
   it("handles transitive edges", () => {
     const parent = unionFind(
       ["a", "b", "c"],
-      [["a", "b"], ["b", "c"]],
+      [
+        ["a", "b"],
+        ["b", "c"],
+      ],
     );
     expect(getRoot(parent, "a")).toBe(getRoot(parent, "c"));
   });

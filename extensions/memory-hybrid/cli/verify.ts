@@ -9,10 +9,11 @@ import { withExit, type Chainable } from "./shared.js";
 export type VerifyContext = {
   runVerify: (opts: { fix: boolean; logFile?: string; testLlm?: boolean }, sink: VerifyCliSink) => Promise<void>;
   runInstall: (opts: { dryRun: boolean }) => Promise<InstallCliResult>;
+  runResetAuthBackoff: () => Promise<void>;
 };
 
 export function registerVerifyCommands(mem: Chainable, ctx: VerifyContext): void {
-  const { runVerify, runInstall } = ctx;
+  const { runVerify, runInstall, runResetAuthBackoff } = ctx;
 
   mem
     .command("verify")
@@ -21,46 +22,73 @@ export function registerVerifyCommands(mem: Chainable, ctx: VerifyContext): void
     .option("--log-file <path>", "Check this log file for memory-hybrid / cron errors")
     .option("--test-llm", "Test each configured LLM model with a minimal completion (requires gateway)")
     .option("--no-emoji", "Use plain text indicators instead of emoji (for terminals with poor Unicode support)")
-    .action(withExit(async (opts: { fix?: boolean; logFile?: string; testLlm?: boolean; noEmoji?: boolean }) => {
-      if (opts.noEmoji) process.env.HYBRID_MEM_NO_EMOJI = "1";
-      try {
-        await runVerify(
-          { fix: !!opts.fix, logFile: opts.logFile, testLlm: !!opts.testLlm },
-          { log: (s) => console.log(s), error: (s) => console.error(s) },
-        );
-      } catch (err) {
-        capturePluginError(err instanceof Error ? err : new Error(String(err)), { subsystem: "cli", operation: "verify" });
-        throw err;
-      }
-    }));
+    .action(
+      withExit(async (opts: { fix?: boolean; logFile?: string; testLlm?: boolean; noEmoji?: boolean }) => {
+        if (opts.noEmoji) process.env.HYBRID_MEM_NO_EMOJI = "1";
+        try {
+          await runVerify(
+            { fix: !!opts.fix, logFile: opts.logFile, testLlm: !!opts.testLlm },
+            { log: (s) => console.log(s), error: (s) => console.error(s) },
+          );
+        } catch (err) {
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+            subsystem: "cli",
+            operation: "verify",
+          });
+          throw err;
+        }
+      }),
+    );
+
+  mem
+    .command("reset-auth-backoff")
+    .description(
+      "Clear OAuth failover backoff so the next LLM call will try OAuth again for providers that have both OAuth and API key.",
+    )
+    .action(
+      withExit(async () => {
+        await runResetAuthBackoff();
+      }),
+    );
 
   mem
     .command("install")
-    .description("Apply full recommended config, prompts, and optional jobs (idempotent). Run after first plugin setup for best defaults.")
+    .description(
+      "Apply full recommended config, prompts, and optional jobs (idempotent). Run after first plugin setup for best defaults.",
+    )
     .option("--dry-run", "Print what would be merged without writing")
-    .action(withExit(async (opts: { dryRun?: boolean }) => {
-      let result;
-      try {
-        result = await runInstall({ dryRun: !!opts.dryRun });
-      } catch (err) {
-        capturePluginError(err instanceof Error ? err : new Error(String(err)), { subsystem: "cli", operation: "install" });
-        throw err;
-      }
-      if (!result.ok) {
-        console.error(result.error);
-        process.exitCode = 1;
-        return;
-      }
-      if (result.dryRun) {
-        console.log("Would merge into " + result.configPath + ":");
-        console.log(result.configJson ?? "");
-        return;
-      }
-      console.log("Config written: " + result.configPath);
-      console.log(`Applied: plugins.slots.memory=${result.pluginId}, ${result.pluginId} config (all features), memorySearch, compaction prompts, bootstrap limits, autoClassify. Add cron jobs via 'openclaw cron add' if needed (see docs/SESSION-DISTILLATION.md).`);
-      console.log("\nNext steps:");
-      console.log(`  1. Set embedding.apiKey in plugins.entries["${result.pluginId}"].config (or use env:OPENAI_API_KEY in config).`);
-      console.log("  2. Restart the gateway: openclaw gateway stop && openclaw gateway start");
-      console.log("  3. Run: openclaw hybrid-mem verify [--fix]");
-    }));
+    .action(
+      withExit(async (opts: { dryRun?: boolean }) => {
+        let result;
+        try {
+          result = await runInstall({ dryRun: !!opts.dryRun });
+        } catch (err) {
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+            subsystem: "cli",
+            operation: "install",
+          });
+          throw err;
+        }
+        if (!result.ok) {
+          console.error(result.error);
+          process.exitCode = 1;
+          return;
+        }
+        if (result.dryRun) {
+          console.log("Would merge into " + result.configPath + ":");
+          console.log(result.configJson ?? "");
+          return;
+        }
+        console.log("Config written: " + result.configPath);
+        console.log(
+          `Applied: plugins.slots.memory=${result.pluginId}, ${result.pluginId} config (all features), memorySearch, compaction prompts, bootstrap limits, autoClassify. Add cron jobs via 'openclaw cron add' if needed (see docs/SESSION-DISTILLATION.md).`,
+        );
+        console.log("\nNext steps:");
+        console.log(
+          `  1. Set embedding.apiKey in plugins.entries["${result.pluginId}"].config (or use env:OPENAI_API_KEY in config).`,
+        );
+        console.log("  2. Restart the gateway: openclaw gateway stop && openclaw gateway start");
+        console.log("  3. Run: openclaw hybrid-mem verify [--fix]");
+      }),
+    );
 }

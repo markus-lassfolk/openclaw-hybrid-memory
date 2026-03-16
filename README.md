@@ -74,7 +74,7 @@ If you want an agent that feels like it knows you and gets better with use, this
 - **Silent mode** — set `verbosity: "silent"` to suppress all unsolicited memory context injections into prompts, working purely in the background.
 - **Full CLI** — commands for stats, search, classify, consolidate, reflect, dream-cycle, scope promote, verify, install, uninstall, and more ([docs/CLI-REFERENCE.md](docs/CLI-REFERENCE.md))
 - **Mission Control dashboard** — real-time web dashboard at `http://localhost:7700`: memory stats, cron job status, task queue, agent state, GitHub activity, and 7-day LLM cost tracking. Auto-refreshes every 60s. ([docs/CONFIGURATION.md](docs/CONFIGURATION.md#mission-control-dashboard-dashboard))
-- **One-command setup** — `openclaw hybrid-mem install` applies recommended config and **9 maintenance cron jobs** (nightly distill, memory-to-skills, self-correction, dream-cycle, weekly reflection, extract-procedures, deep-maintenance, persona-proposals, monthly consolidation)
+- **One-command setup** — `openclaw hybrid-mem install` applies recommended config and **8 maintenance cron jobs** (nightly distill, self-correction, dream-cycle, weekly reflection, extract-procedures, deep-maintenance, persona-proposals, monthly consolidation)
 - **Verify & fix** — `openclaw hybrid-mem verify --fix` diagnoses issues and adds any missing cron jobs
 - **Clean uninstall** — `openclaw hybrid-mem uninstall` reverts to default memory; data kept unless `--clean-all`
 
@@ -193,6 +193,18 @@ See [docs/QUICKSTART.md](docs/QUICKSTART.md) for the full walkthrough.
 **Agent self-evolution with human approval** - agents propose changes to identity files based on observed patterns; humans review and approve via CLI. Enable with `"personaProposals": { "enabled": true }`. Agent tools: `persona_propose`, `persona_proposals_list`. Human-only CLI: `openclaw proposals review <id> <approve|reject>`, `openclaw proposals apply <id>`.
 
 → Full doc: [PERSONA-PROPOSALS.md](docs/PERSONA-PROPOSALS.md) (config, safety, workflow).
+
+---
+
+## Development
+
+**Pre-commit formatting:** A pre-commit hook runs [Prettier](https://prettier.io/) on staged `extensions/memory-hybrid/**/*.ts` so CI format checks pass. Run **once** from the repo root:
+
+```bash
+npm install
+```
+
+This installs [husky](https://typicode.github.io/husky/) and [lint-staged](https://github.com/okonet/lint-staged); every `git commit` will format staged TypeScript files before the commit. Plugin code and tests live in `extensions/memory-hybrid/`; run `npm run test`, `npm run lint`, and `npx tsc --noEmit` there.
 
 ---
 

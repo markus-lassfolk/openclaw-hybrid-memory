@@ -108,7 +108,7 @@ const PASS1_SYSTEM_PROMPT =
 const PASS2_SYSTEM_PROMPT =
   "You are an implicit preference analyst. Extract implied preferences, corrections, and contextual signals " +
   "from the transcript that were NOT explicitly stated but can be reliably inferred. " +
-  "Focus on: preference changes (\"actually let's try X\"), implicit corrections, unstated constraints, workflow signals. " +
+  'Focus on: preference changes ("actually let\'s try X"), implicit corrections, unstated constraints, workflow signals. ' +
   `Return a JSON array of objects with keys: text (string), category (string), importance (0.0–1.0). Categories: ${EXTRACTION_CATEGORIES}. ` +
   "Return [] if no implicit facts can be reliably inferred.";
 
@@ -182,9 +182,7 @@ export function parseCandidateFacts(response: string, pass: 1 | 2): CandidateFac
     const rawCategory = typeof obj.category === "string" ? obj.category : "other";
     const category = normalizeCategory(rawCategory);
     const importance =
-      typeof obj.importance === "number" && obj.importance >= 0 && obj.importance <= 1
-        ? obj.importance
-        : 0.7;
+      typeof obj.importance === "number" && obj.importance >= 0 && obj.importance <= 1 ? obj.importance : 0.7;
     facts.push({ text: obj.text.trim(), category, importance, pass });
   }
   return facts;
@@ -199,11 +197,7 @@ export function parseCandidateFacts(response: string, pass: 1 | 2): CandidateFac
 export function parseVerdict(response: string): ExtractionVerdict {
   const trimmed = response.trim();
   if (/\bREJECTED\b/i.test(trimmed)) return "REJECTED";
-  if (
-    /\bCONFIRMED\b/i.test(trimmed) &&
-    !/\bNOT\s+CONFIRMED\b/i.test(trimmed) &&
-    !/\bUNCONFIRMED\b/i.test(trimmed)
-  ) {
+  if (/\bCONFIRMED\b/i.test(trimmed) && !/\bNOT\s+CONFIRMED\b/i.test(trimmed) && !/\bUNCONFIRMED\b/i.test(trimmed)) {
     return "CONFIRMED";
   }
   return "UNCERTAIN";

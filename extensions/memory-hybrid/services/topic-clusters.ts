@@ -110,11 +110,7 @@ function buildAdjacency(
  * BFS from startId, collecting all reachable fact IDs.
  * Marks visited nodes in the shared `visited` set.
  */
-function bfsComponent(
-  startId: string,
-  adj: Map<string, Set<string>>,
-  visited: Set<string>,
-): string[] {
+function bfsComponent(startId: string, adj: Map<string, Set<string>>, visited: Set<string>): string[] {
   const component: string[] = [];
   const queue: string[] = [startId];
   visited.add(startId);
@@ -162,7 +158,11 @@ export function generateClusterLabel(entries: MemoryEntry[]): string {
   if (entityCounts.size > 0) {
     const topEntity = [...entityCounts.entries()].sort((a, b) => b[1] - a[1])[0][0];
     // Limit to 3 words, lowercase
-    return topEntity.split(/[\s_-]+/).slice(0, 3).join(" ").toLowerCase();
+    return topEntity
+      .split(/[\s_-]+/)
+      .slice(0, 3)
+      .join(" ")
+      .toLowerCase();
   }
 
   // 2. Tag frequency (entry.tags is already string[] | null after DB mapping)
@@ -176,7 +176,11 @@ export function generateClusterLabel(entries: MemoryEntry[]): string {
   }
   if (tagCounts.size > 0) {
     const topTag = [...tagCounts.entries()].sort((a, b) => b[1] - a[1])[0][0];
-    return topTag.split(/[\s_-]+/).slice(0, 3).join(" ").toLowerCase();
+    return topTag
+      .split(/[\s_-]+/)
+      .slice(0, 3)
+      .join(" ")
+      .toLowerCase();
   }
 
   // 3. Category frequency
@@ -216,9 +220,7 @@ export function detectClusters(
   options: ClusterDetectionOptions = {},
 ): ClusterDetectionResult {
   const { minClusterSize = 3, existingClusterIds } = options;
-  const minSize = Number.isFinite(minClusterSize)
-    ? Math.max(1, Math.floor(minClusterSize))
-    : 3;
+  const minSize = Number.isFinite(minClusterSize) ? Math.max(1, Math.floor(minClusterSize)) : 3;
 
   const linkedFactIds = factsDb.getAllLinkedFactIds();
   const totalLinkedFacts = linkedFactIds.length;

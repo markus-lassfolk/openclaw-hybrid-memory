@@ -73,17 +73,13 @@ export class ProposalsDB {
   }
 
   private migrateRejectionReasonColumn(): void {
-    const cols = this.db
-      .prepare(`PRAGMA table_info(proposals)`)
-      .all() as Array<{ name: string }>;
+    const cols = this.db.prepare(`PRAGMA table_info(proposals)`).all() as Array<{ name: string }>;
     if (cols.some((c) => c.name === "rejection_reason")) return;
     this.db.exec(`ALTER TABLE proposals ADD COLUMN rejection_reason TEXT`);
   }
 
   private migrateTargetSnapshotColumns(): void {
-    const cols = this.db
-      .prepare(`PRAGMA table_info(proposals)`)
-      .all() as Array<{ name: string }>;
+    const cols = this.db.prepare(`PRAGMA table_info(proposals)`).all() as Array<{ name: string }>;
     if (!cols.some((c) => c.name === "target_mtime_ms")) {
       this.db.exec(`ALTER TABLE proposals ADD COLUMN target_mtime_ms REAL`);
     }
@@ -130,9 +126,7 @@ export class ProposalsDB {
   }
 
   get(id: string): ProposalEntry | null {
-    const row = this.db
-      .prepare("SELECT * FROM proposals WHERE id = ?")
-      .get(id) as any;
+    const row = this.db.prepare("SELECT * FROM proposals WHERE id = ?").get(id) as any;
     if (!row) return null;
     return this.rowToEntry(row);
   }
@@ -156,43 +150,30 @@ export class ProposalsDB {
     return rows.map((r) => this.rowToEntry(r));
   }
 
-  updateStatus(
-    id: string,
-    status: string,
-    reviewedBy?: string,
-    rejectionReason?: string,
-  ): ProposalEntry | null {
+  updateStatus(id: string, status: string, reviewedBy?: string, rejectionReason?: string): ProposalEntry | null {
     const now = Math.floor(Date.now() / 1000);
     this.db
-      .prepare(
-        "UPDATE proposals SET status = ?, reviewed_at = ?, reviewed_by = ?, rejection_reason = ? WHERE id = ?",
-      )
+      .prepare("UPDATE proposals SET status = ?, reviewed_at = ?, reviewed_by = ?, rejection_reason = ? WHERE id = ?")
       .run(status, now, reviewedBy ?? null, rejectionReason ?? null, id);
     return this.get(id);
   }
 
   markApplied(id: string): ProposalEntry | null {
     const now = Math.floor(Date.now() / 1000);
-    this.db
-      .prepare("UPDATE proposals SET status = 'applied', applied_at = ? WHERE id = ?")
-      .run(now, id);
+    this.db.prepare("UPDATE proposals SET status = 'applied', applied_at = ? WHERE id = ?").run(now, id);
     return this.get(id);
   }
 
   countRecentProposals(daysBack: number): number {
     const cutoff = Math.floor(Date.now() / 1000) - daysBack * 24 * 3600;
-    const row = this.db
-      .prepare("SELECT COUNT(*) as count FROM proposals WHERE created_at >= ?")
-      .get(cutoff) as any;
+    const row = this.db.prepare("SELECT COUNT(*) as count FROM proposals WHERE created_at >= ?").get(cutoff) as any;
     return row?.count ?? 0;
   }
 
   pruneExpired(): number {
     const now = Math.floor(Date.now() / 1000);
     const result = this.db
-      .prepare(
-        "DELETE FROM proposals WHERE expires_at IS NOT NULL AND expires_at < ? AND status = 'pending'",
-      )
+      .prepare("DELETE FROM proposals WHERE expires_at IS NOT NULL AND expires_at < ? AND status = 'pending'")
       .run(now);
     return result.changes;
   }
@@ -207,9 +188,9 @@ export class ProposalsDB {
       }
     } catch (err) {
       capturePluginError(err as Error, {
-        operation: 'json-parse-evidence',
-        severity: 'info',
-        subsystem: 'proposals'
+        operation: "json-parse-evidence",
+        severity: "info",
+        subsystem: "proposals",
       });
       // Corrupted JSON - fallback to empty array
       evidenceSessions = [];
@@ -247,9 +228,9 @@ export class ProposalsDB {
       this.db.close();
     } catch (err) {
       capturePluginError(err as Error, {
-        operation: 'db-close',
-        severity: 'info',
-        subsystem: 'proposals'
+        operation: "db-close",
+        severity: "info",
+        subsystem: "proposals",
       });
       /* already closed */
     }

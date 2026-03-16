@@ -1,4 +1,6 @@
 import { setMemoryCategories, getMemoryCategories, PRESET_OVERRIDES } from "../utils.js";
+import { versionInfo } from "../../versionInfo.js";
+import { isVersionAtLeast } from "../../utils/version-check.js";
 import type { HybridMemoryConfig, EmbeddingModelConfig, ConfigMode } from "../types/index.js";
 import {
   DEFAULT_MODEL,
@@ -56,7 +58,6 @@ import {
   parseFutureDateProtectionConfig,
   parseDocumentsConfig,
   parsePersonaProposalsConfig,
-  parseMemoryToSkillsConfig,
   parseMultiAgentConfig,
   parseErrorReportingConfig,
   parseWorkflowTrackingConfig,
@@ -77,7 +78,15 @@ function deepMergePreset(base: Record<string, unknown>, overrides: Record<string
   for (const key of Object.keys(overrides)) {
     const b = out[key];
     const o = overrides[key];
-    if (o !== undefined && o !== null && typeof o === "object" && !Array.isArray(o) && typeof b === "object" && b !== null && !Array.isArray(b)) {
+    if (
+      o !== undefined &&
+      o !== null &&
+      typeof o === "object" &&
+      !Array.isArray(o) &&
+      typeof b === "object" &&
+      b !== null &&
+      !Array.isArray(b)
+    ) {
       out[key] = deepMergePreset(b as Record<string, unknown>, o as Record<string, unknown>);
     } else if (o !== undefined) {
       out[key] = o;
@@ -123,7 +132,8 @@ function deepEqual(a: unknown, b: unknown): boolean {
 /** True if user value explicitly overrides a preset key (same key, different value). Extra keys in user (e.g. encryptionKey) do not count. */
 function userOverridesPresetValue(userVal: unknown, presetVal: unknown): boolean {
   if (presetVal !== undefined && presetVal !== null && typeof presetVal === "object" && !Array.isArray(presetVal)) {
-    if (userVal === undefined || userVal === null || typeof userVal !== "object" || Array.isArray(userVal)) return false;
+    if (userVal === undefined || userVal === null || typeof userVal !== "object" || Array.isArray(userVal))
+      return false;
     const u = userVal as Record<string, unknown>;
     const p = presetVal as Record<string, unknown>;
     for (const key of Object.keys(p)) {
@@ -132,6 +142,50 @@ function userOverridesPresetValue(userVal: unknown, presetVal: unknown): boolean
     return false;
   }
   return !deepEqual(userVal, presetVal);
+}
+
+/**
+ * Phase 1 (2026.3.140+): Force core-only baseline for all installations.
+ * Overrides user-set values to establish consistent baseline.
+ */
+function applyPhase1CoreOnlyMigration(cfg: Record<string, unknown>): void {
+  cfg.queryExpansion = {
+    ...(typeof cfg.queryExpansion === "object" && cfg.queryExpansion !== null ? cfg.queryExpansion : {}),
+    enabled: false,
+  } as Record<string, unknown>;
+  const forceDisabledKeys = [
+    "frustrationDetection",
+    "nightlyCycle",
+    "passiveObserver",
+    "workflowTracking",
+    "selfExtension",
+    "crystallization",
+    "verification",
+    "provenance",
+    "aliases",
+    "crossAgentLearning",
+    "reranking",
+    "contextualVariants",
+    "documents",
+    "personaProposals",
+  ];
+  for (const key of forceDisabledKeys) {
+    const existing = cfg[key];
+    const base =
+      typeof existing === "object" && existing !== null && !Array.isArray(existing)
+        ? (existing as Record<string, unknown>)
+        : {};
+    (cfg as Record<string, unknown>)[key] = { ...base, enabled: false };
+  }
+  const g = cfg.graph as Record<string, unknown> | undefined;
+  if (g && typeof g === "object") {
+    cfg.graph = { ...g, strengthenOnRecall: false };
+  }
+  // Credential auto-detect: make opt-in (recommendations §2 resolution)
+  const cred = cfg.credentials as Record<string, unknown> | undefined;
+  if (cred && typeof cred === "object") {
+    cfg.credentials = { ...cred, autoDetect: false };
+  }
 }
 
 export function vectorDimsForModel(model: string, fallback?: number): number {
@@ -153,17 +207,32 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
   }
   let cfg = value as Record<string, unknown>;
   const modeRaw = cfg.mode;
-  const validModes: ConfigMode[] = ["essential", "normal", "expert", "full"];
-  const defaultMode: ConfigMode = "full"; // best experience out of the box; use essential/normal for low-resource or cost-conscious setups
-  // Fail fast on typos/invalid modes rather than silently applying full preset
-  if (typeof modeRaw === "string" && modeRaw.trim() !== "" && !validModes.includes(modeRaw as ConfigMode)) {
-    throw new Error(`memory-hybrid config: invalid mode "${modeRaw}"; expected one of: ${validModes.join(", ")}`);
+  const validModes: ConfigMode[] = ["local", "minimal", "enhanced", "complete"];
+  const defaultMode: ConfigMode = "local"; // cost-safety default: no external LLM until user opts in
+  const deprecatedModeNames = ["essential", "normal", "expert", "full"] as const;
+  // Force reset: all deprecated mode names map to local; user must set new name to get higher tiers
+  const deprecatedModeMapping: Record<string, ConfigMode> = {
+    essential: "local",
+    normal: "local",
+    expert: "local",
+    full: "local",
+  };
+  let appliedMode: ConfigMode;
+  if (typeof modeRaw === "string" && modeRaw.trim() !== "") {
+    const trimmed = modeRaw.trim();
+    if (validModes.includes(trimmed as ConfigMode)) {
+      appliedMode = trimmed as ConfigMode;
+    } else if (deprecatedModeNames.includes(trimmed as (typeof deprecatedModeNames)[number])) {
+      appliedMode = deprecatedModeMapping[trimmed] ?? "local";
+      console.warn(
+        `memory-hybrid: Config mode "${trimmed}" is deprecated and has been mapped to "${appliedMode}". Update your config to use the new mode names: local, minimal, enhanced, or complete.`,
+      );
+    } else {
+      throw new Error(`memory-hybrid config: invalid mode "${modeRaw}"; expected one of: ${validModes.join(", ")}`);
+    }
+  } else {
+    appliedMode = defaultMode;
   }
-  // Resolve the mode to apply: use the specified valid mode or fall back to default
-  const appliedMode: ConfigMode =
-    typeof modeRaw === "string" && validModes.includes(modeRaw as ConfigMode)
-      ? (modeRaw as ConfigMode)
-      : defaultMode;
   let hasPresetOverrides = false; // true when user explicitly overrode a preset value (show "Custom" in verify)
   // Apply preset for resolved mode (covers both explicit mode and default-mode paths, eliminating duplication)
   const preset = PRESET_OVERRIDES[appliedMode];
@@ -171,6 +240,10 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
   delete userRaw.mode;
   cfg = deepMergePreset(preset, cfg) as Record<string, unknown>;
   delete cfg.mode;
+  // Phase 1 (2026.3.140+): force core-only baseline for all installations (overrides user-set values too)
+  if (isVersionAtLeast(versionInfo.pluginVersion, "2026.3.140")) {
+    applyPhase1CoreOnlyMigration(cfg);
+  }
   // Only "Custom" when user explicitly set a preset key to a different value (not when they only add e.g. embedding or credentials.encryptionKey)
   for (const key of Object.keys(preset)) {
     if (!(key in userRaw)) continue;
@@ -186,20 +259,20 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
   const distillForEmbed = cfg.distill as { apiKey?: string } | undefined;
   const llmProvidersForEmbed = (cfg.llm as { providers?: Record<string, { apiKey?: string }> } | undefined)?.providers;
   const distillApiKeyRaw = typeof distillForEmbed?.apiKey === "string" ? distillForEmbed.apiKey.trim() : "";
-  const llmGoogleApiKeyRaw = typeof llmProvidersForEmbed?.google?.apiKey === "string" ? llmProvidersForEmbed.google.apiKey.trim() : "";
+  const llmGoogleApiKeyRaw =
+    typeof llmProvidersForEmbed?.google?.apiKey === "string" ? llmProvidersForEmbed.google.apiKey.trim() : "";
   // Recognize all SecretRef formats: env:VAR, file:/path, ${VAR} templates, or long literal keys.
   // Template detection uses .includes/${} pair check (no regex → no ReDoS risk).
   const looksLikeSecretRefOrKey = (k: string) =>
-    k.length >= 10 ||
-    k.startsWith("env:") ||
-    k.startsWith("file:") ||
-    (k.includes("${") && k.includes("}"));
+    k.length >= 10 || k.startsWith("env:") || k.startsWith("file:") || (k.includes("${") && k.includes("}"));
   const hasGoogleKey = looksLikeSecretRefOrKey(distillApiKeyRaw) || looksLikeSecretRefOrKey(llmGoogleApiKeyRaw);
   let embeddingProvider: EmbeddingProviderName;
   if (typeof embedding?.provider === "string" && validProviders.includes(embedding.provider)) {
     embeddingProvider = embedding.provider as EmbeddingProviderName;
   } else if (embedding?.provider !== undefined) {
-    throw new Error(`Invalid embedding.provider: '${embedding.provider}'. Valid options: openai, ollama, onnx, google.`);
+    throw new Error(
+      `Invalid embedding.provider: '${embedding.provider}'. Valid options: openai, ollama, onnx, google.`,
+    );
   } else {
     // Infer provider when omitted: openai if apiKey + OpenAI model; google if no openai/ollama but have google key; else ollama.
     const rawApiKey = embedding && typeof embedding.apiKey === "string" ? (embedding.apiKey as string).trim() : "";
@@ -211,14 +284,18 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
     const modelStr = typeof embedding?.model === "string" ? (embedding.model as string).trim() : "";
     const llm = cfg.llm as { nano?: string[]; default?: string[]; heavy?: string[] } | undefined;
     const llmListsForProvider = [llm?.nano, llm?.default, llm?.heavy].filter(Array.isArray) as string[][];
-    const hasOllamaInLlmForProvider = llmListsForProvider.some((list) => list.some((m) => typeof m === "string" && (m as string).startsWith("ollama/")));
+    const hasOllamaInLlmForProvider = llmListsForProvider.some((list) =>
+      list.some((m) => typeof m === "string" && (m as string).startsWith("ollama/")),
+    );
     if (hasApiKey && modelStr && isOpenAIModel(modelStr)) {
       embeddingProvider = "openai";
     } else if (!hasApiKey && !hasOllamaInLlmForProvider && hasGoogleKey) {
       embeddingProvider = "google";
     } else {
       if (embedding !== undefined) {
-        console.warn(`memory-hybrid: embedding.provider not set; defaulting to "ollama". Set embedding.provider explicitly (openai, ollama, onnx, google).`);
+        console.warn(
+          `memory-hybrid: embedding.provider not set; defaulting to "ollama". Set embedding.provider explicitly (openai, ollama, onnx, google).`,
+        );
       }
       embeddingProvider = "ollama";
     }
@@ -228,7 +305,9 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
   let resolvedApiKey: string | undefined;
   if (embeddingProvider === "openai") {
     if (!embedding || typeof embedding.apiKey !== "string") {
-      throw new Error("embedding.apiKey is required. Set it in plugins.entries[\"openclaw-hybrid-memory\"].config.embedding. Run 'openclaw hybrid-mem verify --fix' for help.");
+      throw new Error(
+        "embedding.apiKey is required. Set it in plugins.entries[\"openclaw-hybrid-memory\"].config.embedding. Run 'openclaw hybrid-mem verify --fix' for help.",
+      );
     }
     const rawKey = (embedding.apiKey as string).trim();
     // Resolve env:/file: SecretRef format (e.g. "env:OPENAI_API_KEY") as well as ${VAR} templates.
@@ -239,7 +318,9 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
         const refDesc = rawKey.startsWith("env:")
           ? `environment variable '${rawKey.slice(4)}'`
           : `file '${rawKey.slice(5)}'`;
-        throw new Error(`embedding.apiKey references ${refDesc} which could not be resolved. Ensure it is set and non-empty.`);
+        throw new Error(
+          `embedding.apiKey references ${refDesc} which could not be resolved. Ensure it is set and non-empty.`,
+        );
       }
       resolvedKey = resolved;
     } else {
@@ -247,7 +328,9 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
     }
     // Validate the resolved key — catches placeholders/short values originating from SecretRefs too.
     if (resolvedKey.length < 10 || resolvedKey === "YOUR_OPENAI_API_KEY" || resolvedKey === "<OPENAI_API_KEY>") {
-      throw new Error("embedding.apiKey is missing or a placeholder. Set a valid OpenAI API key in config. Run 'openclaw hybrid-mem verify --fix' for help.");
+      throw new Error(
+        "embedding.apiKey is missing or a placeholder. Set a valid OpenAI API key in config. Run 'openclaw hybrid-mem verify --fix' for help.",
+      );
     }
     resolvedApiKey = resolvedKey;
   } else if (embedding && typeof embedding.apiKey === "string") {
@@ -260,14 +343,14 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
         // Intentionally omit the SecretRef path from the message to avoid clear-text logging (CWE-312).
         console.warn(
           "Warning: embedding.apiKey fallback SecretRef could not be resolved. " +
-          "Fallback to OpenAI embeddings will be disabled. " +
-          'Update plugins.entries["openclaw-hybrid-memory"].config.embedding.apiKey or fix the SecretRef.',
+            "Fallback to OpenAI embeddings will be disabled. " +
+            'Update plugins.entries["openclaw-hybrid-memory"].config.embedding.apiKey or fix the SecretRef.',
         );
       } else if (resolved.length < 10 || resolved === "YOUR_OPENAI_API_KEY" || resolved === "<OPENAI_API_KEY>") {
         console.warn(
           `Warning: embedding.apiKey fallback resolved to a placeholder or invalid value. ` +
-          "Fallback to OpenAI embeddings will be disabled. " +
-          `Update plugins.entries["openclaw-hybrid-memory"].config.embedding.apiKey with a valid key.`,
+            "Fallback to OpenAI embeddings will be disabled. " +
+            `Update plugins.entries["openclaw-hybrid-memory"].config.embedding.apiKey with a valid key.`,
         );
       } else {
         resolvedApiKey = resolved;
@@ -278,8 +361,8 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
         if (resolved.length < 10 || resolved === "YOUR_OPENAI_API_KEY" || resolved === "<OPENAI_API_KEY>") {
           console.warn(
             `Warning: embedding.apiKey fallback resolved to a placeholder or invalid value. ` +
-            "Fallback to OpenAI embeddings will be disabled. " +
-            `Update plugins.entries["openclaw-hybrid-memory"].config.embedding.apiKey with a valid key.`,
+              "Fallback to OpenAI embeddings will be disabled. " +
+              `Update plugins.entries["openclaw-hybrid-memory"].config.embedding.apiKey with a valid key.`,
           );
         } else {
           resolvedApiKey = resolved;
@@ -287,8 +370,8 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
       } catch {
         console.warn(
           "Warning: embedding.apiKey fallback contains unresolved environment variable references. " +
-          "Fallback to OpenAI embeddings will be disabled. " +
-          'Update plugins.entries["openclaw-hybrid-memory"].config.embedding.apiKey or set the required environment variables.',
+            "Fallback to OpenAI embeddings will be disabled. " +
+            'Update plugins.entries["openclaw-hybrid-memory"].config.embedding.apiKey or set the required environment variables.',
         );
       }
     }
@@ -297,7 +380,8 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
   // Resolve model from explicit 'model' field or provider-specific aliases (ollamaModel, onnxModelPath)
   const primaryModelStr = typeof embedding?.model === "string" ? embedding.model.trim() : "";
   const ollamaModelAlias = typeof embedding?.ollamaModel === "string" ? (embedding.ollamaModel as string).trim() : "";
-  const onnxModelPathAlias = typeof embedding?.onnxModelPath === "string" ? (embedding.onnxModelPath as string).trim() : "";
+  const onnxModelPathAlias =
+    typeof embedding?.onnxModelPath === "string" ? (embedding.onnxModelPath as string).trim() : "";
   const resolvedModelStr =
     primaryModelStr ||
     (embeddingProvider === "ollama" ? ollamaModelAlias : "") ||
@@ -312,10 +396,16 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
         : embeddingProvider === "onnx"
           ? "embedding.model (or embedding.onnxModelPath)"
           : "embedding.model";
-    throw new Error(`${fieldHint} is required when provider='${embeddingProvider}'. Specify the model name (e.g., 'nomic-embed-text' for Ollama).`);
+    throw new Error(
+      `${fieldHint} is required when provider='${embeddingProvider}'. Specify the model name (e.g., 'nomic-embed-text' for Ollama).`,
+    );
   }
   const singleModel = resolvedModelStr || DEFAULT_MODEL;
-  const modelsRaw = Array.isArray(embedding?.models) ? (embedding.models as string[]).filter((m) => typeof m === "string" && (m as string).trim().length > 0).map((m) => (m as string).trim()) : [];
+  const modelsRaw = Array.isArray(embedding?.models)
+    ? (embedding.models as string[])
+        .filter((m) => typeof m === "string" && (m as string).trim().length > 0)
+        .map((m) => (m as string).trim())
+    : [];
   let embeddingModels: string[] | undefined;
   // Parse models for all providers (#6): for openai, these are the model preference list;
   // for ollama/onnx, these are the OpenAI fallback model names (used when apiKey is set).
@@ -326,12 +416,16 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
         vectorDimsForModel(m);
         // For ollama/onnx providers, models field contains OpenAI fallback names — reject non-OpenAI models
         if (embeddingProvider !== "openai" && !isOpenAIModel(m)) {
-          console.warn(`memory-hybrid: embedding.models — model "${m}" is not an OpenAI model and will be skipped. For provider='${embeddingProvider}', the models field must contain OpenAI fallback model names (e.g. text-embedding-3-small, text-embedding-3-large, text-embedding-ada-002).`);
+          console.warn(
+            `memory-hybrid: embedding.models — model "${m}" is not an OpenAI model and will be skipped. For provider='${embeddingProvider}', the models field must contain OpenAI fallback model names (e.g. text-embedding-3-small, text-embedding-3-large, text-embedding-ada-002).`,
+          );
           continue;
         }
         valid.push(m);
       } catch {
-        console.warn(`memory-hybrid: embedding.models — model "${m}" is not recognized and will be skipped. Check spelling or use a supported model (e.g. text-embedding-3-small, text-embedding-3-large, text-embedding-ada-002).`);
+        console.warn(
+          `memory-hybrid: embedding.models — model "${m}" is not recognized and will be skipped. Check spelling or use a supported model (e.g. text-embedding-3-small, text-embedding-3-large, text-embedding-ada-002).`,
+        );
       }
     }
     if (valid.length > 0) {
@@ -340,7 +434,9 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
         embeddingModels = valid;
       } else {
         const dims = valid.map((m) => `${m}=${vectorDimsForModel(m)}`).join(", ");
-        console.warn(`memory-hybrid: embedding.models — models have mismatched vector dimensions (${dims}); all will be ignored. Models in a list must share the same output dimension.`);
+        console.warn(
+          `memory-hybrid: embedding.models — models have mismatched vector dimensions (${dims}); all will be ignored. Models in a list must share the same output dimension.`,
+        );
       }
     }
   }
@@ -349,9 +445,8 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
   const model = embeddingProvider === "openai" ? (embeddingModels?.[0] ?? singleModel) : singleModel;
 
   // Resolve vector dimensions: explicit config takes priority, then look up from known models
-  const configDimensions = typeof embedding?.dimensions === "number" && embedding.dimensions > 0
-    ? embedding.dimensions
-    : undefined;
+  const configDimensions =
+    typeof embedding?.dimensions === "number" && embedding.dimensions > 0 ? embedding.dimensions : undefined;
   let resolvedDimensions: number;
   if (configDimensions !== undefined) {
     resolvedDimensions = configDimensions;
@@ -376,19 +471,19 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
     if (!EMBEDDING_DIMENSIONS[model]) {
       throw new Error(
         `memory-hybrid: embedding model '${model}' is not in the known-models list. ` +
-        `Set embedding.dimensions explicitly to the vector size your model produces. ` +
-        `Known models: ${Object.keys(EMBEDDING_DIMENSIONS).join(", ")}.`,
+          `Set embedding.dimensions explicitly to the vector size your model produces. ` +
+          `Known models: ${Object.keys(EMBEDDING_DIMENSIONS).join(", ")}.`,
       );
     }
     resolvedDimensions = vectorDimsForModel(model, 768); // 768 default for known ollama models
   }
 
-  const resolvedEndpoint = typeof embedding?.endpoint === "string" && embedding.endpoint.trim().length > 0
-    ? embedding.endpoint.trim()
-    : undefined;
-  const resolvedBatchSize = typeof embedding?.batchSize === "number" && embedding.batchSize > 0
-    ? Math.floor(embedding.batchSize)
-    : 50;
+  const resolvedEndpoint =
+    typeof embedding?.endpoint === "string" && embedding.endpoint.trim().length > 0
+      ? embedding.endpoint.trim()
+      : undefined;
+  const resolvedBatchSize =
+    typeof embedding?.batchSize === "number" && embedding.batchSize > 0 ? Math.floor(embedding.batchSize) : 50;
 
   // preferredProviders: explicit list or infer from LLM config (align with failover / Ollama-as-tier)
   const preferredProvidersRaw = embedding?.preferredProviders;
@@ -397,7 +492,9 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
   let preferredProviders: PreferredProvider[];
   if (Array.isArray(preferredProvidersRaw) && preferredProvidersRaw.length > 0) {
     preferredProviders = preferredProvidersRaw
-      .filter((p): p is PreferredProvider => typeof p === "string" && validProviderNames.includes(p as PreferredProvider))
+      .filter(
+        (p): p is PreferredProvider => typeof p === "string" && validProviderNames.includes(p as PreferredProvider),
+      )
       .filter((p, i, a) => a.indexOf(p) === i); // dedupe
     if (preferredProviders.length === 0) preferredProviders = ["ollama", "openai"];
   } else {
@@ -436,23 +533,29 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
   const multiModelProviders = ["openai", "ollama", "onnx"] as const;
   const multiModelRoles = ["general", "domain", "query", "custom"] as const;
   const parsedMultiModels: EmbeddingModelConfig[] = Array.isArray(multiModelsRaw)
-    ? (multiModelsRaw as unknown[]).filter((item): item is EmbeddingModelConfig => {
-        if (!item || typeof item !== "object") return false;
-        const o = item as Record<string, unknown>;
-        if (typeof o.name !== "string" || o.name.trim().length === 0) return false;
-        if (!multiModelProviders.includes(o.provider as "openai" | "ollama" | "onnx")) return false;
-        if (typeof o.dimensions !== "number" || o.dimensions <= 0) return false;
-        if (!multiModelRoles.includes(o.role as "general" | "domain" | "query" | "custom")) return false;
-        return true;
-      }).map((o) => ({
-        name: (o as unknown as Record<string, unknown>).name as string,
-        provider: (o as unknown as Record<string, unknown>).provider as "openai" | "ollama" | "onnx",
-        dimensions: (o as unknown as Record<string, unknown>).dimensions as number,
-        role: (o as unknown as Record<string, unknown>).role as "general" | "domain" | "query" | "custom",
-        ...(typeof (o as unknown as Record<string, unknown>).apiKey === "string" ? { apiKey: (o as unknown as Record<string, unknown>).apiKey as string } : {}),
-        ...(typeof (o as unknown as Record<string, unknown>).endpoint === "string" ? { endpoint: (o as unknown as Record<string, unknown>).endpoint as string } : {}),
-        ...((o as unknown as Record<string, unknown>).enabled === false ? { enabled: false } : {}),
-      }))
+    ? (multiModelsRaw as unknown[])
+        .filter((item): item is EmbeddingModelConfig => {
+          if (!item || typeof item !== "object") return false;
+          const o = item as Record<string, unknown>;
+          if (typeof o.name !== "string" || o.name.trim().length === 0) return false;
+          if (!multiModelProviders.includes(o.provider as "openai" | "ollama" | "onnx")) return false;
+          if (typeof o.dimensions !== "number" || o.dimensions <= 0) return false;
+          if (!multiModelRoles.includes(o.role as "general" | "domain" | "query" | "custom")) return false;
+          return true;
+        })
+        .map((o) => ({
+          name: (o as unknown as Record<string, unknown>).name as string,
+          provider: (o as unknown as Record<string, unknown>).provider as "openai" | "ollama" | "onnx",
+          dimensions: (o as unknown as Record<string, unknown>).dimensions as number,
+          role: (o as unknown as Record<string, unknown>).role as "general" | "domain" | "query" | "custom",
+          ...(typeof (o as unknown as Record<string, unknown>).apiKey === "string"
+            ? { apiKey: (o as unknown as Record<string, unknown>).apiKey as string }
+            : {}),
+          ...(typeof (o as unknown as Record<string, unknown>).endpoint === "string"
+            ? { endpoint: (o as unknown as Record<string, unknown>).endpoint as string }
+            : {}),
+          ...((o as unknown as Record<string, unknown>).enabled === false ? { enabled: false } : {}),
+        }))
     : [];
 
   // Parse custom categories
@@ -466,9 +569,7 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
   }
 
   const captureMaxChars =
-    typeof cfg.captureMaxChars === "number" && cfg.captureMaxChars > 0
-      ? cfg.captureMaxChars
-      : 5000;
+    typeof cfg.captureMaxChars === "number" && cfg.captureMaxChars > 0 ? cfg.captureMaxChars : 5000;
 
   const langKwRaw = cfg.languageKeywords as Record<string, unknown> | undefined;
   const languageKeywords =
@@ -489,23 +590,35 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
       ? {
           apiKey: typeof distillRaw.apiKey === "string" ? distillRaw.apiKey : undefined,
           defaultModel: typeof distillRaw.defaultModel === "string" ? distillRaw.defaultModel : undefined,
-          fallbackModels: Array.isArray(distillRaw.fallbackModels) && distillRaw.fallbackModels.every((m) => typeof m === "string")
-            ? (distillRaw.fallbackModels as string[])
-            : undefined,
+          fallbackModels:
+            Array.isArray(distillRaw.fallbackModels) && distillRaw.fallbackModels.every((m) => typeof m === "string")
+              ? (distillRaw.fallbackModels as string[])
+              : undefined,
           extractDirectives: distillRaw.extractDirectives !== false,
           extractReinforcement: distillRaw.extractReinforcement !== false,
-          reinforcementBoost: typeof distillRaw.reinforcementBoost === "number" && distillRaw.reinforcementBoost >= 0 && distillRaw.reinforcementBoost <= 1.0
-            ? distillRaw.reinforcementBoost
-            : 0.1,
-          reinforcementProcedureBoost: typeof distillRaw.reinforcementProcedureBoost === "number" && distillRaw.reinforcementProcedureBoost >= 0 && distillRaw.reinforcementProcedureBoost <= 1.0
-            ? distillRaw.reinforcementProcedureBoost
-            : 0.1,
-          reinforcementPromotionThreshold: typeof distillRaw.reinforcementPromotionThreshold === "number" && distillRaw.reinforcementPromotionThreshold >= 1
-            ? Math.floor(distillRaw.reinforcementPromotionThreshold)
-            : 2,
+          reinforcementBoost:
+            typeof distillRaw.reinforcementBoost === "number" &&
+            distillRaw.reinforcementBoost >= 0 &&
+            distillRaw.reinforcementBoost <= 1.0
+              ? distillRaw.reinforcementBoost
+              : 0.1,
+          reinforcementProcedureBoost:
+            typeof distillRaw.reinforcementProcedureBoost === "number" &&
+            distillRaw.reinforcementProcedureBoost >= 0 &&
+            distillRaw.reinforcementProcedureBoost <= 1.0
+              ? distillRaw.reinforcementProcedureBoost
+              : 0.1,
+          reinforcementPromotionThreshold:
+            typeof distillRaw.reinforcementPromotionThreshold === "number" &&
+            distillRaw.reinforcementPromotionThreshold >= 1
+              ? Math.floor(distillRaw.reinforcementPromotionThreshold)
+              : 2,
           extractionModelTier: (() => {
-            const v = typeof distillRaw.extractionModelTier === "string" ? distillRaw.extractionModelTier.trim().toLowerCase() : "";
-            return (v === "nano" || v === "default" || v === "heavy") ? (v as "nano" | "default" | "heavy") : undefined;
+            const v =
+              typeof distillRaw.extractionModelTier === "string"
+                ? distillRaw.extractionModelTier.trim().toLowerCase()
+                : "";
+            return v === "nano" || v === "default" || v === "heavy" ? (v as "nano" | "default" | "heavy") : undefined;
           })(),
         }
       : undefined;
@@ -524,10 +637,8 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
       multiModels: parsedMultiModels.length > 0 ? parsedMultiModels : undefined,
       autoMigrate: embedding?.autoMigrate === true,
     },
-    lanceDbPath:
-      typeof cfg.lanceDbPath === "string" ? cfg.lanceDbPath : DEFAULT_LANCE_PATH,
-    sqlitePath:
-      typeof cfg.sqlitePath === "string" ? cfg.sqlitePath : DEFAULT_SQLITE_PATH,
+    lanceDbPath: typeof cfg.lanceDbPath === "string" ? cfg.lanceDbPath : DEFAULT_LANCE_PATH,
+    sqlitePath: typeof cfg.sqlitePath === "string" ? cfg.sqlitePath : DEFAULT_SQLITE_PATH,
     autoCapture: cfg.autoCapture !== false,
     autoRecall: parseAutoRecallConfig(cfg),
     captureMaxChars,
@@ -543,7 +654,6 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
     reflection: parseReflectionConfig(cfg),
     procedures: parseProceduresConfig(cfg),
     extraction: parseExtractionConfig(cfg),
-    memoryToSkills: parseMemoryToSkillsConfig(cfg),
     memoryTiering: parseMemoryTieringConfig(cfg),
     llm: parseLLMConfig(cfg),
     auth: parseAuthConfig(cfg),
@@ -599,7 +709,9 @@ export function parseVerbosityLevel(cfg: Record<string, unknown>): import("../ty
     return raw as import("../types/index.js").VerbosityLevel;
   }
   if (raw !== undefined) {
-    console.warn(`memory-hybrid: invalid verbosity "${raw}"; expected one of: ${valid.join(", ")}. Defaulting to "normal".`);
+    console.warn(
+      `memory-hybrid: invalid verbosity "${raw}"; expected one of: ${valid.join(", ")}. Defaulting to "normal".`,
+    );
   }
   return "normal";
 }

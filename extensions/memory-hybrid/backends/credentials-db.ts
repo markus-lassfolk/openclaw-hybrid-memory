@@ -81,14 +81,14 @@ export class CredentialsDB {
     mkdirSync(dirname(dbPath), { recursive: true });
     this.db = new Database(dbPath);
     this.applyPragmas();
-    
+
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS vault_meta (
         key TEXT PRIMARY KEY,
         value BLOB NOT NULL
       )
     `);
-    
+
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS credentials (
         service TEXT NOT NULL,
@@ -105,10 +105,14 @@ export class CredentialsDB {
     this.db.exec(`
       CREATE INDEX IF NOT EXISTS idx_credentials_service ON credentials(service)
     `);
-    
-    const versionRow = this.db.prepare("SELECT value FROM vault_meta WHERE key = 'kdf_version'").get() as { value: Buffer } | undefined;
-    const saltRow = this.db.prepare("SELECT value FROM vault_meta WHERE key = 'salt'").get() as { value: Buffer } | undefined;
-    
+
+    const versionRow = this.db.prepare("SELECT value FROM vault_meta WHERE key = 'kdf_version'").get() as
+      | { value: Buffer }
+      | undefined;
+    const saltRow = this.db.prepare("SELECT value FROM vault_meta WHERE key = 'salt'").get() as
+      | { value: Buffer }
+      | undefined;
+
     if (!this.encrypted) {
       // Plaintext vault: no key derived
       this.kdfVersion = CRED_KDF_PLAINTEXT;
@@ -117,22 +121,25 @@ export class CredentialsDB {
       this.password = null;
       if (versionRow && Buffer.isBuffer(versionRow.value) && versionRow.value[0] !== CRED_KDF_PLAINTEXT) {
         throw new Error(
-          "Credentials vault was created with encryption. Set credentials.encryptionKey (or OPENCLAW_CRED_KEY) to open it, or use a new vault path for an unencrypted vault."
+          "Credentials vault was created with encryption. Set credentials.encryptionKey (or OPENCLAW_CRED_KEY) to open it, or use a new vault path for an unencrypted vault.",
         );
       }
       if (!versionRow) {
         // C1 FIX: Check if vault has encrypted data before marking as plaintext
-        const hasCredentials = (this.db.prepare("SELECT COUNT(*) as count FROM credentials").get() as { count: number }).count > 0;
+        const hasCredentials =
+          (this.db.prepare("SELECT COUNT(*) as count FROM credentials").get() as { count: number }).count > 0;
         if (hasCredentials) {
           throw new Error(
-            "Credentials vault contains data but no encryption metadata. This vault may have encrypted credentials. Provide credentials.encryptionKey to open it."
+            "Credentials vault contains data but no encryption metadata. This vault may have encrypted credentials. Provide credentials.encryptionKey to open it.",
           );
         }
-        this.db.prepare("INSERT OR REPLACE INTO vault_meta (key, value) VALUES ('kdf_version', ?)").run(Buffer.from([CRED_KDF_PLAINTEXT]));
+        this.db
+          .prepare("INSERT OR REPLACE INTO vault_meta (key, value) VALUES ('kdf_version', ?)")
+          .run(Buffer.from([CRED_KDF_PLAINTEXT]));
       }
       return;
     }
-    
+
     // Check if vault is plaintext first (before assuming legacy)
     if (versionRow && Buffer.isBuffer(versionRow.value) && versionRow.value[0] === CRED_KDF_PLAINTEXT) {
       // C2 FIX: DB is plaintext, override this.encrypted regardless of key length
@@ -144,14 +151,17 @@ export class CredentialsDB {
       this.password = null;
       // Optionally warn that key is being ignored
       if (encryptionKey.length >= 16) {
-        console.warn("Credentials vault is in plaintext mode (kdf_version=0). The provided encryption key is being ignored.");
+        console.warn(
+          "Credentials vault is in plaintext mode (kdf_version=0). The provided encryption key is being ignored.",
+        );
       }
       return;
     }
-    
+
     if (!versionRow || !saltRow) {
-      const hasCredentials = (this.db.prepare("SELECT COUNT(*) as count FROM credentials").get() as { count: number }).count > 0;
-      
+      const hasCredentials =
+        (this.db.prepare("SELECT COUNT(*) as count FROM credentials").get() as { count: number }).count > 0;
+
       if (hasCredentials) {
         this.kdfVersion = 1;
         this.salt = Buffer.alloc(0);
@@ -162,7 +172,9 @@ export class CredentialsDB {
         this.salt = randomBytes(32);
         this.key = deriveKey(encryptionKey, this.salt, this.kdfVersion);
         this.password = null;
-        this.db.prepare("INSERT OR REPLACE INTO vault_meta (key, value) VALUES ('kdf_version', ?)").run(Buffer.from([this.kdfVersion]));
+        this.db
+          .prepare("INSERT OR REPLACE INTO vault_meta (key, value) VALUES ('kdf_version', ?)")
+          .run(Buffer.from([this.kdfVersion]));
         this.db.prepare("INSERT OR REPLACE INTO vault_meta (key, value) VALUES ('salt', ?)").run(this.salt);
       }
     } else {
@@ -196,9 +208,7 @@ export class CredentialsDB {
     expires?: number | null;
   }): CredentialEntry {
     const now = Math.floor(Date.now() / 1000);
-    const stored = this.encrypted
-      ? encryptValue(entry.value, this.key)
-      : Buffer.from(entry.value, "utf8");
+    const stored = this.encrypted ? encryptValue(entry.value, this.key) : Buffer.from(entry.value, "utf8");
     this.liveDb
       .prepare(
         `INSERT INTO credentials (service, type, value, url, notes, created, updated, expires)
@@ -210,16 +220,7 @@ export class CredentialsDB {
            updated = excluded.updated,
            expires = excluded.expires`,
       )
-      .run(
-        entry.service,
-        entry.type,
-        stored,
-        entry.url ?? null,
-        entry.notes ?? null,
-        now,
-        now,
-        entry.expires ?? null,
-      );
+      .run(entry.service, entry.type, stored, entry.url ?? null, entry.notes ?? null, now, now, entry.expires ?? null);
     return {
       service: entry.service,
       type: entry.type,
@@ -234,30 +235,32 @@ export class CredentialsDB {
 
   get(service: string, type?: CredentialType): CredentialEntry | null {
     const row = type
-      ? (this.liveDb.prepare("SELECT * FROM credentials WHERE service = ? AND type = ?").get(service, type) as Record<string, unknown> | undefined)
-      : (this.liveDb.prepare("SELECT * FROM credentials WHERE service = ? ORDER BY updated DESC LIMIT 1").get(service) as Record<string, unknown> | undefined);
+      ? (this.liveDb.prepare("SELECT * FROM credentials WHERE service = ? AND type = ?").get(service, type) as
+          | Record<string, unknown>
+          | undefined)
+      : (this.liveDb
+          .prepare("SELECT * FROM credentials WHERE service = ? ORDER BY updated DESC LIMIT 1")
+          .get(service) as Record<string, unknown> | undefined);
     if (!row) return null;
     const buf = row.value as Buffer;
-    const value = this.encrypted
-      ? decryptValue(buf, this.key)
-      : buf.toString("utf8");
-    
+    const value = this.encrypted ? decryptValue(buf, this.key) : buf.toString("utf8");
+
     if (this.kdfVersion === 1) {
       try {
         this.migrateLegacyVault();
       } catch (err) {
         capturePluginError(err as Error, {
-          operation: 'migrate-vault',
-          severity: 'info',
-          subsystem: 'credentials'
+          operation: "migrate-vault",
+          severity: "info",
+          subsystem: "credentials",
         });
         // Migration is best-effort; failure should not block credential retrieval
       }
     }
-    
+
     return {
       service: row.service as string,
-      type: (row.type as string) as CredentialType,
+      type: row.type as string as CredentialType,
       value,
       url: (row.url as string) ?? null,
       notes: (row.notes as string) ?? null,
@@ -266,20 +269,20 @@ export class CredentialsDB {
       expires: (row.expires as number) ?? null,
     };
   }
-  
+
   /** Migrate legacy SHA-256 vault to scrypt. Called after first successful decryption. */
   private migrateLegacyVault(): void {
     if (!this.password) {
       throw new Error("Migration requires password");
     }
-    
+
     // Fetch all credentials (will be decrypted with old key)
     const rows = this.liveDb.prepare("SELECT * FROM credentials").all() as Array<Record<string, unknown>>;
-    
+
     // Generate new salt and derive new key with scrypt
     this.salt = randomBytes(32);
     const newKey = deriveKey(this.password, this.salt, CRED_KDF_VERSION);
-    
+
     // Wrap all mutations in a transaction to prevent partial migration
     const migrate = this.liveDb.transaction(() => {
       // Re-encrypt all credentials with new key
@@ -290,14 +293,16 @@ export class CredentialsDB {
         const newEncrypted = encryptValue(plaintext, newKey); // Encrypt with new key
         updateStmt.run(newEncrypted, row.service, row.type);
       }
-      
+
       // Update metadata
-      this.liveDb.prepare("INSERT OR REPLACE INTO vault_meta (key, value) VALUES ('kdf_version', ?)").run(Buffer.from([CRED_KDF_VERSION]));
+      this.liveDb
+        .prepare("INSERT OR REPLACE INTO vault_meta (key, value) VALUES ('kdf_version', ?)")
+        .run(Buffer.from([CRED_KDF_VERSION]));
       this.liveDb.prepare("INSERT OR REPLACE INTO vault_meta (key, value) VALUES ('salt', ?)").run(this.salt);
     });
-    
+
     migrate();
-    
+
     // Update instance state
     this.kdfVersion = CRED_KDF_VERSION;
     this.key = newKey;
@@ -334,25 +339,14 @@ export class CredentialsDB {
     }
 
     const now = Math.floor(Date.now() / 1000);
-    const stored = this.encrypted
-      ? encryptValue(entry.value, this.key)
-      : Buffer.from(entry.value, "utf8");
+    const stored = this.encrypted ? encryptValue(entry.value, this.key) : Buffer.from(entry.value, "utf8");
     const result = this.liveDb
       .prepare(
         `INSERT INTO credentials (service, type, value, url, notes, created, updated, expires)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(service, type) DO NOTHING`,
       )
-      .run(
-        entry.service,
-        entry.type,
-        stored,
-        entry.url ?? null,
-        entry.notes ?? null,
-        now,
-        now,
-        entry.expires ?? null,
-      );
+      .run(entry.service, entry.type, stored, entry.url ?? null, entry.notes ?? null, now, now, entry.expires ?? null);
     if (result.changes === 0) {
       // A credential already exists for this service+type; do not overwrite it.
       return null;
@@ -372,7 +366,9 @@ export class CredentialsDB {
   /** Returns true if an entry already exists for the given service (and optional type). */
   exists(service: string, type?: CredentialType): boolean {
     if (type) {
-      const row = this.liveDb.prepare("SELECT 1 FROM credentials WHERE service = ? AND type = ? LIMIT 1").get(service, type);
+      const row = this.liveDb
+        .prepare("SELECT 1 FROM credentials WHERE service = ? AND type = ? LIMIT 1")
+        .get(service, type);
       return !!row;
     }
     const row = this.liveDb.prepare("SELECT 1 FROM credentials WHERE service = ? LIMIT 1").get(service);
@@ -384,15 +380,15 @@ export class CredentialsDB {
    * Use sparingly (decrypts every value). Primarily for audit operations.
    */
   listAll(): CredentialEntry[] {
-    const rows = this.liveDb.prepare("SELECT * FROM credentials ORDER BY service, type").all() as Array<Record<string, unknown>>;
+    const rows = this.liveDb.prepare("SELECT * FROM credentials ORDER BY service, type").all() as Array<
+      Record<string, unknown>
+    >;
     return rows.map((row) => {
       const buf = row.value as Buffer;
-      const value = this.encrypted
-        ? decryptValue(buf, this.key)
-        : buf.toString("utf8");
+      const value = this.encrypted ? decryptValue(buf, this.key) : buf.toString("utf8");
       return {
         service: row.service as string,
-        type: (row.type as string) as CredentialType,
+        type: row.type as string as CredentialType,
         value,
         url: (row.url as string) ?? null,
         notes: (row.notes as string) ?? null,
@@ -404,7 +400,9 @@ export class CredentialsDB {
   }
 
   list(): Array<{ service: string; type: string; url: string | null; expires: number | null }> {
-    const rows = this.liveDb.prepare("SELECT service, type, url, expires FROM credentials ORDER BY service, type").all() as Array<{
+    const rows = this.liveDb
+      .prepare("SELECT service, type, url, expires FROM credentials ORDER BY service, type")
+      .all() as Array<{
       service: string;
       type: string;
       url: string | null;
@@ -427,9 +425,9 @@ export class CredentialsDB {
       this.db.close();
     } catch (err) {
       capturePluginError(err as Error, {
-        operation: 'db-close',
-        severity: 'info',
-        subsystem: 'credentials'
+        operation: "db-close",
+        severity: "info",
+        subsystem: "credentials",
       });
       /* already closed */
     }

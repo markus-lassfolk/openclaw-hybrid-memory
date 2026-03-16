@@ -36,15 +36,39 @@ afterEach(() => {
 });
 
 // Minimal FactsDB stub
-function makeFactsDbStub(overrides?: Partial<Pick<FactsDB, "getCount" | "statsBreakdownByCategory" | "getBatch">>): FactsDB {
+function makeFactsDbStub(
+  overrides?: Partial<Pick<FactsDB, "getCount" | "statsBreakdownByCategory" | "getBatch">>,
+): FactsDB {
   return {
     getCount: overrides?.getCount ?? (() => 42),
-    statsBreakdownByCategory: overrides?.statsBreakdownByCategory ?? (() => ({ preference: 10, goal: 5, skill: 15, other: 12 })),
-    getBatch: overrides?.getBatch ?? ((_offset: number, _limit: number) => [
-      { id: "f1", category: "preference", recallCount: 5, lastAccessed: Math.floor(Date.now() / 1000) - 3600, supersededAt: null },
-      { id: "f2", category: "goal", recallCount: 1, lastAccessed: Math.floor(Date.now() / 1000) - 86400 * 20, supersededAt: null },
-      { id: "f3", category: "skill", recallCount: 3, lastAccessed: Math.floor(Date.now() / 1000) - 600, supersededAt: null },
-    ] as unknown as ReturnType<FactsDB["getBatch"]>),
+    statsBreakdownByCategory:
+      overrides?.statsBreakdownByCategory ?? (() => ({ preference: 10, goal: 5, skill: 15, other: 12 })),
+    getBatch:
+      overrides?.getBatch ??
+      ((_offset: number, _limit: number) =>
+        [
+          {
+            id: "f1",
+            category: "preference",
+            recallCount: 5,
+            lastAccessed: Math.floor(Date.now() / 1000) - 3600,
+            supersededAt: null,
+          },
+          {
+            id: "f2",
+            category: "goal",
+            recallCount: 1,
+            lastAccessed: Math.floor(Date.now() / 1000) - 86400 * 20,
+            supersededAt: null,
+          },
+          {
+            id: "f3",
+            category: "skill",
+            recallCount: 3,
+            lastAccessed: Math.floor(Date.now() / 1000) - 600,
+            supersededAt: null,
+          },
+        ] as unknown as ReturnType<FactsDB["getBatch"]>),
   } as unknown as FactsDB;
 }
 
@@ -167,7 +191,10 @@ describe("sweepSessionHistory", () => {
   it("deduplicates within cooldown window", async () => {
     const sessionDir = join(tmpDir, "sessions2");
     mkdirSync(sessionDir);
-    writeFileSync(join(sessionDir, "s1.jsonl"), JSON.stringify({ message: "hello world", timestamp: new Date().toISOString() }));
+    writeFileSync(
+      join(sessionDir, "s1.jsonl"),
+      JSON.stringify({ message: "hello world", timestamp: new Date().toISOString() }),
+    );
 
     process.env.OPENCLAW_SESSION_DIR = sessionDir;
     try {
@@ -215,11 +242,12 @@ describe("sweepMemoryPatterns", () => {
 
   it("correctly identifies hot facts by recallCount threshold", async () => {
     const factsDb = makeFactsDbStub({
-      getBatch: () => [
-        { id: "hot1", category: "preference", recallCount: 10, lastAccessed: Date.now() / 1000, supersededAt: null },
-        { id: "cold1", category: "skill", recallCount: 0, lastAccessed: Date.now() / 1000, supersededAt: null },
-        { id: "hot2", category: "skill", recallCount: 5, lastAccessed: Date.now() / 1000, supersededAt: null },
-      ] as unknown as ReturnType<FactsDB["getBatch"]>,
+      getBatch: () =>
+        [
+          { id: "hot1", category: "preference", recallCount: 10, lastAccessed: Date.now() / 1000, supersededAt: null },
+          { id: "cold1", category: "skill", recallCount: 0, lastAccessed: Date.now() / 1000, supersededAt: null },
+          { id: "hot2", category: "skill", recallCount: 5, lastAccessed: Date.now() / 1000, supersededAt: null },
+        ] as unknown as ReturnType<FactsDB["getBatch"]>,
     });
 
     const cfg = { enabled: true, hotAccessThreshold: 3, staleAfterDays: 14, importance: 0.4 };
@@ -236,10 +264,11 @@ describe("sweepMemoryPatterns", () => {
     const staleSec = Math.floor((Date.now() - 20 * 24 * 3600 * 1000) / 1000); // 20 days ago
     const recentSec = Math.floor(Date.now() / 1000) - 3600; // 1 hour ago
     const factsDb = makeFactsDbStub({
-      getBatch: () => [
-        { id: "stale1", category: "preference", recallCount: 0, lastAccessed: staleSec, supersededAt: null },
-        { id: "recent1", category: "skill", recallCount: 0, lastAccessed: recentSec, supersededAt: null },
-      ] as unknown as ReturnType<FactsDB["getBatch"]>,
+      getBatch: () =>
+        [
+          { id: "stale1", category: "preference", recallCount: 0, lastAccessed: staleSec, supersededAt: null },
+          { id: "recent1", category: "skill", recallCount: 0, lastAccessed: recentSec, supersededAt: null },
+        ] as unknown as ReturnType<FactsDB["getBatch"]>,
     });
 
     const cfg = { enabled: true, hotAccessThreshold: 3, staleAfterDays: 14, importance: 0.4 };
@@ -252,12 +281,13 @@ describe("sweepMemoryPatterns", () => {
 
   it("correctly identifies open loops (goal/task facts not superseded)", async () => {
     const factsDb = makeFactsDbStub({
-      getBatch: () => [
-        { id: "loop1", category: "goal", recallCount: 0, lastAccessed: null, supersededAt: null },
-        { id: "loop2", category: "task", recallCount: 0, lastAccessed: null, supersededAt: null },
-        { id: "done1", category: "goal", recallCount: 0, lastAccessed: null, supersededAt: 123456 },
-        { id: "pref1", category: "preference", recallCount: 0, lastAccessed: null, supersededAt: null },
-      ] as unknown as ReturnType<FactsDB["getBatch"]>,
+      getBatch: () =>
+        [
+          { id: "loop1", category: "goal", recallCount: 0, lastAccessed: null, supersededAt: null },
+          { id: "loop2", category: "task", recallCount: 0, lastAccessed: null, supersededAt: null },
+          { id: "done1", category: "goal", recallCount: 0, lastAccessed: null, supersededAt: 123456 },
+          { id: "pref1", category: "preference", recallCount: 0, lastAccessed: null, supersededAt: null },
+        ] as unknown as ReturnType<FactsDB["getBatch"]>,
     });
 
     const cfg = { enabled: true, hotAccessThreshold: 3, staleAfterDays: 14, importance: 0.4 };
@@ -363,7 +393,7 @@ describe("sweepSystemHealth", () => {
 
     const events = bus.queryEvents({ type: "sensor.system-health" });
     expect(typeof events[0].payload.sqliteSizeBytes).toBe("number");
-    expect((events[0].payload.sqliteSizeBytes as number)).toBeGreaterThan(0);
+    expect(events[0].payload.sqliteSizeBytes as number).toBeGreaterThan(0);
   });
 });
 
@@ -375,7 +405,10 @@ describe("sweepAll", () => {
   it("runs Tier 1 sensors (excluding garmin that needs HA config)", async () => {
     const sessionDir = join(tmpDir, "sessions");
     mkdirSync(sessionDir);
-    writeFileSync(join(sessionDir, "test.jsonl"), JSON.stringify({ message: "hello", timestamp: new Date().toISOString() }));
+    writeFileSync(
+      join(sessionDir, "test.jsonl"),
+      JSON.stringify({ message: "hello", timestamp: new Date().toISOString() }),
+    );
     process.env.OPENCLAW_SESSION_DIR = sessionDir;
 
     try {
@@ -490,7 +523,9 @@ describe("sweepAll", () => {
 
     // Make getBatch throw
     const factsDb = makeFactsDbStub({
-      getBatch: () => { throw new Error("DB unavailable"); },
+      getBatch: () => {
+        throw new Error("DB unavailable");
+      },
     });
 
     const result = await sweepAll(bus, cfg, factsDb, { tier: 1 });

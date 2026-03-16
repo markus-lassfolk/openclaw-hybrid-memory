@@ -151,9 +151,7 @@ describe("Multi-keyword queries", () => {
       (r) => r.text.toLowerCase().includes("machine") && r.text.toLowerCase().includes("learning"),
     );
     const partialMatchIdx = results.findIndex(
-      (r) =>
-        r.text.toLowerCase().includes("machine") &&
-        !r.text.toLowerCase().includes("learning"),
+      (r) => r.text.toLowerCase().includes("machine") && !r.text.toLowerCase().includes("learning"),
     );
 
     if (fullMatchIdx !== -1 && partialMatchIdx !== -1) {
@@ -303,9 +301,7 @@ describe("BM25 column weighting", () => {
 
     const results = searchFts(rawDb(db), "emacs", { limit: 5 });
     // Should find at least the emacs entity even if "emacs" isn't in text
-    const found = results.some(
-      (r) => (r.entity ?? null) === "emacs-editor" || r.text.toLowerCase().includes("emacs"),
-    );
+    const found = results.some((r) => (r.entity ?? null) === "emacs-editor" || r.text.toLowerCase().includes("emacs"));
     expect(found).toBe(true);
   });
 });

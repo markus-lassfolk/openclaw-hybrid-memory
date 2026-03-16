@@ -28,21 +28,22 @@ interface VerifyPruningResult {
 function runPruningCheck(
   rawConfig: Record<string, unknown>,
   configPath: string,
-  opts: { fix: boolean }
+  opts: { fix: boolean },
 ): VerifyPruningResult {
   const issues: string[] = [];
   const fixes: string[] = [];
   let detected = false;
   let fixApplied = false;
 
-  const agentsDefaults = (rawConfig.agents as Record<string, unknown> | undefined)
-    ?.defaults as Record<string, unknown> | undefined;
+  const agentsDefaults = (rawConfig.agents as Record<string, unknown> | undefined)?.defaults as
+    | Record<string, unknown>
+    | undefined;
 
   if (agentsDefaults != null && "pruning" in agentsDefaults) {
     detected = true;
     issues.push("agents.defaults.pruning is set but unsupported (has no effect)");
     fixes.push(
-      'Remove "pruning" from agents.defaults in openclaw.json. Memory pruning is handled automatically by the plugin (every 60 min).'
+      'Remove "pruning" from agents.defaults in openclaw.json. Memory pruning is handled automatically by the plugin (every 60 min).',
     );
 
     if (opts.fix) {

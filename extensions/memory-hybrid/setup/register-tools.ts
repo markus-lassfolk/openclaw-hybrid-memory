@@ -6,11 +6,7 @@
  */
 
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk";
-import type { FactsDB } from "../backends/facts-db.js";
-import type { VectorDB } from "../backends/vector-db.js";
-import type { WriteAheadLog } from "../backends/wal.js";
-import type { CredentialsDB } from "../backends/credentials-db.js";
-import type { ProposalsDB } from "../backends/proposals-db.js";
+import type { MemoryPluginAPI } from "../api/memory-plugin-api.js";
 import type { EventLog } from "../backends/event-log.js";
 import type { EmbeddingProvider } from "../services/embeddings.js";
 import type { EmbeddingRegistry } from "../services/embedding-registry.js";
@@ -47,56 +43,8 @@ import { capturePluginError } from "../services/error-reporter.js";
 import type { ProvenanceService } from "../services/provenance.js";
 import type { VariantGenerationQueue } from "../services/contextual-variants.js";
 
-export interface ToolsContext {
-  factsDb: FactsDB;
-  vectorDb: VectorDB;
-  cfg: HybridMemoryConfig;
-  embeddings: EmbeddingProvider;
-  embeddingRegistry?: EmbeddingRegistry | null;
-  openai: OpenAI;
-  wal: WriteAheadLog | null;
-  credentialsDb: CredentialsDB | null;
-  proposalsDb: ProposalsDB | null;
-  eventLog: EventLog | null;
-  provenanceService?: ProvenanceService | null;
-  lastProgressiveIndexIds: string[];
-  currentAgentIdRef: { value: string | null };
-  pendingLLMWarnings: PendingLLMWarnings;
-  aliasDb?: AliasDB | null;
-  issueStore?: IssueStore | null;
-  workflowStore?: WorkflowStore | null;
-  crystallizationStore?: CrystallizationStore | null;
-  toolProposalStore?: ToolProposalStore | null;
-  verificationStore?: VerificationStore | null;
-  variantQueue?: VariantGenerationQueue | null;
-  resolvedSqlitePath: string;
-  pythonBridge?: PythonBridge | null;
-  timers: {
-    proposalsPruneTimer: { value: ReturnType<typeof setInterval> | null };
-  };
-  buildToolScopeFilter: (
-    params: { userId?: string | null; agentId?: string | null; sessionId?: string | null },
-    currentAgent: string | null,
-    config: { multiAgent: { orchestratorId: string }; autoRecall: { scopeFilter?: ScopeFilter } }
-  ) => ScopeFilter | undefined;
-  walWrite: (
-    wal: WriteAheadLog | null,
-    operation: "store" | "update",
-    data: Record<string, unknown>,
-    logger: { warn: (msg: string) => void }
-  ) => string;
-  walRemove: (wal: WriteAheadLog | null, id: string, logger: { warn: (msg: string) => void }) => void;
-  findSimilarByEmbedding: (
-    vectorDb: VectorDB,
-    factsDb: { getById(id: string): MemoryEntry | null },
-    vector: number[],
-    limit: number,
-    minScore?: number
-  ) => Promise<MemoryEntry[]>;
-  runReflection: RunReflectionFn;
-  runReflectionRules: RunReflectionRulesFn;
-  runReflectionMeta: RunReflectionMetaFn;
-}
+/** Tool registration receives the stable plugin API (Phase 3). */
+export type ToolsContext = MemoryPluginAPI;
 
 /**
  * Register all plugin tools with the OpenClaw API.
@@ -139,12 +87,29 @@ export function registerTools(ctx: ToolsContext, api: ClawdbotPluginApi): void {
 
   // Memory tools (core recall, store, forget operations)
   registerMemoryTools(
-    { factsDb, vectorDb, cfg, embeddings, embeddingRegistry, openai, wal, credentialsDb, eventLog, provenanceService, aliasDb, verificationStore, variantQueue, lastProgressiveIndexIds, currentAgentIdRef, pendingLLMWarnings },
+    {
+      factsDb,
+      vectorDb,
+      cfg,
+      embeddings,
+      embeddingRegistry,
+      openai,
+      wal,
+      credentialsDb,
+      eventLog,
+      provenanceService,
+      aliasDb,
+      verificationStore,
+      variantQueue,
+      lastProgressiveIndexIds,
+      currentAgentIdRef,
+      pendingLLMWarnings,
+    },
     api,
     buildToolScopeFilter,
     (operation, data, logger) => walWrite(wal, operation, data, logger),
     (id, logger) => walRemove(wal, id, logger),
-    findSimilarByEmbedding
+    findSimilarByEmbedding,
   );
 
   // Graph tools (memory linking and traversal)
@@ -173,22 +138,25 @@ export function registerTools(ctx: ToolsContext, api: ClawdbotPluginApi): void {
 
     // Periodic cleanup of expired proposals (stored in module-level variable for cleanup on stop).
     // Guard: only call pruneExpired when DB is still open to avoid "database connection is not open" after stop() (issue #130).
-    timers.proposalsPruneTimer.value = setInterval(() => {
-      try {
-        if (proposalsDb?.isOpen()) {
-          const pruned = proposalsDb.pruneExpired();
-          if (pruned > 0) {
-            api.logger.info(`memory-hybrid: pruned ${pruned} expired proposal(s)`);
+    timers.proposalsPruneTimer.value = setInterval(
+      () => {
+        try {
+          if (proposalsDb?.isOpen()) {
+            const pruned = proposalsDb.pruneExpired();
+            if (pruned > 0) {
+              api.logger.info(`memory-hybrid: pruned ${pruned} expired proposal(s)`);
+            }
           }
+        } catch (err) {
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+            subsystem: "proposals",
+            operation: "periodic-prune",
+          });
+          api.logger.warn(`memory-hybrid: proposal prune failed: ${err}`);
         }
-      } catch (err) {
-        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-          subsystem: "proposals",
-          operation: "periodic-prune",
-        });
-        api.logger.warn(`memory-hybrid: proposal prune failed: ${err}`);
-      }
-    }, 24 * 60 * 60_000); // daily
+      },
+      24 * 60 * 60_000,
+    ); // daily
 
     // Proposals CLI (list/show/approve/reject) is registered under hybrid-mem in manage.ts only
   }
@@ -201,15 +169,12 @@ export function registerTools(ctx: ToolsContext, api: ClawdbotPluginApi): void {
     runReflectionRules,
     runReflectionMeta,
     (operation, data) => walWrite(wal, operation, data, api.logger),
-    (id) => walRemove(wal, id, api.logger)
+    (id) => walRemove(wal, id, api.logger),
   );
 
   // Document ingestion tool (opt-in, requires Python + markitdown)
   if (cfg.documents.enabled && pythonBridge) {
-    registerDocumentTools(
-      { factsDb, vectorDb, cfg, embeddings, pythonBridge, openai, provenanceService },
-      api,
-    );
+    registerDocumentTools({ factsDb, vectorDb, cfg, embeddings, pythonBridge, openai, provenanceService }, api);
   }
 
   // Verification tools (Issue #162)

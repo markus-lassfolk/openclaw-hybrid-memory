@@ -34,7 +34,11 @@ const CREDENTIAL_PATTERNS: Array<{ regex: RegExp; type: string; hint: string }> 
   { regex: /gho_[A-Za-z0-9]{36}/, type: "api_key", hint: "GitHub OAuth token" },
   { regex: /xox[baprs]-[A-Za-z0-9-]{10,}/, type: "token", hint: "Slack token" },
   { regex: /ssh\s+[\w@.-]+\s+[\w@.-]+/i, type: "ssh", hint: "SSH connection string" },
-  { regex: /[\w.-]+@[\w.-]+\.\w+.*(?:password|passwd|token|key)\s*[:=]\s*\S+/i, type: "password", hint: "Credentials with host/email" },
+  {
+    regex: /[\w.-]+@[\w.-]+\.\w+.*(?:password|passwd|token|key)\s*[:=]\s*\S+/i,
+    type: "password",
+    hint: "Credentials with host/email",
+  },
 ];
 
 export function detectCredentialPatterns(text: string): Array<{ type: string; hint: string }> {
@@ -71,8 +75,7 @@ export function isCredentialLike(
   if ((entity ?? "").toLowerCase() === "credentials") return true;
   const k = (key ?? "").toLowerCase();
   const e = (entity ?? "").toLowerCase();
-  if (["api_key", "password", "token", "secret", "bearer"].some((x) => k.includes(x) || e.includes(x)))
-    return true;
+  if (["api_key", "password", "token", "secret", "bearer"].some((x) => k.includes(x) || e.includes(x))) return true;
   if (value && value.length >= 8 && /^(eyJ|sk-|ghp_|gho_|xox[baprs]-)/i.test(value)) return true;
   return CREDENTIAL_PATTERNS.some((p) => p.regex.test(text)) || SENSITIVE_PATTERNS.some((r) => r.test(text));
 }
@@ -92,7 +95,13 @@ export function tryParseCredentialForVault(
   key?: string | null,
   value?: string | null,
   options?: TryParseCredentialOptions,
-): { service: string; type: "token" | "password" | "api_key" | "ssh" | "bearer" | "other"; secretValue: string; url?: string; notes?: string } | null {
+): {
+  service: string;
+  type: "token" | "password" | "api_key" | "ssh" | "bearer" | "other";
+  secretValue: string;
+  url?: string;
+  notes?: string;
+} | null {
   if (!isCredentialLike(text, entity, key, value)) return null;
   const match = extractCredentialMatch(text);
   if (options?.requirePatternMatch && !match) return null;
@@ -103,7 +112,7 @@ export function tryParseCredentialForVault(
   // Only fall back to the structured value param when no pattern matched.
   const secretFromMatch = match?.secretValue ?? null;
   const secretFromParam = value && value.length >= 8 ? value : null;
-  const secretValue = (secretFromMatch ?? secretFromParam) ?? null;
+  const secretValue = secretFromMatch ?? secretFromParam ?? null;
   if (!secretValue) return null;
   const typeFromPattern = (match?.type ?? "other") as "token" | "password" | "api_key" | "ssh" | "bearer" | "other";
   // hasPatternMatch is only true when secretValue ITSELF came from the regex match.

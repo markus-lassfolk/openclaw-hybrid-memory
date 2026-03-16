@@ -54,7 +54,7 @@ export interface SweepAllResult {
 function stableStringify(obj: Record<string, unknown>): string {
   function sortDeep(value: unknown): unknown {
     if (value === null || value === undefined) return value;
-    if (typeof value !== 'object') return value;
+    if (typeof value !== "object") return value;
     if (Array.isArray(value)) return value.map(sortDeep);
     const sorted: Record<string, unknown> = {};
     for (const key of Object.keys(value as Record<string, unknown>).sort()) {
@@ -78,9 +78,7 @@ interface HAEntity {
 
 async function fetchHa(ha: HomeAssistantSensorConfig, path: string): Promise<Response> {
   const url = `${ha.baseUrl.replace(/\/$/, "")}${path}`;
-  const token = ha.token.startsWith("env:")
-    ? (process.env[ha.token.slice(4)] ?? "")
-    : ha.token;
+  const token = ha.token.startsWith("env:") ? (process.env[ha.token.slice(4)] ?? "") : ha.token;
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), ha.timeoutMs ?? 10_000);
@@ -111,10 +109,7 @@ async function fetchHaEntities(
   return all.filter((e) => e.entity_id.startsWith(prefix));
 }
 
-async function fetchHaEntityById(
-  ha: HomeAssistantSensorConfig,
-  entityId: string,
-): Promise<HAEntity | null> {
+async function fetchHaEntityById(ha: HomeAssistantSensorConfig, entityId: string): Promise<HAEntity | null> {
   const res = await fetchHa(ha, `/api/states/${encodeURIComponent(entityId)}`);
   if (res.status === 404) return null;
   if (!res.ok) throw new Error(`HA API error: ${res.status} ${res.statusText}`);
@@ -292,13 +287,7 @@ export async function sweepSessionHistory(
       return result;
     }
 
-    bus.appendEvent(
-      "sensor.session-history",
-      "session-history-sensor",
-      payload,
-      cfg.importance ?? 0.5,
-      fp,
-    );
+    bus.appendEvent("sensor.session-history", "session-history-sensor", payload, cfg.importance ?? 0.5, fp);
     result.eventsWritten++;
   } catch (err) {
     result.error = err instanceof Error ? err.message : String(err);
@@ -341,11 +330,7 @@ export async function sweepMemoryPatterns(
         f.lastAccessed !== undefined &&
         (f.lastAccessed as number) < staleCutoffSec,
     );
-    const openLoops = sample.filter(
-      (f) =>
-        (f.category === "goal" || f.category === "task") &&
-        f.supersededAt == null,
-    );
+    const openLoops = sample.filter((f) => (f.category === "goal" || f.category === "task") && f.supersededAt == null);
 
     const payload = {
       totalFacts,
@@ -364,13 +349,7 @@ export async function sweepMemoryPatterns(
       return result;
     }
 
-    bus.appendEvent(
-      "sensor.memory-patterns",
-      "memory-patterns-sensor",
-      payload,
-      cfg.importance ?? 0.4,
-      fp,
-    );
+    bus.appendEvent("sensor.memory-patterns", "memory-patterns-sensor", payload, cfg.importance ?? 0.4, fp);
     result.eventsWritten++;
   } catch (err) {
     result.error = err instanceof Error ? err.message : String(err);
@@ -478,14 +457,7 @@ export async function sweepGitHub(
     // CI failures on open PRs
     const ciFailures: Array<{ pr: number; title: string; url: string }> = [];
     for (const pr of openPrs.slice(0, 5)) {
-      const ciOutput = tryExecFileSync("gh", [
-        "pr",
-        "checks",
-        ...repoArgs,
-        String(pr.number),
-        "--json",
-        "name,bucket",
-      ]);
+      const ciOutput = tryExecFileSync("gh", ["pr", "checks", ...repoArgs, String(pr.number), "--json", "name,bucket"]);
       if (ciOutput) {
         try {
           const checks = JSON.parse(ciOutput) as Array<{ name: string; bucket: string }>;
@@ -513,9 +485,7 @@ export async function sweepGitHub(
       "number,title,state,url,updatedAt",
     ]);
     const allIssues = parseGhJson<GitHubIssue>(issueOutput);
-    const staleIssues = allIssues.filter(
-      (i) => i.updatedAt !== undefined && i.updatedAt < staleCutoff,
-    );
+    const staleIssues = allIssues.filter((i) => i.updatedAt !== undefined && i.updatedAt < staleCutoff);
 
     const payload = {
       openPrCount: openPrs.length,
@@ -549,13 +519,7 @@ export async function sweepGitHub(
       return result;
     }
 
-    bus.appendEvent(
-      "sensor.github",
-      "github-sensor",
-      payload,
-      cfg.importance ?? 0.7,
-      fp,
-    );
+    bus.appendEvent("sensor.github", "github-sensor", payload, cfg.importance ?? 0.7, fp);
     result.eventsWritten++;
   } catch (err) {
     result.error = err instanceof Error ? err.message : String(err);
@@ -608,7 +572,10 @@ export async function sweepHomeAssistantAnomaly(
       return result;
     }
 
-    const anomalyKey = anomalies.map((a) => `${a.entity}:${a.state}`).sort().join("|");
+    const anomalyKey = anomalies
+      .map((a) => `${a.entity}:${a.state}`)
+      .sort()
+      .join("|");
     const fp = computeFingerprint(`sensor.ha-anomaly:${anomalyKey}`);
     if (bus.dedup(fp, cooldownHours)) {
       result.eventsSkipped++;
@@ -677,13 +644,7 @@ export async function sweepSystemHealth(
       return result;
     }
 
-    bus.appendEvent(
-      "sensor.system-health",
-      "system-health-sensor",
-      payload,
-      cfg.importance ?? 0.7,
-      fp,
-    );
+    bus.appendEvent("sensor.system-health", "system-health-sensor", payload, cfg.importance ?? 0.7, fp);
     result.eventsWritten++;
   } catch (err) {
     result.error = err instanceof Error ? err.message : String(err);
@@ -709,9 +670,8 @@ export async function sweepWeather(
   try {
     const location = cfg.location ?? "auto";
 
-    const url = location === "auto"
-      ? `https://wttr.in/?format=j1`
-      : `https://wttr.in/${encodeURIComponent(location)}?format=j1`;
+    const url =
+      location === "auto" ? `https://wttr.in/?format=j1` : `https://wttr.in/${encodeURIComponent(location)}?format=j1`;
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 10_000);
     let weatherData: Record<string, unknown> = {};
@@ -811,7 +771,13 @@ export async function sweepYarbo(
       return result;
     }
 
-    bus.appendEvent("sensor.yarbo", "yarbo-sensor", { entities: payload, errorCount: errorEntities.length }, cfg.importance ?? 0.6, fp);
+    bus.appendEvent(
+      "sensor.yarbo",
+      "yarbo-sensor",
+      { entities: payload, errorCount: errorEntities.length },
+      cfg.importance ?? 0.6,
+      fp,
+    );
     result.eventsWritten++;
   } catch (err) {
     result.error = err instanceof Error ? err.message : String(err);
@@ -849,10 +815,10 @@ export async function sweepAll(
 
   // Map config-style camelCase names to internal hyphenated names
   const nameMap: Record<string, string> = {
-    "homeAssistantAnomaly": "ha-anomaly",
-    "sessionHistory": "session-history",
-    "memoryPatterns": "memory-patterns",
-    "systemHealth": "system-health",
+    homeAssistantAnomaly: "ha-anomaly",
+    sessionHistory: "session-history",
+    memoryPatterns: "memory-patterns",
+    systemHealth: "system-health",
   };
 
   // Normalize sources to internal names
@@ -869,7 +835,7 @@ export async function sweepAll(
   // This avoids duplicate full-state fetches within a single sweep run.
   let cachedHaStates: HAEntity[] | undefined;
   if (ha && !opts.dryRun) {
-    const needsHaStates = 
+    const needsHaStates =
       ((tier === 1 || tier === "all") && shouldRun("garmin") && cfg.garmin?.enabled) ||
       ((tier === 2 || tier === "all") && shouldRun("yarbo") && cfg.yarbo?.enabled);
     if (needsHaStates) {
@@ -932,9 +898,7 @@ export async function sweepAll(
 
     if (shouldRun("system-health") && cfg.systemHealth?.enabled) {
       if (!opts.dryRun) {
-        results.push(
-          await sweepSystemHealth(bus, cfg.systemHealth, opts.resolvedSqlitePath ?? "", cooldown),
-        );
+        results.push(await sweepSystemHealth(bus, cfg.systemHealth, opts.resolvedSqlitePath ?? "", cooldown));
       } else {
         results.push({ sensor: "system-health", eventsWritten: 0, eventsSkipped: 0 });
       }

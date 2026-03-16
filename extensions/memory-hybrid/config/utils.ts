@@ -30,7 +30,7 @@ export function isValidCategory(cat: string): boolean {
 
 /** Preset overrides per mode. Merged under user config so user keys win. See CONFIGURATION-MODES.md. */
 export const PRESET_OVERRIDES: Record<ConfigMode, Record<string, unknown>> = {
-  essential: {
+  local: {
     autoCapture: true,
     autoRecall: { enabled: true, entityLookup: { enabled: false }, authFailure: { enabled: false } },
     autoClassify: { enabled: false, suggestCategories: false },
@@ -44,34 +44,38 @@ export const PRESET_OVERRIDES: Record<ConfigMode, Record<string, unknown>> = {
     memoryTiering: { enabled: false },
     distill: { extractDirectives: true, extractReinforcement: false },
     verbosity: "quiet",
+    /** FTS-only recall and capture: no embedding/vector/LLM calls; local SQLite + files only. */
+    retrieval: { strategies: ["fts5"] },
   },
-  normal: {
+  /** Minimal: nano for auto-classify, default (flash) for distill — good value at low cost. Ingest paths on so occasional ingest-files gets facts. */
+  minimal: {
     autoCapture: true,
     autoRecall: { enabled: true, entityLookup: { enabled: false }, authFailure: { enabled: true } },
     autoClassify: { enabled: true, suggestCategories: true },
     store: { fuzzyDedupe: false, classifyBeforeWrite: false },
-    graph: { enabled: true, autoLink: false, useInRecall: true },
+    graph: { enabled: true, autoLink: false, useInRecall: true, strengthenOnRecall: false },
     procedures: { enabled: true, requireApprovalForPromote: true },
     reflection: { enabled: false },
     wal: { enabled: true },
     languageKeywords: { autoBuild: true },
     personaProposals: { enabled: false },
     memoryTiering: { enabled: true, compactionOnSessionEnd: true },
-    distill: { extractDirectives: true, extractReinforcement: true },
+    distill: { extractDirectives: true, extractReinforcement: true, extractionModelTier: "default" },
+    ingest: { paths: ["skills/**/*.md", "TOOLS.md", "AGENTS.md"] },
     verbosity: "normal",
   },
-  expert: {
+  enhanced: {
     autoCapture: true,
     autoRecall: { enabled: true, entityLookup: { enabled: true }, authFailure: { enabled: true } },
     autoClassify: { enabled: true, suggestCategories: true },
     credentials: { autoDetect: true, autoCapture: { toolCalls: true } },
     store: { fuzzyDedupe: true, classifyBeforeWrite: true },
-    graph: { enabled: true, autoLink: true, useInRecall: true },
+    graph: { enabled: true, autoLink: true, useInRecall: true, strengthenOnRecall: false },
     procedures: { enabled: true, requireApprovalForPromote: true },
     reflection: { enabled: true },
     wal: { enabled: true },
     languageKeywords: { autoBuild: true },
-    personaProposals: { enabled: true },
+    personaProposals: { enabled: false },
     memoryTiering: { enabled: true, compactionOnSessionEnd: true },
     selfCorrection: {
       semanticDedup: true,
@@ -80,33 +84,35 @@ export const PRESET_OVERRIDES: Record<ConfigMode, Record<string, unknown>> = {
       analyzeViaSpawn: false,
     },
     distill: { extractDirectives: true, extractReinforcement: true, extractionModelTier: "default" },
-    nightlyCycle: { enabled: true },
-    passiveObserver: { enabled: true },
+    ingest: { paths: ["skills/**/*.md", "TOOLS.md", "AGENTS.md"] },
+    frustrationDetection: { enabled: false },
+    nightlyCycle: { enabled: false },
+    passiveObserver: { enabled: false },
     extraction: { extractionPasses: true },
-    workflowTracking: { enabled: true },
-    selfExtension: { enabled: true },
-    crystallization: { enabled: true },
-    verification: { enabled: true },
-    provenance: { enabled: true },
-    aliases: { enabled: true },
-    memoryToSkills: { enabled: false },
-    crossAgentLearning: { enabled: true },
-    reranking: { enabled: true },
-    contextualVariants: { enabled: true },
+    workflowTracking: { enabled: false },
+    selfExtension: { enabled: false },
+    crystallization: { enabled: false },
+    verification: { enabled: false },
+    provenance: { enabled: false },
+    aliases: { enabled: false },
+    crossAgentLearning: { enabled: false },
+    reranking: { enabled: false },
+    contextualVariants: { enabled: false },
+    documents: { enabled: false },
     verbosity: "normal",
   },
-  full: {
+  complete: {
     autoCapture: true,
     autoRecall: { enabled: true, entityLookup: { enabled: true }, authFailure: { enabled: true } },
     autoClassify: { enabled: true, suggestCategories: true },
     credentials: { autoDetect: true, autoCapture: { toolCalls: true } },
     store: { fuzzyDedupe: true, classifyBeforeWrite: true },
-    graph: { enabled: true, autoLink: true, useInRecall: true },
+    graph: { enabled: true, autoLink: true, useInRecall: true, strengthenOnRecall: false },
     procedures: { enabled: true, requireApprovalForPromote: true },
     reflection: { enabled: true },
     wal: { enabled: true },
     languageKeywords: { autoBuild: true },
-    personaProposals: { enabled: true },
+    personaProposals: { enabled: false },
     memoryTiering: { enabled: true, compactionOnSessionEnd: true },
     selfCorrection: {
       semanticDedup: true,
@@ -114,33 +120,30 @@ export const PRESET_OVERRIDES: Record<ConfigMode, Record<string, unknown>> = {
       autoRewriteTools: false,
       analyzeViaSpawn: false,
     },
-    // NOTE: Presets should NOT hardcode specific models (e.g., hydeModel).
-    // Model selection is handled dynamically via the tiered fallback system (nano/default/heavy)
-    // based on which providers/API keys are available. Hardcoding breaks users without that provider.
-    queryExpansion: { enabled: true },
+    // queryExpansion not set in preset — defaults to disabled; set explicitly to enable (Phase 1).
     ingest: { paths: ["skills/**/*.md", "TOOLS.md", "AGENTS.md"] },
     distill: { extractDirectives: true, extractReinforcement: true, extractionModelTier: "default" },
-    nightlyCycle: { enabled: true },
-    passiveObserver: { enabled: true },
+    frustrationDetection: { enabled: false },
+    nightlyCycle: { enabled: false },
+    passiveObserver: { enabled: false },
     extraction: { extractionPasses: true },
-    workflowTracking: { enabled: true },
-    selfExtension: { enabled: true },
-    crystallization: { enabled: true },
-    verification: { enabled: true },
-    provenance: { enabled: true },
-    aliases: { enabled: true },
-    memoryToSkills: { enabled: false },
-    crossAgentLearning: { enabled: true },
-    reranking: { enabled: true },
-    contextualVariants: { enabled: true },
-    documents: { enabled: true },
+    workflowTracking: { enabled: false },
+    selfExtension: { enabled: false },
+    crystallization: { enabled: false },
+    verification: { enabled: false },
+    provenance: { enabled: false },
+    aliases: { enabled: false },
+    crossAgentLearning: { enabled: false },
+    reranking: { enabled: false },
+    contextualVariants: { enabled: false },
+    documents: { enabled: false },
     verbosity: "verbose",
   },
 };
 
 /**
  * Check if verbosity level is in "compact mode" (quiet or silent).
- * Compact mode suppresses verbose output and only shows essential information.
+ * Compact mode suppresses verbose output and only shows minimal information.
  * Use this helper instead of inline checks to ensure consistent behavior across the codebase.
  */
 export function isCompactVerbosity(verbosity: VerbosityLevel | undefined): boolean {

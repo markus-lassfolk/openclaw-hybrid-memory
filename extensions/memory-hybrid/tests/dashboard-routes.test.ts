@@ -59,29 +59,20 @@ function fakeReq(): { method: string; url: string; headers: Record<string, strin
 describe("registerDashboardHttpRoutes", () => {
   it("does not register routes when health.enabled is false", () => {
     const { api, routes } = makeApi();
-    registerDashboardHttpRoutes(
-      { cfg: { health: { enabled: false, authenticated: true } } },
-      api,
-    );
+    registerDashboardHttpRoutes({ cfg: { health: { enabled: false, authenticated: true } } }, api);
     expect(routes).toHaveLength(0);
   });
 
   it("registers root and api/health routes when enabled", () => {
     const { api, routes } = makeApi();
-    registerDashboardHttpRoutes(
-      { cfg: { health: { enabled: true, authenticated: true } } },
-      api,
-    );
+    registerDashboardHttpRoutes({ cfg: { health: { enabled: true, authenticated: true } } }, api);
     expect(routes.map((r) => r.path)).toContain(`${DASHBOARD_PREFIX}${DASHBOARD_PATHS.root}`);
     expect(routes.map((r) => r.path)).toContain(`${DASHBOARD_PREFIX}${DASHBOARD_PATHS.healthApi}`);
   });
 
   it("all routes use authenticated=true by default", () => {
     const { api, routes } = makeApi();
-    registerDashboardHttpRoutes(
-      { cfg: { health: { enabled: true, authenticated: true } } },
-      api,
-    );
+    registerDashboardHttpRoutes({ cfg: { health: { enabled: true, authenticated: true } } }, api);
     expect(routes.length).toBeGreaterThan(0);
     for (const route of routes) {
       expect(route.opts.authenticated).toBe(true);
@@ -90,10 +81,7 @@ describe("registerDashboardHttpRoutes", () => {
 
   it("all routes use authenticated=false when configured", () => {
     const { api, routes } = makeApi();
-    registerDashboardHttpRoutes(
-      { cfg: { health: { enabled: true, authenticated: false } } },
-      api,
-    );
+    registerDashboardHttpRoutes({ cfg: { health: { enabled: true, authenticated: false } } }, api);
     expect(routes.length).toBeGreaterThan(0);
     for (const route of routes) {
       expect(route.opts.authenticated).toBe(false);
@@ -102,20 +90,14 @@ describe("registerDashboardHttpRoutes", () => {
 
   it("every registered route has identical authenticated value (consistent-auth requirement)", () => {
     const { api, routes } = makeApi();
-    registerDashboardHttpRoutes(
-      { cfg: { health: { enabled: true, authenticated: true } } },
-      api,
-    );
+    registerDashboardHttpRoutes({ cfg: { health: { enabled: true, authenticated: true } } }, api);
     const authValues = [...new Set(routes.map((r) => r.opts.authenticated))];
     expect(authValues).toHaveLength(1);
   });
 
   it("root route handler returns 200 HTML", async () => {
     const { api, routes } = makeApi();
-    registerDashboardHttpRoutes(
-      { cfg: { health: { enabled: true, authenticated: true } } },
-      api,
-    );
+    registerDashboardHttpRoutes({ cfg: { health: { enabled: true, authenticated: true } } }, api);
     const rootRoute = routes.find((r) => r.path === `${DASHBOARD_PREFIX}${DASHBOARD_PATHS.root}`);
     expect(rootRoute).toBeDefined();
     const response = await rootRoute!.handler(fakeReq());
@@ -126,13 +108,8 @@ describe("registerDashboardHttpRoutes", () => {
 
   it("api/health route handler returns 200 JSON with status=ok", async () => {
     const { api, routes } = makeApi();
-    registerDashboardHttpRoutes(
-      { cfg: { health: { enabled: true, authenticated: true } } },
-      api,
-    );
-    const healthRoute = routes.find(
-      (r) => r.path === `${DASHBOARD_PREFIX}${DASHBOARD_PATHS.healthApi}`,
-    );
+    registerDashboardHttpRoutes({ cfg: { health: { enabled: true, authenticated: true } } }, api);
+    const healthRoute = routes.find((r) => r.path === `${DASHBOARD_PREFIX}${DASHBOARD_PATHS.healthApi}`);
     expect(healthRoute).toBeDefined();
     const response = await healthRoute!.handler(fakeReq());
     expect(response.status).toBe(200);

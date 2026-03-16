@@ -87,7 +87,11 @@ describe("Gap 1 — exportAsImplicitSignals wiring into implicit_signals table",
   });
 
   afterEach(() => {
-    try { factsDb.close?.(); } catch { /* ignore */ }
+    try {
+      factsDb.close?.();
+    } catch {
+      /* ignore */
+    }
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
@@ -121,11 +125,7 @@ describe("Gap 1 — exportAsImplicitSignals wiring into implicit_signals table",
   });
 
   it("signals can be stored into implicit_signals table via getRawDb()", () => {
-    const turns = frustrationTurns([
-      "FIX THIS NOW",
-      "Why aren't you listening",
-      "I SAID FIX IT",
-    ]);
+    const turns = frustrationTurns(["FIX THIS NOW", "Why aren't you listening", "I SAID FIX IT"]);
     const state = detectFrustration(turns, defaultCfg, 0);
     const signals = exportAsImplicitSignals(state);
 
@@ -193,7 +193,11 @@ describe("Gap 2 — generateToolHint wiring into agent context preparation", () 
   });
 
   afterEach(() => {
-    try { store.close(); } catch { /* ignore */ }
+    try {
+      store.close();
+    } catch {
+      /* ignore */
+    }
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
@@ -269,8 +273,16 @@ describe("Gap 3 — generateMonthlyReport monthly gating in nightly cycle", () =
   });
 
   afterEach(() => {
-    try { store.close(); } catch { /* ignore */ }
-    try { factsDb.close?.(); } catch { /* ignore */ }
+    try {
+      store.close();
+    } catch {
+      /* ignore */
+    }
+    try {
+      factsDb.close?.();
+    } catch {
+      /* ignore */
+    }
     rmSync(tmpDir, { recursive: true, force: true });
   });
 

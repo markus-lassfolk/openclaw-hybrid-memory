@@ -63,9 +63,7 @@ function makeMeta(id: string, overrides: Record<string, unknown> = {}) {
 
 describe("fuseResults — single strategy", () => {
   it("single result from one strategy has score 1/(k+1)", () => {
-    const strategy = new Map([
-      ["fts5", [makeRanked("fact-1", 1, "fts5")]],
-    ]);
+    const strategy = new Map([["fts5", [makeRanked("fact-1", 1, "fts5")]]]);
     const fused = fuseResults(strategy);
     expect(fused).toHaveLength(1);
     expect(fused[0].factId).toBe("fact-1");
@@ -75,11 +73,7 @@ describe("fuseResults — single strategy", () => {
 
   it("multiple results from one strategy are ranked by score descending", () => {
     const strategy = new Map([
-      ["fts5", [
-        makeRanked("fact-1", 1, "fts5"),
-        makeRanked("fact-2", 2, "fts5"),
-        makeRanked("fact-3", 3, "fts5"),
-      ]],
+      ["fts5", [makeRanked("fact-1", 1, "fts5"), makeRanked("fact-2", 2, "fts5"), makeRanked("fact-3", 3, "fts5")]],
     ]);
     const fused = fuseResults(strategy);
     expect(fused).toHaveLength(3);
@@ -142,12 +136,8 @@ describe("fuseResults — multiple strategies", () => {
 
 describe("fuseResults — k parameter", () => {
   it("higher k reduces score differences between ranks", () => {
-    const k10Strategy = new Map([
-      ["fts5", [makeRanked("a", 1, "fts5"), makeRanked("b", 10, "fts5")]],
-    ]);
-    const k100Strategy = new Map([
-      ["fts5", [makeRanked("a", 1, "fts5"), makeRanked("b", 10, "fts5")]],
-    ]);
+    const k10Strategy = new Map([["fts5", [makeRanked("a", 1, "fts5"), makeRanked("b", 10, "fts5")]]]);
+    const k100Strategy = new Map([["fts5", [makeRanked("a", 1, "fts5"), makeRanked("b", 10, "fts5")]]]);
     const fused10 = fuseResults(k10Strategy, 10);
     const fused100 = fuseResults(k100Strategy, 100);
 
@@ -188,9 +178,7 @@ describe("applyPostRrfAdjustments — recency", () => {
     const nowSec = Math.floor(Date.now() / 1000);
     const thirtyDaysAgo = nowSec - 30 * 86_400;
 
-    const strategy = new Map([
-      ["fts5", [makeRanked("old", 1, "fts5"), makeRanked("fresh", 2, "fts5")]],
-    ]);
+    const strategy = new Map([["fts5", [makeRanked("old", 1, "fts5"), makeRanked("fresh", 2, "fts5")]]]);
     const fused = fuseResults(strategy);
     const meta = new Map([
       ["old", makeMeta("old", { lastAccessed: thirtyDaysAgo, confidence: 1.0 })],
@@ -212,9 +200,7 @@ describe("applyPostRrfAdjustments — recency", () => {
 describe("applyPostRrfAdjustments — confidence", () => {
   it("high-confidence fact scores higher than low-confidence", () => {
     const nowSec = Math.floor(Date.now() / 1000);
-    const strategy = new Map([
-      ["fts5", [makeRanked("high-conf", 1, "fts5"), makeRanked("low-conf", 2, "fts5")]],
-    ]);
+    const strategy = new Map([["fts5", [makeRanked("high-conf", 1, "fts5"), makeRanked("low-conf", 2, "fts5")]]]);
     const fused = fuseResults(strategy);
     const meta = new Map([
       ["high-conf", makeMeta("high-conf", { confidence: 0.95 })],
@@ -241,9 +227,7 @@ describe("applyPostRrfAdjustments — confidence", () => {
 describe("applyPostRrfAdjustments — access frequency", () => {
   it("frequently recalled fact gets a boost", () => {
     const nowSec = Math.floor(Date.now() / 1000);
-    const strategy = new Map([
-      ["fts5", [makeRanked("hot", 1, "fts5"), makeRanked("cold", 2, "fts5")]],
-    ]);
+    const strategy = new Map([["fts5", [makeRanked("hot", 1, "fts5"), makeRanked("cold", 2, "fts5")]]]);
     const fused = fuseResults(strategy);
     const meta = new Map([
       ["hot", makeMeta("hot", { recallCount: 10, confidence: 1.0 })],
@@ -352,11 +336,10 @@ describe("fuseResults — edge cases", () => {
   });
 
   it("large result sets (100+ per strategy) fuse correctly", () => {
-    const semanticResults = Array.from({ length: 100 }, (_, i) =>
-      makeRanked(`fact-${i}`, i + 1, "semantic"),
-    );
-    const ftsResults = Array.from({ length: 100 }, (_, i) =>
-      makeRanked(`fact-${i + 50}`, i + 1, "fts5"), // overlapping from 50–99
+    const semanticResults = Array.from({ length: 100 }, (_, i) => makeRanked(`fact-${i}`, i + 1, "semantic"));
+    const ftsResults = Array.from(
+      { length: 100 },
+      (_, i) => makeRanked(`fact-${i + 50}`, i + 1, "fts5"), // overlapping from 50–99
     );
     const strategy = new Map([
       ["semantic", semanticResults],

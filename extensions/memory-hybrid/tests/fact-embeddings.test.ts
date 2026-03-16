@@ -36,7 +36,15 @@ function makeEmbedding(dims: number, fillValue = 0.1): Float32Array {
 }
 
 function storeTestFact(db: FactsDB, text = "test fact"): string {
-  const result = db.store({ text, category: "fact", importance: 0.7, source: "test", entity: null, key: null, value: null });
+  const result = db.store({
+    text,
+    category: "fact",
+    importance: 0.7,
+    source: "test",
+    entity: null,
+    key: null,
+    value: null,
+  });
   return result.id;
 }
 
@@ -48,9 +56,7 @@ describe("fact_embeddings table — schema", () => {
   it("table is created automatically on FactsDB construction", () => {
     // If the table didn't exist, storeEmbedding would throw
     const factId = storeTestFact(db);
-    expect(() =>
-      db.storeEmbedding(factId, "test-model", "canonical", makeEmbedding(4), 4),
-    ).not.toThrow();
+    expect(() => db.storeEmbedding(factId, "test-model", "canonical", makeEmbedding(4), 4)).not.toThrow();
   });
 
   it("is idempotent — multiple FactsDB openings do not fail", () => {

@@ -29,27 +29,121 @@ export interface ConversationTurn {
 
 // Common English stop words to exclude from similarity computation
 const STOP_WORDS = new Set([
-  "a", "an", "the", "and", "or", "but", "in", "on", "at", "to", "for",
-  "of", "with", "by", "from", "as", "is", "was", "are", "were", "be",
-  "been", "being", "have", "has", "had", "do", "does", "did", "will",
-  "would", "could", "should", "may", "might", "shall", "can", "need",
-  "it", "its", "this", "that", "these", "those", "i", "you", "he", "she",
-  "we", "they", "me", "him", "her", "us", "them", "my", "your", "his",
-  "our", "their", "what", "which", "who", "how", "when", "where", "why",
-  "if", "then", "so", "not", "no", "up", "out", "about", "just", "also",
-  "more", "very", "well", "get", "got", "going", "there", "here",
+  "a",
+  "an",
+  "the",
+  "and",
+  "or",
+  "but",
+  "in",
+  "on",
+  "at",
+  "to",
+  "for",
+  "of",
+  "with",
+  "by",
+  "from",
+  "as",
+  "is",
+  "was",
+  "are",
+  "were",
+  "be",
+  "been",
+  "being",
+  "have",
+  "has",
+  "had",
+  "do",
+  "does",
+  "did",
+  "will",
+  "would",
+  "could",
+  "should",
+  "may",
+  "might",
+  "shall",
+  "can",
+  "need",
+  "it",
+  "its",
+  "this",
+  "that",
+  "these",
+  "those",
+  "i",
+  "you",
+  "he",
+  "she",
+  "we",
+  "they",
+  "me",
+  "him",
+  "her",
+  "us",
+  "them",
+  "my",
+  "your",
+  "his",
+  "our",
+  "their",
+  "what",
+  "which",
+  "who",
+  "how",
+  "when",
+  "where",
+  "why",
+  "if",
+  "then",
+  "so",
+  "not",
+  "no",
+  "up",
+  "out",
+  "about",
+  "just",
+  "also",
+  "more",
+  "very",
+  "well",
+  "get",
+  "got",
+  "going",
+  "there",
+  "here",
 ]);
 
 // Synonym map for common paraphrases — maps word → canonical form
 const SYNONYMS: Record<string, string> = {
-  good: "great", great: "great", excellent: "great", awesome: "great",
-  bad: "terrible", terrible: "terrible", poor: "terrible",
-  fix: "repair", repair: "repair", resolve: "repair", fixed: "repair", resolved: "repair",
-  broken: "failed", failed: "failed", error: "failed", wrong: "failed",
-  show: "display", display: "display", print: "display",
-  make: "create", create: "create", build: "create",
-  remove: "delete", delete: "delete",
-  help: "assist", assist: "assist",
+  good: "great",
+  great: "great",
+  excellent: "great",
+  awesome: "great",
+  bad: "terrible",
+  terrible: "terrible",
+  poor: "terrible",
+  fix: "repair",
+  repair: "repair",
+  resolve: "repair",
+  fixed: "repair",
+  resolved: "repair",
+  broken: "failed",
+  failed: "failed",
+  error: "failed",
+  wrong: "failed",
+  show: "display",
+  display: "display",
+  print: "display",
+  make: "create",
+  create: "create",
+  build: "create",
+  remove: "delete",
+  delete: "delete",
+  help: "assist",
+  assist: "assist",
 };
 
 /**
@@ -190,7 +284,8 @@ export function detectImmediateAction(
   }
   if (agentIdx < 0) return null;
 
-  const ACTION_WORDS = /\b(done|worked|working|running|deployed|fixed|installed|completed|success|succeeded|ran|built|created|started|launched|got it working|it works|solved|resolved)\b/i;
+  const ACTION_WORDS =
+    /\b(done|worked|working|running|deployed|fixed|installed|completed|success|succeeded|ran|built|created|started|launched|got it working|it works|solved|resolved)\b/i;
   if (ACTION_WORDS.test(current.content)) {
     return {
       type: "immediate_action",
@@ -399,7 +494,8 @@ export function detectCorrectionCascade(
   const current = turns[turnIndex];
   if (current.role !== "user") return null;
 
-  const CORRECTION_RE = /\b(no(?!\s+(problem|worries|need|issue|issues|questions?|thanks?))|nope|wrong|incorrect|not what i (said|meant|asked)|that'?s not|i said|not right|you misunderstood|not quite)\b/i;
+  const CORRECTION_RE =
+    /\b(no(?!\s+(problem|worries|need|issue|issues|questions?|thanks?))|nope|wrong|incorrect|not what i (said|meant|asked)|that'?s not|i said|not right|you misunderstood|not quite)\b/i;
 
   // Count corrections in the last 5 turns
   const window = turns.slice(Math.max(0, turnIndex - 4), turnIndex + 1);
@@ -483,7 +579,8 @@ export function detectSelfService(
   const current = turns[turnIndex];
   if (current.role !== "user") return null;
 
-  const SELF_SERVICE_RE = /\b(i'?ll (do|handle|take care of|fix|try) it myself|never mind|forget it|i got it|i will do it|don'?t (bother|worry)|i'?ll figure it out|i can do it)\b/i;
+  const SELF_SERVICE_RE =
+    /\b(i'?ll (do|handle|take care of|fix|try) it myself|never mind|forget it|i got it|i will do it|don'?t (bother|worry)|i'?ll figure it out|i can do it)\b/i;
   if (!SELF_SERVICE_RE.test(current.content)) return null;
 
   let agentMsg = "";
@@ -520,7 +617,8 @@ export function detectEscalation(
   const current = turns[turnIndex];
   if (current.role !== "user") return null;
 
-  const ESCALATION_RE = /\b(i'?ll ask (someone|my|the|a)|going to ask|ask (my colleague|my boss|a human|the team|gpt|chatgpt|another|someone else)|i'?ll check with|let me ask|i asked|asked (someone|my|the|a))\b/i;
+  const ESCALATION_RE =
+    /\b(i'?ll ask (someone|my|the|a)|going to ask|ask (my colleague|my boss|a human|the team|gpt|chatgpt|another|someone else)|i'?ll check with|let me ask|i asked|asked (someone|my|the|a))\b/i;
   if (!ESCALATION_RE.test(current.content)) return null;
 
   let agentMsg = "";

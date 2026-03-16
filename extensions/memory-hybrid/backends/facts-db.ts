@@ -18,7 +18,16 @@ import { capturePluginError } from "../services/error-reporter.js";
 import { getLanguageKeywordsFilePath } from "../utils/language-keywords.js";
 import { searchFts } from "../services/fts-search.js";
 
-export const MEMORY_LINK_TYPES = ["SUPERSEDES", "CAUSED_BY", "PART_OF", "RELATED_TO", "DEPENDS_ON", "CONTRADICTS", "INSTANCE_OF", "DERIVED_FROM"] as const;
+export const MEMORY_LINK_TYPES = [
+  "SUPERSEDES",
+  "CAUSED_BY",
+  "PART_OF",
+  "RELATED_TO",
+  "DEPENDS_ON",
+  "CONTRADICTS",
+  "INSTANCE_OF",
+  "DERIVED_FROM",
+] as const;
 export type MemoryLinkType = (typeof MEMORY_LINK_TYPES)[number];
 
 /** Optional context metadata captured alongside a reinforcement event (#259). */
@@ -263,9 +272,10 @@ export class FactsDB {
 
     // Idempotent migration: add FK constraint to existing tables that pre-date this migration.
     // SQLite does not support ALTER TABLE ADD CONSTRAINT, so we use RENAME-RECREATE-INSERT-DROP.
-    const fkList = this.liveDb
-      .prepare(`PRAGMA foreign_key_list(reinforcement_log)`)
-      .all() as Array<{ table: string; from: string }>;
+    const fkList = this.liveDb.prepare(`PRAGMA foreign_key_list(reinforcement_log)`).all() as Array<{
+      table: string;
+      from: string;
+    }>;
     const hasFk = fkList.some((fk) => fk.from === "fact_id" && fk.table === "facts");
     if (!hasFk) {
       this.liveDb.transaction(() => {
@@ -299,9 +309,7 @@ export class FactsDB {
    *  Requires SQLite >= 3.35 for ALTER TABLE … DROP COLUMN.
    */
   private migrateReinforcedCountToReal(): void {
-    const factsCols = this.liveDb
-      .prepare(`PRAGMA table_info(facts)`)
-      .all() as Array<{ name: string; type: string }>;
+    const factsCols = this.liveDb.prepare(`PRAGMA table_info(facts)`).all() as Array<{ name: string; type: string }>;
     const factsReinforcedCol = factsCols.find((c) => c.name === "reinforced_count");
     if (factsReinforcedCol && factsReinforcedCol.type !== "REAL") {
       this.liveDb.transaction(() => {
@@ -316,9 +324,10 @@ export class FactsDB {
       })();
     }
 
-    const proceduresCols = this.liveDb
-      .prepare(`PRAGMA table_info(procedures)`)
-      .all() as Array<{ name: string; type: string }>;
+    const proceduresCols = this.liveDb.prepare(`PRAGMA table_info(procedures)`).all() as Array<{
+      name: string;
+      type: string;
+    }>;
     const proceduresReinforcedCol = proceduresCols.find((c) => c.name === "reinforced_count");
     if (proceduresReinforcedCol && proceduresReinforcedCol.type !== "REAL") {
       this.liveDb.transaction(() => {
@@ -352,7 +361,9 @@ export class FactsDB {
     `);
     this.liveDb.exec(`CREATE INDEX IF NOT EXISTS idx_is_created ON implicit_signals(created_at)`);
     this.liveDb.exec(`CREATE INDEX IF NOT EXISTS idx_is_polarity ON implicit_signals(polarity)`);
-    this.liveDb.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_is_unique ON implicit_signals(session_file, signal_type, user_message, polarity)`);
+    this.liveDb.exec(
+      `CREATE UNIQUE INDEX IF NOT EXISTS idx_is_unique ON implicit_signals(session_file, signal_type, user_message, polarity)`,
+    );
   }
 
   /** Create feedback_trajectories table for multi-turn task sequence learning (#262). */
@@ -402,9 +413,10 @@ export class FactsDB {
     this.liveDb.exec(`CREATE INDEX IF NOT EXISTS idx_fe_measured ON feedback_effectiveness(measured_at)`);
 
     // Idempotent migration: add FK constraint to existing tables that pre-date this migration.
-    const fkList = this.liveDb
-      .prepare(`PRAGMA foreign_key_list(feedback_effectiveness)`)
-      .all() as Array<{ table: string; from: string }>;
+    const fkList = this.liveDb.prepare(`PRAGMA foreign_key_list(feedback_effectiveness)`).all() as Array<{
+      table: string;
+      from: string;
+    }>;
     const hasFk = fkList.some((fk) => fk.from === "rule_id" && fk.table === "facts");
     if (!hasFk) {
       this.liveDb.transaction(() => {
@@ -457,18 +469,14 @@ export class FactsDB {
    *  last_accessed_at (ISO 8601 TEXT) is backfilled from last_accessed (epoch INTEGER).
    */
   private migrateAccessCountAndLastAccessedAt(): void {
-    const cols = this.liveDb
-      .prepare(`PRAGMA table_info(facts)`)
-      .all() as Array<{ name: string }>;
+    const cols = this.liveDb.prepare(`PRAGMA table_info(facts)`).all() as Array<{ name: string }>;
     const colNames = new Set(cols.map((c) => c.name));
 
     if (!colNames.has("access_count")) {
       this.liveDb.exec(`ALTER TABLE facts ADD COLUMN access_count INTEGER NOT NULL DEFAULT 0`);
       // Backfill from recall_count so existing access history is preserved
       this.liveDb.exec(`UPDATE facts SET access_count = COALESCE(recall_count, 0)`);
-      this.liveDb.exec(
-        `CREATE INDEX IF NOT EXISTS idx_facts_access_count ON facts(access_count)`,
-      );
+      this.liveDb.exec(`CREATE INDEX IF NOT EXISTS idx_facts_access_count ON facts(access_count)`);
     }
 
     if (!colNames.has("last_accessed_at")) {
@@ -522,9 +530,7 @@ export class FactsDB {
 
   /** Add reinforcement tracking columns (reinforced_count, last_reinforced_at, reinforced_quotes). */
   private migrateReinforcementColumns(): void {
-    const cols = this.liveDb
-      .prepare(`PRAGMA table_info(facts)`)
-      .all() as Array<{ name: string }>;
+    const cols = this.liveDb.prepare(`PRAGMA table_info(facts)`).all() as Array<{ name: string }>;
     const colNames = new Set(cols.map((c) => c.name));
     if (colNames.has("reinforced_count")) return;
     this.liveDb.exec(`ALTER TABLE facts ADD COLUMN reinforced_count INTEGER NOT NULL DEFAULT 0`);
@@ -537,29 +543,21 @@ export class FactsDB {
 
   /** Add tier column; default 'warm' for existing rows. */
   private migrateTierColumn(): void {
-    const cols = this.liveDb
-      .prepare(`PRAGMA table_info(facts)`)
-      .all() as Array<{ name: string }>;
+    const cols = this.liveDb.prepare(`PRAGMA table_info(facts)`).all() as Array<{ name: string }>;
     if (cols.some((c) => c.name === "tier")) return;
     this.liveDb.exec(`ALTER TABLE facts ADD COLUMN tier TEXT DEFAULT 'warm'`);
     this.liveDb.exec(`UPDATE facts SET tier = 'warm' WHERE tier IS NULL`);
-    this.liveDb.exec(
-      `CREATE INDEX IF NOT EXISTS idx_facts_tier ON facts(tier) WHERE tier IS NOT NULL`,
-    );
+    this.liveDb.exec(`CREATE INDEX IF NOT EXISTS idx_facts_tier ON facts(tier) WHERE tier IS NOT NULL`);
   }
 
   /** Add scope and scope_target columns for memory scoping. */
   private migrateScopeColumns(): void {
-    const cols = this.liveDb
-      .prepare(`PRAGMA table_info(facts)`)
-      .all() as Array<{ name: string }>;
+    const cols = this.liveDb.prepare(`PRAGMA table_info(facts)`).all() as Array<{ name: string }>;
     const colNames = new Set(cols.map((c) => c.name));
     if (colNames.has("scope")) return;
     this.liveDb.exec(`ALTER TABLE facts ADD COLUMN scope TEXT NOT NULL DEFAULT 'global'`);
     this.liveDb.exec(`ALTER TABLE facts ADD COLUMN scope_target TEXT`);
-    this.liveDb.exec(
-      `CREATE INDEX IF NOT EXISTS idx_facts_scope ON facts(scope)`,
-    );
+    this.liveDb.exec(`CREATE INDEX IF NOT EXISTS idx_facts_scope ON facts(scope)`);
     this.liveDb.exec(
       `CREATE INDEX IF NOT EXISTS idx_facts_scope_target ON facts(scope, scope_target) WHERE scope_target IS NOT NULL`,
     );
@@ -567,9 +565,7 @@ export class FactsDB {
 
   /** Procedural memory: add procedure_type, success_count, last_validated, source_sessions to facts. */
   private migrateProcedureColumns(): void {
-    const cols = this.liveDb
-      .prepare(`PRAGMA table_info(facts)`)
-      .all() as Array<{ name: string }>;
+    const cols = this.liveDb.prepare(`PRAGMA table_info(facts)`).all() as Array<{ name: string }>;
     const colNames = new Set(cols.map((c) => c.name));
     if (colNames.has("procedure_type")) return;
     this.liveDb.exec(`ALTER TABLE facts ADD COLUMN procedure_type TEXT`);
@@ -601,9 +597,7 @@ export class FactsDB {
         updated_at INTEGER
       )
     `);
-    const cols = this.liveDb
-      .prepare(`PRAGMA table_info(procedures)`)
-      .all() as Array<{ name: string }>;
+    const cols = this.liveDb.prepare(`PRAGMA table_info(procedures)`).all() as Array<{ name: string }>;
     const colNames = new Set(cols.map((c) => c.name));
     if (!colNames.has("source_sessions")) {
       this.liveDb.exec(`ALTER TABLE procedures ADD COLUMN source_sessions TEXT`);
@@ -635,9 +629,7 @@ export class FactsDB {
 
   /** Phase 2: Add reinforcement tracking columns to procedures table (same pattern as facts). */
   private migrateReinforcementColumnsProcedures(): void {
-    const cols = this.liveDb
-      .prepare(`PRAGMA table_info(procedures)`)
-      .all() as Array<{ name: string }>;
+    const cols = this.liveDb.prepare(`PRAGMA table_info(procedures)`).all() as Array<{ name: string }>;
     const colNames = new Set(cols.map((c) => c.name));
     if (colNames.has("reinforced_count")) return;
     this.liveDb.exec(`ALTER TABLE procedures ADD COLUMN reinforced_count INTEGER NOT NULL DEFAULT 0`);
@@ -651,9 +643,7 @@ export class FactsDB {
 
   /** Add scope and scope_target columns to procedures table (same pattern as facts). */
   private migrateProcedureScopeColumns(): void {
-    const cols = this.liveDb
-      .prepare(`PRAGMA table_info(procedures)`)
-      .all() as Array<{ name: string }>;
+    const cols = this.liveDb.prepare(`PRAGMA table_info(procedures)`).all() as Array<{ name: string }>;
     const colNames = new Set(cols.map((c) => c.name));
     // Check both columns independently, not just scope
     if (!colNames.has("scope")) {
@@ -662,9 +652,7 @@ export class FactsDB {
     if (!colNames.has("scope_target")) {
       this.liveDb.exec(`ALTER TABLE procedures ADD COLUMN scope_target TEXT`);
     }
-    this.liveDb.exec(
-      `CREATE INDEX IF NOT EXISTS idx_procedures_scope ON procedures(scope)`,
-    );
+    this.liveDb.exec(`CREATE INDEX IF NOT EXISTS idx_procedures_scope ON procedures(scope)`);
     this.liveDb.exec(
       `CREATE INDEX IF NOT EXISTS idx_procedures_scope_target ON procedures(scope, scope_target) WHERE scope_target IS NOT NULL`,
     );
@@ -686,12 +674,12 @@ export class FactsDB {
     `);
     this.liveDb.exec(`CREATE INDEX IF NOT EXISTS idx_contradictions_new ON contradictions(fact_id_new)`);
     this.liveDb.exec(`CREATE INDEX IF NOT EXISTS idx_contradictions_old ON contradictions(fact_id_old)`);
-    this.liveDb.exec(`CREATE INDEX IF NOT EXISTS idx_contradictions_resolved ON contradictions(resolved) WHERE resolved = 0`);
-    
+    this.liveDb.exec(
+      `CREATE INDEX IF NOT EXISTS idx_contradictions_resolved ON contradictions(resolved) WHERE resolved = 0`,
+    );
+
     // Add old_fact_original_confidence column if it doesn't exist (for unbiased comparison)
-    const cols = this.liveDb
-      .prepare(`PRAGMA table_info(contradictions)`)
-      .all() as Array<{ name: string }>;
+    const cols = this.liveDb.prepare(`PRAGMA table_info(contradictions)`).all() as Array<{ name: string }>;
     if (!cols.some((c) => c.name === "old_fact_original_confidence")) {
       this.liveDb.exec(`ALTER TABLE contradictions ADD COLUMN old_fact_original_confidence REAL`);
     }
@@ -712,9 +700,7 @@ export class FactsDB {
 
   /** Add embedding_model column to facts for tracking vector provenance (Issue #153). */
   private migrateEmbeddingModelColumn(): void {
-    const cols = this.liveDb
-      .prepare(`PRAGMA table_info(facts)`)
-      .all() as Array<{ name: string }>;
+    const cols = this.liveDb.prepare(`PRAGMA table_info(facts)`).all() as Array<{ name: string }>;
     if (cols.some((c) => c.name === "embedding_model")) return;
     this.liveDb.exec(`ALTER TABLE facts ADD COLUMN embedding_model TEXT`);
     this.liveDb.exec(
@@ -736,9 +722,7 @@ export class FactsDB {
 
   /** Add decay_freeze_until column for future-date freeze protection (#144). */
   private migrateDecayFreezeColumn(): void {
-    const cols = this.liveDb
-      .prepare(`PRAGMA table_info(facts)`)
-      .all() as Array<{ name: string }>;
+    const cols = this.liveDb.prepare(`PRAGMA table_info(facts)`).all() as Array<{ name: string }>;
     if (cols.some((c) => c.name === "decay_freeze_until")) return;
     this.liveDb.exec(`ALTER TABLE facts ADD COLUMN decay_freeze_until INTEGER DEFAULT NULL`);
     this.liveDb.exec(
@@ -764,12 +748,8 @@ export class FactsDB {
         FOREIGN KEY (fact_id) REFERENCES facts(id) ON DELETE CASCADE
       )
     `);
-    this.liveDb.exec(
-      `CREATE INDEX IF NOT EXISTS idx_fact_embeddings_fact_id ON fact_embeddings(fact_id)`,
-    );
-    this.liveDb.exec(
-      `CREATE INDEX IF NOT EXISTS idx_fact_embeddings_model ON fact_embeddings(model)`,
-    );
+    this.liveDb.exec(`CREATE INDEX IF NOT EXISTS idx_fact_embeddings_fact_id ON fact_embeddings(fact_id)`);
+    this.liveDb.exec(`CREATE INDEX IF NOT EXISTS idx_fact_embeddings_model ON fact_embeddings(model)`);
   }
 
   // ---------------------------------------------------------------------------
@@ -791,16 +771,12 @@ export class FactsDB {
         FOREIGN KEY (fact_id) REFERENCES facts(id) ON DELETE CASCADE
       )
     `);
-    this.liveDb.exec(
-      `CREATE INDEX IF NOT EXISTS idx_fact_variants_fact_id ON fact_variants(fact_id)`,
-    );
+    this.liveDb.exec(`CREATE INDEX IF NOT EXISTS idx_fact_variants_fact_id ON fact_variants(fact_id)`);
   }
 
   /** Add provenance columns to facts table (Issue #163). All nullable. Use provenance_session (not source_session) to avoid confusion with source_sessions. */
   private migrateProvenanceColumns(): void {
-    const cols = this.liveDb
-      .prepare(`PRAGMA table_info(facts)`)
-      .all() as Array<{ name: string }>;
+    const cols = this.liveDb.prepare(`PRAGMA table_info(facts)`).all() as Array<{ name: string }>;
     const colNames = new Set(cols.map((c) => c.name));
     if (!colNames.has("provenance_session")) {
       this.liveDb.exec(`ALTER TABLE facts ADD COLUMN provenance_session TEXT`);
@@ -846,7 +822,9 @@ export class FactsDB {
 
   /** Add FK to verified_facts for existing DBs created before FK was in schema. Idempotent. */
   private migrateVerifiedFactsAddFk(): void {
-    const tableInfo = this.liveDb.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='verified_facts'").get();
+    const tableInfo = this.liveDb
+      .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='verified_facts'")
+      .get();
     if (!tableInfo) return;
     const fkCheck = this.liveDb.pragma("foreign_key_list(verified_facts)") as Array<{ table: string }> | undefined;
     if (Array.isArray(fkCheck) && fkCheck.length > 0) return; // FK already present — nothing to do
@@ -891,14 +869,10 @@ export class FactsDB {
   /**
    * Retrieve all variants stored for a given fact.
    */
-  getVariants(
-    factId: string,
-  ): Array<{ id: number; variantType: string; variantText: string; createdAt: string }> {
+  getVariants(factId: string): Array<{ id: number; variantType: string; variantText: string; createdAt: string }> {
     return (
       this.liveDb
-        .prepare(
-          `SELECT id, variant_type, variant_text, created_at FROM fact_variants WHERE fact_id = ?`,
-        )
+        .prepare(`SELECT id, variant_type, variant_text, created_at FROM fact_variants WHERE fact_id = ?`)
         .all(factId) as Array<{
         id: number;
         variant_type: string;
@@ -917,9 +891,7 @@ export class FactsDB {
    * Check whether a fact already has variants stored (to avoid re-processing).
    */
   hasVariants(factId: string): boolean {
-    const row = this.liveDb
-      .prepare(`SELECT 1 FROM fact_variants WHERE fact_id = ? LIMIT 1`)
-      .get(factId);
+    const row = this.liveDb.prepare(`SELECT 1 FROM fact_variants WHERE fact_id = ? LIMIT 1`).get(factId);
     return row !== undefined;
   }
 
@@ -939,13 +911,7 @@ export class FactsDB {
    * Store or replace an embedding vector for a fact+model+variant combination.
    * The embedding is stored as a BLOB (raw Float32Array bytes for portability).
    */
-  storeEmbedding(
-    factId: string,
-    model: string,
-    variant: string,
-    embedding: Float32Array,
-    dimensions: number,
-  ): void {
+  storeEmbedding(factId: string, model: string, variant: string, embedding: Float32Array, dimensions: number): void {
     const blob = Buffer.from(embedding.buffer, embedding.byteOffset, embedding.byteLength);
     this.liveDb
       .prepare(
@@ -974,13 +940,9 @@ export class FactsDB {
   /**
    * Retrieve all embeddings stored for a given fact (all models/variants).
    */
-  getEmbeddings(
-    factId: string,
-  ): Array<{ model: string; variant: string; embedding: Float32Array }> {
+  getEmbeddings(factId: string): Array<{ model: string; variant: string; embedding: Float32Array }> {
     const rows = this.liveDb
-      .prepare(
-        `SELECT model, variant, embedding FROM fact_embeddings WHERE fact_id = ?`,
-      )
+      .prepare(`SELECT model, variant, embedding FROM fact_embeddings WHERE fact_id = ?`)
       .all(factId) as Array<{ model: string; variant: string; embedding: Buffer }>;
     return rows.map((r) => ({
       model: r.model,
@@ -993,17 +955,14 @@ export class FactsDB {
    * Retrieve embeddings for a specific model. When limit is set, returns the most recent
    * (by fact_embeddings.id DESC) to avoid excluding recent facts when capping for performance.
    */
-  getEmbeddingsByModel(
-    model: string,
-    limit?: number,
-  ): Array<{ factId: string; embedding: Float32Array }> {
+  getEmbeddingsByModel(model: string, limit?: number): Array<{ factId: string; embedding: Float32Array }> {
     const sql =
       limit != null
         ? `SELECT fact_id, embedding FROM fact_embeddings WHERE model = ? AND variant = 'canonical' ORDER BY id DESC LIMIT ?`
         : `SELECT fact_id, embedding FROM fact_embeddings WHERE model = ? AND variant = 'canonical'`;
-    const rows = (limit != null
-      ? this.liveDb.prepare(sql).all(model, limit)
-      : this.liveDb.prepare(sql).all(model)) as Array<{ fact_id: string; embedding: Buffer }>;
+    const rows = (
+      limit != null ? this.liveDb.prepare(sql).all(model, limit) : this.liveDb.prepare(sql).all(model)
+    ) as Array<{ fact_id: string; embedding: Buffer }>;
     return rows.map((r) => ({
       factId: r.fact_id,
       embedding: FactsDB.bufferToFloat32Array(r.embedding),
@@ -1015,9 +974,7 @@ export class FactsDB {
    * Normally handled by the ON DELETE CASCADE FK, but exposed for explicit use.
    */
   deleteEmbeddings(factId: string): void {
-    this.liveDb
-      .prepare(`DELETE FROM fact_embeddings WHERE fact_id = ?`)
-      .run(factId);
+    this.liveDb.prepare(`DELETE FROM fact_embeddings WHERE fact_id = ?`).run(factId);
   }
 
   /**
@@ -1027,9 +984,9 @@ export class FactsDB {
    * DB in a consistent state (either old schema intact, or new schema + backfill complete).
    */
   private migrateFtsTagsSupport(): void {
-    const row = this.liveDb
-      .prepare(`SELECT sql FROM sqlite_master WHERE type='table' AND name='facts_fts'`)
-      .get() as { sql: string } | undefined;
+    const row = this.liveDb.prepare(`SELECT sql FROM sqlite_master WHERE type='table' AND name='facts_fts'`).get() as
+      | { sql: string }
+      | undefined;
 
     // If the CREATE statement already contains 'tags', nothing to do.
     if (row && row.sql && row.sql.includes("tags")) return;
@@ -1095,7 +1052,10 @@ export class FactsDB {
    * (attacker can pass userId: "alice" to access alice's private memories). Use autoRecall.scopeFilter from config
    * (set by integration layer) rather than user-supplied parameters. See docs/MEMORY-SCOPING.md.
    */
-  private scopeFilterClause(filter: ScopeFilter | null | undefined): { clause: string; params: Record<string, unknown> } {
+  private scopeFilterClause(filter: ScopeFilter | null | undefined): {
+    clause: string;
+    params: Record<string, unknown>;
+  } {
     if (!filter || (!filter.userId && !filter.agentId && !filter.sessionId)) {
       return { clause: "", params: {} };
     }
@@ -1146,21 +1106,15 @@ export class FactsDB {
   }
 
   private migrateTagsColumn(): void {
-    const cols = this.liveDb
-      .prepare(`PRAGMA table_info(facts)`)
-      .all() as Array<{ name: string }>;
+    const cols = this.liveDb.prepare(`PRAGMA table_info(facts)`).all() as Array<{ name: string }>;
     if (cols.some((c) => c.name === "tags")) return;
     this.liveDb.exec(`ALTER TABLE facts ADD COLUMN tags TEXT`);
-    this.liveDb.exec(
-      `CREATE INDEX IF NOT EXISTS idx_facts_tags ON facts(tags) WHERE tags IS NOT NULL AND tags != ''`,
-    );
+    this.liveDb.exec(`CREATE INDEX IF NOT EXISTS idx_facts_tags ON facts(tags) WHERE tags IS NOT NULL AND tags != ''`);
   }
 
   /** Add recall_count and last_accessed for dynamic salience scoring. */
   private migrateAccessTracking(): void {
-    const cols = this.liveDb
-      .prepare(`PRAGMA table_info(facts)`)
-      .all() as Array<{ name: string }>;
+    const cols = this.liveDb.prepare(`PRAGMA table_info(facts)`).all() as Array<{ name: string }>;
     const colNames = new Set(cols.map((c) => c.name));
     if (colNames.has("recall_count")) return;
     this.liveDb.exec(`ALTER TABLE facts ADD COLUMN recall_count INTEGER NOT NULL DEFAULT 0`);
@@ -1173,9 +1127,7 @@ export class FactsDB {
 
   /** Add superseded_at and superseded_by for contradiction resolution. */
   private migrateSupersessionColumns(): void {
-    const cols = this.liveDb
-      .prepare(`PRAGMA table_info(facts)`)
-      .all() as Array<{ name: string }>;
+    const cols = this.liveDb.prepare(`PRAGMA table_info(facts)`).all() as Array<{ name: string }>;
     const colNames = new Set(cols.map((c) => c.name));
     if (colNames.has("superseded_at")) return;
     this.liveDb.exec(`ALTER TABLE facts ADD COLUMN superseded_at INTEGER`);
@@ -1187,9 +1139,7 @@ export class FactsDB {
 
   /** Bi-temporal columns valid_from, valid_until, supersedes_id for point-in-time queries. */
   private migrateBiTemporalColumns(): void {
-    const cols = this.liveDb
-      .prepare(`PRAGMA table_info(facts)`)
-      .all() as Array<{ name: string }>;
+    const cols = this.liveDb.prepare(`PRAGMA table_info(facts)`).all() as Array<{ name: string }>;
     const colNames = new Set(cols.map((c) => c.name));
     if (colNames.has("valid_from")) return;
     this.liveDb.exec(`ALTER TABLE facts ADD COLUMN valid_from INTEGER`);
@@ -1198,9 +1148,7 @@ export class FactsDB {
     this.liveDb.exec(
       `UPDATE facts SET valid_from = COALESCE(source_date, created_at), valid_until = NULL, supersedes_id = NULL WHERE valid_from IS NULL`,
     );
-    this.liveDb.exec(
-      `CREATE INDEX IF NOT EXISTS idx_facts_valid_range ON facts(valid_from, valid_until)`,
-    );
+    this.liveDb.exec(`CREATE INDEX IF NOT EXISTS idx_facts_valid_range ON facts(valid_from, valid_until)`);
   }
 
   /** Create memory_links table for graph-based spreading activation. */
@@ -1212,9 +1160,11 @@ export class FactsDB {
     if (tableExists) {
       // Use PRAGMA foreign_key_list to check for a CASCADE FK on target_fact_id.
       // This is immune to DDL formatting variations across plugin versions.
-      const fkList = this.liveDb
-        .prepare(`PRAGMA foreign_key_list(memory_links)`)
-        .all() as Array<{ table: string; from: string; on_delete: string }>;
+      const fkList = this.liveDb.prepare(`PRAGMA foreign_key_list(memory_links)`).all() as Array<{
+        table: string;
+        from: string;
+        on_delete: string;
+      }>;
       const hasTargetCascade = fkList.some(
         (fk) => fk.from === "target_fact_id" && fk.on_delete.toUpperCase() === "CASCADE",
       );
@@ -1262,9 +1212,7 @@ export class FactsDB {
   }
 
   private migrateSourceDateColumn(): void {
-    const cols = this.liveDb
-      .prepare(`PRAGMA table_info(facts)`)
-      .all() as Array<{ name: string }>;
+    const cols = this.liveDb.prepare(`PRAGMA table_info(facts)`).all() as Array<{ name: string }>;
     if (cols.some((c) => c.name === "source_date")) return;
     this.liveDb.exec(`ALTER TABLE facts ADD COLUMN source_date INTEGER`);
     this.liveDb.exec(`UPDATE facts SET source_date = created_at WHERE source_date IS NULL`);
@@ -1274,16 +1222,17 @@ export class FactsDB {
   }
 
   private migrateNormalizedHash(): void {
-    const cols = this.liveDb
-      .prepare(`PRAGMA table_info(facts)`)
-      .all() as Array<{ name: string }>;
+    const cols = this.liveDb.prepare(`PRAGMA table_info(facts)`).all() as Array<{ name: string }>;
     if (!cols.some((c) => c.name === "normalized_hash")) {
       this.liveDb.exec(`ALTER TABLE facts ADD COLUMN normalized_hash TEXT`);
-      this.liveDb.exec(`CREATE INDEX IF NOT EXISTS idx_facts_normalized_hash ON facts(normalized_hash) WHERE normalized_hash IS NOT NULL`);
+      this.liveDb.exec(
+        `CREATE INDEX IF NOT EXISTS idx_facts_normalized_hash ON facts(normalized_hash) WHERE normalized_hash IS NOT NULL`,
+      );
     }
-    const rows = this.liveDb
-      .prepare(`SELECT id, text FROM facts WHERE normalized_hash IS NULL`)
-      .all() as Array<{ id: string; text: string }>;
+    const rows = this.liveDb.prepare(`SELECT id, text FROM facts WHERE normalized_hash IS NULL`).all() as Array<{
+      id: string;
+      text: string;
+    }>;
     if (rows.length === 0) return;
     const stmt = this.liveDb.prepare(`UPDATE facts SET normalized_hash = ? WHERE id = ?`);
     for (const row of rows) {
@@ -1292,9 +1241,7 @@ export class FactsDB {
   }
 
   private migrateSummaryColumn(): void {
-    const cols = this.liveDb
-      .prepare(`PRAGMA table_info(facts)`)
-      .all() as Array<{ name: string }>;
+    const cols = this.liveDb.prepare(`PRAGMA table_info(facts)`).all() as Array<{ name: string }>;
     if (cols.some((c) => c.name === "summary")) return;
     this.liveDb.exec(`ALTER TABLE facts ADD COLUMN summary TEXT`);
   }
@@ -1309,9 +1256,7 @@ export class FactsDB {
   }
 
   private migrateDecayColumns(): void {
-    const cols = this.liveDb
-      .prepare(`PRAGMA table_info(facts)`)
-      .all() as Array<{ name: string }>;
+    const cols = this.liveDb.prepare(`PRAGMA table_info(facts)`).all() as Array<{ name: string }>;
     const colNames = new Set(cols.map((c) => c.name));
 
     if (colNames.has("decay_class")) return;
@@ -1343,9 +1288,9 @@ export class FactsDB {
   private migrateTimestampUnits(): void {
     const MS_THRESHOLD = 10_000_000_000;
 
-    const { cnt } = this.liveDb
-      .prepare(`SELECT COUNT(*) as cnt FROM facts WHERE created_at > ?`)
-      .get(MS_THRESHOLD) as { cnt: number };
+    const { cnt } = this.liveDb.prepare(`SELECT COUNT(*) as cnt FROM facts WHERE created_at > ?`).get(MS_THRESHOLD) as {
+      cnt: number;
+    };
 
     if (cnt === 0) return;
 
@@ -1417,13 +1362,8 @@ export class FactsDB {
     const id = randomUUID();
     const nowSec = Math.floor(Date.now() / 1000);
 
-    const decayClass =
-      entry.decayClass ||
-      classifyDecay(entry.entity, entry.key, entry.value, entry.text);
-    const expiresAt =
-      entry.expiresAt !== undefined
-        ? entry.expiresAt
-        : calculateExpiry(decayClass, nowSec);
+    const decayClass = entry.decayClass || classifyDecay(entry.entity, entry.key, entry.value, entry.text);
+    const expiresAt = entry.expiresAt !== undefined ? entry.expiresAt : calculateExpiry(decayClass, nowSec);
     const importance = entry.importance ?? 0.5;
     const confidence = entry.confidence ?? 1.0;
     const summary = entry.summary ?? null;
@@ -1453,8 +1393,7 @@ export class FactsDB {
     const provenanceSession = entry.provenanceSession ?? null;
     const sourceTurn = entry.sourceTurn ?? null;
     const extractionMethod = entry.extractionMethod ?? null;
-    const extractionConfidence =
-      entry.extractionConfidence !== undefined ? entry.extractionConfidence : null;
+    const extractionConfidence = entry.extractionConfidence !== undefined ? entry.extractionConfidence : null;
 
     const tier: MemoryTier = (entry as { tier?: MemoryTier }).tier ?? "warm";
     // Fix #2: guard against NaN/non-finite values passed in from external callers
@@ -1463,9 +1402,7 @@ export class FactsDB {
     // Fix #1: ensure expires_at covers the full freeze period so the fact is not pruned
     // before the freeze expires
     const adjustedExpiresAt =
-      decayFreezeUntil !== null && expiresAt !== null && expiresAt < decayFreezeUntil
-        ? decayFreezeUntil
-        : expiresAt;
+      decayFreezeUntil !== null && expiresAt !== null && expiresAt < decayFreezeUntil ? decayFreezeUntil : expiresAt;
     this.liveDb
       .prepare(
         `INSERT INTO facts (id, text, category, importance, entity, key, value, source, created_at, decay_class, expires_at, last_confirmed_at, confidence, summary, embedding_model, normalized_hash, source_date, tags, valid_from, valid_until, supersedes_id, tier, scope, scope_target, procedure_type, success_count, last_validated, source_sessions, decay_freeze_until, provenance_session, source_turn, extraction_method, extraction_confidence)
@@ -1553,7 +1490,18 @@ export class FactsDB {
           .prepare(
             `UPDATE facts SET last_confirmed_at = ?, expires_at = CASE decay_class WHEN 'stable' THEN ? + ? WHEN 'active' THEN ? + ? WHEN 'durable' THEN ? + ? WHEN 'normal' THEN ? + ? ELSE expires_at END WHERE id IN (${placeholders}) AND decay_class IN ('stable', 'active', 'durable', 'normal')`,
           )
-          .run(nowSec, nowSec, TTL_DEFAULTS.stable, nowSec, TTL_DEFAULTS.active, nowSec, TTL_DEFAULTS.durable, nowSec, TTL_DEFAULTS.normal, ...batch);
+          .run(
+            nowSec,
+            nowSec,
+            TTL_DEFAULTS.stable,
+            nowSec,
+            TTL_DEFAULTS.active,
+            nowSec,
+            TTL_DEFAULTS.durable,
+            nowSec,
+            TTL_DEFAULTS.normal,
+            ...batch,
+          );
 
         // Bump recall_count, last_accessed, access_count, and last_accessed_at for all
         this.liveDb
@@ -1570,9 +1518,7 @@ export class FactsDB {
   logRecall(hit: boolean, occurredAtSec?: number): void {
     const id = randomUUID();
     const nowSec = occurredAtSec ?? Math.floor(Date.now() / 1000);
-    this.liveDb
-      .prepare(`INSERT INTO recall_log (id, occurred_at, hit) VALUES (?, ?, ?)`)
-      .run(id, nowSec, hit ? 1 : 0);
+    this.liveDb.prepare(`INSERT INTO recall_log (id, occurred_at, hit) VALUES (?, ?, ?)`).run(id, nowSec, hit ? 1 : 0);
   }
 
   /** Prune recall_log entries older than N days to prevent unbounded growth (Issue #148). */
@@ -1583,9 +1529,9 @@ export class FactsDB {
 
   /** Read the last stored embedding provider+model metadata (Issue #153). */
   getEmbeddingMeta(): { provider: string; model: string } | null {
-    const row = this.liveDb
-      .prepare(`SELECT provider, model FROM embedding_meta WHERE id = 1`)
-      .get() as { provider: string; model: string } | undefined;
+    const row = this.liveDb.prepare(`SELECT provider, model FROM embedding_meta WHERE id = 1`).get() as
+      | { provider: string; model: string }
+      | undefined;
     if (!row) return null;
     return { provider: row.provider, model: row.model };
   }
@@ -1604,9 +1550,7 @@ export class FactsDB {
 
   /** Record which embedding model generated the stored vector for a fact (Issue #153). */
   setEmbeddingModel(id: string, model: string | null): void {
-    this.liveDb
-      .prepare(`UPDATE facts SET embedding_model = ? WHERE id = ?`)
-      .run(model, id);
+    this.liveDb.prepare(`UPDATE facts SET embedding_model = ? WHERE id = ?`).run(model, id);
   }
 
   /** Get HOT-tier facts for session context, capped by token budget. */
@@ -1640,18 +1584,16 @@ export class FactsDB {
 
   /** Set a fact's tier. */
   setTier(id: string, tier: MemoryTier): boolean {
-    const result = this.liveDb
-      .prepare(`UPDATE facts SET tier = ? WHERE id = ?`)
-      .run(tier, id);
+    const result = this.liveDb.prepare(`UPDATE facts SET tier = ? WHERE id = ?`).run(tier, id);
     return result.changes > 0;
   }
 
   /** Compaction — migrate facts between tiers. Completed tasks -> COLD, inactive preferences -> WARM, active blockers -> HOT. */
-  runCompaction(opts: {
-    inactivePreferenceDays: number;
-    hotMaxTokens: number;
-    hotMaxFacts: number;
-  }): { hot: number; warm: number; cold: number } {
+  runCompaction(opts: { inactivePreferenceDays: number; hotMaxTokens: number; hotMaxFacts: number }): {
+    hot: number;
+    warm: number;
+    cold: number;
+  } {
     const nowSec = Math.floor(Date.now() / 1000);
     const inactiveCutoff = nowSec - opts.inactivePreferenceDays * 86400;
     const counts = { hot: 0, warm: 0, cold: 0 };
@@ -1745,7 +1687,16 @@ export class FactsDB {
       diversityWeight?: number;
     } = {},
   ): SearchResult[] {
-    const { includeExpired = false, tag, includeSuperseded = false, asOf, tierFilter = "warm", scopeFilter, reinforcementBoost = 0.1, diversityWeight = 1.0 } = options;
+    const {
+      includeExpired = false,
+      tag,
+      includeSuperseded = false,
+      asOf,
+      tierFilter = "warm",
+      scopeFilter,
+      reinforcementBoost = 0.1,
+      diversityWeight = 1.0,
+    } = options;
 
     const sanitized = this.sanitizeFTS5Query(query);
     const safeQuery = sanitized
@@ -1757,24 +1708,16 @@ export class FactsDB {
     if (!safeQuery) return [];
 
     const nowSec = Math.floor(Date.now() / 1000);
-    const expiryFilter = includeExpired
-      ? ""
-      : "AND (f.expires_at IS NULL OR f.expires_at > @now)";
+    const expiryFilter = includeExpired ? "" : "AND (f.expires_at IS NULL OR f.expires_at > @now)";
     const temporalFilter =
       asOf != null
         ? "AND f.valid_from <= @asOf AND (f.valid_until IS NULL OR f.valid_until > @asOf)"
         : includeSuperseded
           ? ""
           : "AND f.superseded_at IS NULL";
-    const tagFilter =
-      tag && tag.trim()
-        ? "AND (',' || COALESCE(f.tags,'') || ',') LIKE @tagPattern"
-        : "";
+    const tagFilter = tag && tag.trim() ? "AND (',' || COALESCE(f.tags,'') || ',') LIKE @tagPattern" : "";
     const tagPattern = tag && tag.trim() ? `%,${tag.toLowerCase().trim()},%` : null;
-    const tierFilterClause =
-      tierFilter === "warm"
-        ? "AND (f.tier IS NULL OR f.tier = 'warm' OR f.tier = 'hot')"
-        : "";
+    const tierFilterClause = tierFilter === "warm" ? "AND (f.tier IS NULL OR f.tier = 'warm' OR f.tier = 'hot')" : "";
     const { clause: scopeFilterClauseStr, params: scopeParams } = this.scopeFilterClause(scopeFilter);
 
     const rows = this.liveDb
@@ -1871,19 +1814,14 @@ export class FactsDB {
   ): SearchResult[] {
     const nowSec = Math.floor(Date.now() / 1000);
     const { includeSuperseded = false, asOf, scopeFilter } = options ?? {};
-    const limit = typeof options?.limit === "number" && options.limit > 0
-      ? Math.floor(options.limit)
-      : null;
+    const limit = typeof options?.limit === "number" && options.limit > 0 ? Math.floor(options.limit) : null;
     const temporalFilter =
       asOf != null
         ? " AND valid_from <= ? AND (valid_until IS NULL OR valid_until > ?)"
         : includeSuperseded
           ? ""
           : " AND superseded_at IS NULL";
-    const tagFilter =
-      tag && tag.trim()
-        ? " AND (',' || COALESCE(tags,'') || ',') LIKE ?"
-        : "";
+    const tagFilter = tag && tag.trim() ? " AND (',' || COALESCE(tags,'') || ',') LIKE ?" : "";
     const tagParam = tag && tag.trim() ? `%,${tag.toLowerCase().trim()},%` : null;
     const { clause: scopeClause, params: scopeParamsArr } = this.scopeFilterClausePositional(scopeFilter);
     const limitClause = limit ? " LIMIT ?" : "";
@@ -1908,9 +1846,7 @@ export class FactsDB {
           ? [...[entity, nowSec, asOf, asOf], ...scopeParamsArr]
           : [...[entity, nowSec], ...scopeParamsArr];
     const finalParams = limit ? [...params, limit] : params;
-    const rows = this.liveDb.prepare(base).all(...finalParams) as Array<
-      Record<string, unknown>
-    >;
+    const rows = this.liveDb.prepare(base).all(...finalParams) as Array<Record<string, unknown>>;
 
     const results = rows.map((row) => {
       const entry = this.rowToEntry(row);
@@ -1947,9 +1883,9 @@ export class FactsDB {
       if (pattern.length > 20) parts.push(pattern.slice(20));
       pattern = parts.join("-");
     }
-    const rows = this.liveDb.prepare(
-      `SELECT id FROM facts WHERE id LIKE ? || '%' LIMIT 3`
-    ).all(pattern) as Array<{ id: string }>;
+    const rows = this.liveDb.prepare(`SELECT id FROM facts WHERE id LIKE ? || '%' LIMIT 3`).all(pattern) as Array<{
+      id: string;
+    }>;
     if (rows.length === 0) return null;
     if (rows.length === 1) return { id: rows[0].id };
     return { ambiguous: true, count: rows.length >= 3 ? 3 : rows.length };
@@ -1958,24 +1894,18 @@ export class FactsDB {
   delete(id: string): boolean {
     // Explicitly clean up contradictions (defense-in-depth; ON DELETE CASCADE on facts also handles this,
     // but explicit cleanup ensures correctness regardless of FK enforcement state at the call site).
-    this.liveDb
-      .prepare(`DELETE FROM contradictions WHERE fact_id_new = ? OR fact_id_old = ?`)
-      .run(id, id);
+    this.liveDb.prepare(`DELETE FROM contradictions WHERE fact_id_new = ? OR fact_id_old = ?`).run(id, id);
     // Manually clean up links where this fact is the target, except DERIVED_FROM links
     // (DERIVED_FROM links are preserved for provenance tracking even after source facts are deleted)
-    this.liveDb
-      .prepare(`DELETE FROM memory_links WHERE target_fact_id = ? AND link_type != 'DERIVED_FROM'`)
-      .run(id);
-    
+    this.liveDb.prepare(`DELETE FROM memory_links WHERE target_fact_id = ? AND link_type != 'DERIVED_FROM'`).run(id);
+
     const result = this.liveDb.prepare(`DELETE FROM facts WHERE id = ?`).run(id);
     return result.changes > 0;
   }
 
   /** Exact or (if fuzzyDedupe) normalized-text duplicate. */
   hasDuplicate(text: string): boolean {
-    const exact = this.liveDb
-      .prepare(`SELECT id FROM facts WHERE text = ? LIMIT 1`)
-      .get(text);
+    const exact = this.liveDb.prepare(`SELECT id FROM facts WHERE text = ? LIMIT 1`).get(text);
     if (exact) return true;
     if (this.fuzzyDedupe && this.getDuplicateIdByNormalizedHash(text) !== null) return true;
     return false;
@@ -1984,9 +1914,9 @@ export class FactsDB {
   /** Id of an existing fact with same normalized text, or null. Used when store.fuzzyDedupe is true. */
   private getDuplicateIdByNormalizedHash(text: string): string | null {
     const hash = normalizedHash(text);
-    const row = this.liveDb
-      .prepare(`SELECT id FROM facts WHERE normalized_hash = ? LIMIT 1`)
-      .get(hash) as { id: string } | undefined;
+    const row = this.liveDb.prepare(`SELECT id FROM facts WHERE normalized_hash = ? LIMIT 1`).get(hash) as
+      | { id: string }
+      | undefined;
     return row?.id ?? null;
   }
 
@@ -2004,7 +1934,6 @@ export class FactsDB {
     return result.changes > 0;
   }
 
-
   /** Find top-N most similar existing facts by entity+key overlap and normalized text. Used for ADD/UPDATE/DELETE classification. */
   findSimilarForClassification(text: string, entity: string | null, key: string | null, limit = 5): MemoryEntry[] {
     const nowSec = Math.floor(Date.now() / 1000);
@@ -2014,7 +1943,7 @@ export class FactsDB {
     if (entity && key) {
       const rows = this.liveDb
         .prepare(
-          `SELECT * FROM facts WHERE lower(entity) = lower(?) AND lower(key) = lower(?) AND superseded_at IS NULL AND (expires_at IS NULL OR expires_at > ?) ORDER BY created_at DESC LIMIT ?`
+          `SELECT * FROM facts WHERE lower(entity) = lower(?) AND lower(key) = lower(?) AND superseded_at IS NULL AND (expires_at IS NULL OR expires_at > ?) ORDER BY created_at DESC LIMIT ?`,
         )
         .all(entity, key, nowSec, limit) as Array<Record<string, unknown>>;
       for (const row of rows) {
@@ -2028,7 +1957,7 @@ export class FactsDB {
       const seenIds = new Set(results.map((r) => r.id));
       const rows = this.liveDb
         .prepare(
-          `SELECT * FROM facts WHERE lower(entity) = lower(?) AND superseded_at IS NULL AND (expires_at IS NULL OR expires_at > ?) ORDER BY created_at DESC LIMIT ?`
+          `SELECT * FROM facts WHERE lower(entity) = lower(?) AND superseded_at IS NULL AND (expires_at IS NULL OR expires_at > ?) ORDER BY created_at DESC LIMIT ?`,
         )
         .all(entity, nowSec, remaining + results.length) as Array<Record<string, unknown>>;
       for (const row of rows) {
@@ -2056,7 +1985,7 @@ export class FactsDB {
         try {
           const rows = this.liveDb
             .prepare(
-              `SELECT f.* FROM facts f JOIN facts_fts fts ON f.rowid = fts.rowid WHERE facts_fts MATCH ? AND f.superseded_at IS NULL AND (f.expires_at IS NULL OR f.expires_at > ?) LIMIT ?`
+              `SELECT f.* FROM facts f JOIN facts_fts fts ON f.rowid = fts.rowid WHERE facts_fts MATCH ? AND f.superseded_at IS NULL AND (f.expires_at IS NULL OR f.expires_at > ?) LIMIT ?`,
             )
             .all(words, nowSec, remaining + results.length) as Array<Record<string, unknown>>;
           for (const row of rows) {
@@ -2069,9 +1998,9 @@ export class FactsDB {
           }
         } catch (err) {
           capturePluginError(err as Error, {
-            operation: 'fts-query',
-            severity: 'info',
-            subsystem: 'facts'
+            operation: "fts-query",
+            severity: "info",
+            subsystem: "facts",
           });
           // FTS query can fail on unusual input; ignore
         }
@@ -2127,9 +2056,9 @@ export class FactsDB {
           return Array.isArray(parsed) ? parsed.filter((q): q is string => typeof q === "string") : null;
         } catch (err) {
           capturePluginError(err as Error, {
-            operation: 'json-parse-quotes',
-            severity: 'info',
-            subsystem: 'facts'
+            operation: "json-parse-quotes",
+            severity: "info",
+            subsystem: "facts",
           });
           return null;
         }
@@ -2139,7 +2068,9 @@ export class FactsDB {
   }
 
   /** For consolidation (2.4): fetch facts with id, text, category, entity, key. Order by created_at DESC. Excludes superseded. */
-  getFactsForConsolidation(limit: number): Array<{ id: string; text: string; category: string; entity: string | null; key: string | null }> {
+  getFactsForConsolidation(
+    limit: number,
+  ): Array<{ id: string; text: string; category: string; entity: string | null; key: string | null }> {
     const nowSec = Math.floor(Date.now() / 1000);
     const rows = this.liveDb
       .prepare(
@@ -2194,10 +2125,7 @@ export class FactsDB {
   }
 
   /** Batch get facts by id. Returns a Map of id → entry after asOf/scope filtering. */
-  getByIds(
-    ids: string[],
-    options?: { asOf?: number; scopeFilter?: ScopeFilter | null },
-  ): Map<string, MemoryEntry> {
+  getByIds(ids: string[], options?: { asOf?: number; scopeFilter?: ScopeFilter | null }): Map<string, MemoryEntry> {
     const result = new Map<string, MemoryEntry>();
     if (ids.length === 0) return result;
     const uniqueIds = Array.from(new Set(ids));
@@ -2207,9 +2135,9 @@ export class FactsDB {
     for (let i = 0; i < uniqueIds.length; i += CHUNK_SIZE) {
       const chunk = uniqueIds.slice(i, i + CHUNK_SIZE);
       const placeholders = chunk.map(() => "?").join(",");
-      const rows = this.liveDb
-        .prepare(`SELECT * FROM facts WHERE id IN (${placeholders})`)
-        .all(...chunk) as Array<Record<string, unknown>>;
+      const rows = this.liveDb.prepare(`SELECT * FROM facts WHERE id IN (${placeholders})`).all(...chunk) as Array<
+        Record<string, unknown>
+      >;
       for (const row of rows) {
         const entry = this.rowToEntry(row);
         const filtered = this.applyLookupFilters(entry, options);
@@ -2220,12 +2148,7 @@ export class FactsDB {
   }
 
   /** Create a typed link between two facts. Returns link id. */
-  createLink(
-    sourceFactId: string,
-    targetFactId: string,
-    linkType: MemoryLinkType,
-    strength = 1.0,
-  ): string {
+  createLink(sourceFactId: string, targetFactId: string, linkType: MemoryLinkType, strength = 1.0): string {
     const id = randomUUID();
     const now = Math.floor(Date.now() / 1000);
     this.liveDb
@@ -2237,11 +2160,7 @@ export class FactsDB {
   }
 
   /** Hebbian: Create or strengthen RELATED_TO link between two facts recalled together. */
-  createOrStrengthenRelatedLink(
-    factIdA: string,
-    factIdB: string,
-    deltaStrength = 0.1,
-  ): void {
+  createOrStrengthenRelatedLink(factIdA: string, factIdB: string, deltaStrength = 0.1): void {
     if (factIdA === factIdB) return;
     const [source, target] = factIdA < factIdB ? [factIdA, factIdB] : [factIdB, factIdA];
 
@@ -2253,9 +2172,7 @@ export class FactsDB {
 
     const newStrength = Math.min(1, (existing?.strength ?? 0) + deltaStrength);
     if (existing) {
-      this.liveDb
-        .prepare(`UPDATE memory_links SET strength = ? WHERE id = ?`)
-        .run(newStrength, existing.id);
+      this.liveDb.prepare(`UPDATE memory_links SET strength = ? WHERE id = ?`).run(newStrength, existing.id);
     } else {
       this.createLink(source, target, "RELATED_TO", newStrength);
     }
@@ -2264,9 +2181,7 @@ export class FactsDB {
   /** Get links from a fact (outgoing). */
   getLinksFrom(factId: string): Array<{ id: string; targetFactId: string; linkType: string; strength: number }> {
     const rows = this.liveDb
-      .prepare(
-        `SELECT id, target_fact_id, link_type, strength FROM memory_links WHERE source_fact_id = ?`,
-      )
+      .prepare(`SELECT id, target_fact_id, link_type, strength FROM memory_links WHERE source_fact_id = ?`)
       .all(factId) as Array<{ id: string; target_fact_id: string; link_type: string; strength: number }>;
     return rows.map((r) => ({
       id: r.id,
@@ -2279,9 +2194,7 @@ export class FactsDB {
   /** Get links to a fact (incoming). */
   getLinksTo(factId: string): Array<{ id: string; sourceFactId: string; linkType: string; strength: number }> {
     const rows = this.liveDb
-      .prepare(
-        `SELECT id, source_fact_id, link_type, strength FROM memory_links WHERE target_fact_id = ?`,
-      )
+      .prepare(`SELECT id, source_fact_id, link_type, strength FROM memory_links WHERE target_fact_id = ?`)
       .all(factId) as Array<{ id: string; source_fact_id: string; link_type: string; strength: number }>;
     return rows.map((r) => ({
       id: r.id,
@@ -2371,9 +2284,7 @@ export class FactsDB {
     const { includeSuperseded = false } = options ?? {};
     const temporalFilter = includeSuperseded ? "" : " AND superseded_at IS NULL";
     const row = this.liveDb
-      .prepare(
-        `SELECT COUNT(*) AS count FROM facts WHERE (expires_at IS NULL OR expires_at > ?)${temporalFilter}`,
-      )
+      .prepare(`SELECT COUNT(*) AS count FROM facts WHERE (expires_at IS NULL OR expires_at > ?)${temporalFilter}`)
       .get(nowSec) as { count: number };
     return row?.count ?? 0;
   }
@@ -2382,11 +2293,7 @@ export class FactsDB {
    * Get a batch of non-expired facts (for migration without loading all into memory).
    * Same ordering and filter as getAll; offset/limit applied.
    */
-  getBatch(
-    offset: number,
-    limit: number,
-    options?: { includeSuperseded?: boolean },
-  ): MemoryEntry[] {
+  getBatch(offset: number, limit: number, options?: { includeSuperseded?: boolean }): MemoryEntry[] {
     const nowSec = Math.floor(Date.now() / 1000);
     const { includeSuperseded = false } = options ?? {};
     const temporalFilter = includeSuperseded ? "" : " AND superseded_at IS NULL";
@@ -2410,10 +2317,7 @@ export class FactsDB {
     },
   ): MemoryEntry[] {
     const nowSec = Math.floor(Date.now() / 1000);
-    const parts: string[] = [
-      "(expires_at IS NULL OR expires_at > ?)",
-      "superseded_at IS NULL",
-    ];
+    const parts: string[] = ["(expires_at IS NULL OR expires_at > ?)", "superseded_at IS NULL"];
     const params: unknown[] = [nowSec];
     if (filters?.category != null) {
       parts.push("category = ?");
@@ -2438,9 +2342,7 @@ export class FactsDB {
     const where = parts.join(" AND ");
     params.push(limit);
     const rows = this.liveDb
-      .prepare(
-        `SELECT * FROM facts WHERE ${where} ORDER BY COALESCE(source_date, created_at) DESC LIMIT ?`,
-      )
+      .prepare(`SELECT * FROM facts WHERE ${where} ORDER BY COALESCE(source_date, created_at) DESC LIMIT ?`)
       .all(...params) as Array<Record<string, unknown>>;
     return rows.map((row) => this.rowToEntry(row));
   }
@@ -2448,13 +2350,13 @@ export class FactsDB {
   /** Get texts of superseded facts (for filtering LanceDB results). Cached for 1 minute to avoid repeated queries. */
   getSupersededTexts(): Set<string> {
     const now = Date.now();
-    if (this.supersededTextsCache && (now - this.supersededTextsCacheTime) < this.SUPERSEDED_CACHE_TTL_MS) {
+    if (this.supersededTextsCache && now - this.supersededTextsCacheTime < this.SUPERSEDED_CACHE_TTL_MS) {
       return this.supersededTextsCache;
     }
 
-    const rows = this.liveDb
-      .prepare(`SELECT text FROM facts WHERE superseded_at IS NOT NULL`)
-      .all() as Array<{ text: string }>;
+    const rows = this.liveDb.prepare(`SELECT text FROM facts WHERE superseded_at IS NOT NULL`).all() as Array<{
+      text: string;
+    }>;
     this.supersededTextsCache = new Set(rows.map((r) => r.text.toLowerCase()));
     this.supersededTextsCacheTime = now;
     return this.supersededTextsCache;
@@ -2466,9 +2368,7 @@ export class FactsDB {
   }
 
   count(): number {
-    const row = this.liveDb
-      .prepare(`SELECT COUNT(*) as cnt FROM facts`)
-      .get() as Record<string, number>;
+    const row = this.liveDb.prepare(`SELECT COUNT(*) as cnt FROM facts`).get() as Record<string, number>;
     return row.cnt;
   }
 
@@ -2483,13 +2383,15 @@ export class FactsDB {
              AND (decay_freeze_until IS NULL OR decay_freeze_until <= @now)
              AND id NOT IN (SELECT fact_id FROM verified_facts)
          )
-         AND link_type != 'DERIVED_FROM'`
+         AND link_type != 'DERIVED_FROM'`,
       )
       .run({ now: nowSec });
     const result = this.liveDb
-      .prepare(`DELETE FROM facts WHERE expires_at IS NOT NULL AND expires_at < @now
+      .prepare(
+        `DELETE FROM facts WHERE expires_at IS NOT NULL AND expires_at < @now
                 AND (decay_freeze_until IS NULL OR decay_freeze_until <= @now)
-                AND id NOT IN (SELECT fact_id FROM verified_facts)`)
+                AND id NOT IN (SELECT fact_id FROM verified_facts)`,
+      )
       .run({ now: nowSec });
     return result.changes;
   }
@@ -2504,18 +2406,24 @@ export class FactsDB {
            SELECT id FROM facts WHERE scope = 'session' AND scope_target = ?
              AND id NOT IN (SELECT fact_id FROM verified_facts)
          )
-         AND link_type != 'DERIVED_FROM'`
+         AND link_type != 'DERIVED_FROM'`,
       )
       .run(sessionId);
     const result = this.liveDb
-      .prepare(`DELETE FROM facts WHERE scope = 'session' AND scope_target = ?
-                AND id NOT IN (SELECT fact_id FROM verified_facts)`)
+      .prepare(
+        `DELETE FROM facts WHERE scope = 'session' AND scope_target = ?
+                AND id NOT IN (SELECT fact_id FROM verified_facts)`,
+      )
       .run(sessionId);
     return result.changes;
   }
 
   /** Promote a fact's scope (e.g. session → global or agent). Returns true if updated. */
-  promoteScope(factId: string, newScope: "global" | "user" | "agent" | "session", newScopeTarget: string | null): boolean {
+  promoteScope(
+    factId: string,
+    newScope: "global" | "user" | "agent" | "session",
+    newScopeTarget: string | null,
+  ): boolean {
     const scopeTarget = newScope === "global" ? null : newScopeTarget;
     const result = this.liveDb
       .prepare(`UPDATE facts SET scope = ?, scope_target = ? WHERE id = ?`)
@@ -2549,29 +2457,29 @@ export class FactsDB {
              AND (decay_freeze_until IS NULL OR decay_freeze_until <= @now)
              AND id NOT IN (SELECT fact_id FROM verified_facts)
          )
-         AND link_type != 'DERIVED_FROM'`
+         AND link_type != 'DERIVED_FROM'`,
       )
       .run({ now: nowSec });
     const result = this.liveDb
-      .prepare(`DELETE FROM facts WHERE confidence < 0.1
+      .prepare(
+        `DELETE FROM facts WHERE confidence < 0.1
                 AND (decay_freeze_until IS NULL OR decay_freeze_until <= @now)
-                AND id NOT IN (SELECT fact_id FROM verified_facts)`)
+                AND id NOT IN (SELECT fact_id FROM verified_facts)`,
+      )
       .run({ now: nowSec });
     return result.changes;
   }
 
   confirmFact(id: string): boolean {
     const nowSec = Math.floor(Date.now() / 1000);
-    const row = this.liveDb
-      .prepare(`SELECT decay_class FROM facts WHERE id = ?`)
-      .get(id) as { decay_class: DecayClass } | undefined;
+    const row = this.liveDb.prepare(`SELECT decay_class FROM facts WHERE id = ?`).get(id) as
+      | { decay_class: DecayClass }
+      | undefined;
     if (!row) return false;
 
     const newExpiry = calculateExpiry(row.decay_class, nowSec);
     this.liveDb
-      .prepare(
-        `UPDATE facts SET confidence = 1.0, last_confirmed_at = ?, expires_at = ? WHERE id = ?`,
-      )
+      .prepare(`UPDATE facts SET confidence = 1.0, last_confirmed_at = ?, expires_at = ? WHERE id = ?`)
       .run(nowSec, newExpiry, id);
     return true;
   }
@@ -2588,9 +2496,9 @@ export class FactsDB {
         if (Array.isArray(parsed)) quotes = parsed.filter((q): q is string => typeof q === "string");
       } catch (err) {
         capturePluginError(err as Error, {
-          operation: 'json-parse-quotes',
-          severity: 'info',
-          subsystem: 'facts'
+          operation: "json-parse-quotes",
+          severity: "info",
+          subsystem: "facts",
         });
         // Corrupted JSON — start fresh
       }
@@ -2609,9 +2517,9 @@ export class FactsDB {
     const nowSec = Math.floor(Date.now() / 1000);
 
     const tx = this.liveDb.transaction(() => {
-      const row = this.liveDb
-        .prepare(`SELECT confidence FROM facts WHERE id = ?`)
-        .get(id) as { confidence: number } | undefined;
+      const row = this.liveDb.prepare(`SELECT confidence FROM facts WHERE id = ?`).get(id) as
+        | { confidence: number }
+        | undefined;
       if (!row) return false;
 
       const current = typeof row.confidence === "number" ? row.confidence : 1.0;
@@ -2635,16 +2543,21 @@ export class FactsDB {
    * Wraps read-modify-write in a transaction to prevent race conditions.
    * Returns true if fact was updated.
    */
-  reinforceFact(id: string, quoteSnippet: string, context?: ReinforcementContext, opts?: { trackContext?: boolean; maxEventsPerFact?: number; boostAmount?: number }): boolean {
+  reinforceFact(
+    id: string,
+    quoteSnippet: string,
+    context?: ReinforcementContext,
+    opts?: { trackContext?: boolean; maxEventsPerFact?: number; boostAmount?: number },
+  ): boolean {
     const nowSec = Math.floor(Date.now() / 1000);
     const trackContext = opts?.trackContext !== false;
     const maxEventsPerFact = opts?.maxEventsPerFact ?? 50;
     const boostAmount = Math.max(0, opts?.boostAmount ?? 1);
 
     const tx = this.liveDb.transaction(() => {
-      const row = this.liveDb
-        .prepare(`SELECT reinforced_quotes FROM facts WHERE id = ?`)
-        .get(id) as { reinforced_quotes: string | null } | undefined;
+      const row = this.liveDb.prepare(`SELECT reinforced_quotes FROM facts WHERE id = ?`).get(id) as
+        | { reinforced_quotes: string | null }
+        | undefined;
       if (!row) return false;
 
       const quotesJson = this.appendReinforcementQuote(row.reinforced_quotes, quoteSnippet);
@@ -2701,15 +2614,15 @@ export class FactsDB {
     const rows = this.liveDb
       .prepare(`SELECT * FROM reinforcement_log WHERE fact_id = ? ORDER BY occurred_at DESC`)
       .all(factId) as Array<{
-        id: string;
-        fact_id: string;
-        signal: string;
-        query_snippet: string | null;
-        topic: string | null;
-        tool_sequence: string | null;
-        session_file: string | null;
-        occurred_at: number;
-      }>;
+      id: string;
+      fact_id: string;
+      signal: string;
+      query_snippet: string | null;
+      topic: string | null;
+      tool_sequence: string | null;
+      session_file: string | null;
+      occurred_at: number;
+    }>;
     return rows.map((r) => ({
       id: r.id,
       factId: r.fact_id,
@@ -2732,7 +2645,13 @@ export class FactsDB {
     const stems = events
       .map((e) => e.querySnippet?.trim())
       .filter((s): s is string => !!s)
-      .map((s) => s.toLowerCase().replace(/[^a-z0-9\s]/g, "").replace(/\s+/g, " ").slice(0, 50));
+      .map((s) =>
+        s
+          .toLowerCase()
+          .replace(/[^a-z0-9\s]/g, "")
+          .replace(/\s+/g, " ")
+          .slice(0, 50),
+      );
     if (stems.length === 0) return 1.0;
     const uniqueStems = new Set(stems).size;
     return uniqueStems / stems.length;
@@ -2748,15 +2667,15 @@ export class FactsDB {
     const rows = this.liveDb
       .prepare(`SELECT * FROM reinforcement_log WHERE fact_id IN (${placeholders}) ORDER BY fact_id, occurred_at DESC`)
       .all(...factIds) as Array<{
-        id: string;
-        fact_id: string;
-        signal: string;
-        query_snippet: string | null;
-        topic: string | null;
-        tool_sequence: string | null;
-        session_file: string | null;
-        occurred_at: number;
-      }>;
+      id: string;
+      fact_id: string;
+      signal: string;
+      query_snippet: string | null;
+      topic: string | null;
+      tool_sequence: string | null;
+      session_file: string | null;
+      occurred_at: number;
+    }>;
     const eventsByFactId = new Map<string, ReinforcementEvent[]>();
     for (const r of rows) {
       const event: ReinforcementEvent = {
@@ -2795,7 +2714,7 @@ export class FactsDB {
    */
   reinforceProcedure(id: string, quoteSnippet: string, promotionThreshold = 2): boolean {
     const nowSec = Math.floor(Date.now() / 1000);
-    
+
     const tx = this.liveDb.transaction(() => {
       const row = this.liveDb
         .prepare(`SELECT reinforced_quotes, reinforced_count, confidence FROM procedures WHERE id = ?`)
@@ -2829,7 +2748,7 @@ export class FactsDB {
       }
       return true;
     });
-    
+
     return tx();
   }
 
@@ -2879,9 +2798,9 @@ export class FactsDB {
       return { id: row.id, ...JSON.parse(row.text) };
     } catch (err) {
       capturePluginError(err as Error, {
-        operation: 'json-parse-checkpoint',
-        severity: 'info',
-        subsystem: 'facts'
+        operation: "json-parse-checkpoint",
+        severity: "info",
+        subsystem: "facts",
       });
       return null;
     }
@@ -2889,9 +2808,7 @@ export class FactsDB {
 
   statsBreakdown(): Record<string, number> {
     const rows = this.liveDb
-      .prepare(
-        `SELECT decay_class, COUNT(*) as cnt FROM facts GROUP BY decay_class`,
-      )
+      .prepare(`SELECT decay_class, COUNT(*) as cnt FROM facts GROUP BY decay_class`)
       .all() as Array<{ decay_class: string; cnt: number }>;
 
     const stats: Record<string, number> = {};
@@ -2918,9 +2835,7 @@ export class FactsDB {
   /** Source breakdown (conversation, cli, distillation, reflection, etc.) for non-superseded facts. */
   statsBreakdownBySource(): Record<string, number> {
     const rows = this.liveDb
-      .prepare(
-        `SELECT source, COUNT(*) as cnt FROM facts WHERE superseded_at IS NULL GROUP BY source`,
-      )
+      .prepare(`SELECT source, COUNT(*) as cnt FROM facts WHERE superseded_at IS NULL GROUP BY source`)
       .all() as Array<{ source: string; cnt: number }>;
     const stats: Record<string, number> = {};
     for (const row of rows) {
@@ -2932,9 +2847,7 @@ export class FactsDB {
   /** Category breakdown for non-superseded facts (for rich stats). */
   statsBreakdownByCategory(): Record<string, number> {
     const rows = this.liveDb
-      .prepare(
-        `SELECT category, COUNT(*) as cnt FROM facts WHERE superseded_at IS NULL GROUP BY category`,
-      )
+      .prepare(`SELECT category, COUNT(*) as cnt FROM facts WHERE superseded_at IS NULL GROUP BY category`)
       .all() as Array<{ category: string; cnt: number }>;
     const stats: Record<string, number> = {};
     for (const row of rows) {
@@ -2999,7 +2912,14 @@ export class FactsDB {
       entity: row.entity ?? null,
       key: row.key ?? null,
       value: row.value ?? null,
-      tags: typeof row.tags === "string" ? (row.tags || "").split(",").map((t: string) => t.trim()).filter(Boolean).join(",") : "",
+      tags:
+        typeof row.tags === "string"
+          ? (row.tags || "")
+              .split(",")
+              .map((t: string) => t.trim())
+              .filter(Boolean)
+              .join(",")
+          : "",
       tier: (row.tier as string) || "warm",
       decay_class: (row.decay_class as string) || "stable",
       scope: (row.scope as string) || "global",
@@ -3039,13 +2959,16 @@ export class FactsDB {
         .all(...pageIds) as Array<Record<string, unknown>>;
       const byId = new Map<string, Record<string, unknown>>();
       for (const r of pageRows) byId.set(r.id as string, r);
-      const facts = pageIds.map((id) => byId.get(id)).filter(Boolean).map((r) => toDashboardRow(r!));
+      const facts = pageIds
+        .map((id) => byId.get(id))
+        .filter(Boolean)
+        .map((r) => toDashboardRow(r!));
       return { facts, total: searchTotal };
     }
 
-    const countRow = this.liveDb
-      .prepare(`SELECT COUNT(*) as cnt FROM facts WHERE ${where}`)
-      .get(...params) as { cnt: number };
+    const countRow = this.liveDb.prepare(`SELECT COUNT(*) as cnt FROM facts WHERE ${where}`).get(...params) as {
+      cnt: number;
+    };
     const total = countRow?.cnt ?? 0;
 
     const rows = this.liveDb
@@ -3063,15 +2986,15 @@ export class FactsDB {
   /** Distinct memory categories present in non-superseded facts (for CLI stats/categories). */
   uniqueMemoryCategories(): string[] {
     const rows = this.liveDb
-      .prepare(
-        `SELECT DISTINCT category FROM facts WHERE superseded_at IS NULL ORDER BY category`,
-      )
+      .prepare(`SELECT DISTINCT category FROM facts WHERE superseded_at IS NULL ORDER BY category`)
       .all() as Array<{ category: string }>;
     return rows.map((r) => r.category || "other");
   }
 
   /** Snapshot of top procedures for context-audit (sorted by confidence). */
-  getProceduresForAudit(limit = 5): Array<{ taskPattern: string; recipeJson: string; procedureType: "positive" | "negative"; confidence: number }> {
+  getProceduresForAudit(
+    limit = 5,
+  ): Array<{ taskPattern: string; recipeJson: string; procedureType: "positive" | "negative"; confidence: number }> {
     try {
       const rows = this.liveDb
         .prepare(
@@ -3080,7 +3003,12 @@ export class FactsDB {
            ORDER BY confidence DESC, COALESCE(last_validated, created_at) DESC
            LIMIT ?`,
         )
-        .all(limit) as Array<{ task_pattern: string; recipe_json: string; procedure_type: "positive" | "negative"; confidence: number }>;
+        .all(limit) as Array<{
+        task_pattern: string;
+        recipe_json: string;
+        procedure_type: "positive" | "negative";
+        confidence: number;
+      }>;
       return rows.map((r) => ({
         taskPattern: r.task_pattern,
         recipeJson: r.recipe_json,
@@ -3104,9 +3032,9 @@ export class FactsDB {
       return row?.cnt ?? 0;
     } catch (err) {
       capturePluginError(err as Error, {
-        operation: 'count-procedures',
-        severity: 'info',
-        subsystem: 'facts'
+        operation: "count-procedures",
+        severity: "info",
+        subsystem: "facts",
       });
       return 0;
     }
@@ -3121,9 +3049,9 @@ export class FactsDB {
       return row?.cnt ?? 0;
     } catch (err) {
       capturePluginError(err as Error, {
-        operation: 'count-procedures-validated',
-        severity: 'info',
-        subsystem: 'facts'
+        operation: "count-procedures-validated",
+        severity: "info",
+        subsystem: "facts",
       });
       return 0;
     }
@@ -3132,15 +3060,15 @@ export class FactsDB {
   /** Count of procedures promoted to skill (promoted_to_skill = 1). */
   proceduresPromotedCount(): number {
     try {
-      const row = this.liveDb
-        .prepare(`SELECT COUNT(*) as cnt FROM procedures WHERE promoted_to_skill = 1`)
-        .get() as { cnt: number };
+      const row = this.liveDb.prepare(`SELECT COUNT(*) as cnt FROM procedures WHERE promoted_to_skill = 1`).get() as {
+        cnt: number;
+      };
       return row?.cnt ?? 0;
     } catch (err) {
       capturePluginError(err as Error, {
-        operation: 'count-procedures-promoted',
-        severity: 'info',
-        subsystem: 'facts'
+        operation: "count-procedures-promoted",
+        severity: "info",
+        subsystem: "facts",
       });
       return 0;
     }
@@ -3149,15 +3077,13 @@ export class FactsDB {
   /** Count of rows in memory_links (graph connections). Returns 0 if table does not exist. */
   linksCount(): number {
     try {
-      const row = this.liveDb
-        .prepare(`SELECT COUNT(*) as cnt FROM memory_links`)
-        .get() as { cnt: number };
+      const row = this.liveDb.prepare(`SELECT COUNT(*) as cnt FROM memory_links`).get() as { cnt: number };
       return row?.cnt ?? 0;
     } catch (err) {
       capturePluginError(err as Error, {
-        operation: 'count-links',
-        severity: 'info',
-        subsystem: 'facts'
+        operation: "count-links",
+        severity: "info",
+        subsystem: "facts",
       });
       return 0;
     }
@@ -3166,9 +3092,7 @@ export class FactsDB {
   /** Count of facts with source LIKE 'directive:%' (extracted directives). */
   directivesCount(): number {
     const row = this.liveDb
-      .prepare(
-        `SELECT COUNT(*) as cnt FROM facts WHERE superseded_at IS NULL AND source LIKE 'directive:%'`,
-      )
+      .prepare(`SELECT COUNT(*) as cnt FROM facts WHERE superseded_at IS NULL AND source LIKE 'directive:%'`)
       .get() as { cnt: number };
     return row?.cnt ?? 0;
   }
@@ -3184,9 +3108,9 @@ export class FactsDB {
       return row?.cnt ?? 0;
     } catch (err) {
       capturePluginError(err as Error, {
-        operation: 'count-meta-patterns',
-        severity: 'info',
-        subsystem: 'facts'
+        operation: "count-meta-patterns",
+        severity: "info",
+        subsystem: "facts",
       });
       return 0;
     }
@@ -3204,20 +3128,17 @@ export class FactsDB {
 
   /** Estimated total tokens stored (summary or text) for non-superseded facts. Uses same heuristic as auto-recall. */
   estimateStoredTokens(): number {
-    const rows = this.liveDb
-      .prepare(
-        `SELECT summary, text FROM facts WHERE superseded_at IS NULL`,
-      )
-      .all() as Array<{ summary: string | null; text: string }>;
+    const rows = this.liveDb.prepare(`SELECT summary, text FROM facts WHERE superseded_at IS NULL`).all() as Array<{
+      summary: string | null;
+      text: string;
+    }>;
     return rows.reduce((sum, r) => sum + estimateTokensForDisplay(r.summary || r.text), 0);
   }
 
   /** Estimated tokens by tier (hot/warm/cold) for non-superseded facts. */
   estimateStoredTokensByTier(): { hot: number; warm: number; cold: number } {
     const rows = this.liveDb
-      .prepare(
-        `SELECT COALESCE(tier, 'warm') as tier, summary, text FROM facts WHERE superseded_at IS NULL`,
-      )
+      .prepare(`SELECT COALESCE(tier, 'warm') as tier, summary, text FROM facts WHERE superseded_at IS NULL`)
       .all() as Array<{ tier: string; summary: string | null; text: string }>;
     const out = { hot: 0, warm: 0, cold: 0 };
     for (const r of rows) {
@@ -3233,9 +3154,7 @@ export class FactsDB {
   countExpired(): number {
     const nowSec = Math.floor(Date.now() / 1000);
     const row = this.liveDb
-      .prepare(
-        `SELECT COUNT(*) as cnt FROM facts WHERE expires_at IS NOT NULL AND expires_at < ?`,
-      )
+      .prepare(`SELECT COUNT(*) as cnt FROM facts WHERE expires_at IS NOT NULL AND expires_at < ?`)
       .get(nowSec) as { cnt: number };
     return row.cnt;
   }
@@ -3246,9 +3165,7 @@ export class FactsDB {
       .all() as Array<{ rowid: number; entity: string; key: string; value: string; text: string }>;
 
     const nowSec = Math.floor(Date.now() / 1000);
-    const update = this.liveDb.prepare(
-      `UPDATE facts SET decay_class = ?, expires_at = ? WHERE rowid = ?`,
-    );
+    const update = this.liveDb.prepare(`UPDATE facts SET decay_class = ?, expires_at = ? WHERE rowid = ?`);
 
     const counts: Record<string, number> = {};
     const tx = this.liveDb.transaction(() => {
@@ -3274,9 +3191,7 @@ export class FactsDB {
   /** List non-superseded facts by category (for CLI list command). */
   listFactsByCategory(category: string, limit = 100): MemoryEntry[] {
     const rows = this.liveDb
-      .prepare(
-        `SELECT * FROM facts WHERE category = ? AND (superseded_at IS NULL) ORDER BY created_at DESC LIMIT ?`,
-      )
+      .prepare(`SELECT * FROM facts WHERE category = ? AND (superseded_at IS NULL) ORDER BY created_at DESC LIMIT ?`)
       .all(category, limit) as Array<Record<string, unknown>>;
     return rows.map((row) => this.rowToEntry(row));
   }
@@ -3292,9 +3207,7 @@ export class FactsDB {
   }
 
   updateCategory(id: string, category: string): boolean {
-    const result = this.liveDb
-      .prepare("UPDATE facts SET category = ? WHERE id = ?")
-      .run(category, id);
+    const result = this.liveDb.prepare("UPDATE facts SET category = ? WHERE id = ?").run(category, id);
     return result.changes > 0;
   }
 
@@ -3345,9 +3258,9 @@ export class FactsDB {
           return Array.isArray(parsed) ? parsed.filter((q): q is string => typeof q === "string") : null;
         } catch (err) {
           capturePluginError(err as Error, {
-            operation: 'json-parse-quotes',
-            severity: 'info',
-            subsystem: 'facts'
+            operation: "json-parse-quotes",
+            severity: "info",
+            subsystem: "facts",
           });
           return null;
         }
@@ -3380,8 +3293,8 @@ export class FactsDB {
     const now = Math.floor(Date.now() / 1000);
     const existing = this.getProcedureById(id);
     if (existing) {
-      const successCount = (proc.successCount ?? existing.successCount);
-      const failureCount = (proc.failureCount ?? existing.failureCount);
+      const successCount = proc.successCount ?? existing.successCount;
+      const failureCount = proc.failureCount ?? existing.failureCount;
       const confidence = proc.confidence ?? Math.max(0.1, Math.min(0.95, 0.5 + 0.1 * (successCount - failureCount)));
       const scope = proc.scope ?? existing.scope;
       const scopeTarget = proc.scopeTarget ?? existing.scopeTarget;
@@ -3442,15 +3355,15 @@ export class FactsDB {
       return rows.map((r) => this.procedureRowToEntry(r));
     } catch (err) {
       capturePluginError(err as Error, {
-        operation: 'list-procedures',
-        severity: 'info',
-        subsystem: 'facts'
+        operation: "list-procedures",
+        severity: "info",
+        subsystem: "facts",
       });
       return [];
     }
   }
 
-  /** List positive procedures updated in the last N days (for memory-to-skills). Days clamped to [1, 365]. */
+  /** List positive procedures updated in the last N days. Days clamped to [1, 365]. */
   listProceduresUpdatedInLastNDays(days: number, limit = 500): ProcedureEntry[] {
     if (Number.isNaN(days) || days <= 0) return [];
     const clampedDays = Math.min(365, Math.max(1, Math.floor(days)));
@@ -3464,16 +3377,18 @@ export class FactsDB {
       return rows.map((r) => this.procedureRowToEntry(r));
     } catch (err) {
       capturePluginError(err as Error, {
-        operation: 'list-procedures-recent',
-        severity: 'info',
-        subsystem: 'facts'
+        operation: "list-procedures-recent",
+        severity: "info",
+        subsystem: "facts",
       });
       return [];
     }
   }
 
   getProcedureById(id: string): ProcedureEntry | null {
-    const row = this.liveDb.prepare(`SELECT * FROM procedures WHERE id = ?`).get(id) as Record<string, unknown> | undefined;
+    const row = this.liveDb.prepare(`SELECT * FROM procedures WHERE id = ?`).get(id) as
+      | Record<string, unknown>
+      | undefined;
     if (!row) return null;
     return this.procedureRowToEntry(row);
   }
@@ -3497,19 +3412,24 @@ export class FactsDB {
       return rows.map((r) => this.procedureRowToEntry(r));
     } catch (err) {
       capturePluginError(err as Error, {
-        operation: 'fts-query',
-        severity: 'info',
-        subsystem: 'facts'
+        operation: "fts-query",
+        severity: "info",
+        subsystem: "facts",
       });
       return [];
     }
   }
 
-  /** 
+  /**
    * Search procedures by task description (FTS). Returns positive procedures first, then negative.
    * Phase 2: Applies reinforcement boost to score when reinforced_count > 0.
    */
-  searchProcedures(taskDescription: string, limit = 10, reinforcementBoost = 0.1, scopeFilter?: ScopeFilter): ProcedureEntry[] {
+  searchProcedures(
+    taskDescription: string,
+    limit = 10,
+    reinforcementBoost = 0.1,
+    scopeFilter?: ScopeFilter,
+  ): ProcedureEntry[] {
     const sanitized = this.sanitizeFTS5Query(taskDescription);
     const safeQuery = sanitized
       .split(/\s+/)
@@ -3522,17 +3442,17 @@ export class FactsDB {
       // Apply scope filter to procedures search
       const { clause: scopeClause, params: scopeParams } = this.scopeFilterClausePositional(scopeFilter);
       const baseSql = `SELECT p.*, bm25(procedures_fts) as fts_score FROM procedures p JOIN procedures_fts fts ON p.rowid = fts.rowid WHERE procedures_fts MATCH ?${scopeClause} ORDER BY p.procedure_type DESC, bm25(procedures_fts) LIMIT ?`;
-      const rows = this.liveDb
-        .prepare(baseSql)
-        .all(safeQuery, ...scopeParams, limit * 2) as Array<Record<string, unknown>>;
-      
+      const rows = this.liveDb.prepare(baseSql).all(safeQuery, ...scopeParams, limit * 2) as Array<
+        Record<string, unknown>
+      >;
+
       if (rows.length === 0) return [];
-      
+
       // Phase 2: Compute composite score: FTS relevance + confidence + reinforcement
       const minFtsScore = Math.min(...rows.map((r) => r.fts_score as number));
       const maxFtsScore = Math.max(...rows.map((r) => r.fts_score as number));
       const ftsRange = maxFtsScore - minFtsScore || 1;
-      
+
       type ScoredRow = Record<string, unknown> & { boostedScore: number };
       const scored: ScoredRow[] = rows.map((r) => {
         const reinforcedCount = (r.reinforced_count as number) ?? 0;
@@ -3560,9 +3480,9 @@ export class FactsDB {
       return scored.slice(0, limit).map((r) => this.procedureRowToEntry(r));
     } catch (err) {
       capturePluginError(err as Error, {
-        operation: 'fts-query',
-        severity: 'info',
-        subsystem: 'facts'
+        operation: "fts-query",
+        severity: "info",
+        subsystem: "facts",
       });
       return [];
     }
@@ -3578,7 +3498,12 @@ export class FactsDB {
    * - Reinforcement boost for user-praised procedures (configurable)
    * Returns procedures with relevanceScore, sorted by composite score.
    */
-  searchProceduresRanked(taskDescription: string, limit = 10, reinforcementBoost = 0.1, scopeFilter?: ScopeFilter): Array<ProcedureEntry & { relevanceScore: number }> {
+  searchProceduresRanked(
+    taskDescription: string,
+    limit = 10,
+    reinforcementBoost = 0.1,
+    scopeFilter?: ScopeFilter,
+  ): Array<ProcedureEntry & { relevanceScore: number }> {
     const sanitized = this.sanitizeFTS5Query(taskDescription);
     const safeQuery = sanitized
       .split(/\s+/)
@@ -3587,14 +3512,14 @@ export class FactsDB {
       .map((w) => `"${w}"`)
       .join(" OR ");
     if (!safeQuery) return [];
-    
+
     const nowSec = Math.floor(Date.now() / 1000);
     const RECENCY_WINDOW = 30 * 24 * 3600; // 30 days
     const RECENT_FAILURE_WINDOW = 7 * 24 * 3600; // 7 days
     const MIN_RECENCY_FACTOR = 0.3;
     const NEVER_VALIDATED_PENALTY = 0.7; // 30% penalty
     const RECENT_FAILURE_PENALTY = 0.5;
-    
+
     try {
       // Apply scope filter to procedures search
       const { clause: scopeClause, params: scopeParams } = this.scopeFilterClausePositional(scopeFilter);
@@ -3607,60 +3532,62 @@ export class FactsDB {
            LIMIT ?`,
         )
         .all(safeQuery, ...scopeParams, limit * 3) as Array<Record<string, unknown>>;
-      
+
       if (rows.length === 0) return [];
-      
+
       // Normalize FTS scores to 0-1 range
       const minFtsScore = Math.min(...rows.map((r) => r.fts_score as number));
       const maxFtsScore = Math.max(...rows.map((r) => r.fts_score as number));
       const ftsRange = maxFtsScore - minFtsScore || 1;
-      
+
       type ScoredRow = ProcedureEntry & { relevanceScore: number };
       const scored: ScoredRow[] = rows.map((r) => {
         const proc = this.procedureRowToEntry(r);
         const confidence = proc.confidence;
-        
+
         // FTS relevance (inverted because bm25 returns negative scores)
         const rawFtsScore = 1 - ((r.fts_score as number) - minFtsScore) / ftsRange;
         const ftsScore = Number.isNaN(rawFtsScore) ? 0.8 : rawFtsScore;
-        
+
         // Recency factor (decay over 30 days, min 0.3)
         const lastActive = proc.lastValidated ?? proc.createdAt;
         const ageSeconds = nowSec - lastActive;
-        const recencyFactor = ageSeconds > RECENCY_WINDOW
-          ? MIN_RECENCY_FACTOR
-          : Math.max(MIN_RECENCY_FACTOR, 1 - (ageSeconds / RECENCY_WINDOW));
-        
+        const recencyFactor =
+          ageSeconds > RECENCY_WINDOW
+            ? MIN_RECENCY_FACTOR
+            : Math.max(MIN_RECENCY_FACTOR, 1 - ageSeconds / RECENCY_WINDOW);
+
         // Success rate (50-100% weight based on successCount/failureCount)
         const totalTrials = proc.successCount + proc.failureCount;
         let successRateWeight = 0.75; // default for never-validated
         if (totalTrials > 0) {
           const successRate = proc.successCount / totalTrials;
-          successRateWeight = 0.5 + (successRate * 0.5); // 50% base + up to 50% from success rate
+          successRateWeight = 0.5 + successRate * 0.5; // 50% base + up to 50% from success rate
         }
-        
+
         // Penalty for recent failures (last 7 days)
         let recentFailurePenalty = 1.0;
-        if (proc.lastFailed && (nowSec - proc.lastFailed) < RECENT_FAILURE_WINDOW) {
+        if (proc.lastFailed && nowSec - proc.lastFailed < RECENT_FAILURE_WINDOW) {
           recentFailurePenalty = RECENT_FAILURE_PENALTY;
         }
-        
+
         // Penalty for never-validated procedures
         let validationPenalty = 1.0;
         if (!proc.lastValidated) {
           validationPenalty = NEVER_VALIDATED_PENALTY;
         }
-        
+
         // Reinforcement boost for user-praised procedures
         const reinforcedCount = (r.reinforced_count as number) ?? 0;
         const reinforcement = reinforcedCount > 0 ? reinforcementBoost : 0;
-        
+
         // Composite score: FTS relevance + confidence + reinforcement, weighted by recency, success_rate, and penalties
         const baseScore = ftsScore * 0.6 + confidence * 0.4 + reinforcement;
-        const relevanceScore = Math.min(1.0, 
-          baseScore * recencyFactor * successRateWeight * recentFailurePenalty * validationPenalty
+        const relevanceScore = Math.min(
+          1.0,
+          baseScore * recencyFactor * successRateWeight * recentFailurePenalty * validationPenalty,
         );
-        
+
         return { ...proc, relevanceScore };
       });
 
@@ -3680,9 +3607,9 @@ export class FactsDB {
       return scored.slice(0, limit);
     } catch (err) {
       capturePluginError(err as Error, {
-        operation: 'fts-query',
-        severity: 'info',
-        subsystem: 'facts'
+        operation: "fts-query",
+        severity: "info",
+        subsystem: "facts",
       });
       return [];
     }
@@ -3699,7 +3626,7 @@ export class FactsDB {
     const now = Math.floor(Date.now() / 1000);
     const proc = this.getProcedureById(id);
     if (!proc) return false;
-    
+
     // Check if this session has already been counted
     if (sessionId) {
       const sourceSessions = proc.sourceSessions ? proc.sourceSessions.split(",") : [];
@@ -3708,7 +3635,7 @@ export class FactsDB {
       }
       sourceSessions.push(sessionId);
       const newSourceSessions = sourceSessions.join(",");
-      
+
       const successCount = proc.successCount + 1;
       const confidence = Math.max(0.1, Math.min(0.95, 0.5 + 0.1 * (successCount - proc.failureCount)));
       if (recipeJson !== undefined) {
@@ -3749,7 +3676,7 @@ export class FactsDB {
     const now = Math.floor(Date.now() / 1000);
     const proc = this.getProcedureById(id);
     if (!proc) return false;
-    
+
     // Check if this session has already been counted
     if (sessionId) {
       const sourceSessions = proc.sourceSessions ? proc.sourceSessions.split(",") : [];
@@ -3758,7 +3685,7 @@ export class FactsDB {
       }
       sourceSessions.push(sessionId);
       const newSourceSessions = sourceSessions.join(",");
-      
+
       const failureCount = proc.failureCount + 1;
       const confidence = Math.max(0.1, Math.min(0.95, 0.5 + 0.1 * (proc.successCount - failureCount)));
       if (recipeJson !== undefined) {
@@ -3853,10 +3780,14 @@ export class FactsDB {
   /** Get reflection statistics */
   statsReflection(): { reflectionPatternsCount: number; reflectionRulesCount: number } {
     const patternsRow = this.liveDb
-      .prepare(`SELECT COUNT(*) as count FROM facts WHERE superseded_at IS NULL AND source = 'reflection' AND category = 'pattern'`)
+      .prepare(
+        `SELECT COUNT(*) as count FROM facts WHERE superseded_at IS NULL AND source = 'reflection' AND category = 'pattern'`,
+      )
       .get() as { count: number } | undefined;
     const rulesRow = this.liveDb
-      .prepare(`SELECT COUNT(*) as count FROM facts WHERE superseded_at IS NULL AND source = 'reflection' AND category = 'rule'`)
+      .prepare(
+        `SELECT COUNT(*) as count FROM facts WHERE superseded_at IS NULL AND source = 'reflection' AND category = 'rule'`,
+      )
       .get() as { count: number } | undefined;
     return {
       reflectionPatternsCount: patternsRow?.count ?? 0,
@@ -3945,7 +3876,9 @@ export class FactsDB {
   /** Get statistics by scope */
   scopeStats(): Array<{ scope: string; scopeTarget: string | null; count: number }> {
     const rows = this.liveDb
-      .prepare(`SELECT scope, scope_target as scopeTarget, COUNT(*) as count FROM facts WHERE scope IS NOT NULL GROUP BY scope, scope_target`)
+      .prepare(
+        `SELECT scope, scope_target as scopeTarget, COUNT(*) as count FROM facts WHERE scope IS NOT NULL GROUP BY scope, scope_target`,
+      )
       .all() as Array<{ scope: string; scopeTarget: string | null; count: number }>;
     return rows;
   }
@@ -3973,12 +3906,12 @@ export class FactsDB {
     // Clean up links where deleted facts are targets (except DERIVED_FROM)
     const linkCleanupQuery = `DELETE FROM memory_links
       WHERE target_fact_id IN (
-        SELECT id FROM facts WHERE ${conditions.join(' OR ')}
+        SELECT id FROM facts WHERE ${conditions.join(" OR ")}
       )
       AND link_type != 'DERIVED_FROM'`;
     this.liveDb.prepare(linkCleanupQuery).run(...params);
 
-    const query = `DELETE FROM facts WHERE ${conditions.join(' OR ')}`;
+    const query = `DELETE FROM facts WHERE ${conditions.join(" OR ")}`;
     const result = this.liveDb.prepare(query).run(...params);
     return result.changes;
   }
@@ -4017,9 +3950,9 @@ export class FactsDB {
     // No explicit transaction wrapper needed — better-sqlite3 is synchronous,
     // and this method is also called from within recordContradiction's transaction
     // where a nested transaction() call would throw.
-    const row = this.liveDb
-      .prepare(`SELECT confidence FROM facts WHERE id = ?`)
-      .get(id) as { confidence: number } | undefined;
+    const row = this.liveDb.prepare(`SELECT confidence FROM facts WHERE id = ?`).get(id) as
+      | { confidence: number }
+      | undefined;
     if (!row) return null;
     const current = row.confidence ?? 1.0;
     const updated = Math.max(0.1, Math.min(1.0, current + delta));
@@ -4032,9 +3965,9 @@ export class FactsDB {
    * Returns the new confidence value, or null if the fact was not found.
    */
   setConfidenceTo(id: string, value: number): number | null {
-    const row = this.liveDb
-      .prepare(`SELECT confidence FROM facts WHERE id = ?`)
-      .get(id) as { confidence: number } | undefined;
+    const row = this.liveDb.prepare(`SELECT confidence FROM facts WHERE id = ?`).get(id) as
+      | { confidence: number }
+      | undefined;
     if (!row) return null;
     const updated = Math.max(0.1, Math.min(1, value));
     this.liveDb.prepare(`UPDATE facts SET confidence = ? WHERE id = ?`).run(updated, id);
@@ -4049,9 +3982,9 @@ export class FactsDB {
     const normalized = trimmed.toLowerCase();
     // Reject tags that would break the comma-separated storage format.
     if (!normalized || normalized.includes(",")) return;
-    const row = this.liveDb
-      .prepare(`SELECT tags FROM facts WHERE id = ?`)
-      .get(id) as { tags: string | null } | undefined;
+    const row = this.liveDb.prepare(`SELECT tags FROM facts WHERE id = ?`).get(id) as
+      | { tags: string | null }
+      | undefined;
     if (!row) return;
     const tags = parseTags(row.tags);
     // Case-insensitive duplicate check (existing tags may be mixed-case in storage).
@@ -4082,11 +4015,7 @@ export class FactsDB {
         : "AND scope = ? AND scope_target IS NULL"
       : "";
     const baseParams: unknown[] = [entity, key, value, excludeFactId, nowSec];
-    const scopeParams: unknown[] = scope
-      ? scopeTarget != null
-        ? [scope, scopeTarget]
-        : [scope]
-      : [];
+    const scopeParams: unknown[] = scope ? (scopeTarget != null ? [scope, scopeTarget] : [scope]) : [];
     const rows = this.liveDb
       .prepare(
         `SELECT * FROM facts
@@ -4117,9 +4046,9 @@ export class FactsDB {
 
     const tx = this.liveDb.transaction(() => {
       // Get the old fact's current confidence before reducing it
-      const oldFactRow = this.liveDb
-        .prepare(`SELECT confidence FROM facts WHERE id = ?`)
-        .get(factIdOld) as { confidence: number } | undefined;
+      const oldFactRow = this.liveDb.prepare(`SELECT confidence FROM facts WHERE id = ?`).get(factIdOld) as
+        | { confidence: number }
+        | undefined;
       const originalConfidence = oldFactRow?.confidence ?? 1.0;
 
       this.liveDb
@@ -4157,7 +4086,14 @@ export class FactsDB {
   ): Array<{ contradictionId: string; oldFactId: string }> {
     if (!entity?.trim() || !key?.trim() || !value?.trim()) return [];
 
-    const conflicting = this.findConflictingFacts(entity.trim(), key.trim(), value.trim(), newFactId, scope, scopeTarget);
+    const conflicting = this.findConflictingFacts(
+      entity.trim(),
+      key.trim(),
+      value.trim(),
+      newFactId,
+      scope,
+      scopeTarget,
+    );
     const results: Array<{ contradictionId: string; oldFactId: string }> = [];
 
     for (const old of conflicting) {
@@ -4177,14 +4113,10 @@ export class FactsDB {
   getContradictions(factId?: string): ContradictionRecord[] {
     const rows = factId
       ? (this.liveDb
-          .prepare(
-            `SELECT * FROM contradictions WHERE fact_id_new = ? OR fact_id_old = ? ORDER BY detected_at DESC`,
-          )
+          .prepare(`SELECT * FROM contradictions WHERE fact_id_new = ? OR fact_id_old = ? ORDER BY detected_at DESC`)
           .all(factId, factId) as Array<Record<string, unknown>>)
       : (this.liveDb
-          .prepare(
-            `SELECT * FROM contradictions WHERE resolved = 0 ORDER BY detected_at DESC`,
-          )
+          .prepare(`SELECT * FROM contradictions WHERE resolved = 0 ORDER BY detected_at DESC`)
           .all() as Array<Record<string, unknown>>);
     return rows.map((r) => ({
       id: r.id as string,
@@ -4201,14 +4133,9 @@ export class FactsDB {
    * Mark a contradiction as resolved with the given strategy.
    * Returns true if the record was found and updated.
    */
-  resolveContradiction(
-    contradictionId: string,
-    resolution: "superseded" | "kept" | "merged",
-  ): boolean {
+  resolveContradiction(contradictionId: string, resolution: "superseded" | "kept" | "merged"): boolean {
     const result = this.liveDb
-      .prepare(
-        `UPDATE contradictions SET resolved = 1, resolution = ? WHERE id = ? AND resolved = 0`,
-      )
+      .prepare(`UPDATE contradictions SET resolved = 1, resolution = ? WHERE id = ? AND resolved = 0`)
       .run(resolution, contradictionId);
     return result.changes > 0;
   }
@@ -4219,9 +4146,7 @@ export class FactsDB {
    */
   isContradicted(factId: string): boolean {
     const row = this.liveDb
-      .prepare(
-        `SELECT 1 FROM contradictions WHERE (fact_id_old = ? OR fact_id_new = ?) AND resolved = 0 LIMIT 1`,
-      )
+      .prepare(`SELECT 1 FROM contradictions WHERE (fact_id_old = ? OR fact_id_new = ?) AND resolved = 0 LIMIT 1`)
       .get(factId, factId);
     return row != null;
   }
@@ -4322,9 +4247,9 @@ export class FactsDB {
   /** Count of unresolved contradictions. */
   contradictionsCount(): number {
     try {
-      const row = this.liveDb
-        .prepare(`SELECT COUNT(*) as cnt FROM contradictions WHERE resolved = 0`)
-        .get() as { cnt: number };
+      const row = this.liveDb.prepare(`SELECT COUNT(*) as cnt FROM contradictions WHERE resolved = 0`).get() as {
+        cnt: number;
+      };
       return row?.cnt ?? 0;
     } catch (err) {
       capturePluginError(err as Error, {
@@ -4350,9 +4275,7 @@ export class FactsDB {
       return this.knownEntitiesCache;
     }
     const rows = this.liveDb
-      .prepare(
-        `SELECT DISTINCT entity FROM facts WHERE entity IS NOT NULL AND superseded_at IS NULL`,
-      )
+      .prepare(`SELECT DISTINCT entity FROM facts WHERE entity IS NOT NULL AND superseded_at IS NULL`)
       .all() as Array<{ entity: string }>;
     this.knownEntitiesCache = rows.map((r) => r.entity);
     this.knownEntitiesCacheTime = now;
@@ -4366,10 +4289,7 @@ export class FactsDB {
    *
    * Returns unique {entity, weight} pairs sorted by descending weight.
    */
-  extractEntitiesFromText(
-    text: string,
-    knownEntities: string[],
-  ): Array<{ entity: string; weight: number }> {
+  extractEntitiesFromText(text: string, knownEntities: string[]): Array<{ entity: string; weight: number }> {
     const seen = new Map<string, number>();
     const lowerText = text.toLowerCase();
 
@@ -4538,7 +4458,7 @@ export class FactsDB {
       const nowSec = Math.floor(Date.now() / 1000);
       // Look for facts stored in the same session (via source_sessions column)
       // Also accept entity or tag overlap as qualifying co-occurrence signal
-      const escapedSessionId = sessionId.replace(/[\\%_]/g, '\\$&');
+      const escapedSessionId = sessionId.replace(/[\\%_]/g, "\\$&");
       const recentRows = this.liveDb
         .prepare(
           `SELECT * FROM facts
@@ -4550,12 +4470,7 @@ export class FactsDB {
            ORDER BY created_at DESC
            LIMIT 20`,
         )
-        .all(
-          newFactId,
-          nowSec,
-          `%,${escapedSessionId},%`,
-          `%"${escapedSessionId}"%`,
-        ) as Array<Record<string, unknown>>;
+        .all(newFactId, nowSec, `%,${escapedSessionId},%`, `%"${escapedSessionId}"%`) as Array<Record<string, unknown>>;
 
       for (const row of recentRows) {
         const coEntry = this.rowToEntry(row);
@@ -4582,11 +4497,7 @@ export class FactsDB {
           : "AND scope = ? AND scope_target IS NULL"
         : "";
       const baseParams: unknown[] = [entity.trim(), key.trim(), newFactId, nowSec];
-      const scopeParams: unknown[] = scope
-        ? scopeTarget != null
-          ? [scope, scopeTarget]
-          : [scope]
-        : [];
+      const scopeParams: unknown[] = scope ? (scopeTarget != null ? [scope, scopeTarget] : [scope]) : [];
       const conflicting = this.liveDb
         .prepare(
           `SELECT * FROM facts
@@ -4600,7 +4511,12 @@ export class FactsDB {
         )
         .all(...baseParams, ...scopeParams) as Array<Record<string, unknown>>;
 
-      const newVal = ((this.liveDb.prepare(`SELECT value FROM facts WHERE id = ?`).get(newFactId) as { value: string | null } | undefined)?.value as string) ?? null;
+      const newVal =
+        ((
+          this.liveDb.prepare(`SELECT value FROM facts WHERE id = ?`).get(newFactId) as
+            | { value: string | null }
+            | undefined
+        )?.value as string) ?? null;
 
       // Skip supersession entirely when new fact has no value — a valueless fact
       // cannot meaningfully supersede an existing value.
@@ -4623,7 +4539,7 @@ export class FactsDB {
             if (cfg.autoSupersede) {
               // Mark old fact as superseded
               this.supersede(oldFact.id, newFactId);
-              
+
               // Only reduce confidence if no contradiction was already recorded
               // (detectContradictions already applied -0.2 penalty)
               const existingContradiction = this.liveDb
@@ -4695,9 +4611,10 @@ export class FactsDB {
    * Used for building the cluster adjacency map in a single query.
    */
   getAllLinks(): Array<{ sourceFactId: string; targetFactId: string }> {
-    const rows = this.liveDb
-      .prepare(`SELECT source_fact_id, target_fact_id FROM memory_links`)
-      .all() as Array<{ source_fact_id: string; target_fact_id: string }>;
+    const rows = this.liveDb.prepare(`SELECT source_fact_id, target_fact_id FROM memory_links`).all() as Array<{
+      source_fact_id: string;
+      target_fact_id: string;
+    }>;
     return rows.map((r) => ({
       sourceFactId: r.source_fact_id,
       targetFactId: r.target_fact_id,
@@ -4723,7 +4640,16 @@ export class FactsDB {
    * Persist detected clusters, replacing all existing cluster data.
    * Runs in a single transaction for atomicity.
    */
-  saveClusters(clusters: Array<{ id: string; label: string; factIds: string[]; factCount: number; createdAt: number; updatedAt: number }>): void {
+  saveClusters(
+    clusters: Array<{
+      id: string;
+      label: string;
+      factIds: string[];
+      factCount: number;
+      createdAt: number;
+      updatedAt: number;
+    }>,
+  ): void {
     const insertCluster = this.liveDb.prepare(
       `INSERT OR REPLACE INTO clusters (id, label, fact_count, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`,
     );
@@ -4768,9 +4694,9 @@ export class FactsDB {
 
   /** Get the cluster ID that a given fact belongs to (null if not in any cluster). */
   getFactClusterId(factId: string): string | null {
-    const row = this.liveDb
-      .prepare(`SELECT cluster_id FROM cluster_members WHERE fact_id = ?`)
-      .get(factId) as { cluster_id: string } | undefined;
+    const row = this.liveDb.prepare(`SELECT cluster_id FROM cluster_members WHERE fact_id = ?`).get(factId) as
+      | { cluster_id: string }
+      | undefined;
     return row?.cluster_id ?? null;
   }
 
@@ -4779,9 +4705,9 @@ export class FactsDB {
       this.db.close();
     } catch (err) {
       capturePluginError(err as Error, {
-        operation: 'db-close',
-        severity: 'info',
-        subsystem: 'facts'
+        operation: "db-close",
+        severity: "info",
+        subsystem: "facts",
       });
       /* already closed */
     }

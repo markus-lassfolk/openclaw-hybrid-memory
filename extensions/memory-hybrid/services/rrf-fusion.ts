@@ -73,10 +73,7 @@ export const RRF_K_DEFAULT = 60;
  * @returns Fused results sorted by rrfScore descending. finalScore equals rrfScore
  *   until applyPostRrfAdjustments() is called.
  */
-export function fuseResults(
-  strategyResults: Map<string, RankedResult[]>,
-  k: number = RRF_K_DEFAULT,
-): FusedResult[] {
+export function fuseResults(strategyResults: Map<string, RankedResult[]>, k: number = RRF_K_DEFAULT): FusedResult[] {
   if (!Number.isFinite(k) || k <= 0) {
     throw new Error(`RRF k must be a positive finite number (got ${k})`);
   }
@@ -151,10 +148,7 @@ export function applyPostRrfAdjustments(
     // Recency adjustment
     const lastAccessedRaw = fact?.lastAccessed;
     const lastAccessedSec = Number.isFinite(lastAccessedRaw ?? NaN) ? (lastAccessedRaw as number) : null;
-    const daysSince =
-      lastAccessedSec != null
-        ? Math.max(0, (nowSec - lastAccessedSec) / SECONDS_PER_DAY)
-        : 0; // no access record → treat as fresh (neutral)
+    const daysSince = lastAccessedSec != null ? Math.max(0, (nowSec - lastAccessedSec) / SECONDS_PER_DAY) : 0; // no access record → treat as fresh (neutral)
     score *= 1 + Math.log(daysSince + 1) * -0.01;
 
     // Confidence adjustment

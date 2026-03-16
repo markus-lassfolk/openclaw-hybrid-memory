@@ -374,7 +374,10 @@ describe("ContinuousVerifier.runCycle — error handling", () => {
     const id1 = await store.verify("fact-err1", "Fact one", "agent");
     const id2 = await store.verify("fact-err2", "Fact two", "agent");
     const db = (store as unknown as { db: import("better-sqlite3").Database }).db;
-    db.prepare(`UPDATE verified_facts SET next_verification = '2020-01-01T00:00:00.000Z' WHERE id IN (?, ?)`).run(id1, id2);
+    db.prepare(`UPDATE verified_facts SET next_verification = '2020-01-01T00:00:00.000Z' WHERE id IN (?, ?)`).run(
+      id1,
+      id2,
+    );
 
     const result = await verifier.runCycle();
     expect(result.checked).toBe(2);

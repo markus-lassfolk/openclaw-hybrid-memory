@@ -11,12 +11,7 @@
 
 import OpenAI from "openai";
 import type { EmbeddingModelConfig } from "../config.js";
-import {
-  Embeddings,
-  OllamaEmbeddingProvider,
-  OnnxEmbeddingProvider,
-  type EmbeddingProvider,
-} from "./embeddings.js";
+import { Embeddings, OllamaEmbeddingProvider, OnnxEmbeddingProvider, type EmbeddingProvider } from "./embeddings.js";
 import { capturePluginError } from "./error-reporter.js";
 
 // ---------------------------------------------------------------------------
@@ -131,10 +126,10 @@ export class EmbeddingRegistry {
           const [name, vec] = s.value;
           result.set(name, vec);
         } else {
-          capturePluginError(
-            s.reason instanceof Error ? s.reason : new Error(String(s.reason)),
-            { subsystem: "embedding-registry", operation: "embedAll" },
-          );
+          capturePluginError(s.reason instanceof Error ? s.reason : new Error(String(s.reason)), {
+            subsystem: "embedding-registry",
+            operation: "embedAll",
+          });
         }
       }
     }
@@ -146,10 +141,7 @@ export class EmbeddingRegistry {
    * Return the names of all models (primary + additional enabled models).
    */
   allModelNames(): string[] {
-    return [
-      this.primaryName,
-      ...this.modelConfigs.map((m) => m.name),
-    ];
+    return [this.primaryName, ...this.modelConfigs.map((m) => m.name)];
   }
 
   // ---------------------------------------------------------------------------
@@ -186,9 +178,7 @@ function createProviderForConfig(cfg: EmbeddingModelConfig): EmbeddingProvider {
 
   if (cfg.provider === "openai") {
     if (!cfg.apiKey) {
-      throw new Error(
-        `EmbeddingModelConfig for '${cfg.name}': apiKey is required for openai provider`,
-      );
+      throw new Error(`EmbeddingModelConfig for '${cfg.name}': apiKey is required for openai provider`);
     }
     const client = new OpenAI({ apiKey: cfg.apiKey });
     return new Embeddings(client, cfg.name, cfg.dimensions);
@@ -201,9 +191,7 @@ function createProviderForConfig(cfg: EmbeddingModelConfig): EmbeddingProvider {
     });
   }
 
-  throw new Error(
-    `EmbeddingModelConfig for '${cfg.name}': unknown provider '${cfg.provider as string}'`,
-  );
+  throw new Error(`EmbeddingModelConfig for '${cfg.name}': unknown provider '${cfg.provider as string}'`);
 }
 
 // ---------------------------------------------------------------------------

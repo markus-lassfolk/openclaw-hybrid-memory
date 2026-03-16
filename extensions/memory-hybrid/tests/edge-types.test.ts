@@ -305,14 +305,10 @@ describe("autoDetectInstanceOf", () => {
     storeFact("Poodle is a dog breed", "poodle", null, null);
     const fact = storeFact("Fifi is a poodle");
 
-    db.autoLinkEntities(
-      fact.id,
-      "Fifi is a poodle",
-      "fifi",
-      null,
-      null,
-      { coOccurrenceWeight: 0.3, autoSupersede: true },
-    );
+    db.autoLinkEntities(fact.id, "Fifi is a poodle", "fifi", null, null, {
+      coOccurrenceWeight: 0.3,
+      autoSupersede: true,
+    });
 
     const instanceLinks = db.getLinksFrom(fact.id).filter((l) => l.linkType === "INSTANCE_OF");
     expect(instanceLinks.length).toBeGreaterThanOrEqual(1);
@@ -393,7 +389,7 @@ describe("DERIVED_FROM", () => {
     // DERIVED_FROM links should still exist for provenance tracking
     const links = db.getLinksFrom(merged.id).filter((l) => l.linkType === "DERIVED_FROM");
     expect(links).toHaveLength(2);
-    expect(links.map(l => l.targetFactId).sort()).toEqual([source1.id, source2.id].sort());
+    expect(links.map((l) => l.targetFactId).sort()).toEqual([source1.id, source2.id].sort());
   });
 });
 
@@ -445,11 +441,9 @@ describe("packIntoBudget with contradictedIds", () => {
 
   it("does not mark facts when contradictedIds is empty", () => {
     const entry = makeEntry("c", { text: "Some fact" });
-    const { packed } = packIntoBudget(
-      [{ factId: "c", entry: entry as MemoryEntry }],
-      10_000,
-      { contradictedIds: new Set() },
-    );
+    const { packed } = packIntoBudget([{ factId: "c", entry: entry as MemoryEntry }], 10_000, {
+      contradictedIds: new Set(),
+    });
     expect(packed[0]).not.toContain("WARNING");
   });
 

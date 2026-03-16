@@ -25,15 +25,11 @@ describe("extractJsonArray", () => {
   });
 
   it("handles prose-wrapped array", () => {
-    expect(
-      extractJsonArray('Here are the results: ["a", "b"] hope that helps'),
-    ).toEqual(["a", "b"]);
+    expect(extractJsonArray('Here are the results: ["a", "b"] hope that helps')).toEqual(["a", "b"]);
   });
 
   it("handles literal brackets inside string values", () => {
-    expect(
-      extractJsonArray('["query about [topic]", "another"]'),
-    ).toEqual(["query about [topic]", "another"]);
+    expect(extractJsonArray('["query about [topic]", "another"]')).toEqual(["query about [topic]", "another"]);
   });
 
   it("returns empty array when no array is present", () => {
@@ -57,8 +53,6 @@ describe("extractJsonArray", () => {
   });
 
   it("returns the first valid array when multiple exist", () => {
-    expect(extractJsonArray('["first"] some text ["second"]')).toEqual([
-      "first",
-    ]);
+    expect(extractJsonArray('["first"] some text ["second"]')).toEqual(["first"]);
   });
 });

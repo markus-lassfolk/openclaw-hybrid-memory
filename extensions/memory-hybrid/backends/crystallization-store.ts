@@ -106,9 +106,9 @@ export class CrystallizationStore {
   // -------------------------------------------------------------------------
 
   getById(id: string): CrystallizationProposal | null {
-    const row = this.db
-      .prepare("SELECT * FROM crystallization_proposals WHERE id = ?")
-      .get(id) as Record<string, unknown> | undefined;
+    const row = this.db.prepare("SELECT * FROM crystallization_proposals WHERE id = ?").get(id) as
+      | Record<string, unknown>
+      | undefined;
     if (!row) return null;
     return this.rowToProposal(row);
   }
@@ -200,9 +200,7 @@ export class CrystallizationStore {
         .get(status) as { n: number };
       return row.n;
     }
-    const row = this.db
-      .prepare("SELECT COUNT(*) as n FROM crystallization_proposals")
-      .get() as { n: number };
+    const row = this.db.prepare("SELECT COUNT(*) as n FROM crystallization_proposals").get() as { n: number };
     return row.n;
   }
 
@@ -251,7 +249,7 @@ export class CrystallizationStore {
       patternId: row.pattern_id as string,
       skillName: row.skill_name as string,
       skillContent: row.skill_content as string,
-      status: (row.status as string) as CrystallizationStatus,
+      status: row.status as string as CrystallizationStatus,
       patternSnapshot: row.pattern_snapshot as string,
       rejectionReason: row.rejection_reason ? (row.rejection_reason as string) : undefined,
       outputPath: row.output_path ? (row.output_path as string) : undefined,

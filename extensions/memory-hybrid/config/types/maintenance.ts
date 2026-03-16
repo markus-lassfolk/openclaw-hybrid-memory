@@ -61,9 +61,9 @@ export type HealthConfig = {
 
 /** Monthly knowledge quality review (Issue #165). */
 export type MonthlyReviewConfig = {
-  enabled: boolean;           // default: false
-  model?: string;             // LLM model for recommendations, default: plugin default
-  dayOfMonth: number;         // default: 1
+  enabled: boolean; // default: false
+  model?: string; // LLM model for recommendations, default: plugin default
+  dayOfMonth: number; // default: 1
 };
 
 /** Maintenance configuration group. */

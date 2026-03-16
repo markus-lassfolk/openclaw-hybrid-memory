@@ -31,7 +31,9 @@ const { mergeResults, filterByScope } = _testing;
 
 type SearchResult = Parameters<typeof mergeResults>[0][0];
 
-function makeResult(overrides: Partial<SearchResult["entry"]> & { score?: number; backend?: "sqlite" | "lancedb" }): SearchResult {
+function makeResult(
+  overrides: Partial<SearchResult["entry"]> & { score?: number; backend?: "sqlite" | "lancedb" },
+): SearchResult {
   const { score = 0.5, backend = "sqlite", ...entryOverrides } = overrides;
   return {
     entry: {
@@ -114,12 +116,8 @@ describe("mergeResults", () => {
 
   it("RRF: breaks ties by sourceDate (newest first)", () => {
     const now = Math.floor(Date.now() / 1000);
-    const sqlite = [
-      makeResult({ text: "old fact", score: 0.8, createdAt: now - 1000, backend: "sqlite" }),
-    ];
-    const lance = [
-      makeResult({ text: "new fact", score: 0.8, createdAt: now, backend: "lancedb" }),
-    ];
+    const sqlite = [makeResult({ text: "old fact", score: 0.8, createdAt: now - 1000, backend: "sqlite" })];
+    const lance = [makeResult({ text: "new fact", score: 0.8, createdAt: now, backend: "lancedb" })];
     const merged = mergeResults(sqlite, lance, 10);
     // Same RRF; newer fact wins
     expect(merged[0].entry.text).toBe("new fact");
@@ -192,10 +190,7 @@ describe("mergeResults", () => {
 
 describe("filterByScope", () => {
   it("returns all results when scopeFilter is empty", () => {
-    const results = [
-      makeResult({ text: "A", id: "id-a" }),
-      makeResult({ text: "B", id: "id-b" }),
-    ];
+    const results = [makeResult({ text: "A", id: "id-a" }), makeResult({ text: "B", id: "id-b" })];
     const getById = (id: string) => ({ id });
     expect(filterByScope(results, getById, undefined)).toEqual(results);
     expect(filterByScope(results, getById, {})).toEqual(results);

@@ -19,9 +19,9 @@ export type PassiveObserverConfig = {
 /** Reflection / pattern synthesis from session history */
 export type ReflectionConfig = {
   enabled: boolean;
-  model?: string;            // when unset, runtime uses getDefaultCronModel(cfg, "default")
-  defaultWindow: number;      // Time window in days (default: 14)
-  minObservations: number;   // Min observations to support a pattern (default: 2)
+  model?: string; // when unset, runtime uses getDefaultCronModel(cfg, "default")
+  defaultWindow: number; // Time window in days (default: 14)
+  minObservations: number; // Min observations to support a pattern (default: 2)
 };
 
 /** Two-tier LLM pre-filter configuration for bulk session triage (Issue #290). */
@@ -84,4 +84,6 @@ export type ProceduresConfig = {
   skillsAutoPath: string;
   /** Require human approval before promoting auto-skill to permanent (default: true) */
   requireApprovalForPromote: boolean;
+  /** Max tokens for procedure block injected into recall (default: 500). Prevents procedure context from dominating. */
+  maxInjectionTokens: number;
 };

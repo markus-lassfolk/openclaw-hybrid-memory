@@ -131,18 +131,20 @@ describe("parseObserverResponse", () => {
   });
 
   it("parses JSON wrapped in markdown code fence", () => {
-    const raw = "```json\n" + JSON.stringify([
-      { text: "The team decided to adopt GraphQL", category: "decision", importance: 0.9 },
-    ]) + "\n```";
+    const raw =
+      "```json\n" +
+      JSON.stringify([{ text: "The team decided to adopt GraphQL", category: "decision", importance: 0.9 }]) +
+      "\n```";
     const facts = parseObserverResponse(raw, categories);
     expect(facts).toHaveLength(1);
     expect(facts[0].category).toBe("decision");
   });
 
   it("parses JSON wrapped in plain code fence", () => {
-    const raw = "```\n" + JSON.stringify([
-      { text: "Maria is the project owner", category: "entity", importance: 0.85 },
-    ]) + "\n```";
+    const raw =
+      "```\n" +
+      JSON.stringify([{ text: "Maria is the project owner", category: "entity", importance: 0.85 }]) +
+      "\n```";
     const facts = parseObserverResponse(raw, categories);
     expect(facts).toHaveLength(1);
   });
@@ -190,7 +192,8 @@ describe("parseObserverResponse", () => {
   });
 
   it("ignores non-object array items", () => {
-    const raw = "[null, 42, \"string\", {\"text\": \"Valid fact about deployment pipeline\", \"category\": \"fact\", \"importance\": 0.7}]";
+    const raw =
+      '[null, 42, "string", {"text": "Valid fact about deployment pipeline", "category": "fact", "importance": 0.7}]';
     const facts = parseObserverResponse(raw, categories);
     expect(facts).toHaveLength(1);
   });
@@ -232,7 +235,7 @@ describe("cursor management", () => {
 
   it("loadCursors ignores non-numeric cursor values", async () => {
     const path = getCursorsPath(tmpDir);
-    writeFileSync(path, JSON.stringify({ "good": 100, "bad": "string", "negative": -1 }));
+    writeFileSync(path, JSON.stringify({ good: 100, bad: "string", negative: -1 }));
     const cursors = await loadCursors(path);
     expect(cursors["good"]).toBe(100);
     expect(cursors["bad"]).toBeUndefined();
@@ -249,7 +252,7 @@ describe("cursor management", () => {
   it("saveCursors creates directory if needed", async () => {
     const nestedDir = join(tmpDir, "deep", "nested");
     const path = getCursorsPath(nestedDir);
-    await saveCursors(path, { "s1": 99 });
+    await saveCursors(path, { s1: 99 });
     const loaded = await loadCursors(path);
     expect(loaded["s1"]).toBe(99);
   });
@@ -292,7 +295,7 @@ describe("runPassiveObserver", () => {
     embedBatch: vi.fn().mockImplementation((texts: string[]) => Promise.resolve(texts.map(() => vec))),
   });
 
-  const makeOpenAI = () => ({} as unknown as import("openai").default);
+  const makeOpenAI = () => ({}) as unknown as import("openai").default;
 
   beforeEach(() => {
     tmpDir = join(tmpdir(), `observer-run-test-${randomUUID()}`);
@@ -358,9 +361,10 @@ describe("runPassiveObserver", () => {
     // Create a mock that intercepts chatCompleteWithRetry
     const { runPassiveObserver: runFn } = await import("../services/passive-observer.js");
 
-    const sessionContent = JSON.stringify({
-      message: { role: "user", content: "We use React and had lunch" },
-    }) + "\n";
+    const sessionContent =
+      JSON.stringify({
+        message: { role: "user", content: "We use React and had lunch" },
+      }) + "\n";
     writeFileSync(join(sessionsDir, "s1.jsonl"), sessionContent);
 
     const storedFacts: ExtractedFact[] = [];
@@ -423,9 +427,10 @@ describe("runPassiveObserver", () => {
   });
 
   it("dryRun mode does not call factsDb.store", async () => {
-    const sessionContent = JSON.stringify({
-      message: { role: "user", content: "The system is built with TypeScript and Node.js" },
-    }) + "\n";
+    const sessionContent =
+      JSON.stringify({
+        message: { role: "user", content: "The system is built with TypeScript and Node.js" },
+      }) + "\n";
     writeFileSync(join(sessionsDir, "dry-run.jsonl"), sessionContent);
 
     const factsDb = makeFactsDb();
@@ -441,16 +446,19 @@ describe("runPassiveObserver", () => {
   });
 
   it("stores extracted facts end-to-end with mocked LLM + DBs", async () => {
-    const sessionContent = JSON.stringify({
-      message: { role: "user", content: "We decided to use Rust for the CLI tool." },
-    }) + "\n";
+    const sessionContent =
+      JSON.stringify({
+        message: { role: "user", content: "We decided to use Rust for the CLI tool." },
+      }) + "\n";
     writeFileSync(join(sessionsDir, "e2e.jsonl"), sessionContent);
 
     const chatSpy = vi
       .spyOn(chat, "chatCompleteWithRetry")
-      .mockResolvedValue(JSON.stringify([
-        { text: "The team decided to use Rust for the CLI tool", category: "decision", importance: 0.8 },
-      ]));
+      .mockResolvedValue(
+        JSON.stringify([
+          { text: "The team decided to use Rust for the CLI tool", category: "decision", importance: 0.8 },
+        ]),
+      );
 
     const factsDb = makeFactsDb({
       detectContradictions: vi.fn(),
@@ -568,15 +576,12 @@ describe("runPassiveObserver event_log integration", () => {
     const { EventLog } = await import("../backends/event-log.js");
     const eventLog = new EventLog(join(tmpDir, "event-log-pref.db"));
 
-    const sessionContent =
-      JSON.stringify({ message: { role: "user", content: "I always prefer dark mode." } }) + "\n";
+    const sessionContent = JSON.stringify({ message: { role: "user", content: "I always prefer dark mode." } }) + "\n";
     writeFileSync(join(sessionsDir, "sess-pref.jsonl"), sessionContent);
 
     const chatSpy = vi
       .spyOn(chat, "chatCompleteWithRetry")
-      .mockResolvedValue(
-        JSON.stringify([{ text: "User prefers dark mode", category: "preference", importance: 0.8 }]),
-      );
+      .mockResolvedValue(JSON.stringify([{ text: "User prefers dark mode", category: "preference", importance: 0.8 }]));
 
     const cfg = makeConfig({ sessionsDir });
     await runPassiveObserver(
@@ -599,8 +604,7 @@ describe("runPassiveObserver event_log integration", () => {
   });
 
   it("does not write to event_log when eventLog is null", async () => {
-    const sessionContent =
-      JSON.stringify({ message: { role: "user", content: "The team uses Rust for CLI." } }) + "\n";
+    const sessionContent = JSON.stringify({ message: { role: "user", content: "The team uses Rust for CLI." } }) + "\n";
     writeFileSync(join(sessionsDir, "sess-noelog.jsonl"), sessionContent);
 
     const chatSpy = vi
@@ -637,11 +641,17 @@ describe("runPassiveObserver event_log integration", () => {
 
     const callOrder: string[] = [];
     const eventLog = {
-      append: vi.fn().mockImplementation(() => { callOrder.push("eventLog.append"); return "evt-id"; }),
+      append: vi.fn().mockImplementation(() => {
+        callOrder.push("eventLog.append");
+        return "evt-id";
+      }),
     };
     const factsDb = {
       getRecentFacts: vi.fn().mockReturnValue([]),
-      store: vi.fn().mockImplementation(() => { callOrder.push("factsDb.store"); return { id: "fact-1" }; }),
+      store: vi.fn().mockImplementation(() => {
+        callOrder.push("factsDb.store");
+        return { id: "fact-1" };
+      }),
       detectContradictions: vi.fn(),
       setEmbeddingModel: vi.fn(),
     };
@@ -675,7 +685,7 @@ describe("PassiveObserverConfig defaults via hybridConfigSchema", () => {
     const { hybridConfigSchema } = await import("../config.js");
     const cfg = hybridConfigSchema.parse({
       embedding: { apiKey: "sk-test-key-12345678", model: "text-embedding-3-small" },
-      mode: "normal",
+      mode: "minimal",
     });
     expect(cfg.passiveObserver.enabled).toBe(false);
     expect(cfg.passiveObserver.intervalMinutes).toBe(15);
@@ -686,7 +696,7 @@ describe("PassiveObserverConfig defaults via hybridConfigSchema", () => {
     expect(cfg.passiveObserver.sessionsDir).toBeUndefined();
   });
 
-  it("parses enabled passiveObserver config", async () => {
+  it("parses passiveObserver config (2026.3.140 migration forces enabled: false)", async () => {
     const { hybridConfigSchema } = await import("../config.js");
     const cfg = hybridConfigSchema.parse({
       embedding: { apiKey: "sk-test-key-12345678", model: "text-embedding-3-small" },
@@ -700,7 +710,7 @@ describe("PassiveObserverConfig defaults via hybridConfigSchema", () => {
         sessionsDir: "/tmp/sessions",
       },
     });
-    expect(cfg.passiveObserver.enabled).toBe(true);
+    expect(cfg.passiveObserver.enabled).toBe(false);
     expect(cfg.passiveObserver.intervalMinutes).toBe(30);
     expect(cfg.passiveObserver.model).toBe("google/gemini-2.5-flash");
     expect(cfg.passiveObserver.maxCharsPerChunk).toBe(4000);
@@ -946,9 +956,7 @@ describe("runPassiveObserver identity fact promotion", () => {
     const chatSpy = vi
       .spyOn(chat, "chatCompleteWithRetry")
       .mockResolvedValue(
-        JSON.stringify([
-          { text: "The agent's email is doristheagent@gmail.com", category: "fact", importance: 0.8 },
-        ]),
+        JSON.stringify([{ text: "The agent's email is doristheagent@gmail.com", category: "fact", importance: 0.8 }]),
       );
 
     const factsDb = makeFactsDb();
@@ -981,16 +989,13 @@ describe("runPassiveObserver identity fact promotion", () => {
   });
 
   it("stores non-identity fact with scope=session (default unchanged)", async () => {
-    const sessionContent =
-      JSON.stringify({ message: { role: "user", content: "The team uses TypeScript." } }) + "\n";
+    const sessionContent = JSON.stringify({ message: { role: "user", content: "The team uses TypeScript." } }) + "\n";
     writeFileSync(join(sessionsDir, "regular-sess.jsonl"), sessionContent);
 
     const chatSpy = vi
       .spyOn(chat, "chatCompleteWithRetry")
       .mockResolvedValue(
-        JSON.stringify([
-          { text: "User mentioned they like coffee a lot", category: "fact", importance: 0.7 },
-        ]),
+        JSON.stringify([{ text: "User mentioned they like coffee a lot", category: "fact", importance: 0.7 }]),
       );
 
     const factsDb = makeFactsDb();
@@ -1024,9 +1029,7 @@ describe("runPassiveObserver identity fact promotion", () => {
     const chatSpy = vi
       .spyOn(chat, "chatCompleteWithRetry")
       .mockResolvedValue(
-        JSON.stringify([
-          { text: "Doris email is doris@gmail.com", category: "fact", importance: 0.75 },
-        ]),
+        JSON.stringify([{ text: "Doris email is doris@gmail.com", category: "fact", importance: 0.75 }]),
       );
 
     const factsDb = makeFactsDb();

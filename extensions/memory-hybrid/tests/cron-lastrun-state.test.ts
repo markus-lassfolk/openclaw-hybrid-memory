@@ -206,10 +206,8 @@ describe("syncCronLastRunFromGuards", () => {
 
   it("updates lastRunAtMs when guard timestamp is newer", () => {
     const oldTs = Date.now() - 24 * 60 * 60 * 1000; // 24h ago
-    const newTs = Date.now() - 2 * 60 * 60 * 1000;   // 2h ago
-    writeCronStore(openclawDir, [
-      { name: "weekly-reflection", enabled: true, state: { lastRunAtMs: oldTs } },
-    ]);
+    const newTs = Date.now() - 2 * 60 * 60 * 1000; // 2h ago
+    writeCronStore(openclawDir, [{ name: "weekly-reflection", enabled: true, state: { lastRunAtMs: oldTs } }]);
     writeGuardFile(openclawDir, "weekly-reflection", newTs);
 
     syncCronLastRunFromGuards(noop, openclawDir);
@@ -221,11 +219,9 @@ describe("syncCronLastRunFromGuards", () => {
   });
 
   it("does NOT downgrade lastRunAtMs when guard timestamp is older", () => {
-    const recentTs = Date.now() - 1 * 60 * 60 * 1000;  // 1h ago
-    const olderTs  = Date.now() - 12 * 60 * 60 * 1000; // 12h ago
-    writeCronStore(openclawDir, [
-      { name: "monthly-consolidation", enabled: true, state: { lastRunAtMs: recentTs } },
-    ]);
+    const recentTs = Date.now() - 1 * 60 * 60 * 1000; // 1h ago
+    const olderTs = Date.now() - 12 * 60 * 60 * 1000; // 12h ago
+    writeCronStore(openclawDir, [{ name: "monthly-consolidation", enabled: true, state: { lastRunAtMs: recentTs } }]);
     writeGuardFile(openclawDir, "monthly-consolidation", olderTs);
 
     syncCronLastRunFromGuards(noop, openclawDir);
@@ -326,9 +322,7 @@ describe("syncCronLastRunFromGuards", () => {
 
   it("does not write jobs.json when nothing changes", () => {
     const recentTs = Date.now() - 1000;
-    writeCronStore(openclawDir, [
-      { name: "nightly-memory-sweep", enabled: true, state: { lastRunAtMs: recentTs } },
-    ]);
+    writeCronStore(openclawDir, [{ name: "nightly-memory-sweep", enabled: true, state: { lastRunAtMs: recentTs } }]);
     writeGuardFile(openclawDir, "nightly-memory-sweep", recentTs - 100); // older → no update
 
     const before = readFileSync(join(openclawDir, "cron", "jobs.json"), "utf-8");
@@ -360,7 +354,6 @@ describe("guard prefix format — persistent path", () => {
       "self-correction-analysis",
       "weekly-reflection",
       "weekly-extract-procedures",
-      "nightly-memory-to-skills",
       "weekly-deep-maintenance",
       "weekly-persona-proposals",
       "monthly-consolidation",

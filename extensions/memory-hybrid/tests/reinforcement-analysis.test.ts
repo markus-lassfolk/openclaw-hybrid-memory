@@ -85,7 +85,15 @@ function makeCtx(openai: any, extra: Partial<HandlerContext> = {}): HandlerConte
     cfg: {
       procedures: { sessionsDir: tmpDir },
       distill: {},
-      reinforcement: { enabled: true, passiveBoost: 0.1, activeBoost: 0.05, maxConfidence: 1.0, similarityThreshold: 0.85, trackContext: true, maxEventsPerFact: 50 },
+      reinforcement: {
+        enabled: true,
+        passiveBoost: 0.1,
+        activeBoost: 0.05,
+        maxConfidence: 1.0,
+        similarityThreshold: 0.85,
+        trackContext: true,
+        maxEventsPerFact: 50,
+      },
       selfCorrection: {
         semanticDedup: false,
         semanticDedupThreshold: 0.92,
@@ -155,8 +163,25 @@ describe("POSITIVE_RULE inserts into TOOLS.md (#260)", () => {
     writeFileSync(
       sessionFile,
       [
-        JSON.stringify({ type: "message", message: { role: "assistant", content: [{ type: "text", text: "I broke the task into three milestones and spawned sub-agents for each one. Here are the results." }] } }),
-        JSON.stringify({ type: "message", message: { role: "user", content: [{ type: "text", text: "Perfect! That's exactly the workflow I wanted. Keep doing it this way." }] } }),
+        JSON.stringify({
+          type: "message",
+          message: {
+            role: "assistant",
+            content: [
+              {
+                type: "text",
+                text: "I broke the task into three milestones and spawned sub-agents for each one. Here are the results.",
+              },
+            ],
+          },
+        }),
+        JSON.stringify({
+          type: "message",
+          message: {
+            role: "user",
+            content: [{ type: "text", text: "Perfect! That's exactly the workflow I wanted. Keep doing it this way." }],
+          },
+        }),
       ].join("\n"),
       "utf-8",
     );
@@ -196,8 +221,25 @@ describe("PATTERN_FACT stores with correct category and tags (#260)", () => {
     writeFileSync(
       sessionFile,
       [
-        JSON.stringify({ type: "message", message: { role: "assistant", content: [{ type: "text", text: "I noticed the lint was failing in CI so I fixed it proactively before you asked." }] } }),
-        JSON.stringify({ type: "message", message: { role: "user", content: [{ type: "text", text: "Yes! Exactly like that. Love when you catch issues proactively." }] } }),
+        JSON.stringify({
+          type: "message",
+          message: {
+            role: "assistant",
+            content: [
+              {
+                type: "text",
+                text: "I noticed the lint was failing in CI so I fixed it proactively before you asked.",
+              },
+            ],
+          },
+        }),
+        JSON.stringify({
+          type: "message",
+          message: {
+            role: "user",
+            content: [{ type: "text", text: "Yes! Exactly like that. Love when you catch issues proactively." }],
+          },
+        }),
       ].join("\n"),
       "utf-8",
     );
@@ -210,7 +252,12 @@ describe("PATTERN_FACT stores with correct category and tags (#260)", () => {
     expect(patternFact).toBeDefined();
     expect(patternFact!.source).toBe("reinforcement-analysis");
     const rawTags = patternFact!.tags;
-    const tags: string[] = typeof rawTags === "string" ? (JSON.parse(rawTags) as string[]) : (Array.isArray(rawTags) ? rawTags as string[] : []);
+    const tags: string[] =
+      typeof rawTags === "string"
+        ? (JSON.parse(rawTags) as string[])
+        : Array.isArray(rawTags)
+          ? (rawTags as string[])
+          : [];
     expect(tags).toContain("reinforcement");
     expect(tags).toContain("behavioral");
     expect(tags).toContain("ci");
@@ -243,8 +290,20 @@ describe("MEMORY_STORE stores fact with semantic dedup (#260)", () => {
     writeFileSync(
       sessionFile,
       [
-        JSON.stringify({ type: "message", message: { role: "assistant", content: [{ type: "text", text: "I rewrote the function using async/await for clarity." }] } }),
-        JSON.stringify({ type: "message", message: { role: "user", content: [{ type: "text", text: "Perfect, always prefer async/await in this codebase." }] } }),
+        JSON.stringify({
+          type: "message",
+          message: {
+            role: "assistant",
+            content: [{ type: "text", text: "I rewrote the function using async/await for clarity." }],
+          },
+        }),
+        JSON.stringify({
+          type: "message",
+          message: {
+            role: "user",
+            content: [{ type: "text", text: "Perfect, always prefer async/await in this codebase." }],
+          },
+        }),
       ].join("\n"),
       "utf-8",
     );
@@ -277,8 +336,14 @@ describe("MEMORY_STORE stores fact with semantic dedup (#260)", () => {
     writeFileSync(
       sessionFile,
       [
-        JSON.stringify({ type: "message", message: { role: "assistant", content: [{ type: "text", text: "Using async/await here." }] } }),
-        JSON.stringify({ type: "message", message: { role: "user", content: [{ type: "text", text: "Good, keep using async/await." }] } }),
+        JSON.stringify({
+          type: "message",
+          message: { role: "assistant", content: [{ type: "text", text: "Using async/await here." }] },
+        }),
+        JSON.stringify({
+          type: "message",
+          message: { role: "user", content: [{ type: "text", text: "Good, keep using async/await." }] },
+        }),
       ].join("\n"),
       "utf-8",
     );
@@ -287,7 +352,15 @@ describe("MEMORY_STORE stores fact with semantic dedup (#260)", () => {
       cfg: {
         procedures: { sessionsDir: tmpDir },
         distill: {},
-        reinforcement: { enabled: true, passiveBoost: 0.1, activeBoost: 0.05, maxConfidence: 1.0, similarityThreshold: 0.85, trackContext: true, maxEventsPerFact: 50 },
+        reinforcement: {
+          enabled: true,
+          passiveBoost: 0.1,
+          activeBoost: 0.05,
+          maxConfidence: 1.0,
+          similarityThreshold: 0.85,
+          trackContext: true,
+          maxEventsPerFact: 50,
+        },
         selfCorrection: {
           semanticDedup: true,
           semanticDedupThreshold: 0.92,
@@ -345,8 +418,24 @@ describe("PROPOSAL creates entry in proposals DB (#260)", () => {
     writeFileSync(
       sessionFile,
       [
-        JSON.stringify({ type: "message", message: { role: "assistant", content: [{ type: "text", text: "Here's a thorough PR review with inline comments as resolvable threads." }] } }),
-        JSON.stringify({ type: "message", message: { role: "user", content: [{ type: "text", text: "Brilliant! This is exactly how I like code reviews done. Keep this format." }] } }),
+        JSON.stringify({
+          type: "message",
+          message: {
+            role: "assistant",
+            content: [
+              { type: "text", text: "Here's a thorough PR review with inline comments as resolvable threads." },
+            ],
+          },
+        }),
+        JSON.stringify({
+          type: "message",
+          message: {
+            role: "user",
+            content: [
+              { type: "text", text: "Brilliant! This is exactly how I like code reviews done. Keep this format." },
+            ],
+          },
+        }),
       ].join("\n"),
       "utf-8",
     );
@@ -385,8 +474,17 @@ describe("AGENTS_RULE from self-correction creates proposal in DB (#260)", () =>
     writeFileSync(
       sessionFile,
       [
-        JSON.stringify({ type: "message", message: { role: "assistant", content: [{ type: "text", text: "I'll wait here for further instructions." }] } }),
-        JSON.stringify({ type: "message", message: { role: "user", content: [{ type: "text", text: "No, you should continue automatically without waiting." }] } }),
+        JSON.stringify({
+          type: "message",
+          message: { role: "assistant", content: [{ type: "text", text: "I'll wait here for further instructions." }] },
+        }),
+        JSON.stringify({
+          type: "message",
+          message: {
+            role: "user",
+            content: [{ type: "text", text: "No, you should continue automatically without waiting." }],
+          },
+        }),
       ].join("\n"),
       "utf-8",
     );
@@ -442,8 +540,14 @@ describe("Semantic dedup prevents duplicate positive rules (#260)", () => {
     writeFileSync(
       sessionFile,
       [
-        JSON.stringify({ type: "message", message: { role: "assistant", content: [{ type: "text", text: "I fixed the lint errors proactively." }] } }),
-        JSON.stringify({ type: "message", message: { role: "user", content: [{ type: "text", text: "Great! Love this approach." }] } }),
+        JSON.stringify({
+          type: "message",
+          message: { role: "assistant", content: [{ type: "text", text: "I fixed the lint errors proactively." }] },
+        }),
+        JSON.stringify({
+          type: "message",
+          message: { role: "user", content: [{ type: "text", text: "Great! Love this approach." }] },
+        }),
       ].join("\n"),
       "utf-8",
     );
@@ -452,7 +556,15 @@ describe("Semantic dedup prevents duplicate positive rules (#260)", () => {
       cfg: {
         procedures: { sessionsDir: tmpDir },
         distill: {},
-        reinforcement: { enabled: true, passiveBoost: 0.1, activeBoost: 0.05, maxConfidence: 1.0, similarityThreshold: 0.85, trackContext: true, maxEventsPerFact: 50 },
+        reinforcement: {
+          enabled: true,
+          passiveBoost: 0.1,
+          activeBoost: 0.05,
+          maxConfidence: 1.0,
+          similarityThreshold: 0.85,
+          trackContext: true,
+          maxEventsPerFact: 50,
+        },
         selfCorrection: {
           semanticDedup: true,
           semanticDedupThreshold: 0.92,
@@ -504,8 +616,14 @@ describe("Semantic dedup prevents duplicate positive rules (#260)", () => {
     writeFileSync(
       sessionFile,
       [
-        JSON.stringify({ type: "message", message: { role: "assistant", content: [{ type: "text", text: "I fixed the lint errors proactively." }] } }),
-        JSON.stringify({ type: "message", message: { role: "user", content: [{ type: "text", text: "Great! Love this approach." }] } }),
+        JSON.stringify({
+          type: "message",
+          message: { role: "assistant", content: [{ type: "text", text: "I fixed the lint errors proactively." }] },
+        }),
+        JSON.stringify({
+          type: "message",
+          message: { role: "user", content: [{ type: "text", text: "Great! Love this approach." }] },
+        }),
       ].join("\n"),
       "utf-8",
     );
@@ -612,8 +730,14 @@ describe("Semantic dedup prevents duplicate pattern facts (#260)", () => {
     writeFileSync(
       sessionFile,
       [
-        JSON.stringify({ type: "message", message: { role: "assistant", content: [{ type: "text", text: "I fixed the issue proactively." }] } }),
-        JSON.stringify({ type: "message", message: { role: "user", content: [{ type: "text", text: "Great job! Love this approach." }] } }),
+        JSON.stringify({
+          type: "message",
+          message: { role: "assistant", content: [{ type: "text", text: "I fixed the issue proactively." }] },
+        }),
+        JSON.stringify({
+          type: "message",
+          message: { role: "user", content: [{ type: "text", text: "Great job! Love this approach." }] },
+        }),
       ].join("\n"),
       "utf-8",
     );
@@ -622,7 +746,15 @@ describe("Semantic dedup prevents duplicate pattern facts (#260)", () => {
       cfg: {
         procedures: { sessionsDir: tmpDir },
         distill: {},
-        reinforcement: { enabled: true, passiveBoost: 0.1, activeBoost: 0.05, maxConfidence: 1.0, similarityThreshold: 0.85, trackContext: true, maxEventsPerFact: 50 },
+        reinforcement: {
+          enabled: true,
+          passiveBoost: 0.1,
+          activeBoost: 0.05,
+          maxConfidence: 1.0,
+          similarityThreshold: 0.85,
+          trackContext: true,
+          maxEventsPerFact: 50,
+        },
         selfCorrection: {
           semanticDedup: true,
           semanticDedupThreshold: 0.92,

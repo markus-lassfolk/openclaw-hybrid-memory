@@ -104,9 +104,37 @@ export function sequenceSimilarity(a: string[], b: string[]): number {
 // ---------------------------------------------------------------------------
 
 const STOP_WORDS = new Set([
-  "a", "an", "the", "and", "or", "for", "to", "in", "on", "at", "of",
-  "with", "by", "from", "is", "it", "this", "that", "me", "my", "i",
-  "do", "use", "get", "set", "run", "show", "list", "please", "can", "you",
+  "a",
+  "an",
+  "the",
+  "and",
+  "or",
+  "for",
+  "to",
+  "in",
+  "on",
+  "at",
+  "of",
+  "with",
+  "by",
+  "from",
+  "is",
+  "it",
+  "this",
+  "that",
+  "me",
+  "my",
+  "i",
+  "do",
+  "use",
+  "get",
+  "set",
+  "run",
+  "show",
+  "list",
+  "please",
+  "can",
+  "you",
 ]);
 
 export function extractGoalKeywords(goal: string): string[] {
@@ -170,7 +198,7 @@ export class WorkflowStore {
     const now = new Date().toISOString();
     // Normalize explicit keywords the same way extractGoalKeywords does (lowercase, dedupe, filter)
     const keywords = input.goalKeywords
-      ? [...new Set(input.goalKeywords.map(k => k.toLowerCase().trim()).filter(k => k.length > 0))]
+      ? [...new Set(input.goalKeywords.map((k) => k.toLowerCase().trim()).filter((k) => k.length > 0))]
       : extractGoalKeywords(input.goal);
     const argsHash = input.argsHash ?? hashToolSequence(input.toolSequence);
     const outcome = input.outcome ?? "unknown";
@@ -205,9 +233,9 @@ export class WorkflowStore {
   // -------------------------------------------------------------------------
 
   getById(id: string): WorkflowTrace | null {
-    const row = this.db
-      .prepare("SELECT * FROM workflow_traces WHERE id = ?")
-      .get(id) as Record<string, unknown> | undefined;
+    const row = this.db.prepare("SELECT * FROM workflow_traces WHERE id = ?").get(id) as
+      | Record<string, unknown>
+      | undefined;
     if (!row) return null;
     return this.rowToTrace(row);
   }
@@ -251,9 +279,7 @@ export class WorkflowStore {
     if (filter?.goal) {
       const keywords = extractGoalKeywords(filter.goal);
       if (keywords.length > 0) {
-        results = results.filter((t) =>
-          keywords.some((kw) => t.goalKeywords.includes(kw)),
-        );
+        results = results.filter((t) => keywords.some((kw) => t.goalKeywords.includes(kw)));
       }
     }
 
@@ -276,9 +302,7 @@ export class WorkflowStore {
       .all() as Record<string, unknown>[];
 
     const kwSet = new Set(keywords.map((k) => k.toLowerCase()));
-    const matched = candidates
-      .map((r) => this.rowToTrace(r))
-      .filter((t) => t.goalKeywords.some((k) => kwSet.has(k)));
+    const matched = candidates.map((r) => this.rowToTrace(r)).filter((t) => t.goalKeywords.some((k) => kwSet.has(k)));
 
     return matched.slice(0, limit);
   }
@@ -288,9 +312,10 @@ export class WorkflowStore {
   // -------------------------------------------------------------------------
 
   getSuccessRate(toolSequence: string[], similarityThreshold = 0.8): number {
-    const allRows = this.db
-      .prepare("SELECT tool_sequence, outcome FROM workflow_traces")
-      .all() as { tool_sequence: string; outcome: string }[];
+    const allRows = this.db.prepare("SELECT tool_sequence, outcome FROM workflow_traces").all() as {
+      tool_sequence: string;
+      outcome: string;
+    }[];
 
     let total = 0;
     let successes = 0;
@@ -315,11 +340,7 @@ export class WorkflowStore {
   // getPatterns — group similar sequences and compute aggregate stats
   // -------------------------------------------------------------------------
 
-  getPatterns(options?: {
-    minSuccessRate?: number;
-    similarityThreshold?: number;
-    limit?: number;
-  }): WorkflowPattern[] {
+  getPatterns(options?: { minSuccessRate?: number; similarityThreshold?: number; limit?: number }): WorkflowPattern[] {
     const threshold = options?.similarityThreshold ?? 0.8;
     const allRows = this.db
       .prepare("SELECT goal, tool_sequence, outcome, duration_ms FROM workflow_traces ORDER BY created_at DESC")
@@ -367,10 +388,7 @@ export class WorkflowStore {
       const successCount = c.outcomes.filter((o) => o === "success").length;
       const failureCount = c.outcomes.filter((o) => o === "failure").length;
       const successRate = totalCount > 0 ? successCount / totalCount : 0;
-      const avgDurationMs =
-        c.durations.length > 0
-          ? c.durations.reduce((a, b) => a + b, 0) / c.durations.length
-          : 0;
+      const avgDurationMs = c.durations.length > 0 ? c.durations.reduce((a, b) => a + b, 0) / c.durations.length : 0;
       // Deduplicate example goals
       const uniqueGoals = [...new Set(c.goals)].slice(0, 3);
 
@@ -401,12 +419,8 @@ export class WorkflowStore {
   // -------------------------------------------------------------------------
 
   prune(olderThanDays: number): number {
-    const cutoff = new Date(
-      Date.now() - olderThanDays * 24 * 60 * 60 * 1000,
-    ).toISOString();
-    const result = this.db
-      .prepare("DELETE FROM workflow_traces WHERE created_at < ?")
-      .run(cutoff);
+    const cutoff = new Date(Date.now() - olderThanDays * 24 * 60 * 60 * 1000).toISOString();
+    const result = this.db.prepare("DELETE FROM workflow_traces WHERE created_at < ?").run(cutoff);
     return result.changes;
   }
 
@@ -415,9 +429,7 @@ export class WorkflowStore {
   // -------------------------------------------------------------------------
 
   count(): number {
-    const row = this.db
-      .prepare("SELECT COUNT(*) as n FROM workflow_traces")
-      .get() as { n: number };
+    const row = this.db.prepare("SELECT COUNT(*) as n FROM workflow_traces").get() as { n: number };
     return row.n;
   }
 
@@ -469,7 +481,7 @@ export class WorkflowStore {
       goalKeywords: parseJsonArray(row.goal_keywords, []),
       toolSequence: parseJsonArray(row.tool_sequence, []),
       argsHash: row.args_hash as string,
-      outcome: (row.outcome as string) as "success" | "failure" | "unknown",
+      outcome: row.outcome as string as "success" | "failure" | "unknown",
       toolCount: row.tool_count as number,
       durationMs: row.duration_ms as number,
       sessionId: row.session_id as string,

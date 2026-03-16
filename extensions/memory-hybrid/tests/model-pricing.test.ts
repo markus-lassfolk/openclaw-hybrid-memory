@@ -5,22 +5,22 @@ describe("getModelPricing", () => {
   it("returns pricing for known OpenAI models", () => {
     const p = getModelPricing("openai/gpt-4.1-nano");
     expect(p).not.toBeNull();
-    expect(p!.inputPer1M).toBe(0.10);
-    expect(p!.outputPer1M).toBe(0.40);
+    expect(p!.inputPer1M).toBe(0.1);
+    expect(p!.outputPer1M).toBe(0.4);
   });
 
   it("returns pricing for known Google models", () => {
     const p = getModelPricing("google/gemini-2.0-flash-lite");
     expect(p).not.toBeNull();
     expect(p!.inputPer1M).toBe(0.075);
-    expect(p!.outputPer1M).toBe(0.30);
+    expect(p!.outputPer1M).toBe(0.3);
   });
 
   it("returns pricing for known Anthropic models", () => {
     const p = getModelPricing("anthropic/claude-sonnet-4-6");
     expect(p).not.toBeNull();
-    expect(p!.inputPer1M).toBe(3.00);
-    expect(p!.outputPer1M).toBe(15.00);
+    expect(p!.inputPer1M).toBe(3.0);
+    expect(p!.outputPer1M).toBe(15.0);
   });
 
   it("returns null for unknown model", () => {
@@ -52,7 +52,7 @@ describe("estimateCost", () => {
     // gpt-4.1-nano: input=$0.10/1M, output=$0.40/1M
     // 1M input + 1M output = $0.10 + $0.40 = $0.50
     const cost = estimateCost("openai/gpt-4.1-nano", 1_000_000, 1_000_000);
-    expect(cost).toBeCloseTo(0.50, 6);
+    expect(cost).toBeCloseTo(0.5, 6);
   });
 
   it("calculates fractional tokens correctly", () => {
@@ -79,7 +79,7 @@ describe("estimateCost", () => {
   it("handles very small token counts", () => {
     // 100 input + 50 output with nano model
     const cost = estimateCost("openai/gpt-4.1-nano", 100, 50);
-    const expected = (100 / 1_000_000) * 0.10 + (50 / 1_000_000) * 0.40;
+    const expected = (100 / 1_000_000) * 0.1 + (50 / 1_000_000) * 0.4;
     expect(cost).toBeCloseTo(expected, 10);
   });
 });
@@ -106,10 +106,10 @@ describe("getModeCostEstimates()", () => {
 
   it("covers all four config modes", () => {
     const modes = getModeCostEstimates().map((e) => e.mode);
-    expect(modes).toContain("essential");
-    expect(modes).toContain("normal");
-    expect(modes).toContain("expert");
-    expect(modes).toContain("full");
+    expect(modes).toContain("local");
+    expect(modes).toContain("minimal");
+    expect(modes).toContain("enhanced");
+    expect(modes).toContain("complete");
   });
 
   it("has non-negative monthlyLow for all modes", () => {
@@ -124,11 +124,11 @@ describe("getModeCostEstimates()", () => {
     }
   });
 
-  it("modes are ordered by cost (essential cheapest, full most expensive)", () => {
+  it("modes are ordered by cost (local cheapest, complete most expensive)", () => {
     const estimates = getModeCostEstimates();
-    const essential = estimates.find((e) => e.mode === "essential")!;
-    const full = estimates.find((e) => e.mode === "full")!;
-    expect(full.monthlyHigh).toBeGreaterThan(essential.monthlyHigh);
+    const local = estimates.find((e) => e.mode === "local")!;
+    const complete = estimates.find((e) => e.mode === "complete")!;
+    expect(complete.monthlyHigh).toBeGreaterThan(local.monthlyHigh);
   });
 
   it("each mode has a non-empty description and features list", () => {
@@ -138,12 +138,12 @@ describe("getModeCostEstimates()", () => {
     }
   });
 
-  it("full mode includes all expert mode features", () => {
+  it("complete mode includes all enhanced mode features", () => {
     const estimates = getModeCostEstimates();
-    const expert = estimates.find((e) => e.mode === "expert")!;
-    const full = estimates.find((e) => e.mode === "full")!;
-    for (const feature of expert.features) {
-      expect(full.features).toContain(feature);
+    const enhanced = estimates.find((e) => e.mode === "enhanced")!;
+    const complete = estimates.find((e) => e.mode === "complete")!;
+    for (const feature of enhanced.features) {
+      expect(complete.features).toContain(feature);
     }
   });
 });

@@ -12,7 +12,10 @@ import { addOperationBreadcrumb } from "../services/error-reporter.js";
 export function buildToolScopeFilter(
   params: { userId?: string | null; agentId?: string | null; sessionId?: string | null },
   currentAgent: string | null,
-  config: { multiAgent: { orchestratorId: string; trustToolScopeParams?: boolean }; autoRecall: { scopeFilter?: ScopeFilter } }
+  config: {
+    multiAgent: { orchestratorId: string; trustToolScopeParams?: boolean };
+    autoRecall: { scopeFilter?: ScopeFilter };
+  },
 ): ScopeFilter | undefined {
   const { userId, agentId, sessionId } = params;
 
@@ -29,7 +32,7 @@ export function buildToolScopeFilter(
     return {
       userId: config.autoRecall.scopeFilter?.userId ?? null,
       agentId: currentAgent,
-      sessionId: config.autoRecall.scopeFilter?.sessionId ?? null
+      sessionId: config.autoRecall.scopeFilter?.sessionId ?? null,
     };
   } else {
     return undefined;

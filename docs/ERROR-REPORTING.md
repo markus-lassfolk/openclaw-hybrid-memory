@@ -1,8 +1,8 @@
 # Error Reporting (GlitchTip/Sentry Integration)
 
-**Status:** Enabled by default (community mode, opt-out)
+**Status:** Enabled by default (opt-out), reporting to the public community GlitchTip DSN
 **Requires:** `@sentry/node` (optional peer dependency)
-**Default:** Enabled - anonymous error reporting to a community GlitchTip instance
+**Default:** Enabled — anonymous error reporting to the plugin’s GlitchTip instance (`glitchtip.lassfolk.cc`). Set `errorReporting.enabled: false` or `errorReporting.consent: false` to opt out.
 
 ## Overview
 

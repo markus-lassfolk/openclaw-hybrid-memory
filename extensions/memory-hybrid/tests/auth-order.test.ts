@@ -97,6 +97,7 @@ describe("parseAuthConfig — single provider", () => {
       order: {
         anthropic: ["anthropic:claude-cli", "anthropic:api"],
       },
+      preferOAuthWhenBoth: true,
     });
   });
 
@@ -112,6 +113,7 @@ describe("parseAuthConfig — single provider", () => {
       order: {
         openai: ["openai-codex", "openai:api"],
       },
+      preferOAuthWhenBoth: true,
     });
   });
 
@@ -127,6 +129,7 @@ describe("parseAuthConfig — single provider", () => {
       order: {
         google: ["google-gemini-cli", "google:default"],
       },
+      preferOAuthWhenBoth: true,
     });
   });
 
@@ -142,6 +145,7 @@ describe("parseAuthConfig — single provider", () => {
       order: {
         anthropic: ["anthropic:api"],
       },
+      preferOAuthWhenBoth: true,
     });
   });
 });
@@ -167,6 +171,7 @@ describe("parseAuthConfig — multi-provider (OAuth-first example from issue #31
         openai: ["openai-codex", "openai:api"],
         google: ["google-gemini-cli", "google:default"],
       },
+      preferOAuthWhenBoth: true,
     });
   });
 
@@ -184,6 +189,7 @@ describe("parseAuthConfig — multi-provider (OAuth-first example from issue #31
         anthropic: ["anthropic:claude-cli", "anthropic:api"],
         minimax: ["minimax-portal:minimax-cli"],
       },
+      preferOAuthWhenBoth: true,
     });
   });
 
@@ -192,8 +198,8 @@ describe("parseAuthConfig — multi-provider (OAuth-first example from issue #31
       auth: {
         order: {
           anthropic: ["anthropic:claude-cli"],
-          openai: [],                      // empty — skipped
-          google: [null, 123, undefined],  // all non-string — skipped
+          openai: [], // empty — skipped
+          google: [null, 123, undefined], // all non-string — skipped
         },
       },
     });
@@ -201,6 +207,7 @@ describe("parseAuthConfig — multi-provider (OAuth-first example from issue #31
       order: {
         anthropic: ["anthropic:claude-cli"],
       },
+      preferOAuthWhenBoth: true,
     });
   });
 });
@@ -257,7 +264,7 @@ describe("parseAuthConfig — normalisation", () => {
       auth: {
         order: {
           anthropic: ["anthropic:claude-cli"],
-          "": ["openai-codex"],            // empty provider key — should be skipped
+          "": ["openai-codex"], // empty provider key — should be skipped
         },
       },
     });
@@ -274,7 +281,6 @@ describe("parseAuthConfig — normalisation", () => {
 // ---------------------------------------------------------------------------
 
 describe("OAuth profile detection logic", () => {
-
   it("returns false for undefined order", () => {
     expect(hasOAuthProfiles(undefined, "anthropic")).toBe(false);
   });
@@ -320,6 +326,6 @@ describe("OAuth profile detection logic", () => {
     const order = ["anthropic:claude-cli", "anthropic:api"];
     expect(hasOAuthProfiles(order, "anthropic")).toBe(true);
     expect(order[0]).toBe("anthropic:claude-cli"); // OAuth is first
-    expect(order[1]).toBe("anthropic:api");         // API key is fallback
+    expect(order[1]).toBe("anthropic:api"); // API key is fallback
   });
 });

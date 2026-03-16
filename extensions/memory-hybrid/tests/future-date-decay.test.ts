@@ -188,22 +188,14 @@ describe("detectFutureDate — offset phrases", () => {
 
 describe("detectFutureDate — multiple dates: uses the latest", () => {
   it("picks the latest of two future dates", () => {
-    const result = detectFutureDate(
-      "Kickoff 2026-03-10, deadline 2026-04-15",
-      ENABLED_CFG,
-      NOW_MS,
-    );
+    const result = detectFutureDate("Kickoff 2026-03-10, deadline 2026-04-15", ENABLED_CFG, NOW_MS);
     expect(result).not.toBeNull();
     // 2026-04-15 is ~41 days ahead; 2026-03-10 is 5 days ahead
     expect(daysSince(result!)).toBeGreaterThan(30);
   });
 
   it("ignores past dates when combined with future dates", () => {
-    const result = detectFutureDate(
-      "Last done 2025-12-01, next due 2026-05-01",
-      ENABLED_CFG,
-      NOW_MS,
-    );
+    const result = detectFutureDate("Last done 2025-12-01, next due 2026-05-01", ENABLED_CFG, NOW_MS);
     expect(result).not.toBeNull();
     // Should pick 2026-05-01 (~57 days ahead)
     expect(daysSince(result!)).toBeGreaterThan(50);
@@ -385,7 +377,8 @@ describe("FactsDB — decayConfidence skips frozen facts", () => {
     // Artificially push last_confirmed_at far back so decay would normally fire
     const rawDb = db.getRawDb();
     const expiresAt = nowSec + 2 * 86400; // expires in 2 days
-    rawDb.prepare(`UPDATE facts SET last_confirmed_at = ?, expires_at = ?, confidence = 0.9 WHERE id = ?`)
+    rawDb
+      .prepare(`UPDATE facts SET last_confirmed_at = ?, expires_at = ?, confidence = 0.9 WHERE id = ?`)
       .run(nowSec - 20 * 86400, expiresAt, entry.id);
 
     db.decayConfidence();
@@ -412,7 +405,8 @@ describe("FactsDB — decayConfidence skips frozen facts", () => {
     // Push last_confirmed_at far back and expires_at close
     const rawDb = db.getRawDb();
     const expiresAt = nowSec + 2 * 86400;
-    rawDb.prepare(`UPDATE facts SET last_confirmed_at = ?, expires_at = ?, confidence = 0.9 WHERE id = ?`)
+    rawDb
+      .prepare(`UPDATE facts SET last_confirmed_at = ?, expires_at = ?, confidence = 0.9 WHERE id = ?`)
       .run(nowSec - 20 * 86400, expiresAt, entry.id);
 
     db.decayConfidence();
@@ -441,7 +435,8 @@ describe("FactsDB — decayConfidence skips frozen facts", () => {
 
     const rawDb = db.getRawDb();
     const expiresAt = nowSec + 2 * 86400;
-    rawDb.prepare(`UPDATE facts SET last_confirmed_at = ?, expires_at = ?, confidence = 0.9 WHERE id = ?`)
+    rawDb
+      .prepare(`UPDATE facts SET last_confirmed_at = ?, expires_at = ?, confidence = 0.9 WHERE id = ?`)
       .run(nowSec - 20 * 86400, expiresAt, entry.id);
 
     db.decayConfidence();
@@ -472,7 +467,8 @@ describe("FactsDB — decayConfidence deletes low-confidence frozen facts that e
     const rawDb = db.getRawDb();
     const expiresAt = nowSec + 1 * 86400;
     // Set confidence very low and last_confirmed far back
-    rawDb.prepare(`UPDATE facts SET last_confirmed_at = ?, expires_at = ?, confidence = 0.15 WHERE id = ?`)
+    rawDb
+      .prepare(`UPDATE facts SET last_confirmed_at = ?, expires_at = ?, confidence = 0.15 WHERE id = ?`)
       .run(nowSec - 20 * 86400, expiresAt, entry.id);
 
     db.decayConfidence();
@@ -503,8 +499,7 @@ describe("FactsDB — pruneExpired respects decay_freeze_until", () => {
 
     const rawDb = db.getRawDb();
     const expiresAt = nowSec - 1 * 86400;
-    rawDb.prepare(`UPDATE facts SET expires_at = ? WHERE id = ?`)
-      .run(expiresAt, entry.id);
+    rawDb.prepare(`UPDATE facts SET expires_at = ? WHERE id = ?`).run(expiresAt, entry.id);
 
     db.pruneExpired();
 
@@ -528,8 +523,7 @@ describe("FactsDB — pruneExpired respects decay_freeze_until", () => {
 
     const rawDb = db.getRawDb();
     const expiresAt = nowSec - 1 * 86400;
-    rawDb.prepare(`UPDATE facts SET expires_at = ? WHERE id = ?`)
-      .run(expiresAt, entry.id);
+    rawDb.prepare(`UPDATE facts SET expires_at = ? WHERE id = ?`).run(expiresAt, entry.id);
 
     db.pruneExpired();
 
@@ -555,8 +549,7 @@ describe("FactsDB — pruneExpired respects decay_freeze_until", () => {
 
     const rawDb = db.getRawDb();
     const expiresAt = nowSec - 1 * 86400;
-    rawDb.prepare(`UPDATE facts SET expires_at = ? WHERE id = ?`)
-      .run(expiresAt, entry.id);
+    rawDb.prepare(`UPDATE facts SET expires_at = ? WHERE id = ?`).run(expiresAt, entry.id);
 
     db.pruneExpired();
 
@@ -640,8 +633,7 @@ describe("detectFutureDate — explicit paramDecayFreezeUntil override", () => {
     expect(autoDetected!).toBeGreaterThan(overrideTs);
 
     // Simulate the override logic from memory_store
-    const result =
-      Number.isFinite(overrideTs) ? overrideTs : autoDetected;
+    const result = Number.isFinite(overrideTs) ? overrideTs : autoDetected;
     expect(result).toBe(overrideTs);
   });
 
@@ -649,9 +641,7 @@ describe("detectFutureDate — explicit paramDecayFreezeUntil override", () => {
     const paramDecayFreezeUntil: number | null = null;
     const autoDetected = detectFutureDate("Meeting in 30 days", ENABLED_CFG, NOW_MS);
     const result =
-      paramDecayFreezeUntil != null && Number.isFinite(paramDecayFreezeUntil)
-        ? paramDecayFreezeUntil
-        : autoDetected;
+      paramDecayFreezeUntil != null && Number.isFinite(paramDecayFreezeUntil) ? paramDecayFreezeUntil : autoDetected;
     expect(result).toBe(autoDetected);
     expect(result).not.toBeNull();
   });
@@ -660,9 +650,7 @@ describe("detectFutureDate — explicit paramDecayFreezeUntil override", () => {
     const paramDecayFreezeUntil: number | null = null;
     const autoDetected = detectFutureDate("User prefers dark mode", ENABLED_CFG, NOW_MS);
     const result =
-      paramDecayFreezeUntil != null && Number.isFinite(paramDecayFreezeUntil)
-        ? paramDecayFreezeUntil
-        : autoDetected;
+      paramDecayFreezeUntil != null && Number.isFinite(paramDecayFreezeUntil) ? paramDecayFreezeUntil : autoDetected;
     expect(result).toBeNull();
   });
 });
@@ -714,12 +702,11 @@ describe("FactsDB — combined freeze+prune: frozen survives, unfrozen decays", 
 
     // Force both to have a past expires_at
     const rawDb = db.getRawDb();
-    rawDb.prepare(`UPDATE facts SET expires_at = ? WHERE id IN (?, ?)`)
-      .run(pastExpiry, frozen.id, unfrozen.id);
+    rawDb.prepare(`UPDATE facts SET expires_at = ? WHERE id IN (?, ?)`).run(pastExpiry, frozen.id, unfrozen.id);
 
     db.pruneExpired();
 
-    expect(db.getById(frozen.id)).not.toBeNull();   // frozen → survives
-    expect(db.getById(unfrozen.id)).toBeNull();      // unfrozen → pruned
+    expect(db.getById(frozen.id)).not.toBeNull(); // frozen → survives
+    expect(db.getById(unfrozen.id)).toBeNull(); // unfrozen → pruned
   });
 });

@@ -123,7 +123,10 @@ class OnnxRuntimeMissingError extends Error {
 }
 
 function isOnnxRuntimeMissingError(err: unknown): err is OnnxRuntimeMissingError {
-  return err instanceof OnnxRuntimeMissingError || (err instanceof Error && (err as Error & { code?: string }).code === "ONNX_RUNTIME_MISSING");
+  return (
+    err instanceof OnnxRuntimeMissingError ||
+    (err instanceof Error && (err as Error & { code?: string }).code === "ONNX_RUNTIME_MISSING")
+  );
 }
 
 const defaultOnnxRuntimeLoader: OnnxRuntimeLoader = () => import("onnxruntime-node");
@@ -175,7 +178,9 @@ async function downloadFile(url: string, destPath: string): Promise<void> {
   clearTimeout(timeoutId);
   if (!resp.ok || !resp.body) {
     const body = await resp.text().catch(() => "");
-    throw new Error(`Failed to download ${url}: HTTP ${resp.status} ${resp.statusText}${body ? ` — ${body.slice(0, 200)}` : ""}`);
+    throw new Error(
+      `Failed to download ${url}: HTTP ${resp.status} ${resp.statusText}${body ? ` — ${body.slice(0, 200)}` : ""}`,
+    );
   }
   const contentLength = resp.headers.get("content-length");
   if (contentLength) {
@@ -217,9 +222,7 @@ async function resolveOnnxModelFiles(
     if (!(await fileExists(modelPath))) {
       throw new Error(`ONNX model file not found at ${modelPath}`);
     }
-    const vocabPath = opts?.vocabPath
-      ? resolve(opts.vocabPath)
-      : join(dirname(modelPath), "vocab.txt");
+    const vocabPath = opts?.vocabPath ? resolve(opts.vocabPath) : join(dirname(modelPath), "vocab.txt");
     if (!(await fileExists(vocabPath))) {
       throw new Error(`Tokenizer vocab.txt not found at ${vocabPath}`);
     }
@@ -227,10 +230,8 @@ async function resolveOnnxModelFiles(
   }
 
   const resolvedModelPath = resolve(model);
-  if (model.endsWith(".onnx") && await fileExists(resolvedModelPath)) {
-    const vocabPath = opts?.vocabPath
-      ? resolve(opts.vocabPath)
-      : join(dirname(resolvedModelPath), "vocab.txt");
+  if (model.endsWith(".onnx") && (await fileExists(resolvedModelPath))) {
+    const vocabPath = opts?.vocabPath ? resolve(opts.vocabPath) : join(dirname(resolvedModelPath), "vocab.txt");
     if (!(await fileExists(vocabPath))) {
       throw new Error(`Tokenizer vocab.txt not found at ${vocabPath}`);
     }
@@ -401,7 +402,13 @@ function l2Normalize(vec: Float32Array): Float32Array {
   return out;
 }
 
-function meanPool(lastHidden: Float32Array, attentionMask: BigInt64Array, batch: number, seq: number, hidden: number): Float32Array[] {
+function meanPool(
+  lastHidden: Float32Array,
+  attentionMask: BigInt64Array,
+  batch: number,
+  seq: number,
+  hidden: number,
+): Float32Array[] {
   const outputs: Float32Array[] = [];
   let offset = 0;
   for (let b = 0; b < batch; b++) {
@@ -499,10 +506,7 @@ export class OnnxEmbeddingProvider implements EmbeddingProvider {
     for (let i = 0; i < texts.length; i += this.batchSize) {
       const batch = texts.slice(i, i + this.batchSize);
       const encoded = batch.map((t) => this.tokenizer!.encode(t, this.maxSeqLength));
-      const maxLen = Math.min(
-        this.maxSeqLength,
-        Math.max(...encoded.map((e) => e.inputIds.length)),
-      );
+      const maxLen = Math.min(this.maxSeqLength, Math.max(...encoded.map((e) => e.inputIds.length)));
       const padId = this.tokenizer!.getPadTokenId();
       for (const e of encoded) {
         while (e.inputIds.length < maxLen) {
@@ -538,10 +542,7 @@ export class OnnxEmbeddingProvider implements EmbeddingProvider {
       }
 
       const output = await this.session.run(feeds);
-      const outputTensor =
-        output["sentence_embedding"] ??
-        output["pooler_output"] ??
-        output["last_hidden_state"];
+      const outputTensor = output["sentence_embedding"] ?? output["pooler_output"] ?? output["last_hidden_state"];
       if (!outputTensor) {
         throw new Error("ONNX output missing sentence_embedding/pooler_output/last_hidden_state");
       }
@@ -615,7 +616,6 @@ export function isOllamaCircuitBreakerOpen(err: Error): boolean {
   return err.message.startsWith("Ollama circuit breaker open");
 }
 
-
 /**
  * OpenAI-based embedding provider.
  * Uses a cache, supports model preference lists (try in order on failure).
@@ -635,15 +635,13 @@ export class Embeddings implements EmbeddingProvider {
     dimensions?: number,
     batchSize?: number,
   ) {
-    this.client = typeof clientOrApiKey === "string"
-      ? new OpenAI({ apiKey: clientOrApiKey })
-      : clientOrApiKey;
+    this.client = typeof clientOrApiKey === "string" ? new OpenAI({ apiKey: clientOrApiKey }) : clientOrApiKey;
     this.models = Array.isArray(modelOrModels) ? modelOrModels : [modelOrModels];
     if (this.models.length === 0) throw new Error("Embeddings requires at least one model");
     this.modelName = this.models[0];
     this.dimensions = dimensions ?? 1536; // default: text-embedding-3-small
     this.batchSize = batchSize || 2048;
-    
+
     // Validate dimensions against known model limits and capabilities
     const modelMaxDimensions: Record<string, number> = {
       "text-embedding-3-small": 1536,
@@ -662,7 +660,9 @@ export class Embeddings implements EmbeddingProvider {
       const nativeDim = modelNativeDimensions[model];
       const supportsDimensions = model.startsWith("text-embedding-3-");
       if (nativeDim !== undefined && this.dimensions !== nativeDim && !supportsDimensions) {
-        throw new Error(`Model ${model} does not support custom dimensions (native: ${nativeDim}, requested: ${this.dimensions}). Use a text-embedding-3-* model for custom dimensions.`);
+        throw new Error(
+          `Model ${model} does not support custom dimensions (native: ${nativeDim}, requested: ${this.dimensions}). Use a text-embedding-3-* model for custom dimensions.`,
+        );
       }
     }
   }
@@ -698,11 +698,12 @@ export class Embeddings implements EmbeddingProvider {
         // Truncate to stay within the 8192-token OpenAI embedding limit (#442)
         const input = truncateForEmbedding(text);
         const resp = await withLLMRetry(
-          () => this.client.embeddings.create({
-            model,
-            input,
-            ...(supportsDimensions ? { dimensions: this.dimensions } : {}),
-          }),
+          () =>
+            this.client.embeddings.create({
+              model,
+              input,
+              ...(supportsDimensions ? { dimensions: this.dimensions } : {}),
+            }),
           { maxRetries: 2 },
         );
         const vector = resp.data[0].embedding;
@@ -735,11 +736,11 @@ export class Embeddings implements EmbeddingProvider {
 
   async embedBatch(texts: string[]): Promise<number[][]> {
     if (texts.length === 0) return [];
-    
+
     const allResults: number[][] = [];
     for (let i = 0; i < texts.length; i += this.batchSize) {
       const batch = texts.slice(i, i + this.batchSize);
-      
+
       let lastErr: Error | undefined;
       let resp: Awaited<ReturnType<typeof this.client.embeddings.create>> | undefined;
       for (const model of this.models) {
@@ -748,11 +749,12 @@ export class Embeddings implements EmbeddingProvider {
           // Truncate each item to stay within the 8192-token OpenAI embedding limit (#442)
           const truncatedBatch = batch.map(truncateForEmbedding);
           resp = await withLLMRetry(
-            () => this.client.embeddings.create({
-              model,
-              input: truncatedBatch,
-              ...(supportsDimensions ? { dimensions: this.dimensions } : {}),
-            }),
+            () =>
+              this.client.embeddings.create({
+                model,
+                input: truncatedBatch,
+                ...(supportsDimensions ? { dimensions: this.dimensions } : {}),
+              }),
             { maxRetries: 2 },
           );
           this.modelName = model;
@@ -766,11 +768,7 @@ export class Embeddings implements EmbeddingProvider {
         if (resp.data.length !== batch.length) {
           throw new Error(`OpenAI embed returned ${resp.data.length} embeddings for ${batch.length} inputs`);
         }
-        allResults.push(
-          ...resp.data
-            .sort((a, b) => a.index - b.index)
-            .map((item) => item.embedding),
-        );
+        allResults.push(...resp.data.sort((a, b) => a.index - b.index).map((item) => item.embedding));
       }
       if (lastErr !== undefined && allResults.length === i) {
         // Skip reporting config errors (404 model-not-found, 403 country/region restriction, 401 auth failure) and 429 (rate limit) — operator config issues or transient errors, not bugs (#329, #394, #397, #385).
@@ -828,12 +826,7 @@ export class OllamaEmbeddingProvider implements EmbeddingProvider {
   private readonly endpoint: string;
   private readonly batchSize: number;
 
-  constructor(opts: {
-    model: string;
-    dimensions: number;
-    endpoint?: string;
-    batchSize?: number;
-  }) {
+  constructor(opts: { model: string; dimensions: number; endpoint?: string; batchSize?: number }) {
     this.modelName = opts.model;
     this.dimensions = opts.dimensions;
     this.endpoint = (opts.endpoint ?? "http://localhost:11434").replace(/\/$/, "");
@@ -857,7 +850,9 @@ export class OllamaEmbeddingProvider implements EmbeddingProvider {
     // while leaving providers at different base URLs unaffected.
     const circuit = _getOllamaCircuit(this.endpoint);
     if (Date.now() < circuit.disabledUntil) {
-      throw new Error(`Ollama circuit breaker open — disabled until ${new Date(circuit.disabledUntil).toISOString()} (endpoint: ${this.endpoint})`);
+      throw new Error(
+        `Ollama circuit breaker open — disabled until ${new Date(circuit.disabledUntil).toISOString()} (endpoint: ${this.endpoint})`,
+      );
     }
 
     const allResults: number[][] = [];
@@ -903,13 +898,13 @@ export class OllamaEmbeddingProvider implements EmbeddingProvider {
           circuit.failCount = OLLAMA_MAX_FAILS;
           console.warn(
             `memory-hybrid: Ollama model OOM (${this.modelName}) — model requires more memory than available. ` +
-            `Circuit breaker tripped; disabling endpoint ${this.endpoint} for 5min. ` +
-            `Consider using a smaller model or configuring a cloud embedding fallback.`
+              `Circuit breaker tripped; disabling endpoint ${this.endpoint} for 5min. ` +
+              `Consider using a smaller model or configuring a cloud embedding fallback.`,
           );
         }
         throw new Error(errMsg);
       }
-      const data = await resp.json() as { embeddings: number[][] };
+      const data = (await resp.json()) as { embeddings: number[][] };
       if (!Array.isArray(data.embeddings)) {
         throw new Error(`Ollama embed response missing 'embeddings' array`);
       }
@@ -959,7 +954,7 @@ export class FallbackEmbeddingProvider implements EmbeddingProvider {
     if (fallback && fallback.dimensions !== primary.dimensions) {
       throw new Error(
         `Primary (${primary.modelName}: ${primary.dimensions}d) and fallback ` +
-        `(${fallback.modelName}: ${fallback.dimensions}d) must have matching dimensions`,
+          `(${fallback.modelName}: ${fallback.dimensions}d) must have matching dimensions`,
       );
     }
     this.active = primary;
@@ -1104,10 +1099,7 @@ export class ChainEmbeddingProvider implements EmbeddingProvider {
     this.modelName = providers[0].modelName;
   }
 
-  private async tryProviders<T>(
-    fn: (provider: EmbeddingProvider) => Promise<T>,
-    phase: string,
-  ): Promise<T> {
+  private async tryProviders<T>(fn: (provider: EmbeddingProvider) => Promise<T>, phase: string): Promise<T> {
     let currentIndex = 0;
     this.modelName = this.providers[0].modelName;
     const collectedErrors: Error[] = [];
@@ -1180,10 +1172,7 @@ export class ChainEmbeddingProvider implements EmbeddingProvider {
  * - provider='openai' → Embeddings (OpenAI)
  * - provider='onnx'   → OnnxEmbeddingProvider (with optional OpenAI fallback if apiKey set)
  */
-export function createEmbeddingProvider(
-  cfg: EmbeddingConfig,
-  onFallback?: (err: unknown) => void,
-): EmbeddingProvider {
+export function createEmbeddingProvider(cfg: EmbeddingConfig, onFallback?: (err: unknown) => void): EmbeddingProvider {
   const { provider, model, apiKey, models, dimensions, endpoint, batchSize, preferredProviders } = cfg;
 
   if (preferredProviders && preferredProviders.length > 1) {
@@ -1191,27 +1180,43 @@ export function createEmbeddingProvider(
     const labels: string[] = [];
     const openaiModels = models?.length ? models : ["text-embedding-3-small"];
     // All providers in the chain must use the same dimensions (config.dimensions). For ollama+openai, use 1536 and an ollama model that supports it, or 768 with openai dimension override if supported.
-    const ollamaModel = model && !["text-embedding-3-small", "text-embedding-3-large", "text-embedding-ada-002"].includes(model)
-      ? model
-      : "nomic-embed-text";
+    const ollamaModel =
+      model && !["text-embedding-3-small", "text-embedding-3-large", "text-embedding-ada-002"].includes(model)
+        ? model
+        : "nomic-embed-text";
     // Use cfg.model if it is a known Google embed model; otherwise default to text-embedding-005 (#385).
     // Non-Google model names are rejected to prevent sending them to the Google endpoint.
-    const googleModel = (model && KNOWN_GOOGLE_EMBED_MODELS.has(model)) ? model : "text-embedding-005";
+    const googleModel = model && KNOWN_GOOGLE_EMBED_MODELS.has(model) ? model : "text-embedding-005";
     for (const name of preferredProviders) {
       if (name === "ollama") {
         try {
           chain.push(new OllamaEmbeddingProvider({ model: ollamaModel, dimensions, endpoint, batchSize }));
           labels.push("ollama");
         } catch (err) {
-          capturePluginError(err instanceof Error ? err : new Error(String(err)), { subsystem: "embeddings", operation: "chain-build-ollama" });
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+            subsystem: "embeddings",
+            operation: "chain-build-ollama",
+          });
         }
       } else if (name === "openai" && apiKey) {
         try {
           const client = new OpenAI({ apiKey });
-          chain.push(new Embeddings(client, model && ["text-embedding-3-small", "text-embedding-3-large", "text-embedding-ada-002"].includes(model) ? model : openaiModels[0], dimensions, batchSize));
+          chain.push(
+            new Embeddings(
+              client,
+              model && ["text-embedding-3-small", "text-embedding-3-large", "text-embedding-ada-002"].includes(model)
+                ? model
+                : openaiModels[0],
+              dimensions,
+              batchSize,
+            ),
+          );
           labels.push("openai");
         } catch (err) {
-          capturePluginError(err instanceof Error ? err : new Error(String(err)), { subsystem: "embeddings", operation: "chain-build-openai" });
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+            subsystem: "embeddings",
+            operation: "chain-build-openai",
+          });
         }
       } else if (name === "google" && cfg.googleApiKey && cfg.googleApiKey.length >= 10) {
         try {
@@ -1219,12 +1224,17 @@ export function createEmbeddingProvider(
           chain.push(new Embeddings(client, googleModel, dimensions, batchSize));
           labels.push("google");
         } catch (err) {
-          capturePluginError(err instanceof Error ? err : new Error(String(err)), { subsystem: "embeddings", operation: "chain-build-google" });
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+            subsystem: "embeddings",
+            operation: "chain-build-google",
+          });
         }
       }
     }
     if (chain.length === 0) {
-      throw new Error("embedding.preferredProviders: no provider could be built (check apiKey for openai/google, Ollama for ollama, distill.apiKey or llm.providers.google for Google).");
+      throw new Error(
+        "embedding.preferredProviders: no provider could be built (check apiKey for openai/google, Ollama for ollama, distill.apiKey or llm.providers.google for Google).",
+      );
     }
     if (chain.length === 1) {
       return chain[0];
@@ -1244,7 +1254,9 @@ export function createEmbeddingProvider(
       } catch (err) {
         // Fallback creation failed (e.g. Ollama dimensions exceed all OpenAI model limits).
         // Warn the user so they know their fallback isn't working.
-        console.warn(`memory-hybrid: Failed to create OpenAI fallback for Ollama provider: ${err instanceof Error ? err.message : String(err)}. Continuing with Ollama-only (no fallback).`);
+        console.warn(
+          `memory-hybrid: Failed to create OpenAI fallback for Ollama provider: ${err instanceof Error ? err.message : String(err)}. Continuing with Ollama-only (no fallback).`,
+        );
         return primary;
       }
     }
@@ -1265,7 +1277,7 @@ export function createEmbeddingProvider(
     const client = new OpenAI({ apiKey: cfg.googleApiKey, baseURL: GOOGLE_EMBEDDING_BASE_URL });
     // Use configured model only when it is a known Google embedding model; otherwise default to text-embedding-005.
     // Non-Google model names are rejected here to prevent sending them to the Google endpoint (#385).
-    const googleEmbedModel = (model && KNOWN_GOOGLE_EMBED_MODELS.has(model)) ? model : "text-embedding-005";
+    const googleEmbedModel = model && KNOWN_GOOGLE_EMBED_MODELS.has(model) ? model : "text-embedding-005";
     return new Embeddings(client, googleEmbedModel, dimensions, batchSize);
   }
 
@@ -1280,13 +1292,17 @@ export function createEmbeddingProvider(
           if (isOnnxRuntimeMissingError(err)) {
             console.warn("memory-hybrid: onnxruntime-node not installed; falling back to OpenAI embeddings.");
           } else {
-            console.warn(`memory-hybrid: ONNX embeddings failed; falling back to OpenAI. ${err instanceof Error ? err.message : String(err)}`);
+            console.warn(
+              `memory-hybrid: ONNX embeddings failed; falling back to OpenAI. ${err instanceof Error ? err.message : String(err)}`,
+            );
           }
           onFallback?.(err);
         };
         return new FallbackEmbeddingProvider(primary, fallback, onSwitch, "onnx", "openai");
       } catch (err) {
-        console.warn(`memory-hybrid: Failed to create OpenAI fallback for ONNX provider: ${err instanceof Error ? err.message : String(err)}. Continuing with ONNX-only (no fallback).`);
+        console.warn(
+          `memory-hybrid: Failed to create OpenAI fallback for ONNX provider: ${err instanceof Error ? err.message : String(err)}. Continuing with ONNX-only (no fallback).`,
+        );
         return primary;
       }
     }

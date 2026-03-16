@@ -43,11 +43,7 @@ describe("export-memory", () => {
     });
 
     const outDir = join(tmpDir, "export");
-    const result = runExport(
-      db,
-      { outputPath: outDir, mode: "replace" },
-      { pluginVersion: "1.0.0", schemaVersion: 3 },
-    );
+    const result = runExport(db, { outputPath: outDir, mode: "replace" }, { pluginVersion: "1.0.0", schemaVersion: 3 });
 
     expect(result.factsExported).toBe(2);
     expect(result.filesWritten).toBeGreaterThanOrEqual(4); // MEMORY.md, manifest.json, 2 fact files

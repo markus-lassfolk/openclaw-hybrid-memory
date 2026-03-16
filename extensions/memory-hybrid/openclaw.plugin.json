@@ -1,7 +1,7 @@
 {
   "id": "openclaw-hybrid-memory",
   "kind": "memory",
-  "version": "2026.3.110",
+  "version": "2026.3.152",
   "uiHints": {
     "embedding.provider": {
       "label": "Embedding Provider",
@@ -42,10 +42,10 @@
       "help": "Embedding output dimensions for the ONNX model",
       "advanced": true
     },
-    "mode": {
-      "label": "Configuration preset",
-      "placeholder": "normal",
-      "help": "essential | normal | expert | full. See CONFIGURATION-MODES.md."
+"mode": {
+        "label": "Configuration preset",
+      "placeholder": "local",
+      "help": "local | minimal | enhanced | complete (or legacy: essential | normal | expert | full, mapped to local). See CONFIGURATION-MODES.md."
     },
     "lanceDbPath": {
       "label": "LanceDB Path",
@@ -396,22 +396,6 @@
       "label": "Reflection min observations",
       "help": "Min observations to support a pattern (default 2)"
     },
-    "memoryToSkills": {
-      "label": "Memory-to-skills (enable/disable)",
-      "help": "Enable or disable memory-to-skills pipeline (true/false). Run: openclaw hybrid-mem skills-suggest. Use memoryToSkills.enabled for the same."
-    },
-    "memoryToSkills.enabled": {
-      "label": "Memory-to-skills",
-      "help": "Cluster procedures and draft skills to skills/auto-generated/ (nightly or skills-suggest). Run: openclaw hybrid-mem skills-suggest [--dry-run] [--days N]"
-    },
-    "memoryToSkills.schedule": {
-      "label": "Memory-to-skills schedule",
-      "help": "Cron for nightly run (default 15 2 * * *)"
-    },
-    "memoryToSkills.windowDays": {
-      "label": "Memory-to-skills window (days)",
-      "help": "Procedures updated in last N days (default 30)"
-    },
     "nightlyCycle.enabled": {
       "label": "Nightly dream cycle",
       "help": "Run automated prune → consolidate → reflect pipeline (cron job nightly-dream-cycle). Default: false."
@@ -449,8 +433,8 @@
     "properties": {
       "mode": {
         "type": "string",
-        "enum": ["essential", "normal", "expert", "full"],
-        "description": "Configuration preset. See docs/CONFIGURATION-MODES.md."
+        "enum": ["essential", "normal", "expert", "full", "local", "minimal", "enhanced", "complete"],
+        "description": "Configuration preset: local | minimal | enhanced | complete. Legacy values (essential, normal, expert, full) are accepted and mapped to local. See docs/CONFIGURATION-MODES.md."
       },
       "embedding": {
         "type": "object",
@@ -749,13 +733,13 @@
         "properties": {
           "enabled": {
             "type": "boolean",
-            "default": false,
-            "description": "Enable error reporting (default: false, opt-in)"
+            "default": true,
+            "description": "Enable error reporting (default: true, opt-out). Set false to disable."
           },
           "consent": {
             "type": "boolean",
-            "default": false,
-            "description": "Explicit user consent required (default: false)"
+            "default": true,
+            "description": "User consent for reporting (default: true, opt-out). Set false to disable."
           },
           "mode": {
             "type": "string",
@@ -789,7 +773,7 @@
           }
         },
         "required": ["enabled", "consent"],
-        "description": "Opt-in error reporting to GlitchTip/Sentry. See docs/ERROR-REPORTING.md."
+        "description": "Opt-out error reporting to GlitchTip/Sentry (enabled by default, community DSN). Set enabled: false or consent: false to disable. See docs/ERROR-REPORTING.md."
       },
       "distill": {
         "type": "object",
@@ -1013,51 +997,6 @@
           }
         },
         "description": "Procedural memory: auto-generated skills from learned patterns"
-      },
-      "memoryToSkills": {
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
-          "enabled": {
-            "type": "boolean",
-            "description": "Enable memory-to-skills pipeline (default: false)"
-          },
-          "schedule": {
-            "type": "string",
-            "description": "Cron schedule for nightly run (default: 15 2 * * *)"
-          },
-          "windowDays": {
-            "type": "number",
-            "description": "Procedures updated in last N days (default: 30)"
-          },
-          "minInstances": {
-            "type": "number",
-            "description": "Minimum procedure instances per cluster (default: 3)"
-          },
-          "consistencyThreshold": {
-            "type": "number",
-            "minimum": 0,
-            "maximum": 1,
-            "description": "Step consistency threshold 0-1 (default: 0.7)"
-          },
-          "outputDir": {
-            "type": "string",
-            "description": "Output directory relative to workspace (default: skills/auto-generated)"
-          },
-          "notify": {
-            "type": "boolean",
-            "description": "Cron message asks agent to notify on new drafts (default: true)"
-          },
-          "autoPublish": {
-            "type": "boolean",
-            "description": "Always require human review; no auto-promote (default: false)"
-          },
-          "validateScript": {
-            "type": "string",
-            "description": "Optional path to post-generation validation script (e.g. quick_validate.py). Not invoked by plugin."
-          }
-        },
-        "description": "Memory-to-skills: cluster procedures, synthesize SKILL.md drafts (issue #114)"
       },
       "selfCorrection": {
         "type": "object",

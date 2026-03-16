@@ -27,22 +27,11 @@ import { randomUUID } from "node:crypto";
 import { formatDuration } from "../utils/duration.js";
 
 /** Valid task statuses */
-export const ACTIVE_TASK_STATUSES = [
-  "In progress",
-  "Waiting",
-  "Stalled",
-  "Failed",
-  "Done",
-] as const;
+export const ACTIVE_TASK_STATUSES = ["In progress", "Waiting", "Stalled", "Failed", "Done"] as const;
 export type ActiveTaskStatus = (typeof ACTIVE_TASK_STATUSES)[number];
 
 /** Non-terminal statuses (still active) */
-const ACTIVE_STATUSES: Set<ActiveTaskStatus> = new Set([
-  "In progress",
-  "Waiting",
-  "Stalled",
-  "Failed",
-]);
+const ACTIVE_STATUSES: Set<ActiveTaskStatus> = new Set(["In progress", "Waiting", "Stalled", "Failed"]);
 
 /** Structured task entry */
 export interface ActiveTaskEntry {
@@ -226,10 +215,7 @@ export function serializeTaskEntry(entry: ActiveTaskEntry): string {
 }
 
 /** Serialize all tasks back to full ACTIVE-TASK.md content */
-export function serializeActiveTaskFile(
-  active: ActiveTaskEntry[],
-  completed: ActiveTaskEntry[],
-): string {
+export function serializeActiveTaskFile(active: ActiveTaskEntry[], completed: ActiveTaskEntry[]): string {
   const parts: string[] = ["# ACTIVE-TASK.md — Working Memory\n"];
 
   parts.push("## Active Tasks\n");
@@ -261,10 +247,7 @@ export function serializeActiveTaskFile(
  * Flag tasks that have not been updated in more than `staleMinutes` minutes.
  * Returns new array with `stale` property set.
  */
-export function detectStaleTasks(
-  tasks: ActiveTaskEntry[],
-  staleMinutes: number,
-): ActiveTaskEntry[] {
+export function detectStaleTasks(tasks: ActiveTaskEntry[], staleMinutes: number): ActiveTaskEntry[] {
   const now = Date.now();
   const staleMs = staleMinutes * 60 * 1000;
   return tasks.map((t) => {
@@ -284,10 +267,7 @@ export function detectStaleTasks(
  * @param filePath - Absolute path to ACTIVE-TASK.md
  * @param staleMinutes - Minutes before a task is considered stale (default: 1440 = 24h)
  */
-export async function readActiveTaskFile(
-  filePath: string,
-  staleMinutes = 1440,
-): Promise<ActiveTaskFile | null> {
+export async function readActiveTaskFile(filePath: string, staleMinutes = 1440): Promise<ActiveTaskFile | null> {
   if (!existsSync(filePath)) return null;
   try {
     const content = await readFile(filePath, "utf-8");
@@ -366,10 +346,7 @@ export function completeTask(
  * Build a compact injection block for the active task working memory.
  * Budget-capped to `maxTokens` (approximate — 4 chars ≈ 1 token).
  */
-export function buildActiveTaskInjection(
-  tasks: ActiveTaskEntry[],
-  maxTokens: number,
-): string {
+export function buildActiveTaskInjection(tasks: ActiveTaskEntry[], maxTokens: number): string {
   const activeTasks = tasks.filter((t) => ACTIVE_STATUSES.has(t.status));
   if (activeTasks.length === 0) return "";
 
@@ -381,9 +358,7 @@ export function buildActiveTaskInjection(
 
   for (const task of activeTasks) {
     const staleFlag = task.stale ? " ⚠️ STALE" : "";
-    const summary = [
-      `- [${task.label}] ${task.description} (${task.status}${staleFlag})`,
-    ];
+    const summary = [`- [${task.label}] ${task.description} (${task.status}${staleFlag})`];
     if (task.next) summary.push(`  Next: ${task.next}`);
     if (task.subagent) summary.push(`  Subagent: ${task.subagent}`);
     const block = summary.join("\n");
@@ -418,16 +393,10 @@ export function buildActiveTaskInjection(
  * @param staleMinutes Threshold used for the warning label (e.g. 1440 → shows ">24h").
  * @param maxChars Optional character budget cap (approximate — 4 chars ≈ 1 token). If provided, truncates output.
  */
-export function buildStaleWarningInjection(
-  tasks: ActiveTaskEntry[],
-  staleMinutes: number,
-  maxChars?: number,
-): string {
+export function buildStaleWarningInjection(tasks: ActiveTaskEntry[], staleMinutes: number, maxChars?: number): string {
   const staleTasks = tasks.filter((t) => t.stale);
   // Hint for any "In progress" task with a subagent — regardless of staleness.
-  const inProgressWithSubagent = tasks.filter(
-    (t) => t.status === "In progress" && t.subagent,
-  );
+  const inProgressWithSubagent = tasks.filter((t) => t.status === "In progress" && t.subagent);
 
   if (staleTasks.length === 0 && inProgressWithSubagent.length === 0) return "";
 
@@ -445,9 +414,7 @@ export function buildStaleWarningInjection(
     const now = Date.now();
     for (const task of staleTasks) {
       const updatedMs = new Date(task.updated).getTime();
-      const hoursAgo = isNaN(updatedMs)
-        ? "?"
-        : Math.floor((now - updatedMs) / (60 * 60 * 1000));
+      const hoursAgo = isNaN(updatedMs) ? "?" : Math.floor((now - updatedMs) / (60 * 60 * 1000));
       const line1 = `- [${task.label}]: ${task.description} — last updated ${task.updated} (${hoursAgo}h ago)`;
       const nextPart = task.next ? `, Next: ${task.next}` : "";
       const line2 = `  Status: ${task.status}${nextPart}`;
@@ -499,10 +466,7 @@ export function buildStaleWarningInjection(
  * Append completed task summary to `memory/YYYY-MM-DD.md`.
  * Creates the file if it doesn't exist.
  */
-export async function flushCompletedTaskToMemory(
-  task: ActiveTaskEntry,
-  memoryDir: string,
-): Promise<string> {
+export async function flushCompletedTaskToMemory(task: ActiveTaskEntry, memoryDir: string): Promise<string> {
   const date = new Date().toISOString().slice(0, 10);
   const filePath = join(memoryDir, `${date}.md`);
 
@@ -530,9 +494,7 @@ export async function flushCompletedTaskToMemory(
     "",
   ].join("\n");
 
-  const newContent = existing
-    ? existing.trimEnd() + "\n\n" + summary
-    : `# Memory Log — ${date}\n\n` + summary;
+  const newContent = existing ? existing.trimEnd() + "\n\n" + summary : `# Memory Log — ${date}\n\n` + summary;
 
   await writeFile(filePath, newContent, "utf-8");
   return filePath;
@@ -602,11 +564,7 @@ export interface PendingTaskSignal extends TaskSignal {
  * @param memoryDir Absolute path to the memory directory
  * @returns         Absolute path of the written signal file
  */
-export async function writeTaskSignal(
-  label: string,
-  signal: TaskSignal,
-  memoryDir: string,
-): Promise<string> {
+export async function writeTaskSignal(label: string, signal: TaskSignal, memoryDir: string): Promise<string> {
   const signalsDir = join(memoryDir, "task-signals");
   await mkdir(signalsDir, { recursive: true });
   // Sanitise label to be filesystem-safe
@@ -715,10 +673,7 @@ export async function readActiveTaskFileWithMtime(
 ): Promise<ActiveTaskFileWithMtime | null> {
   if (!existsSync(filePath)) return null;
   try {
-    const [content, fileStat] = await Promise.all([
-      readFile(filePath, "utf-8"),
-      stat(filePath),
-    ]);
+    const [content, fileStat] = await Promise.all([readFile(filePath, "utf-8"), stat(filePath)]);
     const parsed = parseActiveTaskFile(content);
     parsed.active = detectStaleTasks(parsed.active, staleMinutes);
     return { ...parsed, mtime: fileStat.mtimeMs };
@@ -754,9 +709,7 @@ export async function writeActiveTaskFileOptimistic(
   active: ActiveTaskEntry[],
   completed: ActiveTaskEntry[],
   knownMtime: number,
-  merge: (
-    fresh: ActiveTaskFileWithMtime,
-  ) => Promise<[ActiveTaskEntry[], ActiveTaskEntry[]] | null>,
+  merge: (fresh: ActiveTaskFileWithMtime) => Promise<[ActiveTaskEntry[], ActiveTaskEntry[]] | null>,
   maxRetries = 3,
   staleMinutes = 1440,
 ): Promise<boolean> {

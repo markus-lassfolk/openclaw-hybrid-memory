@@ -12,6 +12,8 @@ import {
   getDefaultCronModel,
   getCronModelConfig,
   getLLMModelPreference,
+  getLLMModelPreferenceUnfiltered,
+  getProvidersWithKeys,
   resolveReflectionModelAndFallbacks,
   type DecayClass,
   type HybridMemoryConfig,
@@ -145,9 +147,7 @@ describe("vectorDimsForModel", () => {
   });
 
   it("throws for unsupported model", () => {
-    expect(() => vectorDimsForModel("unknown-model")).toThrow(
-      /Unsupported embedding model/,
-    );
+    expect(() => vectorDimsForModel("unknown-model")).toThrow(/Unsupported embedding model/);
   });
 });
 
@@ -213,9 +213,9 @@ describe("hybridConfigSchema.parse", () => {
     expect(result.autoRecall.retrievalDirectives.maxPerPrompt).toBe(6);
   });
 
-  it("memoryTiering defaults when omitted", () => {
+  it("memoryTiering defaults when omitted (no mode → local: tiering off)", () => {
     const result = hybridConfigSchema.parse(validBase);
-    expect(result.memoryTiering.enabled).toBe(true);
+    expect(result.memoryTiering.enabled).toBe(false);
     expect(result.memoryTiering.hotMaxTokens).toBe(2000);
     expect(result.memoryTiering.compactionOnSessionEnd).toBe(true);
     expect(result.memoryTiering.inactivePreferenceDays).toBe(7);
@@ -451,8 +451,8 @@ describe("hybridConfigSchema.parse", () => {
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     try {
       expect(() => hybridConfigSchema.parse({})).toThrow(/embedding\.model|embedding\.apiKey/);
-      const warnCalls = warnSpy.mock.calls.filter((args) =>
-        typeof args[0] === "string" && args[0].includes("embedding.provider not set"),
+      const warnCalls = warnSpy.mock.calls.filter(
+        (args) => typeof args[0] === "string" && args[0].includes("embedding.provider not set"),
       );
       expect(warnCalls).toHaveLength(0);
     } finally {
@@ -574,14 +574,14 @@ describe("hybridConfigSchema.parse", () => {
     expect(result.captureMaxChars).toBe(10000);
   });
 
-  it("no mode applies full preset: store.fuzzyDedupe is true", () => {
+  it("no mode applies local preset: store.fuzzyDedupe is true", () => {
     const result = hybridConfigSchema.parse(validBase);
     expect(result.store.fuzzyDedupe).toBe(true);
   });
 
-  it("no mode applies full preset: store.classifyBeforeWrite is true", () => {
+  it("no mode applies local preset: store.classifyBeforeWrite is false", () => {
     const result = hybridConfigSchema.parse(validBase);
-    expect(result.store.classifyBeforeWrite).toBe(true);
+    expect(result.store.classifyBeforeWrite).toBe(false);
   });
 
   it("defaults store.classifyModel to undefined", () => {
@@ -800,9 +800,9 @@ describe("hybridConfigSchema.parse", () => {
     expect(result.categories).toContain("fact");
   });
 
-  it("no mode applies full preset: autoClassify.enabled is true", () => {
+  it("no mode applies local preset: autoClassify.enabled is false", () => {
     const result = hybridConfigSchema.parse(validBase);
-    expect(result.autoClassify.enabled).toBe(true);
+    expect(result.autoClassify.enabled).toBe(false);
     expect(result.autoClassify.model).toBeUndefined();
     expect(result.autoClassify.batchSize).toBe(20);
   });
@@ -918,7 +918,10 @@ describe("hybridConfigSchema.parse", () => {
     vi.stubEnv("TEST_GEMINI_PROVIDER_KEY_344", "test-google-key-provider-long-enough-000000002");
     const result = hybridConfigSchema.parse({
       embedding: { provider: "google", model: "text-embedding-004", dimensions: 768 },
-      llm: { default: ["google/gemini-2.0-flash"], providers: { google: { apiKey: "env:TEST_GEMINI_PROVIDER_KEY_344" } } },
+      llm: {
+        default: ["google/gemini-2.0-flash"],
+        providers: { google: { apiKey: "env:TEST_GEMINI_PROVIDER_KEY_344" } },
+      },
     });
     expect(result.embedding.googleApiKey).toBe("test-google-key-provider-long-enough-000000002");
     expect(result.embedding.googleApiKey).not.toMatch(/^env:/);
@@ -1019,19 +1022,29 @@ describe("hybridConfigSchema.parse", () => {
     expect(result.embedding.googleApiKey).toBe("AIzaSy-value-containing-${literal}-suffix-123456");
   });
 
-  it("no mode applies full preset: distill is defined with preset defaults", () => {
+  it("no mode applies local preset: distill has extractDirectives true, extractReinforcement false", () => {
     const result = hybridConfigSchema.parse(validBase);
     expect(result.distill).toBeDefined();
     expect(result.distill?.extractDirectives).toBe(true);
-    expect(result.distill?.extractReinforcement).toBe(true);
-    expect(result.distill?.extractionModelTier).toBe("default");
+    expect(result.distill?.extractReinforcement).toBe(false);
   });
 
   it("parses distill.extractionModelTier (nano | default | heavy)", () => {
-    expect(hybridConfigSchema.parse({ ...validBase, distill: { extractionModelTier: "nano" } }).distill?.extractionModelTier).toBe("nano");
-    expect(hybridConfigSchema.parse({ ...validBase, distill: { extractionModelTier: "default" } }).distill?.extractionModelTier).toBe("default");
-    expect(hybridConfigSchema.parse({ ...validBase, distill: { extractionModelTier: "heavy" } }).distill?.extractionModelTier).toBe("heavy");
-    expect(hybridConfigSchema.parse({ ...validBase, distill: { extractionModelTier: "other" } }).distill?.extractionModelTier).toBeUndefined();
+    expect(
+      hybridConfigSchema.parse({ ...validBase, distill: { extractionModelTier: "nano" } }).distill?.extractionModelTier,
+    ).toBe("nano");
+    expect(
+      hybridConfigSchema.parse({ ...validBase, distill: { extractionModelTier: "default" } }).distill
+        ?.extractionModelTier,
+    ).toBe("default");
+    expect(
+      hybridConfigSchema.parse({ ...validBase, distill: { extractionModelTier: "heavy" } }).distill
+        ?.extractionModelTier,
+    ).toBe("heavy");
+    expect(
+      hybridConfigSchema.parse({ ...validBase, distill: { extractionModelTier: "other" } }).distill
+        ?.extractionModelTier,
+    ).toBeUndefined();
   });
 
   it("parses llm config when default and heavy arrays are non-empty", () => {
@@ -1098,6 +1111,30 @@ describe("hybridConfigSchema.parse", () => {
     expect(getLLMModelPreference(cronCfg, "heavy")).toEqual(["gpt-4o", "gpt-4o-mini"]);
     expect(getDefaultCronModel(cronCfg, "default")).toBe("gemini-2.0-flash");
     expect(getDefaultCronModel(cronCfg, "heavy")).toBe("gpt-4o");
+  });
+
+  it("getLLMModelPreference and getProvidersWithKeys exclude llm.disabledProviders", () => {
+    const cfg = hybridConfigSchema.parse({
+      ...validBase,
+      llm: {
+        default: ["google/gemini-2.5-flash", "anthropic/claude-sonnet-4-6", "openai/gpt-4.1-mini"],
+        heavy: ["anthropic/claude-opus-4-6"],
+        disabledProviders: ["anthropic"],
+      },
+      distill: { apiKey: "google-key-10ch" },
+      claude: { apiKey: "anthropic-key-10ch" },
+      embedding: { provider: "openai", apiKey: "openai-key-10ch", model: "text-embedding-3-small" },
+    });
+    const cronCfg = getCronModelConfig(cfg);
+    expect(getLLMModelPreferenceUnfiltered(cronCfg, "default")).toEqual([
+      "google/gemini-2.5-flash",
+      "anthropic/claude-sonnet-4-6",
+      "openai/gpt-4.1-mini",
+    ]);
+    expect(getLLMModelPreference(cronCfg, "default")).toEqual(["google/gemini-2.5-flash", "openai/gpt-4.1-mini"]);
+    expect(getLLMModelPreference(cronCfg, "heavy")).toEqual([]);
+    expect(getProvidersWithKeys(cronCfg)).toEqual(expect.arrayContaining(["google", "openai"]));
+    expect(getProvidersWithKeys(cronCfg)).not.toContain("anthropic");
   });
 
   it("getLLMModelPreference when llm is undefined uses legacy single model (OpenClaw provider/model IDs)", () => {
@@ -1204,7 +1241,11 @@ describe("hybridConfigSchema.parse", () => {
     it("when no llm config, uses legacy single model and distill.fallbackModels for fallbacks", () => {
       const cfg = hybridConfigSchema.parse({
         ...validBase,
-        distill: { apiKey: "GEMINI_KEY_LONG_ENOUGH_12345", defaultModel: "gemini-custom", fallbackModels: ["openai/gpt-5.4", "gpt-4o"] },
+        distill: {
+          apiKey: "GEMINI_KEY_LONG_ENOUGH_12345",
+          defaultModel: "gemini-custom",
+          fallbackModels: ["openai/gpt-5.4", "gpt-4o"],
+        },
       });
       const { defaultModel, fallbackModels } = resolveReflectionModelAndFallbacks(cfg, "default");
       expect(defaultModel).toBe("gemini-custom");
@@ -1274,15 +1315,17 @@ describe("hybridConfigSchema.parse", () => {
     expect(result.selfCorrection?.applyToolsByDefault).toBe(false);
   });
 
-  it("no mode applies full preset: selfCorrection is defined with preset defaults", () => {
+  it("no mode applies local preset: selfCorrection set by preset", () => {
     const result = hybridConfigSchema.parse(validBase);
-    expect(result.selfCorrection).toBeDefined();
-    expect(result.selfCorrection?.applyToolsByDefault).toBe(true);
+    // Local preset has reflection and graph disabled
+    expect(result.reflection.enabled).toBe(false);
+    expect(result.graph.enabled).toBe(false);
   });
 
-  it("languageKeywords defaults when omitted", () => {
+  it("languageKeywords defaults when omitted (no mode → local preset: autoBuild false)", () => {
     const result = hybridConfigSchema.parse(validBase);
-    expect(result.languageKeywords).toEqual({ autoBuild: true, weeklyIntervalDays: 7 });
+    expect(result.languageKeywords.autoBuild).toBe(false);
+    expect(result.languageKeywords.weeklyIntervalDays).toBe(7);
   });
 
   it("parses languageKeywords when provided", () => {
@@ -1318,7 +1361,7 @@ describe("hybridConfigSchema.parse", () => {
     expect(result.ingest?.overlap).toBe(100);
   });
 
-  it("parses optional search config (HyDE) — DEPRECATED: auto-migrates to queryExpansion (#160)", () => {
+  it("parses optional search config (HyDE) — 2026.3.140 baseline forces queryExpansion off", () => {
     const result = hybridConfigSchema.parse({
       ...validBase,
       search: {
@@ -1326,54 +1369,43 @@ describe("hybridConfigSchema.parse", () => {
         hydeModel: "gpt-4o-mini",
       },
     });
-    // Legacy search fields are still parsed for backward compat
     expect(result.search).toBeDefined();
     expect(result.search?.hydeEnabled).toBe(true);
     expect(result.search?.hydeModel).toBe("gpt-4o-mini");
-    // Migration shim: queryExpansion must be auto-enabled with the legacy model
-    expect(result.queryExpansion.enabled).toBe(true);
-    expect(result.queryExpansion.model).toBe("gpt-4o-mini");
+    expect(result.queryExpansion.enabled).toBe(false);
   });
 
-  it("parses search with hydeEnabled true and no hydeModel — DEPRECATED: auto-migrates to queryExpansion (issue #92, #160)", () => {
+  it("parses search with hydeEnabled true and no hydeModel — 2026.3.140 baseline forces queryExpansion off", () => {
     const result = hybridConfigSchema.parse({
       ...validBase,
       search: { hydeEnabled: true },
     });
     expect(result.search).toBeDefined();
     expect(result.search?.hydeEnabled).toBe(true);
-    expect(result.search?.hydeModel).toBeUndefined();
-    // Migration shim: queryExpansion must be auto-enabled; model remains undefined (runtime uses nano tier)
-    expect(result.queryExpansion.enabled).toBe(true);
-    expect(result.queryExpansion.model).toBeUndefined();
+    expect(result.queryExpansion.enabled).toBe(false);
   });
 
-  it("migration shim (#160): queryExpansion.enabled=true works directly without search.hydeEnabled", () => {
+  it("migration shim (#160): 2026.3.140 baseline overrides queryExpansion.enabled=true to false", () => {
     const result = hybridConfigSchema.parse({
       ...validBase,
       queryExpansion: { enabled: true, model: "openai/gpt-4.1-nano" },
     });
-    expect(result.queryExpansion.enabled).toBe(true);
-    expect(result.queryExpansion.model).toBe("openai/gpt-4.1-nano");
-    // No legacy search config needed
+    expect(result.queryExpansion.enabled).toBe(false);
     expect(result.search).toBeUndefined();
   });
 
-  it("migration shim (#160): queryExpansion takes precedence when both search.hydeEnabled and queryExpansion.enabled are set", () => {
+  it("migration shim (#160): 2026.3.140 baseline overrides both search.hydeEnabled and queryExpansion to disabled", () => {
     const result = hybridConfigSchema.parse({
       ...validBase,
       search: { hydeEnabled: true, hydeModel: "old-model" },
       queryExpansion: { enabled: true, model: "new-model" },
     });
-    // queryExpansion.enabled is explicit → it wins
-    expect(result.queryExpansion.enabled).toBe(true);
-    // queryExpansion.model wins over search.hydeModel
-    expect(result.queryExpansion.model).toBe("new-model");
+    expect(result.queryExpansion.enabled).toBe(false);
   });
 
-  it("migration shim (#160): queryExpansion enabled by default when no mode (full preset)", () => {
+  it("migration shim (#160): queryExpansion disabled by default when no mode (Phase 1; local preset)", () => {
     const result = hybridConfigSchema.parse({ ...validBase });
-    expect(result.queryExpansion.enabled).toBe(true);
+    expect(result.queryExpansion.enabled).toBe(false);
   });
 
   it("migration shim (#160): explicit queryExpansion.enabled=false overrides search.hydeEnabled=true", () => {
@@ -1388,27 +1420,28 @@ describe("hybridConfigSchema.parse", () => {
     expect(result.queryExpansion.model).toBeUndefined();
   });
 
-  it("migration shim (#160): queryExpansion.enabled=true inherits search.hydeModel when queryExpansion.model unset", () => {
+  it("migration shim (#160): 2026.3.140 baseline overrides queryExpansion.enabled=true to false", () => {
     const result = hybridConfigSchema.parse({
       ...validBase,
       search: { hydeEnabled: true, hydeModel: "legacy-hyde-model" },
       queryExpansion: { enabled: true },
     });
-    expect(result.queryExpansion.enabled).toBe(true);
-    expect(result.queryExpansion.model).toBe("legacy-hyde-model");
+    expect(result.queryExpansion.enabled).toBe(false);
   });
-  it("queryExpansion.timeoutMs (#384): enforces minimum 10000ms floor when explicitly configured too low", () => {
+  it("queryExpansion.timeoutMs (#384): 2026.3.140 baseline enabled false, user timeout preserved and floored", () => {
     const result = hybridConfigSchema.parse({
       ...validBase,
       queryExpansion: { enabled: true, timeoutMs: 5000 },
     });
-    expect(result.queryExpansion.timeoutMs).toBe(10000);
+    expect(result.queryExpansion.enabled).toBe(false);
+    expect(result.queryExpansion.timeoutMs).toBe(10000); // parser floor MIN_QE_TIMEOUT_MS
   });
-  it("queryExpansion.timeoutMs (#384): preserves value above minimum floor", () => {
+  it("queryExpansion.timeoutMs (#384): 2026.3.140 baseline enabled false, user timeout preserved", () => {
     const result = hybridConfigSchema.parse({
       ...validBase,
       queryExpansion: { enabled: true, timeoutMs: 20000 },
     });
+    expect(result.queryExpansion.enabled).toBe(false);
     expect(result.queryExpansion.timeoutMs).toBe(20000);
   });
   it("queryExpansion.timeoutMs (#384): defaults to 15000ms when not configured", () => {
@@ -1416,34 +1449,39 @@ describe("hybridConfigSchema.parse", () => {
       ...validBase,
       queryExpansion: { enabled: true },
     });
+    expect(result.queryExpansion.enabled).toBe(false);
     expect(result.queryExpansion.timeoutMs).toBe(15000);
   });
-  it("reranking.timeoutMs (#384): enforces minimum 5000ms floor when explicitly configured too low", () => {
+  it("reranking.timeoutMs (#384): 2026.3.140 baseline enabled false, user timeout floored", () => {
     const result = hybridConfigSchema.parse({
       ...validBase,
       reranking: { enabled: true, timeoutMs: 1000 },
     });
-    expect(result.reranking.timeoutMs).toBe(5000);
+    expect(result.reranking.enabled).toBe(false);
+    expect(result.reranking.timeoutMs).toBe(5000); // parser floor MIN_RERANK_TIMEOUT_MS
   });
-  it("reranking.timeoutMs (#384): preserves value above minimum floor", () => {
+  it("reranking.timeoutMs (#384): 2026.3.140 baseline enabled false, user timeout preserved", () => {
     const result = hybridConfigSchema.parse({
       ...validBase,
       reranking: { enabled: true, timeoutMs: 15000 },
     });
+    expect(result.reranking.enabled).toBe(false);
     expect(result.reranking.timeoutMs).toBe(15000);
   });
-  it("queryExpansion.timeoutMs (#384): passes through unchanged at exactly the floor value (10000)", () => {
+  it("queryExpansion.timeoutMs (#384): 2026.3.140 baseline enabled false, floor value preserved", () => {
     const result = hybridConfigSchema.parse({
       ...validBase,
       queryExpansion: { enabled: true, timeoutMs: 10000 },
     });
+    expect(result.queryExpansion.enabled).toBe(false);
     expect(result.queryExpansion.timeoutMs).toBe(10000);
   });
-  it("reranking.timeoutMs (#384): passes through unchanged at exactly the floor value (5000)", () => {
+  it("reranking.timeoutMs (#384): 2026.3.140 baseline enabled false, floor value preserved", () => {
     const result = hybridConfigSchema.parse({
       ...validBase,
       reranking: { enabled: true, timeoutMs: 5000 },
     });
+    expect(result.reranking.enabled).toBe(false);
     expect(result.reranking.timeoutMs).toBe(5000);
   });
   it("reranking.timeoutMs (#384): defaults to 10000ms when omitted", () => {
@@ -1451,35 +1489,40 @@ describe("hybridConfigSchema.parse", () => {
       ...validBase,
       reranking: { enabled: true },
     });
+    expect(result.reranking.enabled).toBe(false);
     expect(result.reranking.timeoutMs).toBe(10000);
   });
-  it("queryExpansion.timeoutMs (#384): treats 0 as bypass — returns undefined (no config-level floor)", () => {
+  it("queryExpansion.timeoutMs (#384): 2026.3.140 baseline timeoutMs 0 bypasses floor (undefined)", () => {
     const result = hybridConfigSchema.parse({
       ...validBase,
       queryExpansion: { enabled: true, timeoutMs: 0 },
     });
+    expect(result.queryExpansion.enabled).toBe(false);
     expect(result.queryExpansion.timeoutMs).toBeUndefined();
   });
-  it("reranking.timeoutMs (#384): treats 0 as bypass — returns undefined (no config-level floor)", () => {
+  it("reranking.timeoutMs (#384): 2026.3.140 baseline timeoutMs 0 bypasses floor (undefined)", () => {
     const result = hybridConfigSchema.parse({
       ...validBase,
       reranking: { enabled: true, timeoutMs: 0 },
     });
+    expect(result.reranking.enabled).toBe(false);
     expect(result.reranking.timeoutMs).toBeUndefined();
   });
-  it("queryExpansion.timeoutMs (#384): rejects Infinity — falls back to default 15000ms", () => {
+  it("queryExpansion.timeoutMs (#384): 2026.3.140 baseline Infinity coerced to default", () => {
     const result = hybridConfigSchema.parse({
       ...validBase,
       queryExpansion: { enabled: true, timeoutMs: Infinity },
     });
-    expect(result.queryExpansion.timeoutMs).toBe(15000);
+    expect(result.queryExpansion.enabled).toBe(false);
+    expect(result.queryExpansion.timeoutMs).toBe(15000); // parser uses default when not finite
   });
-  it("reranking.timeoutMs (#384): rejects Infinity — falls back to default 10000ms", () => {
+  it("reranking.timeoutMs (#384): 2026.3.140 baseline Infinity coerced to default", () => {
     const result = hybridConfigSchema.parse({
       ...validBase,
       reranking: { enabled: true, timeoutMs: Infinity },
     });
-    expect(result.reranking.timeoutMs).toBe(10000);
+    expect(result.reranking.enabled).toBe(false);
+    expect(result.reranking.timeoutMs).toBe(10000); // parser uses default when not finite
   });
   it("multiAgent defaults to orchestratorId='main' and defaultStoreScope='global' (backward compatible)", () => {
     const result = hybridConfigSchema.parse(validBase);
@@ -1544,12 +1587,13 @@ describe("hybridConfigSchema.parse", () => {
   });
 
   describe("config mode presets", () => {
-    it("mode essential: disables autoClassify, graph, procedures, reflection, credentials", () => {
+    it("mode local: FTS-only retrieval (no embed/LLM), disables autoClassify, graph, procedures, reflection", () => {
       const result = hybridConfigSchema.parse({
         ...validBase,
-        mode: "essential" as ConfigMode,
+        mode: "local" as ConfigMode,
       });
-      expect(result.mode).toBe("essential");
+      expect(result.mode).toBe("local");
+      expect(result.retrieval.strategies).toEqual(["fts5"]);
       expect(result.autoClassify.enabled).toBe(false);
       expect(result.graph.enabled).toBe(false);
       expect(result.procedures.enabled).toBe(false);
@@ -1563,15 +1607,14 @@ describe("hybridConfigSchema.parse", () => {
       expect(result.memoryTiering.enabled).toBe(false);
       expect(result.autoRecall.entityLookup.enabled).toBe(false);
       expect(result.autoRecall.authFailure.enabled).toBe(false);
-      expect(result.memoryToSkills.enabled).toBe(false);
     });
 
-    it("mode normal: enables autoClassify, graph, procedures; disables reflection", () => {
+    it("mode minimal: enables autoClassify, graph, procedures, ingest paths; disables reflection; distill uses default (flash) tier", () => {
       const result = hybridConfigSchema.parse({
         ...validBase,
-        mode: "normal" as ConfigMode,
+        mode: "minimal" as ConfigMode,
       });
-      expect(result.mode).toBe("normal");
+      expect(result.mode).toBe("minimal");
       expect(result.autoClassify.enabled).toBe(true);
       expect(result.graph.enabled).toBe(true);
       expect(result.procedures.enabled).toBe(true);
@@ -1579,77 +1622,49 @@ describe("hybridConfigSchema.parse", () => {
       expect(result.credentials.enabled).toBe(false);
       expect(result.graph.autoLink).toBe(false);
       expect(result.store.classifyBeforeWrite).toBe(false);
-      expect(result.memoryToSkills.enabled).toBe(false);
-      expect(result.memoryToSkills.schedule).toBe("15 2 * * *");
-      expect(result.memoryToSkills.outputDir).toBe("skills/auto-generated");
+      expect(result.distill?.extractionModelTier).toBe("default");
+      expect(result.ingest?.paths).toEqual(["skills/**/*.md", "TOOLS.md", "AGENTS.md"]);
     });
 
-    it("parses memoryToSkills.validateScript when provided", () => {
-      const result = hybridConfigSchema.parse({
-        ...validBase,
-        memoryToSkills: { validateScript: "  scripts/quick_validate.py  " },
-      });
-      expect(result.memoryToSkills.validateScript).toBe("scripts/quick_validate.py");
-    });
-
-    it("allows memoryToSkills.enabled true when procedures disabled (explicit)", () => {
-      const result = hybridConfigSchema.parse({
-        ...validBase,
-        procedures: { enabled: false },
-        memoryToSkills: { enabled: true },
-      });
-      expect(result.procedures.enabled).toBe(false);
-      expect(result.memoryToSkills.enabled).toBe(true);
-    });
-
-    it("memoryToSkills.enabled true in normal mode enables pipeline (opt-in)", () => {
-      const result = hybridConfigSchema.parse({
-        ...validBase,
-        mode: "normal" as ConfigMode,
-        memoryToSkills: { enabled: true },
-      });
-      expect(result.procedures.enabled).toBe(true);
-      expect(result.memoryToSkills.enabled).toBe(true);
-    });
-
-    it("mode expert: enables reflection, classifyBeforeWrite, graph.autoLink, credential sub-options when vault on", () => {
+    it("mode enhanced: enables reflection, classifyBeforeWrite, graph.autoLink, credential sub-options when vault on", () => {
       process.env.OPENCLAW_CRED_KEY = "a-long-secret-key-at-least-16-chars";
       try {
         const result = hybridConfigSchema.parse({
           ...validBase,
-          mode: "expert" as ConfigMode,
+          mode: "enhanced" as ConfigMode,
           credentials: {
             encryptionKey: "env:OPENCLAW_CRED_KEY",
           },
         });
-        expect(result.mode).toBe("expert");
+        expect(result.mode).toBe("enhanced");
         expect(result.reflection.enabled).toBe(true);
         expect(result.store.classifyBeforeWrite).toBe(true);
         expect(result.graph.autoLink).toBe(true);
         expect(result.credentials.enabled).toBe(true);
-        expect(result.credentials.autoDetect).toBe(true);
+        // Phase 1: credentials.autoDetect forced off (opt-in); user must set explicitly to enable
+        expect(result.credentials.autoDetect).toBe(false);
         expect(result.credentials.autoCapture?.toolCalls).toBe(true);
       } finally {
         delete process.env.OPENCLAW_CRED_KEY;
       }
     });
 
-    it("mode full: enables queryExpansion (replaces deprecated search.hydeEnabled, #160)", () => {
+    it("mode complete: queryExpansion off by default (Phase 1); ingest paths set", () => {
       const result = hybridConfigSchema.parse({
         ...validBase,
-        mode: "full" as ConfigMode,
+        mode: "complete" as ConfigMode,
       });
-      expect(result.mode).toBe("full");
-      // The full preset now sets queryExpansion.enabled directly (not via deprecated search.hydeEnabled)
-      expect(result.queryExpansion.enabled).toBe(true);
-      // No deprecated search block should be set by the preset
+      expect(result.mode).toBe("complete");
+      // Phase 1: complete preset no longer enables query expansion by default
+      expect(result.queryExpansion.enabled).toBe(false);
       expect(result.search?.hydeEnabled).toBeFalsy();
+      expect(result.ingest?.paths).toEqual(["skills/**/*.md", "TOOLS.md", "AGENTS.md"]);
     });
 
-    it("user overrides win over preset (mode essential + graph.enabled true); mode becomes Custom for verify", () => {
+    it("user overrides win over preset (mode local + graph.enabled true); mode becomes Custom for verify", () => {
       const result = hybridConfigSchema.parse({
         ...validBase,
-        mode: "essential" as ConfigMode,
+        mode: "local" as ConfigMode,
         graph: { enabled: true },
       });
       expect(result.mode).toBe("custom"); // overrides → show "Custom" in verify
@@ -1657,18 +1672,33 @@ describe("hybridConfigSchema.parse", () => {
       expect(result.autoClassify.enabled).toBe(false);
     });
 
-    it("no mode: result.mode is 'full' (default)", () => {
+    it("no mode: result.mode is 'local' (default)", () => {
       const result = hybridConfigSchema.parse(validBase);
-      expect(result.mode).toBe("full");
+      expect(result.mode).toBe("local");
+    });
+
+    it("deprecated mode name 'normal' is interpreted as local and warns", () => {
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+      try {
+        const result = hybridConfigSchema.parse({
+          ...validBase,
+          mode: "normal",
+        });
+        expect(result.mode).toBe("local");
+        expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("deprecated"));
+        expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("local"));
+      } finally {
+        warnSpy.mockRestore();
+      }
     });
 
     it("no mode but user overrides preset: result.mode is 'custom'", () => {
       const result = hybridConfigSchema.parse({
         ...validBase,
-        graph: { enabled: false },
+        graph: { enabled: true },
       });
-      expect(result.mode).toBe("custom"); // overrides full preset's graph.enabled: true
-      expect(result.graph.enabled).toBe(false);
+      expect(result.mode).toBe("custom"); // overrides local preset (graph.enabled true)
+      expect(result.graph.enabled).toBe(true);
     });
   });
 });

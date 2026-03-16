@@ -191,9 +191,7 @@ describe("EventBus.updateStatus", () => {
   });
 
   it("throws when called with a non-existent id", () => {
-    expect(() => bus.updateStatus(999999, "processed")).toThrow(
-      "EventBus: no event found with id 999999",
-    );
+    expect(() => bus.updateStatus(999999, "processed")).toThrow("EventBus: no event found with id 999999");
   });
 });
 
@@ -221,8 +219,7 @@ describe("EventBus.dedup", () => {
     // deterministically outside a 1-hour cooldown window.
     const twoHoursAgo = new Date(Date.now() - 2 * 3600 * 1000).toISOString();
     const db2 = new Database(join(tmpDir, "event-bus.db"));
-    db2.prepare("UPDATE memory_events SET created_at = ? WHERE fingerprint = ?")
-      .run(twoHoursAgo, fp);
+    db2.prepare("UPDATE memory_events SET created_at = ? WHERE fingerprint = ?").run(twoHoursAgo, fp);
     db2.close();
 
     // Event is 2 h old but cooldown is 1 h → should NOT be treated as a duplicate

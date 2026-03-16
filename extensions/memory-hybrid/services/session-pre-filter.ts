@@ -140,7 +140,10 @@ export async function extractSessionSample(filePath: string, maxChars: number): 
         // Skip obvious non-actionable messages early
         let skip = false;
         for (const re of SKIP_PATTERNS) {
-          if (re.test(text)) { skip = true; break; }
+          if (re.test(text)) {
+            skip = true;
+            break;
+          }
         }
         if (skip) continue;
 
@@ -162,11 +165,7 @@ export async function extractSessionSample(filePath: string, maxChars: number): 
  * Returns true if the session contains extractable content.
  * @throws When Ollama is unreachable (connection error) — caller handles this.
  */
-async function classifySession(
-  sample: string,
-  config: PreFilterConfig,
-  ollamaClient: OpenAI,
-): Promise<boolean> {
+async function classifySession(sample: string, config: PreFilterConfig, ollamaClient: OpenAI): Promise<boolean> {
   const prompt = PRE_FILTER_PROMPT + sample;
   const model = stripOllamaPrefix(config.model);
 
@@ -202,7 +201,11 @@ async function classifySession(
  */
 function isConnectionError(err: unknown): boolean {
   const msg = err instanceof Error ? err.message : String(err);
-  if (/ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND|EHOSTUNREACH|connect\s+ETIMEDOUT|socket hang up|LLM request timeout/i.test(msg)) {
+  if (
+    /ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND|EHOSTUNREACH|connect\s+ETIMEDOUT|socket hang up|LLM request timeout/i.test(
+      msg,
+    )
+  ) {
     return true;
   }
   // HTTP 404 (model not found) or 5xx (server error) should also abort the batch.

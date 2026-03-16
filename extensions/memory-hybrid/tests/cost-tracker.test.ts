@@ -45,7 +45,7 @@ describe("CostTracker", () => {
       });
       const row = db.prepare("SELECT estimated_cost_usd FROM llm_cost_log").get() as { estimated_cost_usd: number };
       // $0.10 + $0.40 = $0.50
-      expect(row.estimated_cost_usd).toBeCloseTo(0.50, 4);
+      expect(row.estimated_cost_usd).toBeCloseTo(0.5, 4);
     });
 
     it("records null estimated_cost_usd for unknown model", () => {
@@ -55,7 +55,9 @@ describe("CostTracker", () => {
         inputTokens: 100,
         outputTokens: 50,
       });
-      const row = db.prepare("SELECT estimated_cost_usd FROM llm_cost_log").get() as { estimated_cost_usd: number | null };
+      const row = db.prepare("SELECT estimated_cost_usd FROM llm_cost_log").get() as {
+        estimated_cost_usd: number | null;
+      };
       expect(row.estimated_cost_usd).toBeNull();
     });
 
@@ -88,10 +90,20 @@ describe("CostTracker", () => {
     it("returns features aggregated by feature name", () => {
       // Insert several records
       for (let i = 0; i < 5; i++) {
-        tracker.record({ feature: "auto-classify", model: "openai/gpt-4.1-nano", inputTokens: 1000, outputTokens: 200 });
+        tracker.record({
+          feature: "auto-classify",
+          model: "openai/gpt-4.1-nano",
+          inputTokens: 1000,
+          outputTokens: 200,
+        });
       }
       for (let i = 0; i < 3; i++) {
-        tracker.record({ feature: "query-expansion", model: "openai/gpt-4.1-nano", inputTokens: 500, outputTokens: 100 });
+        tracker.record({
+          feature: "query-expansion",
+          model: "openai/gpt-4.1-nano",
+          inputTokens: 500,
+          outputTokens: 100,
+        });
       }
 
       const report = tracker.getReport({ days: 1 });
@@ -338,7 +350,9 @@ describe("CostTracker", () => {
         countAvoided: 0,
         estimatedSavingUsd: 0,
       });
-      const row = db.prepare("SELECT estimated_saving_usd FROM llm_savings_log").get() as { estimated_saving_usd: number };
+      const row = db.prepare("SELECT estimated_saving_usd FROM llm_savings_log").get() as {
+        estimated_saving_usd: number;
+      };
       expect(row.estimated_saving_usd).toBe(0);
     });
   });
@@ -354,9 +368,24 @@ describe("CostTracker", () => {
     });
 
     it("aggregates savings by feature", () => {
-      tracker.recordSavings({ feature: "self-correction", action: "auto-fixed incident", countAvoided: 2, estimatedSavingUsd: 0.004 });
-      tracker.recordSavings({ feature: "self-correction", action: "auto-fixed incident", countAvoided: 1, estimatedSavingUsd: 0.002 });
-      tracker.recordSavings({ feature: "auto-classify", action: "batch-classified facts", countAvoided: 19, estimatedSavingUsd: 0.0019 });
+      tracker.recordSavings({
+        feature: "self-correction",
+        action: "auto-fixed incident",
+        countAvoided: 2,
+        estimatedSavingUsd: 0.004,
+      });
+      tracker.recordSavings({
+        feature: "self-correction",
+        action: "auto-fixed incident",
+        countAvoided: 1,
+        estimatedSavingUsd: 0.002,
+      });
+      tracker.recordSavings({
+        feature: "auto-classify",
+        action: "batch-classified facts",
+        countAvoided: 19,
+        estimatedSavingUsd: 0.0019,
+      });
 
       const report = tracker.getSavingsReport(7);
       expect(report.features).toHaveLength(2);
@@ -389,7 +418,12 @@ describe("CostTracker", () => {
         "INSERT INTO llm_savings_log (timestamp, feature, action, count_avoided, estimated_saving_usd) VALUES (?, ?, ?, ?, ?)",
       ).run(Math.floor(Date.now() / 1000) - 10 * 86400, "old-feature", "old action", 5, 0.005);
 
-      tracker.recordSavings({ feature: "new-feature", action: "new action", countAvoided: 2, estimatedSavingUsd: 0.002 });
+      tracker.recordSavings({
+        feature: "new-feature",
+        action: "new action",
+        countAvoided: 2,
+        estimatedSavingUsd: 0.002,
+      });
 
       const report7 = tracker.getSavingsReport(7);
       expect(report7.features.map((f) => f.feature)).not.toContain("old-feature");

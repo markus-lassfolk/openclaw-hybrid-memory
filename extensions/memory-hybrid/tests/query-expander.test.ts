@@ -45,11 +45,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
-import {
-  QueryExpander,
-  parseExpansionsFromResponse,
-  generateRuleBasedAlias,
-} from "../services/query-expander.js";
+import { QueryExpander, parseExpansionsFromResponse, generateRuleBasedAlias } from "../services/query-expander.js";
 import { runRetrievalPipeline, DEFAULT_RETRIEVAL_CONFIG } from "../services/retrieval-orchestrator.js";
 import { _testing } from "../index.js";
 import type { QueryExpansionConfig } from "../config.js";
@@ -111,7 +107,7 @@ describe("parseExpansionsFromResponse", () => {
   });
 
   it("handles code-fenced JSON", () => {
-    const response = "```json\n[\"phrasing a\", \"phrasing b\"]\n```";
+    const response = '```json\n["phrasing a", "phrasing b"]\n```';
     const result = parseExpansionsFromResponse(response, 5);
     expect(result).toEqual(["phrasing a", "phrasing b"]);
   });
@@ -171,8 +167,7 @@ describe("QueryExpander.expandQuery — disabled", () => {
     const result = await expander.expandQuery("find my API key");
     expect(result).toEqual(["find my API key"]);
     expect(
-      (openai as { chat: { completions: { create: ReturnType<typeof vi.fn> } } })
-        .chat.completions.create,
+      (openai as { chat: { completions: { create: ReturnType<typeof vi.fn> } } }).chat.completions.create,
     ).not.toHaveBeenCalled();
   });
 
@@ -429,15 +424,7 @@ describe("retrieval orchestrator — query expansion integration", () => {
     };
 
     // No queryExpander passed — should behave as before
-    const result = await runRetrievalPipeline(
-      "API key",
-      null,
-      factsDb.getRawDb(),
-      vectorDb,
-      factsDb,
-      config,
-      2000,
-    );
+    const result = await runRetrievalPipeline("API key", null, factsDb.getRawDb(), vectorDb, factsDb, config, 2000);
 
     expect(result).toBeDefined();
     expect(Array.isArray(result.fused)).toBe(true);
@@ -494,17 +481,17 @@ describe("retrieval orchestrator — query expansion integration", () => {
       factsDb,
       config,
       2000,
-      undefined,   // nowSec
-      undefined,   // tagFilter
-      undefined,   // includeSuperseded
-      undefined,   // scopeFilter
-      undefined,   // asOf
-      null,        // aliasDb
-      undefined,   // clustersConfig
-      null,        // embeddingRegistry
-      null,        // factsDbForEmbeddings
-      expander,    // queryExpander
-      embedFn,     // embedFn
+      undefined, // nowSec
+      undefined, // tagFilter
+      undefined, // includeSuperseded
+      undefined, // scopeFilter
+      undefined, // asOf
+      null, // aliasDb
+      undefined, // clustersConfig
+      null, // embeddingRegistry
+      null, // factsDbForEmbeddings
+      expander, // queryExpander
+      embedFn, // embedFn
     );
 
     // embedFn should have been called once per variant (2 variants)
@@ -551,17 +538,17 @@ describe("retrieval orchestrator — query expansion integration", () => {
       factsDb,
       config,
       2000,
-      undefined,   // nowSec
-      undefined,   // tagFilter
-      undefined,   // includeSuperseded
-      undefined,   // scopeFilter
-      undefined,   // asOf
-      null,        // aliasDb
-      undefined,   // clustersConfig
-      null,        // embeddingRegistry
-      null,        // factsDbForEmbeddings
+      undefined, // nowSec
+      undefined, // tagFilter
+      undefined, // includeSuperseded
+      undefined, // scopeFilter
+      undefined, // asOf
+      null, // aliasDb
+      undefined, // clustersConfig
+      null, // embeddingRegistry
+      null, // factsDbForEmbeddings
       failingExpander, // queryExpander
-      embedFn,     // embedFn
+      embedFn, // embedFn
     );
 
     expect(result).toBeDefined();

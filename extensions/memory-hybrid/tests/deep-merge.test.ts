@@ -33,9 +33,9 @@ describe("deepMerge - Prototype Pollution Prevention", () => {
   it("blocks __proto__ key from polluting Object.prototype", () => {
     const target = {};
     const maliciousSource = JSON.parse('{"__proto__": {"polluted": "yes"}}');
-    
+
     deepMerge(target, maliciousSource);
-    
+
     // Verify Object.prototype was not polluted
     expect((Object.prototype as Record<string, unknown>).polluted).toBeUndefined();
     expect(({} as Record<string, unknown>).polluted).toBeUndefined();
@@ -50,9 +50,9 @@ describe("deepMerge - Prototype Pollution Prevention", () => {
         },
       },
     };
-    
+
     deepMerge(target, maliciousSource);
-    
+
     // Verify Object.prototype was not polluted
     expect((Object.prototype as Record<string, unknown>).isAdmin).toBeUndefined();
     expect(({} as Record<string, unknown>).isAdmin).toBeUndefined();
@@ -68,9 +68,9 @@ describe("deepMerge - Prototype Pollution Prevention", () => {
         evilProperty: "evil",
       },
     };
-    
+
     deepMerge(target, maliciousSource);
-    
+
     // Verify the prototype key was not added to target
     expect(target.prototype).toBeUndefined();
     expect((Object.prototype as Record<string, unknown>).evilProperty).toBeUndefined();
@@ -83,9 +83,9 @@ describe("deepMerge - Prototype Pollution Prevention", () => {
     const maliciousSource = {
       config: JSON.parse('{"__proto__": {"polluted": "nested"}}'),
     };
-    
+
     deepMerge(target, maliciousSource);
-    
+
     // Verify Object.prototype was not polluted
     expect((Object.prototype as Record<string, unknown>).polluted).toBeUndefined();
     expect(({} as Record<string, unknown>).polluted).toBeUndefined();
@@ -99,14 +99,14 @@ describe("deepMerge - Prototype Pollution Prevention", () => {
       "prototype": {"polluted3": "yes"},
       "safeKey": "safeValue"
     }`);
-    
+
     deepMerge(target, maliciousSource);
-    
+
     // Verify Object.prototype was not polluted
     expect((Object.prototype as Record<string, unknown>).polluted1).toBeUndefined();
     expect((Object.prototype as Record<string, unknown>).polluted2).toBeUndefined();
     expect((Object.prototype as Record<string, unknown>).polluted3).toBeUndefined();
-    
+
     // But safe keys should be merged
     expect(target.safeKey).toBe("safeValue");
   });
@@ -122,9 +122,9 @@ describe("deepMerge - Prototype Pollution Prevention", () => {
         level2: JSON.parse('{"__proto__": {"deepPollution": "yes"}}'),
       },
     };
-    
+
     deepMerge(target, maliciousSource);
-    
+
     // Verify Object.prototype was not polluted at any level
     expect((Object.prototype as Record<string, unknown>).deepPollution).toBeUndefined();
     expect(({} as Record<string, unknown>).deepPollution).toBeUndefined();
@@ -135,9 +135,9 @@ describe("deepMerge - Normal Merge Behavior", () => {
   it("merges simple properties correctly", () => {
     const target: Record<string, unknown> = { a: 1 };
     const source: Record<string, unknown> = { b: 2 };
-    
+
     deepMerge(target, source);
-    
+
     expect(target).toEqual({ a: 1, b: 2 });
   });
 
@@ -153,9 +153,9 @@ describe("deepMerge - Normal Merge Behavior", () => {
         cache: { enabled: true },
       },
     };
-    
+
     deepMerge(target, source);
-    
+
     expect(target).toEqual({
       config: {
         database: { host: "localhost", port: 5432 },
@@ -167,9 +167,9 @@ describe("deepMerge - Normal Merge Behavior", () => {
   it("does not overwrite existing properties in target", () => {
     const target: Record<string, unknown> = { a: 1, b: 2 };
     const source: Record<string, unknown> = { b: 999, c: 3 };
-    
+
     deepMerge(target, source);
-    
+
     // b should remain 2, not be overwritten to 999
     expect(target).toEqual({ a: 1, b: 2, c: 3 });
   });
@@ -184,9 +184,9 @@ describe("deepMerge - Normal Merge Behavior", () => {
       nested: { prop: "don't use this", newProp: "add this" },
       newKey: "add this too",
     };
-    
+
     deepMerge(target, source);
-    
+
     expect(target).toEqual({
       existing: "keep this",
       nested: { prop: "original", newProp: "add this" },
@@ -202,9 +202,9 @@ describe("deepMerge - Normal Merge Behavior", () => {
       items: [4, 5, 6],
       newArray: [7, 8, 9],
     };
-    
+
     deepMerge(target, source);
-    
+
     // Arrays should not be merged; existing array is kept, new array is added
     expect(target.items).toEqual([1, 2, 3]);
     expect(target.newArray).toEqual([7, 8, 9]);
@@ -213,9 +213,9 @@ describe("deepMerge - Normal Merge Behavior", () => {
   it("handles null values correctly", () => {
     const target: Record<string, unknown> = { a: null };
     const source: Record<string, unknown> = { a: { nested: "value" }, b: null };
-    
+
     deepMerge(target, source);
-    
+
     // null in target should not be merged into
     expect(target.a).toBeNull();
     expect(target.b).toBeNull();
@@ -224,18 +224,18 @@ describe("deepMerge - Normal Merge Behavior", () => {
   it("handles empty objects", () => {
     const target: Record<string, unknown> = {};
     const source: Record<string, unknown> = { a: 1, b: { c: 2 } };
-    
+
     deepMerge(target, source);
-    
+
     expect(target).toEqual({ a: 1, b: { c: 2 } });
   });
 
   it("handles source with no properties", () => {
     const target: Record<string, unknown> = { a: 1 };
     const source: Record<string, unknown> = {};
-    
+
     deepMerge(target, source);
-    
+
     expect(target).toEqual({ a: 1 });
   });
 
@@ -259,9 +259,9 @@ describe("deepMerge - Normal Merge Behavior", () => {
         },
       },
     };
-    
+
     deepMerge(target, source);
-    
+
     expect(target).toEqual({
       level1: {
         level2: {
@@ -287,9 +287,9 @@ describe("deepMerge - Normal Merge Behavior", () => {
       newBoolean: false,
       newNull: null,
     };
-    
+
     deepMerge(target, source);
-    
+
     expect(target).toEqual({
       string: "text",
       number: 42,
@@ -306,18 +306,18 @@ describe("deepMerge - Edge Cases", () => {
   it("handles objects with numeric keys", () => {
     const target: Record<string, unknown> = { "0": "zero" };
     const source: Record<string, unknown> = { "1": "one" };
-    
+
     deepMerge(target, source);
-    
+
     expect(target).toEqual({ "0": "zero", "1": "one" });
   });
 
   it("handles objects with special characters in keys", () => {
     const target: Record<string, unknown> = { "key-with-dash": "value1" };
     const source: Record<string, unknown> = { "key.with.dot": "value2", "key with space": "value3" };
-    
+
     deepMerge(target, source);
-    
+
     expect(target).toEqual({
       "key-with-dash": "value1",
       "key.with.dot": "value2",
@@ -332,9 +332,9 @@ describe("deepMerge - Edge Cases", () => {
     const source: Record<string, unknown> = {
       config: { nested: "object" },
     };
-    
+
     deepMerge(target, source);
-    
+
     // config should remain a string, not be replaced or merged
     expect(target.config).toBe("string value");
   });
@@ -346,9 +346,9 @@ describe("deepMerge - Edge Cases", () => {
     const source: Record<string, unknown> = {
       config: "string value",
     };
-    
+
     deepMerge(target, source);
-    
+
     // config should remain an object, not be replaced
     expect(target.config).toEqual({ existing: "value" });
   });

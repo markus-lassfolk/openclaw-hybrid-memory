@@ -56,33 +56,75 @@ const silentLogger = { info: () => undefined, warn: () => undefined };
 
 describe("buildDigestSummary", () => {
   it("returns 'No changes.' when all counts are zero", () => {
-    const s = buildDigestSummary({ factsPruned: 0, factsDecayed: 0, eventsConsolidated: 0, factsCreated: 0, patternsFound: 0, rulesGenerated: 0 });
+    const s = buildDigestSummary({
+      factsPruned: 0,
+      factsDecayed: 0,
+      eventsConsolidated: 0,
+      factsCreated: 0,
+      patternsFound: 0,
+      rulesGenerated: 0,
+    });
     expect(s).toBe("No changes.");
   });
 
   it("reports pruned facts", () => {
-    const s = buildDigestSummary({ factsPruned: 5, factsDecayed: 0, eventsConsolidated: 0, factsCreated: 0, patternsFound: 0, rulesGenerated: 0 });
+    const s = buildDigestSummary({
+      factsPruned: 5,
+      factsDecayed: 0,
+      eventsConsolidated: 0,
+      factsCreated: 0,
+      patternsFound: 0,
+      rulesGenerated: 0,
+    });
     expect(s).toContain("5 facts pruned");
   });
 
   it("reports decayed facts", () => {
-    const s = buildDigestSummary({ factsPruned: 0, factsDecayed: 3, eventsConsolidated: 0, factsCreated: 0, patternsFound: 0, rulesGenerated: 0 });
+    const s = buildDigestSummary({
+      factsPruned: 0,
+      factsDecayed: 3,
+      eventsConsolidated: 0,
+      factsCreated: 0,
+      patternsFound: 0,
+      rulesGenerated: 0,
+    });
     expect(s).toContain("3 facts decayed");
   });
 
   it("reports events consolidated", () => {
-    const s = buildDigestSummary({ factsPruned: 0, factsDecayed: 0, eventsConsolidated: 10, factsCreated: 2, patternsFound: 0, rulesGenerated: 0 });
+    const s = buildDigestSummary({
+      factsPruned: 0,
+      factsDecayed: 0,
+      eventsConsolidated: 10,
+      factsCreated: 2,
+      patternsFound: 0,
+      rulesGenerated: 0,
+    });
     expect(s).toContain("10 events consolidated into 2 facts");
   });
 
   it("reports patterns and rules", () => {
-    const s = buildDigestSummary({ factsPruned: 0, factsDecayed: 0, eventsConsolidated: 0, factsCreated: 0, patternsFound: 4, rulesGenerated: 2 });
+    const s = buildDigestSummary({
+      factsPruned: 0,
+      factsDecayed: 0,
+      eventsConsolidated: 0,
+      factsCreated: 0,
+      patternsFound: 4,
+      rulesGenerated: 2,
+    });
     expect(s).toContain("4 patterns extracted");
     expect(s).toContain("2 rules generated");
   });
 
   it("combines multiple non-zero counts", () => {
-    const s = buildDigestSummary({ factsPruned: 1, factsDecayed: 2, eventsConsolidated: 5, factsCreated: 1, patternsFound: 3, rulesGenerated: 1 });
+    const s = buildDigestSummary({
+      factsPruned: 1,
+      factsDecayed: 2,
+      eventsConsolidated: 5,
+      factsCreated: 1,
+      patternsFound: 3,
+      rulesGenerated: 1,
+    });
     expect(s).toContain("1 facts pruned");
     expect(s).toContain("2 facts decayed");
     expect(s).toContain("5 events consolidated");
@@ -188,8 +230,18 @@ describe("runEpisodicConsolidation", () => {
   it("consolidates old events into facts", async () => {
     // Insert events old enough to be consolidated (olderThanDays = 0 means any event)
     const oldTs = new Date(Date.now() - 8 * 24 * 3600 * 1000).toISOString();
-    eventLog.append({ sessionId: "s1", timestamp: oldTs, eventType: "fact_learned", content: { text: "User prefers TypeScript" } });
-    eventLog.append({ sessionId: "s1", timestamp: oldTs, eventType: "fact_learned", content: { text: "User prefers functional style" } });
+    eventLog.append({
+      sessionId: "s1",
+      timestamp: oldTs,
+      eventType: "fact_learned",
+      content: { text: "User prefers TypeScript" },
+    });
+    eventLog.append({
+      sessionId: "s1",
+      timestamp: oldTs,
+      eventType: "fact_learned",
+      content: { text: "User prefers functional style" },
+    });
 
     const result = await runEpisodicConsolidation(factsDb, eventLog, 7, silentLogger);
     expect(result.eventsConsolidated).toBe(2);
@@ -198,7 +250,13 @@ describe("runEpisodicConsolidation", () => {
 
   it("creates DERIVED_FROM links for consolidated events", async () => {
     const oldTs = new Date(Date.now() - 8 * 24 * 3600 * 1000).toISOString();
-    eventLog.append({ sessionId: "s1", timestamp: oldTs, eventType: "fact_learned", content: { text: "Fact about Alice" }, entities: ["Alice"] });
+    eventLog.append({
+      sessionId: "s1",
+      timestamp: oldTs,
+      eventType: "fact_learned",
+      content: { text: "Fact about Alice" },
+      entities: ["Alice"],
+    });
 
     const result = await runEpisodicConsolidation(factsDb, eventLog, 7, silentLogger);
     expect(result.factsCreated).toBe(1);
@@ -228,7 +286,12 @@ describe("runEpisodicConsolidation", () => {
   it("skips events that are not old enough", async () => {
     // Recent events (not older than 7 days) should NOT be consolidated
     const recentTs = new Date().toISOString();
-    eventLog.append({ sessionId: "s1", timestamp: recentTs, eventType: "fact_learned", content: { text: "Recent event" } });
+    eventLog.append({
+      sessionId: "s1",
+      timestamp: recentTs,
+      eventType: "fact_learned",
+      content: { text: "Recent event" },
+    });
 
     const result = await runEpisodicConsolidation(factsDb, eventLog, 7, silentLogger);
     expect(result.eventsConsolidated).toBe(0);
@@ -237,8 +300,20 @@ describe("runEpisodicConsolidation", () => {
 
   it("groups events by entity into separate consolidated facts", async () => {
     const oldTs = new Date(Date.now() - 8 * 24 * 3600 * 1000).toISOString();
-    eventLog.append({ sessionId: "s1", timestamp: oldTs, eventType: "fact_learned", content: { text: "Alice prefers coffee" }, entities: ["Alice"] });
-    eventLog.append({ sessionId: "s1", timestamp: oldTs, eventType: "fact_learned", content: { text: "Bob prefers tea" }, entities: ["Bob"] });
+    eventLog.append({
+      sessionId: "s1",
+      timestamp: oldTs,
+      eventType: "fact_learned",
+      content: { text: "Alice prefers coffee" },
+      entities: ["Alice"],
+    });
+    eventLog.append({
+      sessionId: "s1",
+      timestamp: oldTs,
+      eventType: "fact_learned",
+      content: { text: "Bob prefers tea" },
+      entities: ["Bob"],
+    });
 
     const result = await runEpisodicConsolidation(factsDb, eventLog, 7, silentLogger);
     expect(result.eventsConsolidated).toBe(2);
@@ -265,7 +340,11 @@ describe("runDreamCycle", () => {
 
   it("returns skipped=true when enabled=false", async () => {
     const result = await runDreamCycle(
-      factsDb, {} as never, {} as never, {} as never, null,
+      factsDb,
+      {} as never,
+      {} as never,
+      {} as never,
+      null,
       { ...baseConfig, enabled: false },
       silentLogger,
     );
@@ -298,7 +377,11 @@ describe("runDreamCycle", () => {
     const embeddingsStub = { embed: vi.fn().mockRejectedValue(new Error("no key")) } as never;
 
     const result = await runDreamCycle(
-      factsDb, {} as never, embeddingsStub, openaiStub, null,
+      factsDb,
+      {} as never,
+      embeddingsStub,
+      openaiStub,
+      null,
       { ...baseConfig, pruneMode: "expired" },
       silentLogger,
     );
@@ -329,7 +412,11 @@ describe("runDreamCycle", () => {
     const embeddingsStub = { embed: vi.fn().mockRejectedValue(new Error("no key")) } as never;
 
     const result = await runDreamCycle(
-      factsDb, {} as never, embeddingsStub, openaiStub, null,
+      factsDb,
+      {} as never,
+      embeddingsStub,
+      openaiStub,
+      null,
       { ...baseConfig, pruneMode: "decay" },
       silentLogger,
     );
@@ -341,7 +428,12 @@ describe("runDreamCycle", () => {
 
   it("includes eventsConsolidated count when eventLog is provided", async () => {
     const oldTs = new Date(Date.now() - 8 * 24 * 3600 * 1000).toISOString();
-    eventLog.append({ sessionId: "s1", timestamp: oldTs, eventType: "fact_learned", content: { text: "Old event to consolidate" } });
+    eventLog.append({
+      sessionId: "s1",
+      timestamp: oldTs,
+      eventType: "fact_learned",
+      content: { text: "Old event to consolidate" },
+    });
 
     const openaiStub = {
       chat: { completions: { create: vi.fn().mockRejectedValue(new Error("no key")) } },
@@ -349,7 +441,11 @@ describe("runDreamCycle", () => {
     const embeddingsStub = { embed: vi.fn().mockRejectedValue(new Error("no key")) } as never;
 
     const result = await runDreamCycle(
-      factsDb, {} as never, embeddingsStub, openaiStub, eventLog,
+      factsDb,
+      {} as never,
+      embeddingsStub,
+      openaiStub,
+      eventLog,
       baseConfig,
       silentLogger,
     );
@@ -364,7 +460,11 @@ describe("runDreamCycle", () => {
     const embeddingsStub = { embed: vi.fn().mockRejectedValue(new Error("no key")) } as never;
 
     const result = await runDreamCycle(
-      factsDb, {} as never, embeddingsStub, openaiStub, null,
+      factsDb,
+      {} as never,
+      embeddingsStub,
+      openaiStub,
+      null,
       baseConfig,
       silentLogger,
     );
@@ -378,7 +478,11 @@ describe("runDreamCycle", () => {
     const embeddingsStub = { embed: vi.fn().mockRejectedValue(new Error("no key")) } as never;
 
     const result = await runDreamCycle(
-      factsDb, {} as never, embeddingsStub, openaiStub, null,
+      factsDb,
+      {} as never,
+      embeddingsStub,
+      openaiStub,
+      null,
       baseConfig,
       silentLogger,
     );
@@ -407,7 +511,11 @@ describe("runDreamCycle", () => {
     const embeddingsStub = { embed: vi.fn().mockRejectedValue(new Error("no key")) } as never;
 
     await runDreamCycle(
-      factsDb, {} as never, embeddingsStub, openaiStub, null,
+      factsDb,
+      {} as never,
+      embeddingsStub,
+      openaiStub,
+      null,
       { ...baseConfig, pruneMode: "expired" },
       silentLogger,
     );
@@ -422,13 +530,17 @@ describe("runDreamCycle", () => {
 
 describe("NightlyCycleConfig parsing", () => {
   const minimalConfig = {
-    embedding: { provider: "openai", model: "text-embedding-3-small", apiKey: "sk-test-key-that-is-long-enough-to-pass" },
+    embedding: {
+      provider: "openai",
+      model: "text-embedding-3-small",
+      apiKey: "sk-test-key-that-is-long-enough-to-pass",
+    },
     sqlitePath: "/tmp/test-facts.db",
     lanceDbPath: "/tmp/test-lance",
   };
 
   it("defaults to disabled with sensible defaults", () => {
-    const cfg = hybridConfigSchema.parse({ ...minimalConfig, mode: "normal" });
+    const cfg = hybridConfigSchema.parse({ ...minimalConfig, mode: "minimal" });
     expect(cfg.nightlyCycle.enabled).toBe(false);
     expect(cfg.nightlyCycle.schedule).toBe("45 2 * * *");
     expect(cfg.nightlyCycle.reflectWindowDays).toBe(7);
@@ -437,12 +549,12 @@ describe("NightlyCycleConfig parsing", () => {
     expect(cfg.nightlyCycle.maxUnconsolidatedAgeDays).toBe(90);
   });
 
-  it("enables the cycle when enabled: true", () => {
+  it("2026.3.140 migration forces nightlyCycle off even when enabled: true", () => {
     const cfg = hybridConfigSchema.parse({
       ...minimalConfig,
       nightlyCycle: { enabled: true },
     });
-    expect(cfg.nightlyCycle.enabled).toBe(true);
+    expect(cfg.nightlyCycle.enabled).toBe(false);
   });
 
   it("accepts custom schedule, window, pruneMode, and consolidateAfterDays", () => {
@@ -487,7 +599,11 @@ describe("NightlyCycleConfig parsing", () => {
 
 describe("EventLogConfig parsing", () => {
   const minimalConfig = {
-    embedding: { provider: "openai", model: "text-embedding-3-small", apiKey: "sk-test-key-that-is-long-enough-to-pass" },
+    embedding: {
+      provider: "openai",
+      model: "text-embedding-3-small",
+      apiKey: "sk-test-key-that-is-long-enough-to-pass",
+    },
     sqlitePath: "/tmp/test-facts.db",
     lanceDbPath: "/tmp/test-lance",
   };

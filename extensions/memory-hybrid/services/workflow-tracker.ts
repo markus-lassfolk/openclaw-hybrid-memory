@@ -77,11 +77,7 @@ export class WorkflowTracker {
    * Flush the session buffer to persistent storage.
    * Returns the recorded trace id or null if nothing was recorded.
    */
-  flush(
-    sessionId: string,
-    goal: string,
-    outcome: "success" | "failure" | "unknown" = "unknown",
-  ): string | null {
+  flush(sessionId: string, goal: string, outcome: "success" | "failure" | "unknown" = "unknown"): string | null {
     if (!this.cfg.enabled) return null;
     const buf = this.sessions.get(sessionId);
     if (!buf || buf.toolCalls.length === 0) {

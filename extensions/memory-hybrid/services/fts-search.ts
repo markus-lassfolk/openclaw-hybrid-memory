@@ -40,8 +40,8 @@ const FTS_COLUMNS = ["text", "category", "entity", "tags", "key", "value"] as co
  */
 function escapeForFts5(raw: string): string {
   return raw
-    .replace(/['"*();]/g, " ")     // FTS5 special chars + semicolons
-    .replace(/--/g, " ")           // SQL line-comment marker
+    .replace(/['"*();]/g, " ") // FTS5 special chars + semicolons
+    .replace(/--/g, " ") // SQL line-comment marker
     .replace(/\b(AND|OR|NOT)\b/g, " ")
     .replace(/\s+/g, " ")
     .trim();
@@ -64,8 +64,8 @@ export function buildFts5Query(raw: string): string | null {
   // If the user has explicitly used FTS5 operators, attempt to pass through
   // with only dangerous characters stripped.
   const operatorTokens = trimmed.split(/\s+/);
-  const hasOperators = operatorTokens.some((t) => /^(AND|OR|NOT)$/i.test(t))
-    || operatorTokens.some((t) => /^[a-zA-Z0-9_]+\*$/.test(t));
+  const hasOperators =
+    operatorTokens.some((t) => /^(AND|OR|NOT)$/i.test(t)) || operatorTokens.some((t) => /^[a-zA-Z0-9_]+\*$/.test(t));
   if (hasOperators) {
     const sanitizedTokens: string[] = [];
     for (const token of operatorTokens) {
@@ -152,10 +152,7 @@ export function searchFts(
 
   const validColumns = columns?.filter((c) => FTS_COLUMNS.includes(c)) ?? [];
   // Prefix query with column filter if requested.
-  const matchExpr =
-    validColumns.length > 0
-      ? `{ ${validColumns.join(" ")} } : ( ${ftsQuery} )`
-      : ftsQuery;
+  const matchExpr = validColumns.length > 0 ? `{ ${validColumns.join(" ")} } : ( ${ftsQuery} )` : ftsQuery;
 
   // Build WHERE clauses for structured filters.
   const extraClauses: string[] = [];

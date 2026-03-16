@@ -18,6 +18,88 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.3.152] - 2026-03-15
+
+### Changed
+
+- **config-set:** Simpler toggle syntax: use `openclaw hybrid-mem config-set <feature> enabled|disabled` (e.g. `config-set nightlyCycle enabled`) instead of `config-set nightlyCycle.enabled true`. Values validated; unknown values return a clear error. `costTracking` added to object toggles.
+- **verify:** Clear summary and guidance after Embeddings/LLM tables. "Embeddings: OK" / "LLMs: OK" lines and a single "Summary: Ready" or "Summary: Fix the issue(s)…" so users know at a glance if setup is good. Source column no longer blank (shows "gateway" or "—" when key is not in plugin config). "In config" shows "No" instead of "—" for reference models. Legend explains Source and In config.
+
+### Fixed
+
+- **verify:** Empty Source column when API keys come from gateway/env; now shows "gateway" or "—". "In config" column now explicitly "No" when model is not in llm.nano/default/heavy.
+
+---
+
+## [2026.3.151] - 2026-03-15
+
+### Fixed
+
+- **Plugin config schema (OpenClaw validation):** `config.mode` enum in `openclaw.plugin.json` now includes `local`, `minimal`, `enhanced`, `complete` so configs using the new preset names pass OpenClaw validation. Legacy values (`essential`, `normal`, `expert`, `full`) remain accepted.
+
+### Changed
+
+- **Verify output:** Full embedding and LLM tables always visible (not suppressed in quiet). LLM table shows one row per model (from config + reference list), with Model, Provider, Auth, Source, In config, Enabled. Reference models (Opus, GPT-5.4, Codex, o3, etc.) always listed.
+
+---
+
+## [2026.3.150] - 2026-03-15
+
+### Release summary (user-friendly)
+
+This release adds **Phase 3 modularization** and **Phase 2.3 lifecycle staging**, plus **OAuth-first auth with smart failover** and clearer **configuration modes**.
+
+- **OAuth preferred when both OAuth and API key exist** — The plugin now tries OAuth first when a provider has both. If OAuth fails (e.g. gateway down), it automatically falls back to your API key and uses **incremental backoff** (5 min → 30 min → 1 h → 2 h → 4 h) before retrying OAuth. You can clear backoff anytime with `openclaw hybrid-mem reset-auth-backoff`. See [LLM-AND-PROVIDERS.md](docs/LLM-AND-PROVIDERS.md).
+- **Configuration mode names updated** — Modes are now `local` | `minimal` | `enhanced` | `complete`. **Default when omitted is `local`** (backward compatible with previous “full” behavior). Deprecated names (`essential`, `normal`, `expert`, `full`) are reset to **`local`** and a one-time warning is logged; set the new mode explicitly to enable LLM or other features. See [CONFIGURATION-MODES.md](docs/CONFIGURATION-MODES.md).
+- **New CLI** — `openclaw hybrid-mem config` shows effective config and mode; `openclaw hybrid-mem reset-auth-backoff` clears OAuth failover state. `verify` gains `--test-llm` and richer Embeddings/LLM tables (credential source, OAuth vs API results, disabled providers).
+- **Memory-to-skills removed** — The `skills-suggest` command, cron job, and related config/docs have been removed. Use workflow crystallization and tool proposals instead.
+- **Stable internal API** — Optional modules can depend on `MemoryPluginAPI` (see `api/memory-plugin-api.ts`) for tool and lifecycle registration without circular dependencies.
+- **Lifecycle pipeline** — Hooks are decomposed into staged pipeline (setup, recall, injection, capture, cleanup) with per-stage timeouts and toggles.
+
+### Added
+
+- **OAuth failover and backoff:** When OAuth fails for a provider that also has an API key, the plugin records the failure and uses the API key. Retries to OAuth use a configurable backoff schedule (default: 5 min, 30 min, 1 h, 2 h, 4 h). State is stored in `.auth-backoff.json` next to the SQLite DB. Config: `auth.preferOAuthWhenBoth` (default `true`), `auth.backoffScheduleMinutes`, `auth.resetBackoffAfterHours` (default 24). See [LLM-AND-PROVIDERS.md](docs/LLM-AND-PROVIDERS.md).
+- **CLI `reset-auth-backoff`:** Clears OAuth failover state so the next LLM call tries OAuth again for providers with both OAuth and API key.
+- **CLI `config`:** New subcommand to print effective plugin config and detected mode (or “Custom” when presets are overridden).
+- **`verify --test-llm`:** Runs minimal completions per provider and reports OAuth vs API result separately; shows credential source (env, file, plugin, gateway, local) and honors `llm.disabledProviders`.
+- **Stable `MemoryPluginAPI`:** Type in `api/memory-plugin-api.ts` consumed by `registerTools` and `registerLifecycleHooks` so optional modules can depend on a single API surface.
+- **Config:** `llm.disabledProviders` (array of provider IDs to exclude from all LLM use), `procedures.maxInjectionTokens` (default 500), mode presets for `local` / `minimal` / `enhanced` / `complete`.
+
+### Changed
+
+- **Default mode:** When `mode` is omitted, the plugin uses **`local`** (cost-safety: no external LLM, FTS-only). Set `"mode": "minimal"`, `"enhanced"`, or `"complete"` to enable LLM and other features.
+- **Deprecated mode mapping:** All deprecated names (`essential`, `normal`, `expert`, `full`) are **reset to `local`**. A one-time warning is logged; set the new mode explicitly to restore higher tiers.
+- **Lifecycle:** Single `pluginContext` (typed as `MemoryPluginAPI`) is passed into `registerLifecycleHooks` and `registerTools`. Hooks are implemented as staged pipeline (setup, recall, injection, capture, cleanup) with config toggles and timeouts.
+- **Local / FTS-only:** When mode is `local`, retrieval uses FTS-only (no embeddings or vector DB). Capture and recall skip embedding/vector work when semantic retrieval is disabled.
+- **Procedure injection:** Capped by `procedures.maxInjectionTokens`; blocks are trimmed to stay within the cap.
+
+### Removed
+
+- **Memory-to-skills feature:** `skills-suggest` CLI command, cron job, `memory-to-skills` service, prompts, and related config/types/docs. Maintenance cron set reduced from 9 to 8 jobs.
+
+### Fixed
+
+- **Credential source fallback:** `credentialSource` now returns empty string for missing keys so verify’s fallback logic correctly shows the actual source (e.g. `llm.providers` with `env:`).
+- **Google LLM base URL:** Removed `/v1` appending in `buildDirectClient` so Google’s `v1beta/openai/` endpoint is used correctly in `verify --test-llm`.
+- **Stale references:** Removed `skills-suggest` from CLI help and command list after feature removal.
+
+### Migration notes
+
+- If you used **deprecated mode names** (`essential`, `normal`, `expert`, `full`), the plugin resets them to **`local`**. Set `"mode": "minimal"`, `"enhanced"`, or `"complete"` explicitly to enable LLM and other features.
+- If you relied on **memory-to-skills** or **skills-suggest**, remove those from cron/config; use workflow crystallization and tool proposals instead.
+- **OAuth + API key** users: no change required; OAuth is preferred by default and API key is used on failure with backoff. Use `openclaw hybrid-mem reset-auth-backoff` to clear backoff if needed.
+
+---
+
+## [2026.3.140] - 2026-03-14
+
+### Changed
+
+- **Version 2026.3.140:** Bump for Phase 1 remodeling release.
+- **Upgrade migration (core-only baseline):** When running plugin version **2026.3.140 or later**, config parsing applies a **Phase 1 core-only migration**. The plugin **overrides** every listed option to the disabled value, **including values the user had set**, so all installations get the same baseline. Affected areas: `queryExpansion`, `frustrationDetection`, `nightlyCycle`, `passiveObserver`, `workflowTracking`, `selfExtension`, `crystallization`, `verification`, `provenance`, `aliases`, `crossAgentLearning`, `reranking`, `contextualVariants`, `documents`, `personaProposals`, and `graph.strengthenOnRecall`. To re-enable any feature, set it explicitly in your plugin config after upgrading (e.g. `queryExpansion: { enabled: true }`).
+
+---
+
 ## [2026.3.110] - 2026-03-11
 
 ### Fixed
@@ -669,7 +751,10 @@ Major feature release including procedural memory, directive extraction, reinfor
 
 ---
 
-[Unreleased]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.3.92...HEAD
+[Unreleased]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.3.151...HEAD
+[2026.3.151]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/releases/tag/v2026.3.151
+[2026.3.150]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/releases/tag/v2026.3.150
+[2026.3.140]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/releases/tag/v2026.3.140
 [2026.3.110]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/releases/tag/v2026.3.110
 [2026.3.100]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/releases/tag/v2026.3.100
 [2026.3.92]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/releases/tag/v2026.3.92

@@ -90,18 +90,54 @@ export class IssueStore {
     const sets: string[] = ["updated_at = ?"];
     const params: unknown[] = [now];
 
-    if (patch.title !== undefined) { sets.push("title = ?"); params.push(patch.title); }
-    if (patch.status !== undefined) { sets.push("status = ?"); params.push(patch.status); }
-    if (patch.severity !== undefined) { sets.push("severity = ?"); params.push(patch.severity); }
-    if (patch.symptoms !== undefined) { sets.push("symptoms = ?"); params.push(JSON.stringify(patch.symptoms)); }
-    if (patch.rootCause !== undefined) { sets.push("root_cause = ?"); params.push(patch.rootCause); }
-    if (patch.fix !== undefined) { sets.push("fix = ?"); params.push(patch.fix); }
-    if (patch.rollback !== undefined) { sets.push("rollback = ?"); params.push(patch.rollback); }
-    if (patch.relatedFacts !== undefined) { sets.push("related_facts = ?"); params.push(JSON.stringify(patch.relatedFacts)); }
-    if (patch.resolvedAt !== undefined) { sets.push("resolved_at = ?"); params.push(patch.resolvedAt); }
-    if (patch.verifiedAt !== undefined) { sets.push("verified_at = ?"); params.push(patch.verifiedAt); }
-    if (patch.tags !== undefined) { sets.push("tags = ?"); params.push(JSON.stringify(patch.tags)); }
-    if (patch.metadata !== undefined) { sets.push("metadata = ?"); params.push(JSON.stringify(patch.metadata)); }
+    if (patch.title !== undefined) {
+      sets.push("title = ?");
+      params.push(patch.title);
+    }
+    if (patch.status !== undefined) {
+      sets.push("status = ?");
+      params.push(patch.status);
+    }
+    if (patch.severity !== undefined) {
+      sets.push("severity = ?");
+      params.push(patch.severity);
+    }
+    if (patch.symptoms !== undefined) {
+      sets.push("symptoms = ?");
+      params.push(JSON.stringify(patch.symptoms));
+    }
+    if (patch.rootCause !== undefined) {
+      sets.push("root_cause = ?");
+      params.push(patch.rootCause);
+    }
+    if (patch.fix !== undefined) {
+      sets.push("fix = ?");
+      params.push(patch.fix);
+    }
+    if (patch.rollback !== undefined) {
+      sets.push("rollback = ?");
+      params.push(patch.rollback);
+    }
+    if (patch.relatedFacts !== undefined) {
+      sets.push("related_facts = ?");
+      params.push(JSON.stringify(patch.relatedFacts));
+    }
+    if (patch.resolvedAt !== undefined) {
+      sets.push("resolved_at = ?");
+      params.push(patch.resolvedAt);
+    }
+    if (patch.verifiedAt !== undefined) {
+      sets.push("verified_at = ?");
+      params.push(patch.verifiedAt);
+    }
+    if (patch.tags !== undefined) {
+      sets.push("tags = ?");
+      params.push(JSON.stringify(patch.tags));
+    }
+    if (patch.metadata !== undefined) {
+      sets.push("metadata = ?");
+      params.push(JSON.stringify(patch.metadata));
+    }
 
     params.push(id);
     this.db.prepare(`UPDATE issues SET ${sets.join(", ")} WHERE id = ?`).run(...params);
@@ -115,9 +151,7 @@ export class IssueStore {
 
     const allowed = ISSUE_TRANSITIONS[existing.status as keyof typeof ISSUE_TRANSITIONS];
     if (!allowed) {
-      throw new Error(
-        `Unknown issue status in database: "${existing.status}". Cannot transition to "${newStatus}".`,
-      );
+      throw new Error(`Unknown issue status in database: "${existing.status}". Cannot transition to "${newStatus}".`);
     }
     if (!allowed.includes(newStatus)) {
       throw new Error(
@@ -138,12 +172,7 @@ export class IssueStore {
     return this.update(id, patch);
   }
 
-  list(filter?: {
-    status?: IssueStatus[];
-    severity?: string[];
-    tags?: string[];
-    limit?: number;
-  }): Issue[] {
+  list(filter?: { status?: IssueStatus[]; severity?: string[]; tags?: string[]; limit?: number }): Issue[] {
     let query = "SELECT * FROM issues WHERE 1=1";
     const params: unknown[] = [];
 
@@ -170,9 +199,7 @@ export class IssueStore {
     // Tags filtering (JSON array — done in-memory for simplicity)
     if (filter?.tags && filter.tags.length > 0) {
       const filterTags = filter.tags.map((t) => t.toLowerCase());
-      results = results.filter((issue) =>
-        filterTags.some((ft) => issue.tags.map((t) => t.toLowerCase()).includes(ft)),
-      );
+      results = results.filter((issue) => filterTags.some((ft) => issue.tags.map((t) => t.toLowerCase()).includes(ft)));
     }
 
     // Apply limit after all filtering is complete
@@ -186,9 +213,7 @@ export class IssueStore {
   search(query: string): Issue[] {
     const term = `%${query}%`;
     const rows = this.db
-      .prepare(
-        `SELECT * FROM issues WHERE title LIKE ? OR symptoms LIKE ? ORDER BY created_at DESC LIMIT 50`,
-      )
+      .prepare(`SELECT * FROM issues WHERE title LIKE ? OR symptoms LIKE ? ORDER BY created_at DESC LIMIT 50`)
       .all(term, term) as any[];
     return rows.map((r) => this.rowToIssue(r));
   }
@@ -209,9 +234,7 @@ export class IssueStore {
   archive(olderThanDays: number): number {
     const cutoff = new Date(Date.now() - olderThanDays * 24 * 60 * 60 * 1000).toISOString();
     const result = this.db
-      .prepare(
-        `DELETE FROM issues WHERE status IN ('verified', 'wont-fix') AND updated_at < ?`,
-      )
+      .prepare(`DELETE FROM issues WHERE status IN ('verified', 'wont-fix') AND updated_at < ?`)
       .run(cutoff);
     return result.changes;
   }

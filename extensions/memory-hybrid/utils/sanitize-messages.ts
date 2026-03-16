@@ -16,7 +16,17 @@
 
 export type MessageLike = {
   role: string;
-  content?: string | Array<{ type?: string; id?: string; tool_use_id?: string; content?: unknown; text?: string; name?: string; input?: unknown }>;
+  content?:
+    | string
+    | Array<{
+        type?: string;
+        id?: string;
+        tool_use_id?: string;
+        content?: unknown;
+        text?: string;
+        name?: string;
+        input?: unknown;
+      }>;
 };
 
 const PLACEHOLDER_CONTENT = "[Output omitted or truncated.]";
@@ -43,7 +53,11 @@ function getToolResultIds(content: MessageLike["content"]): Set<string> {
   if (!Array.isArray(content)) return new Set();
   const set = new Set<string>();
   for (const block of content) {
-    if (block && typeof block === "object" && ((block as { type?: string }).type === "tool_result" || (block as { type?: string }).type === "result")) {
+    if (
+      block &&
+      typeof block === "object" &&
+      ((block as { type?: string }).type === "tool_result" || (block as { type?: string }).type === "result")
+    ) {
       const tid = (block as { tool_use_id?: string }).tool_use_id;
       if (typeof tid === "string" && tid.trim()) set.add(tid.trim());
     }

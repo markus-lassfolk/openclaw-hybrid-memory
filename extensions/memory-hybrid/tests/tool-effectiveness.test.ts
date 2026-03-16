@@ -208,9 +208,7 @@ describe("generateRecommendations", () => {
   });
 
   it("returns best tool recommendation when all healthy", () => {
-    const metrics: ToolMetrics[] = [
-      makeMetrics({ tool: "great_tool", compositeScore: 0.95, successRate: 0.99 }),
-    ];
+    const metrics: ToolMetrics[] = [makeMetrics({ tool: "great_tool", compositeScore: 0.95, successRate: 0.99 })];
     const recs = generateRecommendations(metrics, 0.3);
     expect(recs.some((r) => r.toLowerCase().includes("great_tool"))).toBe(true);
   });
@@ -235,7 +233,11 @@ describe("ToolEffectivenessStore", () => {
   });
 
   afterEach(() => {
-    try { store.close(); } catch { /* ignore */ }
+    try {
+      store.close();
+    } catch {
+      /* ignore */
+    }
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
@@ -369,7 +371,11 @@ describe("ToolEffectivenessStore — context-aware", () => {
   });
 
   afterEach(() => {
-    try { store.close(); } catch { /* ignore */ }
+    try {
+      store.close();
+    } catch {
+      /* ignore */
+    }
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
@@ -437,7 +443,11 @@ describe("generateToolHint", () => {
   });
 
   afterEach(() => {
-    try { store.close(); } catch { /* ignore */ }
+    try {
+      store.close();
+    } catch {
+      /* ignore */
+    }
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
@@ -504,8 +514,16 @@ describe("generateMonthlyReport", () => {
   });
 
   afterEach(() => {
-    try { store.close(); } catch { /* ignore */ }
-    try { factsDb.close?.(); } catch { /* ignore */ }
+    try {
+      store.close();
+    } catch {
+      /* ignore */
+    }
+    try {
+      factsDb.close?.();
+    } catch {
+      /* ignore */
+    }
     rmSync(tmpDir, { recursive: true, force: true });
   });
 

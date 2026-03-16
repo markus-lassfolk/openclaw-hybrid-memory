@@ -17,7 +17,10 @@ export function parsePassiveObserverConfig(cfg: Record<string, unknown>): Passiv
       typeof observerRaw?.intervalMinutes === "number" && observerRaw.intervalMinutes >= 1
         ? Math.floor(observerRaw.intervalMinutes)
         : 15,
-    model: typeof observerRaw?.model === "string" && observerRaw.model.trim().length > 0 ? observerRaw.model.trim() : undefined,
+    model:
+      typeof observerRaw?.model === "string" && observerRaw.model.trim().length > 0
+        ? observerRaw.model.trim()
+        : undefined,
     maxCharsPerChunk:
       typeof observerRaw?.maxCharsPerChunk === "number" && observerRaw.maxCharsPerChunk >= 100
         ? Math.floor(observerRaw.maxCharsPerChunk)
@@ -27,7 +30,9 @@ export function parsePassiveObserverConfig(cfg: Record<string, unknown>): Passiv
         ? observerRaw.minImportance
         : 0.5,
     deduplicationThreshold:
-      typeof observerRaw?.deduplicationThreshold === "number" && observerRaw.deduplicationThreshold >= 0 && observerRaw.deduplicationThreshold <= 1
+      typeof observerRaw?.deduplicationThreshold === "number" &&
+      observerRaw.deduplicationThreshold >= 0 &&
+      observerRaw.deduplicationThreshold <= 1
         ? observerRaw.deduplicationThreshold
         : 0.92,
     sessionsDir:
@@ -42,12 +47,14 @@ export function parseReflectionConfig(cfg: Record<string, unknown>): ReflectionC
   return {
     enabled: reflectionRaw?.enabled === true,
     model: typeof reflectionRaw?.model === "string" ? reflectionRaw.model : undefined,
-    defaultWindow: typeof reflectionRaw?.defaultWindow === "number" && reflectionRaw.defaultWindow > 0
-      ? Math.min(90, Math.floor(reflectionRaw.defaultWindow))
-      : 14,
-    minObservations: typeof reflectionRaw?.minObservations === "number" && reflectionRaw.minObservations >= 1
-      ? Math.floor(reflectionRaw.minObservations)
-      : 2,
+    defaultWindow:
+      typeof reflectionRaw?.defaultWindow === "number" && reflectionRaw.defaultWindow > 0
+        ? Math.min(90, Math.floor(reflectionRaw.defaultWindow))
+        : 14,
+    minObservations:
+      typeof reflectionRaw?.minObservations === "number" && reflectionRaw.minObservations >= 1
+        ? Math.floor(reflectionRaw.minObservations)
+        : 2,
   };
 }
 
@@ -56,22 +63,33 @@ export function parseProceduresConfig(cfg: Record<string, unknown>): ProceduresC
   const proceduresRaw = cfg.procedures as Record<string, unknown> | undefined;
   return {
     enabled: proceduresRaw?.enabled !== false,
-    sessionsDir: typeof proceduresRaw?.sessionsDir === "string" && proceduresRaw.sessionsDir.length > 0
-      ? expandHomePlaceholders(proceduresRaw.sessionsDir)
-      : defaultSessionsDir,
-    minSteps: typeof proceduresRaw?.minSteps === "number" && proceduresRaw.minSteps >= 1
-      ? Math.floor(proceduresRaw.minSteps)
-      : 2,
-    validationThreshold: typeof proceduresRaw?.validationThreshold === "number" && proceduresRaw.validationThreshold >= 1
-      ? Math.floor(proceduresRaw.validationThreshold)
-      : 3,
-    skillTTLDays: typeof proceduresRaw?.skillTTLDays === "number" && proceduresRaw.skillTTLDays >= 1
-      ? Math.floor(proceduresRaw.skillTTLDays)
-      : 30,
-    skillsAutoPath: typeof proceduresRaw?.skillsAutoPath === "string" && proceduresRaw.skillsAutoPath.length > 0
-      ? proceduresRaw.skillsAutoPath
-      : "skills/auto",
+    sessionsDir:
+      typeof proceduresRaw?.sessionsDir === "string" && proceduresRaw.sessionsDir.length > 0
+        ? expandHomePlaceholders(proceduresRaw.sessionsDir)
+        : defaultSessionsDir,
+    minSteps:
+      typeof proceduresRaw?.minSteps === "number" && proceduresRaw.minSteps >= 1
+        ? Math.floor(proceduresRaw.minSteps)
+        : 2,
+    validationThreshold:
+      typeof proceduresRaw?.validationThreshold === "number" && proceduresRaw.validationThreshold >= 1
+        ? Math.floor(proceduresRaw.validationThreshold)
+        : 3,
+    skillTTLDays:
+      typeof proceduresRaw?.skillTTLDays === "number" && proceduresRaw.skillTTLDays >= 1
+        ? Math.floor(proceduresRaw.skillTTLDays)
+        : 30,
+    skillsAutoPath:
+      typeof proceduresRaw?.skillsAutoPath === "string" && proceduresRaw.skillsAutoPath.length > 0
+        ? proceduresRaw.skillsAutoPath
+        : "skills/auto",
     requireApprovalForPromote: proceduresRaw?.requireApprovalForPromote !== false,
+    maxInjectionTokens:
+      typeof proceduresRaw?.maxInjectionTokens === "number" &&
+      proceduresRaw.maxInjectionTokens > 0 &&
+      Number.isFinite(proceduresRaw.maxInjectionTokens)
+        ? Math.floor(proceduresRaw.maxInjectionTokens)
+        : 500,
   };
 }
 
@@ -79,15 +97,12 @@ function parsePreFilterConfig(raw: Record<string, unknown> | undefined): Extract
   if (!raw) return undefined;
   return {
     enabled: raw.enabled === true,
-    model: typeof raw.model === "string" && raw.model.trim().length > 0
-      ? raw.model.trim()
-      : "qwen3:8b",
-    endpoint: typeof raw.endpoint === "string" && raw.endpoint.trim().length > 0
-      ? raw.endpoint.trim()
-      : undefined,
-    maxCharsPerSession: typeof raw.maxCharsPerSession === "number" && raw.maxCharsPerSession >= 100
-      ? Math.floor(raw.maxCharsPerSession)
-      : undefined,
+    model: typeof raw.model === "string" && raw.model.trim().length > 0 ? raw.model.trim() : "qwen3:8b",
+    endpoint: typeof raw.endpoint === "string" && raw.endpoint.trim().length > 0 ? raw.endpoint.trim() : undefined,
+    maxCharsPerSession:
+      typeof raw.maxCharsPerSession === "number" && raw.maxCharsPerSession >= 100
+        ? Math.floor(raw.maxCharsPerSession)
+        : undefined,
   };
 }
 
@@ -96,19 +111,25 @@ export function parseExtractionConfig(cfg: Record<string, unknown>): ExtractionC
   return {
     extractionPasses: extractionRaw?.extractionPasses === true,
     verificationPass: extractionRaw?.verificationPass === true,
-    extractionModel: typeof extractionRaw?.extractionModel === "string" && extractionRaw.extractionModel.trim().length > 0
-      ? extractionRaw.extractionModel.trim()
-      : undefined,
-    implicitModel: typeof extractionRaw?.implicitModel === "string" && extractionRaw.implicitModel.trim().length > 0
-      ? extractionRaw.implicitModel.trim()
-      : undefined,
-    verificationModel: typeof extractionRaw?.verificationModel === "string" && extractionRaw.verificationModel.trim().length > 0
-      ? extractionRaw.verificationModel.trim()
-      : undefined,
+    extractionModel:
+      typeof extractionRaw?.extractionModel === "string" && extractionRaw.extractionModel.trim().length > 0
+        ? extractionRaw.extractionModel.trim()
+        : undefined,
+    implicitModel:
+      typeof extractionRaw?.implicitModel === "string" && extractionRaw.implicitModel.trim().length > 0
+        ? extractionRaw.implicitModel.trim()
+        : undefined,
+    verificationModel:
+      typeof extractionRaw?.verificationModel === "string" && extractionRaw.verificationModel.trim().length > 0
+        ? extractionRaw.verificationModel.trim()
+        : undefined,
     preFilter: parsePreFilterConfig(extractionRaw?.preFilter as Record<string, unknown> | undefined),
     extractionModelTier: (() => {
-      const v = typeof extractionRaw?.extractionModelTier === "string" ? extractionRaw.extractionModelTier.trim().toLowerCase() : "";
-      return (v === "nano" || v === "default" || v === "heavy") ? (v as "nano" | "default" | "heavy") : undefined;
+      const v =
+        typeof extractionRaw?.extractionModelTier === "string"
+          ? extractionRaw.extractionModelTier.trim().toLowerCase()
+          : "";
+      return v === "nano" || v === "default" || v === "heavy" ? (v as "nano" | "default" | "heavy") : undefined;
     })(),
   };
 }

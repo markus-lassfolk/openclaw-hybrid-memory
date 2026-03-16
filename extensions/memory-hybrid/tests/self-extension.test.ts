@@ -10,14 +10,8 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { _testing } from "../index.js";
 
-const {
-  ToolProposalStore,
-  WorkflowStore,
-  GapDetector,
-  ToolProposer,
-  computeGapId,
-  deriveToolNameFromSequence,
-} = _testing as any;
+const { ToolProposalStore, WorkflowStore, GapDetector, ToolProposer, computeGapId, deriveToolNameFromSequence } =
+  _testing as any;
 
 // ---------------------------------------------------------------------------
 // Config fixtures
@@ -67,9 +61,7 @@ afterEach(() => {
 
 describe("deriveToolNameFromSequence", () => {
   it("produces a bulk variant for a single repeated tool", () => {
-    expect(deriveToolNameFromSequence(["memory_recall", "memory_recall", "memory_recall"])).toBe(
-      "memory_recall_bulk",
-    );
+    expect(deriveToolNameFromSequence(["memory_recall", "memory_recall", "memory_recall"])).toBe("memory_recall_bulk");
   });
 
   it("produces a combined name for two different tools", () => {
@@ -605,7 +597,7 @@ describe("Config parsing — selfExtension", () => {
         maxProposals: 10,
       },
     });
-    expect(parsed.selfExtension.enabled).toBe(true);
+    expect(parsed.selfExtension.enabled).toBe(false); // 2026.3.140 baseline
     expect(parsed.selfExtension.minGapFrequency).toBe(5);
     expect(parsed.selfExtension.minToolSavings).toBe(3);
     expect(parsed.selfExtension.maxProposals).toBe(10);
@@ -613,7 +605,7 @@ describe("Config parsing — selfExtension", () => {
 
   it("uses safe defaults when selfExtension config is absent", async () => {
     const { hybridConfigSchema } = await import("../config/index.js");
-    const parsed = hybridConfigSchema.parse({ ...BASE_CFG, mode: "normal" });
+    const parsed = hybridConfigSchema.parse({ ...BASE_CFG, mode: "minimal" });
     expect(parsed.selfExtension.enabled).toBe(false);
     expect(parsed.selfExtension.minGapFrequency).toBe(3);
     expect(parsed.selfExtension.minToolSavings).toBe(2);
@@ -627,8 +619,8 @@ describe("Config parsing — selfExtension", () => {
       selfExtension: {
         enabled: false,
         minGapFrequency: -5, // invalid
-        minToolSavings: 0,   // invalid
-        maxProposals: -1,    // invalid
+        minToolSavings: 0, // invalid
+        maxProposals: -1, // invalid
       },
     });
     expect(parsed.selfExtension.minGapFrequency).toBe(3);

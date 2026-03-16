@@ -18,19 +18,9 @@ import type {
   ContextualVariantsConfig,
 } from "./retrieval.js";
 
-import type {
-  StoreConfig,
-  WALConfig,
-  EventLogConfig,
-  PathConfig,
-} from "./core.js";
+import type { StoreConfig, WALConfig, EventLogConfig, PathConfig } from "./core.js";
 
-import type {
-  PassiveObserverConfig,
-  ReflectionConfig,
-  ProceduresConfig,
-  ExtractionConfig,
-} from "./capture.js";
+import type { PassiveObserverConfig, ReflectionConfig, ProceduresConfig, ExtractionConfig } from "./capture.js";
 
 import type {
   VerificationConfig,
@@ -67,11 +57,7 @@ import type {
   DashboardConfig,
 } from "./features.js";
 
-import type {
-  MultiAgentConfig,
-  PersonaProposalsConfig,
-  MemoryToSkillsConfig,
-} from "./agents.js";
+import type { MultiAgentConfig, PersonaProposalsConfig } from "./agents.js";
 
 import type { SensorSweepConfig } from "./sensors.js";
 
@@ -123,6 +109,12 @@ export type LLMConfig = {
    * Default: false.
    */
   localAutoStart?: boolean;
+  /**
+   * Provider IDs to exclude from all LLM use (tier lists, verify, etc.).
+   * Use when a provider is configured (e.g. in llm.default) but you want hybrid-memory to never use it (e.g. low credits).
+   * Example: ["anthropic"] — Anthropic models are not tried even if listed in llm.nano/default/heavy.
+   */
+  disabledProviders?: string[];
 };
 
 /** Minimal plugin config shape for resolving cron job model (no full parse). */
@@ -137,14 +129,7 @@ export type CronModelConfig = {
 };
 
 /** Credential types supported by the credentials store */
-export const CREDENTIAL_TYPES = [
-  "token",
-  "password",
-  "api_key",
-  "ssh",
-  "bearer",
-  "other",
-] as const;
+export const CREDENTIAL_TYPES = ["token", "password", "api_key", "ssh", "bearer", "other"] as const;
 export type CredentialType = (typeof CREDENTIAL_TYPES)[number];
 
 /** Auto-capture configuration for credential scanning from tool call inputs */
@@ -344,10 +329,25 @@ export type AuthOrderConfig = {
    * Always populated when an AuthOrderConfig is present (parseAuthConfig never returns {}).
    */
   order: Record<string, string[]>;
+  /**
+   * When a provider has both OAuth and an API key, prefer OAuth (default: true).
+   * On OAuth failure the plugin records backoff and uses the API key until backoff expires.
+   */
+  preferOAuthWhenBoth?: boolean;
+  /**
+   * Backoff delays in minutes after each OAuth failure before trying OAuth again.
+   * Default: [5, 30, 60, 120, 240] (5min → 30min → 1h → 2h → 4h).
+   */
+  backoffScheduleMinutes?: number[];
+  /**
+   * Reset backoff levels after this many hours so OAuth is tried again from level 0.
+   * Default: 24.
+   */
+  resetBackoffAfterHours?: number;
 };
 
 /** Configuration mode presets. See docs/CONFIGURATION-MODES.md. */
-export type ConfigMode = "essential" | "normal" | "expert" | "full";
+export type ConfigMode = "local" | "minimal" | "enhanced" | "complete";
 
 /**
  * Output verbosity level for CLI commands and tool responses.
@@ -355,10 +355,10 @@ export type ConfigMode = "essential" | "normal" | "expert" | "full";
  *   relevant-procedures, and credential-hint blocks. Memory tools remain fully functional.
  *   Ideal for users who want the plugin to work silently in the background.
  * - quiet: minimal output — counts/totals only, no decorative headers or config echo.
- *   Ideal for scripted/cron use and low-noise deployments (default for essential mode).
+ *   Ideal for scripted/cron use and low-noise deployments (default for local mode).
  * - normal: current default behaviour — balanced output with key details.
  * - verbose: extra detail — full breakdowns, all fields, config summaries.
- *   Ideal for debugging and interactive sessions (default for full mode).
+ *   Ideal for debugging and interactive sessions (default for complete mode).
  */
 export type VerbosityLevel = "silent" | "quiet" | "normal" | "verbose";
 
@@ -428,8 +428,6 @@ export type HybridMemoryConfig = {
   procedures: ProceduresConfig;
   /** Multi-pass extraction with LLM verification (Issue #166, default: disabled). */
   extraction: ExtractionConfig;
-  /** Memory-to-skills: synthesize skill drafts from clustered procedures (default: enabled when procedures enabled) */
-  memoryToSkills: MemoryToSkillsConfig;
   /** Dynamic memory tiering — hot/warm/cold (default: enabled) */
   memoryTiering: MemoryTieringConfig;
   /** Optional: LLM preference lists and per-provider API config for direct chat calls (issue #87). */
@@ -536,7 +534,7 @@ export type HybridMemoryConfig = {
   /**
    * Output verbosity level for CLI commands and tool responses (Issue #282).
    * quiet: counts/totals only. normal: balanced default. verbose: full detail.
-   * Defaults: essential→quiet, normal→normal, expert→normal, full→verbose.
+   * Defaults: local→quiet, minimal→normal, enhanced→normal, complete→verbose.
    */
   verbosity: VerbosityLevel;
   /** Set when user specified a mode in config; used by verify to show "Mode: Normal" etc. */

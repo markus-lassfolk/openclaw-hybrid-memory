@@ -101,7 +101,11 @@ export class VectorDB {
       // Close any connection that may have been set by a concurrent in-flight doInitialize()
       // that completed after close() ran, to avoid leaking the underlying file handle.
       if (this.db) {
-        try { this.db.close(); } catch { /* ignore */ }
+        try {
+          this.db.close();
+        } catch {
+          /* ignore */
+        }
         this.db = null;
       }
       this.initPromise = null;
@@ -110,8 +114,8 @@ export class VectorDB {
     if (this.initPromise) return this.initPromise;
     this.initPromise = this.doInitialize().catch((err) => {
       capturePluginError(err as Error, {
-        operation: 'vector-db-init',
-        subsystem: 'vector'
+        operation: "vector-db-init",
+        subsystem: "vector",
       });
       this.initPromise = null;
       throw err;
@@ -262,13 +266,13 @@ export class VectorDB {
           .then(() => {
             _optimizeFailuresByPath.delete(this.dbPath);
           })
-          .catch(err => {
+          .catch((err) => {
             const failures = (_optimizeFailuresByPath.get(this.dbPath) ?? 0) + 1;
             _optimizeFailuresByPath.set(this.dbPath, failures);
             if (failures >= _OPTIMIZE_FAILURE_WARN_THRESHOLD) {
               this.logWarn(
                 `memory-hybrid: auto-optimize has failed ${failures} time(s) in a row — ` +
-                `check LanceDB path (${this.dbPath}) for disk space or permission issues. Error: ${err}`,
+                  `check LanceDB path (${this.dbPath}) for disk space or permission issues. Error: ${err}`,
               );
             } else {
               this.logWarn(`memory-hybrid: auto-optimize failed (non-fatal): ${err}`);
@@ -278,8 +282,8 @@ export class VectorDB {
       return id;
     } catch (err) {
       capturePluginError(err as Error, {
-        operation: 'vector-store',
-        subsystem: 'vector'
+        operation: "vector-store",
+        subsystem: "vector",
       });
       this.logWarn(`memory-hybrid: LanceDB store failed: ${err}`);
       throw err;
@@ -293,7 +297,9 @@ export class VectorDB {
    * @param olderThanMs - Clean up versions older than this many ms (default: 7 days = 604800000)
    * @returns Statistics about the optimization (compaction + cleanup)
    */
-  async optimize(olderThanMs: number = 7 * 24 * 60 * 60 * 1000): Promise<{ compacted: number; removedFragments: number; freedBytes: number }> {
+  async optimize(
+    olderThanMs: number = 7 * 24 * 60 * 60 * 1000,
+  ): Promise<{ compacted: number; removedFragments: number; freedBytes: number }> {
     await this.ensureInitialized();
     // Wait for any in-progress optimization to complete
     if (this.optimizePromise) {
@@ -301,7 +307,9 @@ export class VectorDB {
     }
     // Check again after awaiting in case another optimize started, globally this time
     if (_optimizingByPath.get(this.dbPath)) {
-      this.logWarn("memory-hybrid: optimize() called while another optimize is in progress; skipping to prevent concurrent table operations");
+      this.logWarn(
+        "memory-hybrid: optimize() called while another optimize is in progress; skipping to prevent concurrent table operations",
+      );
       return { compacted: 0, removedFragments: 0, freedBytes: 0 };
     }
     _optimizingByPath.set(this.dbPath, true);
@@ -328,11 +336,7 @@ export class VectorDB {
     return optimizePromise;
   }
 
-  async search(
-    vector: number[],
-    limit = 5,
-    minScore = 0.3,
-  ): Promise<SearchResult[]> {
+  async search(vector: number[], limit = 5, minScore = 0.3): Promise<SearchResult[]> {
     try {
       await this.ensureInitialized();
       // Schema was detected as invalid at startup (dim mismatch or no vector column).
@@ -354,9 +358,10 @@ export class VectorDB {
               key: null,
               value: null,
               source: "conversation",
-              createdAt: (row.createdAt as number) > 10_000_000_000
-                ? Math.floor((row.createdAt as number) / 1000)
-                : (row.createdAt as number),
+              createdAt:
+                (row.createdAt as number) > 10_000_000_000
+                  ? Math.floor((row.createdAt as number) / 1000)
+                  : (row.createdAt as number),
               decayClass: "stable" as DecayClass,
               expiresAt: null,
               lastConfirmedAt: 0,
@@ -368,12 +373,13 @@ export class VectorDB {
         })
         .filter((r) => r.score >= minScore);
     } catch (err) {
-      const isKnownSchemaErr = !this.schemaValid && err instanceof Error && err.message.includes(LANCE_NO_VECTOR_COL_MSG);
+      const isKnownSchemaErr =
+        !this.schemaValid && err instanceof Error && err.message.includes(LANCE_NO_VECTOR_COL_MSG);
       if (!isKnownSchemaErr) {
         capturePluginError(err as Error, {
-          operation: 'vector-search',
-          severity: 'info',
-          subsystem: 'vector'
+          operation: "vector-search",
+          severity: "info",
+          subsystem: "vector",
         });
       }
       this.logWarn(`memory-hybrid: LanceDB search failed: ${err}`);
@@ -391,12 +397,13 @@ export class VectorDB {
       const score = 1 / (1 + (results[0]._distance ?? 0));
       return score >= threshold;
     } catch (err) {
-      const isKnownSchemaErr = !this.schemaValid && err instanceof Error && err.message.includes(LANCE_NO_VECTOR_COL_MSG);
+      const isKnownSchemaErr =
+        !this.schemaValid && err instanceof Error && err.message.includes(LANCE_NO_VECTOR_COL_MSG);
       if (!isKnownSchemaErr) {
         capturePluginError(err as Error, {
-          operation: 'vector-duplicate-check',
-          severity: 'info',
-          subsystem: 'vector'
+          operation: "vector-duplicate-check",
+          severity: "info",
+          subsystem: "vector",
         });
       }
       this.logWarn(`memory-hybrid: LanceDB hasDuplicate failed: ${err}`);
@@ -422,8 +429,8 @@ export class VectorDB {
       return true;
     } catch (err) {
       capturePluginError(err as Error, {
-        operation: 'vector-delete',
-        subsystem: 'vector'
+        operation: "vector-delete",
+        subsystem: "vector",
       });
       this.logWarn(`memory-hybrid: LanceDB delete failed: ${err}`);
       throw err;
@@ -436,9 +443,9 @@ export class VectorDB {
       return await this.getTable().countRows();
     } catch (err) {
       capturePluginError(err as Error, {
-        operation: 'vector-count',
-        severity: 'info',
-        subsystem: 'vector'
+        operation: "vector-count",
+        severity: "info",
+        subsystem: "vector",
       });
       this.logWarn(`memory-hybrid: LanceDB count failed: ${err}`);
       return 0;
@@ -456,6 +463,8 @@ export class VectorDB {
    * Increment the session refcount. Called when an agent session begins using this VectorDB.
    * If the DB was previously closed (e.g. by a premature stop()), resets the closed flag so
    * the next operation auto-reconnects via ensureInitialized().
+   * Note: The main plugin lifecycle uses a single long-lived connection and no longer calls
+   * open()/removeSession() per turn; these remain for tests and backward compatibility.
    */
   open(): void {
     this.sessionCount++;
@@ -472,7 +481,9 @@ export class VectorDB {
    */
   removeSession(): void {
     if (this.sessionCount <= 0) {
-      this.logWarn("memory-hybrid: VectorDB.removeSession() called with sessionCount already 0 — possible session lifecycle mismatch (open()/removeSession() calls are unbalanced)");
+      this.logWarn(
+        "memory-hybrid: VectorDB.removeSession() called with sessionCount already 0 — possible session lifecycle mismatch (open()/removeSession() calls are unbalanced)",
+      );
     }
     this.sessionCount = Math.max(0, this.sessionCount - 1);
     if (this.sessionCount <= 0) {
@@ -485,7 +496,11 @@ export class VectorDB {
     this.closeGeneration++;
     this.table = null;
     if (this.db) {
-      try { this.db.close(); } catch { /* ignore */ }
+      try {
+        this.db.close();
+      } catch {
+        /* ignore */
+      }
     }
     this.db = null;
     // Intentionally NOT clearing initPromise here. If doInitialize() is in-flight, the

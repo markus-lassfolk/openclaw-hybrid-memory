@@ -26,7 +26,7 @@ import * as errorReporter from "../services/error-reporter.js";
 const { VectorDB } = _testing;
 
 const CORRECT_DIM = 3; // dimension used by the "current" embedding model
-const WRONG_DIM = 5;   // dimension used when the table was originally created
+const WRONG_DIM = 5; // dimension used when the table was originally created
 
 // ---------------------------------------------------------------------------
 // Helper: create a LanceDB table seeded with vectors of a given dimension.
@@ -240,7 +240,12 @@ describe("VectorDB.optimize() — compaction and version pruning (issue #292)", 
 
   it("DB remains usable after optimize — can still store and search", async () => {
     await db.optimize();
-    const id = await db.store({ text: "post-optimize fact", vector: [0.5, 0.5, 0.5], importance: 0.8, category: "fact" });
+    const id = await db.store({
+      text: "post-optimize fact",
+      vector: [0.5, 0.5, 0.5],
+      importance: 0.8,
+      category: "fact",
+    });
     expect(typeof id).toBe("string");
     const results = await db.search([0.5, 0.5, 0.5], 5, 0);
     expect(results.some((r) => r.entry.text === "post-optimize fact")).toBe(true);
@@ -305,14 +310,18 @@ describe("VectorDB issue #366 — capturePluginError suppressed on schema mismat
     // stub whose vectorSearch throws a generic error. schemaValid is still true, so
     // the catch block must NOT suppress capturePluginError.
     const unexpectedErr = new Error("Unexpected I/O failure");
-    (db as any).table = { vectorSearch: () => { throw unexpectedErr; } };
+    (db as any).table = {
+      vectorSearch: () => {
+        throw unexpectedErr;
+      },
+    };
 
     const results = await db.search(new Array(WRONG_DIM).fill(0.1), 5, 0);
     expect(results).toHaveLength(0);
     expect(vi.mocked(errorReporter.capturePluginError)).toHaveBeenCalledOnce();
     expect(vi.mocked(errorReporter.capturePluginError)).toHaveBeenCalledWith(
       unexpectedErr,
-      expect.objectContaining({ operation: 'vector-search' }),
+      expect.objectContaining({ operation: "vector-search" }),
     );
     await db.close();
   });

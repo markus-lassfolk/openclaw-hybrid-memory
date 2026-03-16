@@ -149,8 +149,26 @@ function detectDirectiveCategories(text: string): { categories: DirectiveCategor
  * must not be treated as directive separators (e.g. "Remember: ...").
  */
 const URI_SCHEMES = new Set([
-  "http", "https", "ftp", "file", "mailto", "tel", "ssh", "data", "ws", "wss",
-  "irc", "imap", "nntp", "ldap", "sftp", "git", "svn", "jdbc", "redis", "mongodb",
+  "http",
+  "https",
+  "ftp",
+  "file",
+  "mailto",
+  "tel",
+  "ssh",
+  "data",
+  "ws",
+  "wss",
+  "irc",
+  "imap",
+  "nntp",
+  "ldap",
+  "sftp",
+  "git",
+  "svn",
+  "jdbc",
+  "redis",
+  "mongodb",
 ]);
 
 /**
@@ -161,7 +179,7 @@ const URI_SCHEMES = new Set([
  */
 function extractRule(text: string): string {
   const trimmed = text.trim().replace(/\s+/g, " ");
-  
+
   // Heuristic: If a colon exists after a word boundary (directive pattern), extract text after it.
   // This regex matches colons that follow a word, but excludes:
   // - URL/URI schemes (http:, https:, ftp:, mailto:, file:, ssh:, data:, etc.) via URI_SCHEMES set
@@ -195,9 +213,12 @@ function extractRule(text: string): string {
 
 function fallbackExtract(trimmed: string): string {
   if (trimmed.length <= 200) return trimmed;
-  
+
   // Try to find a sentence with directive keywords
-  const sentences = trimmed.split(/[.!?]+/).map((s) => s.trim()).filter((s) => s.length > 10);
+  const sentences = trimmed
+    .split(/[.!?]+/)
+    .map((s) => s.trim())
+    .filter((s) => s.length > 10);
   for (const s of sentences) {
     if (/\b(always|never|from now on|make sure|remember|prefer|avoid|when|if)\b/i.test(s)) {
       return s.slice(0, 200);
@@ -226,9 +247,9 @@ export function runDirectiveExtract(opts: RunDirectiveExtractOpts): DirectiveExt
       lines = readFileSync(filePath, "utf-8").split("\n");
     } catch (err) {
       capturePluginError(err as Error, {
-        operation: 'read-session-file',
-        severity: 'info',
-        subsystem: 'directive-extract'
+        operation: "read-session-file",
+        severity: "info",
+        subsystem: "directive-extract",
       });
       continue;
     }
@@ -247,9 +268,9 @@ export function runDirectiveExtract(opts: RunDirectiveExtractOpts): DirectiveExt
         messages.push({ role, text });
       } catch (err) {
         capturePluginError(err as Error, {
-          operation: 'parse-session-line',
-          severity: 'info',
-          subsystem: 'directive-extract'
+          operation: "parse-session-line",
+          severity: "info",
+          subsystem: "directive-extract",
         });
         // skip malformed lines
       }
@@ -269,8 +290,7 @@ export function runDirectiveExtract(opts: RunDirectiveExtractOpts): DirectiveExt
       const { categories, confidence } = detectDirectiveCategories(userText);
       if (categories.length === 0) continue; // No clear directive
 
-      const precedingAssistant =
-        i > 0 && messages[i - 1].role === "assistant" ? messages[i - 1].text : "";
+      const precedingAssistant = i > 0 && messages[i - 1].role === "assistant" ? messages[i - 1].text : "";
       const extractedRule = extractRule(userText);
 
       incidents.push({

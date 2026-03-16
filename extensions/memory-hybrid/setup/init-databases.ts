@@ -13,9 +13,21 @@ import { EventLog } from "../backends/event-log.js";
 import { WriteAheadLog } from "../backends/wal.js";
 import { createEmbeddingProvider, type EmbeddingProvider } from "../services/embeddings.js";
 import { buildEmbeddingRegistry, type EmbeddingRegistry } from "../services/embedding-registry.js";
-import { type HybridMemoryConfig, type LLMProviderConfig, type CredentialType, type EmbeddingModelConfig, type ResolvedGatewayAuthConfig } from "../config.js";
+import {
+  type HybridMemoryConfig,
+  type LLMProviderConfig,
+  type CredentialType,
+  type EmbeddingModelConfig,
+  type ResolvedGatewayAuthConfig,
+} from "../config.js";
 import { UnconfiguredProviderError } from "../services/chat.js";
 import { hasOAuthProfiles } from "../utils/auth.js";
+import {
+  isOAuthInBackoff,
+  recordOAuthFailure,
+  DEFAULT_BACKOFF_MINUTES,
+  DEFAULT_RESET_AFTER_HOURS,
+} from "../utils/auth-failover.js";
 import { setKeywordsPath } from "../utils/language-keywords.js";
 import { setMemoryCategories, getMemoryCategories } from "../config.js";
 import { migrateCredentialsToVault, CREDENTIAL_REDACTION_MIGRATION_FLAG } from "../services/credential-migration.js";
@@ -106,14 +118,25 @@ function inferFeatureLabel(body: Record<string, unknown>, _model: string): strin
   // reflection.txt: "analyzing a user's interaction history to identify behavioral patterns"
   // reflection-meta.txt: "synthesizing behavioral patterns into higher-level meta-patterns"
   // reflection-rules.txt: "synthesizing behavioral patterns into actionable one-line rules"
-  if (content.includes("identify behavioral patterns") || content.includes("synthesizing behavioral patterns") || content.includes("interaction history to identify")) return "reflection";
+  if (
+    content.includes("identify behavioral patterns") ||
+    content.includes("synthesizing behavioral patterns") ||
+    content.includes("interaction history to identify")
+  )
+    return "reflection";
 
   // self-correction-analyze.txt: "You are a self-improvement analyst"
   // self-correction-rewrite-tools.txt: "You are an editor for a behavioral instructions file"
-  if (content.includes("self-improvement analyst") || content.includes("self-correction") || content.includes("behavioral instructions file")) return "self-correction";
+  if (
+    content.includes("self-improvement analyst") ||
+    content.includes("self-correction") ||
+    content.includes("behavioral instructions file")
+  )
+    return "self-correction";
 
   // reinforcement-analyze.txt: "You are a positive-reinforcement analyst"
-  if (content.includes("positive-reinforcement analyst") || content.includes("positive reinforcement analyst")) return "reinforcement-extract";
+  if (content.includes("positive-reinforcement analyst") || content.includes("positive reinforcement analyst"))
+    return "reinforcement-extract";
 
   // analyze-feedback-phrases.txt: "analyzing chat logs to discover how this specific user expresses"
   if (content.includes("implicit") && content.includes("feedback")) return "implicit-feedback";
@@ -123,7 +146,8 @@ function inferFeatureLabel(body: Record<string, unknown>, _model: string): strin
   if (content.includes("trajectory analyst")) return "trajectory-analysis";
 
   // frustration detection: looks for frustration keywords in analysis context
-  if (content.includes("frustration") && (content.includes("detect") || content.includes("analys"))) return "frustration-detection";
+  if (content.includes("frustration") && (content.includes("detect") || content.includes("analys")))
+    return "frustration-detection";
 
   // cross-agent-generalize.txt: "identify which of these lessons are general enough"
   if (content.includes("cross-agent") || content.includes("lessons are general enough")) return "cross-agent-learning";
@@ -144,11 +168,12 @@ function inferFeatureLabel(body: Record<string, unknown>, _model: string): strin
   // consolidate.txt: "You are a memory consolidator"
   if (content.includes("memory consolidator") || content.includes("merge the following facts")) return "consolidation";
 
-  // memory-to-skills-synthesize.txt: "synthesizing a reusable skill"
-  if (content.includes("synthesizing a reusable skill") || content.includes("memory.to.skills")) return "memory-to-skills";
-
   // generate-proposals.txt: "generating persona file update proposals"
-  if (content.includes("persona file update proposals") || (content.includes("persona") && content.includes("proposal"))) return "persona-proposals";
+  if (
+    content.includes("persona file update proposals") ||
+    (content.includes("persona") && content.includes("proposal"))
+  )
+    return "persona-proposals";
 
   // continuous verification
   if (content.includes("continuous") && content.includes("verification")) return "continuous-verification";
@@ -199,7 +224,12 @@ export const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
  *  - Other `provider/*` with explicit llm.providers config → custom endpoint
  *  - Unknown provider, no config → throws UnconfiguredProviderError
  */
-function buildMultiProviderOpenAI(cfg: HybridMemoryConfig, api: ClawdbotPluginApi, costTracker: CostTracker | null): OpenAI {
+function buildMultiProviderOpenAI(
+  cfg: HybridMemoryConfig,
+  api: ClawdbotPluginApi,
+  costTracker: CostTracker | null,
+  authBackoffStatePath?: string,
+): OpenAI {
   const clientCache = new Map<string, OpenAI>();
   /** Resolve env:VAR / file:/path / ${VAR} SecretRef strings so all llm.providers keys work with SecretRef format (Issue #344).
    *  Delegates to the shared resolveSecretRef helper from config/parsers/core.ts to avoid duplicated logic. */
@@ -219,19 +249,22 @@ function buildMultiProviderOpenAI(cfg: HybridMemoryConfig, api: ClawdbotPluginAp
   if (cfg.gateway?.auth?.token && !gatewayAuthResolved) {
     throw new Error(
       `memory-hybrid: gateway.auth.token is configured (SecretRef "${cfg.gateway.auth.token}") but could not be resolved. ` +
-      `Ensure the referenced env var or file is accessible, or remove gateway.auth.token from the plugin config. ` +
-      `Not falling back to OPENCLAW_GATEWAY_TOKEN to prevent silent auth misconfiguration.`,
+        `Ensure the referenced env var or file is accessible, or remove gateway.auth.token from the plugin config. ` +
+        `Not falling back to OPENCLAW_GATEWAY_TOKEN to prevent silent auth misconfiguration.`,
     );
   }
   const gatewayToken = gatewayAuthResolved ?? process.env.OPENCLAW_GATEWAY_TOKEN;
-  const gatewayBaseUrl = gatewayPort && gatewayPort >= 1 && gatewayPort <= 65535
-    ? `http://127.0.0.1:${gatewayPort}/v1`
-    : undefined;
+  const gatewayBaseUrl =
+    gatewayPort && gatewayPort >= 1 && gatewayPort <= 65535 ? `http://127.0.0.1:${gatewayPort}/v1` : undefined;
   if (gatewayPortRaw && (!gatewayPort || gatewayPort < 1 || gatewayPort > 65535)) {
-    api.logger.warn?.(`memory-hybrid: OPENCLAW_GATEWAY_PORT must be 1-65535 (got '${gatewayPortRaw}'); falling back to direct OpenAI.`);
+    api.logger.warn?.(
+      `memory-hybrid: OPENCLAW_GATEWAY_PORT must be 1-65535 (got '${gatewayPortRaw}'); falling back to direct OpenAI.`,
+    );
   }
   if (gatewayBaseUrl && !gatewayToken) {
-    api.logger.warn?.("memory-hybrid: OPENCLAW_GATEWAY_PORT set but no gateway auth token found; set gateway.auth.token (SecretRef) in plugin config or OPENCLAW_GATEWAY_TOKEN env var. Gateway calls may fail if auth is required.");
+    api.logger.warn?.(
+      "memory-hybrid: OPENCLAW_GATEWAY_PORT set but no gateway auth token found; set gateway.auth.token (SecretRef) in plugin config or OPENCLAW_GATEWAY_TOKEN env var. Gateway calls may fail if auth is required.",
+    );
   }
 
   function getOrCreate(key: string, factory: () => OpenAI): OpenAI {
@@ -243,10 +276,14 @@ function buildMultiProviderOpenAI(cfg: HybridMemoryConfig, api: ClawdbotPluginAp
     if (gatewayBaseUrl) {
       const key = gatewayToken ?? cfg.embedding.apiKey;
       if (!key) throw new UnconfiguredProviderError("openai", "openai/*");
-      return getOrCreate(`openai:gateway:${gatewayBaseUrl}`, () => new OpenAI({
-        apiKey: key,
-        baseURL: gatewayBaseUrl,
-      }));
+      return getOrCreate(
+        `openai:gateway:${gatewayBaseUrl}`,
+        () =>
+          new OpenAI({
+            apiKey: key,
+            baseURL: gatewayBaseUrl,
+          }),
+      );
     }
     if (!cfg.embedding.apiKey) throw new UnconfiguredProviderError("openai", "openai/*");
     return getOrCreate("openai:default", () => new OpenAI({ apiKey: cfg.embedding.apiKey! }));
@@ -286,40 +323,78 @@ function buildMultiProviderOpenAI(cfg: HybridMemoryConfig, api: ClawdbotPluginAp
 
   /** The configured auth.order map from plugin config (issue #311). */
   const authOrder = cfg.auth?.order;
+  const preferOAuthWhenBoth = cfg.auth?.preferOAuthWhenBoth !== false;
+  const failoverOpts = authBackoffStatePath
+    ? {
+        statePath: authBackoffStatePath,
+        backoffScheduleMinutes: cfg.auth?.backoffScheduleMinutes?.length
+          ? cfg.auth.backoffScheduleMinutes
+          : DEFAULT_BACKOFF_MINUTES,
+        resetBackoffAfterHours: cfg.auth?.resetBackoffAfterHours ?? DEFAULT_RESET_AFTER_HOURS,
+      }
+    : undefined;
 
-  function resolveClient(model: string): { client: OpenAI; bareModel: string; ollamaBaseUrl?: string; useFullModel?: boolean } {
+  function hasApiKeyForProvider(prefix: string): boolean {
+    const prov = cfg.llm?.providers as Record<string, { apiKey?: string }> | undefined;
+    if (prefix === "google") {
+      const k = resolveApiKey(prov?.google?.apiKey ?? cfg.distill?.apiKey);
+      return Boolean(k && k.length >= 10);
+    }
+    if (prefix === "openai") {
+      const k = resolveApiKey(prov?.openai?.apiKey) ?? resolveApiKey(cfg.embedding?.apiKey);
+      return Boolean(k && k.length >= 10);
+    }
+    if (prefix === "anthropic") {
+      const claude = (cfg as Record<string, unknown>).claude as { apiKey?: string } | undefined;
+      const k = resolveApiKey(prov?.anthropic?.apiKey) ?? resolveApiKey(claude?.apiKey);
+      return Boolean(k && k.length >= 10);
+    }
+    const k = resolveApiKey(prov?.[prefix]?.apiKey);
+    return Boolean(k && k.length >= 10);
+  }
+
+  function resolveClient(model: string): {
+    client: OpenAI;
+    bareModel: string;
+    ollamaBaseUrl?: string;
+    useFullModel?: boolean;
+    authType?: "oauth";
+  } {
     const normalized = normalizeModelId(model);
     const trimmed = normalized.trim();
     const slashIdx = trimmed.indexOf("/");
 
     if (slashIdx <= 0) {
-      // Still bare — use default OpenAI client
       return { client: defaultOpenAIClient(), bareModel: trimmed };
     }
 
     const prefix = trimmed.slice(0, slashIdx).toLowerCase();
     const bareModel = trimmed.slice(slashIdx + 1);
-    const providerCfg: LLMProviderConfig | undefined = (cfg.llm?.providers as Record<string, LLMProviderConfig | undefined> | undefined)?.[prefix];
+    const providerCfg: LLMProviderConfig | undefined = (
+      cfg.llm?.providers as Record<string, LLMProviderConfig | undefined> | undefined
+    )?.[prefix];
 
-    // Generic OAuth → gateway routing for any provider.
-    // If OAuth profiles are configured for a provider and the local gateway is available,
-    // route through the gateway so it can resolve the OAuth token before falling back to an API key.
-    // This ensures auth.order behaves consistently across all providers (google, anthropic, minimax, etc.).
+    // OAuth + optional failover: when both OAuth and API key exist, prefer OAuth unless in backoff.
     if (hasOAuthProfiles(authOrder?.[prefix], prefix) && gatewayBaseUrl && gatewayToken) {
-      return {
-        client: getOrCreate(
-          `gateway:oauth:${gatewayBaseUrl}:${prefix}`,
-          () => new OpenAI({ apiKey: gatewayToken, baseURL: gatewayBaseUrl }),
-        ),
-        bareModel,
-        // The gateway expects the full "provider/model" identifier.
-        useFullModel: true,
-      };
+      const hasApi = hasApiKeyForProvider(prefix);
+      const useOAuth = !hasApi || (preferOAuthWhenBoth && (!failoverOpts || !isOAuthInBackoff(prefix, failoverOpts)));
+      if (useOAuth) {
+        return {
+          client: getOrCreate(
+            `gateway:oauth:${gatewayBaseUrl}:${prefix}`,
+            () => new OpenAI({ apiKey: gatewayToken, baseURL: gatewayBaseUrl }),
+          ),
+          bareModel,
+          useFullModel: true,
+          authType: "oauth",
+        };
+      }
+      // Fall through to use API client (OAuth in backoff or preferOAuthWhenBoth false).
     }
 
     if (prefix === "google") {
-      const apiKey = resolveApiKey(providerCfg?.apiKey ?? cfg.distill?.apiKey)
-        ?? (process.env.GOOGLE_API_KEY?.trim() || undefined);
+      const apiKey =
+        resolveApiKey(providerCfg?.apiKey ?? cfg.distill?.apiKey) ?? (process.env.GOOGLE_API_KEY?.trim() || undefined);
       if (!apiKey) throw new UnconfiguredProviderError("google", trimmed);
       const baseURL = providerCfg?.baseURL ?? GOOGLE_GEMINI_BASE_URL;
       return { client: getOrCreate(`google:${baseURL}`, () => new OpenAI({ apiKey, baseURL })), bareModel };
@@ -330,31 +405,36 @@ function buildMultiProviderOpenAI(cfg: HybridMemoryConfig, api: ClawdbotPluginAp
       // If a custom external baseURL is configured for the openai provider,
       // do NOT fall back to gatewayToken — that would send the internal gateway
       // token to an arbitrary external endpoint (security issue).
-      const hasCustomExternalBaseURL = Boolean(
-        providerCfg?.baseURL && providerCfg.baseURL !== gatewayBaseUrl,
-      );
-      const apiKey = resolveApiKey(providerCfg?.apiKey)
-        ?? (hasCustomExternalBaseURL ? undefined : gatewayToken)
-        ?? (hasCustomExternalBaseURL ? undefined : cfg.embedding.apiKey)
-        ?? (process.env.OPENAI_API_KEY?.trim() || undefined);
+      const hasCustomExternalBaseURL = Boolean(providerCfg?.baseURL && providerCfg.baseURL !== gatewayBaseUrl);
+      const apiKey =
+        resolveApiKey(providerCfg?.apiKey) ??
+        (hasCustomExternalBaseURL ? undefined : gatewayToken) ??
+        (hasCustomExternalBaseURL ? undefined : cfg.embedding.apiKey) ??
+        (process.env.OPENAI_API_KEY?.trim() || undefined);
       if (!apiKey) throw new UnconfiguredProviderError("openai", trimmed);
       const baseURL = providerCfg?.baseURL ?? gatewayBaseUrl;
       const cacheKey = `openai:prefixed:${apiKey.slice(0, 8)}:${baseURL ?? "default"}`;
-      return { client: getOrCreate(cacheKey, () => new OpenAI({ apiKey, ...(baseURL ? { baseURL } : {}) })), bareModel };
+      return {
+        client: getOrCreate(cacheKey, () => new OpenAI({ apiKey, ...(baseURL ? { baseURL } : {}) })),
+        bareModel,
+      };
     }
 
     if (prefix === "anthropic") {
-      const apiKey = resolveApiKey(providerCfg?.apiKey)
-        ?? (process.env.ANTHROPIC_API_KEY?.trim() || undefined);
+      const apiKey = resolveApiKey(providerCfg?.apiKey) ?? (process.env.ANTHROPIC_API_KEY?.trim() || undefined);
       if (!apiKey) throw new UnconfiguredProviderError("anthropic", trimmed);
       const baseURL = providerCfg?.baseURL ?? ANTHROPIC_BASE_URL;
       // Anthropic's OpenAI-compatible endpoints require anthropic-version header
       return {
-        client: getOrCreate(`anthropic:${baseURL}`, () => new OpenAI({
-          apiKey,
-          baseURL,
-          defaultHeaders: { "anthropic-version": ANTHROPIC_VERSION_HEADER },
-        })),
+        client: getOrCreate(
+          `anthropic:${baseURL}`,
+          () =>
+            new OpenAI({
+              apiKey,
+              baseURL,
+              defaultHeaders: { "anthropic-version": ANTHROPIC_VERSION_HEADER },
+            }),
+        ),
         bareModel,
       };
     }
@@ -381,22 +461,25 @@ function buildMultiProviderOpenAI(cfg: HybridMemoryConfig, api: ClawdbotPluginAp
       // OpenRouter exposes an OpenAI-compatible API at https://openrouter.ai/api/v1.
       // Model names are passed as-is after stripping the "openrouter/" prefix
       // (e.g. "openrouter/anthropic/claude-3.5-sonnet" → bareModel "anthropic/claude-3.5-sonnet").
-      const apiKey = resolveApiKey(providerCfg?.apiKey)
-        ?? (process.env.OPENROUTER_API_KEY?.trim() || undefined);
+      const apiKey = resolveApiKey(providerCfg?.apiKey) ?? (process.env.OPENROUTER_API_KEY?.trim() || undefined);
       if (!apiKey) throw new UnconfiguredProviderError("openrouter", trimmed);
       const baseURL = providerCfg?.baseURL ?? OPENROUTER_BASE_URL;
       // Include apiKey prefix in cache key so key rotation takes effect without restart.
       // defaultHeaders follow OpenRouter's recommendations for attribution and rate-limit priority.
       const cacheKey = `openrouter:${baseURL}:${apiKey.slice(0, 8)}`;
       return {
-        client: getOrCreate(cacheKey, () => new OpenAI({
-          apiKey,
-          baseURL,
-          defaultHeaders: {
-            "HTTP-Referer": "https://github.com/markus-lassfolk/openclaw-hybrid-memory",
-            "X-Title": "openclaw-hybrid-memory",
-          },
-        })),
+        client: getOrCreate(
+          cacheKey,
+          () =>
+            new OpenAI({
+              apiKey,
+              baseURL,
+              defaultHeaders: {
+                "HTTP-Referer": "https://github.com/markus-lassfolk/openclaw-hybrid-memory",
+                "X-Title": "openclaw-hybrid-memory",
+              },
+            }),
+        ),
         bareModel,
       };
     }
@@ -404,14 +487,16 @@ function buildMultiProviderOpenAI(cfg: HybridMemoryConfig, api: ClawdbotPluginAp
     if (prefix === "minimax") {
       // Use the built-in MiniMax API endpoint as default so callers never accidentally
       // fall through to the default OpenAI client (which returns 404 for MiniMax models).
-      const apiKey = resolveApiKey(providerCfg?.apiKey)
-        ?? (process.env.MINIMAX_API_KEY?.trim() || undefined);
+      const apiKey = resolveApiKey(providerCfg?.apiKey) ?? (process.env.MINIMAX_API_KEY?.trim() || undefined);
       if (!apiKey) throw new UnconfiguredProviderError("minimax", trimmed);
       const baseURL = providerCfg?.baseURL ?? MINIMAX_BASE_URL;
       // Canonicalize the bare model name: strip Ollama-style ":tag" suffixes and fix casing
       // so that e.g. "minimax-m2.5:cloud" → "MiniMax-M2.5" (issue #400).
       const canonicalBareModel = canonicalizeMiniMaxModelId(bareModel);
-      return { client: getOrCreate(`minimax:${baseURL}`, () => new OpenAI({ apiKey, baseURL })), bareModel: canonicalBareModel };
+      return {
+        client: getOrCreate(`minimax:${baseURL}`, () => new OpenAI({ apiKey, baseURL })),
+        bareModel: canonicalBareModel,
+      };
     }
 
     if (providerCfg?.apiKey || providerCfg?.baseURL) {
@@ -419,7 +504,10 @@ function buildMultiProviderOpenAI(cfg: HybridMemoryConfig, api: ClawdbotPluginAp
       const apiKey = resolveApiKey(providerCfg.apiKey) ?? "no-key";
       const baseURL = providerCfg.baseURL;
       const cacheKey = `custom:${prefix}:${apiKey.slice(0, 8)}:${baseURL ?? "default"}`;
-      return { client: getOrCreate(cacheKey, () => new OpenAI({ apiKey, ...(baseURL ? { baseURL } : {}) })), bareModel };
+      return {
+        client: getOrCreate(cacheKey, () => new OpenAI({ apiKey, ...(baseURL ? { baseURL } : {}) })),
+        bareModel,
+      };
     }
 
     // Before giving up, try provider-specific env var pattern (but NOT the gateway token —
@@ -429,7 +517,10 @@ function buildMultiProviderOpenAI(cfg: HybridMemoryConfig, api: ClawdbotPluginAp
     if (envFallbackKey) {
       const baseURL = providerCfg?.baseURL;
       const cacheKey = `custom:${prefix}:${envFallbackKey.slice(0, 8)}:${baseURL ?? "default"}`;
-      return { client: getOrCreate(cacheKey, () => new OpenAI({ apiKey: envFallbackKey, ...(baseURL ? { baseURL } : {}) })), bareModel };
+      return {
+        client: getOrCreate(cacheKey, () => new OpenAI({ apiKey: envFallbackKey, ...(baseURL ? { baseURL } : {}) })),
+        bareModel,
+      };
     }
 
     // Unknown provider with no config — throw so callers can skip to the next model cleanly
@@ -452,7 +543,10 @@ function buildMultiProviderOpenAI(cfg: HybridMemoryConfig, api: ClawdbotPluginAp
     }
     if (isReasoningModel(bareModel)) {
       // Reasoning models only accept temperature=1 (the default); strip to avoid 400
-      const { temperature, top_p, ...rest } = result as Record<string, unknown> & { temperature?: unknown; top_p?: unknown };
+      const { temperature, top_p, ...rest } = result as Record<string, unknown> & {
+        temperature?: unknown;
+        top_p?: unknown;
+      };
       if (temperature !== undefined || top_p !== undefined) {
         api.logger.debug?.(`memory-hybrid: stripped temperature/top_p for reasoning model ${bareModel}`);
       }
@@ -472,10 +566,13 @@ function buildMultiProviderOpenAI(cfg: HybridMemoryConfig, api: ClawdbotPluginAp
       if (prop === "chat") {
         return {
           completions: {
-            create(body: Parameters<OpenAI["chat"]["completions"]["create"]>[0], opts?: Parameters<OpenAI["chat"]["completions"]["create"]>[1]) {
+            create(
+              body: Parameters<OpenAI["chat"]["completions"]["create"]>[0],
+              opts?: Parameters<OpenAI["chat"]["completions"]["create"]>[1],
+            ) {
               const rawModel: string = (body as { model?: string }).model ?? "";
               const model = normalizeModelId(rawModel);
-              const { client, bareModel, ollamaBaseUrl, useFullModel } = resolveClient(model);
+              const { client, bareModel, ollamaBaseUrl, useFullModel, authType } = resolveClient(model);
               const prefix = model.trim().split("/")[0]?.toLowerCase();
               const isOpenAI = prefix === "openai" || !model.includes("/");
               // When gateway-routed for non-OpenAI providers (auth.order OAuth), send the full "provider/model"
@@ -487,11 +584,13 @@ function buildMultiProviderOpenAI(cfg: HybridMemoryConfig, api: ClawdbotPluginAp
               const start = Date.now();
               // For Ollama models, probe the local server before attempting the call so we fall
               // through to the next tier model quickly instead of waiting for a TCP timeout.
-              const makeCall = () => client.chat.completions.create(
-                adjustedBody as unknown as Parameters<OpenAI["chat"]["completions"]["create"]>[0], opts,
-              );
-              const promise: ReturnType<typeof makeCall> = ollamaBaseUrl
-                ? (async () => {
+              const makeCall = () =>
+                client.chat.completions.create(
+                  adjustedBody as unknown as Parameters<OpenAI["chat"]["completions"]["create"]>[0],
+                  opts,
+                );
+              let promise: ReturnType<typeof makeCall> = ollamaBaseUrl
+                ? ((async () => {
                     const available = await probeOllamaEndpoint(ollamaBaseUrl);
                     if (!available) {
                       const err = Object.assign(
@@ -501,8 +600,14 @@ function buildMultiProviderOpenAI(cfg: HybridMemoryConfig, api: ClawdbotPluginAp
                       throw err;
                     }
                     return makeCall();
-                  })() as ReturnType<typeof makeCall>
+                  })() as ReturnType<typeof makeCall>)
                 : makeCall();
+              if (authType === "oauth" && failoverOpts) {
+                promise = promise.catch((err: unknown) => {
+                  recordOAuthFailure(prefix, failoverOpts);
+                  throw err;
+                }) as ReturnType<typeof makeCall>;
+              }
               // Fire-and-forget cost tracking — never blocks or modifies the returned promise
               if (costTracker) {
                 const feature = inferFeatureLabel(body as unknown as Record<string, unknown>, model);
@@ -521,18 +626,29 @@ function buildMultiProviderOpenAI(cfg: HybridMemoryConfig, api: ClawdbotPluginAp
                         durationMs,
                         success: true,
                       });
-                    } catch { /* never let tracking break LLM calls */ }
+                    } catch {
+                      /* never let tracking break LLM calls */
+                    }
                   },
                   () => {
                     try {
                       const durationMs = Date.now() - start;
                       // Estimate input tokens from request messages (actual count unavailable on failure)
                       const reqMessages = Array.isArray((body as unknown as Record<string, unknown>).messages)
-                        ? (body as unknown as Record<string, unknown>).messages as unknown[]
+                        ? ((body as unknown as Record<string, unknown>).messages as unknown[])
                         : [];
                       const estimatedInputTokens = Math.ceil(JSON.stringify(reqMessages).length / 4);
-                      costTracker.record({ feature, model: normalizedModel, inputTokens: estimatedInputTokens, outputTokens: 0, durationMs, success: false });
-                    } catch { /* never let tracking break LLM calls */ }
+                      costTracker.record({
+                        feature,
+                        model: normalizedModel,
+                        inputTokens: estimatedInputTokens,
+                        outputTokens: 0,
+                        durationMs,
+                        success: false,
+                      });
+                    } catch {
+                      /* never let tracking break LLM calls */
+                    }
                   },
                 );
               }
@@ -590,10 +706,7 @@ export interface DatabaseContext {
  * - Discovered categories loading
  * - Async verification checks
  */
-export function initializeDatabases(
-  cfg: HybridMemoryConfig,
-  api: ClawdbotPluginApi,
-): DatabaseContext {
+export function initializeDatabases(cfg: HybridMemoryConfig, api: ClawdbotPluginApi): DatabaseContext {
   const resolvedLancePath = api.resolvePath(cfg.lanceDbPath);
   const resolvedSqlitePath = api.resolvePath(cfg.sqlitePath);
   setKeywordsPath(dirname(resolvedSqlitePath));
@@ -619,8 +732,15 @@ export function initializeDatabases(
   // model selection when the user has already set up their models in openclaw.json.
   // If the gateway list is heavy-only (e.g. only Opus), we prepend a cheap fallback so default/nano
   // tasks don't all use the expensive model (see cost issue: hundreds of tasks running as Opus).
-  const RECOMMENDED_CHEAP_FALLBACK = ["openai/gpt-4.1-nano", "google/gemini-2.0-flash-lite", "anthropic/claude-3-5-haiku"];
-  if (!cfg.llm || (cfg.llm.default.length === 0 && (cfg.llm.heavy ?? []).length === 0 && (cfg.llm.nano ?? []).length === 0)) {
+  const RECOMMENDED_CHEAP_FALLBACK = [
+    "openai/gpt-4.1-nano",
+    "google/gemini-2.0-flash-lite",
+    "anthropic/claude-3-5-haiku",
+  ];
+  if (
+    !cfg.llm ||
+    (cfg.llm.default.length === 0 && (cfg.llm.heavy ?? []).length === 0 && (cfg.llm.nano ?? []).length === 0)
+  ) {
     const agentModel = (api.config as Record<string, unknown>)?.agents as Record<string, unknown> | undefined;
     const agentDefaults = agentModel?.defaults as Record<string, unknown> | undefined;
     const modelCfg = agentDefaults?.model as Record<string, unknown> | undefined;
@@ -633,7 +753,11 @@ export function initializeDatabases(
     if (gatewayModels.length > 0) {
       // Deduplicate while preserving order
       const seen = new Set<string>();
-      const uniqueModels = gatewayModels.filter(m => { if (seen.has(m)) return false; seen.add(m); return true; });
+      const uniqueModels = gatewayModels.filter((m) => {
+        if (seen.has(m)) return false;
+        seen.add(m);
+        return true;
+      });
 
       // Heuristic tier split based on model name keywords.
       // Nano:   nano, mini, haiku, lite, turbo-mini  — ultra-cheap for classify/HyDE/summarize
@@ -641,29 +765,32 @@ export function initializeDatabases(
       // Light:  flash, small                           — fast/cheap (but not nano-cheap)
       // Medium: everything else (sonnet, gpt-4o, etc.)
       // All ollama/* models are nano-tier (local = free, no API cost)
-      const nano    = uniqueModels.filter(m => isNanoModel(m) && !isHeavyModel(m));
-      const heavy   = uniqueModels.filter(m => isHeavyModel(m) && !isNanoModel(m));
-      const light   = uniqueModels.filter(m => isLightModel(m) && !isNanoModel(m) && !isHeavyModel(m));
-      const medium  = uniqueModels.filter(m => !isNanoModel(m) && !isLightModel(m) && !isHeavyModel(m));
+      const nano = uniqueModels.filter((m) => isNanoModel(m) && !isHeavyModel(m));
+      const heavy = uniqueModels.filter((m) => isHeavyModel(m) && !isNanoModel(m));
+      const light = uniqueModels.filter((m) => isLightModel(m) && !isNanoModel(m) && !isHeavyModel(m));
+      const medium = uniqueModels.filter((m) => !isNanoModel(m) && !isLightModel(m) && !isHeavyModel(m));
 
       // default tier: agent order (primary then fallbacks) so reflection/general match what you set in openclaw.json
-      const defaultIsHeavyOnly = uniqueModels.length > 0 && uniqueModels.every(m => isHeavyModel(m));
+      const defaultIsHeavyOnly = uniqueModels.length > 0 && uniqueModels.every((m) => isHeavyModel(m));
       let defaultTier = [...uniqueModels];
       if (defaultIsHeavyOnly) {
         defaultTier = [...RECOMMENDED_CHEAP_FALLBACK, ...defaultTier];
-        api.logger.info?.(`memory-hybrid: agents.defaults.model is heavy-only; prepending cheap fallback for default tier so maintenance tasks use a cheaper model first. Set llm.default / llm.nano explicitly in plugin config to override.`);
+        api.logger.info?.(
+          `memory-hybrid: agents.defaults.model is heavy-only; prepending cheap fallback for default tier so maintenance tasks use a cheaper model first. Set llm.default / llm.nano explicitly in plugin config to override.`,
+        );
       }
       // heavy tier: capable first (heavy → medium → light) for distill/self-correction
       const heavyTier = [...heavy, ...medium, ...light];
 
       // nano: cheap first — never use Opus/heavy for classify/summarize. Use nano models if present; else when heavy-only use cheap fallback; else use light then medium from agent list.
-      const nanoList = nano.length > 0
-        ? [...nano, ...light, ...medium]
-        : defaultIsHeavyOnly
-          ? RECOMMENDED_CHEAP_FALLBACK
-          : light.length > 0 || medium.length > 0
-            ? [...light, ...medium]
-            : [];
+      const nanoList =
+        nano.length > 0
+          ? [...nano, ...light, ...medium]
+          : defaultIsHeavyOnly
+            ? RECOMMENDED_CHEAP_FALLBACK
+            : light.length > 0 || medium.length > 0
+              ? [...light, ...medium]
+              : [];
 
       cfg.llm = {
         ...(cfg.llm?.localAutoStart !== undefined ? { localAutoStart: cfg.llm.localAutoStart } : {}),
@@ -675,15 +802,16 @@ export function initializeDatabases(
         ...(nanoList.length > 0 ? { nano: nanoList } : {}),
         _source: "gateway",
       };
-      api.logger.info?.(`memory-hybrid: llm model tiers auto-derived from agents.defaults.model (default: ${cfg.llm.default.slice(0, 3).join(", ")}${cfg.llm.default.length > 3 ? "…" : ""}${nanoList.length > 0 ? `; nano: ${(cfg.llm.nano ?? []).slice(0, 2).join(", ")}` : ""})`);
+      api.logger.info?.(
+        `memory-hybrid: llm model tiers auto-derived from agents.defaults.model (default: ${cfg.llm.default.slice(0, 3).join(", ")}${cfg.llm.default.length > 3 ? "…" : ""}${nanoList.length > 0 ? `; nano: ${(cfg.llm.nano ?? []).slice(0, 2).join(", ")}` : ""})`,
+      );
     }
   }
   // CostTracker — created early so proxy can instrument every chat.completions.create call (Issue #270).
   // Shares FactsDB's SQLite connection (same memory.db, avoids a second DB handle).
   // Gated on cfg.costTracking.enabled (default: true).
-  const costTracker: CostTracker | null = cfg.costTracking?.enabled !== false
-    ? new CostTracker(factsDb.getRawDb())
-    : null;
+  const costTracker: CostTracker | null =
+    cfg.costTracking?.enabled !== false ? new CostTracker(factsDb.getRawDb()) : null;
   if (costTracker) {
     api.logger.info("memory-hybrid: LLM cost tracker initialized");
   }
@@ -692,9 +820,10 @@ export function initializeDatabases(
   // (e.g. Minimax, Anthropic, etc.) without duplicating them in plugin config.
   // Check three paths: models.providers (standard), llm.providers (legacy), providers (top-level).
   const gwConfig = api.config as Record<string, unknown> | undefined;
-  const gwProviders = (gwConfig?.models as Record<string, unknown> | undefined)?.providers
-    ?? (gwConfig?.llm as Record<string, unknown> | undefined)?.providers
-    ?? (gwConfig?.providers as Record<string, unknown> | undefined);
+  const gwProviders =
+    (gwConfig?.models as Record<string, unknown> | undefined)?.providers ??
+    (gwConfig?.llm as Record<string, unknown> | undefined)?.providers ??
+    (gwConfig?.providers as Record<string, unknown> | undefined);
   const mergedProviderNames: string[] = [];
   if (!cfg.llm) (cfg as Record<string, unknown>).llm = { providers: {} };
   const plm = cfg.llm as Record<string, unknown>;
@@ -713,10 +842,13 @@ export function initializeDatabases(
         prov[name] = {
           ...prov[name],
           apiKey: rawKey.trim(),
-          baseURL: prov[name]?.baseURL ?? (gw as Record<string, unknown>).baseURL ?? (gw as Record<string, unknown>).base_url,
+          baseURL:
+            prov[name]?.baseURL ?? (gw as Record<string, unknown>).baseURL ?? (gw as Record<string, unknown>).base_url,
         };
         mergedProviderNames.push(name);
-        api.logger.info?.(`memory-hybrid: using gateway provider "${name}" for llm.providers (add ${name}/<model> to llm.default or llm.heavy to use)`);
+        api.logger.info?.(
+          `memory-hybrid: using gateway provider "${name}" for llm.providers (add ${name}/<model> to llm.default or llm.heavy to use)`,
+        );
       }
     }
   }
@@ -730,12 +862,21 @@ export function initializeDatabases(
     if (envKey.length >= 10) {
       prov.anthropic = { apiKey: envKey };
       mergedProviderNames.push("anthropic");
-      api.logger.info?.("memory-hybrid: using ANTHROPIC_API_KEY for llm.providers.anthropic (verify --test-llm will test Anthropic models)");
+      api.logger.info?.(
+        "memory-hybrid: using ANTHROPIC_API_KEY for llm.providers.anthropic (verify --test-llm will test Anthropic models)",
+      );
     }
   }
 
   // If we merged providers, ensure at least one model from each is in the tier lists so they get tested and used as fallbacks.
-  const hasModelFrom = (list: string[], prefix: string) => list.some((m) => m.startsWith(`${prefix}/`) || (m.startsWith("claude-") && prefix === "anthropic") || (m.startsWith("gemini-") && prefix === "google") || (m.toLowerCase().startsWith("minimax-") && prefix === "minimax"));
+  const hasModelFrom = (list: string[], prefix: string) =>
+    list.some(
+      (m) =>
+        m.startsWith(`${prefix}/`) ||
+        (m.startsWith("claude-") && prefix === "anthropic") ||
+        (m.startsWith("gemini-") && prefix === "google") ||
+        (m.toLowerCase().startsWith("minimax-") && prefix === "minimax"),
+    );
   if (cfg.llm && mergedProviderNames.length > 0) {
     const defaultList = Array.isArray(cfg.llm.default) ? [...cfg.llm.default] : [];
     const heavyList = Array.isArray(cfg.llm.heavy) ? [...cfg.llm.heavy] : [];
@@ -757,15 +898,29 @@ export function initializeDatabases(
         // Define chat-compatibility filter (used for both models[] and defaultModel/model fields).
         // Skip non-chat entries (embeddings, transcription, TTS, image generation) so that
         // chatCompleteWithRetry is never routed through an incompatible model.
-        const NON_CHAT_TYPES = new Set(["embed", "embedding", "embeddings", "transcription", "speech-to-text", "text-to-speech", "tts", "image", "image-generation"]);
+        const NON_CHAT_TYPES = new Set([
+          "embed",
+          "embedding",
+          "embeddings",
+          "transcription",
+          "speech-to-text",
+          "text-to-speech",
+          "tts",
+          "image",
+          "image-generation",
+        ]);
         const NON_CHAT_ID_RE = /\bembed|whisper|\btts\b|dall-e|transcri|gpt-image|image-gen/i;
         const isChatEntry = (entry: unknown): boolean => {
           if (typeof entry === "object" && entry !== null) {
-            const type = String((entry as Record<string, unknown>).type ?? "").toLowerCase().trim();
+            const type = String((entry as Record<string, unknown>).type ?? "")
+              .toLowerCase()
+              .trim();
             if (type && NON_CHAT_TYPES.has(type)) return false;
             // If type is explicit and non-empty, trust it (unknown types → assume chat)
             if (type) return true;
-            const id = String((entry as Record<string, unknown>).id ?? (entry as Record<string, unknown>).name ?? "").toLowerCase();
+            const id = String(
+              (entry as Record<string, unknown>).id ?? (entry as Record<string, unknown>).name ?? "",
+            ).toLowerCase();
             return !NON_CHAT_ID_RE.test(id);
           }
           if (typeof entry === "string") return !NON_CHAT_ID_RE.test(entry.toLowerCase());
@@ -780,7 +935,10 @@ export function initializeDatabases(
               typeof entry === "string"
                 ? entry.trim()
                 : String((entry as Record<string, unknown>).id ?? (entry as Record<string, unknown>).name ?? "").trim();
-            if (modelId) { defaultModel = `${name}/${modelId}`; break; }
+            if (modelId) {
+              defaultModel = `${name}/${modelId}`;
+              break;
+            }
           }
         }
         // Fall back to singular defaultModel or model field (also filter non-chat models)
@@ -793,31 +951,37 @@ export function initializeDatabases(
       // Final fallback: use hardcoded knownDefault for well-known providers
       if (!defaultModel) defaultModel = knownDefault[name] ?? null;
       if (!defaultModel) continue;
-      if (!hasModelFrom(defaultList, name)) { defaultList.push(defaultModel); appended = true; }
+      if (!hasModelFrom(defaultList, name)) {
+        defaultList.push(defaultModel);
+        appended = true;
+      }
       const heavyModel = name === "anthropic" ? "anthropic/claude-opus-4-6" : defaultModel;
-      if (!hasModelFrom(heavyList, name)) { heavyList.push(heavyModel); appended = true; }
+      if (!hasModelFrom(heavyList, name)) {
+        heavyList.push(heavyModel);
+        appended = true;
+      }
     }
     if (appended) {
       (cfg.llm as Record<string, unknown>).default = defaultList;
       (cfg.llm as Record<string, unknown>).heavy = heavyList;
-      api.logger.info?.(`memory-hybrid: appended gateway provider models to llm.default/heavy so they are tested and used as fallbacks.`);
+      api.logger.info?.(
+        `memory-hybrid: appended gateway provider models to llm.default/heavy so they are tested and used as fallbacks.`,
+      );
     }
   }
 
   // Ollama auto-start: if any tier includes ollama/* models and localAutoStart is enabled,
   // attempt to launch `ollama serve` in the background when the server is not already running.
   if (cfg.llm?.localAutoStart) {
-    const allModels = [
-      ...(cfg.llm.nano ?? []),
-      ...(cfg.llm.default ?? []),
-      ...(cfg.llm.heavy ?? []),
-    ];
-    const hasOllamaModels = allModels.some(m => m.split("/")[0]?.toLowerCase() === "ollama");
+    const allModels = [...(cfg.llm.nano ?? []), ...(cfg.llm.default ?? []), ...(cfg.llm.heavy ?? [])];
+    const hasOllamaModels = allModels.some((m) => m.split("/")[0]?.toLowerCase() === "ollama");
     if (hasOllamaModels) {
       void (async () => {
         try {
-          const ollamaBase = (cfg.llm?.providers as Record<string, { baseURL?: string } | undefined> | undefined)?.["ollama"]?.baseURL?.replace(/\/v1\/?$/, "")
-            ?? OLLAMA_DEFAULT_BASE_URL;
+          const ollamaBase =
+            (cfg.llm?.providers as Record<string, { baseURL?: string } | undefined> | undefined)?.[
+              "ollama"
+            ]?.baseURL?.replace(/\/v1\/?$/, "") ?? OLLAMA_DEFAULT_BASE_URL;
           const running = await probeOllamaEndpoint(ollamaBase);
           if (!running) {
             api.logger.info("memory-hybrid: Ollama is not running — attempting auto-start (llm.localAutoStart: true)");
@@ -835,7 +999,9 @@ export function initializeDatabases(
             if (nowRunning) {
               api.logger.info("memory-hybrid: Ollama started successfully");
             } else {
-              api.logger.warn("memory-hybrid: Ollama auto-start attempted but server still not available — local model calls will fall back to cloud");
+              api.logger.warn(
+                "memory-hybrid: Ollama auto-start attempted but server still not available — local model calls will fall back to cloud",
+              );
             }
           }
         } catch (err) {
@@ -854,7 +1020,8 @@ export function initializeDatabases(
   // openai/* or bare names → OpenAI API (uses embedding.apiKey or llm.providers.openai.apiKey)
   // ollama/* → local Ollama server (http://127.0.0.1:11434/v1 by default)
   // Other providers → require llm.providers.<provider>.apiKey + optionally baseURL
-  const openai = buildMultiProviderOpenAI(cfg, api, costTracker);
+  const authBackoffStatePath = join(dirname(resolvedSqlitePath), ".auth-backoff.json");
+  const openai = buildMultiProviderOpenAI(cfg, api, costTracker, authBackoffStatePath);
 
   let credentialsDb: CredentialsDB | null = null;
   if (cfg.credentials.enabled) {
@@ -864,7 +1031,7 @@ export function initializeDatabases(
     api.logger.info(
       encrypted
         ? `memory-hybrid: credentials vault enabled (encrypted) (${credPath})`
-        : `memory-hybrid: credentials vault enabled (plaintext; secure by other means) (${credPath})`
+        : `memory-hybrid: credentials vault enabled (plaintext; secure by other means) (${credPath})`,
     );
   }
 
@@ -935,7 +1102,6 @@ export function initializeDatabases(
     });
     api.logger.info("memory-hybrid: verification store enabled");
   }
-
 
   // Initialize ProvenanceService when enabled (Issue #163)
   let provenanceService: ProvenanceService | null = null;
@@ -1011,9 +1177,10 @@ export function initializeDatabases(
         phase: "initialization",
         backend: cfg.embedding.provider,
       });
-      const hint = cfg.embedding.provider === "ollama"
-        ? `Ensure Ollama is running at ${cfg.embedding.endpoint ?? "http://localhost:11434"} and model '${cfg.embedding.model}' is pulled. Run 'openclaw hybrid-mem verify' for details.`
-        : "Set a valid embedding.apiKey in plugin config and ensure the model is accessible. Run 'openclaw hybrid-mem verify' for details.";
+      const hint =
+        cfg.embedding.provider === "ollama"
+          ? `Ensure Ollama is running at ${cfg.embedding.endpoint ?? "http://localhost:11434"} and model '${cfg.embedding.model}' is pulled. Run 'openclaw hybrid-mem verify' for details.`
+          : "Set a valid embedding.apiKey in plugin config and ensure the model is accessible. Run 'openclaw hybrid-mem verify' for details.";
       api.logger.error(
         `memory-hybrid: ⚠️  EMBEDDING CHECK FAILED (provider=${cfg.embedding.provider}) — ${String(e)}. ` +
           `Plugin will continue but semantic search will not work. ${hint}`,
@@ -1051,7 +1218,9 @@ export function initializeDatabases(
           await handle.writeFile("1", "utf8");
           shouldMigrate = true; // We won the race, proceed with migration
         } finally {
-          await handle.close().catch(() => { /* ignore close errors */ });
+          await handle.close().catch(() => {
+            /* ignore close errors */
+          });
         }
       } catch (err: any) {
         if (err.code === "EEXIST") {
@@ -1083,7 +1252,9 @@ export function initializeDatabases(
             api.logger.info(`memory-hybrid: migrated ${result.migrated} credential(s) from memory into vault`);
           }
           if (result.errors.length > 0) {
-            api.logger.warn(`memory-hybrid: credential migration had ${result.errors.length} error(s): ${result.errors.join("; ")}`);
+            api.logger.warn(
+              `memory-hybrid: credential migration had ${result.errors.length} error(s): ${result.errors.join("; ")}`,
+            );
           }
         } catch (e) {
           capturePluginError(e instanceof Error ? e : new Error(String(e)), {
@@ -1151,7 +1322,10 @@ export function initializeDatabases(
 
         if (!needsReembedding && existsSync(reembedProgressPath)) {
           try {
-            const progress = JSON.parse(readFileSync(reembedProgressPath, "utf-8")) as { completedIds: string[]; total: number };
+            const progress = JSON.parse(readFileSync(reembedProgressPath, "utf-8")) as {
+              completedIds: string[];
+              total: number;
+            };
             if (progress.completedIds.length < progress.total) {
               needsReembedding = true;
               completedIds = new Set(progress.completedIds);
@@ -1224,9 +1398,7 @@ export function initializeDatabases(
             // Ignore cleanup errors
           }
 
-          api.logger.info(
-            `memory-hybrid: re-embedded ${reembedded}/${facts.length} facts during re-embedding pass`,
-          );
+          api.logger.info(`memory-hybrid: re-embedded ${reembedded}/${facts.length} facts during re-embedding pass`);
         }
       } catch (err) {
         capturePluginError(err instanceof Error ? err : new Error(String(err)), {
@@ -1271,9 +1443,7 @@ function resolveEmbeddingRegistryModels(
   }
   const rawModels = (embedding as unknown as { models?: unknown }).models;
   if (!Array.isArray(rawModels) || rawModels.length === 0) return undefined;
-  const hasObjectModels = rawModels.every(
-    (item) => item && typeof item === "object",
-  );
+  const hasObjectModels = rawModels.every((item) => item && typeof item === "object");
   if (!hasObjectModels) return undefined;
   return rawModels as EmbeddingModelConfig[];
 }
@@ -1297,7 +1467,21 @@ export function closeOldDatabases(context: {
   verificationStore?: VerificationStore | null;
   provenanceService?: ProvenanceService | null;
 }): void {
-  const { factsDb, vectorDb, credentialsDb, proposalsDb, eventLog, aliasDb, eventBus, issueStore, workflowStore, crystallizationStore, toolProposalStore, verificationStore, provenanceService } = context;
+  const {
+    factsDb,
+    vectorDb,
+    credentialsDb,
+    proposalsDb,
+    eventLog,
+    aliasDb,
+    eventBus,
+    issueStore,
+    workflowStore,
+    crystallizationStore,
+    toolProposalStore,
+    verificationStore,
+    provenanceService,
+  } = context;
 
   invalidateClusterCache();
 
@@ -1305,91 +1489,130 @@ export function closeOldDatabases(context: {
     try {
       factsDb.close();
     } catch (err) {
-      capturePluginError(err instanceof Error ? err : new Error(String(err)), { operation: "close-databases", subsystem: "factsDb" });
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        operation: "close-databases",
+        subsystem: "factsDb",
+      });
     }
   }
   if (typeof vectorDb?.close === "function") {
     try {
       vectorDb.close();
     } catch (err) {
-      capturePluginError(err instanceof Error ? err : new Error(String(err)), { operation: "close-databases", subsystem: "vectorDb" });
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        operation: "close-databases",
+        subsystem: "vectorDb",
+      });
     }
   }
   if (credentialsDb) {
     try {
       credentialsDb.close();
     } catch (err) {
-      capturePluginError(err instanceof Error ? err : new Error(String(err)), { operation: "close-databases", subsystem: "credentialsDb" });
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        operation: "close-databases",
+        subsystem: "credentialsDb",
+      });
     }
   }
   if (proposalsDb) {
     try {
       proposalsDb.close();
     } catch (err) {
-      capturePluginError(err instanceof Error ? err : new Error(String(err)), { operation: "close-databases", subsystem: "proposalsDb" });
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        operation: "close-databases",
+        subsystem: "proposalsDb",
+      });
     }
   }
   if (eventLog) {
     try {
       eventLog.close();
     } catch (err) {
-      capturePluginError(err instanceof Error ? err : new Error(String(err)), { operation: "close-databases", subsystem: "eventLog" });
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        operation: "close-databases",
+        subsystem: "eventLog",
+      });
     }
   }
   if (aliasDb) {
     try {
       aliasDb.close();
     } catch (err) {
-      capturePluginError(err instanceof Error ? err : new Error(String(err)), { operation: "close-databases", subsystem: "aliasDb" });
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        operation: "close-databases",
+        subsystem: "aliasDb",
+      });
     }
   }
   if (eventBus) {
     try {
       eventBus.close();
     } catch (err) {
-      capturePluginError(err instanceof Error ? err : new Error(String(err)), { operation: "close-databases", subsystem: "eventBus" });
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        operation: "close-databases",
+        subsystem: "eventBus",
+      });
     }
   }
   if (issueStore) {
     try {
       issueStore.close();
     } catch (err) {
-      capturePluginError(err instanceof Error ? err : new Error(String(err)), { operation: "close-databases", subsystem: "issueStore" });
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        operation: "close-databases",
+        subsystem: "issueStore",
+      });
     }
   }
   if (workflowStore) {
     try {
       workflowStore.close();
     } catch (err) {
-      capturePluginError(err instanceof Error ? err : new Error(String(err)), { operation: "close-databases", subsystem: "workflowStore" });
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        operation: "close-databases",
+        subsystem: "workflowStore",
+      });
     }
   }
   if (crystallizationStore) {
     try {
       crystallizationStore.close();
     } catch (err) {
-      capturePluginError(err instanceof Error ? err : new Error(String(err)), { operation: "close-databases", subsystem: "crystallizationStore" });
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        operation: "close-databases",
+        subsystem: "crystallizationStore",
+      });
     }
   }
   if (toolProposalStore) {
     try {
       toolProposalStore.close();
     } catch (err) {
-      capturePluginError(err instanceof Error ? err : new Error(String(err)), { operation: "close-databases", subsystem: "toolProposalStore" });
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        operation: "close-databases",
+        subsystem: "toolProposalStore",
+      });
     }
   }
   if (verificationStore) {
     try {
       verificationStore.close();
     } catch (err) {
-      capturePluginError(err instanceof Error ? err : new Error(String(err)), { operation: "close-databases", subsystem: "verificationStore" });
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        operation: "close-databases",
+        subsystem: "verificationStore",
+      });
     }
   }
   if (provenanceService) {
     try {
       provenanceService.close();
     } catch (err) {
-      capturePluginError(err instanceof Error ? err : new Error(String(err)), { operation: "close-databases", subsystem: "provenanceService" });
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        operation: "close-databases",
+        subsystem: "provenanceService",
+      });
     }
   }
 }

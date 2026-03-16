@@ -6,51 +6,15 @@
  */
 
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk";
-import type { FactsDB } from "../backends/facts-db.js";
-import type { VectorDB } from "../backends/vector-db.js";
-import type { WriteAheadLog } from "../backends/wal.js";
-import type { CredentialsDB } from "../backends/credentials-db.js";
-import type { EmbeddingProvider } from "../services/embeddings.js";
-import type { EmbeddingRegistry } from "../services/embedding-registry.js";
-import type OpenAI from "openai";
-import type { HybridMemoryConfig } from "../config.js";
+import type { MemoryPluginAPI } from "../api/memory-plugin-api.js";
 import { getMemoryCategories } from "../config.js";
-import type { MemoryEntry, ScopeFilter } from "../types/memory.js";
 import { createLifecycleHooks, type LifecycleContext } from "../lifecycle/hooks.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { sanitizeMessagesForClaude, type MessageLike } from "../utils/sanitize-messages.js";
-import type { PendingLLMWarnings } from "../services/chat.js";
 import { replayWalEntries } from "../utils/wal-replay.js";
 
-export interface HooksContext {
-  factsDb: FactsDB;
-  vectorDb: VectorDB;
-  embeddings: EmbeddingProvider;
-  embeddingRegistry?: EmbeddingRegistry | null;
-  openai: OpenAI;
-  cfg: HybridMemoryConfig;
-  credentialsDb: CredentialsDB | null;
-  aliasDb: import("../services/retrieval-aliases.js").AliasDB | null;
-  wal: WriteAheadLog | null;
-  eventLog: import("../backends/event-log.js").EventLog | null;
-  currentAgentIdRef: { value: string | null };
-  lastProgressiveIndexIds: string[];
-  restartPendingClearedRef: { value: boolean };
-  resolvedSqlitePath: string;
-  walWrite: (operation: "store" | "update", data: Record<string, unknown>, logger: { warn: (msg: string) => void }) => string;
-  walRemove: (id: string, logger: { warn: (msg: string) => void }) => void;
-  findSimilarByEmbedding: (
-    vectorDb: VectorDB,
-    factsDb: { getById(id: string): MemoryEntry | null },
-    vector: number[],
-    limit: number,
-    minScore?: number
-  ) => Promise<MemoryEntry[]>;
-  shouldCapture: (text: string) => boolean;
-  detectCategory: (text: string) => import("../config.js").MemoryCategory;
-  pendingLLMWarnings: PendingLLMWarnings;
-  issueStore: import("../backends/issue-store.js").IssueStore | null;
-}
+/** Lifecycle hooks receive the stable plugin API (Phase 3). */
+export type HooksContext = MemoryPluginAPI;
 
 /** Issue #463: Returned handle for lifecycle hook cleanup. */
 export interface LifecycleHooksHandle {
@@ -81,16 +45,20 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
       lastProgressiveIndexIds: ctx.lastProgressiveIndexIds,
       restartPendingClearedRef: ctx.restartPendingClearedRef,
       resolvedSqlitePath: ctx.resolvedSqlitePath,
-      walWrite: ctx.walWrite,
-      walRemove: ctx.walRemove,
+      walWrite: (operation, data, logger) => ctx.walWrite(ctx.wal, operation, data, logger),
+      walRemove: (id, logger) => ctx.walRemove(ctx.wal, id, logger),
       findSimilarByEmbedding: ctx.findSimilarByEmbedding,
       shouldCapture: ctx.shouldCapture,
       detectCategory: ctx.detectCategory,
       pendingLLMWarnings: ctx.pendingLLMWarnings,
       issueStore: ctx.issueStore,
+      recallInFlightRef: ctx.recallInFlightRef,
     };
   } catch (err) {
-    capturePluginError(err instanceof Error ? err : new Error(String(err)), { subsystem: "registration", operation: "register-hooks:context" });
+    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+      subsystem: "registration",
+      operation: "register-hooks:context",
+    });
     throw err;
   }
 
@@ -98,7 +66,10 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
   try {
     hooks = createLifecycleHooks(lifecycleContext);
   } catch (err) {
-    capturePluginError(err instanceof Error ? err : new Error(String(err)), { subsystem: "registration", operation: "register-hooks:create" });
+    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+      subsystem: "registration",
+      operation: "register-hooks:create",
+    });
     throw err;
   }
   try {
@@ -106,7 +77,10 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
     hooks.onAgentEnd(api);
     hooks.onFrustrationDetect?.(api);
   } catch (err) {
-    capturePluginError(err instanceof Error ? err : new Error(String(err)), { subsystem: "registration", operation: "register-hooks:attach" });
+    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+      subsystem: "registration",
+      operation: "register-hooks:attach",
+    });
     hooks.dispose();
     throw err;
   }
@@ -124,7 +98,7 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
       "<llm-config-warning>",
       ...warnings,
       "Note: These configuration warnings will not repeat in this session.",
-      "</llm-config-warning>"
+      "</llm-config-warning>",
     ].join("\n");
 
     return { prependContext: wrappedWarnings };
@@ -164,13 +138,14 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
     // Build once and cache — these never change within a gateway session.
     const buildStaticInstructions = (): string => {
       const cats = getMemoryCategories();
-      const catList = cats.length > 0 ? cats.join(", ") : "preference, fact, decision, entity, pattern, rule, other, technical";
+      const catList =
+        cats.length > 0 ? cats.join(", ") : "preference, fact, decision, entity, pattern, rule, other, technical";
       return [
         "<!-- memory-hybrid: capability hints -->",
         "You have access to long-term memory tools for this session.",
         `Available categories: ${catList}.`,
         "Use memory_store to save important facts, preferences, and decisions.",
-        "Use memory_recall(\"query\") or memory_recall(id: N) to retrieve specific memories.",
+        'Use memory_recall("query") or memory_recall(id: N) to retrieve specific memories.',
         "Use memory_forget(memoryId) to remove stale or incorrect memories.",
         "Memories are scoped (global / user / agent / session) — prefer global unless scoped context is needed.",
         "<!-- /memory-hybrid: capability hints -->",

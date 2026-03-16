@@ -7,10 +7,7 @@ import type { DecayClass } from "../config.js";
 import { TTL_DEFAULTS } from "../config.js";
 import { getDecayPermanentRegex, getDecaySessionRegex, getDecayActiveRegex } from "./language-keywords.js";
 
-export function calculateExpiry(
-  decayClass: DecayClass,
-  fromTimestamp = Math.floor(Date.now() / 1000),
-): number | null {
+export function calculateExpiry(decayClass: DecayClass, fromTimestamp = Math.floor(Date.now() / 1000)): number | null {
   const ttl = TTL_DEFAULTS[decayClass];
   return ttl ? fromTimestamp + ttl : null;
 }
@@ -25,8 +22,17 @@ export function classifyDecay(
   const textLower = text.toLowerCase();
 
   const permanentKeys = [
-    "name", "email", "api_key", "api_endpoint", "architecture",
-    "decision", "birthday", "born", "phone", "language", "location",
+    "name",
+    "email",
+    "api_key",
+    "api_endpoint",
+    "architecture",
+    "decision",
+    "birthday",
+    "born",
+    "phone",
+    "language",
+    "location",
   ];
   if (permanentKeys.some((k) => keyLower.includes(k))) return "permanent";
   if (getDecayPermanentRegex().test(textLower)) return "permanent";
@@ -41,8 +47,7 @@ export function classifyDecay(
   if (activeKeys.some((k) => keyLower.includes(k))) return "active";
   if (getDecayActiveRegex().test(textLower)) return "active";
 
-  if (keyLower.includes("checkpoint") || keyLower.includes("preflight"))
-    return "checkpoint";
+  if (keyLower.includes("checkpoint") || keyLower.includes("preflight")) return "checkpoint";
 
   return "stable";
 }
