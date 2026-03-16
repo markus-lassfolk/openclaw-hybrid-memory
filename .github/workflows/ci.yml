@@ -24,7 +24,7 @@ jobs:
       code: ${{ github.event_name == 'workflow_call' && 'true' || steps.filter.outputs.code }}
     steps:
       - uses: actions/checkout@v6
-      - uses: dorny/paths-filter@v3
+      - uses: dorny/paths-filter@v4
         id: filter
         if: github.event_name != 'workflow_call'
         with:
