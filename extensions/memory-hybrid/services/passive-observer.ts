@@ -376,6 +376,12 @@ export async function runPassiveObserver(
 
   const prompt = loadPrompt("passive-observer");
 
+  // In-memory dedup pool for dry-run mode (Issue #499): during dry-run, facts are not written
+  // to LanceDB, so vectorDb.search() cannot find facts extracted earlier in the same batch.
+  // This array tracks embeddings of facts that would be stored in the current run, enabling
+  // intra-batch deduplication so dry-run accurately previews real-run behavior.
+  const dryRunVectors: number[][] = [];
+
   // ---------------------------------------------------------------------------
   // Phase 3: process each session that has new content.
   // ---------------------------------------------------------------------------
@@ -521,6 +527,25 @@ export async function runPassiveObserver(
         } catch {
           // On search failure, proceed without dedup — a few duplicates are acceptable
         }
+
+        // Dry-run intra-batch dedup: check against facts that would be stored in this run.
+        // Since vectorDb.store() is never called during dry-run, vectorDb.search() won't find
+        // facts extracted earlier in the same batch. Compare against dryRunVectors[] to ensure
+        // dry-run output accurately reflects real-run deduplication behavior (Issue #499).
+        if (!isDuplicate && opts.dryRun) {
+          for (const recentVec of dryRunVectors) {
+            let dotProduct = 0;
+            for (let i = 0; i < vec.length; i++) {
+              dotProduct += vec[i] * recentVec[i];
+            }
+            const cosineSim = dotProduct;
+            if (cosineSim >= cosineSimilarityThreshold) {
+              isDuplicate = true;
+              break;
+            }
+          }
+        }
+
         if (isDuplicate) continue;
 
         if (opts.dryRun) {
@@ -528,6 +553,7 @@ export async function runPassiveObserver(
             `memory-hybrid: passive-observer [dry-run] would store: ${fact.text.slice(0, 60)}... (importance=${fact.importance.toFixed(2)}, category=${fact.category})`,
           );
           result.factsStored++;
+          dryRunVectors.push(vec);
           continue;
         }
 
