@@ -1,4 +1,13 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+
+// Mock node:fs so we can override fsyncSync in individual tests while letting
+// everything else call through to the real implementation.
+vi.mock("node:fs", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs")>();
+  return { ...actual, fsyncSync: vi.fn((...args: Parameters<typeof actual.fsyncSync>) => actual.fsyncSync(...args)) };
+});
+
+import * as nodeFs from "node:fs";
 import { mkdirSync, rmSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -428,6 +437,44 @@ describe("WriteAheadLog", () => {
       const badWal = new WriteAheadLog(badPath, 5 * 60 * 1000);
 
       expect(() => badWal.remove("some-id")).toThrow(/WAL remove failed/);
+    });
+
+    it("does not throw when fsync fails with EPERM (e.g. WSL2/NTFS)", () => {
+      const epermError = Object.assign(new Error("operation not permitted"), { code: "EPERM" });
+      vi.mocked(nodeFs.fsyncSync).mockImplementationOnce(() => { throw epermError; });
+      const entry = {
+        id: randomUUID(),
+        timestamp: Date.now(),
+        operation: "store" as const,
+        data: { text: "Test", category: "general", importance: 0.7, source: "test" },
+      };
+      expect(() => wal.write(entry)).not.toThrow();
+      const entries = wal.readAll();
+      expect(entries).toHaveLength(1);
+    });
+
+    it("does not throw when fsync fails with EINVAL", () => {
+      const einvalError = Object.assign(new Error("invalid argument"), { code: "EINVAL" });
+      vi.mocked(nodeFs.fsyncSync).mockImplementationOnce(() => { throw einvalError; });
+      const entry = {
+        id: randomUUID(),
+        timestamp: Date.now(),
+        operation: "store" as const,
+        data: { text: "Test EINVAL", category: "general", importance: 0.5, source: "test" },
+      };
+      expect(() => wal.write(entry)).not.toThrow();
+    });
+
+    it("re-throws unexpected fsync errors", () => {
+      const unexpectedError = Object.assign(new Error("no space left on device"), { code: "ENOSPC" });
+      vi.mocked(nodeFs.fsyncSync).mockImplementationOnce(() => { throw unexpectedError; });
+      const entry = {
+        id: randomUUID(),
+        timestamp: Date.now(),
+        operation: "store" as const,
+        data: { text: "Test ENOSPC", category: "general", importance: 0.5, source: "test" },
+      };
+      expect(() => wal.write(entry)).toThrow(/WAL write failed/);
     });
   });
 
