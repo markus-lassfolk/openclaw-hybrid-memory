@@ -54,6 +54,17 @@ export class WriteAheadLog {
     const fd = openSync(this.walPath, "r");
     try {
       fsyncSync(fd);
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code === "EPERM" || code === "EINVAL") {
+        // Some filesystems (e.g. NTFS via WSL2) do not support fsync on a
+        // read-only file descriptor.  The data has already been written by
+        // appendFileSync / writeFileSync; skipping fsync here is safe and the
+        // durability guarantee degrades to best-effort on those filesystems.
+        console.warn(`[WAL] fsync skipped (${code}): filesystem may not support fsync – durability is best-effort`);
+      } else {
+        throw err;
+      }
     } finally {
       closeSync(fd);
     }
