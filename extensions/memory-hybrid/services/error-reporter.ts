@@ -366,8 +366,10 @@ class GlitchTipReporter {
   ) {
     const url = new URL(dsn);
     this.publicKey = url.username;
-    const projectId = url.pathname.replace(/^\//, "");
-    this.storeUrl = `${url.protocol}//${url.host}/api/${projectId}/store/`;
+    const pathSegments = url.pathname.replace(/^\//, "").split("/").filter(Boolean);
+    const projectId = pathSegments.pop() || "";
+    const basePath = pathSegments.length > 0 ? `/${pathSegments.join("/")}` : "";
+    this.storeUrl = `${url.protocol}//${url.host}${basePath}/api/${projectId}/store/`;
     this.release = release;
     this.environment = environment;
     this.sampleRate = sampleRate;
@@ -470,9 +472,15 @@ class GlitchTipReporter {
     this.pendingFetches = [];
     if (pending.length === 0) return true;
     try {
+      let timeoutId: NodeJS.Timeout | undefined;
       await Promise.race([
-        Promise.all(pending),
-        new Promise<never>((_, reject) => setTimeout(() => reject(new Error("Flush timeout")), timeoutMs)),
+        Promise.all(pending).then((result) => {
+          if (timeoutId !== undefined) clearTimeout(timeoutId);
+          return result;
+        }),
+        new Promise<never>((_, reject) => {
+          timeoutId = setTimeout(() => reject(new Error("Flush timeout")), timeoutMs);
+        }),
       ]);
       return true;
     } catch {
