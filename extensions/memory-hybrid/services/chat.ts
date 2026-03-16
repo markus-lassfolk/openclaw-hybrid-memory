@@ -118,9 +118,7 @@ export function is401Like(err: unknown): boolean {
     if (status === 401 || status === "401") return true;
   }
   if (err instanceof Error) {
-    return /^\b401\b/.test(err.message.trim())
-      || /\bHTTP\s+401\b|\bError\s+code:\s*401\b|\b401\s+[A-Za-z]/i.test(err.message)
-      || /\bunauthorized\b|\binvalid\s+api\s+key\b|\bincorrect\s+api\s+key\b|\bauthentication\s+failed\b/i.test(err.message);
+    return /\b401\b|unauthorized/i.test(err.message);
   }
   return false;
 }
