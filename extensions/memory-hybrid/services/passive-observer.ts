@@ -503,13 +503,18 @@ export async function runPassiveObserver(
           continue;
         }
 
+        // Normalize the vector to ensure the L2-to-cosine conversion is valid.
+        // The conversion formula (1 / (1 + sqrt(2*(1-cosine)))) assumes unit-length vectors.
+        // While OpenAI embeddings are pre-normalized, Ollama and some other providers return
+        // unnormalized vectors, causing the L2 distance to be scaled by vector magnitude.
+        const normalizedVec = normalizeVector(vec);
+
         // Dedup check via LanceDB ANN search — O(log n) instead of O(n*m) brute-force.
         // Replaces the old recentVectors[] linear scan and eliminates the embedBatch()
         // call on the recent-facts pool. LanceDB is the single source of truth.
-        // Use vec (raw embedding) — same vector space as what is stored in LanceDB.
         let isDuplicate = false;
         try {
-          const dupeResults = await vectorDb.search(vec, 1, similarityThreshold);
+          const dupeResults = await vectorDb.search(normalizedVec, 1, similarityThreshold);
           if (dupeResults.length > 0) {
             isDuplicate = true;
             // Confidence reinforcement: boost the matched fact instead of silently skipping (Issue #147)
@@ -534,11 +539,10 @@ export async function runPassiveObserver(
         // facts extracted earlier in the same batch. Compare against dryRunVectors[] to ensure
         // dry-run output accurately reflects real-run deduplication behavior (Issue #499).
         if (!isDuplicate && opts.dryRun) {
-          const normVec = normalizeVector(vec);
           for (const recentVec of dryRunVectors) {
             let dotProduct = 0;
-            for (let i = 0; i < normVec.length; i++) {
-              dotProduct += normVec[i] * recentVec[i];
+            for (let i = 0; i < normalizedVec.length; i++) {
+              dotProduct += normalizedVec[i] * recentVec[i];
             }
             const cosineSim = dotProduct;
             if (cosineSim >= cosineSimilarityThreshold) {
@@ -555,7 +559,7 @@ export async function runPassiveObserver(
             `memory-hybrid: passive-observer [dry-run] would store: ${fact.text.slice(0, 60)}... (importance=${fact.importance.toFixed(2)}, category=${fact.category})`,
           );
           result.factsStored++;
-          dryRunVectors.push(normalizeVector(vec));
+          dryRunVectors.push(normalizedVec);
           continue;
         }
 
@@ -628,11 +632,11 @@ export async function runPassiveObserver(
         // For global/permanent identity facts, pass null scope so detection spans all scopes.
         factsDb.detectContradictions(stored.id, null, null, null, stored.scope ?? null, stored.scopeTarget ?? null);
 
-        // Store to LanceDB
+        // Store to LanceDB (use normalized vector for consistent L2 distance metric)
         try {
           await vectorDb.store({
             text: fact.text,
-            vector: vec,
+            vector: normalizedVec,
             importance: identity ? Math.max(fact.importance, 0.9) : fact.importance,
             category: fact.category,
             id: stored.id,
