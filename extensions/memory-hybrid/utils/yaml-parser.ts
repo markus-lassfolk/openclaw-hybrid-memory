@@ -27,7 +27,7 @@ export function parseYaml(text: string): YAMLValue {
 function skipBlanks(ctx: ParseCtx): void {
   while (ctx.pos < ctx.lines.length) {
     const t = ctx.lines[ctx.pos].trim();
-    if (t === "" || t.startsWith("#")) {
+    if (t === "" || t.startsWith("#") || t === "---") {
       ctx.pos++;
     } else {
       break;
@@ -57,7 +57,7 @@ function parseNode(ctx: ParseCtx, parentIndent: number): YAMLValue {
     return parseMapping(ctx, indent);
   }
   ctx.pos++;
-  return parseScalar(content);
+  return parseScalar(removeInlineComment(content));
 }
 
 function hasMappingColon(content: string): boolean {
@@ -149,7 +149,7 @@ function parseSequence(ctx: ParseCtx, baseIndent: number): YAMLValue[] {
       } else if (hasMappingColon(afterDash)) {
         result.push(parseSeqMapItem(ctx, afterDash, baseIndent));
       } else {
-        result.push(parseScalar(afterDash));
+        result.push(parseScalar(removeInlineComment(afterDash)));
       }
     }
   }
@@ -230,11 +230,11 @@ function unquoteStr(s: string): string {
 function removeInlineComment(s: string): string {
   let inDouble = false;
   let inSingle = false;
-  for (let i = 1; i < s.length; i++) {
+  for (let i = 0; i < s.length; i++) {
     const c = s[i];
     if (c === '"' && !inSingle) inDouble = !inDouble;
     else if (c === "'" && !inDouble) inSingle = !inSingle;
-    else if (c === "#" && !inDouble && !inSingle && s[i - 1] === " ") {
+    else if (c === "#" && !inDouble && !inSingle && i > 0 && s[i - 1] === " ") {
       return s.substring(0, i).trim();
     }
   }
@@ -259,11 +259,12 @@ export function parseScalar(s: string): YAMLValue {
   }
 
   // Boolean
-  if (s === "true" || s === "yes" || s === "on") return true;
-  if (s === "false" || s === "no" || s === "off") return false;
+  const lower = s.toLowerCase();
+  if (lower === "true" || lower === "yes" || lower === "on") return true;
+  if (lower === "false" || lower === "no" || lower === "off") return false;
 
   // Null
-  if (s === "null" || s === "~") return null;
+  if (lower === "null" || s === "~") return null;
 
   // Integer
   if (/^-?\d+$/.test(s)) return parseInt(s, 10);
@@ -281,12 +282,18 @@ function parseFlowSequence(s: string): YAMLValue[] {
 
   const items: string[] = [];
   let depth = 0;
+  let inDouble = false;
+  let inSingle = false;
   let current = "";
 
   for (const c of inner) {
-    if (c === "[" || c === "{") depth++;
-    else if (c === "]" || c === "}") depth--;
-    else if (c === "," && depth === 0) {
+    if (c === '"' && !inSingle) inDouble = !inDouble;
+    else if (c === "'" && !inDouble) inSingle = !inSingle;
+    else if (c === "[" || c === "{") {
+      if (!inDouble && !inSingle) depth++;
+    } else if (c === "]" || c === "}") {
+      if (!inDouble && !inSingle) depth--;
+    } else if (c === "," && depth === 0 && !inDouble && !inSingle) {
       items.push(current.trim());
       current = "";
       continue;
