@@ -118,7 +118,10 @@ export function is401Like(err: unknown): boolean {
     if (status === 401 || status === "401") return true;
   }
   if (err instanceof Error) {
-    return /\b401\b|unauthorized/i.test(err.message);
+    if (/\b401\b|unauthorized/i.test(err.message)) return true;
+    // Also match specific auth failure phrases for robustness — catches errors from providers
+    // that don't include "401" or "unauthorized" in the message and don't set a .status property.
+    if (/incorrect api key|invalid api key|authentication failed/i.test(err.message)) return true;
   }
   return false;
 }
