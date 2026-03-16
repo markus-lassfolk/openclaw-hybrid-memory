@@ -4,7 +4,8 @@
   "project": [
     "{api,backends,cli,config,lifecycle,prompts,routes,scripts,services,setup,tests,tools,types,utils}/**/*.ts",
     "index.ts",
-    "config.ts"
+    "config.ts",
+    "versionInfo.ts"
   ],
   "ignore": [
     "{api,backends,cli,config,lifecycle,prompts,routes,scripts,services,setup,tests,tools,types,utils}/**/*.test.ts",
