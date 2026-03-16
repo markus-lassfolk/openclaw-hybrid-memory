@@ -7,15 +7,15 @@
 
 import { basename } from "node:path";
 import type { Converter, ConversionResult } from "./index.js";
-import yaml from "js-yaml";
+import { parseYaml } from "../../utils/yaml-parser.js";
 
-// ESPHome allows !secret directives
-const ESPHOME_SECRET_TYPE = new yaml.Type("!secret", {
-  kind: "scalar",
-  construct: (_data: string) => "[REDACTED]",
-});
-
-const ESPHOME_SCHEMA = yaml.DEFAULT_SCHEMA.extend([ESPHOME_SECRET_TYPE]);
+/**
+ * Replace !secret directives with [REDACTED] before parsing.
+ * ESPHome uses !secret for sensitive values; we always redact them.
+ */
+function preprocessESPHomeYaml(content: string): string {
+  return content.replace(/!secret\s+\S+/g, '"[REDACTED]"');
+}
 
 type ESPDoc = Record<string, unknown>;
 
@@ -80,8 +80,9 @@ export const esphomeYamlConverter: Converter = {
     let doc: ESPDoc;
 
     try {
-      const parsed = yaml.load(content, { schema: ESPHOME_SCHEMA });
-      doc = (typeof parsed === "object" && parsed !== null ? parsed : {}) as ESPDoc;
+      const preprocessed = preprocessESPHomeYaml(content);
+      const parsed = parseYaml(preprocessed);
+      doc = (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed) ? parsed : {}) as ESPDoc;
     } catch {
       doc = {};
     }

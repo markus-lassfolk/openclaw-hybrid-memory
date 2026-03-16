@@ -8,62 +8,48 @@
 
 import { basename } from "node:path";
 import type { Converter, ConversionResult } from "./index.js";
+import { parseYaml } from "../../utils/yaml-parser.js";
 
-// js-yaml custom schema to handle !include and !secret without throwing
-import yaml from "js-yaml";
+// Sentinel prefixes used after pre-processing HA custom tags
+const HA_INCLUDE_PREFIX = "__HA_INCLUDE__";
+const HA_SECRET_PREFIX = "__HA_SECRET__";
+const HA_INCLUDE_DIR_PREFIX = "__HA_INCLUDE_DIR__";
+const HA_INCLUDE_DIR_LIST_PREFIX = "__HA_INCLUDE_DIR_LIST__";
+const HA_INCLUDE_DIR_NAMED_PREFIX = "__HA_INCLUDE_DIR_NAMED__";
 
-const HA_INCLUDE_TYPE = new yaml.Type("!include", {
-  kind: "scalar",
-  construct: (data: string) => ({ __ha_include: data }),
-});
-
-const HA_SECRET_TYPE = new yaml.Type("!secret", {
-  kind: "scalar",
-  construct: (data: string) => ({ __ha_secret: data }),
-});
-
-const HA_INCLUDE_DIR_TYPE = new yaml.Type("!include_dir_merge_named", {
-  kind: "scalar",
-  construct: (data: string) => ({ __ha_include_dir: data }),
-});
-
-const HA_INCLUDE_DIR_LIST_TYPE = new yaml.Type("!include_dir_list", {
-  kind: "scalar",
-  construct: (data: string) => ({ __ha_include_dir_list: data }),
-});
-
-const HA_INCLUDE_DIR_NAMED_TYPE = new yaml.Type("!include_dir_named", {
-  kind: "scalar",
-  construct: (data: string) => ({ __ha_include_dir_named: data }),
-});
-
-const HA_SCHEMA = yaml.DEFAULT_SCHEMA.extend([
-  HA_INCLUDE_TYPE,
-  HA_SECRET_TYPE,
-  HA_INCLUDE_DIR_TYPE,
-  HA_INCLUDE_DIR_LIST_TYPE,
-  HA_INCLUDE_DIR_NAMED_TYPE,
-]);
+/**
+ * Replace HA-specific YAML tags with safe sentinel string values before parsing.
+ * Order matters: longer tag names must be replaced before shorter prefixes.
+ */
+function preprocessHAYaml(content: string): string {
+  return content
+    .replace(/!include_dir_merge_named\s+(\S+)/g, `"${HA_INCLUDE_DIR_PREFIX}$1"`)
+    .replace(/!include_dir_list\s+(\S+)/g, `"${HA_INCLUDE_DIR_LIST_PREFIX}$1"`)
+    .replace(/!include_dir_named\s+(\S+)/g, `"${HA_INCLUDE_DIR_NAMED_PREFIX}$1"`)
+    .replace(/!include\s+(\S+)/g, `"${HA_INCLUDE_PREFIX}$1"`)
+    .replace(/!secret\s+(\S+)/g, `"${HA_SECRET_PREFIX}$1"`);
+}
 
 type HADoc = Record<string, unknown>;
 
-function isIncludeRef(val: unknown): val is { __ha_include: string } {
-  return typeof val === "object" && val !== null && "__ha_include" in val;
+function isIncludeRef(val: unknown): val is string {
+  return typeof val === "string" && val.startsWith(HA_INCLUDE_PREFIX);
 }
-function isSecretRef(val: unknown): val is { __ha_secret: string } {
-  return typeof val === "object" && val !== null && "__ha_secret" in val;
+function isSecretRef(val: unknown): val is string {
+  return typeof val === "string" && val.startsWith(HA_SECRET_PREFIX);
 }
 function isIncludeDirRef(val: unknown): boolean {
   return (
-    typeof val === "object" &&
-    val !== null &&
-    ("__ha_include_dir" in val || "__ha_include_dir_list" in val || "__ha_include_dir_named" in val)
+    typeof val === "string" &&
+    (val.startsWith(HA_INCLUDE_DIR_PREFIX) ||
+      val.startsWith(HA_INCLUDE_DIR_LIST_PREFIX) ||
+      val.startsWith(HA_INCLUDE_DIR_NAMED_PREFIX))
   );
 }
 
 function renderRef(val: unknown): string {
-  if (isIncludeRef(val)) return `*(includes: ${val.__ha_include})*`;
-  if (isSecretRef(val)) return `*(secret: ${val.__ha_secret})*`;
+  if (isIncludeRef(val)) return `*(includes: ${val.substring(HA_INCLUDE_PREFIX.length)})*`;
+  if (isSecretRef(val)) return `*(secret: ${val.substring(HA_SECRET_PREFIX.length)})*`;
   if (isIncludeDirRef(val)) return `*(includes directory)*`;
   return String(val);
 }
@@ -170,8 +156,9 @@ export const haYamlConverter: Converter = {
     let doc: HADoc;
 
     try {
-      const parsed = yaml.load(content, { schema: HA_SCHEMA });
-      doc = (typeof parsed === "object" && parsed !== null ? parsed : {}) as HADoc;
+      const preprocessed = preprocessHAYaml(content);
+      const parsed = parseYaml(preprocessed);
+      doc = (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed) ? parsed : {}) as HADoc;
     } catch {
       doc = {};
     }
@@ -235,15 +222,19 @@ export const haYamlConverter: Converter = {
     const includeRefs: string[] = [];
     function collectIncludes(obj: unknown, depth = 0): void {
       if (depth > 5) return;
+      if (typeof obj === "string") {
+        if (obj.startsWith(HA_INCLUDE_PREFIX)) {
+          includeRefs.push(obj.substring(HA_INCLUDE_PREFIX.length));
+        } else if (
+          obj.startsWith(HA_INCLUDE_DIR_PREFIX) ||
+          obj.startsWith(HA_INCLUDE_DIR_LIST_PREFIX) ||
+          obj.startsWith(HA_INCLUDE_DIR_NAMED_PREFIX)
+        ) {
+          includeRefs.push("*(directory)*");
+        }
+        return;
+      }
       if (typeof obj !== "object" || obj === null) return;
-      if (isIncludeRef(obj)) {
-        includeRefs.push(obj.__ha_include);
-        return;
-      }
-      if (isIncludeDirRef(obj)) {
-        includeRefs.push("*(directory)*");
-        return;
-      }
       if (Array.isArray(obj)) {
         obj.forEach((v) => collectIncludes(v, depth + 1));
         return;
