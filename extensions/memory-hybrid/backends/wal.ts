@@ -43,6 +43,7 @@ export function isWalEntry(obj: unknown): obj is WALEntry {
 export class WriteAheadLog {
   private walPath: string;
   private maxAge: number;
+  private fsyncWarnEmitted: boolean = false;
 
   constructor(walPath: string, maxAge: number = 5 * 60 * 1000) {
     this.walPath = walPath;
@@ -61,7 +62,10 @@ export class WriteAheadLog {
         // read-only file descriptor.  The data has already been written by
         // appendFileSync / writeFileSync; skipping fsync here is safe and the
         // durability guarantee degrades to best-effort on those filesystems.
-        console.warn(`[WAL] fsync skipped (${code}): filesystem may not support fsync – durability is best-effort`);
+        if (!this.fsyncWarnEmitted) {
+          console.warn(`[WAL] fsync skipped (${code}): filesystem may not support fsync – durability is best-effort`);
+          this.fsyncWarnEmitted = true;
+        }
       } else {
         throw err;
       }
