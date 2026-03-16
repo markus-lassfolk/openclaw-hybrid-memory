@@ -383,6 +383,11 @@ export async function runPassiveObserver(
   // intra-batch deduplication so dry-run accurately previews real-run behavior.
   const dryRunVectors: number[][] = [];
 
+  // In-memory dedup pool for non-dry-run mode: when vectorDb.store() fails, the fact is
+  // committed to SQLite but not to LanceDB. This array provides a fallback intra-batch
+  // dedup mechanism so subsequent identical facts within the same batch are still detected.
+  const recentVectors: number[][] = [];
+
   // ---------------------------------------------------------------------------
   // Phase 3: process each session that has new content.
   // ---------------------------------------------------------------------------
@@ -534,12 +539,15 @@ export async function runPassiveObserver(
           // On search failure, proceed without dedup — a few duplicates are acceptable
         }
 
-        // Dry-run intra-batch dedup: check against facts that would be stored in this run.
-        // Since vectorDb.store() is never called during dry-run, vectorDb.search() won't find
-        // facts extracted earlier in the same batch. Compare against dryRunVectors[] to ensure
-        // dry-run output accurately reflects real-run deduplication behavior (Issue #499).
-        if (!isDuplicate && opts.dryRun) {
-          for (const recentVec of dryRunVectors) {
+        // Intra-batch dedup: check against facts stored/attempted in this run.
+        // In dry-run mode, vectorDb.store() is never called, so vectorDb.search() won't find
+        // facts extracted earlier in the same batch. In non-dry-run mode, if vectorDb.store()
+        // fails, the fact is in SQLite but not LanceDB, so vectorDb.search() also won't find it.
+        // Compare against dryRunVectors[] (dry-run) or recentVectors[] (non-dry-run) to ensure
+        // accurate intra-batch deduplication (Issue #499).
+        if (!isDuplicate) {
+          const vectorPool = opts.dryRun ? dryRunVectors : recentVectors;
+          for (const recentVec of vectorPool) {
             let dotProduct = 0;
             for (let i = 0; i < normalizedVec.length; i++) {
               dotProduct += normalizedVec[i] * recentVec[i];
@@ -650,6 +658,10 @@ export async function runPassiveObserver(
             factId: stored.id,
           });
         }
+
+        // Track vector for intra-batch dedup: whether vectorDb.store() succeeded or failed,
+        // add to recentVectors[] so subsequent identical facts in this batch are detected.
+        recentVectors.push(normalizedVec);
 
         result.factsStored++;
       }
