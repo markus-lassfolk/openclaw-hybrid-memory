@@ -108,6 +108,31 @@ export function is403Like(err: unknown): boolean {
 }
 
 /**
+ * 401 Unauthorized / invalid api key detection helper.
+ * A 401 is a permanent operator config issue (wrong API key) that will never be resolved by retrying.
+ * Exported so other modules can treat 401 as a config error and suppress capturePluginError.
+ */
+export function is401Like(err: unknown): boolean {
+  if (err && typeof err === "object") {
+    const status = (err as { status?: unknown }).status;
+    if (status === 401 || status === "401") return true;
+  }
+  if (err instanceof Error) {
+    return /^\b401\b/.test(err.message.trim())
+      || /\bHTTP\s+401\b|\bError\s+code:\s*401\b|\b401\s+[A-Za-z]/i.test(err.message)
+      || /\bunauthorized\b|\binvalid\s+api\s+key\b|\bincorrect\s+api\s+key\b|\bauthentication\s+failed\b/i.test(err.message);
+  }
+  return false;
+}
+
+/** Returns true when the error is a 401 (auth failure) — either directly or wrapped in LLMRetryError. */
+export function is401OrWrapped(err: Error): boolean {
+  if (is401Like(err)) return true;
+  if (err instanceof LLMRetryError && is401Like(err.cause)) return true;
+  return false;
+}
+
+/**
  * 429 Too Many Requests / rate-limit detection helper.
  * Checks the HTTP status code property first (reliable), then falls back to
  * message pattern matching. Rate limits are transient — suppress GlitchTip reporting.
@@ -300,7 +325,8 @@ export async function chatComplete(opts: {
       isOllamaOOM(err);  // #387: Ollama OOM — model too large for available RAM, not a bug
     const isConfigError = err instanceof UnconfiguredProviderError ||
       is404Like(err) ||  // #303: model not found = wrong model name in config, not a bug
-      is403Like(err);    // #394: country/region restriction = operator config issue, not a bug
+      is403Like(err) ||  // #394: country/region restriction = operator config issue, not a bug
+      is401Like(err);    // #475: invalid API key = operator config issue, not a bug
     if (!isTransient && !isConfigError) {
       capturePluginError(error, {
         subsystem: "chat",
@@ -360,7 +386,7 @@ export async function withLLMRetry<T>(
         throw lastError;
       }
       // Don't retry 401 — wrong key won't be fixed by retrying
-      if (/\b401\b|unauthorized/i.test(lastError.message)) {
+      if (is401Like(lastError)) {
         throw lastError;
       }
       // Don't retry 403 — access forbidden (country/region restriction, IP block, billing) won't be fixed by retrying (#394)
@@ -519,6 +545,7 @@ export async function chatCompleteWithRetry(opts: {
       const isTimeout = /timed out|llm request timeout|request was aborted|Request was aborted|ETIMEDOUT|ECONNREFUSED/i.test(lastError.message);  // #339: include our own "LLM request timeout" pattern
       const is404 = is404Like(lastError);
       const is403 = is403Like(lastError);
+      const is401 = is401Like(lastError);
       const is500 = is500Like(lastError);  // #302
       if (isUnconfigured) unconfiguredCount++;
       if (i < modelsToTry.length - 1 && !signal?.aborted) {
@@ -527,6 +554,7 @@ export async function chatCompleteWithRetry(opts: {
             : isTimeout ? "timed out"
             : is404 ? "model not found (404)"
             : is403 ? "access denied (403)"
+            : is401 ? "unauthorized (401)"
             : is500 ? "server error (500)"  // #302
             : "failed after retries";
           console.warn(
@@ -541,6 +569,7 @@ export async function chatCompleteWithRetry(opts: {
   const finalIs500 = is500Like(finalError);
   const finalIs404 = is404Like(finalError);
   const finalIs403 = is403Like(finalError);  // #394: country/region restriction = operator config issue
+  const finalIs401 = is401OrWrapped(finalError);  // #475: invalid API key = operator config issue
   const finalIsOOM = isOllamaOOM(finalError);  // #387: OOM is expected when model too large for RAM
   const finalIs429 = is429OrWrapped(finalError);  // #397
   const finalIsTimeout = /timed out|llm request timeout|request was aborted|Request was aborted|ETIMEDOUT|ECONNREFUSED/i.test(finalError.message);
@@ -567,7 +596,7 @@ export async function chatCompleteWithRetry(opts: {
     // earlier model failed for a different reason (e.g. rate limit), so unconfiguredCount < total.
     const finalIsUnconfigured = finalError instanceof UnconfiguredProviderError ||
       (finalError instanceof LLMRetryError && finalError.cause instanceof UnconfiguredProviderError);
-    if (!finalIs500 && !finalIsOOM && !finalIsUnconfigured && !finalIsTimeout && !finalIs403 && !finalIs429) {
+    if (!finalIs500 && !finalIsOOM && !finalIsUnconfigured && !finalIsTimeout && !finalIs403 && !finalIs401 && !finalIs429) {
       capturePluginError(finalError, {
         subsystem: "chat",
         operation: "chatCompleteWithRetry",
@@ -595,6 +624,12 @@ export async function chatCompleteWithRetry(opts: {
     pendingWarnings?.add(
       `⚠️ Memory plugin: LLM access denied (403) — your API key may be restricted by country/region, ` +
       `IP block, or billing. Check provider settings. ` +
+      `Run: openclaw hybrid-mem verify --test-llm`
+    );
+  } else if (finalIs401) {
+    // #475: invalid API key = operator config issue, not a bug — skip GlitchTip
+    pendingWarnings?.add(
+      `⚠️ Memory plugin: LLM unauthorized (401) — your API key is invalid or expired. Check provider settings. ` +
       `Run: openclaw hybrid-mem verify --test-llm`
     );
   } else if (finalIsTimeout) {

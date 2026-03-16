@@ -356,7 +356,14 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
   if (configDimensions !== undefined) {
     resolvedDimensions = configDimensions;
   } else if (embeddingProvider === "openai") {
-    resolvedDimensions = vectorDimsForModel(model); // throws for unknown openai models
+    if (!EMBEDDING_DIMENSIONS[model]) {
+      throw new Error(
+        `memory-hybrid: embedding model '${model}' is not in the known-models list. ` +
+        `Set embedding.dimensions explicitly to the vector size your model produces. ` +
+        `Known models: ${Object.keys(EMBEDDING_DIMENSIONS).join(", ")}.`
+      );
+    }
+    resolvedDimensions = vectorDimsForModel(model);
   } else if (embeddingProvider === "google") {
     // Google text-embedding-005 default is 768d; set embedding.dimensions to override (#385).
     // WARNING: If you previously used text-embedding-004, changing the model to text-embedding-005

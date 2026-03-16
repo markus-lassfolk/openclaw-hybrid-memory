@@ -11,7 +11,7 @@ import { dirname, join, resolve } from "node:path";
 import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { capturePluginError } from "./error-reporter.js";
-import { withLLMRetry, is404Like, is403Like, is429OrWrapped, LLMRetryError } from "./chat.js";
+import { withLLMRetry, is404Like, is403Like, is401OrWrapped, is429OrWrapped, LLMRetryError } from "./chat.js";
 
 /**
  * Thrown by ChainEmbeddingProvider when every provider in the chain has failed.
@@ -599,32 +599,6 @@ function is404OrWrapped(err: Error): boolean {
 function is403OrWrapped(err: Error): boolean {
   if (is403Like(err)) return true;
   if (err instanceof LLMRetryError && is403Like(err.cause)) return true;
-  return false;
-}
-
-/** Helper: check if an error is a 401 auth failure.
- * Uses the same regex as withLLMRetry (/\b401\b|unauthorized/i) to ensure consistency. */
-function is401Like(err: unknown): boolean {
-  if (err && typeof err === "object") {
-    const status = (err as { status?: unknown }).status;
-    if (status === 401 || status === "401") return true;
-  }
-  if (err instanceof Error) {
-    // Match the same pattern as withLLMRetry: bare "401" as word boundary OR "unauthorized"
-    if (/\b401\b|unauthorized/i.test(err.message)) return true;
-    // Also match specific auth failure phrases for robustness
-    if (/incorrect api key|invalid api key|authentication failed/i.test(err.message)) return true;
-  }
-  return false;
-}
-
-/** Returns true when the error is a 401 (auth failure) — either directly or wrapped in LLMRetryError.
- * Handles both direct status and message-only auth errors (e.g. Ollama plain Error with "HTTP 401 Unauthorized").
- * Note: withLLMRetry short-circuits on 401 and rethrows directly, so 401s rarely arrive wrapped,
- * but we handle both forms for robustness (consistent with is404OrWrapped and is403OrWrapped). */
-function is401OrWrapped(err: Error): boolean {
-  if (is401Like(err)) return true;
-  if (err instanceof LLMRetryError && is401Like(err.cause)) return true;
   return false;
 }
 
