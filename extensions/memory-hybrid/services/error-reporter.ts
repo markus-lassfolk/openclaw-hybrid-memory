@@ -566,13 +566,21 @@ export async function initErrorReporter(
 
   const releaseStr = `openclaw-hybrid-memory@${pluginVersion}`;
 
-  reporter = new GlitchTipReporter(
-    resolvedDsn,
-    releaseStr,
-    config.environment || "production",
-    config.sampleRate ?? 1.0,
-    config.resolvedIssues,
-  );
+  try {
+    reporter = new GlitchTipReporter(
+      resolvedDsn,
+      releaseStr,
+      config.environment || "production",
+      config.sampleRate ?? 1.0,
+      config.resolvedIssues,
+    );
+  } catch (err) {
+    logger.warn?.(
+      "[ErrorReporter] Invalid DSN format, error reporting disabled:",
+      err instanceof Error ? err.message : String(err),
+    );
+    return;
+  }
 
   // Bot identity: config first, then OpenClaw context (e.g. api.context?.agentId).
   // When neither is configured, bot_id is omitted entirely — no hostname fallback to prevent leaks.
