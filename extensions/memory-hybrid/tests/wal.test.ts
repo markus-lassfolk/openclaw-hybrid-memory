@@ -441,7 +441,9 @@ describe("WriteAheadLog", () => {
 
     it("does not throw when fsync fails with EPERM (e.g. WSL2/NTFS)", () => {
       const epermError = Object.assign(new Error("operation not permitted"), { code: "EPERM" });
-      vi.mocked(nodeFs.fsyncSync).mockImplementationOnce(() => { throw epermError; });
+      vi.mocked(nodeFs.fsyncSync).mockImplementationOnce(() => {
+        throw epermError;
+      });
       const entry = {
         id: randomUUID(),
         timestamp: Date.now(),
@@ -455,7 +457,9 @@ describe("WriteAheadLog", () => {
 
     it("does not throw when fsync fails with EINVAL", () => {
       const einvalError = Object.assign(new Error("invalid argument"), { code: "EINVAL" });
-      vi.mocked(nodeFs.fsyncSync).mockImplementationOnce(() => { throw einvalError; });
+      vi.mocked(nodeFs.fsyncSync).mockImplementationOnce(() => {
+        throw einvalError;
+      });
       const entry = {
         id: randomUUID(),
         timestamp: Date.now(),
@@ -467,7 +471,9 @@ describe("WriteAheadLog", () => {
 
     it("re-throws unexpected fsync errors", () => {
       const unexpectedError = Object.assign(new Error("no space left on device"), { code: "ENOSPC" });
-      vi.mocked(nodeFs.fsyncSync).mockImplementationOnce(() => { throw unexpectedError; });
+      vi.mocked(nodeFs.fsyncSync).mockImplementationOnce(() => {
+        throw unexpectedError;
+      });
       const entry = {
         id: randomUUID(),
         timestamp: Date.now(),
