@@ -4,7 +4,7 @@ import eslintConfigPrettier from 'eslint-config-prettier'
 
 export default tseslint.config(
   {
-    ignores: ['node_modules/**', 'dist/**', 'scripts/**', 'setup/**', 'tools/**', 'lifecycle/**'],
+    ignores: ['node_modules/**', 'dist/**', 'scripts/**'],
   },
   eslint.configs.recommended,
   ...tseslint.configs.recommended,
