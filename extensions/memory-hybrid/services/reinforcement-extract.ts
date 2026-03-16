@@ -194,9 +194,10 @@ export async function runReinforcementExtract(opts: RunReinforcementExtractOpts)
     try {
       const handle = await open(filePath, "r");
       let rawBuf: Buffer;
+      let fileBytelen: number;
       try {
         const stats = await handle.stat();
-        const fileBytelen = stats.size;
+        fileBytelen = stats.size;
         const length = Math.min(fileBytelen, MAX_JSONL_BYTES_PER_RUN);
         if (length <= 0) {
           continue;
@@ -212,7 +213,7 @@ export async function runReinforcementExtract(opts: RunReinforcementExtractOpts)
       // When we hit the byte cap the last read may end mid-line; trim to the
       // last complete newline so we never parse a partial JSONL record.
       // When reading the full file (no cap hit) there is no partial line risk.
-      if (rawBuf.length >= MAX_JSONL_BYTES_PER_RUN) {
+      if (rawBuf.length >= MAX_JSONL_BYTES_PER_RUN && rawBuf.length < fileBytelen) {
         const lastNewlineIdx = rawBuf.lastIndexOf(0x0a);
         if (lastNewlineIdx !== -1) {
           rawBuf = rawBuf.subarray(0, lastNewlineIdx + 1);
