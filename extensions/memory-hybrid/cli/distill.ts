@@ -121,8 +121,8 @@ export function registerDistillCommands(mem: Chainable, ctx: DistillContext): vo
           full?: boolean;
         }) => {
           const sink = { log: (s: string) => console.log(s), warn: (s: string) => console.warn(s) };
-          const maxSessions = Math.max(0, Number.parseInt(opts.maxSessions || "0") || 0);
-          const maxSessionTokens = Math.max(0, Number.parseInt(opts.maxSessionTokens || "0") || 0);
+          const maxSessions = Math.max(0, Number.parseInt(opts.maxSessions || "0", 10) || 0);
+          const maxSessionTokens = Math.max(0, Number.parseInt(opts.maxSessionTokens || "0", 10) || 0);
           const days = opts.days != null ? Number.parseInt(opts.days, 10) : undefined;
           const result = await runDistill(
             {
