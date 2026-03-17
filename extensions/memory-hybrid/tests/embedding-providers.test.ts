@@ -1452,7 +1452,12 @@ describe("#486: safeEmbed suppresses AllEmbeddingProvidersFailed with 429/circui
 
   it("does NOT report when AllEmbeddingProvidersFailed cause is circuit-breaker-open", async () => {
     const cbErr = new Error("Ollama circuit breaker open — retrying in 30s");
-    const p1 = { embed: vi.fn().mockRejectedValue(cbErr), embedBatch: vi.fn(), dimensions: 768, modelName: "ollama" };
+    const p1 = {
+      embed: vi.fn().mockRejectedValue(cbErr),
+      embedBatch: vi.fn(),
+      dimensions: 768,
+      modelName: "ollama",
+    };
     const chain = new ChainEmbeddingProvider(
       [p1] as unknown as import("../services/embeddings.js").EmbeddingProvider[],
       ["ollama"],
