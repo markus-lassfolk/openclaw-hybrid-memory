@@ -118,6 +118,7 @@ async function discoverCategoriesFromOther(
 
   const existingCategories = new Set(getMemoryCategories());
   const labelToIds = new Map<string, string[]>();
+  let anyBatchSucceeded = false;
 
   for (let i = 0; i < others.length; i += DISCOVERY_BATCH_SIZE) {
     const batch = others.slice(i, i + DISCOVERY_BATCH_SIZE);
@@ -140,6 +141,7 @@ async function discoverCategoriesFromOther(
       const jsonMatch = content.match(/\[[\s\S]*\]/);
       if (!jsonMatch) continue;
       const labels: unknown[] = JSON.parse(jsonMatch[0]);
+      anyBatchSucceeded = true;
       for (let j = 0; j < Math.min(labels.length, batch.length); j++) {
         const raw = typeof labels[j] === "string" ? (labels[j] as string) : "";
         const label = normalizeSuggestedLabel(raw);
@@ -174,9 +176,10 @@ async function discoverCategoriesFromOther(
     for (const id of ids) factsDb.updateCategory(id, label);
   }
 
-  // Write last-run timestamp after a successful discovery run (even if no new categories were created).
+  // Write last-run timestamp only if at least one batch succeeded (even if no new categories were created).
   // This prevents the LLM from firing again on the next cron tick when categories are settled.
-  if (intervalHours > 0) {
+  // If all batches failed, don't write the timestamp so discovery is retried on the next run.
+  if (intervalHours > 0 && anyBatchSucceeded) {
     const lastRunPath = getLastDiscoveryPath(discoveredCategoriesPath);
     await writeLastDiscoveryTimestamp(lastRunPath, Date.now());
   }
