@@ -635,6 +635,39 @@ describe("MiniMax provider routing — gateway key auto-merge", () => {
     expect(heavyList).not.toContain("openai/gpt-image-1");
   });
 
+  it("uses original provider name (pre-normalization) for gwProviders model lookup (mergedProviderOriginalNames)", () => {
+    // Gateway has provider "MiniMax" (mixed case). The plugin normalizes to lowercase "minimax" for
+    // cfg.llm.providers, but must still look up gwProviders["MiniMax"] (original casing) to read
+    // the models[] list. mergedProviderOriginalNames maps "minimax" → "MiniMax" for this purpose.
+    const cfg = getTestConfig(tmpDir);
+    cfg.llm = {
+      default: ["openai/gpt-4.1-mini"],
+      heavy: ["openai/gpt-4o"],
+    } as typeof cfg.llm;
+    const api = makeMockApi({
+      resolvePath: (p: string) => (p.startsWith("/") ? p : join(tmpDir, p)),
+      config: {
+        models: {
+          providers: {
+            // Mixed-case key as a gateway might supply it
+            MiniMax: { apiKey: "sk-cp-mixedcase-name-test", models: ["MiniMax-M2.5"] },
+          },
+        },
+      },
+    });
+
+    ctx = initializeDatabases(cfg, api as never);
+
+    const defaultList = Array.isArray(cfg.llm?.default) ? cfg.llm.default : [];
+    const heavyList = Array.isArray(cfg.llm?.heavy) ? cfg.llm.heavy : [];
+    // The models[] from gwProviders["MiniMax"] must be picked up despite the key case mismatch
+    expect(defaultList).toContain("minimax/MiniMax-M2.5");
+    expect(heavyList).toContain("minimax/MiniMax-M2.5");
+    // The hardcoded fallback should NOT be used since the model list was found
+    expect(defaultList).not.toContain("minimax/MiniMax-Text-01");
+    expect(heavyList).not.toContain("minimax/MiniMax-Text-01");
+  });
+
   it("hasModelFrom recognises bare MiniMax-* names (case-insensitive) so minimax is not double-appended", () => {
     // If the user already has a bare MiniMax-M2.5 in their tier list (which normalizeModelId
     // converts to minimax/MiniMax-M2.5 when routing), hasModelFrom should detect the minimax
