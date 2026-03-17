@@ -9,14 +9,14 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 describe("reinforcement-extract", () => {
-  it("should detect explicit praise", () => {
+  it("should detect explicit praise", async () => {
     const tmpDir = mkdtempSync(join(tmpdir(), "test-"));
     const sessionFile = join(tmpDir, "2026-02-19-test.jsonl");
     const jsonl = `{"type":"message","message":{"role":"assistant","content":[{"type":"text","text":"I checked the logs and found the error. Here's the fix."}]}}
 {"type":"message","message":{"role":"user","content":[{"type":"text","text":"Perfect! That's exactly what I needed"}]}}`;
     writeFileSync(sessionFile, jsonl, "utf-8");
 
-    const result = runReinforcementExtract({
+    const result = await runReinforcementExtract({
       filePaths: [sessionFile],
       reinforcementRegex:
         /\b(perfect|great|excellent|amazing|brilliant|spot on|nailed it|love it|much better|huge improvement|exactly|yes.*like that|keep.*this|finally|now you get it)\b/i,
@@ -31,7 +31,7 @@ describe("reinforcement-extract", () => {
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it("should extract recalled memory IDs", () => {
+  it("should extract recalled memory IDs", async () => {
     const tmpDir = mkdtempSync(join(tmpdir(), "test-"));
     const sessionFile = join(tmpDir, "2026-02-19-test.jsonl");
     const memoryId = "12345678-1234-1234-1234-123456789abc";
@@ -39,7 +39,7 @@ describe("reinforcement-extract", () => {
 {"type":"message","message":{"role":"user","content":[{"type":"text","text":"Brilliant! Exactly what I asked for"}]}}`;
     writeFileSync(sessionFile, jsonl, "utf-8");
 
-    const result = runReinforcementExtract({
+    const result = await runReinforcementExtract({
       filePaths: [sessionFile],
       reinforcementRegex:
         /\b(perfect|great|excellent|amazing|brilliant|spot on|nailed it|love it|much better|huge improvement|exactly|yes.*like that|keep.*this|finally|now you get it)\b/i,
@@ -53,14 +53,14 @@ describe("reinforcement-extract", () => {
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it("should extract tool call sequence (Phase 2)", () => {
+  it("should extract tool call sequence (Phase 2)", async () => {
     const tmpDir = mkdtempSync(join(tmpdir(), "test-"));
     const sessionFile = join(tmpDir, "2026-02-19-test.jsonl");
     const jsonl = `{"type":"message","message":{"role":"assistant","content":[{"type":"tool_use","name":"memory_recall","id":"tool1"},{"type":"tool_use","name":"exec","id":"tool2"},{"type":"tool_use","name":"write","id":"tool3"},{"type":"text","text":"Done! Fixed the config."}]}}
 {"type":"message","message":{"role":"user","content":[{"type":"text","text":"Spot on! Love this workflow"}]}}`;
     writeFileSync(sessionFile, jsonl, "utf-8");
 
-    const result = runReinforcementExtract({
+    const result = await runReinforcementExtract({
       filePaths: [sessionFile],
       reinforcementRegex:
         /\b(perfect|great|excellent|amazing|brilliant|spot on|nailed it|love it|much better|huge improvement|exactly|yes.*like that|keep.*this|finally|now you get it)\b/i,
@@ -74,14 +74,14 @@ describe("reinforcement-extract", () => {
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it("should filter out generic politeness", () => {
+  it("should filter out generic politeness", async () => {
     const tmpDir = mkdtempSync(join(tmpdir(), "test-"));
     const sessionFile = join(tmpDir, "2026-02-19-test.jsonl");
     const jsonl = `{"type":"message","message":{"role":"assistant","content":[{"type":"text","text":"Here's the info"}]}}
 {"type":"message","message":{"role":"user","content":[{"type":"text","text":"Thanks"}]}}`;
     writeFileSync(sessionFile, jsonl, "utf-8");
 
-    const result = runReinforcementExtract({
+    const result = await runReinforcementExtract({
       filePaths: [sessionFile],
       reinforcementRegex:
         /\b(perfect|great|excellent|amazing|brilliant|spot on|nailed it|love it|much better|huge improvement|exactly|yes.*like that|keep.*this|finally|now you get it|thanks?|thank you)\b/i,
@@ -94,14 +94,14 @@ describe("reinforcement-extract", () => {
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it("should detect method confirmation", () => {
+  it("should detect method confirmation", async () => {
     const tmpDir = mkdtempSync(join(tmpdir(), "test-"));
     const sessionFile = join(tmpDir, "2026-02-19-test.jsonl");
     const jsonl = `{"type":"message","message":{"role":"assistant","content":[{"type":"text","text":"I formatted the output as JSON"}]}}
 {"type":"message","message":{"role":"user","content":[{"type":"text","text":"Yes, like that! Keep this format"}]}}`;
     writeFileSync(sessionFile, jsonl, "utf-8");
 
-    const result = runReinforcementExtract({
+    const result = await runReinforcementExtract({
       filePaths: [sessionFile],
       reinforcementRegex:
         /\b(perfect|great|excellent|amazing|brilliant|spot on|nailed it|love it|much better|huge improvement|exactly|yes.*like that|keep.*this|finally|now you get it)\b/i,
@@ -115,14 +115,14 @@ describe("reinforcement-extract", () => {
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it("should detect relief/finally", () => {
+  it("should detect relief/finally", async () => {
     const tmpDir = mkdtempSync(join(tmpdir(), "test-"));
     const sessionFile = join(tmpDir, "2026-02-19-test.jsonl");
     const jsonl = `{"type":"message","message":{"role":"assistant","content":[{"type":"text","text":"I've implemented the fix you wanted"}]}}
 {"type":"message","message":{"role":"user","content":[{"type":"text","text":"Finally! Now you get it"}]}}`;
     writeFileSync(sessionFile, jsonl, "utf-8");
 
-    const result = runReinforcementExtract({
+    const result = await runReinforcementExtract({
       filePaths: [sessionFile],
       reinforcementRegex:
         /\b(perfect|great|excellent|amazing|brilliant|spot on|nailed it|love it|much better|huge improvement|exactly|yes.*like that|keep.*this|finally|now you get it)\b/i,
@@ -136,7 +136,7 @@ describe("reinforcement-extract", () => {
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it("should skip heartbeat and cron messages", () => {
+  it("should skip heartbeat and cron messages", async () => {
     const tmpDir = mkdtempSync(join(tmpdir(), "test-"));
     const sessionFile = join(tmpDir, "2026-02-19-test.jsonl");
     const jsonl = `{"type":"message","message":{"role":"assistant","content":[{"type":"text","text":"HEARTBEAT_OK"}]}}
@@ -145,7 +145,7 @@ describe("reinforcement-extract", () => {
 {"type":"message","message":{"role":"user","content":[{"type":"text","text":"perfect"}]}}`;
     writeFileSync(sessionFile, jsonl, "utf-8");
 
-    const result = runReinforcementExtract({
+    const result = await runReinforcementExtract({
       filePaths: [sessionFile],
       reinforcementRegex:
         /\b(perfect|great|excellent|amazing|brilliant|spot on|nailed it|love it|much better|huge improvement|exactly|yes.*like that|keep.*this|finally|now you get it)\b/i,
@@ -156,7 +156,7 @@ describe("reinforcement-extract", () => {
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it("should boost confidence for substantial agent response", () => {
+  it("should boost confidence for substantial agent response", async () => {
     const tmpDir = mkdtempSync(join(tmpdir(), "test-"));
     const sessionFile = join(tmpDir, "2026-02-19-test.jsonl");
     const longResponse = "Here's a detailed analysis of the problem. ".repeat(10);
@@ -164,7 +164,7 @@ describe("reinforcement-extract", () => {
 {"type":"message","message":{"role":"user","content":[{"type":"text","text":"Great work!"}]}}`;
     writeFileSync(sessionFile, jsonl, "utf-8");
 
-    const result = runReinforcementExtract({
+    const result = await runReinforcementExtract({
       filePaths: [sessionFile],
       reinforcementRegex:
         /\b(perfect|great|excellent|amazing|brilliant|spot on|nailed it|love it|much better|huge improvement|exactly|yes.*like that|keep.*this|finally|now you get it)\b/i,
@@ -177,7 +177,7 @@ describe("reinforcement-extract", () => {
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it("should collect tool calls from multiple assistant messages in multi-turn conversations", () => {
+  it("should collect tool calls from multiple assistant messages in multi-turn conversations", async () => {
     const tmpDir = mkdtempSync(join(tmpdir(), "test-"));
     const sessionFile = join(tmpDir, "2026-02-19-multiturn.jsonl");
     const jsonl = `{"type":"message","message":{"role":"user","content":[{"type":"text","text":"Fix the config"}]}}
@@ -187,7 +187,7 @@ describe("reinforcement-extract", () => {
 {"type":"message","message":{"role":"user","content":[{"type":"text","text":"Perfect! That workflow was exactly right"}]}}`;
     writeFileSync(sessionFile, jsonl, "utf-8");
 
-    const result = runReinforcementExtract({
+    const result = await runReinforcementExtract({
       filePaths: [sessionFile],
       reinforcementRegex:
         /\b(perfect|great|excellent|amazing|brilliant|spot on|nailed it|love it|much better|huge improvement|exactly|yes.*like that|keep.*this|finally|now you get it)\b/i,
@@ -204,7 +204,7 @@ describe("reinforcement-extract", () => {
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it("captures precedingUserMessage from the message before the agent response (#260)", () => {
+  it("captures precedingUserMessage from the message before the agent response (#260)", async () => {
     const tmpDir = mkdtempSync(join(tmpdir(), "test-"));
     const sessionFile = join(tmpDir, "2026-02-19-preceding.jsonl");
     const jsonl = `{"type":"message","message":{"role":"user","content":[{"type":"text","text":"Can you review this PR and add inline comments?"}]}}
@@ -212,7 +212,7 @@ describe("reinforcement-extract", () => {
 {"type":"message","message":{"role":"user","content":[{"type":"text","text":"Brilliant! Exactly how I like reviews done."}]}}`;
     writeFileSync(sessionFile, jsonl, "utf-8");
 
-    const result = runReinforcementExtract({
+    const result = await runReinforcementExtract({
       filePaths: [sessionFile],
       reinforcementRegex:
         /\b(perfect|great|excellent|amazing|brilliant|spot on|nailed it|love it|much better|huge improvement|exactly|yes.*like that|keep.*this|finally|now you get it)\b/i,
@@ -225,14 +225,14 @@ describe("reinforcement-extract", () => {
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it("precedingUserMessage is empty string when there is no prior user message (#260)", () => {
+  it("precedingUserMessage is empty string when there is no prior user message (#260)", async () => {
     const tmpDir = mkdtempSync(join(tmpdir(), "test-"));
     const sessionFile = join(tmpDir, "2026-02-19-nopreceding.jsonl");
     const jsonl = `{"type":"message","message":{"role":"assistant","content":[{"type":"text","text":"Here is a detailed analysis of the architecture with 10 key points."}]}}
 {"type":"message","message":{"role":"user","content":[{"type":"text","text":"Perfect! That's exactly what I needed."}]}}`;
     writeFileSync(sessionFile, jsonl, "utf-8");
 
-    const result = runReinforcementExtract({
+    const result = await runReinforcementExtract({
       filePaths: [sessionFile],
       reinforcementRegex:
         /\b(perfect|great|excellent|amazing|brilliant|spot on|nailed it|love it|much better|huge improvement|exactly|yes.*like that|keep.*this|finally|now you get it)\b/i,
@@ -245,7 +245,7 @@ describe("reinforcement-extract", () => {
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it("expanded context window: agentBehavior captures up to 1200 chars (#260)", () => {
+  it("expanded context window: agentBehavior captures up to 1200 chars (#260)", async () => {
     const tmpDir = mkdtempSync(join(tmpdir(), "test-"));
     const sessionFile = join(tmpDir, "2026-02-19-longbehavior.jsonl");
     const longBehavior = "A".repeat(1500);
@@ -253,7 +253,7 @@ describe("reinforcement-extract", () => {
 {"type":"message","message":{"role":"user","content":[{"type":"text","text":"Perfect! That was exactly right."}]}}`;
     writeFileSync(sessionFile, jsonl, "utf-8");
 
-    const result = runReinforcementExtract({
+    const result = await runReinforcementExtract({
       filePaths: [sessionFile],
       reinforcementRegex:
         /\b(perfect|great|excellent|amazing|brilliant|spot on|nailed it|love it|much better|huge improvement|exactly|yes.*like that|keep.*this|finally|now you get it)\b/i,
@@ -263,6 +263,38 @@ describe("reinforcement-extract", () => {
     // Should be truncated near 1200 (truncate() may add "..." suffix, so allow up to 1210)
     expect(result.incidents[0].agentBehavior.length).toBeLessThanOrEqual(1210);
     expect(result.incidents[0].agentBehavior.length).toBeGreaterThan(600);
+
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("should respect 2MB byte cap and not load oversized files fully into memory", async () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), "test-"));
+    const sessionFile = join(tmpDir, "2026-02-19-large.jsonl");
+
+    // Write a file with a praise incident at the start, well within 2MB
+    const lines: string[] = [];
+    lines.push(
+      `{"type":"message","message":{"role":"assistant","content":[{"type":"text","text":"I implemented the fix you requested with careful attention to detail."}]}}`,
+    );
+    lines.push(
+      `{"type":"message","message":{"role":"user","content":[{"type":"text","text":"Perfect! Exactly what I needed."}]}}`,
+    );
+    // Pad with non-praise lines to make file larger but still under 2MB
+    const padding = `{"type":"message","message":{"role":"assistant","content":[{"type":"text","text":"Acknowledged."}]}}`;
+    for (let i = 0; i < 500; i++) {
+      lines.push(padding);
+    }
+    writeFileSync(sessionFile, lines.join("\n"), "utf-8");
+
+    const result = await runReinforcementExtract({
+      filePaths: [sessionFile],
+      reinforcementRegex:
+        /\b(perfect|great|excellent|amazing|brilliant|spot on|nailed it|love it|much better|huge improvement|exactly|yes.*like that|keep.*this|finally|now you get it)\b/i,
+    });
+
+    // Should still detect the praise incident near the top of the file
+    expect(result.incidents.length).toBeGreaterThan(0);
+    expect(result.sessionsScanned).toBe(1);
 
     rmSync(tmpDir, { recursive: true, force: true });
   });
