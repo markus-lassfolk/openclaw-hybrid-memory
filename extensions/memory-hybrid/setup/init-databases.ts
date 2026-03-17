@@ -52,6 +52,26 @@ import { isNanoModel, isHeavyModel, isLightModel } from "../utils/model-tier.js"
  */
 const ROUTABLE_BUILTIN_PROVIDERS = new Set(["google", "openai", "anthropic", "ollama", "openrouter", "minimax"]);
 
+/**
+ * Extract gateway configuration from environment and plugin config.
+ * Centralized to avoid duplicating this logic across buildMultiProviderOpenAI and initializeDatabases.
+ */
+function extractGatewayConfig(cfg: HybridMemoryConfig): {
+  gatewayPortRaw: string | undefined;
+  gatewayPort: number | undefined;
+  gatewayAuthResolved: string | undefined;
+  gatewayToken: string | undefined;
+  gatewayBaseUrl: string | undefined;
+} {
+  const gatewayPortRaw = process.env.OPENCLAW_GATEWAY_PORT;
+  const gatewayPort = gatewayPortRaw ? Number.parseInt(gatewayPortRaw, 10) : undefined;
+  const gatewayAuthResolved = (cfg.gateway?.auth as ResolvedGatewayAuthConfig | undefined)?._resolvedToken;
+  const gatewayToken = gatewayAuthResolved ?? process.env.OPENCLAW_GATEWAY_TOKEN;
+  const gatewayBaseUrl =
+    gatewayPort && gatewayPort >= 1 && gatewayPort <= 65535 ? `http://127.0.0.1:${gatewayPort}/v1` : undefined;
+  return { gatewayPortRaw, gatewayPort, gatewayAuthResolved, gatewayToken, gatewayBaseUrl };
+}
+
 /** Known provider OpenAI-compatible base URLs. */
 const GOOGLE_GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/";
 /** Default Ollama server base URL (without /v1 path). */
@@ -245,14 +265,9 @@ function buildMultiProviderOpenAI(
     if (!key?.trim()) return undefined;
     return resolveSecretRef(key);
   };
-  const gatewayPortRaw = process.env.OPENCLAW_GATEWAY_PORT;
-  const gatewayPort = gatewayPortRaw ? Number.parseInt(gatewayPortRaw, 10) : undefined;
-  // Resolve gateway auth token: prefer cfg.gateway.auth.token (SecretRef) over env var fallback.
-  // The parser stores the resolved value as non-enumerable _resolvedToken so it never appears in
-  // JSON dumps while remaining accessible here at runtime.
+  const { gatewayPortRaw, gatewayPort, gatewayAuthResolved, gatewayToken, gatewayBaseUrl } = extractGatewayConfig(cfg);
   // Fail closed: if gateway.auth.token is configured but cannot be resolved, throw rather than
   // silently falling back to OPENCLAW_GATEWAY_TOKEN — a stale env token would mask rollout mistakes.
-  const gatewayAuthResolved = (cfg.gateway?.auth as ResolvedGatewayAuthConfig | undefined)?._resolvedToken;
   if (cfg.gateway?.auth?.token && !gatewayAuthResolved) {
     throw new Error(
       `memory-hybrid: gateway.auth.token is configured (SecretRef "${cfg.gateway.auth.token}") but could not be resolved. ` +
@@ -260,9 +275,6 @@ function buildMultiProviderOpenAI(
         `Not falling back to OPENCLAW_GATEWAY_TOKEN to prevent silent auth misconfiguration.`,
     );
   }
-  const gatewayToken = gatewayAuthResolved ?? process.env.OPENCLAW_GATEWAY_TOKEN;
-  const gatewayBaseUrl =
-    gatewayPort && gatewayPort >= 1 && gatewayPort <= 65535 ? `http://127.0.0.1:${gatewayPort}/v1` : undefined;
   if (gatewayPortRaw && (!gatewayPort || gatewayPort < 1 || gatewayPort > 65535)) {
     api.logger.warn?.(
       `memory-hybrid: OPENCLAW_GATEWAY_PORT must be 1-65535 (got '${gatewayPortRaw}'); falling back to direct OpenAI.`,
@@ -794,8 +806,9 @@ export function initializeDatabases(cfg: HybridMemoryConfig, api: ClawdbotPlugin
     "anthropic/claude-3-5-haiku",
   ];
   if (
-    !cfg.llm ||
-    (cfg.llm.default.length === 0 && (cfg.llm.heavy ?? []).length === 0 && (cfg.llm.nano ?? []).length === 0)
+    (cfg.llm?.default ?? []).length === 0 &&
+    (cfg.llm?.heavy ?? []).length === 0 &&
+    (cfg.llm?.nano ?? []).length === 0
   ) {
     const agentModel = (api.config as Record<string, unknown>)?.agents as Record<string, unknown> | undefined;
     const agentDefaults = agentModel?.defaults as Record<string, unknown> | undefined;
@@ -806,10 +819,21 @@ export function initializeDatabases(cfg: HybridMemoryConfig, api: ClawdbotPlugin
       : [];
     // Models from agents.defaults.model with an unknown provider prefix (e.g. "Local/S", "custom/X")
     // would throw UnconfiguredProviderError when used, so filter them out here (issue #487).
-    const pluginProviders = (cfg.llm?.providers ?? {}) as Record<string, unknown>;
+    // Normalize provider keys to lowercase to match the lowercased prefix check at line 831 (issue #487 fix).
+    const pluginProviders = Object.fromEntries(
+      Object.entries((cfg.llm?.providers ?? {}) as Record<string, unknown>).map(([k, v]) => [k.toLowerCase(), v]),
+    );
+    // Extract gateway config for OAuth routing check (matches buildMultiProviderOpenAI logic)
+    const { gatewayBaseUrl, gatewayToken } = extractGatewayConfig(cfg);
+    // Normalize auth.order keys to lowercase so lookups match the lowercased prefix.
+    const authOrder = cfg.auth?.order
+      ? Object.fromEntries(Object.entries(cfg.auth.order).map(([k, v]) => [k.toLowerCase(), v]))
+      : undefined;
     const canRoute = (m: string): boolean => {
       if (!m.includes("/")) return true; // bare name — normalizeModelId() may rewrite to a prefixed form (e.g. gemini-*, claude-*, MiniMax-*)
       const prefix = m.trim().split("/")[0].toLowerCase();
+      // Check OAuth routing first (matches resolveClient logic at line 378)
+      if (hasOAuthProfiles(authOrder?.[prefix], prefix) && gatewayBaseUrl && gatewayToken) return true;
       if (ROUTABLE_BUILTIN_PROVIDERS.has(prefix) || Object.hasOwn(pluginProviders, prefix)) return true;
       // Read-only env var check: safe even with user-supplied prefix since we only read env vars.
       // Mirrors resolveClient()'s <PREFIX>_API_KEY fallback (see resolveClient in setup/resolve-client.ts).
@@ -828,6 +852,13 @@ export function initializeDatabases(cfg: HybridMemoryConfig, api: ClawdbotPlugin
         );
         return false;
       });
+
+    if (gatewayModels.length === 0 && [primary, ...fallbacks].some(Boolean)) {
+      api.logger.warn?.(
+        `memory-hybrid: all models from agents.defaults.model were filtered out (unknown provider prefixes). ` +
+          `No LLM tiers auto-configured. Set llm.default explicitly or add provider entries to llm.providers.`,
+      );
+    }
 
     if (gatewayModels.length > 0) {
       // Deduplicate while preserving order
@@ -882,7 +913,7 @@ export function initializeDatabases(cfg: HybridMemoryConfig, api: ClawdbotPlugin
         _source: "gateway",
       };
       api.logger.info?.(
-        `memory-hybrid: llm model tiers auto-derived from agents.defaults.model (default: ${cfg.llm.default.slice(0, 3).join(", ")}${cfg.llm.default.length > 3 ? "…" : ""}${nanoList.length > 0 ? `; nano: ${(cfg.llm.nano ?? []).slice(0, 2).join(", ")}` : ""})`,
+        `memory-hybrid: llm model tiers auto-derived from agents.defaults.model (default: ${(cfg.llm.default ?? []).slice(0, 3).join(", ")}${(cfg.llm.default ?? []).length > 3 ? "…" : ""}${nanoList.length > 0 ? `; nano: ${(cfg.llm.nano ?? []).slice(0, 2).join(", ")}` : ""})`,
       );
     }
   }
