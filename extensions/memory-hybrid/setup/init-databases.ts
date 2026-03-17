@@ -45,6 +45,13 @@ import { VerificationStore } from "../services/verification-store.js";
 import { CostTracker } from "../backends/cost-tracker.js";
 import { isNanoModel, isHeavyModel, isLightModel } from "../utils/model-tier.js";
 
+/**
+ * Provider prefixes that resolveClient() handles natively without explicit llm.providers config.
+ * Keep in sync with the built-in provider cases in resolveClient() (setup/resolve-client.ts).
+ * If resolveClient adds a new built-in provider, add it here too.
+ */
+const ROUTABLE_BUILTIN_PROVIDERS = new Set(["google", "openai", "anthropic", "ollama", "openrouter", "minimax"]);
+
 /** Known provider OpenAI-compatible base URLs. */
 const GOOGLE_GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/";
 /** Default Ollama server base URL (without /v1 path). */
@@ -727,6 +734,55 @@ export function initializeDatabases(cfg: HybridMemoryConfig, api: ClawdbotPlugin
     resolveEmbeddingRegistryModels(cfg.embedding),
   );
 
+  // Merge gateway provider keys into plugin llm.providers BEFORE auto-derivation so canRoute
+  // can see all available providers (issue #487 fix).
+  // Check three paths: models.providers (standard), llm.providers (legacy), providers (top-level).
+  const gwConfig = api.config as Record<string, unknown> | undefined;
+  const gwProviders =
+    (gwConfig?.models as Record<string, unknown> | undefined)?.providers ??
+    (gwConfig?.llm as Record<string, unknown> | undefined)?.providers ??
+    (gwConfig?.providers as Record<string, unknown> | undefined);
+  const mergedProviderNames: string[] = [];
+  const mergedProviderOriginalNames = new Map<string, string>();
+  if (!cfg.llm) (cfg as Record<string, unknown>).llm = { providers: {}, default: [], heavy: [], nano: [] };
+  const plm = cfg.llm as Record<string, unknown>;
+  if (!plm.providers || typeof plm.providers !== "object") plm.providers = {};
+  const prov = plm.providers as Record<string, Record<string, unknown>>;
+
+  if (gwProviders && typeof gwProviders === "object" && !Array.isArray(gwProviders)) {
+    for (const [name, gw] of Object.entries(gwProviders)) {
+      if (!name || !gw || typeof gw !== "object") continue;
+      const rawKey = (gw as Record<string, unknown>).apiKey ?? (gw as Record<string, unknown>).api_key;
+      if (typeof rawKey !== "string" || !rawKey.trim()) continue;
+      // Normalize provider name to lowercase to match canRoute's case-insensitive lookup (issue #487 fix).
+      const normalizedName = name.toLowerCase();
+      // Merge if: (a) no plugin entry exists, or (b) plugin entry has no apiKey — allows gateway key
+      // to fill in when plugin config has a placeholder/empty key for this provider (issue #386).
+      const pluginHasKey =
+        typeof prov[normalizedName]?.apiKey === "string" && (prov[normalizedName].apiKey as string).trim().length > 0;
+      if (!prov[normalizedName] || !pluginHasKey) {
+        prov[normalizedName] = {
+          ...prov[normalizedName],
+          apiKey: rawKey.trim(),
+          baseURL:
+            prov[normalizedName]?.baseURL ??
+            (gw as Record<string, unknown>).baseURL ??
+            (gw as Record<string, unknown>).base_url,
+        };
+        mergedProviderNames.push(normalizedName);
+        mergedProviderOriginalNames.set(normalizedName, name);
+        api.logger.info?.(
+          `memory-hybrid: using gateway provider "${name}" for llm.providers (add ${normalizedName}/<model> to llm.default or llm.heavy to use)`,
+        );
+      } else {
+        // Plugin already has a key for this provider; still register the original-cased name so
+        // the model-defaults loop below can pick up gateway models[] entries for this provider.
+        mergedProviderNames.push(normalizedName);
+        mergedProviderOriginalNames.set(normalizedName, name);
+      }
+    }
+  }
+
   // When llm.default/heavy are not explicitly configured, auto-derive from agents.defaults.model
   // (the same model list shown by `openclaw models list`). This makes the plugin zero-config for
   // model selection when the user has already set up their models in openclaw.json.
@@ -748,7 +804,30 @@ export function initializeDatabases(cfg: HybridMemoryConfig, api: ClawdbotPlugin
     const fallbacks = Array.isArray(modelCfg?.fallbacks)
       ? (modelCfg.fallbacks as unknown[]).filter((m): m is string => typeof m === "string" && m.trim().length > 0)
       : [];
-    const gatewayModels = [primary, ...fallbacks].filter((m): m is string => Boolean(m));
+    // Models from agents.defaults.model with an unknown provider prefix (e.g. "Local/S", "custom/X")
+    // would throw UnconfiguredProviderError when used, so filter them out here (issue #487).
+    const pluginProviders = (cfg.llm?.providers ?? {}) as Record<string, unknown>;
+    const canRoute = (m: string): boolean => {
+      if (!m.includes("/")) return true; // bare name — normalizeModelId() may rewrite to a prefixed form (e.g. gemini-*, claude-*, MiniMax-*)
+      const prefix = m.trim().split("/")[0].toLowerCase();
+      if (ROUTABLE_BUILTIN_PROVIDERS.has(prefix) || Object.hasOwn(pluginProviders, prefix)) return true;
+      // Read-only env var check: safe even with user-supplied prefix since we only read env vars.
+      // Mirrors resolveClient()'s <PREFIX>_API_KEY fallback (see resolveClient in setup/resolve-client.ts).
+      const envKey = process.env[`${prefix.toUpperCase()}_API_KEY`];
+      return Boolean(envKey?.trim());
+    };
+    const gatewayModels = [primary, ...fallbacks]
+      .filter((m): m is string => Boolean(m))
+      .filter((m) => {
+        if (canRoute(m)) return true;
+        const prefix = m.trim().split("/")[0];
+        api.logger.warn?.(
+          `memory-hybrid: skipping gateway model "${m}" from agents.defaults.model — ` +
+            `provider "${prefix}" is not a known built-in and is not configured in llm.providers. ` +
+            `To use this model configure llm.providers.${prefix.toLowerCase()} (apiKey and/or baseURL) in plugin config.`,
+        );
+        return false;
+      });
 
     if (gatewayModels.length > 0) {
       // Deduplicate while preserving order
@@ -816,43 +895,6 @@ export function initializeDatabases(cfg: HybridMemoryConfig, api: ClawdbotPlugin
     api.logger.info("memory-hybrid: LLM cost tracker initialized");
   }
 
-  // Merge gateway provider keys into plugin llm.providers so the plugin can use all keys the gateway has
-  // (e.g. Minimax, Anthropic, etc.) without duplicating them in plugin config.
-  // Check three paths: models.providers (standard), llm.providers (legacy), providers (top-level).
-  const gwConfig = api.config as Record<string, unknown> | undefined;
-  const gwProviders =
-    (gwConfig?.models as Record<string, unknown> | undefined)?.providers ??
-    (gwConfig?.llm as Record<string, unknown> | undefined)?.providers ??
-    (gwConfig?.providers as Record<string, unknown> | undefined);
-  const mergedProviderNames: string[] = [];
-  if (!cfg.llm) (cfg as Record<string, unknown>).llm = { providers: {} };
-  const plm = cfg.llm as Record<string, unknown>;
-  if (!plm.providers || typeof plm.providers !== "object") plm.providers = {};
-  const prov = plm.providers as Record<string, Record<string, unknown>>;
-
-  if (gwProviders && typeof gwProviders === "object" && !Array.isArray(gwProviders)) {
-    for (const [name, gw] of Object.entries(gwProviders)) {
-      if (!name || !gw || typeof gw !== "object") continue;
-      const rawKey = (gw as Record<string, unknown>).apiKey ?? (gw as Record<string, unknown>).api_key;
-      if (typeof rawKey !== "string" || !rawKey.trim()) continue;
-      // Merge if: (a) no plugin entry exists, or (b) plugin entry has no apiKey — allows gateway key
-      // to fill in when plugin config has a placeholder/empty key for this provider (issue #386).
-      const pluginHasKey = typeof prov[name]?.apiKey === "string" && (prov[name].apiKey as string).trim().length > 0;
-      if (!prov[name] || !pluginHasKey) {
-        prov[name] = {
-          ...prov[name],
-          apiKey: rawKey.trim(),
-          baseURL:
-            prov[name]?.baseURL ?? (gw as Record<string, unknown>).baseURL ?? (gw as Record<string, unknown>).base_url,
-        };
-        mergedProviderNames.push(name);
-        api.logger.info?.(
-          `memory-hybrid: using gateway provider "${name}" for llm.providers (add ${name}/<model> to llm.default or llm.heavy to use)`,
-        );
-      }
-    }
-  }
-
   // If Anthropic is in tier lists (e.g. from agents.defaults.model) but not yet in providers, use ANTHROPIC_API_KEY so verify --test-llm can test it.
   const defaultList = Array.isArray(cfg.llm?.default) ? cfg.llm.default : [];
   const heavyList = Array.isArray(cfg.llm?.heavy) ? cfg.llm.heavy : [];
@@ -872,7 +914,7 @@ export function initializeDatabases(cfg: HybridMemoryConfig, api: ClawdbotPlugin
   const hasModelFrom = (list: string[], prefix: string) =>
     list.some(
       (m) =>
-        m.startsWith(`${prefix}/`) ||
+        m.toLowerCase().startsWith(`${prefix}/`) ||
         (m.startsWith("claude-") && prefix === "anthropic") ||
         (m.startsWith("gemini-") && prefix === "google") ||
         (m.toLowerCase().startsWith("minimax-") && prefix === "minimax"),
@@ -893,8 +935,9 @@ export function initializeDatabases(cfg: HybridMemoryConfig, api: ClawdbotPlugin
       // This ensures that if the gateway has e.g. minimax.models: ["MiniMax-M2.5"], we use that
       // instead of the hardcoded "MiniMax-Text-01".
       let defaultModel: string | null = null;
-      if (gwProviders && typeof (gwProviders as Record<string, unknown>)[name] === "object") {
-        const gw = (gwProviders as Record<string, unknown>)[name] as Record<string, unknown>;
+      const originalName = mergedProviderOriginalNames.get(name) ?? name;
+      if (gwProviders && typeof (gwProviders as Record<string, unknown>)[originalName] === "object") {
+        const gw = (gwProviders as Record<string, unknown>)[originalName] as Record<string, unknown>;
         // Define chat-compatibility filter (used for both models[] and defaultModel/model fields).
         // Skip non-chat entries (embeddings, transcription, TTS, image generation) so that
         // chatCompleteWithRetry is never routed through an incompatible model.

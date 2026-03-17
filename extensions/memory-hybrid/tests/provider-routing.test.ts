@@ -635,6 +635,39 @@ describe("MiniMax provider routing — gateway key auto-merge", () => {
     expect(heavyList).not.toContain("openai/gpt-image-1");
   });
 
+  it("uses original provider name (pre-normalization) for gwProviders model lookup (mergedProviderOriginalNames)", () => {
+    // Gateway has provider "MiniMax" (mixed case). The plugin normalizes to lowercase "minimax" for
+    // cfg.llm.providers, but must still look up gwProviders["MiniMax"] (original casing) to read
+    // the models[] list. mergedProviderOriginalNames maps "minimax" → "MiniMax" for this purpose.
+    const cfg = getTestConfig(tmpDir);
+    cfg.llm = {
+      default: ["openai/gpt-4.1-mini"],
+      heavy: ["openai/gpt-4o"],
+    } as typeof cfg.llm;
+    const api = makeMockApi({
+      resolvePath: (p: string) => (p.startsWith("/") ? p : join(tmpDir, p)),
+      config: {
+        models: {
+          providers: {
+            // Mixed-case key as a gateway might supply it
+            MiniMax: { apiKey: "sk-cp-mixedcase-name-test", models: ["MiniMax-M2.5"] },
+          },
+        },
+      },
+    });
+
+    ctx = initializeDatabases(cfg, api as never);
+
+    const defaultList = Array.isArray(cfg.llm?.default) ? cfg.llm.default : [];
+    const heavyList = Array.isArray(cfg.llm?.heavy) ? cfg.llm.heavy : [];
+    // The models[] from gwProviders["MiniMax"] must be picked up despite the key case mismatch
+    expect(defaultList).toContain("minimax/MiniMax-M2.5");
+    expect(heavyList).toContain("minimax/MiniMax-M2.5");
+    // The hardcoded fallback should NOT be used since the model list was found
+    expect(defaultList).not.toContain("minimax/MiniMax-Text-01");
+    expect(heavyList).not.toContain("minimax/MiniMax-Text-01");
+  });
+
   it("hasModelFrom recognises bare MiniMax-* names (case-insensitive) so minimax is not double-appended", () => {
     // If the user already has a bare MiniMax-M2.5 in their tier list (which normalizeModelId
     // converts to minimax/MiniMax-M2.5 when routing), hasModelFrom should detect the minimax
@@ -1216,5 +1249,127 @@ describe("OpenRouter gateway merge — issue #392", () => {
     // The proxy strips only "openrouter/" prefix; bareModel must be "qwen/qwen3-14b" (not "qwen3-14b")
     const callWithBareModel = createCalls.find(([body]) => (body as { model?: string })?.model === "qwen/qwen3-14b");
     expect(callWithBareModel).toBeDefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Gateway model auto-derivation — unknown provider prefix filter (issue #487)
+// ---------------------------------------------------------------------------
+
+describe("gateway model auto-derivation — unknown provider prefix filter", () => {
+  let tmpDir: string;
+  let ctx: ReturnType<typeof initializeDatabases> | undefined;
+  let origGatewayPort: string | undefined;
+  let origGatewayToken: string | undefined;
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), "provider-routing-unknown-"));
+    vi.mocked(OpenAI).mockClear();
+    ctx = undefined;
+    origGatewayPort = process.env.OPENCLAW_GATEWAY_PORT;
+    origGatewayToken = process.env.OPENCLAW_GATEWAY_TOKEN;
+    delete process.env.OPENCLAW_GATEWAY_PORT;
+    delete process.env.OPENCLAW_GATEWAY_TOKEN;
+  });
+
+  afterEach(() => {
+    if (ctx) {
+      try {
+        closeOldDatabases(ctx);
+      } catch {
+        /* best effort */
+      }
+    }
+    rmSync(tmpDir, { recursive: true, force: true });
+    restoreEnv("OPENCLAW_GATEWAY_PORT", origGatewayPort);
+    restoreEnv("OPENCLAW_GATEWAY_TOKEN", origGatewayToken);
+  });
+
+  it("filters out gateway models with unknown provider prefix (e.g. Local/S) from auto-derived tier lists (issue #487)", () => {
+    // Reproduces: UnconfiguredProviderError for provider 'local' when mode=local
+    // The gateway has agents.defaults.model.primary = "Local/S" (a local-inference model).
+    // Without the fix, "Local/S" ends up in cfg.llm.default and resolveClient("Local/S")
+    // throws UnconfiguredProviderError("local", "Local/S").
+    const cfg = getTestConfig(tmpDir);
+    // No explicit llm config → auto-derivation runs from agents.defaults.model
+    const warnSpy = vi.fn();
+    const api = makeMockApi({
+      resolvePath: (p: string) => (p.startsWith("/") ? p : join(tmpDir, p)),
+      logger: { info: vi.fn(), warn: warnSpy, debug: vi.fn(), error: vi.fn() },
+      config: {
+        agents: {
+          defaults: {
+            model: {
+              primary: "Local/S",
+              fallbacks: ["Local/M", "openai/gpt-4.1-mini"],
+            },
+          },
+        },
+      },
+    });
+
+    ctx = initializeDatabases(cfg, api as never);
+
+    const defaultList = Array.isArray(cfg.llm?.default) ? cfg.llm.default : [];
+    // "Local/S" and "Local/M" have unknown provider "local" → must be excluded
+    expect(defaultList).not.toContain("Local/S");
+    expect(defaultList).not.toContain("Local/M");
+    // The known OpenAI model must still be included
+    expect(defaultList).toContain("openai/gpt-4.1-mini");
+    // A warning must be logged for each skipped model
+    const warnCalls = warnSpy.mock.calls.map(([msg]) => msg as string);
+    expect(warnCalls.some((m) => m.includes("Local/S") && m.includes("not a known built-in"))).toBe(true);
+    expect(warnCalls.some((m) => m.includes("Local/M") && m.includes("not a known built-in"))).toBe(true);
+  });
+
+  it("allows gateway models with unknown prefix when that prefix is configured in llm.providers", () => {
+    // If a user explicitly adds llm.providers.local.baseURL (e.g. a local proxy), "Local/X" should be kept.
+    const cfg = getTestConfig(tmpDir, {
+      llm: {
+        providers: {
+          local: { baseURL: "http://localhost:8080/v1" },
+        },
+      },
+    });
+    const api = makeMockApi({
+      resolvePath: (p: string) => (p.startsWith("/") ? p : join(tmpDir, p)),
+      config: {
+        agents: {
+          defaults: {
+            model: {
+              primary: "Local/S",
+            },
+          },
+        },
+      },
+    });
+
+    ctx = initializeDatabases(cfg, api as never);
+
+    const defaultList = Array.isArray(cfg.llm?.default) ? cfg.llm.default : [];
+    // Provider "local" is configured → model must be kept
+    expect(defaultList).toContain("Local/S");
+  });
+
+  it("keeps bare model names (no provider prefix) during auto-derivation", () => {
+    // Bare names like "gpt-4o" have no "/" → canRoute returns true; they route to default OpenAI.
+    const cfg = getTestConfig(tmpDir);
+    const api = makeMockApi({
+      resolvePath: (p: string) => (p.startsWith("/") ? p : join(tmpDir, p)),
+      config: {
+        agents: {
+          defaults: {
+            model: {
+              primary: "gpt-4o",
+            },
+          },
+        },
+      },
+    });
+
+    ctx = initializeDatabases(cfg, api as never);
+
+    const defaultList = Array.isArray(cfg.llm?.default) ? cfg.llm.default : [];
+    expect(defaultList).toContain("gpt-4o");
   });
 });

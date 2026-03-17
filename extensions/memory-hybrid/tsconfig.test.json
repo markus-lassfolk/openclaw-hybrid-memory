@@ -1,0 +1,11 @@
+{
+  // This config type-checks test files only (vitest globals injected via "types").
+  // The "include" intentionally replaces (not extends) the base config's include list so
+  // only tests/**/*.ts is explicitly checked here; source files are covered by tsconfig.json.
+  // All test-only helpers and fixtures live under tests/ — no shared test utilities outside it.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "types": ["vitest/globals"]
+  },
+  "include": ["tests/**/*.ts"]
+}
