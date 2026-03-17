@@ -85,7 +85,7 @@ function makeCredentialFact(
       importance: 0.8,
       entity: overrides.entity ?? "Credentials",
       key: overrides.key ?? "github",
-      value: overrides.hasOwnProperty("value") ? overrides.value : TOKEN_VALUE,
+      value: Object.hasOwn(overrides, "value") ? overrides.value : TOKEN_VALUE,
       source: "conversation",
       createdAt: Math.floor(Date.now() / 1000),
       decayClass: "permanent" as const,
