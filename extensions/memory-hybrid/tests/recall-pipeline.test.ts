@@ -484,3 +484,112 @@ describe("runRecallPipelineQuery — abort cancels embed after HyDE (#558)", () 
     expect(deps.embeddings.embed).toHaveBeenCalledWith("raw query fallback");
   });
 });
+
+// ---------------------------------------------------------------------------
+// HyDE skipForInteractiveTurns (#581)
+// ---------------------------------------------------------------------------
+
+describe("runRecallPipelineQuery — skipForInteractiveTurns (#581)", () => {
+  beforeEach(() => {
+    vi.spyOn(chatModule, "chatCompleteWithRetry").mockResolvedValue("HyDE generated text");
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("skips HyDE when interactive=true and skipForInteractiveTurns is true (default)", async () => {
+    const deps = makeDeps({
+      cfg: {
+        queryExpansion: {
+          enabled: true,
+          maxVariants: 4,
+          cacheSize: 100,
+          timeoutMs: 15_000,
+          skipForInteractiveTurns: true,
+        },
+        retrievalStrategies: ["semantic"],
+        memoryTieringEnabled: false,
+        rawCfg: { llm: undefined } as unknown as RecallPipelineDeps["cfg"]["rawCfg"],
+      },
+    });
+    (deps.factsDb.search as ReturnType<typeof vi.fn>).mockReturnValue([]);
+    (deps.vectorDb.search as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+
+    await runRecallPipelineQuery("my interactive query", 5, deps, { value: false }, { interactive: true });
+
+    // HyDE was blocked — embed must be called with raw query, not HyDE-generated text
+    expect(deps.embeddings.embed).toHaveBeenCalledWith("my interactive query");
+    expect(chatModule.chatCompleteWithRetry).not.toHaveBeenCalled();
+  });
+
+  it("skips HyDE when interactive=true and skipForInteractiveTurns is undefined (defaults to true)", async () => {
+    const deps = makeDeps({
+      cfg: {
+        queryExpansion: { enabled: true, maxVariants: 4, cacheSize: 100, timeoutMs: 15_000 },
+        retrievalStrategies: ["semantic"],
+        memoryTieringEnabled: false,
+        rawCfg: { llm: undefined } as unknown as RecallPipelineDeps["cfg"]["rawCfg"],
+      },
+    });
+    (deps.factsDb.search as ReturnType<typeof vi.fn>).mockReturnValue([]);
+    (deps.vectorDb.search as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+
+    await runRecallPipelineQuery("another interactive query", 5, deps, { value: false }, { interactive: true });
+
+    expect(deps.embeddings.embed).toHaveBeenCalledWith("another interactive query");
+    expect(chatModule.chatCompleteWithRetry).not.toHaveBeenCalled();
+  });
+
+  it("allows HyDE when interactive=true but skipForInteractiveTurns is explicitly false", async () => {
+    const deps = makeDeps({
+      cfg: {
+        queryExpansion: {
+          enabled: true,
+          maxVariants: 4,
+          cacheSize: 100,
+          timeoutMs: 15_000,
+          skipForInteractiveTurns: false,
+        },
+        retrievalStrategies: ["semantic"],
+        memoryTieringEnabled: false,
+        rawCfg: { llm: undefined } as unknown as RecallPipelineDeps["cfg"]["rawCfg"],
+      },
+    });
+    (deps.factsDb.search as ReturnType<typeof vi.fn>).mockReturnValue([]);
+    (deps.vectorDb.search as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+
+    await runRecallPipelineQuery("query with hyde", 5, deps, { value: false }, { interactive: true });
+
+    // HyDE was allowed — chatCompleteWithRetry must have been called
+    expect(chatModule.chatCompleteWithRetry).toHaveBeenCalled();
+    // embed should be called with HyDE-generated text (not raw query)
+    expect(deps.embeddings.embed).toHaveBeenCalledWith("HyDE generated text");
+  });
+
+  it("allows HyDE when interactive is not set (background/cron recall)", async () => {
+    const deps = makeDeps({
+      cfg: {
+        queryExpansion: {
+          enabled: true,
+          maxVariants: 4,
+          cacheSize: 100,
+          timeoutMs: 15_000,
+          skipForInteractiveTurns: true,
+        },
+        retrievalStrategies: ["semantic"],
+        memoryTieringEnabled: false,
+        rawCfg: { llm: undefined } as unknown as RecallPipelineDeps["cfg"]["rawCfg"],
+      },
+    });
+    (deps.factsDb.search as ReturnType<typeof vi.fn>).mockReturnValue([]);
+    (deps.vectorDb.search as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+
+    // No interactive option — background/cron path
+    await runRecallPipelineQuery("background query", 5, deps, { value: false });
+
+    // HyDE was allowed on the background path
+    expect(chatModule.chatCompleteWithRetry).toHaveBeenCalled();
+    expect(deps.embeddings.embed).toHaveBeenCalledWith("HyDE generated text");
+  });
+});

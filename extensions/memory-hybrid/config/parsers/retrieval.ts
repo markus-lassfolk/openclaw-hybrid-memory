@@ -311,6 +311,10 @@ export function parseQueryExpansionConfig(cfg: Record<string, unknown>): QueryEx
   // because the new QE path has its own minimum floor enforcement (#384).
   const defaultTimeout = hydeEnabled && !qeExplicitlySet ? 25000 : 15000;
 
+  // skipForInteractiveTurns: defaults to true — prevents HyDE LLM calls on the hot interactive
+  // before_agent_start path to avoid latency spikes (#581). Set to false to re-enable.
+  const skipForInteractiveTurns = qeRaw?.skipForInteractiveTurns !== false;
+
   const rawQeTimeoutRaw = qeRaw?.timeoutMs;
   // Treat 0 or negative as an explicit "no config-level floor" bypass: caller receives undefined
   // and chatComplete falls back to its own internal default timeout. Use Number.isFinite to reject
@@ -324,6 +328,7 @@ export function parseQueryExpansionConfig(cfg: Record<string, unknown>): QueryEx
       maxVariants,
       cacheSize,
       timeoutMs: undefined,
+      skipForInteractiveTurns,
     };
   }
 
@@ -348,6 +353,7 @@ export function parseQueryExpansionConfig(cfg: Record<string, unknown>): QueryEx
     maxVariants,
     cacheSize,
     timeoutMs: rawQeTimeout !== null ? Math.max(MIN_QE_TIMEOUT_MS, rawQeTimeout) : defaultTimeout,
+    skipForInteractiveTurns,
   };
 }
 

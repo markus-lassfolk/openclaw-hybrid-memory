@@ -63,8 +63,14 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
 
     registerActiveTaskInjection(api, ctx, resolvedActiveTaskPath);
     registerCleanupHandlers(api, ctx, sessionState, resolvedActiveTaskPath, workspaceRoot);
-    registerAuthFailureRecall(api, ctx, sessionState);
-    registerCredentialHint(api, ctx);
+    // Guard experimental/optional features at the registration point — avoids registering
+    // event listeners whose bodies immediately return when disabled (#581).
+    if (ctx.cfg.autoRecall.authFailure.enabled) {
+      registerAuthFailureRecall(api, ctx, sessionState);
+    }
+    if (ctx.cfg.credentials.enabled && ctx.cfg.credentials.autoDetect) {
+      registerCredentialHint(api, ctx);
+    }
   };
 
   const onFrustrationDetect = (api: ClawdbotPluginApi) => {
