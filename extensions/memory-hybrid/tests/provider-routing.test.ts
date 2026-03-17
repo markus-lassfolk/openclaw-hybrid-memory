@@ -10,7 +10,6 @@ import { tmpdir } from "node:os";
 // Mock OpenAI BEFORE any module imports (vi.mock is hoisted automatically).
 // Must use a regular named function (not arrow) so `new OpenAI(...)` works as a constructor.
 vi.mock("openai", () => {
-   
   const MockOpenAI = vi.fn(function MockOpenAI(this: Record<string, unknown>, args: Record<string, unknown>) {
     this._constructArgs = args;
     this.chat = {
