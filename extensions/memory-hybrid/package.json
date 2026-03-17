@@ -37,13 +37,13 @@
     "embeddings"
   ],
   "peerDependencies": {
-    "@sinclair/typebox": "0.34.48",
     "openclaw": ">=2026.3.8",
     "openai": "^6.16.0"
   },
   "dependencies": {
     "@lancedb/lancedb": "^0.26.2",
     "@sentry/node": "^8.0.0",
+    "@sinclair/typebox": "0.34.48",
     "better-sqlite3": "^12.0.0",
     "js-yaml": "^4.1.1"
   },
