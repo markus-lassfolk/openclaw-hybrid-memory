@@ -18,7 +18,7 @@ export const SENSITIVE_PATTERNS = [
   /password/i,
   /api.?key/i,
   /secret/i,
-  /token\s+is/i,
+  /token/i,
   /\bbearer\b/i, // Bearer tokens
   /\bauthorization\b/i, // Authorization headers
   /\bcredentials?\b/i, // Credentials keyword
