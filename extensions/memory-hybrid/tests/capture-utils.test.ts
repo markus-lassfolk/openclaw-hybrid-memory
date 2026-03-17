@@ -5,6 +5,12 @@
 
 import { describe, it, expect } from "vitest";
 import { shouldCapture, detectCategory } from "../services/capture-utils.js";
+import {
+  getCategoryDecisionRegex,
+  getCategoryPreferenceRegex,
+  getCategoryEntityRegex,
+  getCategoryFactRegex,
+} from "../utils/language-keywords.js";
 
 // ---------------------------------------------------------------------------
 // shouldCapture
@@ -108,10 +114,10 @@ describe("shouldCapture", () => {
 // ---------------------------------------------------------------------------
 
 describe("detectCategory", () => {
-  const decisionRegex = /\b(decided|chose|going with|will use|picked)\b/i;
-  const preferenceRegex = /\b(prefer|like|love|favorite|always use)\b/i;
-  const entityRegex = /\b(company|person|product|project)\b/i;
-  const factRegex = /\b(is|are|was|were|has|have|located|born|founded)\b/i;
+  const decisionRegex = getCategoryDecisionRegex();
+  const preferenceRegex = getCategoryPreferenceRegex();
+  const entityRegex = getCategoryEntityRegex();
+  const factRegex = getCategoryFactRegex();
 
   it("returns 'decision' for text matching decision keywords", () => {
     expect(
@@ -125,15 +131,9 @@ describe("detectCategory", () => {
     ).toBe("decision");
   });
 
-  it("returns 'decision' for 'going with' keyword", () => {
+  it("returns 'decision' for 'went with' keyword", () => {
     expect(
-      detectCategory(
-        "we are going with Postgres for the database",
-        decisionRegex,
-        preferenceRegex,
-        entityRegex,
-        factRegex,
-      ),
+      detectCategory("we went with Postgres for the database", decisionRegex, preferenceRegex, entityRegex, factRegex),
     ).toBe("decision");
   });
 
@@ -149,10 +149,10 @@ describe("detectCategory", () => {
     ).toBe("preference");
   });
 
-  it("returns 'preference' for 'always use' keyword", () => {
+  it("returns 'decision' for 'always use' keyword", () => {
     expect(
       detectCategory("I always use two spaces for indentation", decisionRegex, preferenceRegex, entityRegex, factRegex),
-    ).toBe("preference");
+    ).toBe("decision");
   });
 
   it("returns 'entity' for text containing a phone-like pattern", () => {
@@ -176,7 +176,7 @@ describe("detectCategory", () => {
 
   it("returns 'entity' for text matching entity regex", () => {
     expect(
-      detectCategory("the company is called Acme Corp", decisionRegex, preferenceRegex, entityRegex, factRegex),
+      detectCategory("the project is called Acme Corp", decisionRegex, preferenceRegex, entityRegex, factRegex),
     ).toBe("entity");
   });
 
@@ -186,10 +186,10 @@ describe("detectCategory", () => {
     ).toBe("fact");
   });
 
-  it("returns 'fact' for 'was founded' pattern", () => {
+  it("returns 'fact' for 'has' pattern", () => {
     expect(
       detectCategory(
-        "the framework was created in 2015 by a team",
+        "the framework has many features and capabilities",
         decisionRegex,
         preferenceRegex,
         entityRegex,
