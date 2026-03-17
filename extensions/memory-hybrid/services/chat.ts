@@ -220,8 +220,8 @@ export function isContextLengthError(err: unknown): boolean {
           // #488: Ollama pattern (may appear with "400" prefix in some SDK versions)
           /input\s+length\s+\d+\s+exceeds/i.test(err.message))) ||
       /\b400\b.*maximum context length/i.test(err.message) ||
-      // #488: Ollama may emit this without a numeric status prefix — match it directly
-      /input\s+length\s+\d+\s+exceeds.*token\s+size\s+\d+/i.test(err.message)
+      // #488: Ollama message-only — no "400" prefix or .status property
+      /input\s+length\s+\d+\s+exceeds/i.test(err.message)
     );
   }
   return false;
@@ -608,7 +608,7 @@ export async function chatCompleteWithRetry(opts: {
                     : is500
                       ? "server error (500)" // #302
                       : isContextLength
-                        ? "input too long (400)" // #488
+                        ? "input too long" // #488
                         : "failed after retries";
           console.warn(`${label}: model ${currentModel} ${reason}, trying fallback model ${modelsToTry[i + 1]}...`);
         }

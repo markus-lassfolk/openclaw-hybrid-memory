@@ -279,8 +279,11 @@ export async function preFilterSessions(
             } else {
               skipped.push(filePath);
             }
-          } catch {
-            // Still too long or other error after truncation — keep conservatively
+          } catch (retryErr) {
+            if (isConnectionError(retryErr)) {
+              ollamaUnavailable = true;
+            }
+            // Still too long or other error — keep conservatively
             kept.push(filePath);
           }
         } else {
