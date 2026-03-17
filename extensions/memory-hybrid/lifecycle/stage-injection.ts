@@ -13,6 +13,32 @@ import { withTimeout } from "../utils/timeout.js";
 import type { LifecycleContext, RecallResult } from "./types.js";
 
 const INJECTION_STAGE_TIMEOUT_MS = 10_000;
+const HEBBIAN_MAX_K = 8;
+
+/** Collect top-K pairs and batch-strengthen in a single transaction, fire-and-forget. */
+function strengthenHebbianLinks(
+  ids: string[],
+  factsDb: LifecycleContext["factsDb"],
+  logger: { warn: (msg: string) => void },
+): void {
+  const topK = ids.slice(0, HEBBIAN_MAX_K);
+  const pairs: [string, string][] = [];
+  for (let i = 0; i < topK.length; i++) {
+    for (let j = i + 1; j < topK.length; j++) {
+      pairs.push([topK[i], topK[j]]);
+    }
+  }
+  if (pairs.length === 0) return;
+  void Promise.resolve()
+    .then(() => factsDb.strengthenRelatedLinksBatch(pairs))
+    .catch((err) => {
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        operation: "hebbian-strengthen",
+        subsystem: "stage-injection",
+      });
+      logger.warn(`memory-hybrid: hebbian link strengthening failed: ${err}`);
+    });
+}
 
 export async function runInjectionStage(
   recallResult: RecallResult,
@@ -142,11 +168,7 @@ async function runInjection(
     const allIds = [...pinned.map((x) => x.entry.id), ...indexIds];
     if (ambientSeenFacts && allIds.length > 0) ambientSeenFacts.markSeen(allIds);
     if (ctx.cfg.graph.enabled && ctx.cfg.graph.strengthenOnRecall && allIds.length >= 2) {
-      for (let i = 0; i < allIds.length; i++) {
-        for (let j = i + 1; j < allIds.length; j++) {
-          ctx.factsDb.createOrStrengthenRelatedLink(allIds[i], allIds[j]);
-        }
-      }
+      strengthenHebbianLinks(allIds, ctx.factsDb, api.logger);
     }
     const indexContent = indexLines.join("\n");
     const fullContent =
@@ -183,11 +205,7 @@ async function runInjection(
     ctx.factsDb.refreshAccessedFacts(indexIds);
     if (ambientSeenFacts && indexIds.length > 0) ambientSeenFacts.markSeen(indexIds);
     if (ctx.cfg.graph.enabled && ctx.cfg.graph.strengthenOnRecall && indexIds.length >= 2) {
-      for (let i = 0; i < indexIds.length; i++) {
-        for (let j = i + 1; j < indexIds.length; j++) {
-          ctx.factsDb.createOrStrengthenRelatedLink(indexIds[i], indexIds[j]);
-        }
-      }
+      strengthenHebbianLinks(indexIds, ctx.factsDb, api.logger);
     }
     const indexContent = indexLines.join("\n");
     api.logger.info?.(
@@ -232,11 +250,7 @@ async function runInjection(
   ctx.factsDb.refreshAccessedFacts(injectedIds);
   if (ambientSeenFacts) ambientSeenFacts.markSeen(injectedIds);
   if (ctx.cfg.graph.enabled && ctx.cfg.graph.strengthenOnRecall && injectedIds.length >= 2) {
-    for (let i = 0; i < injectedIds.length; i++) {
-      for (let j = i + 1; j < injectedIds.length; j++) {
-        ctx.factsDb.createOrStrengthenRelatedLink(injectedIds[i], injectedIds[j]);
-      }
-    }
+    strengthenHebbianLinks(injectedIds, ctx.factsDb, api.logger);
   }
 
   let memoryContext = lines.join("\n");
