@@ -567,10 +567,16 @@ describe("runPassiveObserver — LanceDB dedup (Issue #499)", () => {
     const vectorDb = makeVectorDb(); // search returns [] — no duplicates
     const cfg = makeConfig({ sessionsDir });
 
+    // Use distinct vectors so intra-batch dedup doesn't catch the second fact
+    const embeddings = makeEmbeddings();
+    embeddings.embed
+      .mockResolvedValueOnce([0.1, 0.2, 0.3])
+      .mockResolvedValueOnce([0.9, 0.1, 0.0]);
+
     const result = await runPassiveObserver(
       makeFactsDb() as never,
       vectorDb as never,
-      makeEmbeddings() as never,
+      embeddings as never,
       {} as never,
       cfg,
       ["fact"],
