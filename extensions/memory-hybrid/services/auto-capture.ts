@@ -18,10 +18,10 @@ export const SENSITIVE_PATTERNS = [
   /password/i,
   /api.?key/i,
   /secret/i,
-  /token/i,
-  /\bbearer\b/i, // Bearer tokens
-  /\bauthorization\b/i, // Authorization headers
-  /\bcredentials?\b/i, // Credentials keyword
+  /token\s+is/i, // More specific: only "token is" not just "token" (used by consolidation.ts to exclude from consolidation)
+  /bearer/i, // Bearer tokens (no word boundary to catch bearer_token, etc.)
+  /authorization/i, // Authorization headers (no word boundary to catch authorization_header, etc.)
+  /credentials?/i, // Credentials keyword (no word boundary to catch credentials_file, etc.)
   /\bssn\b/i,
   /credit.?card/i,
   /AKIA[0-9A-Z]{16}/, // AWS access keys
@@ -29,21 +29,8 @@ export const SENSITIVE_PATTERNS = [
   /:\/\/[^\s:@]+:[^\s@]+@[^\s/]+/, // Connection strings with embedded passwords (e.g., mongodb://user:pass@host) - Note: usernames with colons will fail
 ];
 
-/** Patterns for isCredentialLike - more specific than SENSITIVE_PATTERNS to avoid false positives */
-const CREDENTIAL_LIKE_PATTERNS = [
-  /password/i,
-  /api.?key/i,
-  /secret/i,
-  /token\s+is/i, // More specific: only "token is" not just "token"
-  /\bbearer\b/i,
-  /\bauthorization\b/i,
-  /\bcredentials?\b/i,
-  /\bssn\b/i,
-  /credit.?card/i,
-  /AKIA[0-9A-Z]{16}/,
-  /-----BEGIN .*PRIVATE KEY/,
-  /:\/\/[^\s:@]+:[^\s@]+@[^\s/]+/,
-];
+/** Patterns for isCredentialLike - derived from SENSITIVE_PATTERNS with /token/i for broader credential detection */
+const CREDENTIAL_LIKE_PATTERNS = SENSITIVE_PATTERNS.map((pattern, index) => (index === 3 ? /token/i : pattern));
 
 /** Patterns that suggest a credential value - for auto-detect prompt to store */
 const CREDENTIAL_PATTERNS: Array<{ regex: RegExp; type: string; hint: string }> = [
