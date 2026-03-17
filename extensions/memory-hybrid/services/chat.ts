@@ -516,14 +516,6 @@ export async function withLLMRetry<T>(
         }
         throw retryError;
       }
-      // Re-check abort signal before sleeping — if the parent step timed out while we
-      // were in a retry attempt, bail immediately instead of sleeping through the backoff.
-      if (opts?.signal?.aborted) {
-        const reason = opts.signal.reason;
-        const abortError = reason instanceof Error ? reason : new Error(reason != null ? String(reason) : "Aborted");
-        abortError.name = "AbortError";
-        throw abortError;
-      }
 
       // 429: respect Retry-After header if present; otherwise use exponential backoff (2s → 4s → 8s)
       let delay: number;
@@ -534,7 +526,25 @@ export async function withLLMRetry<T>(
       } else {
         delay = Math.pow(3, attempt) * 1000; // 1s, 3s, 9s
       }
-      await new Promise((r) => setTimeout(r, delay));
+      await new Promise((resolve, reject) => {
+        const timeout = setTimeout(resolve, delay);
+        if (opts?.signal) {
+          const onAbort = () => {
+            clearTimeout(timeout);
+            const reason = opts.signal!.reason;
+            const abortError =
+              reason instanceof Error ? reason : new Error(reason != null ? String(reason) : "Aborted");
+            abortError.name = "AbortError";
+            reject(abortError);
+          };
+          if (opts.signal.aborted) {
+            clearTimeout(timeout);
+            onAbort();
+          } else {
+            opts.signal.addEventListener("abort", onAbort, { once: true });
+          }
+        }
+      });
     }
   }
   throw new Error("unreachable");
