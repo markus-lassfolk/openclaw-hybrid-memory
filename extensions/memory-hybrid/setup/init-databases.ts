@@ -795,7 +795,7 @@ export function initializeDatabases(cfg: HybridMemoryConfig, api: ClawdbotPlugin
   ];
   if (
     !cfg.llm ||
-    (cfg.llm.default.length === 0 && (cfg.llm.heavy ?? []).length === 0 && (cfg.llm.nano ?? []).length === 0)
+    ((cfg.llm.default ?? []).length === 0 && (cfg.llm.heavy ?? []).length === 0 && (cfg.llm.nano ?? []).length === 0)
   ) {
     const agentModel = (api.config as Record<string, unknown>)?.agents as Record<string, unknown> | undefined;
     const agentDefaults = agentModel?.defaults as Record<string, unknown> | undefined;
@@ -892,7 +892,7 @@ export function initializeDatabases(cfg: HybridMemoryConfig, api: ClawdbotPlugin
         _source: "gateway",
       };
       api.logger.info?.(
-        `memory-hybrid: llm model tiers auto-derived from agents.defaults.model (default: ${cfg.llm.default.slice(0, 3).join(", ")}${cfg.llm.default.length > 3 ? "…" : ""}${nanoList.length > 0 ? `; nano: ${(cfg.llm.nano ?? []).slice(0, 2).join(", ")}` : ""})`,
+        `memory-hybrid: llm model tiers auto-derived from agents.defaults.model (default: ${(cfg.llm.default ?? []).slice(0, 3).join(", ")}${(cfg.llm.default ?? []).length > 3 ? "…" : ""}${nanoList.length > 0 ? `; nano: ${(cfg.llm.nano ?? []).slice(0, 2).join(", ")}` : ""})`,
       );
     }
   }
