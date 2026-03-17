@@ -404,4 +404,16 @@ describe("shouldCapture — unified SENSITIVE_PATTERNS (issue #555)", () => {
     const text = "remember mongodb://admin:Pa$$w0rd@localhost/mydb for the service";
     expect(shouldCapture(text, maxChars, alwaysMatch)).toBe(false);
   });
+
+  // Regression: CAPTURE_FILTER_PATTERNS uses /token/i (not /token\s+is/i), so common
+  // "token=" and "token: " formats must still be blocked by shouldCapture.
+  it("blocks text with token=value format that also contains a memory trigger", () => {
+    const text = "remember my API token=ghp_abc123def456 for the staging environment";
+    expect(shouldCapture(text, maxChars, alwaysMatch)).toBe(false);
+  });
+
+  it("blocks text with token: value format that also contains a memory trigger", () => {
+    const text = "remember to use token: sk-abcdefghijklmnopqrstuvwxyz for the service";
+    expect(shouldCapture(text, maxChars, alwaysMatch)).toBe(false);
+  });
 });

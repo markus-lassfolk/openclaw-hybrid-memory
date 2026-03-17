@@ -34,9 +34,6 @@ export const CAPTURE_FILTER_PATTERNS = SENSITIVE_PATTERNS.map((pattern) =>
   pattern.source === /token\s+is/i.source && pattern.flags === /token\s+is/i.flags ? /token/i : pattern,
 );
 
-/** Patterns for isCredentialLike - derived from SENSITIVE_PATTERNS with /token/i for broader credential detection */
-const CREDENTIAL_LIKE_PATTERNS = CAPTURE_FILTER_PATTERNS;
-
 /** Patterns that suggest a credential value - for auto-detect prompt to store */
 const CREDENTIAL_PATTERNS: Array<{ regex: RegExp; type: string; hint: string }> = [
   { regex: /Bearer\s+eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/i, type: "bearer", hint: "Bearer/JWT token" },
@@ -88,7 +85,7 @@ export function isCredentialLike(
   const e = (entity ?? "").toLowerCase();
   if (["api_key", "password", "token", "secret", "bearer"].some((x) => k.includes(x) || e.includes(x))) return true;
   if (value && value.length >= 8 && /^(eyJ|sk-|ghp_|gho_|xox[baprs]-)/i.test(value)) return true;
-  return CREDENTIAL_PATTERNS.some((p) => p.regex.test(text)) || CREDENTIAL_LIKE_PATTERNS.some((r) => r.test(text));
+  return CREDENTIAL_PATTERNS.some((p) => p.regex.test(text)) || CAPTURE_FILTER_PATTERNS.some((r) => r.test(text));
 }
 
 export const VAULT_POINTER_PREFIX = "vault:";
