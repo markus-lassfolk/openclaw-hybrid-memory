@@ -30,9 +30,7 @@ export const SENSITIVE_PATTERNS = [
 ];
 
 /** Patterns for capture filtering - uses broader /token/i instead of /token\s+is/i for security */
-export const CAPTURE_FILTER_PATTERNS = SENSITIVE_PATTERNS.map((pattern) =>
-  pattern.source === /token\s+is/i.source && pattern.flags === /token\s+is/i.flags ? /token/i : pattern,
-);
+export const CAPTURE_FILTER_PATTERNS = [...SENSITIVE_PATTERNS.slice(0, 3), /token/i, ...SENSITIVE_PATTERNS.slice(4)];
 
 /** Patterns that suggest a credential value - for auto-detect prompt to store */
 const CREDENTIAL_PATTERNS: Array<{ regex: RegExp; type: string; hint: string }> = [
