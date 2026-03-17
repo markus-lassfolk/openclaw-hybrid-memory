@@ -16,7 +16,21 @@ export default defineConfig({
     include: ["tests/**/*.test.ts"],
     coverage: {
       provider: "v8",
-      include: ["index.ts", "config.ts", "versionInfo.ts"],
+      include: [
+        "index.ts",
+        "config.ts",
+        "versionInfo.ts",
+        "backends/**/*.ts",
+        "services/**/*.ts",
+        "tools/**/*.ts",
+        "utils/**/*.ts",
+        "cli/**/*.ts",
+        "setup/**/*.ts",
+        "lifecycle/**/*.ts",
+        "routes/**/*.ts",
+        "config/**/*.ts",
+      ],
+      exclude: ["tests/**", "types/**"],
     },
   },
 });
