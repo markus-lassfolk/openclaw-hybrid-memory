@@ -807,9 +807,19 @@ export function initializeDatabases(cfg: HybridMemoryConfig, api: ClawdbotPlugin
     // Models from agents.defaults.model with an unknown provider prefix (e.g. "Local/S", "custom/X")
     // would throw UnconfiguredProviderError when used, so filter them out here (issue #487).
     const pluginProviders = (cfg.llm?.providers ?? {}) as Record<string, unknown>;
+    // Extract gateway config for OAuth routing check (matches buildMultiProviderOpenAI logic)
+    const gatewayPortRaw = process.env.OPENCLAW_GATEWAY_PORT;
+    const gatewayPort = gatewayPortRaw ? Number.parseInt(gatewayPortRaw, 10) : undefined;
+    const gatewayAuthResolved = (cfg.gateway?.auth as ResolvedGatewayAuthConfig | undefined)?._resolvedToken;
+    const gatewayToken = gatewayAuthResolved ?? process.env.OPENCLAW_GATEWAY_TOKEN;
+    const gatewayBaseUrl =
+      gatewayPort && gatewayPort >= 1 && gatewayPort <= 65535 ? `http://127.0.0.1:${gatewayPort}/v1` : undefined;
+    const authOrder = cfg.auth?.order;
     const canRoute = (m: string): boolean => {
       if (!m.includes("/")) return true; // bare name — normalizeModelId() may rewrite to a prefixed form (e.g. gemini-*, claude-*, MiniMax-*)
       const prefix = m.trim().split("/")[0].toLowerCase();
+      // Check OAuth routing first (matches resolveClient logic at line 378)
+      if (hasOAuthProfiles(authOrder?.[prefix], prefix) && gatewayBaseUrl && gatewayToken) return true;
       if (ROUTABLE_BUILTIN_PROVIDERS.has(prefix) || Object.hasOwn(pluginProviders, prefix)) return true;
       // Read-only env var check: safe even with user-supplied prefix since we only read env vars.
       // Mirrors resolveClient()'s <PREFIX>_API_KEY fallback (see resolveClient in setup/resolve-client.ts).
