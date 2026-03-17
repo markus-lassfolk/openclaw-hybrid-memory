@@ -289,11 +289,14 @@ export async function runConsolidate(
         factsDb.setEmbeddingModel(entry.id, embeddings.modelName);
       } catch (err) {
         logger.warn(`memory-hybrid: consolidate vector store failed: ${err}`);
-        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-          operation: "consolidate-vector-store",
-          subsystem: "vector",
-          factId: entry.id,
-        });
+        // AllEmbeddingProvidersFailed is expected when all providers are unavailable — don't report (#486)
+        if (!shouldSuppressEmbeddingError(err)) {
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+            operation: "consolidate-vector-store",
+            subsystem: "vector",
+            factId: entry.id,
+          });
+        }
       }
     }
     // Create DERIVED_FROM links: merged fact ← each source fact (provenance audit trail)
