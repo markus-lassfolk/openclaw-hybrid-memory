@@ -1,4 +1,4 @@
-import { defineConfig } from "vitest/config";
+import { defineConfig, coverageConfigDefaults } from "vitest/config";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -30,7 +30,7 @@ export default defineConfig({
         "routes/**/*.ts",
         "config/**/*.ts",
       ],
-      exclude: ["tests/**", "types/**"],
+      exclude: [...coverageConfigDefaults.exclude, "tests/**", "types/**"],
     },
   },
 });
