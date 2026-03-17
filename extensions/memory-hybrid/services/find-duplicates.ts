@@ -35,6 +35,7 @@ async function safeEmbedBatch(
     if (!shouldSuppressEmbeddingError(err)) {
       capturePluginError(asErr, { operation: "safe-embed-batch", subsystem: "embeddings" });
     }
+    logWarn(`memory-hybrid: embedding batch failed: ${err}`);
     return texts.map(() => null);
   }
 }
