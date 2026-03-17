@@ -569,9 +569,7 @@ describe("runPassiveObserver — LanceDB dedup (Issue #499)", () => {
 
     // Use distinct vectors so intra-batch dedup doesn't catch the second fact
     const embeddings = makeEmbeddings();
-    embeddings.embed
-      .mockResolvedValueOnce([0.1, 0.2, 0.3])
-      .mockResolvedValueOnce([0.9, 0.1, 0.0]);
+    embeddings.embed.mockResolvedValueOnce([0.1, 0.2, 0.3]).mockResolvedValueOnce([0.9, 0.1, 0.0]);
 
     const result = await runPassiveObserver(
       makeFactsDb() as never,
