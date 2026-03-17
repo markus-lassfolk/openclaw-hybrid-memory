@@ -29,15 +29,17 @@ function strengthenHebbianLinks(
     }
   }
   if (pairs.length === 0) return;
-  void Promise.resolve()
-    .then(() => factsDb.strengthenRelatedLinksBatch(pairs))
-    .catch((err) => {
+  setImmediate(() => {
+    try {
+      factsDb.strengthenRelatedLinksBatch(pairs);
+    } catch (err) {
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
         operation: "hebbian-strengthen",
         subsystem: "stage-injection",
       });
       logger.warn(`memory-hybrid: hebbian link strengthening failed: ${err}`);
-    });
+    }
+  });
 }
 
 export async function runInjectionStage(
