@@ -3816,6 +3816,42 @@ export class FactsDB {
     return this.backfillDecayClasses();
   }
 
+  /**
+   * Prune log tables that accumulate indefinitely (Issue #573).
+   * Deletes rows older than `retentionDays` from:
+   *   - recall_log
+   *   - reinforcement_log
+   *   - feedback_trajectories
+   * Returns the total number of rows deleted.
+   */
+  pruneLogTables(retentionDays: number): number {
+    if (retentionDays <= 0) return 0;
+    const cutoff = Math.floor(Date.now() / 1000) - retentionDays * 86400;
+    const r1 = this.liveDb.prepare(`DELETE FROM recall_log WHERE occurred_at < ?`).run(cutoff);
+    const r2 = this.liveDb.prepare(`DELETE FROM reinforcement_log WHERE occurred_at < ?`).run(cutoff);
+    const r3 = this.liveDb.prepare(`DELETE FROM feedback_trajectories WHERE created_at < ?`).run(cutoff);
+    return r1.changes + r2.changes + r3.changes;
+  }
+
+  /**
+   * Run FTS5 'optimize' command to compact full-text search shadow tables (Issue #573).
+   * Should be called after bulk deletes to reclaim space in the FTS index.
+   */
+  optimizeFts(): void {
+    this.liveDb.exec(`INSERT INTO facts_fts(facts_fts) VALUES('optimize')`);
+  }
+
+  /**
+   * Checkpoint the WAL file and run VACUUM to reclaim freed disk space (Issue #573).
+   * PRAGMA wal_checkpoint(TRUNCATE) shrinks the WAL to zero bytes.
+   * VACUUM rewrites the main database file, releasing all freed pages.
+   * This is safe to call at any time — it acquires an exclusive lock internally.
+   */
+  vacuumAndCheckpoint(): void {
+    this.liveDb.pragma("wal_checkpoint(TRUNCATE)");
+    this.liveDb.exec("VACUUM");
+  }
+
   /** Get reflection statistics */
   statsReflection(): { reflectionPatternsCount: number; reflectionRulesCount: number } {
     const patternsRow = this.liveDb

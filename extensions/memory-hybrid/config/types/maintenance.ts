@@ -44,6 +44,18 @@ export type NightlyCycleConfig = {
   eventLogArchivePath?: string;
   /** Legacy: max age for unconsolidated event log entries before deletion (default: 90). */
   maxUnconsolidatedAgeDays: number;
+  /**
+   * Retention window in days for log tables (recall_log, reinforcement_log, feedback_trajectories).
+   * Rows older than this are deleted during the dream cycle. Set to 0 to disable log pruning.
+   * Default: 30.
+   */
+  logRetentionDays: number;
+  /**
+   * When true, run PRAGMA wal_checkpoint(TRUNCATE) + VACUUM after each nightly cycle
+   * to reclaim disk space freed by pruning. Slightly slower but keeps facts.db lean.
+   * Default: true.
+   */
+  vacuumOnCycle: boolean;
 };
 
 /** Memory health dashboard configuration (Issue #148). */
