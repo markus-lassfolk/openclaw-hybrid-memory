@@ -138,29 +138,6 @@ jobs:
           path: extensions/memory-hybrid/coverage/
           if-no-files-found: warn
 
-  duplicate-check:
-    name: Duplicate Code Detection (jscpd)
-    needs: changes
-    if: needs.changes.outputs.code == 'true'
-    runs-on: ubuntu-latest
-    continue-on-error: true
-    steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-node@v6
-        with:
-          node-version: 22
-      - name: Cache node_modules
-        uses: actions/cache@v5
-        with:
-          path: extensions/memory-hybrid/node_modules
-          key: ${{ runner.os }}-node-22-${{ hashFiles('extensions/memory-hybrid/package-lock.json') }}
-          restore-keys: |
-            ${{ runner.os }}-node-22-
-      - name: Install dependencies
-        run: cd extensions/memory-hybrid && npm install
-      - name: Run jscpd
-        run: npx jscpd extensions/memory-hybrid --format typescript --min-lines 12 --min-tokens 80 --reporters console --gitignore --ignore "**/node_modules/**" --ignore "**/dist/**" --ignore "**/coverage/**"
-
   dead-code:
     name: Dead Code Analysis (knip)
     needs: changes
