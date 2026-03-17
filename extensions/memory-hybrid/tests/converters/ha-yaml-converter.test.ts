@@ -214,4 +214,25 @@ script:
     expect(result.markdown).not.toContain("pushbullet_key");
     expect(result.markdown).not.toContain("test_message");
   });
+
+  it("handles keys with hyphens and dots", () => {
+    const yaml = `
+homeassistant:
+  name: "Test Home"
+
+api-key: !secret my_api_key
+sensor.temperature: !secret temp_sensor
+mqtt-broker: !secret mqtt_host
+device.id: !secret device_identifier
+`.trim();
+
+    const result = haYamlConverter.convert(yaml, "/config/configuration.yaml");
+    // Should not crash and should handle the secrets
+    expect(result.markdown).toContain("# Home Assistant Configuration");
+    // Secret references should not appear in output
+    expect(result.markdown).not.toContain("my_api_key");
+    expect(result.markdown).not.toContain("temp_sensor");
+    expect(result.markdown).not.toContain("mqtt_host");
+    expect(result.markdown).not.toContain("device_identifier");
+  });
 });

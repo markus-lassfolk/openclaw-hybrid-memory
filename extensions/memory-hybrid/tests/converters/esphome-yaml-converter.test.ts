@@ -237,4 +237,27 @@ wifi:
     expect(result.markdown).not.toContain("wifi_pass_1");
     expect(result.markdown).not.toContain("wifi_pass_2");
   });
+
+  it("handles keys with hyphens and dots", () => {
+    const yaml = `
+esphome:
+  name: test_device
+
+esp32:
+  board: esp32dev
+
+api-key: !secret my_api_key
+mqtt.broker: !secret mqtt_host
+ota-password: !secret ota_pass
+device.id: !secret device_id
+`.trim();
+
+    const result = esphomeYamlConverter.convert(yaml, "/config/hyphen-keys.yaml");
+    expect(result.markdown).toContain("test_device");
+    // Secrets should be redacted
+    expect(result.markdown).not.toContain("my_api_key");
+    expect(result.markdown).not.toContain("mqtt_host");
+    expect(result.markdown).not.toContain("ota_pass");
+    expect(result.markdown).not.toContain("device_id");
+  });
 });

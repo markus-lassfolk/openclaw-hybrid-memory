@@ -17,7 +17,7 @@ import { parseYaml } from "../../utils/yaml-parser.js";
 function preprocessESPHomeYaml(content: string): string {
   // Match tags at the start of a line value (after key: or after sequence dash -)
   return content
-    .replace(/(^|\n)(\s*)(\w+):\s+!secret\s+\S+/g, '$1$2$3: "[REDACTED]"')
+    .replace(/(^|\n)(\s*)([\w.-]+):\s+!secret\s+\S+/g, '$1$2$3: "[REDACTED]"')
     .replace(/(^|\n)(\s*)-\s+!secret\s+\S+/g, '$1$2- "[REDACTED]"');
 }
 
