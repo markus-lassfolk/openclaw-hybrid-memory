@@ -120,7 +120,7 @@ export async function consumePendingTaskSignals(
     completedToFlush: ActiveTaskEntry[];
   } => {
     let updatedActive = [...activeEntries];
-    let updatedCompleted = [...completedEntries];
+    const updatedCompleted = [...completedEntries];
     const processedSignals: PendingTaskSignal[] = [];
     const expiredSignals: PendingTaskSignal[] = [];
     const completedToFlush: ActiveTaskEntry[] = [];
