@@ -27,7 +27,7 @@ import { chunkTextByChars } from "../utils/text.js";
 import { loadPrompt, fillPrompt } from "../utils/prompt-loader.js";
 import { chatCompleteWithRetry, LLMRetryError } from "./chat.js";
 import { capturePluginError } from "./error-reporter.js";
-import { normalizeVector } from "./reflection.js";
+import { normalizeVector, dotProductSimilarity } from "./reflection.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -386,7 +386,8 @@ export async function runPassiveObserver(
   // In-memory dedup pool for non-dry-run mode: when vectorDb.store() fails, the fact is
   // committed to SQLite but not to LanceDB. This array provides a fallback intra-batch
   // dedup mechanism so subsequent identical facts within the same batch are still detected.
-  const recentVectors: number[][] = [];
+  // Track fact IDs alongside vectors to enable confidence reinforcement (Issue #147).
+  const recentVectors: Array<{ vector: number[]; factId: string }> = [];
 
   // ---------------------------------------------------------------------------
   // Phase 3: process each session that has new content.
@@ -546,16 +547,30 @@ export async function runPassiveObserver(
         // Compare against dryRunVectors[] (dry-run) or recentVectors[] (non-dry-run) to ensure
         // accurate intra-batch deduplication (Issue #499).
         if (!isDuplicate) {
-          const vectorPool = opts.dryRun ? dryRunVectors : recentVectors;
-          for (const recentVec of vectorPool) {
-            let dotProduct = 0;
-            for (let i = 0; i < normalizedVec.length; i++) {
-              dotProduct += normalizedVec[i] * recentVec[i];
+          if (opts.dryRun) {
+            for (const recentVec of dryRunVectors) {
+              const cosineSim = dotProductSimilarity(normalizedVec, recentVec);
+              if (cosineSim >= cosineSimilarityThreshold) {
+                isDuplicate = true;
+                break;
+              }
             }
-            const cosineSim = dotProduct;
-            if (cosineSim >= cosineSimilarityThreshold) {
-              isDuplicate = true;
-              break;
+          } else {
+            for (const recent of recentVectors) {
+              const cosineSim = dotProductSimilarity(normalizedVec, recent.vector);
+              if (cosineSim >= cosineSimilarityThreshold) {
+                isDuplicate = true;
+                // Confidence reinforcement: boost the matched fact (Issue #147)
+                if (reinforcementEnabled) {
+                  try {
+                    const boosted = factsDb.boostConfidence(recent.factId, passiveBoost, maxConfidence);
+                    if (boosted) result.factsReinforced++;
+                  } catch {
+                    // Non-fatal — don't fail passive observer because of boost error
+                  }
+                }
+                break;
+              }
             }
           }
         }
@@ -661,7 +676,7 @@ export async function runPassiveObserver(
 
         // Track vector for intra-batch dedup: whether vectorDb.store() succeeded or failed,
         // add to recentVectors[] so subsequent identical facts in this batch are detected.
-        recentVectors.push(normalizedVec);
+        recentVectors.push({ vector: normalizedVec, factId: stored.id });
 
         result.factsStored++;
       }
