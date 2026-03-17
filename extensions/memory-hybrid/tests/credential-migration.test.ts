@@ -431,7 +431,7 @@ describe("migrateCredentialsToVault", () => {
       expect(result.errors).toHaveLength(0);
     });
 
-    it("does not call writeFn when markDone=true but nothing to migrate", async () => {
+    it("calls writeFn when markDone=true even with nothing to migrate", async () => {
       const writeFn = vi.fn();
       const factsDb = makeFactsDB({ lookup: vi.fn().mockReturnValue([]) });
 
