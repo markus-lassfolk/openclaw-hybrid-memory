@@ -231,8 +231,10 @@ function removeInlineComment(s: string): string {
     const c = s[i];
     if (c === '"' && !inSingle) inDouble = !inDouble;
     else if (c === "'" && !inDouble) inSingle = !inSingle;
-    else if (c === "#" && !inDouble && !inSingle && i > 0 && s[i - 1] === " ") {
-      return s.substring(0, i).trim();
+    else if (c === "#" && !inDouble && !inSingle) {
+      if (i === 0 || s[i - 1] === " ") {
+        return s.substring(0, i).trim();
+      }
     }
   }
   return s;
