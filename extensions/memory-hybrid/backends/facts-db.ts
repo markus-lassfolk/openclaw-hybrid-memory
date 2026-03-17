@@ -2197,7 +2197,7 @@ export class FactsDB {
         if (factIdA === factIdB) continue;
         const [source, target] = factIdA < factIdB ? [factIdA, factIdB] : [factIdB, factIdA];
         const existing = selectStmt.get(source, target) as { id: string; strength: number } | undefined;
-        const newStrength = Math.min(1, (existing?.strength ?? 0) + deltaStrength);
+        const newStrength = Math.max(0, Math.min(1, (existing?.strength ?? 0) + deltaStrength));
         if (existing) {
           updateStmt.run(newStrength, existing.id);
         } else {
