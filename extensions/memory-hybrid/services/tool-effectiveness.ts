@@ -26,28 +26,28 @@ import type { ToolEffectivenessConfig } from "../config/types/features.js";
 // ---------------------------------------------------------------------------
 
 export interface ToolMetrics {
-  tool: string;
-  /** Context label for this score row (default "general"). */
-  context: string;
-  totalCalls: number;
-  successCalls: number;
-  failureCalls: number;
-  unknownCalls: number;
-  successRate: number;
-  avgDurationMs: number;
-  avgCallsPerSession: number;
-  redundancyScore: number; // 0-1: 1 = maximally redundant (same tool called many times)
-  compositeScore: number; // 0-1: higher is better
-  lastUpdated: number; // epoch seconds
+	tool: string;
+	/** Context label for this score row (default "general"). */
+	context: string;
+	totalCalls: number;
+	successCalls: number;
+	failureCalls: number;
+	unknownCalls: number;
+	successRate: number;
+	avgDurationMs: number;
+	avgCallsPerSession: number;
+	redundancyScore: number; // 0-1: 1 = maximally redundant (same tool called many times)
+	compositeScore: number; // 0-1: higher is better
+	lastUpdated: number; // epoch seconds
 }
 
 export interface ToolEffectivenessReport {
-  computedAt: number;
-  toolsScored: number;
-  topTools: ToolMetrics[];
-  lowScoreTools: ToolMetrics[];
-  allScores: ToolMetrics[];
-  recommendations: string[];
+	computedAt: number;
+	toolsScored: number;
+	topTools: ToolMetrics[];
+	lowScoreTools: ToolMetrics[];
+	allScores: ToolMetrics[];
+	recommendations: string[];
 }
 
 // ToolEffectivenessConfig is imported from ../config/types/features.js
@@ -79,24 +79,24 @@ CREATE TABLE IF NOT EXISTS tool_effectiveness (
 // ---------------------------------------------------------------------------
 
 export class ToolEffectivenessStore {
-  private db: Database.Database;
+	private db: Database.Database;
 
-  constructor(dbPath: string) {
-    mkdirSync(dirname(dbPath), { recursive: true });
-    this.db = new Database(dbPath, {
-      timeout: SQLITE_BUSY_TIMEOUT_MS,
-    });
-    this.db.pragma("journal_mode = WAL");
-    this.db.pragma("foreign_keys = ON");
-    this.db.exec(SCHEMA);
-  }
+	constructor(dbPath: string) {
+		mkdirSync(dirname(dbPath), { recursive: true });
+		this.db = new Database(dbPath, {
+			timeout: SQLITE_BUSY_TIMEOUT_MS,
+		});
+		this.db.pragma("journal_mode = WAL");
+		this.db.pragma("foreign_keys = ON");
+		this.db.exec(SCHEMA);
+	}
 
-  /** Upsert a tool score row. */
-  upsert(metrics: ToolMetrics): void {
-    const context = metrics.context ?? "general";
-    this.db
-      .prepare(
-        `INSERT INTO tool_effectiveness
+	/** Upsert a tool score row. */
+	upsert(metrics: ToolMetrics): void {
+		const context = metrics.context ?? "general";
+		this.db
+			.prepare(
+				`INSERT INTO tool_effectiveness
          (tool, context, total_calls, success_calls, failure_calls, unknown_calls, avg_duration_ms, avg_calls_per_session, composite_score, last_updated)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(tool, context) DO UPDATE SET
@@ -108,44 +108,44 @@ export class ToolEffectivenessStore {
            avg_calls_per_session = excluded.avg_calls_per_session,
            composite_score = excluded.composite_score,
            last_updated = excluded.last_updated`,
-      )
-      .run(
-        metrics.tool,
-        context,
-        metrics.totalCalls,
-        metrics.successCalls,
-        metrics.failureCalls,
-        metrics.unknownCalls,
-        metrics.avgDurationMs,
-        metrics.avgCallsPerSession,
-        metrics.compositeScore,
-        metrics.lastUpdated,
-      );
-  }
+			)
+			.run(
+				metrics.tool,
+				context,
+				metrics.totalCalls,
+				metrics.successCalls,
+				metrics.failureCalls,
+				metrics.unknownCalls,
+				metrics.avgDurationMs,
+				metrics.avgCallsPerSession,
+				metrics.compositeScore,
+				metrics.lastUpdated,
+			);
+	}
 
-  /**
-   * Record a single tool outcome (incremental upsert for real-time tracking).
-   *
-   * @param tool      Tool name.
-   * @param outcome   "success" | "failure" | "unknown".
-   * @param context   Context label (default "general").
-   * @param durationMs Duration of the call in milliseconds (default 0).
-   *
-   * Note: `avg_calls_per_session` is intentionally not updated here because individual
-   * tool outcome events lack session boundary information. It is computed during the
-   * nightly batch analysis via `computeToolEffectiveness` / `upsert`, which has access
-   * to per-session call counts from workflow traces.
-   */
-  recordToolOutcome(
-    tool: string,
-    outcome: "success" | "failure" | "unknown",
-    context = "general",
-    durationMs = 0,
-  ): void {
-    const now = Math.floor(Date.now() / 1000);
-    this.db
-      .prepare(
-        `INSERT INTO tool_effectiveness
+	/**
+	 * Record a single tool outcome (incremental upsert for real-time tracking).
+	 *
+	 * @param tool      Tool name.
+	 * @param outcome   "success" | "failure" | "unknown".
+	 * @param context   Context label (default "general").
+	 * @param durationMs Duration of the call in milliseconds (default 0).
+	 *
+	 * Note: `avg_calls_per_session` is intentionally not updated here because individual
+	 * tool outcome events lack session boundary information. It is computed during the
+	 * nightly batch analysis via `computeToolEffectiveness` / `upsert`, which has access
+	 * to per-session call counts from workflow traces.
+	 */
+	recordToolOutcome(
+		tool: string,
+		outcome: "success" | "failure" | "unknown",
+		context = "general",
+		durationMs = 0,
+	): void {
+		const now = Math.floor(Date.now() / 1000);
+		this.db
+			.prepare(
+				`INSERT INTO tool_effectiveness
          (tool, context, total_calls, success_calls, failure_calls, unknown_calls, avg_duration_ms, avg_calls_per_session, composite_score, last_updated)
          VALUES (?, ?, 1,
            CASE ? WHEN 'success' THEN 1 ELSE 0 END,
@@ -160,155 +160,181 @@ export class ToolEffectivenessStore {
            avg_duration_ms = (avg_duration_ms * total_calls + ?) / (total_calls + 1),
            composite_score = CAST(success_calls + CASE ? WHEN 'success' THEN 1 ELSE 0 END AS REAL) / MAX(total_calls + 1, 1) * 0.5 + 0.25,
            last_updated   = ?`,
-      )
-      .run(
-        tool,
-        context,
-        outcome,
-        outcome,
-        outcome,
-        durationMs,
-        now,
-        outcome,
-        outcome,
-        outcome,
-        durationMs,
-        outcome,
-        now,
-      );
-  }
+			)
+			.run(
+				tool,
+				context,
+				outcome,
+				outcome,
+				outcome,
+				durationMs,
+				now,
+				outcome,
+				outcome,
+				outcome,
+				durationMs,
+				outcome,
+				now,
+			);
+	}
 
-  /**
-   * Get effectiveness for a specific tool, optionally filtered by context.
-   *
-   * @param tool     Tool name.
-   * @param context  Optional context filter. If omitted, returns all context rows for the tool.
-   * @returns        Array of ToolMetrics (one per context), or empty array if not found.
-   */
-  getToolEffectiveness(tool: string, context?: string): ToolMetrics[] {
-    type Row = {
-      tool: string;
-      context: string;
-      total_calls: number;
-      success_calls: number;
-      failure_calls: number;
-      unknown_calls: number;
-      avg_duration_ms: number;
-      avg_calls_per_session: number;
-      composite_score: number;
-      last_updated: number;
-    };
+	/**
+	 * Get effectiveness for a specific tool, optionally filtered by context.
+	 *
+	 * @param tool     Tool name.
+	 * @param context  Optional context filter. If omitted, returns all context rows for the tool.
+	 * @returns        Array of ToolMetrics (one per context), or empty array if not found.
+	 */
+	getToolEffectiveness(tool: string, context?: string): ToolMetrics[] {
+		type Row = {
+			tool: string;
+			context: string;
+			total_calls: number;
+			success_calls: number;
+			failure_calls: number;
+			unknown_calls: number;
+			avg_duration_ms: number;
+			avg_calls_per_session: number;
+			composite_score: number;
+			last_updated: number;
+		};
 
-    let rows: Row[];
-    if (context !== undefined) {
-      rows = this.db
-        .prepare(`SELECT * FROM tool_effectiveness WHERE tool = ? AND context = ?`)
-        .all(tool, context) as Row[];
-    } else {
-      rows = this.db.prepare(`SELECT * FROM tool_effectiveness WHERE tool = ? ORDER BY context`).all(tool) as Row[];
-    }
+		let rows: Row[];
+		if (context !== undefined) {
+			rows = this.db
+				.prepare(
+					`SELECT * FROM tool_effectiveness WHERE tool = ? AND context = ?`,
+				)
+				.all(tool, context) as Row[];
+		} else {
+			rows = this.db
+				.prepare(
+					`SELECT * FROM tool_effectiveness WHERE tool = ? ORDER BY context`,
+				)
+				.all(tool) as Row[];
+		}
 
-    return rows.map((r) => ({
-      tool: r.tool,
-      context: r.context,
-      totalCalls: r.total_calls,
-      successCalls: r.success_calls,
-      failureCalls: r.failure_calls,
-      unknownCalls: r.unknown_calls,
-      successRate: r.total_calls > 0 ? r.success_calls / r.total_calls : 0,
-      avgDurationMs: r.avg_duration_ms,
-      avgCallsPerSession: r.avg_calls_per_session,
-      redundancyScore: Math.min(1, Math.max(0, (r.avg_calls_per_session - 1) / 4)),
-      compositeScore: r.composite_score,
-      lastUpdated: r.last_updated,
-    }));
-  }
+		return rows.map((r) => ({
+			tool: r.tool,
+			context: r.context,
+			totalCalls: r.total_calls,
+			successCalls: r.success_calls,
+			failureCalls: r.failure_calls,
+			unknownCalls: r.unknown_calls,
+			successRate: r.total_calls > 0 ? r.success_calls / r.total_calls : 0,
+			avgDurationMs: r.avg_duration_ms,
+			avgCallsPerSession: r.avg_calls_per_session,
+			redundancyScore: Math.min(
+				1,
+				Math.max(0, (r.avg_calls_per_session - 1) / 4),
+			),
+			compositeScore: r.composite_score,
+			lastUpdated: r.last_updated,
+		}));
+	}
 
-  /** Apply decay to all scores. */
-  applyDecay(factor: number): void {
-    this.db.prepare(`UPDATE tool_effectiveness SET composite_score = composite_score * ?`).run(factor);
-  }
+	/** Apply decay to all scores. */
+	applyDecay(factor: number): void {
+		this.db
+			.prepare(
+				`UPDATE tool_effectiveness SET composite_score = composite_score * ?`,
+			)
+			.run(factor);
+	}
 
-  /** Get all scores ordered by composite_score DESC. */
-  getAll(): ToolMetrics[] {
-    const rows = this.db.prepare(`SELECT * FROM tool_effectiveness ORDER BY composite_score DESC`).all() as Array<{
-      tool: string;
-      context: string;
-      total_calls: number;
-      success_calls: number;
-      failure_calls: number;
-      unknown_calls: number;
-      avg_duration_ms: number;
-      avg_calls_per_session: number;
-      composite_score: number;
-      last_updated: number;
-    }>;
+	/** Get all scores ordered by composite_score DESC. */
+	getAll(): ToolMetrics[] {
+		const rows = this.db
+			.prepare(`SELECT * FROM tool_effectiveness ORDER BY composite_score DESC`)
+			.all() as Array<{
+			tool: string;
+			context: string;
+			total_calls: number;
+			success_calls: number;
+			failure_calls: number;
+			unknown_calls: number;
+			avg_duration_ms: number;
+			avg_calls_per_session: number;
+			composite_score: number;
+			last_updated: number;
+		}>;
 
-    return rows.map((r) => ({
-      tool: r.tool,
-      context: r.context ?? "general",
-      totalCalls: r.total_calls,
-      successCalls: r.success_calls,
-      failureCalls: r.failure_calls,
-      unknownCalls: r.unknown_calls,
-      successRate: r.total_calls > 0 ? r.success_calls / r.total_calls : 0,
-      avgDurationMs: r.avg_duration_ms,
-      avgCallsPerSession: r.avg_calls_per_session,
-      redundancyScore: Math.min(1, Math.max(0, (r.avg_calls_per_session - 1) / 4)),
-      compositeScore: r.composite_score,
-      lastUpdated: r.last_updated,
-    }));
-  }
+		return rows.map((r) => ({
+			tool: r.tool,
+			context: r.context ?? "general",
+			totalCalls: r.total_calls,
+			successCalls: r.success_calls,
+			failureCalls: r.failure_calls,
+			unknownCalls: r.unknown_calls,
+			successRate: r.total_calls > 0 ? r.success_calls / r.total_calls : 0,
+			avgDurationMs: r.avg_duration_ms,
+			avgCallsPerSession: r.avg_calls_per_session,
+			redundancyScore: Math.min(
+				1,
+				Math.max(0, (r.avg_calls_per_session - 1) / 4),
+			),
+			compositeScore: r.composite_score,
+			lastUpdated: r.last_updated,
+		}));
+	}
 
-  /** Get score for a specific tool (first context row, or "general"). */
-  getByTool(tool: string): ToolMetrics | null {
-    const row = this.db
-      .prepare(`SELECT * FROM tool_effectiveness WHERE tool = ? ORDER BY context LIMIT 1`)
-      .get(tool) as
-      | {
-          tool: string;
-          context: string;
-          total_calls: number;
-          success_calls: number;
-          failure_calls: number;
-          unknown_calls: number;
-          avg_duration_ms: number;
-          avg_calls_per_session: number;
-          composite_score: number;
-          last_updated: number;
-        }
-      | undefined;
+	/** Get score for a specific tool (first context row, or "general"). */
+	getByTool(tool: string): ToolMetrics | null {
+		const row = this.db
+			.prepare(
+				`SELECT * FROM tool_effectiveness WHERE tool = ? ORDER BY context LIMIT 1`,
+			)
+			.get(tool) as
+			| {
+					tool: string;
+					context: string;
+					total_calls: number;
+					success_calls: number;
+					failure_calls: number;
+					unknown_calls: number;
+					avg_duration_ms: number;
+					avg_calls_per_session: number;
+					composite_score: number;
+					last_updated: number;
+			  }
+			| undefined;
 
-    if (!row) return null;
-    return {
-      tool: row.tool,
-      context: row.context ?? "general",
-      totalCalls: row.total_calls,
-      successCalls: row.success_calls,
-      failureCalls: row.failure_calls,
-      unknownCalls: row.unknown_calls,
-      successRate: row.total_calls > 0 ? row.success_calls / row.total_calls : 0,
-      avgDurationMs: row.avg_duration_ms,
-      avgCallsPerSession: row.avg_calls_per_session,
-      redundancyScore: Math.min(1, Math.max(0, (row.avg_calls_per_session - 1) / 4)),
-      compositeScore: row.composite_score,
-      lastUpdated: row.last_updated,
-    };
-  }
+		if (!row) return null;
+		return {
+			tool: row.tool,
+			context: row.context ?? "general",
+			totalCalls: row.total_calls,
+			successCalls: row.success_calls,
+			failureCalls: row.failure_calls,
+			unknownCalls: row.unknown_calls,
+			successRate:
+				row.total_calls > 0 ? row.success_calls / row.total_calls : 0,
+			avgDurationMs: row.avg_duration_ms,
+			avgCallsPerSession: row.avg_calls_per_session,
+			redundancyScore: Math.min(
+				1,
+				Math.max(0, (row.avg_calls_per_session - 1) / 4),
+			),
+			compositeScore: row.composite_score,
+			lastUpdated: row.last_updated,
+		};
+	}
 
-  /** Count of scored tools. */
-  count(): number {
-    const row = this.db.prepare(`SELECT COUNT(*) as n FROM tool_effectiveness`).get() as { n: number };
-    return row.n;
-  }
+	/** Count of scored tools. */
+	count(): number {
+		const row = this.db
+			.prepare(`SELECT COUNT(*) as n FROM tool_effectiveness`)
+			.get() as { n: number };
+		return row.n;
+	}
 
-  close(): void {
-    try {
-      this.db.close();
-    } catch {
-      // ignore
-    }
-  }
+	close(): void {
+		try {
+			this.db.close();
+		} catch {
+			// ignore
+		}
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -316,150 +342,174 @@ export class ToolEffectivenessStore {
 // ---------------------------------------------------------------------------
 
 interface TraceRow {
-  tool_sequence: string;
-  outcome: string;
-  duration_ms: number;
-  session_id: string;
+	tool_sequence: string;
+	outcome: string;
+	duration_ms: number;
+	session_id: string;
 }
 
 /** Aggregate raw workflow trace rows into per-tool metrics. */
-export function aggregateTraceRows(rows: TraceRow[], minCalls: number): ToolMetrics[] {
-  if (rows.length === 0) return [];
+export function aggregateTraceRows(
+	rows: TraceRow[],
+	minCalls: number,
+): ToolMetrics[] {
+	if (rows.length === 0) return [];
 
-  const toolStats = new Map<
-    string,
-    {
-      total: number;
-      success: number;
-      failure: number;
-      unknown: number;
-      durations: number[];
-      // sessionId → call count in that session
-      sessionCalls: Map<string, number>;
-    }
-  >();
+	const toolStats = new Map<
+		string,
+		{
+			total: number;
+			success: number;
+			failure: number;
+			unknown: number;
+			durations: number[];
+			// sessionId → call count in that session
+			sessionCalls: Map<string, number>;
+		}
+	>();
 
-  const maxDuration = rows.reduce((max, r) => Math.max(max, r.duration_ms ?? 0), 0) || 1;
+	const maxDuration =
+		rows.reduce((max, r) => Math.max(max, r.duration_ms ?? 0), 0) || 1;
 
-  for (const row of rows) {
-    let seq: string[] = [];
-    try {
-      seq = JSON.parse(row.tool_sequence) as string[];
-    } catch {
-      continue;
-    }
-    const uniqueToolsInRow = new Set(seq);
-    const sessionId = row.session_id ?? "unknown";
+	for (const row of rows) {
+		let seq: string[] = [];
+		try {
+			seq = JSON.parse(row.tool_sequence) as string[];
+		} catch {
+			continue;
+		}
+		const uniqueToolsInRow = new Set(seq);
+		const sessionId = row.session_id ?? "unknown";
 
-    for (const tool of uniqueToolsInRow) {
-      if (!toolStats.has(tool)) {
-        toolStats.set(tool, {
-          total: 0,
-          success: 0,
-          failure: 0,
-          unknown: 0,
-          durations: [],
-          sessionCalls: new Map(),
-        });
-      }
-      const s = toolStats.get(tool)!;
+		for (const tool of uniqueToolsInRow) {
+			if (!toolStats.has(tool)) {
+				toolStats.set(tool, {
+					total: 0,
+					success: 0,
+					failure: 0,
+					unknown: 0,
+					durations: [],
+					sessionCalls: new Map(),
+				});
+			}
+			const s = toolStats.get(tool)!;
 
-      // Count occurrences of this tool in this trace
-      const callsInTrace = seq.filter((t) => t === tool).length;
-      s.total += callsInTrace;
+			// Count occurrences of this tool in this trace
+			const callsInTrace = seq.filter((t) => t === tool).length;
+			s.total += callsInTrace;
 
-      // Outcome attribution
-      if (row.outcome === "success") s.success += callsInTrace;
-      else if (row.outcome === "failure") s.failure += callsInTrace;
-      else s.unknown += callsInTrace;
+			// Outcome attribution
+			if (row.outcome === "success") s.success += callsInTrace;
+			else if (row.outcome === "failure") s.failure += callsInTrace;
+			else s.unknown += callsInTrace;
 
-      // Duration: attribute the trace duration equally across unique tools
-      s.durations.push((row.duration_ms ?? 0) / uniqueToolsInRow.size);
+			// Duration: attribute the trace duration equally across unique tools
+			s.durations.push((row.duration_ms ?? 0) / uniqueToolsInRow.size);
 
-      // Session redundancy
-      const prevCalls = s.sessionCalls.get(sessionId) ?? 0;
-      s.sessionCalls.set(sessionId, prevCalls + callsInTrace);
-    }
-  }
+			// Session redundancy
+			const prevCalls = s.sessionCalls.get(sessionId) ?? 0;
+			s.sessionCalls.set(sessionId, prevCalls + callsInTrace);
+		}
+	}
 
-  const results: ToolMetrics[] = [];
+	const results: ToolMetrics[] = [];
 
-  for (const [tool, s] of toolStats) {
-    if (s.total < minCalls) continue;
+	for (const [tool, s] of toolStats) {
+		if (s.total < minCalls) continue;
 
-    const successRate = s.total > 0 ? s.success / s.total : 0;
-    const avgDuration = s.durations.reduce((a, b) => a + b, 0) / Math.max(1, s.durations.length);
-    const sessionCallCounts = [...s.sessionCalls.values()];
-    const avgCallsPerSession = sessionCallCounts.reduce((a, b) => a + b, 0) / Math.max(1, sessionCallCounts.length);
+		const successRate = s.total > 0 ? s.success / s.total : 0;
+		const avgDuration =
+			s.durations.reduce((a, b) => a + b, 0) / Math.max(1, s.durations.length);
+		const sessionCallCounts = [...s.sessionCalls.values()];
+		const avgCallsPerSession =
+			sessionCallCounts.reduce((a, b) => a + b, 0) /
+			Math.max(1, sessionCallCounts.length);
 
-    // Redundancy = (avg calls per session - 1) / 4 clamped to [0,1]
-    // 1 call/session = 0 redundancy; 5+ calls/session = 1.0 redundancy
-    const redundancyScore = Math.min(1, Math.max(0, (avgCallsPerSession - 1) / 4));
+		// Redundancy = (avg calls per session - 1) / 4 clamped to [0,1]
+		// 1 call/session = 0 redundancy; 5+ calls/session = 1.0 redundancy
+		const redundancyScore = Math.min(
+			1,
+			Math.max(0, (avgCallsPerSession - 1) / 4),
+		);
 
-    // Duration score: 1 = very fast, 0 = slowest seen
-    const durationScore = 1 - Math.min(1, avgDuration / maxDuration);
+		// Duration score: 1 = very fast, 0 = slowest seen
+		const durationScore = 1 - Math.min(1, avgDuration / maxDuration);
 
-    // Composite: success 50%, speed 30%, low-redundancy 20%
-    const compositeScore = successRate * 0.5 + durationScore * 0.3 + (1 - redundancyScore) * 0.2;
+		// Composite: success 50%, speed 30%, low-redundancy 20%
+		const compositeScore =
+			successRate * 0.5 + durationScore * 0.3 + (1 - redundancyScore) * 0.2;
 
-    results.push({
-      tool,
-      context: "general",
-      totalCalls: s.total,
-      successCalls: s.success,
-      failureCalls: s.failure,
-      unknownCalls: s.unknown,
-      successRate,
-      avgDurationMs: avgDuration,
-      avgCallsPerSession,
-      redundancyScore,
-      compositeScore: Math.min(1, Math.max(0, compositeScore)),
-      lastUpdated: Math.floor(Date.now() / 1000),
-    });
-  }
+		results.push({
+			tool,
+			context: "general",
+			totalCalls: s.total,
+			successCalls: s.success,
+			failureCalls: s.failure,
+			unknownCalls: s.unknown,
+			successRate,
+			avgDurationMs: avgDuration,
+			avgCallsPerSession,
+			redundancyScore,
+			compositeScore: Math.min(1, Math.max(0, compositeScore)),
+			lastUpdated: Math.floor(Date.now() / 1000),
+		});
+	}
 
-  return results.sort((a, b) => b.compositeScore - a.compositeScore);
+	return results.sort((a, b) => b.compositeScore - a.compositeScore);
 }
 
 /** Generate human-readable recommendations from tool metrics. */
-export function generateRecommendations(metrics: ToolMetrics[], lowScoreThreshold: number): string[] {
-  const recs: string[] = [];
+export function generateRecommendations(
+	metrics: ToolMetrics[],
+	lowScoreThreshold: number,
+): string[] {
+	const recs: string[] = [];
 
-  const lowScorers = metrics.filter((m) => m.compositeScore < lowScoreThreshold && m.totalCalls >= 5);
-  if (lowScorers.length > 0) {
-    const names = lowScorers
-      .slice(0, 3)
-      .map((m) => `${m.tool} (score: ${m.compositeScore.toFixed(2)})`)
-      .join(", ");
-    recs.push(`Low-scoring tools may need workflow review: ${names}`);
-  }
+	const lowScorers = metrics.filter(
+		(m) => m.compositeScore < lowScoreThreshold && m.totalCalls >= 5,
+	);
+	if (lowScorers.length > 0) {
+		const names = lowScorers
+			.slice(0, 3)
+			.map((m) => `${m.tool} (score: ${m.compositeScore.toFixed(2)})`)
+			.join(", ");
+		recs.push(`Low-scoring tools may need workflow review: ${names}`);
+	}
 
-  const highRedundancy = metrics.filter((m) => m.redundancyScore > 0.7 && m.totalCalls >= 5);
-  if (highRedundancy.length > 0) {
-    const names = highRedundancy
-      .slice(0, 3)
-      .map((m) => `${m.tool} (avg ${m.avgCallsPerSession.toFixed(1)}x/session)`)
-      .join(", ");
-    recs.push(`Highly redundant tools (called many times per session): ${names}`);
-  }
+	const highRedundancy = metrics.filter(
+		(m) => m.redundancyScore > 0.7 && m.totalCalls >= 5,
+	);
+	if (highRedundancy.length > 0) {
+		const names = highRedundancy
+			.slice(0, 3)
+			.map((m) => `${m.tool} (avg ${m.avgCallsPerSession.toFixed(1)}x/session)`)
+			.join(", ");
+		recs.push(
+			`Highly redundant tools (called many times per session): ${names}`,
+		);
+	}
 
-  const lowSuccess = metrics.filter((m) => m.successRate < 0.5 && m.totalCalls >= 5);
-  if (lowSuccess.length > 0) {
-    const names = lowSuccess
-      .slice(0, 3)
-      .map((m) => `${m.tool} (${(m.successRate * 100).toFixed(0)}% success)`)
-      .join(", ");
-    recs.push(`Tools with low success rates: ${names}`);
-  }
+	const lowSuccess = metrics.filter(
+		(m) => m.successRate < 0.5 && m.totalCalls >= 5,
+	);
+	if (lowSuccess.length > 0) {
+		const names = lowSuccess
+			.slice(0, 3)
+			.map((m) => `${m.tool} (${(m.successRate * 100).toFixed(0)}% success)`)
+			.join(", ");
+		recs.push(`Tools with low success rates: ${names}`);
+	}
 
-  if (recs.length === 0) {
-    const topTool = metrics[0];
-    if (topTool) {
-      recs.push(`Best performing tool: ${topTool.tool} (score: ${topTool.compositeScore.toFixed(2)})`);
-    }
-  }
+	if (recs.length === 0) {
+		const topTool = metrics[0];
+		if (topTool) {
+			recs.push(
+				`Best performing tool: ${topTool.tool} (score: ${topTool.compositeScore.toFixed(2)})`,
+			);
+		}
+	}
 
-  return recs;
+	return recs;
 }
 
 // ---------------------------------------------------------------------------
@@ -476,139 +526,163 @@ export function generateRecommendations(metrics: ToolMetrics[], lowScoreThreshol
  * @returns               Effectiveness report.
  */
 export async function computeToolEffectiveness(
-  workflowDbPath: string,
-  effectivenessDb: ToolEffectivenessStore | null,
-  cfg: Partial<ToolEffectivenessConfig> = {},
-  logger: { warn?: (msg: string) => void } = {},
+	workflowDbPath: string,
+	effectivenessDb: ToolEffectivenessStore | null,
+	cfg: Partial<ToolEffectivenessConfig> = {},
+	logger: { warn?: (msg: string) => void } = {},
 ): Promise<ToolEffectivenessReport> {
-  const minCalls = cfg.minCalls ?? 3;
-  const topN = cfg.topN ?? 10;
-  const lowScoreThreshold = cfg.lowScoreThreshold ?? 0.3;
-  const decayFactor = cfg.decayFactor ?? 0.95;
+	const minCalls = cfg.minCalls ?? 3;
+	const topN = cfg.topN ?? 10;
+	const lowScoreThreshold = cfg.lowScoreThreshold ?? 0.3;
+	const decayFactor = cfg.decayFactor ?? 0.95;
 
-  const report: ToolEffectivenessReport = {
-    computedAt: Math.floor(Date.now() / 1000),
-    toolsScored: 0,
-    topTools: [],
-    lowScoreTools: [],
-    allScores: [],
-    recommendations: [],
-  };
+	const report: ToolEffectivenessReport = {
+		computedAt: Math.floor(Date.now() / 1000),
+		toolsScored: 0,
+		topTools: [],
+		lowScoreTools: [],
+		allScores: [],
+		recommendations: [],
+	};
 
-  // Open the workflow traces DB (read-only if possible)
-  let traceDb: Database.Database | null = null;
-  let ownedEffStore = false;
-  let effStore = effectivenessDb;
+	// Open the workflow traces DB (read-only if possible)
+	let traceDb: Database.Database | null = null;
+	let ownedEffStore = false;
+	let effStore = effectivenessDb;
 
-  try {
-    traceDb = new Database(workflowDbPath, { readonly: true, timeout: SQLITE_BUSY_TIMEOUT_MS });
+	try {
+		traceDb = new Database(workflowDbPath, {
+			readonly: true,
+			timeout: SQLITE_BUSY_TIMEOUT_MS,
+		});
 
-    // Check table exists
-    const tableExists = traceDb
-      .prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='workflow_traces'`)
-      .get() as { name: string } | undefined;
+		// Check table exists
+		const tableExists = traceDb
+			.prepare(
+				`SELECT name FROM sqlite_master WHERE type='table' AND name='workflow_traces'`,
+			)
+			.get() as { name: string } | undefined;
 
-    if (!tableExists) {
-      logger.warn?.("tool-effectiveness: workflow_traces table not found — no traces recorded yet");
-      return report;
-    }
+		if (!tableExists) {
+			logger.warn?.(
+				"tool-effectiveness: workflow_traces table not found — no traces recorded yet",
+			);
+			return report;
+		}
 
-    // Pull all traces
-    const rows = traceDb
-      .prepare(`SELECT tool_sequence, outcome, duration_ms, session_id FROM workflow_traces`)
-      .all() as TraceRow[];
+		// Pull all traces
+		const rows = traceDb
+			.prepare(
+				`SELECT tool_sequence, outcome, duration_ms, session_id FROM workflow_traces`,
+			)
+			.all() as TraceRow[];
 
-    if (rows.length === 0) {
-      return report;
-    }
+		if (rows.length === 0) {
+			return report;
+		}
 
-    // Compute metrics
-    const metrics = aggregateTraceRows(rows, minCalls);
+		// Compute metrics
+		const metrics = aggregateTraceRows(rows, minCalls);
 
-    if (metrics.length === 0) {
-      return report;
-    }
+		if (metrics.length === 0) {
+			return report;
+		}
 
-    // Apply decay and upsert into effectivenessDb
-    if (!effStore) {
-      const effPath = workflowDbPath.replace(/(\.[^.]+)?$/, "-tool-effectiveness.db");
-      effStore = new ToolEffectivenessStore(effPath);
-      ownedEffStore = true;
-    }
+		// Apply decay and upsert into effectivenessDb
+		if (!effStore) {
+			const effPath = workflowDbPath.replace(
+				/(\.[^.]+)?$/,
+				"-tool-effectiveness.db",
+			);
+			effStore = new ToolEffectivenessStore(effPath);
+			ownedEffStore = true;
+		}
 
-    effStore.applyDecay(decayFactor);
+		effStore.applyDecay(decayFactor);
 
-    for (const m of metrics) {
-      effStore.upsert(m);
-    }
+		for (const m of metrics) {
+			effStore.upsert(m);
+		}
 
-    // Read back all scores (includes decayed history)
-    const allScores = effStore.getAll();
-    report.toolsScored = allScores.length;
-    report.allScores = allScores;
-    report.topTools = allScores.slice(0, topN);
-    report.lowScoreTools = allScores.filter((m) => m.compositeScore < lowScoreThreshold && m.totalCalls >= minCalls);
-    report.recommendations = generateRecommendations(allScores, lowScoreThreshold);
-  } catch (err) {
-    capturePluginError(err instanceof Error ? err : new Error(String(err)), { operation: "tool-effectiveness" });
-    logger.warn?.(`tool-effectiveness: error computing scores: ${err}`);
-  } finally {
-    try {
-      traceDb?.close();
-    } catch {
-      // ignore
-    }
-    if (ownedEffStore && effStore) {
-      try {
-        effStore.close();
-      } catch {
-        // ignore
-      }
-    }
-  }
+		// Read back all scores (includes decayed history)
+		const allScores = effStore.getAll();
+		report.toolsScored = allScores.length;
+		report.allScores = allScores;
+		report.topTools = allScores.slice(0, topN);
+		report.lowScoreTools = allScores.filter(
+			(m) => m.compositeScore < lowScoreThreshold && m.totalCalls >= minCalls,
+		);
+		report.recommendations = generateRecommendations(
+			allScores,
+			lowScoreThreshold,
+		);
+	} catch (err) {
+		capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+			operation: "tool-effectiveness",
+		});
+		logger.warn?.(`tool-effectiveness: error computing scores: ${err}`);
+	} finally {
+		try {
+			traceDb?.close();
+		} catch {
+			// ignore
+		}
+		if (ownedEffStore && effStore) {
+			try {
+				effStore.close();
+			} catch {
+				// ignore
+			}
+		}
+	}
 
-  return report;
+	return report;
 }
 
 /**
  * Format a ToolEffectivenessReport as a human-readable string.
  */
-export function formatToolEffectivenessReport(report: ToolEffectivenessReport): string {
-  if (report.toolsScored === 0) {
-    return "No tool effectiveness data available. Enable workflowTracking and run more sessions.";
-  }
+export function formatToolEffectivenessReport(
+	report: ToolEffectivenessReport,
+): string {
+	if (report.toolsScored === 0) {
+		return "No tool effectiveness data available. Enable workflowTracking and run more sessions.";
+	}
 
-  const lines: string[] = [
-    `Tool Effectiveness Report (${new Date(report.computedAt * 1000).toISOString()})`,
-    `Tools scored: ${report.toolsScored}`,
-    "",
-    "Top Tools:",
-  ];
+	const lines: string[] = [
+		`Tool Effectiveness Report (${new Date(report.computedAt * 1000).toISOString()})`,
+		`Tools scored: ${report.toolsScored}`,
+		"",
+		"Top Tools:",
+	];
 
-  for (const t of report.topTools.slice(0, 10)) {
-    lines.push(
-      `  ${t.tool}: score=${t.compositeScore.toFixed(3)} ` +
-        `success=${(t.successRate * 100).toFixed(0)}% ` +
-        `calls=${t.totalCalls} ` +
-        `redundancy=${(t.redundancyScore * 100).toFixed(0)}%`,
-    );
-  }
+	for (const t of report.topTools.slice(0, 10)) {
+		lines.push(
+			`  ${t.tool}: score=${t.compositeScore.toFixed(3)} ` +
+				`success=${(t.successRate * 100).toFixed(0)}% ` +
+				`calls=${t.totalCalls} ` +
+				`redundancy=${(t.redundancyScore * 100).toFixed(0)}%`,
+		);
+	}
 
-  if (report.lowScoreTools.length > 0) {
-    lines.push("", "⚠ Low-Score Tools:");
-    for (const t of report.lowScoreTools) {
-      lines.push(`  ${t.tool}: score=${t.compositeScore.toFixed(3)} ` + `success=${(t.successRate * 100).toFixed(0)}%`);
-    }
-  }
+	if (report.lowScoreTools.length > 0) {
+		lines.push("", "⚠ Low-Score Tools:");
+		for (const t of report.lowScoreTools) {
+			lines.push(
+				`  ${t.tool}: score=${t.compositeScore.toFixed(3)} ` +
+					`success=${(t.successRate * 100).toFixed(0)}%`,
+			);
+		}
+	}
 
-  if (report.recommendations.length > 0) {
-    lines.push("", "Recommendations:");
-    for (const r of report.recommendations) {
-      lines.push(`  • ${r}`);
-    }
-  }
+	if (report.recommendations.length > 0) {
+		lines.push("", "Recommendations:");
+		for (const r of report.recommendations) {
+			lines.push(`  • ${r}`);
+		}
+	}
 
-  return lines.join("\n");
+	return lines.join("\n");
 }
 
 // ---------------------------------------------------------------------------
@@ -628,29 +702,34 @@ export function formatToolEffectivenessReport(report: ToolEffectivenessReport): 
  * @returns              Hint string, or empty string if no meaningful data.
  */
 export function generateToolHint(
-  store: ToolEffectivenessStore,
-  context: string,
-  minUses = 5,
-  hintThreshold = 0.3,
+	store: ToolEffectivenessStore,
+	context: string,
+	minUses = 5,
+	hintThreshold = 0.3,
 ): string {
-  // Get all rows for this context
-  const all = store.getAll().filter((m) => m.context === context && m.totalCalls >= minUses);
+	// Get all rows for this context
+	const all = store
+		.getAll()
+		.filter((m) => m.context === context && m.totalCalls >= minUses);
 
-  if (all.length < 2) return "";
+	if (all.length < 2) return "";
 
-  // Sort by compositeScore DESC
-  const sorted = [...all].sort((a, b) => b.compositeScore - a.compositeScore);
-  const best = sorted[0]!;
-  const worst = sorted[sorted.length - 1]!;
+	// Sort by compositeScore DESC
+	const sorted = [...all].sort((a, b) => b.compositeScore - a.compositeScore);
+	const best = sorted[0]!;
+	const worst = sorted[sorted.length - 1]!;
 
-  if (best.compositeScore - worst.compositeScore < hintThreshold) return "";
+	if (best.compositeScore - worst.compositeScore < hintThreshold) return "";
 
-  // Build the hint
-  const toolList = sorted
-    .map((m) => `${m.tool} scores ${m.compositeScore.toFixed(1)} (${m.totalCalls} uses)`)
-    .join(", ");
+	// Build the hint
+	const toolList = sorted
+		.map(
+			(m) =>
+				`${m.tool} scores ${m.compositeScore.toFixed(1)} (${m.totalCalls} uses)`,
+		)
+		.join(", ");
 
-  return `[tool-hint: For "${context}" tasks, ${toolList}. Prefer ${best.tool}.]`;
+	return `[tool-hint: For "${context}" tasks, ${toolList}. Prefer ${best.tool}.]`;
 }
 
 // ---------------------------------------------------------------------------
@@ -663,57 +742,61 @@ export function generateToolHint(
  * @param store    ToolEffectivenessStore with scored data.
  * @param factsDb  Facts database to store the pattern fact.
  */
-export async function generateMonthlyReport(store: ToolEffectivenessStore, factsDb: FactsDB): Promise<void> {
-  try {
-    const allScores = store.getAll();
+export async function generateMonthlyReport(
+	store: ToolEffectivenessStore,
+	factsDb: FactsDB,
+): Promise<void> {
+	try {
+		const allScores = store.getAll();
 
-    if (allScores.length === 0) {
-      return;
-    }
+		if (allScores.length === 0) {
+			return;
+		}
 
-    const top5 = allScores
-      .slice(0, 5)
-      .map((m) => `${m.tool}(${m.compositeScore.toFixed(2)})`)
-      .join(", ");
+		const top5 = allScores
+			.slice(0, 5)
+			.map((m) => `${m.tool}(${m.compositeScore.toFixed(2)})`)
+			.join(", ");
 
-    const lowScorers = allScores
-      .filter((m) => m.compositeScore < 0.3 && m.totalCalls >= 5)
-      .slice(0, 3)
-      .map((m) => `${m.tool}(${m.compositeScore.toFixed(2)})`)
-      .join(", ");
+		const lowScorers = allScores
+			.filter((m) => m.compositeScore < 0.3 && m.totalCalls >= 5)
+			.slice(0, 3)
+			.map((m) => `${m.tool}(${m.compositeScore.toFixed(2)})`)
+			.join(", ");
 
-    const totalTools = allScores.length;
-    const avgScore = allScores.reduce((sum, m) => sum + m.compositeScore, 0) / totalTools;
+		const totalTools = allScores.length;
+		const avgScore =
+			allScores.reduce((sum, m) => sum + m.compositeScore, 0) / totalTools;
 
-    const month = new Date().toISOString().slice(0, 7); // YYYY-MM
+		const month = new Date().toISOString().slice(0, 7); // YYYY-MM
 
-    const summaryLines = [
-      `Monthly tool effectiveness report (${month}):`,
-      `${totalTools} tools scored, avg composite score: ${avgScore.toFixed(3)}.`,
-      `Top tools: ${top5}.`,
-    ];
-    if (lowScorers) {
-      summaryLines.push(`Low-scoring tools (score < 0.3): ${lowScorers}.`);
-    }
+		const summaryLines = [
+			`Monthly tool effectiveness report (${month}):`,
+			`${totalTools} tools scored, avg composite score: ${avgScore.toFixed(3)}.`,
+			`Top tools: ${top5}.`,
+		];
+		if (lowScorers) {
+			summaryLines.push(`Low-scoring tools (score < 0.3): ${lowScorers}.`);
+		}
 
-    const summary = summaryLines.join(" ");
+		const summary = summaryLines.join(" ");
 
-    factsDb.store({
-      text: summary,
-      category: "pattern",
-      entity: null,
-      key: `tool-effectiveness-monthly-${month}`,
-      value: null,
-      importance: 0.7,
-      confidence: 0.9,
-      scope: "global",
-      source: "tool-effectiveness",
-      tags: ["tool-effectiveness", "monthly-report"],
-      summary: `Tool effectiveness summary for ${month}`,
-    });
-  } catch (err) {
-    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-      operation: "tool-effectiveness-monthly-report",
-    });
-  }
+		factsDb.store({
+			text: summary,
+			category: "pattern",
+			entity: null,
+			key: `tool-effectiveness-monthly-${month}`,
+			value: null,
+			importance: 0.7,
+			confidence: 0.9,
+			scope: "global",
+			source: "tool-effectiveness",
+			tags: ["tool-effectiveness", "monthly-report"],
+			summary: `Tool effectiveness summary for ${month}`,
+		});
+	} catch (err) {
+		capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+			operation: "tool-effectiveness-monthly-report",
+		});
+	}
 }
