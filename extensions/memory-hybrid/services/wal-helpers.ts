@@ -53,3 +53,12 @@ export function walRemove(wal: WriteAheadLog | null, id: string, logger: { warn:
     }
   }
 }
+
+/**
+ * Reset the WAL circuit breaker state to its initial values.
+ * Intended for use in tests only — do not call in production code.
+ */
+export function _resetWalCircuitBreakerForTests(): void {
+  walFailureCount = 0;
+  walDisabled = false;
+}
