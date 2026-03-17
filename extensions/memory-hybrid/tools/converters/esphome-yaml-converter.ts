@@ -7,15 +7,13 @@
 
 import { basename } from "node:path";
 import type { Converter, ConversionResult } from "./index.js";
-import yaml from "js-yaml";
+import { parse } from "yaml";
+import type { SchemaOptions } from "yaml";
 
-// ESPHome allows !secret directives
-const ESPHOME_SECRET_TYPE = new yaml.Type("!secret", {
-  kind: "scalar",
-  construct: (_data: string) => "[REDACTED]",
-});
-
-const ESPHOME_SCHEMA = yaml.DEFAULT_SCHEMA.extend([ESPHOME_SECRET_TYPE]);
+// ESPHome allows !secret directives — redact all secrets at parse time
+const ESPHOME_CUSTOM_TAGS: NonNullable<SchemaOptions["customTags"]> = [
+  { tag: "!secret", resolve: (_value: string) => "[REDACTED]" },
+];
 
 type ESPDoc = Record<string, unknown>;
 
@@ -80,7 +78,7 @@ export const esphomeYamlConverter: Converter = {
     let doc: ESPDoc;
 
     try {
-      const parsed = yaml.load(content, { schema: ESPHOME_SCHEMA });
+      const parsed = parse(content, { customTags: ESPHOME_CUSTOM_TAGS });
       doc = (typeof parsed === "object" && parsed !== null ? parsed : {}) as ESPDoc;
     } catch {
       doc = {};
