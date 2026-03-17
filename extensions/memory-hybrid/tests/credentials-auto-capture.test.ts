@@ -401,7 +401,7 @@ describe("shouldCapture — unified SENSITIVE_PATTERNS (issue #555)", () => {
   });
 
   it("blocks connection string with embedded password that also contains a memory trigger", () => {
-    const text = "remember mongodb://admin:secretpass@localhost/mydb for the service";
+    const text = "remember mongodb://admin:Pa$$w0rd@localhost/mydb for the service";
     expect(shouldCapture(text, maxChars, alwaysMatch)).toBe(false);
   });
 });

@@ -35,9 +35,7 @@ export const CAPTURE_FILTER_PATTERNS = SENSITIVE_PATTERNS.map((pattern) =>
 );
 
 /** Patterns for isCredentialLike - derived from SENSITIVE_PATTERNS with /token/i for broader credential detection */
-const CREDENTIAL_LIKE_PATTERNS = SENSITIVE_PATTERNS.map((pattern) =>
-  pattern.source === /token\s+is/i.source && pattern.flags === /token\s+is/i.flags ? /token/i : pattern,
-);
+const CREDENTIAL_LIKE_PATTERNS = CAPTURE_FILTER_PATTERNS;
 
 /** Patterns that suggest a credential value - for auto-detect prompt to store */
 const CREDENTIAL_PATTERNS: Array<{ regex: RegExp; type: string; hint: string }> = [
