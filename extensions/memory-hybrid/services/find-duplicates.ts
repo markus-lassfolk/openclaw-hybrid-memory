@@ -73,6 +73,14 @@ export async function runFindDuplicates(
     const batch = ids.slice(i, i + BATCH_SIZE);
     const batchTexts = batch.map((id) => idToFact.get(id)!.text);
     const vecs = await safeEmbedBatch(embeddings, batchTexts, (msg) => logger.warn(msg));
+    // Whole batch failed: all slots are null — log once instead of once-per-fact to avoid log spam.
+    if (vecs.every((v) => v === null || v.length === 0)) {
+      logger.warn(
+        `memory-hybrid: find-duplicates -- skipping batch of ${batch.length} facts (ids ${batch[0]}…${batch[batch.length - 1]}) due to embedding failure`,
+      );
+      skippedEmbeddings += batch.length;
+      continue;
+    }
     for (let j = 0; j < batch.length; j++) {
       const vec = vecs[j];
       if (!vec || vec.length === 0) {

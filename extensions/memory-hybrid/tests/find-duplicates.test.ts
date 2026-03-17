@@ -107,25 +107,30 @@ describe("runFindDuplicates", () => {
     expect(result.candidatesCount).toBe(3);
   });
 
-  it("handles whole batch failure — returns empty pairs gracefully", async () => {
+  it("handles whole batch failure — returns empty pairs gracefully and logs single batch warning", async () => {
     const facts = [makeEntry({ id: "a", text: "Fact A" }), makeEntry({ id: "b", text: "Fact B" })];
     const factsDb = { getFactsForConsolidation: vi.fn().mockReturnValue(facts) };
     const embedBatch = vi.fn().mockRejectedValue(new Error("embedding provider unavailable"));
     const embeddings = { embedBatch, embed: vi.fn(), dimensions: 2, modelName: "test" };
     const vectorDb = { search: vi.fn() };
+    const warnLogger = { info: vi.fn(), warn: vi.fn() };
 
     const result = await runFindDuplicates(
       factsDb as never,
       vectorDb as never,
       embeddings,
       { threshold: 0.8, includeStructured: false, limit: 100 },
-      logger,
+      warnLogger,
     );
 
     // No pairs found, no crash
     expect(result.pairs).toHaveLength(0);
     // vectorDb.search never called — no valid vectors
     expect(vectorDb.search).not.toHaveBeenCalled();
+    // Single batch-level warning, not per-fact spam
+    const warnCalls = warnLogger.warn.mock.calls.map((c: string[]) => c[0]);
+    expect(warnCalls.some((m: string) => m.includes("skipping batch of"))).toBe(true);
+    expect(warnCalls.every((m: string) => !m.includes("skipping fact"))).toBe(true);
   });
 
   it("all batches fail — graceful degradation with zero pairs", async () => {
