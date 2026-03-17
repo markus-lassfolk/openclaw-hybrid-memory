@@ -129,7 +129,10 @@ export async function migrateCredentialsToVault(opts: MigrateCredentialsOptions)
     }
   }
 
-  // Only write the flag when markDone is true AND there were no errors — a partial migration must not be marked complete.
+  // Only write the flag when markDone is true AND there were no errors — a partial migration
+  // must not be marked complete. Trade-off: a persistent vault error will cause migration to
+  // re-run on every startup, but the idempotency filter (vault: prefix / "stored in secure
+  // vault" text check) prevents double-migration; the cost is a single DB lookup per boot.
   if (markDone && errors.length === 0) {
     try {
       (opts.writeFn ?? writeFileSync)(migrationFlagPath, "1", "utf8");

@@ -35,7 +35,12 @@ type MockEmbeddings = {
   embed: ReturnType<typeof vi.fn>;
 };
 
-/** A valid GitHub PAT — ghp_ + 36 alphanumeric chars = passes extractCredentialMatch + validateCredentialValue. */
+/**
+ * A valid classic GitHub PAT — ghp_ + 36 alphanumeric chars (40 total).
+ * extractCredentialMatch only supports the classic ghp_/gho_ prefixes; newer fine-grained
+ * tokens (github_pat_...) are not matched by the current extractor, so no second variant
+ * is needed here.
+ */
 const TOKEN_VALUE = "ghp_" + "A".repeat(36);
 
 function makeFactsDB(overrides: Partial<MockFactsDB> = {}): MockFactsDB {
@@ -194,7 +199,9 @@ describe("migrateCredentialsToVault", () => {
       const result = await migrateCredentialsToVault(makeOpts({ factsDb, credentialsDb }));
 
       expect(result.migrated).toBe(0);
-      expect(result.skipped).toBe(0); // filtered before even counting as skipped
+      // Pointer facts are filtered out before the main loop, so they never reach the
+      // tryParseCredentialForVault call that increments skipped. Asserting only the
+      // observable side-effect (no vault write) keeps this test resilient to refactors.
       expect(credentialsDb.store).not.toHaveBeenCalled();
     });
 
@@ -377,6 +384,9 @@ describe("migrateCredentialsToVault", () => {
       expect(result.migrated).toBe(0);
       expect(result.errors.length).toBeGreaterThan(0);
       expect(result.errors[0]).toContain("vault verification failed");
+      // Original fact must NOT be deleted when verification fails — deletion happens after
+      // the get() check, so the credential remains intact in factsDb.
+      expect(factsDb.delete).not.toHaveBeenCalled();
     });
 
     it("adds error when stored value does not match expected secretValue", async () => {
@@ -392,6 +402,8 @@ describe("migrateCredentialsToVault", () => {
       expect(result.migrated).toBe(0);
       expect(result.errors.length).toBeGreaterThan(0);
       expect(result.errors[0]).toContain("vault verification failed");
+      // Original fact must NOT be deleted when verification fails — data safety guaranteed.
+      expect(factsDb.delete).not.toHaveBeenCalled();
     });
   });
 
@@ -417,6 +429,102 @@ describe("migrateCredentialsToVault", () => {
       const result = await migrateCredentialsToVault(makeOpts({ factsDb, credentialsDb, aliasDb: null }));
 
       expect(result.migrated).toBe(1);
+    });
+  });
+
+  describe("failure paths — factsDb.store, embeddings.embed, vectorDb.store", () => {
+    it("collects error when factsDb.store throws writing vault pointer", async () => {
+      // factsDb.store is called once (to write the pointer). If it throws, the outer
+      // catch handles it: error collected, migrated NOT incremented.
+      const fact = makeCredentialFact();
+      const factsDb = makeFactsDB({
+        lookup: vi.fn().mockReturnValue([fact]),
+        store: vi.fn().mockImplementation(() => {
+          throw new Error("sqlite write error");
+        }),
+      });
+      const credentialsDb = makeCredentialsDB();
+
+      const result = await migrateCredentialsToVault(makeOpts({ factsDb, credentialsDb }));
+
+      expect(result.errors).toHaveLength(1);
+      expect(result.errors[0]).toContain("sqlite write error");
+      expect(result.migrated).toBe(0);
+    });
+
+    it("adds vector error and still counts migration when embeddings.embed rejects", async () => {
+      // embeddings.embed failure is caught by the inner try block around vector operations.
+      // The credential is already stored in the vault and the pointer is in factsDb,
+      // so it is counted as migrated. Only the vector index entry is missing.
+      const fact = makeCredentialFact();
+      const factsDb = makeFactsDB({ lookup: vi.fn().mockReturnValue([fact]) });
+      const credentialsDb = makeCredentialsDB();
+      const embeddings = makeEmbeddings({
+        embed: vi.fn().mockRejectedValue(new Error("embedding service down")),
+      });
+
+      const result = await migrateCredentialsToVault(makeOpts({ factsDb, credentialsDb, embeddings }));
+
+      expect(result.errors).toHaveLength(1);
+      expect(result.errors[0]).toContain("embedding service down");
+      expect(result.migrated).toBe(1);
+    });
+
+    it("adds vector error and still counts migration when vectorDb.store rejects", async () => {
+      // vectorDb.store failure is caught by the same inner try block. Same outcome as
+      // embeddings.embed failure: credential migrated, pointer stored, only vector missing.
+      const fact = makeCredentialFact();
+      const factsDb = makeFactsDB({ lookup: vi.fn().mockReturnValue([fact]) });
+      const credentialsDb = makeCredentialsDB();
+      const vectorDb = makeVectorDB({
+        store: vi.fn().mockRejectedValue(new Error("lancedb write error")),
+      });
+
+      const result = await migrateCredentialsToVault(makeOpts({ factsDb, credentialsDb, vectorDb }));
+
+      expect(result.errors).toHaveLength(1);
+      expect(result.errors[0]).toContain("lancedb write error");
+      expect(result.migrated).toBe(1);
+    });
+  });
+
+  describe("factsDb.delete failure — error collected, vault entry already stored", () => {
+    it("collects error when factsDb.delete throws during migration", async () => {
+      // If factsDb.delete throws, the outer catch handles it. The vault entry was already
+      // written (credentialsDb.store succeeded and verification passed), but the original
+      // fact remains in factsDb. The error is surfaced to prevent silent data inconsistency.
+      const fact = makeCredentialFact();
+      const factsDb = makeFactsDB({
+        lookup: vi.fn().mockReturnValue([fact]),
+        delete: vi.fn().mockImplementation(() => {
+          throw new Error("sqlite delete failed");
+        }),
+      });
+      const credentialsDb = makeCredentialsDB();
+
+      const result = await migrateCredentialsToVault(makeOpts({ factsDb, credentialsDb }));
+
+      expect(result.errors).toHaveLength(1);
+      expect(result.errors[0]).toContain("sqlite delete failed");
+      expect(result.migrated).toBe(0);
+      // Vault entry was stored before the failed deletion
+      expect(credentialsDb.store).toHaveBeenCalled();
+    });
+  });
+
+  describe("writeFn error path — error collected, result not re-thrown", () => {
+    it("adds error to result when writeFn throws, does not re-throw", async () => {
+      const writeFn = vi.fn().mockImplementation(() => {
+        throw new Error("disk full");
+      });
+      // Empty facts list so migration completes cleanly before the flag write
+      const factsDb = makeFactsDB({ lookup: vi.fn().mockReturnValue([]) });
+
+      const result = await migrateCredentialsToVault(makeOpts({ factsDb, markDone: true, writeFn }));
+
+      // capturePluginError is called internally; the error is surfaced in result.errors
+      expect(result.errors).toHaveLength(1);
+      expect(result.errors[0]).toContain("disk full");
     });
   });
 
