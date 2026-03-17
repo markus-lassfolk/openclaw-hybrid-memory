@@ -145,7 +145,7 @@ export const haYamlConverter: Converter = {
     let doc: HADoc;
 
     try {
-      const parsed = parse(content, { customTags: HA_CUSTOM_TAGS });
+      const parsed = parse(content, { customTags: HA_CUSTOM_TAGS, schema: "yaml-1.1" });
       doc = (typeof parsed === "object" && parsed !== null ? parsed : {}) as HADoc;
     } catch {
       doc = {};

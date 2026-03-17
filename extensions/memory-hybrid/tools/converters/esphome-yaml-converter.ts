@@ -78,7 +78,7 @@ export const esphomeYamlConverter: Converter = {
     let doc: ESPDoc;
 
     try {
-      const parsed = parse(content, { customTags: ESPHOME_CUSTOM_TAGS });
+      const parsed = parse(content, { customTags: ESPHOME_CUSTOM_TAGS, schema: "yaml-1.1" });
       doc = (typeof parsed === "object" && parsed !== null ? parsed : {}) as ESPDoc;
     } catch {
       doc = {};
