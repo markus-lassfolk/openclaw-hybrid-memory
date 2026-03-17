@@ -32,7 +32,8 @@ import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
 import type { EmbeddingProvider } from "../services/embeddings.js";
 import type { SearchResult } from "../types/memory.js";
-import { type mergeResults, filterByScope } from "../services/merge-results.js";
+// biome-ignore lint/style/useImportType: mergeResults kept as value import so typeof mergeResults resolves at the type level without confusion
+import { mergeResults, filterByScope } from "../services/merge-results.js";
 import type { ScopeFilter } from "../types/memory.js";
 import type { HybridMemoryConfig } from "../config.js";
 import { getCronModelConfig, getDefaultCronModel } from "../config.js";
@@ -2444,11 +2445,11 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
         const thresholdDays = Number.parseFloat(opts.thresholdDays);
         const minImportance = Number.parseFloat(opts.minImportance);
 
-        if (isNaN(thresholdDays) || thresholdDays < 0) {
+        if (Number.isNaN(thresholdDays) || thresholdDays < 0) {
           console.error("--threshold-days must be a non-negative number");
           process.exit(1);
         }
-        if (isNaN(minImportance) || minImportance < 0 || minImportance > 1) {
+        if (Number.isNaN(minImportance) || minImportance < 0 || minImportance > 1) {
           console.error("--min-importance must be a number between 0 and 1");
           process.exit(1);
         }
@@ -2528,7 +2529,7 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
         const compare = (a: string, b: string): number => {
           const parseNum = (s: string): number => {
             const n = Number.parseInt(s, 10);
-            return isNaN(n) ? 0 : n;
+            return Number.isNaN(n) ? 0 : n;
           };
           const pa = a
             .replace(/[-+].*/, "")

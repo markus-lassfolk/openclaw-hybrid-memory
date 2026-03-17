@@ -12,8 +12,8 @@ export function parseSourceDate(v: string | number | null | undefined): number |
   if (iso) {
     const [, y, m, d] = iso;
     const ms = Date.UTC(Number.parseInt(y!, 10), Number.parseInt(m!, 10) - 1, Number.parseInt(d!, 10));
-    return isNaN(ms) ? null : Math.floor(ms / 1000);
+    return Number.isNaN(ms) ? null : Math.floor(ms / 1000);
   }
   const n = Number.parseInt(s, 10);
-  return !isNaN(n) && n > 0 ? n : null;
+  return !Number.isNaN(n) && n > 0 ? n : null;
 }

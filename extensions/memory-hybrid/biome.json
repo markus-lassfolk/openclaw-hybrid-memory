@@ -1,7 +1,13 @@
 {
   "$schema": "https://biomejs.dev/schemas/1.9.4/schema.json",
   "files": {
-    "ignore": ["dist/**", "node_modules/**", "scripts/**", "coverage/**", "tsconfig*.json"]
+    "ignore": [
+      "dist/**",
+      "node_modules/**",
+      "scripts/**",
+      "coverage/**",
+      "tsconfig*.json"
+    ]
   },
   "formatter": {
     "enabled": true,
@@ -25,24 +31,24 @@
         "noExplicitAny": "warn",
         "noConsole": "off",
         "noImplicitAnyLet": "warn",
-        "noAssignInExpressions": "warn",
-        "noMisleadingCharacterClass": "warn",
-        "noControlCharactersInRegex": "warn",
+        "noAssignInExpressions": "error",
+        "noMisleadingCharacterClass": "error",
+        "noControlCharactersInRegex": "error",
         "noConfusingVoidType": "warn",
-        "noGlobalIsNan": "warn"
+        "noGlobalIsNan": "error"
       },
       "correctness": {
-        "noUnusedVariables": "warn",
+        "noUnusedVariables": "error",
         "noUnnecessaryContinue": "warn"
       },
       "style": {
         "useConst": "warn",
-        "noVar": "warn",
+        "noVar": "error",
         "noNonNullAssertion": "warn",
         "noParameterAssign": "warn",
         "noUnusedTemplateLiteral": "warn",
         "useTemplate": "warn",
-        "useNodejsImportProtocol": "warn",
+        "useNodejsImportProtocol": "error",
         "noUselessElse": "warn",
         "useExponentiationOperator": "warn",
         "useSingleVarDeclarator": "warn"
@@ -53,7 +59,7 @@
         "useOptionalChain": "warn"
       },
       "performance": {
-        "noDelete": "warn"
+        "noDelete": "error"
       }
     }
   },

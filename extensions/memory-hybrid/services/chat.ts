@@ -283,9 +283,9 @@ function parseRetryAfterMs(err: unknown): number | undefined {
   if (!raw) return undefined;
   // Retry-After can be either a delay-seconds integer or an HTTP-date
   const secs = Number.parseInt(raw, 10);
-  if (!isNaN(secs) && secs > 0) return secs * 1000;
+  if (!Number.isNaN(secs) && secs > 0) return secs * 1000;
   const date = Date.parse(raw);
-  if (!isNaN(date)) return Math.max(0, date - Date.now());
+  if (!Number.isNaN(date)) return Math.max(0, date - Date.now());
   return undefined;
 }
 

@@ -72,7 +72,7 @@ function colIndex(headers: string[], ...candidates: string[]): number {
 function parseNum(val: string | undefined): number | null {
   if (val === undefined || val === "") return null;
   const n = Number.parseFloat(val);
-  return isNaN(n) ? null : n;
+  return Number.isNaN(n) ? null : n;
 }
 
 function summariseCSV(headers: string[], rows: string[][]): string {

@@ -11,7 +11,7 @@
     "prettier": "^3.0.0"
   },
   "lint-staged": {
-    "extensions/memory-hybrid/**/*.ts": "extensions/memory-hybrid/node_modules/.bin/biome format --config-path extensions/memory-hybrid --write"
+    "extensions/memory-hybrid/**/*.ts": "npm exec --prefix extensions/memory-hybrid -- biome format --config-path extensions/memory-hybrid --write"
   },
   "dependencies": {
     "js-yaml": "^4.1.1"

@@ -252,7 +252,7 @@ export function detectStaleTasks(tasks: ActiveTaskEntry[], staleMinutes: number)
   const staleMs = staleMinutes * 60 * 1000;
   return tasks.map((t) => {
     const updatedMs = new Date(t.updated).getTime();
-    const isStale = !isNaN(updatedMs) && now - updatedMs > staleMs;
+    const isStale = !Number.isNaN(updatedMs) && now - updatedMs > staleMs;
     return { ...t, stale: isStale };
   });
 }
@@ -414,7 +414,7 @@ export function buildStaleWarningInjection(tasks: ActiveTaskEntry[], staleMinute
     const now = Date.now();
     for (const task of staleTasks) {
       const updatedMs = new Date(task.updated).getTime();
-      const hoursAgo = isNaN(updatedMs) ? "?" : Math.floor((now - updatedMs) / (60 * 60 * 1000));
+      const hoursAgo = Number.isNaN(updatedMs) ? "?" : Math.floor((now - updatedMs) / (60 * 60 * 1000));
       const line1 = `- [${task.label}]: ${task.description} — last updated ${task.updated} (${hoursAgo}h ago)`;
       const nextPart = task.next ? `, Next: ${task.next}` : "";
       const line2 = `  Status: ${task.status}${nextPart}`;

@@ -95,7 +95,7 @@ function extractCandidates(text: string, nowMs: number): number[] {
     if (moRaw < 1 || moRaw > 12 || d < 1 || d > 31) continue;
     const mo = moRaw - 1;
     const ts = Date.UTC(y, mo, d);
-    if (!isNaN(ts)) {
+    if (!Number.isNaN(ts)) {
       // Verify Date.UTC did not silently normalize (e.g. "2026-02-30" → March)
       const check = new Date(ts);
       if (check.getUTCMonth() !== mo || check.getUTCDate() !== d) continue;
@@ -129,7 +129,7 @@ function extractCandidates(text: string, nowMs: number): number[] {
     for (const yearOffset of [0, 1]) {
       const y = now.getUTCFullYear() + yearOffset;
       const ts = Date.UTC(y, moIdx, dayNum);
-      if (!isNaN(ts)) {
+      if (!Number.isNaN(ts)) {
         // Verify no silent normalization (e.g. Feb 30 → March)
         const check = new Date(ts);
         if (check.getUTCMonth() !== moIdx || check.getUTCDate() !== dayNum) continue;

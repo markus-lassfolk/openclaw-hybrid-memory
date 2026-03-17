@@ -3312,7 +3312,7 @@ export async function runBackfillForCli(
     if (!m) return null;
     const ms = Date.UTC(+m[1], +m[2] - 1, +m[3]);
     const sec = Math.floor(ms / 1000);
-    return isNaN(sec) ? null : sec;
+    return Number.isNaN(sec) ? null : sec;
   };
   let processed = 0;
   for (const fact of allCandidates) {
