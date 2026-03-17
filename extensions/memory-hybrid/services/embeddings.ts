@@ -54,6 +54,11 @@ export interface EmbeddingConfig {
   preferredProviders?: ("ollama" | "openai" | "google")[];
   /** Set by parser from distill.apiKey or llm.providers.google.apiKey when preferredProviders includes "google". */
   googleApiKey?: string;
+  /**
+   * How long (ms) FallbackEmbeddingProvider waits before probing the primary again after a fallback switch.
+   * Must be a finite number > 0. Defaults to 60 000 (1 minute) when not set.
+   */
+  retryIntervalMs?: number;
 }
 
 /** Google Gemini OpenAI-compatible embeddings base URL (same as chat). */
@@ -965,6 +970,9 @@ export class FallbackEmbeddingProvider implements EmbeddingProvider {
     fallbackLabel = "openai",
     retryIntervalMs = 60000,
   ) {
+    if (!Number.isFinite(retryIntervalMs) || retryIntervalMs <= 0) {
+      throw new Error(`FallbackEmbeddingProvider: retryIntervalMs must be a finite number > 0, got ${retryIntervalMs}`);
+    }
     if (fallback && fallback.dimensions !== primary.dimensions) {
       throw new Error(
         `Primary (${primary.modelName}: ${primary.dimensions}d) and fallback ` +
@@ -1008,8 +1016,8 @@ export class FallbackEmbeddingProvider implements EmbeddingProvider {
           phase,
         });
       }
-      return null;
       // Primary still failing — continue using fallback
+      return null;
     }
   }
 
@@ -1187,7 +1195,7 @@ export class ChainEmbeddingProvider implements EmbeddingProvider {
  * - provider='onnx'   → OnnxEmbeddingProvider (with optional OpenAI fallback if apiKey set)
  */
 export function createEmbeddingProvider(cfg: EmbeddingConfig, onFallback?: (err: unknown) => void): EmbeddingProvider {
-  const { provider, model, apiKey, models, dimensions, endpoint, batchSize, preferredProviders } = cfg;
+  const { provider, model, apiKey, models, dimensions, endpoint, batchSize, preferredProviders, retryIntervalMs } = cfg;
 
   if (preferredProviders && preferredProviders.length > 1) {
     const chain: EmbeddingProvider[] = [];
@@ -1264,7 +1272,7 @@ export function createEmbeddingProvider(cfg: EmbeddingConfig, onFallback?: (err:
       const openaiModels = models?.length ? models : ["text-embedding-3-small"];
       try {
         const fallback = new Embeddings(openaiClient, openaiModels, dimensions, batchSize);
-        return new FallbackEmbeddingProvider(primary, fallback, onFallback);
+        return new FallbackEmbeddingProvider(primary, fallback, onFallback, "ollama", "openai", retryIntervalMs);
       } catch (err) {
         // Fallback creation failed (e.g. Ollama dimensions exceed all OpenAI model limits).
         // Warn the user so they know their fallback isn't working.
@@ -1312,7 +1320,7 @@ export function createEmbeddingProvider(cfg: EmbeddingConfig, onFallback?: (err:
           }
           onFallback?.(err);
         };
-        return new FallbackEmbeddingProvider(primary, fallback, onSwitch, "onnx", "openai");
+        return new FallbackEmbeddingProvider(primary, fallback, onSwitch, "onnx", "openai", retryIntervalMs);
       } catch (err) {
         console.warn(
           `memory-hybrid: Failed to create OpenAI fallback for ONNX provider: ${err instanceof Error ? err.message : String(err)}. Continuing with ONNX-only (no fallback).`,
