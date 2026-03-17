@@ -24,6 +24,8 @@ export interface MigrateCredentialsOptions {
   aliasDb?: import("./retrieval-aliases.js").AliasDB | null;
   migrationFlagPath: string;
   markDone: boolean;
+  /** Injectable file-write function (defaults to fs.writeFileSync). Used in tests to avoid touching the filesystem. */
+  writeFn?: (path: string, data: string, encoding: BufferEncoding) => void;
 }
 
 export interface MigrateCredentialsResult {
@@ -35,7 +37,7 @@ export interface MigrateCredentialsResult {
 /**
  * When vault is enabled: move existing credential facts from memory into the vault and replace them with pointers.
  * Idempotent: facts that are already pointers (value starts with vault:) are skipped.
- * Returns { migrated, skipped, errors }. If markDone is true, writes a flag file so init only runs once.
+ * Returns { migrated, skipped, errors }. If markDone is true and there are no errors, writes a flag file so init only runs once.
  */
 export async function migrateCredentialsToVault(opts: MigrateCredentialsOptions): Promise<MigrateCredentialsResult> {
   const { factsDb, vectorDb, embeddings, credentialsDb, aliasDb, migrationFlagPath, markDone } = opts;
@@ -127,9 +129,10 @@ export async function migrateCredentialsToVault(opts: MigrateCredentialsOptions)
     }
   }
 
-  if (markDone) {
+  // Only write the flag when markDone is true AND there were no errors — a partial migration must not be marked complete.
+  if (markDone && errors.length === 0) {
     try {
-      writeFileSync(migrationFlagPath, "1", "utf8");
+      (opts.writeFn ?? writeFileSync)(migrationFlagPath, "1", "utf8");
     } catch (e) {
       capturePluginError(e instanceof Error ? e : new Error(String(e)), {
         subsystem: "credentials",
