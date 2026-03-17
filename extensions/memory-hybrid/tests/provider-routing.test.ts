@@ -1351,6 +1351,36 @@ describe("gateway model auto-derivation — unknown provider prefix filter", () 
     expect(defaultList).toContain("Local/S");
   });
 
+  it("allows gateway models when user-configured provider key uses capital letters (case-insensitive lookup)", () => {
+    // Regression test for issue #487: user configures llm.providers.Local (capital L) in plugin config.
+    // Model "Local/S" should be kept because canRoute normalizes both the prefix and pluginProviders keys.
+    const cfg = getTestConfig(tmpDir, {
+      llm: {
+        providers: {
+          Local: { baseURL: "http://localhost:8080/v1" }, // Capital L
+        },
+      },
+    });
+    const api = makeMockApi({
+      resolvePath: (p: string) => (p.startsWith("/") ? p : join(tmpDir, p)),
+      config: {
+        agents: {
+          defaults: {
+            model: {
+              primary: "Local/S",
+            },
+          },
+        },
+      },
+    });
+
+    ctx = initializeDatabases(cfg, api as never);
+
+    const defaultList = Array.isArray(cfg.llm?.default) ? cfg.llm.default : [];
+    // Provider "Local" (capital L) is configured → model "Local/S" must be kept
+    expect(defaultList).toContain("Local/S");
+  });
+
   it("keeps bare model names (no provider prefix) during auto-derivation", () => {
     // Bare names like "gpt-4o" have no "/" → canRoute returns true; they are preserved during
     // auto-derivation without prefix filtering (normalizeModelId may route them further).

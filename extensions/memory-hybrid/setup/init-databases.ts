@@ -819,7 +819,10 @@ export function initializeDatabases(cfg: HybridMemoryConfig, api: ClawdbotPlugin
       : [];
     // Models from agents.defaults.model with an unknown provider prefix (e.g. "Local/S", "custom/X")
     // would throw UnconfiguredProviderError when used, so filter them out here (issue #487).
-    const pluginProviders = (cfg.llm?.providers ?? {}) as Record<string, unknown>;
+    // Normalize provider keys to lowercase to match the lowercased prefix check at line 831 (issue #487 fix).
+    const pluginProviders = Object.fromEntries(
+      Object.entries((cfg.llm?.providers ?? {}) as Record<string, unknown>).map(([k, v]) => [k.toLowerCase(), v]),
+    );
     // Extract gateway config for OAuth routing check (matches buildMultiProviderOpenAI logic)
     const { gatewayBaseUrl, gatewayToken } = extractGatewayConfig(cfg);
     // Normalize auth.order keys to lowercase so lookups match the lowercased prefix.
