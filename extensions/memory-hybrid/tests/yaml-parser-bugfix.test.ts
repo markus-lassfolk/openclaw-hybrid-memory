@@ -47,6 +47,26 @@ describe("yaml-parser bugfixes", () => {
     });
   });
 
+  describe("Bug 2a: Flow sequence quoted strings preserve type (no coercion)", () => {
+    it('keeps ["true"] as string, not boolean', () => {
+      const result = parseYaml('flags: ["true", "false"]') as Record<string, any>;
+      expect(result.flags).toEqual(["true", "false"]);
+      expect(typeof result.flags[0]).toBe("string");
+      expect(typeof result.flags[1]).toBe("string");
+    });
+
+    it('keeps ["123"] as string, not number', () => {
+      const result = parseYaml('ids: ["123", "456"]') as Record<string, any>;
+      expect(result.ids).toEqual(["123", "456"]);
+      expect(typeof result.ids[0]).toBe("string");
+    });
+
+    it("parses unquoted booleans and numbers correctly in flow sequences", () => {
+      const result = parseYaml("vals: [true, false, 42, 3.14]") as Record<string, any>;
+      expect(result.vals).toEqual([true, false, 42, 3.14]);
+    });
+  });
+
   describe("Bug 2: Quoted strings should not be corrupted by tag preprocessing", () => {
     it("preserves quoted strings containing tag-like text in yaml-parser", () => {
       const yaml = `description: "Do not use !secret here"
