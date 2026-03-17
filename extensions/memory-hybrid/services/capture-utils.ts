@@ -3,16 +3,7 @@
  */
 
 import type { MemoryCategory } from "../types/memory.js";
-
-const SENSITIVE_PATTERNS = [
-  /api[_-]?key/i,
-  /password/i,
-  /secret/i,
-  /token/i,
-  /bearer/i,
-  /authorization/i,
-  /credentials?/i,
-];
+import { SENSITIVE_PATTERNS } from "./auto-capture.js";
 
 export function shouldCapture(text: string, captureMaxChars: number, memoryTriggers: RegExp[]): boolean {
   if (text.length < 10 || text.length > captureMaxChars) return false;

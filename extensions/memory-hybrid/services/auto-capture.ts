@@ -19,6 +19,9 @@ export const SENSITIVE_PATTERNS = [
   /api.?key/i,
   /secret/i,
   /token\s+is/i,
+  /\bbearer\b/i, // Bearer tokens
+  /\bauthorization\b/i, // Authorization headers
+  /\bcredentials?\b/i, // Credentials keyword
   /\bssn\b/i,
   /credit.?card/i,
   /AKIA[0-9A-Z]{16}/, // AWS access keys
