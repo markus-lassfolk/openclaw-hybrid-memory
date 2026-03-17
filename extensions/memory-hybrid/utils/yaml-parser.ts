@@ -101,7 +101,8 @@ function parseMapping(ctx: ParseCtx, baseIndent: number): Record<string, YAMLVal
 
     ctx.pos++;
     const key = unquoteStr(content.substring(0, colonIdx).trim());
-    const valueStr = content.substring(colonIdx + 1).trim();
+    const rawValueStr = content.substring(colonIdx + 1).trim();
+    const valueStr = removeInlineComment(rawValueStr);
 
     if (valueStr === "") {
       skipBlanks(ctx);
@@ -112,7 +113,7 @@ function parseMapping(ctx: ParseCtx, baseIndent: number): Record<string, YAMLVal
         result[key] = null;
       }
     } else {
-      result[key] = parseScalar(removeInlineComment(valueStr));
+      result[key] = parseScalar(valueStr);
     }
   }
 
@@ -175,7 +176,8 @@ function parseSeqMapItem(ctx: ParseCtx, firstPair: string, seqIndent: number): R
 
     ctx.pos++;
     const key = unquoteStr(content.substring(0, colonIdx).trim());
-    const valueStr = content.substring(colonIdx + 1).trim();
+    const rawValueStr = content.substring(colonIdx + 1).trim();
+    const valueStr = removeInlineComment(rawValueStr);
 
     if (valueStr === "") {
       skipBlanks(ctx);
@@ -186,7 +188,7 @@ function parseSeqMapItem(ctx: ParseCtx, firstPair: string, seqIndent: number): R
         result[key] = null;
       }
     } else {
-      result[key] = parseScalar(removeInlineComment(valueStr));
+      result[key] = parseScalar(valueStr);
     }
   }
 
@@ -198,7 +200,8 @@ function parsePairInto(ctx: ParseCtx, content: string, parentIndent: number, res
   if (colonIdx < 0) return;
 
   const key = unquoteStr(content.substring(0, colonIdx).trim());
-  const valueStr = content.substring(colonIdx + 1).trim();
+  const rawValueStr = content.substring(colonIdx + 1).trim();
+  const valueStr = removeInlineComment(rawValueStr);
 
   if (valueStr === "") {
     skipBlanks(ctx);
@@ -209,7 +212,7 @@ function parsePairInto(ctx: ParseCtx, content: string, parentIndent: number, res
       result[key] = null;
     }
   } else {
-    result[key] = parseScalar(removeInlineComment(valueStr));
+    result[key] = parseScalar(valueStr);
   }
 }
 

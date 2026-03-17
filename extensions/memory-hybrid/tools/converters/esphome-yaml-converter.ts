@@ -12,9 +12,11 @@ import { parseYaml } from "../../utils/yaml-parser.js";
 /**
  * Replace !secret directives with [REDACTED] before parsing.
  * ESPHome uses !secret for sensitive values; we always redact them.
+ * Only matches tags at the start of values (not inside quoted strings or after other content).
  */
 function preprocessESPHomeYaml(content: string): string {
-  return content.replace(/!secret\s+\S+/g, '"[REDACTED]"');
+  // Match tags only at the start of a line value (after key: and optional whitespace)
+  return content.replace(/(^|\n)(\s*)(\w+):\s+!secret\s+\S+/g, '$1$2$3: "[REDACTED]"');
 }
 
 type ESPDoc = Record<string, unknown>;

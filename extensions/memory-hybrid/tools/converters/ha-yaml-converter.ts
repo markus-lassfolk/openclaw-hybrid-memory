@@ -20,14 +20,17 @@ const HA_INCLUDE_DIR_NAMED_PREFIX = "__HA_INCLUDE_DIR_NAMED__";
 /**
  * Replace HA-specific YAML tags with safe sentinel string values before parsing.
  * Order matters: longer tag names must be replaced before shorter prefixes.
+ * Only matches tags at the start of values (not inside quoted strings or after other content).
  */
 function preprocessHAYaml(content: string): string {
+  // Match tags only at the start of a line value (after key: and optional whitespace)
+  // Use negative lookbehind to ensure we're not inside a quoted string
   return content
-    .replace(/!include_dir_merge_named\s+(\S+)/g, `"${HA_INCLUDE_DIR_PREFIX}$1"`)
-    .replace(/!include_dir_list\s+(\S+)/g, `"${HA_INCLUDE_DIR_LIST_PREFIX}$1"`)
-    .replace(/!include_dir_named\s+(\S+)/g, `"${HA_INCLUDE_DIR_NAMED_PREFIX}$1"`)
-    .replace(/!include\s+(\S+)/g, `"${HA_INCLUDE_PREFIX}$1"`)
-    .replace(/!secret\s+(\S+)/g, `"${HA_SECRET_PREFIX}$1"`);
+    .replace(/(^|\n)(\s*)(\w+):\s+!include_dir_merge_named\s+(\S+)/g, `$1$2$3: "${HA_INCLUDE_DIR_PREFIX}$4"`)
+    .replace(/(^|\n)(\s*)(\w+):\s+!include_dir_list\s+(\S+)/g, `$1$2$3: "${HA_INCLUDE_DIR_LIST_PREFIX}$4"`)
+    .replace(/(^|\n)(\s*)(\w+):\s+!include_dir_named\s+(\S+)/g, `$1$2$3: "${HA_INCLUDE_DIR_NAMED_PREFIX}$4"`)
+    .replace(/(^|\n)(\s*)(\w+):\s+!include\s+(\S+)/g, `$1$2$3: "${HA_INCLUDE_PREFIX}$4"`)
+    .replace(/(^|\n)(\s*)(\w+):\s+!secret\s+(\S+)/g, `$1$2$3: "${HA_SECRET_PREFIX}$4"`);
 }
 
 type HADoc = Record<string, unknown>;
