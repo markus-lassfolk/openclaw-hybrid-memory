@@ -8,6 +8,7 @@ Part of the [OpenClaw Hybrid Memory](https://github.com/markus-lassfolk/openclaw
 
 ## Requirements
 
+- **Node.js `^20.19.0 || >=22.12.0`** — Node 20.0–20.18 and 22.0–22.11 are **not** supported; npm will reject the install with `EBADENGINE` on those versions.
 - **OpenClaw v2026.3.8+** (required) — the plugin enforces this minimum version at startup to ensure CLI subcommands and config reloads work.
 - **Embedding provider** — Required. The plugin needs an embedding provider to load. Four options:
   - **OpenAI** (default): set `embedding.apiKey` and `embedding.model` (e.g. `text-embedding-3-small`). Requires an OpenAI API key.
@@ -99,11 +100,23 @@ Routes are only registered when `health.enabled` is `true` (the default). OpenCl
 ## Dependencies
 
 - `better-sqlite3` ^12.0.0
-- `@lancedb/lancedb` ^0.23.0
-- `openai` ^6.16.0
-- `@sinclair/typebox` 0.34.47
+- `@lancedb/lancedb` ^0.26.2
+- `@sinclair/typebox` 0.34.48
+- `openai` ^6.16.0 — **peer dependency (must be directly provided by the host)**. The `openai` package is not bundled with this plugin. Your host environment must directly declare and install `openai ^6.16.0` — a transitive copy (e.g. one pulled in via a sub-dependency of OpenClaw) is **not** sufficient under pnpm, Yarn PnP, or other strict package managers. Install it explicitly alongside this plugin: `npm i openai`.
 
 Build tools required for `better-sqlite3`: C++ toolchain (e.g. `build-essential` on Linux, Visual Studio Build Tools on Windows), Python 3. You may see an `npm warn deprecated prebuild-install` message during install; it comes from better-sqlite3's optional dependency and is harmless until [WiseLibs/better-sqlite3#655](https://github.com/WiseLibs/better-sqlite3/issues/655) is resolved.
+
+## Local ONNX Embeddings (optional)
+
+For local embedding inference without an API key, install `onnxruntime-node` into the **OpenClaw extensions folder** (`~/.openclaw/extensions`) — one level above the plugin package — so that it survives `openclaw hybrid-mem upgrade`:
+
+```bash
+npm install --prefix ~/.openclaw/extensions onnxruntime-node@^1.18.0
+```
+
+Installing at this level means Node's module resolution finds it by traversing up from the plugin directory, and the ~513 MB binary is not removed when the plugin is reinstalled. If you install it inside the plugin's own directory (`~/.openclaw/extensions/openclaw-hybrid-memory`) instead, you will need to re-run the install after each upgrade.
+
+Then set `embedding.provider: "onnx"` in your plugin config. Models are auto-downloaded from HuggingFace on first use. `onnxruntime-node` is not listed as a dependency of this package — it is a ~513 MB optional native binary that most users do not need. The plugin detects its absence and shows a clear error if you configure the `onnx` provider without installing it.
 
 ## Credits
 

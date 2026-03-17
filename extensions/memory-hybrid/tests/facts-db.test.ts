@@ -1880,6 +1880,85 @@ describe("FactsDB.createOrStrengthenRelatedLink", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Hebbian strengthenRelatedLinksBatch
+// ---------------------------------------------------------------------------
+
+describe("FactsDB.strengthenRelatedLinksBatch", () => {
+  function makeFactForBatch(label: string) {
+    return db.store({
+      text: label,
+      category: "fact",
+      importance: 0.7,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+    });
+  }
+
+  it("creates RELATED_TO links for all pairs in a single call", () => {
+    const a = makeFactForBatch("Batch A");
+    const b = makeFactForBatch("Batch B");
+    const c = makeFactForBatch("Batch C");
+
+    db.strengthenRelatedLinksBatch([
+      [a.id, b.id],
+      [a.id, c.id],
+      [b.id, c.id],
+    ]);
+
+    const linksA = db.getLinksFrom(a.id < b.id ? a.id : b.id);
+    const linksB = db.getLinksFrom(a.id < c.id ? a.id : c.id);
+    const linksC = db.getLinksFrom(b.id < c.id ? b.id : c.id);
+    const allRelated = [...linksA, ...linksB, ...linksC].filter((l) => l.linkType === "RELATED_TO");
+    // 3 unique pairs → 3 links
+    const uniqueIds = new Set(allRelated.map((l) => l.id));
+    expect(uniqueIds.size).toBe(3);
+  });
+
+  it("strengthens existing links on repeated calls", () => {
+    const a = makeFactForBatch("Batch Repeat A");
+    const b = makeFactForBatch("Batch Repeat B");
+
+    db.strengthenRelatedLinksBatch([[a.id, b.id]]);
+    const [source1] = a.id < b.id ? [a.id] : [b.id];
+    const strength1 = db.getLinksFrom(source1).find((l) => l.linkType === "RELATED_TO")?.strength ?? 0;
+
+    db.strengthenRelatedLinksBatch([[a.id, b.id]]);
+    const strength2 = db.getLinksFrom(source1).find((l) => l.linkType === "RELATED_TO")?.strength ?? 0;
+
+    expect(strength2).toBeGreaterThan(strength1);
+  });
+
+  it("skips pairs where both IDs are identical", () => {
+    const a = makeFactForBatch("Batch Self A");
+
+    db.strengthenRelatedLinksBatch([[a.id, a.id]]);
+
+    const links = db.getLinksFrom(a.id);
+    expect(links.filter((l) => l.linkType === "RELATED_TO").length).toBe(0);
+  });
+
+  it("does nothing when given an empty array", () => {
+    expect(() => db.strengthenRelatedLinksBatch([])).not.toThrow();
+  });
+
+  it("caps strength at 1.0 after many calls", () => {
+    const a = makeFactForBatch("Batch Cap A");
+    const b = makeFactForBatch("Batch Cap B");
+    const pair: [string, string][] = [[a.id, b.id]];
+
+    for (let i = 0; i < 20; i++) {
+      db.strengthenRelatedLinksBatch(pair);
+    }
+
+    const [source] = a.id < b.id ? [a.id] : [b.id];
+    const strength = db.getLinksFrom(source).find((l) => l.linkType === "RELATED_TO")?.strength ?? 0;
+    expect(strength).toBeLessThanOrEqual(1.0);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Memory Scoping
 // ---------------------------------------------------------------------------
 
