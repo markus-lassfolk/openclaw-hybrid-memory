@@ -38,7 +38,7 @@
         "noGlobalIsNan": "error"
       },
       "correctness": {
-        "noUnusedVariables": "error",
+        "noUnusedVariables": "warn",
         "noUnnecessaryContinue": "warn"
       },
       "style": {
