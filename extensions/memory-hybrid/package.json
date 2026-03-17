@@ -28,14 +28,7 @@
     "type": "git",
     "url": "git+https://github.com/markus-lassfolk/openclaw-hybrid-memory.git"
   },
-  "keywords": [
-    "openclaw",
-    "plugin",
-    "memory",
-    "sqlite",
-    "lancedb",
-    "embeddings"
-  ],
+  "keywords": ["openclaw", "plugin", "memory", "sqlite", "lancedb", "embeddings"],
   "peerDependencies": {
     "openclaw": ">=2026.3.8",
     "openai": "^6.16.0",
@@ -46,9 +39,7 @@
     "better-sqlite3": "^12.0.0"
   },
   "openclaw": {
-    "extensions": [
-      "./index.ts"
-    ]
+    "extensions": ["./index.ts"]
   },
   "scripts": {
     "test": "vitest run",
