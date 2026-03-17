@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 /**
  * Rebuild native modules (better-sqlite3, @lancedb/lancedb) after install.
+ * Skips rebuild when the module already loads successfully (warm cache).
  * Exits 1 on failure with a clear message — no silent failures.
  */
 const { execSync } = require("child_process");
@@ -21,11 +22,31 @@ function run(cmd, desc) {
   }
 }
 
-console.log("Rebuilding native modules for openclaw-hybrid-memory...");
-const ok1 = run("npm rebuild better-sqlite3", "better-sqlite3");
-const ok2 = run("npm rebuild @lancedb/lancedb", "@lancedb/lancedb");
+function needsRebuild(moduleName) {
+  try {
+    require(moduleName);
+    return false;
+  } catch {
+    return true;
+  }
+}
+
+let ok1 = true;
+if (needsRebuild("better-sqlite3")) {
+  console.log("Rebuilding better-sqlite3...");
+  ok1 = run("npm rebuild better-sqlite3", "better-sqlite3");
+} else {
+  console.log("better-sqlite3 bindings OK — skipping rebuild");
+}
+
+let ok2 = true;
+if (needsRebuild("@lancedb/lancedb")) {
+  console.log("Rebuilding @lancedb/lancedb...");
+  ok2 = run("npm rebuild @lancedb/lancedb", "@lancedb/lancedb");
+} else {
+  console.log("@lancedb/lancedb bindings OK — skipping rebuild");
+}
 
 if (!ok1 || !ok2) {
   process.exit(1);
 }
-console.log("Native modules rebuilt successfully.");

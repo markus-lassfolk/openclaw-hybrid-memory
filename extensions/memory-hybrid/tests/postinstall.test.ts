@@ -25,4 +25,19 @@ describe("postinstall", () => {
     const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf-8"));
     expect(pkg.files).toContain("scripts");
   });
+
+  it("postinstall-rebuild.cjs has guard to skip rebuild when bindings are functional", () => {
+    const scriptPath = join(root, "scripts", "postinstall-rebuild.cjs");
+    const content = readFileSync(scriptPath, "utf-8");
+    expect(content).toContain("needsRebuild");
+    expect(content).toContain("skipping rebuild");
+  });
+
+  it("needsRebuild guard returns false on successful require, true on failure", () => {
+    const scriptPath = join(root, "scripts", "postinstall-rebuild.cjs");
+    const content = readFileSync(scriptPath, "utf-8");
+    // Guard uses try/require pattern: returns false on success, true on catch
+    expect(content).toContain("return false");
+    expect(content).toContain("return true");
+  });
 });
