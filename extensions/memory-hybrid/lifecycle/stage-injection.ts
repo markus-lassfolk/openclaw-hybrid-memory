@@ -21,7 +21,7 @@ function strengthenHebbianLinks(
   factsDb: LifecycleContext["factsDb"],
   logger: { warn: (msg: string) => void },
 ): void {
-  const topK = ids.slice(0, HEBBIAN_MAX_K);
+  const topK = Array.from(new Set(ids)).slice(0, HEBBIAN_MAX_K);
   const pairs: [string, string][] = [];
   for (let i = 0; i < topK.length; i++) {
     for (let j = i + 1; j < topK.length; j++) {
