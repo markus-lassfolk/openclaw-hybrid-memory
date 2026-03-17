@@ -8,42 +8,17 @@
 
 import { basename } from "node:path";
 import type { Converter, ConversionResult } from "./index.js";
+import { parse } from "yaml";
+import type { SchemaOptions } from "yaml";
 
-// js-yaml custom schema to handle !include and !secret without throwing
-import yaml from "js-yaml";
-
-const HA_INCLUDE_TYPE = new yaml.Type("!include", {
-  kind: "scalar",
-  construct: (data: string) => ({ __ha_include: data }),
-});
-
-const HA_SECRET_TYPE = new yaml.Type("!secret", {
-  kind: "scalar",
-  construct: (data: string) => ({ __ha_secret: data }),
-});
-
-const HA_INCLUDE_DIR_TYPE = new yaml.Type("!include_dir_merge_named", {
-  kind: "scalar",
-  construct: (data: string) => ({ __ha_include_dir: data }),
-});
-
-const HA_INCLUDE_DIR_LIST_TYPE = new yaml.Type("!include_dir_list", {
-  kind: "scalar",
-  construct: (data: string) => ({ __ha_include_dir_list: data }),
-});
-
-const HA_INCLUDE_DIR_NAMED_TYPE = new yaml.Type("!include_dir_named", {
-  kind: "scalar",
-  construct: (data: string) => ({ __ha_include_dir_named: data }),
-});
-
-const HA_SCHEMA = yaml.DEFAULT_SCHEMA.extend([
-  HA_INCLUDE_TYPE,
-  HA_SECRET_TYPE,
-  HA_INCLUDE_DIR_TYPE,
-  HA_INCLUDE_DIR_LIST_TYPE,
-  HA_INCLUDE_DIR_NAMED_TYPE,
-]);
+// Custom tags to handle Home Assistant YAML directives without throwing
+const HA_CUSTOM_TAGS: NonNullable<SchemaOptions["customTags"]> = [
+  { tag: "!include", resolve: (value: string) => ({ __ha_include: value }) },
+  { tag: "!secret", resolve: (value: string) => ({ __ha_secret: value }) },
+  { tag: "!include_dir_merge_named", resolve: (value: string) => ({ __ha_include_dir: value }) },
+  { tag: "!include_dir_list", resolve: (value: string) => ({ __ha_include_dir_list: value }) },
+  { tag: "!include_dir_named", resolve: (value: string) => ({ __ha_include_dir_named: value }) },
+];
 
 type HADoc = Record<string, unknown>;
 
@@ -170,7 +145,7 @@ export const haYamlConverter: Converter = {
     let doc: HADoc;
 
     try {
-      const parsed = yaml.load(content, { schema: HA_SCHEMA });
+      const parsed = parse(content, { customTags: HA_CUSTOM_TAGS });
       doc = (typeof parsed === "object" && parsed !== null ? parsed : {}) as HADoc;
     } catch {
       doc = {};

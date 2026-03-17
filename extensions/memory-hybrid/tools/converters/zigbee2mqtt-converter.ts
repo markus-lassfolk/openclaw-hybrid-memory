@@ -8,7 +8,7 @@
 
 import { basename, extname } from "node:path";
 import type { Converter, ConversionResult } from "./index.js";
-import yaml from "js-yaml";
+import { parse } from "yaml";
 
 type Z2MDoc = Record<string, unknown>;
 
@@ -198,7 +198,7 @@ export const zigbee2mqttConverter: Converter = {
     // YAML
     let doc: Z2MDoc;
     try {
-      const parsed = yaml.load(content);
+      const parsed = parse(content);
       doc = (typeof parsed === "object" && parsed !== null ? parsed : {}) as Z2MDoc;
     } catch {
       doc = {};
