@@ -13,8 +13,15 @@ import {
   tryParseCredentialForVault,
   SENSITIVE_PATTERNS,
   VAULT_POINTER_PREFIX,
+  type TryParseCredentialOptions,
 } from "../services/auto-capture.js";
 import { MAX_SERVICE_NAME_LENGTH } from "../services/credential-validation.js";
+
+// Credential test fixtures — constructed dynamically to avoid secret-scanner false positives.
+const GHP_TOKEN = "ghp_" + "A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8";
+const GHO_TOKEN = "gho_" + "A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8";
+const SK_KEY = "sk-" + "abcdefghij1234567890ABCDE";
+const SK_PROJ = "sk-proj-" + "abcdefghij1234567890ABCD";
 
 // ---------------------------------------------------------------------------
 // SENSITIVE_PATTERNS & VAULT_POINTER_PREFIX constants
@@ -75,21 +82,21 @@ describe("detectCredentialPatterns", () => {
 
   it("detects OpenAI-style sk- key", () => {
     // The pattern requires sk- followed by 20+ alphanumeric chars (no internal dashes)
-    const text = "set SK_KEY=sk-abcdefghij1234567890ABCDE";
+    const text = `set SK_KEY=${SK_KEY}`;
     const results = detectCredentialPatterns(text);
     expect(results.some((r) => r.type === "api_key")).toBe(true);
     expect(results.some((r) => r.hint.includes("sk-"))).toBe(true);
   });
 
   it("detects GitHub personal access token (ghp_)", () => {
-    const text = "export GITHUB_TOKEN=ghp_A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8";
+    const text = `export GITHUB_TOKEN=${GHP_TOKEN}`;
     const results = detectCredentialPatterns(text);
     expect(results.some((r) => r.type === "api_key")).toBe(true);
     expect(results.some((r) => r.hint.includes("GitHub"))).toBe(true);
   });
 
   it("detects GitHub OAuth token (gho_)", () => {
-    const text = "token: gho_A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8";
+    const text = `token: ${GHO_TOKEN}`;
     const results = detectCredentialPatterns(text);
     expect(results.some((r) => r.type === "api_key")).toBe(true);
   });
@@ -120,6 +127,8 @@ describe("detectCredentialPatterns", () => {
     const text = `Bearer ${jwt} and also Bearer ${jwt}`;
     const results = detectCredentialPatterns(text);
     const jwtHints = results.filter((r) => r.hint.includes("JWT"));
+    // Deduplication contract: each distinct hint is emitted at most once regardless of
+    // how many times the same pattern appears in the input text.
     expect(jwtHints).toHaveLength(1);
   });
 });
@@ -141,14 +150,14 @@ describe("extractCredentialMatch", () => {
 
   it("extracts sk- API key", () => {
     // The pattern requires sk- followed by 20+ alphanumeric chars (no internal dashes)
-    const result = extractCredentialMatch("export OPENAI_KEY=sk-abcdefghij1234567890ABCDE");
+    const result = extractCredentialMatch(`export OPENAI_KEY=${SK_KEY}`);
     expect(result).not.toBeNull();
     expect(result!.type).toBe("api_key");
     expect(result!.secretValue).toMatch(/^sk-/);
   });
 
   it("extracts GitHub personal access token", () => {
-    const result = extractCredentialMatch("ghp_A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8");
+    const result = extractCredentialMatch(GHP_TOKEN);
     expect(result).not.toBeNull();
     expect(result!.type).toBe("api_key");
     expect(result!.secretValue).toMatch(/^ghp_/);
@@ -184,7 +193,7 @@ describe("inferServiceFromText", () => {
   });
 
   it("returns 'github' for ghp_ pattern", () => {
-    expect(inferServiceFromText("ghp_A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8")).toBe("github");
+    expect(inferServiceFromText(GHP_TOKEN)).toBe("github");
   });
 
   it("returns 'openai' for sk-proj prefix text", () => {
@@ -239,11 +248,11 @@ describe("isCredentialLike", () => {
   });
 
   it("returns true when value starts with sk-", () => {
-    expect(isCredentialLike("text", null, null, "sk-proj-abcdefghij1234567890")).toBe(true);
+    expect(isCredentialLike("text", null, null, SK_PROJ)).toBe(true);
   });
 
   it("returns true when value starts with ghp_", () => {
-    expect(isCredentialLike("text", null, null, "ghp_A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8")).toBe(true);
+    expect(isCredentialLike("text", null, null, GHP_TOKEN)).toBe(true);
   });
 
   it("returns true when text matches a credential pattern", () => {
@@ -261,6 +270,8 @@ describe("isCredentialLike", () => {
   });
 
   it("returns false when value is too short (< 8 chars)", () => {
+    // "sk-abc" (6 chars) fails the sk- credential pattern (requires 20+ alphanum after prefix)
+    // and also fails the value length guard (< 8 chars), so isCredentialLike returns false.
     expect(isCredentialLike("plain text", null, null, "sk-abc")).toBe(false);
   });
 });
@@ -303,12 +314,7 @@ describe("tryParseCredentialForVault", () => {
   });
 
   it("infers service from text when no entity/key given", () => {
-    const result = tryParseCredentialForVault(
-      `github personal access token ghp_A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8`,
-      null,
-      null,
-      null,
-    );
+    const result = tryParseCredentialForVault(`github personal access token ${GHP_TOKEN}`, null, null, null);
     expect(result).not.toBeNull();
     expect(result!.service).toBe("github");
   });
@@ -316,18 +322,13 @@ describe("tryParseCredentialForVault", () => {
   it("returns null with requirePatternMatch=true when no regex match found", () => {
     // value is credential-like but text has no pattern match
     // When requirePatternMatch=true and there's no regex match in text, returns null
-    const result = tryParseCredentialForVault(
-      "plain text no pattern",
-      "credentials",
-      "myservice",
-      "sk-proj-abcdefghij1234567890ABCD",
-      { requirePatternMatch: true },
-    );
+    const opts: TryParseCredentialOptions = { requirePatternMatch: true };
+    const result = tryParseCredentialForVault("plain text no pattern", "credentials", "myservice", SK_PROJ, opts);
     expect(result).toBeNull();
   });
 
   it("includes notes field containing original text when text is short enough", () => {
-    const text = `github token: ghp_A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8`;
+    const text = `github token: ${GHP_TOKEN}`;
     const result = tryParseCredentialForVault(text, null, null, null);
     expect(result).not.toBeNull();
     expect(result!.notes).toBe(text);
