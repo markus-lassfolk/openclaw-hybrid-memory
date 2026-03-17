@@ -500,7 +500,8 @@ export async function computeToolEffectiveness(
   let effStore = effectivenessDb;
 
   try {
-    traceDb = new DatabaseSync(workflowDbPath);
+    traceDb = new DatabaseSync(workflowDbPath, { readOnly: true });
+    traceDb.exec(`PRAGMA busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
 
     // Check table exists
     const tableExists = traceDb

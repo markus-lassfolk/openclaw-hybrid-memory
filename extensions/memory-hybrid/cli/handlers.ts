@@ -1128,7 +1128,7 @@ export async function runVerifyForCli(
     issues.push(`SQLite: ${msg}`);
     if (isBindingsError(msg)) {
       sqliteBindingsFailed = true;
-      fixes.push(`Native module rebuild needed. Run: cd ${extDir} && npm rebuild @lancedb/lancedb`);
+      fixes.push(`node:sqlite is not available. Upgrade Node.js to >=22.12.0 or use a compatible version.`);
     } else {
       fixes.push(
         `SQLite: Ensure path is writable and not corrupted. Path: ${resolvedSqlitePath}. If corrupted, back up and remove the file to recreate, or run from a process with write access.`,
@@ -1920,10 +1920,10 @@ export async function runVerifyForCli(
 
   if (opts.fix) {
     const applied: string[] = [];
-    if (sqliteBindingsFailed || lanceBindingsFailed) {
+    if (lanceBindingsFailed) {
       try {
         const { spawnSync } = await import("node:child_process");
-        const pkgs = [...(sqliteBindingsFailed ? [] : []), ...(lanceBindingsFailed ? ["@lancedb/lancedb"] : [])];
+        const pkgs = lanceBindingsFailed ? ["@lancedb/lancedb"] : [];
         for (const pkg of pkgs) {
           const r = spawnSync("npm", ["rebuild", pkg], { cwd: extDir, shell: true });
           if (r.status === 0) {
