@@ -23,14 +23,19 @@ const HA_INCLUDE_DIR_NAMED_PREFIX = "__HA_INCLUDE_DIR_NAMED__";
  * Only matches tags at the start of values (not inside quoted strings or after other content).
  */
 function preprocessHAYaml(content: string): string {
-  // Match tags only at the start of a line value (after key: and optional whitespace)
+  // Match tags at the start of a line value (after key: or after sequence dash -)
   // Use negative lookbehind to ensure we're not inside a quoted string
   return content
     .replace(/(^|\n)(\s*)(\w+):\s+!include_dir_merge_named\s+(\S+)/g, `$1$2$3: "${HA_INCLUDE_DIR_PREFIX}$4"`)
+    .replace(/(^|\n)(\s*)-\s+!include_dir_merge_named\s+(\S+)/g, `$1$2- "${HA_INCLUDE_DIR_PREFIX}$3"`)
     .replace(/(^|\n)(\s*)(\w+):\s+!include_dir_list\s+(\S+)/g, `$1$2$3: "${HA_INCLUDE_DIR_LIST_PREFIX}$4"`)
+    .replace(/(^|\n)(\s*)-\s+!include_dir_list\s+(\S+)/g, `$1$2- "${HA_INCLUDE_DIR_LIST_PREFIX}$3"`)
     .replace(/(^|\n)(\s*)(\w+):\s+!include_dir_named\s+(\S+)/g, `$1$2$3: "${HA_INCLUDE_DIR_NAMED_PREFIX}$4"`)
+    .replace(/(^|\n)(\s*)-\s+!include_dir_named\s+(\S+)/g, `$1$2- "${HA_INCLUDE_DIR_NAMED_PREFIX}$3"`)
     .replace(/(^|\n)(\s*)(\w+):\s+!include\s+(\S+)/g, `$1$2$3: "${HA_INCLUDE_PREFIX}$4"`)
-    .replace(/(^|\n)(\s*)(\w+):\s+!secret\s+(\S+)/g, `$1$2$3: "${HA_SECRET_PREFIX}$4"`);
+    .replace(/(^|\n)(\s*)-\s+!include\s+(\S+)/g, `$1$2- "${HA_INCLUDE_PREFIX}$3"`)
+    .replace(/(^|\n)(\s*)(\w+):\s+!secret\s+(\S+)/g, `$1$2$3: "${HA_SECRET_PREFIX}$4"`)
+    .replace(/(^|\n)(\s*)-\s+!secret\s+(\S+)/g, `$1$2- "${HA_SECRET_PREFIX}$3"`);
 }
 
 type HADoc = Record<string, unknown>;
@@ -71,6 +76,9 @@ function getStr(obj: Record<string, unknown>, key: string, fallback = ""): strin
 }
 
 function renderAutomation(auto: unknown, idx: number): string {
+  if (typeof auto === "string" && (isIncludeRef(auto) || isSecretRef(auto) || isIncludeDirRef(auto))) {
+    return `- ${renderRef(auto)}`;
+  }
   if (typeof auto !== "object" || auto === null) return `- Automation ${idx + 1}: *(invalid)*`;
   const a = auto as Record<string, unknown>;
   const alias = getStr(a, "alias", `automation_${idx + 1}`);
@@ -128,6 +136,9 @@ function renderScript(name: string, script: unknown): string {
 }
 
 function renderScene(scene: unknown, idx: number): string {
+  if (typeof scene === "string" && (isIncludeRef(scene) || isSecretRef(scene) || isIncludeDirRef(scene))) {
+    return `- ${renderRef(scene)}`;
+  }
   if (typeof scene !== "object" || scene === null) return `- Scene ${idx + 1}: *(invalid)*`;
   const s = scene as Record<string, unknown>;
   const name = getStr(s, "name", `scene_${idx + 1}`);
@@ -137,6 +148,9 @@ function renderScene(scene: unknown, idx: number): string {
 }
 
 function renderEntity(entity: unknown, idx: number): string {
+  if (typeof entity === "string" && (isIncludeRef(entity) || isSecretRef(entity) || isIncludeDirRef(entity))) {
+    return `- ${renderRef(entity)}`;
+  }
   if (typeof entity !== "object" || entity === null) return `- Entity ${idx + 1}: *(invalid)*`;
   const e = entity as Record<string, unknown>;
   const name = getStr(e, "name", `entity_${idx + 1}`);

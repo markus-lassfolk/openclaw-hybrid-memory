@@ -15,8 +15,10 @@ import { parseYaml } from "../../utils/yaml-parser.js";
  * Only matches tags at the start of values (not inside quoted strings or after other content).
  */
 function preprocessESPHomeYaml(content: string): string {
-  // Match tags only at the start of a line value (after key: and optional whitespace)
-  return content.replace(/(^|\n)(\s*)(\w+):\s+!secret\s+\S+/g, '$1$2$3: "[REDACTED]"');
+  // Match tags at the start of a line value (after key: or after sequence dash -)
+  return content
+    .replace(/(^|\n)(\s*)(\w+):\s+!secret\s+\S+/g, '$1$2$3: "[REDACTED]"')
+    .replace(/(^|\n)(\s*)-\s+!secret\s+\S+/g, '$1$2- "[REDACTED]"');
 }
 
 type ESPDoc = Record<string, unknown>;

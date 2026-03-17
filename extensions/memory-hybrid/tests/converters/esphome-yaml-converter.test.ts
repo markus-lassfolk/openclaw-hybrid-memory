@@ -214,4 +214,27 @@ output:
     expect(result.markdown).toContain("## Switches/Outputs");
     expect(result.markdown).toContain("pwm_out_1");
   });
+
+  it("handles !secret in sequence items", () => {
+    const yaml = `
+esphome:
+  name: test_device
+
+esp32:
+  board: esp32dev
+
+wifi:
+  networks:
+    - ssid: "Network1"
+      password: !secret wifi_pass_1
+    - ssid: "Network2"
+      password: !secret wifi_pass_2
+`.trim();
+
+    const result = esphomeYamlConverter.convert(yaml, "/config/multi-wifi.yaml");
+    expect(result.markdown).toContain("test_device");
+    // Secrets should be redacted
+    expect(result.markdown).not.toContain("wifi_pass_1");
+    expect(result.markdown).not.toContain("wifi_pass_2");
+  });
 });
