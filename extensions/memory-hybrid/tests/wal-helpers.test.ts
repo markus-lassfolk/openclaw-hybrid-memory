@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { walWrite, walRemove, _resetWalCircuitBreakerForTests } from "../services/wal-helpers.js";
+import { walWrite, walRemove, _resetWalCircuitBreakerForTesting } from "../services/wal-helpers.js";
 import type { WriteAheadLog } from "../backends/wal.js";
 
 // ---------------------------------------------------------------------------
@@ -22,7 +22,7 @@ function makeWal(overrides: Partial<{ write: () => void; remove: () => void }> =
 }
 
 beforeEach(() => {
-  _resetWalCircuitBreakerForTests();
+  _resetWalCircuitBreakerForTesting();
 });
 
 // ---------------------------------------------------------------------------
@@ -56,33 +56,34 @@ describe("walWrite — happy path", () => {
   });
 
   it("resets failure count to 0 after a successful write", () => {
+    // Phase 1: cause some failures (below the 10-failure threshold)
     const failingWal = makeWal({
       write: vi.fn().mockImplementation(() => {
         throw new Error("disk full");
       }),
     });
-    const goodWal = makeWal();
     const logger = makeLogger();
-
-    // Cause some failures first
     for (let i = 0; i < 3; i++) {
       walWrite(failingWal, "store", {}, logger);
     }
 
-    // A successful write should reset the counter — further failures should not
-    // trip the breaker until we reach the threshold again
+    // Phase 2: a successful write resets the counter to 0
+    const goodWal = makeWal();
     walWrite(goodWal, "store", {}, logger);
+    expect(goodWal.write).toHaveBeenCalledOnce(); // write reached the WAL
+    expect(logger.warn).not.toHaveBeenCalledWith(expect.stringContaining("WAL disabled")); // counter reset, not tripped
 
-    // 9 more failures still shouldn't disable (threshold is 10 from zero)
+    // Phase 3: verify a fresh 10-failure cycle is needed to re-trip the breaker
     const newFailingWal = makeWal({
       write: vi.fn().mockImplementation(() => {
         throw new Error("fail");
       }),
     });
+    // 9 more failures still shouldn't disable (threshold is 10 from zero)
     for (let i = 0; i < 9; i++) {
       walWrite(newFailingWal, "store", {}, logger);
     }
-    // The 10th should be the one that disables
+    // The 10th failure trips the breaker; subsequent calls are silenced
     walWrite(newFailingWal, "store", {}, logger);
     const disabledLogger = makeLogger();
     walWrite(newFailingWal, "store", {}, disabledLogger);
@@ -124,7 +125,9 @@ describe("walWrite — failure accumulation", () => {
 
     // Still calling write on the 9th attempt (not disabled yet)
     expect(wal.write).toHaveBeenCalledTimes(9);
-    const disableWarning = logger.warn.mock.calls.some((c: string[]) => c[0].includes("WAL disabled"));
+    const disableWarning = logger.warn.mock.calls.some(
+      (c: unknown[]) => typeof c[0] === "string" && c[0].includes("WAL disabled"),
+    );
     expect(disableWarning).toBe(false);
   });
 });
@@ -147,7 +150,9 @@ describe("walWrite — circuit breaker trips at 10 consecutive failures", () => 
     }
 
     expect(wal.write).toHaveBeenCalledTimes(10);
-    const disableWarning = logger.warn.mock.calls.some((c: string[]) => c[0].includes("WAL disabled"));
+    const disableWarning = logger.warn.mock.calls.some(
+      (c: unknown[]) => typeof c[0] === "string" && c[0].includes("WAL disabled"),
+    );
     expect(disableWarning).toBe(true);
   });
 
@@ -190,10 +195,10 @@ describe("walWrite — circuit breaker trips at 10 consecutive failures", () => 
 });
 
 // ---------------------------------------------------------------------------
-// _resetWalCircuitBreakerForTests — reset recovery
+// _resetWalCircuitBreakerForTesting — reset recovery
 // ---------------------------------------------------------------------------
 
-describe("_resetWalCircuitBreakerForTests — reset recovery", () => {
+describe("_resetWalCircuitBreakerForTesting — reset recovery", () => {
   it("re-enables WAL writes after a breaker trip", () => {
     const wal = makeWal({
       write: vi.fn().mockImplementation(() => {
@@ -208,7 +213,7 @@ describe("_resetWalCircuitBreakerForTests — reset recovery", () => {
     }
 
     // Reset and verify writes are accepted again
-    _resetWalCircuitBreakerForTests();
+    _resetWalCircuitBreakerForTesting();
 
     const goodWal = makeWal();
     const freshLogger = makeLogger();
@@ -230,7 +235,7 @@ describe("_resetWalCircuitBreakerForTests — reset recovery", () => {
     for (let i = 0; i < 10; i++) walWrite(wal, "store", {}, logger);
 
     // Reset
-    _resetWalCircuitBreakerForTests();
+    _resetWalCircuitBreakerForTesting();
 
     // 9 new failures should NOT re-trip
     const wal2 = makeWal({
@@ -241,7 +246,9 @@ describe("_resetWalCircuitBreakerForTests — reset recovery", () => {
     const logger2 = makeLogger();
     for (let i = 0; i < 9; i++) walWrite(wal2, "store", {}, logger2);
 
-    const disabled = logger2.warn.mock.calls.some((c: string[]) => c[0].includes("WAL disabled"));
+    const disabled = logger2.warn.mock.calls.some(
+      (c: unknown[]) => typeof c[0] === "string" && c[0].includes("WAL disabled"),
+    );
     expect(disabled).toBe(false);
     expect(wal2.write).toHaveBeenCalledTimes(9);
   });
@@ -298,7 +305,9 @@ describe("test isolation — breaker state resets between tests", () => {
     });
     const logger = makeLogger();
     for (let i = 0; i < 10; i++) walWrite(wal, "store", {}, logger);
-    const disabled = logger.warn.mock.calls.some((c: string[]) => c[0].includes("WAL disabled"));
+    const disabled = logger.warn.mock.calls.some(
+      (c: unknown[]) => typeof c[0] === "string" && c[0].includes("WAL disabled"),
+    );
     expect(disabled).toBe(true);
   });
 
