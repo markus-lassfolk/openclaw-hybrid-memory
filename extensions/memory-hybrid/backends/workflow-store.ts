@@ -8,7 +8,8 @@
  * UUIDs for primary keys, ISO-8601 timestamps.
  */
 
-import Database from "better-sqlite3";
+import { DatabaseSync } from "node:sqlite";
+import type { SQLInputValue } from "node:sqlite";
 import { createHash, randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
@@ -159,14 +160,14 @@ export function hashToolSequence(toolSequence: string[]): string {
 // ---------------------------------------------------------------------------
 
 export class WorkflowStore {
-  private db: Database.Database;
+  private db: DatabaseSync;
   private closed = false;
 
   constructor(dbPath: string) {
     mkdirSync(dirname(dbPath), { recursive: true });
-    this.db = new Database(dbPath);
-    this.db.pragma("journal_mode = WAL");
-    this.db.pragma(`busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
+    this.db = new DatabaseSync(dbPath);
+    this.db.exec("PRAGMA journal_mode = WAL");
+    this.db.exec(`PRAGMA busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
 
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS workflow_traces (
@@ -246,7 +247,7 @@ export class WorkflowStore {
 
   list(filter?: WorkflowFilter): WorkflowTrace[] {
     let query = "SELECT * FROM workflow_traces WHERE 1=1";
-    const params: unknown[] = [];
+    const params: SQLInputValue[] = [];
 
     if (filter?.outcome) {
       query += " AND outcome = ?";
@@ -421,7 +422,7 @@ export class WorkflowStore {
   prune(olderThanDays: number): number {
     const cutoff = new Date(Date.now() - olderThanDays * 24 * 60 * 60 * 1000).toISOString();
     const result = this.db.prepare("DELETE FROM workflow_traces WHERE created_at < ?").run(cutoff);
-    return result.changes;
+    return Number(result.changes);
   }
 
   // -------------------------------------------------------------------------

@@ -13,7 +13,7 @@
  * Low scorers can be flagged in CLI output.
  */
 
-import Database from "better-sqlite3";
+import { DatabaseSync } from "node:sqlite";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { capturePluginError } from "./error-reporter.js";
@@ -79,15 +79,14 @@ CREATE TABLE IF NOT EXISTS tool_effectiveness (
 // ---------------------------------------------------------------------------
 
 export class ToolEffectivenessStore {
-  private db: Database.Database;
+  private db: DatabaseSync;
 
   constructor(dbPath: string) {
     mkdirSync(dirname(dbPath), { recursive: true });
-    this.db = new Database(dbPath, {
-      timeout: SQLITE_BUSY_TIMEOUT_MS,
-    });
-    this.db.pragma("journal_mode = WAL");
-    this.db.pragma("foreign_keys = ON");
+    this.db = new DatabaseSync(dbPath);
+    this.db.exec("PRAGMA journal_mode = WAL");
+    this.db.exec(`PRAGMA busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
+    this.db.exec("PRAGMA foreign_keys = ON");
     this.db.exec(SCHEMA);
   }
 
@@ -139,8 +138,8 @@ export class ToolEffectivenessStore {
   recordToolOutcome(
     tool: string,
     outcome: "success" | "failure" | "unknown",
-    context = "general",
-    durationMs = 0,
+    context: string = "general",
+    durationMs: number = 0,
   ): void {
     const now = Math.floor(Date.now() / 1000);
     this.db
@@ -262,7 +261,9 @@ export class ToolEffectivenessStore {
 
   /** Get score for a specific tool (first context row, or "general"). */
   getByTool(tool: string): ToolMetrics | null {
-    const row = this.db.prepare(`SELECT * FROM tool_effectiveness WHERE tool = ? ORDER BY context LIMIT 1`).get(tool) as
+    const row = this.db
+      .prepare(`SELECT * FROM tool_effectiveness WHERE tool = ? ORDER BY context LIMIT 1`)
+      .get(tool) as
       | {
           tool: string;
           context: string;
@@ -494,15 +495,12 @@ export async function computeToolEffectiveness(
   };
 
   // Open the workflow traces DB (read-only if possible)
-  let traceDb: Database.Database | null = null;
+  let traceDb: DatabaseSync | null = null;
   let ownedEffStore = false;
   let effStore = effectivenessDb;
 
   try {
-    traceDb = new Database(workflowDbPath, {
-      readonly: true,
-      timeout: SQLITE_BUSY_TIMEOUT_MS,
-    });
+    traceDb = new DatabaseSync(workflowDbPath);
 
     // Check table exists
     const tableExists = traceDb
@@ -517,7 +515,7 @@ export async function computeToolEffectiveness(
     // Pull all traces
     const rows = traceDb
       .prepare(`SELECT tool_sequence, outcome, duration_ms, session_id FROM workflow_traces`)
-      .all() as TraceRow[];
+      .all() as unknown as TraceRow[];
 
     if (rows.length === 0) {
       return report;
@@ -551,9 +549,7 @@ export async function computeToolEffectiveness(
     report.lowScoreTools = allScores.filter((m) => m.compositeScore < lowScoreThreshold && m.totalCalls >= minCalls);
     report.recommendations = generateRecommendations(allScores, lowScoreThreshold);
   } catch (err) {
-    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-      operation: "tool-effectiveness",
-    });
+    capturePluginError(err instanceof Error ? err : new Error(String(err)), { operation: "tool-effectiveness" });
     logger.warn?.(`tool-effectiveness: error computing scores: ${err}`);
   } finally {
     try {
@@ -633,8 +629,8 @@ export function formatToolEffectivenessReport(report: ToolEffectivenessReport): 
 export function generateToolHint(
   store: ToolEffectivenessStore,
   context: string,
-  minUses = 5,
-  hintThreshold = 0.3,
+  minUses: number = 5,
+  hintThreshold: number = 0.3,
 ): string {
   // Get all rows for this context
   const all = store.getAll().filter((m) => m.context === context && m.totalCalls >= minUses);

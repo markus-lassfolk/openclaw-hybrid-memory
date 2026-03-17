@@ -340,7 +340,7 @@ describe("WorkflowStore.prune", () => {
     const trace = store.record({ goal: "old task", toolSequence: ["exec"] });
 
     // Backdate to 100 days ago via direct DB manipulation using private access
-    const db = (store as any).db as import("better-sqlite3").Database;
+    const db = (store as any).db as import("node:sqlite").DatabaseSync;
     const oldDate = new Date(Date.now() - 100 * 24 * 60 * 60 * 1000).toISOString();
     db.prepare("UPDATE workflow_traces SET created_at = ? WHERE id = ?").run(oldDate, trace.id);
 
@@ -538,7 +538,7 @@ describe("WorkflowTracker", () => {
     tracker.flush("s", "old goal", "success");
 
     // Backdate via DB
-    const db = (store as any).db as import("better-sqlite3").Database;
+    const db = (store as any).db as import("node:sqlite").DatabaseSync;
     const oldDate = new Date(Date.now() - 100 * 24 * 60 * 60 * 1000).toISOString();
     db.prepare("UPDATE workflow_traces SET created_at = ?").run(oldDate);
 

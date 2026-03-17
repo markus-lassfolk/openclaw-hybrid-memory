@@ -2,7 +2,9 @@
  * SQLite + FTS5 backend for structured facts.
  */
 
-import Database from "better-sqlite3";
+import { DatabaseSync } from "node:sqlite";
+import type { SQLInputValue } from "node:sqlite";
+import { createTransaction } from "../utils/sqlite-transaction.js";
 import { mkdirSync, readFileSync, existsSync } from "node:fs";
 import { dirname } from "node:path";
 import { randomUUID } from "node:crypto";
@@ -62,7 +64,8 @@ export interface ContradictionRecord {
 }
 
 export class FactsDB {
-  private db: Database.Database;
+  private db: DatabaseSync;
+  private _dbOpen = true;
   private readonly dbPath: string;
   private readonly fuzzyDedupe: boolean;
   private supersededTextsCache: Set<string> | null = null;
@@ -89,7 +92,7 @@ export class FactsDB {
     this.dbPath = dbPath;
     this.fuzzyDedupe = options?.fuzzyDedupe ?? false;
     mkdirSync(dirname(dbPath), { recursive: true });
-    this.db = new Database(dbPath);
+    this.db = new DatabaseSync(dbPath);
     this.applyPragmas();
 
     // Create main table
@@ -278,7 +281,7 @@ export class FactsDB {
     }>;
     const hasFk = fkList.some((fk) => fk.from === "fact_id" && fk.table === "facts");
     if (!hasFk) {
-      this.liveDb.transaction(() => {
+      createTransaction(this.liveDb, () => {
         this.liveDb.exec(`ALTER TABLE reinforcement_log RENAME TO reinforcement_log_v1`);
         this.liveDb.exec(`
           CREATE TABLE reinforcement_log (
@@ -312,7 +315,7 @@ export class FactsDB {
     const factsCols = this.liveDb.prepare(`PRAGMA table_info(facts)`).all() as Array<{ name: string; type: string }>;
     const factsReinforcedCol = factsCols.find((c) => c.name === "reinforced_count");
     if (factsReinforcedCol && factsReinforcedCol.type !== "REAL") {
-      this.liveDb.transaction(() => {
+      createTransaction(this.liveDb, () => {
         this.liveDb.exec(`DROP INDEX IF EXISTS idx_facts_reinforced`);
         this.liveDb.exec(`ALTER TABLE facts ADD COLUMN reinforced_count_real REAL NOT NULL DEFAULT 0`);
         this.liveDb.exec(`UPDATE facts SET reinforced_count_real = CAST(reinforced_count AS REAL)`);
@@ -330,7 +333,7 @@ export class FactsDB {
     }>;
     const proceduresReinforcedCol = proceduresCols.find((c) => c.name === "reinforced_count");
     if (proceduresReinforcedCol && proceduresReinforcedCol.type !== "REAL") {
-      this.liveDb.transaction(() => {
+      createTransaction(this.liveDb, () => {
         this.liveDb.exec(`DROP INDEX IF EXISTS idx_procedures_reinforced`);
         this.liveDb.exec(`ALTER TABLE procedures ADD COLUMN reinforced_count_real REAL NOT NULL DEFAULT 0`);
         this.liveDb.exec(`UPDATE procedures SET reinforced_count_real = CAST(reinforced_count AS REAL)`);
@@ -419,7 +422,7 @@ export class FactsDB {
     }>;
     const hasFk = fkList.some((fk) => fk.from === "rule_id" && fk.table === "facts");
     if (!hasFk) {
-      this.liveDb.transaction(() => {
+      createTransaction(this.liveDb, () => {
         this.liveDb.exec(`ALTER TABLE feedback_effectiveness RENAME TO feedback_effectiveness_v1`);
         this.liveDb.exec(`
           CREATE TABLE feedback_effectiveness (
@@ -826,9 +829,11 @@ export class FactsDB {
       .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='verified_facts'")
       .get();
     if (!tableInfo) return;
-    const fkCheck = this.liveDb.pragma("foreign_key_list(verified_facts)") as Array<{ table: string }> | undefined;
+    const fkCheck = this.liveDb.prepare("PRAGMA foreign_key_list(verified_facts)").all() as
+      | Array<{ table: string }>
+      | undefined;
     if (Array.isArray(fkCheck) && fkCheck.length > 0) return; // FK already present — nothing to do
-    this.liveDb.transaction(() => {
+    createTransaction(this.liveDb, () => {
       this.liveDb.exec(`
         CREATE TABLE verified_facts_new (
           id TEXT PRIMARY KEY,
@@ -927,7 +932,7 @@ export class FactsDB {
 
   /**
    * Copy a Buffer (which may have unaligned byteOffset) into a Float32Array.
-   * Node.js Buffers from better-sqlite3 can share a pooled ArrayBuffer with
+   * Node.js Buffers from node:sqlite can share a pooled ArrayBuffer with
    * byteOffset not divisible by 4, which would make Float32Array constructor throw.
    */
   private static bufferToFloat32Array(buf: Buffer): Float32Array {
@@ -992,7 +997,7 @@ export class FactsDB {
     if (row && row.sql && row.sql.includes("tags")) return;
 
     // Wrap the entire migration in a transaction so any failure leaves the DB consistent.
-    const migrate = this.liveDb.transaction(() => {
+    const migrate = createTransaction(this.liveDb, () => {
       // Drop old triggers first (they reference the old column list).
       this.liveDb.exec(`
         DROP TRIGGER IF EXISTS facts_ai;
@@ -1082,13 +1087,16 @@ export class FactsDB {
    * Build SQL fragment for scope filtering with positional params (for lookup/getAll).
    * Same security constraints as scopeFilterClause — derive from trusted identity only.
    */
-  private scopeFilterClausePositional(filter: ScopeFilter | null | undefined): { clause: string; params: unknown[] } {
+  private scopeFilterClausePositional(filter: ScopeFilter | null | undefined): {
+    clause: string;
+    params: SQLInputValue[];
+  } {
     if (!filter || (!filter.userId && !filter.agentId && !filter.sessionId)) {
       return { clause: "", params: [] };
     }
     const parts: string[] = ["("];
     parts.push("scope = 'global'");
-    const params: unknown[] = [];
+    const params: SQLInputValue[] = [];
     if (filter.userId) {
       parts.push("OR (scope = 'user' AND scope_target = ?)");
       params.push(filter.userId);
@@ -1171,7 +1179,7 @@ export class FactsDB {
 
       if (hasTargetCascade) {
         // Table exists with old CASCADE FK on target_fact_id — recreate without it.
-        const recreate = this.liveDb.transaction(() => {
+        const recreate = createTransaction(this.liveDb, () => {
           this.liveDb.exec(`
             CREATE TABLE memory_links_new (
               id TEXT PRIMARY KEY,
@@ -1248,11 +1256,11 @@ export class FactsDB {
 
   /** Re-apply connection pragmas (used on initial open and auto-reopen). */
   private applyPragmas(): void {
-    this.db.pragma("journal_mode = WAL");
-    this.db.pragma("busy_timeout = 5000");
-    this.db.pragma("synchronous = NORMAL");
-    this.db.pragma("wal_autocheckpoint = 1000");
-    this.db.pragma("foreign_keys = ON"); // Required for memory_links ON DELETE CASCADE
+    this.db.exec("PRAGMA journal_mode = WAL");
+    this.db.exec("PRAGMA busy_timeout = 5000");
+    this.db.exec("PRAGMA synchronous = NORMAL");
+    this.db.exec("PRAGMA wal_autocheckpoint = 1000");
+    this.db.exec("PRAGMA foreign_keys = ON"); // Required for memory_links ON DELETE CASCADE
   }
 
   private migrateDecayColumns(): void {
@@ -1480,7 +1488,7 @@ export class FactsDB {
     const nowSec = Math.floor(Date.now() / 1000);
     const BATCH_SIZE = 500; // SQLite variable limit
 
-    const tx = this.liveDb.transaction(() => {
+    const tx = createTransaction(this.liveDb, () => {
       for (let i = 0; i < ids.length; i += BATCH_SIZE) {
         const batch = ids.slice(i, i + BATCH_SIZE);
         const placeholders = batch.map(() => "?").join(",");
@@ -1524,7 +1532,7 @@ export class FactsDB {
   /** Prune recall_log entries older than N days to prevent unbounded growth (Issue #148). */
   pruneRecallLog(olderThanDays = 30): number {
     const cutoff = Math.floor(Date.now() / 1000) - olderThanDays * 24 * 3600;
-    return this.liveDb.prepare(`DELETE FROM recall_log WHERE occurred_at < ?`).run(cutoff).changes;
+    return Number(this.liveDb.prepare(`DELETE FROM recall_log WHERE occurred_at < ?`).run(cutoff).changes);
   }
 
   /** Read the last stored embedding provider+model metadata (Issue #153). */
@@ -2192,7 +2200,7 @@ export class FactsDB {
       `INSERT INTO memory_links (id, source_fact_id, target_fact_id, link_type, strength, created_at) VALUES (?, ?, ?, 'RELATED_TO', ?, ?)`,
     );
     const now = Math.floor(Date.now() / 1000);
-    const tx = this.liveDb.transaction(() => {
+    const tx = createTransaction(this.liveDb, () => {
       for (const [factIdA, factIdB] of pairs) {
         if (factIdA === factIdB) continue;
         const [source, target] = factIdA < factIdB ? [factIdA, factIdB] : [factIdB, factIdA];
@@ -2348,7 +2356,7 @@ export class FactsDB {
   ): MemoryEntry[] {
     const nowSec = Math.floor(Date.now() / 1000);
     const parts: string[] = ["(expires_at IS NULL OR expires_at > ?)", "superseded_at IS NULL"];
-    const params: unknown[] = [nowSec];
+    const params: SQLInputValue[] = [nowSec];
     if (filters?.category != null) {
       parts.push("category = ?");
       params.push(filters.category);
@@ -2423,7 +2431,7 @@ export class FactsDB {
                 AND id NOT IN (SELECT fact_id FROM verified_facts)`,
       )
       .run({ now: nowSec });
-    return result.changes;
+    return Number(result.changes);
   }
 
   /** Prune session-scoped memories for a given session (cleared on session end). Returns count deleted. */
@@ -2445,7 +2453,7 @@ export class FactsDB {
                 AND id NOT IN (SELECT fact_id FROM verified_facts)`,
       )
       .run(sessionId);
-    return result.changes;
+    return Number(result.changes);
   }
 
   /** Promote a fact's scope (e.g. session → global or agent). Returns true if updated. */
@@ -2497,7 +2505,7 @@ export class FactsDB {
                 AND id NOT IN (SELECT fact_id FROM verified_facts)`,
       )
       .run({ now: nowSec });
-    return result.changes;
+    return Number(result.changes);
   }
 
   confirmFact(id: string): boolean {
@@ -2546,7 +2554,7 @@ export class FactsDB {
   boostConfidence(id: string, delta: number, maxConfidence = 1.0): boolean {
     const nowSec = Math.floor(Date.now() / 1000);
 
-    const tx = this.liveDb.transaction(() => {
+    const tx = createTransaction(this.liveDb, () => {
       const row = this.liveDb.prepare(`SELECT confidence FROM facts WHERE id = ?`).get(id) as
         | { confidence: number }
         | undefined;
@@ -2584,7 +2592,7 @@ export class FactsDB {
     const maxEventsPerFact = opts?.maxEventsPerFact ?? 50;
     const boostAmount = Math.max(0, opts?.boostAmount ?? 1);
 
-    const tx = this.liveDb.transaction(() => {
+    const tx = createTransaction(this.liveDb, () => {
       const row = this.liveDb.prepare(`SELECT reinforced_quotes FROM facts WHERE id = ?`).get(id) as
         | { reinforced_quotes: string | null }
         | undefined;
@@ -2745,7 +2753,7 @@ export class FactsDB {
   reinforceProcedure(id: string, quoteSnippet: string, promotionThreshold = 2): boolean {
     const nowSec = Math.floor(Date.now() / 1000);
 
-    const tx = this.liveDb.transaction(() => {
+    const tx = createTransaction(this.liveDb, () => {
       const row = this.liveDb
         .prepare(`SELECT reinforced_quotes, reinforced_count, confidence FROM procedures WHERE id = ?`)
         .get(id) as { reinforced_quotes: string | null; reinforced_count: number; confidence: number } | undefined;
@@ -2915,7 +2923,7 @@ export class FactsDB {
   }): { facts: Array<Record<string, unknown>>; total: number } {
     const nowSec = Math.floor(Date.now() / 1000);
     let where = "superseded_at IS NULL AND (expires_at IS NULL OR expires_at > ?)";
-    const params: unknown[] = [nowSec];
+    const params: SQLInputValue[] = [nowSec];
 
     if (opts.category) {
       where += " AND category = ?";
@@ -3198,7 +3206,7 @@ export class FactsDB {
     const update = this.liveDb.prepare(`UPDATE facts SET decay_class = ?, expires_at = ? WHERE rowid = ?`);
 
     const counts: Record<string, number> = {};
-    const tx = this.liveDb.transaction(() => {
+    const tx = createTransaction(this.liveDb, () => {
       for (const row of rows) {
         const dc = classifyDecay(row.entity, row.key, row.value, row.text);
         if (dc === "stable") continue;
@@ -3242,20 +3250,21 @@ export class FactsDB {
   }
 
   /** Get the live DB handle, reopening if closed after a SIGUSR1 restart. */
-  private get liveDb(): Database.Database {
-    if (!this.db.open) {
-      this.db = new Database(this.dbPath);
+  private get liveDb(): DatabaseSync {
+    if (!this._dbOpen) {
+      this.db.open();
+      this._dbOpen = true;
       this.applyPragmas();
     }
     return this.db;
   }
 
   /**
-   * Expose the underlying better-sqlite3 Database for services that require direct
+   * Expose the underlying node:sqlite DatabaseSync for services that require direct
    * SQL access (e.g. the FTS5 search service used by the RRF retrieval pipeline).
    * Returned instance is the same live handle used internally (with auto-reopen).
    */
-  getRawDb(): Database.Database {
+  getRawDb(): DatabaseSync {
     return this.liveDb;
   }
 
@@ -3326,8 +3335,8 @@ export class FactsDB {
       const successCount = proc.successCount ?? existing.successCount;
       const failureCount = proc.failureCount ?? existing.failureCount;
       const confidence = proc.confidence ?? Math.max(0.1, Math.min(0.95, 0.5 + 0.1 * (successCount - failureCount)));
-      const scope = proc.scope ?? existing.scope;
-      const scopeTarget = proc.scopeTarget ?? existing.scopeTarget;
+      const scope = proc.scope ?? existing.scope ?? "global";
+      const scopeTarget = proc.scopeTarget ?? existing.scopeTarget ?? null;
       this.liveDb
         .prepare(
           `UPDATE procedures SET task_pattern = ?, recipe_json = ?, procedure_type = ?, success_count = ?, failure_count = ?, last_validated = ?, last_failed = ?, confidence = ?, ttl_days = ?, scope = ?, scope_target = ?, updated_at = ? WHERE id = ?`,
@@ -3799,7 +3808,7 @@ export class FactsDB {
            AND link_type != 'DERIVED_FROM'`,
       )
       .run();
-    return result.changes;
+    return Number(result.changes);
   }
 
   /** Alias for backfillDecayClasses() for backward compatibility */
@@ -3943,7 +3952,7 @@ export class FactsDB {
 
     const query = `DELETE FROM facts WHERE ${conditions.join(" OR ")}`;
     const result = this.liveDb.prepare(query).run(...params);
-    return result.changes;
+    return Number(result.changes);
   }
 
   /**
@@ -4044,8 +4053,8 @@ export class FactsDB {
         ? "AND scope = ? AND scope_target = ?"
         : "AND scope = ? AND scope_target IS NULL"
       : "";
-    const baseParams: unknown[] = [entity, key, value, excludeFactId, nowSec];
-    const scopeParams: unknown[] = scope ? (scopeTarget != null ? [scope, scopeTarget] : [scope]) : [];
+    const baseParams: SQLInputValue[] = [entity, key, value, excludeFactId, nowSec];
+    const scopeParams: SQLInputValue[] = scope ? (scopeTarget != null ? [scope, scopeTarget] : [scope]) : [];
     const rows = this.liveDb
       .prepare(
         `SELECT * FROM facts
@@ -4074,7 +4083,7 @@ export class FactsDB {
     const id = randomUUID();
     const detectedAt = new Date().toISOString();
 
-    const tx = this.liveDb.transaction(() => {
+    const tx = createTransaction(this.liveDb, () => {
       // Get the old fact's current confidence before reducing it
       const oldFactRow = this.liveDb.prepare(`SELECT confidence FROM facts WHERE id = ?`).get(factIdOld) as
         | { confidence: number }
@@ -4526,8 +4535,8 @@ export class FactsDB {
           ? "AND scope = ? AND scope_target = ?"
           : "AND scope = ? AND scope_target IS NULL"
         : "";
-      const baseParams: unknown[] = [entity.trim(), key.trim(), newFactId, nowSec];
-      const scopeParams: unknown[] = scope ? (scopeTarget != null ? [scope, scopeTarget] : [scope]) : [];
+      const baseParams: SQLInputValue[] = [entity.trim(), key.trim(), newFactId, nowSec];
+      const scopeParams: SQLInputValue[] = scope ? (scopeTarget != null ? [scope, scopeTarget] : [scope]) : [];
       const conflicting = this.liveDb
         .prepare(
           `SELECT * FROM facts
@@ -4687,7 +4696,7 @@ export class FactsDB {
       `INSERT OR IGNORE INTO cluster_members (cluster_id, fact_id) VALUES (?, ?)`,
     );
 
-    this.liveDb.transaction(() => {
+    createTransaction(this.liveDb, () => {
       // Replace all clusters
       this.liveDb.exec(`DELETE FROM cluster_members`);
       this.liveDb.exec(`DELETE FROM clusters`);

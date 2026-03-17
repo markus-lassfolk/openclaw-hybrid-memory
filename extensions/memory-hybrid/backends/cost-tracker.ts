@@ -6,7 +6,7 @@
  * ⚠️ Costs are estimates based on published model pricing, not billing-accurate.
  */
 
-import type Database from "better-sqlite3";
+import { type DatabaseSync } from "node:sqlite";
 import { estimateCost } from "../services/model-pricing.js";
 
 /**
@@ -86,11 +86,11 @@ export interface CostReport {
 }
 
 export class CostTracker {
-  private readonly db: Database.Database;
+  private readonly db: DatabaseSync;
   /** Rate-limit: log at most one DB error per session to avoid spamming the console. */
   private _errorLogged = false;
 
-  constructor(db: Database.Database) {
+  constructor(db: DatabaseSync) {
     this.db = db;
     this.initSchema();
   }
@@ -365,6 +365,6 @@ export class CostTracker {
     const cutoff = Math.floor(Date.now() / 1000) - retainDays * 86400;
     const costResult = this.db.prepare(`DELETE FROM llm_cost_log WHERE timestamp < ?`).run(cutoff);
     const savingsResult = this.db.prepare(`DELETE FROM llm_savings_log WHERE timestamp < ?`).run(cutoff);
-    return costResult.changes + savingsResult.changes;
+    return Number(costResult.changes) + Number(savingsResult.changes);
   }
 }

@@ -10,8 +10,7 @@
  */
 
 import { Type } from "@sinclair/typebox";
-import Database from "better-sqlite3";
-import type OpenAI from "openai";
+import OpenAI from "openai";
 import { randomUUID } from "node:crypto";
 import {
   appendFileSync,
@@ -253,7 +252,7 @@ import {
   extractGoalKeywords,
   hashToolSequence,
 } from "./backends/workflow-store.js";
-import { WorkflowTracker } from "./services/workflow-tracker.js";
+import { WorkflowTracker, _resetRateLimitForTest } from "./services/workflow-tracker.js";
 import { CrystallizationStore } from "./backends/crystallization-store.js";
 import { PatternDetector, computePatternId, scorePattern } from "./services/pattern-detector.js";
 import { SkillCrystallizer, deriveSkillName, isExecOnlySequence } from "./services/skill-crystallizer.js";
@@ -817,6 +816,7 @@ export const _testing = {
   sequenceSimilarity,
   extractGoalKeywords,
   hashToolSequence,
+  _resetRateLimitForTest,
   // Workflow crystallization (Issue #208)
   CrystallizationStore,
   PatternDetector,

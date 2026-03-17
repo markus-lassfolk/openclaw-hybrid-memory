@@ -1128,7 +1128,7 @@ export async function runVerifyForCli(
     issues.push(`SQLite: ${msg}`);
     if (isBindingsError(msg)) {
       sqliteBindingsFailed = true;
-      fixes.push(`Native module (better-sqlite3) needs rebuild. Run: cd ${extDir} && npm rebuild better-sqlite3`);
+      fixes.push(`Native module rebuild needed. Run: cd ${extDir} && npm rebuild @lancedb/lancedb`);
     } else {
       fixes.push(
         `SQLite: Ensure path is writable and not corrupted. Path: ${resolvedSqlitePath}. If corrupted, back up and remove the file to recreate, or run from a process with write access.`,
@@ -1923,10 +1923,7 @@ export async function runVerifyForCli(
     if (sqliteBindingsFailed || lanceBindingsFailed) {
       try {
         const { spawnSync } = await import("node:child_process");
-        const pkgs = [
-          ...(sqliteBindingsFailed ? ["better-sqlite3"] : []),
-          ...(lanceBindingsFailed ? ["@lancedb/lancedb"] : []),
-        ];
+        const pkgs = [...(sqliteBindingsFailed ? [] : []), ...(lanceBindingsFailed ? ["@lancedb/lancedb"] : [])];
         for (const pkg of pkgs) {
           const r = spawnSync("npm", ["rebuild", pkg], { cwd: extDir, shell: true });
           if (r.status === 0) {
@@ -5411,7 +5408,7 @@ export async function runExtractImplicitFeedbackForCli(
   let trajectoriesBuilt = 0;
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const rawDb = (factsDb as any).liveDb as import("better-sqlite3").Database | undefined;
+  const rawDb = (factsDb as any).liveDb as import("node:sqlite").DatabaseSync | undefined;
 
   for (const filePath of filePaths) {
     let lines: string[];

@@ -8,7 +8,8 @@
  * can call it as an independent retrieval strategy alongside vector search.
  */
 
-import type Database from "better-sqlite3";
+import { type DatabaseSync } from "node:sqlite";
+import type { SQLInputValue } from "node:sqlite";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -110,14 +111,14 @@ export function buildFts5Query(raw: string): string | null {
 /**
  * Search the FTS5 index for facts matching `query`.
  *
- * @param db      - A better-sqlite3 `Database` instance.
+ * @param db      - A node:sqlite `DatabaseSync` instance.
  * @param query   - Raw search string. May contain FTS5 operators (AND/OR/NOT/*),
  *                  phrase quotes, or plain keywords.
  * @param options - Optional filters and limits.
  * @returns Ranked list of matching facts (best first).
  */
 export function searchFts(
-  db: Database.Database,
+  db: DatabaseSync,
   query: string,
   options: {
     /** Maximum results to return (default: 20). */
@@ -156,7 +157,7 @@ export function searchFts(
 
   // Build WHERE clauses for structured filters.
   const extraClauses: string[] = [];
-  const params: Record<string, unknown> = { query: matchExpr, limit };
+  const params: Record<string, SQLInputValue> = { query: matchExpr, limit };
 
   if (!includeSuperseded) {
     // Use asOf when provided so point-in-time queries filter against the correct timestamp.
@@ -237,7 +238,7 @@ export function searchFts(
  *
  * @returns Number of facts indexed.
  */
-export function rebuildFtsIndex(db: Database.Database): number {
+export function rebuildFtsIndex(db: DatabaseSync): number {
   // Delete whatever is currently in the FTS index.
   db.exec(`DELETE FROM facts_fts`);
 

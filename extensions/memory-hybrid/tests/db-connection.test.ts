@@ -24,6 +24,8 @@ function closeInternalConnection(instance: InstanceType<typeof FactsDB> | Instan
   const conn = (instance as unknown as { db: { close: () => void } }).db;
   expect(conn).toBeDefined();
   conn.close();
+  // node:sqlite has no .open property — track state via _dbOpen so liveDb can reopen.
+  (instance as unknown as { _dbOpen: boolean })._dbOpen = false;
 }
 
 // ---------------------------------------------------------------------------

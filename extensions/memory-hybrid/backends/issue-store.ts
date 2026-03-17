@@ -5,7 +5,8 @@
  * machine transitions.
  */
 
-import Database from "better-sqlite3";
+import { DatabaseSync } from "node:sqlite";
+import type { SQLInputValue } from "node:sqlite";
 import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
@@ -18,14 +19,14 @@ import { ISSUE_TRANSITIONS } from "../types/issue-types.js";
 export type { Issue, CreateIssueInput, IssueStatus } from "../types/issue-types.js";
 
 export class IssueStore {
-  private db: Database.Database;
+  private db: DatabaseSync;
   private closed = false;
 
   constructor(dbPath: string) {
     mkdirSync(dirname(dbPath), { recursive: true });
-    this.db = new Database(dbPath);
-    this.db.pragma("journal_mode = WAL");
-    this.db.pragma(`busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
+    this.db = new DatabaseSync(dbPath);
+    this.db.exec("PRAGMA journal_mode = WAL");
+    this.db.exec(`PRAGMA busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
 
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS issues (
@@ -88,7 +89,7 @@ export class IssueStore {
 
     const now = new Date().toISOString();
     const sets: string[] = ["updated_at = ?"];
-    const params: unknown[] = [now];
+    const params: SQLInputValue[] = [now];
 
     if (patch.title !== undefined) {
       sets.push("title = ?");
@@ -174,7 +175,7 @@ export class IssueStore {
 
   list(filter?: { status?: IssueStatus[]; severity?: string[]; tags?: string[]; limit?: number }): Issue[] {
     let query = "SELECT * FROM issues WHERE 1=1";
-    const params: unknown[] = [];
+    const params: SQLInputValue[] = [];
 
     if (filter?.status && filter.status.length > 0) {
       query += ` AND status IN (${filter.status.map(() => "?").join(", ")})`;
@@ -236,7 +237,7 @@ export class IssueStore {
     const result = this.db
       .prepare(`DELETE FROM issues WHERE status IN ('verified', 'wont-fix') AND updated_at < ?`)
       .run(cutoff);
-    return result.changes;
+    return Number(result.changes);
   }
 
   private rowToIssue(row: any): Issue {
