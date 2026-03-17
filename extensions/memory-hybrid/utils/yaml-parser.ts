@@ -237,7 +237,7 @@ function removeInlineComment(s: string): string {
     if (c === '"' && !inSingle) inDouble = !inDouble;
     else if (c === "'" && !inDouble) inSingle = !inSingle;
     else if (c === "#" && !inDouble && !inSingle) {
-      if (i === 0 || s[i - 1] === " ") {
+      if (i === 0 || s[i - 1] === " " || s[i - 1] === "\t") {
         return s.substring(0, i).trim();
       }
     }
