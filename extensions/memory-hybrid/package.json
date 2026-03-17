@@ -70,8 +70,7 @@
     "@vitest/coverage-v8": "^4.0.18",
     "knip": "^5.0.0",
     "typescript": "^5.9.3",
-    "vitest": "^4.0.18",
-    "yauzl": "^3.2.1"
+    "vitest": "^4.0.18"
   },
   "overrides": {
     "@hono/node-server": ">=1.19.10 <2",
