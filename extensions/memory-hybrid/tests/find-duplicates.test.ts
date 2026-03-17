@@ -30,7 +30,10 @@ describe("runFindDuplicates", () => {
       makeEntry({ id: "b", text: "User likes TypeScript" }),
     ];
     const factsDb = { getFactsForConsolidation: vi.fn().mockReturnValue(facts) };
-    const embedBatch = vi.fn().mockResolvedValue([[1, 0], [0.9, 0.1]]);
+    const embedBatch = vi.fn().mockResolvedValue([
+      [1, 0],
+      [0.9, 0.1],
+    ]);
     const embeddings = { embedBatch, embed: vi.fn(), dimensions: 2, modelName: "test" };
     const vectorDb = { search: vi.fn().mockResolvedValue([]) };
 
@@ -51,15 +54,16 @@ describe("runFindDuplicates", () => {
     const facts = [makeEntry({ id: "a", text: "Fact A" }), makeEntry({ id: "b", text: "Fact B" })];
     const factsDb = { getFactsForConsolidation: vi.fn().mockReturnValue(facts) };
     const embeddings = {
-      embedBatch: vi.fn().mockResolvedValue([[1, 0], [0.95, 0.1]]),
+      embedBatch: vi.fn().mockResolvedValue([
+        [1, 0],
+        [0.95, 0.1],
+      ]),
       embed: vi.fn(),
       dimensions: 2,
       modelName: "test",
     };
     const vectorDb = {
-      search: vi.fn().mockImplementation(async () => [
-        { entry: facts[1], score: 0.95, backend: "lancedb" as const },
-      ]),
+      search: vi.fn().mockImplementation(async () => [{ entry: facts[1], score: 0.95, backend: "lancedb" as const }]),
     };
 
     const result = await runFindDuplicates(
@@ -197,7 +201,10 @@ describe("runFindDuplicates", () => {
       makeEntry({ id: "c", text: "Uses VSCode" }),
     ];
     const factsDb = { getFactsForConsolidation: vi.fn().mockReturnValue(facts) };
-    const embedBatch = vi.fn().mockResolvedValue([[1, 0], [0, 1]]);
+    const embedBatch = vi.fn().mockResolvedValue([
+      [1, 0],
+      [0, 1],
+    ]);
     const embeddings = { embedBatch, embed: vi.fn(), dimensions: 2, modelName: "test" };
     const vectorDb = { search: vi.fn().mockResolvedValue([]) };
 
