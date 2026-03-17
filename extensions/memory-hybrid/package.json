@@ -43,6 +43,8 @@
   },
   "dependencies": {
     "@lancedb/lancedb": "^0.26.2",
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^25.2.3",
     "better-sqlite3": "^12.0.0"
   },
   "openclaw": {
@@ -54,31 +56,25 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
-    "lint": "eslint .",
-    "lint:fix": "eslint . --fix",
-    "format": "prettier --write \"{api,backends,cli,config,lifecycle,prompts,routes,scripts,services,setup,tests,tools,types,utils}/**/*.ts\" index.ts config.ts versionInfo.ts vitest.config.ts",
-    "format:check": "prettier --check \"{api,backends,cli,config,lifecycle,prompts,routes,scripts,services,setup,tests,tools,types,utils}/**/*.ts\" index.ts config.ts versionInfo.ts vitest.config.ts",
+    "lint": "biome lint .",
+    "lint:fix": "biome lint --write .",
+    "format": "biome format --write .",
+    "format:check": "biome format .",
     "lint:arch": "bash scripts/lint-arch.sh",
     "postinstall": "node scripts/postinstall-rebuild.cjs",
     "verify:publish": "node scripts/verify-publish.cjs",
     "release:publish": "npm run verify:publish && npm publish --otp=$OTP"
   },
   "devDependencies": {
-    "@eslint/js": "^9.0.0",
-    "@types/better-sqlite3": "^7.6.13",
-    "@types/node": "^25.2.3",
+    "@biomejs/biome": "^1.9.0",
     "@vitest/coverage-v8": "^4.0.18",
-    "eslint": "^9.0.0",
     "knip": "^5.0.0",
-    "prettier": "^3.0.0",
     "typescript": "^5.9.3",
-    "typescript-eslint": "^8.0.0",
     "vitest": "^4.0.18"
   },
   "overrides": {
     "@hono/node-server": ">=1.19.10 <2",
-    "opusscript": "0.1.1",
-    "yauzl": ">=3.2.1"
+    "opusscript": "0.1.1"
   },
   "engines": {
     "node": "^20.19.0 || >=22.12.0"
