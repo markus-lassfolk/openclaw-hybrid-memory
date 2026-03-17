@@ -216,9 +216,7 @@ export function isContextLengthError(err: unknown): boolean {
       ((msg.includes("400") || msg.includes("bad request")) &&
         (msg.includes("context length") ||
           msg.includes("maximum context") ||
-          /max.*token.*(length|limit)|token limit|context.length/i.test(err.message) ||
-          // #488: Ollama pattern (may appear with "400" prefix in some SDK versions)
-          /input\s+length\s+\d+\s+exceeds/i.test(err.message))) ||
+          /max.*token.*(length|limit)|token limit|context.length/i.test(err.message))) ||
       /\b400\b.*maximum context length/i.test(err.message) ||
       // #488: Ollama message-only — no "400" prefix or .status property.
       // This pattern intentionally appears three times: some SDKs set .status=400 (first block),
