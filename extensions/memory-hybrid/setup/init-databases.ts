@@ -903,7 +903,7 @@ export function initializeDatabases(cfg: HybridMemoryConfig, api: ClawdbotPlugin
   const hasModelFrom = (list: string[], prefix: string) =>
     list.some(
       (m) =>
-        m.startsWith(`${prefix}/`) ||
+        m.toLowerCase().startsWith(`${prefix}/`) ||
         (m.startsWith("claude-") && prefix === "anthropic") ||
         (m.startsWith("gemini-") && prefix === "google") ||
         (m.toLowerCase().startsWith("minimax-") && prefix === "minimax"),
