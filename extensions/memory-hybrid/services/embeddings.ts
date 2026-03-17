@@ -946,7 +946,7 @@ export class FallbackEmbeddingProvider implements EmbeddingProvider {
   private readonly fallback: EmbeddingProvider | null;
   private switched = false;
   private lastRetryAttempt = 0;
-  private readonly retryIntervalMs = 60000;
+  private readonly retryIntervalMs: number;
   private readonly onSwitch?: (err: unknown) => void;
   private readonly primaryLabel: string;
   private readonly fallbackLabel: string;
@@ -963,6 +963,7 @@ export class FallbackEmbeddingProvider implements EmbeddingProvider {
     onSwitch?: (err: unknown) => void,
     primaryLabel = "ollama",
     fallbackLabel = "openai",
+    retryIntervalMs = 60000,
   ) {
     if (fallback && fallback.dimensions !== primary.dimensions) {
       throw new Error(
@@ -976,8 +977,40 @@ export class FallbackEmbeddingProvider implements EmbeddingProvider {
     this.onSwitch = onSwitch;
     this.primaryLabel = primaryLabel;
     this.fallbackLabel = fallbackLabel;
+    this.retryIntervalMs = retryIntervalMs;
     this.dimensions = primary.dimensions;
     this.modelName = primary.modelName;
+  }
+
+  /**
+   * Attempt to return to the primary provider after a fallback switch.
+   * Updates `switched`, `active`, and `modelName` on success.
+   * Returns the result if primary recovered, or null if still failing (stay on fallback).
+   */
+  private async _tryReturnToPrimary<T>(
+    fn: (provider: EmbeddingProvider) => Promise<T>,
+    phase: string,
+  ): Promise<T | null> {
+    this.lastRetryAttempt = Date.now();
+    try {
+      const result = await fn(this.primary);
+      this.active = this.primary;
+      this.switched = false;
+      this.modelName = this.active.modelName;
+      return result;
+    } catch (err) {
+      const asErr = err instanceof Error ? err : new Error(String(err));
+      // Skip reporting config errors (404/403/401 — operator issues), 429 (rate limit), and circuit breaker open — not bugs (#329, #394, #385, #397, #458).
+      if (!isConfigError(asErr) && !is429OrWrapped(asErr) && !isOllamaCircuitBreakerOpen(asErr)) {
+        capturePluginError(asErr, {
+          subsystem: "embeddings",
+          operation: "fallback-retry-primary",
+          phase,
+        });
+      }
+      return null;
+      // Primary still failing — continue using fallback
+    }
   }
 
   async embed(text: string): Promise<number[]> {
@@ -985,25 +1018,8 @@ export class FallbackEmbeddingProvider implements EmbeddingProvider {
       return this.active.embed(text);
     }
     if (this.switched && Date.now() - this.lastRetryAttempt >= this.retryIntervalMs) {
-      this.lastRetryAttempt = Date.now();
-      try {
-        const result = await this.primary.embed(text);
-        this.active = this.primary;
-        this.switched = false;
-        this.modelName = this.active.modelName;
-        return result;
-      } catch (err) {
-        const asErr = err instanceof Error ? err : new Error(String(err));
-        // Skip reporting config errors (404/403/401 — operator issues), 429 (rate limit), and circuit breaker open — not bugs (#329, #394, #385, #397, #458).
-        if (!isConfigError(asErr) && !is429OrWrapped(asErr) && !isOllamaCircuitBreakerOpen(asErr)) {
-          capturePluginError(asErr, {
-            subsystem: "embeddings",
-            operation: "fallback-retry-primary",
-            phase: "embed",
-          });
-        }
-        // Primary still failing — continue using fallback
-      }
+      const recovered = await this._tryReturnToPrimary((p) => p.embed(text), "embed");
+      if (recovered !== null) return recovered;
     }
     if (this.switched) {
       return this.active.embed(text);
@@ -1034,25 +1050,8 @@ export class FallbackEmbeddingProvider implements EmbeddingProvider {
       return this.active.embedBatch(texts);
     }
     if (this.switched && Date.now() - this.lastRetryAttempt >= this.retryIntervalMs) {
-      this.lastRetryAttempt = Date.now();
-      try {
-        const result = await this.primary.embedBatch(texts);
-        this.active = this.primary;
-        this.switched = false;
-        this.modelName = this.active.modelName;
-        return result;
-      } catch (err) {
-        const asErr = err instanceof Error ? err : new Error(String(err));
-        // Skip reporting config errors (404/403/401 — operator issues), 429 (rate limit), and circuit breaker open — not bugs (#329, #394, #385, #397, #458).
-        if (!isConfigError(asErr) && !is429OrWrapped(asErr) && !isOllamaCircuitBreakerOpen(asErr)) {
-          capturePluginError(asErr, {
-            subsystem: "embeddings",
-            operation: "fallback-retry-primary",
-            phase: "embedBatch",
-          });
-        }
-        // Primary still failing — continue using fallback
-      }
+      const recovered = await this._tryReturnToPrimary((p) => p.embedBatch(texts), "embedBatch");
+      if (recovered !== null) return recovered;
     }
     if (this.switched) {
       return this.active.embedBatch(texts);
@@ -1095,7 +1094,9 @@ export class ChainEmbeddingProvider implements EmbeddingProvider {
   readonly dimensions: number;
   modelName: string;
   get activeProvider(): string {
-    return this.labels[this.activeIndex];
+    // When the active provider is itself a FallbackEmbeddingProvider that has switched internally,
+    // prefer its own activeProvider over the chain's label for accurate reporting (#560).
+    return this.providers[this.activeIndex]?.activeProvider ?? this.labels[this.activeIndex];
   }
 
   constructor(providers: EmbeddingProvider[], labels: string[]) {
