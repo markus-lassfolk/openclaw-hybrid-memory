@@ -32,7 +32,7 @@ import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
 import type { EmbeddingProvider } from "../services/embeddings.js";
 import type { SearchResult } from "../types/memory.js";
-import { mergeResults, filterByScope } from "../services/merge-results.js";
+import { type mergeResults, filterByScope } from "../services/merge-results.js";
 import type { ScopeFilter } from "../types/memory.js";
 import type { HybridMemoryConfig } from "../config.js";
 import { getCronModelConfig, getDefaultCronModel } from "../config.js";
@@ -542,7 +542,7 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
     .option("--older-than-days <days>", "Remove versions older than this many days (default: 7)", "7")
     .action(
       withExit(async (opts?: { olderThanDays?: string }) => {
-        const olderThanDays = parseInt(opts?.olderThanDays ?? "7", 10);
+        const olderThanDays = Number.parseInt(opts?.olderThanDays ?? "7", 10);
         const olderThanMs = olderThanDays * 24 * 60 * 60 * 1000;
         try {
           const stats = await vectorDb.optimize(olderThanMs);
@@ -977,7 +977,7 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
           tier?: string;
         }) => {
           try {
-            const limit = parseInt(opts?.limit ?? "10", 10);
+            const limit = Number.parseInt(opts?.limit ?? "10", 10);
             const filters = {
               category: opts?.category,
               entity: opts?.entity,
@@ -1433,7 +1433,7 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
             {
               dryRun: !!opts?.dryRun,
               workspace: opts?.workspace,
-              limit: opts?.limit ? parseInt(opts.limit, 10) : undefined,
+              limit: opts?.limit ? Number.parseInt(opts.limit, 10) : undefined,
             },
             { log: console.log, warn: console.warn },
           );
@@ -1529,9 +1529,9 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
     .option("--limit <n>", "Max pairs to return (default 100)", "100")
     .action(
       withExit(async (opts?: { threshold?: string; includeStructured?: boolean; limit?: string }) => {
-        const threshold = parseFloat(opts?.threshold ?? "0.85");
+        const threshold = Number.parseFloat(opts?.threshold ?? "0.85");
         const includeStructured = !!opts?.includeStructured;
-        const limit = parseInt(opts?.limit ?? "100", 10);
+        const limit = Number.parseInt(opts?.limit ?? "100", 10);
         let res;
         try {
           res = await runFindDuplicates({ threshold, includeStructured, limit });
@@ -1570,10 +1570,10 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
           limit?: string;
           model?: string;
         }) => {
-          const threshold = parseFloat(opts?.threshold ?? "0.85");
+          const threshold = Number.parseFloat(opts?.threshold ?? "0.85");
           const includeStructured = !!opts?.includeStructured;
           const dryRun = !!opts?.dryRun;
-          const limit = parseInt(opts?.limit ?? "10", 10);
+          const limit = Number.parseInt(opts?.limit ?? "10", 10);
           const model = opts?.model ?? getDefaultCronModel(getCronModelConfig(ctx.cfg), "default");
           let res;
           try {
@@ -1601,7 +1601,7 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
     .option("--verbose", "Log each pattern as it is extracted")
     .action(
       withExit(async (opts?: { window?: string; dryRun?: boolean; model?: string; verbose?: boolean }) => {
-        const window = opts?.window ? parseInt(opts.window, 10) : reflectionConfig.defaultWindow;
+        const window = opts?.window ? Number.parseInt(opts.window, 10) : reflectionConfig.defaultWindow;
         const dryRun = !!opts?.dryRun;
         const model = opts?.model ?? reflectionConfig.model;
         const verbose = !!opts?.verbose;
@@ -1861,7 +1861,7 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
     .action(
       withExit(async (opts?: { dryRun?: boolean; limit?: string; model?: string }) => {
         const dryRun = !!opts?.dryRun;
-        const limit = parseInt(opts?.limit ?? "100", 10);
+        const limit = Number.parseInt(opts?.limit ?? "100", 10);
         const model = opts?.model;
         let res;
         try {
@@ -1926,7 +1926,7 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
     .option("--output <path>", "Output path for incidents JSON (default: memory/.self-correction-incidents.json)")
     .action(
       withExit(async (opts?: { days?: string; output?: string }) => {
-        const days = opts?.days ? parseInt(opts.days, 10) : 7;
+        const days = opts?.days ? Number.parseInt(opts.days, 10) : 7;
         const outputPath = opts?.output;
         let res;
         try {
@@ -2039,7 +2039,7 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
             trajectories?: boolean;
             closedLoop?: boolean;
           }) => {
-            const days = opts?.days ? parseInt(opts.days, 10) : 3;
+            const days = opts?.days ? Number.parseInt(opts.days, 10) : 3;
             const dryRun = !!opts?.dryRun;
             const verbose = !!opts?.verbose;
             const includeTrajectories = opts?.trajectories !== false;
@@ -2128,7 +2128,7 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
             process.exitCode = 1;
             return;
           }
-          const days = opts?.days ? parseInt(opts.days, 10) : 7;
+          const days = opts?.days ? Number.parseInt(opts.days, 10) : 7;
           const format = opts?.format === "compact" ? ("compact" as const) : ("pretty" as const);
           runCostReport(
             { days, model: !!opts?.model, feature: opts?.feature, csv: !!opts?.csv, format, modes: !!opts?.modes },
@@ -2183,7 +2183,7 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
           process.exitCode = 1;
           return;
         }
-        const days = opts?.days ? parseInt(opts.days, 10) : undefined;
+        const days = opts?.days ? Number.parseInt(opts.days, 10) : undefined;
         const outputPath = opts?.output;
         const learn = !!opts?.learn;
         const model = opts?.model?.trim() || undefined;
@@ -2441,8 +2441,8 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
     .option("--min-importance <n>", "Minimum importance score to promote (default: 0.7)", "0.7")
     .action(
       withExit(async (opts: { dryRun?: boolean; thresholdDays: string; minImportance: string }) => {
-        const thresholdDays = parseFloat(opts.thresholdDays);
-        const minImportance = parseFloat(opts.minImportance);
+        const thresholdDays = Number.parseFloat(opts.thresholdDays);
+        const minImportance = Number.parseFloat(opts.minImportance);
 
         if (isNaN(thresholdDays) || thresholdDays < 0) {
           console.error("--threshold-days must be a non-negative number");
@@ -2527,7 +2527,7 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
 
         const compare = (a: string, b: string): number => {
           const parseNum = (s: string): number => {
-            const n = parseInt(s, 10);
+            const n = Number.parseInt(s, 10);
             return isNaN(n) ? 0 : n;
           };
           const pa = a

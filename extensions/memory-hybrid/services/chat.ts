@@ -3,7 +3,7 @@
  * Uses a multi-provider OpenAI-compatible proxy; provider-agnostic model fallback (issue #87).
  */
 
-import OpenAI from "openai";
+import type OpenAI from "openai";
 import { capturePluginError } from "./error-reporter.js";
 import { withCostFeature } from "./cost-context.js";
 
@@ -282,7 +282,7 @@ function parseRetryAfterMs(err: unknown): number | undefined {
   const raw = headers["retry-after"] ?? headers["Retry-After"];
   if (!raw) return undefined;
   // Retry-After can be either a delay-seconds integer or an HTTP-date
-  const secs = parseInt(raw, 10);
+  const secs = Number.parseInt(raw, 10);
   if (!isNaN(secs) && secs > 0) return secs * 1000;
   const date = Date.parse(raw);
   if (!isNaN(date)) return Math.max(0, date - Date.now());

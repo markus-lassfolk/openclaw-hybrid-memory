@@ -38,7 +38,7 @@ function skipBlanks(ctx: ParseCtx): void {
 
 function getIndent(line: string): number {
   const i = line.search(/\S/);
-  return i < 0 ? Infinity : i;
+  return i < 0 ? Number.POSITIVE_INFINITY : i;
 }
 
 function parseNode(ctx: ParseCtx, parentIndent: number): YAMLValue {
@@ -271,10 +271,10 @@ function parseScalar(s: string): YAMLValue {
   if (lower === "null" || s === "~") return null;
 
   // Integer
-  if (/^-?\d+$/.test(s)) return parseInt(s, 10);
+  if (/^-?\d+$/.test(s)) return Number.parseInt(s, 10);
 
   // Float
-  if (/^-?\d+\.\d+$/.test(s)) return parseFloat(s);
+  if (/^-?\d+\.\d+$/.test(s)) return Number.parseFloat(s);
 
   // Everything else: string (includes URLs, hex values like 0x1a62, paths, etc.)
   return s;

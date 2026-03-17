@@ -107,7 +107,7 @@ export function registerSensorSweepCommands(mem: Chainable, ctx: SensorSweepCont
     .action(
       withExit(async (opts: { type?: string; status?: string; limit?: string; json?: boolean }) => {
         try {
-          const limit = Math.min(Math.max(1, parseInt(opts.limit ?? "20", 10) || 20), 200);
+          const limit = Math.min(Math.max(1, Number.parseInt(opts.limit ?? "20", 10) || 20), 200);
           const events = ctx.eventBus.queryEvents({
             type: opts.type,
             status: (opts.status ?? "raw") as import("../backends/event-bus.js").EventStatus,

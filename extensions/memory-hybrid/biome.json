@@ -23,14 +23,37 @@
       "recommended": true,
       "suspicious": {
         "noExplicitAny": "warn",
-        "noConsole": "off"
+        "noConsole": "off",
+        "noImplicitAnyLet": "warn",
+        "noAssignInExpressions": "warn",
+        "noMisleadingCharacterClass": "warn",
+        "noControlCharactersInRegex": "warn",
+        "noConfusingVoidType": "warn",
+        "noGlobalIsNan": "warn"
       },
       "correctness": {
-        "noUnusedVariables": "warn"
+        "noUnusedVariables": "warn",
+        "noUnnecessaryContinue": "warn"
       },
       "style": {
         "useConst": "warn",
-        "noVar": "warn"
+        "noVar": "warn",
+        "noNonNullAssertion": "warn",
+        "noParameterAssign": "warn",
+        "noUnusedTemplateLiteral": "warn",
+        "useTemplate": "warn",
+        "useNodejsImportProtocol": "warn",
+        "noUselessElse": "warn",
+        "useExponentiationOperator": "warn",
+        "useSingleVarDeclarator": "warn"
+      },
+      "complexity": {
+        "noForEach": "warn",
+        "useLiteralKeys": "warn",
+        "useOptionalChain": "warn"
+      },
+      "performance": {
+        "noDelete": "warn"
       }
     }
   },

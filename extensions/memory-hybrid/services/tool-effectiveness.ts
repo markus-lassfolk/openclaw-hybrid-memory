@@ -139,8 +139,8 @@ export class ToolEffectivenessStore {
   recordToolOutcome(
     tool: string,
     outcome: "success" | "failure" | "unknown",
-    context: string = "general",
-    durationMs: number = 0,
+    context = "general",
+    durationMs = 0,
   ): void {
     const now = Math.floor(Date.now() / 1000);
     this.db
@@ -630,8 +630,8 @@ export function formatToolEffectivenessReport(report: ToolEffectivenessReport): 
 export function generateToolHint(
   store: ToolEffectivenessStore,
   context: string,
-  minUses: number = 5,
-  hintThreshold: number = 0.3,
+  minUses = 5,
+  hintThreshold = 0.3,
 ): string {
   // Get all rows for this context
   const all = store.getAll().filter((m) => m.context === context && m.totalCalls >= minUses);

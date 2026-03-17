@@ -507,8 +507,8 @@ class GlitchTipReporter {
         return {
           function: match[1] || "<anonymous>",
           filename: sanitizePath(match[2]),
-          lineno: parseInt(match[3], 10),
-          colno: parseInt(match[4], 10),
+          lineno: Number.parseInt(match[3], 10),
+          colno: Number.parseInt(match[4], 10),
           in_app: !match[2].includes("node_modules"),
         };
       })

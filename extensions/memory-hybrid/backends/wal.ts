@@ -53,7 +53,7 @@ export function isWalEntry(obj: unknown): obj is WALEntry {
 export class WriteAheadLog {
   private walPath: string;
   private maxAge: number;
-  private fsyncWarnEmitted: boolean = false;
+  private fsyncWarnEmitted = false;
 
   constructor(walPath: string, maxAge: number = 5 * 60 * 1000) {
     this.walPath = walPath;

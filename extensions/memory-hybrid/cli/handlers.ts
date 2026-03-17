@@ -4876,9 +4876,9 @@ function setNested(obj: Record<string, unknown>, path: string, value: unknown): 
         : value === "null"
           ? null
           : /^-?\d+$/.test(String(value))
-            ? parseInt(String(value), 10)
+            ? Number.parseInt(String(value), 10)
             : /^-?\d*\.\d+$/.test(String(value))
-              ? parseFloat(String(value))
+              ? Number.parseFloat(String(value))
               : value;
   (cur as any)[last] = v;
   return true;

@@ -88,9 +88,9 @@ function extractCandidates(text: string, nowMs: number): number[] {
   const isoRe = /\b(\d{4})-(\d{2})-(\d{2})(?:T\d{2}:\d{2}(?::\d{2})?)?/g;
   let m: RegExpExecArray | null;
   while ((m = isoRe.exec(text)) !== null) {
-    const y = parseInt(m[1]!, 10);
-    const moRaw = parseInt(m[2]!, 10);
-    const d = parseInt(m[3]!, 10);
+    const y = Number.parseInt(m[1]!, 10);
+    const moRaw = Number.parseInt(m[2]!, 10);
+    const d = Number.parseInt(m[3]!, 10);
     // Fix #7: reject out-of-range month/day before Date.UTC to avoid silent normalization
     if (moRaw < 1 || moRaw > 12 || d < 1 || d > 31) continue;
     const mo = moRaw - 1;
@@ -114,11 +114,11 @@ function extractCandidates(text: string, nowMs: number): number[] {
     if (m[1] !== undefined && m[2] !== undefined) {
       // "March 20"
       monthStr = m[1].toLowerCase();
-      dayNum = parseInt(m[2], 10);
+      dayNum = Number.parseInt(m[2], 10);
     } else {
       // "20 March"
       monthStr = m[4]!.toLowerCase();
-      dayNum = parseInt(m[3]!, 10);
+      dayNum = Number.parseInt(m[3]!, 10);
     }
     const moIdx = MONTH_MAP[monthStr];
     if (moIdx === undefined) continue;
@@ -184,7 +184,7 @@ function extractCandidates(text: string, nowMs: number): number[] {
   // -------------------------------------------------------------------------
   const inOffsetRe = /\bin\s+(\d+)\s+(day|days|week|weeks|month|months)\b/gi;
   while ((m = inOffsetRe.exec(text)) !== null) {
-    const n = parseInt(m[1]!, 10);
+    const n = Number.parseInt(m[1]!, 10);
     const unit = m[2]!.toLowerCase();
     let daysAhead = 0;
     if (unit === "day" || unit === "days") daysAhead = n;

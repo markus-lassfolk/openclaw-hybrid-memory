@@ -121,9 +121,9 @@ export function registerDistillCommands(mem: Chainable, ctx: DistillContext): vo
           full?: boolean;
         }) => {
           const sink = { log: (s: string) => console.log(s), warn: (s: string) => console.warn(s) };
-          const maxSessions = Math.max(0, parseInt(opts.maxSessions || "0") || 0);
-          const maxSessionTokens = Math.max(0, parseInt(opts.maxSessionTokens || "0") || 0);
-          const days = opts.days != null ? parseInt(opts.days, 10) : undefined;
+          const maxSessions = Math.max(0, Number.parseInt(opts.maxSessions || "0") || 0);
+          const maxSessionTokens = Math.max(0, Number.parseInt(opts.maxSessionTokens || "0") || 0);
+          const days = opts.days != null ? Number.parseInt(opts.days, 10) : undefined;
           const result = await runDistill(
             {
               dryRun: !!opts.dryRun,
@@ -191,7 +191,7 @@ export function registerDistillCommands(mem: Chainable, ctx: DistillContext): vo
     .option("--verbose", "Log each extracted fact as it is stored")
     .action(
       withExit(async (opts: { days: string; dryRun?: boolean; verbose?: boolean }) => {
-        const daysBack = parseInt(opts.days);
+        const daysBack = Number.parseInt(opts.days);
         const result = await runExtractDaily(
           { days: daysBack, dryRun: !!opts.dryRun, verbose: !!opts.verbose },
           { log: (s) => console.log(s), warn: (s) => console.warn(s) },
@@ -218,7 +218,7 @@ export function registerDistillCommands(mem: Chainable, ctx: DistillContext): vo
     .option("--full", "Force full re-scan (ignore watermark, process all sessions in window)")
     .action(
       withExit(async (opts: { dir?: string; days?: string; dryRun?: boolean; verbose?: boolean; full?: boolean }) => {
-        const days = opts.days != null ? parseInt(opts.days, 10) : undefined;
+        const days = opts.days != null ? Number.parseInt(opts.days, 10) : undefined;
         const result = await runExtractProcedures({
           sessionDir: opts.dir,
           days: Number.isFinite(days) ? days : undefined,
@@ -286,7 +286,7 @@ export function registerDistillCommands(mem: Chainable, ctx: DistillContext): vo
     .option("--full", "Force full re-scan (ignore watermark, process all sessions in window)")
     .action(
       withExit(async (opts: { days?: string; verbose?: boolean; dryRun?: boolean; full?: boolean }) => {
-        const days = parseInt(opts.days ?? "3", 10);
+        const days = Number.parseInt(opts.days ?? "3", 10);
         const result = await runExtractDirectives({
           days,
           verbose: opts.verbose,
@@ -313,7 +313,7 @@ export function registerDistillCommands(mem: Chainable, ctx: DistillContext): vo
     .option("--full", "Force full re-scan (ignore watermark, process all sessions in window)")
     .action(
       withExit(async (opts: { days?: string; verbose?: boolean; dryRun?: boolean; full?: boolean }) => {
-        const days = parseInt(opts.days ?? "3", 10);
+        const days = Number.parseInt(opts.days ?? "3", 10);
         const result = await runExtractReinforcement({
           days,
           verbose: opts.verbose,

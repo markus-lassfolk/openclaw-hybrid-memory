@@ -71,7 +71,7 @@ function colIndex(headers: string[], ...candidates: string[]): number {
 
 function parseNum(val: string | undefined): number | null {
   if (val === undefined || val === "") return null;
-  const n = parseFloat(val);
+  const n = Number.parseFloat(val);
   return isNaN(n) ? null : n;
 }
 
