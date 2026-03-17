@@ -42,9 +42,8 @@
     "@sinclair/typebox": "^0.34.48"
   },
   "dependencies": {
-    "@lancedb/lancedb": "0.26.2",
-    "@types/better-sqlite3": "7.6.13",
-    "better-sqlite3": "12.8.0"
+    "@lancedb/lancedb": "^0.26.2",
+    "better-sqlite3": "^12.0.0"
   },
   "openclaw": {
     "extensions": [
@@ -67,9 +66,11 @@
   "devDependencies": {
     "@eslint/js": "^9.0.0",
     "openai": "^6.16.0",
+    "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^25.2.3",
     "@vitest/coverage-v8": "^4.0.18",
     "eslint": "^9.0.0",
+    "eslint-config-prettier": "^10.0.0",
     "knip": "^5.0.0",
     "prettier": "^3.0.0",
     "typescript": "^5.9.3",
