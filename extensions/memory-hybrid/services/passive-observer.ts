@@ -366,48 +366,28 @@ export async function runPassiveObserver(
 
   if (!hasNewContent) return result;
 
-  // ---------------------------------------------------------------------------
-  // Phase 2: load recent fact vectors for dedup (only once per run, now that
-  // we know there is new content to process).
-  // ---------------------------------------------------------------------------
-  const recentFacts = factsDb.getRecentFacts(7, { excludeCategories: [] }); // last 7 days
-  const recentVectors: (number[] | null)[] = [];
-  const recentFactIds: (string | null)[] = [];
-  // Cap at 50 facts — sufficient for dedup without excessive API calls.
-  const dedupePool = recentFacts.slice(0, 50);
-  try {
-    // Use a 30-second hard timeout to prevent blocking the timer indefinitely on slow providers.
-    const embedBatchPromise = embeddings.embedBatch(dedupePool.map((f) => f.text));
-    let timeoutId: ReturnType<typeof setTimeout> | undefined;
-    const timeoutPromise = new Promise<never>((_, reject) => {
-      timeoutId = setTimeout(() => reject(new Error("embed-batch timeout")), 30_000);
-    });
-    let batchResult: number[][];
-    try {
-      batchResult = (await Promise.race([embedBatchPromise, timeoutPromise])) as number[][];
-    } finally {
-      if (timeoutId !== undefined) {
-        clearTimeout(timeoutId);
-      }
-    }
-    for (let i = 0; i < dedupePool.length; i++) {
-      recentVectors.push(normalizeVector(batchResult[i]));
-      recentFactIds.push(dedupePool[i].id);
-    }
-  } catch {
-    // On timeout or error, proceed without dedup vectors — a few duplicates are acceptable.
-    for (const f of dedupePool) {
-      recentVectors.push(null);
-      recentFactIds.push(f.id);
-    }
-  }
-
   const reinforcementEnabled = opts.reinforcement?.enabled !== false && opts.reinforcement != null;
   const passiveBoost = opts.reinforcement?.passiveBoost ?? 0.1;
   const maxConfidence = opts.reinforcement?.maxConfidence ?? 1.0;
-  const similarityThreshold = opts.reinforcement?.similarityThreshold ?? config.deduplicationThreshold;
+  const cosineSimilarityThreshold = opts.reinforcement?.similarityThreshold ?? config.deduplicationThreshold;
+  // Convert cosine similarity threshold to L2-based score for vectorDb.search().
+  // VectorDB uses score = 1/(1+L2_distance). For normalized vectors, L2 = sqrt(2*(1-cosine)).
+  // This conversion ensures the dedup threshold behaves as originally calibrated (issue #499).
+  const similarityThreshold = 1 / (1 + Math.sqrt(2 * (1 - cosineSimilarityThreshold)));
 
   const prompt = loadPrompt("passive-observer");
+
+  // In-memory dedup pool for dry-run mode (Issue #499): during dry-run, facts are not written
+  // to LanceDB, so vectorDb.search() cannot find facts extracted earlier in the same batch.
+  // This array tracks embeddings of facts that would be stored in the current run, enabling
+  // intra-batch deduplication so dry-run accurately previews real-run behavior.
+  const dryRunVectors: number[][] = [];
+
+  // In-memory dedup pool for non-dry-run mode: when vectorDb.store() fails, the fact is
+  // committed to SQLite but not to LanceDB. This array provides a fallback intra-batch
+  // dedup mechanism so subsequent identical facts within the same batch are still detected.
+  // Track fact IDs alongside vectors to enable confidence reinforcement (Issue #147).
+  const recentVectors: Array<{ vector: number[]; factId: string }> = [];
 
   // ---------------------------------------------------------------------------
   // Phase 3: process each session that has new content.
@@ -529,18 +509,23 @@ export async function runPassiveObserver(
           continue;
         }
 
-        const normVec = normalizeVector(vec);
+        // Normalize the vector to ensure the L2-to-cosine conversion is valid.
+        // The conversion formula (1 / (1 + sqrt(2*(1-cosine)))) assumes unit-length vectors.
+        // While OpenAI embeddings are pre-normalized, Ollama and some other providers return
+        // unnormalized vectors, causing the L2 distance to be scaled by vector magnitude.
+        const normalizedVec = normalizeVector(vec);
 
-        // Dedup check against recent facts — reinforce instead of skip when enabled
+        // Dedup check via LanceDB ANN search — O(log n) instead of O(n*m) brute-force.
+        // Replaces the old recentVectors[] linear scan and eliminates the embedBatch()
+        // call on the recent-facts pool. LanceDB is the single source of truth.
         let isDuplicate = false;
-        for (let ri = 0; ri < recentVectors.length; ri++) {
-          const rv = recentVectors[ri];
-          if (!rv || rv.length === 0) continue;
-          if (dotProductSimilarity(normVec, rv) >= similarityThreshold) {
+        try {
+          const dupeResults = await vectorDb.search(normalizedVec, 1, similarityThreshold);
+          if (dupeResults.length > 0) {
             isDuplicate = true;
             // Confidence reinforcement: boost the matched fact instead of silently skipping (Issue #147)
             if (reinforcementEnabled && !opts.dryRun) {
-              const matchedId = recentFactIds[ri];
+              const matchedId = dupeResults[0].entry.id;
               if (matchedId) {
                 try {
                   const boosted = factsDb.boostConfidence(matchedId, passiveBoost, maxConfidence);
@@ -550,9 +535,46 @@ export async function runPassiveObserver(
                 }
               }
             }
-            break;
+          }
+        } catch {
+          // On search failure, proceed without dedup — a few duplicates are acceptable
+        }
+
+        // Intra-batch dedup: check against facts stored/attempted in this run.
+        // In dry-run mode, vectorDb.store() is never called, so vectorDb.search() won't find
+        // facts extracted earlier in the same batch. In non-dry-run mode, if vectorDb.store()
+        // fails, the fact is in SQLite but not LanceDB, so vectorDb.search() also won't find it.
+        // Compare against dryRunVectors[] (dry-run) or recentVectors[] (non-dry-run) to ensure
+        // accurate intra-batch deduplication (Issue #499).
+        if (!isDuplicate) {
+          if (opts.dryRun) {
+            for (const recentVec of dryRunVectors) {
+              const cosineSim = dotProductSimilarity(normalizedVec, recentVec);
+              if (cosineSim >= cosineSimilarityThreshold) {
+                isDuplicate = true;
+                break;
+              }
+            }
+          } else {
+            for (const recent of recentVectors) {
+              const cosineSim = dotProductSimilarity(normalizedVec, recent.vector);
+              if (cosineSim >= cosineSimilarityThreshold) {
+                isDuplicate = true;
+                // Confidence reinforcement: boost the matched fact (Issue #147)
+                if (reinforcementEnabled) {
+                  try {
+                    const boosted = factsDb.boostConfidence(recent.factId, passiveBoost, maxConfidence);
+                    if (boosted) result.factsReinforced++;
+                  } catch {
+                    // Non-fatal — don't fail passive observer because of boost error
+                  }
+                }
+                break;
+              }
+            }
           }
         }
+
         if (isDuplicate) continue;
 
         if (opts.dryRun) {
@@ -560,8 +582,7 @@ export async function runPassiveObserver(
             `memory-hybrid: passive-observer [dry-run] would store: ${fact.text.slice(0, 60)}... (importance=${fact.importance.toFixed(2)}, category=${fact.category})`,
           );
           result.factsStored++;
-          recentVectors.push(normVec);
-          recentFactIds.push(null);
+          dryRunVectors.push(normalizedVec);
           continue;
         }
 
@@ -634,11 +655,11 @@ export async function runPassiveObserver(
         // For global/permanent identity facts, pass null scope so detection spans all scopes.
         factsDb.detectContradictions(stored.id, null, null, null, stored.scope ?? null, stored.scopeTarget ?? null);
 
-        // Store to LanceDB
+        // Store to LanceDB (use normalized vector for consistent L2 distance metric)
         try {
           await vectorDb.store({
             text: fact.text,
-            vector: vec,
+            vector: normalizedVec,
             importance: identity ? Math.max(fact.importance, 0.9) : fact.importance,
             category: fact.category,
             id: stored.id,
@@ -653,8 +674,10 @@ export async function runPassiveObserver(
           });
         }
 
-        recentVectors.push(normVec);
-        recentFactIds.push(stored.id);
+        // Track vector for intra-batch dedup: whether vectorDb.store() succeeded or failed,
+        // add to recentVectors[] so subsequent identical facts in this batch are detected.
+        recentVectors.push({ vector: normalizedVec, factId: stored.id });
+
         result.factsStored++;
       }
     }
