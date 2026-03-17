@@ -1374,6 +1374,38 @@ describe("gateway model auto-derivation — unknown provider prefix filter", () 
     expect(defaultList).toContain("gpt-4o");
   });
 
+  it("keeps models whose provider was gateway-merged with original-case key (e.g. 'Local' capital L)", () => {
+    // The gateway config has a provider key "Local" (capital L) with an apiKey.
+    // The plugin config has no llm.providers entry.
+    // Gateway merge runs before auto-derivation and adds prov["Local"] = { apiKey: "..." }.
+    // pluginProviders normalizes keys to lowercase, so "local" is in the Set.
+    // canRoute("Local/S") → prefix "local" → pluginProviders.has("local") → true → model kept.
+    const cfg = getTestConfig(tmpDir);
+    const api = makeMockApi({
+      resolvePath: (p: string) => (p.startsWith("/") ? p : join(tmpDir, p)),
+      config: {
+        models: {
+          providers: {
+            Local: { apiKey: "sk-local-mixed-case-test-key-long-enough" }, // capital L
+          },
+        },
+        agents: {
+          defaults: {
+            model: {
+              primary: "Local/S",
+            },
+          },
+        },
+      },
+    });
+
+    ctx = initializeDatabases(cfg, api as never);
+
+    const defaultList = Array.isArray(cfg.llm?.default) ? cfg.llm.default : [];
+    // Gateway merged "Local" (capital L) → normalized to "local" in pluginProviders → model kept
+    expect(defaultList).toContain("Local/S");
+  });
+
   it("keeps OAuth-routable models (auth.order configured for prefix) during auto-derivation", () => {
     // Models whose provider prefix is registered in auth.order with a non-API-key profile are
     // routed through the gateway via OAuth — canRoute should return true for them.
