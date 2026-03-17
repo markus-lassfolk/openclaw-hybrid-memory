@@ -16,10 +16,11 @@
  *   - hydeUsedRef state is mutated correctly across multiple calls
  */
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { runRecallPipelineQuery, type RecallPipelineDeps } from "../services/recall-pipeline.js";
 import type { SearchResult, MemoryEntry } from "../types/memory.js";
 import { createPendingLLMWarnings } from "../services/chat.js";
+import * as chatModule from "../services/chat.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -390,5 +391,96 @@ describe("runRecallPipelineQuery — limit", () => {
     const result = await runRecallPipelineQuery("query", 5, deps, { value: false });
 
     expect(result.length).toBeLessThanOrEqual(5);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Abort signal propagation — Issue #558
+// ---------------------------------------------------------------------------
+
+describe("runRecallPipelineQuery — abort cancels embed after HyDE (#558)", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.useRealTimers();
+  });
+
+  it("does not call embeddings.embed when vector-step timeout fires while HyDE is running", async () => {
+    // Use fake timers so we can fast-forward the 30s VECTOR_STEP_TIMEOUT_MS.
+    vi.useFakeTimers();
+
+    // Make chatCompleteWithRetry hang until the passed abort signal fires (which the
+    // 30s timeout inside recall-pipeline will trigger), then return a result.
+    // The abort guard added by #558 must fire before embeddings.embed is called.
+    vi.spyOn(chatModule, "chatCompleteWithRetry").mockImplementation(async (opts) => {
+      await new Promise<void>((resolve) => {
+        if (opts.signal?.aborted) {
+          resolve();
+          return;
+        }
+        opts.signal?.addEventListener("abort", () => resolve(), { once: true });
+        // Safety valve — resolves when fake-timers advance past this point
+        setTimeout(resolve, 60_000);
+      });
+      // Return a result AFTER the abort — the abort guard must prevent embed from running
+      return "HyDE result that arrived after timeout abort";
+    });
+
+    const deps = makeDeps({
+      cfg: {
+        queryExpansion: { enabled: true, maxVariants: 4, cacheSize: 100, timeoutMs: 60_000 },
+        retrievalStrategies: ["semantic"],
+        memoryTieringEnabled: false,
+        rawCfg: { llm: undefined } as unknown as RecallPipelineDeps["cfg"]["rawCfg"],
+      },
+    });
+
+    (deps.factsDb.search as ReturnType<typeof vi.fn>).mockReturnValue([]);
+    (deps.vectorDb.search as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+
+    // Start pipeline — it will hang inside chatCompleteWithRetry mock
+    const pipelinePromise = runRecallPipelineQuery(
+      "test abort query",
+      5,
+      deps,
+      { value: false },
+      {
+        hydeLabel: "HyDE-test",
+      },
+    );
+
+    // Advance fake timers past the 30s VECTOR_STEP_TIMEOUT_MS.
+    // This fires the internal setTimeout → directiveAbort.abort() → HyDE mock resolves.
+    await vi.advanceTimersByTimeAsync(31_000);
+
+    // Pipeline should now settle (timeout path)
+    await pipelinePromise;
+
+    // Key assertion: embeddings.embed must NOT have been called after abort
+    expect(deps.embeddings.embed).not.toHaveBeenCalled();
+  });
+
+  it("still calls embeddings.embed with raw query when HyDE fails non-abort", async () => {
+    // When HyDE fails for a transient reason (not abort), embed should still be called
+    // with the raw query — verifying the abort guard does not fire for normal HyDE failures.
+    vi.spyOn(chatModule, "chatCompleteWithRetry").mockRejectedValue(
+      new Error("LLM request timeout after 5000ms (model: test-model)"),
+    );
+
+    const deps = makeDeps({
+      cfg: {
+        queryExpansion: { enabled: true, maxVariants: 4, cacheSize: 100, timeoutMs: 5_000 },
+        retrievalStrategies: ["semantic"],
+        memoryTieringEnabled: false,
+        rawCfg: { llm: undefined } as unknown as RecallPipelineDeps["cfg"]["rawCfg"],
+      },
+    });
+
+    (deps.factsDb.search as ReturnType<typeof vi.fn>).mockReturnValue([]);
+    (deps.vectorDb.search as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+
+    await runRecallPipelineQuery("raw query fallback", 5, deps, { value: false });
+
+    // HyDE failed but the vector-step timeout did NOT fire — embed should proceed with raw query
+    expect(deps.embeddings.embed).toHaveBeenCalledWith("raw query fallback");
   });
 });
