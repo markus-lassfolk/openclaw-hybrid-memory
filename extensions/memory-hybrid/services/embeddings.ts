@@ -973,6 +973,13 @@ export class FallbackEmbeddingProvider implements EmbeddingProvider {
     if (!Number.isFinite(retryIntervalMs) || retryIntervalMs <= 0) {
       throw new Error(`FallbackEmbeddingProvider: retryIntervalMs must be a finite number > 0, got ${retryIntervalMs}`);
     }
+    if (retryIntervalMs < 1000) {
+      // Values below 1 s are valid for tests but will hammer the primary provider in production.
+      // eslint-disable-next-line no-console
+      console.warn(
+        `FallbackEmbeddingProvider: retryIntervalMs=${retryIntervalMs}ms is very low; values under 1000ms may cause excessive primary-probe traffic after a fallback switch.`,
+      );
+    }
     if (fallback && fallback.dimensions !== primary.dimensions) {
       throw new Error(
         `Primary (${primary.modelName}: ${primary.dimensions}d) and fallback ` +
@@ -995,7 +1002,7 @@ export class FallbackEmbeddingProvider implements EmbeddingProvider {
    * Updates `switched`, `active`, and `modelName` on success.
    * Returns the result if primary recovered, or null if still failing (stay on fallback).
    */
-  private async _tryReturnToPrimary<T>(
+  private async tryReturnToPrimary<T>(
     fn: (provider: EmbeddingProvider) => Promise<T>,
     phase: string,
   ): Promise<T | null> {
@@ -1026,7 +1033,7 @@ export class FallbackEmbeddingProvider implements EmbeddingProvider {
       return this.active.embed(text);
     }
     if (this.switched && Date.now() - this.lastRetryAttempt >= this.retryIntervalMs) {
-      const recovered = await this._tryReturnToPrimary((p) => p.embed(text), "embed");
+      const recovered = await this.tryReturnToPrimary((p) => p.embed(text), "embed");
       if (recovered !== null) return recovered;
     }
     if (this.switched) {
@@ -1058,7 +1065,7 @@ export class FallbackEmbeddingProvider implements EmbeddingProvider {
       return this.active.embedBatch(texts);
     }
     if (this.switched && Date.now() - this.lastRetryAttempt >= this.retryIntervalMs) {
-      const recovered = await this._tryReturnToPrimary((p) => p.embedBatch(texts), "embedBatch");
+      const recovered = await this.tryReturnToPrimary((p) => p.embedBatch(texts), "embedBatch");
       if (recovered !== null) return recovered;
     }
     if (this.switched) {
@@ -1104,6 +1111,9 @@ export class ChainEmbeddingProvider implements EmbeddingProvider {
   get activeProvider(): string {
     // When the active provider is itself a FallbackEmbeddingProvider that has switched internally,
     // prefer its own activeProvider over the chain's label for accurate reporting (#560).
+    // The `?.activeProvider` can be undefined: EmbeddingProvider.activeProvider is optional
+    // (`?: string`), so providers that don't implement it will hit the `??` fallback and return
+    // the chain's own label. Both branches are intentionally reachable.
     return this.providers[this.activeIndex]?.activeProvider ?? this.labels[this.activeIndex];
   }
 
