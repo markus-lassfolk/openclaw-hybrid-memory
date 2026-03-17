@@ -1535,6 +1535,7 @@ export class FactsDB {
     return Number(this.liveDb.prepare(`DELETE FROM recall_log WHERE occurred_at < ?`).run(cutoff).changes);
   }
 
+
   /** Read the last stored embedding provider+model metadata (Issue #153). */
   getEmbeddingMeta(): { provider: string; model: string } | null {
     const row = this.liveDb.prepare(`SELECT provider, model FROM embedding_meta WHERE id = 1`).get() as
