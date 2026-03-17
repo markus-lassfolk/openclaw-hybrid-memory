@@ -90,4 +90,68 @@ config: !include settings.yaml`;
       expect(result.config).toBeTruthy();
     });
   });
+
+  describe("Bug 3: YAML 1.2 boolean parsing (yes/no/on/off are strings)", () => {
+    it("parses on/off as strings, not booleans", () => {
+      const yaml = `state: on
+previous_state: off`;
+
+      const result = parseYaml(yaml) as Record<string, any>;
+      expect(result.state).toBe("on");
+      expect(typeof result.state).toBe("string");
+      expect(result.previous_state).toBe("off");
+      expect(typeof result.previous_state).toBe("string");
+    });
+
+    it("parses yes/no as strings, not booleans", () => {
+      const yaml = `answer: yes
+declined: no`;
+
+      const result = parseYaml(yaml) as Record<string, any>;
+      expect(result.answer).toBe("yes");
+      expect(typeof result.answer).toBe("string");
+      expect(result.declined).toBe("no");
+      expect(typeof result.declined).toBe("string");
+    });
+
+    it("still parses true/false as booleans", () => {
+      const yaml = `enabled: true
+disabled: false`;
+
+      const result = parseYaml(yaml) as Record<string, any>;
+      expect(result.enabled).toBe(true);
+      expect(typeof result.enabled).toBe("boolean");
+      expect(result.disabled).toBe(false);
+      expect(typeof result.disabled).toBe("boolean");
+    });
+
+    it("handles mixed case true/false as booleans", () => {
+      const yaml = `a: True
+b: FALSE
+c: TrUe`;
+
+      const result = parseYaml(yaml) as Record<string, any>;
+      expect(result.a).toBe(true);
+      expect(result.b).toBe(false);
+      expect(result.c).toBe(true);
+    });
+
+    it("preserves on/off in Home Assistant entity states", () => {
+      const yaml = `scene:
+  - name: Evening
+    entities:
+      light.living_room:
+        state: on
+        brightness: 100
+      light.bedroom:
+        state: off`;
+
+      const result = parseYaml(yaml) as Record<string, any>;
+      const scene = result.scene[0];
+      expect(scene.entities["light.living_room"].state).toBe("on");
+      expect(typeof scene.entities["light.living_room"].state).toBe("string");
+      expect(scene.entities["light.bedroom"].state).toBe("off");
+      expect(typeof scene.entities["light.bedroom"].state).toBe("string");
+    });
+  });
 });

@@ -262,10 +262,10 @@ function parseScalar(s: string): YAMLValue {
     }
   }
 
-  // Boolean
+  // Boolean (YAML 1.2 core schema: only true/false, not yes/no/on/off)
   const lower = s.toLowerCase();
-  if (lower === "true" || lower === "yes" || lower === "on") return true;
-  if (lower === "false" || lower === "no" || lower === "off") return false;
+  if (lower === "true") return true;
+  if (lower === "false") return false;
 
   // Null
   if (lower === "null" || s === "~") return null;
