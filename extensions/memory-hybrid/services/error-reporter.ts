@@ -3,10 +3,11 @@
  *
  * SECURITY REQUIREMENTS (NON-NEGOTIABLE):
  * - consent: true by default — user must explicitly opt OUT
- * - No PII transmission: events rebuilt from scratch using allowlist
+ * - No real user data: no memory text, prompts, conversation content, or user identity
  * - MAX_BREADCRUMBS: 10 — only plugin.* category allowed, message/data stripped
  * - sanitizeEvent() rebuilds event from scratch using allowlist before sending
  * - NEVER include: memory text, prompts, API keys, home paths, IPs, emails
+ * - Opt-in bot identity only: user.id/user.username are anonymous bot UUID/name (not real user data)
  * - Rate limiting: 60s dedup window for same error fingerprint
  *
  * Uses native fetch (Node 20+) — no @sentry/node dependency.
@@ -285,6 +286,8 @@ export function sanitizeEvent(event: GlitchTipEvent): GlitchTipEvent | null {
       backend: event.tags?.backend ? scrubString(String(event.tags.backend)) : undefined,
       bot_id: event.tags?.bot_id ? scrubString(String(event.tags.bot_id)) : undefined,
       bot_name: event.tags?.bot_name ? scrubString(String(event.tags.bot_name).slice(0, 64)) : undefined,
+      retryAttempt: event.tags?.retryAttempt ? scrubString(String(event.tags.retryAttempt)) : undefined,
+      memoryCount: event.tags?.memoryCount ? scrubString(String(event.tags.memoryCount)) : undefined,
     },
     contexts: {
       ...(event.contexts?.config_shape
@@ -366,7 +369,7 @@ class GlitchTipReporter {
   ) {
     const url = new URL(dsn);
     this.publicKey = url.username;
-    const pathSegments = url.pathname.replace(/^\//, "").split("/").filter(Boolean);
+    const pathSegments = url.pathname.replace(/^\/+|\/+$/g, "").split("/").filter(Boolean);
     const projectId = pathSegments.pop() || "";
     const basePath = pathSegments.length > 0 ? `/${pathSegments.join("/")}` : "";
     this.storeUrl = `${url.protocol}//${url.host}${basePath}/api/${projectId}/store/`;
@@ -445,7 +448,7 @@ class GlitchTipReporter {
       breadcrumbs: [...this.breadcrumbs],
     };
 
-    // Sanitize (allowlist rebuild; same privacy guarantees as beforeSend)
+    // Sanitize: rebuild event from scratch using allowlist — drops any fields not explicitly permitted
     const sanitized = sanitizeEvent(rawEvent);
     if (!sanitized) return eventId;
 
@@ -493,7 +496,10 @@ class GlitchTipReporter {
     const lines = error.stack.split("\n").slice(1); // skip "Error: message" first line
     const frames: ReportFrame[] = lines
       .map((line): ReportFrame | null => {
-        const match = line.match(/at (?:([^()\n]+) \()?([^)\n]+):(\d+):(\d+)\)?/);
+        if (line.length > 500) return null; // ReDoS guard: skip abnormally long lines
+        const trimmed = line.trimStart();
+        if (!trimmed.startsWith("at ")) return null; // fast path avoids regex on non-frame lines
+        const match = trimmed.match(/^at (?:([^()\n]+) \()?([^)\n]+):(\d+):(\d+)\)?/);
         if (!match) return null;
         return {
           function: match[1] || "<anonymous>",
