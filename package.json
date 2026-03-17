@@ -12,5 +12,8 @@
   },
   "lint-staged": {
     "extensions/memory-hybrid/**/*.ts": "prettier --write"
+  },
+  "dependencies": {
+    "js-yaml": "^4.1.1"
   }
 }
