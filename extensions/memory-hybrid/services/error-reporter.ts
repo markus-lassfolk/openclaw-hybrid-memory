@@ -503,7 +503,8 @@ class GlitchTipReporter {
           in_app: !match[2].includes("node_modules"),
         };
       })
-      .filter((f): f is ReportFrame => f !== null);
+      .filter((f): f is ReportFrame => f !== null)
+      .reverse();
     return frames.length > 0 ? { frames } : undefined;
   }
 
