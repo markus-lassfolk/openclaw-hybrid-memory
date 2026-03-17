@@ -10,6 +10,7 @@
 import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
 import type { EmbeddingProvider } from "./embeddings.js";
+import { shouldSuppressEmbeddingError } from "./embeddings.js";
 import type OpenAI from "openai";
 import type { MemoryEntry, MemoryCategory } from "../types/memory.js";
 import type { ProvenanceService } from "./provenance.js";
@@ -207,11 +208,14 @@ export async function runReflection(
           const vec = await embeddings.embed(f.text);
           existingVectors.push(normalizeVector(vec));
         } catch (err) {
-          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-            operation: "reflection-embed-existing",
-            subsystem: "embeddings",
-            factId: f.id,
-          });
+          // AllEmbeddingProvidersFailed is expected when all providers are unavailable — don't report (#486)
+          if (!shouldSuppressEmbeddingError(err)) {
+            capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+              operation: "reflection-embed-existing",
+              subsystem: "embeddings",
+              factId: f.id,
+            });
+          }
           existingVectors.push(null);
         }
       }
@@ -226,11 +230,14 @@ export async function runReflection(
     try {
       vec = await embeddings.embed(patternText);
     } catch (err) {
-      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-        operation: "embed-pattern",
-        severity: "info",
-        subsystem: "reflection",
-      });
+      // AllEmbeddingProvidersFailed is expected when all providers are unavailable — don't report (#486)
+      if (!shouldSuppressEmbeddingError(err)) {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+          operation: "embed-pattern",
+          severity: "info",
+          subsystem: "reflection",
+        });
+      }
       continue; // Skip this pattern on embed failure
     }
     const normVec = normalizeVector(vec);
@@ -398,11 +405,14 @@ export async function runReflectionRules(
       try {
         existingVectors.push(normalizeVector(await embeddings.embed(f.text)));
       } catch (err) {
-        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-          operation: "reflection-rules-embed-existing",
-          subsystem: "embeddings",
-          factId: f.id,
-        });
+        // AllEmbeddingProvidersFailed is expected when all providers are unavailable — don't report (#486)
+        if (!shouldSuppressEmbeddingError(err)) {
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+            operation: "reflection-rules-embed-existing",
+            subsystem: "embeddings",
+            factId: f.id,
+          });
+        }
         existingVectors.push(null);
       }
     }
@@ -415,11 +425,14 @@ export async function runReflectionRules(
     try {
       vec = await embeddings.embed(ruleText);
     } catch (err) {
-      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-        operation: "embed-rule",
-        severity: "info",
-        subsystem: "reflection",
-      });
+      // AllEmbeddingProvidersFailed is expected when all providers are unavailable — don't report (#486)
+      if (!shouldSuppressEmbeddingError(err)) {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+          operation: "embed-rule",
+          severity: "info",
+          subsystem: "reflection",
+        });
+      }
       continue; // Skip this rule on embed failure
     }
     const normVec = normalizeVector(vec);
@@ -581,11 +594,14 @@ export async function runReflectionMeta(
       try {
         existingVectors.push(normalizeVector(await embeddings.embed(f.text)));
       } catch (err) {
-        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-          operation: "reflection-meta-embed-existing",
-          subsystem: "embeddings",
-          factId: f.id,
-        });
+        // AllEmbeddingProvidersFailed is expected when all providers are unavailable — don't report (#486)
+        if (!shouldSuppressEmbeddingError(err)) {
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+            operation: "reflection-meta-embed-existing",
+            subsystem: "embeddings",
+            factId: f.id,
+          });
+        }
         existingVectors.push(null);
       }
     }
@@ -598,11 +614,14 @@ export async function runReflectionMeta(
     try {
       vec = await embeddings.embed(metaText);
     } catch (err) {
-      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-        operation: "embed-meta",
-        severity: "info",
-        subsystem: "reflection",
-      });
+      // AllEmbeddingProvidersFailed is expected when all providers are unavailable — don't report (#486)
+      if (!shouldSuppressEmbeddingError(err)) {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+          operation: "embed-meta",
+          severity: "info",
+          subsystem: "reflection",
+        });
+      }
       continue; // Skip this meta-pattern on embed failure
     }
     const normVec = normalizeVector(vec);

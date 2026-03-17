@@ -9,6 +9,7 @@
 import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
 import type { EmbeddingProvider } from "./embeddings.js";
+import { shouldSuppressEmbeddingError } from "./embeddings.js";
 import type OpenAI from "openai";
 import type { MemoryEntry, MemoryCategory } from "../types/memory.js";
 import type { ProvenanceService } from "./provenance.js";
@@ -151,11 +152,14 @@ export async function runConsolidate(
         vectors.push(normalizeVector(vec));
       } catch (err) {
         logger.warn(`memory-hybrid: consolidate embed failed for ${id}: ${err}`);
-        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-          operation: "consolidate-embed",
-          subsystem: "embeddings",
-          factId: id,
-        });
+        // AllEmbeddingProvidersFailed is expected when all providers are unavailable — don't report (#486)
+        if (!shouldSuppressEmbeddingError(err)) {
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+            operation: "consolidate-embed",
+            subsystem: "embeddings",
+            factId: id,
+          });
+        }
         vectors.push([]);
       }
     }
@@ -271,11 +275,14 @@ export async function runConsolidate(
       factsDb.setEmbeddingModel(entry.id, embeddings.modelName);
     } catch (err) {
       logger.warn(`memory-hybrid: consolidate vector store failed: ${err}`);
-      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-        operation: "consolidate-vector-store",
-        subsystem: "vector",
-        factId: entry.id,
-      });
+      // AllEmbeddingProvidersFailed is expected when all providers are unavailable — don't report (#486)
+      if (!shouldSuppressEmbeddingError(err)) {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+          operation: "consolidate-vector-store",
+          subsystem: "vector",
+          factId: entry.id,
+        });
+      }
     }
     // Create DERIVED_FROM links: merged fact ← each source fact (provenance audit trail)
     for (const id of clusterIds) {

@@ -1130,6 +1130,37 @@ describe("is403Like", () => {
   it("returns false for null", () => {
     expect(is403Like(null)).toBe(false);
   });
+
+  // #490: proxy/gateway may strip HTTP status and return message-only errors
+  it("#490: returns true for 'Country, region, or territory not supported' without numeric prefix", () => {
+    expect(is403Like(new Error("Country, region, or territory not supported"))).toBe(true);
+  });
+
+  it("#490: returns true for 'Country, region, or territory not supported' embedded in a longer message", () => {
+    expect(is403Like(new Error("upstream error: Country, region, or territory not supported"))).toBe(true);
+  });
+
+  it("#490: returns true for PERMISSION_DENIED gRPC status in message", () => {
+    expect(is403Like(new Error("PERMISSION_DENIED: Country, region, or territory not supported"))).toBe(true);
+  });
+
+  it("#490: returns true for standalone PERMISSION_DENIED without extra context", () => {
+    expect(is403Like(new Error("PERMISSION_DENIED"))).toBe(true);
+  });
+
+  it("#490: returns true for 'access denied' (non-filesystem)", () => {
+    expect(is403Like(new Error("access denied by provider"))).toBe(true);
+  });
+
+  it("#490: returns false for filesystem 'access denied' (e.g. EACCES)", () => {
+    // Must not false-positive on OS-level permission errors
+    expect(is403Like(new Error("access denied to file /etc/hosts"))).toBe(false);
+    expect(is403Like(new Error("access denied: path /tmp/foo"))).toBe(false);
+  });
+
+  it("#490: returns false for 'access forbidden' on a directory", () => {
+    expect(is403Like(new Error("access forbidden: directory /var/run"))).toBe(false);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -1207,6 +1238,92 @@ describe("chatCompleteWithRetry — 403 country/region restriction (#395)", () =
     expect(fn).toHaveBeenCalledTimes(1);
     // Must not report to GlitchTip
     expect(errorReporter.capturePluginError).not.toHaveBeenCalled();
+  });
+
+  // #490: GlitchTip issue 324 — proxy/gateway strips HTTP status from the Error, leaving
+  // only the provider's message body. The is403Like() check must still detect these.
+  it("#490: withLLMRetry short-circuits on 'Country, region, or territory not supported' without numeric prefix (GlitchTip #324)", async () => {
+    vi.clearAllMocks();
+    // Simulates the exact error format that caused GlitchTip issue 324:
+    // the proxy strips .status and the "403 " prefix, leaving only the provider message body.
+    const err = new Error("Country, region, or territory not supported");
+    const fn = vi.fn().mockRejectedValue(err);
+
+    await expect(withLLMRetry(fn, { maxRetries: 3 })).rejects.toThrow("Country, region, or territory not supported");
+    // Must NOT retry — should exit on first attempt
+    expect(fn).toHaveBeenCalledTimes(1);
+    // Must NOT create LLMRetryError and report to GlitchTip
+    expect(errorReporter.capturePluginError).not.toHaveBeenCalled();
+  });
+
+  it("#490: withLLMRetry short-circuits on PERMISSION_DENIED (gRPC status) without .status property", async () => {
+    vi.clearAllMocks();
+    const err = new Error("PERMISSION_DENIED: Country, region, or territory not supported");
+    const fn = vi.fn().mockRejectedValue(err);
+
+    await expect(withLLMRetry(fn, { maxRetries: 3 })).rejects.toThrow("PERMISSION_DENIED");
+    expect(fn).toHaveBeenCalledTimes(1);
+    expect(errorReporter.capturePluginError).not.toHaveBeenCalled();
+  });
+
+  it("#490: chatCompleteWithRetry falls back immediately when primary is geo-blocked (message-only 403)", async () => {
+    // The geo-blocked model fails with a message-only error (no .status, no numeric prefix).
+    // chatCompleteWithRetry must try the next model without retrying the geo-blocked one.
+    const geoErr = new Error("Country, region, or territory not supported");
+    const mockOpenai = {
+      chat: {
+        completions: {
+          create: vi
+            .fn()
+            .mockRejectedValueOnce(geoErr) // primary: geo-blocked (1 attempt, no retry)
+            .mockResolvedValueOnce({ choices: [{ message: { content: "fallback ok" } }] }), // fallback: ok
+        },
+      },
+    } as unknown as import("openai").default;
+
+    const promise = chatCompleteWithRetry({
+      model: "google/gemini-2.5-flash",
+      content: "test",
+      openai: mockOpenai,
+      fallbackModels: ["openai/gpt-4o-mini"],
+      label: "#490 test",
+    });
+
+    await vi.runAllTimersAsync();
+    const result = await promise;
+    expect(result).toBe("fallback ok");
+    // Primary must be called exactly once (no retry for geo-blocking), fallback once
+    expect(mockOpenai.chat.completions.create).toHaveBeenCalledTimes(2);
+    expect(errorReporter.capturePluginError).not.toHaveBeenCalled();
+  });
+
+  it("#490: does not report to GlitchTip when ALL models are geo-blocked (message-only 403, no .status)", async () => {
+    vi.clearAllMocks();
+    const geoErr = new Error("Country, region, or territory not supported");
+    const mockOpenai = {
+      chat: {
+        completions: {
+          create: vi.fn().mockRejectedValue(geoErr),
+        },
+      },
+    } as unknown as import("openai").default;
+
+    const warnings = createPendingLLMWarnings();
+    const promise = chatCompleteWithRetry({
+      model: "google/gemini-2.5-flash",
+      content: "test",
+      openai: mockOpenai,
+      fallbackModels: ["google/gemini-2.0-flash"],
+      pendingWarnings: warnings,
+    });
+
+    const expectation = expect(promise).rejects.toThrow("Country, region");
+    await vi.runAllTimersAsync();
+    await expectation;
+    expect(errorReporter.capturePluginError).not.toHaveBeenCalled();
+    const drained = warnings.drain();
+    expect(drained).toHaveLength(1);
+    expect(drained[0]).toMatch(/403|country|region|access denied/i);
   });
 });
 
