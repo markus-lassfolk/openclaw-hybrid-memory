@@ -12,8 +12,7 @@
     "allowSyntheticDefaultImports": true,
     "outDir": "dist",
     "declaration": true,
-    "sourceMap": true,
-    "types": ["vitest/globals"]
+    "sourceMap": true
   },
   "include": [
     "*.ts",
@@ -23,7 +22,6 @@
     "services/**/*.ts",
     "tools/**/*.ts",
     "utils/**/*.ts",
-    "tests/**/*.ts",
     "types/**/*.ts"
   ],
   "exclude": ["dist", "node_modules"]
