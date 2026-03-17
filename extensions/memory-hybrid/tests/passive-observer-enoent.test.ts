@@ -36,6 +36,10 @@ import { join } from "node:path";
 import { mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { runPassiveObserver, type PassiveObserverConfig } from "../services/passive-observer.js";
+import type { FactsDB } from "../backends/facts-db.js";
+import type { VectorDB } from "../backends/vector-db.js";
+import type { EmbeddingProvider } from "../services/embeddings.js";
+import type OpenAI from "openai";
 import * as chat from "../services/chat.js";
 
 // ---------------------------------------------------------------------------
@@ -112,10 +116,10 @@ describe("passive-observer ENOENT handling (Issue #485)", () => {
 
     const logger = makeLogger();
     const result = await runPassiveObserver(
-      makeFactsDb() as never,
-      makeVectorDb() as never,
-      makeEmbeddings() as never,
-      {} as never,
+      makeFactsDb() as unknown as FactsDB,
+      makeVectorDb() as unknown as VectorDB,
+      makeEmbeddings() as unknown as EmbeddingProvider,
+      {} as unknown as OpenAI,
       makeConfig({ sessionsDir }),
       ["fact"],
       { model: "test-model", dbDir: tmpDir },
@@ -139,7 +143,8 @@ describe("passive-observer ENOENT handling (Issue #485)", () => {
     writeFileSync(prunedFile, '{"message":{"role":"user","content":"deleted"}}\n');
     writeFileSync(goodFile, goodContent);
 
-    // First stat call (pruned file, because readdirSync sorts alphabetically) → ENOENT
+    // First stat call is the pruned file because runPassiveObserver sorts filePaths
+    // alphabetically (via .sort()) — "aaaa-" < "zzzz-" is always stable.
     vi.mocked(stat).mockRejectedValueOnce(makeEnoent());
     // Second stat call (good file) → passthrough to real stat
 
@@ -151,10 +156,10 @@ describe("passive-observer ENOENT handling (Issue #485)", () => {
 
     const factsDb = makeFactsDb();
     const result = await runPassiveObserver(
-      factsDb as never,
-      makeVectorDb() as never,
-      makeEmbeddings() as never,
-      {} as never,
+      factsDb as unknown as FactsDB,
+      makeVectorDb() as unknown as VectorDB,
+      makeEmbeddings() as unknown as EmbeddingProvider,
+      {} as unknown as OpenAI,
       makeConfig({ sessionsDir }),
       ["fact"],
       { model: "test-model", dbDir: tmpDir },
@@ -178,10 +183,10 @@ describe("passive-observer ENOENT handling (Issue #485)", () => {
 
     const logger = makeLogger();
     const result = await runPassiveObserver(
-      makeFactsDb() as never,
-      makeVectorDb() as never,
-      makeEmbeddings() as never,
-      {} as never,
+      makeFactsDb() as unknown as FactsDB,
+      makeVectorDb() as unknown as VectorDB,
+      makeEmbeddings() as unknown as EmbeddingProvider,
+      {} as unknown as OpenAI,
       makeConfig({ sessionsDir }),
       ["fact"],
       { model: "test-model", dbDir: tmpDir },
@@ -206,10 +211,10 @@ describe("passive-observer ENOENT handling (Issue #485)", () => {
 
     const logger = makeLogger();
     const result = await runPassiveObserver(
-      makeFactsDb() as never,
-      makeVectorDb() as never,
-      makeEmbeddings() as never,
-      {} as never,
+      makeFactsDb() as unknown as FactsDB,
+      makeVectorDb() as unknown as VectorDB,
+      makeEmbeddings() as unknown as EmbeddingProvider,
+      {} as unknown as OpenAI,
       makeConfig({ sessionsDir }),
       ["fact"],
       { model: "test-model", dbDir: tmpDir },
@@ -234,7 +239,8 @@ describe("passive-observer ENOENT handling (Issue #485)", () => {
     writeFileSync(prunedFile, '{"message":{"role":"user","content":"deleted"}}\n');
     writeFileSync(goodFile, '{"message":{"role":"user","content":"The team uses Rust"}}\n');
 
-    // First open call (pruned file) → ENOENT
+    // First open call is the pruned file — runPassiveObserver sorts filePaths
+    // alphabetically so "aaaa-" is always processed before "zzzz-".
     vi.mocked(open).mockRejectedValueOnce(makeEnoent());
 
     const chatSpy = vi
@@ -245,10 +251,10 @@ describe("passive-observer ENOENT handling (Issue #485)", () => {
 
     const factsDb = makeFactsDb();
     const result = await runPassiveObserver(
-      factsDb as never,
-      makeVectorDb() as never,
-      makeEmbeddings() as never,
-      {} as never,
+      factsDb as unknown as FactsDB,
+      makeVectorDb() as unknown as VectorDB,
+      makeEmbeddings() as unknown as EmbeddingProvider,
+      {} as unknown as OpenAI,
       makeConfig({ sessionsDir }),
       ["fact"],
       { model: "test-model", dbDir: tmpDir },
@@ -271,10 +277,10 @@ describe("passive-observer ENOENT handling (Issue #485)", () => {
 
     const logger = makeLogger();
     const result = await runPassiveObserver(
-      makeFactsDb() as never,
-      makeVectorDb() as never,
-      makeEmbeddings() as never,
-      {} as never,
+      makeFactsDb() as unknown as FactsDB,
+      makeVectorDb() as unknown as VectorDB,
+      makeEmbeddings() as unknown as EmbeddingProvider,
+      {} as unknown as OpenAI,
       makeConfig({ sessionsDir }),
       ["fact"],
       { model: "test-model", dbDir: tmpDir },
@@ -302,10 +308,10 @@ describe("passive-observer ENOENT handling (Issue #485)", () => {
       .mockRejectedValueOnce(makeEnoent());
 
     const result = await runPassiveObserver(
-      makeFactsDb() as never,
-      makeVectorDb() as never,
-      makeEmbeddings() as never,
-      {} as never,
+      makeFactsDb() as unknown as FactsDB,
+      makeVectorDb() as unknown as VectorDB,
+      makeEmbeddings() as unknown as EmbeddingProvider,
+      {} as unknown as OpenAI,
       makeConfig({ sessionsDir }),
       ["fact"],
       { model: "test-model", dbDir: tmpDir },
