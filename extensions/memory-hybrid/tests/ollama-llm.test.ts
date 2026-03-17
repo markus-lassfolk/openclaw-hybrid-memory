@@ -41,7 +41,7 @@ describe("Ollama cost tracking — $0 for local models", () => {
 // 2. chatCompleteWithRetry: ECONNREFUSED on Ollama falls through to next model
 // ─────────────────────────────────────────────────────────────────────────────
 import { chatCompleteWithRetry } from "../services/chat.js";
-import type OpenAI from "openai";
+import OpenAI from "openai";
 
 describe("Ollama graceful fallback — ECONNREFUSED", () => {
   beforeEach(() => {

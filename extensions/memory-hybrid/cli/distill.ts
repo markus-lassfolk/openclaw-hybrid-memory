@@ -191,7 +191,7 @@ export function registerDistillCommands(mem: Chainable, ctx: DistillContext): vo
     .option("--verbose", "Log each extracted fact as it is stored")
     .action(
       withExit(async (opts: { days: string; dryRun?: boolean; verbose?: boolean }) => {
-        const daysBack = Number.parseInt(opts.days);
+        const daysBack = Number.parseInt(opts.days, 10);
         const result = await runExtractDaily(
           { days: daysBack, dryRun: !!opts.dryRun, verbose: !!opts.verbose },
           { log: (s) => console.log(s), warn: (s) => console.warn(s) },

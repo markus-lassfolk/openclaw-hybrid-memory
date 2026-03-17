@@ -3,7 +3,7 @@
  * Uses a multi-provider OpenAI-compatible proxy; provider-agnostic model fallback (issue #87).
  */
 
-import type OpenAI from "openai";
+import OpenAI from "openai";
 import { capturePluginError } from "./error-reporter.js";
 import { withCostFeature } from "./cost-context.js";
 

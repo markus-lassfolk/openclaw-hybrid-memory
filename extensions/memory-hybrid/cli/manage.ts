@@ -32,7 +32,7 @@ import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
 import type { EmbeddingProvider } from "../services/embeddings.js";
 import type { SearchResult } from "../types/memory.js";
-import { type mergeResults, filterByScope } from "../services/merge-results.js";
+import { mergeResults, filterByScope } from "../services/merge-results.js";
 import type { ScopeFilter } from "../types/memory.js";
 import type { HybridMemoryConfig } from "../config.js";
 import { getCronModelConfig, getDefaultCronModel } from "../config.js";
