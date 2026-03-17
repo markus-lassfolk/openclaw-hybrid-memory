@@ -278,7 +278,7 @@ export async function runConsolidate(
       if (!shouldSuppressEmbeddingError(err)) {
         capturePluginError(err instanceof Error ? err : new Error(String(err)), {
           operation: "consolidate-embed",
-          subsystem: "embedding",
+          subsystem: "embeddings",
           factId: entry.id,
         });
       }
