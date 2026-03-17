@@ -3845,13 +3845,13 @@ export class FactsDB {
 
   /**
    * Checkpoint the WAL file and run VACUUM to reclaim freed disk space (Issue #573).
-   * PRAGMA wal_checkpoint(TRUNCATE) shrinks the WAL to zero bytes.
    * VACUUM rewrites the main database file, releasing all freed pages.
+   * PRAGMA wal_checkpoint(TRUNCATE) shrinks the WAL to zero bytes.
    * This is safe to call at any time — it acquires an exclusive lock internally.
    */
   vacuumAndCheckpoint(): void {
-    this.liveDb.pragma("wal_checkpoint(TRUNCATE)");
     this.liveDb.exec("VACUUM");
+    this.liveDb.pragma("wal_checkpoint(TRUNCATE)");
   }
 
   /** Get reflection statistics */
