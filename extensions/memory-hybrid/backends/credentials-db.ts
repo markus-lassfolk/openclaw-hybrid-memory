@@ -429,6 +429,7 @@ export class CredentialsDB {
   }
 
   close(): void {
+    this._dbOpen = false;
     try {
       this.db.close();
     } catch (err) {
