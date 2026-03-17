@@ -102,7 +102,7 @@ Routes are only registered when `health.enabled` is `true` (the default). OpenCl
 - `better-sqlite3` ^12.0.0
 - `@lancedb/lancedb` ^0.26.2
 - `@sinclair/typebox` 0.34.48
-- `openai` ^6.16.0 — **peer dependency (host-provided)**. The `openai` package is not bundled with this plugin. OpenClaw supplies it at runtime; if you install the plugin manually you must ensure `openai ^6.16.0` is present in the host environment (e.g. `npm i openai` alongside `openclaw-hybrid-memory`).
+- `openai` ^6.16.0 — **peer dependency (must be directly provided by the host)**. The `openai` package is not bundled with this plugin. Your host environment must directly declare and install `openai ^6.16.0` — a transitive copy (e.g. one pulled in via a sub-dependency of OpenClaw) is **not** sufficient under pnpm, Yarn PnP, or other strict package managers. Install it explicitly alongside this plugin: `npm i openai`.
 
 Build tools required for `better-sqlite3`: C++ toolchain (e.g. `build-essential` on Linux, Visual Studio Build Tools on Windows), Python 3. You may see an `npm warn deprecated prebuild-install` message during install; it comes from better-sqlite3's optional dependency and is harmless until [WiseLibs/better-sqlite3#655](https://github.com/WiseLibs/better-sqlite3/issues/655) is resolved.
 
