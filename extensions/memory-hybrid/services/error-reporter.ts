@@ -529,7 +529,10 @@ class GlitchTipReporter {
       body: JSON.stringify(event),
       signal: AbortSignal.timeout(5000),
     });
-    await resp.text();
+    const body = await resp.text();
+    if (!resp.ok) {
+      throw new Error(`GlitchTip rejected event: HTTP ${resp.status} ${body}`);
+    }
   }
 }
 
