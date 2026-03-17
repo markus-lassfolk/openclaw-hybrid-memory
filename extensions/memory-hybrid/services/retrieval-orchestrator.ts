@@ -386,7 +386,7 @@ export interface RetrievalPipelineOptions {
   config?: RetrievalConfig;
   /** Token budget for packing. Defaults to `config.explicitBudgetTokens`. */
   budgetTokens?: number;
-  /** Current time as epoch seconds. Defaults to `Date.now() / 1000`. */
+  /** Current time as epoch seconds. Defaults to `Math.floor(Date.now() / 1000)`. */
   nowSec?: number;
   /** Optional tag constraint propagated into the FTS5 strategy. */
   tagFilter?: string;
@@ -402,7 +402,7 @@ export interface RetrievalPipelineOptions {
   clustersConfig?: ClustersConfig;
   /** Multi-model embedding registry (Issue #158). Each registered model adds its own RRF strategy. */
   embeddingRegistry?: EmbeddingRegistry | null;
-  /** Access to the fact_embeddings table (Issue #158). Required when `embeddingRegistry` is set. */
+  /** Access to the fact_embeddings table (Issue #158). When `embeddingRegistry` is set but this is omitted/null, multi-model strategies are silently skipped (graceful degradation). */
   factsDbForEmbeddings?: FactsDbWithEmbeddings | null;
   /** Query expander for variant-query strategies (Issue #160). */
   queryExpander?: QueryExpander | null;
