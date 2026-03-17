@@ -529,6 +529,147 @@ describe("FallbackEmbeddingProvider", () => {
         ),
     ).toThrow(/must have matching dimensions/);
   });
+
+  it("#560: retryIntervalMs constructor parameter controls when primary retry is attempted", async () => {
+    vi.useFakeTimers();
+    try {
+      let primaryCallCount = 0;
+      const primary = {
+        embed: vi.fn().mockImplementation(() => {
+          primaryCallCount++;
+          if (primaryCallCount === 1) return Promise.reject(new Error("connection failed"));
+          return Promise.resolve([0.1, 0.2]);
+        }),
+        embedBatch: vi.fn(),
+        dimensions: 2,
+        modelName: "primary",
+      };
+      const fallback = {
+        embed: vi.fn().mockResolvedValue([0.9, 0.9]),
+        embedBatch: vi.fn(),
+        dimensions: 2,
+        modelName: "fallback",
+      };
+      const wrapper = new FallbackEmbeddingProvider(
+        primary as unknown as import("../services/embeddings.js").EmbeddingProvider,
+        fallback as unknown as import("../services/embeddings.js").EmbeddingProvider,
+        undefined,
+        "primary",
+        "fallback",
+        5000, // 5 second retry interval (non-default)
+      );
+      // First call triggers switch to fallback
+      await wrapper.embed("test1");
+      expect(wrapper.activeProvider).toBe("fallback");
+
+      // Advance 4 seconds — not enough for retry
+      await vi.advanceTimersByTimeAsync(4000);
+      await wrapper.embed("test2");
+      // Should still use fallback (retry interval not elapsed)
+      expect(primary.embed).toHaveBeenCalledTimes(1); // only initial attempt
+
+      // Advance 2 more seconds (total 6s > 5s interval)
+      await vi.advanceTimersByTimeAsync(2000);
+      const result = await wrapper.embed("test3");
+      // Primary should have been retried and recovered
+      expect(result).toEqual([0.1, 0.2]);
+      expect(wrapper.activeProvider).toBe("primary");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("#560: embedBatch primary recovery resets switched state", async () => {
+    vi.useFakeTimers();
+    try {
+      let batchCallCount = 0;
+      const primary = {
+        embed: vi.fn(),
+        embedBatch: vi.fn().mockImplementation(() => {
+          batchCallCount++;
+          if (batchCallCount === 1) return Promise.reject(new Error("connection failed"));
+          return Promise.resolve([[0.1, 0.2]]);
+        }),
+        dimensions: 2,
+        modelName: "primary-model",
+      };
+      const fallback = {
+        embed: vi.fn(),
+        embedBatch: vi.fn().mockResolvedValue([[0.9, 0.9]]),
+        dimensions: 2,
+        modelName: "fallback-model",
+      };
+      const wrapper = new FallbackEmbeddingProvider(
+        primary as unknown as import("../services/embeddings.js").EmbeddingProvider,
+        fallback as unknown as import("../services/embeddings.js").EmbeddingProvider,
+        undefined,
+        "ollama",
+        "openai",
+      );
+      // First call — primary fails, switch to fallback
+      await wrapper.embedBatch(["test1"]);
+      expect(wrapper.activeProvider).toBe("openai");
+
+      // Advance past retry interval — primary should recover
+      await vi.advanceTimersByTimeAsync(61000);
+      const result = await wrapper.embedBatch(["test2"]);
+      expect(result).toEqual([[0.1, 0.2]]); // primary result
+      expect(wrapper.activeProvider).toBe("ollama"); // switched back to primary label
+
+      // Next call should use primary directly (switched = false)
+      await wrapper.embedBatch(["test3"]);
+      expect(primary.embedBatch).toHaveBeenCalledTimes(3); // initial fail + retry + direct call
+      expect(fallback.embedBatch).toHaveBeenCalledTimes(1); // only during switch period
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("#560: embed primary recovery resets switched state", async () => {
+    vi.useFakeTimers();
+    try {
+      let embedCallCount = 0;
+      const primary = {
+        embed: vi.fn().mockImplementation(() => {
+          embedCallCount++;
+          if (embedCallCount === 1) return Promise.reject(new Error("connection failed"));
+          return Promise.resolve([0.3, 0.4]);
+        }),
+        embedBatch: vi.fn(),
+        dimensions: 2,
+        modelName: "primary-model",
+      };
+      const fallback = {
+        embed: vi.fn().mockResolvedValue([0.9, 0.9]),
+        embedBatch: vi.fn(),
+        dimensions: 2,
+        modelName: "fallback-model",
+      };
+      const wrapper = new FallbackEmbeddingProvider(
+        primary as unknown as import("../services/embeddings.js").EmbeddingProvider,
+        fallback as unknown as import("../services/embeddings.js").EmbeddingProvider,
+        undefined,
+        "ollama",
+        "openai",
+      );
+      // First call — primary fails, switch to fallback
+      await wrapper.embed("test1");
+      expect(wrapper.activeProvider).toBe("openai");
+
+      // Advance past retry interval — primary should recover
+      await vi.advanceTimersByTimeAsync(61000);
+      const result = await wrapper.embed("test2");
+      expect(result).toEqual([0.3, 0.4]); // primary result
+      expect(wrapper.activeProvider).toBe("ollama"); // switched back to primary label
+
+      // Next call should use primary directly (switched = false)
+      await wrapper.embed("test3");
+      expect(primary.embed).toHaveBeenCalledTimes(3); // initial fail + retry + direct call
+      expect(fallback.embed).toHaveBeenCalledTimes(1); // only during switch period
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -820,6 +961,71 @@ describe("FallbackEmbeddingProvider — 403 suppression (#394)", () => {
     const result = await wrapper.embedBatch(["test"]);
     expect(result).toEqual(fallbackVecs);
     expect(vi.mocked(capturePluginError)).not.toHaveBeenCalled();
+  });
+});
+
+describe("#560: ChainEmbeddingProvider.activeProvider reflects nested FallbackEmbeddingProvider state", () => {
+  afterEach(() => {
+    _resetOllamaCircuitBreakerForTesting();
+  });
+
+  it("reports inner fallback provider name when nested FallbackEmbeddingProvider has switched", async () => {
+    // Nested FallbackEmbeddingProvider: ollama (primary) → openai (fallback)
+    const ollamaPrimary = {
+      embed: vi.fn().mockRejectedValue(new Error("ECONNREFUSED")),
+      embedBatch: vi.fn().mockRejectedValue(new Error("ECONNREFUSED")),
+      dimensions: 2,
+      modelName: "nomic-embed-text",
+    };
+    const openAIFallback = {
+      embed: vi.fn().mockResolvedValue([0.9, 0.9]),
+      embedBatch: vi.fn().mockResolvedValue([[0.9, 0.9]]),
+      dimensions: 2,
+      modelName: "text-embedding-3-small",
+    };
+    const fallbackProvider = new FallbackEmbeddingProvider(
+      ollamaPrimary as unknown as import("../services/embeddings.js").EmbeddingProvider,
+      openAIFallback as unknown as import("../services/embeddings.js").EmbeddingProvider,
+      undefined,
+      "ollama",
+      "openai",
+    );
+    // Second provider in chain (never reached)
+    const googleProvider = {
+      embed: vi.fn().mockResolvedValue([0.5, 0.5]),
+      embedBatch: vi.fn().mockResolvedValue([[0.5, 0.5]]),
+      dimensions: 2,
+      modelName: "text-embedding-005",
+    };
+    const chain = new ChainEmbeddingProvider(
+      [fallbackProvider, googleProvider] as unknown as import("../services/embeddings.js").EmbeddingProvider[],
+      ["ollama", "google"],
+    );
+
+    // Initially, chain reports "ollama" (primary label)
+    expect(chain.activeProvider).toBe("ollama");
+
+    // After embed — ollama fails internally, FallbackEmbeddingProvider switches to openai
+    await chain.embed("test");
+
+    // Chain should now reflect the inner switch: openai (not "ollama")
+    expect(chain.activeProvider).toBe("openai");
+  });
+
+  it("reports chain label when nested provider has no activeProvider (plain provider)", async () => {
+    const p1 = {
+      embed: vi.fn().mockResolvedValue([0.1, 0.2]),
+      embedBatch: vi.fn().mockResolvedValue([[0.1, 0.2]]),
+      dimensions: 2,
+      modelName: "some-model",
+      activeProvider: undefined, // no nested provider awareness
+    };
+    const chain = new ChainEmbeddingProvider(
+      [p1] as unknown as import("../services/embeddings.js").EmbeddingProvider[],
+      ["plain-label"],
+    );
+    await chain.embed("test");
+    expect(chain.activeProvider).toBe("plain-label");
   });
 });
 
