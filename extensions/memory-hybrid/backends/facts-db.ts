@@ -388,6 +388,7 @@ export class FactsDB {
     `);
     this.liveDb.exec(`CREATE INDEX IF NOT EXISTS idx_ft_session ON feedback_trajectories(session_file)`);
     this.liveDb.exec(`CREATE INDEX IF NOT EXISTS idx_ft_outcome ON feedback_trajectories(outcome)`);
+    this.liveDb.exec(`CREATE INDEX IF NOT EXISTS idx_ft_created_at ON feedback_trajectories(created_at)`);
   }
 
   /** Create feedback_effectiveness table for closed-loop rule measurement (#262). */
