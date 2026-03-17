@@ -2178,6 +2178,36 @@ export class FactsDB {
     }
   }
 
+  /**
+   * Hebbian batch: strengthen RELATED_TO links for all pairs in a single SQLite transaction.
+   * Reduces O(n²) individual round-trips to 1 transaction regardless of pair count.
+   */
+  strengthenRelatedLinksBatch(pairs: [string, string][], deltaStrength = 0.1): void {
+    if (pairs.length === 0) return;
+    const selectStmt = this.liveDb.prepare(
+      `SELECT id, strength FROM memory_links WHERE source_fact_id = ? AND target_fact_id = ? AND link_type = 'RELATED_TO'`,
+    );
+    const updateStmt = this.liveDb.prepare(`UPDATE memory_links SET strength = ? WHERE id = ?`);
+    const insertStmt = this.liveDb.prepare(
+      `INSERT INTO memory_links (id, source_fact_id, target_fact_id, link_type, strength, created_at) VALUES (?, ?, ?, 'RELATED_TO', ?, ?)`,
+    );
+    const now = Math.floor(Date.now() / 1000);
+    const tx = this.liveDb.transaction(() => {
+      for (const [factIdA, factIdB] of pairs) {
+        if (factIdA === factIdB) continue;
+        const [source, target] = factIdA < factIdB ? [factIdA, factIdB] : [factIdB, factIdA];
+        const existing = selectStmt.get(source, target) as { id: string; strength: number } | undefined;
+        const newStrength = Math.max(0, Math.min(1, (existing?.strength ?? 0) + deltaStrength));
+        if (existing) {
+          updateStmt.run(newStrength, existing.id);
+        } else {
+          insertStmt.run(randomUUID(), source, target, newStrength, now);
+        }
+      }
+    });
+    tx();
+  }
+
   /** Get links from a fact (outgoing). */
   getLinksFrom(factId: string): Array<{ id: string; targetFactId: string; linkType: string; strength: number }> {
     const rows = this.liveDb

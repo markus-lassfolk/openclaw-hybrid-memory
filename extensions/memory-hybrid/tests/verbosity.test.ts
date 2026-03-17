@@ -24,18 +24,6 @@ import type { VerbosityLevel } from "../config.js";
 import { createLifecycleHooks } from "../lifecycle/hooks.js";
 import type { LifecycleContext } from "../lifecycle/hooks.js";
 
-// @sentry/node is an optional runtime dependency; stub it for unit tests so that
-// importing lifecycle/hooks.ts (which transitively imports error-reporter.ts) doesn't fail.
-vi.mock("@sentry/node", () => ({
-  init: vi.fn(),
-  captureException: vi.fn(),
-  withScope: vi.fn((_cb: (scope: unknown) => void) => {}),
-  configureScope: vi.fn(),
-  addBreadcrumb: vi.fn(),
-  setTag: vi.fn(),
-  setContext: vi.fn(),
-}));
-
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
