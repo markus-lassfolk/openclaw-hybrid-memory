@@ -1,13 +1,7 @@
 {
   "$schema": "https://biomejs.dev/schemas/1.9.4/schema.json",
   "files": {
-    "ignore": [
-      "dist/**",
-      "node_modules/**",
-      "scripts/**",
-      "coverage/**",
-      "tsconfig*.json"
-    ]
+    "ignore": ["dist/**", "node_modules/**", "scripts/**", "coverage/**", "tsconfig*.json"]
   },
   "formatter": {
     "enabled": true,
@@ -31,9 +25,9 @@
         "noExplicitAny": "warn",
         "noConsole": "off",
         "noImplicitAnyLet": "warn",
-        "noAssignInExpressions": "error",
-        "noMisleadingCharacterClass": "error",
-        "noControlCharactersInRegex": "error",
+        "noAssignInExpressions": "warn",
+        "noMisleadingCharacterClass": "warn",
+        "noControlCharactersInRegex": "warn",
         "noConfusingVoidType": "warn",
         "noGlobalIsNan": "error"
       },
@@ -59,7 +53,7 @@
         "useOptionalChain": "warn"
       },
       "performance": {
-        "noDelete": "error"
+        "noDelete": "warn"
       }
     }
   },

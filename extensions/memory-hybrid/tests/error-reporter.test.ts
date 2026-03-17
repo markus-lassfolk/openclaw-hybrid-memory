@@ -391,7 +391,7 @@ describe("Error Reporter", () => {
 
   describe("Security Boundaries", () => {
     it("should verify error reporter enforces security config", async () => {
-      const serviceCode = await import("fs").then((fs) =>
+      const serviceCode = await import("node:fs").then((fs) =>
         fs.promises.readFile(new URL("../services/error-reporter.ts", import.meta.url), "utf-8"),
       );
 
