@@ -286,8 +286,9 @@ describe("runPassiveObserver", () => {
     ...overrides,
   });
 
-  const makeVectorDb = () => ({
+  const makeVectorDb = (searchResults: unknown[] = []) => ({
     store: vi.fn().mockResolvedValue(undefined),
+    search: vi.fn().mockResolvedValue(searchResults),
   });
 
   const makeEmbeddings = (vec = [0.1, 0.2, 0.3]) => ({
@@ -383,29 +384,43 @@ describe("runPassiveObserver", () => {
     expect(filtered[0].text).toBe("The team uses React for all frontend development");
   });
 
-  it("deduplication: skips facts similar to recent stored facts", async () => {
-    // Build two identical normalized vectors — similarity = 1.0 > threshold 0.85
-    const vec = [1, 0, 0]; // unit vector
-    const recentFact = { id: "existing", text: "The team uses React", category: "fact", importance: 0.8 };
+  it("deduplication: skips facts when vectorDb.search returns a match", async () => {
+    const sessionContent =
+      JSON.stringify({ message: { role: "user", content: "The team uses React for frontend development." } }) + "\n";
+    writeFileSync(join(sessionsDir, "dedup-test.jsonl"), sessionContent);
 
-    const factsDb = makeFactsDb({
-      getRecentFacts: vi.fn().mockReturnValue([recentFact]),
-    });
-    const embeddings = makeEmbeddings(vec);
+    const chatSpy = vi
+      .spyOn(chat, "chatCompleteWithRetry")
+      .mockResolvedValue(
+        JSON.stringify([{ text: "The team uses React for frontend", category: "fact", importance: 0.8 }]),
+      );
 
-    // parseObserverResponse gives us the candidate fact
-    const candidate: ExtractedFact = { text: "The team uses React for frontend", category: "fact", importance: 0.8 };
+    // vectorDb.search returns a match — signals the fact is a duplicate
+    const matchResult = [{ entry: { id: "existing-fact-id" }, score: 0.95 }];
+    const vectorDb = makeVectorDb(matchResult);
+    const factsDb = makeFactsDb({ detectContradictions: vi.fn(), setEmbeddingModel: vi.fn() });
 
-    // Simulate what the observer does: embed candidate, compare with recent fact vector
-    const { normalizeVector, dotProductSimilarity } = await import("../services/reflection.js");
-    const candidateVec = normalizeVector(await embeddings.embed(candidate.text));
-    const existingVec = normalizeVector(await embeddings.embed(recentFact.text));
-    const similarity = dotProductSimilarity(candidateVec, existingVec);
+    const cfg = makeConfig({ sessionsDir });
+    const result = await runPassiveObserver(
+      factsDb as never,
+      vectorDb as never,
+      makeEmbeddings() as never,
+      makeOpenAI(),
+      cfg,
+      ["fact", "decision"],
+      { model: "test-model", dbDir: tmpDir },
+      makeLogger(),
+    );
 
-    // Since both return the same vector [1,0,0], similarity should be 1.0
-    expect(similarity).toBeGreaterThanOrEqual(0.85);
-    // Therefore the fact should be skipped (not stored)
-    // This validates the dedup logic used in runPassiveObserver
+    // Fact was extracted but deduplicated — not stored
+    expect(result.factsExtracted).toBe(1);
+    expect(result.factsStored).toBe(0);
+    expect(factsDb.store).not.toHaveBeenCalled();
+    // vectorDb.search was called once for the candidate fact
+    expect(vectorDb.search).toHaveBeenCalledTimes(1);
+    expect(vectorDb.search).toHaveBeenCalledWith(expect.any(Array), 1, expect.any(Number));
+
+    chatSpy.mockRestore();
   });
 
   it("updates cursor to file size after processing", async () => {
@@ -489,7 +504,250 @@ describe("runPassiveObserver", () => {
 });
 
 // ---------------------------------------------------------------------------
-// 5. Passive observer writes events to event_log (Issue #150)
+// 5. LanceDB-based dedup (Issue #499)
+// ---------------------------------------------------------------------------
+
+describe("runPassiveObserver — LanceDB dedup (Issue #499)", () => {
+  let tmpDir: string;
+  let sessionsDir: string;
+
+  const makeConfig = (overrides: Partial<PassiveObserverConfig> = {}): PassiveObserverConfig => ({
+    enabled: true,
+    intervalMinutes: 15,
+    maxCharsPerChunk: 8000,
+    minImportance: 0.5,
+    deduplicationThreshold: 0.92,
+    ...overrides,
+  });
+
+  const makeLogger = () => ({ info: vi.fn(), warn: vi.fn() });
+
+  const makeFactsDb = (overrides: Record<string, unknown> = {}) => ({
+    getRecentFacts: vi.fn().mockReturnValue([]),
+    store: vi.fn().mockReturnValue({ id: `fact-${randomUUID()}` }),
+    detectContradictions: vi.fn(),
+    setEmbeddingModel: vi.fn(),
+    boostConfidence: vi.fn().mockReturnValue(false),
+    ...overrides,
+  });
+
+  const makeVectorDb = (searchResults: unknown[] = []) => ({
+    store: vi.fn().mockResolvedValue(undefined),
+    search: vi.fn().mockResolvedValue(searchResults),
+  });
+
+  const makeEmbeddings = (vec = [0.1, 0.2, 0.3]) => ({
+    embed: vi.fn().mockResolvedValue(vec),
+    embedBatch: vi.fn().mockImplementation((texts: string[]) => Promise.resolve(texts.map(() => vec))),
+    modelName: "mock-model",
+  });
+
+  beforeEach(() => {
+    tmpDir = join(tmpdir(), `observer-lancedb-dedup-test-${randomUUID()}`);
+    sessionsDir = join(tmpDir, "sessions");
+    mkdirSync(sessionsDir, { recursive: true });
+  });
+
+  afterEach(() => {
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("calls vectorDb.search once per extracted fact", async () => {
+    const sessionContent =
+      JSON.stringify({ message: { role: "user", content: "The team uses TypeScript everywhere." } }) + "\n";
+    writeFileSync(join(sessionsDir, "search-call-test.jsonl"), sessionContent);
+
+    const chatSpy = vi.spyOn(chat, "chatCompleteWithRetry").mockResolvedValue(
+      JSON.stringify([
+        { text: "The team uses TypeScript everywhere", category: "fact", importance: 0.8 },
+        { text: "The project targets Node.js 22 LTS", category: "fact", importance: 0.75 },
+      ]),
+    );
+
+    const vectorDb = makeVectorDb(); // search returns [] — no duplicates
+    const cfg = makeConfig({ sessionsDir });
+
+    // Use distinct vectors so intra-batch dedup doesn't catch the second fact
+    const embeddings = makeEmbeddings();
+    embeddings.embed
+      .mockResolvedValueOnce([0.1, 0.2, 0.3])
+      .mockResolvedValueOnce([0.9, 0.1, 0.0]);
+
+    const result = await runPassiveObserver(
+      makeFactsDb() as never,
+      vectorDb as never,
+      embeddings as never,
+      {} as never,
+      cfg,
+      ["fact"],
+      { model: "test-model", dbDir: tmpDir },
+      makeLogger(),
+    );
+
+    expect(result.factsExtracted).toBe(2);
+    expect(result.factsStored).toBe(2);
+    // search called once per extracted fact
+    expect(vectorDb.search).toHaveBeenCalledTimes(2);
+
+    chatSpy.mockRestore();
+  });
+
+  it("uses deduplicationThreshold as minScore for vectorDb.search", async () => {
+    const threshold = 0.88;
+    const sessionContent =
+      JSON.stringify({ message: { role: "user", content: "We use PostgreSQL as the main database." } }) + "\n";
+    writeFileSync(join(sessionsDir, "threshold-test.jsonl"), sessionContent);
+
+    const chatSpy = vi
+      .spyOn(chat, "chatCompleteWithRetry")
+      .mockResolvedValue(
+        JSON.stringify([
+          { text: "The project uses PostgreSQL as the main database", category: "fact", importance: 0.8 },
+        ]),
+      );
+
+    const vectorDb = makeVectorDb();
+    const cfg = makeConfig({ sessionsDir, deduplicationThreshold: threshold });
+
+    await runPassiveObserver(
+      makeFactsDb() as never,
+      vectorDb as never,
+      makeEmbeddings() as never,
+      {} as never,
+      cfg,
+      ["fact"],
+      { model: "test-model", dbDir: tmpDir },
+      makeLogger(),
+    );
+
+    // The third argument to search is the L2-based similarity threshold.
+    // Production code converts cosine similarity to L2-based score: 1/(1+sqrt(2*(1-cosine)))
+    const expectedL2Threshold = 1 / (1 + Math.sqrt(2 * (1 - threshold)));
+    expect(vectorDb.search).toHaveBeenCalledWith(expect.any(Array), 1, expectedL2Threshold);
+
+    chatSpy.mockRestore();
+  });
+
+  it("reinforcement: boosts matched fact when vectorDb.search finds a near-duplicate", async () => {
+    const sessionContent =
+      JSON.stringify({ message: { role: "user", content: "I still use TypeScript for everything." } }) + "\n";
+    writeFileSync(join(sessionsDir, "reinforce-test.jsonl"), sessionContent);
+
+    const chatSpy = vi
+      .spyOn(chat, "chatCompleteWithRetry")
+      .mockResolvedValue(
+        JSON.stringify([{ text: "User uses TypeScript for all projects", category: "preference", importance: 0.8 }]),
+      );
+
+    const matchedFactId = "existing-fact-abc";
+    const matchResult = [{ entry: { id: matchedFactId }, score: 0.95, backend: "lancedb" }];
+    const vectorDb = makeVectorDb(matchResult);
+    const factsDb = makeFactsDb({
+      boostConfidence: vi.fn().mockReturnValue(true),
+    });
+    const cfg = makeConfig({ sessionsDir });
+
+    const result = await runPassiveObserver(
+      factsDb as never,
+      vectorDb as never,
+      makeEmbeddings() as never,
+      {} as never,
+      cfg,
+      ["preference"],
+      {
+        model: "test-model",
+        dbDir: tmpDir,
+        reinforcement: {
+          enabled: true,
+          passiveBoost: 0.1,
+          activeBoost: 0.05,
+          maxConfidence: 1.0,
+          similarityThreshold: 0.85,
+        },
+      },
+      makeLogger(),
+    );
+
+    expect(result.factsReinforced).toBe(1);
+    expect(result.factsStored).toBe(0);
+    expect(factsDb.boostConfidence).toHaveBeenCalledWith(matchedFactId, 0.1, 1.0);
+
+    chatSpy.mockRestore();
+  });
+
+  it("search failure does not crash observer — proceeds without dedup", async () => {
+    const sessionContent =
+      JSON.stringify({ message: { role: "user", content: "We decided to adopt Kubernetes." } }) + "\n";
+    writeFileSync(join(sessionsDir, "search-fail-test.jsonl"), sessionContent);
+
+    const chatSpy = vi
+      .spyOn(chat, "chatCompleteWithRetry")
+      .mockResolvedValue(
+        JSON.stringify([
+          { text: "Team adopted Kubernetes for container orchestration", category: "decision", importance: 0.8 },
+        ]),
+      );
+
+    // search throws — dedup is skipped, fact should still be stored
+    const vectorDb = {
+      store: vi.fn().mockResolvedValue(undefined),
+      search: vi.fn().mockRejectedValue(new Error("LanceDB search error")),
+    };
+    const factsDb = makeFactsDb();
+    const cfg = makeConfig({ sessionsDir });
+
+    const result = await runPassiveObserver(
+      factsDb as never,
+      vectorDb as never,
+      makeEmbeddings() as never,
+      {} as never,
+      cfg,
+      ["decision"],
+      { model: "test-model", dbDir: tmpDir },
+      makeLogger(),
+    );
+
+    // Fact stored despite search failure (graceful fallback)
+    expect(result.factsStored).toBe(1);
+    expect(factsDb.store).toHaveBeenCalledTimes(1);
+
+    chatSpy.mockRestore();
+  });
+
+  it("does not call getRecentFacts — LanceDB is the single source of truth", async () => {
+    const sessionContent =
+      JSON.stringify({ message: { role: "user", content: "The service runs on AWS Lambda." } }) + "\n";
+    writeFileSync(join(sessionsDir, "no-getrecent-test.jsonl"), sessionContent);
+
+    const chatSpy = vi
+      .spyOn(chat, "chatCompleteWithRetry")
+      .mockResolvedValue(
+        JSON.stringify([{ text: "The service runs on AWS Lambda functions", category: "fact", importance: 0.8 }]),
+      );
+
+    const factsDb = makeFactsDb();
+    const cfg = makeConfig({ sessionsDir });
+
+    await runPassiveObserver(
+      factsDb as never,
+      makeVectorDb() as never,
+      makeEmbeddings() as never,
+      {} as never,
+      cfg,
+      ["fact"],
+      { model: "test-model", dbDir: tmpDir },
+      makeLogger(),
+    );
+
+    // getRecentFacts should NOT be called — Phase 2 was removed
+    expect(factsDb.getRecentFacts).not.toHaveBeenCalled();
+
+    chatSpy.mockRestore();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 6. Passive observer writes events to event_log (Issue #150)
 // ---------------------------------------------------------------------------
 
 describe("runPassiveObserver event_log integration", () => {
@@ -517,6 +775,7 @@ describe("runPassiveObserver event_log integration", () => {
 
   const makeVectorDb = () => ({
     store: vi.fn().mockResolvedValue(undefined),
+    search: vi.fn().mockResolvedValue([]),
     hasDuplicate: vi.fn().mockResolvedValue(false),
   });
 
@@ -930,6 +1189,7 @@ describe("runPassiveObserver identity fact promotion", () => {
 
   const makeVectorDb = () => ({
     store: vi.fn().mockResolvedValue(undefined),
+    search: vi.fn().mockResolvedValue([]),
   });
 
   const makeEmbeddings = (vec = [0.1, 0.2, 0.3]) => ({
