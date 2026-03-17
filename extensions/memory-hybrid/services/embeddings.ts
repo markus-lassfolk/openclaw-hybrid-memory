@@ -95,7 +95,19 @@ function truncateForEmbedding(text: string): string {
 // ONNX embedding provider (local)
 // ---------------------------------------------------------------------------
 
-type OnnxRuntime = typeof import("onnxruntime-node");
+// Minimal type shims for onnxruntime-node (loaded dynamically at runtime; package is optional).
+interface OnnxTensor {
+  data: Float32Array | Int32Array | BigInt64Array;
+  dims: readonly number[];
+}
+interface OnnxInferenceSession {
+  readonly inputNames: readonly string[];
+  run(feeds: Record<string, OnnxTensor>): Promise<Record<string, OnnxTensor>>;
+}
+interface OnnxRuntime {
+  InferenceSession: { create(modelPath: string): Promise<OnnxInferenceSession> };
+  Tensor: new (type: string, data: BigInt64Array, dims: number[]) => OnnxTensor;
+}
 type OnnxRuntimeLoader = () => Promise<OnnxRuntime>;
 
 const DEFAULT_ONNX_CACHE_DIR = join(homedir(), ".cache", "openclaw", "onnx-embeddings");
@@ -129,7 +141,8 @@ function isOnnxRuntimeMissingError(err: unknown): err is OnnxRuntimeMissingError
   );
 }
 
-const defaultOnnxRuntimeLoader: OnnxRuntimeLoader = () => import("onnxruntime-node");
+const defaultOnnxRuntimeLoader: OnnxRuntimeLoader = () =>
+  import("onnxruntime-node") as Promise<unknown> as Promise<OnnxRuntime>;
 let onnxRuntimeLoader: OnnxRuntimeLoader = defaultOnnxRuntimeLoader;
 
 /** @internal Test hook: override ONNX runtime loader. */
@@ -442,7 +455,7 @@ export class OnnxEmbeddingProvider implements EmbeddingProvider {
   private readonly cacheDir?: string;
   private readonly modelPath?: string;
   private readonly vocabPath?: string;
-  private session?: import("onnxruntime-node").InferenceSession;
+  private session?: OnnxInferenceSession;
   private tokenizer?: WordPieceTokenizer;
   private ort?: OnnxRuntime;
   private ready?: Promise<void>;
@@ -528,7 +541,7 @@ export class OnnxEmbeddingProvider implements EmbeddingProvider {
           tokenTypeIds[idx] = BigInt(e.tokenTypeIds[t] ?? 0);
         }
       }
-      const feeds: Record<string, import("onnxruntime-node").Tensor> = {};
+      const feeds: Record<string, OnnxTensor> = {};
       const inputNames = this.session.inputNames;
       if (!inputNames.includes("input_ids")) {
         throw new Error("ONNX model input does not include input_ids");
