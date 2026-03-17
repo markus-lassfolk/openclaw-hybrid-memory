@@ -1351,8 +1351,39 @@ describe("gateway model auto-derivation — unknown provider prefix filter", () 
     expect(defaultList).toContain("Local/S");
   });
 
+  it("allows gateway models when user-configured provider key uses capital letters (case-insensitive lookup)", () => {
+    // Regression test for issue #487: user configures llm.providers.Local (capital L) in plugin config.
+    // Model "Local/S" should be kept because canRoute normalizes both the prefix and pluginProviders keys.
+    const cfg = getTestConfig(tmpDir, {
+      llm: {
+        providers: {
+          Local: { baseURL: "http://localhost:8080/v1" }, // Capital L
+        },
+      },
+    });
+    const api = makeMockApi({
+      resolvePath: (p: string) => (p.startsWith("/") ? p : join(tmpDir, p)),
+      config: {
+        agents: {
+          defaults: {
+            model: {
+              primary: "Local/S",
+            },
+          },
+        },
+      },
+    });
+
+    ctx = initializeDatabases(cfg, api as never);
+
+    const defaultList = Array.isArray(cfg.llm?.default) ? cfg.llm.default : [];
+    // Provider "Local" (capital L) is configured → model "Local/S" must be kept
+    expect(defaultList).toContain("Local/S");
+  });
+
   it("keeps bare model names (no provider prefix) during auto-derivation", () => {
-    // Bare names like "gpt-4o" have no "/" → canRoute returns true; they route to default OpenAI.
+    // Bare names like "gpt-4o" have no "/" → canRoute returns true; they are preserved during
+    // auto-derivation without prefix filtering (normalizeModelId may route them further).
     const cfg = getTestConfig(tmpDir);
     const api = makeMockApi({
       resolvePath: (p: string) => (p.startsWith("/") ? p : join(tmpDir, p)),
@@ -1371,5 +1402,71 @@ describe("gateway model auto-derivation — unknown provider prefix filter", () 
 
     const defaultList = Array.isArray(cfg.llm?.default) ? cfg.llm.default : [];
     expect(defaultList).toContain("gpt-4o");
+  });
+
+  it("keeps models whose provider was gateway-merged with original-case key (e.g. 'Local' capital L)", () => {
+    // The gateway config has a provider key "Local" (capital L) with an apiKey.
+    // The plugin config has no llm.providers entry.
+    // Gateway merge runs before auto-derivation and adds prov["Local"] = { apiKey: "..." }.
+    // pluginProviders normalizes keys to lowercase, so "local" is in the Set.
+    // canRoute("Local/S") → prefix "local" → pluginProviders.has("local") → true → model kept.
+    const cfg = getTestConfig(tmpDir);
+    const api = makeMockApi({
+      resolvePath: (p: string) => (p.startsWith("/") ? p : join(tmpDir, p)),
+      config: {
+        models: {
+          providers: {
+            Local: { apiKey: "sk-local-mixed-case-test-key-long-enough" }, // capital L
+          },
+        },
+        agents: {
+          defaults: {
+            model: {
+              primary: "Local/S",
+            },
+          },
+        },
+      },
+    });
+
+    ctx = initializeDatabases(cfg, api as never);
+
+    const defaultList = Array.isArray(cfg.llm?.default) ? cfg.llm.default : [];
+    // Gateway merged "Local" (capital L) → normalized to "local" in pluginProviders → model kept
+    expect(defaultList).toContain("Local/S");
+  });
+
+  it("keeps OAuth-routable models (auth.order configured for prefix) during auto-derivation", () => {
+    // Models whose provider prefix is registered in auth.order with a non-API-key profile are
+    // routed through the gateway via OAuth — canRoute should return true for them.
+    const cfg = getTestConfig(tmpDir, {
+      auth: {
+        order: {
+          // "deepseek:oauth" is not an API-key-only profile → hasOAuthProfiles returns true
+          deepseek: ["deepseek:oauth"],
+        },
+      },
+    });
+    process.env.OPENCLAW_GATEWAY_PORT = "4000";
+    process.env.OPENCLAW_GATEWAY_TOKEN = "test-gateway-token";
+
+    const api = makeMockApi({
+      resolvePath: (p: string) => (p.startsWith("/") ? p : join(tmpDir, p)),
+      config: {
+        agents: {
+          defaults: {
+            model: {
+              primary: "deepseek/chat",
+            },
+          },
+        },
+      },
+    });
+
+    ctx = initializeDatabases(cfg, api as never);
+
+    const defaultList = Array.isArray(cfg.llm?.default) ? cfg.llm.default : [];
+    // Provider "deepseek" is OAuth-routable via gateway → model must be kept
+    expect(defaultList).toContain("deepseek/chat");
   });
 });
