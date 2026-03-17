@@ -345,6 +345,11 @@ export async function runPassiveObserver(
       const stats = await stat(filePath);
       fileBytelen = stats.size;
     } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+        // File was pruned by session.maintenance between readdirSync and stat — skip silently.
+        logger.info(`memory-hybrid: passive-observer — session ${sessionId} was pruned, skipping`);
+        continue;
+      }
       logger.warn(`memory-hybrid: passive-observer — failed to stat session ${sessionId}: ${err}`);
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
         operation: "passive-observer-stat",
@@ -426,6 +431,13 @@ export async function runPassiveObserver(
       rawBuf = rawBuf.subarray(0, sliceEnd);
       segmentEnd = cursor + sliceEnd;
     } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+        // File was pruned by session.maintenance between stat and open — skip silently.
+        logger.info(
+          `memory-hybrid: passive-observer — session ${sessionId} was pruned between scan and read, skipping`,
+        );
+        continue;
+      }
       logger.warn(`memory-hybrid: passive-observer — failed to read session ${sessionId}: ${err}`);
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
         operation: "passive-observer-read",
