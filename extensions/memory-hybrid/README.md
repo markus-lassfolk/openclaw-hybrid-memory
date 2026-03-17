@@ -107,11 +107,13 @@ Build tools required for `better-sqlite3`: C++ toolchain (e.g. `build-essential`
 
 ## Local ONNX Embeddings (optional)
 
-For local embedding inference without an API key, install `onnxruntime-node` separately **after** installing the plugin:
+For local embedding inference without an API key, install `onnxruntime-node` into the **OpenClaw extensions folder** (`~/.openclaw/extensions`) — one level above the plugin package — so that it survives `openclaw hybrid-mem upgrade`:
 
 ```bash
-npm install onnxruntime-node@^1.18.0
+npm install --prefix ~/.openclaw/extensions onnxruntime-node@^1.18.0
 ```
+
+Installing at this level means Node's module resolution finds it by traversing up from the plugin directory, and the ~513 MB binary is not removed when the plugin is reinstalled. If you install it inside the plugin's own directory (`~/.openclaw/extensions/openclaw-hybrid-memory`) instead, you will need to re-run the install after each upgrade.
 
 Then set `embedding.provider: "onnx"` in your plugin config. Models are auto-downloaded from HuggingFace on first use. `onnxruntime-node` is not listed as a dependency of this package — it is a ~513 MB optional native binary that most users do not need. The plugin detects its absence and shows a clear error if you configure the `onnx` provider without installing it.
 
