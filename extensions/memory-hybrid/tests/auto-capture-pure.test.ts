@@ -14,6 +14,7 @@ import {
   SENSITIVE_PATTERNS,
   VAULT_POINTER_PREFIX,
 } from "../services/auto-capture.js";
+import { MAX_SERVICE_NAME_LENGTH } from "../services/credential-validation.js";
 
 // ---------------------------------------------------------------------------
 // SENSITIVE_PATTERNS & VAULT_POINTER_PREFIX constants
@@ -333,9 +334,8 @@ describe("tryParseCredentialForVault", () => {
   });
 
   it("returns null when service name is invalid (too long / invalid chars)", () => {
-    const longService = "a".repeat(60); // exceeds MAX_SERVICE_NAME_LENGTH
+    const longService = "a".repeat(MAX_SERVICE_NAME_LENGTH + 10);
     const result = tryParseCredentialForVault(`Bearer ${VALID_JWT}`, longService, null, null);
-    // service slug from a 60-char entity; validateAndNormalizeServiceName should reject it
     expect(result).toBeNull();
   });
 });

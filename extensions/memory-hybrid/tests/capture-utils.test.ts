@@ -11,6 +11,7 @@ import {
   getCategoryEntityRegex,
   getCategoryFactRegex,
 } from "../utils/language-keywords.js";
+import { getMemoryTriggers } from "../services/auto-capture.js";
 
 // ---------------------------------------------------------------------------
 // shouldCapture
@@ -18,7 +19,7 @@ import {
 
 describe("shouldCapture", () => {
   const MAX_CHARS = 500;
-  const TRIGGERS = [/\bremember\b/i, /\bprefer\b/i, /\bmy name is\b/i];
+  const TRIGGERS = getMemoryTriggers();
 
   it("rejects text below minimum length (< 10 chars)", () => {
     expect(shouldCapture("short", MAX_CHARS, TRIGGERS)).toBe(false);
