@@ -9,7 +9,7 @@ describe("yaml-parser bugfixes", () => {
   latitude: 59.3
   longitude: 18.0`;
 
-      const result = parseYaml(yaml);
+      const result = parseYaml(yaml) as Record<string, any>;
       expect(result).toHaveProperty("homeassistant");
       expect(result.homeassistant).toBeTypeOf("object");
       expect(result.homeassistant).toHaveProperty("name", "My Home");
@@ -24,7 +24,7 @@ describe("yaml-parser bugfixes", () => {
   - name: item2
     value: 200`;
 
-      const result = parseYaml(yaml);
+      const result = parseYaml(yaml) as Record<string, any>;
       expect(result.items).toBeInstanceOf(Array);
       expect(result.items).toHaveLength(2);
       expect(result.items[0]).toHaveProperty("name", "item1");
@@ -38,7 +38,7 @@ describe("yaml-parser bugfixes", () => {
       - platform: state
         entity_id: sensor.test`;
 
-      const result = parseYaml(yaml);
+      const result = parseYaml(yaml) as Record<string, any>;
       expect(result.automation).toBeInstanceOf(Array);
       expect(result.automation[0]).toHaveProperty("alias", "Test");
       expect(result.automation[0]).toHaveProperty("trigger");
@@ -53,7 +53,7 @@ describe("yaml-parser bugfixes", () => {
 warning: "Avoid !include in docs"
 note: 'Also !secret in single quotes'`;
 
-      const result = parseYaml(yaml);
+      const result = parseYaml(yaml) as Record<string, any>;
       expect(result.description).toBe("Do not use !secret here");
       expect(result.warning).toBe("Avoid !include in docs");
       expect(result.note).toBe("Also !secret in single quotes");
@@ -63,7 +63,7 @@ note: 'Also !secret in single quotes'`;
       const yaml = `password: !secret wifi_pass
 config: !include settings.yaml`;
 
-      const result = parseYaml(yaml);
+      const result = parseYaml(yaml) as Record<string, any>;
       // These are not valid YAML for our parser (no tag support),
       // but they should at least parse as strings
       expect(result.password).toBeTruthy();
