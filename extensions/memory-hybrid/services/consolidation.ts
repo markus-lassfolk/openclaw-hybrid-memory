@@ -269,14 +269,26 @@ export async function runConsolidate(
         });
       }
     }
+    let vector: number[] | undefined;
     try {
-      const vector = await embeddings.embed(mergedText);
-      await vectorDb.store({ text: mergedText, vector, importance: BATCH_STORE_IMPORTANCE, category, id: entry.id });
-      factsDb.setEmbeddingModel(entry.id, embeddings.modelName);
+      vector = await embeddings.embed(mergedText);
     } catch (err) {
-      logger.warn(`memory-hybrid: consolidate vector store failed: ${err}`);
+      logger.warn(`memory-hybrid: consolidate embed failed: ${err}`);
       // AllEmbeddingProvidersFailed is expected when all providers are unavailable — don't report (#486)
       if (!shouldSuppressEmbeddingError(err)) {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+          operation: "consolidate-embed",
+          subsystem: "embedding",
+          factId: entry.id,
+        });
+      }
+    }
+    if (vector !== undefined) {
+      try {
+        await vectorDb.store({ text: mergedText, vector, importance: BATCH_STORE_IMPORTANCE, category, id: entry.id });
+        factsDb.setEmbeddingModel(entry.id, embeddings.modelName);
+      } catch (err) {
+        logger.warn(`memory-hybrid: consolidate vector store failed: ${err}`);
         capturePluginError(err instanceof Error ? err : new Error(String(err)), {
           operation: "consolidate-vector-store",
           subsystem: "vector",
