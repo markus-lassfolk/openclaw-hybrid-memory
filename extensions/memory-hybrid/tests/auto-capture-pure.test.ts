@@ -197,7 +197,7 @@ describe("inferServiceFromText", () => {
   });
 
   it("returns 'openai' for sk-proj prefix text", () => {
-    expect(inferServiceFromText("openai api key is sk-proj-xxx")).toBe("openai");
+    expect(inferServiceFromText("api key is sk-proj-xxx")).toBe("openai");
   });
 
   it("returns 'slack' for xoxb- token", () => {
