@@ -7,15 +7,15 @@
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
 
-// We can't directly import the service functions since they depend on Sentry,
-// which is an optional dependency. Instead, we'll test the sanitization logic
-// by exporting it separately or by mocking Sentry.
+// Test the native fetch implementation of the error reporter.
+// Sentry-specific functions (sanitizeEvent, scrubString, etc.) are pure and
+// can be imported and tested directly without any mocking.
 
-// For now, we'll test the module loading behavior and privacy constraints
+// Test the module loading behavior and privacy constraints
 describe("Error Reporter", () => {
   describe("Module Loading", () => {
-    it("should load successfully with @sentry/node as a required dependency", async () => {
-      // @sentry/node is now a required dependency (moved from optionalDependencies to dependencies)
+    it("should load successfully and export required functions", async () => {
+      // No external dependencies required — uses native fetch (Node 20+)
       const { initErrorReporter, isErrorReporterActive, DEFAULT_GLITCHTIP_DSN } =
         await import("../services/error-reporter.js");
       expect(typeof initErrorReporter).toBe("function");
@@ -386,23 +386,25 @@ describe("Error Reporter", () => {
   });
 
   describe("Security Boundaries", () => {
-    it("should verify initErrorReporter enforces security config", async () => {
+    it("should verify error reporter enforces security config", async () => {
       const serviceCode = await import("fs").then((fs) =>
         fs.promises.readFile(new URL("../services/error-reporter.ts", import.meta.url), "utf-8"),
       );
 
-      expect(serviceCode).toContain("maxBreadcrumbs: 10");
-      expect(serviceCode).toContain("sendDefaultPii: false");
-      expect(serviceCode).toContain("autoSessionTracking: false");
-      expect(serviceCode).toContain(
-        'filter((i) => ["LinkedErrors", "InboundFilters", "FunctionToString"].includes(i.name))',
-      );
-      expect(serviceCode).toContain("beforeBreadcrumb(breadcrumb)");
-      expect(serviceCode).toContain("plugin.");
+      // Hard-coded breadcrumb cap enforced in GlitchTipReporter.addBreadcrumb
+      expect(serviceCode).toContain("MAX_BREADCRUMBS");
+      // Allowlist sanitization is applied in beforeSend (privacy-first design)
+      expect(serviceCode).toContain("sanitizeEvent");
+      // String scrubbing for API keys, paths, PII
+      expect(serviceCode).toContain("scrubString");
+      // Rate-limiting dedup window: 60 seconds
+      expect(serviceCode).toContain("60000");
+      // Only plugin.* category breadcrumbs allowed
+      expect(serviceCode).toContain('"plugin."');
     });
   });
 
-  describe("Integration Tests (if @sentry/node is installed)", () => {
+  describe("Integration Tests", () => {
     it("should verify capturePluginError accepts extended context and returns event ID", async () => {
       const { capturePluginError, isErrorReporterActive } = await import("../services/error-reporter.js");
 
@@ -760,7 +762,7 @@ describe("Error Reporter", () => {
 });
 
 describe("UnconfiguredProviderError suppression", () => {
-  it("capturePluginError returns undefined immediately and never reaches Sentry for UnconfiguredProviderError", async () => {
+  it("capturePluginError returns undefined immediately and never reaches GlitchTip for UnconfiguredProviderError", async () => {
     // Regression guard: capturePluginError must silently drop UnconfiguredProviderError.
     // These are config issues (missing API keys), not bugs — they must never leak to GlitchTip.
     const { capturePluginError } = await import("../services/error-reporter.js");
@@ -780,23 +782,13 @@ describe("UnconfiguredProviderError suppression", () => {
   });
 
   it("capturePluginError behavior for regular errors is tested in error-reporter-guard.test.ts", async () => {
-    // The full test for regular error handling requires mocking Sentry at the module level,
-    // which must be done before any imports. See error-reporter-guard.test.ts for the
+    // The full test for regular error handling uses a mocked fetch to verify
+    // that events are sent or suppressed. See error-reporter-guard.test.ts for the
     // comprehensive test that verifies:
-    // 1. Regular errors DO call Sentry.captureException (guard does not suppress)
-    // 2. UnconfiguredProviderError does NOT call Sentry.captureException (guard suppresses)
+    // 1. Regular errors DO trigger fetch (guard does not suppress)
+    // 2. UnconfiguredProviderError does NOT trigger fetch (guard suppresses)
 
     // This placeholder test ensures the test count remains stable
     expect(true).toBe(true);
   });
 });
-
-// Helper to check if @sentry/node is installed
-async function checkSentryInstalled(): Promise<boolean> {
-  try {
-    await import("@sentry/node");
-    return true;
-  } catch {
-    return false;
-  }
-}
