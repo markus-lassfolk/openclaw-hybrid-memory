@@ -160,13 +160,15 @@ function parseSeqMapItem(ctx: ParseCtx, firstPair: string, seqIndent: number): R
 
   parsePairInto(ctx, firstPair, seqIndent + 2, result);
 
+  const expectedSiblingIndent = seqIndent + 2;
+
   while (true) {
     skipBlanks(ctx);
     if (ctx.pos >= ctx.lines.length) break;
 
     const line = ctx.lines[ctx.pos];
     const indent = getIndent(line);
-    if (indent <= seqIndent) break;
+    if (indent <= seqIndent || indent !== expectedSiblingIndent) break;
 
     const content = line.slice(indent);
     if (content.startsWith("- ") || content === "-") break;
