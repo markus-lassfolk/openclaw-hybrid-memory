@@ -9,6 +9,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { extractCredentialsFromToolCalls, extractHostFromUrl, slugify } from "../services/credential-scanner.js";
 import { CredentialsDB } from "../backends/credentials-db.js";
+import { shouldCapture } from "../services/capture-utils.js";
 
 // Note: extractCredentialsFromToolCalls moved to credential-scanner service
 
@@ -377,5 +378,42 @@ describe("council review fixes", () => {
       // Should have extracted at least one credential even if other patterns fail
       expect(results.length).toBeGreaterThan(0);
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Issue #555: shouldCapture uses unified SENSITIVE_PATTERNS from auto-capture.ts
+// Verifies the three patterns that were missing from the old capture-utils.ts.
+// ---------------------------------------------------------------------------
+
+describe("shouldCapture — unified SENSITIVE_PATTERNS (issue #555)", () => {
+  const alwaysMatch: RegExp[] = [/remember/i];
+  const maxChars = 10_000;
+
+  it("blocks AWS access key text that also contains a memory trigger", () => {
+    const text = "remember AKIA0123456789ABCDEF is the AWS key for staging";
+    expect(shouldCapture(text, maxChars, alwaysMatch)).toBe(false);
+  });
+
+  it("blocks private key header text that also contains a memory trigger", () => {
+    const text = "remember that -----BEGIN RSA PRIVATE KEY----- is the cert header";
+    expect(shouldCapture(text, maxChars, alwaysMatch)).toBe(false);
+  });
+
+  it("blocks connection string with embedded password that also contains a memory trigger", () => {
+    const text = "remember mongodb://admin:Pa$$w0rd@localhost/mydb for the service";
+    expect(shouldCapture(text, maxChars, alwaysMatch)).toBe(false);
+  });
+
+  // Regression: CAPTURE_FILTER_PATTERNS uses /token/i (not /token\s+is/i), so common
+  // "token=" and "token: " formats must still be blocked by shouldCapture.
+  it("blocks text with token=value format that also contains a memory trigger", () => {
+    const text = "remember my API token=ghp_abc123def456 for the staging environment";
+    expect(shouldCapture(text, maxChars, alwaysMatch)).toBe(false);
+  });
+
+  it("blocks text with token: value format that also contains a memory trigger", () => {
+    const text = "remember to use token: sk-abcdefghijklmnopqrstuvwxyz for the service";
+    expect(shouldCapture(text, maxChars, alwaysMatch)).toBe(false);
   });
 });
