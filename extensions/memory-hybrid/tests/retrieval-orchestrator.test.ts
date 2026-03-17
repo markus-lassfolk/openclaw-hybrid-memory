@@ -55,7 +55,10 @@ describe("runRetrievalPipeline graph strategy", () => {
       fts5TopK: 5,
     };
 
-    const result = await runRetrievalPipeline("apple", null, factsDb.getRawDb(), vectorDb, factsDb, config, 2000);
+    const result = await runRetrievalPipeline("apple", null, factsDb.getRawDb(), vectorDb, factsDb, {
+      config,
+      budgetTokens: 2000,
+    });
 
     const ids = result.fused.map((r) => r.factId);
     expect(ids).toContain(apple.id);

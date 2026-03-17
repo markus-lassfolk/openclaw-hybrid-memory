@@ -153,24 +153,10 @@ describe("runRetrievalPipeline — single-model backward compatibility", () => {
     const rawDb = factsDb.getRawDb();
     const vectorDb = makeMockVectorDb();
 
-    const result = await runRetrievalPipeline(
-      "test",
-      null,
-      rawDb,
-      vectorDb,
-      factsDb,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      null,
-      undefined,
-      null, // embeddingRegistry = null
-      null, // factsDbForEmbeddings = null
-    );
+    const result = await runRetrievalPipeline("test", null, rawDb, vectorDb, factsDb, {
+      embeddingRegistry: null,
+      factsDbForEmbeddings: null,
+    });
 
     expect(result).toBeDefined();
   });
@@ -211,24 +197,20 @@ describe("Multi-model semantic search via fact_embeddings", () => {
       vectorDb,
       factsDb,
       {
-        strategies: ["semantic", "fts5"],
-        rrf_k: 60,
-        ambientBudgetTokens: 2000,
-        explicitBudgetTokens: 4000,
-        graphWalkDepth: 0,
-        semanticTopK: 10,
-        fts5TopK: 10,
+        config: {
+          strategies: ["semantic", "fts5"],
+          rrf_k: 60,
+          ambientBudgetTokens: 2000,
+          explicitBudgetTokens: 4000,
+          graphWalkDepth: 0,
+          semanticTopK: 10,
+          fts5TopK: 10,
+        },
+        budgetTokens: 4000,
+        aliasDb: null,
+        embeddingRegistry: registry,
+        factsDbForEmbeddings: factsDb,
       },
-      4000,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      null,
-      undefined,
-      registry,
-      factsDb,
     );
 
     // The fact should be found via multi-model semantic search
@@ -258,13 +240,8 @@ describe("Multi-model semantic search via fact_embeddings", () => {
     const rawDb = factsDb.getRawDb();
     const vectorDb = makeMockVectorDb();
 
-    const result = await runRetrievalPipeline(
-      "orthogonal query",
-      null,
-      rawDb,
-      vectorDb,
-      factsDb,
-      {
+    const result = await runRetrievalPipeline("orthogonal query", null, rawDb, vectorDb, factsDb, {
+      config: {
         strategies: ["semantic"],
         rrf_k: 60,
         ambientBudgetTokens: 2000,
@@ -273,17 +250,11 @@ describe("Multi-model semantic search via fact_embeddings", () => {
         semanticTopK: 10,
         fts5TopK: 10,
       },
-      4000,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      null,
-      undefined,
-      registry,
-      factsDb,
-    );
+      budgetTokens: 4000,
+      aliasDb: null,
+      embeddingRegistry: registry,
+      factsDbForEmbeddings: factsDb,
+    });
 
     // Orthogonal vectors → no match above threshold
     const foundIds = result.fused.map((r) => r.factId);
@@ -322,13 +293,8 @@ describe("Multi-model semantic search via fact_embeddings", () => {
     const rawDb = factsDb.getRawDb();
     const vectorDb = makeMockVectorDb();
 
-    const result = await runRetrievalPipeline(
-      "programming",
-      null,
-      rawDb,
-      vectorDb,
-      factsDb,
-      {
+    const result = await runRetrievalPipeline("programming", null, rawDb, vectorDb, factsDb, {
+      config: {
         strategies: ["semantic"],
         rrf_k: 60,
         ambientBudgetTokens: 2000,
@@ -337,17 +303,11 @@ describe("Multi-model semantic search via fact_embeddings", () => {
         semanticTopK: 10,
         fts5TopK: 10,
       },
-      4000,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      null,
-      undefined,
-      registry,
-      factsDb,
-    );
+      budgetTokens: 4000,
+      aliasDb: null,
+      embeddingRegistry: registry,
+      factsDbForEmbeddings: factsDb,
+    });
 
     const foundIds = result.fused.map((r) => r.factId);
     // Both facts should appear in fused results (from different model lanes)
@@ -397,13 +357,8 @@ describe("Multi-model semantic search via fact_embeddings", () => {
     const rawDb = factsDb.getRawDb();
     const vectorDb = makeMockVectorDb();
 
-    const result = await runRetrievalPipeline(
-      "machine learning",
-      null,
-      rawDb,
-      vectorDb,
-      factsDb,
-      {
+    const result = await runRetrievalPipeline("machine learning", null, rawDb, vectorDb, factsDb, {
+      config: {
         strategies: ["semantic"],
         rrf_k: 60,
         ambientBudgetTokens: 2000,
@@ -412,17 +367,11 @@ describe("Multi-model semantic search via fact_embeddings", () => {
         semanticTopK: 10,
         fts5TopK: 10,
       },
-      4000,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      null,
-      undefined,
-      registry,
-      factsDb,
-    );
+      budgetTokens: 4000,
+      aliasDb: null,
+      embeddingRegistry: registry,
+      factsDbForEmbeddings: factsDb,
+    });
 
     const foundIds = result.fused.map((r) => r.factId);
 
@@ -470,13 +419,8 @@ describe("Multi-model semantic search via fact_embeddings", () => {
     const rawDb = factsDb.getRawDb();
     const vectorDb = makeMockVectorDb();
 
-    const result = await runRetrievalPipeline(
-      "test",
-      null,
-      rawDb,
-      vectorDb,
-      factsDb,
-      {
+    const result = await runRetrievalPipeline("test", null, rawDb, vectorDb, factsDb, {
+      config: {
         strategies: ["semantic"],
         rrf_k: 60,
         ambientBudgetTokens: 2000,
@@ -485,17 +429,11 @@ describe("Multi-model semantic search via fact_embeddings", () => {
         semanticTopK: 10,
         fts5TopK: 10,
       },
-      4000,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      null,
-      undefined,
-      registry,
-      factsDb,
-    );
+      budgetTokens: 4000,
+      aliasDb: null,
+      embeddingRegistry: registry,
+      factsDbForEmbeddings: factsDb,
+    });
 
     // Single-model mode: no multi-model results (LanceDB also returns empty)
     expect(result.fused).toHaveLength(0);

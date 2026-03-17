@@ -373,6 +373,50 @@ export function invalidateClusterCache(): void {
 }
 
 /**
+ * Options bag for `runRetrievalPipeline`.
+ *
+ * All fields are optional. Required inputs (`query`, `queryVector`, `db`,
+ * `vectorDb`, `factsDb`) are kept as positional parameters because they are
+ * always needed; everything else lives here so callers can pass only what they
+ * actually use — without placeholder nulls — and new strategies can be added
+ * without touching every call site.
+ */
+export interface RetrievalPipelineOptions {
+  /** Retrieval pipeline configuration. Defaults to `DEFAULT_RETRIEVAL_CONFIG`. */
+  config?: RetrievalConfig;
+  /** Token budget for packing. Defaults to `config.explicitBudgetTokens`. */
+  budgetTokens?: number;
+  /** Current time as epoch seconds. Defaults to `Math.floor(Date.now() / 1000)`. */
+  nowSec?: number;
+  /** Optional tag constraint propagated into the FTS5 strategy. */
+  tagFilter?: string;
+  /** When true, superseded/expired facts are included. Default false. */
+  includeSuperseded?: boolean;
+  /** Scope constraints applied when resolving fused fact IDs. */
+  scopeFilter?: unknown;
+  /** Temporal filter applied when resolving fused fact IDs. */
+  asOf?: number;
+  /** Alias DB for alias-search RRF strategy (Issue #149). */
+  aliasDb?: AliasDB | null;
+  /** Cluster sibling-boost configuration (Issue #146). */
+  clustersConfig?: ClustersConfig;
+  /** Multi-model embedding registry (Issue #158). Each registered model adds its own RRF strategy. */
+  embeddingRegistry?: EmbeddingRegistry | null;
+  /** Access to the fact_embeddings table (Issue #158). When `embeddingRegistry` is set but this is omitted/null, multi-model strategies are silently skipped (graceful degradation). */
+  factsDbForEmbeddings?: FactsDbWithEmbeddings | null;
+  /** Query expander for variant-query strategies (Issue #160). */
+  queryExpander?: QueryExpander | null;
+  /** Embed function used to vectorise expanded query variants (Issue #160). */
+  embedFn?: ((text: string) => Promise<number[]>) | null;
+  /** Recent conversation context passed to the LLM query expander. */
+  queryExpansionContext?: string;
+  /** Re-ranking configuration (Issue #161). */
+  rerankingConfig?: RerankingConfig | null;
+  /** OpenAI-compatible client for re-ranking LLM calls (Issue #161). */
+  rerankingOpenai?: import("openai").default | null;
+}
+
+/**
  * Run the multi-strategy retrieval pipeline and return fused, ranked results.
  *
  * Steps:
@@ -388,23 +432,7 @@ export function invalidateClusterCache(): void {
  * @param db - better-sqlite3 Database instance for FTS5 queries.
  * @param vectorDb - LanceDB VectorDB instance for semantic queries.
  * @param factsDb - FactsDB for metadata lookup.
- * @param config - Retrieval pipeline configuration.
- * @param budgetTokens - Token budget for packing (overrides config defaults).
- * @param nowSec - Current time as epoch seconds (default: Date.now()/1000).
- * @param tagFilter - Optional tag constraint to propagate into FTS5 strategy.
- * @param includeSuperseded - Whether to include superseded facts (default false).
- * @param scopeFilter - Scope constraints applied when resolving fused fact IDs.
- * @param asOf - Temporal filter applied when resolving fused fact IDs.
- * @param embeddingRegistry - Optional multi-model registry (Issue #158). When provided and
- *   has additional models registered, each model contributes a separate RRF strategy.
- * @param factsDbForEmbeddings - Optional access to fact_embeddings table (Issue #158).
- * @param queryExpander - Optional query expander instance (Issue #160). When provided and
- *   expansion is enabled, generates variant queries and adds each as a separate RRF strategy.
- * @param embedFn - Optional function to embed text (Issue #160). Required for expansion to work.
- * @param queryExpansionContext - Optional recent conversation context to improve expansion quality.
- * @param rerankingConfig - Optional re-ranking configuration (Issue #161). When provided and
- *   enabled, calls an LLM to re-rank the top candidates by semantic relevance to the query.
- * @param rerankingOpenai - Optional OpenAI-compatible client for re-ranking LLM calls.
+ * @param options - Optional settings; see `RetrievalPipelineOptions`.
  */
 export async function runRetrievalPipeline(
   query: string,
@@ -412,23 +440,26 @@ export async function runRetrievalPipeline(
   db: Database.Database,
   vectorDb: VectorDB,
   factsDb: FactLookup,
-  config: RetrievalConfig = DEFAULT_RETRIEVAL_CONFIG,
-  budgetTokens: number = config.explicitBudgetTokens,
-  nowSec: number = Math.floor(Date.now() / 1000),
-  tagFilter?: string,
-  includeSuperseded?: boolean,
-  scopeFilter?: unknown,
-  asOf?: number,
-  aliasDb?: AliasDB | null,
-  clustersConfig?: ClustersConfig,
-  embeddingRegistry?: EmbeddingRegistry | null,
-  factsDbForEmbeddings?: FactsDbWithEmbeddings | null,
-  queryExpander?: QueryExpander | null,
-  embedFn?: ((text: string) => Promise<number[]>) | null,
-  queryExpansionContext?: string,
-  rerankingConfig?: RerankingConfig | null,
-  rerankingOpenai?: import("openai").default | null,
+  options: RetrievalPipelineOptions = {},
 ): Promise<OrchestratorResult> {
+  const config = options.config ?? DEFAULT_RETRIEVAL_CONFIG;
+  const budgetTokens = options.budgetTokens ?? config.explicitBudgetTokens;
+  const nowSec = options.nowSec ?? Math.floor(Date.now() / 1000);
+  const {
+    tagFilter,
+    includeSuperseded,
+    scopeFilter,
+    asOf,
+    aliasDb,
+    clustersConfig,
+    embeddingRegistry,
+    factsDbForEmbeddings,
+    queryExpander,
+    embedFn,
+    queryExpansionContext,
+    rerankingConfig,
+    rerankingOpenai,
+  } = options;
   const runOnce = async (expansion: {
     useLlm: boolean;
     variants: string[] | null;

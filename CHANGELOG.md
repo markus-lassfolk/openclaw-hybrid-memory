@@ -14,6 +14,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Migration Notes
 
+- **`runRetrievalPipeline` signature changed to options bag — breaking change (#501):** The function signature was refactored from many optional positional parameters to a single `RetrievalPipelineOptions` object. `runRetrievalPipeline` is re-exported from the package root (`extensions/memory-hybrid/index.ts`), so **any external consumer calling the old positional form must migrate**.
+
+  Before:
+  ```ts
+  await runRetrievalPipeline(query, queryVector, db, vectorDb, factsDb, config, budgetTokens, tagFilter, ...);
+  ```
+  After:
+  ```ts
+  await runRetrievalPipeline(query, queryVector, db, vectorDb, factsDb, { config, budgetTokens, tagFilter, ... });
+  ```
+  The five required positional parameters (`query`, `queryVector`, `db`, `vectorDb`, `factsDb`) are unchanged; everything else moves into the `options` bag. Omitting any option preserves existing default behaviour.
+
 - **Google embedding model default changed: `text-embedding-004` → `text-embedding-005` (#385):** If your deployment previously used `text-embedding-004` (explicitly or as the inferred default), switching to `text-embedding-005` produces different vector representations. **Existing LanceDB tables indexed with `text-embedding-004` will have degraded semantic retrieval quality until re-indexed.** Run `openclaw hybrid-mem re-index` after upgrading to rebuild the vector index with the new model. To keep using `text-embedding-004`, set `embedding.model: "text-embedding-004"` explicitly in your plugin config.
 
 ---
