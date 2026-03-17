@@ -66,6 +66,9 @@ export interface ObserverRunResult {
 // Track consecutive failures across runs to prevent infinite retries on bad session files.
 const consecutiveFailures = new Map<string, number>();
 
+/** Returns true when the error is an ENOENT (file not found) OS error. */
+const isEnoent = (err: unknown): boolean => (err as NodeJS.ErrnoException).code === "ENOENT";
+
 // ---------------------------------------------------------------------------
 // JSONL text extraction
 // ---------------------------------------------------------------------------
@@ -294,6 +297,7 @@ export async function runPassiveObserver(
   try {
     filePaths = readdirSync(sessionsDir)
       .filter((f) => f.endsWith(".jsonl"))
+      .sort() // deterministic ordering across OS/filesystems
       .map((f) => join(sessionsDir, f));
   } catch (err) {
     logger.warn(`memory-hybrid: passive-observer — failed to read sessions dir: ${err}`);
@@ -346,6 +350,11 @@ export async function runPassiveObserver(
       const stats = await stat(filePath);
       fileBytelen = stats.size;
     } catch (err) {
+      if (isEnoent(err)) {
+        // File was pruned by session.maintenance between readdirSync and stat — skip silently.
+        logger.info(`memory-hybrid: passive-observer — session ${sessionId} was pruned, skipping`);
+        continue;
+      }
       logger.warn(`memory-hybrid: passive-observer — failed to stat session ${sessionId}: ${err}`);
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
         operation: "passive-observer-stat",
@@ -355,6 +364,9 @@ export async function runPassiveObserver(
       continue;
     }
 
+    // sessionsScanned counts sessions whose stat succeeded. A later open ENOENT (Phase 3)
+    // will still leave this counter incremented, so operators may observe
+    // sessionsScanned > factsStored with no errors — this is intentional and expected.
     result.sessionsScanned++;
     const cursor = cursors[sessionId] ?? 0;
 
@@ -427,6 +439,13 @@ export async function runPassiveObserver(
       rawBuf = rawBuf.subarray(0, sliceEnd);
       segmentEnd = cursor + sliceEnd;
     } catch (err) {
+      if (isEnoent(err)) {
+        // File was pruned by session.maintenance between stat and open — skip silently.
+        logger.info(
+          `memory-hybrid: passive-observer — session ${sessionId} was pruned between scan and read, skipping`,
+        );
+        continue;
+      }
       logger.warn(`memory-hybrid: passive-observer — failed to read session ${sessionId}: ${err}`);
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
         operation: "passive-observer-read",
