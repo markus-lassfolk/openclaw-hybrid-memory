@@ -15,7 +15,7 @@
 import OpenAI from "openai";
 import { createReadStream } from "node:fs";
 import { createInterface } from "node:readline";
-import { chatComplete } from "./chat.js";
+import { chatComplete, isContextLengthError } from "./chat.js";
 import { capturePluginError } from "./error-reporter.js";
 
 /** Configuration for local LLM pre-filtering. */
@@ -267,6 +267,26 @@ export async function preFilterSessions(
         // Ollama unreachable — fallback: keep this and all remaining sessions
         ollamaUnavailable = true;
         kept.push(filePath);
+      } else if (isContextLengthError(err)) {
+        // #488: Input too long for this model's context window — retry with a halved sample.
+        // The model has a small context window (e.g. 512 tokens); truncating the input may fit.
+        const truncated = sample.slice(0, Math.floor(sample.length / 2));
+        if (truncated.trim()) {
+          try {
+            const interesting = await classifySession(truncated, config, ollamaClient);
+            if (interesting) {
+              kept.push(filePath);
+            } else {
+              skipped.push(filePath);
+            }
+          } catch {
+            // Still too long or other error after truncation — keep conservatively
+            kept.push(filePath);
+          }
+        } else {
+          // Sample too short to truncate further — keep conservatively
+          kept.push(filePath);
+        }
       } else {
         // Other error (model error, bad response, etc.) — conservative: keep session
         capturePluginError(err instanceof Error ? err : new Error(String(err)), {

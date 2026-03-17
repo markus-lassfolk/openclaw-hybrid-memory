@@ -192,6 +192,7 @@ export function is500Like(err: unknown): boolean {
  * Detect 400 errors caused by exceeding the model's context length.
  * These are unrecoverable without truncating the input — retrying is wasteful (#442).
  * Pattern matches OpenAI's error: "400 Invalid 'input': maximum context length is 8192 tokens."
+ * Also matches Ollama's error: "Input length 768 exceeds maximum allowed token size 512" (#488).
  */
 export function isContextLengthError(err: unknown): boolean {
   if (err && typeof err === "object") {
@@ -201,7 +202,9 @@ export function isContextLengthError(err: unknown): boolean {
       if (
         msg.includes("context length") ||
         msg.includes("maximum context") ||
-        /max.*token.*(length|limit)|token limit|context.length/i.test(msg)
+        /max.*token.*(length|limit)|token limit|context.length/i.test(msg) ||
+        // #488: Ollama "Input length 768 exceeds maximum allowed token size 512"
+        /input\s+length\s+\d+\s+exceeds/i.test(msg)
       ) {
         return true;
       }
@@ -213,8 +216,12 @@ export function isContextLengthError(err: unknown): boolean {
       ((msg.includes("400") || msg.includes("bad request")) &&
         (msg.includes("context length") ||
           msg.includes("maximum context") ||
-          /max.*token.*(length|limit)|token limit|context.length/i.test(err.message))) ||
-      /\b400\b.*maximum context length/i.test(err.message)
+          /max.*token.*(length|limit)|token limit|context.length/i.test(err.message) ||
+          // #488: Ollama pattern (may appear with "400" prefix in some SDK versions)
+          /input\s+length\s+\d+\s+exceeds/i.test(err.message))) ||
+      /\b400\b.*maximum context length/i.test(err.message) ||
+      // #488: Ollama may emit this without a numeric status prefix — match it directly
+      /input\s+length\s+\d+\s+exceeds.*token\s+size\s+\d+/i.test(err.message)
     );
   }
   return false;
@@ -344,7 +351,8 @@ export async function chatComplete(opts: {
       err instanceof UnconfiguredProviderError ||
       is404Like(err) || // #303: model not found = wrong model name in config, not a bug
       is403Like(err) || // #394: country/region restriction = operator config issue, not a bug
-      is401Like(err); // #475: invalid API key = operator config issue, not a bug
+      is401Like(err) || // #475: invalid API key = operator config issue, not a bug
+      isContextLengthError(err); // #488: input too long for model context window = wrong model choice, not a bug
     if (!isTransient && !isConfigError) {
       capturePluginError(error, {
         subsystem: "chat",
@@ -583,6 +591,7 @@ export async function chatCompleteWithRetry(opts: {
       const is403 = is403Like(lastError);
       const is401 = is401Like(lastError);
       const is500 = is500Like(lastError); // #302
+      const isContextLength = isContextLengthError(lastError); // #488
       if (isUnconfigured) unconfiguredCount++;
       if (i < modelsToTry.length - 1 && !signal?.aborted) {
         if (!isUnconfigured) {
@@ -598,7 +607,9 @@ export async function chatCompleteWithRetry(opts: {
                     ? "unauthorized (401)"
                     : is500
                       ? "server error (500)" // #302
-                      : "failed after retries";
+                      : isContextLength
+                        ? "input too long (400)" // #488
+                        : "failed after retries";
           console.warn(`${label}: model ${currentModel} ${reason}, trying fallback model ${modelsToTry[i + 1]}...`);
         }
       }
@@ -612,6 +623,7 @@ export async function chatCompleteWithRetry(opts: {
   const finalIs401 = is401OrWrapped(finalError); // #475: invalid API key = operator config issue
   const finalIsOOM = isOllamaOOM(finalError); // #387: OOM is expected when model too large for RAM
   const finalIs429 = is429OrWrapped(finalError); // #397
+  const finalIsContextLength = isContextLengthError(finalError); // #488: input too long for model context window
   const finalIsTimeout =
     /timed out|llm request timeout|request was aborted|Request was aborted|ETIMEDOUT|ECONNREFUSED/i.test(
       finalError.message,
@@ -641,6 +653,7 @@ export async function chatCompleteWithRetry(opts: {
     if (
       !finalIs500 &&
       !finalIsOOM &&
+      !finalIsContextLength && // #488: context window exceeded = config issue, not a bug
       !finalIsUnconfigured &&
       !finalIsTimeout &&
       !finalIs403 &&
@@ -658,6 +671,13 @@ export async function chatCompleteWithRetry(opts: {
     pendingWarnings?.add(
       `⚠️ Memory plugin: LLM model requires more memory than available (OOM). ` +
         `Consider using a smaller model or configuring a cloud fallback. ` +
+        `Run: openclaw hybrid-mem verify --test-llm`,
+    );
+  } else if (finalIsContextLength) {
+    // #488: input too long for model's context window — config issue (model too small), not a code bug
+    pendingWarnings?.add(
+      `⚠️ Memory plugin: LLM input exceeds model context window. ` +
+        `Consider using a model with a larger context window or reducing input size. ` +
         `Run: openclaw hybrid-mem verify --test-llm`,
     );
   } else if (finalIs500) {
