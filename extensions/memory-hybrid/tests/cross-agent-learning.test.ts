@@ -434,7 +434,7 @@ describe("runCrossAgentLearning — LLM mock", () => {
     expect(result.errors).toBeGreaterThanOrEqual(0);
   });
 
-  it("LLM call is attributed to 'cross_agent_learning' feature", async () => {
+  it("LLM call is attributed to 'cross-agent-learning' feature", async () => {
     let capturedFeature: string | undefined;
     const now = Math.floor(Date.now() / 1000);
     rawDb(db)
@@ -472,7 +472,7 @@ describe("runCrossAgentLearning — LLM mock", () => {
     };
 
     await runCrossAgentLearning(db, mockOpenAI as never, cfg);
-    expect(capturedFeature).toBe("cross_agent_learning");
+    expect(capturedFeature).toBe("cross-agent-learning");
   });
 });
 
