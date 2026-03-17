@@ -14,6 +14,7 @@ import {
   AllEmbeddingProvidersFailed,
   createEmbeddingProvider,
   safeEmbed,
+  shouldSuppressEmbeddingError,
   __setOnnxRuntimeLoaderForTests,
   _resetOllamaCircuitBreakerForTesting,
   type EmbeddingConfig,
@@ -1152,5 +1153,123 @@ describe("#385: createEmbeddingProvider uses text-embedding-005 as default Googl
     };
     const provider = createEmbeddingProvider(cfg);
     expect(provider).toBeInstanceOf(ChainEmbeddingProvider);
+  });
+});
+
+describe("#486: shouldSuppressEmbeddingError — suppression helper", () => {
+  it("suppresses config errors (401, 403, 404)", () => {
+    expect(shouldSuppressEmbeddingError(Object.assign(new Error("401 Unauthorized"), { status: 401 }))).toBe(true);
+    expect(shouldSuppressEmbeddingError(Object.assign(new Error("403 Forbidden"), { status: 403 }))).toBe(true);
+    expect(shouldSuppressEmbeddingError(Object.assign(new Error("404 Not Found"), { status: 404 }))).toBe(true);
+  });
+
+  it("suppresses 429 rate limit errors", () => {
+    expect(shouldSuppressEmbeddingError(Object.assign(new Error("429 Too Many Requests"), { status: 429 }))).toBe(true);
+  });
+
+  it("suppresses Ollama circuit breaker open errors", () => {
+    expect(shouldSuppressEmbeddingError(new Error("Ollama circuit breaker open — skipping embed"))).toBe(true);
+  });
+
+  it("does NOT suppress generic transient errors", () => {
+    expect(shouldSuppressEmbeddingError(new Error("ECONNREFUSED"))).toBe(false);
+    expect(shouldSuppressEmbeddingError(new Error("network timeout"))).toBe(false);
+    expect(shouldSuppressEmbeddingError(new Error("500 Internal Server Error"))).toBe(false);
+  });
+
+  it("does NOT suppress non-Error values", () => {
+    expect(shouldSuppressEmbeddingError("string error")).toBe(false);
+    expect(shouldSuppressEmbeddingError(null)).toBe(false);
+    expect(shouldSuppressEmbeddingError(undefined)).toBe(false);
+  });
+
+  it("suppresses AllEmbeddingProvidersFailed when all causes are config errors", () => {
+    const configErr = Object.assign(new Error("404 Not Found"), { status: 404 });
+    const err = new AllEmbeddingProvidersFailed([configErr]);
+    expect(shouldSuppressEmbeddingError(err)).toBe(true);
+  });
+
+  it("suppresses AllEmbeddingProvidersFailed when all causes are 429 errors", () => {
+    const rateLimitErr = Object.assign(new Error("429 Too Many Requests"), { status: 429 });
+    const err = new AllEmbeddingProvidersFailed([rateLimitErr]);
+    expect(shouldSuppressEmbeddingError(err)).toBe(true);
+  });
+
+  it("suppresses AllEmbeddingProvidersFailed when all causes are circuit-breaker-open errors", () => {
+    const cbErr = new Error("Ollama circuit breaker open — retrying in 30s");
+    const err = new AllEmbeddingProvidersFailed([cbErr]);
+    expect(shouldSuppressEmbeddingError(err)).toBe(true);
+  });
+
+  it("suppresses AllEmbeddingProvidersFailed when causes are a mix of suppressible errors", () => {
+    const configErr = Object.assign(new Error("401 Unauthorized"), { status: 401 });
+    const rateLimitErr = Object.assign(new Error("429 Too Many Requests"), { status: 429 });
+    const cbErr = new Error("Ollama circuit breaker open");
+    const err = new AllEmbeddingProvidersFailed([configErr, rateLimitErr, cbErr]);
+    expect(shouldSuppressEmbeddingError(err)).toBe(true);
+  });
+
+  it("does NOT suppress AllEmbeddingProvidersFailed when any cause is a transient error", () => {
+    const configErr = Object.assign(new Error("404 Not Found"), { status: 404 });
+    const transientErr = new Error("ECONNREFUSED");
+    const err = new AllEmbeddingProvidersFailed([configErr, transientErr]);
+    expect(shouldSuppressEmbeddingError(err)).toBe(false);
+  });
+
+  it("does NOT suppress AllEmbeddingProvidersFailed with empty causes (unknown state)", () => {
+    const err = new AllEmbeddingProvidersFailed([]);
+    expect(shouldSuppressEmbeddingError(err)).toBe(false);
+  });
+});
+
+describe("#486: safeEmbed suppresses AllEmbeddingProvidersFailed with 429/circuit-breaker causes", () => {
+  beforeEach(() => {
+    vi.mocked(capturePluginError).mockClear();
+  });
+
+  it("does NOT report when AllEmbeddingProvidersFailed cause is 429", async () => {
+    const rateLimitErr = Object.assign(new Error("429 Too Many Requests"), { status: 429 });
+    const p1 = {
+      embed: vi.fn().mockRejectedValue(rateLimitErr),
+      embedBatch: vi.fn(),
+      dimensions: 768,
+      modelName: "p1",
+    };
+    const chain = new ChainEmbeddingProvider(
+      [p1] as unknown as import("../services/embeddings.js").EmbeddingProvider[],
+      ["p1"],
+    );
+    const result = await safeEmbed(chain, "test");
+    expect(result).toBeNull();
+    expect(vi.mocked(capturePluginError)).not.toHaveBeenCalled();
+  });
+
+  it("does NOT report when AllEmbeddingProvidersFailed cause is circuit-breaker-open", async () => {
+    const cbErr = new Error("Ollama circuit breaker open — retrying in 30s");
+    const p1 = { embed: vi.fn().mockRejectedValue(cbErr), embedBatch: vi.fn(), dimensions: 768, modelName: "ollama" };
+    const chain = new ChainEmbeddingProvider(
+      [p1] as unknown as import("../services/embeddings.js").EmbeddingProvider[],
+      ["ollama"],
+    );
+    const result = await safeEmbed(chain, "test");
+    expect(result).toBeNull();
+    expect(vi.mocked(capturePluginError)).not.toHaveBeenCalled();
+  });
+
+  it("DOES report when AllEmbeddingProvidersFailed cause is a transient error", async () => {
+    const transientErr = new Error("network timeout");
+    const p1 = {
+      embed: vi.fn().mockRejectedValue(transientErr),
+      embedBatch: vi.fn(),
+      dimensions: 768,
+      modelName: "p1",
+    };
+    const chain = new ChainEmbeddingProvider(
+      [p1] as unknown as import("../services/embeddings.js").EmbeddingProvider[],
+      ["p1"],
+    );
+    const result = await safeEmbed(chain, "test");
+    expect(result).toBeNull();
+    expect(vi.mocked(capturePluginError)).toHaveBeenCalledOnce();
   });
 });

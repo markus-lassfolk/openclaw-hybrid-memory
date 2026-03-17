@@ -1325,6 +1325,23 @@ export function createEmbeddingProvider(cfg: EmbeddingConfig, onFallback?: (err:
   throw new Error(`Unknown embedding provider: '${provider as string}'. Valid options: openai, ollama, onnx, google.`);
 }
 
+/**
+ * Returns true when an embedding error should be suppressed from error monitoring.
+ * Covers config errors (401/403/404), rate limits (429), circuit-breaker-open, and
+ * AllEmbeddingProvidersFailed when every cause is one of those expected conditions.
+ * Use this in any catch block that calls embeddings.embed() / embedBatch() to avoid
+ * reporting noise when all providers are legitimately unavailable (#486).
+ */
+export function shouldSuppressEmbeddingError(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  if (isConfigError(err) || is429OrWrapped(err) || isOllamaCircuitBreakerOpen(err)) return true;
+  if (err instanceof AllEmbeddingProvidersFailed) {
+    if (err.causes.length === 0) return false; // unknown state — report
+    return err.causes.every((c) => isConfigError(c) || is429OrWrapped(c) || isOllamaCircuitBreakerOpen(c));
+  }
+  return false;
+}
+
 /** Centralized embedding with error handling. Returns null on failure and optionally logs. */
 export async function safeEmbed(
   provider: EmbeddingProvider,
@@ -1335,16 +1352,9 @@ export async function safeEmbed(
     return await provider.embed(text);
   } catch (err) {
     const asErr = err instanceof Error ? err : new Error(String(err));
-    // Skip reporting config errors (404/403/401 — operator issues), 429 (rate limit), and circuit breaker open
-    // — all are operator config issues, transient errors, or expected degradation, not bugs (#394, #329, #385, #397, #458)
-    // For AllEmbeddingProvidersFailed, only suppress when all causes are config errors; report if any cause is transient
-    const shouldReport = !(
-      (err instanceof AllEmbeddingProvidersFailed && err.causes.length > 0 && err.causes.every(isConfigError)) ||
-      isConfigError(asErr) ||
-      is429OrWrapped(asErr) ||
-      isOllamaCircuitBreakerOpen(asErr)
-    );
-    if (shouldReport) {
+    // Suppress config errors, 429, circuit-breaker-open, and AllEmbeddingProvidersFailed whose every
+    // cause is one of those expected conditions (#394, #329, #385, #397, #458, #486)
+    if (!shouldSuppressEmbeddingError(err)) {
       capturePluginError(asErr, {
         operation: "safe-embed",
         subsystem: "embeddings",
