@@ -5,7 +5,7 @@
 import { describe, it, expect } from "vitest";
 import { _testing } from "../index.js";
 import { loadPrompt, fillPrompt } from "../utils/prompt-loader.js";
-import { runReflection } from "../services/reflection.js";
+import { runReflection, runReflectionRules, runReflectionMeta } from "../services/reflection.js";
 import { getCurrentCostFeature } from "../services/cost-context.js";
 import type { MemoryEntry } from "../types/memory.js";
 
@@ -100,7 +100,7 @@ describe("runReflection cost attribution", () => {
     const fact = makeEntry();
     const factsDb = {
       getRecentFacts: () => [fact],
-      store: () => ({ id: "pattern-1", text: fact.text, category: "pattern" }) as MemoryEntry,
+      store: async () => ({ id: "pattern-1", text: fact.text, category: "pattern" }) as MemoryEntry,
       setEmbeddingModel: () => undefined,
     };
     const vectorDb = { store: async () => undefined };
@@ -127,6 +127,99 @@ describe("runReflection cost attribution", () => {
     );
 
     expect(capturedFeature).toBe("reflection");
+  });
+});
+
+describe("runReflectionRules cost attribution", () => {
+  it("LLM call is attributed to 'reflection-rules' feature", async () => {
+    let capturedFeature: string | undefined;
+    const pattern1 = makeEntry({
+      id: "p1",
+      category: "pattern",
+      text: "User consistently prefers functional composition over object-oriented patterns",
+    });
+    const pattern2 = makeEntry({
+      id: "p2",
+      category: "pattern",
+      text: "User values type safety and always enables TypeScript strict mode in projects",
+    });
+    const factsDb = {
+      getByCategory: (cat: string) => (cat === "pattern" ? [pattern1, pattern2] : []),
+      store: async () => ({ id: "rule-1", text: "Always use functional patterns", category: "rule" }) as MemoryEntry,
+      setEmbeddingModel: () => undefined,
+    };
+    const vectorDb = { store: async () => undefined };
+    const embeddings = { embed: async () => [1, 0], modelName: "test-model" };
+    const openai = {
+      chat: {
+        completions: {
+          create: async () => {
+            capturedFeature = getCurrentCostFeature();
+            return { choices: [{ message: { content: "No rules detected." } }] };
+          },
+        },
+      },
+    };
+
+    await runReflectionRules(
+      factsDb as never,
+      vectorDb as never,
+      embeddings as never,
+      openai as never,
+      { dryRun: false, model: "test-model" },
+      { info: () => undefined, warn: () => undefined },
+    );
+
+    expect(capturedFeature).toBe("reflection-rules");
+  });
+});
+
+describe("runReflectionMeta cost attribution", () => {
+  it("LLM call is attributed to 'reflection-meta' feature", async () => {
+    let capturedFeature: string | undefined;
+    const pattern1 = makeEntry({
+      id: "p1",
+      category: "pattern",
+      text: "User consistently prefers functional composition over object-oriented patterns",
+    });
+    const pattern2 = makeEntry({
+      id: "p2",
+      category: "pattern",
+      text: "User values type safety and always enables TypeScript strict mode in projects",
+    });
+    const pattern3 = makeEntry({
+      id: "p3",
+      category: "pattern",
+      text: "User prefers small focused functions under twenty lines with clear single responsibility",
+    });
+    const factsDb = {
+      getByCategory: (cat: string) => (cat === "pattern" ? [pattern1, pattern2, pattern3] : []),
+      store: async () => ({ id: "meta-1", text: "Core meta-pattern", category: "pattern" }) as MemoryEntry,
+      setEmbeddingModel: () => undefined,
+    };
+    const vectorDb = { store: async () => undefined };
+    const embeddings = { embed: async () => [1, 0], modelName: "test-model" };
+    const openai = {
+      chat: {
+        completions: {
+          create: async () => {
+            capturedFeature = getCurrentCostFeature();
+            return { choices: [{ message: { content: "No meta-patterns detected." } }] };
+          },
+        },
+      },
+    };
+
+    await runReflectionMeta(
+      factsDb as never,
+      vectorDb as never,
+      embeddings as never,
+      openai as never,
+      { dryRun: false, model: "test-model" },
+      { info: () => undefined, warn: () => undefined },
+    );
+
+    expect(capturedFeature).toBe("reflection-meta");
   });
 });
 
