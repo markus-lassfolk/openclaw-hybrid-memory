@@ -211,6 +211,7 @@ async function callLLMForGeneralisation(
     content: prompt,
     maxTokens: 2000,
     timeoutMs: 40000,
+    feature: "cross_agent_learning",
   });
 
   if (!text || text.trim().length === 0) return [];

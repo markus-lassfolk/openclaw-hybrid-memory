@@ -40,7 +40,16 @@ export interface MigrateCredentialsResult {
  * Returns { migrated, skipped, errors }. If markDone is true and there are no errors, writes a flag file so init only runs once.
  */
 export async function migrateCredentialsToVault(opts: MigrateCredentialsOptions): Promise<MigrateCredentialsResult> {
-  const { factsDb, vectorDb, embeddings, credentialsDb, aliasDb, migrationFlagPath, markDone } = opts;
+  const {
+    factsDb,
+    vectorDb,
+    embeddings,
+    credentialsDb,
+    aliasDb,
+    migrationFlagPath,
+    markDone,
+    writeFn = writeFileSync,
+  } = opts;
   let migrated = 0;
   let skipped = 0;
   const errors: string[] = [];
@@ -135,7 +144,7 @@ export async function migrateCredentialsToVault(opts: MigrateCredentialsOptions)
   // vault" text check) prevents double-migration; the cost is a single DB lookup per boot.
   if (markDone && errors.length === 0) {
     try {
-      (opts.writeFn ?? writeFileSync)(migrationFlagPath, "1", "utf8");
+      writeFn(migrationFlagPath, "1", "utf8");
     } catch (e) {
       capturePluginError(e instanceof Error ? e : new Error(String(e)), {
         subsystem: "credentials",
