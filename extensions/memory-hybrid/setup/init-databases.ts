@@ -756,7 +756,10 @@ export function initializeDatabases(cfg: HybridMemoryConfig, api: ClawdbotPlugin
     const canRoute = (m: string): boolean => {
       if (!m.includes("/")) return true; // bare name → default OpenAI client
       const prefix = m.trim().split("/")[0].toLowerCase();
-      return ROUTABLE_BUILTIN_PROVIDERS.has(prefix) || prefix in pluginProviders;
+      if (ROUTABLE_BUILTIN_PROVIDERS.has(prefix) || prefix in pluginProviders) return true;
+      // Check for env var fallback pattern that resolveClient supports (line 516)
+      const envKey = process.env[`${prefix.toUpperCase()}_API_KEY`];
+      return Boolean(envKey?.trim());
     };
     const gatewayModels = [primary, ...fallbacks]
       .filter((m): m is string => Boolean(m))
