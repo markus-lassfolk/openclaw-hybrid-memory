@@ -526,19 +526,24 @@ export async function withLLMRetry<T>(
       } else {
         delay = Math.pow(3, attempt) * 1000; // 1s, 3s, 9s
       }
-      await new Promise((resolve, reject) => {
-        const timeout = setTimeout(resolve, delay);
+      // Abort-aware backoff sleep: if the signal fires while we are waiting, reject immediately
+      // instead of sleeping through the full delay. The listener is removed on normal resolve to
+      // prevent leaks; the { once: true } option is not relied on alone for cleanup.
+      await new Promise<void>((resolve, reject) => {
+        const onAbort = () => {
+          clearTimeout(timeout);
+          const reason = opts!.signal!.reason;
+          const msg = reason instanceof Error ? reason.message : reason != null ? String(reason) : "Aborted";
+          const abortError = new Error(msg);
+          abortError.name = "AbortError";
+          reject(abortError);
+        };
+        const timeout = setTimeout(() => {
+          opts?.signal?.removeEventListener("abort", onAbort);
+          resolve();
+        }, delay);
         if (opts?.signal) {
-          const onAbort = () => {
-            clearTimeout(timeout);
-            const reason = opts.signal!.reason;
-            const abortError =
-              reason instanceof Error ? reason : new Error(reason != null ? String(reason) : "Aborted");
-            abortError.name = "AbortError";
-            reject(abortError);
-          };
           if (opts.signal.aborted) {
-            clearTimeout(timeout);
             onAbort();
           } else {
             opts.signal.addEventListener("abort", onAbort, { once: true });
@@ -591,7 +596,8 @@ export async function chatCompleteWithRetry(opts: {
   for (let i = 0; i < modelsToTry.length; i++) {
     if (signal?.aborted) {
       const reason = (signal as AbortSignal).reason;
-      const abortError = reason instanceof Error ? reason : new Error(reason != null ? String(reason) : "Aborted");
+      const msg = reason instanceof Error ? reason.message : reason != null ? String(reason) : "Aborted";
+      const abortError = new Error(msg);
       abortError.name = "AbortError";
       throw abortError;
     }

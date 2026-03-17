@@ -16,7 +16,7 @@
  *   - hydeUsedRef state is mutated correctly across multiple calls
  */
 
-import { describe, it, expect, vi, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { runRecallPipelineQuery, type RecallPipelineDeps } from "../services/recall-pipeline.js";
 import type { SearchResult, MemoryEntry } from "../types/memory.js";
 import { createPendingLLMWarnings } from "../services/chat.js";

@@ -165,7 +165,9 @@ export async function runRecallPipelineQuery(
         // The HyDE call above may have completed just before the abort — we must not
         // waste an embedding provider call whose result will be discarded.
         if (directiveAbort.signal.aborted) {
-          throw new Error(`recall pipeline timed out after ${VECTOR_STEP_TIMEOUT_MS}ms`);
+          const abortError = new Error(`recall pipeline timed out after ${VECTOR_STEP_TIMEOUT_MS}ms`);
+          abortError.name = "AbortError";
+          throw abortError;
         }
 
         const vector =
