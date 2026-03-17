@@ -31,7 +31,6 @@ import {
   resolveReflectionModelAndFallbacks,
 } from "../config.js";
 import { versionInfo } from "../versionInfo.js";
-import { safeEmbed } from "../services/embeddings.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { applyApprovedProposal } from "../cli/proposals.js";
 import { runBackup as runBackupFn, runBackupVerify as runBackupVerifyFn } from "../cli/backup.js";
@@ -294,7 +293,7 @@ function buildCliContextServices(ctx: HybridMemCliRegistrationContext, api: Claw
   const discoveredPath = join(dirname(resolvedSqlitePath), ".discovered-categories.json");
   const logSink = { info: (m: string) => console.log(m), warn: (m: string) => console.warn(m) };
   return {
-    runFindDuplicates: (opts) => runFindDuplicates(factsDb, vectorDb, embeddings, safeEmbed, opts, api.logger),
+    runFindDuplicates: (opts) => runFindDuplicates(factsDb, vectorDb, embeddings, opts, api.logger),
     runConsolidate: (opts) => {
       // Skip if OpenAI provider is configured but API key is missing
       if (cfg.embedding?.provider === "openai" && !cfg.embedding?.apiKey) {

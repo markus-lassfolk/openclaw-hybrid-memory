@@ -54,6 +54,11 @@ export interface EmbeddingConfig {
   preferredProviders?: ("ollama" | "openai" | "google")[];
   /** Set by parser from distill.apiKey or llm.providers.google.apiKey when preferredProviders includes "google". */
   googleApiKey?: string;
+  /**
+   * How long (ms) FallbackEmbeddingProvider waits before probing the primary again after a fallback switch.
+   * Must be a finite number > 0. Defaults to 60 000 (1 minute) when not set.
+   */
+  retryIntervalMs?: number;
 }
 
 /** Google Gemini OpenAI-compatible embeddings base URL (same as chat). */
@@ -946,7 +951,7 @@ export class FallbackEmbeddingProvider implements EmbeddingProvider {
   private readonly fallback: EmbeddingProvider | null;
   private switched = false;
   private lastRetryAttempt = 0;
-  private readonly retryIntervalMs = 60000;
+  private readonly retryIntervalMs: number;
   private readonly onSwitch?: (err: unknown) => void;
   private readonly primaryLabel: string;
   private readonly fallbackLabel: string;
@@ -963,7 +968,18 @@ export class FallbackEmbeddingProvider implements EmbeddingProvider {
     onSwitch?: (err: unknown) => void,
     primaryLabel = "ollama",
     fallbackLabel = "openai",
+    retryIntervalMs = 60000,
   ) {
+    if (!Number.isFinite(retryIntervalMs) || retryIntervalMs <= 0) {
+      throw new Error(`FallbackEmbeddingProvider: retryIntervalMs must be a finite number > 0, got ${retryIntervalMs}`);
+    }
+    if (retryIntervalMs < 1000) {
+      // Values below 1 s are valid for tests but will hammer the primary provider in production.
+      // eslint-disable-next-line no-console
+      console.warn(
+        `FallbackEmbeddingProvider: retryIntervalMs=${retryIntervalMs}ms is very low; values under 1000ms may cause excessive primary-probe traffic after a fallback switch.`,
+      );
+    }
     if (fallback && fallback.dimensions !== primary.dimensions) {
       throw new Error(
         `Primary (${primary.modelName}: ${primary.dimensions}d) and fallback ` +
@@ -976,8 +992,40 @@ export class FallbackEmbeddingProvider implements EmbeddingProvider {
     this.onSwitch = onSwitch;
     this.primaryLabel = primaryLabel;
     this.fallbackLabel = fallbackLabel;
+    this.retryIntervalMs = retryIntervalMs;
     this.dimensions = primary.dimensions;
     this.modelName = primary.modelName;
+  }
+
+  /**
+   * Attempt to return to the primary provider after a fallback switch.
+   * Updates `switched`, `active`, and `modelName` on success.
+   * Returns the result if primary recovered, or null if still failing (stay on fallback).
+   */
+  private async tryReturnToPrimary<T>(
+    fn: (provider: EmbeddingProvider) => Promise<T>,
+    phase: string,
+  ): Promise<T | null> {
+    this.lastRetryAttempt = Date.now();
+    try {
+      const result = await fn(this.primary);
+      this.active = this.primary;
+      this.switched = false;
+      this.modelName = this.active.modelName;
+      return result;
+    } catch (err) {
+      const asErr = err instanceof Error ? err : new Error(String(err));
+      // Skip reporting config errors (404/403/401 — operator issues), 429 (rate limit), and circuit breaker open — not bugs (#329, #394, #385, #397, #458).
+      if (!isConfigError(asErr) && !is429OrWrapped(asErr) && !isOllamaCircuitBreakerOpen(asErr)) {
+        capturePluginError(asErr, {
+          subsystem: "embeddings",
+          operation: "fallback-retry-primary",
+          phase,
+        });
+      }
+      // Primary still failing — continue using fallback
+      return null;
+    }
   }
 
   async embed(text: string): Promise<number[]> {
@@ -985,25 +1033,8 @@ export class FallbackEmbeddingProvider implements EmbeddingProvider {
       return this.active.embed(text);
     }
     if (this.switched && Date.now() - this.lastRetryAttempt >= this.retryIntervalMs) {
-      this.lastRetryAttempt = Date.now();
-      try {
-        const result = await this.primary.embed(text);
-        this.active = this.primary;
-        this.switched = false;
-        this.modelName = this.active.modelName;
-        return result;
-      } catch (err) {
-        const asErr = err instanceof Error ? err : new Error(String(err));
-        // Skip reporting config errors (404/403/401 — operator issues), 429 (rate limit), and circuit breaker open — not bugs (#329, #394, #385, #397, #458).
-        if (!isConfigError(asErr) && !is429OrWrapped(asErr) && !isOllamaCircuitBreakerOpen(asErr)) {
-          capturePluginError(asErr, {
-            subsystem: "embeddings",
-            operation: "fallback-retry-primary",
-            phase: "embed",
-          });
-        }
-        // Primary still failing — continue using fallback
-      }
+      const recovered = await this.tryReturnToPrimary((p) => p.embed(text), "embed");
+      if (recovered !== null) return recovered;
     }
     if (this.switched) {
       return this.active.embed(text);
@@ -1034,25 +1065,8 @@ export class FallbackEmbeddingProvider implements EmbeddingProvider {
       return this.active.embedBatch(texts);
     }
     if (this.switched && Date.now() - this.lastRetryAttempt >= this.retryIntervalMs) {
-      this.lastRetryAttempt = Date.now();
-      try {
-        const result = await this.primary.embedBatch(texts);
-        this.active = this.primary;
-        this.switched = false;
-        this.modelName = this.active.modelName;
-        return result;
-      } catch (err) {
-        const asErr = err instanceof Error ? err : new Error(String(err));
-        // Skip reporting config errors (404/403/401 — operator issues), 429 (rate limit), and circuit breaker open — not bugs (#329, #394, #385, #397, #458).
-        if (!isConfigError(asErr) && !is429OrWrapped(asErr) && !isOllamaCircuitBreakerOpen(asErr)) {
-          capturePluginError(asErr, {
-            subsystem: "embeddings",
-            operation: "fallback-retry-primary",
-            phase: "embedBatch",
-          });
-        }
-        // Primary still failing — continue using fallback
-      }
+      const recovered = await this.tryReturnToPrimary((p) => p.embedBatch(texts), "embedBatch");
+      if (recovered !== null) return recovered;
     }
     if (this.switched) {
       return this.active.embedBatch(texts);
@@ -1095,7 +1109,12 @@ export class ChainEmbeddingProvider implements EmbeddingProvider {
   readonly dimensions: number;
   modelName: string;
   get activeProvider(): string {
-    return this.labels[this.activeIndex];
+    // When the active provider is itself a FallbackEmbeddingProvider that has switched internally,
+    // prefer its own activeProvider over the chain's label for accurate reporting (#560).
+    // The `?.activeProvider` can be undefined: EmbeddingProvider.activeProvider is optional
+    // (`?: string`), so providers that don't implement it will hit the `??` fallback and return
+    // the chain's own label. Both branches are intentionally reachable.
+    return this.providers[this.activeIndex]?.activeProvider ?? this.labels[this.activeIndex];
   }
 
   constructor(providers: EmbeddingProvider[], labels: string[]) {
@@ -1186,7 +1205,7 @@ export class ChainEmbeddingProvider implements EmbeddingProvider {
  * - provider='onnx'   → OnnxEmbeddingProvider (with optional OpenAI fallback if apiKey set)
  */
 export function createEmbeddingProvider(cfg: EmbeddingConfig, onFallback?: (err: unknown) => void): EmbeddingProvider {
-  const { provider, model, apiKey, models, dimensions, endpoint, batchSize, preferredProviders } = cfg;
+  const { provider, model, apiKey, models, dimensions, endpoint, batchSize, preferredProviders, retryIntervalMs } = cfg;
 
   if (preferredProviders && preferredProviders.length > 1) {
     const chain: EmbeddingProvider[] = [];
@@ -1263,7 +1282,7 @@ export function createEmbeddingProvider(cfg: EmbeddingConfig, onFallback?: (err:
       const openaiModels = models?.length ? models : ["text-embedding-3-small"];
       try {
         const fallback = new Embeddings(openaiClient, openaiModels, dimensions, batchSize);
-        return new FallbackEmbeddingProvider(primary, fallback, onFallback);
+        return new FallbackEmbeddingProvider(primary, fallback, onFallback, "ollama", "openai", retryIntervalMs);
       } catch (err) {
         // Fallback creation failed (e.g. Ollama dimensions exceed all OpenAI model limits).
         // Warn the user so they know their fallback isn't working.
@@ -1311,7 +1330,7 @@ export function createEmbeddingProvider(cfg: EmbeddingConfig, onFallback?: (err:
           }
           onFallback?.(err);
         };
-        return new FallbackEmbeddingProvider(primary, fallback, onSwitch, "onnx", "openai");
+        return new FallbackEmbeddingProvider(primary, fallback, onSwitch, "onnx", "openai", retryIntervalMs);
       } catch (err) {
         console.warn(
           `memory-hybrid: Failed to create OpenAI fallback for ONNX provider: ${err instanceof Error ? err.message : String(err)}. Continuing with ONNX-only (no fallback).`,

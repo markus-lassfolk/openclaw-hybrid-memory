@@ -516,6 +516,7 @@ export async function withLLMRetry<T>(
         }
         throw retryError;
       }
+
       // 429: respect Retry-After header if present; otherwise use exponential backoff (2s → 4s → 8s)
       let delay: number;
       if (is429) {
@@ -525,7 +526,30 @@ export async function withLLMRetry<T>(
       } else {
         delay = Math.pow(3, attempt) * 1000; // 1s, 3s, 9s
       }
-      await new Promise((r) => setTimeout(r, delay));
+      // Abort-aware backoff sleep: if the signal fires while we are waiting, reject immediately
+      // instead of sleeping through the full delay. The listener is removed on normal resolve to
+      // prevent leaks; the { once: true } option is not relied on alone for cleanup.
+      await new Promise<void>((resolve, reject) => {
+        const onAbort = () => {
+          clearTimeout(timeout);
+          const reason = opts!.signal!.reason;
+          const msg = reason instanceof Error ? reason.message : reason != null ? String(reason) : "Aborted";
+          const abortError = new Error(msg);
+          abortError.name = "AbortError";
+          reject(abortError);
+        };
+        const timeout = setTimeout(() => {
+          opts?.signal?.removeEventListener("abort", onAbort);
+          resolve();
+        }, delay);
+        if (opts?.signal) {
+          if (opts.signal.aborted) {
+            onAbort();
+          } else {
+            opts.signal.addEventListener("abort", onAbort, { once: true });
+          }
+        }
+      });
     }
   }
   throw new Error("unreachable");
@@ -572,7 +596,8 @@ export async function chatCompleteWithRetry(opts: {
   for (let i = 0; i < modelsToTry.length; i++) {
     if (signal?.aborted) {
       const reason = (signal as AbortSignal).reason;
-      const abortError = reason instanceof Error ? reason : new Error(reason != null ? String(reason) : "Aborted");
+      const msg = reason instanceof Error ? reason.message : reason != null ? String(reason) : "Aborted";
+      const abortError = new Error(msg);
       abortError.name = "AbortError";
       throw abortError;
     }
