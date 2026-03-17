@@ -330,6 +330,84 @@ describe("preFilterSessions", () => {
     expect(result.skipped).not.toContain(path);
   });
 
+  it("#488: retries with truncated sample on context-length error and classifies correctly", async () => {
+    const path = join(tmpDir, "session.jsonl");
+    writeFileSync(path, msg("user", "Remember I prefer dark mode always"), "utf-8");
+
+    const contextLengthErr = Object.assign(new Error("Input length 768 exceeds maximum allowed token size 512"), {
+      status: 400,
+    });
+    let callCount = 0;
+    const mockClient = {
+      chat: {
+        completions: {
+          create: vi.fn().mockImplementation(() => {
+            callCount++;
+            if (callCount === 1) return Promise.reject(contextLengthErr);
+            // Second call with truncated input succeeds
+            return Promise.resolve({ choices: [{ message: { content: "YES" } }] });
+          }),
+        },
+      },
+    } as unknown as import("openai").default;
+
+    const result = await preFilterSessions([path], defaultConfig, { ollamaClient: mockClient });
+
+    // Should have retried with truncated input and kept the session
+    expect(result.kept).toContain(path);
+    expect(result.skipped).not.toContain(path);
+    expect(result.ollamaUnavailable).toBe(false);
+    expect(callCount).toBe(2);
+  });
+
+  it("#488: keeps session conservatively when truncated retry also fails with context-length error", async () => {
+    const path = join(tmpDir, "session.jsonl");
+    writeFileSync(path, msg("user", "Remember I prefer dark mode always"), "utf-8");
+
+    const contextLengthErr = Object.assign(new Error("Input length 768 exceeds maximum allowed token size 512"), {
+      status: 400,
+    });
+    const mockClient = {
+      chat: {
+        completions: {
+          create: vi.fn().mockRejectedValue(contextLengthErr),
+        },
+      },
+    } as unknown as import("openai").default;
+
+    const result = await preFilterSessions([path], defaultConfig, { ollamaClient: mockClient });
+
+    // Both attempts failed — keep conservatively
+    expect(result.kept).toContain(path);
+    expect(result.skipped).not.toContain(path);
+    expect(result.ollamaUnavailable).toBe(false);
+  });
+
+  it("#488: does not set ollamaUnavailable on context-length error (Ollama is reachable)", async () => {
+    const paths = [join(tmpDir, "session1.jsonl"), join(tmpDir, "session2.jsonl")];
+    for (const p of paths) {
+      writeFileSync(p, msg("user", "Remember that I like TypeScript always"), "utf-8");
+    }
+
+    const contextLengthErr = Object.assign(new Error("Input length 768 exceeds maximum allowed token size 512"), {
+      status: 400,
+    });
+    const mockClient = {
+      chat: {
+        completions: {
+          create: vi.fn().mockRejectedValue(contextLengthErr),
+        },
+      },
+    } as unknown as import("openai").default;
+
+    const result = await preFilterSessions(paths, defaultConfig, { ollamaClient: mockClient });
+
+    // Ollama IS reachable — just input is too long. ollamaUnavailable must remain false.
+    expect(result.ollamaUnavailable).toBe(false);
+    // Both sessions kept conservatively
+    expect(result.kept).toEqual(paths);
+  });
+
   it("strips ollama/ prefix from model name when classifying", async () => {
     const path = join(tmpDir, "session.jsonl");
     writeFileSync(path, msg("user", "Remember I prefer dark mode always"), "utf-8");
