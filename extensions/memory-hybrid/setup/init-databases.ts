@@ -52,6 +52,26 @@ import { isNanoModel, isHeavyModel, isLightModel } from "../utils/model-tier.js"
  */
 const ROUTABLE_BUILTIN_PROVIDERS = new Set(["google", "openai", "anthropic", "ollama", "openrouter", "minimax"]);
 
+/**
+ * Extract gateway configuration from environment and plugin config.
+ * Centralized to avoid duplicating this logic across buildMultiProviderOpenAI and initializeDatabases.
+ */
+function extractGatewayConfig(cfg: HybridMemoryConfig): {
+  gatewayPortRaw: string | undefined;
+  gatewayPort: number | undefined;
+  gatewayAuthResolved: string | undefined;
+  gatewayToken: string | undefined;
+  gatewayBaseUrl: string | undefined;
+} {
+  const gatewayPortRaw = process.env.OPENCLAW_GATEWAY_PORT;
+  const gatewayPort = gatewayPortRaw ? Number.parseInt(gatewayPortRaw, 10) : undefined;
+  const gatewayAuthResolved = (cfg.gateway?.auth as ResolvedGatewayAuthConfig | undefined)?._resolvedToken;
+  const gatewayToken = gatewayAuthResolved ?? process.env.OPENCLAW_GATEWAY_TOKEN;
+  const gatewayBaseUrl =
+    gatewayPort && gatewayPort >= 1 && gatewayPort <= 65535 ? `http://127.0.0.1:${gatewayPort}/v1` : undefined;
+  return { gatewayPortRaw, gatewayPort, gatewayAuthResolved, gatewayToken, gatewayBaseUrl };
+}
+
 /** Known provider OpenAI-compatible base URLs. */
 const GOOGLE_GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/";
 /** Default Ollama server base URL (without /v1 path). */
@@ -245,14 +265,9 @@ function buildMultiProviderOpenAI(
     if (!key?.trim()) return undefined;
     return resolveSecretRef(key);
   };
-  const gatewayPortRaw = process.env.OPENCLAW_GATEWAY_PORT;
-  const gatewayPort = gatewayPortRaw ? Number.parseInt(gatewayPortRaw, 10) : undefined;
-  // Resolve gateway auth token: prefer cfg.gateway.auth.token (SecretRef) over env var fallback.
-  // The parser stores the resolved value as non-enumerable _resolvedToken so it never appears in
-  // JSON dumps while remaining accessible here at runtime.
+  const { gatewayPortRaw, gatewayPort, gatewayAuthResolved, gatewayToken, gatewayBaseUrl } = extractGatewayConfig(cfg);
   // Fail closed: if gateway.auth.token is configured but cannot be resolved, throw rather than
   // silently falling back to OPENCLAW_GATEWAY_TOKEN — a stale env token would mask rollout mistakes.
-  const gatewayAuthResolved = (cfg.gateway?.auth as ResolvedGatewayAuthConfig | undefined)?._resolvedToken;
   if (cfg.gateway?.auth?.token && !gatewayAuthResolved) {
     throw new Error(
       `memory-hybrid: gateway.auth.token is configured (SecretRef "${cfg.gateway.auth.token}") but could not be resolved. ` +
@@ -260,9 +275,6 @@ function buildMultiProviderOpenAI(
         `Not falling back to OPENCLAW_GATEWAY_TOKEN to prevent silent auth misconfiguration.`,
     );
   }
-  const gatewayToken = gatewayAuthResolved ?? process.env.OPENCLAW_GATEWAY_TOKEN;
-  const gatewayBaseUrl =
-    gatewayPort && gatewayPort >= 1 && gatewayPort <= 65535 ? `http://127.0.0.1:${gatewayPort}/v1` : undefined;
   if (gatewayPortRaw && (!gatewayPort || gatewayPort < 1 || gatewayPort > 65535)) {
     api.logger.warn?.(
       `memory-hybrid: OPENCLAW_GATEWAY_PORT must be 1-65535 (got '${gatewayPortRaw}'); falling back to direct OpenAI.`,
@@ -809,12 +821,7 @@ export function initializeDatabases(cfg: HybridMemoryConfig, api: ClawdbotPlugin
     // would throw UnconfiguredProviderError when used, so filter them out here (issue #487).
     const pluginProviders = (cfg.llm?.providers ?? {}) as Record<string, unknown>;
     // Extract gateway config for OAuth routing check (matches buildMultiProviderOpenAI logic)
-    const gatewayPortRaw = process.env.OPENCLAW_GATEWAY_PORT;
-    const gatewayPort = gatewayPortRaw ? Number.parseInt(gatewayPortRaw, 10) : undefined;
-    const gatewayAuthResolved = (cfg.gateway?.auth as ResolvedGatewayAuthConfig | undefined)?._resolvedToken;
-    const gatewayToken = gatewayAuthResolved ?? process.env.OPENCLAW_GATEWAY_TOKEN;
-    const gatewayBaseUrl =
-      gatewayPort && gatewayPort >= 1 && gatewayPort <= 65535 ? `http://127.0.0.1:${gatewayPort}/v1` : undefined;
+    const { gatewayBaseUrl, gatewayToken } = extractGatewayConfig(cfg);
     // Normalize auth.order keys to lowercase so lookups match the lowercased prefix.
     const authOrder = cfg.auth?.order
       ? Object.fromEntries(Object.entries(cfg.auth.order).map(([k, v]) => [k.toLowerCase(), v]))
