@@ -43,8 +43,6 @@
   },
   "dependencies": {
     "@lancedb/lancedb": "^0.26.2",
-    "@types/better-sqlite3": "^7.6.13",
-    "@types/node": "^25.2.3",
     "better-sqlite3": "^12.0.0"
   },
   "openclaw": {
@@ -67,6 +65,8 @@
   },
   "devDependencies": {
     "@biomejs/biome": "^1.9.0",
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^25.2.3",
     "@vitest/coverage-v8": "^4.0.18",
     "knip": "^5.0.0",
     "typescript": "^5.9.3",
