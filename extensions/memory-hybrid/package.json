@@ -37,16 +37,14 @@
     "embeddings"
   ],
   "peerDependencies": {
-    "@sinclair/typebox": "^0.34.48",
     "openclaw": ">=2026.3.8",
-    "openai": "^6.16.0"
+    "openai": "^6.16.0",
+    "@sinclair/typebox": "^0.34.48"
   },
   "dependencies": {
     "@lancedb/lancedb": "0.26.2",
     "@types/better-sqlite3": "7.6.13",
-    "@types/node": "^20.0.0",
-    "better-sqlite3": "12.8.0",
-    "js-yaml": "4.1.1"
+    "better-sqlite3": "12.8.0"
   },
   "openclaw": {
     "extensions": [
@@ -69,7 +67,7 @@
   "devDependencies": {
     "@eslint/js": "^9.0.0",
     "openai": "^6.16.0",
-    "@types/js-yaml": "^4.0.9",
+    "@types/node": "^25.2.3",
     "@vitest/coverage-v8": "^4.0.18",
     "eslint": "^9.0.0",
     "eslint-config-prettier": "^10.0.0",
