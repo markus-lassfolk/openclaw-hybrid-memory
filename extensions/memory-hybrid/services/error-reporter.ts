@@ -5,7 +5,7 @@
  * - consent: true by default — user must explicitly opt OUT
  * - No PII transmission: events rebuilt from scratch using allowlist
  * - MAX_BREADCRUMBS: 10 — only plugin.* category allowed, message/data stripped
- * - beforeSend rebuilds event from scratch using allowlist
+ * - sanitizeEvent() rebuilds event from scratch using allowlist before sending
  * - NEVER include: memory text, prompts, API keys, home paths, IPs, emails
  * - Rate limiting: 60s dedup window for same error fingerprint
  *
@@ -493,7 +493,7 @@ class GlitchTipReporter {
     const lines = error.stack.split("\n").slice(1); // skip "Error: message" first line
     const frames: ReportFrame[] = lines
       .map((line): ReportFrame | null => {
-        const match = line.match(/at (?:(.+?) \()?(.+?):(\d+):(\d+)\)?/);
+        const match = line.match(/at (?:([^()\n]+) \()?([^)\n]+):(\d+):(\d+)\)?/);
         if (!match) return null;
         return {
           function: match[1] || "<anonymous>",
