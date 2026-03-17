@@ -793,10 +793,7 @@ export function initializeDatabases(cfg: HybridMemoryConfig, api: ClawdbotPlugin
     "google/gemini-2.0-flash-lite",
     "anthropic/claude-3-5-haiku",
   ];
-  if (
-    !cfg.llm ||
-    ((cfg.llm.default ?? []).length === 0 && (cfg.llm.heavy ?? []).length === 0 && (cfg.llm.nano ?? []).length === 0)
-  ) {
+  if ((cfg.llm.default ?? []).length === 0 && (cfg.llm.heavy ?? []).length === 0 && (cfg.llm.nano ?? []).length === 0) {
     const agentModel = (api.config as Record<string, unknown>)?.agents as Record<string, unknown> | undefined;
     const agentDefaults = agentModel?.defaults as Record<string, unknown> | undefined;
     const modelCfg = agentDefaults?.model as Record<string, unknown> | undefined;
