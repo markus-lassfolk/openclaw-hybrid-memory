@@ -45,6 +45,13 @@ import { VerificationStore } from "../services/verification-store.js";
 import { CostTracker } from "../backends/cost-tracker.js";
 import { isNanoModel, isHeavyModel, isLightModel } from "../utils/model-tier.js";
 
+/**
+ * Provider prefixes that resolveClient() handles natively without explicit llm.providers config.
+ * Keep in sync with the built-in provider cases in resolveClient() (setup/resolve-client.ts).
+ * If resolveClient adds a new built-in provider, add it here too.
+ */
+const ROUTABLE_BUILTIN_PROVIDERS = new Set(["google", "openai", "anthropic", "ollama", "openrouter", "minimax"]);
+
 /** Known provider OpenAI-compatible base URLs. */
 const GOOGLE_GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/";
 /** Default Ollama server base URL (without /v1 path). */
@@ -767,6 +774,11 @@ export function initializeDatabases(cfg: HybridMemoryConfig, api: ClawdbotPlugin
         api.logger.info?.(
           `memory-hybrid: using gateway provider "${name}" for llm.providers (add ${normalizedName}/<model> to llm.default or llm.heavy to use)`,
         );
+      } else {
+        // Plugin already has a key for this provider; still register the original-cased name so
+        // the model-defaults loop below can pick up gateway models[] entries for this provider.
+        mergedProviderNames.push(normalizedName);
+        mergedProviderOriginalNames.set(normalizedName, name);
       }
     }
   }
@@ -792,16 +804,15 @@ export function initializeDatabases(cfg: HybridMemoryConfig, api: ClawdbotPlugin
     const fallbacks = Array.isArray(modelCfg?.fallbacks)
       ? (modelCfg.fallbacks as unknown[]).filter((m): m is string => typeof m === "string" && m.trim().length > 0)
       : [];
-    // Provider prefixes that resolveClient handles without explicit llm.providers config.
-    // Models from agents.defaults.model with any other prefix (e.g. "Local/S", "custom/X")
+    // Models from agents.defaults.model with an unknown provider prefix (e.g. "Local/S", "custom/X")
     // would throw UnconfiguredProviderError when used, so filter them out here (issue #487).
-    const ROUTABLE_BUILTIN_PROVIDERS = new Set(["google", "openai", "anthropic", "ollama", "openrouter", "minimax"]);
     const pluginProviders = (cfg.llm?.providers ?? {}) as Record<string, unknown>;
     const canRoute = (m: string): boolean => {
-      if (!m.includes("/")) return true; // bare name → default OpenAI client
+      if (!m.includes("/")) return true; // bare name — normalizeModelId() may rewrite to a prefixed form (e.g. gemini-*, claude-*, MiniMax-*)
       const prefix = m.trim().split("/")[0].toLowerCase();
-      if (ROUTABLE_BUILTIN_PROVIDERS.has(prefix) || prefix in pluginProviders) return true;
-      // Check for env var fallback pattern that resolveClient supports (line 516)
+      if (ROUTABLE_BUILTIN_PROVIDERS.has(prefix) || Object.hasOwn(pluginProviders, prefix)) return true;
+      // Read-only env var check: safe even with user-supplied prefix since we only read env vars.
+      // Mirrors resolveClient()'s <PREFIX>_API_KEY fallback (see resolveClient in setup/resolve-client.ts).
       const envKey = process.env[`${prefix.toUpperCase()}_API_KEY`];
       return Boolean(envKey?.trim());
     };
@@ -813,7 +824,7 @@ export function initializeDatabases(cfg: HybridMemoryConfig, api: ClawdbotPlugin
         api.logger.warn?.(
           `memory-hybrid: skipping gateway model "${m}" from agents.defaults.model — ` +
             `provider "${prefix}" is not a known built-in and is not configured in llm.providers. ` +
-            `To use this model add llm.providers.${prefix.toLowerCase()}.apiKey to plugin config.`,
+            `To use this model configure llm.providers.${prefix.toLowerCase()} (apiKey and/or baseURL) in plugin config.`,
         );
         return false;
       });
