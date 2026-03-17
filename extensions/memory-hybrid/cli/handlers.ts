@@ -2451,7 +2451,7 @@ export async function runExtractReinforcementForCli(
     }
 
     const reinforcementRegex = getReinforcementSignalRegex();
-    const result = runReinforcementExtract({ filePaths: extractionPaths, reinforcementRegex });
+    const result = await runReinforcementExtract({ filePaths: extractionPaths, reinforcementRegex });
 
     if (opts.verbose) {
       for (const incident of result.incidents) {
