@@ -283,7 +283,7 @@ export async function preFilterSessions(
             if (isConnectionError(retryErr)) {
               ollamaUnavailable = true;
             }
-            // Still too long or other error — keep conservatively
+            // Truncated input also too long, connection error, or other failure — keep conservatively
             kept.push(filePath);
           }
         } else {
