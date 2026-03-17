@@ -43,7 +43,7 @@
   },
   "dependencies": {
     "@lancedb/lancedb": "0.26.2",
-    "@types/better-sqlite3": "^7.6.13",
+    "@types/better-sqlite3": "7.6.13",
     "better-sqlite3": "12.8.0",
     "js-yaml": "4.1.1"
   },
