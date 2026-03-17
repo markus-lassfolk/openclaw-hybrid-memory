@@ -73,7 +73,6 @@
     "@types/node": "^25.2.3",
     "@vitest/coverage-v8": "^4.0.18",
     "eslint": "^9.0.0",
-    "eslint-config-prettier": "^10.0.0",
     "jscpd": "^4.0.0",
     "knip": "^5.0.0",
     "prettier": "^3.0.0",
