@@ -748,7 +748,28 @@ export function initializeDatabases(cfg: HybridMemoryConfig, api: ClawdbotPlugin
     const fallbacks = Array.isArray(modelCfg?.fallbacks)
       ? (modelCfg.fallbacks as unknown[]).filter((m): m is string => typeof m === "string" && m.trim().length > 0)
       : [];
-    const gatewayModels = [primary, ...fallbacks].filter((m): m is string => Boolean(m));
+    // Provider prefixes that resolveClient handles without explicit llm.providers config.
+    // Models from agents.defaults.model with any other prefix (e.g. "Local/S", "custom/X")
+    // would throw UnconfiguredProviderError when used, so filter them out here (issue #487).
+    const ROUTABLE_BUILTIN_PROVIDERS = new Set(["google", "openai", "anthropic", "ollama", "openrouter", "minimax"]);
+    const pluginProviders = (cfg.llm?.providers ?? {}) as Record<string, unknown>;
+    const canRoute = (m: string): boolean => {
+      if (!m.includes("/")) return true; // bare name → default OpenAI client
+      const prefix = m.trim().split("/")[0].toLowerCase();
+      return ROUTABLE_BUILTIN_PROVIDERS.has(prefix) || prefix in pluginProviders;
+    };
+    const gatewayModels = [primary, ...fallbacks]
+      .filter((m): m is string => Boolean(m))
+      .filter((m) => {
+        if (canRoute(m)) return true;
+        const prefix = m.trim().split("/")[0];
+        api.logger.warn?.(
+          `memory-hybrid: skipping gateway model "${m}" from agents.defaults.model — ` +
+            `provider "${prefix}" is not a known built-in and is not configured in llm.providers. ` +
+            `To use this model add llm.providers.${prefix.toLowerCase()}.apiKey to plugin config.`,
+        );
+        return false;
+      });
 
     if (gatewayModels.length > 0) {
       // Deduplicate while preserving order
