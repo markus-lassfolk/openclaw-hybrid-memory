@@ -369,7 +369,10 @@ class GlitchTipReporter {
   ) {
     const url = new URL(dsn);
     this.publicKey = url.username;
-    const pathSegments = url.pathname.replace(/^\/+|\/+$/g, "").split("/").filter(Boolean);
+    const pathSegments = url.pathname
+      .replace(/^\/+|\/+$/g, "")
+      .split("/")
+      .filter(Boolean);
     const projectId = pathSegments.pop() || "";
     const basePath = pathSegments.length > 0 ? `/${pathSegments.join("/")}` : "";
     this.storeUrl = `${url.protocol}//${url.host}${basePath}/api/${projectId}/store/`;
@@ -517,7 +520,7 @@ class GlitchTipReporter {
   private async send(event: GlitchTipEvent): Promise<void> {
     const timestamp = Math.floor(Date.now() / 1000);
     const authHeader = `Sentry sentry_version=7, sentry_timestamp=${timestamp}, sentry_client=openclaw-hybrid-memory/native, sentry_key=${this.publicKey}`;
-    await fetch(this.storeUrl, {
+    const resp = await fetch(this.storeUrl, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -526,6 +529,7 @@ class GlitchTipReporter {
       body: JSON.stringify(event),
       signal: AbortSignal.timeout(5000),
     });
+    await resp.text();
   }
 }
 
