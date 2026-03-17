@@ -736,7 +736,7 @@ export function initializeDatabases(cfg: HybridMemoryConfig, api: ClawdbotPlugin
     (gwConfig?.llm as Record<string, unknown> | undefined)?.providers ??
     (gwConfig?.providers as Record<string, unknown> | undefined);
   const mergedProviderNames: string[] = [];
-  if (!cfg.llm) (cfg as Record<string, unknown>).llm = { providers: {} };
+  if (!cfg.llm) (cfg as Record<string, unknown>).llm = { providers: {}, default: [], heavy: [], nano: [] };
   const plm = cfg.llm as Record<string, unknown>;
   if (!plm.providers || typeof plm.providers !== "object") plm.providers = {};
   const prov = plm.providers as Record<string, Record<string, unknown>>;
