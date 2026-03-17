@@ -1352,7 +1352,8 @@ describe("gateway model auto-derivation — unknown provider prefix filter", () 
   });
 
   it("keeps bare model names (no provider prefix) during auto-derivation", () => {
-    // Bare names like "gpt-4o" have no "/" → canRoute returns true; they route to default OpenAI.
+    // Bare names like "gpt-4o" have no "/" → canRoute returns true; they are preserved during
+    // auto-derivation without prefix filtering (normalizeModelId may route them further).
     const cfg = getTestConfig(tmpDir);
     const api = makeMockApi({
       resolvePath: (p: string) => (p.startsWith("/") ? p : join(tmpDir, p)),
@@ -1371,5 +1372,39 @@ describe("gateway model auto-derivation — unknown provider prefix filter", () 
 
     const defaultList = Array.isArray(cfg.llm?.default) ? cfg.llm.default : [];
     expect(defaultList).toContain("gpt-4o");
+  });
+
+  it("keeps OAuth-routable models (auth.order configured for prefix) during auto-derivation", () => {
+    // Models whose provider prefix is registered in auth.order with a non-API-key profile are
+    // routed through the gateway via OAuth — canRoute should return true for them.
+    const cfg = getTestConfig(tmpDir, {
+      auth: {
+        order: {
+          // "deepseek:oauth" is not an API-key-only profile → hasOAuthProfiles returns true
+          deepseek: ["deepseek:oauth"],
+        },
+      },
+    });
+    process.env.OPENCLAW_GATEWAY_PORT = "4000";
+    process.env.OPENCLAW_GATEWAY_TOKEN = "test-gateway-token";
+
+    const api = makeMockApi({
+      resolvePath: (p: string) => (p.startsWith("/") ? p : join(tmpDir, p)),
+      config: {
+        agents: {
+          defaults: {
+            model: {
+              primary: "deepseek/chat",
+            },
+          },
+        },
+      },
+    });
+
+    ctx = initializeDatabases(cfg, api as never);
+
+    const defaultList = Array.isArray(cfg.llm?.default) ? cfg.llm.default : [];
+    // Provider "deepseek" is OAuth-routable via gateway → model must be kept
+    expect(defaultList).toContain("deepseek/chat");
   });
 });

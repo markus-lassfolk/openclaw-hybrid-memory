@@ -815,7 +815,10 @@ export function initializeDatabases(cfg: HybridMemoryConfig, api: ClawdbotPlugin
     const gatewayToken = gatewayAuthResolved ?? process.env.OPENCLAW_GATEWAY_TOKEN;
     const gatewayBaseUrl =
       gatewayPort && gatewayPort >= 1 && gatewayPort <= 65535 ? `http://127.0.0.1:${gatewayPort}/v1` : undefined;
-    const authOrder = cfg.auth?.order;
+    // Normalize auth.order keys to lowercase so lookups match the lowercased prefix.
+    const authOrder = cfg.auth?.order
+      ? Object.fromEntries(Object.entries(cfg.auth.order).map(([k, v]) => [k.toLowerCase(), v]))
+      : undefined;
     const canRoute = (m: string): boolean => {
       if (!m.includes("/")) return true; // bare name — normalizeModelId() may rewrite to a prefixed form (e.g. gemini-*, claude-*, MiniMax-*)
       const prefix = m.trim().split("/")[0].toLowerCase();
@@ -839,6 +842,13 @@ export function initializeDatabases(cfg: HybridMemoryConfig, api: ClawdbotPlugin
         );
         return false;
       });
+
+    if (gatewayModels.length === 0 && [primary, ...fallbacks].some(Boolean)) {
+      api.logger.warn?.(
+        `memory-hybrid: all models from agents.defaults.model were filtered out (unknown provider prefixes). ` +
+          `No LLM tiers auto-configured. Set llm.default explicitly or add provider entries to llm.providers.`,
+      );
+    }
 
     if (gatewayModels.length > 0) {
       // Deduplicate while preserving order
