@@ -1,4 +1,4 @@
-import { defineConfig } from "vitest/config";
+import { defineConfig, coverageConfigDefaults } from "vitest/config";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -16,7 +16,8 @@ export default defineConfig({
     include: ["tests/**/*.test.ts"],
     coverage: {
       provider: "v8",
-      include: ["index.ts", "config.ts", "versionInfo.ts"],
+      include: ["**/*.ts"],
+      exclude: [...coverageConfigDefaults.exclude, "tests/**", "types/**"],
     },
   },
 });
