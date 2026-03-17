@@ -29,6 +29,22 @@ export const SENSITIVE_PATTERNS = [
   /:\/\/[^\s:@]+:[^\s@]+@[^\s/]+/, // Connection strings with embedded passwords (e.g., mongodb://user:pass@host) - Note: usernames with colons will fail
 ];
 
+/** Patterns for isCredentialLike - more specific than SENSITIVE_PATTERNS to avoid false positives */
+const CREDENTIAL_LIKE_PATTERNS = [
+  /password/i,
+  /api.?key/i,
+  /secret/i,
+  /token\s+is/i, // More specific: only "token is" not just "token"
+  /\bbearer\b/i,
+  /\bauthorization\b/i,
+  /\bcredentials?\b/i,
+  /\bssn\b/i,
+  /credit.?card/i,
+  /AKIA[0-9A-Z]{16}/,
+  /-----BEGIN .*PRIVATE KEY/,
+  /:\/\/[^\s:@]+:[^\s@]+@[^\s/]+/,
+];
+
 /** Patterns that suggest a credential value - for auto-detect prompt to store */
 const CREDENTIAL_PATTERNS: Array<{ regex: RegExp; type: string; hint: string }> = [
   { regex: /Bearer\s+eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/i, type: "bearer", hint: "Bearer/JWT token" },
@@ -80,7 +96,7 @@ export function isCredentialLike(
   const e = (entity ?? "").toLowerCase();
   if (["api_key", "password", "token", "secret", "bearer"].some((x) => k.includes(x) || e.includes(x))) return true;
   if (value && value.length >= 8 && /^(eyJ|sk-|ghp_|gho_|xox[baprs]-)/i.test(value)) return true;
-  return CREDENTIAL_PATTERNS.some((p) => p.regex.test(text)) || SENSITIVE_PATTERNS.some((r) => r.test(text));
+  return CREDENTIAL_PATTERNS.some((p) => p.regex.test(text)) || CREDENTIAL_LIKE_PATTERNS.some((r) => r.test(text));
 }
 
 export const VAULT_POINTER_PREFIX = "vault:";
