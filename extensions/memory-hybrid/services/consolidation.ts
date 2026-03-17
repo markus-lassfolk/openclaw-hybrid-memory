@@ -202,6 +202,8 @@ export async function runConsolidate(
     let mergedText: string;
     try {
       const { withLLMRetry } = await import("./chat.js");
+      // Uses withCostFeature context-wrapper (rather than a feature: param) because
+      // openai.chat.completions.create is called directly here, not via chatCompleteWithRetry.
       const resp = await withCostFeature("consolidation", () =>
         withLLMRetry(
           () =>

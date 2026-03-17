@@ -359,7 +359,7 @@ export async function runReflectionRules(
       openai,
       fallbackModels: opts.fallbackModels ?? [],
       label: "memory-hybrid: reflect-rules",
-      feature: "reflection",
+      feature: "reflection-rules",
     });
   } catch (err) {
     logger.warn(`memory-hybrid: reflect-rules LLM failed: ${err}`);
@@ -547,7 +547,7 @@ export async function runReflectionMeta(
       openai,
       fallbackModels: opts.fallbackModels ?? [],
       label: "memory-hybrid: reflect-meta",
-      feature: "reflection",
+      feature: "reflection-meta",
     });
   } catch (err) {
     logger.warn(`memory-hybrid: reflect-meta LLM failed: ${err}`);
