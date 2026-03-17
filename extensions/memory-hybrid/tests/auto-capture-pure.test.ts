@@ -159,8 +159,8 @@ describe("extractCredentialMatch", () => {
   });
 
   it("returns null for very short matches (< 8 chars after stripping)", () => {
-    // sk- with less than 5 additional chars won't reach length 8
-    const result = extractCredentialMatch("sk-abc");
+    // SSH pattern can match short strings; "ssh a b" = 7 chars, should be rejected by length guard
+    const result = extractCredentialMatch("ssh a b");
     expect(result).toBeNull();
   });
 });
