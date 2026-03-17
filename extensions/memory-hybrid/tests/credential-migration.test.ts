@@ -305,11 +305,11 @@ describe("migrateCredentialsToVault", () => {
       const result = await migrateCredentialsToVault(makeOpts({ factsDb, credentialsDb, markDone: true, writeFn }));
 
       // Error collected from fact-1 failure
-      expect(result.errors.length).toBeGreaterThanOrEqual(1);
+      expect(result.errors).toHaveLength(1);
       expect(result.errors[0]).toContain("vault write failed");
 
       // Second fact still migrated
-      expect(result.migrated).toBeGreaterThanOrEqual(1);
+      expect(result.migrated).toBe(1);
 
       // Flag NOT written because there are errors
       expect(writeFn).not.toHaveBeenCalled();
