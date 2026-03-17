@@ -516,6 +516,15 @@ export async function withLLMRetry<T>(
         }
         throw retryError;
       }
+      // Re-check abort signal before sleeping — if the parent step timed out while we
+      // were in a retry attempt, bail immediately instead of sleeping through the backoff.
+      if (opts?.signal?.aborted) {
+        const reason = opts.signal.reason;
+        const abortError = reason instanceof Error ? reason : new Error(reason != null ? String(reason) : "Aborted");
+        abortError.name = "AbortError";
+        throw abortError;
+      }
+
       // 429: respect Retry-After header if present; otherwise use exponential backoff (2s → 4s → 8s)
       let delay: number;
       if (is429) {

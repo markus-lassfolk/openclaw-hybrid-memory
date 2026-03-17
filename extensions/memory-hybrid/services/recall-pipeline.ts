@@ -161,6 +161,13 @@ export async function runRecallPipelineQuery(
           }
         }
 
+        // Guard: if the vector-step timeout already fired, skip the embed call entirely.
+        // The HyDE call above may have completed just before the abort — we must not
+        // waste an embedding provider call whose result will be discarded.
+        if (directiveAbort.signal.aborted) {
+          throw new Error(`recall pipeline timed out after ${VECTOR_STEP_TIMEOUT_MS}ms`);
+        }
+
         const vector =
           opts?.precomputedVector && textToEmbed === trimmed
             ? opts.precomputedVector
