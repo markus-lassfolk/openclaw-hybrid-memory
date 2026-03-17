@@ -314,25 +314,15 @@ describe("tryParseCredentialForVault", () => {
 
   it("returns null with requirePatternMatch=true when no regex match found", () => {
     // value is credential-like but text has no pattern match
+    // When requirePatternMatch=true and there's no regex match in text, returns null
     const result = tryParseCredentialForVault(
-      "my api key",
-      "credentials",
-      "myservice",
-      "sk-proj-abcdefghij1234567890ABCD",
-      { requirePatternMatch: true },
-    );
-    // The value starts with sk- so pattern match via CREDENTIAL_PATTERNS will find it
-    // This test confirms requirePatternMatch works for non-matching text
-    const resultNoMatch = tryParseCredentialForVault(
       "plain text no pattern",
       "credentials",
       "myservice",
       "sk-proj-abcdefghij1234567890ABCD",
       { requirePatternMatch: true },
     );
-    // The value sk- is in the text implicitly but the TEXT itself has no pattern—value is the secret
-    // When requirePatternMatch=true and there's no regex match in text, returns null
-    expect(resultNoMatch).toBeNull();
+    expect(result).toBeNull();
   });
 
   it("includes notes field containing original text when text is short enough", () => {
