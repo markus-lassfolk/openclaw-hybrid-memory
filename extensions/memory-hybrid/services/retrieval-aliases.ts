@@ -12,6 +12,7 @@ import { dirname } from "node:path";
 import { randomUUID } from "node:crypto";
 import type OpenAI from "openai";
 import type { EmbeddingProvider } from "./embeddings.js";
+import { shouldSuppressEmbeddingError } from "./embeddings.js";
 import { chatComplete } from "./chat.js";
 import { capturePluginError } from "./error-reporter.js";
 import type { AliasesConfig } from "../config.js";
@@ -418,10 +419,13 @@ export async function storeAliases(
       const vec = await embeddings.embed(alias);
       aliasDb.store(factId, alias, vec);
     } catch (err) {
-      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-        subsystem: "aliases",
-        operation: "store-alias-embedding",
-      });
+      // AllEmbeddingProvidersFailed is expected when all providers are unavailable — don't report (#486)
+      if (!shouldSuppressEmbeddingError(err)) {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+          subsystem: "aliases",
+          operation: "store-alias-embedding",
+        });
+      }
       logWarn?.(`memory-hybrid: alias embedding failed: ${err}`);
     }
   }

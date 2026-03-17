@@ -8,6 +8,7 @@
 import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
 import type { EmbeddingProvider } from "./embeddings.js";
+import { shouldSuppressEmbeddingError } from "./embeddings.js";
 import { capturePluginError } from "./error-reporter.js";
 
 // ---------------------------------------------------------------------------
@@ -134,10 +135,13 @@ export async function migrateEmbeddings(opts: MigrateEmbeddingsOptions): Promise
       const batchResult = await embeddings.embedBatch(texts);
       vectors = batchResult;
     } catch (batchErr) {
-      capturePluginError(batchErr instanceof Error ? batchErr : new Error(String(batchErr)), {
-        subsystem: "embeddings",
-        operation: "migration-embed-batch",
-      });
+      // AllEmbeddingProvidersFailed is expected when all providers are unavailable — don't report (#486)
+      if (!shouldSuppressEmbeddingError(batchErr)) {
+        capturePluginError(batchErr instanceof Error ? batchErr : new Error(String(batchErr)), {
+          subsystem: "embeddings",
+          operation: "migration-embed-batch",
+        });
+      }
       log.warn(
         `memory-hybrid: embedding-migration: batch embed failed at offset ${offset} — falling back to per-fact embeds: ${batchErr}`,
       );
@@ -146,10 +150,13 @@ export async function migrateEmbeddings(opts: MigrateEmbeddingsOptions): Promise
           try {
             return await embeddings.embed(fact.text);
           } catch (err) {
-            capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-              subsystem: "embeddings",
-              operation: "migration-embed-single",
-            });
+            // AllEmbeddingProvidersFailed is expected when all providers are unavailable — don't report (#486)
+            if (!shouldSuppressEmbeddingError(err)) {
+              capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+                subsystem: "embeddings",
+                operation: "migration-embed-single",
+              });
+            }
             errors.push(`fact ${fact.id}: embed failed — ${String(err)}`);
             return null;
           }

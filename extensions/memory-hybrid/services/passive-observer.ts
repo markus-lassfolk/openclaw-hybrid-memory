@@ -20,6 +20,7 @@ import type { VectorDB } from "../backends/vector-db.js";
 import type { EventLog } from "../backends/event-log.js";
 import { categoryToEventType } from "../backends/event-log.js";
 import type { EmbeddingProvider } from "./embeddings.js";
+import { shouldSuppressEmbeddingError } from "./embeddings.js";
 import type { ProvenanceService } from "./provenance.js";
 import type OpenAI from "openai";
 import type { MemoryCategory, ReinforcementConfig } from "../config.js";
@@ -500,11 +501,14 @@ export async function runPassiveObserver(
           vec = await embeddings.embed(fact.text);
         } catch (err) {
           logger.warn(`memory-hybrid: passive-observer — embed failed for fact: ${fact.text.slice(0, 80)}... (${err})`);
-          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-            operation: "passive-observer-embed",
-            severity: "info",
-            subsystem: "passive-observer",
-          });
+          // AllEmbeddingProvidersFailed is expected when all providers are unavailable — don't report (#486)
+          if (!shouldSuppressEmbeddingError(err)) {
+            capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+              operation: "passive-observer-embed",
+              severity: "info",
+              subsystem: "passive-observer",
+            });
+          }
           result.errors++;
           continue;
         }

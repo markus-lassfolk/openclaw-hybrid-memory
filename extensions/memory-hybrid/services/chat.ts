@@ -94,6 +94,10 @@ export function is404Like(err: unknown): boolean {
  * A 403 is a permanent operator config issue (e.g. Google country/region restriction,
  * IP block, billing restriction) that will never be resolved by retrying.
  * Exported so embeddings.ts can treat 403 as a config error and suppress capturePluginError.
+ *
+ * Also detects provider-specific geo-restriction phrases that may arrive without a "403"
+ * numeric prefix when the error passes through a proxy or gateway that strips HTTP status
+ * from the Error object (GlitchTip #324 / issue #490).
  */
 export function is403Like(err: unknown): boolean {
   if (err && typeof err === "object") {
@@ -102,10 +106,24 @@ export function is403Like(err: unknown): boolean {
   }
   if (err instanceof Error) {
     // Match HTTP 403 patterns: "403 Forbidden", "403 Country, region, or territory not supported", etc.
-    return (
+    if (
       /^\b403\b/.test(err.message.trim()) ||
       /\bHTTP\s+403\b|\bError\s+code:\s*403\b|\b403\s+[A-Za-z]/i.test(err.message)
-    );
+    ) {
+      return true;
+    }
+    // Match provider-specific geo-restriction / permission-denied phrases that arrive WITHOUT
+    // a numeric "403" prefix when errors pass through a proxy or gateway.
+    // #490: Google returns "Country, region, or territory not supported" (exact phrase) as
+    // the message body when the API key / project is not permitted in the request's region.
+    if (/\bcountry,\s*region,\s*or\s*territory\s+not\s+supported\b/i.test(err.message)) return true;
+    // gRPC PERMISSION_DENIED status mapped to HTTP 403 — some gateway implementations
+    // embed the gRPC status name instead of (or in addition to) the HTTP code.
+    if (/\bPERMISSION_DENIED\b/.test(err.message)) return true;
+    // Generic "access denied" / "access forbidden" phrases without a numeric status prefix
+    // that certain proxy implementations emit when forwarding a 403 response.
+    if (/\baccess\s+(denied|forbidden)\b/i.test(err.message) && !/\b(file|directory|path|disk)\b/i.test(err.message))
+      return true;
   }
   return false;
 }
