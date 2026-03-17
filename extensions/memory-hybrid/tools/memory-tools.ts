@@ -510,29 +510,22 @@ export function registerMemoryTools(
           ? new QueryExpander(cfg.queryExpansion, openai)
           : null;
       const embedFn = queryExpander && queryVector != null ? (text: string) => embeddings.embed(text) : null;
-      const rrfOutput = await runRetrievalPipeline(
-        query,
-        queryVector,
-        factsDb.getRawDb(),
-        vectorDb,
-        factsDb,
-        rrfConfig,
-        cfg.retrieval.explicitBudgetTokens,
-        Math.floor(Date.now() / 1000),
-        tag ?? undefined,
+      const rrfOutput = await runRetrievalPipeline(query, queryVector, factsDb.getRawDb(), vectorDb, factsDb, {
+        config: rrfConfig,
+        budgetTokens: cfg.retrieval.explicitBudgetTokens,
+        tagFilter: tag ?? undefined,
         includeSuperseded,
         scopeFilter,
-        asOfSec ?? undefined,
-        cfg.aliases?.enabled ? aliasDb : null,
-        cfg.clusters,
-        embeddingRegistry ?? null,
-        factsDb,
-        queryExpander ?? null,
+        asOf: asOfSec ?? undefined,
+        aliasDb: cfg.aliases?.enabled ? aliasDb : null,
+        clustersConfig: cfg.clusters,
+        embeddingRegistry: embeddingRegistry ?? null,
+        factsDbForEmbeddings: factsDb,
+        queryExpander: queryExpander ?? null,
         embedFn,
-        undefined, // queryExpansionContext (could pass recent conversation if available)
-        cfg.reranking,
-        openai,
-      );
+        rerankingConfig: cfg.reranking,
+        rerankingOpenai: openai,
+      });
 
       // Merge entity-lookup results first, then append RRF results (deduped).
       // When packed is non-empty, only include fused results whose factId was packed
