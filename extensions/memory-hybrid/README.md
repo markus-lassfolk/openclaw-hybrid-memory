@@ -8,6 +8,7 @@ Part of the [OpenClaw Hybrid Memory](https://github.com/markus-lassfolk/openclaw
 
 ## Requirements
 
+- **Node.js `^20.19.0 || >=22.12.0`** — Node 20.0–20.18 and 22.0–22.11 are **not** supported; npm will reject the install with `EBADENGINE` on those versions.
 - **OpenClaw v2026.3.8+** (required) — the plugin enforces this minimum version at startup to ensure CLI subcommands and config reloads work.
 - **Embedding provider** — Required. The plugin needs an embedding provider to load. Four options:
   - **OpenAI** (default): set `embedding.apiKey` and `embedding.model` (e.g. `text-embedding-3-small`). Requires an OpenAI API key.
@@ -99,9 +100,9 @@ Routes are only registered when `health.enabled` is `true` (the default). OpenCl
 ## Dependencies
 
 - `better-sqlite3` ^12.0.0
-- `@lancedb/lancedb` ^0.23.0
-- `openai` ^6.16.0
-- `@sinclair/typebox` 0.34.47
+- `@lancedb/lancedb` ^0.26.2
+- `@sinclair/typebox` 0.34.48
+- `openai` ^6.16.0 — **peer dependency (host-provided)**. The `openai` package is not bundled with this plugin. OpenClaw supplies it at runtime; if you install the plugin manually you must ensure `openai ^6.16.0` is present in the host environment (e.g. `npm i openai` alongside `openclaw-hybrid-memory`).
 
 Build tools required for `better-sqlite3`: C++ toolchain (e.g. `build-essential` on Linux, Visual Studio Build Tools on Windows), Python 3. You may see an `npm warn deprecated prebuild-install` message during install; it comes from better-sqlite3's optional dependency and is harmless until [WiseLibs/better-sqlite3#655](https://github.com/WiseLibs/better-sqlite3/issues/655) is resolved.
 
