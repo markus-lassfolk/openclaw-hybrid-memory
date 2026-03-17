@@ -736,6 +736,7 @@ export function initializeDatabases(cfg: HybridMemoryConfig, api: ClawdbotPlugin
     (gwConfig?.llm as Record<string, unknown> | undefined)?.providers ??
     (gwConfig?.providers as Record<string, unknown> | undefined);
   const mergedProviderNames: string[] = [];
+  const mergedProviderOriginalNames = new Map<string, string>();
   if (!cfg.llm) (cfg as Record<string, unknown>).llm = { providers: {}, default: [], heavy: [], nano: [] };
   const plm = cfg.llm as Record<string, unknown>;
   if (!plm.providers || typeof plm.providers !== "object") plm.providers = {};
@@ -746,19 +747,25 @@ export function initializeDatabases(cfg: HybridMemoryConfig, api: ClawdbotPlugin
       if (!name || !gw || typeof gw !== "object") continue;
       const rawKey = (gw as Record<string, unknown>).apiKey ?? (gw as Record<string, unknown>).api_key;
       if (typeof rawKey !== "string" || !rawKey.trim()) continue;
+      // Normalize provider name to lowercase to match canRoute's case-insensitive lookup (issue #487 fix).
+      const normalizedName = name.toLowerCase();
       // Merge if: (a) no plugin entry exists, or (b) plugin entry has no apiKey — allows gateway key
       // to fill in when plugin config has a placeholder/empty key for this provider (issue #386).
-      const pluginHasKey = typeof prov[name]?.apiKey === "string" && (prov[name].apiKey as string).trim().length > 0;
-      if (!prov[name] || !pluginHasKey) {
-        prov[name] = {
-          ...prov[name],
+      const pluginHasKey =
+        typeof prov[normalizedName]?.apiKey === "string" && (prov[normalizedName].apiKey as string).trim().length > 0;
+      if (!prov[normalizedName] || !pluginHasKey) {
+        prov[normalizedName] = {
+          ...prov[normalizedName],
           apiKey: rawKey.trim(),
           baseURL:
-            prov[name]?.baseURL ?? (gw as Record<string, unknown>).baseURL ?? (gw as Record<string, unknown>).base_url,
+            prov[normalizedName]?.baseURL ??
+            (gw as Record<string, unknown>).baseURL ??
+            (gw as Record<string, unknown>).base_url,
         };
-        mergedProviderNames.push(name);
+        mergedProviderNames.push(normalizedName);
+        mergedProviderOriginalNames.set(normalizedName, name);
         api.logger.info?.(
-          `memory-hybrid: using gateway provider "${name}" for llm.providers (add ${name}/<model> to llm.default or llm.heavy to use)`,
+          `memory-hybrid: using gateway provider "${name}" for llm.providers (add ${normalizedName}/<model> to llm.default or llm.heavy to use)`,
         );
       }
     }
@@ -917,8 +924,9 @@ export function initializeDatabases(cfg: HybridMemoryConfig, api: ClawdbotPlugin
       // This ensures that if the gateway has e.g. minimax.models: ["MiniMax-M2.5"], we use that
       // instead of the hardcoded "MiniMax-Text-01".
       let defaultModel: string | null = null;
-      if (gwProviders && typeof (gwProviders as Record<string, unknown>)[name] === "object") {
-        const gw = (gwProviders as Record<string, unknown>)[name] as Record<string, unknown>;
+      const originalName = mergedProviderOriginalNames.get(name) ?? name;
+      if (gwProviders && typeof (gwProviders as Record<string, unknown>)[originalName] === "object") {
+        const gw = (gwProviders as Record<string, unknown>)[originalName] as Record<string, unknown>;
         // Define chat-compatibility filter (used for both models[] and defaultModel/model fields).
         // Skip non-chat entries (embeddings, transcription, TTS, image generation) so that
         // chatCompleteWithRetry is never routed through an incompatible model.
