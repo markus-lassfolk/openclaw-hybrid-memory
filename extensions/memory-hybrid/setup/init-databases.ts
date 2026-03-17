@@ -727,6 +727,43 @@ export function initializeDatabases(cfg: HybridMemoryConfig, api: ClawdbotPlugin
     resolveEmbeddingRegistryModels(cfg.embedding),
   );
 
+  // Merge gateway provider keys into plugin llm.providers BEFORE auto-derivation so canRoute
+  // can see all available providers (issue #487 fix).
+  // Check three paths: models.providers (standard), llm.providers (legacy), providers (top-level).
+  const gwConfig = api.config as Record<string, unknown> | undefined;
+  const gwProviders =
+    (gwConfig?.models as Record<string, unknown> | undefined)?.providers ??
+    (gwConfig?.llm as Record<string, unknown> | undefined)?.providers ??
+    (gwConfig?.providers as Record<string, unknown> | undefined);
+  const mergedProviderNames: string[] = [];
+  if (!cfg.llm) (cfg as Record<string, unknown>).llm = { providers: {} };
+  const plm = cfg.llm as Record<string, unknown>;
+  if (!plm.providers || typeof plm.providers !== "object") plm.providers = {};
+  const prov = plm.providers as Record<string, Record<string, unknown>>;
+
+  if (gwProviders && typeof gwProviders === "object" && !Array.isArray(gwProviders)) {
+    for (const [name, gw] of Object.entries(gwProviders)) {
+      if (!name || !gw || typeof gw !== "object") continue;
+      const rawKey = (gw as Record<string, unknown>).apiKey ?? (gw as Record<string, unknown>).api_key;
+      if (typeof rawKey !== "string" || !rawKey.trim()) continue;
+      // Merge if: (a) no plugin entry exists, or (b) plugin entry has no apiKey — allows gateway key
+      // to fill in when plugin config has a placeholder/empty key for this provider (issue #386).
+      const pluginHasKey = typeof prov[name]?.apiKey === "string" && (prov[name].apiKey as string).trim().length > 0;
+      if (!prov[name] || !pluginHasKey) {
+        prov[name] = {
+          ...prov[name],
+          apiKey: rawKey.trim(),
+          baseURL:
+            prov[name]?.baseURL ?? (gw as Record<string, unknown>).baseURL ?? (gw as Record<string, unknown>).base_url,
+        };
+        mergedProviderNames.push(name);
+        api.logger.info?.(
+          `memory-hybrid: using gateway provider "${name}" for llm.providers (add ${name}/<model> to llm.default or llm.heavy to use)`,
+        );
+      }
+    }
+  }
+
   // When llm.default/heavy are not explicitly configured, auto-derive from agents.defaults.model
   // (the same model list shown by `openclaw models list`). This makes the plugin zero-config for
   // model selection when the user has already set up their models in openclaw.json.
@@ -838,43 +875,6 @@ export function initializeDatabases(cfg: HybridMemoryConfig, api: ClawdbotPlugin
     cfg.costTracking?.enabled !== false ? new CostTracker(factsDb.getRawDb()) : null;
   if (costTracker) {
     api.logger.info("memory-hybrid: LLM cost tracker initialized");
-  }
-
-  // Merge gateway provider keys into plugin llm.providers so the plugin can use all keys the gateway has
-  // (e.g. Minimax, Anthropic, etc.) without duplicating them in plugin config.
-  // Check three paths: models.providers (standard), llm.providers (legacy), providers (top-level).
-  const gwConfig = api.config as Record<string, unknown> | undefined;
-  const gwProviders =
-    (gwConfig?.models as Record<string, unknown> | undefined)?.providers ??
-    (gwConfig?.llm as Record<string, unknown> | undefined)?.providers ??
-    (gwConfig?.providers as Record<string, unknown> | undefined);
-  const mergedProviderNames: string[] = [];
-  if (!cfg.llm) (cfg as Record<string, unknown>).llm = { providers: {} };
-  const plm = cfg.llm as Record<string, unknown>;
-  if (!plm.providers || typeof plm.providers !== "object") plm.providers = {};
-  const prov = plm.providers as Record<string, Record<string, unknown>>;
-
-  if (gwProviders && typeof gwProviders === "object" && !Array.isArray(gwProviders)) {
-    for (const [name, gw] of Object.entries(gwProviders)) {
-      if (!name || !gw || typeof gw !== "object") continue;
-      const rawKey = (gw as Record<string, unknown>).apiKey ?? (gw as Record<string, unknown>).api_key;
-      if (typeof rawKey !== "string" || !rawKey.trim()) continue;
-      // Merge if: (a) no plugin entry exists, or (b) plugin entry has no apiKey — allows gateway key
-      // to fill in when plugin config has a placeholder/empty key for this provider (issue #386).
-      const pluginHasKey = typeof prov[name]?.apiKey === "string" && (prov[name].apiKey as string).trim().length > 0;
-      if (!prov[name] || !pluginHasKey) {
-        prov[name] = {
-          ...prov[name],
-          apiKey: rawKey.trim(),
-          baseURL:
-            prov[name]?.baseURL ?? (gw as Record<string, unknown>).baseURL ?? (gw as Record<string, unknown>).base_url,
-        };
-        mergedProviderNames.push(name);
-        api.logger.info?.(
-          `memory-hybrid: using gateway provider "${name}" for llm.providers (add ${name}/<model> to llm.default or llm.heavy to use)`,
-        );
-      }
-    }
   }
 
   // If Anthropic is in tier lists (e.g. from agents.defaults.model) but not yet in providers, use ANTHROPIC_API_KEY so verify --test-llm can test it.
