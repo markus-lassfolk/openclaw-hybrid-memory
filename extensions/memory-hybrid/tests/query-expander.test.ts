@@ -424,7 +424,10 @@ describe("retrieval orchestrator — query expansion integration", () => {
     };
 
     // No queryExpander passed — should behave as before
-    const result = await runRetrievalPipeline("API key", null, factsDb.getRawDb(), vectorDb, factsDb, config, 2000);
+    const result = await runRetrievalPipeline("API key", null, factsDb.getRawDb(), vectorDb, factsDb, {
+      config,
+      budgetTokens: 2000,
+    });
 
     expect(result).toBeDefined();
     expect(Array.isArray(result.fused)).toBe(true);
@@ -473,26 +476,15 @@ describe("retrieval orchestrator — query expansion integration", () => {
 
     const originalVec = new Array(384).fill(0.2);
 
-    await runRetrievalPipeline(
-      "find API key",
-      originalVec,
-      factsDb.getRawDb(),
-      vectorDb,
-      factsDb,
+    await runRetrievalPipeline("find API key", originalVec, factsDb.getRawDb(), vectorDb, factsDb, {
       config,
-      2000,
-      undefined, // nowSec
-      undefined, // tagFilter
-      undefined, // includeSuperseded
-      undefined, // scopeFilter
-      undefined, // asOf
-      null, // aliasDb
-      undefined, // clustersConfig
-      null, // embeddingRegistry
-      null, // factsDbForEmbeddings
-      expander, // queryExpander
-      embedFn, // embedFn
-    );
+      budgetTokens: 2000,
+      aliasDb: null,
+      embeddingRegistry: null,
+      factsDbForEmbeddings: null,
+      queryExpander: expander,
+      embedFn,
+    });
 
     // embedFn should have been called once per variant (2 variants)
     expect(embedCallCount).toBe(2);
@@ -530,26 +522,15 @@ describe("retrieval orchestrator — query expansion integration", () => {
     const originalVec = new Array(384).fill(0.2);
 
     // Pipeline should still succeed without expansion
-    const result = await runRetrievalPipeline(
-      "apple",
-      originalVec,
-      factsDb.getRawDb(),
-      vectorDb,
-      factsDb,
+    const result = await runRetrievalPipeline("apple", originalVec, factsDb.getRawDb(), vectorDb, factsDb, {
       config,
-      2000,
-      undefined, // nowSec
-      undefined, // tagFilter
-      undefined, // includeSuperseded
-      undefined, // scopeFilter
-      undefined, // asOf
-      null, // aliasDb
-      undefined, // clustersConfig
-      null, // embeddingRegistry
-      null, // factsDbForEmbeddings
-      failingExpander, // queryExpander
-      embedFn, // embedFn
-    );
+      budgetTokens: 2000,
+      aliasDb: null,
+      embeddingRegistry: null,
+      factsDbForEmbeddings: null,
+      queryExpander: failingExpander,
+      embedFn,
+    });
 
     expect(result).toBeDefined();
     expect(Array.isArray(result.fused)).toBe(true);
@@ -586,26 +567,15 @@ describe("retrieval orchestrator — query expansion integration", () => {
     const embedFn = vi.fn().mockResolvedValue(new Array(384).fill(0.1));
     const originalVec = new Array(384).fill(0.2);
 
-    await runRetrievalPipeline(
-      "HA config",
-      originalVec,
-      factsDb.getRawDb(),
-      vectorDb,
-      factsDb,
+    await runRetrievalPipeline("HA config", originalVec, factsDb.getRawDb(), vectorDb, factsDb, {
       config,
-      2000,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      null,
-      undefined,
-      null,
-      null,
-      expander,
+      budgetTokens: 2000,
+      aliasDb: null,
+      embeddingRegistry: null,
+      factsDbForEmbeddings: null,
+      queryExpander: expander,
       embedFn,
-    );
+    });
 
     expect(expander.expandQuery).not.toHaveBeenCalled();
     expect(embedFn).toHaveBeenCalledTimes(1);
@@ -643,26 +613,15 @@ describe("retrieval orchestrator — query expansion integration", () => {
     const embedFn = vi.fn().mockResolvedValue(new Array(384).fill(0.1));
     const originalVec = new Array(384).fill(0.2);
 
-    await runRetrievalPipeline(
-      "api creds",
-      originalVec,
-      factsDb.getRawDb(),
-      vectorDb,
-      factsDb,
+    await runRetrievalPipeline("api creds", originalVec, factsDb.getRawDb(), vectorDb, factsDb, {
       config,
-      2000,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      null,
-      undefined,
-      null,
-      null,
-      expander,
+      budgetTokens: 2000,
+      aliasDb: null,
+      embeddingRegistry: null,
+      factsDbForEmbeddings: null,
+      queryExpander: expander,
       embedFn,
-    );
+    });
 
     expect(expander.expandQuery).toHaveBeenCalledTimes(1);
     expect(embedFn).toHaveBeenCalledTimes(3);
@@ -697,26 +656,15 @@ describe("retrieval orchestrator — query expansion integration", () => {
     const embedFn = vi.fn().mockResolvedValue(new Array(384).fill(0.1));
     const originalVec = new Array(384).fill(0.2);
 
-    await runRetrievalPipeline(
-      "vm settings",
-      originalVec,
-      factsDb.getRawDb(),
-      vectorDb,
-      factsDb,
+    await runRetrievalPipeline("vm settings", originalVec, factsDb.getRawDb(), vectorDb, factsDb, {
       config,
-      2000,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      null,
-      undefined,
-      null,
-      null,
-      expander,
+      budgetTokens: 2000,
+      aliasDb: null,
+      embeddingRegistry: null,
+      factsDbForEmbeddings: null,
+      queryExpander: expander,
       embedFn,
-    );
+    });
 
     expect(expander.expandQuery).not.toHaveBeenCalled();
     expect(embedFn).not.toHaveBeenCalled();

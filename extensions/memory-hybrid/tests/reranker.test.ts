@@ -407,7 +407,10 @@ describe("Integration — runRetrievalPipeline with re-ranking", () => {
     const config = { ...DEFAULT_RETRIEVAL_CONFIG, strategies: ["fts5"] as Array<"fts5"> };
 
     // Should not throw — omitting re-ranking params is backward compatible
-    const result = await runRetrievalPipeline("apple", null, factsDb.getRawDb(), vectorDb, factsDb, config, 2000);
+    const result = await runRetrievalPipeline("apple", null, factsDb.getRawDb(), vectorDb, factsDb, {
+      config,
+      budgetTokens: 2000,
+    });
     expect(result).toBeDefined();
   });
 
@@ -437,29 +440,12 @@ describe("Integration — runRetrievalPipeline with re-ranking", () => {
     const config = { ...DEFAULT_RETRIEVAL_CONFIG, strategies: ["fts5"] as Array<"fts5"> };
     const rerankingCfg: RerankingConfig = { enabled: true, candidateCount: 50, outputCount: 20, timeoutMs: 10000 };
 
-    const result = await runRetrievalPipeline(
-      "apple",
-      null,
-      factsDb.getRawDb(),
-      vectorDb,
-      factsDb,
+    const result = await runRetrievalPipeline("apple", null, factsDb.getRawDb(), vectorDb, factsDb, {
       config,
-      2000,
-      undefined, // nowSec
-      undefined, // tagFilter
-      undefined, // includeSuperseded
-      undefined, // scopeFilter
-      undefined, // asOf
-      undefined, // aliasDb
-      undefined, // clustersConfig
-      undefined, // embeddingRegistry
-      undefined, // factsDbForEmbeddings
-      undefined, // queryExpander
-      undefined, // embedFn
-      undefined, // queryExpansionContext
-      rerankingCfg,
-      openai as never,
-    );
+      budgetTokens: 2000,
+      rerankingConfig: rerankingCfg,
+      rerankingOpenai: openai as never,
+    });
 
     // After re-ranking, stored2 should come first
     expect(result.fused[0]?.factId).toBe(stored2.id);
@@ -482,29 +468,12 @@ describe("Integration — runRetrievalPipeline with re-ranking", () => {
     const rerankingCfg: RerankingConfig = { enabled: true, candidateCount: 50, outputCount: 20, timeoutMs: 10000 };
 
     // Should not throw
-    const result = await runRetrievalPipeline(
-      "banana",
-      null,
-      factsDb.getRawDb(),
-      vectorDb,
-      factsDb,
+    const result = await runRetrievalPipeline("banana", null, factsDb.getRawDb(), vectorDb, factsDb, {
       config,
-      2000,
-      undefined, // nowSec
-      undefined, // tagFilter
-      undefined, // includeSuperseded
-      undefined, // scopeFilter
-      undefined, // asOf
-      undefined, // aliasDb
-      undefined, // clustersConfig
-      undefined, // embeddingRegistry
-      undefined, // factsDbForEmbeddings
-      undefined, // queryExpander
-      undefined, // embedFn
-      undefined, // queryExpansionContext
-      rerankingCfg,
-      openai as never,
-    );
+      budgetTokens: 2000,
+      rerankingConfig: rerankingCfg,
+      rerankingOpenai: openai as never,
+    });
 
     // Should still return the fact (fallback order preserved)
     const ids = result.fused.map((r) => r.factId);

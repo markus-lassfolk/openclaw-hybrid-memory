@@ -78,6 +78,7 @@ import {
   serializeFactForContext,
   estimateTokenCount,
   DEFAULT_RETRIEVAL_CONFIG,
+  type RetrievalPipelineOptions,
 } from "./services/retrieval-orchestrator.js";
 import { expandGraph, formatLinkPath, HOP_SCORE_DECAY } from "./services/graph-retrieval.js";
 export type { GraphExpandedResult, LinkPathStep, GraphFactLookup } from "./services/graph-retrieval.js";
@@ -844,4 +845,5 @@ export const _testing = {
 export { versionInfo } from "./versionInfo.js";
 export { sanitizeMessagesForClaude, type MessageLike } from "./utils/sanitize-messages.js";
 export type { ContradictionRecord } from "./backends/facts-db.js";
+export type { RetrievalPipelineOptions } from "./services/retrieval-orchestrator.js";
 export default memoryHybridPlugin;
