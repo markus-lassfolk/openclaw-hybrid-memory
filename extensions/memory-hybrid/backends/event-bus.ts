@@ -7,7 +7,6 @@
 
 import { DatabaseSync } from "node:sqlite";
 import type { SQLInputValue } from "node:sqlite";
-import { createTransaction } from "../utils/sqlite-transaction.js";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { createHash } from "node:crypto";

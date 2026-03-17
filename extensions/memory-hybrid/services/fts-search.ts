@@ -157,21 +157,21 @@ export function searchFts(
 
   // Build WHERE clauses for structured filters.
   const extraClauses: string[] = [];
-  const params: Record<string, SQLInputValue> = { query: matchExpr, limit };
+  const params: Record<string, SQLInputValue> = { "@query": matchExpr, "@limit": limit };
 
   if (!includeSuperseded) {
     // Use asOf when provided so point-in-time queries filter against the correct timestamp.
     const nowSec = asOf ?? Math.floor(Date.now() / 1000);
     extraClauses.push("AND f.superseded_at IS NULL AND (f.expires_at IS NULL OR f.expires_at > @nowSec)");
-    params.nowSec = nowSec;
+    params["@nowSec"] = nowSec;
   }
   if (entityFilter && entityFilter.trim()) {
     extraClauses.push("AND LOWER(f.entity) = LOWER(@entityFilter)");
-    params.entityFilter = entityFilter.trim();
+    params["@entityFilter"] = entityFilter.trim();
   }
   if (tagFilter && tagFilter.trim()) {
     extraClauses.push("AND (',' || COALESCE(f.tags,'') || ',') LIKE @tagPattern");
-    params.tagPattern = `%,${tagFilter.toLowerCase().trim()},%`;
+    params["@tagPattern"] = `%,${tagFilter.toLowerCase().trim()},%`;
   }
 
   let rows: Array<{
