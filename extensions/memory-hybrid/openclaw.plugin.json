@@ -42,8 +42,8 @@
       "help": "Embedding output dimensions for the ONNX model",
       "advanced": true
     },
-"mode": {
-        "label": "Configuration preset",
+    "mode": {
+      "label": "Configuration preset",
       "placeholder": "local",
       "help": "local | minimal | enhanced | complete (or legacy: essential | normal | expert | full, mapped to local). See CONFIGURATION-MODES.md."
     },
