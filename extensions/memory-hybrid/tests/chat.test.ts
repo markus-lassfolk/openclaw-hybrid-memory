@@ -1232,6 +1232,30 @@ describe("isContextLengthError (#442)", () => {
     expect(isContextLengthError(new Error("404 Not Found"))).toBe(false);
     expect(isContextLengthError(new Error("500 Internal Server Error"))).toBe(false);
   });
+
+  // #488: Ollama "Input length X exceeds maximum allowed token size N"
+  it("#488: detects Ollama 'Input length exceeds maximum allowed token size' with status=400", () => {
+    const err = Object.assign(new Error("Input length 768 exceeds maximum allowed token size 512"), { status: 400 });
+    expect(isContextLengthError(err)).toBe(true);
+  });
+
+  it("#488: detects Ollama pattern with '400' prefix in message and status=400", () => {
+    const err = Object.assign(new Error("400 Input length 768 exceeds maximum allowed token size 512"), {
+      status: 400,
+    });
+    expect(isContextLengthError(err)).toBe(true);
+  });
+
+  it("#488: detects Ollama pattern without numeric status property (message-only)", () => {
+    // Ollama may not always expose a .status property — match via message pattern
+    const err = new Error("Input length 768 exceeds maximum allowed token size 512");
+    expect(isContextLengthError(err)).toBe(true);
+  });
+
+  it("#488: does not false-positive on unrelated 400 errors mentioning 'input'", () => {
+    const err = Object.assign(new Error("400 Bad Request: invalid input format"), { status: 400 });
+    expect(isContextLengthError(err)).toBe(false);
+  });
 });
 
 describe("withLLMRetry — context-length error (#442)", () => {
@@ -1248,5 +1272,93 @@ describe("withLLMRetry — context-length error (#442)", () => {
     await expect(withLLMRetry(fn, { maxRetries: 3 })).rejects.toThrow("maximum context length");
     // Must not have retried — short-circuits immediately
     expect(fn).toHaveBeenCalledTimes(1);
+  });
+
+  it("#488: does not retry Ollama 'Input length exceeds maximum allowed token size' error", async () => {
+    const err = Object.assign(new Error("Input length 768 exceeds maximum allowed token size 512"), { status: 400 });
+    const fn = vi.fn().mockRejectedValue(err);
+
+    await expect(withLLMRetry(fn, { maxRetries: 3 })).rejects.toThrow("Input length 768");
+    // Must not have retried — short-circuits immediately
+    expect(fn).toHaveBeenCalledTimes(1);
+  });
+
+  it("#488: does not report Ollama context-length error to GlitchTip", async () => {
+    vi.clearAllMocks();
+    const err = Object.assign(new Error("Input length 768 exceeds maximum allowed token size 512"), { status: 400 });
+    const fn = vi.fn().mockRejectedValue(err);
+
+    await expect(withLLMRetry(fn, { maxRetries: 3 })).rejects.toThrow();
+    expect(errorReporter.capturePluginError).not.toHaveBeenCalled();
+  });
+});
+
+describe("chatCompleteWithRetry — context-length error (#488)", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("#488: falls through to next model immediately on context-length error", async () => {
+    const contextLengthErr = Object.assign(new Error("Input length 768 exceeds maximum allowed token size 512"), {
+      status: 400,
+    });
+    const mockOpenai = {
+      chat: {
+        completions: {
+          create: vi
+            .fn()
+            .mockRejectedValueOnce(contextLengthErr) // primary: context too long
+            .mockResolvedValueOnce({ choices: [{ message: { content: "fallback ok" } }] }), // fallback: ok
+        },
+      },
+    } as unknown as import("openai").default;
+
+    const promise = chatCompleteWithRetry({
+      model: "ollama/qwen3:0.6b",
+      content: "test",
+      openai: mockOpenai,
+      fallbackModels: ["gpt-4o-mini"],
+    });
+
+    await vi.runAllTimersAsync();
+    const result = await promise;
+    expect(result).toBe("fallback ok");
+    // Primary called once (no retry on context-length), fallback called once
+    expect(mockOpenai.chat.completions.create).toHaveBeenCalledTimes(2);
+  });
+
+  it("#488: does not report to GlitchTip when all models fail with context-length error", async () => {
+    const contextLengthErr = Object.assign(new Error("Input length 768 exceeds maximum allowed token size 512"), {
+      status: 400,
+    });
+    const mockOpenai = {
+      chat: {
+        completions: {
+          create: vi.fn().mockRejectedValue(contextLengthErr),
+        },
+      },
+    } as unknown as import("openai").default;
+
+    const warnings = createPendingLLMWarnings();
+    const promise = chatCompleteWithRetry({
+      model: "ollama/qwen3:0.6b",
+      content: "test",
+      openai: mockOpenai,
+      fallbackModels: ["ollama/qwen3:1.7b"],
+      pendingWarnings: warnings,
+    });
+
+    const expectation = expect(promise).rejects.toThrow();
+    await vi.runAllTimersAsync();
+    await expectation;
+    expect(errorReporter.capturePluginError).not.toHaveBeenCalled();
+    const drained = warnings.drain();
+    expect(drained).toHaveLength(1);
+    expect(drained[0]).toMatch(/context window|input.*long|exceeds/i);
   });
 });
