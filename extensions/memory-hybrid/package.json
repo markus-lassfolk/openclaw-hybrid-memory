@@ -43,7 +43,8 @@
   },
   "dependencies": {
     "@lancedb/lancedb": "^0.26.2",
-    "better-sqlite3": "^12.0.0"
+    "better-sqlite3": "^12.0.0",
+    "yauzl": "^3.2.1"
   },
   "openclaw": {
     "extensions": [
@@ -74,8 +75,7 @@
   },
   "overrides": {
     "@hono/node-server": ">=1.19.10 <2",
-    "opusscript": "0.1.1",
-    "yauzl": ">=3.2.1"
+    "opusscript": "0.1.1"
   },
   "engines": {
     "node": "^20.19.0 || >=22.12.0"
