@@ -8,15 +8,8 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { _testing } from "../index.js";
 
-const {
-  WorkflowStore,
-  WorkflowTracker,
-  sequenceDistance,
-  sequenceSimilarity,
-  extractGoalKeywords,
-  hashToolSequence,
-  _resetRateLimitForTest,
-} = _testing;
+const { WorkflowStore, WorkflowTracker, sequenceDistance, sequenceSimilarity, extractGoalKeywords, hashToolSequence } =
+  _testing;
 
 let tmpDir: string;
 let store: InstanceType<typeof WorkflowStore>;
@@ -24,7 +17,6 @@ let store: InstanceType<typeof WorkflowStore>;
 beforeEach(() => {
   tmpDir = mkdtempSync(join(tmpdir(), "workflow-store-test-"));
   store = new WorkflowStore(join(tmpDir, "workflow-traces.db"));
-  _resetRateLimitForTest();
 });
 
 afterEach(() => {
@@ -405,8 +397,8 @@ describe("WorkflowTracker", () => {
   let tracker: InstanceType<typeof WorkflowTracker>;
 
   beforeEach(() => {
+    // Each test gets a fresh tracker instance — no shared module-global state
     tracker = new WorkflowTracker(store, cfg);
-    _resetRateLimitForTest();
   });
 
   it("buffers tool calls per session", () => {
@@ -437,15 +429,33 @@ describe("WorkflowTracker", () => {
     expect(saved!.toolSequence).toEqual(["exec", "read"]);
   });
 
-  it("flush returns null for empty buffer", () => {
+  it("flush returns null for empty buffer (no prior push)", () => {
     const id = tracker.flush("empty-sess", "some goal");
     expect(id).toBeNull();
+    expect(store.count()).toBe(0);
+  });
+
+  it("flush with outcome=failure records a failed trace", () => {
+    tracker.push("fail-sess", "exec");
+    const id = tracker.flush("fail-sess", "broken task", "failure");
+    expect(id).not.toBeNull();
+    const saved = store.getById(id!);
+    expect(saved).not.toBeNull();
+    expect(saved!.outcome).toBe("failure");
   });
 
   it("discard removes buffer without saving", () => {
     tracker.push("disc-sess", "exec");
     tracker.discard("disc-sess");
     expect(tracker.getBuffer("disc-sess")).toEqual([]);
+    expect(store.count()).toBe(0);
+  });
+
+  it("discard then flush returns null", () => {
+    tracker.push("disc-then-flush", "exec");
+    tracker.discard("disc-then-flush");
+    const id = tracker.flush("disc-then-flush", "some goal");
+    expect(id).toBeNull();
     expect(store.count()).toBe(0);
   });
 
@@ -457,22 +467,69 @@ describe("WorkflowTracker", () => {
     expect(id).toBeNull();
   });
 
-  it("rate limit prevents recording beyond maxTracesPerDay", () => {
+  it("rate limit boundary: exactly maxPerDay calls allowed, maxPerDay+1 rejected", () => {
     const strictCfg = { enabled: true, maxTracesPerDay: 2, retentionDays: 90 };
     const t = new WorkflowTracker(store, strictCfg);
-    _resetRateLimitForTest();
 
     t.push("s1", "exec");
-    t.flush("s1", "g1", "success");
+    const id1 = t.flush("s1", "g1", "success");
+    expect(id1).not.toBeNull(); // 1st — allowed
 
     t.push("s2", "read");
-    t.flush("s2", "g2", "success");
+    const id2 = t.flush("s2", "g2", "success");
+    expect(id2).not.toBeNull(); // 2nd — allowed (boundary)
 
     t.push("s3", "write");
-    const id = t.flush("s3", "g3", "success");
+    const id3 = t.flush("s3", "g3", "success");
+    expect(id3).toBeNull(); // 3rd — rejected
 
-    // Third flush should be rejected
-    expect(id).toBeNull();
+    expect(store.count()).toBe(2);
+  });
+
+  it("day rollover resets the rate limit counter (separate instances)", () => {
+    const strictCfg = { enabled: true, maxTracesPerDay: 1, retentionDays: 90 };
+
+    // Day 1 instance
+    const day1 = new Date("2025-01-01T12:00:00Z");
+    const t1 = new WorkflowTracker(store, strictCfg, () => day1);
+
+    t1.push("s1", "exec");
+    const id1 = t1.flush("s1", "g1", "success");
+    expect(id1).not.toBeNull(); // day 1, 1st — allowed
+
+    t1.push("s2", "exec");
+    const id2 = t1.flush("s2", "g2", "success");
+    expect(id2).toBeNull(); // day 1, 2nd — rejected
+
+    // Day 2 — fresh instance (simulates new process / test isolation)
+    const day2 = new Date("2025-01-02T12:00:00Z");
+    const t2 = new WorkflowTracker(store, strictCfg, () => day2);
+
+    t2.push("s3", "exec");
+    const id3 = t2.flush("s3", "g3", "success");
+    expect(id3).not.toBeNull(); // day 2, fresh counter — allowed
+
+    expect(store.count()).toBe(2);
+  });
+
+  it("day rollover within same instance resets counter", () => {
+    const strictCfg = { enabled: true, maxTracesPerDay: 1, retentionDays: 90 };
+
+    let currentTime = new Date("2025-06-15T23:59:00Z");
+    const clock = () => currentTime;
+    const t = new WorkflowTracker(store, strictCfg, clock);
+
+    t.push("s1", "exec");
+    const id1 = t.flush("s1", "g1", "success");
+    expect(id1).not.toBeNull(); // day 1, allowed
+
+    // Advance clock past midnight
+    currentTime = new Date("2025-06-16T00:01:00Z");
+
+    t.push("s2", "exec");
+    const id2 = t.flush("s2", "g2", "success");
+    expect(id2).not.toBeNull(); // day 2, counter reset — allowed
+
     expect(store.count()).toBe(2);
   });
 

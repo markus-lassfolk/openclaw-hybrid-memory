@@ -18,6 +18,7 @@ import { CONSOLIDATION_MERGE_MAX_CHARS, BATCH_STORE_IMPORTANCE } from "../utils/
 import { extractTags } from "../utils/tags.js";
 import { SENSITIVE_PATTERNS } from "./auto-capture.js";
 import { capturePluginError } from "./error-reporter.js";
+import { withCostFeature } from "./cost-context.js";
 import { normalizeVector, dotProductSimilarity } from "./reflection.js";
 import { randomUUID } from "node:crypto";
 
@@ -201,15 +202,17 @@ export async function runConsolidate(
     let mergedText: string;
     try {
       const { withLLMRetry } = await import("./chat.js");
-      const resp = await withLLMRetry(
-        () =>
-          openai.chat.completions.create({
-            model: opts.model,
-            messages: [{ role: "user", content: prompt }],
-            temperature: 0,
-            max_tokens: 300,
-          }),
-        { maxRetries: 2 },
+      const resp = await withCostFeature("consolidation", () =>
+        withLLMRetry(
+          () =>
+            openai.chat.completions.create({
+              model: opts.model,
+              messages: [{ role: "user", content: prompt }],
+              temperature: 0,
+              max_tokens: 300,
+            }),
+          { maxRetries: 2 },
+        ),
       );
       mergedText = (resp.choices[0]?.message?.content ?? "").trim().slice(0, CONSOLIDATION_MERGE_MAX_CHARS);
     } catch (err) {
