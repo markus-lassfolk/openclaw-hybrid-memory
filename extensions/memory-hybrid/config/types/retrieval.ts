@@ -9,6 +9,8 @@ export type AutoClassifyConfig = {
   suggestCategories?: boolean;
   /** Minimum facts with the same suggested label before we create that category (default 10). Not told to the LLM. */
   minFactsForNewCategory?: number;
+  /** Hours between category discovery LLM runs; 0 = no cooldown (default 72). Prevents O(facts/batch) LLM calls on every cron tick when categories are settled. */
+  discoveryIntervalHours: number;
 };
 
 /** Entity-centric recall: when prompt mentions an entity from the list, merge lookup(entity) facts into candidates */

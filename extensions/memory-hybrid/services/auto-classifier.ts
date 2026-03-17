@@ -18,6 +18,8 @@ import { is500Like, is404Like, isOllamaOOM } from "./chat.js";
 const MIN_OTHER_FOR_DISCOVERY = 15;
 /** Batch size for discovery prompts (leave room for JSON array of labels). */
 const DISCOVERY_BATCH_SIZE = 25;
+/** Default cooldown between discovery runs in hours. */
+const DEFAULT_DISCOVERY_INTERVAL_HOURS = 72;
 
 /**
  * Normalize a free-form label to a valid category slug: lowercase, alphanumeric + underscore.
@@ -35,6 +37,43 @@ function normalizeSuggestedLabel(s: string): string {
 }
 
 /**
+ * Derive the sidecar path for last-discovery timestamp from the categories file path.
+ * Exported for testing.
+ */
+export function getLastDiscoveryPath(discoveredCategoriesPath: string): string {
+  return discoveredCategoriesPath.replace(/\.json$/i, "") + ".last-run.json";
+}
+
+/**
+ * Read the last-discovery timestamp from the sidecar file.
+ * Returns null if the file doesn't exist or is malformed.
+ */
+async function readLastDiscoveryTimestamp(lastRunPath: string): Promise<number | null> {
+  try {
+    const raw = await readFile(lastRunPath, "utf-8");
+    const parsed: unknown = JSON.parse(raw);
+    if (
+      typeof parsed === "object" &&
+      parsed !== null &&
+      typeof (parsed as Record<string, unknown>).lastRunAt === "number"
+    ) {
+      return (parsed as { lastRunAt: number }).lastRunAt;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Write the last-discovery timestamp to the sidecar file.
+ */
+async function writeLastDiscoveryTimestamp(lastRunPath: string, timestampMs: number): Promise<void> {
+  await mkdir(dirname(lastRunPath), { recursive: true });
+  await writeFile(lastRunPath, JSON.stringify({ lastRunAt: timestampMs }, null, 2), "utf-8");
+}
+
+/**
  * Ask the LLM to group "other" facts by topic (free-form labels). Labels with at least
  * minFactsForNewCategory facts become new categories; we do not tell the LLM the threshold.
  * Returns list of newly created category names; updates DB and persists to discoveredCategoriesPath.
@@ -42,7 +81,13 @@ function normalizeSuggestedLabel(s: string): string {
 async function discoverCategoriesFromOther(
   factsDb: FactsDB,
   openai: OpenAI,
-  config: { model: string; batchSize: number; suggestCategories?: boolean; minFactsForNewCategory?: number },
+  config: {
+    model: string;
+    batchSize: number;
+    suggestCategories?: boolean;
+    minFactsForNewCategory?: number;
+    discoveryIntervalHours?: number;
+  },
   logger: { info: (msg: string) => void; warn: (msg: string) => void },
   discoveredCategoriesPath: string,
 ): Promise<string[]> {
@@ -50,6 +95,24 @@ async function discoverCategoriesFromOther(
   const minForNew = config.minFactsForNewCategory ?? 10;
   const others = factsDb.getByCategory("other");
   if (others.length < MIN_OTHER_FOR_DISCOVERY) return [];
+
+  // Cooldown check: skip LLM if last discovery ran within discoveryIntervalHours
+  const intervalHours = config.discoveryIntervalHours ?? DEFAULT_DISCOVERY_INTERVAL_HOURS;
+  if (intervalHours > 0) {
+    const lastRunPath = getLastDiscoveryPath(discoveredCategoriesPath);
+    const lastRunAt = await readLastDiscoveryTimestamp(lastRunPath);
+    if (lastRunAt !== null) {
+      const elapsedMs = Date.now() - lastRunAt;
+      const intervalMs = intervalHours * 60 * 60 * 1000;
+      if (elapsedMs < intervalMs) {
+        const remainingHours = ((intervalMs - elapsedMs) / (60 * 60 * 1000)).toFixed(1);
+        logger.info(
+          `memory-hybrid: category discovery skipped — last run ${(elapsedMs / (60 * 60 * 1000)).toFixed(1)}h ago, cooldown ${intervalHours}h (${remainingHours}h remaining)`,
+        );
+        return [];
+      }
+    }
+  }
 
   logger.info(`memory-hybrid: category discovery on ${others.length} "other" facts (min ${minForNew} per label)`);
 
@@ -109,6 +172,13 @@ async function discoverCategoriesFromOther(
     if (ids.length < minForNew) continue;
     newCategoryNames.push(label);
     for (const id of ids) factsDb.updateCategory(id, label);
+  }
+
+  // Write last-run timestamp after a successful discovery run (even if no new categories were created).
+  // This prevents the LLM from firing again on the next cron tick when categories are settled.
+  if (intervalHours > 0) {
+    const lastRunPath = getLastDiscoveryPath(discoveredCategoriesPath);
+    await writeLastDiscoveryTimestamp(lastRunPath, Date.now());
   }
 
   if (newCategoryNames.length === 0) return [];
@@ -253,7 +323,13 @@ function createProgressReporter(
 async function runClassifyForCli(
   factsDb: FactsDB,
   openai: OpenAI,
-  config: { model?: string; batchSize: number; suggestCategories?: boolean; minFactsForNewCategory?: number },
+  config: {
+    model?: string;
+    batchSize: number;
+    suggestCategories?: boolean;
+    minFactsForNewCategory?: number;
+    discoveryIntervalHours?: number;
+  },
   opts: { dryRun: boolean; limit: number; model?: string },
   discoveredPath: string,
   logger: { info: (msg: string) => void; warn: (msg: string) => void },
@@ -306,7 +382,13 @@ async function runClassifyForCli(
 async function runAutoClassify(
   factsDb: FactsDB,
   openai: OpenAI,
-  config: { model?: string; batchSize: number; suggestCategories?: boolean; minFactsForNewCategory?: number },
+  config: {
+    model?: string;
+    batchSize: number;
+    suggestCategories?: boolean;
+    minFactsForNewCategory?: number;
+    discoveryIntervalHours?: number;
+  },
   logger: { info: (msg: string) => void; warn: (msg: string) => void },
   opts?: { discoveredCategoriesPath?: string; model?: string },
 ): Promise<{ reclassified: number; suggested: string[] }> {
