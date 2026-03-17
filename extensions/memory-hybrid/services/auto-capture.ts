@@ -29,8 +29,15 @@ export const SENSITIVE_PATTERNS = [
   /:\/\/[^\s:@]+:[^\s@]+@[^\s/]+/, // Connection strings with embedded passwords (e.g., mongodb://user:pass@host) - Note: usernames with colons will fail
 ];
 
+/** Patterns for capture filtering - uses broader /token/i instead of /token\s+is/i for security */
+export const CAPTURE_FILTER_PATTERNS = SENSITIVE_PATTERNS.map((pattern) =>
+  pattern.source === /token\s+is/i.source && pattern.flags === /token\s+is/i.flags ? /token/i : pattern,
+);
+
 /** Patterns for isCredentialLike - derived from SENSITIVE_PATTERNS with /token/i for broader credential detection */
-const CREDENTIAL_LIKE_PATTERNS = SENSITIVE_PATTERNS.map((pattern, index) => (index === 3 ? /token/i : pattern));
+const CREDENTIAL_LIKE_PATTERNS = SENSITIVE_PATTERNS.map((pattern) =>
+  pattern.source === /token\s+is/i.source && pattern.flags === /token\s+is/i.flags ? /token/i : pattern,
+);
 
 /** Patterns that suggest a credential value - for auto-detect prompt to store */
 const CREDENTIAL_PATTERNS: Array<{ regex: RegExp; type: string; hint: string }> = [

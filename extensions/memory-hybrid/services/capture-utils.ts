@@ -3,7 +3,7 @@
  */
 
 import type { MemoryCategory } from "../types/memory.js";
-import { SENSITIVE_PATTERNS } from "./auto-capture.js";
+import { CAPTURE_FILTER_PATTERNS } from "./auto-capture.js";
 
 export function shouldCapture(text: string, captureMaxChars: number, memoryTriggers: RegExp[]): boolean {
   if (text.length < 10 || text.length > captureMaxChars) return false;
@@ -12,7 +12,7 @@ export function shouldCapture(text: string, captureMaxChars: number, memoryTrigg
   if (text.includes("**") && text.includes("\n-")) return false;
   const emojiCount = (text.match(/[\u{1F300}-\u{1F9FF}]/gu) || []).length;
   if (emojiCount > 3) return false;
-  if (SENSITIVE_PATTERNS.some((r) => r.test(text))) return false;
+  if (CAPTURE_FILTER_PATTERNS.some((r) => r.test(text))) return false;
   return memoryTriggers.some((r) => r.test(text));
 }
 
