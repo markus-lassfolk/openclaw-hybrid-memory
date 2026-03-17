@@ -97,7 +97,7 @@ function truncateForEmbedding(text: string): string {
 
 // Minimal type shims for onnxruntime-node (loaded dynamically at runtime; package is optional).
 interface OnnxTensor {
-  data: Float32Array | Int32Array | BigInt64Array | unknown;
+  data: Float32Array | Int32Array | BigInt64Array;
   dims: readonly number[];
 }
 interface OnnxInferenceSession {
