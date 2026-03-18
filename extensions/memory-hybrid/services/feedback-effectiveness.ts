@@ -52,6 +52,7 @@ function countFeedbackInWindow(
   implicitNegative: number;
 } {
   const db = factsDb.getRawDb();
+  if (!db) return { corrections: 0, praise: 0, implicitPositive: 0, implicitNegative: 0 };
 
   let corrections = 0;
   let praise = 0;
@@ -201,6 +202,7 @@ export function runClosedLoopAnalysis(factsDb: FactsDB, config: Partial<ClosedLo
   try {
     // Find rules/patterns created in last 30 days
     const db = factsDb.getRawDb();
+    if (!db) return report;
 
     const rows = db
       .prepare(
@@ -302,6 +304,7 @@ export function runClosedLoopAnalysis(factsDb: FactsDB, config: Partial<ClosedLo
 export function getEffectivenessReport(factsDb: FactsDB): string {
   try {
     const db = factsDb.getRawDb();
+    if (!db) return "No database available.";
 
     const rows = db
       .prepare(
