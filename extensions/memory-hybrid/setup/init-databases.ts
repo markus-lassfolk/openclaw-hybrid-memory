@@ -247,6 +247,113 @@ function canonicalizeMiniMaxModelId(bare: string): string {
 /** OpenRouter OpenAI-compatible base URL. */
 export const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
 
+/** Resolved API key with metadata about which configuration source provided it. */
+export type ResolvedApiKey = { value?: string; source: string };
+
+/**
+ * Centralised API-key resolver for all built-in and custom providers.
+ *
+ * Resolves the API key for a named provider using a well-defined precedence chain.
+ * Provider-specific exceptions are explicit and documented here, rather than scattered
+ * across individual provider branches in `resolveClient`.
+ *
+ * Precedence table (highest → lowest):
+ *
+ * | Source                      | google | openai | anthropic | openrouter | minimax | ollama | custom |
+ * |-----------------------------|:------:|:------:|:---------:|:----------:|:-------:|:------:|:------:|
+ * | llm.providers.X.apiKey      |   ✓    |   ✓    |     ✓     |     ✓      |    ✓    |   ✓    |   ✓    |
+ * | distill.apiKey (legacy)     |   ✓    |        |           |            |         |        |        |
+ * | gatewayToken                |        |   ✓†   |           |            |         |        |        |
+ * | embedding.apiKey            |        |   ✓†   |           |            |         |        |        |
+ * | GOOGLE_API_KEY env          |   ✓    |        |           |            |         |        |        |
+ * | OPENAI_API_KEY env          |        |   ✓    |           |            |         |        |        |
+ * | ANTHROPIC_API_KEY env       |        |        |     ✓     |            |         |        |        |
+ * | OPENROUTER_API_KEY env      |        |        |           |     ✓      |         |        |        |
+ * | MINIMAX_API_KEY env         |        |        |           |            |    ✓    |        |        |
+ * | <PREFIX>_API_KEY env        |        |        |           |            |         |        |   ✓    |
+ * | "ollama" (no-op default)    |        |        |           |            |         |   ✓    |        |
+ *
+ * † openai: `gatewayToken` and `embedding.apiKey` are skipped when `hasCustomExternalBaseURL` is true
+ *   (security: never send internal gateway credentials to external endpoints).
+ *
+ * @param prefix                       Lowercase provider prefix, e.g. "google", "openai".
+ * @param providerCfg                  The llm.providers[prefix] config object, if present.
+ * @param cfg                          Full plugin config.
+ * @param resolveKey                   SecretRef resolver (env:VAR / file:// / ${VAR}).
+ * @param opts.gatewayToken            Resolved gateway auth token (openai only).
+ * @param opts.hasCustomExternalBaseURL  True when openai uses a non-gateway baseURL.
+ * @param opts.env                     Process environment (injectable for tests; defaults to process.env).
+ */
+export function resolveProviderApiKey(
+  prefix: string,
+  providerCfg: LLMProviderConfig | undefined,
+  cfg: HybridMemoryConfig,
+  resolveKey: (key: string | undefined) => string | undefined,
+  opts: {
+    gatewayToken?: string;
+    hasCustomExternalBaseURL?: boolean;
+    env?: NodeJS.ProcessEnv;
+  } = {},
+): ResolvedApiKey {
+  const { gatewayToken, hasCustomExternalBaseURL = false, env = process.env } = opts;
+
+  // Highest priority: explicit per-provider key in llm.providers config (all providers).
+  const fromProviderCfg = resolveKey(providerCfg?.apiKey);
+  if (fromProviderCfg) return { value: fromProviderCfg, source: `llm.providers.${prefix}.apiKey` };
+
+  if (prefix === "google") {
+    // Legacy fallback: distill.apiKey doubles as the Google API key for distillation.
+    const fromDistill = resolveKey(cfg.distill?.apiKey);
+    if (fromDistill) return { value: fromDistill, source: "distill.apiKey" };
+    const fromEnv = env.GOOGLE_API_KEY?.trim() || undefined;
+    if (fromEnv) return { value: fromEnv, source: "GOOGLE_API_KEY" };
+    return { source: "none" };
+  }
+
+  if (prefix === "openai") {
+    // Security: never send gateway/embedding credentials to an arbitrary external endpoint.
+    if (!hasCustomExternalBaseURL) {
+      if (gatewayToken) return { value: gatewayToken, source: "gatewayToken" };
+      const fromEmbedding = resolveKey(cfg.embedding?.apiKey);
+      if (fromEmbedding) return { value: fromEmbedding, source: "embedding.apiKey" };
+    }
+    const fromEnv = env.OPENAI_API_KEY?.trim() || undefined;
+    if (fromEnv) return { value: fromEnv, source: "OPENAI_API_KEY" };
+    return { source: "none" };
+  }
+
+  if (prefix === "anthropic") {
+    const fromEnv = env.ANTHROPIC_API_KEY?.trim() || undefined;
+    if (fromEnv) return { value: fromEnv, source: "ANTHROPIC_API_KEY" };
+    return { source: "none" };
+  }
+
+  if (prefix === "openrouter") {
+    const fromEnv = env.OPENROUTER_API_KEY?.trim() || undefined;
+    if (fromEnv) return { value: fromEnv, source: "OPENROUTER_API_KEY" };
+    return { source: "none" };
+  }
+
+  if (prefix === "minimax") {
+    const fromEnv = env.MINIMAX_API_KEY?.trim() || undefined;
+    if (fromEnv) return { value: fromEnv, source: "MINIMAX_API_KEY" };
+    return { source: "none" };
+  }
+
+  if (prefix === "ollama") {
+    // Ollama's OpenAI-compatible endpoint accepts any non-empty string as the API key.
+    return { value: "ollama", source: "default" };
+  }
+
+  // Generic env fallback: <PREFIX>_API_KEY (covers any provider following this convention).
+  // NOTE: the gateway token is intentionally excluded — it is scoped to the local gateway
+  // and must never be sent to arbitrary external endpoints.
+  const fromGenericEnv = env[`${prefix.toUpperCase()}_API_KEY`]?.trim();
+  if (fromGenericEnv) return { value: fromGenericEnv, source: `${prefix.toUpperCase()}_API_KEY` };
+
+  return { source: "none" };
+}
+
 /**
  * Builds a multi-provider OpenAI-compatible proxy that routes each model to the correct provider API.
  * All existing call sites use `openai.chat.completions.create({ model, ... })` unchanged — this
@@ -362,22 +469,18 @@ function buildMultiProviderOpenAI(
     : undefined;
 
   function hasApiKeyForProvider(prefix: string): boolean {
-    const prov = cfg.llm?.providers as Record<string, { apiKey?: string }> | undefined;
-    if (prefix === "google") {
-      const k = resolveApiKey(prov?.google?.apiKey ?? cfg.distill?.apiKey);
-      return Boolean(k && k.length >= 10);
-    }
-    if (prefix === "openai") {
-      const k = resolveApiKey(prov?.openai?.apiKey) ?? resolveApiKey(cfg.embedding?.apiKey);
-      return Boolean(k && k.length >= 10);
-    }
-    if (prefix === "anthropic") {
-      const claude = (cfg as Record<string, unknown>).claude as { apiKey?: string } | undefined;
-      const k = resolveApiKey(prov?.anthropic?.apiKey) ?? resolveApiKey(claude?.apiKey);
-      return Boolean(k && k.length >= 10);
-    }
-    const k = resolveApiKey(prov?.[prefix]?.apiKey);
-    return Boolean(k && k.length >= 10);
+    const providerCfg: LLMProviderConfig | undefined = (
+      cfg.llm?.providers as Record<string, LLMProviderConfig | undefined> | undefined
+    )?.[prefix];
+    const hasCustomExternalBaseURL =
+      prefix === "openai" && Boolean(providerCfg?.baseURL && providerCfg.baseURL !== gatewayBaseUrl);
+    // Exclude gatewayToken from the check for OAuth routing decisions — we only want to detect
+    // a real direct API key (llm.providers.X.apiKey, embedding.apiKey, or env var).
+    const { value } = resolveProviderApiKey(prefix, providerCfg, cfg, resolveApiKey, {
+      gatewayToken: undefined,
+      hasCustomExternalBaseURL,
+    });
+    return Boolean(value && value.length >= 10);
   }
 
   function resolveClient(model: string): {
@@ -420,8 +523,7 @@ function buildMultiProviderOpenAI(
     }
 
     if (prefix === "google") {
-      const apiKey =
-        resolveApiKey(providerCfg?.apiKey ?? cfg.distill?.apiKey) ?? (process.env.GOOGLE_API_KEY?.trim() || undefined);
+      const { value: apiKey } = resolveProviderApiKey("google", providerCfg, cfg, resolveApiKey);
       if (!apiKey) throw new UnconfiguredProviderError("google", trimmed);
       const baseURL = providerCfg?.baseURL ?? GOOGLE_GEMINI_BASE_URL;
       return {
@@ -436,11 +538,10 @@ function buildMultiProviderOpenAI(
       // do NOT fall back to gatewayToken — that would send the internal gateway
       // token to an arbitrary external endpoint (security issue).
       const hasCustomExternalBaseURL = Boolean(providerCfg?.baseURL && providerCfg.baseURL !== gatewayBaseUrl);
-      const apiKey =
-        resolveApiKey(providerCfg?.apiKey) ??
-        (hasCustomExternalBaseURL ? undefined : gatewayToken) ??
-        (hasCustomExternalBaseURL ? undefined : cfg.embedding.apiKey) ??
-        (process.env.OPENAI_API_KEY?.trim() || undefined);
+      const { value: apiKey } = resolveProviderApiKey("openai", providerCfg, cfg, resolveApiKey, {
+        gatewayToken,
+        hasCustomExternalBaseURL,
+      });
       if (!apiKey) throw new UnconfiguredProviderError("openai", trimmed);
       const baseURL = providerCfg?.baseURL ?? gatewayBaseUrl;
       const cacheKey = `openai:prefixed:${apiKey.slice(0, 8)}:${baseURL ?? "default"}`;
@@ -451,7 +552,7 @@ function buildMultiProviderOpenAI(
     }
 
     if (prefix === "anthropic") {
-      const apiKey = resolveApiKey(providerCfg?.apiKey) ?? (process.env.ANTHROPIC_API_KEY?.trim() || undefined);
+      const { value: apiKey } = resolveProviderApiKey("anthropic", providerCfg, cfg, resolveApiKey);
       if (!apiKey) throw new UnconfiguredProviderError("anthropic", trimmed);
       const baseURL = providerCfg?.baseURL ?? ANTHROPIC_BASE_URL;
       // Anthropic's OpenAI-compatible endpoints require anthropic-version header
@@ -478,10 +579,10 @@ function buildMultiProviderOpenAI(
       }
       // Strip /v1 suffix for the health-check base URL
       const ollamaBaseUrl = baseURL.replace(/\/v1\/?$/, "");
-      const apiKey = resolveApiKey(providerCfg?.apiKey) ?? "ollama";
+      const { value: apiKey } = resolveProviderApiKey("ollama", providerCfg, cfg, resolveApiKey);
       const cacheKey = `ollama:${baseURL}`;
       return {
-        client: getOrCreate(cacheKey, () => new OpenAI({ apiKey, baseURL })),
+        client: getOrCreate(cacheKey, () => new OpenAI({ apiKey: apiKey ?? "ollama", baseURL })),
         bareModel,
         ollamaBaseUrl,
       };
@@ -491,7 +592,7 @@ function buildMultiProviderOpenAI(
       // OpenRouter exposes an OpenAI-compatible API at https://openrouter.ai/api/v1.
       // Model names are passed as-is after stripping the "openrouter/" prefix
       // (e.g. "openrouter/anthropic/claude-3.5-sonnet" → bareModel "anthropic/claude-3.5-sonnet").
-      const apiKey = resolveApiKey(providerCfg?.apiKey) ?? (process.env.OPENROUTER_API_KEY?.trim() || undefined);
+      const { value: apiKey } = resolveProviderApiKey("openrouter", providerCfg, cfg, resolveApiKey);
       if (!apiKey) throw new UnconfiguredProviderError("openrouter", trimmed);
       const baseURL = providerCfg?.baseURL ?? OPENROUTER_BASE_URL;
       // Include apiKey prefix in cache key so key rotation takes effect without restart.
@@ -517,7 +618,7 @@ function buildMultiProviderOpenAI(
     if (prefix === "minimax") {
       // Use the built-in MiniMax API endpoint as default so callers never accidentally
       // fall through to the default OpenAI client (which returns 404 for MiniMax models).
-      const apiKey = resolveApiKey(providerCfg?.apiKey) ?? (process.env.MINIMAX_API_KEY?.trim() || undefined);
+      const { value: apiKey } = resolveProviderApiKey("minimax", providerCfg, cfg, resolveApiKey);
       if (!apiKey) throw new UnconfiguredProviderError("minimax", trimmed);
       const baseURL = providerCfg?.baseURL ?? MINIMAX_BASE_URL;
       // Canonicalize the bare model name: strip Ollama-style ":tag" suffixes and fix casing
@@ -529,33 +630,18 @@ function buildMultiProviderOpenAI(
       };
     }
 
-    if (providerCfg?.apiKey || providerCfg?.baseURL) {
+    // For all remaining providers (custom configs and unknown providers), use the centralised
+    // resolver which covers llm.providers[prefix].apiKey and the <PREFIX>_API_KEY env convention.
+    // The gateway token is intentionally excluded — it is scoped to the local gateway and must
+    // never be sent to arbitrary external endpoints.
+    const { value: resolvedApiKey } = resolveProviderApiKey(prefix, providerCfg, cfg, resolveApiKey);
+    if (providerCfg?.baseURL || resolvedApiKey) {
       // apiKey may be absent when the provider only needs a custom baseURL (some self-hosted servers)
-      const apiKey = resolveApiKey(providerCfg.apiKey) ?? "no-key";
-      const baseURL = providerCfg.baseURL;
+      const apiKey = resolvedApiKey ?? "no-key";
+      const baseURL = providerCfg?.baseURL;
       const cacheKey = `custom:${prefix}:${apiKey.slice(0, 8)}:${baseURL ?? "default"}`;
       return {
         client: getOrCreate(cacheKey, () => new OpenAI({ apiKey, ...(baseURL ? { baseURL } : {}) })),
-        bareModel,
-      };
-    }
-
-    // Before giving up, try provider-specific env var pattern (but NOT the gateway token —
-    // that's scoped to the local gateway only and must never be sent to external endpoints).
-    // Covers any provider following the <PREFIX>_API_KEY convention.
-    const envFallbackKey = process.env[`${prefix.toUpperCase()}_API_KEY`]?.trim();
-    if (envFallbackKey) {
-      const baseURL = providerCfg?.baseURL;
-      const cacheKey = `custom:${prefix}:${envFallbackKey.slice(0, 8)}:${baseURL ?? "default"}`;
-      return {
-        client: getOrCreate(
-          cacheKey,
-          () =>
-            new OpenAI({
-              apiKey: envFallbackKey,
-              ...(baseURL ? { baseURL } : {}),
-            }),
-        ),
         bareModel,
       };
     }
