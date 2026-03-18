@@ -16,6 +16,7 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { capturePluginError } from "./error-reporter.js";
+import type { HumanizerConfig } from "../config/types/features.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -39,37 +40,6 @@ export interface HumanizerResult {
   patternsTriggered: string[];
   categoryBreakdown: Record<string, number>;
   rawOutput: HumanizerRawOutput;
-}
-
-/** Configuration for humanizer integration */
-export interface HumanizerConfig {
-  /** Enable humanizer scoring on agent replies (default: false — opt-in) */
-  enabled: boolean;
-  /**
-   * Path to the humanizer binary (default: "humanizer").
-   * Override when humanizer is not on PATH.
-   */
-  bin: string;
-  /**
-   * Minimum reply length in characters before scoring (default: 100).
-   * Short replies (ack, "ok", etc.) are skipped to avoid noise.
-   */
-  minTextLength: number;
-  /**
-   * Maximum reply length in characters sent to humanizer (default: 4000).
-   * Truncated before scoring to avoid slow CLI calls on very long replies.
-   */
-  maxTextLength: number;
-  /**
-   * Optional: model name to tag in the stored quality_loop fact.
-   * Informational — not used for routing. Example: "sonnet", "opus".
-   */
-  modelTag?: string;
-  /**
-   * Optional: skill/context tag for the stored fact.
-   * Informational — helps reflect surface per-skill scoring patterns.
-   */
-  skillTag?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -109,7 +79,7 @@ export function parseHumanizerOutput(raw: string): HumanizerResult | null {
     }
 
     const rawOutput: HumanizerRawOutput = {
-      score,
+      score: obj.score,
       patterns_triggered: patternsTriggered,
       category_breakdown: Object.keys(categoryBreakdown).length > 0 ? categoryBreakdown : undefined,
     };

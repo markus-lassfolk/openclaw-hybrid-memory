@@ -25,6 +25,38 @@ import type { LifecycleContext, SessionState } from "./types.js";
 
 const CAPTURE_STAGE_TIMEOUT_MS = 60_000;
 
+/**
+ * Extract text content from the last assistant message in a message array.
+ * Returns undefined if no assistant message is found or if the content is empty.
+ */
+function extractLastAssistantText(messages: unknown[]): string | undefined {
+  const assistantMsgs = messages.filter(
+    (m) => m && typeof m === "object" && (m as { role?: string }).role === "assistant",
+  );
+  const lastAssistant = assistantMsgs[assistantMsgs.length - 1] as { content?: unknown } | undefined;
+  if (!lastAssistant) return undefined;
+
+  if (typeof lastAssistant.content === "string") {
+    return lastAssistant.content;
+  } else if (Array.isArray(lastAssistant.content)) {
+    const textBlocks: string[] = [];
+    for (const block of lastAssistant.content) {
+      if (
+        block &&
+        typeof block === "object" &&
+        "type" in block &&
+        (block as { type?: string }).type === "text" &&
+        "text" in block &&
+        typeof (block as { text?: unknown }).text === "string"
+      ) {
+        textBlocks.push((block as { text: string }).text);
+      }
+    }
+    if (textBlocks.length > 0) return textBlocks.join(" ");
+  }
+  return undefined;
+}
+
 export async function runCaptureStage(
   event: unknown,
   api: ClawdbotPluginApi,
@@ -48,37 +80,13 @@ async function runCapture(
   // 1. Frustration: append last assistant message to session turn history
   if (messages.length > 0) {
     try {
-      const assistantMsgs = (messages as unknown[]).filter(
-        (m) => m && typeof m === "object" && (m as { role?: string }).role === "assistant",
-      );
-      const lastAssistant = assistantMsgs[assistantMsgs.length - 1] as { content?: unknown } | undefined;
-      if (lastAssistant) {
-        let assistantContent: string | undefined;
-        if (typeof lastAssistant.content === "string") {
-          assistantContent = lastAssistant.content;
-        } else if (Array.isArray(lastAssistant.content)) {
-          const textBlocks: string[] = [];
-          for (const block of lastAssistant.content) {
-            if (
-              block &&
-              typeof block === "object" &&
-              "type" in block &&
-              (block as { type?: string }).type === "text" &&
-              "text" in block &&
-              typeof (block as { text?: unknown }).text === "string"
-            ) {
-              textBlocks.push((block as { text: string }).text);
-            }
-          }
-          if (textBlocks.length > 0) assistantContent = textBlocks.join(" ");
-        }
-        if (assistantContent?.trim()) {
-          const state = frustrationStateMap.get(sessionKey);
-          if (state) {
-            state.turns.push({ role: "assistant", content: assistantContent });
-            if (state.turns.length > 20) state.turns.splice(0, state.turns.length - 20);
-            frustrationStateMap.set(sessionKey, state);
-          }
+      const assistantContent = extractLastAssistantText(messages as unknown[]);
+      if (assistantContent?.trim()) {
+        const state = frustrationStateMap.get(sessionKey);
+        if (state) {
+          state.turns.push({ role: "assistant", content: assistantContent });
+          if (state.turns.length > 20) state.turns.splice(0, state.turns.length - 20);
+          frustrationStateMap.set(sessionKey, state);
         }
       }
     } catch (err) {
@@ -93,54 +101,30 @@ async function runCapture(
   // 2. Humanizer quality-loop scoring (Issue #616 — Phase 1: evaluator only, no rewriting)
   if (ctx.cfg.humanizer?.enabled && messages.length > 0) {
     try {
-      const assistantMsgsH = (messages as unknown[]).filter(
-        (m) => m && typeof m === "object" && (m as { role?: string }).role === "assistant",
-      );
-      const lastAssistantH = assistantMsgsH[assistantMsgsH.length - 1] as { content?: unknown } | undefined;
-      if (lastAssistantH) {
-        let textForScore: string | undefined;
-        if (typeof lastAssistantH.content === "string") {
-          textForScore = lastAssistantH.content;
-        } else if (Array.isArray(lastAssistantH.content)) {
-          const blocks: string[] = [];
-          for (const block of lastAssistantH.content) {
-            if (
-              block &&
-              typeof block === "object" &&
-              "type" in block &&
-              (block as { type?: string }).type === "text" &&
-              "text" in block &&
-              typeof (block as { text?: unknown }).text === "string"
-            ) {
-              blocks.push((block as { text: string }).text);
-            }
-          }
-          if (blocks.length > 0) textForScore = blocks.join(" ");
-        }
-        if (textForScore?.trim()) {
-          const humCfg = ctx.cfg.humanizer;
-          const result = await runHumanizerScore(textForScore, {
-            bin: humCfg.bin,
-            minTextLength: humCfg.minTextLength,
-            maxTextLength: humCfg.maxTextLength,
+      const textForScore = extractLastAssistantText(messages as unknown[]);
+      if (textForScore?.trim()) {
+        const humCfg = ctx.cfg.humanizer;
+        const result = await runHumanizerScore(textForScore, {
+          bin: humCfg.bin,
+          minTextLength: humCfg.minTextLength,
+          maxTextLength: humCfg.maxTextLength,
+        });
+        if (result !== null) {
+          const entryText = formatQualityLoopEntry(result, {
+            modelTag: humCfg.modelTag,
+            skillTag: humCfg.skillTag,
           });
-          if (result !== null) {
-            const entryText = formatQualityLoopEntry(result, {
-              modelTag: humCfg.modelTag,
-              skillTag: humCfg.skillTag,
-            });
-            ctx.factsDb.store({
-              text: entryText,
-              category: "quality_loop",
-              importance: 0.6,
-              entity: null,
-              key: null,
-              value: null,
-              source: "humanizer",
-              decayClass: "normal",
-            });
-            api.logger.debug?.(`memory-hybrid: humanizer_score=${result.score.toFixed(2)} stored`);
-          }
+          ctx.factsDb.store({
+            text: entryText,
+            category: "quality_loop",
+            importance: 0.6,
+            entity: null,
+            key: null,
+            value: null,
+            source: "humanizer",
+            decayClass: "normal",
+          });
+          api.logger.debug?.(`memory-hybrid: humanizer_score=${result.score.toFixed(2)} stored`);
         }
       }
     } catch (err) {
