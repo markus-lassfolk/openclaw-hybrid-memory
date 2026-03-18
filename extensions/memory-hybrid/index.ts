@@ -311,25 +311,6 @@ const memoryHybridPlugin = {
     // DB instances if host calls register() before stop(), e.g. on SIGUSR1 or rapid reload).
     const old = runtimeRef.value;
     if (old) {
-      closeOldDatabases({
-        factsDb: old.factsDb,
-        vectorDb: old.vectorDb,
-        credentialsDb: old.credentialsDb,
-        proposalsDb: old.proposalsDb,
-        eventLog: old.eventLog,
-        aliasDb: old.aliasDb,
-        eventBus: old.eventBus,
-        issueStore: old.issueStore,
-        workflowStore: old.workflowStore,
-        crystallizationStore: old.crystallizationStore,
-        toolProposalStore: old.toolProposalStore,
-        verificationStore: old.verificationStore,
-        provenanceService: old.provenanceService,
-      });
-      // Issue #463: Dispose lifecycle hooks (stale session sweep timer, per-session state)
-      old.lifecycleHooksHandle?.dispose();
-      // pythonBridge shutdown
-      old.pythonBridge?.shutdown().catch(() => {});
       // Clear old timer handles to prevent leaks
       if (old.timers.pruneTimer.value) clearInterval(old.timers.pruneTimer.value);
       if (old.timers.classifyTimer.value) clearInterval(old.timers.classifyTimer.value);
@@ -340,9 +321,9 @@ const memoryHybridPlugin = {
         clearTimeout(old.timers.languageKeywordsStartupTimeout.value);
       if (old.timers.postUpgradeTimeout.value) clearTimeout(old.timers.postUpgradeTimeout.value);
       if (old.timers.passiveObserverTimer.value) clearInterval(old.timers.passiveObserverTimer.value);
+      // Issue #463: Dispose lifecycle hooks (stale session sweep timer, per-session state)
+      old.lifecycleHooksHandle?.dispose();
     }
-    // Clear the ref so no stale state leaks while we reinitialize
-    runtimeRef.value = null;
 
     let cfg: HybridMemoryConfig;
     try {
@@ -437,7 +418,7 @@ const memoryHybridPlugin = {
     // Build PluginRuntime -- single instance-scoped container for all state
     // ========================================================================
 
-    runtimeRef.value = {
+    const newRuntime: PluginRuntime = {
       cfg,
       resolvedLancePath,
       resolvedSqlitePath,
@@ -470,7 +451,9 @@ const memoryHybridPlugin = {
       timers: createTimers(),
     };
 
-    const runtime = runtimeRef.value;
+    runtimeRef.value = newRuntime;
+
+    const runtime = newRuntime;
 
     // Phase 2.6 / Phase 3: Single plugin context satisfying MemoryPluginAPI (stable internal API).
     const pluginContext: MemoryPluginAPI = {
@@ -614,6 +597,26 @@ const memoryHybridPlugin = {
         operation: "plugin-register:service",
       });
       throw err;
+    }
+
+    // Clean up old resources after atomic swap (Issue #590)
+    if (old) {
+      closeOldDatabases({
+        factsDb: old.factsDb,
+        vectorDb: old.vectorDb,
+        credentialsDb: old.credentialsDb,
+        proposalsDb: old.proposalsDb,
+        eventLog: old.eventLog,
+        aliasDb: old.aliasDb,
+        eventBus: old.eventBus,
+        issueStore: old.issueStore,
+        workflowStore: old.workflowStore,
+        crystallizationStore: old.crystallizationStore,
+        toolProposalStore: old.toolProposalStore,
+        verificationStore: old.verificationStore,
+        provenanceService: old.provenanceService,
+      });
+      old.pythonBridge?.shutdown().catch(() => {});
     }
 
     // Issue #281 -- Verify cron health on boot
