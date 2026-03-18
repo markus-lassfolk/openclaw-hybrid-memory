@@ -45,6 +45,7 @@ export class WriteAheadLog {
   private walPath: string;
   private maxAge: number;
   private fsyncWarnEmitted = false;
+  private writeLock: Promise<void> = Promise.resolve();
 
   constructor(walPath: string, maxAge: number = 5 * 60 * 1000) {
     this.walPath = walPath;
@@ -78,7 +79,14 @@ export class WriteAheadLog {
   }
 
   async write(entry: WALEntry): Promise<void> {
+    const prevLock = this.writeLock;
+    let releaseLock: () => void;
+    this.writeLock = new Promise((resolve) => {
+      releaseLock = resolve;
+    });
+
     try {
+      await prevLock;
       const line = JSON.stringify(entry) + "\n";
       await appendFile(this.walPath, line, "utf-8");
       await this.fsyncAfterWrite();
@@ -88,6 +96,8 @@ export class WriteAheadLog {
         subsystem: "wal",
       });
       throw new Error(`WAL write failed: ${err}`);
+    } finally {
+      releaseLock!();
     }
   }
 
@@ -156,7 +166,14 @@ export class WriteAheadLog {
   }
 
   async remove(id: string): Promise<void> {
+    const prevLock = this.writeLock;
+    let releaseLock: () => void;
+    this.writeLock = new Promise((resolve) => {
+      releaseLock = resolve;
+    });
+
     try {
+      await prevLock;
       const line = JSON.stringify({ op: "remove", id }) + "\n";
       await appendFile(this.walPath, line, "utf-8");
       await this.fsyncAfterWrite();
@@ -167,6 +184,8 @@ export class WriteAheadLog {
         subsystem: "wal",
       });
       throw new Error(`WAL remove failed: ${err}`);
+    } finally {
+      releaseLock!();
     }
   }
 
@@ -189,20 +208,31 @@ export class WriteAheadLog {
   }
 
   async pruneStale(): Promise<number> {
-    const entries = await this.readAll();
-    const now = Date.now();
-    const valid = entries.filter((e) => now - e.timestamp < this.maxAge);
-    const pruned = entries.length - valid.length;
+    const prevLock = this.writeLock;
+    let releaseLock: () => void;
+    this.writeLock = new Promise((resolve) => {
+      releaseLock = resolve;
+    });
 
-    if (pruned > 0) {
-      if (valid.length === 0) {
-        await this.clear();
-      } else {
-        const ndjson = valid.map((e) => JSON.stringify(e)).join("\n") + (valid.length ? "\n" : "");
-        await writeFile(this.walPath, ndjson, "utf-8");
-        await this.fsyncAfterWrite();
+    try {
+      await prevLock;
+      const entries = await this.readAll();
+      const now = Date.now();
+      const valid = entries.filter((e) => now - e.timestamp < this.maxAge);
+      const pruned = entries.length - valid.length;
+
+      if (pruned > 0) {
+        if (valid.length === 0) {
+          await this.clear();
+        } else {
+          const ndjson = valid.map((e) => JSON.stringify(e)).join("\n") + (valid.length ? "\n" : "");
+          await writeFile(this.walPath, ndjson, "utf-8");
+          await this.fsyncAfterWrite();
+        }
       }
+      return pruned;
+    } finally {
+      releaseLock!();
     }
-    return pruned;
   }
 }
