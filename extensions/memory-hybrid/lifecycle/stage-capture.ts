@@ -100,31 +100,28 @@ async function runCapture(
   // 2. Humanizer quality-loop scoring (Issue #616 — Phase 1: evaluator only, no rewriting)
   if (ctx.cfg.humanizer?.enabled && assistantText?.trim()) {
     try {
-      const textForScore = assistantText;
-      if (textForScore?.trim()) {
-        const humCfg = ctx.cfg.humanizer;
-        const result = await runHumanizerScore(textForScore, {
-          bin: humCfg.bin,
-          minTextLength: humCfg.minTextLength,
-          maxTextLength: humCfg.maxTextLength,
+      const humCfg = ctx.cfg.humanizer;
+      const result = await runHumanizerScore(assistantText, {
+        bin: humCfg.bin,
+        minTextLength: humCfg.minTextLength,
+        maxTextLength: humCfg.maxTextLength,
+      });
+      if (result !== null) {
+        const entryText = formatQualityLoopEntry(result, {
+          modelTag: humCfg.modelTag,
+          skillTag: humCfg.skillTag,
         });
-        if (result !== null) {
-          const entryText = formatQualityLoopEntry(result, {
-            modelTag: humCfg.modelTag,
-            skillTag: humCfg.skillTag,
-          });
-          ctx.factsDb.store({
-            text: entryText,
-            category: "quality_loop",
-            importance: 0.6,
-            entity: null,
-            key: null,
-            value: null,
-            source: "humanizer",
-            decayClass: "normal",
-          });
-          api.logger.debug?.(`memory-hybrid: humanizer_score=${result.score.toFixed(2)} stored`);
-        }
+        ctx.factsDb.store({
+          text: entryText,
+          category: "quality_loop",
+          importance: 0.6,
+          entity: null,
+          key: null,
+          value: null,
+          source: "humanizer",
+          decayClass: "normal",
+        });
+        api.logger.debug?.(`memory-hybrid: humanizer_score=${result.score.toFixed(2)} stored`);
       }
     } catch (err) {
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
