@@ -329,3 +329,20 @@ export type DashboardConfig = {
   /** Optional owner/repo for GitHub queries (e.g. "markus-lassfolk/openclaw-hybrid-memory"). */
   gitRepo?: string;
 };
+// TEST MARKER
+
+/** ApiTap integration — intercept browser traffic to auto-generate API skill specs (Issue #614, default: disabled). */
+export type ApiTapConfig = {
+  /** Enable ApiTap integration (default: false — explicit opt-in required). */
+  enabled: boolean;
+  /** Timeout in seconds for a live capture session (default: 60). */
+  captureTimeoutSeconds: number;
+  /** Days before a discovered endpoint record expires (default: 30). */
+  endpointTtlDays: number;
+  /** Max endpoints stored per capture session (default: 50). */
+  maxEndpointsPerSession: number;
+  /** URL glob patterns allowed for capture (empty = allow all non-blocked). */
+  allowedPatterns: string[];
+  /** URL glob patterns blocked from capture (auth/OAuth flows, default: blocked). */
+  blockedPatterns: string[];
+};
