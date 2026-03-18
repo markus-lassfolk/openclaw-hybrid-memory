@@ -176,7 +176,7 @@ export class ApitapStore {
     const params: SQLInputValue[] = [];
 
     if (filter?.siteUrl) {
-      const escapedSiteUrl = filter.siteUrl.replace(/[%_]/g, "\\$&");
+      const escapedSiteUrl = filter.siteUrl.replace(/\\/g, "\\\\").replace(/[%_]/g, "\\$&");
       query += " AND site_url LIKE ? ESCAPE '\\'";
       params.push(`%${escapedSiteUrl}%`);
     }
