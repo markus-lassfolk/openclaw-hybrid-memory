@@ -8,6 +8,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { registerApitapTools } from "../tools/apitap-tools.js";
 import { ApitapStore } from "../backends/apitap-store.js";
+import { ApitapService } from "../services/apitap-service.js";
 import type { HybridMemoryConfig } from "../config.js";
 
 // ---------------------------------------------------------------------------
@@ -117,12 +118,16 @@ describe("apitap_capture", () => {
   });
 
   it("returns not-installed message when apitap CLI is absent (enabled = true)", async () => {
-    registerApitapTools({ apitapStore: store, cfg: makeEnabledConfig() }, api as any);
-    const result = (await api.callTool("apitap_capture", { url: "https://example.com" })) as any;
-    const text = result?.content?.[0]?.text ?? "";
-    // Either "not installed" or the capture result — both are valid depending on CI environment
-    expect(typeof text).toBe("string");
-    expect(text.length).toBeGreaterThan(0);
+    // Deterministically force isAvailable() = false via prototype spy
+    const spy = vi.spyOn(ApitapService.prototype, "isAvailable").mockReturnValue(false);
+    try {
+      registerApitapTools({ apitapStore: store, cfg: makeEnabledConfig() }, api as any);
+      const result = (await api.callTool("apitap_capture", { url: "https://example.com" })) as any;
+      const text = result?.content?.[0]?.text ?? "";
+      expect(text).toMatch(/not installed/i);
+    } finally {
+      spy.mockRestore();
+    }
   });
 });
 
@@ -151,11 +156,13 @@ describe("apitap_list", () => {
     expect(typeof text).toBe("string");
   });
 
-  it("returns disabled message when apiTap.enabled = false", async () => {
+  it("still works when apiTap.enabled = false (read-only access to existing data)", async () => {
+    // apitap_list is a read-only operation and must work even when new captures are disabled.
+    store.create({ siteUrl: "https://example.com", endpoint: "/api/items", method: "GET", sessionId: "s1" });
     registerApitapTools({ apitapStore: store, cfg: makeDisabledConfig() }, api as any);
     const result = (await api.callTool("apitap_list", {})) as any;
     const text = result?.content?.[0]?.text ?? "";
-    expect(text).toMatch(/disabled/i);
+    expect(text).toContain("/api/items");
   });
 
   it("lists endpoints in the store", async () => {
@@ -185,10 +192,12 @@ describe("apitap_to_skill", () => {
     expect(text).toMatch(/not found|disabled/i);
   });
 
-  it("returns disabled message when apiTap.enabled = false", async () => {
+  it("still works when apiTap.enabled = false (read-only access to existing data)", async () => {
+    // apitap_to_skill is a read-only operation; it must work for audit/recovery even when captures are disabled.
+    const ep = store.create({ siteUrl: "https://example.com", endpoint: "/api/data", method: "GET", sessionId: "s1" });
     registerApitapTools({ apitapStore: store, cfg: makeDisabledConfig() }, api as any);
-    const result = (await api.callTool("apitap_to_skill", { id: "any-id" })) as any;
+    const result = (await api.callTool("apitap_to_skill", { id: ep.id })) as any;
     const text = result?.content?.[0]?.text ?? "";
-    expect(text).toMatch(/disabled/i);
+    expect(text).toContain("/api/data");
   });
 });

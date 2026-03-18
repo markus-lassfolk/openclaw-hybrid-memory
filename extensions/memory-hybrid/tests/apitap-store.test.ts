@@ -171,6 +171,21 @@ describe("ApitapStore.deleteExpired", () => {
     store.create({ siteUrl: "https://x.com", endpoint: "/ep", method: "GET", sessionId: "sx", endpointTtlDays: 30 });
     expect(store.deleteExpired()).toBe(0);
   });
+
+  it("removes already-expired endpoints and excludes them from list()", () => {
+    // Insert one endpoint that expired in the past
+    const pastExpiry = new Date(Date.now() - 60_000).toISOString(); // 1 minute ago
+    store.create({ siteUrl: "https://x.com", endpoint: "/old", method: "GET", sessionId: "sx", expiresAt: pastExpiry });
+    // Insert one endpoint that expires in the future
+    store.create({ siteUrl: "https://x.com", endpoint: "/fresh", method: "GET", sessionId: "sx", endpointTtlDays: 30 });
+
+    const deleted = store.deleteExpired();
+    expect(deleted).toBe(1);
+
+    const remaining = store.list({ includeExpired: false });
+    expect(remaining.map((e) => e.endpoint)).not.toContain("/old");
+    expect(remaining.map((e) => e.endpoint)).toContain("/fresh");
+  });
 });
 
 // ---------------------------------------------------------------------------

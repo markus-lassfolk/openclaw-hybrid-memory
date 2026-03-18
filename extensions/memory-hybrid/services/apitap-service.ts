@@ -77,6 +77,31 @@ function matchesPattern(url: string, pattern: string): boolean {
 }
 
 /**
+ * Check whether a fully-resolved endpoint URL matches any blocked pattern.
+ * Unlike validateUrl(), this does NOT check allowedPatterns — those apply to
+ * capture targets, not to individual discovered sub-endpoints.
+ * Returns an error message when blocked, or null when safe to persist.
+ */
+export function isEndpointBlocked(endpointUrl: string, cfg: ApiTapConfig): string | null {
+  let parsed: URL;
+  try {
+    parsed = new URL(endpointUrl);
+  } catch {
+    return null; // unparseable — let the caller decide
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    return `Endpoint scheme "${parsed.protocol}" is not allowed.`;
+  }
+  const normalizedUrl = `${parsed.protocol}//${parsed.host}${parsed.pathname}`;
+  for (const pattern of cfg.blockedPatterns) {
+    if (matchesPattern(normalizedUrl, pattern)) {
+      return `Endpoint matches blocked pattern "${pattern}".`;
+    }
+  }
+  return null;
+}
+
+/**
  * Validate a URL against allowed/blocked patterns.
  * Returns null if allowed, or an error message if blocked.
  */
@@ -299,11 +324,20 @@ export class ApitapService {
         return `-d '${k}=${escapedValue}'`;
       })
       .join(" ");
-    const escapedUrl = encodeURI(`${siteUrl}${endpoint}`);
+    const baseUrl = encodeURI(`${siteUrl}${endpoint}`);
+    const upperMethod = method.toUpperCase();
+
+    // For GET/HEAD, serialize parameters as a query string so the scaffold
+    // reflects the captured call semantics rather than silently dropping them.
+    const queryString = Object.entries(parameters)
+      .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(String(v))}`)
+      .join("&");
+    const getUrl = queryString ? `${baseUrl}?${queryString}` : baseUrl;
+
     const curlExample =
-      method.toUpperCase() === "GET"
-        ? `curl "${escapedUrl}"`
-        : `curl -X ${method.toUpperCase()} "${escapedUrl}" ${curlParams}`.trim();
+      upperMethod === "GET" || upperMethod === "HEAD"
+        ? `curl "${getUrl}"`
+        : `curl -X ${upperMethod} "${baseUrl}" ${curlParams}`.trim();
 
     return {
       skillName,

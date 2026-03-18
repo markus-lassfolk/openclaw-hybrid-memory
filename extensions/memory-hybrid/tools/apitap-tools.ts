@@ -15,7 +15,7 @@ import { Type } from "@sinclair/typebox";
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk";
 import type { ApitapStore } from "../backends/apitap-store.js";
 import type { HybridMemoryConfig } from "../config.js";
-import { ApitapService, validateUrl } from "../services/apitap-service.js";
+import { ApitapService, isEndpointBlocked, validateUrl } from "../services/apitap-service.js";
 import { capturePluginError } from "../services/error-reporter.js";
 
 export interface ApitapToolsContext {
@@ -50,7 +50,29 @@ function persistAndFormatEndpoints(
       ? new Date(Date.now() + cfg.apiTap.endpointTtlDays * 24 * 60 * 60_000).toISOString()
       : null;
 
-  const stored = result.endpoints.map((ep) =>
+  // Re-validate each discovered endpoint against blockedPatterns before persisting.
+  // The capture-time validateUrl() only checks the top-level page URL; endpoints
+  // discovered during capture can still resolve to auth/sensitive sub-paths.
+  let blockedCount = 0;
+  const allowedEndpoints = result.endpoints.filter((ep) => {
+    let fullUrl: string;
+    if (ep.endpoint.startsWith("http://") || ep.endpoint.startsWith("https://")) {
+      fullUrl = ep.endpoint;
+    } else {
+      try {
+        fullUrl = new URL(ep.endpoint, url).toString();
+      } catch {
+        fullUrl = `${url}${ep.endpoint}`;
+      }
+    }
+    if (isEndpointBlocked(fullUrl, cfg.apiTap)) {
+      blockedCount++;
+      return false;
+    }
+    return true;
+  });
+
+  const stored = allowedEndpoints.map((ep) =>
     apitapStore.create({
       siteUrl: url,
       endpoint: ep.endpoint,
@@ -67,6 +89,9 @@ function persistAndFormatEndpoints(
   lines.push(`${label} for ${url}.`);
   lines.push(`  Session ID:       ${result.sessionId}`);
   lines.push(`  Endpoints found:  ${stored.length}`);
+  if (blockedCount > 0) {
+    lines.push(`  Blocked (filtered): ${blockedCount} endpoint(s) matched blocked patterns and were not stored.`);
+  }
 
   if (stored.length === 0) {
     lines.push("");
@@ -317,16 +342,8 @@ export function registerApitapTools(ctx: ApitapToolsContext, api: ClawdbotPlugin
       };
 
       try {
-        if (!cfg.apiTap.enabled) {
-          return {
-            content: [
-              {
-                type: "text",
-                text: "ApiTap integration is disabled. Set apiTap.enabled = true in plugin config.",
-              },
-            ],
-          };
-        }
+        // apitap_list is read-only: allow access to previously captured data
+        // even when new captures are disabled, so operators can audit/clean up.
 
         const endpoints = apitapStore.list({
           siteUrl,
@@ -394,16 +411,8 @@ export function registerApitapTools(ctx: ApitapToolsContext, api: ClawdbotPlugin
       const { id } = params as { id: string };
 
       try {
-        if (!cfg.apiTap.enabled) {
-          return {
-            content: [
-              {
-                type: "text",
-                text: "ApiTap integration is disabled. Set apiTap.enabled = true in plugin config.",
-              },
-            ],
-          };
-        }
+        // apitap_to_skill is read-only: allow scaffold generation from previously
+        // captured data even when new captures are disabled (audit/recovery workflow).
 
         const endpoint = apitapStore.getById(id);
         if (!endpoint) {
