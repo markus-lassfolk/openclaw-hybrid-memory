@@ -133,9 +133,9 @@ async function runCapture(
               text: entryText,
               category: "quality_loop",
               importance: 0.6,
-              entity: undefined,
-              key: undefined,
-              value: undefined,
+              entity: null,
+              key: null,
+              value: null,
               source: "humanizer",
               decayClass: "normal",
             });

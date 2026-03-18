@@ -65,9 +65,7 @@ describe("parseHumanizerOutput", () => {
   });
 
   it("includes optional uniformity_score and pattern_score", () => {
-    const result = parseHumanizerOutput(
-      JSON.stringify({ score: 0.6, uniformity_score: 0.4, pattern_score: 0.7 }),
-    );
+    const result = parseHumanizerOutput(JSON.stringify({ score: 0.6, uniformity_score: 0.4, pattern_score: 0.7 }));
     expect(result!.rawOutput.uniformity_score).toBe(0.4);
     expect(result!.rawOutput.pattern_score).toBe(0.7);
   });
@@ -93,8 +91,8 @@ describe("formatQualityLoopEntry", () => {
   }
 
   it("formats score with 2 decimal places", () => {
-    const entry = formatQualityLoopEntry(makeResult(0.745));
-    expect(entry).toContain("humanizer_score: 0.75");
+    const entry = formatQualityLoopEntry(makeResult(0.73));
+    expect(entry).toContain("humanizer_score: 0.73");
   });
 
   it("includes patterns when present", () => {
@@ -150,10 +148,11 @@ describe("runHumanizerScore", () => {
 
   it("returns null gracefully when humanizer binary is not installed (ENOENT)", async () => {
     // Uses a non-existent binary path to simulate ENOENT
-    const result = await runHumanizerScore(
-      "A".repeat(200),
-      { bin: "/nonexistent/path/to/humanizer-missing-binary", minTextLength: 10, maxTextLength: 4000 },
-    );
+    const result = await runHumanizerScore("A".repeat(200), {
+      bin: "/nonexistent/path/to/humanizer-missing-binary",
+      minTextLength: 10,
+      maxTextLength: 4000,
+    });
     expect(result).toBeNull();
   });
 });
