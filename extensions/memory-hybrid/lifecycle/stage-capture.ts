@@ -20,6 +20,7 @@ import { extractCredentialsFromToolCalls } from "../services/credential-scanner.
 import { capturePluginError } from "../services/error-reporter.js";
 import { isOllamaCircuitBreakerOpen } from "../services/embeddings.js";
 import { withTimeout } from "../utils/timeout.js";
+import { runHumanizerScore, formatQualityLoopEntry } from "../services/humanizer-score.js";
 import type { LifecycleContext, SessionState } from "./types.js";
 
 const CAPTURE_STAGE_TIMEOUT_MS = 60_000;
@@ -89,7 +90,70 @@ async function runCapture(
     }
   }
 
-  // 2. Event log session_end
+  // 2. Humanizer quality-loop scoring (Issue #616 — Phase 1: evaluator only, no rewriting)
+  if (ctx.cfg.humanizer?.enabled && messages.length > 0) {
+    try {
+      const assistantMsgsH = (messages as unknown[]).filter(
+        (m) => m && typeof m === "object" && (m as { role?: string }).role === "assistant",
+      );
+      const lastAssistantH = assistantMsgsH[assistantMsgsH.length - 1] as { content?: unknown } | undefined;
+      if (lastAssistantH) {
+        let textForScore: string | undefined;
+        if (typeof lastAssistantH.content === "string") {
+          textForScore = lastAssistantH.content;
+        } else if (Array.isArray(lastAssistantH.content)) {
+          const blocks: string[] = [];
+          for (const block of lastAssistantH.content) {
+            if (
+              block &&
+              typeof block === "object" &&
+              "type" in block &&
+              (block as { type?: string }).type === "text" &&
+              "text" in block &&
+              typeof (block as { text?: unknown }).text === "string"
+            ) {
+              blocks.push((block as { text: string }).text);
+            }
+          }
+          if (blocks.length > 0) textForScore = blocks.join(" ");
+        }
+        if (textForScore?.trim()) {
+          const humCfg = ctx.cfg.humanizer;
+          const result = await runHumanizerScore(textForScore, {
+            bin: humCfg.bin,
+            minTextLength: humCfg.minTextLength,
+            maxTextLength: humCfg.maxTextLength,
+          });
+          if (result !== null) {
+            const entryText = formatQualityLoopEntry(result, {
+              modelTag: humCfg.modelTag,
+              skillTag: humCfg.skillTag,
+            });
+            ctx.factsDb.store({
+              text: entryText,
+              category: "quality_loop",
+              importance: 0.6,
+              entity: undefined,
+              key: undefined,
+              value: undefined,
+              source: "humanizer",
+              decayClass: "normal",
+            });
+            api.logger.debug?.(`memory-hybrid: humanizer_score=${result.score.toFixed(2)} stored`);
+          }
+        }
+      }
+    } catch (err) {
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        operation: "humanizer-score-capture",
+        subsystem: "humanizer",
+        severity: "info",
+      });
+      api.logger.debug?.(`memory-hybrid: humanizer scoring skipped: ${String(err)}`);
+    }
+  }
+
+  // 3. Event log session_end
   if (ctx.eventLog) {
     try {
       ctx.eventLog.append({
@@ -103,11 +167,11 @@ async function runCapture(
     }
   }
 
-  // 3. Centralized session state cleanup (Issue #463)
+  // 4. Centralized session state cleanup (Issue #463)
   clearSessionState(sessionKey);
   api.logger.debug?.(`memory-hybrid: cleared all session state for ${sessionKey}`);
 
-  // 4. Compaction on session end
+  // 5. Compaction on session end
   if (ctx.cfg.memoryTiering.enabled && ctx.cfg.memoryTiering.compactionOnSessionEnd) {
     try {
       const counts = ctx.factsDb.runCompaction({
@@ -127,7 +191,7 @@ async function runCapture(
     }
   }
 
-  // 5. Auto-capture from conversation messages
+  // 6. Auto-capture from conversation messages
   if (ctx.cfg.autoCapture && ev.success && messages.length > 0) {
     try {
       const texts: string[] = [];
@@ -344,7 +408,7 @@ async function runCapture(
     }
   }
 
-  // 6. Credential auto-detect: persist hint for next turn
+  // 7. Credential auto-detect: persist hint for next turn
   if (
     ctx.cfg.credentials.enabled &&
     ctx.cfg.credentials.autoDetect &&
@@ -399,7 +463,7 @@ async function runCapture(
     }
   }
 
-  // 7. Tool-call credential auto-capture
+  // 8. Tool-call credential auto-capture
   if (ctx.cfg.credentials.enabled && ctx.cfg.credentials.autoCapture?.toolCalls && messages.length > 0) {
     const logCaptures = ctx.cfg.credentials.autoCapture.logCaptures !== false;
     try {

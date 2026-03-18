@@ -56,6 +56,7 @@ import type {
   CostTrackingConfig,
   DashboardConfig,
   ApiTapConfig,
+  HumanizerConfig,
 } from "./features.js";
 
 import type { MultiAgentConfig, PersonaProposalsConfig } from "./agents.js";
@@ -534,6 +535,8 @@ export type HybridMemoryConfig = {
   sensorSweep: SensorSweepConfig;
   /** ApiTap integration — intercept browser traffic to auto-generate API skill specs (Issue #614, default: disabled). */
   apiTap: ApiTapConfig;
+  /** Humanizer style scoring — quality-loop metric for detecting AI-writing patterns (Issue #616, default: disabled). */
+  humanizer: HumanizerConfig;
   /**
    * Output verbosity level for CLI commands and tool responses (Issue #282).
    * quiet: counts/totals only. normal: balanced default. verbose: full detail.

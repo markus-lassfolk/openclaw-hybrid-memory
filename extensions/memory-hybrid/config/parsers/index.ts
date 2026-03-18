@@ -72,6 +72,7 @@ import {
   parseCostTrackingConfig,
   parseDashboardConfig,
   parseApiTapConfig,
+  parseHumanizerConfig,
 } from "./features.js";
 
 /** Deep-merge: base + overrides (overrides win). Used to apply preset then user config. */
@@ -690,6 +691,7 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
     dashboard: parseDashboardConfig(cfg),
     sensorSweep: parseSensorSweepConfig(cfg),
     apiTap: parseApiTapConfig(cfg),
+    humanizer: parseHumanizerConfig(cfg),
     verbosity: parseVerbosityLevel(cfg),
     mode: hasPresetOverrides ? "custom" : appliedMode,
     gateway: parseGatewayConfig(cfg),
