@@ -419,7 +419,19 @@ const memoryHybridPlugin = {
     // Learnings Intake Buffer (Issue #617)
     // ========================================================================
 
-    const learningsDb = new LearningsDB(join(dirname(resolvedSqlitePath), "learnings.db"));
+    let learningsDb: LearningsDB | null = null;
+    try {
+      const learningsDbPath = join(dirname(resolvedSqlitePath), "learnings.db");
+      learningsDb = new LearningsDB(learningsDbPath);
+      api.logger.info(`memory-hybrid: learnings DB initialized at ${learningsDbPath}`);
+    } catch (err) {
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        subsystem: "registration",
+        operation: "plugin-register:learnings-db-init",
+        severity: "warning",
+      });
+      learningsDb = null;
+    }
 
     // ========================================================================
     // Build PluginRuntime -- single instance-scoped container for all state
