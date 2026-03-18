@@ -233,9 +233,6 @@ describe("CrystallizationProposer.approveProposal", () => {
   });
 
   it("returns success=false when maxCrystallized is 0", () => {
-    const cfg: CrystallizationConfig = { ...BASE_CFG, outputDir: tmpDir, maxCrystallized: 50 };
-    const proposer = new CrystallizationProposer(wfStore, cStore, cfg);
-
     // Manually create a pending proposal
     const proposal = cStore.create({
       patternId: "test-pattern-id",
