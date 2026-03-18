@@ -25,6 +25,34 @@ const MAX_DESC_LEN = 280;
 // ---------------------------------------------------------------------------
 
 /**
+ * Validate config, write to disk, and write restart pending flag
+ */
+function validateAndWriteConfig(
+  config: Record<string, unknown>,
+  root: Record<string, unknown>,
+  configPath: string,
+  operation: string,
+): { ok: true } | { ok: false; error: string } {
+  try {
+    hybridConfigSchema.parse(config);
+  } catch (schemaErr: unknown) {
+    capturePluginError(schemaErr instanceof Error ? schemaErr : new Error(String(schemaErr)), {
+      subsystem: "cli",
+      operation: "runConfigSetForCli:validation-" + operation,
+    });
+    return { ok: false, error: `Invalid config value: ${schemaErr}` };
+  }
+  try {
+    writeFileSync(configPath, JSON.stringify(root, null, 2), "utf-8");
+    writeFileSync(getRestartPendingPath(), "", "utf-8");
+  } catch (e) {
+    capturePluginError(e as Error, { subsystem: "cli", operation: "runConfigSetForCli:write-" + operation });
+    return { ok: false, error: `Could not write config: ${e}` };
+  }
+  return { ok: true };
+}
+
+/**
  * Set nested config value
  */
 function setNested(obj: Record<string, unknown>, path: string, value: unknown): boolean {
@@ -235,22 +263,8 @@ export function runConfigSetForCli(ctx: HandlerContext, key: string, value: stri
     (er as Record<string, unknown>).consent = boolVal;
     out.config.errorReporting = er;
     const written = (er as Record<string, unknown>).enabled;
-    try {
-      hybridConfigSchema.parse(out.config);
-    } catch (schemaErr: unknown) {
-      capturePluginError(schemaErr instanceof Error ? schemaErr : new Error(String(schemaErr)), {
-        subsystem: "cli",
-        operation: "runConfigSetForCli:validation-errorReporting",
-      });
-      return { ok: false, error: `Invalid config value: ${schemaErr}` };
-    }
-    try {
-      writeFileSync(configPath, JSON.stringify(out.root, null, 2), "utf-8");
-      writeFileSync(getRestartPendingPath(), "", "utf-8");
-    } catch (e) {
-      capturePluginError(e as Error, { subsystem: "cli", operation: "runConfigSetForCli:write-errorReporting" });
-      return { ok: false, error: `Could not write config: ${e}` };
-    }
+    const writeResult = validateAndWriteConfig(out.config, out.root, configPath, "errorReporting");
+    if (!writeResult.ok) return writeResult;
     return {
       ok: true,
       configPath,
@@ -267,23 +281,8 @@ export function runConfigSetForCli(ctx: HandlerContext, key: string, value: stri
       (out.config.credentials as Record<string, unknown>).enabled = boolVal;
     }
     const written = (out.config.credentials as Record<string, unknown>).enabled;
-    // Validate config against schema before writing
-    try {
-      hybridConfigSchema.parse(out.config);
-    } catch (schemaErr: unknown) {
-      capturePluginError(schemaErr instanceof Error ? schemaErr : new Error(String(schemaErr)), {
-        subsystem: "cli",
-        operation: "runConfigSetForCli:validation-credentials",
-      });
-      return { ok: false, error: `Invalid config value: ${schemaErr}` };
-    }
-    try {
-      writeFileSync(configPath, JSON.stringify(out.root, null, 2), "utf-8");
-      writeFileSync(getRestartPendingPath(), "", "utf-8");
-    } catch (e) {
-      capturePluginError(e as Error, { subsystem: "cli", operation: "runConfigSetForCli:write-credentials" });
-      return { ok: false, error: `Could not write config: ${e}` };
-    }
+    const writeResult = validateAndWriteConfig(out.config, out.root, configPath, "credentials");
+    if (!writeResult.ok) return writeResult;
     return {
       ok: true,
       configPath,
@@ -350,22 +349,8 @@ export function runConfigSetForCli(ctx: HandlerContext, key: string, value: stri
       if (typeof obj !== "object" || obj === null) obj = {};
       (obj as Record<string, unknown>)[prop] = toggleVal;
       out.config[key] = obj;
-      try {
-        hybridConfigSchema.parse(out.config);
-      } catch (schemaErr: unknown) {
-        capturePluginError(schemaErr instanceof Error ? schemaErr : new Error(String(schemaErr)), {
-          subsystem: "cli",
-          operation: "runConfigSetForCli:validation-" + key,
-        });
-        return { ok: false, error: `Invalid config value: ${schemaErr}` };
-      }
-      try {
-        writeFileSync(configPath, JSON.stringify(out.root, null, 2), "utf-8");
-        writeFileSync(getRestartPendingPath(), "", "utf-8");
-      } catch (e) {
-        capturePluginError(e as Error, { subsystem: "cli", operation: "runConfigSetForCli:write-" + key });
-        return { ok: false, error: `Could not write config: ${e}` };
-      }
+      const writeResult = validateAndWriteConfig(out.config, out.root, configPath, key);
+      if (!writeResult.ok) return writeResult;
       return {
         ok: true,
         configPath,
@@ -386,22 +371,8 @@ export function runConfigSetForCli(ctx: HandlerContext, key: string, value: stri
     const obj = typeof ext === "object" && ext !== null ? { ...ext } : {};
     (obj as Record<string, unknown>).extractionPasses = toggleVal;
     out.config.extraction = obj;
-    try {
-      hybridConfigSchema.parse(out.config);
-    } catch (schemaErr: unknown) {
-      capturePluginError(schemaErr instanceof Error ? schemaErr : new Error(String(schemaErr)), {
-        subsystem: "cli",
-        operation: "runConfigSetForCli:validation-extraction",
-      });
-      return { ok: false, error: `Invalid config value: ${schemaErr}` };
-    }
-    try {
-      writeFileSync(configPath, JSON.stringify(out.root, null, 2), "utf-8");
-      writeFileSync(getRestartPendingPath(), "", "utf-8");
-    } catch (e) {
-      capturePluginError(e as Error, { subsystem: "cli", operation: "runConfigSetForCli:write-extraction" });
-      return { ok: false, error: `Could not write config: ${e}` };
-    }
+    const writeResult = validateAndWriteConfig(out.config, out.root, configPath, "extraction");
+    if (!writeResult.ok) return writeResult;
     return {
       ok: true,
       configPath,
@@ -415,22 +386,8 @@ export function runConfigSetForCli(ctx: HandlerContext, key: string, value: stri
       return { ok: false, error: `Invalid verbosity: "${value}". Use one of: ${validVerbosity.join(", ")}` };
     }
     out.config.verbosity = value;
-    try {
-      hybridConfigSchema.parse(out.config);
-    } catch (schemaErr: unknown) {
-      capturePluginError(schemaErr instanceof Error ? schemaErr : new Error(String(schemaErr)), {
-        subsystem: "cli",
-        operation: "runConfigSetForCli:validation-verbosity",
-      });
-      return { ok: false, error: `Invalid config value: ${schemaErr}` };
-    }
-    try {
-      writeFileSync(configPath, JSON.stringify(out.root, null, 2), "utf-8");
-      writeFileSync(getRestartPendingPath(), "", "utf-8");
-    } catch (e) {
-      capturePluginError(e as Error, { subsystem: "cli", operation: "runConfigSetForCli:write-verbosity" });
-      return { ok: false, error: `Could not write config: ${e}` };
-    }
+    const writeResult = validateAndWriteConfig(out.config, out.root, configPath, "verbosity");
+    if (!writeResult.ok) return writeResult;
     return {
       ok: true,
       configPath,
@@ -455,24 +412,8 @@ export function runConfigSetForCli(ctx: HandlerContext, key: string, value: stri
   const written = getNested(out.config, k);
   const writtenStr = typeof written === "string" ? written : JSON.stringify(written);
 
-  // Validate config against schema before writing
-  try {
-    hybridConfigSchema.parse(out.config);
-  } catch (schemaErr: unknown) {
-    capturePluginError(schemaErr instanceof Error ? schemaErr : new Error(String(schemaErr)), {
-      subsystem: "cli",
-      operation: "runConfigSetForCli:validation",
-    });
-    return { ok: false, error: `Invalid config value: ${schemaErr}` };
-  }
-
-  try {
-    writeFileSync(configPath, JSON.stringify(out.root, null, 2), "utf-8");
-    writeFileSync(getRestartPendingPath(), "", "utf-8");
-  } catch (e) {
-    capturePluginError(e as Error, { subsystem: "cli", operation: "runConfigSetForCli:write" });
-    return { ok: false, error: `Could not write config: ${e}` };
-  }
+  const writeResult = validateAndWriteConfig(out.config, out.root, configPath, "generic");
+  if (!writeResult.ok) return writeResult;
   return {
     ok: true,
     configPath,

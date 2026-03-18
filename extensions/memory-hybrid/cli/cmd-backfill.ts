@@ -38,7 +38,7 @@ import { BATCH_STORE_IMPORTANCE, DISTILL_DEDUP_THRESHOLD } from "../utils/consta
 import type { HandlerContext } from "./handlers.js";
 import type { BackfillCliResult, BackfillCliSink, IngestFilesResult, IngestFilesSink } from "./types.js";
 import { createProgressReporter } from "./cmd-install.js";
-import { gatherSessionFiles, extractTextFromSessionJsonl } from "./cmd-distill.js";
+import { gatherSessionFiles } from "./cmd-distill.js";
 
 // ---------------------------------------------------------------------------
 // Module-level constants
@@ -352,8 +352,6 @@ export async function runAnalyzeFeedbackPhrasesForCli(
     }
   }
   const unmatched = allTexts.filter((text) => {
-    reinforcementRegex.lastIndex = 0;
-    correctionRegex.lastIndex = 0;
     return !reinforcementRegex.test(text) && !correctionRegex.test(text);
   });
 
