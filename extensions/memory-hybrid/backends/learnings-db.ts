@@ -250,11 +250,11 @@ export class LearningsDB {
   /** Return the next sequential number for slugs of a given type. */
   private nextSeq(type: LearningEntryType): number {
     const prefix = TYPE_PREFIX[type];
-    // Count existing slugs for this prefix — slug format: "ERR-001", "LRN-002", etc.
+    // Find the highest existing sequence number for this prefix to avoid collisions after prune
     const row = this.db
-      .prepare(`SELECT COUNT(*) as n FROM learnings WHERE slug LIKE ?`)
-      .get(`${prefix}-%`) as unknown as { n: number };
-    return row.n + 1;
+      .prepare(`SELECT MAX(CAST(SUBSTR(slug, LENGTH(?) + 2) AS INTEGER)) as max_seq FROM learnings WHERE slug LIKE ?`)
+      .get(prefix, `${prefix}-%`) as unknown as { max_seq: number | null };
+    return (row.max_seq ?? 0) + 1;
   }
 
   private rowToEntry(row: LearningRow): LearningEntry {

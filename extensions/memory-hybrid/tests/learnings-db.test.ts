@@ -209,6 +209,28 @@ describe("LearningsDB — prune", () => {
     expect(removed).toBe(0);
     expect(db.count()).toBe(1);
   });
+
+  it("slug generation after prune does not cause collisions", () => {
+    // Create ERR-001 and ERR-002
+    const e1 = db.create({ type: "error", area: "x", content: "error 1" });
+    const e2 = db.create({ type: "error", area: "x", content: "error 2" });
+    expect(e1.slug).toBe("ERR-001");
+    expect(e2.slug).toBe("ERR-002");
+
+    // Promote and prune ERR-001
+    db.transition(e1.id, "promoted", "somewhere");
+    const removed = db.prune(0);
+    expect(removed).toBe(1);
+
+    // Create a new error - should be ERR-003, not ERR-002
+    const e3 = db.create({ type: "error", area: "x", content: "error 3" });
+    expect(e3.slug).toBe("ERR-003");
+
+    // Verify ERR-002 still exists
+    const e2Fetched = db.getBySlug("ERR-002");
+    expect(e2Fetched).not.toBeNull();
+    expect(e2Fetched!.id).toBe(e2.id);
+  });
 });
 
 // ---------------------------------------------------------------------------
