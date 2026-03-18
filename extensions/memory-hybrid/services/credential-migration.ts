@@ -3,7 +3,7 @@
  * One-time migration logic when vault is enabled.
  */
 
-import { writeFileSync } from "fs";
+import { writeFileSync } from "node:fs";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
 import type { CredentialsDB } from "../backends/credentials-db.js";

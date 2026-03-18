@@ -312,9 +312,9 @@ describe("memory_prune — verbosity output", () => {
   let factsDb: any;
 
   beforeEach(async () => {
-    const { mkdtempSync } = await import("fs");
-    const { tmpdir } = await import("os");
-    const { join } = await import("path");
+    const { mkdtempSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
     tmpDir = mkdtempSync(join(tmpdir(), "verbosity-prune-"));
     const { FactsDB } = await import("../backends/facts-db.js");
     factsDb = new FactsDB(join(tmpDir, "facts.db"), {});
@@ -393,9 +393,9 @@ describe("memory_reflect — verbosity output", () => {
   let vectorDb: any;
 
   beforeEach(async () => {
-    const { mkdtempSync } = await import("fs");
-    const { tmpdir } = await import("os");
-    const { join } = await import("path");
+    const { mkdtempSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
     tmpDir = mkdtempSync(join(tmpdir(), "verbosity-reflect-"));
     const { FactsDB } = await import("../backends/facts-db.js");
     const { VectorDB } = await import("../backends/vector-db.js");
@@ -475,9 +475,9 @@ describe("memory_store — verbosity output", () => {
   let vectorDb: any;
 
   beforeEach(async () => {
-    const { mkdtempSync } = await import("fs");
-    const { tmpdir } = await import("os");
-    const { join } = await import("path");
+    const { mkdtempSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
     tmpDir = mkdtempSync(join(tmpdir(), "verbosity-store-"));
     const { FactsDB } = await import("../backends/facts-db.js");
     const { VectorDB } = await import("../backends/vector-db.js");

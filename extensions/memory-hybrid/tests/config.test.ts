@@ -1511,7 +1511,7 @@ describe("hybridConfigSchema.parse", () => {
   it("queryExpansion.timeoutMs (#384): 2026.3.140 baseline Infinity coerced to default", () => {
     const result = hybridConfigSchema.parse({
       ...validBase,
-      queryExpansion: { enabled: true, timeoutMs: Infinity },
+      queryExpansion: { enabled: true, timeoutMs: Number.POSITIVE_INFINITY },
     });
     expect(result.queryExpansion.enabled).toBe(false);
     expect(result.queryExpansion.timeoutMs).toBe(15000); // parser uses default when not finite
@@ -1519,7 +1519,7 @@ describe("hybridConfigSchema.parse", () => {
   it("reranking.timeoutMs (#384): 2026.3.140 baseline Infinity coerced to default", () => {
     const result = hybridConfigSchema.parse({
       ...validBase,
-      reranking: { enabled: true, timeoutMs: Infinity },
+      reranking: { enabled: true, timeoutMs: Number.POSITIVE_INFINITY },
     });
     expect(result.reranking.enabled).toBe(false);
     expect(result.reranking.timeoutMs).toBe(10000); // parser uses default when not finite

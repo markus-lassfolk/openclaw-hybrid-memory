@@ -11,7 +11,7 @@
 
 import { Type } from "@sinclair/typebox";
 import Database from "better-sqlite3";
-import OpenAI from "openai";
+import type OpenAI from "openai";
 import { randomUUID } from "node:crypto";
 import {
   appendFileSync,

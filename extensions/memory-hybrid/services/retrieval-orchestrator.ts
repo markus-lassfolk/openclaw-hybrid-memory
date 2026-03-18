@@ -709,7 +709,9 @@ export async function runRetrievalPipeline(
         // Rebuild orderedEntries in the new order.
         const rerankedOrder = new Map(reranked.map((f, i) => [f.factId, i]));
         orderedEntries.sort(
-          (a, b) => (rerankedOrder.get(a.factId) ?? Infinity) - (rerankedOrder.get(b.factId) ?? Infinity),
+          (a, b) =>
+            (rerankedOrder.get(a.factId) ?? Number.POSITIVE_INFINITY) -
+            (rerankedOrder.get(b.factId) ?? Number.POSITIVE_INFINITY),
         );
         // Trim to the outputCount returned by the reranker.
         if (orderedEntries.length > reranked.length) {
@@ -717,7 +719,9 @@ export async function runRetrievalPipeline(
         }
         // Also reorder scopedFused to stay consistent with orderedEntries.
         scopedFused.sort(
-          (a, b) => (rerankedOrder.get(a.factId) ?? Infinity) - (rerankedOrder.get(b.factId) ?? Infinity),
+          (a, b) =>
+            (rerankedOrder.get(a.factId) ?? Number.POSITIVE_INFINITY) -
+            (rerankedOrder.get(b.factId) ?? Number.POSITIVE_INFINITY),
         );
         if (scopedFused.length > reranked.length) {
           scopedFused.length = reranked.length;

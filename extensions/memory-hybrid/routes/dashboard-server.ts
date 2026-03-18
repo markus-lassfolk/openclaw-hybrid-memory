@@ -83,8 +83,20 @@ export interface ForgeTaskItem {
 }
 
 export interface GitActivity {
-  prs: Array<{ number: number; title: string; state: string; url: string; createdAt: string }>;
-  issues: Array<{ number: number; title: string; state: string; url: string; createdAt: string }>;
+  prs: Array<{
+    number: number;
+    title: string;
+    state: string;
+    url: string;
+    createdAt: string;
+  }>;
+  issues: Array<{
+    number: number;
+    title: string;
+    state: string;
+    url: string;
+    createdAt: string;
+  }>;
   gitError?: string;
 }
 
@@ -296,7 +308,13 @@ async function collectGitActivity(repo?: string): Promise<GitActivity> {
         encoding: "utf-8",
       }),
     ]);
-    type GitItem = { number: number; title: string; state: string; url: string; createdAt: string };
+    type GitItem = {
+      number: number;
+      title: string;
+      state: string;
+      url: string;
+      createdAt: string;
+    };
     const prJson = prResult.stdout.trim();
     const issueJson = issueResult.stdout.trim();
     return {
@@ -343,9 +361,9 @@ function collectCostStats(ctx: DashboardContext): CostStats {
     const db = ctx.factsDb.getRawDb();
     const cutoff = Math.floor(Date.now() / 1000) - days * 86400;
 
-    const tableExists = db
-      .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='llm_cost_log'")
-      .get() as { name: string } | undefined;
+    const tableExists = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='llm_cost_log'").get() as
+      | { name: string }
+      | undefined;
 
     if (!tableExists) return empty;
 
