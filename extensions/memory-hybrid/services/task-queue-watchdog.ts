@@ -14,7 +14,7 @@
  */
 
 import { existsSync } from "node:fs";
-import { readFile, writeFile, readdir, mkdir } from "node:fs/promises";
+import { readFile, writeFile, readdir, mkdir, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { execFile as execFileCb } from "node:child_process";
@@ -211,7 +211,7 @@ export async function runTaskQueueWatchdog(
   }
 
   const item = await readJsonFile<TaskQueueItem>(currentPath);
-  if (!item) {
+  if (!item || typeof item !== "object" || Array.isArray(item)) {
     return { action: "no-current" };
   }
 
@@ -270,10 +270,14 @@ export async function runTaskQueueWatchdog(
   const historyPath = join(historyDir, historyFilename);
   await writeJsonFile(historyPath, enrichedItem);
 
-  // Remove current.json
+  // Remove current.json — re-read to guard against TOCTOU race where a new task
+  // was written between our initial read and this unlink.
   try {
-    const { unlink } = await import("node:fs/promises");
-    await unlink(currentPath);
+    const recheck = await readJsonFile<TaskQueueItem>(currentPath);
+    if (recheck && recheck.pid === item.pid && recheck.started === item.started) {
+      await unlink(currentPath);
+    }
+    // If recheck differs (new task started), leave current.json intact.
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
