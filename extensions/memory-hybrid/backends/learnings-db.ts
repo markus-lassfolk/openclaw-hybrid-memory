@@ -285,7 +285,7 @@ export class LearningsDB {
     for (const row of rows) {
       const match = row.slug.match(/-(\d+)$/);
       if (match) {
-        const seq = parseInt(match[1], 10);
+        const seq = Number.parseInt(match[1], 10);
         if (seq > maxSeq) maxSeq = seq;
       }
     }
