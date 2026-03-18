@@ -5,7 +5,7 @@
  * `runFactsMigrations` runs them in the canonical order required for correctness.
  */
 
-import { DatabaseSync } from "node:sqlite";
+import type { DatabaseSync } from "node:sqlite";
 import { createTransaction } from "../../utils/sqlite-transaction.js";
 import { normalizedHash } from "../../utils/tags.js";
 

@@ -112,6 +112,7 @@ import { gatherIngestFiles } from "./services/ingest-utils.js";
 import type { MemoryEntry, SearchResult, ScopeFilter } from "./types/memory.js";
 import { MEMORY_SCOPES } from "./types/memory.js";
 import { loadPrompt, fillPrompt } from "./utils/prompt-loader.js";
+import { initPluginLogger } from "./utils/logger.js";
 import {
   truncateText,
   truncateForStorage,
@@ -308,6 +309,10 @@ const memoryHybridPlugin = {
   versionInfo,
 
   register(api: ClawdbotPluginApi) {
+    // Initialize structured logger early so all runtime code (services/backends/lifecycle)
+    // routes through api.logger instead of raw console.*.
+    initPluginLogger(api.logger);
+
     // Reopen guard: ensure any previous instance is closed before creating new one (avoids duplicate
     // DB instances if host calls register() before stop(), e.g. on SIGUSR1 or rapid reload).
     const old = runtimeRef.value;

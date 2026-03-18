@@ -10,6 +10,7 @@
 
 import type { DatabaseSync } from "node:sqlite";
 import type { SQLInputValue } from "node:sqlite";
+import { pluginLogger } from "../utils/logger.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -208,7 +209,7 @@ export function searchFts(
       )
       .all(params) as typeof rows;
   } catch (err) {
-    console.warn("memory-hybrid: FTS query failed");
+    pluginLogger.warn(`memory-hybrid: FTS query failed: ${err instanceof Error ? err.message : String(err)}`);
     return [];
   }
 

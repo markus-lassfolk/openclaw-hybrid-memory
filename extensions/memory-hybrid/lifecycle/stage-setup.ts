@@ -10,6 +10,7 @@ import { getRestartPendingPath } from "../utils/constants.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { withTimeout } from "../utils/timeout.js";
 import type { LifecycleContext, SessionState } from "./types.js";
+import { pluginLogger } from "../utils/logger.js";
 
 const SETUP_TIMEOUT_MS = 5000;
 
@@ -44,7 +45,7 @@ async function runSetup(
           subsystem: "lifecycle",
           operation: "delete-restart-marker",
         });
-        console.warn("Failed to delete restart marker:", err);
+        pluginLogger.warn(`Failed to delete restart marker: ${err instanceof Error ? err.message : String(err)}`);
       }
     }
   }
