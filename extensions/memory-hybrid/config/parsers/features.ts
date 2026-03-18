@@ -666,15 +666,19 @@ export function parseApiTapConfig(cfg: Record<string, unknown>): ApiTapConfig {
       : ["**/*oauth*/**", "**/*auth*/**", "**/*login*/**", "**/*signin*/**", "**/*token*/**", "**/*password*/**"],
 export function parseHumanizerConfig(cfg: Record<string, unknown>): HumanizerConfig {
   const raw = cfg.humanizer as Record<string, unknown> | undefined;
+  const maxTextLength =
+    typeof raw?.maxTextLength === "number" && raw.maxTextLength >= 1
+      ? Math.min(20_000, Math.floor(raw.maxTextLength))
+      : 4000;
+  const minTextLength =
+    typeof raw?.minTextLength === "number" && raw.minTextLength >= 0
+      ? Math.min(maxTextLength, Math.floor(raw.minTextLength))
+      : 100;
   return {
     enabled: raw?.enabled === true,
     bin: typeof raw?.bin === "string" && raw.bin.trim().length > 0 ? raw.bin.trim() : "humanizer",
-    minTextLength:
-      typeof raw?.minTextLength === "number" && raw.minTextLength >= 0 ? Math.floor(raw.minTextLength) : 100,
-    maxTextLength:
-      typeof raw?.maxTextLength === "number" && raw.maxTextLength >= 1
-        ? Math.min(20_000, Math.floor(raw.maxTextLength))
-        : 4000,
+    minTextLength,
+    maxTextLength,
     modelTag: typeof raw?.modelTag === "string" && raw.modelTag.trim().length > 0 ? raw.modelTag.trim() : undefined,
     skillTag: typeof raw?.skillTag === "string" && raw.skillTag.trim().length > 0 ? raw.skillTag.trim() : undefined,
   };

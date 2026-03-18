@@ -138,9 +138,10 @@ export async function runHumanizerScore(
   text: string,
   cfg: Pick<HumanizerConfig, "bin" | "minTextLength" | "maxTextLength">,
 ): Promise<HumanizerResult | null> {
-  if (!text || text.trim().length < cfg.minTextLength) return null;
+  const trimmed = text.trim();
+  if (!trimmed || trimmed.length < cfg.minTextLength) return null;
 
-  const truncated = text.length > cfg.maxTextLength ? text.slice(0, cfg.maxTextLength) : text;
+  const truncated = trimmed.length > cfg.maxTextLength ? trimmed.slice(0, cfg.maxTextLength) : trimmed;
 
   try {
     return await new Promise<HumanizerResult | null>((resolve, reject) => {
