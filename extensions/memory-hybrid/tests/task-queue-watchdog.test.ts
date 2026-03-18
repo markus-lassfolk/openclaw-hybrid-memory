@@ -142,6 +142,20 @@ describe("runTaskQueueWatchdog", () => {
     expect(result.action).toBe("no-current");
   });
 
+  it("returns no-current when current.json contains a non-object JSON value", async () => {
+    await mkdir(stateDir, { recursive: true });
+    await writeFile(join(stateDir, "current.json"), JSON.stringify("just a string"), "utf-8");
+    const result = await runTaskQueueWatchdog(makeConfig(), noopLogger);
+    expect(result.action).toBe("no-current");
+  });
+
+  it("returns no-current when current.json contains a JSON array", async () => {
+    await mkdir(stateDir, { recursive: true });
+    await writeFile(join(stateDir, "current.json"), JSON.stringify([1, 2, 3]), "utf-8");
+    const result = await runTaskQueueWatchdog(makeConfig(), noopLogger);
+    expect(result.action).toBe("no-current");
+  });
+
   // ── Healthy entry ────────────────────────────────────────────────────────
 
   it("returns ok for a healthy entry (live PID, recent start)", async () => {
