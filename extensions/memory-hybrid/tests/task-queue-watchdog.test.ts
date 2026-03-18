@@ -283,6 +283,26 @@ describe("runTaskQueueWatchdog", () => {
     expect(result.action).toBe("quarantined");
   });
 
+  it("quarantines issue-less entry when branch matches maxRetries history entries", async () => {
+    const fiveHoursAgo = new Date(Date.now() - 5 * 60 * 60 * 1000).toISOString();
+
+    // Pre-populate history with 2 cleared entries matching the branch (no issue)
+    await mkdir(historyDir, { recursive: true });
+    const prevEntry: TaskQueueItem = { branch: "feat/no-issue", watchdogReason: "prev run" };
+    await writeFile(join(historyDir, "2026-01-01T00-00-00-cleared.json"), JSON.stringify(prevEntry), "utf-8");
+    await writeFile(join(historyDir, "2026-01-01T01-00-00-cleared.json"), JSON.stringify(prevEntry), "utf-8");
+
+    await writeCurrentJson({
+      branch: "feat/no-issue",
+      pid: 999999999,
+      started: fiveHoursAgo,
+      // No issue number — should still quarantine via branch matching
+    });
+
+    const result = await runTaskQueueWatchdog(makeConfig({ maxRetries: 2 }), noopLogger);
+    expect(result.action).toBe("quarantined");
+  });
+
   // ── Retry metadata ───────────────────────────────────────────────────────
 
   it("increments retryCount on each clear", async () => {

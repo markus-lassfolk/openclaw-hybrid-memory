@@ -15,7 +15,7 @@
 
 import { existsSync } from "node:fs";
 import { readFile, writeFile, readdir, mkdir, unlink } from "node:fs/promises";
-import { join } from "node:path";
+import { join, dirname } from "node:path";
 import { homedir } from "node:os";
 import { execFile as execFileCb } from "node:child_process";
 import { promisify } from "node:util";
@@ -152,7 +152,7 @@ async function readJsonFile<T>(filePath: string): Promise<T | null> {
 }
 
 async function writeJsonFile(filePath: string, data: unknown): Promise<void> {
-  await mkdir(join(filePath, ".."), { recursive: true });
+  await mkdir(dirname(filePath), { recursive: true });
   await writeFile(filePath, JSON.stringify(data, null, 2), "utf-8");
 }
 
@@ -166,18 +166,27 @@ function buildHistoryFilename(suffix: string): string {
 }
 
 /**
- * Count how many quarantined/cleared history entries share the same issue number.
+ * Count how many quarantined/cleared history entries match the given task.
+ * Matches by issue number if present, otherwise by branch name.
  * Used to determine retry exhaustion.
  */
-async function countIssueHistory(historyDir: string, issue: number | undefined): Promise<number> {
-  if (issue == null) return 0;
+async function countMatchingHistory(
+  historyDir: string,
+  issue: number | undefined,
+  branch: string | undefined,
+): Promise<number> {
+  // Need at least one identifier to match against
+  if (issue == null && !branch) return 0;
   if (!existsSync(historyDir)) return 0;
   try {
     const files = (await readdir(historyDir)).filter((f) => f.endsWith(".json"));
     let count = 0;
     for (const file of files) {
       const item = await readJsonFile<TaskQueueItem>(join(historyDir, file));
-      if (item?.issue === issue) count++;
+      if (!item) continue;
+      // Match by issue number if available, otherwise by branch
+      if (issue != null && item.issue === issue) count++;
+      else if (issue == null && branch && item.branch === branch) count++;
     }
     return count;
   } catch {
@@ -245,7 +254,7 @@ export async function runTaskQueueWatchdog(
   // ── Recovery: clear or quarantine ─────────────────────────────────────────
 
   const previousRetries = item.retryCount ?? 0;
-  const historyCount = await countIssueHistory(historyDir, item.issue);
+  const historyCount = await countMatchingHistory(historyDir, item.issue, item.branch);
   const isExhausted = previousRetries >= maxRetries || historyCount >= maxRetries;
 
   const action: WatchdogAction = isExhausted ? "quarantined" : "cleared";
@@ -256,13 +265,9 @@ export async function runTaskQueueWatchdog(
     watchdogClearedAt: now,
     watchdogReason: staleReason,
     retryCount: previousRetries + 1,
+    // Explicitly set requeued to avoid inheriting a stale true from the spread
+    requeued: enableRequeue && !isExhausted,
   };
-
-  if (enableRequeue && !isExhausted) {
-    enrichedItem.requeued = true;
-  } else {
-    enrichedItem.requeued = false;
-  }
 
   // Write to history
   await mkdir(historyDir, { recursive: true });
