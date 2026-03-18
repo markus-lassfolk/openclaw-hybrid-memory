@@ -42,7 +42,7 @@ const noopLogger: Required<PluginLoggerApi> = {
  * without going through register()). Ensures diagnostic warnings are always visible.
  */
 const consoleLogger: Required<PluginLoggerApi> = {
-  info: (msg: string) => console.log(msg),
+  info: (msg: string) => console.info(msg),
   warn: (msg: string) => console.warn(msg),
   error: (msg: string) => console.error(msg),
   debug: (msg: string) => console.debug(msg),

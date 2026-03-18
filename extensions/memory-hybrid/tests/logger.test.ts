@@ -7,7 +7,7 @@ describe("pluginLogger", () => {
   });
 
   it("uses console fallback before initPluginLogger is called", () => {
-    const consoleSpy = vi.spyOn(console, "log");
+    const infoSpy = vi.spyOn(console, "info");
     const warnSpy = vi.spyOn(console, "warn");
     const errorSpy = vi.spyOn(console, "error");
     const debugSpy = vi.spyOn(console, "debug");
@@ -17,12 +17,12 @@ describe("pluginLogger", () => {
     pluginLogger.error("error message");
     pluginLogger.debug("debug message");
 
-    expect(consoleSpy).toHaveBeenCalledWith("info message");
+    expect(infoSpy).toHaveBeenCalledWith("info message");
     expect(warnSpy).toHaveBeenCalledWith("warn message");
     expect(errorSpy).toHaveBeenCalledWith("error message");
     expect(debugSpy).toHaveBeenCalledWith("debug message");
 
-    consoleSpy.mockRestore();
+    infoSpy.mockRestore();
     warnSpy.mockRestore();
     errorSpy.mockRestore();
     debugSpy.mockRestore();
