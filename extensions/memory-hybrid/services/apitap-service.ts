@@ -81,22 +81,7 @@ function matchesPattern(url: string, pattern: string): boolean {
  * Returns null if allowed, or an error message if blocked.
  */
 export function validateUrl(url: string, cfg: ApiTapConfig): string | null {
-  // Check blocked patterns first (blocklist wins)
-  for (const pattern of cfg.blockedPatterns) {
-    if (matchesPattern(url, pattern)) {
-      return `URL matches blocked pattern "${pattern}". ApiTap will not capture auth/sensitive endpoints.`;
-    }
-  }
-
-  // Check allowed patterns (empty = allow all)
-  if (cfg.allowedPatterns.length > 0) {
-    const allowed = cfg.allowedPatterns.some((p) => matchesPattern(url, p));
-    if (!allowed) {
-      return `URL does not match any allowed pattern. Configure apiTap.allowedPatterns to permit this site.`;
-    }
-  }
-
-  // Basic URL validation — only allow http/https schemes
+  // Parse and validate URL first to normalize percent-encoded paths
   let parsed: URL;
   try {
     parsed = new URL(url);
@@ -105,6 +90,24 @@ export function validateUrl(url: string, cfg: ApiTapConfig): string | null {
   }
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
     return `URL scheme "${parsed.protocol}" is not allowed. Only http: and https: are permitted.`;
+  }
+
+  // Build normalized URL string for pattern matching (includes decoded pathname)
+  const normalizedUrl = `${parsed.protocol}//${parsed.host}${parsed.pathname}${parsed.search}${parsed.hash}`;
+
+  // Check blocked patterns first (blocklist wins)
+  for (const pattern of cfg.blockedPatterns) {
+    if (matchesPattern(normalizedUrl, pattern)) {
+      return `URL matches blocked pattern "${pattern}". ApiTap will not capture auth/sensitive endpoints.`;
+    }
+  }
+
+  // Check allowed patterns (empty = allow all)
+  if (cfg.allowedPatterns.length > 0) {
+    const allowed = cfg.allowedPatterns.some((p) => matchesPattern(normalizedUrl, p));
+    if (!allowed) {
+      return `URL does not match any allowed pattern. Configure apiTap.allowedPatterns to permit this site.`;
+    }
   }
 
   return null;
