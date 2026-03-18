@@ -501,7 +501,10 @@ async function runRecall(
     // Enforce retrieval.ambientBudgetTokens as a hard total-token cap (#581).
     // autoRecall.maxTokens is a user preference; ambientBudgetTokens is the architectural
     // ceiling — the injected context must not exceed either.
-    const maxTokens = Math.min(ctx.cfg.autoRecall.maxTokens, ctx.cfg.retrieval.ambientBudgetTokens);
+    const totalBudget = Math.min(ctx.cfg.autoRecall.maxTokens, ctx.cfg.retrieval.ambientBudgetTokens);
+    // Account for issueBlock, hotBlock, and procedureBlock tokens to ensure total stays within budget
+    const fixedBlocksTokens = estimateTokens(issueBlock) + estimateTokens(hotBlock) + estimateTokens(procedureBlock);
+    const maxTokens = Math.max(0, totalBudget - fixedBlocksTokens);
     const indexCap = progressiveIndexMaxTokens ?? maxTokens;
     const groupByCategory = progressiveGroupByCategory === true;
     const pinnedRecallThreshold = progressivePinnedRecallCount ?? 3;
