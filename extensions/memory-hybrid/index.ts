@@ -453,6 +453,26 @@ const memoryHybridPlugin = {
 
     runtimeRef.value = newRuntime;
 
+    // Clean up old resources immediately after atomic swap to prevent leaks if registration fails (Issue #590)
+    if (old) {
+      closeOldDatabases({
+        factsDb: old.factsDb,
+        vectorDb: old.vectorDb,
+        credentialsDb: old.credentialsDb,
+        proposalsDb: old.proposalsDb,
+        eventLog: old.eventLog,
+        aliasDb: old.aliasDb,
+        eventBus: old.eventBus,
+        issueStore: old.issueStore,
+        workflowStore: old.workflowStore,
+        crystallizationStore: old.crystallizationStore,
+        toolProposalStore: old.toolProposalStore,
+        verificationStore: old.verificationStore,
+        provenanceService: old.provenanceService,
+      });
+      old.pythonBridge?.shutdown().catch(() => {});
+    }
+
     const runtime = newRuntime;
 
     // Phase 2.6 / Phase 3: Single plugin context satisfying MemoryPluginAPI (stable internal API).
@@ -597,26 +617,6 @@ const memoryHybridPlugin = {
         operation: "plugin-register:service",
       });
       throw err;
-    }
-
-    // Clean up old resources after atomic swap (Issue #590)
-    if (old) {
-      closeOldDatabases({
-        factsDb: old.factsDb,
-        vectorDb: old.vectorDb,
-        credentialsDb: old.credentialsDb,
-        proposalsDb: old.proposalsDb,
-        eventLog: old.eventLog,
-        aliasDb: old.aliasDb,
-        eventBus: old.eventBus,
-        issueStore: old.issueStore,
-        workflowStore: old.workflowStore,
-        crystallizationStore: old.crystallizationStore,
-        toolProposalStore: old.toolProposalStore,
-        verificationStore: old.verificationStore,
-        provenanceService: old.provenanceService,
-      });
-      old.pythonBridge?.shutdown().catch(() => {});
     }
 
     // Issue #281 -- Verify cron health on boot
