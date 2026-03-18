@@ -68,6 +68,10 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
     if (ctx.cfg.autoRecall.enabled && ctx.cfg.autoRecall.authFailure.enabled && ctx.cfg.verbosity !== "silent") {
       registerAuthFailureRecall(api, ctx, sessionState);
     }
+    // Note: credential hints are gated on verbosity !== "silent" because their output
+    // (a prepended hint block) is meaningless in silent mode. This is intentional:
+    // the feature adds context only when the agent can surface it. If credential detection
+    // without output injection is ever needed, split the guard accordingly.
     if (ctx.cfg.credentials.enabled && ctx.cfg.credentials.autoDetect && ctx.cfg.verbosity !== "silent") {
       registerCredentialHint(api, ctx);
     }

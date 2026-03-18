@@ -505,6 +505,11 @@ async function runRecall(
     // Account for issueBlock, hotBlock, and procedureBlock tokens to ensure total stays within budget
     const fixedBlocksTokens = estimateTokens(issueBlock) + estimateTokens(hotBlock) + estimateTokens(procedureBlock);
     const maxTokens = Math.max(0, totalBudget - fixedBlocksTokens);
+    if (maxTokens === 0) {
+      api.logger.warn?.(
+        `memory-hybrid: fixed blocks (${fixedBlocksTokens} tokens) exhausted total budget (${totalBudget} tokens); recall suppressed`
+      );
+    }
     const indexCap = Math.min(progressiveIndexMaxTokens ?? maxTokens, maxTokens);
     const groupByCategory = progressiveGroupByCategory === true;
     const pinnedRecallThreshold = progressivePinnedRecallCount ?? 3;

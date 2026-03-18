@@ -623,4 +623,31 @@ describe("runRecallPipelineQuery — skipForInteractiveTurns (#581)", () => {
     expect(chatModule.chatCompleteWithRetry).toHaveBeenCalled();
     expect(deps.embeddings.embed).toHaveBeenCalledWith("HyDE generated text");
   });
+
+  it("allows HyDE when interactive=false (explicit non-interactive flag)", async () => {
+    // interactive=false should NOT block HyDE — only interactive=true does
+    // opts.interactive === true short-circuits to false when interactive is false
+    const deps = makeDeps({
+      cfg: {
+        queryExpansion: {
+          enabled: true,
+          maxVariants: 4,
+          cacheSize: 100,
+          timeoutMs: 15_000,
+          skipForInteractiveTurns: true,
+        },
+        retrievalStrategies: ["semantic"],
+        memoryTieringEnabled: false,
+        rawCfg: { llm: undefined } as unknown as RecallPipelineDeps["cfg"]["rawCfg"],
+      },
+    });
+    (deps.factsDb.search as ReturnType<typeof vi.fn>).mockReturnValue([]);
+    (deps.vectorDb.search as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+
+    await runRecallPipelineQuery("explicit non-interactive query", 5, deps, { value: false }, { interactive: false });
+
+    // HyDE was allowed — interactive=false does not block HyDE
+    expect(chatModule.chatCompleteWithRetry).toHaveBeenCalled();
+    expect(deps.embeddings.embed).toHaveBeenCalledWith("HyDE generated text");
+  });
 });

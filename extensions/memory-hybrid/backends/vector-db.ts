@@ -548,6 +548,9 @@ export class VectorDB {
    * after this (lazy reconnect safety net).
    */
   close(): void {
+    // Note: isPersistent is intentionally not reset here.
+    // A persistent connection, once closed (gateway shutdown), should not be
+    // re-promoted to managed-lifecycle mode by any remaining callers.
     this.sessionCount = 0;
     this.closeGeneration++;
     this._doClose();
