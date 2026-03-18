@@ -206,6 +206,7 @@ export class WriteAheadLog {
   }
 
   async remove(id: string): Promise<void> {
+    await this.ensureInitialized();
     const prevLock = this.writeLock;
     let releaseLock: () => void;
     this.writeLock = new Promise((resolve) => {
@@ -214,7 +215,6 @@ export class WriteAheadLog {
 
     try {
       await prevLock;
-      await this.ensureInitialized();
       const line = JSON.stringify({ op: "remove", id }) + "\n";
       await appendFile(this.walPath, line, "utf-8");
       await this.fsyncAfterWrite();
