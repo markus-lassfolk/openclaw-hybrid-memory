@@ -16,13 +16,18 @@ import { normalizedHash } from "../../utils/tags.js";
 function migrateDecayColumns(db: DatabaseSync): void {
   const cols = db.prepare(`PRAGMA table_info(facts)`).all() as Array<{ name: string }>;
   const colNames = new Set(cols.map((c) => c.name));
-  if (colNames.has("decay_class")) return;
-  db.exec(`
-    ALTER TABLE facts ADD COLUMN decay_class TEXT NOT NULL DEFAULT 'stable';
-    ALTER TABLE facts ADD COLUMN expires_at INTEGER;
-    ALTER TABLE facts ADD COLUMN last_confirmed_at INTEGER;
-    ALTER TABLE facts ADD COLUMN confidence REAL NOT NULL DEFAULT 1.0;
-  `);
+  if (!colNames.has("decay_class")) {
+    db.exec(`ALTER TABLE facts ADD COLUMN decay_class TEXT NOT NULL DEFAULT 'stable'`);
+  }
+  if (!colNames.has("expires_at")) {
+    db.exec(`ALTER TABLE facts ADD COLUMN expires_at INTEGER`);
+  }
+  if (!colNames.has("last_confirmed_at")) {
+    db.exec(`ALTER TABLE facts ADD COLUMN last_confirmed_at INTEGER`);
+  }
+  if (!colNames.has("confidence")) {
+    db.exec(`ALTER TABLE facts ADD COLUMN confidence REAL NOT NULL DEFAULT 1.0`);
+  }
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_facts_expires ON facts(expires_at)
       WHERE expires_at IS NOT NULL;
@@ -104,10 +109,13 @@ function migrateTagsColumn(db: DatabaseSync): void {
 function migrateAccessTracking(db: DatabaseSync): void {
   const cols = db.prepare(`PRAGMA table_info(facts)`).all() as Array<{ name: string }>;
   const colNames = new Set(cols.map((c) => c.name));
-  if (colNames.has("recall_count")) return;
-  db.exec(`ALTER TABLE facts ADD COLUMN recall_count INTEGER NOT NULL DEFAULT 0`);
-  db.exec(`ALTER TABLE facts ADD COLUMN last_accessed INTEGER`);
-  db.exec(`UPDATE facts SET last_accessed = last_confirmed_at WHERE last_accessed IS NULL`);
+  if (!colNames.has("recall_count")) {
+    db.exec(`ALTER TABLE facts ADD COLUMN recall_count INTEGER NOT NULL DEFAULT 0`);
+  }
+  if (!colNames.has("last_accessed")) {
+    db.exec(`ALTER TABLE facts ADD COLUMN last_accessed INTEGER`);
+    db.exec(`UPDATE facts SET last_accessed = last_confirmed_at WHERE last_accessed IS NULL`);
+  }
   db.exec(`CREATE INDEX IF NOT EXISTS idx_facts_last_accessed ON facts(last_accessed) WHERE last_accessed IS NOT NULL`);
 }
 
@@ -206,9 +214,12 @@ function migrateTierColumn(db: DatabaseSync): void {
 function migrateScopeColumns(db: DatabaseSync): void {
   const cols = db.prepare(`PRAGMA table_info(facts)`).all() as Array<{ name: string }>;
   const colNames = new Set(cols.map((c) => c.name));
-  if (colNames.has("scope")) return;
-  db.exec(`ALTER TABLE facts ADD COLUMN scope TEXT NOT NULL DEFAULT 'global'`);
-  db.exec(`ALTER TABLE facts ADD COLUMN scope_target TEXT`);
+  if (!colNames.has("scope")) {
+    db.exec(`ALTER TABLE facts ADD COLUMN scope TEXT NOT NULL DEFAULT 'global'`);
+  }
+  if (!colNames.has("scope_target")) {
+    db.exec(`ALTER TABLE facts ADD COLUMN scope_target TEXT`);
+  }
   db.exec(`CREATE INDEX IF NOT EXISTS idx_facts_scope ON facts(scope)`);
   db.exec(
     `CREATE INDEX IF NOT EXISTS idx_facts_scope_target ON facts(scope, scope_target) WHERE scope_target IS NOT NULL`,
