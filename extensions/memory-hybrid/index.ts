@@ -416,6 +416,12 @@ const memoryHybridPlugin = {
     }
 
     // ========================================================================
+    // Learnings Intake Buffer (Issue #617)
+    // ========================================================================
+
+    const learningsDb = new LearningsDB(join(dirname(resolvedSqlitePath), "learnings.db"));
+
+    // ========================================================================
     // Build PluginRuntime -- single instance-scoped container for all state
     // ========================================================================
 
@@ -443,6 +449,7 @@ const memoryHybridPlugin = {
       verificationStore: dbContext.verificationStore,
       pythonBridge,
       variantQueue,
+      learningsDb,
       lifecycleHooksHandle: null, // set after registerLifecycleHooks below
       pendingLLMWarnings: createPendingLLMWarnings(),
       currentAgentIdRef: { value: null },

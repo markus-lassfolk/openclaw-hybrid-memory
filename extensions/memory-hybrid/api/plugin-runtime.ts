@@ -27,7 +27,6 @@ import type { IssueStore } from "../backends/issue-store.js";
 import type { WorkflowStore } from "../backends/workflow-store.js";
 import type { CrystallizationStore } from "../backends/crystallization-store.js";
 import type { ToolProposalStore } from "../backends/tool-proposal-store.js";
-import type { ApitapStore } from "../backends/apitap-store.js";
 import type { LearningsDB } from "../backends/learnings-db.js";
 import type { ProvenanceService } from "../services/provenance.js";
 import type { VerificationStore } from "../services/verification-store.js";
@@ -70,8 +69,6 @@ export interface PluginRuntime {
   variantQueue: VariantGenerationQueue | null;
   /** Staged intake buffer for errors, lessons, and feature requests (Issue #617). */
   learningsDb: LearningsDB | null;
-  /** ApiTap discovered endpoint store (Issue #614). */
-  apitapStore: ApitapStore | null;
 
   // --- Lifecycle state ---
   /** Handle returned by registerLifecycleHooks; set after hooks are registered, null until then. */
