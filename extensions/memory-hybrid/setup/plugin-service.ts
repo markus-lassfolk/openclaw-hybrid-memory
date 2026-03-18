@@ -449,7 +449,7 @@ export function createPluginService(ctx: PluginServiceContext) {
       const WATCHDOG_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
       const watchdogRun = async () => {
         try {
-          await runTaskQueueWatchdog({ repoDir: dirname(dirname(dirname(resolvedSqlitePath))) }, api.logger);
+          await runTaskQueueWatchdog({ repoDir: process.env.OPENCLAW_WORKSPACE ?? process.cwd() }, api.logger);
         } catch (err) {
           api.logger.warn?.(`memory-hybrid: task-queue-watchdog failed (non-fatal): ${err}`);
           capturePluginError(err instanceof Error ? err : new Error(String(err)), {
