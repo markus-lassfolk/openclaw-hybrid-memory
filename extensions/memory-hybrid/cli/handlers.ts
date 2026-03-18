@@ -5407,8 +5407,7 @@ export async function runExtractImplicitFeedbackForCli(
   let negativeCount = 0;
   let trajectoriesBuilt = 0;
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const rawDb = (factsDb as any).liveDb as import("node:sqlite").DatabaseSync | undefined;
+  const rawDb = factsDb.getRawDb();
 
   for (const filePath of filePaths) {
     let lines: string[];
