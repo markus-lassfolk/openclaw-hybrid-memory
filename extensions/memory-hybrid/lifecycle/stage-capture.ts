@@ -111,7 +111,7 @@ async function runCapture(
           modelTag: humCfg.modelTag,
           skillTag: humCfg.skillTag,
         });
-        ctx.factsDb.store({
+        await ctx.factsDb.store({
           text: entryText,
           category: "quality_loop",
           importance: 0.6,

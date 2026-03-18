@@ -155,24 +155,31 @@ export async function runHumanizerScore(
 
       let stdout = "";
       let stderr = "";
+      let settled = false;
 
       child.stdout.on("data", (chunk) => {
         stdout += chunk;
-        if (stdout.length > 1024 * 1024) {
+        if (!settled && stdout.length > 1024 * 1024) {
+          settled = true;
           child.kill();
           reject(new Error("stdout exceeded 1 MB"));
         }
       });
 
       child.stderr.on("data", (chunk) => {
-        stderr += chunk;
+        if (stderr.length < 64 * 1024) stderr += chunk;
       });
 
       child.on("error", (err) => {
-        reject(err);
+        if (!settled) {
+          settled = true;
+          reject(err);
+        }
       });
 
       child.on("close", (code) => {
+        if (settled) return;
+        settled = true;
         if (code === 0) {
           resolve(parseHumanizerOutput(stdout));
         } else {
@@ -180,7 +187,12 @@ export async function runHumanizerScore(
         }
       });
 
-      child.stdin.on("error", () => {});
+      child.stdin.on("error", (e) => {
+        // EPIPE is expected when the process exits before consuming all input
+        if ((e as NodeJS.ErrnoException).code !== "EPIPE") {
+          capturePluginError(e, { operation: "humanizer-stdin-write", subsystem: "humanizer", severity: "info" });
+        }
+      });
 
       child.stdin.write(truncated);
       child.stdin.end();
