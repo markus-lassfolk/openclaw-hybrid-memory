@@ -14,7 +14,7 @@
  *   - runIngestFilesForCli       — ingest workspace markdown files via LLM
  */
 
-import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { homedir } from "node:os";
 
@@ -37,6 +37,8 @@ import { BATCH_STORE_IMPORTANCE } from "../utils/constants.js";
 
 import type { HandlerContext } from "./handlers.js";
 import type { BackfillCliResult, BackfillCliSink, IngestFilesResult, IngestFilesSink } from "./types.js";
+import { createProgressReporter } from "./cmd-install.js";
+import { gatherSessionFiles, extractTextFromSessionJsonl } from "./cmd-distill.js";
 
 // ---------------------------------------------------------------------------
 // Module-level constants
@@ -51,30 +53,6 @@ const SENTIMENT_MSG_MAX_CHARS = 200;
 // ---------------------------------------------------------------------------
 // Private helpers
 // ---------------------------------------------------------------------------
-
-/**
- * Simple progress reporter used by long-running loops.
- * Logs at every 10% increment.
- */
-function createProgressReporter(
-  sink: { log: (msg: string) => void },
-  total: number,
-  label: string,
-): { update: (current: number) => void; done: () => void } {
-  let lastPercent = -1;
-  return {
-    update: (current: number) => {
-      const percent = Math.floor((current / total) * 100);
-      if (percent !== lastPercent && percent % 10 === 0) {
-        sink.log(`${label}: ${percent}% (${current}/${total})`);
-        lastPercent = percent;
-      }
-    },
-    done: () => {
-      sink.log(`${label}: Done (${total}/${total})`);
-    },
-  };
-}
 
 function gatherBackfillFiles(workspaceRoot: string): Array<{ path: string; label: string }> {
   const memoryDir = join(workspaceRoot, "memory");
@@ -201,82 +179,6 @@ function extractBackfillFact(line: string): {
     }
   }
   return { text: t, category, entity, key, value, source_date };
-}
-
-/**
- * Gather session files from agents directory.
- * When `sinceTimestampMs` is provided (watermark mode), returns only files with mtime > sinceTimestampMs.
- */
-function gatherSessionFiles(opts: {
-  all?: boolean;
-  days?: number;
-  since?: string;
-  sinceTimestampMs?: number;
-}): Array<{ path: string; mtime: number }> {
-  const openclawDir = join(homedir(), ".openclaw");
-  const agentsDir = join(openclawDir, "agents");
-  if (!existsSync(agentsDir)) return [];
-  const cutoffMs =
-    opts.sinceTimestampMs !== undefined
-      ? opts.sinceTimestampMs
-      : opts.since
-        ? new Date(opts.since).getTime()
-        : Date.now() - (opts.all ? 90 : (opts.days ?? 3)) * 24 * 60 * 60 * 1000;
-  const out: Array<{ path: string; mtime: number }> = [];
-  try {
-    for (const agentName of readdirSync(agentsDir, { withFileTypes: true })) {
-      if (!agentName.isDirectory()) continue;
-      const sessionsDir = join(agentsDir, agentName.name, "sessions");
-      if (!existsSync(sessionsDir)) continue;
-      for (const f of readdirSync(sessionsDir, { withFileTypes: true })) {
-        if (!f.isFile() || !f.name.endsWith(".jsonl") || f.name.startsWith(".deleted")) continue;
-        const fp = join(sessionsDir, f.name);
-        try {
-          const stat = statSync(fp);
-          if (stat.mtimeMs > cutoffMs) out.push({ path: fp, mtime: stat.mtimeMs });
-        } catch (err) {
-          capturePluginError(err as Error, { subsystem: "cli", operation: "gatherSessionFiles:stat", filePath: fp });
-        }
-      }
-    }
-  } catch (err) {
-    capturePluginError(err as Error, { subsystem: "cli", operation: "gatherSessionFiles" });
-  }
-  out.sort((a, b) => a.mtime - b.mtime);
-  return out;
-}
-
-/**
- * Extract text content from session JSONL file
- */
-function extractTextFromSessionJsonl(filePath: string): string {
-  const lines = readFileSync(filePath, "utf-8").split("\n");
-  const parts: string[] = [];
-  for (const line of lines) {
-    const trimmed = line.trim();
-    if (!trimmed) continue;
-    try {
-      const obj = JSON.parse(trimmed) as {
-        type?: string;
-        message?: { role?: string; content?: Array<{ type?: string; text?: string }> };
-      };
-      if (obj.type !== "message" || !obj.message) continue;
-      const msg = obj.message;
-      if (msg.role !== "user" && msg.role !== "assistant") continue;
-      const content = msg.content;
-      if (!Array.isArray(content)) continue;
-      for (const block of content) {
-        if (block?.type === "text" && typeof block.text === "string" && block.text.trim().length > 0) {
-          parts.push(block.text.trim());
-        }
-      }
-    } catch {
-      // NOTE: Intentionally NOT using capturePluginError here to avoid flooding
-      // error logs with JSON parse errors from malformed session lines.
-      // This is a best-effort parser; we skip bad lines silently.
-    }
-  }
-  return parts.join("\n\n");
 }
 
 /** Extract raw user message texts from a session file (for regex/sentiment). */

@@ -23,85 +23,14 @@ import { preFilterSessions } from "../services/session-pre-filter.js";
 import { BATCH_STORE_IMPORTANCE } from "../utils/constants.js";
 import type { DistillWindowResult, RecordDistillResult, DistillCliResult, DistillCliSink } from "./types.js";
 import type { HandlerContext } from "./handlers.js";
-import { buildPreFilterConfig } from "./cmd-install.js";
+import { buildPreFilterConfig, createProgressReporter } from "./cmd-install.js";
+import { acquireScanSlot, clearScanLock } from "./shared.js";
+import { getMaxMtime } from "./cmd-extract.js";
 
 // Constants used only by distill functions
 const FULL_DISTILL_MAX_DAYS = 90;
 const INCREMENTAL_MIN_DAYS = 3;
 const DISTILL_DEDUP_THRESHOLD = 0.85;
-
-/** In-memory concurrency lock: prevents two simultaneous distill scans. */
-const SCAN_IN_PROGRESS = new Map<string, boolean>();
-
-/** 23-hour threshold for startup guard (milliseconds). */
-const SCAN_MIN_INTERVAL_MS = 23 * 60 * 60 * 1000;
-
-/**
- * Apply the 23h startup guard and concurrency lock for a scan type.
- * Returns a skip reason string if the scan should be skipped, or null if it can proceed.
- * If it can proceed, marks the scan as in-progress (caller must call clearScanLock when done).
- */
-function acquireScanSlot(
-  scanType: string,
-  lastRunAt: number | undefined,
-  logger: { info?: (s: string) => void },
-): string | null {
-  if (SCAN_IN_PROGRESS.get(scanType)) {
-    const msg = `Skipping ${scanType}: already running`;
-    logger.info?.(msg);
-    return msg;
-  }
-  if (lastRunAt !== undefined && lastRunAt !== 0 && Date.now() - lastRunAt < SCAN_MIN_INTERVAL_MS) {
-    const hoursAgo = ((Date.now() - lastRunAt) / 3_600_000).toFixed(1);
-    const msg = `Skipping ${scanType}: last run was ${hoursAgo}h ago (threshold: 23h). Use --full to override.`;
-    logger.info?.(msg);
-    return msg;
-  }
-  SCAN_IN_PROGRESS.set(scanType, true);
-  return null;
-}
-
-function clearScanLock(scanType: string): void {
-  SCAN_IN_PROGRESS.delete(scanType);
-}
-
-/**
- * Returns the maximum mtime (in epoch-ms) of the given file paths, or undefined if none exist.
- */
-function getMaxMtime(filePaths: string[]): number | undefined {
-  let maxMtime: number | undefined;
-  for (const p of filePaths) {
-    try {
-      const mtime = statSync(p).mtimeMs;
-      if (maxMtime === undefined || mtime > maxMtime) {
-        maxMtime = mtime;
-      }
-    } catch (err) {
-      // Ignore files that can't be stat'd
-    }
-  }
-  return maxMtime;
-}
-
-function createProgressReporter(
-  sink: { log: (msg: string) => void },
-  total: number,
-  label: string,
-): { update: (current: number) => void; done: () => void } {
-  let lastPercent = -1;
-  return {
-    update: (current: number) => {
-      const percent = Math.floor((current / total) * 100);
-      if (percent !== lastPercent && percent % 10 === 0) {
-        sink.log(`${label}: ${percent}% (${current}/${total})`);
-        lastPercent = percent;
-      }
-    },
-    done: () => {
-      sink.log(`${label}: Done (${total}/${total})`);
-    },
-  };
-}
 
 export function gatherSessionFiles(opts: {
   all?: boolean;
@@ -145,7 +74,7 @@ export function gatherSessionFiles(opts: {
 /**
  * Extract text content from session JSONL file
  */
-function extractTextFromSessionJsonl(filePath: string): string {
+export function extractTextFromSessionJsonl(filePath: string): string {
   const lines = readFileSync(filePath, "utf-8").split("\n");
   const parts: string[] = [];
   for (const line of lines) {

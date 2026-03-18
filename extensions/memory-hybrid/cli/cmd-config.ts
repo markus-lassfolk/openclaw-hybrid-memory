@@ -16,51 +16,13 @@ import { capturePluginError } from "../services/error-reporter.js";
 import { PLUGIN_ID, getRestartPendingPath } from "../utils/constants.js";
 import type { HandlerContext } from "./handlers.js";
 import type { ConfigCliResult, VerifyCliSink } from "./types.js";
+import { getPluginConfigFromFile } from "./cmd-install.js";
 
 const MAX_DESC_LEN = 280;
 
 // ---------------------------------------------------------------------------
 // Private helpers
 // ---------------------------------------------------------------------------
-
-function getPluginEntryConfig(root: Record<string, unknown>): Record<string, unknown> | undefined {
-  const plugins = root?.plugins as Record<string, unknown> | undefined;
-  const entries = plugins?.entries as Record<string, unknown> | undefined;
-  const entry = entries?.[PLUGIN_ID] as Record<string, unknown> | undefined;
-  const config = entry?.config;
-  return config && typeof config === "object" && !Array.isArray(config)
-    ? (config as Record<string, unknown>)
-    : undefined;
-}
-
-/**
- * Get plugin config from file
- */
-function getPluginConfigFromFile(
-  configPath: string,
-): { config: Record<string, unknown>; root: Record<string, unknown> } | { error: string } {
-  if (!existsSync(configPath)) return { error: `Config not found: ${configPath}` };
-  let root: Record<string, unknown>;
-  try {
-    root = JSON.parse(readFileSync(configPath, "utf-8")) as Record<string, unknown>;
-  } catch (e) {
-    capturePluginError(e as Error, { subsystem: "cli", operation: "getPluginConfigFromFile:read" });
-    return { error: `Could not read config: ${e}` };
-  }
-  if (!root.plugins || typeof root.plugins !== "object") root.plugins = {};
-  const plugins = root.plugins as Record<string, unknown>;
-  if (!plugins.entries || typeof plugins.entries !== "object") plugins.entries = {};
-  const entries = plugins.entries as Record<string, unknown>;
-  if (!entries[PLUGIN_ID] || typeof entries[PLUGIN_ID] !== "object") entries[PLUGIN_ID] = { enabled: true, config: {} };
-  const entry = entries[PLUGIN_ID] as Record<string, unknown>;
-  if (!entry.config || typeof entry.config !== "object") entry.config = {};
-  const config = entry.config as Record<string, unknown>;
-  // Repair: credentials must be an object (schema). If written as boolean, normalize so next write is valid.
-  if (config.credentials === true || config.credentials === false) {
-    config.credentials = { enabled: config.credentials };
-  }
-  return { config, root };
-}
 
 /**
  * Set nested config value
