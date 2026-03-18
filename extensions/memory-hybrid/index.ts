@@ -330,6 +330,15 @@ const memoryHybridPlugin = {
       old.lifecycleHooksHandle?.dispose();
       // pythonBridge shutdown
       old.pythonBridge?.shutdown().catch(() => {});
+      // Clear old timer handles to prevent leaks
+      if (old.timers.pruneTimer.value) clearInterval(old.timers.pruneTimer.value);
+      if (old.timers.classifyTimer.value) clearInterval(old.timers.classifyTimer.value);
+      if (old.timers.classifyStartupTimeout.value) clearTimeout(old.timers.classifyStartupTimeout.value);
+      if (old.timers.proposalsPruneTimer.value) clearInterval(old.timers.proposalsPruneTimer.value);
+      if (old.timers.languageKeywordsTimer.value) clearInterval(old.timers.languageKeywordsTimer.value);
+      if (old.timers.languageKeywordsStartupTimeout.value) clearTimeout(old.timers.languageKeywordsStartupTimeout.value);
+      if (old.timers.postUpgradeTimeout.value) clearTimeout(old.timers.postUpgradeTimeout.value);
+      if (old.timers.passiveObserverTimer.value) clearInterval(old.timers.passiveObserverTimer.value);
     }
     // Clear the ref so no stale state leaks while we reinitialize
     runtimeRef.value = null;
