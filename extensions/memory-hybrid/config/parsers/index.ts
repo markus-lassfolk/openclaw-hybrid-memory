@@ -2,6 +2,7 @@ import { setMemoryCategories, getMemoryCategories, PRESET_OVERRIDES } from "../u
 import { versionInfo } from "../../versionInfo.js";
 import { isVersionAtLeast } from "../../utils/version-check.js";
 import type { HybridMemoryConfig, EmbeddingModelConfig, ConfigMode } from "../types/index.js";
+import { pluginLogger } from "../../utils/logger.js";
 import {
   DEFAULT_MODEL,
   DEFAULT_LANCE_PATH,
@@ -224,7 +225,7 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
       appliedMode = trimmed as ConfigMode;
     } else if (deprecatedModeNames.includes(trimmed as (typeof deprecatedModeNames)[number])) {
       appliedMode = deprecatedModeMapping[trimmed] ?? "local";
-      console.warn(
+      pluginLogger.warn(
         `memory-hybrid: Config mode "${trimmed}" is deprecated and has been mapped to "${appliedMode}". Update your config to use the new mode names: local, minimal, enhanced, or complete.`,
       );
     } else {
@@ -293,7 +294,7 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
       embeddingProvider = "google";
     } else {
       if (embedding !== undefined) {
-        console.warn(
+        pluginLogger.warn(
           `memory-hybrid: embedding.provider not set; defaulting to "ollama". Set embedding.provider explicitly (openai, ollama, onnx, google).`,
         );
       }
@@ -341,16 +342,12 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
       if (!resolved) {
         // Do not throw — this apiKey is optional fallback; warn so the misconfiguration is diagnosable.
         // Intentionally omit the SecretRef path from the message to avoid clear-text logging (CWE-312).
-        console.warn(
-          "Warning: embedding.apiKey fallback SecretRef could not be resolved. " +
-            "Fallback to OpenAI embeddings will be disabled. " +
-            'Update plugins.entries["openclaw-hybrid-memory"].config.embedding.apiKey or fix the SecretRef.',
+        pluginLogger.warn(
+          `Warning: embedding.apiKey fallback SecretRef could not be resolved. Fallback to OpenAI embeddings will be disabled. Update plugins.entries["openclaw-hybrid-memory"].config.embedding.apiKey or fix the SecretRef.`,
         );
       } else if (resolved.length < 10 || resolved === "YOUR_OPENAI_API_KEY" || resolved === "<OPENAI_API_KEY>") {
-        console.warn(
-          `Warning: embedding.apiKey fallback resolved to a placeholder or invalid value. ` +
-            "Fallback to OpenAI embeddings will be disabled. " +
-            `Update plugins.entries["openclaw-hybrid-memory"].config.embedding.apiKey with a valid key.`,
+        pluginLogger.warn(
+          `Warning: embedding.apiKey fallback resolved to a placeholder or invalid value. Fallback to OpenAI embeddings will be disabled. Update plugins.entries["openclaw-hybrid-memory"].config.embedding.apiKey with a valid key.`,
         );
       } else {
         resolvedApiKey = resolved;
@@ -359,19 +356,15 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
       try {
         const resolved = resolveEnvVars(rawKey);
         if (resolved.length < 10 || resolved === "YOUR_OPENAI_API_KEY" || resolved === "<OPENAI_API_KEY>") {
-          console.warn(
-            `Warning: embedding.apiKey fallback resolved to a placeholder or invalid value. ` +
-              "Fallback to OpenAI embeddings will be disabled. " +
-              `Update plugins.entries["openclaw-hybrid-memory"].config.embedding.apiKey with a valid key.`,
+          pluginLogger.warn(
+            `Warning: embedding.apiKey fallback resolved to a placeholder or invalid value. Fallback to OpenAI embeddings will be disabled. Update plugins.entries["openclaw-hybrid-memory"].config.embedding.apiKey with a valid key.`,
           );
         } else {
           resolvedApiKey = resolved;
         }
       } catch {
-        console.warn(
-          "Warning: embedding.apiKey fallback contains unresolved environment variable references. " +
-            "Fallback to OpenAI embeddings will be disabled. " +
-            'Update plugins.entries["openclaw-hybrid-memory"].config.embedding.apiKey or set the required environment variables.',
+        pluginLogger.warn(
+          `Warning: embedding.apiKey fallback contains unresolved environment variable references. Fallback to OpenAI embeddings will be disabled. Update plugins.entries["openclaw-hybrid-memory"].config.embedding.apiKey or set the required environment variables.`,
         );
       }
     }
@@ -416,14 +409,14 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
         vectorDimsForModel(m);
         // For ollama/onnx providers, models field contains OpenAI fallback names — reject non-OpenAI models
         if (embeddingProvider !== "openai" && !isOpenAIModel(m)) {
-          console.warn(
+          pluginLogger.warn(
             `memory-hybrid: embedding.models — model "${m}" is not an OpenAI model and will be skipped. For provider='${embeddingProvider}', the models field must contain OpenAI fallback model names (e.g. text-embedding-3-small, text-embedding-3-large, text-embedding-ada-002).`,
           );
           continue;
         }
         valid.push(m);
       } catch {
-        console.warn(
+        pluginLogger.warn(
           `memory-hybrid: embedding.models — model "${m}" is not recognized and will be skipped. Check spelling or use a supported model (e.g. text-embedding-3-small, text-embedding-3-large, text-embedding-ada-002).`,
         );
       }
@@ -434,7 +427,7 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
         embeddingModels = valid;
       } else {
         const dims = valid.map((m) => `${m}=${vectorDimsForModel(m)}`).join(", ");
-        console.warn(
+        pluginLogger.warn(
           `memory-hybrid: embedding.models — models have mismatched vector dimensions (${dims}); all will be ignored. Models in a list must share the same output dimension.`,
         );
       }
@@ -709,7 +702,7 @@ export function parseVerbosityLevel(cfg: Record<string, unknown>): import("../ty
     return raw as import("../types/index.js").VerbosityLevel;
   }
   if (raw !== undefined) {
-    console.warn(
+    pluginLogger.warn(
       `memory-hybrid: invalid verbosity "${raw}"; expected one of: ${valid.join(", ")}. Defaulting to "normal".`,
     );
   }

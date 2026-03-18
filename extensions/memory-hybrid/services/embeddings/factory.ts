@@ -11,6 +11,7 @@ import { OllamaEmbeddingProvider } from "./ollama-provider.js";
 import { OnnxEmbeddingProvider, isOnnxRuntimeMissingError } from "./onnx-provider.js";
 import { FallbackEmbeddingProvider } from "./fallback-provider.js";
 import { ChainEmbeddingProvider } from "./chain-provider.js";
+import { pluginLogger } from "../../utils/logger.js";
 
 /**
  * Factory: creates the right EmbeddingProvider from plugin config.
@@ -101,7 +102,7 @@ export function createEmbeddingProvider(cfg: EmbeddingConfig, onFallback?: (err:
       } catch (err) {
         // Fallback creation failed (e.g. Ollama dimensions exceed all OpenAI model limits).
         // Warn the user so they know their fallback isn't working.
-        console.warn(
+        pluginLogger.warn(
           `memory-hybrid: Failed to create OpenAI fallback for Ollama provider: ${err instanceof Error ? err.message : String(err)}. Continuing with Ollama-only (no fallback).`,
         );
         return primary;
@@ -137,9 +138,9 @@ export function createEmbeddingProvider(cfg: EmbeddingConfig, onFallback?: (err:
         const fallback = new Embeddings(openaiClient, openaiModels, dimensions, batchSize);
         const onSwitch = (err: unknown) => {
           if (isOnnxRuntimeMissingError(err)) {
-            console.warn("memory-hybrid: onnxruntime-node not installed; falling back to OpenAI embeddings.");
+            pluginLogger.warn("memory-hybrid: onnxruntime-node not installed; falling back to OpenAI embeddings.");
           } else {
-            console.warn(
+            pluginLogger.warn(
               `memory-hybrid: ONNX embeddings failed; falling back to OpenAI. ${err instanceof Error ? err.message : String(err)}`,
             );
           }
@@ -147,7 +148,7 @@ export function createEmbeddingProvider(cfg: EmbeddingConfig, onFallback?: (err:
         };
         return new FallbackEmbeddingProvider(primary, fallback, onSwitch, "onnx", "openai", retryIntervalMs);
       } catch (err) {
-        console.warn(
+        pluginLogger.warn(
           `memory-hybrid: Failed to create OpenAI fallback for ONNX provider: ${err instanceof Error ? err.message : String(err)}. Continuing with ONNX-only (no fallback).`,
         );
         return primary;

@@ -17,6 +17,7 @@ import { chatComplete } from "./chat.js";
 import { capturePluginError } from "./error-reporter.js";
 import type { AliasesConfig } from "../config.js";
 import { UUID_REGEX } from "../utils/constants.js";
+import { pluginLogger } from "../utils/logger.js";
 
 // ---------------------------------------------------------------------------
 // AliasDB
@@ -83,7 +84,7 @@ class AliasVectorIndex {
       await this.table.delete('id = "__schema__"');
     } catch (deleteErr) {
       // Non-fatal; keep the seed row if delete fails.
-      console.warn(`memory-hybrid: failed to delete alias schema seed row (non-fatal): ${deleteErr}`);
+      pluginLogger.warn(`memory-hybrid: failed to delete alias schema seed row (non-fatal): ${deleteErr}`);
     }
   }
 
@@ -95,23 +96,20 @@ class AliasVectorIndex {
           typeof f.type?.typeId === "number" && f.type.typeId === 16,
       );
       if (!vectorField) {
-        console.warn(
-          `memory-hybrid: ⚠️  Alias LanceDB table '${ALIAS_LANCE_TABLE}' has no vector column — ` +
-            `alias search will fall back to linear scan.`,
+        pluginLogger.warn(
+          `memory-hybrid: ⚠️  Alias LanceDB table '${ALIAS_LANCE_TABLE}' has no vector column — alias search will fall back to linear scan.`,
         );
         return;
       }
       const actualDim = (vectorField.type as { listSize?: number }).listSize;
       if (typeof actualDim !== "number" || actualDim !== this.vectorDim) {
         const actual = typeof actualDim === "number" ? actualDim : "unknown";
-        console.warn(
-          `memory-hybrid: ⚠️  Alias LanceDB dimension mismatch — table has dim=${actual}, ` +
-            `configured embedding model expects dim=${this.vectorDim}. ` +
-            `Alias search will fall back to linear scan until resolved.`,
+        pluginLogger.warn(
+          `memory-hybrid: ⚠️  Alias LanceDB dimension mismatch — table has dim=${actual}, configured embedding model expects dim=${this.vectorDim}. Alias search will fall back to linear scan until resolved.`,
         );
       }
     } catch (err) {
-      console.warn(`memory-hybrid: alias LanceDB schema validation failed (non-fatal): ${err}`);
+      pluginLogger.warn(`memory-hybrid: alias LanceDB schema validation failed (non-fatal): ${err}`);
     }
   }
 
@@ -139,7 +137,7 @@ class AliasVectorIndex {
         operation: "alias-vector-store",
         subsystem: "aliases",
       });
-      console.warn(`memory-hybrid: alias LanceDB store failed (non-fatal): ${err}`);
+      pluginLogger.warn(`memory-hybrid: alias LanceDB store failed (non-fatal): ${err}`);
     }
   }
 
@@ -169,7 +167,7 @@ class AliasVectorIndex {
         severity: "info",
         subsystem: "aliases",
       });
-      console.warn(`memory-hybrid: alias LanceDB search failed (non-fatal): ${err}`);
+      pluginLogger.warn(`memory-hybrid: alias LanceDB search failed (non-fatal): ${err}`);
       return [];
     }
   }
@@ -178,7 +176,7 @@ class AliasVectorIndex {
     try {
       await this.ensureInitialized();
       if (!UUID_REGEX.test(factId)) {
-        console.warn(`memory-hybrid: skipping alias LanceDB delete for non-UUID factId: ${factId}`);
+        pluginLogger.warn(`memory-hybrid: skipping alias LanceDB delete for non-UUID factId: ${factId}`);
         return;
       }
       await this.getTable().delete(`factId = '${factId.toLowerCase()}'`);
@@ -187,7 +185,7 @@ class AliasVectorIndex {
         operation: "alias-vector-delete",
         subsystem: "aliases",
       });
-      console.warn(`memory-hybrid: alias LanceDB delete failed (non-fatal): ${err}`);
+      pluginLogger.warn(`memory-hybrid: alias LanceDB delete failed (non-fatal): ${err}`);
     }
   }
 

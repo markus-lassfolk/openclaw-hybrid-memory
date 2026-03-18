@@ -3,6 +3,7 @@
  */
 
 import type { EmbeddingProvider } from "./types.js";
+import { pluginLogger } from "../../utils/logger.js";
 
 const OLLAMA_MAX_FAILS = 3;
 const OLLAMA_COOLDOWN_MS = 5 * 60 * 1000; // 5 minutes
@@ -77,7 +78,7 @@ export class OllamaEmbeddingProvider implements EmbeddingProvider {
     for (let i = 0; i < texts.length; i += this.batchSize) {
       const batch = texts.slice(i, i + this.batchSize).map((t) => {
         if (t.length > OllamaEmbeddingProvider.MAX_INPUT_CHARS) {
-          console.warn(
+          pluginLogger.warn(
             `memory-hybrid: Truncating embedding input from ${t.length} to ${OllamaEmbeddingProvider.MAX_INPUT_CHARS} chars for ${this.modelName}`,
           );
           return t.slice(0, OllamaEmbeddingProvider.MAX_INPUT_CHARS);
@@ -96,7 +97,7 @@ export class OllamaEmbeddingProvider implements EmbeddingProvider {
         circuit.failCount++;
         if (circuit.failCount >= OLLAMA_MAX_FAILS) {
           circuit.disabledUntil = Date.now() + OLLAMA_COOLDOWN_MS;
-          console.warn(
+          pluginLogger.warn(
             `memory-hybrid: Ollama circuit breaker open — disabling endpoint ${this.endpoint} for 5min after ${circuit.failCount} failures`,
           );
         }
@@ -114,7 +115,7 @@ export class OllamaEmbeddingProvider implements EmbeddingProvider {
         if (isOOM) {
           circuit.disabledUntil = Date.now() + OLLAMA_COOLDOWN_MS;
           circuit.failCount = OLLAMA_MAX_FAILS;
-          console.warn(
+          pluginLogger.warn(
             `memory-hybrid: Ollama model OOM (${this.modelName}) — model requires more memory than available. ` +
               `Circuit breaker tripped; disabling endpoint ${this.endpoint} for 5min. ` +
               `Consider using a smaller model or configuring a cloud embedding fallback.`,

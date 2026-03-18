@@ -15,6 +15,7 @@ import type {
   AuthOrderConfig,
 } from "../types/index.js";
 import { parseDuration } from "../../utils/duration.js";
+import { pluginLogger } from "../../utils/logger.js";
 
 export const DEFAULT_MODEL = "text-embedding-3-small";
 export const DEFAULT_LANCE_PATH = join(homedir(), ".openclaw", "memory", "lancedb");
@@ -161,7 +162,7 @@ export function parseCredentialsConfig(cfg: Record<string, unknown>): Credential
     const opts = parseCredentialOptions(credRaw);
     // M1 FIX: Log info message when plaintext mode is chosen explicitly
     if (!hasValidKey && credRaw?.enabled === true) {
-      console.info("Credentials vault enabled (plaintext mode — no encryption key set)");
+      pluginLogger.info("Credentials vault enabled (plaintext mode — no encryption key set)");
     }
     credentials = {
       enabled: true,
@@ -332,7 +333,7 @@ export function parseLLMConfig(cfg: Record<string, unknown>): LLMConfig | undefi
             const rawKey = typeof pv.apiKey === "string" && pv.apiKey.trim().length > 0 ? pv.apiKey.trim() : undefined;
             const validKey = rawKey && !isPlaceholderApiKey(rawKey) ? rawKey : undefined;
             if (rawKey && !validKey) {
-              console.warn(
+              pluginLogger.warn(
                 `memory-hybrid: Provider '${k}' has an invalid API key (looks like a placeholder) — skipping`,
               );
             }

@@ -6,6 +6,7 @@ import { capturePluginError } from "../error-reporter.js";
 import { is429OrWrapped } from "../chat.js";
 import type { EmbeddingProvider } from "./types.js";
 import { isConfigError, isOllamaCircuitBreakerOpen } from "./shared.js";
+import { pluginLogger } from "../../utils/logger.js";
 
 /**
  * Wrapper that tries a primary provider and switches permanently to a fallback on first failure.
@@ -41,8 +42,7 @@ export class FallbackEmbeddingProvider implements EmbeddingProvider {
     }
     if (retryIntervalMs < 1000) {
       // Values below 1 s are valid for tests but will hammer the primary provider in production.
-      // eslint-disable-next-line no-console
-      console.warn(
+      pluginLogger.warn(
         `FallbackEmbeddingProvider: retryIntervalMs=${retryIntervalMs}ms is very low; values under 1000ms may cause excessive primary-probe traffic after a fallback switch.`,
       );
     }
