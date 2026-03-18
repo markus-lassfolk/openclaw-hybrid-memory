@@ -22,10 +22,9 @@ const { FactsDB, searchFts, rebuildFtsIndex, buildFts5Query } = _testing;
 
 type DB = InstanceType<typeof FactsDB>;
 
-/** Access the private liveDb connection from FactsDB (for FTS service calls). */
+/** Access the raw SQLite connection from FactsDB (for FTS service calls). */
 function rawDb(db: DB) {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  return (db as any).liveDb as import("node:sqlite").DatabaseSync;
+  return db.getRawDb();
 }
 
 /** Direct INSERT bypassing FactsDB (for perf test bulk seeding). */
