@@ -494,6 +494,20 @@ describe("hybridConfigSchema.parse", () => {
     expect(result.embedding.model).toBe("text-embedding-3-small");
   });
 
+  it("uses text-embedding-3-large when dimensions 3072 and model was small (backward compat)", () => {
+    const result = hybridConfigSchema.parse({
+      ...validBase,
+      embedding: {
+        apiKey: "sk-test-key-that-is-long-enough-to-pass",
+        model: "text-embedding-3-small",
+        dimensions: 3072,
+      },
+    });
+    expect(result.embedding.model).toBe("text-embedding-3-large");
+    expect(result.embedding.dimensions).toBe(3072);
+    expect(result.embedding.models).toEqual(["text-embedding-3-large"]);
+  });
+
   it("respects autoCapture = false", () => {
     const result = hybridConfigSchema.parse({
       ...validBase,

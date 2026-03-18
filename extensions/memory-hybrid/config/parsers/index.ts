@@ -437,7 +437,7 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
   }
   // For OpenAI, the models list is a preference list so use its first entry as the primary model.
   // For Ollama/ONNX, models contains OpenAI fallback names — the primary model is always singleModel.
-  const model = embeddingProvider === "openai" ? (embeddingModels?.[0] ?? singleModel) : singleModel;
+  let model = embeddingProvider === "openai" ? (embeddingModels?.[0] ?? singleModel) : singleModel;
 
   // Resolve vector dimensions: explicit config takes priority, then look up from known models
   const configDimensions =
@@ -471,6 +471,31 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
       );
     }
     resolvedDimensions = vectorDimsForModel(model, 768); // 768 default for known ollama models
+  }
+
+  // Backward compatibility: when explicit dimensions exceed the primary model's max (e.g. 3072 with
+  // text-embedding-3-small), use a model that supports that dimension (e.g. text-embedding-3-large).
+  // The Embeddings constructor validates every model in the list, so we pass only the chosen model.
+  if (
+    embeddingProvider === "openai" &&
+    configDimensions !== undefined &&
+    configDimensions > vectorDimsForModel(model)
+  ) {
+    const modelForDims = Object.keys(EMBEDDING_DIMENSIONS).find(
+      (m) => OPENAI_MODELS.has(m) && EMBEDDING_DIMENSIONS[m] === configDimensions,
+    );
+    if (modelForDims) {
+      model = modelForDims;
+      embeddingModels = [model];
+      pluginLogger.info(
+        `memory-hybrid: embedding.dimensions ${configDimensions} requires a larger model; using ${model} (backward compatible with existing config).`,
+      );
+    } else {
+      throw new Error(
+        `memory-hybrid: embedding.dimensions is ${configDimensions} but model '${model}' supports at most ${vectorDimsForModel(model)}. ` +
+          `Set embedding.model to a model that supports ${configDimensions} dimensions (e.g. text-embedding-3-large for 3072) or set dimensions to ${vectorDimsForModel(model)}.`,
+      );
+    }
   }
 
   const resolvedEndpoint =
