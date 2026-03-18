@@ -79,6 +79,7 @@ function makeDeps(overrides: Partial<RecallPipelineDeps> = {}): RecallPipelineDe
         maxVariants: 4,
         cacheSize: 100,
         timeoutMs: 15_000,
+        skipForInteractiveTurns: true,
       },
       retrievalStrategies: ["fts5"],
       memoryTieringEnabled: false,
@@ -161,7 +162,13 @@ describe("runRecallPipelineQuery — semantic mode", () => {
 
     const deps = makeDeps({
       cfg: {
-        queryExpansion: { enabled: false, maxVariants: 4, cacheSize: 100, timeoutMs: 15_000 },
+        queryExpansion: {
+          enabled: false,
+          maxVariants: 4,
+          cacheSize: 100,
+          timeoutMs: 15_000,
+          skipForInteractiveTurns: true,
+        },
         retrievalStrategies: ["semantic", "fts5"],
         memoryTieringEnabled: false,
         rawCfg: { llm: undefined } as unknown as RecallPipelineDeps["cfg"]["rawCfg"],
@@ -188,7 +195,13 @@ describe("runRecallPipelineQuery — semantic mode", () => {
     const precomputed = [1, 2, 3, 4];
     const deps = makeDeps({
       cfg: {
-        queryExpansion: { enabled: false, maxVariants: 4, cacheSize: 100, timeoutMs: 15_000 },
+        queryExpansion: {
+          enabled: false,
+          maxVariants: 4,
+          cacheSize: 100,
+          timeoutMs: 15_000,
+          skipForInteractiveTurns: true,
+        },
         retrievalStrategies: ["semantic"],
         memoryTieringEnabled: false,
         rawCfg: { llm: undefined } as unknown as RecallPipelineDeps["cfg"]["rawCfg"],
@@ -257,7 +270,13 @@ describe("runRecallPipelineQuery — HyDE disabled (queryExpansion.enabled = fal
     // HyDE-generated text. With HyDE off, embed is called with the raw query.
     const deps = makeDeps({
       cfg: {
-        queryExpansion: { enabled: false, maxVariants: 4, cacheSize: 100, timeoutMs: 15_000 },
+        queryExpansion: {
+          enabled: false,
+          maxVariants: 4,
+          cacheSize: 100,
+          timeoutMs: 15_000,
+          skipForInteractiveTurns: true,
+        },
         retrievalStrategies: ["semantic"],
         memoryTieringEnabled: false,
         rawCfg: { llm: undefined } as unknown as RecallPipelineDeps["cfg"]["rawCfg"],
@@ -277,7 +296,13 @@ describe("runRecallPipelineQuery — hydeUsedRef mutation", () => {
   it("limitHydeOnce marks hydeUsedRef.value = true on first call", async () => {
     const deps = makeDeps({
       cfg: {
-        queryExpansion: { enabled: true, maxVariants: 4, cacheSize: 100, timeoutMs: 15_000 },
+        queryExpansion: {
+          enabled: true,
+          maxVariants: 4,
+          cacheSize: 100,
+          timeoutMs: 15_000,
+          skipForInteractiveTurns: true,
+        },
         retrievalStrategies: ["fts5"],
         memoryTieringEnabled: false,
         rawCfg: { llm: undefined } as unknown as RecallPipelineDeps["cfg"]["rawCfg"],
@@ -300,7 +325,13 @@ describe("runRecallPipelineQuery — hydeUsedRef mutation", () => {
     // the ref is set on first call so subsequent calls skip the HyDE attempt.
     const deps = makeDeps({
       cfg: {
-        queryExpansion: { enabled: true, maxVariants: 4, cacheSize: 100, timeoutMs: 500 },
+        queryExpansion: {
+          enabled: true,
+          maxVariants: 4,
+          cacheSize: 100,
+          timeoutMs: 500,
+          skipForInteractiveTurns: true,
+        },
         retrievalStrategies: ["semantic"],
         memoryTieringEnabled: false,
         rawCfg: {
@@ -342,7 +373,13 @@ describe("runRecallPipelineQuery — memory tiering", () => {
 
     const deps = makeDeps({
       cfg: {
-        queryExpansion: { enabled: false, maxVariants: 4, cacheSize: 100, timeoutMs: 15_000 },
+        queryExpansion: {
+          enabled: false,
+          maxVariants: 4,
+          cacheSize: 100,
+          timeoutMs: 15_000,
+          skipForInteractiveTurns: true,
+        },
         retrievalStrategies: ["fts5"],
         memoryTieringEnabled: true,
         rawCfg: { llm: undefined } as unknown as RecallPipelineDeps["cfg"]["rawCfg"],
@@ -427,7 +464,13 @@ describe("runRecallPipelineQuery — abort cancels embed after HyDE (#558)", () 
 
     const deps = makeDeps({
       cfg: {
-        queryExpansion: { enabled: true, maxVariants: 4, cacheSize: 100, timeoutMs: 60_000 },
+        queryExpansion: {
+          enabled: true,
+          maxVariants: 4,
+          cacheSize: 100,
+          timeoutMs: 60_000,
+          skipForInteractiveTurns: true,
+        },
         retrievalStrategies: ["semantic"],
         memoryTieringEnabled: false,
         rawCfg: { llm: undefined } as unknown as RecallPipelineDeps["cfg"]["rawCfg"],
@@ -468,7 +511,13 @@ describe("runRecallPipelineQuery — abort cancels embed after HyDE (#558)", () 
 
     const deps = makeDeps({
       cfg: {
-        queryExpansion: { enabled: true, maxVariants: 4, cacheSize: 100, timeoutMs: 5_000 },
+        queryExpansion: {
+          enabled: true,
+          maxVariants: 4,
+          cacheSize: 100,
+          timeoutMs: 5_000,
+          skipForInteractiveTurns: true,
+        },
         retrievalStrategies: ["semantic"],
         memoryTieringEnabled: false,
         rawCfg: { llm: undefined } as unknown as RecallPipelineDeps["cfg"]["rawCfg"],
@@ -523,10 +572,16 @@ describe("runRecallPipelineQuery — skipForInteractiveTurns (#581)", () => {
     expect(chatModule.chatCompleteWithRetry).not.toHaveBeenCalled();
   });
 
-  it("skips HyDE when interactive=true and skipForInteractiveTurns is undefined (defaults to true)", async () => {
+  it("skips HyDE when interactive=true and skipForInteractiveTurns is true (parser default)", async () => {
     const deps = makeDeps({
       cfg: {
-        queryExpansion: { enabled: true, maxVariants: 4, cacheSize: 100, timeoutMs: 15_000 },
+        queryExpansion: {
+          enabled: true,
+          maxVariants: 4,
+          cacheSize: 100,
+          timeoutMs: 15_000,
+          skipForInteractiveTurns: true,
+        },
         retrievalStrategies: ["semantic"],
         memoryTieringEnabled: false,
         rawCfg: { llm: undefined } as unknown as RecallPipelineDeps["cfg"]["rawCfg"],

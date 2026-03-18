@@ -144,7 +144,7 @@ export type QueryExpansionConfig = {
    * you explicitly want HyDE expansion on every user-facing turn (Engineering Goal 2: latency).
    * Defaults to `true` when not explicitly set.
    */
-  skipForInteractiveTurns?: boolean;
+  skipForInteractiveTurns: boolean;
 };
 
 /** LLM re-ranking of RRF fusion results (Issue #161). */
