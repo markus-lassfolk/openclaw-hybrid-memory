@@ -13,7 +13,7 @@
  *  - Never auto-triggers; only responds to explicit agent tool calls
  */
 
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import type { ApiTapConfig } from "../config/types/features.js";
 
 // ---------------------------------------------------------------------------
@@ -63,7 +63,13 @@ function matchesPattern(url: string, pattern: string): boolean {
     .replace(/§DOUBLESTAR§/g, ".*") // ** matches across segments
     .replace(/\?/g, "."); // ? matches exactly one character
   try {
-    return new RegExp(`^${escaped}$`, "i").test(url);
+    const regex = new RegExp(`^${escaped}$`, "i");
+    if (regex.test(url)) return true;
+    // Also test with trailing slash to catch patterns like **/auth/** matching /auth
+    if (!url.endsWith("/")) {
+      return regex.test(url + "/");
+    }
+    return false;
   } catch {
     return false;
   }
@@ -134,85 +140,104 @@ export class ApitapService {
    * Run `apitap capture` to record live browser traffic for a site.
    * Blocks until the capture session ends (timeout) or the user stops it.
    */
-  capture(siteUrl: string, timeoutSeconds?: number): ApitapCaptureResult {
-    const urlError = validateUrl(siteUrl, this.cfg);
-    if (urlError) {
-      return {
-        sessionId: "",
-        siteUrl,
-        endpoints: [],
-        durationMs: 0,
-        error: urlError,
-      };
-    }
-
+  async capture(siteUrl: string, timeoutSeconds?: number): Promise<ApitapCaptureResult> {
     const timeout = timeoutSeconds ?? this.cfg.captureTimeoutSeconds;
     const startMs = Date.now();
 
-    try {
-      const result = spawnSync(
+    return new Promise((resolve) => {
+      const proc = spawn(
         "apitap",
         ["capture", "--url", siteUrl, "--timeout", String(timeout), "--output", "json", "--no-browser-ui"],
         {
-          encoding: "utf8",
-          timeout: (timeout + 10) * 1000, // extra 10s buffer
           stdio: ["ignore", "pipe", "pipe"],
         },
       );
 
-      const durationMs = Date.now() - startMs;
+      let stdout = "";
+      let stderr = "";
 
-      if (result.status !== 0) {
-        const errMsg = result.stderr?.trim() || `apitap capture exited with code ${result.status}`;
-        return { sessionId: "", siteUrl, endpoints: [], durationMs, error: errMsg };
-      }
+      proc.stdout.on("data", (data: Buffer) => {
+        stdout += data.toString();
+      });
 
-      return this.parseCaptureOutput(result.stdout ?? "", siteUrl, durationMs);
-    } catch (err) {
-      const durationMs = Date.now() - startMs;
-      const errMsg = err instanceof Error ? err.message : String(err);
-      return { sessionId: "", siteUrl, endpoints: [], durationMs, error: errMsg };
-    }
+      proc.stderr.on("data", (data: Buffer) => {
+        stderr += data.toString();
+      });
+
+      const killTimer = setTimeout(
+        () => {
+          proc.kill("SIGTERM");
+        },
+        (timeout + 10) * 1000,
+      );
+
+      proc.on("close", (code) => {
+        clearTimeout(killTimer);
+        const durationMs = Date.now() - startMs;
+
+        if (code !== 0) {
+          const errMsg = stderr.trim() || `apitap capture exited with code ${code}`;
+          resolve({ sessionId: "", siteUrl, endpoints: [], durationMs, error: errMsg });
+          return;
+        }
+
+        resolve(this.parseCaptureOutput(stdout, siteUrl, durationMs));
+      });
+
+      proc.on("error", (err) => {
+        clearTimeout(killTimer);
+        const durationMs = Date.now() - startMs;
+        resolve({ sessionId: "", siteUrl, endpoints: [], durationMs, error: err.message });
+      });
+    });
   }
 
   /**
    * Run `apitap peek` for quick headless API discovery (no browser window).
    * Faster than capture but may miss dynamically loaded endpoints.
    */
-  peek(siteUrl: string): ApitapCaptureResult {
-    const urlError = validateUrl(siteUrl, this.cfg);
-    if (urlError) {
-      return {
-        sessionId: "",
-        siteUrl,
-        endpoints: [],
-        durationMs: 0,
-        error: urlError,
-      };
-    }
-
+  async peek(siteUrl: string): Promise<ApitapCaptureResult> {
     const startMs = Date.now();
 
-    try {
-      const result = spawnSync("apitap", ["peek", "--url", siteUrl, "--output", "json"], {
-        encoding: "utf8",
-        timeout: 60_000,
+    return new Promise((resolve) => {
+      const proc = spawn("apitap", ["peek", "--url", siteUrl, "--output", "json"], {
         stdio: ["ignore", "pipe", "pipe"],
       });
 
-      const durationMs = Date.now() - startMs;
+      let stdout = "";
+      let stderr = "";
 
-      if (result.status !== 0) {
-        const errMsg = result.stderr?.trim() || `apitap peek exited with code ${result.status}`;
-        return { sessionId: "", siteUrl, endpoints: [], durationMs, error: errMsg };
-      }
+      proc.stdout.on("data", (data: Buffer) => {
+        stdout += data.toString();
+      });
 
-      return this.parseCaptureOutput(result.stdout ?? "", siteUrl, durationMs);
-    } catch (err) {
-      const durationMs = Date.now() - startMs;
-      const errMsg = err instanceof Error ? err.message : String(err);
-      return { sessionId: "", siteUrl, endpoints: [], durationMs, error: errMsg };
-    }
+      proc.stderr.on("data", (data: Buffer) => {
+        stderr += data.toString();
+      });
+
+      const killTimer = setTimeout(() => {
+        proc.kill("SIGTERM");
+      }, 60_000);
+
+      proc.on("close", (code) => {
+        clearTimeout(killTimer);
+        const durationMs = Date.now() - startMs;
+
+        if (code !== 0) {
+          const errMsg = stderr.trim() || `apitap peek exited with code ${code}`;
+          resolve({ sessionId: "", siteUrl, endpoints: [], durationMs, error: errMsg });
+          return;
+        }
+
+        resolve(this.parseCaptureOutput(stdout, siteUrl, durationMs));
+      });
+
+      proc.on("error", (err) => {
+        clearTimeout(killTimer);
+        const durationMs = Date.now() - startMs;
+        resolve({ sessionId: "", siteUrl, endpoints: [], durationMs, error: err.message });
+      });
+    });
   }
 
   /**

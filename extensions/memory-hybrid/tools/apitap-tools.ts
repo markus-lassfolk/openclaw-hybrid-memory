@@ -83,7 +83,7 @@ export function registerApitapTools(ctx: ApitapToolsContext, api: ClawdbotPlugin
           };
         }
 
-        const result = service.capture(url, timeoutSeconds);
+        const result = await service.capture(url, timeoutSeconds);
 
         if (result.error) {
           return {
@@ -193,7 +193,7 @@ export function registerApitapTools(ctx: ApitapToolsContext, api: ClawdbotPlugin
           };
         }
 
-        const result = service.peek(url);
+        const result = await service.peek(url);
 
         if (result.error) {
           return {
