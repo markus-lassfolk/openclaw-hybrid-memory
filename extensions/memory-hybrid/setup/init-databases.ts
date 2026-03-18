@@ -469,22 +469,15 @@ function buildMultiProviderOpenAI(
     : undefined;
 
   function hasApiKeyForProvider(prefix: string): boolean {
-    const prov = cfg.llm?.providers as Record<string, { apiKey?: string }> | undefined;
-    if (prefix === "google") {
-      const k = resolveApiKey(prov?.google?.apiKey ?? cfg.distill?.apiKey);
-      return Boolean(k && k.length >= 10);
-    }
-    if (prefix === "openai") {
-      const k = resolveApiKey(prov?.openai?.apiKey) ?? resolveApiKey(cfg.embedding?.apiKey);
-      return Boolean(k && k.length >= 10);
-    }
-    if (prefix === "anthropic") {
-      const claude = (cfg as Record<string, unknown>).claude as { apiKey?: string } | undefined;
-      const k = resolveApiKey(prov?.anthropic?.apiKey) ?? resolveApiKey(claude?.apiKey);
-      return Boolean(k && k.length >= 10);
-    }
-    const k = resolveApiKey(prov?.[prefix]?.apiKey);
-    return Boolean(k && k.length >= 10);
+    const providerCfg: LLMProviderConfig | undefined = (
+      cfg.llm?.providers as Record<string, LLMProviderConfig | undefined> | undefined
+    )?.[prefix];
+    const hasCustomExternalBaseURL = prefix === "openai" && Boolean(providerCfg?.baseURL && providerCfg.baseURL !== gatewayBaseUrl);
+    const { value } = resolveProviderApiKey(prefix, providerCfg, cfg, resolveApiKey, {
+      gatewayToken,
+      hasCustomExternalBaseURL,
+    });
+    return Boolean(value && value.length >= 10);
   }
 
   function resolveClient(model: string): {
