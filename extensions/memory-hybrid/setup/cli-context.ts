@@ -528,7 +528,7 @@ function buildRichStatsExtras(ctx: HandlerContext): NonNullable<HybridMemCliCont
                 return;
               }
               const match = /^(\d+)/.exec(stdout.trim());
-              resolve(match ? parseInt(match[1], 10) * 1024 : 0);
+              resolve(match ? Number.parseInt(match[1], 10) * 1024 : 0);
             });
           });
         } catch (err) {

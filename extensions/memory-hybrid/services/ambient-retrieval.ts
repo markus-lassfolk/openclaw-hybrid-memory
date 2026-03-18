@@ -86,7 +86,7 @@ export function cosineDistance(a: number[], b: number[]): number {
  * @param threshold - Cosine distance threshold (default: 0.4). Higher = less sensitive.
  * @returns true when the distance exceeds the threshold (topic shifted).
  */
-export function detectTopicShift(prev: number[], next: number[], threshold: number = 0.4): boolean {
+export function detectTopicShift(prev: number[], next: number[], threshold = 0.4): boolean {
   if (prev.length === 0 || next.length === 0) return false;
   const distance = cosineDistance(prev, next);
   return distance > threshold;

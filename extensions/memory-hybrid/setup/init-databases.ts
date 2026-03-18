@@ -13,12 +13,12 @@ import { EventLog } from "../backends/event-log.js";
 import { WriteAheadLog } from "../backends/wal.js";
 import { createEmbeddingProvider, type EmbeddingProvider } from "../services/embeddings.js";
 import { buildEmbeddingRegistry, type EmbeddingRegistry } from "../services/embedding-registry.js";
-import {
-  type HybridMemoryConfig,
-  type LLMProviderConfig,
-  type CredentialType,
-  type EmbeddingModelConfig,
-  type ResolvedGatewayAuthConfig,
+import type {
+  HybridMemoryConfig,
+  LLMProviderConfig,
+  CredentialType,
+  EmbeddingModelConfig,
+  ResolvedGatewayAuthConfig,
 } from "../config.js";
 import { UnconfiguredProviderError } from "../services/chat.js";
 import { hasOAuthProfiles } from "../utils/auth.js";
@@ -69,7 +69,13 @@ function extractGatewayConfig(cfg: HybridMemoryConfig): {
   const gatewayToken = gatewayAuthResolved ?? process.env.OPENCLAW_GATEWAY_TOKEN;
   const gatewayBaseUrl =
     gatewayPort && gatewayPort >= 1 && gatewayPort <= 65535 ? `http://127.0.0.1:${gatewayPort}/v1` : undefined;
-  return { gatewayPortRaw, gatewayPort, gatewayAuthResolved, gatewayToken, gatewayBaseUrl };
+  return {
+    gatewayPortRaw,
+    gatewayPort,
+    gatewayAuthResolved,
+    gatewayToken,
+    gatewayBaseUrl,
+  };
 }
 
 /** Known provider OpenAI-compatible base URLs. */
@@ -99,7 +105,9 @@ async function probeOllamaEndpoint(baseUrl: string): Promise<boolean> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), OLLAMA_HEALTH_TIMEOUT_MS);
   try {
-    const resp = await fetch(`${baseUrl}/api/tags`, { signal: controller.signal });
+    const resp = await fetch(`${baseUrl}/api/tags`, {
+      signal: controller.signal,
+    });
     const ok = resp.ok;
     _ollamaHealthCache.set(baseUrl, { ok, ts: now });
     return ok;
@@ -416,7 +424,10 @@ function buildMultiProviderOpenAI(
         resolveApiKey(providerCfg?.apiKey ?? cfg.distill?.apiKey) ?? (process.env.GOOGLE_API_KEY?.trim() || undefined);
       if (!apiKey) throw new UnconfiguredProviderError("google", trimmed);
       const baseURL = providerCfg?.baseURL ?? GOOGLE_GEMINI_BASE_URL;
-      return { client: getOrCreate(`google:${baseURL}`, () => new OpenAI({ apiKey, baseURL })), bareModel };
+      return {
+        client: getOrCreate(`google:${baseURL}`, () => new OpenAI({ apiKey, baseURL })),
+        bareModel,
+      };
     }
 
     if (prefix === "openai") {
@@ -537,7 +548,14 @@ function buildMultiProviderOpenAI(
       const baseURL = providerCfg?.baseURL;
       const cacheKey = `custom:${prefix}:${envFallbackKey.slice(0, 8)}:${baseURL ?? "default"}`;
       return {
-        client: getOrCreate(cacheKey, () => new OpenAI({ apiKey: envFallbackKey, ...(baseURL ? { baseURL } : {}) })),
+        client: getOrCreate(
+          cacheKey,
+          () =>
+            new OpenAI({
+              apiKey: envFallbackKey,
+              ...(baseURL ? { baseURL } : {}),
+            }),
+        ),
         bareModel,
       };
     }
@@ -636,7 +654,12 @@ function buildMultiProviderOpenAI(
                   (resp: unknown) => {
                     try {
                       const durationMs = Date.now() - start;
-                      const r = resp as { usage?: { prompt_tokens?: number; completion_tokens?: number } } | null;
+                      const r = resp as {
+                        usage?: {
+                          prompt_tokens?: number;
+                          completion_tokens?: number;
+                        };
+                      } | null;
                       costTracker.record({
                         feature,
                         model: normalizedModel,
@@ -730,7 +753,9 @@ export function initializeDatabases(cfg: HybridMemoryConfig, api: ClawdbotPlugin
   const resolvedSqlitePath = api.resolvePath(cfg.sqlitePath);
   setKeywordsPath(dirname(resolvedSqlitePath));
 
-  const factsDb = new FactsDB(resolvedSqlitePath, { fuzzyDedupe: cfg.store.fuzzyDedupe });
+  const factsDb = new FactsDB(resolvedSqlitePath, {
+    fuzzyDedupe: cfg.store.fuzzyDedupe,
+  });
   const vectorDim = cfg.embedding.dimensions;
   const vectorDb = new VectorDB(resolvedLancePath, vectorDim, cfg.vector.autoRepair);
   vectorDb.setLogger(api.logger);
@@ -756,7 +781,13 @@ export function initializeDatabases(cfg: HybridMemoryConfig, api: ClawdbotPlugin
     (gwConfig?.providers as Record<string, unknown> | undefined);
   const mergedProviderNames: string[] = [];
   const mergedProviderOriginalNames = new Map<string, string>();
-  if (!cfg.llm) (cfg as Record<string, unknown>).llm = { providers: {}, default: [], heavy: [], nano: [] };
+  if (!cfg.llm)
+    (cfg as Record<string, unknown>).llm = {
+      providers: {},
+      default: [],
+      heavy: [],
+      nano: [],
+    };
   const plm = cfg.llm as Record<string, unknown>;
   if (!plm.providers || typeof plm.providers !== "object") plm.providers = {};
   const prov = plm.providers as Record<string, Record<string, unknown>>;
@@ -1060,7 +1091,10 @@ export function initializeDatabases(cfg: HybridMemoryConfig, api: ClawdbotPlugin
           if (!running) {
             api.logger.info("memory-hybrid: Ollama is not running — attempting auto-start (llm.localAutoStart: true)");
             const { spawn } = await import("node:child_process");
-            const child = spawn("ollama", ["serve"], { detached: true, stdio: "ignore" });
+            const child = spawn("ollama", ["serve"], {
+              detached: true,
+              stdio: "ignore",
+            });
             child.on("error", (err) => {
               api.logger.warn(`memory-hybrid: Ollama spawn error: ${err.message}`);
             });
@@ -1204,14 +1238,17 @@ export function initializeDatabases(cfg: HybridMemoryConfig, api: ClawdbotPlugin
   }
 
   // Track embedding provider+model changes to trigger re-embedding (Issue #153).
-  const currentEmbeddingMeta = { provider: cfg.embedding.provider, model: cfg.embedding.model };
+  const currentEmbeddingMeta = {
+    provider: cfg.embedding.provider,
+    model: cfg.embedding.model,
+  };
   let embeddingConfigChanged = false;
   try {
     const previousEmbeddingMeta = factsDb.getEmbeddingMeta();
     embeddingConfigChanged = Boolean(
       previousEmbeddingMeta &&
-      (previousEmbeddingMeta.provider !== currentEmbeddingMeta.provider ||
-        previousEmbeddingMeta.model !== currentEmbeddingMeta.model),
+        (previousEmbeddingMeta.provider !== currentEmbeddingMeta.provider ||
+          previousEmbeddingMeta.model !== currentEmbeddingMeta.model),
     );
     // When autoMigrate is enabled, still record the initial baseline on first run so future
     // changes can be detected. For subsequent runs with a config change, let runEmbeddingMaintenance
@@ -1431,7 +1468,10 @@ export function initializeDatabases(cfg: HybridMemoryConfig, api: ClawdbotPlugin
             if (vectorDb.getCloseGeneration() !== initialGeneration) {
               // Save progress before aborting
               try {
-                const progress = { completedIds: Array.from(completedIds), total: facts.length };
+                const progress = {
+                  completedIds: Array.from(completedIds),
+                  total: facts.length,
+                };
                 const { writeFileSync } = await import("node:fs");
                 writeFileSync(reembedProgressPath, JSON.stringify(progress), "utf-8");
               } catch {

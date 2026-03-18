@@ -357,7 +357,7 @@ export function registerMemoryTools(
         const trimmed = idParam.trim();
         // Check if it's a numeric string (progressive index position)
         if (/^\d+$/.test(trimmed)) {
-          const idx = parseInt(trimmed, 10);
+          const idx = Number.parseInt(trimmed, 10);
           if (idx >= 1 && idx <= lastProgressiveIndexIds.length) {
             factId = lastProgressiveIndexIds[idx - 1] ?? null;
           }

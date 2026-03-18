@@ -59,7 +59,7 @@ describe("EventBus.appendEvent", () => {
   });
 
   it("throws RangeError for NaN importance", () => {
-    expect(() => bus.appendEvent("sensor.test", "test", {}, NaN)).toThrow(RangeError);
+    expect(() => bus.appendEvent("sensor.test", "test", {}, Number.NaN)).toThrow(RangeError);
   });
 
   it("stores fingerprint when provided", () => {

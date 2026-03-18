@@ -266,7 +266,7 @@ export class EventLog {
             if (existsSync(filePath)) {
               try {
                 const input = createReadStream(filePath).pipe(createGunzip());
-                const rl = createInterface({ input, crlfDelay: Infinity });
+                const rl = createInterface({ input, crlfDelay: Number.POSITIVE_INFINITY });
                 for await (const line of rl) {
                   if (!line.trim()) continue;
                   try {

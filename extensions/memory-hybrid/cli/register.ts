@@ -8,6 +8,7 @@ import type { VectorDB } from "../backends/vector-db.js";
 import type { EmbeddingProvider } from "../services/embeddings.js";
 import type { AliasDB } from "../services/retrieval-aliases.js";
 import type { SearchResult } from "../types/memory.js";
+// biome-ignore lint/style/useImportType: mergeResults kept as value import so typeof mergeResults resolves at the type level without confusion
 import { mergeResults, filterByScope } from "../services/merge-results.js";
 import type { ScopeFilter } from "../types/memory.js";
 import { parseSourceDate } from "../utils/dates.js";
