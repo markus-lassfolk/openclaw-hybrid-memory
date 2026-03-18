@@ -188,7 +188,7 @@ export class ApitapStore {
       params.push(filter.status);
     }
     if (!filter?.includeExpired) {
-      query += " AND (expires_at IS NULL OR expires_at > strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))";
+      query += " AND (expires_at IS NULL OR expires_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))";
     }
 
     query += " ORDER BY created_at DESC";
@@ -223,7 +223,7 @@ export class ApitapStore {
   deleteExpired(): number {
     const result = this.db
       .prepare(
-        "DELETE FROM apitap_endpoints WHERE expires_at IS NOT NULL AND expires_at <= strftime('%Y-%m-%dT%H:%M:%SZ', 'now')",
+        "DELETE FROM apitap_endpoints WHERE expires_at IS NOT NULL AND expires_at <= strftime('%Y-%m-%dT%H:%M:%fZ', 'now')",
       )
       .run();
     return Number(result.changes);
