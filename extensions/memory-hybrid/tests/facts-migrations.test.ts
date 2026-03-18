@@ -19,7 +19,8 @@ beforeEach(() => {
   tmpDir = mkdtempSync(join(tmpdir(), "facts-migrations-test-"));
   db = new DatabaseSync(join(tmpDir, "test.db"));
 
-  // Apply base schema (same as FactsDB constructor before migrations)
+  // Apply a minimal base schema (core facts table + FTS virtual table only;
+  // excludes FTS sync triggers and auxiliary indexes that FactsDB also creates)
   db.exec(`PRAGMA journal_mode = WAL`);
   db.exec(`PRAGMA foreign_keys = ON`);
   db.exec(`
