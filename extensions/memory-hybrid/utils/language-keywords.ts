@@ -63,6 +63,28 @@ export const ENGLISH_KEYWORDS = {
   decayPermanent: ["decided", "architecture", "always use", "never use"],
   decaySession: ["currently debugging", "right now", "this session"],
   decayActive: ["working on", "need to", "todo", "blocker", "sprint"],
+  /** Key-field fragments that classify a fact as permanent. Translatable for multilingual key matching. */
+  decayPermanentKeys: [
+    "name",
+    "email",
+    "api_key",
+    "api_endpoint",
+    "architecture",
+    "decision",
+    "birthday",
+    "born",
+    "phone",
+    "language",
+    "location",
+  ],
+  /** Key-field fragments that classify a fact as session. Translatable for multilingual key matching. */
+  decaySessionKeys: ["current_file", "temp", "debug", "working_on_right_now"],
+  /** Key-field fragments that classify a fact as active. Translatable for multilingual key matching. */
+  decayActiveKeys: ["task", "todo", "wip", "branch", "sprint", "blocker"],
+  /** Entity exact-match values that classify a fact as permanent. Translatable for multilingual entity matching. */
+  decayPermanentEntities: ["decision", "convention"],
+  /** Key-field fragments that classify a fact as checkpoint. Translatable for multilingual key matching. */
+  decayCheckpointKeys: ["checkpoint", "preflight"],
   /** Self-correction detection. Phrases that suggest the user is correcting the agent. Translated via build-languages for multi-language support. */
   correctionSignals: [
     "every time",
@@ -626,6 +648,31 @@ export function getDecaySessionRegex(): RegExp {
 
 export function getDecayActiveRegex(): RegExp {
   return buildRegexFromKeywords(loadMergedKeywords().decayActive);
+}
+
+/** Merged key-field fragments for permanent decay classification (English + translations). */
+export function getDecayPermanentKeys(): string[] {
+  return loadMergedKeywords().decayPermanentKeys;
+}
+
+/** Merged key-field fragments for session decay classification (English + translations). */
+export function getDecaySessionKeys(): string[] {
+  return loadMergedKeywords().decaySessionKeys;
+}
+
+/** Merged key-field fragments for active decay classification (English + translations). */
+export function getDecayActiveKeys(): string[] {
+  return loadMergedKeywords().decayActiveKeys;
+}
+
+/** Merged entity exact-match values for permanent decay classification (English + translations). */
+export function getDecayPermanentEntities(): string[] {
+  return loadMergedKeywords().decayPermanentEntities;
+}
+
+/** Merged key-field fragments for checkpoint decay classification (English + translations). */
+export function getDecayCheckpointKeys(): string[] {
+  return loadMergedKeywords().decayCheckpointKeys;
 }
 
 /** Emoji that indicate user dissatisfaction — trigger self-correction extraction (with or without follow-up text). */
