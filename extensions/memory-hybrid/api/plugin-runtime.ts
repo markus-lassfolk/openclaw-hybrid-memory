@@ -30,6 +30,7 @@ import type { ToolProposalStore } from "../backends/tool-proposal-store.js";
 import type { LearningsDB } from "../backends/learnings-db.js";
 import type { ProvenanceService } from "../services/provenance.js";
 import type { VerificationStore } from "../services/verification-store.js";
+import type { ApitapStore } from "../backends/apitap-store.js";
 import type { PythonBridge } from "../services/python-bridge.js";
 import type { EmbeddingProvider } from "../services/embeddings.js";
 import type { EmbeddingRegistry } from "../services/embedding-registry.js";
@@ -65,6 +66,7 @@ export interface PluginRuntime {
   toolProposalStore: ToolProposalStore | null;
   provenanceService: ProvenanceService | null;
   verificationStore: VerificationStore | null;
+  apitapStore: ApitapStore | null;
   pythonBridge: PythonBridge | null;
   variantQueue: VariantGenerationQueue | null;
   /** Staged intake buffer for errors, lessons, and feature requests (Issue #617). */

@@ -285,7 +285,10 @@ export class ApitapService {
     })();
 
     const curlParams = Object.entries(parameters)
-      .map(([k, v]) => `-d '${k}=${v}'`)
+      .map(([k, v]) => {
+        const escapedValue = String(v).replace(/'/g, "'\\''");
+        return `-d '${k}=${escapedValue}'`;
+      })
       .join(" ");
     const curlExample =
       method.toUpperCase() === "GET"

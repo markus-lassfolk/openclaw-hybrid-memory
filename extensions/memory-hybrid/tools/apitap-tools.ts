@@ -23,6 +23,61 @@ export interface ApitapToolsContext {
   cfg: HybridMemoryConfig;
 }
 
+interface PersistResult {
+  stored: Array<{ id: string; method: string; endpoint: string }>;
+  outputText: string;
+}
+
+function persistAndFormatEndpoints(
+  result: { sessionId: string; endpoints: Array<{ endpoint: string; method: string; parameters?: Record<string, unknown>; sampleResponse?: unknown; contentType?: string }> },
+  url: string,
+  cfg: HybridMemoryConfig,
+  apitapStore: ApitapStore,
+  label: string,
+  zeroResultsMessage: string,
+): PersistResult {
+  const expiresAt =
+    cfg.apiTap.endpointTtlDays > 0
+      ? new Date(Date.now() + cfg.apiTap.endpointTtlDays * 24 * 60 * 60_000).toISOString()
+      : null;
+
+  const stored = result.endpoints.map((ep) =>
+    apitapStore.create({
+      siteUrl: url,
+      endpoint: ep.endpoint,
+      method: ep.method,
+      parameters: ep.parameters ?? {},
+      sampleResponse: ep.sampleResponse ?? null,
+      contentType: ep.contentType ?? "application/json",
+      sessionId: result.sessionId,
+      expiresAt,
+    }),
+  );
+
+  const lines: string[] = [];
+  lines.push(`${label} for ${url}.`);
+  lines.push(`  Session ID:       ${result.sessionId}`);
+  lines.push(`  Endpoints found:  ${stored.length}`);
+
+  if (stored.length === 0) {
+    lines.push("");
+    lines.push(zeroResultsMessage);
+  } else {
+    lines.push("");
+    lines.push("Discovered endpoints:");
+    stored.slice(0, 20).forEach((ep, i) => {
+      lines.push(`  ${i + 1}. [${ep.method}] ${ep.endpoint}  (id: ${ep.id})`);
+    });
+    if (stored.length > 20) {
+      lines.push(`  ... and ${stored.length - 20} more`);
+    }
+    lines.push("");
+    lines.push("Use apitap_to_skill <id> to generate a skill scaffold.");
+  }
+
+  return { stored, outputText: lines.join("\n") };
+}
+
 export function registerApitapTools(ctx: ApitapToolsContext, api: ClawdbotPluginApi): void {
   const { apitapStore, cfg } = ctx;
   const service = new ApitapService(cfg.apiTap);
@@ -91,41 +146,20 @@ export function registerApitapTools(ctx: ApitapToolsContext, api: ClawdbotPlugin
           };
         }
 
-        // Persist discovered endpoints to store
-        const expiresAt =
-          cfg.apiTap.endpointTtlDays > 0
-            ? new Date(Date.now() + cfg.apiTap.endpointTtlDays * 24 * 60 * 60_000).toISOString()
-            : null;
-
-        const stored = result.endpoints.map((ep) =>
-          apitapStore.create({
-            siteUrl: url,
-            endpoint: ep.endpoint,
-            method: ep.method,
-            parameters: ep.parameters ?? {},
-            sampleResponse: ep.sampleResponse ?? null,
-            contentType: ep.contentType ?? "application/json",
-            sessionId: result.sessionId,
-            expiresAt,
-          }),
+        const { stored, outputText } = persistAndFormatEndpoints(
+          result,
+          url,
+          cfg,
+          apitapStore,
+          `ApiTap capture complete`,
+          "",
         );
 
-        const lines: string[] = [];
-        lines.push(`ApiTap capture complete for ${url}.`);
-        lines.push(`  Session ID:       ${result.sessionId}`);
-        lines.push(`  Duration:         ${Math.round(result.durationMs / 1000)}s`);
-        lines.push(`  Endpoints found:  ${stored.length}`);
+        const lines = outputText.split("\n");
+        lines.splice(2, 0, `  Duration:         ${Math.round(result.durationMs / 1000)}s`);
+
         if (stored.length > 0) {
-          lines.push("");
-          lines.push("Discovered endpoints (pending review):");
-          stored.slice(0, 20).forEach((ep, i) => {
-            lines.push(`  ${i + 1}. [${ep.method}] ${ep.endpoint}  (id: ${ep.id})`);
-          });
-          if (stored.length > 20) {
-            lines.push(`  ... and ${stored.length - 20} more`);
-          }
-          lines.push("");
-          lines.push("Use apitap_to_skill <id> to convert an endpoint to a skill scaffold.");
+          lines[lines.length - 2] = "Discovered endpoints (pending review):";
           lines.push("Use apitap_list to see all discovered endpoints.");
         }
 
@@ -201,46 +235,17 @@ export function registerApitapTools(ctx: ApitapToolsContext, api: ClawdbotPlugin
           };
         }
 
-        // Persist to store with TTL
-        const expiresAt =
-          cfg.apiTap.endpointTtlDays > 0
-            ? new Date(Date.now() + cfg.apiTap.endpointTtlDays * 24 * 60 * 60_000).toISOString()
-            : null;
-
-        const stored = result.endpoints.map((ep) =>
-          apitapStore.create({
-            siteUrl: url,
-            endpoint: ep.endpoint,
-            method: ep.method,
-            parameters: ep.parameters ?? {},
-            sampleResponse: ep.sampleResponse ?? null,
-            contentType: ep.contentType ?? "application/json",
-            sessionId: result.sessionId,
-            expiresAt,
-          }),
+        const { stored, outputText } = persistAndFormatEndpoints(
+          result,
+          url,
+          cfg,
+          apitapStore,
+          `ApiTap peek complete`,
+          "No API endpoints discovered. Try apitap_capture for a more thorough scan.",
         );
 
-        const lines: string[] = [];
-        lines.push(`ApiTap peek complete for ${url}.`);
-        lines.push(`  Session ID:       ${result.sessionId}`);
-        lines.push(`  Duration:         ${Math.round(result.durationMs / 1000)}s`);
-        lines.push(`  Endpoints found:  ${stored.length}`);
-
-        if (stored.length === 0) {
-          lines.push("");
-          lines.push("No API endpoints discovered. Try apitap_capture for a more thorough scan.");
-        } else {
-          lines.push("");
-          lines.push("Discovered endpoints:");
-          stored.slice(0, 20).forEach((ep, i) => {
-            lines.push(`  ${i + 1}. [${ep.method}] ${ep.endpoint}  (id: ${ep.id})`);
-          });
-          if (stored.length > 20) {
-            lines.push(`  ... and ${stored.length - 20} more`);
-          }
-          lines.push("");
-          lines.push("Use apitap_to_skill <id> to generate a skill scaffold.");
-        }
+        const lines = outputText.split("\n");
+        lines.splice(2, 0, `  Duration:         ${Math.round(result.durationMs / 1000)}s`);
 
         return {
           content: [{ type: "text", text: lines.join("\n") }],
