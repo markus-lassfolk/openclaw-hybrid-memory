@@ -9,7 +9,7 @@
  * clean and avoid circular-dependency concerns.
  */
 
-import OpenAI from "openai";
+import type OpenAI from "openai";
 import type { MemoryCategory, HybridMemoryConfig } from "../config.js";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
