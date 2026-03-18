@@ -1,9 +1,9 @@
 /**
  * tool-proposer.test.ts — Dedicated unit tests for services/tool-proposer.ts.
  *
- * Uses mock GapDetector and in-memory ToolProposalStore so ToolProposer is tested
- * in isolation. This complements self-extension.test.ts which uses an integration
- * approach with real databases.
+ * Uses mock GapDetector and a disk-backed ToolProposalStore (temp SQLite file under
+ * a tmpdir) so ToolProposer is tested in isolation. This complements
+ * self-extension.test.ts which uses an integration approach with real databases.
  *
  * ## Coverage
  *

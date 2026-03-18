@@ -78,7 +78,7 @@ describe("deriveToolNameFromSequence", () => {
     expect(deriveToolNameFromSequence(["memory_recall", "memory_recall", "memory_recall"])).toBe("memory_recall_bulk");
   });
 
-  it("returns 'exec_batch' variant for exec-only sequences", () => {
+  it("returns 'exec_bulk' for exec-only sequences", () => {
     expect(deriveToolNameFromSequence(["exec", "exec", "exec"])).toBe("exec_bulk");
   });
 

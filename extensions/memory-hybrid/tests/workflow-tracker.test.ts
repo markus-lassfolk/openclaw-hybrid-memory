@@ -38,7 +38,7 @@
  * - Day rollover (via injectable clock) resets the counter.
  */
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { WorkflowTracker } from "../services/workflow-tracker.js";
 import type { WorkflowStore, WorkflowTrace, CreateWorkflowTraceInput } from "../backends/workflow-store.js";
 import type { WorkflowTrackingConfig } from "../config/types/features.js";
