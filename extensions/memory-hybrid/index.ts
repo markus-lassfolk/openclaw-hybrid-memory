@@ -470,6 +470,7 @@ const memoryHybridPlugin = {
         toolProposalStore: old.toolProposalStore,
         verificationStore: old.verificationStore,
         provenanceService: old.provenanceService,
+        learningsDb: old.learningsDb,
       });
       old.pythonBridge?.shutdown().catch(() => {});
     }
