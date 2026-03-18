@@ -22,7 +22,7 @@ export function registerAuthFailureRecall(
   ctx: LifecycleContext,
   sessionState: SessionState,
 ): void {
-  if (!ctx.cfg.autoRecall.enabled || !ctx.cfg.autoRecall.authFailure.enabled || ctx.cfg.verbosity === "silent") return;
+  if (!ctx.cfg.autoRecall.enabled || !ctx.cfg.autoRecall.authFailure.enabled) return;
 
   const customPatterns: AuthFailurePattern[] = [];
   for (const p of ctx.cfg.autoRecall.authFailure.patterns) {

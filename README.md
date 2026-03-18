@@ -54,7 +54,7 @@ If you want an agent that feels like it knows you and gets better with use, this
 - **Auto-classify** — background LLM reclassifies facts into proper categories (7 built-in + custom)
 - **Category discovery** — LLM suggests new categories from your data patterns
 - **Retrieval directives** — targeted recall by entity mention, keywords, task type, or session start (config: `autoRecall.retrievalDirectives`)
-- **Query expansion** — optional LLM-expanded query before embedding for better semantic recall (config: `queryExpansion.enabled`; replaces deprecated HyDE options)
+- **Query expansion** — optional LLM-expanded query before embedding for better semantic recall (config: `queryExpansion.enabled`; replaces deprecated HyDE options). Skipped on interactive turns by default (`queryExpansion.skipForInteractiveTurns: true`) to avoid 5–15 s latency spikes; set to `false` to enable on every turn.
 - **Auth failure auto-recall** — reactive memory trigger detects SSH/HTTP/API auth failures and automatically injects credentials ([docs/AUTH-FAILURE-AUTO-RECALL.md](docs/AUTH-FAILURE-AUTO-RECALL.md))
 - **Reflection layer** — synthesizes behavioral patterns and rules from accumulated facts ([docs/REFLECTION.md](docs/REFLECTION.md))
 - **Graph memory** — typed relationships between facts enable zero-LLM recall via graph traversal ([docs/GRAPH-MEMORY.md](docs/GRAPH-MEMORY.md))
