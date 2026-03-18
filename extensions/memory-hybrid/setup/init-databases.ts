@@ -582,7 +582,7 @@ function buildMultiProviderOpenAI(
       const { value: apiKey } = resolveProviderApiKey("ollama", providerCfg, cfg, resolveApiKey);
       const cacheKey = `ollama:${baseURL}`;
       return {
-        client: getOrCreate(cacheKey, () => new OpenAI({ apiKey: apiKey!, baseURL })),
+        client: getOrCreate(cacheKey, () => new OpenAI({ apiKey: apiKey ?? "ollama", baseURL })),
         bareModel,
         ollamaBaseUrl,
       };
