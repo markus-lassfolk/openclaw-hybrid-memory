@@ -462,17 +462,27 @@ function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+const LOWERCASE_GROUPS = new Set<KeywordGroup>([
+  "decayPermanentKeys",
+  "decaySessionKeys",
+  "decayActiveKeys",
+  "decayPermanentEntities",
+  "decayCheckpointKeys",
+]);
+
 function mergeGroup(
   english: readonly string[],
   translationsByLang: Record<string, Record<string, string[]>> | undefined,
   group: KeywordGroup,
 ): string[] {
   const set = new Set<string>(english);
+  const shouldLowercase = LOWERCASE_GROUPS.has(group);
   if (translationsByLang) {
     for (const langData of Object.values(translationsByLang)) {
       const list = langData?.[group];
       if (Array.isArray(list))
-        for (const w of list) if (typeof w === "string" && w.trim()) set.add(w.trim().toLowerCase());
+        for (const w of list)
+          if (typeof w === "string" && w.trim()) set.add(shouldLowercase ? w.trim().toLowerCase() : w.trim());
     }
   }
   return [...set];
