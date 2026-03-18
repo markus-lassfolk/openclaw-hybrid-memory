@@ -510,10 +510,7 @@ export class VectorDB {
     if (this.isPersistent) {
       // Persistent connections are managed by close() (gateway shutdown only).
       // Ignore refcount decrements to prevent accidental premature closure (#581).
-      this.logWarn(
-        "memory-hybrid: VectorDB.removeSession() called on a persistent connection — ignored. " +
-          "Use close() for gateway shutdown. (session refcounting is a no-op in persistent mode)",
-      );
+      // This is a safe no-op by design; no log needed for expected behavior.
       return;
     }
     if (this.sessionCount <= 0) {
