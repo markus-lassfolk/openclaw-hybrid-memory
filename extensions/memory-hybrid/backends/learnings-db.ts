@@ -275,11 +275,21 @@ export class LearningsDB {
   /** Return the next sequential number for slugs of a given type. */
   private nextSeq(type: LearningEntryType): number {
     const prefix = TYPE_PREFIX[type];
-    // Find the highest existing sequence number for this prefix to avoid collisions after prune
-    const row = this.db
-      .prepare(`SELECT MAX(CAST(SUBSTR(slug, LENGTH(?) + 2) AS INTEGER)) as max_seq FROM learnings WHERE slug LIKE ?`)
-      .get(prefix, `${prefix}-%`) as unknown as { max_seq: number | null };
-    return (row.max_seq ?? 0) + 1;
+    const rows = this.db.prepare(`SELECT slug FROM learnings WHERE slug LIKE ?`).all(`${prefix}-%`) as unknown as {
+      slug: string;
+    }[];
+
+    if (rows.length === 0) return 1;
+
+    let maxSeq = 0;
+    for (const row of rows) {
+      const match = row.slug.match(/-(\d+)$/);
+      if (match) {
+        const seq = Number.parseInt(match[1], 10);
+        if (seq > maxSeq) maxSeq = seq;
+      }
+    }
+    return maxSeq + 1;
   }
 
   private rowToEntry(row: LearningRow): LearningEntry {

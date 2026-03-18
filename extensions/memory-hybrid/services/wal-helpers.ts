@@ -13,16 +13,16 @@ const WAL_FAILURE_THRESHOLD = 10;
 let walFailureCount = 0;
 let walDisabled = false;
 
-export function walWrite(
+export async function walWrite(
   wal: WriteAheadLog | null,
   operation: "store" | "update",
   data: Record<string, unknown>,
   logger: { warn: (msg: string) => void },
-): string {
+): Promise<string> {
   const id = randomUUID();
   if (wal && !walDisabled) {
     try {
-      wal.write({ id, timestamp: Date.now(), operation, data: data as any });
+      await wal.write({ id, timestamp: Date.now(), operation, data: data as any });
       walFailureCount = 0; // Reset on success
     } catch (err) {
       walFailureCount++;
@@ -40,10 +40,14 @@ export function walWrite(
   return id;
 }
 
-export function walRemove(wal: WriteAheadLog | null, id: string, logger: { warn: (msg: string) => void }): void {
+export async function walRemove(
+  wal: WriteAheadLog | null,
+  id: string,
+  logger: { warn: (msg: string) => void },
+): Promise<void> {
   if (wal) {
     try {
-      wal.remove(id);
+      await wal.remove(id);
     } catch (err) {
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
         subsystem: "wal",

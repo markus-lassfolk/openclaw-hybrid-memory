@@ -256,7 +256,7 @@ async function runCapture(
                   const oldFact = ctx.factsDb.getById(classification.targetId);
                   if (oldFact) {
                     const finalImportance = Math.max(0.7, oldFact.importance);
-                    const walEntryId = ctx.walWrite(
+                    const walEntryId = await ctx.walWrite(
                       "update",
                       {
                         text: textToStore,
@@ -310,7 +310,7 @@ async function runCapture(
                       });
                       api.logger.warn(`memory-hybrid: vector capture failed: ${vecErr}`);
                     }
-                    ctx.walRemove(walEntryId, api.logger);
+                    await ctx.walRemove(walEntryId, api.logger);
                     api.logger.info?.(
                       `memory-hybrid: auto-capture UPDATE — superseded ${classification.targetId} with ${newEntry.id}`,
                     );
@@ -327,7 +327,7 @@ async function runCapture(
               }
             }
           }
-          const walEntryId = ctx.walWrite(
+          const walEntryId = await ctx.walWrite(
             "store",
             {
               text: textToStore,
@@ -374,7 +374,7 @@ async function runCapture(
             });
             api.logger.warn(`memory-hybrid: vector capture failed: ${vecErr}`);
           }
-          ctx.walRemove(walEntryId, api.logger);
+          await ctx.walRemove(walEntryId, api.logger);
           stored++;
         }
         if (stored > 0) api.logger.info(`memory-hybrid: auto-captured ${stored} memories`);

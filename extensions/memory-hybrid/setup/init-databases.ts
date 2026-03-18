@@ -1360,6 +1360,18 @@ export function initializeDatabases(cfg: HybridMemoryConfig, api: ClawdbotPlugin
   // Prerequisite checks (async, don't block plugin start): verify keys and model access
   // Health status can be queried by tools to fail gracefully instead of throwing at runtime.
   const initialized = (async () => {
+    if (wal) {
+      try {
+        await wal.init();
+      } catch (e) {
+        capturePluginError(e instanceof Error ? e : new Error(String(e)), {
+          subsystem: "wal",
+          operation: "init",
+          phase: "initialization",
+        });
+        api.logger.warn(`memory-hybrid: WAL initialization failed: ${e}`);
+      }
+    }
     try {
       await embeddings.embed("verify");
       health.embeddingsOk = true;
