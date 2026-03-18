@@ -310,9 +310,20 @@ export function parseMultiAgentConfig(cfg: Record<string, unknown>): MultiAgentC
 }
 
 /**
- * Parse error reporting config. Sentinel/GlitchTip is enabled by default (opt-out) and reports to
- * the public community DSN. Presets do not set errorReporting — this parser is the single source
- * of defaults. Do not change to opt-in or remove the public DSN default without explicit product decision.
+ * Parse error reporting config. Error reporting and telemetry default to **opt-out** (enabled = true)
+ * during the active development phase of this tool. This is a deliberate product decision:
+ *
+ * - During early development, crash reports and error telemetry are essential for quickly identifying
+ *   and fixing issues across diverse user environments.
+ * - The community DSN reports to a shared GlitchTip instance operated by the project maintainer.
+ * - Users can opt out at any time by setting `errorReporting.enabled: false` or `errorReporting.consent: false`
+ *   in their config.
+ *
+ * DESIGN DECISION: Opt-out (not opt-in) is intentional for the development phase.
+ * This default SHOULD be revisited and switched to opt-in before a stable/production release.
+ * Track this at: https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/600
+ *
+ * Do not change this default without an explicit product decision and changelog entry.
  */
 export function parseErrorReportingConfig(cfg: Record<string, unknown>): ErrorReportingConfig {
   const errorReportingRaw = cfg.errorReporting as Record<string, unknown> | undefined;
@@ -320,7 +331,7 @@ export function parseErrorReportingConfig(cfg: Record<string, unknown>): ErrorRe
   // When errorReporting is not specified: opt-out defaults (enabled + consent true, community DSN)
   if (!errorReportingRaw || typeof errorReportingRaw !== "object") {
     return {
-      enabled: true,
+      enabled: true, // opt-out during dev phase — see JSDoc above
       dsn: DEFAULT_GLITCHTIP_DSN,
       consent: true,
       mode: "community",
@@ -329,7 +340,7 @@ export function parseErrorReportingConfig(cfg: Record<string, unknown>): ErrorRe
   }
 
   // enabled defaults to true — user must explicitly set enabled: false to opt out
-  let enabled = errorReportingRaw.enabled !== false;
+  let enabled = errorReportingRaw.enabled !== false; // opt-out: true unless user explicitly disables
   // consent defaults to true — user must explicitly set consent: false to opt out
   const consent = errorReportingRaw.consent !== false;
   const dsnRaw = typeof errorReportingRaw.dsn === "string" ? errorReportingRaw.dsn.trim() : "";
