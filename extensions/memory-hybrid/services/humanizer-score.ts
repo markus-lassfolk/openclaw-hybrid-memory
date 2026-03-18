@@ -145,7 +145,7 @@ export async function runHumanizerScore(
   const truncated = text.length > cfg.maxTextLength ? text.slice(0, cfg.maxTextLength) : text;
 
   try {
-    const { stdout } = await execFileAsync(cfg.bin, ["score", "--json", truncated], {
+    const { stdout } = await execFileAsync(cfg.bin, ["score", "--json", "--", truncated], {
       timeout: 10_000,
       maxBuffer: 1024 * 1024, // 1 MB
     });
