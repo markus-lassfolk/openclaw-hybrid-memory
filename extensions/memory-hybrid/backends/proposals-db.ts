@@ -3,7 +3,7 @@
  * Stores LLM-generated suggestions for persona file updates.
  */
 
-import Database from "better-sqlite3";
+import { DatabaseSync } from "node:sqlite";
 import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
@@ -30,16 +30,16 @@ export type ProposalEntry = {
 };
 
 export class ProposalsDB {
-  private db: Database.Database;
+  private db: DatabaseSync;
   private readonly dbPath: string;
   private closed = false;
 
   constructor(dbPath: string) {
     this.dbPath = dbPath;
     mkdirSync(dirname(dbPath), { recursive: true });
-    this.db = new Database(dbPath);
-    this.db.pragma("journal_mode = WAL");
-    this.db.pragma(`busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
+    this.db = new DatabaseSync(dbPath);
+    this.db.exec("PRAGMA journal_mode = WAL");
+    this.db.exec(`PRAGMA busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
 
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS proposals (
@@ -175,7 +175,7 @@ export class ProposalsDB {
     const result = this.db
       .prepare("DELETE FROM proposals WHERE expires_at IS NOT NULL AND expires_at < ? AND status = 'pending'")
       .run(now);
-    return result.changes;
+    return Number(result.changes);
   }
 
   private rowToEntry(row: any): ProposalEntry {

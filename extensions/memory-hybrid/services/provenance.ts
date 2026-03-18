@@ -5,7 +5,7 @@
  * through consolidation events to the original session and conversation turn.
  */
 
-import Database from "better-sqlite3";
+import { DatabaseSync } from "node:sqlite";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { randomUUID } from "node:crypto";
@@ -76,19 +76,19 @@ interface FactProvenanceRow {
 // ---------------------------------------------------------------------------
 
 export class ProvenanceService {
-  private db: Database.Database;
+  private db: DatabaseSync;
 
   constructor(dbPath: string) {
     mkdirSync(dirname(dbPath), { recursive: true });
-    this.db = new Database(dbPath);
+    this.db = new DatabaseSync(dbPath);
     this.applyPragmas();
     this.initSchema();
   }
 
   private applyPragmas(): void {
-    this.db.pragma("journal_mode = WAL");
-    this.db.pragma("busy_timeout = 5000");
-    this.db.pragma("synchronous = NORMAL");
+    this.db.exec("PRAGMA journal_mode = WAL");
+    this.db.exec("PRAGMA busy_timeout = 5000");
+    this.db.exec("PRAGMA synchronous = NORMAL");
   }
 
   private initSchema(): void {
@@ -131,7 +131,7 @@ export class ProvenanceService {
   getEdges(factId: string): ProvenanceEdgeRecord[] {
     const rows = this.db
       .prepare(`SELECT * FROM provenance_edges WHERE fact_id = ? ORDER BY created_at ASC`)
-      .all(factId) as ProvenanceEdgeRow[];
+      .all(factId) as unknown as ProvenanceEdgeRow[];
     return rows.map((r) => ({
       id: r.id,
       factId: r.fact_id,
@@ -147,7 +147,7 @@ export class ProvenanceService {
   // getProvenance — full provenance chain for a fact
   // -------------------------------------------------------------------------
 
-  getProvenance(factId: string, factsDb?: Database.Database): ProvenanceChain {
+  getProvenance(factId: string, factsDb?: DatabaseSync): ProvenanceChain {
     const edges = this.getEdges(factId);
 
     let factData: { id: string; text: string; confidence: number } = {
@@ -209,7 +209,7 @@ export class ProvenanceService {
   prune(retentionDays: number): number {
     const cutoff = new Date(Date.now() - retentionDays * 24 * 3600 * 1000).toISOString();
     const result = this.db.prepare(`DELETE FROM provenance_edges WHERE created_at < ?`).run(cutoff);
-    return result.changes;
+    return Number(result.changes);
   }
 
   // -------------------------------------------------------------------------

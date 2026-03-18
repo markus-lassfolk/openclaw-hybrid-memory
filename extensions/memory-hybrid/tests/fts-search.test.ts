@@ -6,6 +6,7 @@
  * rebuildFtsIndex, edge cases, and performance.
  */
 
+import { createTransaction } from "../utils/sqlite-transaction.js";
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
@@ -24,7 +25,7 @@ type DB = InstanceType<typeof FactsDB>;
 /** Access the private liveDb connection from FactsDB (for FTS service calls). */
 function rawDb(db: DB) {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  return (db as any).liveDb as import("better-sqlite3").Database;
+  return (db as any).liveDb as import("node:sqlite").DatabaseSync;
 }
 
 /** Direct INSERT bypassing FactsDB (for perf test bulk seeding). */
@@ -650,7 +651,7 @@ describe("performance", () => {
        VALUES (?, ?, 'other', 0.7, NULL, NULL, NULL, NULL, 'conversation', ?)`,
     );
 
-    const insertMany = rawDb(db).transaction(() => {
+    const insertMany = createTransaction(rawDb(db), () => {
       const now = Math.floor(Date.now() / 1000);
       for (let i = 0; i < 1100; i++) {
         const topic = i % 2 === 0 ? "database" : "networking";

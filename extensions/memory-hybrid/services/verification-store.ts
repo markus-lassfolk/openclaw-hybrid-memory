@@ -5,7 +5,8 @@
  * and protection against silent decay or corruption.
  */
 
-import Database from "better-sqlite3";
+import { DatabaseSync } from "node:sqlite";
+import { createTransaction } from "../utils/sqlite-transaction.js";
 import { mkdirSync, appendFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { randomUUID, createHash } from "node:crypto";
@@ -170,10 +171,11 @@ export function shouldAutoVerify(fact: {
 // ---------------------------------------------------------------------------
 
 export class VerificationStore {
-  private db: Database.Database;
+  private db: DatabaseSync;
   private readonly backupPath: string;
   private readonly reverificationDays: number;
   private readonly logger?: { warn?: (msg: string) => void; error?: (msg: string) => void };
+  private _dbOpen = true;
   /** When false, connection is shared (e.g. FactsDB.getRawDb()); close() must not call db.close(). */
   private readonly ownsConnection: boolean;
 
@@ -183,7 +185,7 @@ export class VerificationStore {
    *   instance, the caller is responsible for pragma setup and lifecycle.
    */
   constructor(
-    dbPathOrInstance: string | Database.Database,
+    dbPathOrInstance: string | DatabaseSync,
     options?: {
       backupPath?: string;
       reverificationDays?: number;
@@ -192,7 +194,7 @@ export class VerificationStore {
   ) {
     if (typeof dbPathOrInstance === "string") {
       mkdirSync(dirname(dbPathOrInstance), { recursive: true });
-      this.db = new Database(dbPathOrInstance);
+      this.db = new DatabaseSync(dbPathOrInstance);
       this.ownsConnection = true;
       this.applyPragmas();
     } else {
@@ -211,9 +213,9 @@ export class VerificationStore {
   }
 
   private applyPragmas(): void {
-    this.db.pragma("journal_mode = WAL");
-    this.db.pragma("busy_timeout = 5000");
-    this.db.pragma("synchronous = NORMAL");
+    this.db.exec("PRAGMA journal_mode = WAL");
+    this.db.exec("PRAGMA busy_timeout = 5000");
+    this.db.exec("PRAGMA synchronous = NORMAL");
   }
 
   /** Schema for standalone verification DB (no facts table). When verified_facts lives in FactsDB, the migration in facts-db.ts is used. */
@@ -285,9 +287,9 @@ export class VerificationStore {
     if (factId !== undefined) {
       rows = this.db
         .prepare(`SELECT * FROM verified_facts WHERE fact_id = ? ORDER BY version DESC`)
-        .all(factId) as VerifiedFactRow[];
+        .all(factId) as unknown as VerifiedFactRow[];
     } else {
-      rows = this.db.prepare(`SELECT * FROM verified_facts`).all() as VerifiedFactRow[];
+      rows = this.db.prepare(`SELECT * FROM verified_facts`).all() as unknown as VerifiedFactRow[];
     }
 
     const corrupted: string[] = [];
@@ -348,7 +350,7 @@ export class VerificationStore {
             OR vf.verified_at <= ?
          ORDER BY COALESCE(vf.next_verification, vf.verified_at) ASC`,
       )
-      .all(now, cutoff) as VerifiedFactRow[];
+      .all(now, cutoff) as unknown as VerifiedFactRow[];
 
     return rows.filter((row) => this.validateRowChecksum(row)).map(rowToVerifiedFact);
   }
@@ -370,7 +372,7 @@ export class VerificationStore {
          ON vf.fact_id = latest.fact_id AND vf.version = latest.max_version
          ORDER BY vf.verified_at DESC`,
       )
-      .all() as VerifiedFactRow[];
+      .all() as unknown as VerifiedFactRow[];
 
     return rows.filter((row) => this.validateRowChecksum(row)).map(rowToVerifiedFact);
   }
@@ -403,7 +405,7 @@ export class VerificationStore {
     const checksum = computeChecksum(newText);
     const newVersion = existing.version + 1;
 
-    this.db.transaction(() => {
+    createTransaction(this.db, () => {
       this.db
         .prepare(
           `INSERT INTO verified_facts
@@ -436,8 +438,9 @@ export class VerificationStore {
   // -------------------------------------------------------------------------
 
   close(): void {
-    if (this.ownsConnection && this.db.open) {
+    if (this.ownsConnection && this._dbOpen) {
       this.db.close();
+      this._dbOpen = false;
     }
   }
 

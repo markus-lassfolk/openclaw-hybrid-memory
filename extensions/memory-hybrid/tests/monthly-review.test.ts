@@ -28,7 +28,7 @@ type DB = InstanceType<typeof FactsDB>;
 
 function rawDb(db: DB) {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  return (db as any).liveDb as import("better-sqlite3").Database;
+  return (db as any).liveDb as import("node:sqlite").DatabaseSync;
 }
 
 function insertFact(

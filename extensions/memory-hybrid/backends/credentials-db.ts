@@ -4,13 +4,19 @@
  * values are stored in plaintext; the user may secure data by other means (e.g. filesystem permissions).
  */
 
-import Database from "better-sqlite3";
+import { DatabaseSync } from "node:sqlite";
+import { createTransaction } from "../utils/sqlite-transaction.js";
 import { createHash, createCipheriv, createDecipheriv, randomBytes, scryptSync } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import type { CredentialType } from "../config.js";
 import { SQLITE_BUSY_TIMEOUT_MS } from "../utils/constants.js";
 import { capturePluginError } from "../services/error-reporter.js";
+
+/** node:sqlite returns BLOBs as Uint8Array; convert to Buffer for crypto ops. */
+function toBuffer(val: Uint8Array | Buffer): Buffer {
+  return Buffer.isBuffer(val) ? val : Buffer.from(val);
+}
 
 const CRED_IV_LEN = 12;
 const CRED_AUTH_TAG_LEN = 16;
@@ -63,8 +69,9 @@ export type CredentialEntry = {
 };
 
 export class CredentialsDB {
-  private db: Database.Database;
+  private db: DatabaseSync;
   private readonly dbPath: string;
+  private _dbOpen = true;
   private key: Buffer;
   private kdfVersion: number;
   private salt: Buffer;
@@ -79,7 +86,7 @@ export class CredentialsDB {
     this.dbPath = dbPath;
     this.encrypted = encryptionKey.length >= 16;
     mkdirSync(dirname(dbPath), { recursive: true });
-    this.db = new Database(dbPath);
+    this.db = new DatabaseSync(dbPath);
     this.applyPragmas();
 
     this.db.exec(`
@@ -107,10 +114,10 @@ export class CredentialsDB {
     `);
 
     const versionRow = this.db.prepare("SELECT value FROM vault_meta WHERE key = 'kdf_version'").get() as
-      | { value: Buffer }
+      | { value: Uint8Array | Buffer }
       | undefined;
     const saltRow = this.db.prepare("SELECT value FROM vault_meta WHERE key = 'salt'").get() as
-      | { value: Buffer }
+      | { value: Uint8Array | Buffer }
       | undefined;
 
     if (!this.encrypted) {
@@ -119,7 +126,7 @@ export class CredentialsDB {
       this.salt = Buffer.alloc(0);
       this.key = Buffer.alloc(0);
       this.password = null;
-      if (versionRow && Buffer.isBuffer(versionRow.value) && versionRow.value[0] !== CRED_KDF_PLAINTEXT) {
+      if (versionRow && versionRow.value != null && toBuffer(versionRow.value)[0] !== CRED_KDF_PLAINTEXT) {
         throw new Error(
           "Credentials vault was created with encryption. Set credentials.encryptionKey (or OPENCLAW_CRED_KEY) to open it, or use a new vault path for an unencrypted vault.",
         );
@@ -141,7 +148,7 @@ export class CredentialsDB {
     }
 
     // Check if vault is plaintext first (before assuming legacy)
-    if (versionRow && Buffer.isBuffer(versionRow.value) && versionRow.value[0] === CRED_KDF_PLAINTEXT) {
+    if (versionRow && versionRow.value != null && toBuffer(versionRow.value)[0] === CRED_KDF_PLAINTEXT) {
       // C2 FIX: DB is plaintext, override this.encrypted regardless of key length
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (this as any).encrypted = false;
@@ -178,22 +185,23 @@ export class CredentialsDB {
         this.db.prepare("INSERT OR REPLACE INTO vault_meta (key, value) VALUES ('salt', ?)").run(this.salt);
       }
     } else {
-      this.kdfVersion = Buffer.isBuffer(versionRow.value) ? versionRow.value[0] : CRED_KDF_VERSION;
-      this.salt = saltRow.value;
+      this.kdfVersion = versionRow.value != null ? toBuffer(versionRow.value)[0] : CRED_KDF_VERSION;
+      this.salt = toBuffer(saltRow.value);
       this.key = deriveKey(encryptionKey, this.salt, this.kdfVersion);
       this.password = this.kdfVersion === 1 ? encryptionKey : null;
     }
   }
 
   private applyPragmas(): void {
-    this.db.pragma("journal_mode = WAL");
-    this.db.pragma(`busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
+    this.db.exec("PRAGMA journal_mode = WAL");
+    this.db.exec(`PRAGMA busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
   }
 
   /** Get the live DB handle, reopening if closed after a SIGUSR1 restart. */
-  private get liveDb(): Database.Database {
-    if (!this.db.open) {
-      this.db = new Database(this.dbPath);
+  private get liveDb(): DatabaseSync {
+    if (!this._dbOpen) {
+      this.db.open();
+      this._dbOpen = true;
       this.applyPragmas();
     }
     return this.db;
@@ -242,7 +250,7 @@ export class CredentialsDB {
           .prepare("SELECT * FROM credentials WHERE service = ? ORDER BY updated DESC LIMIT 1")
           .get(service) as Record<string, unknown> | undefined);
     if (!row) return null;
-    const buf = row.value as Buffer;
+    const buf = toBuffer(row.value as Uint8Array | Buffer);
     const value = this.encrypted ? decryptValue(buf, this.key) : buf.toString("utf8");
 
     if (this.kdfVersion === 1) {
@@ -284,14 +292,14 @@ export class CredentialsDB {
     const newKey = deriveKey(this.password, this.salt, CRED_KDF_VERSION);
 
     // Wrap all mutations in a transaction to prevent partial migration
-    const migrate = this.liveDb.transaction(() => {
+    const migrate = createTransaction(this.liveDb, () => {
       // Re-encrypt all credentials with new key
       const updateStmt = this.liveDb.prepare("UPDATE credentials SET value = ? WHERE service = ? AND type = ?");
       for (const row of rows) {
-        const oldBuf = row.value as Buffer;
+        const oldBuf = toBuffer(row.value as Uint8Array | Buffer);
         const plaintext = decryptValue(oldBuf, this.key); // Decrypt with old key
         const newEncrypted = encryptValue(plaintext, newKey); // Encrypt with new key
-        updateStmt.run(newEncrypted, row.service, row.type);
+        updateStmt.run(newEncrypted as unknown as Uint8Array, row.service as string, row.type as string);
       }
 
       // Update metadata
@@ -384,7 +392,7 @@ export class CredentialsDB {
       Record<string, unknown>
     >;
     return rows.map((row) => {
-      const buf = row.value as Buffer;
+      const buf = toBuffer(row.value as Uint8Array | Buffer);
       const value = this.encrypted ? decryptValue(buf, this.key) : buf.toString("utf8");
       return {
         service: row.service as string,
@@ -421,6 +429,7 @@ export class CredentialsDB {
   }
 
   close(): void {
+    this._dbOpen = false;
     try {
       this.db.close();
     } catch (err) {

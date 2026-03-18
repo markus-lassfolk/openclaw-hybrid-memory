@@ -1,14 +1,14 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import Database from "better-sqlite3";
+import { DatabaseSync } from "node:sqlite";
 import { CostTracker } from "../backends/cost-tracker.js";
 import { withCostFeature, getCurrentCostFeature } from "../services/cost-context.js";
 
-function createInMemoryDb(): Database.Database {
-  return new Database(":memory:");
+function createInMemoryDb(): DatabaseSync {
+  return new DatabaseSync(":memory:");
 }
 
 describe("CostTracker", () => {
-  let db: Database.Database;
+  let db: DatabaseSync;
   let tracker: CostTracker;
 
   beforeEach(() => {
@@ -272,7 +272,7 @@ describe("CostTracker", () => {
 
   describe("record() error isolation", () => {
     it("does not throw when the DB is closed", () => {
-      const tmpDb = new Database(":memory:");
+      const tmpDb = new DatabaseSync(":memory:");
       const tmpTracker = new CostTracker(tmpDb);
       tmpDb.close(); // close before recording
       // Should silently swallow — never let tracking break callers

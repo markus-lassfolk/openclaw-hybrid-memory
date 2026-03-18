@@ -6,7 +6,9 @@
  * journal: what happened, when, in which session, and involving which entities.
  */
 
-import Database from "better-sqlite3";
+import { DatabaseSync } from "node:sqlite";
+import type { SQLInputValue } from "node:sqlite";
+import { createTransaction } from "../utils/sqlite-transaction.js";
 import { randomUUID } from "node:crypto";
 import { mkdirSync, createWriteStream, createReadStream, existsSync, renameSync, unlinkSync } from "node:fs";
 import { createInterface } from "node:readline";
@@ -54,16 +56,17 @@ export interface EventLogEntry {
 }
 
 export class EventLog {
-  private db: Database.Database;
+  private db: DatabaseSync;
   private readonly dbPath: string;
   private closed = false;
+  private _dbOpen = true;
 
   constructor(dbPath: string) {
     this.dbPath = dbPath;
     mkdirSync(dirname(dbPath), { recursive: true });
-    this.db = new Database(dbPath);
-    this.db.pragma("journal_mode = WAL");
-    this.db.pragma(`busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
+    this.db = new DatabaseSync(dbPath);
+    this.db.exec("PRAGMA journal_mode = WAL");
+    this.db.exec(`PRAGMA busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
 
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS event_log (
@@ -84,14 +87,15 @@ export class EventLog {
     `);
   }
 
-  private get liveDb(): Database.Database {
+  private get liveDb(): DatabaseSync {
     if (this.closed) {
       throw new Error("EventLog is closed");
     }
-    if (!this.db.open) {
-      this.db = new Database(this.dbPath);
-      this.db.pragma("journal_mode = WAL");
-      this.db.pragma(`busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
+    if (!this._dbOpen) {
+      this.db.open();
+      this._dbOpen = true;
+      this.db.exec("PRAGMA journal_mode = WAL");
+      this.db.exec(`PRAGMA busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
     }
     return this.db;
   }
@@ -124,7 +128,7 @@ export class EventLog {
       `INSERT INTO event_log (id, session_id, timestamp, event_type, content, entities, consolidated_into, metadata)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
     );
-    const insertAll = this.liveDb.transaction((batch: Omit<EventLogEntry, "id" | "createdAt">[]) => {
+    const insertAll = createTransaction(this.liveDb, (batch: Omit<EventLogEntry, "id" | "createdAt">[]) => {
       for (const entry of batch) {
         const id = randomUUID();
         ids.push(id);
@@ -162,7 +166,7 @@ export class EventLog {
 
   /** Return events whose timestamp falls within [from, to] (ISO strings), optionally filtered by eventType. */
   getByTimeRange(from: string, to: string, eventType?: string): EventLogEntry[] {
-    const params: unknown[] = [from, to];
+    const params: SQLInputValue[] = [from, to];
     let query = `SELECT * FROM event_log WHERE timestamp >= ? AND timestamp <= ?`;
     if (eventType) {
       query += ` AND event_type = ?`;
@@ -175,7 +179,7 @@ export class EventLog {
 
   /** Return events not yet consolidated into a fact. Optionally only events older than N days. */
   getUnconsolidated(olderThanDays?: number): EventLogEntry[] {
-    const params: unknown[] = [];
+    const params: SQLInputValue[] = [];
     let query = `SELECT * FROM event_log WHERE consolidated_into IS NULL`;
     if (olderThanDays !== undefined) {
       const cutoff = new Date(Date.now() - olderThanDays * 24 * 3600 * 1000).toISOString();
@@ -204,7 +208,7 @@ export class EventLog {
   /** Mark a set of events as consolidated into the given fact id. */
   markConsolidated(eventIds: string[], factId: string): void {
     const stmt = this.liveDb.prepare(`UPDATE event_log SET consolidated_into = ? WHERE id = ?`);
-    const updateAll = this.liveDb.transaction((ids: string[]) => {
+    const updateAll = createTransaction(this.liveDb, (ids: string[]) => {
       for (const id of ids) {
         stmt.run(factId, id);
       }
@@ -317,7 +321,7 @@ export class EventLog {
         // succeeded — ensures rows are never deleted from SQLite unless their data
         // is safely in the final archive file.
         const del = this.liveDb.prepare(`DELETE FROM event_log WHERE id = ?`);
-        const deleteBatch = this.liveDb.transaction((batch: string[]) => {
+        const deleteBatch = createTransaction(this.liveDb, (batch: string[]) => {
           for (const id of batch) del.run(id);
         });
         deleteBatch(ids);
@@ -349,7 +353,7 @@ export class EventLog {
     const result = this.liveDb
       .prepare(`DELETE FROM event_log WHERE timestamp < ? AND (consolidated_into IS NOT NULL OR ?)`)
       .run(cutoff, includeUnconsolidated ? 1 : 0);
-    return result.changes;
+    return Number(result.changes);
   }
 
   /** Return aggregate statistics about the event log. */
@@ -436,12 +440,13 @@ export class EventLog {
 
   /** True if the database connection is still open. */
   isOpen(): boolean {
-    return !this.closed && this.db.open;
+    return !this.closed && this._dbOpen;
   }
 
   close(): void {
     if (this.closed) return;
     this.closed = true;
+    this._dbOpen = false;
     try {
       this.db.close();
     } catch (err) {

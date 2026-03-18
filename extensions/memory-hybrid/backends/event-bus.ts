@@ -5,7 +5,8 @@
  * Status lifecycle: raw → processed → surfaced → pushed → archived
  */
 
-import Database from "better-sqlite3";
+import { DatabaseSync } from "node:sqlite";
+import type { SQLInputValue } from "node:sqlite";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { createHash } from "node:crypto";
@@ -49,9 +50,10 @@ export function computeFingerprint(input: string): string {
  * by the Rumination Engine.
  */
 export class EventBus {
-  private db: Database.Database;
+  private db: DatabaseSync;
   private readonly dbPath: string;
   private closed = false;
+  private _dbOpen = true;
 
   /**
    * Initializes the Event Bus database, creating the file and schema if needed.
@@ -60,9 +62,9 @@ export class EventBus {
   constructor(dbPath: string) {
     this.dbPath = dbPath;
     mkdirSync(dirname(dbPath), { recursive: true });
-    this.db = new Database(dbPath);
-    this.db.pragma("journal_mode = WAL");
-    this.db.pragma(`busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
+    this.db = new DatabaseSync(dbPath);
+    this.db.exec("PRAGMA journal_mode = WAL");
+    this.db.exec(`PRAGMA busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
     this.migrate();
   }
 
@@ -87,14 +89,15 @@ export class EventBus {
     `);
   }
 
-  private get liveDb(): Database.Database {
+  private get liveDb(): DatabaseSync {
     if (this.closed) {
       throw new Error("EventBus is closed");
     }
-    if (!this.db.open) {
-      this.db = new Database(this.dbPath);
-      this.db.pragma("journal_mode = WAL");
-      this.db.pragma(`busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
+    if (!this._dbOpen) {
+      this.db.open();
+      this._dbOpen = true;
+      this.db.exec("PRAGMA journal_mode = WAL");
+      this.db.exec(`PRAGMA busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
     }
     return this.db;
   }
@@ -127,7 +130,7 @@ export class EventBus {
   queryEvents(filter: QueryFilter = {}): MemoryEvent[] {
     const { status, type, since, limit = 100 } = filter;
     const conditions: string[] = [];
-    const params: unknown[] = [];
+    const params: SQLInputValue[] = [];
 
     if (status !== undefined) {
       conditions.push("status = ?");
@@ -188,7 +191,7 @@ export class EventBus {
     const result = this.liveDb
       .prepare(`DELETE FROM memory_events WHERE status = 'archived' AND created_at < ?`)
       .run(cutoff);
-    return result.changes;
+    return Number(result.changes);
   }
 
   /**
@@ -224,7 +227,7 @@ export class EventBus {
    * Returns true if the database connection is open and active.
    */
   isOpen(): boolean {
-    return !this.closed && this.db.open;
+    return !this.closed && this._dbOpen;
   }
 
   /**
@@ -233,6 +236,7 @@ export class EventBus {
   close(): void {
     if (this.closed) return;
     this.closed = true;
+    this._dbOpen = false;
     try {
       this.db.close();
     } catch (err) {

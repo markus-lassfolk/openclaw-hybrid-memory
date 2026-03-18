@@ -378,7 +378,7 @@ describe("ProvenanceService.prune", () => {
     });
 
     // Backdate the old edge via internal DB access
-    const db = (service as unknown as { db: import("better-sqlite3").Database }).db;
+    const db = (service as unknown as { db: import("node:sqlite").DatabaseSync }).db;
     db.prepare(`UPDATE provenance_edges SET created_at = '2020-01-01T00:00:00.000Z' WHERE fact_id = 'old-fact'`).run();
 
     const pruned = service.prune(365); // Remove edges older than 365 days
@@ -395,7 +395,7 @@ describe("ProvenanceService.prune", () => {
         sourceId: `event-${i}`,
       });
     }
-    const db = (service as unknown as { db: import("better-sqlite3").Database }).db;
+    const db = (service as unknown as { db: import("node:sqlite").DatabaseSync }).db;
     // Backdate all edges
     db.prepare(`UPDATE provenance_edges SET created_at = '2019-01-01T00:00:00.000Z'`).run();
 
