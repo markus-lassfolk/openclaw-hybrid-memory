@@ -93,6 +93,8 @@ export function createPluginService(ctx: PluginServiceContext) {
 
   let observerRunning = false;
   let observerRunPromise: Promise<void> | null = null;
+  let watchdogRunning = false;
+  let watchdogRunPromise: Promise<void> | null = null;
   let shuttingDown = false;
   let dashboardServer: DashboardServer | null = null;
 
@@ -458,7 +460,15 @@ export function createPluginService(ctx: PluginServiceContext) {
           });
         }
       };
-      timers.watchdogTimer.value = setInterval(() => void watchdogRun(), WATCHDOG_INTERVAL_MS);
+      timers.watchdogTimer.value = setInterval(() => {
+        if (shuttingDown) return;
+        if (watchdogRunning) return;
+        watchdogRunning = true;
+        watchdogRunPromise = watchdogRun().finally(() => {
+          watchdogRunning = false;
+          watchdogRunPromise = null;
+        });
+      }, WATCHDOG_INTERVAL_MS);
       api.logger.info("memory-hybrid: task-queue-watchdog enabled (interval: 5m)");
 
       // Post-upgrade pipeline: once per version bump, run build-languages, self-correction, reflection, procedures (via CLI)
@@ -600,6 +610,16 @@ export function createPluginService(ctx: PluginServiceContext) {
         ]);
         if (!completed) {
           api.logger.warn("memory-hybrid: passive-observer shutdown timed out; closing databases anyway");
+        }
+      }
+      if (watchdogRunPromise) {
+        const timeoutMs = 5000;
+        const completed = await Promise.race([
+          watchdogRunPromise.then(() => true).catch(() => true),
+          new Promise<boolean>((resolve) => setTimeout(() => resolve(false), timeoutMs)),
+        ]);
+        if (!completed) {
+          api.logger.warn("memory-hybrid: task-queue-watchdog shutdown timed out; continuing shutdown anyway");
         }
       }
       if (ctx.pythonBridge) {
