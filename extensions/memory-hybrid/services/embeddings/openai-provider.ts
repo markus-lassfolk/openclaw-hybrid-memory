@@ -129,12 +129,44 @@ export class Embeddings implements EmbeddingProvider {
   async embedBatch(texts: string[]): Promise<number[][]> {
     if (texts.length === 0) return [];
 
-    const allResults: number[][] = [];
-    for (let i = 0; i < texts.length; i += this.batchSize) {
-      const batch = texts.slice(i, i + this.batchSize);
+    // Phase 1: Prefill results from cache (same model-order logic as embed()).
+    // Check each model in preference order so a cached fallback result is reused
+    // even if the primary model's cache slot is empty (#589).
+    const results: (number[] | undefined)[] = new Array(texts.length).fill(undefined);
+    const uncachedIndices: number[] = [];
+    let cacheHitModel: string | undefined;
+    for (let i = 0; i < texts.length; i++) {
+      let found = false;
+      for (const model of this.models) {
+        const cacheKey = makeCacheKey(model, texts[i]);
+        const cached = this.cache.get(cacheKey);
+        if (cached !== undefined) {
+          // LRU refresh: move to end
+          this.cache.delete(cacheKey);
+          this.cache.set(cacheKey, cached);
+          results[i] = cached;
+          found = true;
+          if (cacheHitModel === undefined) cacheHitModel = model;
+          break;
+        }
+      }
+      if (!found) uncachedIndices.push(i);
+    }
+
+    if (uncachedIndices.length === 0) {
+      if (cacheHitModel !== undefined) this.modelName = cacheHitModel;
+      return results as number[][];
+    }
+
+    // Phase 2: Batch-embed only the uncached texts, chunked by batchSize.
+    const uncachedTexts = uncachedIndices.map((i) => texts[i]);
+    const freshVectors: number[][] = [];
+    for (let i = 0; i < uncachedTexts.length; i += this.batchSize) {
+      const batch = uncachedTexts.slice(i, i + this.batchSize);
 
       let lastErr: Error | undefined;
       let resp: Awaited<ReturnType<typeof this.client.embeddings.create>> | undefined;
+      let succeededModel: string | undefined;
       for (const model of this.models) {
         try {
           const supportsDimensions = model.startsWith("text-embedding-3-");
@@ -149,6 +181,7 @@ export class Embeddings implements EmbeddingProvider {
               }),
             { maxRetries: 2 },
           );
+          succeededModel = model;
           this.modelName = model;
           break;
         } catch (err) {
@@ -156,13 +189,22 @@ export class Embeddings implements EmbeddingProvider {
           continue;
         }
       }
-      if (resp !== undefined) {
+      if (resp !== undefined && succeededModel !== undefined) {
         if (resp.data.length !== batch.length) {
           throw new Error(`OpenAI embed returned ${resp.data.length} embeddings for ${batch.length} inputs`);
         }
-        allResults.push(...resp.data.sort((a, b) => a.index - b.index).map((item) => item.embedding));
+        const sorted = resp.data.sort((a, b) => a.index - b.index).map((item) => item.embedding);
+        // Write fresh vectors into the cache keyed by the model that succeeded (#589)
+        for (let j = 0; j < batch.length; j++) {
+          if (this.cache.size >= EMBEDDING_CACHE_MAX) {
+            const firstKey = this.cache.keys().next().value;
+            if (firstKey !== undefined) this.cache.delete(firstKey);
+          }
+          this.cache.set(makeCacheKey(succeededModel, uncachedTexts[i + j]), sorted[j]);
+        }
+        freshVectors.push(...sorted);
       }
-      if (lastErr !== undefined && allResults.length === i) {
+      if (lastErr !== undefined && freshVectors.length === i) {
         // Skip reporting config errors (404 model-not-found, 403 country/region restriction, 401 auth failure) and 429 (rate limit) — operator config issues or transient errors, not bugs (#329, #394, #397, #385).
         if (!isConfigError(lastErr) && !is429OrWrapped(lastErr)) {
           capturePluginError(lastErr, {
@@ -174,6 +216,11 @@ export class Embeddings implements EmbeddingProvider {
         throw lastErr;
       }
     }
-    return allResults;
+
+    // Phase 3: Reconstruct the full result array in original input order.
+    for (let i = 0; i < uncachedIndices.length; i++) {
+      results[uncachedIndices[i]] = freshVectors[i];
+    }
+    return results as number[][];
   }
 }

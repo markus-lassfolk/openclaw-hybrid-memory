@@ -140,6 +140,102 @@ describe("Embeddings (OpenAI) implements EmbeddingProvider interface", () => {
     expect(mockCreate.mock.calls[2][0].input).toEqual(["e"]);
   });
 
+  // #589: embedBatch() cache integration
+  it("#589: embedBatch() reuses vectors cached by embed()", async () => {
+    const vec = [0.1, 0.2, 0.3];
+    const mockCreate = vi.fn().mockImplementation((params: { input: string | string[] }) => {
+      const count = Array.isArray(params.input) ? params.input.length : 1;
+      return Promise.resolve({ data: Array.from({ length: count }, (_, i) => ({ index: i, embedding: vec })) });
+    });
+    const client = { embeddings: { create: mockCreate } } as unknown as import("openai").default;
+    const provider = new Embeddings(client, "text-embedding-3-small", 3);
+
+    // Warm the cache via embed()
+    await provider.embed("cached text");
+    expect(mockCreate).toHaveBeenCalledTimes(1);
+    mockCreate.mockClear();
+
+    // embedBatch() with the same text — should hit cache, not the API
+    const results = await provider.embedBatch(["cached text"]);
+    expect(results).toEqual([vec]);
+    expect(mockCreate).not.toHaveBeenCalled();
+  });
+
+  it("#589: embedBatch() populates the cache for subsequent embed() calls", async () => {
+    const vec = [0.4, 0.5, 0.6];
+    const mockCreate = vi.fn().mockImplementation((params: { input: string | string[] }) => {
+      const count = Array.isArray(params.input) ? params.input.length : 1;
+      return Promise.resolve({ data: Array.from({ length: count }, (_, i) => ({ index: i, embedding: vec })) });
+    });
+    const client = { embeddings: { create: mockCreate } } as unknown as import("openai").default;
+    const provider = new Embeddings(client, "text-embedding-3-small", 3);
+
+    // Warm the cache via embedBatch()
+    await provider.embedBatch(["warm me"]);
+    expect(mockCreate).toHaveBeenCalledTimes(1);
+    mockCreate.mockClear();
+
+    // embed() with the same text — should hit cache, not the API
+    const result = await provider.embed("warm me");
+    expect(result).toEqual(vec);
+    expect(mockCreate).not.toHaveBeenCalled();
+  });
+
+  it("#589: embedBatch() handles mixed cached/uncached inputs, only calling API for uncached", async () => {
+    const cachedVec = [0.1, 0.2];
+    const freshVec = [0.9, 0.8];
+    const mockCreate = vi.fn().mockImplementation((params: { input: string | string[] }) => {
+      const inputs = Array.isArray(params.input) ? params.input : [params.input];
+      return Promise.resolve({
+        data: inputs.map((_, i) => ({ index: i, embedding: freshVec })),
+      });
+    });
+    const client = { embeddings: { create: mockCreate } } as unknown as import("openai").default;
+    const provider = new Embeddings(client, "text-embedding-3-small", 2);
+
+    // Seed one text into cache via a dedicated seed call
+    const seedCreate = vi.fn().mockResolvedValue({ data: [{ index: 0, embedding: cachedVec }] });
+    (client.embeddings as { create: unknown }).create = seedCreate;
+    await provider.embed("cached item");
+    (client.embeddings as { create: unknown }).create = mockCreate;
+    mockCreate.mockClear();
+
+    // Call with 3 texts: 1 cached + 2 uncached
+    const results = await provider.embedBatch(["uncached A", "cached item", "uncached B"]);
+
+    // Only the 2 uncached texts should have been sent to the API
+    expect(mockCreate).toHaveBeenCalledOnce();
+    const [callArg] = mockCreate.mock.calls[0] as [{ input: string[] }];
+    expect(callArg.input).toEqual(["uncached A", "uncached B"]);
+
+    // Results are in original input order
+    expect(results[0]).toEqual(freshVec); // uncached A — from API
+    expect(results[1]).toEqual(cachedVec); // cached item — from cache
+    expect(results[2]).toEqual(freshVec); // uncached B — from API
+  });
+
+  it("#589: embedBatch() second call returns all results from cache (no API calls)", async () => {
+    const vec = [0.5, 0.6];
+    const mockCreate = vi.fn().mockImplementation((params: { input: string | string[] }) => {
+      const inputs = Array.isArray(params.input) ? params.input : [params.input];
+      return Promise.resolve({ data: inputs.map((_, i) => ({ index: i, embedding: vec })) });
+    });
+    const client = { embeddings: { create: mockCreate } } as unknown as import("openai").default;
+    // batchSize=2 to exercise multi-chunk code path; text-embedding-3-small supports custom dims
+    const provider = new Embeddings(client, "text-embedding-3-small", 2, 2);
+
+    const texts = ["a", "b", "c", "d", "e"];
+    const first = await provider.embedBatch(texts);
+    expect(first).toHaveLength(5);
+
+    mockCreate.mockClear();
+
+    // Second call — all texts cached, zero API calls
+    const second = await provider.embedBatch(texts);
+    expect(mockCreate).not.toHaveBeenCalled();
+    expect(second).toEqual(first);
+  });
+
   it("throws when dimensions exceed model max", () => {
     const client = makeMockOpenAI([]);
     expect(() => new Embeddings(client, "text-embedding-3-small", 2000)).toThrow(/exceed/i);
