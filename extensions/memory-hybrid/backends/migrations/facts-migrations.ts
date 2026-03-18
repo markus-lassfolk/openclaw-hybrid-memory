@@ -24,6 +24,7 @@ function migrateDecayColumns(db: DatabaseSync): void {
   }
   if (!colNames.has("last_confirmed_at")) {
     db.exec(`ALTER TABLE facts ADD COLUMN last_confirmed_at INTEGER`);
+    db.exec(`UPDATE facts SET last_confirmed_at = created_at WHERE last_confirmed_at IS NULL`);
   }
   if (!colNames.has("confidence")) {
     db.exec(`ALTER TABLE facts ADD COLUMN confidence REAL NOT NULL DEFAULT 1.0`);
@@ -32,9 +33,6 @@ function migrateDecayColumns(db: DatabaseSync): void {
     CREATE INDEX IF NOT EXISTS idx_facts_expires ON facts(expires_at)
       WHERE expires_at IS NOT NULL;
     CREATE INDEX IF NOT EXISTS idx_facts_decay ON facts(decay_class);
-  `);
-  db.exec(`
-    UPDATE facts SET last_confirmed_at = created_at WHERE last_confirmed_at IS NULL;
   `);
 }
 
@@ -52,14 +50,14 @@ function migrateTimestampUnits(db: DatabaseSync): void {
   if (cnt === 0) return;
   db.prepare(
     `UPDATE facts
-     SET created_at = created_at / 1000
+     SET created_at = CAST(created_at / 1000 AS INTEGER)
      WHERE created_at > ?`,
   ).run(MS_THRESHOLD);
   // last_confirmed_at may have been seeded from ms-based created_at
   // by the migrateDecayColumns migration (created_at → last_confirmed_at).
   db.prepare(
     `UPDATE facts
-     SET last_confirmed_at = last_confirmed_at / 1000
+     SET last_confirmed_at = CAST(last_confirmed_at / 1000 AS INTEGER)
      WHERE last_confirmed_at IS NOT NULL
        AND last_confirmed_at > ?`,
   ).run(MS_THRESHOLD);
