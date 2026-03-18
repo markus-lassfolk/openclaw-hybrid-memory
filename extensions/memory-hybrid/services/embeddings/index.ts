@@ -16,12 +16,6 @@ export { AllEmbeddingProvidersFailed } from "./types.js";
 export type { EmbeddingProvider, EmbeddingConfig } from "./types.js";
 
 export {
-  GOOGLE_EMBEDDING_BASE_URL,
-  KNOWN_GOOGLE_EMBED_MODELS,
-  EMBEDDING_CACHE_MAX,
-  OPENAI_EMBEDDING_MAX_TOKENS,
-  OPENAI_EMBEDDING_MAX_CHARS,
-  truncateForEmbedding,
   isOllamaCircuitBreakerOpen,
   shouldSuppressEmbeddingError,
   safeEmbed,
