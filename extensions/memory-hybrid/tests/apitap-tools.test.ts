@@ -48,7 +48,7 @@ function makeDisabledConfig(): HybridMemoryConfig {
       endpointTtlDays: 30,
       maxEndpointsPerSession: 50,
       allowedPatterns: [],
-      blockedPatterns: ["**/oauth/**", "**/auth/**"],
+      blockedPatterns: ["**/*oauth*/**", "**/*auth*/**"],
     },
   } as unknown as HybridMemoryConfig;
 }

@@ -662,6 +662,6 @@ export function parseApiTapConfig(cfg: Record<string, unknown>): ApiTapConfig {
       : [],
     blockedPatterns: Array.isArray(raw?.blockedPatterns)
       ? (raw.blockedPatterns as unknown[]).filter((p): p is string => typeof p === "string" && p.trim().length > 0)
-      : ["**/oauth/**", "**/auth/**", "**/login/**", "**/signin/**", "**/token/**", "**/password/**"],
+      : ["**/*oauth*/**", "**/*auth*/**", "**/*login*/**", "**/*signin*/**", "**/*token*/**", "**/*password*/**"],
   };
 }
