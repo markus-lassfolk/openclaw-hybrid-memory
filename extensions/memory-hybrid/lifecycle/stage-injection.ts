@@ -162,7 +162,7 @@ async function runInjection(
         : `<relevant-memories format="index">\n`;
     const indexFooter = `\n→ Use memory_recall("query"), memory_recall(id: N), or entity/key to fetch full details.\n</relevant-memories>`;
     const indexBudget = indexCap - estimateTokens(pinnedHeader + pinnedPart.join("\n") + indexIntro + indexFooter);
-    const { lines: indexLines, ids: indexIds } = buildProgressiveIndex(rest, Math.max(100, indexBudget), 1);
+    const { lines: indexLines, ids: indexIds } = buildProgressiveIndex(rest, Math.max(0, indexBudget), 1);
     lastProgressiveIndexIdsRef.length = 0;
     lastProgressiveIndexIdsRef.push(...indexIds);
     if (pinnedPart.length > 0) ctx.factsDb.refreshAccessedFacts(pinned.map((x) => x.entry.id));
