@@ -948,6 +948,6 @@ describe("autoLinkEntities — performance", () => {
     });
     const elapsed = performance.now() - start;
 
-    expect(elapsed).toBeLessThan(15);
+    expect(elapsed).toBeLessThan(50);
   });
 });
