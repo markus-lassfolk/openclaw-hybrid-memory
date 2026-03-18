@@ -38,6 +38,7 @@ import {
   closeOldDatabases,
   MINIMAX_BASE_URL,
   OPENROUTER_BASE_URL,
+  resolveProviderApiKey,
 } from "../setup/init-databases.js";
 import { hybridConfigSchema } from "../config.js";
 
@@ -1468,5 +1469,242 @@ describe("gateway model auto-derivation — unknown provider prefix filter", () 
     const defaultList = Array.isArray(cfg.llm?.default) ? cfg.llm.default : [];
     // Provider "deepseek" is OAuth-routable via gateway → model must be kept
     expect(defaultList).toContain("deepseek/chat");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// resolveProviderApiKey — centralised key resolution (issue #598)
+// ---------------------------------------------------------------------------
+
+describe("resolveProviderApiKey", () => {
+  /** Identity resolver — treats all strings as plain keys (no SecretRef expansion). */
+  const identity = (k: string | undefined) => (k?.trim() ? k : undefined);
+
+  /** Minimal config shape sufficient for resolveProviderApiKey tests. */
+  function makeCfg(overrides: Record<string, unknown> = {}) {
+    return {
+      embedding: { apiKey: "sk-embed-key" },
+      distill: { apiKey: undefined as string | undefined },
+      llm: { providers: {} as Record<string, { apiKey?: string }> },
+      ...overrides,
+    } as Parameters<typeof resolveProviderApiKey>[2];
+  }
+
+  describe("llm.providers.X.apiKey — highest priority for all providers", () => {
+    it("returns providerCfg.apiKey for google", () => {
+      const result = resolveProviderApiKey("google", { apiKey: "sk-google-explicit" }, makeCfg(), identity);
+      expect(result).toEqual({ value: "sk-google-explicit", source: "llm.providers.google.apiKey" });
+    });
+
+    it("returns providerCfg.apiKey for openai", () => {
+      const result = resolveProviderApiKey("openai", { apiKey: "sk-openai-explicit" }, makeCfg(), identity);
+      expect(result).toEqual({ value: "sk-openai-explicit", source: "llm.providers.openai.apiKey" });
+    });
+
+    it("returns providerCfg.apiKey for anthropic", () => {
+      const result = resolveProviderApiKey("anthropic", { apiKey: "sk-ant-explicit" }, makeCfg(), identity);
+      expect(result).toEqual({ value: "sk-ant-explicit", source: "llm.providers.anthropic.apiKey" });
+    });
+
+    it("returns providerCfg.apiKey for openrouter even when env is set", () => {
+      const result = resolveProviderApiKey(
+        "openrouter",
+        { apiKey: "sk-or-explicit" },
+        makeCfg(),
+        identity,
+        { env: { OPENROUTER_API_KEY: "sk-or-env" } },
+      );
+      expect(result).toEqual({ value: "sk-or-explicit", source: "llm.providers.openrouter.apiKey" });
+    });
+
+    it("returns providerCfg.apiKey for minimax even when env is set", () => {
+      const result = resolveProviderApiKey(
+        "minimax",
+        { apiKey: "sk-mm-explicit" },
+        makeCfg(),
+        identity,
+        { env: { MINIMAX_API_KEY: "sk-mm-env" } },
+      );
+      expect(result).toEqual({ value: "sk-mm-explicit", source: "llm.providers.minimax.apiKey" });
+    });
+
+    it("returns providerCfg.apiKey for ollama overriding the default", () => {
+      const result = resolveProviderApiKey("ollama", { apiKey: "custom-ollama-key" }, makeCfg(), identity);
+      expect(result).toEqual({ value: "custom-ollama-key", source: "llm.providers.ollama.apiKey" });
+    });
+
+    it("returns providerCfg.apiKey for an unknown custom provider", () => {
+      const result = resolveProviderApiKey("myprovider", { apiKey: "sk-custom" }, makeCfg(), identity);
+      expect(result).toEqual({ value: "sk-custom", source: "llm.providers.myprovider.apiKey" });
+    });
+  });
+
+  describe("google fallback chain", () => {
+    it("falls back to distill.apiKey when no providerCfg key", () => {
+      const cfg = makeCfg({ distill: { apiKey: "sk-distill-google" } });
+      const result = resolveProviderApiKey("google", undefined, cfg, identity, { env: {} });
+      expect(result).toEqual({ value: "sk-distill-google", source: "distill.apiKey" });
+    });
+
+    it("falls back to GOOGLE_API_KEY env when no providerCfg or distill key", () => {
+      const result = resolveProviderApiKey("google", undefined, makeCfg(), identity, {
+        env: { GOOGLE_API_KEY: "sk-google-env" },
+      });
+      expect(result).toEqual({ value: "sk-google-env", source: "GOOGLE_API_KEY" });
+    });
+
+    it("returns source=none when no key is available", () => {
+      const result = resolveProviderApiKey("google", undefined, makeCfg({ distill: undefined }), identity, { env: {} });
+      expect(result).toEqual({ source: "none" });
+      expect(result.value).toBeUndefined();
+    });
+  });
+
+  describe("openai fallback chain", () => {
+    it("falls back to gatewayToken when no providerCfg key and not custom external baseURL", () => {
+      const result = resolveProviderApiKey(
+        "openai",
+        undefined,
+        makeCfg({ embedding: { apiKey: undefined } }),
+        identity,
+        { gatewayToken: "gw-token", hasCustomExternalBaseURL: false, env: {} },
+      );
+      expect(result).toEqual({ value: "gw-token", source: "gatewayToken" });
+    });
+
+    it("falls back to embedding.apiKey after gatewayToken check (no gateway token)", () => {
+      const cfg = makeCfg({ embedding: { apiKey: "sk-embed-key" } });
+      const result = resolveProviderApiKey("openai", undefined, cfg, identity, {
+        hasCustomExternalBaseURL: false,
+        env: {},
+      });
+      expect(result).toEqual({ value: "sk-embed-key", source: "embedding.apiKey" });
+    });
+
+    it("skips gatewayToken and embedding.apiKey when hasCustomExternalBaseURL=true", () => {
+      const cfg = makeCfg({ embedding: { apiKey: "sk-embed-key" } });
+      const result = resolveProviderApiKey("openai", undefined, cfg, identity, {
+        gatewayToken: "gw-token",
+        hasCustomExternalBaseURL: true,
+        env: { OPENAI_API_KEY: "sk-openai-env" },
+      });
+      expect(result).toEqual({ value: "sk-openai-env", source: "OPENAI_API_KEY" });
+    });
+
+    it("falls back to OPENAI_API_KEY env when all higher-priority sources are absent", () => {
+      const result = resolveProviderApiKey(
+        "openai",
+        undefined,
+        makeCfg({ embedding: { apiKey: undefined } }),
+        identity,
+        { env: { OPENAI_API_KEY: "sk-openai-env" } },
+      );
+      expect(result).toEqual({ value: "sk-openai-env", source: "OPENAI_API_KEY" });
+    });
+
+    it("returns source=none when no key is available", () => {
+      const result = resolveProviderApiKey(
+        "openai",
+        undefined,
+        makeCfg({ embedding: { apiKey: undefined } }),
+        identity,
+        { env: {} },
+      );
+      expect(result).toEqual({ source: "none" });
+    });
+  });
+
+  describe("anthropic fallback chain", () => {
+    it("falls back to ANTHROPIC_API_KEY env", () => {
+      const result = resolveProviderApiKey("anthropic", undefined, makeCfg(), identity, {
+        env: { ANTHROPIC_API_KEY: "sk-ant-env" },
+      });
+      expect(result).toEqual({ value: "sk-ant-env", source: "ANTHROPIC_API_KEY" });
+    });
+
+    it("returns source=none when no key is available", () => {
+      const result = resolveProviderApiKey("anthropic", undefined, makeCfg(), identity, { env: {} });
+      expect(result).toEqual({ source: "none" });
+    });
+  });
+
+  describe("openrouter fallback chain", () => {
+    it("falls back to OPENROUTER_API_KEY env", () => {
+      const result = resolveProviderApiKey("openrouter", undefined, makeCfg(), identity, {
+        env: { OPENROUTER_API_KEY: "sk-or-env" },
+      });
+      expect(result).toEqual({ value: "sk-or-env", source: "OPENROUTER_API_KEY" });
+    });
+
+    it("returns source=none when no key is available", () => {
+      const result = resolveProviderApiKey("openrouter", undefined, makeCfg(), identity, { env: {} });
+      expect(result).toEqual({ source: "none" });
+    });
+  });
+
+  describe("minimax fallback chain", () => {
+    it("falls back to MINIMAX_API_KEY env", () => {
+      const result = resolveProviderApiKey("minimax", undefined, makeCfg(), identity, {
+        env: { MINIMAX_API_KEY: "sk-mm-env" },
+      });
+      expect(result).toEqual({ value: "sk-mm-env", source: "MINIMAX_API_KEY" });
+    });
+
+    it("returns source=none when no key is available", () => {
+      const result = resolveProviderApiKey("minimax", undefined, makeCfg(), identity, { env: {} });
+      expect(result).toEqual({ source: "none" });
+    });
+  });
+
+  describe("ollama", () => {
+    it("always returns default ollama key when no providerCfg key", () => {
+      const result = resolveProviderApiKey("ollama", undefined, makeCfg(), identity, { env: {} });
+      expect(result).toEqual({ value: "ollama", source: "default" });
+    });
+  });
+
+  describe("custom / unknown provider generic env fallback", () => {
+    it("falls back to <PREFIX>_API_KEY env for unknown providers", () => {
+      const result = resolveProviderApiKey("myprovider", undefined, makeCfg(), identity, {
+        env: { MYPROVIDER_API_KEY: "sk-myprovider-env" },
+      });
+      expect(result).toEqual({ value: "sk-myprovider-env", source: "MYPROVIDER_API_KEY" });
+    });
+
+    it("returns source=none for unknown providers with no env key", () => {
+      const result = resolveProviderApiKey("myprovider", undefined, makeCfg(), identity, { env: {} });
+      expect(result).toEqual({ source: "none" });
+    });
+  });
+
+  describe("source metadata accuracy", () => {
+    it("reports the correct source for providerCfg.apiKey", () => {
+      const { source } = resolveProviderApiKey("anthropic", { apiKey: "sk-ant" }, makeCfg(), identity);
+      expect(source).toBe("llm.providers.anthropic.apiKey");
+    });
+
+    it("reports the correct source for distill.apiKey fallback", () => {
+      const cfg = makeCfg({ distill: { apiKey: "sk-distill" } });
+      const { source } = resolveProviderApiKey("google", undefined, cfg, identity, { env: {} });
+      expect(source).toBe("distill.apiKey");
+    });
+
+    it("reports the correct source for gatewayToken fallback", () => {
+      const cfg = makeCfg({ embedding: { apiKey: undefined } });
+      const { source } = resolveProviderApiKey("openai", undefined, cfg, identity, {
+        gatewayToken: "gw-tok",
+        hasCustomExternalBaseURL: false,
+        env: {},
+      });
+      expect(source).toBe("gatewayToken");
+    });
+
+    it("reports the correct source for OPENAI_API_KEY env", () => {
+      const cfg = makeCfg({ embedding: { apiKey: undefined } });
+      const { source } = resolveProviderApiKey("openai", undefined, cfg, identity, {
+        env: { OPENAI_API_KEY: "sk-openai" },
+      });
+      expect(source).toBe("OPENAI_API_KEY");
+    });
   });
 });
