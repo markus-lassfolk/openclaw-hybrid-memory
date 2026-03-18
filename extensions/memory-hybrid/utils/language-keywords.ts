@@ -475,8 +475,8 @@ function mergeGroup(
   translationsByLang: Record<string, Record<string, string[]>> | undefined,
   group: KeywordGroup,
 ): string[] {
-  const set = new Set<string>(english);
   const shouldLowercase = LOWERCASE_GROUPS.has(group);
+  const set = new Set<string>(shouldLowercase ? english.map((s) => s.toLowerCase()) : english);
   if (translationsByLang) {
     for (const langData of Object.values(translationsByLang)) {
       const list = langData?.[group];
@@ -506,7 +506,10 @@ export function loadMergedKeywords(): MergedKeywords {
   if (!path) {
     cache = null;
     return Object.fromEntries(
-      (Object.keys(ENGLISH_KEYWORDS) as KeywordGroup[]).map((k) => [k, [...ENGLISH_KEYWORDS[k]]]),
+      (Object.keys(ENGLISH_KEYWORDS) as KeywordGroup[]).map((k) => [
+        k,
+        LOWERCASE_GROUPS.has(k) ? ENGLISH_KEYWORDS[k].map((s) => s.toLowerCase()) : [...ENGLISH_KEYWORDS[k]],
+      ]),
     ) as MergedKeywords;
   }
   const filePath = join(path, LANG_FILE_NAME);
