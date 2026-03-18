@@ -150,6 +150,11 @@ describe("LearningsDB — transition", () => {
   it("throws for unknown id", () => {
     expect(() => db.transition("no-such-id", "promoted")).toThrow("not found");
   });
+
+  it("throws when transitioning to promoted without promotedTo", () => {
+    const entry = db.create({ type: "error", area: "test", content: "test" });
+    expect(() => db.transition(entry.id, "promoted")).toThrow("promotedTo is required");
+  });
 });
 
 describe("LearningsDB — list & count", () => {

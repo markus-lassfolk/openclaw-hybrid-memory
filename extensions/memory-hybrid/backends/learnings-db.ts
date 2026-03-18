@@ -92,17 +92,25 @@ export class LearningsDB {
   create(input: CreateLearningEntryInput): LearningEntry {
     const id = randomUUID();
     const now = new Date().toISOString();
-    const seq = this.nextSeq(input.type);
-    const slug = `${TYPE_PREFIX[input.type]}-${String(seq).padStart(3, "0")}`;
 
-    this.db
-      .prepare(
-        `INSERT INTO learnings (id, slug, type, status, area, content, recurrence, tags, created_at, updated_at)
-         VALUES (?, ?, ?, 'open', ?, ?, 1, ?, ?, ?)`,
-      )
-      .run(id, slug, input.type, input.area, input.content, JSON.stringify(input.tags ?? []), now, now);
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      const seq = this.nextSeq(input.type);
+      const slug = `${TYPE_PREFIX[input.type]}-${String(seq).padStart(3, "0")}`;
 
-    return this.get(id)!;
+      this.db
+        .prepare(
+          `INSERT INTO learnings (id, slug, type, status, area, content, recurrence, tags, created_at, updated_at)
+           VALUES (?, ?, ?, 'open', ?, ?, 1, ?, ?, ?)`,
+        )
+        .run(id, slug, input.type, input.area, input.content, JSON.stringify(input.tags ?? []), now, now);
+
+      this.db.exec("COMMIT");
+      return this.get(id)!;
+    } catch (err) {
+      this.db.exec("ROLLBACK");
+      throw err;
+    }
   }
 
   /** Increment the recurrence counter on an existing entry (same issue recurred). */
@@ -125,6 +133,10 @@ export class LearningsDB {
       throw new Error(
         `Invalid transition: ${existing.status} → ${newStatus}. Allowed: ${allowed.join(", ") || "none"}`,
       );
+    }
+
+    if (newStatus === "promoted" && !promotedTo) {
+      throw new Error(`promotedTo is required when transitioning to "promoted" status`);
     }
 
     const now = new Date().toISOString();
