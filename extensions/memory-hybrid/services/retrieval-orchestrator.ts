@@ -10,7 +10,7 @@
  *   - graph: Graph-walk spreading activation (GraphRAG expansion)
  */
 
-import { type DatabaseSync } from "node:sqlite";
+import type { DatabaseSync } from "node:sqlite";
 import type { VectorDB } from "../backends/vector-db.js";
 import type { MemoryEntry, SearchResult } from "../types/memory.js";
 import { searchFts } from "./fts-search.js";

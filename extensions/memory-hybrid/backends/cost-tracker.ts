@@ -6,7 +6,7 @@
  * ⚠️ Costs are estimates based on published model pricing, not billing-accurate.
  */
 
-import { type DatabaseSync } from "node:sqlite";
+import type { DatabaseSync } from "node:sqlite";
 import { estimateCost } from "../services/model-pricing.js";
 
 /**

@@ -8,7 +8,7 @@
  * can call it as an independent retrieval strategy alongside vector search.
  */
 
-import { type DatabaseSync } from "node:sqlite";
+import type { DatabaseSync } from "node:sqlite";
 import type { SQLInputValue } from "node:sqlite";
 
 // ---------------------------------------------------------------------------
