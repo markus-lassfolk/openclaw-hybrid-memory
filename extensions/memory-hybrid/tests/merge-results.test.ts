@@ -176,7 +176,7 @@ describe("mergeResults — RRF score correctness", () => {
     const merged = mergeResults(sqlite, lance, 10);
     for (const r of merged) {
       expect(r.score).toBeGreaterThan(0);
-      expect(isFinite(r.score)).toBe(true);
+      expect(Number.isFinite(r.score)).toBe(true);
     }
   });
 });
