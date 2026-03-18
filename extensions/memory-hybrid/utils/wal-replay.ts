@@ -34,7 +34,7 @@ export async function replayWalEntries(
   let committed = 0;
   let skipped = 0;
 
-  const walEntries = wal.readAll();
+  const walEntries = await wal.readAll();
 
   for (const entry of walEntries) {
     try {
@@ -84,24 +84,24 @@ export async function replayWalEntries(
             }
           }
           committed++;
-          wal.remove(entry.id);
+          await wal.remove(entry.id);
         } else {
           skipped++;
-          wal.remove(entry.id);
+          await wal.remove(entry.id);
         }
       } else if (entry.operation === "update") {
         // Skip update operations during replay: WAL entries lack the targetId needed
         // to properly supersede the old fact, so replaying would create duplicates.
         // Remove these entries to prevent unbounded WAL growth.
         skipped++;
-        wal.remove(entry.id);
+        await wal.remove(entry.id);
       } else if (entry.operation === "delete") {
         // Delete WAL entries cannot be reliably replayed: the WAL data structure stores
         // text content in data.text, not the target fact UUID. Replaying would pass the
         // memory text as a UUID, causing an "Invalid UUID format" error (see issue #334).
         // Skip and remove to prevent unbounded WAL growth.
         skipped++;
-        wal.remove(entry.id);
+        await wal.remove(entry.id);
       }
     } catch (err) {
       // Non-fatal: log the failure (with entry id + operation for diagnostics) and continue

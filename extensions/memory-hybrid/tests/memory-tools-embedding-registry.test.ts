@@ -66,8 +66,8 @@ function makeMockVectorDb(): VectorDB {
 }
 
 const noopScopeFilter = () => undefined;
-const walWrite = () => "wal-id";
-const walRemove = () => {};
+const walWrite = async () => "wal-id";
+const walRemove = async () => {};
 const findSimilarByEmbedding = async () => [];
 
 // ---------------------------------------------------------------------------

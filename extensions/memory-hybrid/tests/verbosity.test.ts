@@ -528,8 +528,8 @@ describe("memory_store — verbosity output", () => {
       pendingLLMWarnings: { warnings: [] },
     } as any;
     const buildToolScopeFilter = vi.fn();
-    const walWrite = vi.fn().mockReturnValue("wal-id");
-    const walRemove = vi.fn();
+    const walWrite = vi.fn().mockResolvedValue("wal-id");
+    const walRemove = vi.fn().mockResolvedValue(undefined);
     const findSimilarByEmbedding = vi.fn().mockResolvedValue([]);
     registerMemoryTools(ctx, api as any, buildToolScopeFilter, walWrite, walRemove, findSimilarByEmbedding);
     const storeTool = tools.get("memory_store");
@@ -728,8 +728,8 @@ function makeMinimalLifecycleContext(verbosity: VerbosityLevel): LifecycleContex
     openai: {} as unknown as LifecycleContext["openai"],
     issueStore: null,
     pendingLLMWarnings: { drain: () => [] } as unknown as LifecycleContext["pendingLLMWarnings"],
-    walWrite: vi.fn() as unknown as LifecycleContext["walWrite"],
-    walRemove: vi.fn() as unknown as LifecycleContext["walRemove"],
+    walWrite: vi.fn().mockResolvedValue("wal-id") as unknown as LifecycleContext["walWrite"],
+    walRemove: vi.fn().mockResolvedValue(undefined) as unknown as LifecycleContext["walRemove"],
     findSimilarByEmbedding: vi.fn() as unknown as LifecycleContext["findSimilarByEmbedding"],
     shouldCapture: () => false,
     detectCategory: () => "general" as const,

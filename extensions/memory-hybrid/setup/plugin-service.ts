@@ -154,7 +154,7 @@ export function createPluginService(ctx: PluginServiceContext) {
 
       // WAL Recovery: replay uncommitted operations from previous session
       if (wal) {
-        const pendingEntries = wal.getValidEntries();
+        const pendingEntries = await wal.getValidEntries();
         if (pendingEntries.length > 0) {
           api.logger.info(`memory-hybrid: WAL recovery starting — found ${pendingEntries.length} pending operation(s)`);
           let recovered = 0;
@@ -215,7 +215,7 @@ export function createPluginService(ctx: PluginServiceContext) {
                 );
               }
 
-              walRemove(wal, entry.id, api.logger);
+              await walRemove(wal, entry.id, api.logger);
             } catch (err) {
               api.logger.warn(`memory-hybrid: WAL recovery failed for entry ${entry.id}: ${err}`);
               capturePluginError(err instanceof Error ? err : new Error(String(err)), {
@@ -234,7 +234,7 @@ export function createPluginService(ctx: PluginServiceContext) {
 
           // Prune any remaining stale entries
           try {
-            const pruned = wal.pruneStale();
+            const pruned = await wal.pruneStale();
             if (pruned > 0) {
               api.logger.info(`memory-hybrid: WAL pruned ${pruned} stale entries`);
             }
