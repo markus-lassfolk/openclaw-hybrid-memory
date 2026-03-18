@@ -117,8 +117,8 @@ export class WriteAheadLog {
       await prevLock;
       const line = JSON.stringify(entry) + "\n";
       await appendFile(this.walPath, line, "utf-8");
-      await this.fsyncAfterWrite();
       this.activeIds.add(entry.id);
+      await this.fsyncAfterWrite();
     } catch (err) {
       capturePluginError(err as Error, {
         operation: "wal-write",
