@@ -11,6 +11,7 @@ import type {
   RerankingConfig,
   ContextualVariantsConfig,
 } from "../types/retrieval.js";
+import { pluginLogger } from "../../utils/logger.js";
 
 // Minimum timeout floors (#384): prevent spurious timeouts for slow thinking models like Gemini 2.5 Flash.
 // Exported so tests can reference the canonical values without hardcoding magic numbers.
@@ -273,11 +274,8 @@ export function parseQueryExpansionConfig(cfg: Record<string, unknown>): QueryEx
   const qeExplicitlySet = qeRaw?.enabled !== undefined;
 
   if (hydeEnabled) {
-    console.warn(
-      "memory-hybrid: search.hydeEnabled is DEPRECATED — use queryExpansion.enabled instead. " +
-        (qeExplicitlySet
-          ? "Both are set; queryExpansion config takes precedence. Remove search.hydeEnabled from your config."
-          : "Auto-migrating: queryExpansion.enabled has been set to true. Update your config to silence this warning."),
+    pluginLogger.warn(
+      `memory-hybrid: search.hydeEnabled is DEPRECATED — use queryExpansion.enabled instead. ${qeExplicitlySet ? "Both are set; queryExpansion config takes precedence. Remove search.hydeEnabled from your config." : "Auto-migrating: queryExpansion.enabled has been set to true. Update your config to silence this warning."}`,
     );
   }
 
@@ -342,10 +340,8 @@ export function parseQueryExpansionConfig(cfg: Record<string, unknown>): QueryEx
       : null;
 
   if (rawQeTimeout !== null && rawQeTimeout < MIN_QE_TIMEOUT_MS) {
-    console.warn(
-      `memory-hybrid: queryExpansion.timeoutMs=${rawQeTimeout} is below the minimum floor of ${MIN_QE_TIMEOUT_MS}ms` +
-        ` and has been raised to ${MIN_QE_TIMEOUT_MS}ms to prevent spurious timeouts on thinking models (#384).` +
-        ` Set timeoutMs to 0 or a negative value to bypass the floor entirely.`,
+    pluginLogger.warn(
+      `memory-hybrid: queryExpansion.timeoutMs=${rawQeTimeout} is below the minimum floor of ${MIN_QE_TIMEOUT_MS}ms and has been raised to ${MIN_QE_TIMEOUT_MS}ms to prevent spurious timeouts on thinking models (#384). Set timeoutMs to 0 or a negative value to bypass the floor entirely.`,
     );
   }
 
@@ -389,10 +385,8 @@ export function parseRerankingConfig(cfg: Record<string, unknown>): RerankingCon
       ? Math.floor(rawRerankTimeoutRaw)
       : null;
   if (rawRerankTimeout !== null && rawRerankTimeout < MIN_RERANK_TIMEOUT_MS) {
-    console.warn(
-      `memory-hybrid: reranking.timeoutMs=${rawRerankTimeout} is below the minimum floor of ${MIN_RERANK_TIMEOUT_MS}ms` +
-        ` and has been raised to ${MIN_RERANK_TIMEOUT_MS}ms to prevent spurious timeouts (#384).` +
-        ` Set timeoutMs to 0 or a negative value to bypass the floor entirely.`,
+    pluginLogger.warn(
+      `memory-hybrid: reranking.timeoutMs=${rawRerankTimeout} is below the minimum floor of ${MIN_RERANK_TIMEOUT_MS}ms and has been raised to ${MIN_RERANK_TIMEOUT_MS}ms to prevent spurious timeouts (#384). Set timeoutMs to 0 or a negative value to bypass the floor entirely.`,
     );
   }
   return {
