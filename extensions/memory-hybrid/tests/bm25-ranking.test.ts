@@ -28,8 +28,7 @@ const { FactsDB, searchFts, buildFts5Query } = _testing;
 type DB = InstanceType<typeof FactsDB>;
 
 function rawDb(db: DB) {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  return (db as any).liveDb as import("node:sqlite").DatabaseSync;
+  return db.getRawDb();
 }
 
 function insertFact(db: DB, text: string, entity?: string, tags?: string) {
