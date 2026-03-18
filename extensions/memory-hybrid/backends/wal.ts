@@ -47,6 +47,7 @@ export class WriteAheadLog {
   private maxAge: number;
   private fsyncWarnEmitted = false;
   private writeLock: Promise<void> = Promise.resolve();
+  private activeIds = new Set<string>();
 
   constructor(walPath: string, maxAge: number = 5 * 60 * 1000) {
     this.walPath = walPath;
@@ -93,6 +94,7 @@ export class WriteAheadLog {
       const line = JSON.stringify(entry) + "\n";
       await appendFile(this.walPath, line, "utf-8");
       await this.fsyncAfterWrite();
+      this.activeIds.add(entry.id);
     } catch (err) {
       capturePluginError(err as Error, {
         operation: "wal-write",
@@ -182,7 +184,10 @@ export class WriteAheadLog {
       const line = JSON.stringify({ op: "remove", id }) + "\n";
       await appendFile(this.walPath, line, "utf-8");
       await this.fsyncAfterWrite();
-      if ((await this.readAll()).length === 0) await this.clear();
+      this.activeIds.delete(id);
+      if (this.activeIds.size === 0) {
+        await this.clear();
+      }
     } catch (err) {
       capturePluginError(err as Error, {
         operation: "wal-remove",
@@ -197,6 +202,7 @@ export class WriteAheadLog {
   async clear(): Promise<void> {
     try {
       await rm(this.walPath, { force: true });
+      this.activeIds.clear();
     } catch (err) {
       capturePluginError(err as Error, {
         operation: "wal-clear",
@@ -233,6 +239,10 @@ export class WriteAheadLog {
           const ndjson = valid.map((e) => JSON.stringify(e)).join("\n") + (valid.length ? "\n" : "");
           await writeFile(this.walPath, ndjson, "utf-8");
           await this.fsyncAfterWrite();
+          this.activeIds.clear();
+          for (const e of valid) {
+            this.activeIds.add(e.id);
+          }
         }
       }
       return pruned;
