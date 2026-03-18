@@ -18,6 +18,7 @@ import { promisify } from "node:util";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
 import { getDirSize, getFileSizeAsync, readJsonFile } from "../utils/fs.js";
+import { pluginLogger } from "../utils/logger.js";
 
 const execFile = promisify(execFileCb);
 
@@ -781,7 +782,7 @@ export async function createDashboardServer(ctx: DashboardContext, port: number)
     // Port is occupied (likely a previous instance that didn't shut down
     // cleanly). Fall back to an OS-assigned ephemeral port so the dashboard
     // remains available rather than failing entirely.
-    const log = ctx.logger?.error ? (m: string) => ctx.logger!.error!(m) : (m: string) => console.warn(m);
+    const log = ctx.logger?.error ? (m: string) => ctx.logger!.error!(m) : (m: string) => pluginLogger.warn(m);
     log(`[dashboard-server] Port ${port} in use (EADDRINUSE), falling back to OS-assigned port`);
     server.removeAllListeners("listening");
     boundPort = await tryListen(0);
@@ -792,7 +793,7 @@ export async function createDashboardServer(ctx: DashboardContext, port: number)
     if (ctx.logger?.error) {
       ctx.logger.error(`[dashboard-server] Server error: ${err}`);
     } else {
-      console.error("[dashboard-server] Server error:", err);
+      pluginLogger.error(`[dashboard-server] Server error: ${err}`);
     }
   });
 

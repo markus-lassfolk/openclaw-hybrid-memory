@@ -8,6 +8,7 @@ import type { MemoryCategory, DecayClass } from "../config.js";
 import type { MemoryEntry, SearchResult } from "../types/memory.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { UUID_REGEX } from "../utils/constants.js";
+import { pluginLogger } from "../utils/logger.js";
 
 const LANCE_TABLE = "memories";
 /** Substring of the LanceDB error thrown on vector-dimension mismatch (issue #366). */
@@ -75,7 +76,7 @@ export class VectorDB {
 
   private logWarn(msg: string): void {
     if (this.logger) this.logger.warn(msg);
-    else if (typeof console !== "undefined" && console.warn) console.warn(msg);
+    else pluginLogger.warn(msg);
   }
 
   private async ensureInitialized(): Promise<void> {

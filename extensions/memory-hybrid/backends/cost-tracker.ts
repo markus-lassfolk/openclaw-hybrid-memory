@@ -8,6 +8,7 @@
 
 import type { DatabaseSync } from "node:sqlite";
 import { estimateCost } from "../services/model-pricing.js";
+import { pluginLogger } from "../utils/logger.js";
 
 /**
  * A savings entry records work performed automatically that would have
@@ -155,7 +156,9 @@ export class CostTracker {
       // Never let cost tracking break LLM calls — but log the first failure per session for debuggability
       if (!this._errorLogged) {
         this._errorLogged = true;
-        console.warn(`[cost-tracker] Failed to record cost entry: ${err instanceof Error ? err.message : String(err)}`);
+        pluginLogger.warn(
+          `[cost-tracker] Failed to record cost entry: ${err instanceof Error ? err.message : String(err)}`,
+        );
       }
     }
   }
@@ -308,7 +311,7 @@ export class CostTracker {
     } catch (err) {
       if (!this._errorLogged) {
         this._errorLogged = true;
-        console.warn(
+        pluginLogger.warn(
           `[cost-tracker] Failed to record savings entry: ${err instanceof Error ? err.message : String(err)}`,
         );
       }

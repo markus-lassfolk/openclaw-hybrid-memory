@@ -10,6 +10,7 @@ import type { VectorDB } from "../backends/vector-db.js";
 import type { EmbeddingProvider } from "./embeddings.js";
 import { shouldSuppressEmbeddingError } from "./embeddings.js";
 import { capturePluginError } from "./error-reporter.js";
+import { pluginLogger } from "../utils/logger.js";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -85,7 +86,7 @@ export interface EmbeddingMaintenanceResult {
 export async function migrateEmbeddings(opts: MigrateEmbeddingsOptions): Promise<MigrateEmbeddingsResult> {
   const { factsDb, vectorDb, embeddings, batchSize = 50, onProgress, logger } = opts;
 
-  const log = logger ?? { info: console.info, warn: console.warn };
+  const log = logger ?? { info: (m: string) => pluginLogger.info(m), warn: (m: string) => pluginLogger.warn(m) };
 
   const useBatched =
     typeof (factsDb as { getCount?: unknown }).getCount === "function" &&
@@ -245,7 +246,7 @@ export async function migrateEmbeddings(opts: MigrateEmbeddingsOptions): Promise
  */
 export async function runEmbeddingMaintenance(opts: EmbeddingMaintenanceOptions): Promise<EmbeddingMaintenanceResult> {
   const { factsDb, currentProvider, currentModel, autoMigrate, logger } = opts;
-  const log = logger ?? { info: console.info, warn: console.warn };
+  const log = logger ?? { info: (m: string) => pluginLogger.info(m), warn: (m: string) => pluginLogger.warn(m) };
 
   let changed = false;
   let previousMeta;
