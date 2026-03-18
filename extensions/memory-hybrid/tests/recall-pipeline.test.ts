@@ -547,7 +547,7 @@ describe("runRecallPipelineQuery — skipForInteractiveTurns (#581)", () => {
     vi.restoreAllMocks();
   });
 
-  it("skips HyDE when interactive=true and skipForInteractiveTurns is true (default)", async () => {
+  it("skips HyDE when interactive=true and skipForInteractiveTurns is true", async () => {
     const deps = makeDeps({
       cfg: {
         queryExpansion: {
@@ -569,30 +569,6 @@ describe("runRecallPipelineQuery — skipForInteractiveTurns (#581)", () => {
 
     // HyDE was blocked — embed must be called with raw query, not HyDE-generated text
     expect(deps.embeddings.embed).toHaveBeenCalledWith("my interactive query");
-    expect(chatModule.chatCompleteWithRetry).not.toHaveBeenCalled();
-  });
-
-  it("skips HyDE when interactive=true and skipForInteractiveTurns is true (parser default)", async () => {
-    const deps = makeDeps({
-      cfg: {
-        queryExpansion: {
-          enabled: true,
-          maxVariants: 4,
-          cacheSize: 100,
-          timeoutMs: 15_000,
-          skipForInteractiveTurns: true,
-        },
-        retrievalStrategies: ["semantic"],
-        memoryTieringEnabled: false,
-        rawCfg: { llm: undefined } as unknown as RecallPipelineDeps["cfg"]["rawCfg"],
-      },
-    });
-    (deps.factsDb.search as ReturnType<typeof vi.fn>).mockReturnValue([]);
-    (deps.vectorDb.search as ReturnType<typeof vi.fn>).mockResolvedValue([]);
-
-    await runRecallPipelineQuery("another interactive query", 5, deps, { value: false }, { interactive: true });
-
-    expect(deps.embeddings.embed).toHaveBeenCalledWith("another interactive query");
     expect(chatModule.chatCompleteWithRetry).not.toHaveBeenCalled();
   });
 
