@@ -25,6 +25,7 @@ import { readFile, writeFile, mkdir, readdir, unlink, stat, realpath } from "nod
 import { dirname, join, resolve, relative, isAbsolute } from "node:path";
 import { randomUUID } from "node:crypto";
 import { formatDuration } from "../utils/duration.js";
+import { pluginLogger } from "../utils/logger.js";
 
 /** Valid task statuses */
 export const ACTIVE_TASK_STATUSES = ["In progress", "Waiting", "Stalled", "Failed", "Done"] as const;
@@ -754,7 +755,7 @@ export async function writeActiveTaskFileOptimistic(
   }
 
   // Exhausted retries — write whatever we have (last-write-wins fallback)
-  console.warn(
+  pluginLogger.warn(
     `memory-hybrid: writeActiveTaskFileOptimistic exhausted ${maxRetries} retries for ${filePath}; applying last-write-wins fallback`,
   );
   await writeActiveTaskFile(filePath, currentActive, currentCompleted);

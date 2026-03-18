@@ -12,6 +12,7 @@ import { dirname } from "node:path";
 import type { CredentialType } from "../config.js";
 import { SQLITE_BUSY_TIMEOUT_MS } from "../utils/constants.js";
 import { capturePluginError } from "../services/error-reporter.js";
+import { pluginLogger } from "../utils/logger.js";
 
 /** node:sqlite returns BLOBs as Uint8Array; convert to Buffer for crypto ops. */
 function toBuffer(val: Uint8Array | Buffer): Buffer {
@@ -158,7 +159,7 @@ export class CredentialsDB {
       this.password = null;
       // Optionally warn that key is being ignored
       if (encryptionKey.length >= 16) {
-        console.warn(
+        pluginLogger.warn(
           "Credentials vault is in plaintext mode (kdf_version=0). The provided encryption key is being ignored.",
         );
       }

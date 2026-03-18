@@ -34,6 +34,7 @@ import { versionInfo } from "../versionInfo.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { applyApprovedProposal } from "../cli/proposals.js";
 import { runBackup as runBackupFn, runBackupVerify as runBackupVerifyFn } from "../cli/backup.js";
+import { pluginLogger } from "../utils/logger.js";
 
 /** Help text shown after hybrid-mem commands list */
 export const HYBRID_MEM_HELP_GROUPED = `
@@ -291,7 +292,7 @@ function buildCliContextServices(ctx: HybridMemCliRegistrationContext, api: Claw
     provenanceService,
   } = ctx;
   const discoveredPath = join(dirname(resolvedSqlitePath), ".discovered-categories.json");
-  const logSink = { info: (m: string) => console.log(m), warn: (m: string) => console.warn(m) };
+  const logSink = { info: (m: string) => pluginLogger.info(m), warn: (m: string) => pluginLogger.warn(m) };
   return {
     runFindDuplicates: (opts) => runFindDuplicates(factsDb, vectorDb, embeddings, opts, api.logger),
     runConsolidate: (opts) => {

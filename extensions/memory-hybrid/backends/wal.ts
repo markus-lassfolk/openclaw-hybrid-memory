@@ -17,6 +17,7 @@ import {
 import { dirname } from "node:path";
 import type { DecayClass } from "../config.js";
 import { capturePluginError } from "../services/error-reporter.js";
+import { pluginLogger } from "../utils/logger.js";
 
 export type WALEntry = {
   id: string;
@@ -85,7 +86,9 @@ export class WriteAheadLog {
         // appendFileSync / writeFileSync; skipping fsync here is safe and the
         // durability guarantee degrades to best-effort on those filesystems.
         if (!this.fsyncWarnEmitted) {
-          console.warn(`[WAL] fsync skipped (${code}): filesystem may not support fsync – durability is best-effort`);
+          pluginLogger.warn(
+            `[WAL] fsync skipped (${code}): filesystem may not support fsync – durability is best-effort`,
+          );
           this.fsyncWarnEmitted = true;
         }
       } else {
@@ -128,7 +131,9 @@ export class WriteAheadLog {
           subsystem: "wal",
         });
         // Fall back to NDJSON parsing if the array is corrupted.
-        console.warn(`WAL readAll: failed to parse JSON array format, falling back to line-by-line parsing: ${err}`);
+        pluginLogger.warn(
+          `WAL readAll: failed to parse JSON array format, falling back to line-by-line parsing: ${err}`,
+        );
       }
     }
 
@@ -145,7 +150,7 @@ export class WriteAheadLog {
           severity: "info",
           subsystem: "wal",
         });
-        console.warn(`WAL readAll: failed to parse remove line, skipping: ${err}`);
+        pluginLogger.warn(`WAL readAll: failed to parse remove line, skipping: ${err}`);
       }
     }
 
@@ -162,7 +167,7 @@ export class WriteAheadLog {
           severity: "info",
           subsystem: "wal",
         });
-        console.warn(`WAL readAll: failed to parse WAL entry line, skipping: ${err}`);
+        pluginLogger.warn(`WAL readAll: failed to parse WAL entry line, skipping: ${err}`);
       }
     }
 
