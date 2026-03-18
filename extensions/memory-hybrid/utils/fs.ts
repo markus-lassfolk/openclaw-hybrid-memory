@@ -3,7 +3,7 @@
  */
 
 import { statSync, readdirSync } from "node:fs";
-import { readdir, stat } from "node:fs/promises";
+import { readdir, stat, readFile } from "node:fs/promises";
 import { join } from "node:path";
 
 /**
@@ -80,5 +80,18 @@ export async function getDirSize(dirPath: string): Promise<number> {
     return sizes.reduce((total, size) => total + size, 0);
   } catch {
     return 0;
+  }
+}
+
+/**
+ * Reads and parses a JSON file.
+ * @param filePath - Path to the JSON file
+ * @returns Parsed JSON object, or null if the file cannot be read or parsed
+ */
+export async function readJsonFile<T>(filePath: string): Promise<T | null> {
+  try {
+    return JSON.parse(await readFile(filePath, "utf-8")) as T;
+  } catch {
+    return null;
   }
 }

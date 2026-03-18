@@ -10,14 +10,14 @@
 import { createServer } from "node:http";
 import type { Server } from "node:http";
 import { existsSync } from "node:fs";
-import { readFile, readdir, stat } from "node:fs/promises";
+import { readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { execFile as execFileCb } from "node:child_process";
 import { promisify } from "node:util";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
-import { getDirSize, getFileSizeAsync } from "../utils/fs.js";
+import { getDirSize, getFileSizeAsync, readJsonFile } from "../utils/fs.js";
 
 const execFile = promisify(execFileCb);
 
@@ -139,14 +139,6 @@ export interface DashboardStatus {
 const _lanceSizeCache = new Map<string, { size: number; ts: number }>();
 const _lanceInFlight = new Map<string, Promise<number>>();
 const LANCE_CACHE_TTL_MS = 300_000; // 5 minutes
-
-async function readJsonFile<T>(filePath: string): Promise<T | null> {
-  try {
-    return JSON.parse(await readFile(filePath, "utf-8")) as T;
-  } catch {
-    return null;
-  }
-}
 
 async function collectMemoryStats(ctx: DashboardContext): Promise<MemoryStats> {
   const activeFacts = ctx.factsDb.count();
