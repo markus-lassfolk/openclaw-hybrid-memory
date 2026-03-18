@@ -14,12 +14,13 @@
  */
 
 import { existsSync } from "node:fs";
-import { readFile, writeFile, readdir, mkdir, unlink } from "node:fs/promises";
+import { writeFile, readdir, mkdir, unlink } from "node:fs/promises";
 import { join, dirname } from "node:path";
 import { homedir } from "node:os";
 import { execFile as execFileCb } from "node:child_process";
 import { promisify } from "node:util";
 import { capturePluginError } from "./error-reporter.js";
+import { readJsonFile } from "../utils/fs.js";
 
 const execFile = promisify(execFileCb);
 
@@ -142,14 +143,6 @@ export function isRuntimeExceeded(started: string | undefined, maxRuntimeMs: num
 // ---------------------------------------------------------------------------
 // Core watchdog logic
 // ---------------------------------------------------------------------------
-
-async function readJsonFile<T>(filePath: string): Promise<T | null> {
-  try {
-    return JSON.parse(await readFile(filePath, "utf-8")) as T;
-  } catch {
-    return null;
-  }
-}
 
 async function writeJsonFile(filePath: string, data: unknown): Promise<void> {
   await mkdir(dirname(filePath), { recursive: true });
@@ -279,7 +272,14 @@ export async function runTaskQueueWatchdog(
   // was written between our initial read and this unlink.
   try {
     const recheck = await readJsonFile<TaskQueueItem>(currentPath);
-    if (recheck && recheck.pid === item.pid && recheck.started === item.started) {
+    // Guard is only meaningful if we have at least one identity field to compare.
+    // When both pid and started are undefined, the comparison is always true and
+    // provides no protection. In such cases, also check branch to ensure identity.
+    const hasPidOrStarted = item.pid != null || item.started != null;
+    const identityMatches = hasPidOrStarted
+      ? recheck && recheck.pid === item.pid && recheck.started === item.started
+      : recheck && recheck.pid === item.pid && recheck.started === item.started && recheck.branch === item.branch;
+    if (identityMatches) {
       await unlink(currentPath);
     }
     // If recheck differs (new task started), leave current.json intact.
@@ -292,11 +292,7 @@ export async function runTaskQueueWatchdog(
     }
   }
 
-  const logMsg =
-    `memory-hybrid: task-queue-watchdog — ${action} entry` +
-    (item.issue != null ? ` for issue #${item.issue}` : "") +
-    (item.branch ? ` (branch: ${item.branch})` : "") +
-    ` — reason: ${staleReason}`;
+  const logMsg = `memory-hybrid: task-queue-watchdog — ${action} entry${item.issue != null ? ` for issue #${item.issue}` : ""}${item.branch ? ` (branch: ${item.branch})` : ""} — reason: ${staleReason}`;
 
   if (action === "quarantined") {
     logger?.warn(logMsg);
