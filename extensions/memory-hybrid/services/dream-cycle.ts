@@ -41,6 +41,16 @@ export interface DreamCycleConfig {
   eventLogArchivePath: string;
   /** Delete unconsolidated event log entries older than this many days. */
   maxUnconsolidatedAgeDays: number;
+  /**
+   * Retention window for log tables (recall_log, reinforcement_log, feedback_trajectories).
+   * Rows older than this many days are deleted. 0 = disabled. Default: 30.
+   */
+  logRetentionDays: number;
+  /**
+   * When true, run wal_checkpoint(TRUNCATE) + VACUUM after the cycle to reclaim freed space.
+   * Default: true.
+   */
+  vacuumOnCycle: boolean;
 }
 
 /** Result returned by a single dream cycle run. */
@@ -59,6 +69,10 @@ export interface DreamCycleResult {
   patternsFound: number;
   /** New rules stored by runReflectionRules(). */
   rulesGenerated: number;
+  /** Log table rows deleted by pruneLogTables() (Issue #573). */
+  logRowsPruned: number;
+  /** True when VACUUM + checkpoint was executed (Issue #573). */
+  vacuumRan: boolean;
   /** Human-readable summary of the cycle. */
   digestSummary: string;
   /** True when the cycle was skipped because nightlyCycle.enabled = false. */
@@ -116,6 +130,8 @@ export function buildDigestSummary(counts: {
   factsCreated: number;
   patternsFound: number;
   rulesGenerated: number;
+  logRowsPruned?: number;
+  vacuumRan?: boolean;
 }): string {
   const parts: string[] = [];
   if (counts.factsPruned > 0) parts.push(`${counts.factsPruned} facts pruned`);
@@ -126,6 +142,8 @@ export function buildDigestSummary(counts: {
   }
   if (counts.patternsFound > 0) parts.push(`${counts.patternsFound} patterns extracted`);
   if (counts.rulesGenerated > 0) parts.push(`${counts.rulesGenerated} rules generated`);
+  if (counts.logRowsPruned && counts.logRowsPruned > 0) parts.push(`${counts.logRowsPruned} log rows pruned`);
+  if (counts.vacuumRan) parts.push("VACUUM ran");
   if (parts.length === 0) return "No changes.";
   return parts.join(", ") + ".";
 }
@@ -314,6 +332,8 @@ export async function runDreamCycle(
       factsCreated: 0,
       patternsFound: 0,
       rulesGenerated: 0,
+      logRowsPruned: 0,
+      vacuumRan: false,
       digestSummary: "Dream cycle disabled.",
       skipped: true,
     };
@@ -479,7 +499,54 @@ export async function runDreamCycle(
     }
   }
 
-  // ── Step 5: Digest summary ───────────────────────────────────────────────
+  // ── Step 5: Prune log tables ─────────────────────────────────────────────
+  let logRowsPruned = 0;
+  if (config.logRetentionDays > 0) {
+    try {
+      logRowsPruned = factsDb.pruneLogTables(config.logRetentionDays);
+      if (logRowsPruned > 0) {
+        logger.info(
+          `memory-hybrid: dream-cycle — pruned ${logRowsPruned} log rows older than ${config.logRetentionDays} days`,
+        );
+      }
+    } catch (err) {
+      logger.warn(`memory-hybrid: dream-cycle — pruneLogTables failed: ${err}`);
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        operation: "dream-cycle-prune-log-tables",
+        subsystem: "facts-db",
+      });
+    }
+  }
+
+  // ── Step 5b: FTS5 optimize ───────────────────────────────────────────────
+  try {
+    factsDb.optimizeFts();
+    logger.info("memory-hybrid: dream-cycle — FTS5 index optimized");
+  } catch (err) {
+    logger.warn(`memory-hybrid: dream-cycle — optimizeFts failed: ${err}`);
+    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+      operation: "dream-cycle-optimize-fts",
+      subsystem: "facts-db",
+    });
+  }
+
+  // ── Step 5c: VACUUM + WAL checkpoint ────────────────────────────────────
+  let vacuumRan = false;
+  if (config.vacuumOnCycle) {
+    try {
+      factsDb.vacuumAndCheckpoint();
+      vacuumRan = true;
+      logger.info("memory-hybrid: dream-cycle — VACUUM + WAL checkpoint complete");
+    } catch (err) {
+      logger.warn(`memory-hybrid: dream-cycle — vacuumAndCheckpoint failed: ${err}`);
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        operation: "dream-cycle-vacuum",
+        subsystem: "facts-db",
+      });
+    }
+  }
+
+  // ── Step 6: Digest summary ───────────────────────────────────────────────
   const digestSummary = buildDigestSummary({
     factsPruned,
     factsDecayed,
@@ -488,6 +555,8 @@ export async function runDreamCycle(
     factsCreated,
     patternsFound,
     rulesGenerated,
+    logRowsPruned,
+    vacuumRan,
   });
 
   logger.info(`memory-hybrid: dream-cycle — complete. ${digestSummary}`);
@@ -500,6 +569,8 @@ export async function runDreamCycle(
     factsCreated,
     patternsFound,
     rulesGenerated,
+    logRowsPruned,
+    vacuumRan,
     digestSummary,
     skipped: false,
   };
