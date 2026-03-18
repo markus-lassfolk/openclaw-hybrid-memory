@@ -127,7 +127,8 @@ export function formatQualityLoopEntry(
 // ---------------------------------------------------------------------------
 
 /**
- * Run `humanizer score --json <text>` and return the parsed result.
+ * Run `humanizer score --json` and return the parsed result.
+ * Text is passed via stdin to avoid exposing content in process listings.
  *
  * Returns null when:
  *   - humanizer is not installed (ENOENT)
@@ -145,9 +146,10 @@ export async function runHumanizerScore(
   const truncated = text.length > cfg.maxTextLength ? text.slice(0, cfg.maxTextLength) : text;
 
   try {
-    const { stdout } = await execFileAsync(cfg.bin, ["score", "--json", "--", truncated], {
+    const { stdout } = await execFileAsync(cfg.bin, ["score", "--json", "--stdin"], {
       timeout: 10_000,
       maxBuffer: 1024 * 1024, // 1 MB
+      input: truncated,
     });
     return parseHumanizerOutput(stdout);
   } catch (err) {

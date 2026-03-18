@@ -77,17 +77,16 @@ async function runCapture(
   const ev = event as { success?: boolean; messages?: unknown[] };
   const messages = ev?.messages ?? [];
 
+  const assistantText = messages.length > 0 ? extractLastAssistantText(messages as unknown[]) : undefined;
+
   // 1. Frustration: append last assistant message to session turn history
-  if (messages.length > 0) {
+  if (assistantText?.trim()) {
     try {
-      const assistantContent = extractLastAssistantText(messages as unknown[]);
-      if (assistantContent?.trim()) {
-        const state = frustrationStateMap.get(sessionKey);
-        if (state) {
-          state.turns.push({ role: "assistant", content: assistantContent });
-          if (state.turns.length > 20) state.turns.splice(0, state.turns.length - 20);
-          frustrationStateMap.set(sessionKey, state);
-        }
+      const state = frustrationStateMap.get(sessionKey);
+      if (state) {
+        state.turns.push({ role: "assistant", content: assistantText });
+        if (state.turns.length > 20) state.turns.splice(0, state.turns.length - 20);
+        frustrationStateMap.set(sessionKey, state);
       }
     } catch (err) {
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
@@ -99,9 +98,9 @@ async function runCapture(
   }
 
   // 2. Humanizer quality-loop scoring (Issue #616 — Phase 1: evaluator only, no rewriting)
-  if (ctx.cfg.humanizer?.enabled && messages.length > 0) {
+  if (ctx.cfg.humanizer?.enabled && assistantText?.trim()) {
     try {
-      const textForScore = extractLastAssistantText(messages as unknown[]);
+      const textForScore = assistantText;
       if (textForScore?.trim()) {
         const humCfg = ctx.cfg.humanizer;
         const result = await runHumanizerScore(textForScore, {
