@@ -113,11 +113,13 @@ export function formatQualityLoopEntry(
   }
 
   if (opts.modelTag) {
-    parts.push(`model: ${opts.modelTag}`);
+    const safeModelTag = opts.modelTag.replace(/[\n\r,]/g, " ").trim();
+    if (safeModelTag) parts.push(`model: ${safeModelTag}`);
   }
 
   if (opts.skillTag) {
-    parts.push(`skill: ${opts.skillTag}`);
+    const safeSkillTag = opts.skillTag.replace(/[\n\r,]/g, " ").trim();
+    if (safeSkillTag) parts.push(`skill: ${safeSkillTag}`);
   }
 
   return parts.join(", ");
@@ -158,8 +160,9 @@ export async function runHumanizerScore(
       let settled = false;
 
       child.stdout.on("data", (chunk) => {
+        if (settled) return;
         stdout += chunk;
-        if (!settled && stdout.length > 1024 * 1024) {
+        if (stdout.length > 1024 * 1024) {
           settled = true;
           child.kill();
           reject(new Error("stdout exceeded 1 MB"));
@@ -167,7 +170,10 @@ export async function runHumanizerScore(
       });
 
       child.stderr.on("data", (chunk) => {
-        if (stderr.length < 64 * 1024) stderr += chunk;
+        const MAX_STDERR = 64 * 1024;
+        if (stderr.length < MAX_STDERR) {
+          stderr += String(chunk).slice(0, MAX_STDERR - stderr.length);
+        }
       });
 
       child.on("error", (err) => {

@@ -127,6 +127,17 @@ describe("formatQualityLoopEntry", () => {
     const entry = formatQualityLoopEntry(makeResult(0.73, ["gush"]), { modelTag: "sonnet", skillTag: "weather" });
     expect(entry).toBe("humanizer_score: 0.73, patterns: ['gush'], model: sonnet, skill: weather");
   });
+
+  it("strips commas and newlines from modelTag and skillTag", () => {
+    const entry = formatQualityLoopEntry(makeResult(0.5), {
+      modelTag: "claude,opus\nnew",
+      skillTag: "my\rskill,tag",
+    });
+    expect(entry).not.toContain("\n");
+    expect(entry).not.toContain("\r");
+    expect(entry).toContain("model: claude opus new");
+    expect(entry).toContain("skill: my skill tag");
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -152,6 +163,17 @@ describe("runHumanizerScore", () => {
       bin: "/nonexistent/path/to/humanizer-missing-binary",
       minTextLength: 10,
       maxTextLength: 4000,
+    });
+    expect(result).toBeNull();
+  });
+
+  it("truncates text to maxTextLength before invoking binary", async () => {
+    // Text (5000 chars) exceeds maxTextLength (500); truncation must happen without throwing.
+    // Non-existent binary → ENOENT → null verifies the truncation path runs cleanly.
+    const result = await runHumanizerScore("X".repeat(5000), {
+      bin: "/nonexistent/path/to/humanizer-missing-binary",
+      minTextLength: 10,
+      maxTextLength: 500,
     });
     expect(result).toBeNull();
   });
