@@ -344,4 +344,18 @@ export type ApiTapConfig = {
   allowedPatterns: string[];
   /** URL glob patterns blocked from capture (auth/OAuth flows, default: blocked). */
   blockedPatterns: string[];
+/** Humanizer style scoring: quality-loop metric for detecting AI-writing patterns (Issue #616). */
+export type HumanizerConfig = {
+  /** Enable humanizer scoring on agent replies (default: false — opt-in). */
+  enabled: boolean;
+  /** Path to the humanizer binary (default: "humanizer"). */
+  bin: string;
+  /** Minimum reply length in characters before scoring (default: 100). */
+  minTextLength: number;
+  /** Maximum reply length in characters sent to humanizer (default: 4000). */
+  maxTextLength: number;
+  /** Optional model name to tag in the stored quality_loop fact. */
+  modelTag?: string;
+  /** Optional skill/context tag for the stored fact. */
+  skillTag?: string;
 };
