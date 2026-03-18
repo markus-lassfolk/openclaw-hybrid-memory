@@ -322,6 +322,7 @@ const memoryHybridPlugin = {
         clearTimeout(old.timers.languageKeywordsStartupTimeout.value);
       if (old.timers.postUpgradeTimeout.value) clearTimeout(old.timers.postUpgradeTimeout.value);
       if (old.timers.passiveObserverTimer.value) clearInterval(old.timers.passiveObserverTimer.value);
+      if (old.timers.watchdogTimer.value) clearInterval(old.timers.watchdogTimer.value);
       // Issue #463: Dispose lifecycle hooks (stale session sweep timer, per-session state)
       old.lifecycleHooksHandle?.dispose();
     }
