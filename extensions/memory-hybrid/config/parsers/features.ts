@@ -331,7 +331,7 @@ export function parseErrorReportingConfig(cfg: Record<string, unknown>): ErrorRe
   // When errorReporting is not specified: opt-out defaults (enabled + consent true, community DSN)
   if (!errorReportingRaw || typeof errorReportingRaw !== "object") {
     return {
-      enabled: true,
+      enabled: true, // opt-out during dev phase — see JSDoc above
       dsn: DEFAULT_GLITCHTIP_DSN,
       consent: true,
       mode: "community",
@@ -340,7 +340,7 @@ export function parseErrorReportingConfig(cfg: Record<string, unknown>): ErrorRe
   }
 
   // enabled defaults to true — user must explicitly set enabled: false to opt out
-  let enabled = errorReportingRaw.enabled !== false;
+  let enabled = errorReportingRaw.enabled !== false; // opt-out: true unless user explicitly disables
   // consent defaults to true — user must explicitly set consent: false to opt out
   const consent = errorReportingRaw.consent !== false;
   const dsnRaw = typeof errorReportingRaw.dsn === "string" ? errorReportingRaw.dsn.trim() : "";
