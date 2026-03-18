@@ -294,3 +294,79 @@ describe("classifyDecay — non-English keys (French translation in file)", () =
     expect(classifyDecay("décision", null, null, "nous avons choisi React")).toBe("permanent");
   });
 });
+
+// ---------------------------------------------------------------------------
+// Case-insensitive matching — capitalized translations (bug #597)
+// ---------------------------------------------------------------------------
+
+describe("classifyDecay — capitalized translations (case-insensitive matching)", () => {
+  let tmpDir: string;
+
+  beforeEach(async () => {
+    tmpDir = mkdtempSync(join(tmpdir(), "decay-test-caps-"));
+    setKeywordsPath(tmpDir);
+    writeFileSync(
+      join(tmpDir, ".language-keywords.json"),
+      langFile({
+        de: {
+          decayPermanentKeys: ["Entscheidung", "Architektur", "Geburtsdatum"],
+          decaySessionKeys: ["Aktuelle_Datei"],
+          decayActiveKeys: ["Aufgabe", "Zweig"],
+          decayPermanentEntities: ["Entscheidung", "Konvention"],
+          decayCheckpointKeys: ["Kontrollpunkt"],
+          triggers: [],
+          categoryDecision: [],
+          categoryPreference: [],
+          categoryEntity: [],
+          categoryFact: [],
+          decayPermanent: [],
+          decaySession: [],
+          decayActive: [],
+          correctionSignals: [],
+          directiveSignals: [],
+          directiveExplicitMemory: [],
+          directiveFutureBehavior: [],
+          directiveAbsoluteRule: [],
+          directivePreference: [],
+          directiveWarning: [],
+          directiveProcedural: [],
+          directiveImplicitCorrection: [],
+          directiveConditionalRule: [],
+          reinforcementSignals: [],
+          reinforcementStrongPraise: [],
+          reinforcementMethodConfirmation: [],
+          reinforcementRelief: [],
+          reinforcementComparativePraise: [],
+          reinforcementSharingSignals: [],
+        },
+      }),
+    );
+    await clearKeywordCache();
+  });
+
+  afterEach(async () => {
+    await clearKeywordCache();
+    setKeywordsPath("");
+    try {
+      if (tmpDir) rmSync(tmpDir, { recursive: true });
+    } catch {
+      // ignore
+    }
+  });
+
+  it('key "Aufgabe" (capitalized German: task) → active', () => {
+    expect(classifyDecay(null, "aufgabe", null, "Aufgabe erledigen")).toBe("active");
+  });
+
+  it('key "Architektur" (capitalized German: architecture) → permanent', () => {
+    expect(classifyDecay(null, "architektur", null, "Microservices")).toBe("permanent");
+  });
+
+  it('entity "Entscheidung" (capitalized German: decision) → permanent', () => {
+    expect(classifyDecay("entscheidung", null, null, "wir haben React gewählt")).toBe("permanent");
+  });
+
+  it('entity "Konvention" (capitalized German: convention) → permanent', () => {
+    expect(classifyDecay("konvention", null, null, "camelCase verwenden")).toBe("permanent");
+  });
+});

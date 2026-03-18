@@ -471,7 +471,8 @@ function mergeGroup(
   if (translationsByLang) {
     for (const langData of Object.values(translationsByLang)) {
       const list = langData?.[group];
-      if (Array.isArray(list)) for (const w of list) if (typeof w === "string" && w.trim()) set.add(w.trim());
+      if (Array.isArray(list))
+        for (const w of list) if (typeof w === "string" && w.trim()) set.add(w.trim().toLowerCase());
     }
   }
   return [...set];
