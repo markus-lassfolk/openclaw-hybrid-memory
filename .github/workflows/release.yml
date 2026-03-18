@@ -36,11 +36,32 @@ jobs:
           INPUT_VERSION: ${{ github.event.inputs.version }}
         run: |
           if [[ "${{ github.event_name }}" == "push" ]]; then
-            echo "tag=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+            TAG="${GITHUB_REF#refs/tags/}"
           else
-            echo "tag=${INPUT_VERSION}" >> "$GITHUB_OUTPUT"
+            TAG="${INPUT_VERSION}"
           fi
-      - name: Create GitHub Release
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+      - name: Prepare release body
+        id: prep
+        run: |
+          if [ -f "docs/RELEASE-NOTES-${{ steps.version.outputs.version }}.md" ]; then
+            echo "has_release_notes=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_release_notes=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Create GitHub Release (with release notes file)
+        if: steps.prep.outputs.has_release_notes == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: Release ${{ steps.version.outputs.tag }}
+          body_path: docs/RELEASE-NOTES-${{ steps.version.outputs.version }}.md
+          generate_release_notes: false
+          draft: false
+          prerelease: false
+      - name: Create GitHub Release (auto-generated notes)
+        if: steps.prep.outputs.has_release_notes != 'true'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.version.outputs.tag }}
