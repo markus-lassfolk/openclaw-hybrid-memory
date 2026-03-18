@@ -51,10 +51,7 @@ function countFeedbackInWindow(
   implicitPositive: number;
   implicitNegative: number;
 } {
-  // Use the raw DB via a type-cast to access the db instance for direct SQL
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const db = (factsDb as any).liveDb as import("node:sqlite").DatabaseSync | undefined;
-  if (!db) return { corrections: 0, praise: 0, implicitPositive: 0, implicitNegative: 0 };
+  const db = factsDb.getRawDb();
 
   let corrections = 0;
   let praise = 0;
@@ -203,9 +200,7 @@ export function runClosedLoopAnalysis(factsDb: FactsDB, config: Partial<ClosedLo
 
   try {
     // Find rules/patterns created in last 30 days
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const db = (factsDb as any).liveDb as import("node:sqlite").DatabaseSync | undefined;
-    if (!db) return report;
+    const db = factsDb.getRawDb();
 
     const rows = db
       .prepare(
@@ -306,9 +301,7 @@ export function runClosedLoopAnalysis(factsDb: FactsDB, config: Partial<ClosedLo
  */
 export function getEffectivenessReport(factsDb: FactsDB): string {
   try {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const db = (factsDb as any).liveDb as import("node:sqlite").DatabaseSync | undefined;
-    if (!db) return "No database available.";
+    const db = factsDb.getRawDb();
 
     const rows = db
       .prepare(
