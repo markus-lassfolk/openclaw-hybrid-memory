@@ -100,8 +100,8 @@ export class WriteAheadLog {
     try {
       const line = JSON.stringify(entry) + "\n";
       appendFileSync(this.walPath, line, "utf-8");
-      this.fsyncAfterWrite();
       this.activeIds.add(entry.id);
+      this.fsyncAfterWrite();
     } catch (err) {
       capturePluginError(err as Error, {
         operation: "wal-write",
@@ -173,9 +173,9 @@ export class WriteAheadLog {
     try {
       const line = JSON.stringify({ op: "remove", id }) + "\n";
       appendFileSync(this.walPath, line, "utf-8");
-      this.fsyncAfterWrite();
       // Use the in-memory set — no O(n) readAll() needed.
       this.activeIds.delete(id);
+      this.fsyncAfterWrite();
       if (this.activeIds.size === 0) this.clear();
     } catch (err) {
       capturePluginError(err as Error, {
