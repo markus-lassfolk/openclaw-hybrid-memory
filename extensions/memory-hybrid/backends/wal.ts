@@ -54,11 +54,23 @@ export class WriteAheadLog {
   private walPath: string;
   private maxAge: number;
   private fsyncWarnEmitted = false;
+  /** In-memory set of IDs that are currently active (written but not removed).
+   *  Seeded with a single O(n) parse at construction; updated on every
+   *  write/remove/clear so that remove() never needs to call readAll(). */
+  private activeIds: Set<string>;
 
   constructor(walPath: string, maxAge: number = 5 * 60 * 1000) {
     this.walPath = walPath;
     this.maxAge = maxAge;
     mkdirSync(dirname(walPath), { recursive: true });
+    // One-time O(n) parse to seed the in-memory active-ID set.
+    // Wrapped in try-catch so that a bad path (e.g. a directory) does not
+    // prevent construction – write/remove will surface the error at call time.
+    try {
+      this.activeIds = new Set(this.readAll().map((e) => e.id));
+    } catch {
+      this.activeIds = new Set();
+    }
   }
 
   private fsyncAfterWrite(): void {
@@ -89,6 +101,7 @@ export class WriteAheadLog {
       const line = JSON.stringify(entry) + "\n";
       appendFileSync(this.walPath, line, "utf-8");
       this.fsyncAfterWrite();
+      this.activeIds.add(entry.id);
     } catch (err) {
       capturePluginError(err as Error, {
         operation: "wal-write",
@@ -161,7 +174,9 @@ export class WriteAheadLog {
       const line = JSON.stringify({ op: "remove", id }) + "\n";
       appendFileSync(this.walPath, line, "utf-8");
       this.fsyncAfterWrite();
-      if (this.readAll().length === 0) this.clear();
+      // Use the in-memory set — no O(n) readAll() needed.
+      this.activeIds.delete(id);
+      if (this.activeIds.size === 0) this.clear();
     } catch (err) {
       capturePluginError(err as Error, {
         operation: "wal-remove",
@@ -174,6 +189,7 @@ export class WriteAheadLog {
   clear(): void {
     try {
       if (existsSync(this.walPath)) rmSync(this.walPath, { force: true });
+      this.activeIds.clear();
     } catch (err) {
       capturePluginError(err as Error, {
         operation: "wal-clear",
@@ -203,6 +219,8 @@ export class WriteAheadLog {
         writeFileSync(this.walPath, ndjson, "utf-8");
         this.fsyncAfterWrite();
       }
+      // Sync the in-memory set after compaction.
+      this.activeIds = new Set(valid.map((e) => e.id));
     }
     return pruned;
   }

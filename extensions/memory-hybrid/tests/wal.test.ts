@@ -272,6 +272,88 @@ describe("WriteAheadLog", () => {
       const tempPath = `${walPath}.tmp`;
       expect(existsSync(tempPath)).toBe(false);
     });
+    it("does not call readAll() during remove — O(1) compaction check", () => {
+      const entry1 = {
+        id: randomUUID(),
+        timestamp: Date.now(),
+        operation: "store" as const,
+        data: { text: "Memory 1", category: "general", importance: 0.7, source: "test" },
+      };
+      const entry2 = {
+        id: randomUUID(),
+        timestamp: Date.now() + 100,
+        operation: "store" as const,
+        data: { text: "Memory 2", category: "general", importance: 0.8, source: "test" },
+      };
+
+      wal.write(entry1);
+      wal.write(entry2);
+
+      const readAllSpy = vi.spyOn(wal, "readAll");
+      wal.remove(entry1.id);
+
+      expect(readAllSpy).not.toHaveBeenCalled();
+      readAllSpy.mockRestore();
+    });
+
+    it("batch removals do not trigger any readAll() call", () => {
+      const ids: string[] = [];
+      for (let i = 0; i < 10; i++) {
+        const entry = {
+          id: randomUUID(),
+          timestamp: Date.now() + i,
+          operation: "store" as const,
+          data: { text: `Memory ${i}`, category: "general", importance: 0.7, source: "test" },
+        };
+        ids.push(entry.id);
+        wal.write(entry);
+      }
+
+      const readAllSpy = vi.spyOn(wal, "readAll");
+      for (const id of ids) {
+        wal.remove(id);
+      }
+
+      expect(readAllSpy).not.toHaveBeenCalled();
+      readAllSpy.mockRestore();
+    });
+
+    it("auto-clears WAL after all entries removed via batch removes", () => {
+      const ids: string[] = [];
+      for (let i = 0; i < 5; i++) {
+        const entry = {
+          id: randomUUID(),
+          timestamp: Date.now() + i,
+          operation: "store" as const,
+          data: { text: `Memory ${i}`, category: "general", importance: 0.7, source: "test" },
+        };
+        ids.push(entry.id);
+        wal.write(entry);
+      }
+
+      for (const id of ids) {
+        wal.remove(id);
+      }
+
+      expect(existsSync(walPath)).toBe(false);
+      expect(wal.readAll()).toEqual([]);
+    });
+
+    it("removes non-existent ID without clearing when other entries exist", () => {
+      const entry = {
+        id: randomUUID(),
+        timestamp: Date.now(),
+        operation: "store" as const,
+        data: { text: "Survivor", category: "general", importance: 0.9, source: "test" },
+      };
+      wal.write(entry);
+      wal.remove("ghost-id-that-never-existed");
+
+      expect(existsSync(walPath)).toBe(true);
+      expect(wal.readAll()).toHaveLength(1);
+      expect(wal.readAll()[0].id).toBe(entry.id);
+    });
+
   });
 
   describe("clear operation", () => {
