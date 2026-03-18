@@ -220,7 +220,12 @@ export class LearningsDB {
     return row.n;
   }
 
-  findByAreaContent(type: LearningEntryType, area: string, content: string, status: LearningEntryStatus): LearningEntry | null {
+  findByAreaContent(
+    type: LearningEntryType,
+    area: string,
+    content: string,
+    status: LearningEntryStatus,
+  ): LearningEntry | null {
     const row = this.db
       .prepare("SELECT * FROM learnings WHERE type = ? AND area = ? AND content = ? AND status = ?")
       .get(type, area, content, status) as unknown as LearningRow | undefined;
