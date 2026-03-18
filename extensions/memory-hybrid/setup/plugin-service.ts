@@ -28,6 +28,7 @@ import { runBuildLanguageKeywords } from "../services/language-keywords-build.js
 import { getLanguageKeywordsFilePath } from "../utils/language-keywords.js";
 import { versionInfo } from "../versionInfo.js";
 import { checkOpenClawVersion } from "../utils/version-check.js";
+import { runTaskQueueWatchdog } from "../services/task-queue-watchdog.js";
 
 export interface PluginServiceContext {
   PLUGIN_ID: string;
@@ -57,6 +58,7 @@ export interface PluginServiceContext {
     languageKeywordsStartupTimeout: { value: ReturnType<typeof setTimeout> | null };
     postUpgradeTimeout: { value: ReturnType<typeof setTimeout> | null };
     passiveObserverTimer: { value: ReturnType<typeof setInterval> | null };
+    watchdogTimer: { value: ReturnType<typeof setInterval> | null };
   };
 }
 
@@ -443,6 +445,22 @@ export function createPluginService(ctx: PluginServiceContext) {
         );
       }
 
+      // Task queue watchdog: periodically detect stale/broken autonomous queue runs and self-heal
+      const WATCHDOG_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
+      const watchdogRun = async () => {
+        try {
+          await runTaskQueueWatchdog({ repoDir: dirname(dirname(dirname(resolvedSqlitePath))) }, api.logger);
+        } catch (err) {
+          api.logger.warn?.(`memory-hybrid: task-queue-watchdog failed (non-fatal): ${err}`);
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+            subsystem: "plugin-service",
+            operation: "task-queue-watchdog",
+          });
+        }
+      };
+      timers.watchdogTimer.value = setInterval(() => void watchdogRun(), WATCHDOG_INTERVAL_MS);
+      api.logger.info("memory-hybrid: task-queue-watchdog enabled (interval: 5m)");
+
       // Post-upgrade pipeline: once per version bump, run build-languages, self-correction, reflection, procedures (via CLI)
       const rawVersionFilePath = join(dirname(resolvedSqlitePath), ".last-post-upgrade-version");
       // Expand literal $HOME or leading ~ if the sqlite path wasn't fully resolved before being stored.
@@ -560,6 +578,10 @@ export function createPluginService(ctx: PluginServiceContext) {
       if (timers.postUpgradeTimeout.value) {
         clearTimeout(timers.postUpgradeTimeout.value);
         timers.postUpgradeTimeout.value = null;
+      }
+      if (timers.watchdogTimer.value) {
+        clearInterval(timers.watchdogTimer.value);
+        timers.watchdogTimer.value = null;
       }
       if (dashboardServer) {
         try {
