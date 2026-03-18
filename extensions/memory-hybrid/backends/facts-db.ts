@@ -3719,8 +3719,6 @@ export class FactsDB {
   // Topic cluster storage (Issue #146)
   // ---------------------------------------------------------------------------
 
-  /** Create clusters and cluster_members tables for topic cluster storage. */
-
   /**
    * Get all unique fact IDs that participate in at least one memory link
    * (as source or target). Used by cluster detection.
