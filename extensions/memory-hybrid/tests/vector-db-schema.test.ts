@@ -394,6 +394,14 @@ describe("VectorDB issue #599 — search() returns partial metadata with conserv
     expect(entry.value).toBeNull();
   });
 
+  it('search result decayClass is "normal" (neutral, not boosted by preferLongTerm)', async () => {
+    const results = await db.search([0.1, 0.2, 0.3], 5, 0);
+    expect(results).toHaveLength(1);
+    expect(results[0].entry.decayClass).toBe("normal");
+    expect(results[0].entry.decayClass).not.toBe("stable");
+    expect(results[0].entry.decayClass).not.toBe("permanent");
+  });
+
   it("search result expiresAt is null and lastConfirmedAt is 0 (conservative)", async () => {
     const results = await db.search([0.1, 0.2, 0.3], 5, 0);
     expect(results).toHaveLength(1);

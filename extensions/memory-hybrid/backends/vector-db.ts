@@ -366,7 +366,7 @@ export class VectorDB {
                 (row.createdAt as number) > 10_000_000_000
                   ? Math.floor((row.createdAt as number) / 1000)
                   : (row.createdAt as number),
-              decayClass: "stable" as DecayClass,
+              decayClass: "normal" as DecayClass,
               expiresAt: null,
               lastConfirmedAt: 0,
               confidence: 0,
