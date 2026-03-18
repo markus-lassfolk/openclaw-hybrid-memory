@@ -231,10 +231,11 @@ export class ApitapService {
    * Faster than capture but may miss dynamically loaded endpoints.
    */
   async peek(siteUrl: string): Promise<ApitapCaptureResult> {
+    const timeout = this.cfg.captureTimeoutSeconds;
     const startMs = Date.now();
 
     return new Promise((resolve) => {
-      const proc = spawn("apitap", ["peek", "--url", siteUrl, "--output", "json"], {
+      const proc = spawn("apitap", ["peek", "--url", siteUrl, "--timeout", String(timeout), "--output", "json"], {
         stdio: ["ignore", "pipe", "pipe"],
       });
 
@@ -249,9 +250,12 @@ export class ApitapService {
         stderr += data.toString();
       });
 
-      const killTimer = setTimeout(() => {
-        proc.kill("SIGTERM");
-      }, 60_000);
+      const killTimer = setTimeout(
+        () => {
+          proc.kill("SIGTERM");
+        },
+        (timeout + 10) * 1000,
+      );
 
       proc.on("close", (code) => {
         clearTimeout(killTimer);
@@ -284,6 +288,7 @@ export class ApitapService {
     method: string,
     parameters: Record<string, unknown>,
     sampleResponse: unknown,
+    contentType?: string,
   ): SkillScaffold {
     const urlObj = (() => {
       try {
@@ -318,13 +323,8 @@ export class ApitapService {
       }
     })();
 
-    const curlParams = Object.entries(parameters)
-      .map(([k, v]) => {
-        const escapedValue = String(v).replace(/'/g, "'\\''");
-        return `-d '${k}=${escapedValue}'`;
-      })
-      .join(" ");
-    const baseUrl = encodeURI(`${siteUrl}${endpoint}`);
+    const isAbsoluteUrl = endpoint.startsWith("http://") || endpoint.startsWith("https://");
+    const baseUrl = isAbsoluteUrl ? encodeURI(endpoint) : encodeURI(`${siteUrl}${endpoint}`);
     const upperMethod = method.toUpperCase();
 
     // For GET/HEAD, serialize parameters as a query string so the scaffold
@@ -334,10 +334,32 @@ export class ApitapService {
       .join("&");
     const getUrl = queryString ? `${baseUrl}?${queryString}` : baseUrl;
 
-    const curlExample =
-      upperMethod === "GET" || upperMethod === "HEAD"
-        ? `curl "${getUrl}"`
-        : `curl -X ${upperMethod} "${baseUrl}" ${curlParams}`.trim();
+    const isJsonContentType = contentType?.toLowerCase().includes("application/json");
+
+    let curlExample: string;
+    if (upperMethod === "GET" || upperMethod === "HEAD") {
+      curlExample = `curl "${getUrl}"`;
+    } else {
+      const curlParams = isJsonContentType
+        ? (() => {
+            const jsonBody = Object.entries(parameters).reduce(
+              (acc, [k, v]) => {
+                acc[k] = v;
+                return acc;
+              },
+              {} as Record<string, unknown>,
+            );
+            const escapedJson = JSON.stringify(jsonBody).replace(/'/g, "'\\''");
+            return `-H 'Content-Type: application/json' -d '${escapedJson}'`;
+          })()
+        : Object.entries(parameters)
+            .map(([k, v]) => {
+              const escapedValue = String(v).replace(/'/g, "'\\''");
+              return `-d '${k}=${escapedValue}'`;
+            })
+            .join(" ");
+      curlExample = `curl -X ${upperMethod} "${baseUrl}" ${curlParams}`.trim();
+    }
 
     return {
       skillName,

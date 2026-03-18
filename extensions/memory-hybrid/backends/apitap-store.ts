@@ -176,8 +176,9 @@ export class ApitapStore {
     const params: SQLInputValue[] = [];
 
     if (filter?.siteUrl) {
-      query += " AND site_url LIKE ?";
-      params.push(`%${filter.siteUrl}%`);
+      const escapedSiteUrl = filter.siteUrl.replace(/[%_]/g, "\\$&");
+      query += " AND site_url LIKE ? ESCAPE '\\'";
+      params.push(`%${escapedSiteUrl}%`);
     }
     if (filter?.sessionId) {
       query += " AND session_id = ?";

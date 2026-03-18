@@ -431,6 +431,7 @@ export function registerApitapTools(ctx: ApitapToolsContext, api: ClawdbotPlugin
           endpoint.method,
           parameters,
           sampleResponse,
+          endpoint.contentType,
         );
 
         const paramLines = Object.entries(scaffold.parameters).map(
