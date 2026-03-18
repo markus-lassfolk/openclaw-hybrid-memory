@@ -288,14 +288,6 @@ export function runConfigSetForCli(ctx: HandlerContext, key: string, value: stri
   const valueLower = value.trim().toLowerCase();
   const enableValues = ["true", "enabled", "on", "1"];
   const disableValues = ["false", "disabled", "off", "0"];
-  let boolVal: boolean;
-  if (enableValues.includes(valueLower)) {
-    boolVal = true;
-  } else if (disableValues.includes(valueLower)) {
-    boolVal = false;
-  } else {
-    boolVal = value === "true" || value === "enabled"; // unknown value → false for other code paths
-  }
   const objectToggles: Array<{ key: string; prop: string }> = [
     { key: "costTracking", prop: "enabled" },
     { key: "nightlyCycle", prop: "enabled" },

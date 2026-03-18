@@ -519,6 +519,7 @@ export async function runAnalyzeFeedbackPhrasesForCli(
       const merged = {
         reinforcement: [...new Set([...existing.reinforcement, ...reinforcement])],
         correction: [...new Set([...existing.correction, ...correction])],
+        initialRunDone: true,
       };
       saveUserFeedbackPhrases(merged);
       learned = reinforcement.length > 0 || correction.length > 0;
@@ -529,6 +530,7 @@ export async function runAnalyzeFeedbackPhrasesForCli(
       }
     } else if (!existing.initialRunDone) {
       // Persist initialRunDone even without --learn so the 30→3-day auto-window works on subsequent runs
+      existing.initialRunDone = true;
       saveUserFeedbackPhrases(existing);
     }
     return { reinforcement, correction, sessionsScanned: sessionFiles.length, learned };
