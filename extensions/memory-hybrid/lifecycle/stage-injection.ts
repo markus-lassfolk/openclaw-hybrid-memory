@@ -166,8 +166,30 @@ async function runInjection(
       api.logger.debug?.(
         `memory-hybrid: progressive index budget exhausted by fixed blocks (indexCap=${indexCap} tokens); no index will be injected`,
       );
+      if (pinnedPart.length > 0) {
+        const pinnedIds = pinned.map((x) => x.entry.id);
+        ctx.factsDb.refreshAccessedFacts(pinnedIds);
+        if (ambientSeenFacts) ambientSeenFacts.markSeen(pinnedIds);
+        if (ctx.cfg.graph.enabled && ctx.cfg.graph.strengthenOnRecall && pinnedIds.length >= 2) {
+          strengthenHebbianLinks(pinnedIds, ctx.factsDb, api.logger);
+        }
+        const fullContent = `${pinnedHeader}${pinnedPart.join("\n")}\n</relevant-memories>`;
+        api.logger.info?.(
+          `memory-hybrid: progressive_hybrid — ${pinnedPart.length} pinned in full, no index (~${pinnedTokens} tokens)`,
+        );
+        return {
+          prependContext: markDegradedLatency(wrapRecalledContext(issueBlock + hotBlock + withProcedures(fullContent))),
+        };
+      }
+      if (procedureBlock) {
+        return { prependContext: markDegradedLatency(wrapRecalledContext(issueBlock + hotBlock + procedureBlock)) };
+      }
+      const combinedContext = issueBlock + hotBlock;
+      return combinedContext
+        ? { prependContext: markDegradedLatency(wrapRecalledContext(combinedContext)) }
+        : undefined;
     }
-    const { lines: indexLines, ids: indexIds } = buildProgressiveIndex(rest, Math.max(0, indexBudget), 1);
+    const { lines: indexLines, ids: indexIds } = buildProgressiveIndex(rest, indexBudget, 1);
     lastProgressiveIndexIdsRef.length = 0;
     lastProgressiveIndexIdsRef.push(...indexIds);
     if (pinnedPart.length > 0) ctx.factsDb.refreshAccessedFacts(pinned.map((x) => x.entry.id));
