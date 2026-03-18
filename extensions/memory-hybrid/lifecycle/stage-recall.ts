@@ -507,7 +507,7 @@ async function runRecall(
     const maxTokens = Math.max(0, totalBudget - fixedBlocksTokens);
     if (maxTokens === 0) {
       api.logger.warn?.(
-        `memory-hybrid: fixed blocks (${fixedBlocksTokens} tokens) exhausted total budget (${totalBudget} tokens); recall suppressed`
+        `memory-hybrid: fixed blocks (${fixedBlocksTokens} tokens) exhausted total budget (${totalBudget} tokens); recall suppressed`,
       );
     }
     const indexCap = Math.min(progressiveIndexMaxTokens ?? maxTokens, maxTokens);

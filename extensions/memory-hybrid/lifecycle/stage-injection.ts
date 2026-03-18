@@ -164,7 +164,7 @@ async function runInjection(
     const indexBudget = indexCap - estimateTokens(pinnedHeader + pinnedPart.join("\n") + indexIntro + indexFooter);
     if (indexBudget <= 0) {
       api.logger.debug?.(
-        `memory-hybrid: progressive index budget exhausted by fixed blocks (indexCap=${indexCap} tokens); no index will be injected`
+        `memory-hybrid: progressive index budget exhausted by fixed blocks (indexCap=${indexCap} tokens); no index will be injected`,
       );
     }
     const { lines: indexLines, ids: indexIds } = buildProgressiveIndex(rest, Math.max(0, indexBudget), 1);

@@ -119,8 +119,7 @@ export async function runRecallPipelineQuery(
         let textToEmbed = trimmed;
         // Skip HyDE on interactive turns when skipForInteractiveTurns is enabled (default true).
         // This prevents a full LLM round-trip on the hot before_agent_start path (#581).
-        const hydeBlockedByInteractive =
-          opts?.interactive === true && cfg.queryExpansion.skipForInteractiveTurns;
+        const hydeBlockedByInteractive = opts?.interactive === true && cfg.queryExpansion.skipForInteractiveTurns;
         const allowHyde =
           cfg.queryExpansion.enabled && !hydeBlockedByInteractive && (!opts?.limitHydeOnce || !hydeUsedRef.value);
         t0 = Date.now();
