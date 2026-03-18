@@ -247,6 +247,7 @@ import { ProposalsDB, type ProposalEntry } from "./backends/proposals-db.js";
 import { EventLog } from "./backends/event-log.js";
 import { EventBus, computeFingerprint } from "./backends/event-bus.js";
 import { IssueStore } from "./backends/issue-store.js";
+import { LearningsDB } from "./backends/learnings-db.js";
 import {
   WorkflowStore,
   sequenceDistance,
@@ -421,6 +422,24 @@ const memoryHybridPlugin = {
     }
 
     // ========================================================================
+    // Learnings Intake Buffer (Issue #617)
+    // ========================================================================
+
+    let learningsDb: LearningsDB | null = null;
+    try {
+      const learningsDbPath = join(dirname(resolvedSqlitePath), "learnings.db");
+      learningsDb = new LearningsDB(learningsDbPath);
+      api.logger.info(`memory-hybrid: learnings DB initialized at ${learningsDbPath}`);
+    } catch (err) {
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        subsystem: "registration",
+        operation: "plugin-register:learnings-db-init",
+        severity: "warning",
+      });
+      learningsDb = null;
+    }
+
+    // ========================================================================
     // Build PluginRuntime -- single instance-scoped container for all state
     // ========================================================================
 
@@ -448,6 +467,7 @@ const memoryHybridPlugin = {
       verificationStore: dbContext.verificationStore,
       pythonBridge,
       variantQueue,
+      learningsDb,
       lifecycleHooksHandle: null, // set after registerLifecycleHooks below
       pendingLLMWarnings: createPendingLLMWarnings(),
       currentAgentIdRef: { value: null },
@@ -475,6 +495,7 @@ const memoryHybridPlugin = {
         toolProposalStore: old.toolProposalStore,
         verificationStore: old.verificationStore,
         provenanceService: old.provenanceService,
+        learningsDb: old.learningsDb,
       });
       old.pythonBridge?.shutdown().catch(() => {});
     }
@@ -791,6 +812,8 @@ export const _testing = {
   VerificationError,
   // Provenance tracing (Issue #163)
   ProvenanceService,
+  // Learnings intake buffer — staged memory promotion (Issue #617)
+  LearningsDB,
 };
 
 export { versionInfo } from "./versionInfo.js";

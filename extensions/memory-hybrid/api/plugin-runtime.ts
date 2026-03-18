@@ -27,6 +27,7 @@ import type { IssueStore } from "../backends/issue-store.js";
 import type { WorkflowStore } from "../backends/workflow-store.js";
 import type { CrystallizationStore } from "../backends/crystallization-store.js";
 import type { ToolProposalStore } from "../backends/tool-proposal-store.js";
+import type { LearningsDB } from "../backends/learnings-db.js";
 import type { ProvenanceService } from "../services/provenance.js";
 import type { VerificationStore } from "../services/verification-store.js";
 import type { PythonBridge } from "../services/python-bridge.js";
@@ -66,6 +67,8 @@ export interface PluginRuntime {
   verificationStore: VerificationStore | null;
   pythonBridge: PythonBridge | null;
   variantQueue: VariantGenerationQueue | null;
+  /** Staged intake buffer for errors, lessons, and feature requests (Issue #617). */
+  learningsDb: LearningsDB | null;
 
   // --- Lifecycle state ---
   /** Handle returned by registerLifecycleHooks; set after hooks are registered, null until then. */
