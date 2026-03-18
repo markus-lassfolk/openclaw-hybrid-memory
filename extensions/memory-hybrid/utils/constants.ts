@@ -40,6 +40,8 @@ export const REFLECTION_PATTERN_MAX_CHARS = 500;
 export const REFLECTION_META_MAX_CHARS = 300;
 /** Cosine similarity threshold for deduplicating reflection patterns. */
 export const REFLECTION_DEDUPE_THRESHOLD = 0.85;
+/** Cosine similarity threshold for distillation/ingest deduplication. */
+export const DISTILL_DEDUP_THRESHOLD = 0.85;
 /** LLM temperature for reflection/rules prompts. */
 export const REFLECTION_TEMPERATURE = 0.2;
 /** Batch throttle delay (ms) between embedding batches. */
