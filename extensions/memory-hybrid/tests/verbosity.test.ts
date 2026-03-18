@@ -23,6 +23,7 @@ import { hybridConfigSchema, parseVerbosityLevel } from "../config.js";
 import type { VerbosityLevel } from "../config.js";
 import { createLifecycleHooks } from "../lifecycle/hooks.js";
 import type { LifecycleContext } from "../lifecycle/hooks.js";
+import { pluginLogger } from "../utils/logger.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -76,7 +77,7 @@ describe("VerbosityLevel — hybridConfigSchema", () => {
   });
 
   it("warns and defaults to 'normal' for invalid verbosity", () => {
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const warnSpy = vi.spyOn(pluginLogger, "warn").mockImplementation(() => {});
     const cfg = parseWithVerbosity("loud");
     expect(cfg.verbosity).toBe("normal");
     expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("invalid verbosity"));
@@ -153,14 +154,14 @@ describe("parseVerbosityLevel()", () => {
   });
 
   it("returns 'normal' and warns for unknown value", () => {
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const warnSpy = vi.spyOn(pluginLogger, "warn").mockImplementation(() => {});
     expect(parseVerbosityLevel({ verbosity: "loud" })).toBe("normal");
     expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("invalid verbosity"));
     warnSpy.mockRestore();
   });
 
   it("returns 'normal' for numeric value", () => {
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const warnSpy = vi.spyOn(pluginLogger, "warn").mockImplementation(() => {});
     expect(parseVerbosityLevel({ verbosity: 0 })).toBe("normal");
     warnSpy.mockRestore();
   });
@@ -684,7 +685,7 @@ describe("VerbosityLevel — silent mode", () => {
   });
 
   it("parseVerbosityLevel includes 'silent' in valid values warning message", () => {
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const warnSpy = vi.spyOn(pluginLogger, "warn").mockImplementation(() => {});
     parseVerbosityLevel({ verbosity: "supersecret" });
     expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("silent"));
     warnSpy.mockRestore();
