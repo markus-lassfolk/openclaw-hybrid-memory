@@ -64,10 +64,11 @@ let tmpDir: string;
 let factsDb: InstanceType<typeof FactsDB>;
 let wal: InstanceType<typeof WriteAheadLog>;
 
-beforeEach(() => {
+beforeEach(async () => {
   tmpDir = mkdtempSync(join(tmpdir(), "ctx-engine-test-"));
   factsDb = new FactsDB(join(tmpDir, "facts.db"));
   wal = new WriteAheadLog(join(tmpDir, "test.wal"), DEFAULT_WAL_MAX_AGE_MS);
+  await wal.init();
 });
 
 afterEach(() => {

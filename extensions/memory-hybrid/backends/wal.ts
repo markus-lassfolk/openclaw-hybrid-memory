@@ -48,12 +48,36 @@ export class WriteAheadLog {
   private fsyncWarnEmitted = false;
   private writeLock: Promise<void> = Promise.resolve();
   private activeIds = new Set<string>();
+  private initPromise: Promise<void> | null = null;
 
   constructor(walPath: string, maxAge: number = 5 * 60 * 1000) {
     this.walPath = walPath;
     this.maxAge = maxAge;
     // mkdirSync is acceptable here — constructor runs once at startup, not on the hot path.
     mkdirSync(dirname(walPath), { recursive: true });
+  }
+
+  async init(): Promise<void> {
+    if (this.initPromise) {
+      return this.initPromise;
+    }
+    this.initPromise = (async () => {
+      try {
+        const entries = await this.readAll();
+        this.activeIds = new Set(entries.map((e) => e.id));
+      } catch {
+        this.activeIds = new Set();
+      }
+    })();
+    return this.initPromise;
+  }
+
+  private async ensureInitialized(): Promise<void> {
+    if (!this.initPromise) {
+      await this.init();
+    } else {
+      await this.initPromise;
+    }
   }
 
   private async fsyncAfterWrite(): Promise<void> {
@@ -181,6 +205,7 @@ export class WriteAheadLog {
 
     try {
       await prevLock;
+      await this.ensureInitialized();
       const line = JSON.stringify({ op: "remove", id }) + "\n";
       await appendFile(this.walPath, line, "utf-8");
       await this.fsyncAfterWrite();
