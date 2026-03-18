@@ -114,8 +114,8 @@ function migrateAccessTracking(db: DatabaseSync): void {
   }
   if (!colNames.has("last_accessed")) {
     db.exec(`ALTER TABLE facts ADD COLUMN last_accessed INTEGER`);
+    db.exec(`UPDATE facts SET last_accessed = last_confirmed_at WHERE last_accessed IS NULL`);
   }
-  db.exec(`UPDATE facts SET last_accessed = last_confirmed_at WHERE last_accessed IS NULL`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_facts_last_accessed ON facts(last_accessed) WHERE last_accessed IS NOT NULL`);
 }
 
