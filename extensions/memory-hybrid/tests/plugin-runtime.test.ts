@@ -82,7 +82,11 @@ describe("PluginRuntime — two independent instances", () => {
       cfg: { captureMaxChars } as unknown as PluginRuntime["cfg"],
       currentAgentIdRef: { value: null },
       timers: createTimers(),
-      pendingLLMWarnings: { warnings: [], add: () => {}, flush: () => [] } as unknown as PluginRuntime["pendingLLMWarnings"],
+      pendingLLMWarnings: {
+        warnings: [],
+        add: () => {},
+        flush: () => [],
+      } as unknown as PluginRuntime["pendingLLMWarnings"],
     };
   }
 
