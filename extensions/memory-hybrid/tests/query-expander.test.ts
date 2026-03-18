@@ -79,6 +79,7 @@ const ENABLED_CFG: QueryExpansionConfig = {
   maxVariants: 4,
   cacheSize: 100,
   timeoutMs: 5000,
+  skipForInteractiveTurns: true,
 };
 
 const DISABLED_CFG: QueryExpansionConfig = {
@@ -88,6 +89,7 @@ const DISABLED_CFG: QueryExpansionConfig = {
   maxVariants: 4,
   cacheSize: 100,
   timeoutMs: 5000,
+  skipForInteractiveTurns: true,
 };
 
 // ---------------------------------------------------------------------------
@@ -349,6 +351,7 @@ describe("QueryExpansionConfig type", () => {
       maxVariants: 4,
       cacheSize: 100,
       timeoutMs: 5000,
+      skipForInteractiveTurns: true,
     };
     expect(cfg.enabled).toBe(false);
     expect(cfg.maxVariants).toBe(4);
@@ -366,6 +369,7 @@ describe("QueryExpansionConfig type", () => {
       maxVariants: 3,
       cacheSize: 50,
       timeoutMs: 3000,
+      skipForInteractiveTurns: true,
     };
     expect(cfg.model).toBe("openai/gpt-4.1-nano");
   });
