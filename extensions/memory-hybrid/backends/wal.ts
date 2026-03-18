@@ -62,11 +62,20 @@ export class WriteAheadLog {
       return this.initPromise;
     }
     this.initPromise = (async () => {
+      const prevLock = this.writeLock;
+      let releaseLock: () => void;
+      this.writeLock = new Promise((resolve) => {
+        releaseLock = resolve;
+      });
+
       try {
+        await prevLock;
         const entries = await this.readAll();
         this.activeIds = new Set(entries.map((e) => e.id));
       } catch {
         this.activeIds = new Set();
+      } finally {
+        releaseLock!();
       }
     })();
     return this.initPromise;
