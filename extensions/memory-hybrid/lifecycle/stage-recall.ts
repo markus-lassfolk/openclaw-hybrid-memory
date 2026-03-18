@@ -505,7 +505,7 @@ async function runRecall(
     // Account for issueBlock, hotBlock, and procedureBlock tokens to ensure total stays within budget
     const fixedBlocksTokens = estimateTokens(issueBlock) + estimateTokens(hotBlock) + estimateTokens(procedureBlock);
     const maxTokens = Math.max(0, totalBudget - fixedBlocksTokens);
-    const indexCap = progressiveIndexMaxTokens ?? maxTokens;
+    const indexCap = Math.min(progressiveIndexMaxTokens ?? maxTokens, maxTokens);
     const groupByCategory = progressiveGroupByCategory === true;
     const pinnedRecallThreshold = progressivePinnedRecallCount ?? 3;
 
