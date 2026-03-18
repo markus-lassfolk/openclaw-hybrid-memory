@@ -178,12 +178,14 @@ export function dismissEntry(db: LearningsDB, id: string): LearningEntry {
  * Returns entries sorted by recurrence (highest first) so callers can process
  * the highest-priority items first.
  */
-export function getPendingPromotions(db: LearningsDB): Array<{ entry: LearningEntry; eval: PromotionEvaluation }> {
+export function getPendingPromotions(
+  db: LearningsDB,
+): Array<{ entry: LearningEntry; evaluation: PromotionEvaluation }> {
   try {
     const openEntries = db.list({ status: ["open"] });
     return openEntries
-      .map((entry) => ({ entry, eval: evaluatePromotion(entry) }))
-      .filter((item) => item.eval.shouldPromote)
+      .map((entry) => ({ entry, evaluation: evaluatePromotion(entry) }))
+      .filter((item) => item.evaluation.shouldPromote)
       .sort((a, b) => b.entry.recurrence - a.entry.recurrence);
   } catch (err) {
     capturePluginError(err instanceof Error ? err : new Error(String(err)), {
