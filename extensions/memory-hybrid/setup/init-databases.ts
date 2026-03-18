@@ -474,8 +474,10 @@ function buildMultiProviderOpenAI(
     )?.[prefix];
     const hasCustomExternalBaseURL =
       prefix === "openai" && Boolean(providerCfg?.baseURL && providerCfg.baseURL !== gatewayBaseUrl);
+    // Exclude gatewayToken from the check for OAuth routing decisions — we only want to detect
+    // a real direct API key (llm.providers.X.apiKey, embedding.apiKey, or env var).
     const { value } = resolveProviderApiKey(prefix, providerCfg, cfg, resolveApiKey, {
-      gatewayToken,
+      gatewayToken: undefined,
       hasCustomExternalBaseURL,
     });
     return Boolean(value && value.length >= 10);
