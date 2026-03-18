@@ -1,13 +1,34 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 
-// Mock node:fs so we can override fsyncSync in individual tests while letting
-// everything else call through to the real implementation.
-vi.mock("node:fs", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("node:fs")>();
-  return { ...actual, fsyncSync: vi.fn((...args: Parameters<typeof actual.fsyncSync>) => actual.fsyncSync(...args)) };
+// Intercept node:fs/promises so we can inject fsync errors in individual tests
+// while letting everything else (appendFile, readFile, writeFile, rm) use the
+// real implementation on a temporary directory.
+const fsyncError = vi.hoisted(() => ({ value: null as Error | null }));
+
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs/promises")>();
+  const actualOpen = actual.open;
+  return {
+    ...actual,
+    open: vi.fn(async (...args: any[]) => {
+      const fh = await actualOpen(...(args as Parameters<typeof actualOpen>));
+      // Only intercept the 'r' (read-only) opens used by fsyncAfterWrite.
+      if (args[1] === "r") {
+        const origDatasync = fh.datasync.bind(fh);
+        (fh as any).datasync = async () => {
+          if (fsyncError.value) {
+            const err = fsyncError.value;
+            fsyncError.value = null;
+            throw err;
+          }
+          return origDatasync();
+        };
+      }
+      return fh;
+    }),
+  };
 });
 
-import * as nodeFs from "node:fs";
 import { mkdirSync, rmSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -26,6 +47,7 @@ describe("WriteAheadLog", () => {
   let wal: InstanceType<typeof WriteAheadLog>;
 
   beforeEach(() => {
+    fsyncError.value = null;
     // Create a unique test directory for each test
     testDir = join(tmpdir(), `wal-test-${randomUUID()}`);
     mkdirSync(testDir, { recursive: true });
@@ -40,11 +62,11 @@ describe("WriteAheadLog", () => {
   });
 
   describe("constructor", () => {
-    it("creates WAL directory if it doesn't exist", () => {
+    it("creates WAL directory if it doesn't exist", async () => {
       const nestedPath = join(testDir, "nested", "dir", "test.wal");
       const nestedWal = new WriteAheadLog(nestedPath, DEFAULT_MAX_AGE_MS);
       expect(existsSync(join(testDir, "nested", "dir"))).toBe(true);
-      nestedWal.clear(); // cleanup
+      await nestedWal.clear(); // cleanup
     });
   });
 
@@ -53,7 +75,7 @@ describe("WriteAheadLog", () => {
       wal = new WriteAheadLog(walPath, DEFAULT_MAX_AGE_MS);
     });
 
-    it("writes and reads a single entry", () => {
+    it("writes and reads a single entry", async () => {
       const entry = {
         id: randomUUID(),
         timestamp: Date.now(),
@@ -66,14 +88,14 @@ describe("WriteAheadLog", () => {
         },
       };
 
-      wal.write(entry);
-      const entries = wal.readAll();
+      await wal.write(entry);
+      const entries = await wal.readAll();
 
       expect(entries).toHaveLength(1);
       expect(entries[0]).toEqual(entry);
     });
 
-    it("writes multiple entries in sequence", () => {
+    it("writes multiple entries in sequence", async () => {
       const entry1 = {
         id: randomUUID(),
         timestamp: Date.now(),
@@ -88,16 +110,16 @@ describe("WriteAheadLog", () => {
         data: { text: "Memory 2", category: "technical", importance: 0.9, source: "test" },
       };
 
-      wal.write(entry1);
-      wal.write(entry2);
+      await wal.write(entry1);
+      await wal.write(entry2);
 
-      const entries = wal.readAll();
+      const entries = await wal.readAll();
       expect(entries).toHaveLength(2);
       expect(entries[0]).toEqual(entry1);
       expect(entries[1]).toEqual(entry2);
     });
 
-    it("handles entries with missing vector (undefined)", () => {
+    it("handles entries with missing vector (undefined)", async () => {
       const entry = {
         id: randomUUID(),
         timestamp: Date.now(),
@@ -111,36 +133,36 @@ describe("WriteAheadLog", () => {
         },
       };
 
-      wal.write(entry);
-      const entries = wal.readAll();
+      await wal.write(entry);
+      const entries = await wal.readAll();
 
       expect(entries).toHaveLength(1);
       expect(entries[0].data.vector).toBeUndefined();
     });
 
-    it("returns empty array for non-existent WAL file", () => {
+    it("returns empty array for non-existent WAL file", async () => {
       const emptyWal = new WriteAheadLog(join(testDir, "nonexistent.wal"), DEFAULT_MAX_AGE_MS);
-      const entries = emptyWal.readAll();
+      const entries = await emptyWal.readAll();
       expect(entries).toEqual([]);
     });
 
-    it("handles corrupted JSON gracefully", () => {
+    it("handles corrupted JSON gracefully", async () => {
       // Write invalid JSON directly to the file
       writeFileSync(walPath, "{ invalid json }", "utf-8");
 
-      const entries = wal.readAll();
+      const entries = await wal.readAll();
       expect(entries).toEqual([]);
     });
 
-    it("handles empty file", () => {
+    it("handles empty file", async () => {
       writeFileSync(walPath, "", "utf-8");
-      const entries = wal.readAll();
+      const entries = await wal.readAll();
       expect(entries).toEqual([]);
     });
 
-    it("handles whitespace-only file", () => {
+    it("handles whitespace-only file", async () => {
       writeFileSync(walPath, "   \n  \t  ", "utf-8");
-      const entries = wal.readAll();
+      const entries = await wal.readAll();
       expect(entries).toEqual([]);
     });
   });
@@ -150,7 +172,7 @@ describe("WriteAheadLog", () => {
       wal = new WriteAheadLog(walPath, DEFAULT_MAX_AGE_MS);
     });
 
-    it("uses atomic write (temp file + rename)", () => {
+    it("uses atomic write (temp file + rename)", async () => {
       const entry = {
         id: randomUUID(),
         timestamp: Date.now(),
@@ -158,7 +180,7 @@ describe("WriteAheadLog", () => {
         data: { text: "Test", category: "general", importance: 0.7, source: "test" },
       };
 
-      wal.write(entry);
+      await wal.write(entry);
 
       // Verify the temp file doesn't exist after write
       const tempPath = `${walPath}.tmp`;
@@ -168,7 +190,7 @@ describe("WriteAheadLog", () => {
       expect(existsSync(walPath)).toBe(true);
     });
 
-    it("preserves existing entries when writing new ones", () => {
+    it("preserves existing entries when writing new ones", async () => {
       const entry1 = {
         id: randomUUID(),
         timestamp: Date.now(),
@@ -183,10 +205,10 @@ describe("WriteAheadLog", () => {
         data: { text: "Memory 2", category: "general", importance: 0.8, source: "test" },
       };
 
-      wal.write(entry1);
-      wal.write(entry2);
+      await wal.write(entry1);
+      await wal.write(entry2);
 
-      const entries = wal.readAll();
+      const entries = await wal.readAll();
       expect(entries).toHaveLength(2);
     });
   });
@@ -196,7 +218,7 @@ describe("WriteAheadLog", () => {
       wal = new WriteAheadLog(walPath, DEFAULT_MAX_AGE_MS);
     });
 
-    it("removes a specific entry by id", () => {
+    it("removes a specific entry by id", async () => {
       const entry1 = {
         id: randomUUID(),
         timestamp: Date.now(),
@@ -211,16 +233,16 @@ describe("WriteAheadLog", () => {
         data: { text: "Memory 2", category: "general", importance: 0.8, source: "test" },
       };
 
-      wal.write(entry1);
-      wal.write(entry2);
-      wal.remove(entry1.id);
+      await wal.write(entry1);
+      await wal.write(entry2);
+      await wal.remove(entry1.id);
 
-      const entries = wal.readAll();
+      const entries = await wal.readAll();
       expect(entries).toHaveLength(1);
       expect(entries[0].id).toBe(entry2.id);
     });
 
-    it("clears WAL file when removing last entry", () => {
+    it("clears WAL file when removing last entry", async () => {
       const entry = {
         id: randomUUID(),
         timestamp: Date.now(),
@@ -228,13 +250,13 @@ describe("WriteAheadLog", () => {
         data: { text: "Only entry", category: "general", importance: 0.7, source: "test" },
       };
 
-      wal.write(entry);
-      wal.remove(entry.id);
+      await wal.write(entry);
+      await wal.remove(entry.id);
 
       expect(existsSync(walPath)).toBe(false);
     });
 
-    it("handles removing non-existent entry gracefully", () => {
+    it("handles removing non-existent entry gracefully", async () => {
       const entry = {
         id: randomUUID(),
         timestamp: Date.now(),
@@ -242,14 +264,14 @@ describe("WriteAheadLog", () => {
         data: { text: "Test", category: "general", importance: 0.7, source: "test" },
       };
 
-      wal.write(entry);
-      wal.remove("non-existent-id");
+      await wal.write(entry);
+      await wal.remove("non-existent-id");
 
-      const entries = wal.readAll();
+      const entries = await wal.readAll();
       expect(entries).toHaveLength(1);
     });
 
-    it("uses atomic write during remove", () => {
+    it("uses atomic write during remove", async () => {
       const entry1 = {
         id: randomUUID(),
         timestamp: Date.now(),
@@ -264,9 +286,9 @@ describe("WriteAheadLog", () => {
         data: { text: "Memory 2", category: "general", importance: 0.8, source: "test" },
       };
 
-      wal.write(entry1);
-      wal.write(entry2);
-      wal.remove(entry1.id);
+      await wal.write(entry1);
+      await wal.write(entry2);
+      await wal.remove(entry1.id);
 
       // Verify temp file is cleaned up
       const tempPath = `${walPath}.tmp`;
@@ -360,7 +382,7 @@ describe("WriteAheadLog", () => {
       wal = new WriteAheadLog(walPath, DEFAULT_MAX_AGE_MS);
     });
 
-    it("removes the WAL file", () => {
+    it("removes the WAL file", async () => {
       const entry = {
         id: randomUUID(),
         timestamp: Date.now(),
@@ -368,15 +390,15 @@ describe("WriteAheadLog", () => {
         data: { text: "Test", category: "general", importance: 0.7, source: "test" },
       };
 
-      wal.write(entry);
+      await wal.write(entry);
       expect(existsSync(walPath)).toBe(true);
 
-      wal.clear();
+      await wal.clear();
       expect(existsSync(walPath)).toBe(false);
     });
 
-    it("handles clearing non-existent WAL gracefully", () => {
-      expect(() => wal.clear()).not.toThrow();
+    it("handles clearing non-existent WAL gracefully", async () => {
+      await expect(wal.clear()).resolves.not.toThrow();
     });
   });
 
@@ -400,18 +422,18 @@ describe("WriteAheadLog", () => {
         data: { text: "Recent memory", category: "general", importance: 0.8, source: "test" },
       };
 
-      wal.write(oldEntry);
-      wal.write(recentEntry);
+      await wal.write(oldEntry);
+      await wal.write(recentEntry);
 
-      const pruned = wal.pruneStale();
+      const pruned = await wal.pruneStale();
       expect(pruned).toBe(1);
 
-      const entries = wal.readAll();
+      const entries = await wal.readAll();
       expect(entries).toHaveLength(1);
       expect(entries[0].id).toBe(recentEntry.id);
     });
 
-    it("returns 0 when no entries need pruning", () => {
+    it("returns 0 when no entries need pruning", async () => {
       const recentEntry = {
         id: randomUUID(),
         timestamp: Date.now(),
@@ -419,9 +441,9 @@ describe("WriteAheadLog", () => {
         data: { text: "Recent memory", category: "general", importance: 0.8, source: "test" },
       };
 
-      wal.write(recentEntry);
+      await wal.write(recentEntry);
 
-      const pruned = wal.pruneStale();
+      const pruned = await wal.pruneStale();
       expect(pruned).toBe(0);
     });
 
@@ -433,8 +455,8 @@ describe("WriteAheadLog", () => {
         data: { text: "Old memory", category: "general", importance: 0.7, source: "test" },
       };
 
-      wal.write(oldEntry);
-      const pruned = wal.pruneStale();
+      await wal.write(oldEntry);
+      const pruned = await wal.pruneStale();
 
       expect(pruned).toBe(1);
       expect(existsSync(walPath)).toBe(false);
@@ -446,7 +468,7 @@ describe("WriteAheadLog", () => {
       wal = new WriteAheadLog(walPath, TEST_MAX_AGE_MS);
     });
 
-    it("returns only non-stale entries", () => {
+    it("returns only non-stale entries", async () => {
       const oldEntry = {
         id: randomUUID(),
         timestamp: Date.now() - 2000, // 2 seconds old
@@ -461,15 +483,15 @@ describe("WriteAheadLog", () => {
         data: { text: "Recent", category: "general", importance: 0.8, source: "test" },
       };
 
-      wal.write(oldEntry);
-      wal.write(recentEntry);
+      await wal.write(oldEntry);
+      await wal.write(recentEntry);
 
-      const validEntries = wal.getValidEntries();
+      const validEntries = await wal.getValidEntries();
       expect(validEntries).toHaveLength(1);
       expect(validEntries[0].id).toBe(recentEntry.id);
     });
 
-    it("returns empty array when no valid entries", () => {
+    it("returns empty array when no valid entries", async () => {
       const oldEntry = {
         id: randomUUID(),
         timestamp: Date.now() - 5000,
@@ -477,15 +499,15 @@ describe("WriteAheadLog", () => {
         data: { text: "Old", category: "general", importance: 0.7, source: "test" },
       };
 
-      wal.write(oldEntry);
+      await wal.write(oldEntry);
 
-      const validEntries = wal.getValidEntries();
+      const validEntries = await wal.getValidEntries();
       expect(validEntries).toEqual([]);
     });
 
-    it("returns empty array for non-existent WAL", () => {
+    it("returns empty array for non-existent WAL", async () => {
       const emptyWal = new WriteAheadLog(join(testDir, "new.wal"), TEST_MAX_AGE_MS);
-      const validEntries = emptyWal.getValidEntries();
+      const validEntries = await emptyWal.getValidEntries();
       expect(validEntries).toEqual([]);
     });
   });
@@ -495,7 +517,7 @@ describe("WriteAheadLog", () => {
       wal = new WriteAheadLog(walPath, DEFAULT_MAX_AGE_MS);
     });
 
-    it("throws error when write fails", () => {
+    it("throws error when write fails", async () => {
       // Create a directory where the WAL file should be (to cause write failure)
       const badPath = join(testDir, "badwal");
       mkdirSync(badPath, { recursive: true });
@@ -508,60 +530,54 @@ describe("WriteAheadLog", () => {
         data: { text: "Test", category: "general", importance: 0.7, source: "test" },
       };
 
-      expect(() => badWal.write(entry)).toThrow(/WAL write failed/);
+      await expect(badWal.write(entry)).rejects.toThrow(/WAL write failed/);
     });
 
-    it("throws error when remove fails", () => {
+    it("throws error when remove fails", async () => {
       const badPath = join(testDir, "badwal-remove");
       mkdirSync(badPath, { recursive: true });
 
       const badWal = new WriteAheadLog(badPath, 5 * 60 * 1000);
 
-      expect(() => badWal.remove("some-id")).toThrow(/WAL remove failed/);
+      await expect(badWal.remove("some-id")).rejects.toThrow(/WAL remove failed/);
     });
 
-    it("does not throw when fsync fails with EPERM (e.g. WSL2/NTFS)", () => {
+    it("does not throw when fsync fails with EPERM (e.g. WSL2/NTFS)", async () => {
       const epermError = Object.assign(new Error("operation not permitted"), { code: "EPERM" });
-      vi.mocked(nodeFs.fsyncSync).mockImplementationOnce(() => {
-        throw epermError;
-      });
+      fsyncError.value = epermError;
       const entry = {
         id: randomUUID(),
         timestamp: Date.now(),
         operation: "store" as const,
         data: { text: "Test", category: "general", importance: 0.7, source: "test" },
       };
-      expect(() => wal.write(entry)).not.toThrow();
-      const entries = wal.readAll();
+      await expect(wal.write(entry)).resolves.not.toThrow();
+      const entries = await wal.readAll();
       expect(entries).toHaveLength(1);
     });
 
-    it("does not throw when fsync fails with EINVAL", () => {
+    it("does not throw when fsync fails with EINVAL", async () => {
       const einvalError = Object.assign(new Error("invalid argument"), { code: "EINVAL" });
-      vi.mocked(nodeFs.fsyncSync).mockImplementationOnce(() => {
-        throw einvalError;
-      });
+      fsyncError.value = einvalError;
       const entry = {
         id: randomUUID(),
         timestamp: Date.now(),
         operation: "store" as const,
         data: { text: "Test EINVAL", category: "general", importance: 0.5, source: "test" },
       };
-      expect(() => wal.write(entry)).not.toThrow();
+      await expect(wal.write(entry)).resolves.not.toThrow();
     });
 
-    it("re-throws unexpected fsync errors", () => {
+    it("re-throws unexpected fsync errors", async () => {
       const unexpectedError = Object.assign(new Error("no space left on device"), { code: "ENOSPC" });
-      vi.mocked(nodeFs.fsyncSync).mockImplementationOnce(() => {
-        throw unexpectedError;
-      });
+      fsyncError.value = unexpectedError;
       const entry = {
         id: randomUUID(),
         timestamp: Date.now(),
         operation: "store" as const,
         data: { text: "Test ENOSPC", category: "general", importance: 0.5, source: "test" },
       };
-      expect(() => wal.write(entry)).toThrow(/WAL write failed/);
+      await expect(wal.write(entry)).rejects.toThrow(/WAL write failed/);
     });
   });
 
@@ -570,7 +586,7 @@ describe("WriteAheadLog", () => {
       wal = new WriteAheadLog(walPath, DEFAULT_MAX_AGE_MS);
     });
 
-    it("simulates recovery after crash during write", () => {
+    it("simulates recovery after crash during write", async () => {
       const entry = {
         id: randomUUID(),
         timestamp: Date.now(),
@@ -578,17 +594,17 @@ describe("WriteAheadLog", () => {
         data: { text: "Memory before crash", category: "general", importance: 0.7, source: "test" },
       };
 
-      wal.write(entry);
+      await wal.write(entry);
 
       // Simulate crash by creating a new WAL instance
       const recoveredWal = new WriteAheadLog(walPath, DEFAULT_MAX_AGE_MS);
-      const entries = recoveredWal.getValidEntries();
+      const entries = await recoveredWal.getValidEntries();
 
       expect(entries).toHaveLength(1);
       expect(entries[0]).toEqual(entry);
     });
 
-    it("handles partial file corruption by returning empty array", () => {
+    it("handles partial file corruption by returning empty array", async () => {
       // Write valid data first
       const entry = {
         id: randomUUID(),
@@ -596,7 +612,7 @@ describe("WriteAheadLog", () => {
         operation: "store" as const,
         data: { text: "Valid", category: "general", importance: 0.7, source: "test" },
       };
-      wal.write(entry);
+      await wal.write(entry);
 
       // Corrupt the file by truncating it
       const content = readFileSync(walPath, "utf-8");
@@ -604,7 +620,7 @@ describe("WriteAheadLog", () => {
 
       // Create new instance and try to read
       const recoveredWal = new WriteAheadLog(walPath, DEFAULT_MAX_AGE_MS);
-      const entries = recoveredWal.readAll();
+      const entries = await recoveredWal.readAll();
 
       // Should return empty array for corrupted data
       expect(entries).toEqual([]);

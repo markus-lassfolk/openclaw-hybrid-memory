@@ -483,7 +483,7 @@ function buildRichStatsExtras(ctx: HandlerContext): NonNullable<HybridMemCliCont
     getCredentialsCount: () => (credentialsDb ? credentialsDb.list().length : 0),
     getProposalsPending: () => (proposalsDb ? proposalsDb.list({ status: "pending" }).length : 0),
     getProposalsAvailable: () => !!proposalsDb,
-    getWalPending: () => (wal ? wal.getValidEntries().length : 0),
+    getWalPending: async () => (wal ? (await wal.getValidEntries()).length : 0),
     getLastRunTimestamps: () => {
       const out: { distill?: string; reflect?: string; compact?: string } = {};
       for (const [key, file] of [

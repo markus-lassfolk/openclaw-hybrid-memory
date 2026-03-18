@@ -171,7 +171,7 @@ export type ManageContext = {
     getCredentialsCount: () => number;
     getProposalsPending: () => number;
     getProposalsAvailable: () => boolean;
-    getWalPending: () => number;
+    getWalPending: () => Promise<number>;
     getLastRunTimestamps: () => { distill?: string; reflect?: string; compact?: string };
     getStorageSizes: () => Promise<{ sqliteBytes?: number; lanceBytes?: number }>;
   };
@@ -605,7 +605,7 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
           const credentials = extras.getCredentialsCount();
           const proposalsPending = extras.getProposalsPending();
           const proposalsAvailable = extras.getProposalsAvailable();
-          const walPending = extras.getWalPending();
+          const walPending = await extras.getWalPending();
           const timestamps = extras.getLastRunTimestamps();
           const sizes = await extras.getStorageSizes();
 
