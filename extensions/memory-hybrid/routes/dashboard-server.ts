@@ -790,10 +790,11 @@ export async function createDashboardServer(ctx: DashboardContext, port: number)
 
   // Install permanent error handler now that the server is bound.
   server.on("error", (err: NodeJS.ErrnoException) => {
+    const errMsg = err instanceof Error ? `${err.message}\n${err.stack ?? ""}` : String(err);
     if (ctx.logger?.error) {
-      ctx.logger.error(`[dashboard-server] Server error: ${err}`);
+      ctx.logger.error(`[dashboard-server] Server error: ${errMsg}`);
     } else {
-      pluginLogger.error(`[dashboard-server] Server error: ${err}`);
+      pluginLogger.error(`[dashboard-server] Server error: ${errMsg}`);
     }
   });
 
