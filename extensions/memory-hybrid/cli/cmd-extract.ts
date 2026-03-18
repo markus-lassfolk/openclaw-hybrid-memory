@@ -40,7 +40,7 @@ import type {
   ExtractDailySink,
 } from "./types.js";
 import type { HandlerContext } from "./handlers.js";
-import { inferTargetFile } from "./handlers.js";
+import { inferTargetFile } from "./cmd-store.js";
 import { buildPreFilterConfig } from "./cmd-install.js";
 import { acquireScanSlot, clearScanLock } from "./shared.js";
 

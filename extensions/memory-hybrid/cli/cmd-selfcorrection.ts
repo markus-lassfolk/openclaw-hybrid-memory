@@ -24,7 +24,9 @@ import { insertRulesUnderSection } from "../services/tools-md-section.js";
 import { preFilterSessions } from "../services/session-pre-filter.js";
 import { CLI_STORE_IMPORTANCE } from "../utils/constants.js";
 import type { HandlerContext } from "./handlers.js";
-import { gatherSessionFiles, buildPreFilterConfig, inferTargetFile } from "./handlers.js";
+import { gatherSessionFiles } from "./cmd-distill.js";
+import { buildPreFilterConfig } from "./cmd-install.js";
+import { inferTargetFile } from "./cmd-store.js";
 import { acquireScanSlot, clearScanLock } from "./shared.js";
 
 // ---------------------------------------------------------------------------

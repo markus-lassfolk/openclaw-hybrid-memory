@@ -29,7 +29,7 @@ import { getModeCostEstimates } from "../services/model-pricing.js";
 import { chatCompleteWithRetry } from "../services/chat.js";
 import { loadPrompt } from "../utils/prompt-loader.js";
 import type { HandlerContext } from "./handlers.js";
-import { getSessionFilePathsSince } from "./handlers.js";
+import { getSessionFilePathsSince } from "./cmd-extract.js";
 
 // ---------------------------------------------------------------------------
 // extract-implicit-feedback
