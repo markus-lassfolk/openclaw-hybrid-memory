@@ -465,6 +465,7 @@ const memoryHybridPlugin = {
       toolProposalStore: dbContext.toolProposalStore,
       provenanceService: dbContext.provenanceService,
       verificationStore: dbContext.verificationStore,
+      apitapStore: dbContext.apitapStore,
       pythonBridge,
       variantQueue,
       learningsDb,
@@ -496,6 +497,7 @@ const memoryHybridPlugin = {
         verificationStore: old.verificationStore,
         provenanceService: old.provenanceService,
         learningsDb: old.learningsDb,
+        apitapStore: old.apitapStore,
       });
       old.pythonBridge?.shutdown().catch(() => {});
     }
@@ -539,6 +541,7 @@ const memoryHybridPlugin = {
       runReflectionRules,
       runReflectionMeta,
       pythonBridge: runtime.pythonBridge,
+      apitapStore: runtime.apitapStore,
     };
 
     // ========================================================================

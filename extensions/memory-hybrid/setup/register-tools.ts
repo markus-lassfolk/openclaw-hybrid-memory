@@ -28,6 +28,7 @@ import type { WorkflowStore } from "../backends/workflow-store.js";
 import { registerCrystallizationTools } from "../tools/crystallization-tools.js";
 import type { CrystallizationStore } from "../backends/crystallization-store.js";
 import { registerSelfExtensionTools } from "../tools/self-extension-tools.js";
+import { registerApitapTools } from "../tools/apitap-tools.js";
 import type { ToolProposalStore } from "../backends/tool-proposal-store.js";
 import type { PythonBridge } from "../services/python-bridge.js";
 import { registerVerificationTools } from "../tools/verification-tools.js";
@@ -83,6 +84,7 @@ export function registerTools(ctx: ToolsContext, api: ClawdbotPluginApi): void {
     runReflectionMeta,
     pythonBridge,
     variantQueue,
+    apitapStore,
   } = ctx;
 
   // Memory tools (core recall, store, forget operations)
@@ -200,6 +202,11 @@ export function registerTools(ctx: ToolsContext, api: ClawdbotPluginApi): void {
   // Self-extension tools (register when store available; analysis gated by cfg, Issue #210)
   if (toolProposalStore && workflowStore) {
     registerSelfExtensionTools({ toolProposalStore, workflowStore, cfg }, api);
+  }
+
+  // ApiTap tools — browser traffic capture for skill auto-generation (Issue #614)
+  if (apitapStore) {
+    registerApitapTools({ apitapStore, cfg }, api);
   }
 
   // Dashboard HTTP routes (Issue #279)

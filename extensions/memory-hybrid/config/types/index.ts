@@ -55,6 +55,7 @@ import type {
   ToolEffectivenessConfig,
   CostTrackingConfig,
   DashboardConfig,
+  ApiTapConfig,
 } from "./features.js";
 
 import type { MultiAgentConfig, PersonaProposalsConfig } from "./agents.js";
@@ -531,6 +532,8 @@ export type HybridMemoryConfig = {
   dashboard: DashboardConfig;
   /** Sensor sweep — cron-based data collection writing to Event Bus, no LLM (Issue #236, default: disabled). */
   sensorSweep: SensorSweepConfig;
+  /** ApiTap integration — intercept browser traffic to auto-generate API skill specs (Issue #614, default: disabled). */
+  apiTap: ApiTapConfig;
   /**
    * Output verbosity level for CLI commands and tool responses (Issue #282).
    * quiet: counts/totals only. normal: balanced default. verbose: full detail.

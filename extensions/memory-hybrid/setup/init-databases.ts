@@ -43,6 +43,7 @@ import { WorkflowStore } from "../backends/workflow-store.js";
 import { ToolProposalStore } from "../backends/tool-proposal-store.js";
 import { VerificationStore } from "../services/verification-store.js";
 import { CostTracker } from "../backends/cost-tracker.js";
+import { ApitapStore } from "../backends/apitap-store.js";
 import { isNanoModel, isHeavyModel, isLightModel } from "../utils/model-tier.js";
 
 /**
@@ -818,6 +819,7 @@ export interface DatabaseContext {
   resolvedSqlitePath: string;
   health: HealthStatus;
   initialized: Promise<void>;
+  apitapStore: ApitapStore;
 }
 
 /**
@@ -1610,6 +1612,11 @@ export function initializeDatabases(cfg: HybridMemoryConfig, api: ClawdbotPlugin
     })();
   }
 
+  // Initialize ApitapStore — always created; capture gated by cfg.apiTap.enabled (Issue #614)
+  const apitapStorePath = join(dirname(resolvedSqlitePath), "apitap-endpoints.db");
+  const apitapStore = new ApitapStore(apitapStorePath);
+  api.logger.info(`memory-hybrid: apitap store initialized (${apitapStorePath})`);
+
   // Mark the VectorDB as a persistent long-lived singleton connection (#581).
   // This prevents fragile session refcounting from accidentally closing the shared
   // connection via removeSession() — the connection is only closed by close() (gateway shutdown).
@@ -1637,6 +1644,7 @@ export function initializeDatabases(cfg: HybridMemoryConfig, api: ClawdbotPlugin
     resolvedSqlitePath,
     health,
     initialized,
+    apitapStore,
   };
 }
 
@@ -1672,6 +1680,7 @@ export function closeOldDatabases(context: {
   verificationStore?: VerificationStore | null;
   provenanceService?: ProvenanceService | null;
   learningsDb?: import("../backends/learnings-db.js").LearningsDB | null;
+  apitapStore?: ApitapStore | null;
 }): void {
   const {
     factsDb,
@@ -1688,6 +1697,7 @@ export function closeOldDatabases(context: {
     verificationStore,
     provenanceService,
     learningsDb,
+    apitapStore,
   } = context;
 
   invalidateClusterCache();
@@ -1829,6 +1839,16 @@ export function closeOldDatabases(context: {
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
         operation: "close-databases",
         subsystem: "learningsDb",
+      });
+    }
+  }
+  if (apitapStore) {
+    try {
+      apitapStore.close();
+    } catch (err) {
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        operation: "close-databases",
+        subsystem: "apitapStore",
       });
     }
   }

@@ -22,6 +22,7 @@ import type {
   ToolEffectivenessConfig,
   CostTrackingConfig,
   DashboardConfig,
+  ApiTapConfig,
 } from "../types/features.js";
 import type { PersonaProposalsConfig } from "../types/agents.js";
 import { IDENTITY_FILE_TYPES, type IdentityFileType } from "../types/agents.js";
@@ -637,5 +638,30 @@ export function parseDashboardConfig(cfg: Record<string, unknown>): DashboardCon
     enabled: raw?.enabled !== false,
     port: typeof raw?.port === "number" && raw.port >= 1024 && raw.port <= 65535 ? Math.floor(raw.port) : 7700,
     gitRepo: typeof raw?.gitRepo === "string" ? raw.gitRepo : undefined,
+  };
+}
+
+export function parseApiTapConfig(cfg: Record<string, unknown>): ApiTapConfig {
+  const raw = cfg.apiTap as Record<string, unknown> | undefined;
+  return {
+    enabled: raw?.enabled === true,
+    captureTimeoutSeconds:
+      typeof raw?.captureTimeoutSeconds === "number" && raw.captureTimeoutSeconds >= 5
+        ? Math.min(300, Math.floor(raw.captureTimeoutSeconds))
+        : 60,
+    endpointTtlDays:
+      typeof raw?.endpointTtlDays === "number" && raw.endpointTtlDays >= 1
+        ? Math.min(365, Math.floor(raw.endpointTtlDays))
+        : 30,
+    maxEndpointsPerSession:
+      typeof raw?.maxEndpointsPerSession === "number" && raw.maxEndpointsPerSession >= 1
+        ? Math.min(500, Math.floor(raw.maxEndpointsPerSession))
+        : 50,
+    allowedPatterns: Array.isArray(raw?.allowedPatterns)
+      ? (raw.allowedPatterns as unknown[]).filter((p): p is string => typeof p === "string" && p.trim().length > 0)
+      : [],
+    blockedPatterns: Array.isArray(raw?.blockedPatterns)
+      ? (raw.blockedPatterns as unknown[]).filter((p): p is string => typeof p === "string" && p.trim().length > 0)
+      : ["**/*oauth*/**", "**/*auth*/**", "**/*login*/**", "**/*signin*/**", "**/*token*/**", "**/*password*/**"],
   };
 }
