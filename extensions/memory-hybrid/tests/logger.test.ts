@@ -1,24 +1,25 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
-import { pluginLogger, initPluginLogger, resetPluginLogger } from "../utils/logger.js";
+import { describe, it, expect, vi, afterEach } from "vitest";
+import { pluginLogger, initPluginLogger, resetPluginLogger, restoreDefaultLogger } from "../utils/logger.js";
 
 describe("pluginLogger", () => {
-  beforeEach(() => {
-    resetPluginLogger();
+  afterEach(() => {
+    restoreDefaultLogger();
   });
 
-  it("is a silent no-op before initPluginLogger is called", () => {
+  it("uses console fallback before initPluginLogger is called", () => {
     const consoleSpy = vi.spyOn(console, "log");
     const warnSpy = vi.spyOn(console, "warn");
     const errorSpy = vi.spyOn(console, "error");
 
-    pluginLogger.info("should be silent");
-    pluginLogger.warn("should be silent");
-    pluginLogger.error("should be silent");
-    pluginLogger.debug("should be silent");
+    pluginLogger.info("info message");
+    pluginLogger.warn("warn message");
+    pluginLogger.error("error message");
+    pluginLogger.debug("debug message");
 
-    expect(consoleSpy).not.toHaveBeenCalled();
-    expect(warnSpy).not.toHaveBeenCalled();
-    expect(errorSpy).not.toHaveBeenCalled();
+    expect(consoleSpy).toHaveBeenCalledWith("info message");
+    expect(warnSpy).toHaveBeenCalledWith("warn message");
+    expect(errorSpy).toHaveBeenCalledWith("error message");
+    expect(consoleSpy).toHaveBeenCalledWith("debug message");
 
     consoleSpy.mockRestore();
     warnSpy.mockRestore();

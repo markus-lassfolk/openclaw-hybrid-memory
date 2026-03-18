@@ -15,8 +15,9 @@
  *   - cli/**
  *   - index.ts (bootstrap only, top-level startup messages)
  *
- * Before initPluginLogger is called (e.g. during unit tests without plugin setup),
- * the logger is a silent no-op so tests do not emit noise unless they opt in.
+ * Before initPluginLogger is called, the logger defaults to console-based output so that
+ * diagnostic warnings (e.g., config validation) are visible in CLI code paths. In unit tests,
+ * call resetPluginLogger() to suppress output for test isolation.
  */
 
 /** Logger interface matching api.logger from ClawdbotPluginApi */
@@ -36,10 +37,23 @@ const noopLogger: Required<PluginLoggerApi> = {
 };
 
 /**
+ * Console-based fallback logger for CLI code paths and config parsing.
+ * Used when initPluginLogger has not been called (e.g., CLI commands that parse config
+ * without going through register()). Ensures diagnostic warnings are always visible.
+ */
+const consoleLogger: Required<PluginLoggerApi> = {
+  info: (msg: string) => console.log(msg),
+  warn: (msg: string) => console.warn(msg),
+  error: (msg: string) => console.error(msg),
+  debug: (msg: string) => console.log(msg),
+};
+
+/**
  * Active logger delegate — replaced by initPluginLogger.
  * Marked as `let` intentionally: initialized once at plugin startup.
+ * Defaults to consoleLogger so config warnings are visible in CLI paths.
  */
-let activeLogger: Required<PluginLoggerApi> = noopLogger;
+let activeLogger: Required<PluginLoggerApi> = consoleLogger;
 
 /**
  * Initialize the plugin logger with the api.logger instance.
@@ -59,9 +73,18 @@ export function initPluginLogger(apiLogger: PluginLoggerApi): void {
 /**
  * Reset the plugin logger to the silent no-op.
  * Used in unit tests to isolate logging side effects.
+ * Note: In production, the logger defaults to consoleLogger for CLI paths.
  */
 export function resetPluginLogger(): void {
   activeLogger = noopLogger;
+}
+
+/**
+ * Restore the plugin logger to the default console-based logger.
+ * Used in unit tests to restore the default state after resetPluginLogger.
+ */
+export function restoreDefaultLogger(): void {
+  activeLogger = consoleLogger;
 }
 
 /**
