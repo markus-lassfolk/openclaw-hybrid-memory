@@ -175,6 +175,8 @@ export async function runHumanizerScore(
         }
       });
 
+      child.stdin.on("error", () => {});
+
       child.stdin.write(truncated);
       child.stdin.end();
     });
