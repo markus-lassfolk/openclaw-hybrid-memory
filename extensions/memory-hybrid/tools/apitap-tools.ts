@@ -433,9 +433,6 @@ export function registerApitapTools(ctx: ApitapToolsContext, api: ClawdbotPlugin
           sampleResponse,
         );
 
-        // Mark as reviewed
-        apitapStore.updateStatus(id, "reviewed");
-
         const paramLines = Object.entries(scaffold.parameters).map(
           ([k, v]) => `    ${k}: ${v.type}  # ${v.description}`,
         );

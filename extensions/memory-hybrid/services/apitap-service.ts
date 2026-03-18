@@ -87,7 +87,7 @@ export function isEndpointBlocked(endpointUrl: string, cfg: ApiTapConfig): strin
   try {
     parsed = new URL(endpointUrl);
   } catch {
-    return null; // unparseable — let the caller decide
+    return "Endpoint URL is malformed and cannot be validated.";
   }
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
     return `Endpoint scheme "${parsed.protocol}" is not allowed.`;
