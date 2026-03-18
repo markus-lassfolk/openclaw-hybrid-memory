@@ -1507,24 +1507,16 @@ describe("resolveProviderApiKey", () => {
     });
 
     it("returns providerCfg.apiKey for openrouter even when env is set", () => {
-      const result = resolveProviderApiKey(
-        "openrouter",
-        { apiKey: "sk-or-explicit" },
-        makeCfg(),
-        identity,
-        { env: { OPENROUTER_API_KEY: "sk-or-env" } },
-      );
+      const result = resolveProviderApiKey("openrouter", { apiKey: "sk-or-explicit" }, makeCfg(), identity, {
+        env: { OPENROUTER_API_KEY: "sk-or-env" },
+      });
       expect(result).toEqual({ value: "sk-or-explicit", source: "llm.providers.openrouter.apiKey" });
     });
 
     it("returns providerCfg.apiKey for minimax even when env is set", () => {
-      const result = resolveProviderApiKey(
-        "minimax",
-        { apiKey: "sk-mm-explicit" },
-        makeCfg(),
-        identity,
-        { env: { MINIMAX_API_KEY: "sk-mm-env" } },
-      );
+      const result = resolveProviderApiKey("minimax", { apiKey: "sk-mm-explicit" }, makeCfg(), identity, {
+        env: { MINIMAX_API_KEY: "sk-mm-env" },
+      });
       expect(result).toEqual({ value: "sk-mm-explicit", source: "llm.providers.minimax.apiKey" });
     });
 

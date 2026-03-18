@@ -472,7 +472,8 @@ function buildMultiProviderOpenAI(
     const providerCfg: LLMProviderConfig | undefined = (
       cfg.llm?.providers as Record<string, LLMProviderConfig | undefined> | undefined
     )?.[prefix];
-    const hasCustomExternalBaseURL = prefix === "openai" && Boolean(providerCfg?.baseURL && providerCfg.baseURL !== gatewayBaseUrl);
+    const hasCustomExternalBaseURL =
+      prefix === "openai" && Boolean(providerCfg?.baseURL && providerCfg.baseURL !== gatewayBaseUrl);
     const { value } = resolveProviderApiKey(prefix, providerCfg, cfg, resolveApiKey, {
       gatewayToken,
       hasCustomExternalBaseURL,
