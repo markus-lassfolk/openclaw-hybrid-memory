@@ -522,7 +522,7 @@ export function runCostReportForCli(
   }
 
   if (!costTracker) {
-    if (!ctx.cfg.costTracking.enabled) {
+    if (!ctx.cfg.costTracking?.enabled) {
       log("Cost tracking is disabled.");
       log("Enable it: openclaw hybrid-mem config-set costTracking enabled");
     } else {
