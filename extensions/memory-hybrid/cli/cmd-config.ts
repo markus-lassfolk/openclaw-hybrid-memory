@@ -216,13 +216,8 @@ export function runConfigModeForCli(ctx: HandlerContext, mode: string): ConfigCl
         : presetVal;
   }
   out.config.mode = mode;
-  try {
-    writeFileSync(configPath, JSON.stringify(out.root, null, 2), "utf-8");
-    writeFileSync(getRestartPendingPath(), "", "utf-8");
-  } catch (e) {
-    capturePluginError(e as Error, { subsystem: "cli", operation: "runConfigModeForCli:write" });
-    return { ok: false, error: `Could not write config: ${e}` };
-  }
+  const writeResult = validateAndWriteConfig(out.config, out.root, configPath, "mode");
+  if (!writeResult.ok) return writeResult;
   return {
     ok: true,
     configPath,
