@@ -67,7 +67,7 @@ export function parseHumanizerOutput(raw: string): HumanizerResult | null {
     }
 
     const categoryBreakdown: Record<string, number> = {};
-    if (typeof obj.category_breakdown === "object" && obj.category_breakdown !== null) {
+    if (typeof obj.category_breakdown === "object" && obj.category_breakdown !== null && !Array.isArray(obj.category_breakdown)) {
       for (const [k, v] of Object.entries(obj.category_breakdown as Record<string, unknown>)) {
         if (typeof v === "number") {
           categoryBreakdown[k] = v;
