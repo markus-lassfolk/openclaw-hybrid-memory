@@ -1536,7 +1536,6 @@ export class FactsDB {
     return Number(this.liveDb.prepare(`DELETE FROM recall_log WHERE occurred_at < ?`).run(cutoff).changes);
   }
 
-
   /** Read the last stored embedding provider+model metadata (Issue #153). */
   getEmbeddingMeta(): { provider: string; model: string } | null {
     const row = this.liveDb.prepare(`SELECT provider, model FROM embedding_meta WHERE id = 1`).get() as
@@ -3832,7 +3831,7 @@ export class FactsDB {
     const r1 = this.liveDb.prepare(`DELETE FROM recall_log WHERE occurred_at < ?`).run(cutoff);
     const r2 = this.liveDb.prepare(`DELETE FROM reinforcement_log WHERE occurred_at < ?`).run(cutoff);
     const r3 = this.liveDb.prepare(`DELETE FROM feedback_trajectories WHERE created_at < ?`).run(cutoff);
-    return r1.changes + r2.changes + r3.changes;
+    return Number(r1.changes) + Number(r2.changes) + Number(r3.changes);
   }
 
   /**
@@ -3851,7 +3850,7 @@ export class FactsDB {
    */
   vacuumAndCheckpoint(): void {
     this.liveDb.exec("VACUUM");
-    this.liveDb.pragma("wal_checkpoint(TRUNCATE)");
+    this.liveDb.exec("PRAGMA wal_checkpoint(TRUNCATE)");
   }
 
   /** Get reflection statistics */
