@@ -761,13 +761,14 @@ describe("silent mode — hook suppression", () => {
     const silentCount = countBeforeAgentStart(silentApi);
     const normalCount = countBeforeAgentStart(normalApi);
 
-    // Silent mode suppresses auto-recall, auth-failure-recall, active-task, and credential-hint
-    // before_agent_start handlers. Only the unconditional agent-detection handler (registered
-    // by onAgentStart) should fire. onFrustrationDetect is a separate export and still
-    // registers its handler to preserve analytics, but skips injection via an inner guard.
-    expect(silentCount).toBe(1);
-    // Normal mode registers all of those handlers.
-    expect(normalCount).toBeGreaterThan(1);
+    // Silent mode suppresses active-task and credential-hint before_agent_start handlers,
+    // but does NOT suppress auto-recall or auth-failure-recall — verbosity is a log-noise
+    // preference, not a feature-disable flag. Functional recall must work in silent mode.
+    // setup(1) + recall(1) + auth-failure(1) = 3 in silent; active-task + credential-hint
+    // are additionally registered in normal mode.
+    expect(silentCount).toBe(3);
+    // Normal mode registers all handlers (active-task and credential-hint on top).
+    expect(normalCount).toBeGreaterThan(silentCount);
   });
 
   it("registers a single agent_end handler in both silent and normal mode (credential steps gated inside runCaptureStage)", () => {
