@@ -205,7 +205,7 @@ describe("CrystallizationProposer.approveProposal", () => {
     proposer.runCycle();
 
     const pending = cStore.list({ status: "pending" });
-    if (pending.length === 0) return; // no candidates — skip
+    expect(pending.length).toBeGreaterThan(0);
 
     // Reject first, then try to approve
     cStore.reject(pending[0].id);
@@ -221,7 +221,7 @@ describe("CrystallizationProposer.approveProposal", () => {
     seedPatterns(["exec", "read", "write"], 3, 1);
     const cycleResult = proposer.runCycle();
 
-    if (cycleResult.proposed === 0) return; // no candidates — skip
+    expect(cycleResult.proposed).toBeGreaterThan(0);
 
     const pending = cStore.list({ status: "pending" });
     expect(pending.length).toBeGreaterThanOrEqual(1);
@@ -272,7 +272,7 @@ describe("CrystallizationProposer.rejectProposal", () => {
     proposer.runCycle();
 
     const pending = cStore.list({ status: "pending" });
-    if (pending.length === 0) return;
+    expect(pending.length).toBeGreaterThan(0);
 
     const result = proposer.rejectProposal(pending[0].id);
     expect(result.success).toBe(true);
