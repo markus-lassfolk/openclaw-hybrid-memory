@@ -37,7 +37,7 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
       await runSetupStage(event, api, ctx, sessionState);
     });
 
-    if (ctx.cfg.autoRecall.enabled && ctx.cfg.verbosity !== "silent") {
+    if (ctx.cfg.autoRecall.enabled) {
       api.on("before_agent_start", async (event: unknown) => {
         try {
           const recallStageResult = await runRecallStage(event, api, ctx, sessionState);
@@ -65,7 +65,7 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
     registerCleanupHandlers(api, ctx, sessionState, resolvedActiveTaskPath, workspaceRoot);
     // Guard experimental/optional features at the registration point — avoids registering
     // event listeners whose bodies immediately return when disabled (#581).
-    if (ctx.cfg.autoRecall.enabled && ctx.cfg.autoRecall.authFailure.enabled && ctx.cfg.verbosity !== "silent") {
+    if (ctx.cfg.autoRecall.enabled && ctx.cfg.autoRecall.authFailure.enabled) {
       registerAuthFailureRecall(api, ctx, sessionState);
     }
     // Note: credential hints are gated on verbosity !== "silent" because their output
