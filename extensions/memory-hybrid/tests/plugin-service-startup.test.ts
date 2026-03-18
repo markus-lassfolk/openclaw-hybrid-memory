@@ -41,6 +41,7 @@ function makeTimers() {
     languageKeywordsStartupTimeout: { value: null as ReturnType<typeof setTimeout> | null },
     postUpgradeTimeout: { value: null as ReturnType<typeof setTimeout> | null },
     passiveObserverTimer: { value: null as ReturnType<typeof setInterval> | null },
+    watchdogTimer: { value: null as ReturnType<typeof setInterval> | null },
   };
 }
 
@@ -76,6 +77,10 @@ function clearTimers(timers: ReturnType<typeof makeTimers>) {
   if (timers.passiveObserverTimer.value) {
     clearInterval(timers.passiveObserverTimer.value);
     timers.passiveObserverTimer.value = null;
+  }
+  if (timers.watchdogTimer.value) {
+    clearInterval(timers.watchdogTimer.value);
+    timers.watchdogTimer.value = null;
   }
 }
 
