@@ -613,6 +613,7 @@ Opt-in **query expansion** generates a hypothetical answer (or expanded query) b
 | `timeoutMs` | `15000` (25s when migrating from HyDE) | Timeout for expansion call in ms. Raised to 15s in #339 to accommodate thinking models (e.g. Gemini 2.5 Flash) that routinely exceed 5s. A minimum floor of 10000ms is enforced (#384); values explicitly set below that are silently raised. Set to `0` or a negative value to remove the timeout entirely. |
 | `maxVariants` | `4` | Max query variants to generate and merge |
 | `cacheSize` | `100` | Cache size for expansion results |
+| `skipForInteractiveTurns` | `true` | When `true` (default), query expansion is skipped during interactive `before_agent_start` turns. HyDE/QE adds a full LLM round-trip before embedding, which can add 5–15 s of latency on the hot interactive path. Background/cron recall is unaffected by this flag. Set to `false` only if you explicitly want query expansion on every user-facing turn. |
 
 **Migration from HyDE:** If you still have `search.hydeEnabled: true`, the plugin auto-enables `queryExpansion` and uses `search.hydeModel` (or nano tier) for the model. You will see a deprecation warning in the logs. Set `queryExpansion.enabled` and `queryExpansion.model` in config and remove `search.hydeEnabled` / `search.hydeModel` to silence it. Explicit `queryExpansion.enabled: false` overrides the old flag.
 
