@@ -353,7 +353,6 @@ describe("WriteAheadLog", () => {
       expect(wal.readAll()).toHaveLength(1);
       expect(wal.readAll()[0].id).toBe(entry.id);
     });
-
   });
 
   describe("clear operation", () => {
