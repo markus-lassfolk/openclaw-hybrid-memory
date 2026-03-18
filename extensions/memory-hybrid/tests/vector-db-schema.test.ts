@@ -328,6 +328,88 @@ describe("VectorDB issue #366 — capturePluginError suppressed on schema mismat
 });
 
 // ---------------------------------------------------------------------------
+// VectorDB issue #599 — search() must not return optimistic placeholder metadata
+// Fields not stored in LanceDB (confidence, source, decayClass, entity, key, value,
+// expiresAt, lastConfirmedAt) must use conservative/unknown defaults so un-enriched
+// results are not falsely ranked highly.
+// ---------------------------------------------------------------------------
+
+describe("VectorDB issue #599 — search() returns partial metadata with conservative defaults", () => {
+  let tmpDir: string;
+  let lanceDir: string;
+  let db: InstanceType<typeof VectorDB>;
+
+  const DIM = 3;
+
+  beforeEach(async () => {
+    tmpDir = mkdtempSync(join(tmpdir(), "vector-599-test-"));
+    lanceDir = join(tmpDir, "lance");
+    db = new VectorDB(lanceDir, DIM);
+    await db.store({
+      text: "user prefers TypeScript",
+      vector: [0.1, 0.2, 0.3],
+      importance: 0.8,
+      category: "preference",
+      id: "test-id-599",
+    });
+  });
+
+  afterEach(() => {
+    db.close();
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("search result contains real persisted fields (id, text, category, importance, createdAt)", async () => {
+    const results = await db.search([0.1, 0.2, 0.3], 5, 0);
+    expect(results).toHaveLength(1);
+    const entry = results[0].entry;
+    expect(entry.id).toBe("test-id-599");
+    expect(entry.text).toBe("user prefers TypeScript");
+    expect(entry.category).toBe("preference");
+    expect(entry.importance).toBe(0.8);
+    expect(typeof entry.createdAt).toBe("number");
+    expect(entry.createdAt).toBeGreaterThan(0);
+  });
+
+  it("search result confidence is 0 (conservative), not 1.0 (optimistic placeholder)", async () => {
+    const results = await db.search([0.1, 0.2, 0.3], 5, 0);
+    expect(results).toHaveLength(1);
+    expect(results[0].entry.confidence).toBe(0);
+    expect(results[0].entry.confidence).not.toBe(1.0);
+  });
+
+  it('search result source is "unknown", not "conversation" (fabricated placeholder)', async () => {
+    const results = await db.search([0.1, 0.2, 0.3], 5, 0);
+    expect(results).toHaveLength(1);
+    expect(results[0].entry.source).toBe("unknown");
+    expect(results[0].entry.source).not.toBe("conversation");
+  });
+
+  it("search result entity, key, value are null (honest partial metadata)", async () => {
+    const results = await db.search([0.1, 0.2, 0.3], 5, 0);
+    expect(results).toHaveLength(1);
+    const entry = results[0].entry;
+    expect(entry.entity).toBeNull();
+    expect(entry.key).toBeNull();
+    expect(entry.value).toBeNull();
+  });
+
+  it("search result expiresAt is null and lastConfirmedAt is 0 (conservative)", async () => {
+    const results = await db.search([0.1, 0.2, 0.3], 5, 0);
+    expect(results).toHaveLength(1);
+    const entry = results[0].entry;
+    expect(entry.expiresAt).toBeNull();
+    expect(entry.lastConfirmedAt).toBe(0);
+  });
+
+  it("backend is lancedb", async () => {
+    const results = await db.search([0.1, 0.2, 0.3], 5, 0);
+    expect(results).toHaveLength(1);
+    expect(results[0].backend).toBe("lancedb");
+  });
+});
+
+// ---------------------------------------------------------------------------
 // VectorDB issue #379 — malformed UUID suffix duplication
 // delete() must log + return false instead of throwing when the UUID has a
 // doubled suffix (e.g. "...831c1c1" instead of "...831c1").

@@ -354,10 +354,14 @@ export class VectorDB {
               text: row.text as string,
               category: row.category as MemoryCategory,
               importance: row.importance as number,
+              // Fields NOT stored in LanceDB — partial/unknown placeholders.
+              // Callers should enrich via factsDb.getById(entry.id) before trusting
+              // these values. Conservative (non-optimistic) defaults are used so that
+              // un-enriched results are not falsely ranked highly (issue #599).
               entity: null,
               key: null,
               value: null,
-              source: "conversation",
+              source: "unknown",
               createdAt:
                 (row.createdAt as number) > 10_000_000_000
                   ? Math.floor((row.createdAt as number) / 1000)
@@ -365,7 +369,7 @@ export class VectorDB {
               decayClass: "stable" as DecayClass,
               expiresAt: null,
               lastConfirmedAt: 0,
-              confidence: 1.0,
+              confidence: 0,
             },
             score,
             backend: "lancedb" as const,
