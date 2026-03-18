@@ -92,8 +92,9 @@ export function validateUrl(url: string, cfg: ApiTapConfig): string | null {
     return `URL scheme "${parsed.protocol}" is not allowed. Only http: and https: are permitted.`;
   }
 
-  // Build normalized URL string for pattern matching (includes decoded pathname)
-  const normalizedUrl = `${parsed.protocol}//${parsed.host}${parsed.pathname}${parsed.search}${parsed.hash}`;
+  // Build normalized URL string for pattern matching (protocol + host + pathname only)
+  // Query strings and fragments are excluded to ensure path-based patterns work correctly
+  const normalizedUrl = `${parsed.protocol}//${parsed.host}${parsed.pathname}`;
 
   // Check blocked patterns first (blocklist wins)
   for (const pattern of cfg.blockedPatterns) {
