@@ -101,13 +101,13 @@ describe("HybridMemoryContextEngine.compact()", () => {
     // Arrange: write 2 entries to WAL
     const id1 = randomUUID();
     const id2 = randomUUID();
-    wal.write({
+    await wal.write({
       id: id1,
       timestamp: Date.now(),
       operation: "store",
       data: { text: "Compact fact A", category: "fact", importance: 0.8, source: "test" },
     });
-    wal.write({
+    await wal.write({
       id: id2,
       timestamp: Date.now(),
       operation: "store",
@@ -151,7 +151,7 @@ describe("HybridMemoryContextEngine.compact()", () => {
     });
 
     // Write same text to WAL
-    wal.write({
+    await wal.write({
       id: randomUUID(),
       timestamp: Date.now(),
       operation: "store",
@@ -178,7 +178,7 @@ describe("HybridMemoryContextEngine.compact()", () => {
     // Replaying it used to pass the text as a fact ID, causing "Invalid UUID format" errors.
     // The fix: skip delete entries during replay (same as update entries).
     const deleteEntryId = randomUUID();
-    wal.write({
+    await wal.write({
       id: deleteEntryId,
       timestamp: Date.now(),
       operation: "delete",
@@ -195,7 +195,7 @@ describe("HybridMemoryContextEngine.compact()", () => {
     // No facts added — the delete entry was skipped, not replayed as a store
     expect(factsDb.getCount()).toBe(before);
     // The WAL entry should have been removed (no longer pending)
-    expect(wal.readAll()).toHaveLength(0);
+    expect(await wal.readAll()).toHaveLength(0);
   });
 
   it("includes top-fact summary in result when facts are present", async () => {

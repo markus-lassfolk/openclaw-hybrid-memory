@@ -173,8 +173,8 @@ export function registerMemoryTools(
     operation: "store" | "update",
     data: Record<string, unknown>,
     logger: { warn: (msg: string) => void },
-  ) => string,
-  walRemove: (id: string, logger: { warn: (msg: string) => void }) => void,
+  ) => Promise<string>,
+  walRemove: (id: string, logger: { warn: (msg: string) => void }) => Promise<void>,
   findSimilarByEmbedding: (
     vectorDb: VectorDB,
     factsDb: { getById(id: string): MemoryEntry | null },
@@ -1227,7 +1227,7 @@ export function registerMemoryTools(
               if (classification.action === "UPDATE" && classification.targetId) {
                 const oldFact = factsDb.getById(classification.targetId);
                 if (oldFact) {
-                  const walEntryId = walWrite(
+                  const walEntryId = await walWrite(
                     "update",
                     {
                       text: textToStore,
@@ -1312,7 +1312,7 @@ export function registerMemoryTools(
                     api.logger.warn(`memory-hybrid: vector store failed: ${err}`);
                   }
 
-                  walRemove(walEntryId, api.logger);
+                  await walRemove(walEntryId, api.logger);
 
                   // Issue #159: enqueue contextual variant generation (non-blocking)
                   if (variantQueue) {
@@ -1344,7 +1344,7 @@ export function registerMemoryTools(
             }
           }
 
-          const walEntryId = walWrite(
+          const walEntryId = await walWrite(
             "store",
             {
               text: textToStore,
@@ -1494,7 +1494,7 @@ export function registerMemoryTools(
             api.logger.warn(`memory-hybrid: vector store failed: ${err}`);
           }
 
-          walRemove(walEntryId, api.logger);
+          await walRemove(walEntryId, api.logger);
 
           // Issue #150: write event to episodic event log
           if (eventLog) {
