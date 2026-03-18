@@ -137,7 +137,7 @@ export function runConfigViewForCli(ctx: HandlerContext, sink: VerifyCliSink): v
   log("  Self-correction: " + on(!!cfg.selfCorrection));
   log("  Self-extension (tool proposals): " + on(cfg.selfExtension?.enabled ?? false));
   log("  Crystallization (skill proposals): " + on(cfg.crystallization?.enabled ?? false));
-  log("  Extraction (multi-pass): " + on(cfg.extraction?.extractionPasses ?? false));
+  log("  Extraction (multi-pass): " + on(!!cfg.extraction?.extractionPasses));
   log("  Active task (ACTIVE-TASK.md): " + on(cfg.activeTask.enabled));
   log("  Frustration detection: " + on(cfg.frustrationDetection.enabled));
   log("  Cross-agent learning: " + on(cfg.crossAgentLearning.enabled));
