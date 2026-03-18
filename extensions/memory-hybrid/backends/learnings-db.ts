@@ -216,7 +216,7 @@ export class LearningsDB {
   prune(olderThanDays: number): number {
     const cutoff = new Date(Date.now() - olderThanDays * 24 * 60 * 60 * 1000).toISOString();
     const result = this.db
-      .prepare(`DELETE FROM learnings WHERE status IN ('promoted', 'wont_promote') AND updated_at < ?`)
+      .prepare(`DELETE FROM learnings WHERE status IN ('promoted', 'wont_promote') AND updated_at <= ?`)
       .run(cutoff);
     return Number(result.changes);
   }
