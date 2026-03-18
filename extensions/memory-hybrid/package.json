@@ -36,7 +36,7 @@
   },
   "dependencies": {
     "@lancedb/lancedb": "^0.26.2",
-    "better-sqlite3": "^12.0.0"
+    "@types/node": "^25.2.3"
   },
   "openclaw": {
     "extensions": ["./index.ts"]
@@ -56,8 +56,6 @@
   },
   "devDependencies": {
     "@biomejs/biome": "^1.9.0",
-    "@types/better-sqlite3": "^7.6.13",
-    "@types/node": "^25.2.3",
     "@vitest/coverage-v8": "^4.0.18",
     "knip": "^5.0.0",
     "typescript": "^5.9.3",
@@ -69,7 +67,7 @@
     "yauzl": ">=3.2.1"
   },
   "engines": {
-    "node": "^20.19.0 || >=22.12.0"
+    "node": ">=22.12.0"
   },
   "homepage": "https://github.com/markus-lassfolk/openclaw-hybrid-memory#readme",
   "bugs": {

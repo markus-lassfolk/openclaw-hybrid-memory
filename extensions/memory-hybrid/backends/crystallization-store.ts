@@ -5,7 +5,8 @@
  * workflow patterns. Human approval is required before any skill is written to disk.
  */
 
-import Database from "better-sqlite3";
+import { DatabaseSync } from "node:sqlite";
+import type { SQLInputValue } from "node:sqlite";
 import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
@@ -53,14 +54,14 @@ export interface ProposalFilter {
 // ---------------------------------------------------------------------------
 
 export class CrystallizationStore {
-  private db: Database.Database;
+  private db: DatabaseSync;
   private closed = false;
 
   constructor(dbPath: string) {
     mkdirSync(dirname(dbPath), { recursive: true });
-    this.db = new Database(dbPath);
-    this.db.pragma("journal_mode = WAL");
-    this.db.pragma(`busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
+    this.db = new DatabaseSync(dbPath);
+    this.db.exec("PRAGMA journal_mode = WAL");
+    this.db.exec(`PRAGMA busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
 
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS crystallization_proposals (
@@ -131,7 +132,7 @@ export class CrystallizationStore {
 
   list(filter?: ProposalFilter): CrystallizationProposal[] {
     let query = "SELECT * FROM crystallization_proposals WHERE 1=1";
-    const params: unknown[] = [];
+    const params: SQLInputValue[] = [];
 
     if (filter?.status) {
       query += " AND status = ?";

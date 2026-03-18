@@ -5,7 +5,7 @@
  * their embeddings — so facts can be found from multiple semantic angles.
  */
 
-import Database from "better-sqlite3";
+import { DatabaseSync } from "node:sqlite";
 import * as lancedb from "@lancedb/lancedb";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
@@ -212,15 +212,15 @@ class AliasVectorIndex {
  * fast deserialization during linear cosine-similarity search.
  */
 export class AliasDB {
-  private db: Database.Database;
+  private db: DatabaseSync;
   private aliasIndex: AliasVectorIndex;
   /** Cached alias count — invalidated on store/delete to avoid COUNT(*) on every search. */
   private aliasCountCache: number | null = null;
 
   constructor(dbPath: string, aliasLancePath: string, vectorDim: number) {
     mkdirSync(dirname(dbPath), { recursive: true });
-    this.db = new Database(dbPath);
-    this.db.pragma("journal_mode = WAL");
+    this.db = new DatabaseSync(dbPath);
+    this.db.exec("PRAGMA journal_mode = WAL");
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS fact_aliases (
         id TEXT PRIMARY KEY,
@@ -256,7 +256,7 @@ export class AliasDB {
     const normalizedFactId = factId.toLowerCase();
     return this.db
       .prepare(`SELECT id, factId, aliasText FROM fact_aliases WHERE factId COLLATE NOCASE = ?`)
-      .all(normalizedFactId) as AliasRow[];
+      .all(normalizedFactId) as unknown as AliasRow[];
   }
 
   /** Delete all aliases for a fact (e.g., when the fact is superseded). */
@@ -265,7 +265,7 @@ export class AliasDB {
     const normalizedFactId = factId.toLowerCase();
     const res = this.db.prepare(`DELETE FROM fact_aliases WHERE factId = ?`).run(normalizedFactId);
     if (this.aliasCountCache != null) {
-      this.aliasCountCache = Math.max(0, this.aliasCountCache - (res.changes ?? 0));
+      this.aliasCountCache = Math.max(0, this.aliasCountCache - Number(res.changes ?? 0));
     }
     void this.aliasIndex.deleteByFactId(factId);
   }

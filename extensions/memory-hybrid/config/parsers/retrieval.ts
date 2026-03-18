@@ -25,6 +25,10 @@ export function parseAutoClassifyConfig(cfg: Record<string, unknown>): AutoClass
     batchSize: typeof acCfg?.batchSize === "number" ? acCfg.batchSize : 20,
     suggestCategories: acCfg?.suggestCategories !== false,
     minFactsForNewCategory: typeof acCfg?.minFactsForNewCategory === "number" ? acCfg.minFactsForNewCategory : 10,
+    discoveryIntervalHours:
+      typeof acCfg?.discoveryIntervalHours === "number" && acCfg.discoveryIntervalHours >= 0
+        ? acCfg.discoveryIntervalHours
+        : 72,
   };
 }
 
