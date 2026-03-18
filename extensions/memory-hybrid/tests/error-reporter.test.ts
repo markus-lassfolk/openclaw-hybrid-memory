@@ -145,8 +145,8 @@ describe("Error Reporter", () => {
       expect(mockLogger.info).toHaveBeenCalledWith(expect.stringContaining("Using community mode"));
     });
 
-    it("should initialize by default with no config (opt-out: enabled+consent default to true)", async () => {
-      // Verify that with opt-out defaults, error reporting would activate when enabled+consent are both true
+    it("should initialize when explicitly configured with enabled+consent=true (opt-in)", async () => {
+      // Verify that with explicit opt-in config, error reporting activates when enabled+consent are both true
       // (Actual Sentry.init call may fail in test environment, but the guard logic should pass)
       const { initErrorReporter, DEFAULT_GLITCHTIP_DSN } = await import("../services/error-reporter.js");
 
@@ -155,7 +155,7 @@ describe("Error Reporter", () => {
         warn: vi.fn(),
       };
 
-      // Simulate the default config (opt-out: both true)
+      // Simulate an explicit opt-in config (both true)
       await initErrorReporter(
         {
           enabled: true,

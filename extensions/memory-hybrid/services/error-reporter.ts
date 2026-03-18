@@ -2,7 +2,7 @@
  * Error Reporter Service for GlitchTip Integration
  *
  * SECURITY REQUIREMENTS (NON-NEGOTIABLE):
- * - consent: true by default — user must explicitly opt OUT
+ * - consent: false by default — user must explicitly opt IN
  * - No real user data: no memory text, prompts, conversation content, or user identity
  * - MAX_BREADCRUMBS: 10 — only plugin.* category allowed, message/data stripped
  * - sanitizeEvent() rebuilds event from scratch using allowlist before sending
@@ -18,7 +18,7 @@ const MAX_BREADCRUMBS = 10;
 /**
  * Default GlitchTip DSN for anonymous crash reporting.
  * This DSN is safe to expose publicly — it only allows ingest (write), not read.
- * Users can opt out by setting errorReporting.consent: false or errorReporting.enabled: false.
+ * Users can opt in by setting errorReporting.consent: true and errorReporting.enabled: true.
  * Privacy: No PII, prompts, API keys, or user data is ever sent. See sanitizeEvent().
  */
 export const DEFAULT_GLITCHTIP_DSN = "https://7d641cabffdb4557a7bd2f02c338dc80@glitchtip.lassfolk.cc/1";
