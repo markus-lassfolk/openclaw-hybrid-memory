@@ -13,12 +13,9 @@
  *   "humanizer_score: 0.73, patterns: ['great_question','happy_to_help'], model: sonnet, skill: weather"
  */
 
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
+import { spawn } from "node:child_process";
 import { capturePluginError } from "./error-reporter.js";
 import type { HumanizerConfig } from "../config/types/features.js";
-
-const execFileAsync = promisify(execFile);
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -146,15 +143,43 @@ export async function runHumanizerScore(
   const truncated = text.length > cfg.maxTextLength ? text.slice(0, cfg.maxTextLength) : text;
 
   try {
-    const { stdout } = await execFileAsync(cfg.bin, ["score", "--json", "--stdin"], {
-      timeout: 10_000,
-      maxBuffer: 1024 * 1024, // 1 MB
-      input: truncated,
+    return await new Promise<HumanizerResult | null>((resolve, reject) => {
+      const child = spawn(cfg.bin, ["score", "--json", "--stdin"], {
+        timeout: 10_000,
+      });
+
+      let stdout = "";
+      let stderr = "";
+
+      child.stdout.on("data", (chunk) => {
+        stdout += chunk;
+        if (stdout.length > 1024 * 1024) {
+          child.kill();
+          reject(new Error("stdout exceeded 1 MB"));
+        }
+      });
+
+      child.stderr.on("data", (chunk) => {
+        stderr += chunk;
+      });
+
+      child.on("error", (err) => {
+        reject(err);
+      });
+
+      child.on("close", (code) => {
+        if (code === 0) {
+          resolve(parseHumanizerOutput(stdout));
+        } else {
+          reject(new Error(`humanizer exited with code ${code}: ${stderr}`));
+        }
+      });
+
+      child.stdin.write(truncated);
+      child.stdin.end();
     });
-    return parseHumanizerOutput(stdout);
   } catch (err) {
     const asErr = err instanceof Error ? err : new Error(String(err));
-    // ENOENT = humanizer not installed — warn only, don't spam error reporter
     if ((asErr as NodeJS.ErrnoException).code === "ENOENT") {
       return null;
     }
