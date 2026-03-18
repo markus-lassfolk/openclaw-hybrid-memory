@@ -260,6 +260,8 @@ export async function runTaskQueueWatchdog(
 
   if (enableRequeue && !isExhausted) {
     enrichedItem.requeued = true;
+  } else {
+    enrichedItem.requeued = false;
   }
 
   // Write to history
