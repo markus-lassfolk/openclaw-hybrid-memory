@@ -13,7 +13,7 @@
  *  - Never auto-triggers; only responds to explicit agent tool calls
  */
 
-import { spawnSync, execSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import type { ApiTapConfig } from "../config/types/features.js";
 
 // ---------------------------------------------------------------------------
@@ -60,7 +60,8 @@ function matchesPattern(url: string, pattern: string): boolean {
     .replace(/[.+^${}()|[\]\\]/g, "\\$&") // escape regex special chars except * and ?
     .replace(/\*\*/g, "§DOUBLESTAR§") // placeholder for **
     .replace(/\*/g, "[^/]*") // * matches within a segment
-    .replace(/§DOUBLESTAR§/g, ".*"); // ** matches across segments
+    .replace(/§DOUBLESTAR§/g, ".*") // ** matches across segments
+    .replace(/\?/g, "."); // ? matches exactly one character
   try {
     return new RegExp(`^${escaped}$`, "i").test(url);
   } catch {
@@ -329,20 +330,4 @@ export class ApitapService {
 
 function randomSessionId(): string {
   return `session-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-}
-
-/**
- * Check if apitap is installed by running `apitap --version` via execSync.
- * Used for CLI verify commands.
- */
-export function checkApitapInstalled(): { installed: boolean; version?: string; error?: string } {
-  try {
-    const output = execSync("apitap --version", { encoding: "utf8", timeout: 5000, stdio: ["ignore", "pipe", "pipe"] });
-    return { installed: true, version: output.trim() };
-  } catch {
-    return {
-      installed: false,
-      error: "apitap CLI not found. Install with: npm install -g @apitap/core",
-    };
-  }
 }

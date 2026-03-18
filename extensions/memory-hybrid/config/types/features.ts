@@ -329,7 +329,6 @@ export type DashboardConfig = {
   /** Optional owner/repo for GitHub queries (e.g. "markus-lassfolk/openclaw-hybrid-memory"). */
   gitRepo?: string;
 };
-// TEST MARKER
 
 /** ApiTap integration — intercept browser traffic to auto-generate API skill specs (Issue #614, default: disabled). */
 export type ApiTapConfig = {
