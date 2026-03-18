@@ -217,10 +217,10 @@ export class WriteAheadLog {
       await prevLock;
       const line = JSON.stringify({ op: "remove", id }) + "\n";
       await appendFile(this.walPath, line, "utf-8");
-      await this.fsyncAfterWrite();
       this.activeIds.delete(id);
+      await this.fsyncAfterWrite();
       if (this.activeIds.size === 0) {
-        await this.clear();
+        await this._clearInternal();
       }
     } catch (err) {
       capturePluginError(err as Error, {
@@ -233,7 +233,7 @@ export class WriteAheadLog {
     }
   }
 
-  async clear(): Promise<void> {
+  private async _clearInternal(): Promise<void> {
     try {
       await rm(this.walPath, { force: true });
       this.activeIds.clear();
@@ -243,6 +243,21 @@ export class WriteAheadLog {
         subsystem: "wal",
       });
       throw new Error(`WAL clear failed: ${err}`);
+    }
+  }
+
+  async clear(): Promise<void> {
+    const prevLock = this.writeLock;
+    let releaseLock: () => void;
+    this.writeLock = new Promise((resolve) => {
+      releaseLock = resolve;
+    });
+
+    try {
+      await prevLock;
+      await this._clearInternal();
+    } finally {
+      releaseLock!();
     }
   }
 
@@ -268,7 +283,7 @@ export class WriteAheadLog {
 
       if (pruned > 0) {
         if (valid.length === 0) {
-          await this.clear();
+          await this._clearInternal();
         } else {
           const ndjson = valid.map((e) => JSON.stringify(e)).join("\n") + (valid.length ? "\n" : "");
           await writeFile(this.walPath, ndjson, "utf-8");
