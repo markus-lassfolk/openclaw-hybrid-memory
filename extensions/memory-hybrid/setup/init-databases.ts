@@ -1585,6 +1585,7 @@ export function closeOldDatabases(context: {
   toolProposalStore?: ToolProposalStore | null;
   verificationStore?: VerificationStore | null;
   provenanceService?: ProvenanceService | null;
+  learningsDb?: import("../backends/learnings-db.js").LearningsDB | null;
 }): void {
   const {
     factsDb,
@@ -1600,6 +1601,7 @@ export function closeOldDatabases(context: {
     toolProposalStore,
     verificationStore,
     provenanceService,
+    learningsDb,
   } = context;
 
   invalidateClusterCache();
@@ -1731,6 +1733,16 @@ export function closeOldDatabases(context: {
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
         operation: "close-databases",
         subsystem: "provenanceService",
+      });
+    }
+  }
+  if (learningsDb) {
+    try {
+      learningsDb.close();
+    } catch (err) {
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        operation: "close-databases",
+        subsystem: "learningsDb",
       });
     }
   }

@@ -202,6 +202,11 @@ export function getPendingPromotions(db: LearningsDB): Array<{ entry: LearningEn
 /**
  * Create a new entry or increment recurrence if an open entry with the same
  * area + content already exists.
+ *
+ * Note: When an existing entry is found, the tags parameter is intentionally
+ * ignored to preserve the original tags from the first occurrence. This is
+ * consistent with the deduplication semantics where recurrence counting takes
+ * precedence over metadata updates.
  */
 function _addOrIncrement(
   db: LearningsDB,
