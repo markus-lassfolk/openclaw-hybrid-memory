@@ -149,7 +149,7 @@ export async function runExtractProceduresForCli(
       if (filePaths) {
         lastSessionTs = getMaxMtime(filePaths);
       } else {
-        const allFiles = getSessionFilePathsSince(sessionDir, 0);
+        const allFiles = getSessionFilePathsSince(sessionDir, 0, 0);
         lastSessionTs = getMaxMtime(allFiles);
       }
       factsDb.updateScanCursor(SCAN_TYPE, lastSessionTs ?? 0, result.sessionsScanned);

@@ -20,7 +20,7 @@ import { extractTags } from "../utils/tags.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { isCredentialLike, tryParseCredentialForVault, VAULT_POINTER_PREFIX } from "../services/auto-capture.js";
 import { preFilterSessions } from "../services/session-pre-filter.js";
-import { BATCH_STORE_IMPORTANCE } from "../utils/constants.js";
+import { BATCH_STORE_IMPORTANCE, DISTILL_DEDUP_THRESHOLD } from "../utils/constants.js";
 import type { DistillWindowResult, RecordDistillResult, DistillCliResult, DistillCliSink } from "./types.js";
 import type { HandlerContext } from "./handlers.js";
 import { buildPreFilterConfig, createProgressReporter } from "./cmd-install.js";
@@ -30,7 +30,6 @@ import { getMaxMtime } from "./cmd-extract.js";
 // Constants used only by distill functions
 const FULL_DISTILL_MAX_DAYS = 90;
 const INCREMENTAL_MIN_DAYS = 3;
-const DISTILL_DEDUP_THRESHOLD = 0.85;
 
 export function gatherSessionFiles(opts: {
   all?: boolean;

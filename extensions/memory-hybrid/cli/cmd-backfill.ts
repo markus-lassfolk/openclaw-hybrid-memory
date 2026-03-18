@@ -33,7 +33,7 @@ import {
 import { capturePluginError } from "../services/error-reporter.js";
 import { tryExtractionFromTemplates } from "../utils/extraction-from-template.js";
 import { gatherIngestFiles } from "../services/ingest-utils.js";
-import { BATCH_STORE_IMPORTANCE } from "../utils/constants.js";
+import { BATCH_STORE_IMPORTANCE, DISTILL_DEDUP_THRESHOLD } from "../utils/constants.js";
 
 import type { HandlerContext } from "./handlers.js";
 import type { BackfillCliResult, BackfillCliSink, IngestFilesResult, IngestFilesSink } from "./types.js";
@@ -45,7 +45,6 @@ import { gatherSessionFiles, extractTextFromSessionJsonl } from "./cmd-distill.j
 // ---------------------------------------------------------------------------
 
 const DEFAULT_INGEST_PATHS = ["skills/**/*.md", "TOOLS.md", "AGENTS.md"];
-const DISTILL_DEDUP_THRESHOLD = 0.85;
 
 const SENTIMENT_BATCH_SIZE = 40;
 const SENTIMENT_MSG_MAX_CHARS = 200;
