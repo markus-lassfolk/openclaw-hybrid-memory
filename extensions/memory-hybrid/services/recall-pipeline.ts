@@ -83,6 +83,12 @@ export async function runRecallPipelineQuery(
     errorPrefix?: string;
     limitHydeOnce?: boolean;
     precomputedVector?: number[];
+    /**
+     * When true, this is an interactive (before_agent_start) recall turn.
+     * If `cfg.queryExpansion.skipForInteractiveTurns` is true (the default), HyDE is
+     * skipped to prevent LLM latency spikes on the hot user-facing path (#581).
+     */
+    interactive?: boolean;
   },
 ): Promise<SearchResult[]> {
   const { factsDb, vectorDb, embeddings, openai, cfg, recallOpts, minScore, pendingLLMWarnings, logger } = deps;
@@ -111,7 +117,11 @@ export async function runRecallPipelineQuery(
     try {
       const vectorStepPromise = (async (): Promise<SearchResult[]> => {
         let textToEmbed = trimmed;
-        const allowHyde = cfg.queryExpansion.enabled && (!opts?.limitHydeOnce || !hydeUsedRef.value);
+        // Skip HyDE on interactive turns when skipForInteractiveTurns is enabled (default true).
+        // This prevents a full LLM round-trip on the hot before_agent_start path (#581).
+        const hydeBlockedByInteractive = opts?.interactive === true && cfg.queryExpansion.skipForInteractiveTurns;
+        const allowHyde =
+          cfg.queryExpansion.enabled && !hydeBlockedByInteractive && (!opts?.limitHydeOnce || !hydeUsedRef.value);
         t0 = Date.now();
 
         if (allowHyde) {

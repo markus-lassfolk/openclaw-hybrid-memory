@@ -171,6 +171,66 @@ describe("VectorDB reference-counted lifecycle (issue #106)", () => {
 });
 
 // ---------------------------------------------------------------------------
+// VectorDB persistent (long-lived) connection mode (#581)
+// ---------------------------------------------------------------------------
+
+describe("VectorDB persistent connection mode (#581)", () => {
+  let tmpDir: string;
+  let db: InstanceType<typeof VectorDB>;
+
+  beforeEach(async () => {
+    tmpDir = mkdtempSync(join(tmpdir(), "vector-db-persistent-test-"));
+    db = new VectorDB(join(tmpDir, "lance"), VECTOR_DIM);
+    await db.store({ text: "seed", vector: [0.1, 0.2, 0.3], importance: 0.5, category: "fact" });
+  });
+
+  afterEach(() => {
+    db.close();
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("removeSession() after setPersistent() does not close the connection", async () => {
+    db.setPersistent();
+
+    // Even after removeSession, the DB must stay open and usable.
+    db.removeSession();
+
+    expect((db as unknown as { closed: boolean }).closed).toBe(false);
+
+    const id = await db.store({ text: "still alive", vector: [0.4, 0.5, 0.6], importance: 0.8, category: "fact" });
+    expect(typeof id).toBe("string");
+  });
+
+  it("multiple removeSession() calls after setPersistent() do not close the connection", async () => {
+    db.setPersistent();
+
+    db.removeSession();
+    db.removeSession();
+    db.removeSession();
+
+    expect((db as unknown as { closed: boolean }).closed).toBe(false);
+    const results = await db.search([0.1, 0.2, 0.3], 5, 0);
+    expect(results.length).toBeGreaterThan(0);
+  });
+
+  it("close() still works on a persistent connection (gateway shutdown)", async () => {
+    db.setPersistent();
+
+    db.close();
+
+    expect((db as unknown as { closed: boolean }).closed).toBe(true);
+  });
+
+  it("non-persistent removeSession() still closes when refcount reaches zero", async () => {
+    // Verify that without setPersistent(), the old refcount behavior is preserved.
+    db.open();
+
+    db.removeSession(); // refcount → 0 → should close
+    expect((db as unknown as { closed: boolean }).closed).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // credentials-pending.json ENOENT handling (issue #10)
 // ---------------------------------------------------------------------------
 
