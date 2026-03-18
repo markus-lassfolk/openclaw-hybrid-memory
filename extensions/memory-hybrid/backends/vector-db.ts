@@ -55,6 +55,13 @@ export class VectorDB {
    * and abort when it changes, preventing them from running on a closed instance.
    */
   private closeGeneration = 0;
+  /**
+   * When true, this VectorDB is a long-lived singleton connection (set via setPersistent()).
+   * removeSession() becomes a safe no-op when persistent — the connection is only closed
+   * by an explicit close() call (e.g. gateway shutdown). This prevents fragile session
+   * refcounting from accidentally closing a shared connection (#581).
+   */
+  private isPersistent = false;
 
   constructor(
     private readonly dbPath: string,
@@ -354,18 +361,22 @@ export class VectorDB {
               text: row.text as string,
               category: row.category as MemoryCategory,
               importance: row.importance as number,
+              // Fields NOT stored in LanceDB — partial/unknown placeholders.
+              // Callers should enrich via factsDb.getById(entry.id) before trusting
+              // these values. Conservative (non-optimistic) defaults are used so that
+              // un-enriched results are not falsely ranked highly (issue #599).
               entity: null,
               key: null,
               value: null,
-              source: "conversation",
+              source: "unknown",
               createdAt:
                 (row.createdAt as number) > 10_000_000_000
                   ? Math.floor((row.createdAt as number) / 1000)
                   : (row.createdAt as number),
-              decayClass: "stable" as DecayClass,
+              decayClass: "normal" as DecayClass,
               expiresAt: null,
               lastConfirmedAt: 0,
-              confidence: 1.0,
+              confidence: 0,
             },
             score,
             backend: "lancedb" as const,
@@ -460,11 +471,27 @@ export class VectorDB {
   }
 
   /**
+   * Mark this VectorDB as a persistent long-lived singleton connection (#581).
+   *
+   * Once called, `removeSession()` becomes a safe no-op — the connection can only be
+   * closed by an explicit `close()` call (e.g. gateway shutdown). This eliminates the
+   * risk of fragile session refcounting accidentally closing the shared connection while
+   * the plugin is still running.
+   *
+   * Should be called once at plugin startup after the initial `count()` / schema check.
+   */
+  setPersistent(): void {
+    this.isPersistent = true;
+  }
+
+  /**
    * Increment the session refcount. Called when an agent session begins using this VectorDB.
    * If the DB was previously closed (e.g. by a premature stop()), resets the closed flag so
    * the next operation auto-reconnects via ensureInitialized().
-   * Note: The main plugin lifecycle uses a single long-lived connection and no longer calls
-   * open()/removeSession() per turn; these remain for tests and backward compatibility.
+   *
+   * @deprecated The main plugin lifecycle uses a single long-lived connection (setPersistent())
+   * and no longer calls open()/removeSession() per turn. These remain for tests and
+   * backward compatibility only.
    */
   open(): void {
     this.sessionCount++;
@@ -476,10 +503,20 @@ export class VectorDB {
   /**
    * Decrement the session refcount. Called when an agent session ends.
    * Only actually closes the underlying DB when the refcount reaches zero.
-   * Use this in session teardown hooks instead of close() to prevent premature
-   * shutdown of a shared singleton while other sessions are still active.
+   *
+   * When `setPersistent()` has been called, this method is a safe no-op — the persistent
+   * connection can only be closed by `close()` (gateway shutdown).
+   *
+   * @deprecated Prefer the single long-lived connection model (setPersistent()) over
+   * refcounted open()/removeSession() calls.
    */
   removeSession(): void {
+    if (this.isPersistent) {
+      // Persistent connections are managed by close() (gateway shutdown only).
+      // Ignore refcount decrements to prevent accidental premature closure (#581).
+      // This is a safe no-op by design; no log needed for expected behavior.
+      return;
+    }
     if (this.sessionCount <= 0) {
       this.logWarn(
         "memory-hybrid: VectorDB.removeSession() called with sessionCount already 0 — possible session lifecycle mismatch (open()/removeSession() calls are unbalanced)",
@@ -515,6 +552,9 @@ export class VectorDB {
    * after this (lazy reconnect safety net).
    */
   close(): void {
+    // Note: isPersistent is intentionally not reset here.
+    // A persistent connection, once closed (gateway shutdown), should not be
+    // re-promoted to managed-lifecycle mode by any remaining callers.
     this.sessionCount = 0;
     this.closeGeneration++;
     this._doClose();

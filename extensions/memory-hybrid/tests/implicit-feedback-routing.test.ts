@@ -29,8 +29,7 @@ function makeDb(dir: string) {
 
 /** Access raw SQLite DB from FactsDB for test assertions. */
 function rawDb(db: InstanceType<typeof FactsDB>) {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  return (db as any).liveDb as import("node:sqlite").DatabaseSync;
+  return db.getRawDb();
 }
 
 /** Minimal HandlerContext for routing tests — only the fields runExtractImplicitFeedbackForCli uses. */

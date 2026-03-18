@@ -1524,6 +1524,11 @@ export function initializeDatabases(cfg: HybridMemoryConfig, api: ClawdbotPlugin
     })();
   }
 
+  // Mark the VectorDB as a persistent long-lived singleton connection (#581).
+  // This prevents fragile session refcounting from accidentally closing the shared
+  // connection via removeSession() — the connection is only closed by close() (gateway shutdown).
+  vectorDb.setPersistent();
+
   return {
     factsDb,
     vectorDb,
