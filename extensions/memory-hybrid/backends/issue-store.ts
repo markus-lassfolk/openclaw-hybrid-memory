@@ -22,7 +22,7 @@ interface IssueRow {
   id: string;
   title: string;
   status: string;
-  severity: IssueSeverity;
+  severity: string;
   symptoms: string;
   root_cause: string | null;
   fix: string | null;
@@ -278,7 +278,7 @@ export class IssueStore {
       id: row.id,
       title: row.title,
       status: row.status as IssueStatus,
-      severity: row.severity,
+      severity: row.severity as IssueSeverity,
       symptoms: parseJson<string[]>(row.symptoms, []),
       rootCause: row.root_cause ?? undefined,
       fix: row.fix ?? undefined,
