@@ -344,6 +344,8 @@ export type ApiTapConfig = {
   allowedPatterns: string[];
   /** URL glob patterns blocked from capture (auth/OAuth flows, default: blocked). */
   blockedPatterns: string[];
+};
+
 /** Humanizer style scoring: quality-loop metric for detecting AI-writing patterns (Issue #616). */
 export type HumanizerConfig = {
   /** Enable humanizer scoring on agent replies (default: false — opt-in). */
