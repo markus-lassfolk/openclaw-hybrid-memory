@@ -29,7 +29,16 @@ interface PersistResult {
 }
 
 function persistAndFormatEndpoints(
-  result: { sessionId: string; endpoints: Array<{ endpoint: string; method: string; parameters?: Record<string, unknown>; sampleResponse?: unknown; contentType?: string }> },
+  result: {
+    sessionId: string;
+    endpoints: Array<{
+      endpoint: string;
+      method: string;
+      parameters?: Record<string, unknown>;
+      sampleResponse?: unknown;
+      contentType?: string;
+    }>;
+  },
   url: string,
   cfg: HybridMemoryConfig,
   apitapStore: ApitapStore,
@@ -89,8 +98,8 @@ export function registerApitapTools(ctx: ApitapToolsContext, api: ClawdbotPlugin
     name: "apitap_capture",
     label: "ApiTap: Capture Browser Traffic",
     description:
-      "Launch a browser capture session using ApiTap to intercept and parameterize real network traffic. " +
-      "The browser opens to the target URL; navigate normally while ApiTap records API calls. " +
+      "Launch a headless capture session using ApiTap to intercept and parameterize real network traffic. " +
+      "ApiTap captures API calls from the target URL without opening a visible browser window. " +
       "Returns discovered endpoints for review. Requires apiTap.enabled = true in plugin config. " +
       "SECURITY: never use against auth flows or sensitive sites without review.",
     parameters: Type.Object({
@@ -441,7 +450,7 @@ export function registerApitapTools(ctx: ApitapToolsContext, api: ClawdbotPlugin
         lines.push("curl example:");
         lines.push(`  ${scaffold.curlExample}`);
         lines.push("");
-        lines.push("Review this spec before enabling. Use apitap_list to accept/reject endpoints.");
+        lines.push("Review this spec before enabling. Use apitap_list to see all discovered endpoints.");
 
         return {
           content: [{ type: "text", text: lines.join("\n") }],

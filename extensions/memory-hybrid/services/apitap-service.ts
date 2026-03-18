@@ -14,6 +14,7 @@
  */
 
 import { spawn, spawnSync } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import type { ApiTapConfig } from "../config/types/features.js";
 
 // ---------------------------------------------------------------------------
@@ -95,11 +96,15 @@ export function validateUrl(url: string, cfg: ApiTapConfig): string | null {
     }
   }
 
-  // Basic URL validation
+  // Basic URL validation — only allow http/https schemes
+  let parsed: URL;
   try {
-    new URL(url);
+    parsed = new URL(url);
   } catch {
     return `Invalid URL: "${url}"`;
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    return `URL scheme "${parsed.protocol}" is not allowed. Only http: and https: are permitted.`;
   }
 
   return null;
@@ -290,10 +295,11 @@ export class ApitapService {
         return `-d '${k}=${escapedValue}'`;
       })
       .join(" ");
+    const escapedUrl = encodeURI(`${siteUrl}${endpoint}`);
     const curlExample =
       method.toUpperCase() === "GET"
-        ? `curl "${siteUrl}${endpoint}"`
-        : `curl -X ${method.toUpperCase()} "${siteUrl}${endpoint}" ${curlParams}`.trim();
+        ? `curl "${escapedUrl}"`
+        : `curl -X ${method.toUpperCase()} "${escapedUrl}" ${curlParams}`.trim();
 
     return {
       skillName,
@@ -357,5 +363,5 @@ export class ApitapService {
 }
 
 function randomSessionId(): string {
-  return `session-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  return `session-${Date.now()}-${randomBytes(3).toString("hex")}`;
 }
