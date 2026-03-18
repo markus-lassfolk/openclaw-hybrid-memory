@@ -217,8 +217,7 @@ function _addOrIncrement(
   content: string,
   tags?: string[],
 ): LearningEntry {
-  // Search open entries of this type for an exact area+content match.
-  const existing = db.list({ type: [type], status: ["open"] }).find((e) => e.area === area && e.content === content);
+  const existing = db.findByAreaContent(type, area, content, "open");
 
   if (existing) {
     return db.incrementRecurrence(existing.id);
