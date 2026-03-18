@@ -336,7 +336,8 @@ const memoryHybridPlugin = {
       if (old.timers.classifyStartupTimeout.value) clearTimeout(old.timers.classifyStartupTimeout.value);
       if (old.timers.proposalsPruneTimer.value) clearInterval(old.timers.proposalsPruneTimer.value);
       if (old.timers.languageKeywordsTimer.value) clearInterval(old.timers.languageKeywordsTimer.value);
-      if (old.timers.languageKeywordsStartupTimeout.value) clearTimeout(old.timers.languageKeywordsStartupTimeout.value);
+      if (old.timers.languageKeywordsStartupTimeout.value)
+        clearTimeout(old.timers.languageKeywordsStartupTimeout.value);
       if (old.timers.postUpgradeTimeout.value) clearTimeout(old.timers.postUpgradeTimeout.value);
       if (old.timers.passiveObserverTimer.value) clearInterval(old.timers.passiveObserverTimer.value);
     }
