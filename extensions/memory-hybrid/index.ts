@@ -246,6 +246,7 @@ import { ProposalsDB, type ProposalEntry } from "./backends/proposals-db.js";
 import { EventLog } from "./backends/event-log.js";
 import { EventBus, computeFingerprint } from "./backends/event-bus.js";
 import { IssueStore } from "./backends/issue-store.js";
+import { LearningsDB } from "./backends/learnings-db.js";
 import {
   WorkflowStore,
   sequenceDistance,
@@ -785,6 +786,8 @@ export const _testing = {
   VerificationError,
   // Provenance tracing (Issue #163)
   ProvenanceService,
+  // Learnings intake buffer — staged memory promotion (Issue #617)
+  LearningsDB,
 };
 
 export { versionInfo } from "./versionInfo.js";
