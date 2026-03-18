@@ -423,6 +423,8 @@ function buildCliContextServices(ctx: HybridMemCliRegistrationContext, api: Claw
           eventLogArchivalDays: cfg.eventLog.archivalDays,
           eventLogArchivePath: cfg.eventLog.archivePath,
           maxUnconsolidatedAgeDays: cfg.nightlyCycle.maxUnconsolidatedAgeDays,
+          logRetentionDays: cfg.nightlyCycle.logRetentionDays,
+          vacuumOnCycle: cfg.nightlyCycle.vacuumOnCycle,
         },
         logSink,
         provenanceService,

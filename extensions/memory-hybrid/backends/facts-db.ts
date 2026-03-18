@@ -388,6 +388,7 @@ export class FactsDB {
     `);
     this.liveDb.exec(`CREATE INDEX IF NOT EXISTS idx_ft_session ON feedback_trajectories(session_file)`);
     this.liveDb.exec(`CREATE INDEX IF NOT EXISTS idx_ft_outcome ON feedback_trajectories(outcome)`);
+    this.liveDb.exec(`CREATE INDEX IF NOT EXISTS idx_ft_created_at ON feedback_trajectories(created_at)`);
   }
 
   /** Create feedback_effectiveness table for closed-loop rule measurement (#262). */
@@ -3814,6 +3815,42 @@ export class FactsDB {
   /** Alias for backfillDecayClasses() for backward compatibility */
   backfillDecay(): Record<string, number> {
     return this.backfillDecayClasses();
+  }
+
+  /**
+   * Prune log tables that accumulate indefinitely (Issue #573).
+   * Deletes rows older than `retentionDays` from:
+   *   - recall_log
+   *   - reinforcement_log
+   *   - feedback_trajectories
+   * Returns the total number of rows deleted.
+   */
+  pruneLogTables(retentionDays: number): number {
+    if (retentionDays <= 0) return 0;
+    const cutoff = Math.floor(Date.now() / 1000) - retentionDays * 86400;
+    const r1 = this.liveDb.prepare(`DELETE FROM recall_log WHERE occurred_at < ?`).run(cutoff);
+    const r2 = this.liveDb.prepare(`DELETE FROM reinforcement_log WHERE occurred_at < ?`).run(cutoff);
+    const r3 = this.liveDb.prepare(`DELETE FROM feedback_trajectories WHERE created_at < ?`).run(cutoff);
+    return Number(r1.changes) + Number(r2.changes) + Number(r3.changes);
+  }
+
+  /**
+   * Run FTS5 'optimize' command to compact full-text search shadow tables (Issue #573).
+   * Should be called after bulk deletes to reclaim space in the FTS index.
+   */
+  optimizeFts(): void {
+    this.liveDb.exec(`INSERT INTO facts_fts(facts_fts) VALUES('optimize')`);
+  }
+
+  /**
+   * Checkpoint the WAL file and run VACUUM to reclaim freed disk space (Issue #573).
+   * VACUUM rewrites the main database file, releasing all freed pages.
+   * PRAGMA wal_checkpoint(TRUNCATE) shrinks the WAL to zero bytes.
+   * This is safe to call at any time — it acquires an exclusive lock internally.
+   */
+  vacuumAndCheckpoint(): void {
+    this.liveDb.exec("VACUUM");
+    this.liveDb.exec("PRAGMA wal_checkpoint(TRUNCATE)");
   }
 
   /** Get reflection statistics */
