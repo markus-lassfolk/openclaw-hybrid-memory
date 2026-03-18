@@ -56,7 +56,7 @@ function tableExists(name: string): boolean {
 }
 
 function columnExists(table: string, column: string): boolean {
-  const cols = db.prepare(`SELECT name FROM pragma_table_info(?)`).all(table) as Array<{ name: string }>;
+  const cols = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
   return cols.some((c) => c.name === column);
 }
 
