@@ -182,8 +182,7 @@ describe("WorkflowTracker.flush", () => {
     });
     const tracker = new WorkflowTracker(store, ENABLED_CFG);
     tracker.push("sess", "exec");
-    expect(() => tracker.flush("sess", "goal")).not.toThrow();
-    const id = new WorkflowTracker(store, ENABLED_CFG).flush("sess", "goal");
+    const id = tracker.flush("sess", "goal");
     expect(id).toBeNull();
   });
 });
