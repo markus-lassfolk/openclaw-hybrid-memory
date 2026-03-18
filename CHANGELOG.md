@@ -10,6 +10,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.3.181] - 2026-03-18
+
+### Fixed
+
+- **Release workflow:** Resolved concurrency deadlock when Release runs on tag push (caller and called CI workflow shared the same concurrency group). Release now uses a distinct group (`release-cd-${{ github.ref }}`) so the workflow completes and creates the GitHub Release and publishes to npm.
+
+---
+
 ## [2026.3.180] - 2026-03-18
 
 ### Release summary (user-friendly)
@@ -771,7 +779,8 @@ Major feature release including procedural memory, directive extraction, reinfor
 
 ---
 
-[Unreleased]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.3.180...HEAD
+[Unreleased]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.3.181...HEAD
+[2026.3.181]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/releases/tag/v2026.3.181
 [2026.3.180]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/releases/tag/v2026.3.180
 [2026.3.152]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/releases/tag/v2026.3.152
 [2026.3.151]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/releases/tag/v2026.3.151

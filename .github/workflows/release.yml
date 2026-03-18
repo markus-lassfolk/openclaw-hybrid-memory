@@ -1,17 +1,22 @@
+# Release: creates GitHub Release (with docs/RELEASE-NOTES-<version>.md when present) and publishes to npm.
+# - Tag push (v*): run appears under the tag in Actions (change branch filter to "All" or the tag to see it).
+# - Manual run: Actions → Release → "Run workflow", enter version (e.g. v2026.3.180), use branch main.
 name: Release
 
 on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Release version tag (e.g. v2026.03.01)'
+        description: 'Release version tag (e.g. v2026.3.180)'
         required: true
   push:
     tags:
       - 'v*'
 
+# Use a distinct group name so the caller does not share a group with the called CI workflow
+# (when called via workflow_call, CI inherits github.workflow = "Release", which would otherwise cause a deadlock)
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: release-cd-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
