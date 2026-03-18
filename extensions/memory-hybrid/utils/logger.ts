@@ -13,7 +13,7 @@
  *
  * Allow-list for console.* (enforced by biome noConsole rule):
  *   - cli/**
- *   - index.ts (bootstrap only, top-level startup messages)
+ *   - utils/logger.ts (this file)
  *
  * Before initPluginLogger is called, the logger defaults to console-based output so that
  * diagnostic warnings (e.g., config validation) are visible in CLI code paths. In unit tests,
@@ -45,7 +45,7 @@ const consoleLogger: Required<PluginLoggerApi> = {
   info: (msg: string) => console.log(msg),
   warn: (msg: string) => console.warn(msg),
   error: (msg: string) => console.error(msg),
-  debug: (msg: string) => console.log(msg),
+  debug: (msg: string) => console.debug(msg),
 };
 
 /**
@@ -73,7 +73,8 @@ export function initPluginLogger(apiLogger: PluginLoggerApi): void {
 /**
  * Reset the plugin logger to the silent no-op.
  * Used in unit tests to isolate logging side effects.
- * Note: In production, the logger defaults to consoleLogger for CLI paths.
+ * NOTE: this silences all output — call restoreDefaultLogger() if you want console fallback.
+ * In production, the logger defaults to consoleLogger for CLI paths.
  */
 export function resetPluginLogger(): void {
   activeLogger = noopLogger;

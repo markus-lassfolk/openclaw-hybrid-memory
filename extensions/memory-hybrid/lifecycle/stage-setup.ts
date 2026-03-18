@@ -45,7 +45,7 @@ async function runSetup(
           subsystem: "lifecycle",
           operation: "delete-restart-marker",
         });
-        pluginLogger.warn(`Failed to delete restart marker: ${err}`);
+        pluginLogger.warn(`Failed to delete restart marker: ${err instanceof Error ? err.message : String(err)}`);
       }
     }
   }

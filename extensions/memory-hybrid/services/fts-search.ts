@@ -209,7 +209,7 @@ export function searchFts(
       )
       .all(params) as typeof rows;
   } catch (err) {
-    pluginLogger.warn("memory-hybrid: FTS query failed");
+    pluginLogger.warn(`memory-hybrid: FTS query failed: ${err instanceof Error ? err.message : String(err)}`);
     return [];
   }
 

@@ -10,6 +10,7 @@ describe("pluginLogger", () => {
     const consoleSpy = vi.spyOn(console, "log");
     const warnSpy = vi.spyOn(console, "warn");
     const errorSpy = vi.spyOn(console, "error");
+    const debugSpy = vi.spyOn(console, "debug");
 
     pluginLogger.info("info message");
     pluginLogger.warn("warn message");
@@ -19,11 +20,12 @@ describe("pluginLogger", () => {
     expect(consoleSpy).toHaveBeenCalledWith("info message");
     expect(warnSpy).toHaveBeenCalledWith("warn message");
     expect(errorSpy).toHaveBeenCalledWith("error message");
-    expect(consoleSpy).toHaveBeenCalledWith("debug message");
+    expect(debugSpy).toHaveBeenCalledWith("debug message");
 
     consoleSpy.mockRestore();
     warnSpy.mockRestore();
     errorSpy.mockRestore();
+    debugSpy.mockRestore();
   });
 
   it("routes through api.logger after initPluginLogger is called", () => {
