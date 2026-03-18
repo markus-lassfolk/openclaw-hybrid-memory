@@ -155,7 +155,7 @@ export class FactsDB {
       CREATE INDEX IF NOT EXISTS idx_facts_created ON facts(created_at);
     `);
 
-    // Run all schema migrations (idempotent — safe on existing databases)
+    // Run all schema migrations
     runFactsMigrations(this.liveDb);
   }
 
@@ -195,6 +195,10 @@ export class FactsDB {
       )
       .run(scanType, lastSessionTs, now, sessionsProcessed);
   }
+
+  // ---------------------------------------------------------------------------
+  // Contextual variants storage (Issue #159)
+  // ---------------------------------------------------------------------------
 
   /**
    * Store a contextual variant text for a fact.
@@ -3710,6 +3714,12 @@ export class FactsDB {
 
     return { linkedCount, supersededIds };
   }
+
+  // ---------------------------------------------------------------------------
+  // Topic cluster storage (Issue #146)
+  // ---------------------------------------------------------------------------
+
+  /** Create clusters and cluster_members tables for topic cluster storage. */
 
   /**
    * Get all unique fact IDs that participate in at least one memory link
