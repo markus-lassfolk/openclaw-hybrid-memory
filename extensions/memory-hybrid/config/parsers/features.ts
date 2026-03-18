@@ -310,28 +310,39 @@ export function parseMultiAgentConfig(cfg: Record<string, unknown>): MultiAgentC
 }
 
 /**
- * Parse error reporting config. GlitchTip is opt-in — disabled by default unless the user
- * explicitly sets both enabled: true and consent: true in their config. Presets do not set
- * errorReporting — this parser is the single source of defaults.
+ * Parse error reporting config. Error reporting and telemetry default to **opt-out** (enabled = true)
+ * during the active development phase of this tool. This is a deliberate product decision:
+ *
+ * - During early development, crash reports and error telemetry are essential for quickly identifying
+ *   and fixing issues across diverse user environments.
+ * - The community DSN reports to a shared GlitchTip instance operated by the project maintainer.
+ * - Users can opt out at any time by setting `errorReporting.enabled: false` or `errorReporting.consent: false`
+ *   in their config.
+ *
+ * DESIGN DECISION: Opt-out (not opt-in) is intentional for the development phase.
+ * This default SHOULD be revisited and switched to opt-in before a stable/production release.
+ * Track this at: https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/600
+ *
+ * Do not change this default without an explicit product decision and changelog entry.
  */
 export function parseErrorReportingConfig(cfg: Record<string, unknown>): ErrorReportingConfig {
   const errorReportingRaw = cfg.errorReporting as Record<string, unknown> | undefined;
 
-  // When errorReporting is not specified: opt-in defaults (enabled + consent false, community DSN)
+  // When errorReporting is not specified: opt-out defaults (enabled + consent true, community DSN)
   if (!errorReportingRaw || typeof errorReportingRaw !== "object") {
     return {
-      enabled: false,
+      enabled: true,
       dsn: DEFAULT_GLITCHTIP_DSN,
-      consent: false,
+      consent: true,
       mode: "community",
       sampleRate: 1.0,
     };
   }
 
-  // enabled defaults to false — user must explicitly set enabled: true to opt in
-  let enabled = errorReportingRaw.enabled === true;
-  // consent defaults to false — user must explicitly set consent: true to opt in
-  const consent = errorReportingRaw.consent === true;
+  // enabled defaults to true — user must explicitly set enabled: false to opt out
+  let enabled = errorReportingRaw.enabled !== false;
+  // consent defaults to true — user must explicitly set consent: false to opt out
+  const consent = errorReportingRaw.consent !== false;
   const dsnRaw = typeof errorReportingRaw.dsn === "string" ? errorReportingRaw.dsn.trim() : "";
   const modeRaw = typeof errorReportingRaw.mode === "string" ? errorReportingRaw.mode : "community";
   const mode: "community" | "self-hosted" = modeRaw === "self-hosted" ? "self-hosted" : "community";
