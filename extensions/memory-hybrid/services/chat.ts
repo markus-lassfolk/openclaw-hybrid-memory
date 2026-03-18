@@ -6,6 +6,7 @@
 import type OpenAI from "openai";
 import { capturePluginError } from "./error-reporter.js";
 import { withCostFeature } from "./cost-context.js";
+import { pluginLogger } from "../utils/logger.js";
 
 /**
  * Thrown when a model's provider has no API key or base URL configured in llm.providers.
@@ -440,14 +441,14 @@ export async function withLLMRetry<T>(
       // Don't retry 404 — model doesn't exist, let chatCompleteWithRetry try next model
       if (is404Like(lastError)) {
         const modelHint = lastError.message.match(/model[:\s]+(\S+)/i)?.[1];
-        console.warn(
+        pluginLogger.warn(
           `memory-hybrid: Model not found (404)${modelHint ? ` for ${modelHint}` : ""} — check model name or provider availability`,
         );
         throw lastError;
       }
       // Don't retry 400 context-length errors — input was too long; retrying won't fix it (#442)
       if (isContextLengthError(lastError)) {
-        console.warn(
+        pluginLogger.warn(
           `memory-hybrid: Input exceeds model context length — retrying will not help; truncate input before calling`,
         );
         throw lastError;
@@ -465,9 +466,8 @@ export async function withLLMRetry<T>(
       // Ollama OOM: never retry — model requires more memory than available, won't be fixed by retrying.
       // chatCompleteWithRetry will try the next fallback model (e.g. Gemini, OpenAI).
       if (isOllamaOOM(lastError)) {
-        console.warn(
-          `memory-hybrid: Ollama model OOM — model requires more memory than is available. ` +
-            `Skipping retries; will try next fallback model.`,
+        pluginLogger.warn(
+          `memory-hybrid: Ollama model OOM — model requires more memory than is available. Skipping retries; will try next fallback model.`,
         );
         throw lastError;
       }
@@ -522,7 +522,7 @@ export async function withLLMRetry<T>(
       if (is429) {
         const retryAfterMs = parseRetryAfterMs(err);
         delay = retryAfterMs ?? Math.pow(2, attempt + 1) * 1000;
-        console.warn(`memory-hybrid: Rate limited by provider — backing off ${delay}ms`);
+        pluginLogger.warn(`memory-hybrid: Rate limited by provider — backing off ${delay}ms`);
       } else {
         delay = Math.pow(3, attempt) * 1000; // 1s, 3s, 9s
       }
@@ -653,7 +653,9 @@ export async function chatCompleteWithRetry(opts: {
                       : isContextLength
                         ? "input too long" // #488
                         : "failed after retries";
-          console.warn(`${label}: model ${currentModel} ${reason}, trying fallback model ${modelsToTry[i + 1]}...`);
+          pluginLogger.warn(
+            `${label}: model ${currentModel} ${reason}, trying fallback model ${modelsToTry[i + 1]}...`,
+          );
         }
       }
     }

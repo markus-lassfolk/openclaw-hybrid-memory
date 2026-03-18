@@ -27,6 +27,7 @@ import type { PersonaProposalsConfig } from "../types/agents.js";
 import { IDENTITY_FILE_TYPES, type IdentityFileType } from "../types/agents.js";
 import type { ErrorReportingConfig, MultiAgentConfig } from "../types/index.js";
 import { DEFAULT_GLITCHTIP_DSN } from "../../services/error-reporter.js";
+import { pluginLogger } from "../../utils/logger.js";
 
 export function parseGraphConfig(cfg: Record<string, unknown>): GraphConfig {
   const graphRaw = cfg.graph as Record<string, unknown> | undefined;
@@ -348,7 +349,7 @@ export function parseErrorReportingConfig(cfg: Record<string, unknown>): ErrorRe
   const mode: "community" | "self-hosted" = modeRaw === "self-hosted" ? "self-hosted" : "community";
 
   if (enabled && !consent) {
-    console.warn("memory-hybrid: errorReporting.enabled=true but consent is false; disabling error reporting.");
+    pluginLogger.warn("memory-hybrid: errorReporting.enabled=true but consent is false; disabling error reporting.");
     enabled = false;
   }
 
@@ -389,7 +390,7 @@ export function parseErrorReportingConfig(cfg: Record<string, unknown>): ErrorRe
           Object.entries(errorReportingRaw.resolvedIssues).filter((entry): entry is [string, string] => {
             if (typeof entry[1] !== "string") return false;
             if (!validVersionPattern.test(entry[1])) {
-              console.warn(
+              pluginLogger.warn(
                 `memory-hybrid: errorReporting.resolvedIssues["${entry[0]}"] has invalid version "${entry[1]}" — skipped.`,
               );
               return false;
