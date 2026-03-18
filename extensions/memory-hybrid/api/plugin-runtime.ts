@@ -92,6 +92,7 @@ export interface PluginRuntime {
     languageKeywordsStartupTimeout: { value: ReturnType<typeof setTimeout> | null };
     postUpgradeTimeout: { value: ReturnType<typeof setTimeout> | null };
     passiveObserverTimer: { value: ReturnType<typeof setInterval> | null };
+    watchdogTimer: { value: ReturnType<typeof setInterval> | null };
   };
 }
 
@@ -106,5 +107,6 @@ export function createTimers(): PluginRuntime["timers"] {
     languageKeywordsStartupTimeout: { value: null },
     postUpgradeTimeout: { value: null },
     passiveObserverTimer: { value: null },
+    watchdogTimer: { value: null },
   };
 }
