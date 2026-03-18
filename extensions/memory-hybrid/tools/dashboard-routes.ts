@@ -98,7 +98,6 @@ function getDashboardHtml(): string {
     "<body>",
     "<h1>Memory Health Dashboard</h1>",
     '<p>Dashboard implementation pending <a href="https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/148">#148</a>.</p>',
-    `<script>fetch("${DASHBOARD_PREFIX}${DASHBOARD_PATHS.healthApi}").then(r=>r.json());</script>`,
     "</body>",
     "</html>",
   ].join("\n");
