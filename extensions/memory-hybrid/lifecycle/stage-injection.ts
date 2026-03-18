@@ -163,6 +163,7 @@ async function runInjection(
     const indexFooter = `\n→ Use memory_recall("query"), memory_recall(id: N), or entity/key to fetch full details.\n</relevant-memories>`;
     const indexBudget = indexCap - estimateTokens(pinnedHeader + pinnedPart.join("\n") + indexIntro + indexFooter);
     if (indexBudget <= 0) {
+      lastProgressiveIndexIdsRef.length = 0;
       api.logger.debug?.(
         `memory-hybrid: progressive index budget exhausted by fixed blocks (indexCap=${indexCap} tokens); no index will be injected`,
       );
