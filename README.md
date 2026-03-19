@@ -124,6 +124,7 @@ See [docs/QUICKSTART.md](docs/QUICKSTART.md) for the full walkthrough.
 ---
 
 ## Documentation
+- [Architecture boundaries](docs/ARCHITECTURE-BOUNDARIES.md) — core runtime vs adjacent subsystems
 
 ### Getting started
 

@@ -159,3 +159,4 @@ Status emojis: 🟢 active, 🟡 paused, 🔵 completed. Keep the index under ~3
 - [WAL-CRASH-RESILIENCE.md](WAL-CRASH-RESILIENCE.md) — Write-ahead log design
 - [GRAPH-MEMORY.md](GRAPH-MEMORY.md) — Graph-based fact linking
 - [REFLECTION.md](REFLECTION.md) — Reflection layer
+- [ARCHITECTURE-BOUNDARIES.md](ARCHITECTURE-BOUNDARIES.md) — Core runtime vs adjacent subsystems
