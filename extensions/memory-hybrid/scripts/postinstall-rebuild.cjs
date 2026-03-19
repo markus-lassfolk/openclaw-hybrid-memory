@@ -38,6 +38,11 @@ function inspectModule(name) {
   }
 }
 
+function needsRebuild(state) {
+  if (!state.installed) return true;
+  return !state.loadable;
+}
+
 let state = inspectModule(moduleName);
 if (!state.installed) {
   console.log(`${moduleName} missing after install — attempting targeted install...`);
@@ -45,13 +50,16 @@ if (!state.installed) {
   state = inspectModule(moduleName);
 }
 
-if (!state.loadable) {
-  console.log(`Rebuilding ${moduleName}...`);
-  if (!run(`npm rebuild ${moduleName}`, `${moduleName} rebuild`)) process.exit(1);
-  state = inspectModule(moduleName);
+if (!needsRebuild(state)) {
+  console.log(`${moduleName} already loadable — skipping rebuild`);
+  process.exit(0);
 }
 
-if (!state.loadable) {
+console.log(`Rebuilding ${moduleName}...`);
+if (!run(`npm rebuild ${moduleName}`, `${moduleName} rebuild`)) process.exit(1);
+state = inspectModule(moduleName);
+
+if (needsRebuild(state)) {
   console.error(`\n✗ ${moduleName} is still not loadable after install/rebuild.`);
   if (state.error) console.error(state.error);
   process.exit(1);
