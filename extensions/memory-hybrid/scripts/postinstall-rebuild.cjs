@@ -19,7 +19,7 @@ function getVersionRange() {
 
 function run(args, desc) {
   try {
-    execFileSync("npm", args, { cwd: root, stdio: "inherit" });
+    execFileSync("npm", args, { cwd: root, stdio: "inherit", shell: process.platform === "win32" });
     return true;
   } catch {
     console.error(`\n✗ ${desc} failed.`);
