@@ -488,8 +488,13 @@ export async function runVerifyForCli(
       return undefined;
     }
     if (provider === "anthropic") {
-      const k = prov?.anthropic?.apiKey ?? (cronCfg.claude as { apiKey?: string } | undefined)?.apiKey;
-      return resolveKey(k);
+      const fromProv = resolveKey(
+        prov?.anthropic?.apiKey ?? (cronCfg.claude as { apiKey?: string } | undefined)?.apiKey,
+      );
+      if (fromProv) return fromProv;
+      const fromEnv = env.ANTHROPIC_API_KEY?.trim();
+      if (fromEnv && fromEnv.length >= 10) return fromEnv;
+      return undefined;
     }
     if (provider === "ollama") return "ollama";
     // Azure Foundry: use AZURE_OPENAI_API_KEY when llm.providers key is not set.

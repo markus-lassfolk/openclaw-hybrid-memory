@@ -241,6 +241,13 @@ export function getProvidersWithKeys(pluginConfig: CronModelConfig | undefined):
   ) {
     add("google");
   }
+  if (
+    !seen.has("anthropic") &&
+    typeof process.env.ANTHROPIC_API_KEY === "string" &&
+    process.env.ANTHROPIC_API_KEY.trim().length >= 10
+  ) {
+    add("anthropic");
+  }
 
   return out;
 }
