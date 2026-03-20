@@ -50,6 +50,7 @@ Commands by category:
     compact              Tier compaction: move facts between hot/warm/cold
     prune                Remove expired (decayed) facts
     checkpoint           Checkpoint vector DB to disk
+    re-index             Reset LanceDB and re-embed all facts (after changing embedding model)
     backfill-decay       Backfill decay fields (one-time migration)
     backfill             Seed memory from workspace Markdown/text files
 
