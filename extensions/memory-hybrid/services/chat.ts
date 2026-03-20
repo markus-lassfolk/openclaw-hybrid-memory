@@ -7,6 +7,10 @@ import type OpenAI from "openai";
 import { capturePluginError } from "./error-reporter.js";
 import { withCostFeature } from "./cost-context.js";
 import { pluginLogger } from "../utils/logger.js";
+import {
+  getDistillBatchTokenLimit as getDistillBatchTokenLimitFromCatalog,
+  getDistillMaxOutputTokens as getDistillMaxOutputTokensFromCatalog,
+} from "./model-capabilities.js";
 
 /**
  * Thrown when a model's provider has no API key or base URL configured in llm.providers.
@@ -48,12 +52,6 @@ export function createPendingLLMWarnings(): PendingLLMWarnings {
       return msgs;
     },
   };
-}
-
-/** True when model name suggests long-context (e.g. Gemini). Used only for token limits. Only "gemini" is matched; "thinking" is not, to avoid false positives with gateway aliases. */
-function isLongContextModel(model: string): boolean {
-  const m = model.toLowerCase();
-  return m.includes("gemini");
 }
 
 /** Default timeout for chat completion (prevents indefinite hang if gateway/LLM never responds). */
@@ -383,15 +381,14 @@ export async function chatComplete(opts: {
   }
 }
 
+/** Max input tokens for one distill batch request. From model-capabilities catalog (docs/MODEL-REFERENCE.md). */
 export function distillBatchTokenLimit(model: string): number {
-  // Use conservative limits that work across all common fallback models
-  // o3 has 450k TPM limit, so we use 400k to be safe
-  return isLongContextModel(model) ? 400_000 : 80_000;
+  return getDistillBatchTokenLimitFromCatalog(model);
 }
 
-/** Max output tokens for distill/ingest LLM calls. Long-context models (e.g. gateway-routed Gemini) support 65k+; else 8k. */
+/** Max output tokens for distill/ingest LLM calls. From model-capabilities catalog (docs/MODEL-REFERENCE.md). */
 export function distillMaxOutputTokens(model: string): number {
-  return isLongContextModel(model) ? 65_536 : 8000;
+  return getDistillMaxOutputTokensFromCatalog(model);
 }
 
 /**

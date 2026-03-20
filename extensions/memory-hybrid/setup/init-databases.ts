@@ -640,9 +640,18 @@ function buildMultiProviderOpenAI(
       // apiKey may be absent when the provider only needs a custom baseURL (some self-hosted servers)
       const apiKey = resolvedApiKey ?? "no-key";
       const baseURL = providerCfg?.baseURL;
+      // Azure OpenAI / Foundry expect the key in the api-key header for reliable auth.
+      const isAzure =
+        typeof baseURL === "string" &&
+        /\.openai\.azure\.com\/|\.cognitiveservices\.azure\.com\/|\.services\.ai\.azure\.com\//i.test(baseURL);
+      const clientOpts: { apiKey: string; baseURL?: string; defaultHeaders?: Record<string, string> } = {
+        apiKey,
+        ...(baseURL ? { baseURL } : {}),
+      };
+      if (isAzure && apiKey !== "no-key") clientOpts.defaultHeaders = { "api-key": apiKey };
       const cacheKey = `custom:${prefix}:${apiKey.slice(0, 8)}:${baseURL ?? "default"}`;
       return {
-        client: getOrCreate(cacheKey, () => new OpenAI({ apiKey, ...(baseURL ? { baseURL } : {}) })),
+        client: getOrCreate(cacheKey, () => new OpenAI(clientOpts)),
         bareModel,
       };
     }
@@ -898,7 +907,8 @@ export function initializeDatabases(cfg: HybridMemoryConfig, api: ClawdbotPlugin
           baseURL:
             prov[normalizedName]?.baseURL ??
             (gw as Record<string, unknown>).baseURL ??
-            (gw as Record<string, unknown>).base_url,
+            (gw as Record<string, unknown>).base_url ??
+            (gw as Record<string, unknown>).baseUrl,
         };
         mergedProviderNames.push(normalizedName);
         mergedProviderOriginalNames.set(normalizedName, name);
@@ -906,8 +916,15 @@ export function initializeDatabases(cfg: HybridMemoryConfig, api: ClawdbotPlugin
           `memory-hybrid: using gateway provider "${name}" for llm.providers (add ${normalizedName}/<model> to llm.default or llm.heavy to use)`,
         );
       } else {
-        // Plugin already has a key for this provider; still register the original-cased name so
-        // the model-defaults loop below can pick up gateway models[] entries for this provider.
+        // Plugin already has a key for this provider; still merge baseURL from gateway if plugin has none
+        // (OpenClaw config often uses camelCase baseUrl; plugin expects baseURL).
+        const gwBase =
+          (gw as Record<string, unknown>).baseURL ??
+          (gw as Record<string, unknown>).base_url ??
+          (gw as Record<string, unknown>).baseUrl;
+        if (typeof gwBase === "string" && gwBase.trim() && !prov[normalizedName]?.baseURL) {
+          prov[normalizedName] = { ...prov[normalizedName], baseURL: gwBase.trim() };
+        }
         mergedProviderNames.push(normalizedName);
         mergedProviderOriginalNames.set(normalizedName, name);
       }
@@ -1129,7 +1146,8 @@ export function initializeDatabases(cfg: HybridMemoryConfig, api: ClawdbotPlugin
                 ? entry.trim()
                 : String((entry as Record<string, unknown>).id ?? (entry as Record<string, unknown>).name ?? "").trim();
             if (modelId) {
-              defaultModel = `${name}/${modelId}`;
+              // Gateway may already use "provider/model" ids; avoid double prefix (e.g. azure-foundry/azure-foundry/model-router).
+              defaultModel = modelId.includes("/") ? modelId : `${name}/${modelId}`;
               break;
             }
           }
@@ -1138,7 +1156,10 @@ export function initializeDatabases(cfg: HybridMemoryConfig, api: ClawdbotPlugin
         if (!defaultModel) {
           const gwModel =
             typeof gw.defaultModel === "string" ? gw.defaultModel : typeof gw.model === "string" ? gw.model : null;
-          if (gwModel?.trim() && isChatEntry(gwModel)) defaultModel = `${name}/${gwModel.trim()}`;
+          const trimmed = gwModel?.trim();
+          if (trimmed && isChatEntry(gwModel)) {
+            defaultModel = trimmed.includes("/") ? trimmed : `${name}/${trimmed}`;
+          }
         }
       }
       // Final fallback: use hardcoded knownDefault for well-known providers

@@ -260,10 +260,19 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
   const validProviders = ["openai", "ollama", "onnx", "google"];
   type EmbeddingProviderName = "openai" | "ollama" | "onnx" | "google";
   const distillForEmbed = cfg.distill as { apiKey?: string } | undefined;
-  const llmProvidersForEmbed = (cfg.llm as { providers?: Record<string, { apiKey?: string }> } | undefined)?.providers;
+  const llmProvidersForEmbed = (
+    cfg.llm as { providers?: Record<string, { apiKey?: string; baseURL?: string }> } | undefined
+  )?.providers;
   const distillApiKeyRaw = typeof distillForEmbed?.apiKey === "string" ? distillForEmbed.apiKey.trim() : "";
   const llmGoogleApiKeyRaw =
     typeof llmProvidersForEmbed?.google?.apiKey === "string" ? llmProvidersForEmbed.google.apiKey.trim() : "";
+  const azureFoundryForEmbed = llmProvidersForEmbed?.["azure-foundry"];
+  const hasAzureFoundryForEmbed =
+    azureFoundryForEmbed &&
+    typeof azureFoundryForEmbed.apiKey === "string" &&
+    azureFoundryForEmbed.apiKey.trim().length >= 10 &&
+    typeof azureFoundryForEmbed.baseURL === "string" &&
+    azureFoundryForEmbed.baseURL.trim().length > 0;
   // Recognize all SecretRef formats: env:VAR, file:/path, ${VAR} templates, or long literal keys.
   // Template detection uses .includes/${} pair check (no regex → no ReDoS risk).
   const looksLikeSecretRefOrKey = (k: string) =>
@@ -292,6 +301,8 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
     );
     if (hasApiKey && modelStr && isOpenAIModel(modelStr)) {
       embeddingProvider = "openai";
+    } else if (!hasApiKey && hasAzureFoundryForEmbed && modelStr && isOpenAIModel(modelStr)) {
+      embeddingProvider = "openai";
     } else if (!hasApiKey && !hasOllamaInLlmForProvider && hasGoogleKey) {
       embeddingProvider = "google";
     } else {
@@ -304,38 +315,63 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
     }
   }
 
-  // apiKey is required for openai provider only
+  // apiKey is required for openai provider only (or use llm.providers["azure-foundry"] when unset)
   let resolvedApiKey: string | undefined;
+  let embeddingEndpointOverride: string | undefined;
   if (embeddingProvider === "openai") {
-    if (!embedding || typeof embedding.apiKey !== "string") {
-      throw new Error(
-        "embedding.apiKey is required. Set it in plugins.entries[\"openclaw-hybrid-memory\"].config.embedding. Run 'openclaw hybrid-mem verify --fix' for help.",
-      );
-    }
-    const rawKey = (embedding.apiKey as string).trim();
-    // Resolve env:/file: SecretRef format (e.g. "env:OPENAI_API_KEY") as well as ${VAR} templates.
-    let resolvedKey: string;
-    if (rawKey.startsWith("env:") || rawKey.startsWith("file:")) {
-      const resolved = resolveSecretRef(rawKey);
-      if (!resolved) {
-        const refDesc = rawKey.startsWith("env:")
-          ? `environment variable '${rawKey.slice(4)}'`
-          : `file '${rawKey.slice(5)}'`;
+    const rawEmbedKey = embedding && typeof embedding.apiKey === "string" ? (embedding.apiKey as string).trim() : "";
+    const azureFoundry = (cfg.llm as { providers?: Record<string, { apiKey?: string; baseURL?: string }> } | undefined)
+      ?.providers?.["azure-foundry"];
+    const hasAzureFoundry =
+      azureFoundry &&
+      typeof azureFoundry.apiKey === "string" &&
+      azureFoundry.apiKey.trim().length >= 10 &&
+      typeof azureFoundry.baseURL === "string" &&
+      azureFoundry.baseURL.trim().length > 0;
+
+    if (rawEmbedKey && rawEmbedKey.length > 0) {
+      const rawKey = rawEmbedKey;
+      // Resolve env:/file: SecretRef format (e.g. "env:OPENAI_API_KEY") as well as ${VAR} templates.
+      let resolvedKey: string;
+      if (rawKey.startsWith("env:") || rawKey.startsWith("file:")) {
+        const resolved = resolveSecretRef(rawKey);
+        if (!resolved) {
+          const refDesc = rawKey.startsWith("env:")
+            ? `environment variable '${rawKey.slice(4)}'`
+            : `file '${rawKey.slice(5)}'`;
+          throw new Error(
+            `embedding.apiKey references ${refDesc} which could not be resolved. Ensure it is set and non-empty.`,
+          );
+        }
+        resolvedKey = resolved;
+      } else {
+        resolvedKey = resolveEnvVars(rawKey);
+      }
+      if (resolvedKey.length < 10 || resolvedKey === "YOUR_OPENAI_API_KEY" || resolvedKey === "<OPENAI_API_KEY>") {
         throw new Error(
-          `embedding.apiKey references ${refDesc} which could not be resolved. Ensure it is set and non-empty.`,
+          "embedding.apiKey is missing or a placeholder. Set a valid OpenAI API key in config. Run 'openclaw hybrid-mem verify --fix' for help.",
         );
       }
-      resolvedKey = resolved;
+      resolvedApiKey = resolvedKey;
+    } else if (hasAzureFoundry) {
+      const rawKey = azureFoundry!.apiKey!.trim();
+      const resolvedKey =
+        rawKey.startsWith("env:") || rawKey.startsWith("file:") ? resolveSecretRef(rawKey) : resolveEnvVars(rawKey);
+      if (!resolvedKey || resolvedKey.length < 10) {
+        throw new Error(
+          'embedding (openai) with llm.providers["azure-foundry"]: apiKey could not be resolved or is invalid. Set embedding.apiKey or fix the azure-foundry key.',
+        );
+      }
+      resolvedApiKey = resolvedKey;
+      embeddingEndpointOverride = azureFoundry!.baseURL!.trim();
+      pluginLogger.info(
+        'memory-hybrid: using llm.providers["azure-foundry"] for embeddings (same API as LLM). Set embedding.endpoint and embedding.apiKey to override.',
+      );
     } else {
-      resolvedKey = resolveEnvVars(rawKey);
-    }
-    // Validate the resolved key — catches placeholders/short values originating from SecretRefs too.
-    if (resolvedKey.length < 10 || resolvedKey === "YOUR_OPENAI_API_KEY" || resolvedKey === "<OPENAI_API_KEY>") {
       throw new Error(
-        "embedding.apiKey is missing or a placeholder. Set a valid OpenAI API key in config. Run 'openclaw hybrid-mem verify --fix' for help.",
+        'embedding.apiKey is required. Set it in plugins.entries["openclaw-hybrid-memory"].config.embedding, or configure llm.providers["azure-foundry"] with apiKey and baseURL to use Azure Foundry for embeddings. Run \'openclaw hybrid-mem verify --fix\' for help.',
       );
     }
-    resolvedApiKey = resolvedKey;
   } else if (embedding && typeof embedding.apiKey === "string") {
     // Optional fallback apiKey for ollama/onnx (used for fallback to OpenAI when provider unavailable)
     const rawKey = (embedding.apiKey as string).trim();
@@ -499,9 +535,10 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
   }
 
   const resolvedEndpoint =
-    typeof embedding?.endpoint === "string" && embedding.endpoint.trim().length > 0
+    embeddingEndpointOverride ??
+    (typeof embedding?.endpoint === "string" && embedding.endpoint.trim().length > 0
       ? embedding.endpoint.trim()
-      : undefined;
+      : undefined);
   const resolvedBatchSize =
     typeof embedding?.batchSize === "number" && embedding.batchSize > 0 ? Math.floor(embedding.batchSize) : 50;
 

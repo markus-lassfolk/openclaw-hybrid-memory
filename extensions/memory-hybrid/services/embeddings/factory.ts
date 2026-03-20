@@ -13,6 +13,33 @@ import { FallbackEmbeddingProvider } from "./fallback-provider.js";
 import { ChainEmbeddingProvider } from "./chain-provider.js";
 import { pluginLogger } from "../../utils/logger.js";
 
+/** True when the given base URL is an Azure OpenAI / Foundry endpoint (needs api-key header). */
+function isAzureEmbeddingEndpoint(baseURL: string): boolean {
+  return /\.openai\.azure\.com\/|\.cognitiveservices\.azure\.com\/|\.services\.ai\.azure\.com\//i.test(baseURL);
+}
+
+/**
+ * Build OpenAI client options for the openai embedding provider.
+ * When endpoint is set, uses it as baseURL; when it's Azure, adds the api-key header.
+ * Azure deployment-style URLs (/openai/deployments/...) must not get /v1 appended.
+ */
+function openaiEmbeddingClientOpts(
+  apiKey: string,
+  endpoint?: string,
+): { apiKey: string; baseURL?: string; defaultHeaders?: Record<string, string> } {
+  const opts: { apiKey: string; baseURL?: string; defaultHeaders?: Record<string, string> } = { apiKey };
+  if (typeof endpoint === "string" && endpoint.trim().length > 0) {
+    const baseURL = endpoint.trim().replace(/\/+$/, "");
+    const isAzureDeploymentPath = /\/openai\/deployments\//i.test(baseURL);
+    opts.baseURL =
+      baseURL.includes("/v1") || (isAzureEmbeddingEndpoint(baseURL) && isAzureDeploymentPath)
+        ? baseURL
+        : `${baseURL}/v1`;
+    if (isAzureEmbeddingEndpoint(opts.baseURL)) opts.defaultHeaders = { "api-key": apiKey };
+  }
+  return opts;
+}
+
 /**
  * Factory: creates the right EmbeddingProvider from plugin config.
  * - When embedding.preferredProviders has length > 1: chain (try in order; aligns with LLM failover, Ollama-as-tier).
@@ -48,7 +75,7 @@ export function createEmbeddingProvider(cfg: EmbeddingConfig, onFallback?: (err:
         }
       } else if (name === "openai" && apiKey) {
         try {
-          const client = new OpenAI({ apiKey });
+          const client = new OpenAI(openaiEmbeddingClientOpts(apiKey, endpoint));
           chain.push(
             new Embeddings(
               client,
@@ -94,7 +121,7 @@ export function createEmbeddingProvider(cfg: EmbeddingConfig, onFallback?: (err:
     const primary = new OllamaEmbeddingProvider({ model, dimensions, endpoint, batchSize });
     // Optional fallback to OpenAI when a key is provided
     if (apiKey) {
-      const openaiClient = new OpenAI({ apiKey });
+      const openaiClient = new OpenAI(openaiEmbeddingClientOpts(apiKey, endpoint));
       const openaiModels = models?.length ? models : ["text-embedding-3-small"];
       try {
         const fallback = new Embeddings(openaiClient, openaiModels, dimensions, batchSize);
@@ -113,7 +140,7 @@ export function createEmbeddingProvider(cfg: EmbeddingConfig, onFallback?: (err:
 
   if (provider === "openai") {
     if (!apiKey) throw new Error("OpenAI embedding provider requires embedding.apiKey");
-    const openaiClient = new OpenAI({ apiKey });
+    const openaiClient = new OpenAI(openaiEmbeddingClientOpts(apiKey, endpoint));
     const openaiModels = models?.length ? models : [model];
     return new Embeddings(openaiClient, openaiModels, dimensions, batchSize);
   }
@@ -132,7 +159,7 @@ export function createEmbeddingProvider(cfg: EmbeddingConfig, onFallback?: (err:
   if (provider === "onnx") {
     const primary = new OnnxEmbeddingProvider({ model, dimensions, batchSize });
     if (apiKey) {
-      const openaiClient = new OpenAI({ apiKey });
+      const openaiClient = new OpenAI(openaiEmbeddingClientOpts(apiKey, endpoint));
       const openaiModels = models?.length ? models : ["text-embedding-3-small"];
       try {
         const fallback = new Embeddings(openaiClient, openaiModels, dimensions, batchSize);
