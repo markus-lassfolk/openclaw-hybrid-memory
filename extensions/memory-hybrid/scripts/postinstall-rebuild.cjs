@@ -11,6 +11,12 @@ const path = require("path");
 const root = path.join(__dirname, "..");
 const moduleName = "@lancedb/lancedb";
 
+function getVersionRange() {
+  const pkgPath = path.join(root, "package.json");
+  const pkg = JSON.parse(require("fs").readFileSync(pkgPath, "utf8"));
+  return pkg.dependencies?.[moduleName] || "";
+}
+
 function run(cmd, desc) {
   try {
     execSync(cmd, { cwd: root, stdio: "inherit" });
@@ -46,7 +52,9 @@ function needsRebuild(state) {
 let state = inspectModule(moduleName);
 if (!state.installed) {
   console.log(`${moduleName} missing after install — attempting targeted install...`);
-  if (!run(`npm install --no-save ${moduleName}`, `${moduleName} install`)) process.exit(1);
+  const versionRange = getVersionRange();
+  const installSpec = versionRange ? `${moduleName}@${versionRange}` : moduleName;
+  if (!run(`npm install --no-save ${installSpec}`, `${moduleName} install`)) process.exit(1);
   state = inspectModule(moduleName);
 }
 
