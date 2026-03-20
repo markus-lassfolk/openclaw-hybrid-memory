@@ -12,14 +12,29 @@ import { AllEmbeddingProvidersFailed } from "./types.js";
 export const GOOGLE_EMBEDDING_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/";
 
 /**
- * Known Google Gemini embedding models accepted at the OpenAI-compatible endpoint.
- * Only these are passed to the Google endpoint; any other value falls back to the default.
- *
- * WARNING: Changing the default from text-embedding-004 to text-embedding-005 produces
- * different vectors — existing LanceDB tables indexed with 004 will see degraded retrieval
- * quality until re-indexed. Run the hybrid-mem re-index command after upgrading (#385).
+ * Known Google Gemini embedding models at the OpenAI-compatible endpoint
+ * (generativelanguage.googleapis.com/v1beta/openai/). The endpoint expects
+ * gemini-embedding-001 (text) or gemini-embedding-2-preview (multimodal), not text-embedding-004/005.
  */
-export const KNOWN_GOOGLE_EMBED_MODELS = new Set(["text-embedding-005", "text-embedding-004"]);
+export const KNOWN_GOOGLE_EMBED_MODELS = new Set([
+  "gemini-embedding-001",
+  "gemini-embedding-2-preview",
+  "text-embedding-005",
+  "text-embedding-004",
+]);
+
+/** Default Google embedding model when config has an OpenAI-only name (OpenAI-compatible endpoint). */
+export const GOOGLE_EMBED_DEFAULT_MODEL = "gemini-embedding-001";
+
+/** Default output dimensions for Google text-embedding-005/004 (used when config has an OpenAI model name). */
+export const GOOGLE_EMBED_DEFAULT_DIMENSIONS = 768;
+
+/** OpenAI-only embedding model names; for provider=google we map these to text-embedding-005 and 768 dims. */
+export const OPENAI_ONLY_EMBED_MODELS = new Set([
+  "text-embedding-3-small",
+  "text-embedding-3-large",
+  "text-embedding-ada-002",
+]);
 
 /** Max cached embeddings (LRU eviction). Reduces redundant API calls for repeated text. */
 export const EMBEDDING_CACHE_MAX = 500;
