@@ -275,7 +275,13 @@ export async function runVerifyForCli(
                   : "all-MiniLM-L6-v2"),
           dimensions: cfg.embedding.dimensions,
           batchSize: cfg.embedding.batchSize ?? 32,
-          ...(p === "openai" && { apiKey: cfg.embedding.apiKey }),
+          ...(p === "openai" && {
+            apiKey: cfg.embedding.apiKey,
+            ...(typeof (cfg.embedding as Record<string, unknown>).endpoint === "string" &&
+            (cfg.embedding as Record<string, unknown>).endpoint
+              ? { endpoint: (cfg.embedding as Record<string, unknown>).endpoint as string }
+              : {}),
+          }),
           ...(p === "google" && {
             googleApiKey: (cfg.embedding as Record<string, unknown>).googleApiKey as string,
           }),
@@ -450,7 +456,14 @@ export async function runVerifyForCli(
     oauthResult?: boolean;
     apiResult?: boolean;
   }[] = [];
-  const testedProviders = new Set<string>();
+  /** Cache direct client per provider so we use the same client for each model of that provider. */
+  const directClientCache = new Map<string, OpenAI | null>();
+  function getDirectClient(provider: string): OpenAI | null {
+    if (!directClientCache.has(provider)) {
+      directClientCache.set(provider, buildDirectClient(provider) ?? null);
+    }
+    return directClientCache.get(provider)!;
+  }
   for (const model of uniqueModels) {
     const provider = providerFromModel(model);
     const hasApi = providersWithKeys.includes(provider);
@@ -462,19 +475,14 @@ export async function runVerifyForCli(
     const inConfig = configModelSet.has(model);
     let oauthResult: boolean | undefined = undefined;
     let apiResult: boolean | undefined = undefined;
-    if (opts.testLlm && enabled && !testedProviders.has(provider)) {
-      testedProviders.add(provider);
-      const modelToTest =
-        allModelsFiltered.find((m) => providerFromModel(m) === provider) ??
-        allModelsUnfiltered.find((m) => providerFromModel(m) === provider) ??
-        defaultTestModel[provider] ??
-        model;
-      const bareModel = modelToTest.includes("/") ? modelToTest.slice(modelToTest.indexOf("/") + 1) : modelToTest;
+    // Test each configured model with its real endpoint (OAuth gateway or direct API from config).
+    if (opts.testLlm && enabled && inConfig && (hasOAuth || hasApi)) {
+      const bareModel = model.includes("/") ? model.slice(model.indexOf("/") + 1) : model;
       if (hasOAuth && gatewayBaseUrl && gatewayToken) {
         try {
           const oauthClient = new OpenAI({ apiKey: gatewayToken, baseURL: gatewayBaseUrl });
           await chatComplete({
-            model: modelToTest,
+            model,
             content: "Reply with exactly: OK",
             maxTokens: 10,
             openai: oauthClient,
@@ -490,7 +498,7 @@ export async function runVerifyForCli(
         }
       }
       if (hasApi) {
-        const directClient = buildDirectClient(provider);
+        const directClient = getDirectClient(provider);
         if (!directClient) {
           apiResult = false;
         } else {
