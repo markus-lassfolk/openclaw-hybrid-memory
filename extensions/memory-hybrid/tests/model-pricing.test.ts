@@ -10,7 +10,7 @@ describe("getModelPricing", () => {
   });
 
   it("returns pricing for known Google models", () => {
-    const p = getModelPricing("google/gemini-2.0-flash-lite");
+    const p = getModelPricing("google/gemini-2.5-flash-lite");
     expect(p).not.toBeNull();
     expect(p!.inputPer1M).toBe(0.075);
     expect(p!.outputPer1M).toBe(0.3);

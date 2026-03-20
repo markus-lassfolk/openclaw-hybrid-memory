@@ -90,7 +90,7 @@ export type LLMConfig = {
    * Optional: ordered model list for nano/ultra-light ops — autoClassify, HyDE, classifyBeforeWrite, auto-recall summarize.
    * These run on every chat message or write, so cheapness matters most.
    * When not set, falls back to the default tier.
-   * Ideal models: openai/gpt-4.1-nano, google/gemini-2.0-flash-lite, anthropic/claude-haiku-*.
+   * Ideal models: openai/gpt-4.1-nano, google/gemini-2.5-flash-lite, anthropic/claude-haiku-*.
    */
   nano?: string[];
   /** When true, if all preferred models fail, try the fallback model. */

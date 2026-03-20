@@ -267,15 +267,18 @@ export type ResolvedApiKey = { value?: string; source: string };
  * | gatewayToken                |        |   ✓†   |           |            |         |        |        |
  * | embedding.apiKey            |        |   ✓†   |           |            |         |        |        |
  * | GOOGLE_API_KEY env          |   ✓    |        |           |            |         |        |        |
- * | OPENAI_API_KEY env          |        |   ✓    |           |            |         |        |        |
+ * | OPENAI_API_KEY env          |        |   ✓*   |           |            |         |        |        |
+ * | AZURE_OPENAI_API_KEY env    |        |        |           |            |         |        |   ✓‡   |
  * | ANTHROPIC_API_KEY env       |        |        |     ✓     |            |         |        |        |
  * | OPENROUTER_API_KEY env      |        |        |           |     ✓      |         |        |        |
  * | MINIMAX_API_KEY env         |        |        |           |            |    ✓    |        |        |
  * | <PREFIX>_API_KEY env        |        |        |           |            |         |        |   ✓    |
  * | "ollama" (no-op default)    |        |        |           |            |         |   ✓    |        |
  *
+ * * openai: OPENAI_API_KEY is preferred over embedding.apiKey so Azure and OpenAI keys do not conflict.
  * † openai: `gatewayToken` and `embedding.apiKey` are skipped when `hasCustomExternalBaseURL` is true
  *   (security: never send internal gateway credentials to external endpoints).
+ * ‡ azure-foundry / azure-foundry-responses: AZURE_OPENAI_API_KEY env when llm.providers.*.apiKey not set.
  *
  * @param prefix                       Lowercase provider prefix, e.g. "google", "openai".
  * @param providerCfg                  The llm.providers[prefix] config object, if present.
@@ -312,14 +315,22 @@ export function resolveProviderApiKey(
   }
 
   if (prefix === "openai") {
+    // Prefer OPENAI_API_KEY over embedding.apiKey so Azure (embedding) and OpenAI (chat) can use different keys.
+    const fromEnv = env.OPENAI_API_KEY?.trim() || undefined;
+    if (fromEnv) return { value: fromEnv, source: "OPENAI_API_KEY" };
     // Security: never send gateway/embedding credentials to an arbitrary external endpoint.
     if (!hasCustomExternalBaseURL) {
       if (gatewayToken) return { value: gatewayToken, source: "gatewayToken" };
       const fromEmbedding = resolveKey(cfg.embedding?.apiKey);
       if (fromEmbedding) return { value: fromEmbedding, source: "embedding.apiKey" };
     }
-    const fromEnv = env.OPENAI_API_KEY?.trim() || undefined;
-    if (fromEnv) return { value: fromEnv, source: "OPENAI_API_KEY" };
+    return { source: "none" };
+  }
+
+  // Azure Foundry (and Responses) use AZURE_OPENAI_API_KEY so it does not conflict with OPENAI_API_KEY.
+  if (prefix === "azure-foundry" || prefix === "azure-foundry-responses") {
+    const fromEnv = env.AZURE_OPENAI_API_KEY?.trim() || undefined;
+    if (fromEnv) return { value: fromEnv, source: "AZURE_OPENAI_API_KEY" };
     return { source: "none" };
   }
 
@@ -938,7 +949,7 @@ export function initializeDatabases(cfg: HybridMemoryConfig, api: ClawdbotPlugin
   // tasks don't all use the expensive model (see cost issue: hundreds of tasks running as Opus).
   const RECOMMENDED_CHEAP_FALLBACK = [
     "openai/gpt-4.1-nano",
-    "google/gemini-2.0-flash-lite",
+    "google/gemini-2.5-flash-lite",
     "anthropic/claude-3-5-haiku",
   ];
   if (

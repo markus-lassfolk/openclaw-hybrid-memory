@@ -10,6 +10,8 @@ import { pluginLogger } from "../utils/logger.js";
 import {
   getDistillBatchTokenLimit as getDistillBatchTokenLimitFromCatalog,
   getDistillMaxOutputTokens as getDistillMaxOutputTokensFromCatalog,
+  requiresMaxCompletionTokens,
+  isReasoningModel,
 } from "./model-capabilities.js";
 
 /**
@@ -315,16 +317,20 @@ export async function chatComplete(opts: {
   }
 
   try {
+    // Newer models (GPT-5+, o-series) require max_completion_tokens and reject max_tokens; reasoning models also reject temperature/top_p.
+    const useMaxCompletionTokens = requiresMaxCompletionTokens(model);
+    const body: Record<string, unknown> = {
+      model,
+      messages: [{ role: "user", content }],
+      ...(useMaxCompletionTokens ? { max_completion_tokens: effectiveMaxTokens } : { max_tokens: effectiveMaxTokens }),
+    };
+    if (!isReasoningModel(model)) {
+      body.temperature = temperature;
+    }
     const doCreate = () =>
-      opts.openai.chat.completions.create(
-        {
-          model,
-          messages: [{ role: "user", content }],
-          temperature,
-          max_tokens: effectiveMaxTokens,
-        },
-        { signal: controller.signal },
-      );
+      opts.openai.chat.completions.create(body as Parameters<OpenAI["chat"]["completions"]["create"]>[0], {
+        signal: controller.signal,
+      });
     // If feature is provided, wrap in withCostFeature so the proxy attributes the call correctly.
     // Cost recording itself is done by the OpenAI proxy in setup/init-databases.ts.
     const resp = await (feature ? withCostFeature(feature, doCreate) : doCreate());

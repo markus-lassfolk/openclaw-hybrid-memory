@@ -261,10 +261,10 @@ When using Claude via **Anthropic API** (not Azure Foundry). For **Foundry/Marke
 
 | Model ID                 | Context window (approx) | Max output (approx) | Notes                            |
 | ------------------------ | ----------------------- | ------------------- | -------------------------------- |
-| `gemini-2.5-flash-lite`  | 1M                      | 8k                  | Nano tier.                       |
+| `gemini-2.5-flash-lite`  | 1M                      | 8k                  | Nano / fallback.                 |
 | `gemini-2.5-flash`       | 1M                      | 8k                  | Default tier.                    |
 | `gemini-3.1-pro-preview` | 1024k                   | 8k                  | Heavy; long context for distill. |
-| `gemini-2.0-flash-lite`  | 1M                      | 8k                  | Fallback nano.                   |
+| `gemini-2.0-flash-lite`  | —                       | —                   | Deprecated; use 2.5-flash-lite.  |
 
 
 *Check [Google AI model specs](https://ai.google.dev/gemini-api/docs/models) for versions and training data.*
@@ -309,5 +309,6 @@ When using `openai` provider with `api.openai.com` (not Azure), same model names
 | 2026-03-19 | Initial version: Azure OpenAI (GPT-5.4–4, o-series, 4.1, 4o, embeddings), other Foundry providers summary, Anthropic/Google/MiniMax/Ollama placeholders.                                                                                                     |
 | 2026-03-19 | Added Foundry models from partners and community: Anthropic (Foundry), Cohere, Meta, Microsoft (Phi), Mistral AI, Stability AI; source [models-from-partners](https://learn.microsoft.com/en-us/azure/foundry/foundry-models/concepts/models-from-partners). |
 | 2026-03-19 | Plugin: added `services/model-capabilities.ts` with per-model context window, max output tokens, and batch token limit for distill; `chat.ts` now uses it for `distillBatchTokenLimit` and `distillMaxOutputTokens`. Deploy: added `openclaw.model-tokens-snippet.json` for OpenClaw config. |
+| 2026-03-20 | Google: default nano/fallback model switched from deprecated `gemini-2.0-flash-lite` (404) to `gemini-2.5-flash-lite`. See [Gemini deprecations](https://ai.google.dev/gemini-api/docs/deprecations). |
 
 
