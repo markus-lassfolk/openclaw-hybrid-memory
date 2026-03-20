@@ -1057,7 +1057,7 @@ describe("chatCompleteWithRetry — OOM falls through to next model (#387)", () 
       model: "ollama/qwen3:8b",
       content: "test",
       openai: mockOpenai,
-      fallbackModels: ["google/gemini-2.0-flash-lite"],
+      fallbackModels: ["google/gemini-2.5-flash-lite"],
     });
 
     await vi.runAllTimersAsync();

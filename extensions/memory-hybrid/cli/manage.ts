@@ -44,6 +44,7 @@ import { getLanguageKeywordsFilePath } from "../utils/language-keywords.js";
 import { runMemoryDiagnostics } from "../services/memory-diagnostics.js";
 import { runContextAudit } from "../services/context-audit.js";
 import { runClosedLoopAnalysis, getEffectivenessReport } from "../services/feedback-effectiveness.js";
+import { migrateEmbeddings } from "../services/embedding-migration.js";
 
 export type ManageContext = {
   factsDb: FactsDB;
@@ -703,6 +704,42 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
       withExit(async () => {
         await vectorDb.checkpoint?.();
         console.log("Vector DB checkpoint complete.");
+      }),
+    );
+
+  mem
+    .command("re-index")
+    .description(
+      "Reset LanceDB vector index and re-embed all facts from SQLite (use after switching embedding model, e.g. to a larger one).",
+    )
+    .option("--batch-size <n>", "Facts per embed batch (default: 50)", "50")
+    .action(
+      withExit(async (opts?: { batchSize?: string }) => {
+        const batchSize = Math.max(1, Math.min(500, Number.parseInt(String(opts?.batchSize ?? "50"), 10) || 50));
+        console.log("Re-index: resetting LanceDB table...");
+        await vectorDb.resetTableForReindex();
+        console.log("Re-index: re-embedding all facts (this may take a while)...");
+        const result = await migrateEmbeddings({
+          factsDb,
+          vectorDb,
+          embeddings,
+          batchSize,
+          onProgress: (completed, total) => {
+            if (total > 0 && completed % Math.max(1, Math.floor(total / 10)) === 0) {
+              process.stdout.write(`  ${completed}/${total} facts embedded...\r`);
+            }
+          },
+          logger: { info: (m) => console.log(m), warn: (m) => console.warn(m) },
+        });
+        console.log(
+          `Re-index complete: ${result.migrated} embedded, ${result.skipped} skipped, ${result.errors.length} errors.`,
+        );
+        if (result.errors.length > 0 && result.errors.length <= 10) {
+          for (const e of result.errors) console.warn(`  - ${e}`);
+        } else if (result.errors.length > 10) {
+          console.warn(`  (${result.errors.length} errors; first 5:)`);
+          for (const e of result.errors.slice(0, 5)) console.warn(`  - ${e}`);
+        }
       }),
     );
 

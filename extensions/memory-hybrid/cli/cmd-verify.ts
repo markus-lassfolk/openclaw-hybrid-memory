@@ -22,6 +22,7 @@ import {
   getProvidersWithKeys,
   isCompactVerbosity,
 } from "../config.js";
+import { resolveSecretRef } from "../config/parsers/core.js";
 import { chatComplete } from "../services/chat.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { hasOAuthProfiles } from "../utils/auth.js";
@@ -174,6 +175,10 @@ export async function runVerifyForCli(
     if (isBindingsError(msg)) {
       lanceBindingsFailed = true;
       fixes.push(`Native module (@lancedb/lancedb) needs rebuild. Run: cd ${extDir} && npm rebuild @lancedb/lancedb`);
+    } else if (msg.includes("VectorDB not initialized") || msg.includes("close() was called")) {
+      fixes.push(
+        `LanceDB connection was not ready (often transient after plugin load or reload). Re-run verify; the plugin will reconnect automatically. Not caused by reindexing.`,
+      );
     } else {
       fixes.push(
         `LanceDB: Ensure path is writable. Path: ${resolvedLancePath}. If corrupted, back up and remove the directory to recreate. Restart gateway after fix.`,
@@ -364,10 +369,10 @@ export async function runVerifyForCli(
     "openai/gpt-4.1-nano",
     "openai/o3",
     "openai/o1",
-    "openai/codex",
+    "openai/gpt-5-codex",
     "google/gemini-3.1-pro-preview",
     "google/gemini-2.5-flash",
-    "google/gemini-2.0-flash-lite",
+    "google/gemini-2.5-flash-lite",
     "minimax/MiniMax-M2.5",
   ];
   const providerFromModel = (m: string) => {
@@ -383,7 +388,7 @@ export async function runVerifyForCli(
   const disabledSet = new Set((cfg.llm?.disabledProviders ?? []).map((p) => String(p).trim().toLowerCase()));
   const defaultTestModel: Record<string, string> = {
     openai: "openai/gpt-4.1-nano",
-    google: "google/gemini-2.0-flash-lite",
+    google: "google/gemini-2.5-flash-lite",
     anthropic: "anthropic/claude-haiku-4-5-20251001",
     ollama: "ollama/llama3.2",
     minimax: "minimax/minimax-01",
@@ -409,23 +414,41 @@ export async function runVerifyForCli(
     ollama: "http://127.0.0.1:11434/v1",
     minimax: "https://api.minimax.chat/v1",
   };
+  function resolveKey(raw: unknown): string | undefined {
+    if (typeof raw !== "string" || !raw.trim()) return undefined;
+    const trimmed = raw.trim();
+    const resolved = trimmed.startsWith("env:") || trimmed.startsWith("file:") ? resolveSecretRef(trimmed) : trimmed;
+    return typeof resolved === "string" && resolved.length >= 10 ? resolved : undefined;
+  }
   function getDirectApiKey(provider: string): string | undefined {
     const prov = cronCfg.llm?.providers as Record<string, { apiKey?: string }> | undefined;
+    const env = process.env as NodeJS.ProcessEnv;
     if (provider === "openai") {
-      const k = prov?.openai?.apiKey ?? cronCfg.embedding?.apiKey;
-      return typeof k === "string" && k.length >= 10 ? k : undefined;
+      // Prefer OPENAI_API_KEY so Azure (embedding) and OpenAI (chat) can use different keys.
+      const fromProv = resolveKey(prov?.openai?.apiKey);
+      if (fromProv) return fromProv;
+      const fromEnv = env.OPENAI_API_KEY?.trim();
+      if (fromEnv && fromEnv.length >= 10) return fromEnv;
+      return resolveKey(cronCfg.embedding?.apiKey);
     }
     if (provider === "google") {
       const k = prov?.google?.apiKey ?? cronCfg.distill?.apiKey;
-      return typeof k === "string" && k.length >= 10 ? k : undefined;
+      return resolveKey(k);
     }
     if (provider === "anthropic") {
       const k = prov?.anthropic?.apiKey ?? (cronCfg.claude as { apiKey?: string } | undefined)?.apiKey;
-      return typeof k === "string" && k.length >= 10 ? k : undefined;
+      return resolveKey(k);
     }
     if (provider === "ollama") return "ollama";
-    const k = prov?.[provider]?.apiKey;
-    return typeof k === "string" && k.length >= 10 ? k : undefined;
+    // Azure Foundry: use AZURE_OPENAI_API_KEY when llm.providers key is not set.
+    if (
+      (provider === "azure-foundry" || provider === "azure-foundry-responses") &&
+      !resolveKey(prov?.[provider]?.apiKey)
+    ) {
+      const fromEnv = env.AZURE_OPENAI_API_KEY?.trim();
+      if (fromEnv && fromEnv.length >= 10) return fromEnv;
+    }
+    return resolveKey(prov?.[provider]?.apiKey);
   }
   function buildDirectClient(provider: string): OpenAI | undefined {
     const apiKey = getDirectApiKey(provider);
@@ -455,7 +478,15 @@ export async function runVerifyForCli(
     inConfig: boolean;
     oauthResult?: boolean;
     apiResult?: boolean;
+    oauthError?: string;
+    apiError?: string;
+    /** When set, direct API test was skipped (e.g. Responses API); show this in API column, do not treat as failed. */
+    apiSkippedReason?: string;
   }[] = [];
+  function shortError(e: unknown): string {
+    const msg = e instanceof Error ? e.message : String(e);
+    return msg.slice(0, 100).replace(/\s+/g, " ").trim();
+  }
   /** Cache direct client per provider so we use the same client for each model of that provider. */
   const directClientCache = new Map<string, OpenAI | null>();
   function getDirectClient(provider: string): OpenAI | null {
@@ -475,8 +506,11 @@ export async function runVerifyForCli(
     const inConfig = configModelSet.has(model);
     let oauthResult: boolean | undefined = undefined;
     let apiResult: boolean | undefined = undefined;
-    // Test each configured model with its real endpoint (OAuth gateway or direct API from config).
-    if (opts.testLlm && enabled && inConfig && (hasOAuth || hasApi)) {
+    let oauthError: string | undefined = undefined;
+    let apiError: string | undefined = undefined;
+    let apiSkippedReason: string | undefined = undefined;
+    // Test each model that has credentials (OAuth or API), so we report which work even if not yet in llm.nano/default/heavy.
+    if (opts.testLlm && enabled && (hasOAuth || hasApi)) {
       const bareModel = model.includes("/") ? model.slice(model.indexOf("/") + 1) : model;
       if (hasOAuth && gatewayBaseUrl && gatewayToken) {
         try {
@@ -489,6 +523,7 @@ export async function runVerifyForCli(
           });
           oauthResult = true;
         } catch (e) {
+          oauthError = shortError(e);
           capturePluginError(e as Error, {
             subsystem: "cli",
             operation: "runVerifyForCli:llm-test-oauth",
@@ -498,25 +533,37 @@ export async function runVerifyForCli(
         }
       }
       if (hasApi) {
-        const directClient = getDirectClient(provider);
-        if (!directClient) {
-          apiResult = false;
+        // Responses API–only models use responses.create(...), not chat.completions; skip direct test to avoid 400/404.
+        const isResponsesOnlyModel =
+          provider === "azure-foundry-responses" ||
+          (provider === "openai" && (bareModel === "gpt-5-codex" || bareModel === "codex"));
+        if (isResponsesOnlyModel) {
+          apiResult = undefined;
+          apiError = undefined;
+          apiSkippedReason = "N/A (Responses API)";
         } else {
-          try {
-            await chatComplete({
-              model: bareModel,
-              content: "Reply with exactly: OK",
-              maxTokens: 10,
-              openai: directClient,
-            });
-            apiResult = true;
-          } catch (e) {
-            capturePluginError(e as Error, {
-              subsystem: "cli",
-              operation: "runVerifyForCli:llm-test-api",
-              phase: provider,
-            });
+          const directClient = getDirectClient(provider);
+          if (!directClient) {
             apiResult = false;
+            apiError = "No direct client (missing apiKey or baseURL)";
+          } else {
+            try {
+              await chatComplete({
+                model: bareModel,
+                content: "Reply with exactly: OK",
+                maxTokens: 10,
+                openai: directClient,
+              });
+              apiResult = true;
+            } catch (e) {
+              apiError = shortError(e);
+              capturePluginError(e as Error, {
+                subsystem: "cli",
+                operation: "runVerifyForCli:llm-test-api",
+                phase: provider,
+              });
+              apiResult = false;
+            }
           }
         }
       }
@@ -531,6 +578,9 @@ export async function runVerifyForCli(
       inConfig,
       oauthResult,
       apiResult,
+      oauthError,
+      apiError,
+      apiSkippedReason,
     });
   }
   if (llmRows.length === 0) {
@@ -565,32 +615,60 @@ export async function runVerifyForCli(
       const credStr = `OAuth:${row.hasOAuth ? "True" : "False"} / API:${row.hasApi ? "True" : "False"}`;
       const inConfigStr = row.inConfig ? (noEmoji ? "Yes" : "✅ Yes") : noEmoji ? "No" : "No";
       const enabledStr = row.enabled ? (noEmoji ? "Enabled" : "✅ Enabled") : noEmoji ? "Disabled" : "❌ Disabled";
+      // When --test-llm: show Success/Failed if we ran the test; "Skipped" if enabled+inConfig but no creds to test; "—" if not in config
       const oauthStr =
-        row.oauthResult === undefined
-          ? "—"
-          : row.oauthResult
+        row.oauthResult === true
+          ? noEmoji
+            ? "Success"
+            : "✅ Success"
+          : row.oauthResult === false
             ? noEmoji
-              ? "Success"
-              : "✅ Success"
-            : noEmoji
               ? "Failed"
-              : "❌ Failed";
-      const apiStr =
-        row.apiResult === undefined
-          ? "—"
-          : row.apiResult
+              : "❌ Failed"
+            : opts.testLlm && row.enabled && row.inConfig && !row.hasOAuth
+              ? noEmoji
+                ? "Skipped (no OAuth)"
+                : "⏭️ Skipped"
+              : "—";
+      const apiStr = row.apiSkippedReason
+        ? row.apiSkippedReason
+        : row.apiResult === true
+          ? noEmoji
+            ? "Success"
+            : "✅ Success"
+          : row.apiResult === false
             ? noEmoji
-              ? "Success"
-              : "✅ Success"
-            : noEmoji
               ? "Failed"
-              : "❌ Failed";
+              : "❌ Failed"
+            : opts.testLlm && row.enabled && row.inConfig && !row.hasApi
+              ? noEmoji
+                ? "Skipped (no key)"
+                : "⏭️ Skipped"
+              : "—";
       tableLog(
         `  ${row.model.padEnd(llmW1)}  ${row.provider.padEnd(llmW2)}  ${credStr.padEnd(llmW3)}  ${row.source.padEnd(llmW4)}  ${inConfigStr.padEnd(llmW5)}  ${enabledStr.padEnd(llmW6)}${opts.testLlm ? `  ${oauthStr.padEnd(llmW7)}  ${apiStr}` : ""}`,
       );
     }
+    const failedRows = opts.testLlm ? llmRows.filter((r) => r.oauthError || r.apiError) : [];
+    if (failedRows.length > 0) {
+      tableLog("  Failed test details:");
+      let has401Openai = false;
+      for (const row of failedRows) {
+        if (row.oauthError) tableLog(`    ${row.model} (OAuth): ${row.oauthError}`);
+        if (row.apiError) {
+          tableLog(`    ${row.model} (API): ${row.apiError}`);
+          if (row.provider === "openai" && /401|incorrect api key/i.test(row.apiError)) has401Openai = true;
+        }
+      }
+      if (has401Openai) {
+        tableLog(
+          "  Note: OpenAI key comes from llm.providers.openai.apiKey or OPENAI_API_KEY env (not embedding.apiKey). Azure: llm.providers['azure-foundry'].apiKey or AZURE_OPENAI_API_KEY. See docs/LLM-AND-PROVIDERS.md.",
+        );
+      }
+      tableLog("");
+    }
     tableLog(
-      "  (Source = where API key is set: plugin | env | file | gateway. In config = model listed in llm.nano/default/heavy.)",
+      "  (Source = where API key is set: plugin | env | file | gateway. In config = model in llm.nano/default/heavy. Enabled = provider not in llm.disabledProviders. Skipped = not tested (no API key or OAuth for this provider).)",
     );
     const llmProvidersWithCreds = new Set(llmRows.filter((r) => r.hasApi || r.hasOAuth).map((r) => r.provider)).size;
     const llmOk = llmProvidersWithCreds >= 1;
