@@ -241,6 +241,35 @@ export class VectorDB {
     }
   }
 
+  /**
+   * Drop the vector table and recreate it empty with the current dimension.
+   * Use before re-embedding all facts (e.g. after switching to a new embedding model).
+   * Call ensureInitialized() first so the connection exists.
+   */
+  async resetTableForReindex(): Promise<void> {
+    await this.ensureInitialized();
+    if (!this.db) throw new Error("VectorDB connection not initialized.");
+    const tables = await this.db.tableNames();
+    if (tables.includes(LANCE_TABLE)) {
+      await this.db.dropTable(LANCE_TABLE);
+    }
+    this.table = await this.db.createTable(LANCE_TABLE, [
+      {
+        id: "__schema__",
+        text: "",
+        vector: new Array(this.vectorDim).fill(0),
+        importance: 0,
+        category: "other",
+        createdAt: 0,
+      },
+    ]);
+    try {
+      await this.table.delete('id = "__schema__"');
+    } catch (deleteErr) {
+      this.logWarn(`memory-hybrid: failed to delete schema seed row after reset (non-fatal): ${deleteErr}`);
+    }
+  }
+
   /** Get initialized table or throw descriptive error. */
   private getTable(): lancedb.Table {
     if (!this.table) {
@@ -450,10 +479,33 @@ export class VectorDB {
   }
 
   async count(): Promise<number> {
-    try {
+    const tryCount = async (): Promise<number> => {
       await this.ensureInitialized();
-      return await this.getTable().countRows();
+      const t = this.getTable();
+      return await t.countRows();
+    };
+    try {
+      return await tryCount();
     } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      // Race: DB may have been closed (e.g. plugin reload) between ensureInitialized() and getTable().
+      // Retry once to allow reconnect so verify CLI and other callers get a result instead of 0.
+      if (msg.includes("VectorDB not initialized") || msg.includes("close() was called")) {
+        try {
+          this.table = null;
+          this.closed = true;
+          this.initPromise = null;
+          return await tryCount();
+        } catch (retryErr) {
+          capturePluginError(retryErr instanceof Error ? retryErr : new Error(String(retryErr)), {
+            operation: "vector-count-retry",
+            severity: "info",
+            subsystem: "vector",
+          });
+          this.logWarn(`memory-hybrid: LanceDB count failed (after retry): ${retryErr}`);
+          return 0;
+        }
+      }
       capturePluginError(err as Error, {
         operation: "vector-count",
         severity: "info",

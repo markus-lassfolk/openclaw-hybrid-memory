@@ -1583,6 +1583,14 @@ describe("resolveProviderApiKey", () => {
       expect(result).toEqual({ value: "sk-openai-env", source: "OPENAI_API_KEY" });
     });
 
+    it("prefers OPENAI_API_KEY env over embedding.apiKey (Azure vs OpenAI key separation)", () => {
+      const cfg = makeCfg({ embedding: { apiKey: "sk-azure-embed-key" } });
+      const result = resolveProviderApiKey("openai", undefined, cfg, identity, {
+        env: { OPENAI_API_KEY: "sk-openai-env" },
+      });
+      expect(result).toEqual({ value: "sk-openai-env", source: "OPENAI_API_KEY" });
+    });
+
     it("falls back to OPENAI_API_KEY env when all higher-priority sources are absent", () => {
       const result = resolveProviderApiKey(
         "openai",
@@ -1652,6 +1660,22 @@ describe("resolveProviderApiKey", () => {
     it("always returns default ollama key when no providerCfg key", () => {
       const result = resolveProviderApiKey("ollama", undefined, makeCfg(), identity, { env: {} });
       expect(result).toEqual({ value: "ollama", source: "default" });
+    });
+  });
+
+  describe("azure-foundry AZURE_OPENAI_API_KEY", () => {
+    it("falls back to AZURE_OPENAI_API_KEY env when no llm.providers key", () => {
+      const result = resolveProviderApiKey("azure-foundry", undefined, makeCfg(), identity, {
+        env: { AZURE_OPENAI_API_KEY: "azure-key-from-env" },
+      });
+      expect(result).toEqual({ value: "azure-key-from-env", source: "AZURE_OPENAI_API_KEY" });
+    });
+
+    it("azure-foundry-responses uses AZURE_OPENAI_API_KEY env", () => {
+      const result = resolveProviderApiKey("azure-foundry-responses", undefined, makeCfg(), identity, {
+        env: { AZURE_OPENAI_API_KEY: "azure-resp-key" },
+      });
+      expect(result).toEqual({ value: "azure-resp-key", source: "AZURE_OPENAI_API_KEY" });
     });
   });
 

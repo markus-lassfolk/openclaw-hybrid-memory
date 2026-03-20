@@ -234,3 +234,20 @@ export function getContextWindow(model: string): number {
   const cap = getModelCapabilities(model);
   return cap?.contextWindow ?? DEFAULT_CAPABILITIES.contextWindow;
 }
+
+/**
+ * True for models that require `max_completion_tokens` instead of `max_tokens` in the API request
+ * (e.g. GPT-5+, o-series). Used by chatComplete so direct client calls (verify, etc.) work with Azure Foundry and others.
+ */
+export function requiresMaxCompletionTokens(model: string): boolean {
+  const bare = normalizeModelId(model);
+  return /^gpt-5/i.test(bare) || isReasoningModel(model);
+}
+
+/**
+ * True for o1, o3, o4-mini, etc. — reasoning models that reject temperature/top_p and use max_completion_tokens.
+ */
+export function isReasoningModel(model: string): boolean {
+  const bare = normalizeModelId(model);
+  return /^o[0-9]+(?:-[a-z]+)?$/.test(bare);
+}
