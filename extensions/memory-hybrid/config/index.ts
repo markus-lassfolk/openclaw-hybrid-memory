@@ -233,6 +233,15 @@ export function getProvidersWithKeys(pluginConfig: CronModelConfig | undefined):
     }
   }
 
+  // Env fallbacks so providers show as configured when only env is set (e.g. GOOGLE_API_KEY on Doris)
+  if (
+    !seen.has("google") &&
+    typeof process.env.GOOGLE_API_KEY === "string" &&
+    process.env.GOOGLE_API_KEY.trim().length >= 10
+  ) {
+    add("google");
+  }
+
   return out;
 }
 

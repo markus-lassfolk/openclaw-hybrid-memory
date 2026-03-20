@@ -26,7 +26,12 @@ import { resolveSecretRef } from "../config/parsers/core.js";
 import { chatComplete } from "../services/chat.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { hasOAuthProfiles } from "../utils/auth.js";
-import { createEmbeddingProvider, type EmbeddingConfig } from "../services/embeddings.js";
+import {
+  createEmbeddingProvider,
+  type EmbeddingConfig,
+  GOOGLE_EMBED_DEFAULT_DIMENSIONS,
+  OPENAI_ONLY_EMBED_MODELS,
+} from "../services/embeddings.js";
 import { relativeTime } from "./shared.js";
 import { PLUGIN_ID, getRestartPendingPath } from "../utils/constants.js";
 import { ensureMaintenanceCronJobs, getPluginConfigFromFile } from "./cmd-install.js";
@@ -223,9 +228,21 @@ export async function runVerifyForCli(
     cfg.embedding.apiKey.length >= 10 &&
     cfg.embedding.apiKey !== "YOUR_OPENAI_API_KEY" &&
     cfg.embedding.apiKey !== "<OPENAI_API_KEY>";
-  const hasGoogleKey =
-    typeof (cfg.embedding as Record<string, unknown>).googleApiKey === "string" &&
-    ((cfg.embedding as Record<string, unknown>).googleApiKey as string).length >= 10;
+  // Google key may be in embedding.googleApiKey (parsed from distill/llm) or only in raw config
+  const cfgGoogleKey = (cfg.embedding as Record<string, unknown>).googleApiKey as string | undefined;
+  const llmProviders = (rawPluginConfig?.llm as Record<string, unknown> | undefined)?.providers as
+    | Record<string, unknown>
+    | undefined;
+  const rawGoogleKeyForHasKey =
+    (rawPluginConfig?.distill as Record<string, unknown> | undefined)?.apiKey ??
+    (llmProviders?.google as Record<string, unknown> | undefined)?.apiKey;
+  const resolvedGoogleKeyForHasKey =
+    typeof cfgGoogleKey === "string" && cfgGoogleKey.length >= 10
+      ? cfgGoogleKey
+      : typeof rawGoogleKeyForHasKey === "string" && rawGoogleKeyForHasKey.trim()
+        ? resolveSecretRef(rawGoogleKeyForHasKey.trim())
+        : undefined;
+  const hasGoogleKey = Boolean(resolvedGoogleKeyForHasKey && resolvedGoogleKeyForHasKey.length >= 10);
   const embProvidersToShow: ("openai" | "ollama" | "onnx" | "google")[] =
     cfg.embedding.preferredProviders && cfg.embedding.preferredProviders.length > 0
       ? [...new Set(cfg.embedding.preferredProviders)]
@@ -236,6 +253,7 @@ export async function runVerifyForCli(
     api: string;
     source: string;
     success?: boolean;
+    error?: string;
   }[] = [];
   for (const p of embProvidersToShow) {
     const oauth = false;
@@ -253,32 +271,54 @@ export async function runVerifyForCli(
                 : credentialSource(rawLlmProviderApiKey("google"))) || "plugin"
             : "—"
           : "local";
+    // For Google with an OpenAI-only model name, show the effective model we use (text-embedding-005)
+    const embModel =
+      cfg.embedding.model ||
+      (p === "openai"
+        ? "text-embedding-3-small"
+        : p === "google"
+          ? "text-embedding-004"
+          : p === "ollama"
+            ? "nomic-embed-text"
+            : "all-MiniLM-L6-v2");
+    const effectiveGoogleModel =
+      p === "google" && embModel && OPENAI_ONLY_EMBED_MODELS.has(embModel) ? "gemini-embedding-001" : embModel;
     const label =
       p === "openai"
-        ? `OpenAI/${cfg.embedding.model || "text-embedding-3-small"}`
+        ? `OpenAI/${embModel}`
         : p === "google"
-          ? `Google/${cfg.embedding.model || "text-embedding-004"}`
+          ? `Google/${effectiveGoogleModel}`
           : p === "ollama"
-            ? `Local/Ollama (${cfg.embedding.model || "nomic-embed-text"})`
-            : `Local/ONNX (${cfg.embedding.model || "all-MiniLM-L6-v2"})`;
+            ? `Local/Ollama (${embModel})`
+            : `Local/ONNX (${embModel})`;
     let success: boolean | undefined = undefined;
+    let embError: string | undefined = undefined;
     if (!opts.testLlm && (api === "True" || api === "Local")) {
       embeddingOk = true;
     }
     if (opts.testLlm) {
       try {
+        // For Google with an OpenAI-only model name, use gemini-embedding-001 and 768 dims (same as factory)
+        const modelForTest =
+          p === "google" && embModel && OPENAI_ONLY_EMBED_MODELS.has(embModel)
+            ? "gemini-embedding-001"
+            : cfg.embedding.model ||
+              (p === "openai"
+                ? "text-embedding-3-small"
+                : p === "google"
+                  ? "text-embedding-004"
+                  : p === "ollama"
+                    ? "nomic-embed-text"
+                    : "all-MiniLM-L6-v2");
+        const dimensionsForTest =
+          p === "google" && embModel && OPENAI_ONLY_EMBED_MODELS.has(embModel)
+            ? GOOGLE_EMBED_DEFAULT_DIMENSIONS
+            : cfg.embedding.dimensions;
+        // Use resolved Google key (from cfg or raw distill/llm) so test works when key is only in raw config
         const minimalEmbCfg: EmbeddingConfig = {
           provider: p,
-          model:
-            cfg.embedding.model ||
-            (p === "openai"
-              ? "text-embedding-3-small"
-              : p === "google"
-                ? "text-embedding-004"
-                : p === "ollama"
-                  ? "nomic-embed-text"
-                  : "all-MiniLM-L6-v2"),
-          dimensions: cfg.embedding.dimensions,
+          model: modelForTest,
+          dimensions: dimensionsForTest,
           batchSize: cfg.embedding.batchSize ?? 32,
           ...(p === "openai" && {
             apiKey: cfg.embedding.apiKey,
@@ -288,7 +328,8 @@ export async function runVerifyForCli(
               : {}),
           }),
           ...(p === "google" && {
-            googleApiKey: (cfg.embedding as Record<string, unknown>).googleApiKey as string,
+            googleApiKey:
+              resolvedGoogleKeyForHasKey ?? ((cfg.embedding as Record<string, unknown>).googleApiKey as string),
           }),
           ...(p === "ollama" && { endpoint: cfg.embedding.endpoint }),
         };
@@ -298,10 +339,11 @@ export async function runVerifyForCli(
       } catch (e) {
         capturePluginError(e as Error, { subsystem: "cli", operation: "runVerifyForCli:embedding-test", phase: p });
         success = false;
+        embError = (e instanceof Error ? e.message : String(e)).slice(0, 120);
       }
       if (success) embeddingOk = true;
     }
-    embTableRows.push({ label, oauth, api, source, success });
+    embTableRows.push({ label, oauth, api, source, success, error: embError });
   }
   const embCols = ["Model", "Credentials Available", "Source", ...(opts.testLlm ? ["Test Result"] : [])];
   const embW1 = Math.max(8, ...embTableRows.map((r) => r.label.length), 20);
@@ -320,6 +362,13 @@ export async function runVerifyForCli(
         ? `  ${row.success ? (noEmoji ? "Success" : "✅ Success") : noEmoji ? "Failed" : "❌ Failed"}`
         : "");
     tableLog(line);
+  }
+  const failedEmbRows = opts.testLlm ? embTableRows.filter((r) => r.success === false && r.error) : [];
+  if (failedEmbRows.length > 0) {
+    tableLog("  Embedding test failures:");
+    for (const row of failedEmbRows) {
+      tableLog(`    ${row.label}: ${row.error}`);
+    }
   }
   const anyEmbOk = opts.testLlm
     ? embTableRows.some((r) => r.success)
@@ -432,8 +481,11 @@ export async function runVerifyForCli(
       return resolveKey(cronCfg.embedding?.apiKey);
     }
     if (provider === "google") {
-      const k = prov?.google?.apiKey ?? cronCfg.distill?.apiKey;
-      return resolveKey(k);
+      const fromProv = resolveKey(prov?.google?.apiKey ?? cronCfg.distill?.apiKey);
+      if (fromProv) return fromProv;
+      const fromEnv = env.GOOGLE_API_KEY?.trim();
+      if (fromEnv && fromEnv.length >= 10) return fromEnv;
+      return undefined;
     }
     if (provider === "anthropic") {
       const k = prov?.anthropic?.apiKey ?? (cronCfg.claude as { apiKey?: string } | undefined)?.apiKey;
@@ -662,7 +714,7 @@ export async function runVerifyForCli(
       }
       if (has401Openai) {
         tableLog(
-          "  Note: OpenAI key comes from llm.providers.openai.apiKey or OPENAI_API_KEY env (not embedding.apiKey). Azure: llm.providers['azure-foundry'].apiKey or AZURE_OPENAI_API_KEY. See docs/LLM-AND-PROVIDERS.md.",
+          "  Note: OpenAI: llm.providers.openai.apiKey or OPENAI_API_KEY. Google: llm.providers.google.apiKey or distill.apiKey or GOOGLE_API_KEY. Azure: llm.providers['azure-foundry'].apiKey or AZURE_OPENAI_API_KEY. See docs/LLM-AND-PROVIDERS.md.",
         );
       }
       tableLog("");
