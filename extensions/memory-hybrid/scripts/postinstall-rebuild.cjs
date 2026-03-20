@@ -5,7 +5,7 @@
  * stale native bindings. We first attempt a targeted install when missing, then
  * rebuild when present but unloadable.
  */
-const { execSync } = require("child_process");
+const { execFileSync } = require("child_process");
 const path = require("path");
 
 const root = path.join(__dirname, "..");
@@ -17,9 +17,9 @@ function getVersionRange() {
   return pkg.dependencies?.[moduleName] || "";
 }
 
-function run(cmd, desc) {
+function run(args, desc) {
   try {
-    execSync(cmd, { cwd: root, stdio: "inherit" });
+    execFileSync("npm", args, { cwd: root, stdio: "inherit" });
     return true;
   } catch {
     console.error(`\n✗ ${desc} failed.`);
@@ -55,7 +55,7 @@ if (!state.installed) {
   console.log(`${moduleName} missing after install — attempting targeted install...`);
   const versionRange = getVersionRange();
   const installSpec = versionRange ? `${moduleName}@${versionRange}` : moduleName;
-  if (!run(`npm install --no-save ${installSpec}`, `${moduleName} install`)) process.exit(1);
+  if (!run(["install", "--no-save", installSpec], `${moduleName} install`)) process.exit(1);
   state = inspectModule(moduleName);
 }
 
@@ -65,7 +65,7 @@ if (!needsRebuild(state)) {
 }
 
 console.log(`Rebuilding ${moduleName}...`);
-if (!run(`npm rebuild ${moduleName}`, `${moduleName} rebuild`)) process.exit(1);
+if (!run(["rebuild", moduleName], `${moduleName} rebuild`)) process.exit(1);
 state = inspectModule(moduleName);
 
 if (needsRebuild(state)) {
