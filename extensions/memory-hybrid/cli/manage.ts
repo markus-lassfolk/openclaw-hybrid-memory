@@ -3095,4 +3095,114 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
         console.log(generateTraceId());
       }),
     );
+
+  // Issue #635 — Task queue pick-next command
+  const taskQueue = mem.command("task-queue").description("Task queue utilities for autonomous issue management.");
+
+  taskQueue
+    .command("pick-next")
+    .description(
+      "Pick the next autonomous issue to work on using a 3-tier priority system: " +
+        "queue:high → (no queue label) → queue:low. " +
+        "Eligible issues must have both the `autonomous` and `enriched` labels. " +
+        "Outputs JSON with the picked issue or a skip sentinel.",
+    )
+    .option("--repo <owner/repo>", "GitHub repository to query (e.g. markus-lassfolk/openclaw-hybrid-memory)")
+    .option("--limit <n>", "Maximum number of issues to fetch from GitHub (default: 50)", "50")
+    .option("--json", "Force JSON output (default when stdout is not a TTY)")
+    .action(
+      withExit(
+        async (opts?: { repo?: string; limit?: string; json?: boolean }) => {
+          const { pickNextIssue } = await import("../services/pick-next-issue.js");
+          const repoArgs = opts?.repo ? ["--repo", opts.repo] : [];
+          const limit = Number.parseInt(opts?.limit ?? "50", 10);
+          const jsonOutput = opts?.json ?? !process.stdout.isTTY;
+
+          // Fetch open issues with labels included
+          let rawOutput: string;
+          try {
+            rawOutput = execSync(
+              [
+                "gh",
+                "issue",
+                "list",
+                ...repoArgs,
+                "--state",
+                "open",
+                "--limit",
+                String(limit),
+                "--json",
+                "number,title,url,labels",
+              ].join(" "),
+              { encoding: "utf-8", timeout: 15_000 },
+            );
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            if (jsonOutput) {
+              console.log(JSON.stringify({ picked: false, reason: `gh CLI error: ${msg}` }));
+            } else {
+              console.error(`Error: failed to query GitHub issues — ${msg}`);
+            }
+            process.exitCode = 1;
+            return;
+          }
+
+          let rawIssues: import("../services/pick-next-issue.js").GitHubIssueRaw[];
+          try {
+            const parsed: unknown = JSON.parse(rawOutput);
+            rawIssues = Array.isArray(parsed)
+              ? (parsed as import("../services/pick-next-issue.js").GitHubIssueRaw[])
+              : [];
+          } catch {
+            rawIssues = [];
+          }
+
+          // Determine which issue numbers are already in the queue
+          const currentPath = join(
+            homedir(),
+            ".openclaw",
+            "workspace",
+            "state",
+            "task-queue",
+            "current.json",
+          );
+          const excluded = new Set<number>();
+          if (existsSync(currentPath)) {
+            try {
+              const parsed: unknown = JSON.parse(readFileSync(currentPath, "utf-8"));
+              if (
+                parsed !== null &&
+                typeof parsed === "object" &&
+                !Array.isArray(parsed) &&
+                "issue" in parsed &&
+                typeof (parsed as Record<string, unknown>).issue === "number"
+              ) {
+                excluded.add((parsed as { issue: number }).issue);
+              }
+            } catch {
+              // Non-fatal: proceed without exclusion
+            }
+          }
+
+          const result = pickNextIssue(rawIssues, excluded);
+
+          if (jsonOutput) {
+            console.log(JSON.stringify(result, null, 2));
+            return;
+          }
+
+          if (result.picked) {
+            const { issue } = result;
+            const tierLabel =
+              issue.priority === "high" ? "queue:high" : issue.priority === "low" ? "queue:low" : "normal";
+            console.log(`✅ Next issue: #${issue.number} — ${issue.title}`);
+            console.log(`   Priority tier : ${tierLabel}`);
+            console.log(`   URL           : ${issue.url}`);
+            console.log(`   Labels        : ${issue.labels.join(", ")}`);
+          } else {
+            console.log(result.reason);
+          }
+        },
+      ),
+    );
 }
