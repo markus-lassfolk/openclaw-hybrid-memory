@@ -46,7 +46,7 @@ function needsRebuild(state) {
 let state = inspectModule(moduleName);
 if (!state.installed) {
   console.log(`${moduleName} missing after install — attempting targeted install...`);
-  if (!run(`npm install ${moduleName}`, `${moduleName} install`)) process.exit(1);
+  if (!run(`npm install --no-save ${moduleName}`, `${moduleName} install`)) process.exit(1);
   state = inspectModule(moduleName);
 }
 
