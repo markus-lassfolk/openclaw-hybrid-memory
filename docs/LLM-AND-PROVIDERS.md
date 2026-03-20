@@ -40,6 +40,8 @@ When `llm.nano` is not configured, nano ops fall back to `llm.default[0]`.
 
 > **Why Gemini first for heavy?** Distillation processes entire session histories — up to 500k tokens. Google's Gemini Pro is currently the only model with 1024k context at the heavy tier, making it far more effective for distill than Claude Opus (195k) or OpenAI o3 (195k).
 
+For **context window**, **max output tokens**, **model versions**, and **training data cutoff** per model (Azure and others), see [Model reference (context, tokens, versions)](MODEL-REFERENCE.md).
+
 ---
 
 ## OAuth authentication
@@ -385,6 +387,17 @@ Embeddings are required. The plugin supports four providers — choose the one t
   "models": ["text-embedding-3-small"]
 }
 ```
+
+**Azure Foundry (same API as LLM):** To use Azure OpenAI / Foundry for embeddings (e.g. **Azure Foundry Embedding Large** / `text-embedding-3-large`) with the same API key and endpoint as your chat models:
+
+1. **Recommended:** Configure `llm.providers["azure-foundry"]` with `apiKey` and `baseURL` (as you already do for chat). Then set only:
+   - `embedding.provider`: `"openai"`
+   - `embedding.model`: `"text-embedding-3-large"` (or your Azure embedding deployment name)
+   - Do **not** set `embedding.apiKey` or `embedding.endpoint` — the plugin will use the azure-foundry provider for embeddings automatically.
+
+2. **Explicit override:** To point embeddings at a different endpoint (e.g. a dedicated embedding deployment URL), set `embedding.endpoint` to your Azure base URL (e.g. `https://YOUR_RESOURCE.openai.azure.com/openai` or `https://YOUR_RESOURCE.openai.azure.com/openai/deployments/YOUR_EMBEDDING_DEPLOYMENT`) and `embedding.apiKey` to your Azure API key. Use `embedding.model` as the deployment name if using a deployment-style URL.
+
+For Azure, the plugin sends the API key in the `api-key` header and does not append `/v1` when the endpoint already contains `/openai/deployments/`. Set `embedding.dimensions` to `3072` for `text-embedding-3-large`.
 
 ---
 

@@ -102,12 +102,14 @@ describe("distillBatchTokenLimit", () => {
     expect(geminiLimit2).toBe(400_000);
   });
 
-  it("uses 80k limit for non-long-context models", () => {
+  it("uses catalog limits for Claude and o-series (long context), 80k for standard models", () => {
+    // Claude Opus 4-6 has 1M context → 400k batch (from model-capabilities)
     const claudeLimit = distillBatchTokenLimit("anthropic/claude-opus-4-6");
-    expect(claudeLimit).toBe(80_000);
+    expect(claudeLimit).toBe(400_000);
 
+    // o3 has 200k context → 200k batch
     const openaiLimit = distillBatchTokenLimit("openai/o3");
-    expect(openaiLimit).toBe(80_000);
+    expect(openaiLimit).toBe(200_000);
 
     const gptLimit = distillBatchTokenLimit("gpt-4o-mini");
     expect(gptLimit).toBe(80_000);
