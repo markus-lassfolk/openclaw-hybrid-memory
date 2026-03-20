@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtemp, rm, readFile, mkdir, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
@@ -471,7 +471,6 @@ describe("listLeases", () => {
     });
 
     for (const lease of [older, newer, newest]) {
-      await mkdir(tmpDir, { recursive: true });
       await writeFile(
         join(tmpDir, `issue-${lease.issueNumber}.json`),
         JSON.stringify(lease),

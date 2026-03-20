@@ -25,7 +25,6 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { existsSync } from "node:fs";
 import { mkdir, readdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -294,8 +293,6 @@ export class DispatchLeaseRegistry {
    * `lease-expired`. Returns the list of leases that were expired.
    */
   async expireStaleLeases(): Promise<DispatchLease[]> {
-    if (!existsSync(this.leasesDir)) return [];
-
     let files: string[];
     try {
       files = (await readdir(this.leasesDir)).filter(
@@ -357,8 +354,6 @@ export class DispatchLeaseRegistry {
    * Sorted by `dispatchedAt` descending (newest first).
    */
   async listLeases(): Promise<DispatchLease[]> {
-    if (!existsSync(this.leasesDir)) return [];
-
     let files: string[];
     try {
       files = (await readdir(this.leasesDir)).filter(
