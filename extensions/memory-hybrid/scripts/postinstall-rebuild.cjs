@@ -46,7 +46,8 @@ function inspectModule(name) {
 
 function needsRebuild(state) {
   if (!state.installed) return true;
-  return !state.loadable;
+  if (state.loadable) return false;
+  return true;
 }
 
 let state = inspectModule(moduleName);
