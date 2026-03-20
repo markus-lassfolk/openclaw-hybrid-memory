@@ -5,7 +5,13 @@
 import OpenAI from "openai";
 import { capturePluginError } from "../error-reporter.js";
 import type { EmbeddingProvider, EmbeddingConfig } from "./types.js";
-import { GOOGLE_EMBEDDING_BASE_URL, KNOWN_GOOGLE_EMBED_MODELS } from "./shared.js";
+import {
+  GOOGLE_EMBEDDING_BASE_URL,
+  GOOGLE_EMBED_DEFAULT_DIMENSIONS,
+  GOOGLE_EMBED_DEFAULT_MODEL,
+  KNOWN_GOOGLE_EMBED_MODELS,
+  OPENAI_ONLY_EMBED_MODELS,
+} from "./shared.js";
 import { Embeddings } from "./openai-provider.js";
 import { OllamaEmbeddingProvider } from "./ollama-provider.js";
 import { OnnxEmbeddingProvider, isOnnxRuntimeMissingError } from "./onnx-provider.js";
@@ -54,18 +60,21 @@ export function createEmbeddingProvider(cfg: EmbeddingConfig, onFallback?: (err:
     const chain: EmbeddingProvider[] = [];
     const labels: string[] = [];
     const openaiModels = models?.length ? models : ["text-embedding-3-small"];
-    // All providers in the chain must use the same dimensions (config.dimensions). For ollama+openai, use 1536 and an ollama model that supports it, or 768 with openai dimension override if supported.
+    // When Google is in the chain with an OpenAI-only model name, we use 768 for Google; chain requires same dimensions for all.
+    const googleInChainWithOpenAiModel =
+      preferredProviders.includes("google") && model && OPENAI_ONLY_EMBED_MODELS.has(model);
+    const chainDimensions = googleInChainWithOpenAiModel ? GOOGLE_EMBED_DEFAULT_DIMENSIONS : dimensions;
     const ollamaModel =
       model && !["text-embedding-3-small", "text-embedding-3-large", "text-embedding-ada-002"].includes(model)
         ? model
         : "nomic-embed-text";
-    // Use cfg.model if it is a known Google embed model; otherwise default to text-embedding-005 (#385).
-    // Non-Google model names are rejected to prevent sending them to the Google endpoint.
-    const googleModel = model && KNOWN_GOOGLE_EMBED_MODELS.has(model) ? model : "text-embedding-005";
+    const googleModel = model && KNOWN_GOOGLE_EMBED_MODELS.has(model) ? model : GOOGLE_EMBED_DEFAULT_MODEL;
     for (const name of preferredProviders) {
       if (name === "ollama") {
         try {
-          chain.push(new OllamaEmbeddingProvider({ model: ollamaModel, dimensions, endpoint, batchSize }));
+          chain.push(
+            new OllamaEmbeddingProvider({ model: ollamaModel, dimensions: chainDimensions, endpoint, batchSize }),
+          );
           labels.push("ollama");
         } catch (err) {
           capturePluginError(err instanceof Error ? err : new Error(String(err)), {
@@ -82,7 +91,7 @@ export function createEmbeddingProvider(cfg: EmbeddingConfig, onFallback?: (err:
               model && ["text-embedding-3-small", "text-embedding-3-large", "text-embedding-ada-002"].includes(model)
                 ? model
                 : openaiModels[0],
-              dimensions,
+              chainDimensions,
               batchSize,
             ),
           );
@@ -96,7 +105,7 @@ export function createEmbeddingProvider(cfg: EmbeddingConfig, onFallback?: (err:
       } else if (name === "google" && cfg.googleApiKey && cfg.googleApiKey.length >= 10) {
         try {
           const client = new OpenAI({ apiKey: cfg.googleApiKey, baseURL: GOOGLE_EMBEDDING_BASE_URL });
-          chain.push(new Embeddings(client, googleModel, dimensions, batchSize));
+          chain.push(new Embeddings(client, googleModel, chainDimensions, batchSize));
           labels.push("google");
         } catch (err) {
           capturePluginError(err instanceof Error ? err : new Error(String(err)), {
@@ -150,10 +159,12 @@ export function createEmbeddingProvider(cfg: EmbeddingConfig, onFallback?: (err:
       throw new Error("Google embedding provider requires distill.apiKey or llm.providers.google.apiKey.");
     }
     const client = new OpenAI({ apiKey: cfg.googleApiKey, baseURL: GOOGLE_EMBEDDING_BASE_URL });
-    // Use configured model only when it is a known Google embedding model; otherwise default to text-embedding-005.
-    // Non-Google model names are rejected here to prevent sending them to the Google endpoint (#385).
-    const googleEmbedModel = model && KNOWN_GOOGLE_EMBED_MODELS.has(model) ? model : "text-embedding-005";
-    return new Embeddings(client, googleEmbedModel, dimensions, batchSize);
+    // Use configured model only when it is a known Google embedding model; otherwise default.
+    // When config has an OpenAI-only model name (e.g. text-embedding-3-large), use 768 dims so the API and vectors match.
+    const googleEmbedModel = model && KNOWN_GOOGLE_EMBED_MODELS.has(model) ? model : GOOGLE_EMBED_DEFAULT_MODEL;
+    const googleDimensions =
+      model && OPENAI_ONLY_EMBED_MODELS.has(model) ? GOOGLE_EMBED_DEFAULT_DIMENSIONS : dimensions;
+    return new Embeddings(client, googleEmbedModel, googleDimensions, batchSize);
   }
 
   if (provider === "onnx") {
