@@ -246,9 +246,17 @@ export async function runTaskQueueWatchdog(
 
   if (!staleReason) {
     if (item.issue != null) {
-      // Promote `leased` -> `running` once the watchdog observes a healthy active run.
+      // Keep leases in sync with the real queue: backfill a missing lease for
+      // in-flight work, then promote `leased` -> `running` for healthy runs.
       try {
-        const activeLease = await leaseRegistry.getActiveLease(item.issue);
+        let activeLease = await leaseRegistry.getActiveLease(item.issue);
+        if (!activeLease) {
+          const acquired = await leaseRegistry.acquireLease({
+            issueNumber: item.issue,
+            ...(item.branch ? { branch: item.branch } : {}),
+          });
+          activeLease = acquired.acquired ? acquired.lease : acquired.existing;
+        }
         if (activeLease && activeLease.status !== "running") {
           await leaseRegistry.updateLease(item.issue, activeLease.token, {
             status: "running",

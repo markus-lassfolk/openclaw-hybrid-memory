@@ -421,6 +421,27 @@ describe("runTaskQueueWatchdog", () => {
     expect(updated?.status).toBe("running");
   });
 
+  it("acquires and promotes a lease when healthy queue work has no lease yet", async () => {
+    const leasesDir = join(tmpDir, "leases");
+    const leaseRegistry = new DispatchLeaseRegistry({ leasesDir, defaultTtlMs: 60_000 });
+
+    await writeCurrentJson({
+      issue: 1102,
+      branch: "feat/new-run",
+      pid: process.pid,
+      started: new Date(Date.now() - 60_000).toISOString(),
+      status: "running",
+    });
+
+    const result = await runTaskQueueWatchdog(makeConfig({ leaseRegistry }), noopLogger);
+    expect(result.action).toBe("ok");
+
+    const activeLease = await leaseRegistry.getActiveLease(1102);
+    expect(activeLease).not.toBeNull();
+    expect(activeLease?.status).toBe("running");
+    expect(activeLease?.branch).toBe("feat/new-run");
+  });
+
   it("releases active lease as failed when watchdog clears stale entry", async () => {
     const leasesDir = join(tmpDir, "leases");
     const leaseRegistry = new DispatchLeaseRegistry({ leasesDir, defaultTtlMs: 60_000 });

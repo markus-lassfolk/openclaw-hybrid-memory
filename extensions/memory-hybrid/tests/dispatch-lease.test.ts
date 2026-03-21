@@ -173,6 +173,18 @@ describe("acquireLease", () => {
     expect(acquired).toHaveLength(1);
   });
 
+  it("allows only one successful acquire across concurrent registry instances", async () => {
+    const workerA = new DispatchLeaseRegistry({ leasesDir: tmpDir, defaultTtlMs: 60_000 });
+    const workerB = new DispatchLeaseRegistry({ leasesDir: tmpDir, defaultTtlMs: 60_000 });
+
+    const attempts = await Promise.all([
+      ...Array.from({ length: 10 }, () => workerA.acquireLease({ issueNumber: 53 })),
+      ...Array.from({ length: 10 }, () => workerB.acquireLease({ issueNumber: 53 })),
+    ]);
+
+    expect(attempts.filter((r) => r.acquired)).toHaveLength(1);
+  });
+
   it("respects custom ttlMs", async () => {
     const result = await registry.acquireLease({ issueNumber: 51, ttlMs: 5000 });
     expect(result.acquired).toBe(true);
@@ -367,6 +379,20 @@ describe("isLeased", () => {
 
     const acquire = await registry.acquireLease({ issueNumber: 499 });
     expect(acquire.acquired).toBe(true);
+  });
+
+  it("rejects lease files with parseable but non-canonical timestamps", async () => {
+    const invalid = {
+      issueNumber: 498,
+      token: "invalid-format-token",
+      status: "leased",
+      dispatchedAt: "2026-03-21T10:00:00Z",
+      expiresAt: "2026-03-21T11:00:00Z",
+      updatedAt: "2026-03-21T10:30:00Z",
+    };
+    await writeFile(join(tmpDir, "issue-498.json"), JSON.stringify(invalid), "utf-8");
+
+    expect(await registry.getActiveLease(498)).toBeNull();
   });
 });
 

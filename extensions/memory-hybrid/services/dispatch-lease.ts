@@ -105,6 +105,37 @@ export interface UpdateLeaseInput {
 // ---------------------------------------------------------------------------
 
 const VALID_STATUSES = new Set<string>(["leased", "running", "completed", "failed", "lease-expired"]);
+const ISO_UTC_TIMESTAMP_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
+
+interface LeaseLockMetadata {
+  pid?: number;
+  createdAt?: number;
+}
+
+function isProcessAlive(pid: number): boolean {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code === "EPERM") return true;
+    return false;
+  }
+}
+
+function parseLockMetadata(raw: string): LeaseLockMetadata {
+  try {
+    const parsed = JSON.parse(raw) as LeaseLockMetadata;
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return {};
+    return {
+      ...(typeof parsed.pid === "number" ? { pid: parsed.pid } : {}),
+      ...(typeof parsed.createdAt === "number" ? { createdAt: parsed.createdAt } : {}),
+    };
+  } catch {
+    return {};
+  }
+}
 
 /**
  * Returns `true` when `value` has the required shape of a `DispatchLease`.
@@ -115,8 +146,10 @@ function isValidLease(value: unknown): value is DispatchLease {
   const v = value as Record<string, unknown>;
   const isValidTimestamp = (timestamp: unknown): boolean => {
     if (typeof timestamp !== "string") return false;
+    if (!ISO_UTC_TIMESTAMP_RE.test(timestamp)) return false;
     const epochMs = new Date(timestamp).getTime();
-    return Number.isFinite(epochMs);
+    if (!Number.isFinite(epochMs)) return false;
+    return new Date(epochMs).toISOString() === timestamp;
   };
   return (
     typeof v.issueNumber === "number" &&
@@ -179,6 +212,10 @@ export class DispatchLeaseRegistry {
       try {
         const handle = await open(lockPath, "wx");
         try {
+          await handle.writeFile(
+            JSON.stringify({ pid: process.pid, createdAt: Date.now() }),
+            "utf-8",
+          );
           return await fn();
         } finally {
           await handle.close().catch(() => undefined);
@@ -190,8 +227,11 @@ export class DispatchLeaseRegistry {
 
         // Recover abandoned locks if a writer crashed before cleanup.
         try {
+          const metadata = parseLockMetadata(await readFile(lockPath, "utf-8"));
           const lockStat = await stat(lockPath);
-          if (Date.now() - lockStat.mtimeMs > this.staleLockMs) {
+          const lockAgeMs = Date.now() - lockStat.mtimeMs;
+          const ownerIsAlive = metadata.pid != null && isProcessAlive(metadata.pid);
+          if (lockAgeMs > this.staleLockMs && !ownerIsAlive) {
             await unlink(lockPath).catch(() => undefined);
           }
         } catch {
