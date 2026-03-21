@@ -141,6 +141,7 @@ See [docs/QUICKSTART.md](docs/QUICKSTART.md) for the full walkthrough.
 | Document | Description |
 |----------|-------------|
 | **[ARCHITECTURE.md](docs/ARCHITECTURE.md)** | Four-part hybrid architecture, workspace layout, bootstrap files |
+| **[ARCHITECTURE-CENTER.md](docs/ARCHITECTURE-CENTER.md)** | Core runtime vs adjacent subsystems, design constraints, module ownership map |
 | **[CONFIGURATION.md](docs/CONFIGURATION.md)** | Full `openclaw.json` reference |
 | **[LLM-AND-PROVIDERS.md](docs/LLM-AND-PROVIDERS.md)** | Prerequisites, what LLMs are used for, gateway routing, `llm` config |
 | **[FEATURES.md](docs/FEATURES.md)** | Categories, decay, tags, auto-classify, source dates; index of [per-feature docs](docs/FEATURES.md#feature-documentation-by-topic) |
