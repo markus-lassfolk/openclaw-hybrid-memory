@@ -8,6 +8,7 @@ const { execSync } = require("child_process");
 const path = require("path");
 
 const root = path.join(__dirname, "..");
+const REQUIRED_NATIVE_MODULES = ["better-sqlite3", "@lancedb/lancedb"];
 
 function run(cmd, desc) {
   try {
@@ -22,6 +23,21 @@ function run(cmd, desc) {
   }
 }
 
+function isInstalled(moduleName) {
+  try {
+    require.resolve(moduleName);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function ensureInstalled(moduleName) {
+  if (isInstalled(moduleName)) return true;
+  console.log(`${moduleName} not found — installing...`);
+  return run(`npm install --no-save --ignore-scripts ${moduleName}`, `${moduleName} install`);
+}
+
 function needsRebuild(moduleName) {
   try {
     require(moduleName);
@@ -31,22 +47,20 @@ function needsRebuild(moduleName) {
   }
 }
 
-let ok1 = true;
-if (needsRebuild("better-sqlite3")) {
-  console.log("Rebuilding better-sqlite3...");
-  ok1 = run("npm rebuild better-sqlite3", "better-sqlite3");
-} else {
-  console.log("better-sqlite3 bindings OK — skipping rebuild");
+let ok = true;
+for (const moduleName of REQUIRED_NATIVE_MODULES) {
+  if (!ensureInstalled(moduleName)) {
+    ok = false;
+    continue;
+  }
+  if (needsRebuild(moduleName)) {
+    console.log(`Rebuilding ${moduleName}...`);
+    ok = run(`npm rebuild ${moduleName}`, moduleName) && ok;
+  } else {
+    console.log(`${moduleName} bindings OK — skipping rebuild`);
+  }
 }
 
-let ok2 = true;
-if (needsRebuild("@lancedb/lancedb")) {
-  console.log("Rebuilding @lancedb/lancedb...");
-  ok2 = run("npm rebuild @lancedb/lancedb", "@lancedb/lancedb");
-} else {
-  console.log("@lancedb/lancedb bindings OK — skipping rebuild");
-}
-
-if (!ok1 || !ok2) {
+if (!ok) {
   process.exit(1);
 }
