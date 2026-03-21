@@ -21,6 +21,7 @@ import { execFile as execFileCb } from "node:child_process";
 import { promisify } from "node:util";
 import { capturePluginError } from "./error-reporter.js";
 import { readJsonFile } from "../utils/fs.js";
+import { DispatchLeaseRegistry } from "./dispatch-lease.js";
 
 const execFile = promisify(execFileCb);
 
@@ -41,6 +42,8 @@ export interface TaskQueueWatchdogConfig {
   enableRequeue?: boolean;
   /** If true, treat a missing branch as stale (requires repoDir). Default: true */
   checkBranch?: boolean;
+  /** Lease registry used to synchronize queue health with dispatch leases. */
+  leaseRegistry?: DispatchLeaseRegistry;
 }
 
 export type WatchdogAction =
@@ -204,6 +207,7 @@ export async function runTaskQueueWatchdog(
   const maxRetries = config.maxRetries ?? 2;
   const enableRequeue = config.enableRequeue ?? false;
   const checkBranch = config.checkBranch ?? true;
+  const leaseRegistry = config.leaseRegistry ?? new DispatchLeaseRegistry();
 
   const currentPath = join(stateDir, "current.json");
   const historyDir = join(stateDir, "history");
@@ -241,6 +245,23 @@ export async function runTaskQueueWatchdog(
   }
 
   if (!staleReason) {
+    if (item.issue != null) {
+      // Promote `leased` -> `running` once the watchdog observes a healthy active run.
+      try {
+        const activeLease = await leaseRegistry.getActiveLease(item.issue);
+        if (activeLease && activeLease.status !== "running") {
+          await leaseRegistry.updateLease(item.issue, activeLease.token, {
+            status: "running",
+            ...(item.branch ? { branch: item.branch } : {}),
+          });
+        }
+      } catch (err) {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+          subsystem: "task-queue-watchdog",
+          operation: "mark-lease-running",
+        });
+      }
+    }
     return { action: "ok", item };
   }
 
@@ -293,6 +314,26 @@ export async function runTaskQueueWatchdog(
   }
 
   const logMsg = `memory-hybrid: task-queue-watchdog — ${action} entry${item.issue != null ? ` for issue #${item.issue}` : ""}${item.branch ? ` (branch: ${item.branch})` : ""} — reason: ${staleReason}`;
+
+  if (item.issue != null) {
+    // Clear active lease when the watchdog forcefully clears/quarantines a run.
+    try {
+      const activeLease = await leaseRegistry.getActiveLease(item.issue);
+      if (activeLease) {
+        await leaseRegistry.releaseLease(
+          item.issue,
+          activeLease.token,
+          "failed",
+          `watchdog ${action}: ${staleReason}`,
+        );
+      }
+    } catch (err) {
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        subsystem: "task-queue-watchdog",
+        operation: "release-stale-lease",
+      });
+    }
+  }
 
   if (action === "quarantined") {
     logger?.warn(logMsg);

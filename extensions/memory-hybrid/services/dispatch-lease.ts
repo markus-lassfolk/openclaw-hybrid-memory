@@ -25,7 +25,7 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { mkdir, readdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
+import { mkdir, open, readdir, readFile, rename, stat, unlink, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -113,6 +113,11 @@ const VALID_STATUSES = new Set<string>(["leased", "running", "completed", "faile
 function isValidLease(value: unknown): value is DispatchLease {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
   const v = value as Record<string, unknown>;
+  const isValidTimestamp = (timestamp: unknown): boolean => {
+    if (typeof timestamp !== "string") return false;
+    const epochMs = new Date(timestamp).getTime();
+    return Number.isFinite(epochMs);
+  };
   return (
     typeof v.issueNumber === "number" &&
     Number.isInteger(v.issueNumber) &&
@@ -121,9 +126,10 @@ function isValidLease(value: unknown): value is DispatchLease {
     v.token.length > 0 &&
     typeof v.status === "string" &&
     VALID_STATUSES.has(v.status) &&
-    typeof v.dispatchedAt === "string" &&
-    typeof v.expiresAt === "string" &&
-    typeof v.updatedAt === "string"
+    isValidTimestamp(v.dispatchedAt) &&
+    isValidTimestamp(v.expiresAt) &&
+    isValidTimestamp(v.updatedAt) &&
+    (v.completedAt === undefined || isValidTimestamp(v.completedAt))
   );
 }
 
@@ -138,12 +144,16 @@ function isValidLease(value: unknown): value is DispatchLease {
 export class DispatchLeaseRegistry {
   private readonly leasesDir: string;
   private readonly defaultTtlMs: number;
+  private readonly lockWaitMs: number;
+  private readonly staleLockMs: number;
 
   constructor(config: DispatchLeaseRegistryConfig = {}) {
     this.leasesDir =
       config.leasesDir ??
       join(homedir(), ".openclaw", "workspace", "state", "task-queue", "leases");
     this.defaultTtlMs = config.defaultTtlMs ?? 24 * 60 * 60 * 1000; // 24 hours
+    this.lockWaitMs = 50;
+    this.staleLockMs = 10_000;
   }
 
   // ── Private helpers ───────────────────────────────────────────────────────
@@ -154,6 +164,45 @@ export class DispatchLeaseRegistry {
 
   private async ensureDir(): Promise<void> {
     await mkdir(this.leasesDir, { recursive: true });
+  }
+
+  private lockPath(issueNumber: number): string {
+    return `${this.leasePath(issueNumber)}.lock`;
+  }
+
+  private async withIssueLock<T>(issueNumber: number, fn: () => Promise<T>): Promise<T> {
+    await this.ensureDir();
+    const lockPath = this.lockPath(issueNumber);
+    const maxAttempts = 40; // ~2s with default backoff
+
+    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+      try {
+        const handle = await open(lockPath, "wx");
+        try {
+          return await fn();
+        } finally {
+          await handle.close().catch(() => undefined);
+          await unlink(lockPath).catch(() => undefined);
+        }
+      } catch (err) {
+        const code = (err as NodeJS.ErrnoException).code;
+        if (code !== "EEXIST") throw err;
+
+        // Recover abandoned locks if a writer crashed before cleanup.
+        try {
+          const lockStat = await stat(lockPath);
+          if (Date.now() - lockStat.mtimeMs > this.staleLockMs) {
+            await unlink(lockPath).catch(() => undefined);
+          }
+        } catch {
+          // Lock disappeared or is unreadable — retry.
+        }
+
+        await new Promise((resolve) => setTimeout(resolve, this.lockWaitMs));
+      }
+    }
+
+    throw new Error(`Timed out acquiring lease lock for issue #${issueNumber}`);
   }
 
   /** Read a lease from disk; returns null on any error or invalid shape. */
@@ -192,34 +241,36 @@ export class DispatchLeaseRegistry {
    *   `{ acquired: false, existing }` without modifying anything.
    */
   async acquireLease(input: AcquireLeaseInput): Promise<AcquireLeaseResult> {
-    const existing = await this.readLease(input.issueNumber);
+    return this.withIssueLock(input.issueNumber, async () => {
+      const existing = await this.readLease(input.issueNumber);
 
-    if (existing !== null) {
-      const isTerminal = TERMINAL_STATUSES.has(existing.status);
-      const isExpired = new Date(existing.expiresAt).getTime() <= Date.now();
+      if (existing !== null) {
+        const isTerminal = TERMINAL_STATUSES.has(existing.status);
+        const isExpired = new Date(existing.expiresAt).getTime() <= Date.now();
 
-      if (!isTerminal && !isExpired) {
-        // Active lease — block the new dispatch
-        return { acquired: false, existing };
+        if (!isTerminal && !isExpired) {
+          // Active lease — block the new dispatch
+          return { acquired: false, existing };
+        }
       }
-    }
 
-    const now = new Date().toISOString();
-    const ttlMs = input.ttlMs ?? this.defaultTtlMs;
-    const expiresAt = new Date(Date.now() + ttlMs).toISOString();
+      const now = new Date().toISOString();
+      const ttlMs = input.ttlMs ?? this.defaultTtlMs;
+      const expiresAt = new Date(Date.now() + ttlMs).toISOString();
 
-    const lease: DispatchLease = {
-      issueNumber: input.issueNumber,
-      token: randomUUID(),
-      status: "leased",
-      dispatchedAt: now,
-      expiresAt,
-      updatedAt: now,
-      ...(input.branch !== undefined ? { branch: input.branch } : {}),
-    };
+      const lease: DispatchLease = {
+        issueNumber: input.issueNumber,
+        token: randomUUID(),
+        status: "leased",
+        dispatchedAt: now,
+        expiresAt,
+        updatedAt: now,
+        ...(input.branch !== undefined ? { branch: input.branch } : {}),
+      };
 
-    await this.writeLease(lease);
-    return { acquired: true, lease };
+      await this.writeLease(lease);
+      return { acquired: true, lease };
+    });
   }
 
   /**
@@ -236,23 +287,25 @@ export class DispatchLeaseRegistry {
     token: string,
     patch: UpdateLeaseInput,
   ): Promise<DispatchLease | null> {
-    const existing = await this.readLease(issueNumber);
-    if (!existing || existing.token !== token) return null;
+    return this.withIssueLock(issueNumber, async () => {
+      const existing = await this.readLease(issueNumber);
+      if (!existing || existing.token !== token) return null;
 
-    const now = new Date().toISOString();
-    const isTerminal = TERMINAL_STATUSES.has(patch.status);
+      const now = new Date().toISOString();
+      const isTerminal = TERMINAL_STATUSES.has(patch.status);
 
-    const updated: DispatchLease = {
-      ...existing,
-      status: patch.status,
-      updatedAt: now,
-      ...(patch.branch !== undefined ? { branch: patch.branch } : {}),
-      ...(patch.details !== undefined ? { details: patch.details } : {}),
-      ...(isTerminal ? { completedAt: now } : {}),
-    };
+      const updated: DispatchLease = {
+        ...existing,
+        status: patch.status,
+        updatedAt: now,
+        ...(patch.branch !== undefined ? { branch: patch.branch } : {}),
+        ...(patch.details !== undefined ? { details: patch.details } : {}),
+        ...(isTerminal ? { completedAt: now } : {}),
+      };
 
-    await this.writeLease(updated);
-    return updated;
+      await this.writeLease(updated);
+      return updated;
+    });
   }
 
   /**

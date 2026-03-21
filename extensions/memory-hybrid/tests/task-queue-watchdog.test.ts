@@ -14,6 +14,7 @@ import {
   type TaskQueueItem,
   type TaskQueueWatchdogConfig,
 } from "../services/task-queue-watchdog.js";
+import { DispatchLeaseRegistry } from "../services/dispatch-lease.js";
 
 // ---------------------------------------------------------------------------
 // isPidAlive tests
@@ -397,5 +398,50 @@ describe("runTaskQueueWatchdog", () => {
     const fiveHoursAgo = new Date(Date.now() - 5 * 60 * 60 * 1000).toISOString();
     await writeCurrentJson({ pid: 999999999, started: fiveHoursAgo });
     await expect(runTaskQueueWatchdog(makeConfig())).resolves.toBeDefined();
+  });
+
+  it("marks an active lease as running when queue entry is healthy", async () => {
+    const leasesDir = join(tmpDir, "leases");
+    const leaseRegistry = new DispatchLeaseRegistry({ leasesDir, defaultTtlMs: 60_000 });
+    const acq = await leaseRegistry.acquireLease({ issueNumber: 1100, branch: "feat/healthy" });
+    if (!acq.acquired) throw new Error();
+
+    await writeCurrentJson({
+      issue: 1100,
+      branch: "feat/healthy",
+      pid: process.pid,
+      started: new Date(Date.now() - 60_000).toISOString(),
+      status: "running",
+    });
+
+    const result = await runTaskQueueWatchdog(makeConfig({ leaseRegistry }), noopLogger);
+    expect(result.action).toBe("ok");
+
+    const updated = await leaseRegistry.getActiveLease(1100);
+    expect(updated?.status).toBe("running");
+  });
+
+  it("releases active lease as failed when watchdog clears stale entry", async () => {
+    const leasesDir = join(tmpDir, "leases");
+    const leaseRegistry = new DispatchLeaseRegistry({ leasesDir, defaultTtlMs: 60_000 });
+    const acq = await leaseRegistry.acquireLease({ issueNumber: 1101, branch: "feat/stale" });
+    if (!acq.acquired) throw new Error();
+
+    await writeCurrentJson({
+      issue: 1101,
+      branch: "feat/stale",
+      pid: 999999999,
+      started: new Date(Date.now() - 60_000).toISOString(),
+      status: "running",
+    });
+
+    const result = await runTaskQueueWatchdog(makeConfig({ leaseRegistry }), noopLogger);
+    expect(result.action).toBe("cleared");
+
+    expect(await leaseRegistry.getActiveLease(1101)).toBeNull();
+    const leases = await leaseRegistry.listLeases();
+    const lease = leases.find((l) => l.issueNumber === 1101);
+    expect(lease?.status).toBe("failed");
+    expect(lease?.details).toContain("watchdog cleared");
   });
 });

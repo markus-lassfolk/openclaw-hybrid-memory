@@ -165,6 +165,14 @@ describe("acquireLease", () => {
     expect(first.lease.token).not.toBe(second.lease.token);
   });
 
+  it("allows only one successful acquire under concurrent callers", async () => {
+    const attempts = await Promise.all(
+      Array.from({ length: 20 }, () => registry.acquireLease({ issueNumber: 52 })),
+    );
+    const acquired = attempts.filter((r) => r.acquired);
+    expect(acquired).toHaveLength(1);
+  });
+
   it("respects custom ttlMs", async () => {
     const result = await registry.acquireLease({ issueNumber: 51, ttlMs: 5000 });
     expect(result.acquired).toBe(true);
@@ -342,6 +350,23 @@ describe("isLeased", () => {
     if (!acq.acquired) throw new Error();
     await registry.releaseLease(402, acq.lease.token, "completed");
     expect(await registry.isLeased(402)).toBe(false);
+  });
+
+  it("rejects lease files with unparseable timestamps", async () => {
+    const invalid = {
+      issueNumber: 499,
+      token: "invalid-ts-token",
+      status: "leased",
+      dispatchedAt: "not-a-date",
+      expiresAt: "still-not-a-date",
+      updatedAt: "also-bad",
+    };
+    await writeFile(join(tmpDir, "issue-499.json"), JSON.stringify(invalid), "utf-8");
+
+    expect(await registry.getActiveLease(499)).toBeNull();
+
+    const acquire = await registry.acquireLease({ issueNumber: 499 });
+    expect(acquire.acquired).toBe(true);
   });
 });
 
