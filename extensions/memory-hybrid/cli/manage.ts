@@ -3150,8 +3150,7 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
     .action(
       withExit(
         async (opts?: { repo?: string; limit?: string; json?: boolean }) => {
-          const { pickNextIssue } = await import("../services/pick-next-issue.js");
-          const repoArgs = opts?.repo ? ["--repo", opts.repo] : [];
+          const { pickNextIssue, buildPickNextGhIssueListArgs } = await import("../services/pick-next-issue.js");
           const limit = Number.parseInt(opts?.limit ?? "50", 10);
           const jsonOutput = opts?.json ?? !process.stdout.isTTY;
 
@@ -3159,24 +3158,7 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
           let rawOutput: string;
           try {
             rawOutput = execSync(
-              [
-                "gh",
-                "issue",
-                "list",
-                ...repoArgs,
-                "--state",
-                "open",
-                // Apply required label filters before limiting so eligible issues
-                // are not dropped by an early global limit.
-                "--label",
-                "autonomous",
-                "--label",
-                "enriched",
-                "--limit",
-                String(limit),
-                "--json",
-                "number,title,url,labels",
-              ].join(" "),
+              ["gh", ...buildPickNextGhIssueListArgs(opts?.repo, limit)].join(" "),
               { encoding: "utf-8", timeout: 15_000 },
             );
           } catch (err) {

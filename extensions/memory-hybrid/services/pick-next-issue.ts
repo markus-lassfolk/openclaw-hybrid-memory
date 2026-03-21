@@ -62,6 +62,31 @@ export type PickResult = PickSuccess | PickSkip;
 // ---------------------------------------------------------------------------
 
 /**
+ * Build `gh issue list` args for task-queue picking.
+ *
+ * Important: required eligibility labels are applied before `--limit` so the
+ * limit is evaluated on the eligible issue set.
+ */
+export function buildPickNextGhIssueListArgs(repo?: string, limit = 50): string[] {
+  const repoArgs = repo ? ["--repo", repo] : [];
+  return [
+    "issue",
+    "list",
+    ...repoArgs,
+    "--state",
+    "open",
+    "--label",
+    "autonomous",
+    "--label",
+    "enriched",
+    "--limit",
+    String(limit),
+    "--json",
+    "number,title,url,labels",
+  ];
+}
+
+/**
  * Derive the queue priority tier for an issue from its label names.
  *
  * - Returns `"high"` if the `queue:high` label is present.

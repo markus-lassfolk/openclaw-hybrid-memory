@@ -4,6 +4,7 @@
 
 import { describe, it, expect } from "vitest";
 import {
+  buildPickNextGhIssueListArgs,
   getQueuePriority,
   isEligible,
   sortByQueuePriority,
@@ -12,6 +13,35 @@ import {
   type GitHubIssueRaw,
   type PickableIssue,
 } from "../services/pick-next-issue.js";
+
+// ---------------------------------------------------------------------------
+// buildPickNextGhIssueListArgs
+// ---------------------------------------------------------------------------
+
+describe("buildPickNextGhIssueListArgs", () => {
+  it("applies required labels before --limit", () => {
+    const args = buildPickNextGhIssueListArgs("owner/repo", 75);
+    const autonomousIdx = args.indexOf("autonomous");
+    const enrichedIdx = args.indexOf("enriched");
+    const limitIdx = args.indexOf("--limit");
+
+    expect(autonomousIdx).toBeGreaterThan(-1);
+    expect(enrichedIdx).toBeGreaterThan(-1);
+    expect(limitIdx).toBeGreaterThan(-1);
+    expect(autonomousIdx).toBeLessThan(limitIdx);
+    expect(enrichedIdx).toBeLessThan(limitIdx);
+  });
+
+  it("includes repo and json fields for issue picking", () => {
+    const args = buildPickNextGhIssueListArgs("owner/repo", 25);
+    expect(args).toContain("issue");
+    expect(args).toContain("list");
+    expect(args).toContain("--repo");
+    expect(args).toContain("owner/repo");
+    expect(args).toContain("--json");
+    expect(args).toContain("number,title,url,labels");
+  });
+});
 
 // ---------------------------------------------------------------------------
 // getQueuePriority
