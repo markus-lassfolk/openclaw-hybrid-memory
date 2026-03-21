@@ -2,8 +2,7 @@
 /**
  * Ensure native dependency (@lancedb/lancedb) is both installed and loadable.
  * On upgrades, package manager behavior can leave the dependency absent or with
- * stale native bindings. We first attempt a targeted install when missing, then
- * rebuild when present but unloadable.
+ * missing platform package (optional dep) or stale native bindings.
  */
 const { execFileSync } = require("child_process");
 const path = require("path");
@@ -44,22 +43,46 @@ function inspectModule(name) {
   }
 }
 
-function needsRebuild(state) {
+function needsRebuild(moduleName) {
+  try {
+    require(moduleName);
+    return false;
+  } catch {
+    return true;
+  }
+}
+
+function isMissingPlatformBinaryError(error) {
+  if (!error) return false;
+  const msg = String(error.stack || error.message || error);
+  return (
+    /MODULE_NOT_FOUND|Cannot find module/i.test(msg) &&
+    (/[@/]lancedb[/\\]lancedb-(darwin|linux|win32)/i.test(msg) ||
+      /@lancedb\/lancedb-(darwin|linux|win32)/i.test(msg) ||
+      /lancedb\..+\.node/i.test(msg))
+  );
+}
+
+function needsInstall(state) {
   if (!state.installed) return true;
   if (state.loadable) return false;
-  return true;
+  return isMissingPlatformBinaryError(state.error);
 }
 
 let state = inspectModule(moduleName);
-if (!state.installed) {
-  console.log(`${moduleName} missing after install — attempting targeted install...`);
+if (needsInstall(state)) {
+  if (!state.installed) {
+    console.log(`${moduleName} missing after install — attempting targeted install...`);
+  } else {
+    console.log(`${moduleName} platform binary appears missing — attempting targeted install...`);
+  }
   const versionRange = getVersionRange();
   const installSpec = versionRange ? `${moduleName}@${versionRange}` : moduleName;
   if (!run(["install", "--no-save", installSpec], `${moduleName} install`)) process.exit(1);
   state = inspectModule(moduleName);
 }
 
-if (!needsRebuild(state)) {
+if (!needsRebuild(moduleName)) {
   console.log(`${moduleName} already loadable — skipping rebuild`);
   process.exit(0);
 }
@@ -68,7 +91,7 @@ console.log(`Rebuilding ${moduleName}...`);
 if (!run(["rebuild", moduleName], `${moduleName} rebuild`)) process.exit(1);
 state = inspectModule(moduleName);
 
-if (needsRebuild(state)) {
+if (needsRebuild(moduleName)) {
   console.error(`\n✗ ${moduleName} is still not loadable after install/rebuild.`);
   if (state.error) console.error(state.error);
   process.exit(1);
