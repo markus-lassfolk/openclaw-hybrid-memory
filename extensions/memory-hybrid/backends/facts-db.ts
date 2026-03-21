@@ -17,38 +17,36 @@ import { estimateTokensForDisplay } from "../utils/text.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { getLanguageKeywordsFilePath } from "../utils/language-keywords.js";
 import { searchFts } from "../services/fts-search.js";
-
-export const MEMORY_LINK_TYPES = [
-  "SUPERSEDES",
-  "CAUSED_BY",
-  "PART_OF",
-  "RELATED_TO",
-  "DEPENDS_ON",
-  "CONTRADICTS",
-  "INSTANCE_OF",
-  "DERIVED_FROM",
-] as const;
-export type MemoryLinkType = (typeof MEMORY_LINK_TYPES)[number];
-
-/** Optional context metadata captured alongside a reinforcement event (#259). */
-export interface ReinforcementContext {
-  querySnippet?: string;
-  topic?: string;
-  toolSequence?: string[];
-  sessionFile?: string;
-}
-
-/** A single entry in the reinforcement_log table (#259). */
-export interface ReinforcementEvent {
-  id: string;
-  factId: string;
-  signal: "positive" | "negative";
-  querySnippet: string | null;
-  topic: string | null;
-  toolSequence: string[] | null;
-  sessionFile: string | null;
-  occurredAt: number;
-}
+import {
+  appendReinforcementQuote as appendReinforcementQuoteHelper,
+  batchGetReinforcementEvents as batchGetReinforcementEventsHelper,
+  boostConfidence as boostConfidenceHelper,
+  calculateDiversityScore as calculateDiversityScoreHelper,
+  getReinforcementEvents as getReinforcementEventsHelper,
+  reinforceFact as reinforceFactHelper,
+  reinforceProcedure as reinforceProcedureHelper,
+  computeDiversityFromEvents as computeDiversityFromEventsHelper,
+} from "./facts-db/reinforcement.js";
+import {
+  createLink as createLinkHelper,
+  createOrStrengthenRelatedLink as createOrStrengthenRelatedLinkHelper,
+  getConnectedFactIds as getConnectedFactIdsHelper,
+  getLinksFrom as getLinksFromHelper,
+  getLinksTo as getLinksToHelper,
+  strengthenRelatedLinksBatch as strengthenRelatedLinksBatchHelper,
+} from "./facts-db/links.js";
+import {
+  getScanCursor as getScanCursorHelper,
+  migrateScanCursorsTable as migrateScanCursorsTableHelper,
+  updateScanCursor as updateScanCursorHelper,
+} from "./facts-db/scan-cursors.js";
+export {
+  MEMORY_LINK_TYPES,
+  type MemoryLinkType,
+  type ReinforcementContext,
+  type ReinforcementEvent,
+} from "./facts-db/types.js";
+import type { MemoryLinkType, ReinforcementContext, ReinforcementEvent } from "./facts-db/types.js";
 
 /** A single contradiction record (from the contradictions table). */
 export interface ContradictionRecord {
@@ -62,6 +60,9 @@ export interface ContradictionRecord {
 }
 
 export class FactsDB {
+  // Responsibility note:
+  // - This class is the stable API boundary.
+  // - Extracted implementation modules under backends/facts-db/ own links/reinforcement/scan-cursor logic.
   private db: Database.Database;
   private readonly dbPath: string;
   private readonly fuzzyDedupe: boolean;
@@ -454,14 +455,7 @@ export class FactsDB {
 
   /** Create scan_cursors table for watermark-based incremental processing (#288). */
   private migrateScanCursorsTable(): void {
-    this.liveDb.exec(`
-      CREATE TABLE IF NOT EXISTS scan_cursors (
-        scan_type TEXT PRIMARY KEY,
-        last_session_ts INTEGER NOT NULL DEFAULT 0,
-        last_run_at INTEGER NOT NULL DEFAULT 0,
-        sessions_processed INTEGER NOT NULL DEFAULT 0
-      )
-    `);
+    migrateScanCursorsTableHelper(this.liveDb);
   }
 
   /** Add access_count and last_accessed_at columns for salience scoring (#237).
@@ -493,15 +487,7 @@ export class FactsDB {
 
   /** Return the cursor for the given scan type, or null if never run. */
   getScanCursor(scanType: string): { lastSessionTs: number; lastRunAt: number; sessionsProcessed: number } | null {
-    const row = this.liveDb
-      .prepare(`SELECT last_session_ts, last_run_at, sessions_processed FROM scan_cursors WHERE scan_type = ?`)
-      .get(scanType) as { last_session_ts: number; last_run_at: number; sessions_processed: number } | undefined;
-    if (!row) return null;
-    return {
-      lastSessionTs: row.last_session_ts,
-      lastRunAt: row.last_run_at,
-      sessionsProcessed: row.sessions_processed,
-    };
+    return getScanCursorHelper(this.liveDb, scanType);
   }
 
   /**
@@ -512,20 +498,7 @@ export class FactsDB {
    * @param sessionsProcessed Number of sessions processed in this run.
    */
   updateScanCursor(scanType: string, lastSessionTs: number, sessionsProcessed: number): void {
-    const now = Date.now();
-    this.liveDb
-      .prepare(
-        `INSERT INTO scan_cursors (scan_type, last_session_ts, last_run_at, sessions_processed)
-         VALUES (?, ?, ?, ?)
-         ON CONFLICT(scan_type) DO UPDATE SET
-           last_session_ts = CASE
-             WHEN excluded.sessions_processed > 0 THEN excluded.last_session_ts
-             ELSE scan_cursors.last_session_ts
-           END,
-           last_run_at = excluded.last_run_at,
-           sessions_processed = scan_cursors.sessions_processed + excluded.sessions_processed`,
-      )
-      .run(scanType, lastSessionTs, now, sessionsProcessed);
+    updateScanCursorHelper(this.liveDb, scanType, lastSessionTs, sessionsProcessed);
   }
 
   /** Add reinforcement tracking columns (reinforced_count, last_reinforced_at, reinforced_quotes). */
@@ -2149,33 +2122,12 @@ export class FactsDB {
 
   /** Create a typed link between two facts. Returns link id. */
   createLink(sourceFactId: string, targetFactId: string, linkType: MemoryLinkType, strength = 1.0): string {
-    const id = randomUUID();
-    const now = Math.floor(Date.now() / 1000);
-    this.liveDb
-      .prepare(
-        `INSERT INTO memory_links (id, source_fact_id, target_fact_id, link_type, strength, created_at) VALUES (?, ?, ?, ?, ?, ?)`,
-      )
-      .run(id, sourceFactId, targetFactId, linkType, Math.max(0, Math.min(1, strength)), now);
-    return id;
+    return createLinkHelper(this.liveDb, sourceFactId, targetFactId, linkType, strength);
   }
 
   /** Hebbian: Create or strengthen RELATED_TO link between two facts recalled together. */
   createOrStrengthenRelatedLink(factIdA: string, factIdB: string, deltaStrength = 0.1): void {
-    if (factIdA === factIdB) return;
-    const [source, target] = factIdA < factIdB ? [factIdA, factIdB] : [factIdB, factIdA];
-
-    const existing = this.liveDb
-      .prepare(
-        `SELECT id, strength FROM memory_links WHERE source_fact_id = ? AND target_fact_id = ? AND link_type = 'RELATED_TO'`,
-      )
-      .get(source, target) as { id: string; strength: number } | undefined;
-
-    const newStrength = Math.min(1, (existing?.strength ?? 0) + deltaStrength);
-    if (existing) {
-      this.liveDb.prepare(`UPDATE memory_links SET strength = ? WHERE id = ?`).run(newStrength, existing.id);
-    } else {
-      this.createLink(source, target, "RELATED_TO", newStrength);
-    }
+    createOrStrengthenRelatedLinkHelper(this.liveDb, factIdA, factIdB, deltaStrength);
   }
 
   /**
@@ -2183,55 +2135,17 @@ export class FactsDB {
    * Reduces O(n²) individual round-trips to 1 transaction regardless of pair count.
    */
   strengthenRelatedLinksBatch(pairs: [string, string][], deltaStrength = 0.1): void {
-    if (pairs.length === 0) return;
-    const selectStmt = this.liveDb.prepare(
-      `SELECT id, strength FROM memory_links WHERE source_fact_id = ? AND target_fact_id = ? AND link_type = 'RELATED_TO'`,
-    );
-    const updateStmt = this.liveDb.prepare(`UPDATE memory_links SET strength = ? WHERE id = ?`);
-    const insertStmt = this.liveDb.prepare(
-      `INSERT INTO memory_links (id, source_fact_id, target_fact_id, link_type, strength, created_at) VALUES (?, ?, ?, 'RELATED_TO', ?, ?)`,
-    );
-    const now = Math.floor(Date.now() / 1000);
-    const tx = this.liveDb.transaction(() => {
-      for (const [factIdA, factIdB] of pairs) {
-        if (factIdA === factIdB) continue;
-        const [source, target] = factIdA < factIdB ? [factIdA, factIdB] : [factIdB, factIdA];
-        const existing = selectStmt.get(source, target) as { id: string; strength: number } | undefined;
-        const newStrength = Math.max(0, Math.min(1, (existing?.strength ?? 0) + deltaStrength));
-        if (existing) {
-          updateStmt.run(newStrength, existing.id);
-        } else {
-          insertStmt.run(randomUUID(), source, target, newStrength, now);
-        }
-      }
-    });
-    tx();
+    strengthenRelatedLinksBatchHelper(this.liveDb, pairs, deltaStrength);
   }
 
   /** Get links from a fact (outgoing). */
   getLinksFrom(factId: string): Array<{ id: string; targetFactId: string; linkType: string; strength: number }> {
-    const rows = this.liveDb
-      .prepare(`SELECT id, target_fact_id, link_type, strength FROM memory_links WHERE source_fact_id = ?`)
-      .all(factId) as Array<{ id: string; target_fact_id: string; link_type: string; strength: number }>;
-    return rows.map((r) => ({
-      id: r.id,
-      targetFactId: r.target_fact_id,
-      linkType: r.link_type,
-      strength: r.strength,
-    }));
+    return getLinksFromHelper(this.liveDb, factId);
   }
 
   /** Get links to a fact (incoming). */
   getLinksTo(factId: string): Array<{ id: string; sourceFactId: string; linkType: string; strength: number }> {
-    const rows = this.liveDb
-      .prepare(`SELECT id, source_fact_id, link_type, strength FROM memory_links WHERE target_fact_id = ?`)
-      .all(factId) as Array<{ id: string; source_fact_id: string; link_type: string; strength: number }>;
-    return rows.map((r) => ({
-      id: r.id,
-      sourceFactId: r.source_fact_id,
-      linkType: r.link_type,
-      strength: r.strength,
-    }));
+    return getLinksToHelper(this.liveDb, factId);
   }
 
   /** BFS from given fact IDs up to maxDepth hops. Returns all connected fact IDs (including the seed set).
@@ -2239,34 +2153,7 @@ export class FactsDB {
    * with unrelated contradicted facts and cause traversal explosion when a fact has many contradictions.
    */
   getConnectedFactIds(factIds: string[], maxDepth: number): string[] {
-    if (factIds.length === 0 || maxDepth < 1) return [...factIds];
-    const seen = new Set<string>(factIds);
-    let frontier = [...factIds];
-    for (let depth = 0; depth < maxDepth && frontier.length > 0; depth++) {
-      const next: string[] = [];
-      for (const id of frontier) {
-        const out = this.liveDb
-          .prepare(`SELECT target_fact_id FROM memory_links WHERE source_fact_id = ? AND link_type != 'CONTRADICTS'`)
-          .all(id) as Array<{ target_fact_id: string }>;
-        const in_ = this.liveDb
-          .prepare(`SELECT source_fact_id FROM memory_links WHERE target_fact_id = ? AND link_type != 'CONTRADICTS'`)
-          .all(id) as Array<{ source_fact_id: string }>;
-        for (const r of out) {
-          if (!seen.has(r.target_fact_id)) {
-            seen.add(r.target_fact_id);
-            next.push(r.target_fact_id);
-          }
-        }
-        for (const r of in_) {
-          if (!seen.has(r.source_fact_id)) {
-            seen.add(r.source_fact_id);
-            next.push(r.source_fact_id);
-          }
-        }
-      }
-      frontier = next;
-    }
-    return [...seen];
+    return getConnectedFactIdsHelper(this.liveDb, factIds, maxDepth);
   }
 
   /** Get facts from the last N days (for reflection). Excludes pattern/rule by default. More efficient than getAll+filter. */
@@ -2519,23 +2406,7 @@ export class FactsDB {
    * Returns the updated JSON string.
    */
   private appendReinforcementQuote(existingJson: string | null, newSnippet: string): string {
-    let quotes: string[] = [];
-    if (existingJson) {
-      try {
-        const parsed = JSON.parse(existingJson);
-        if (Array.isArray(parsed)) quotes = parsed.filter((q): q is string => typeof q === "string");
-      } catch (err) {
-        capturePluginError(err as Error, {
-          operation: "json-parse-quotes",
-          severity: "info",
-          subsystem: "facts",
-        });
-        // Corrupted JSON — start fresh
-      }
-    }
-    quotes.push(newSnippet.slice(0, 200));
-    if (quotes.length > 10) quotes = quotes.slice(-10);
-    return JSON.stringify(quotes);
+    return appendReinforcementQuoteHelper(existingJson, newSnippet);
   }
 
   /**
@@ -2544,26 +2415,7 @@ export class FactsDB {
    * Returns true if the fact was found and updated.
    */
   boostConfidence(id: string, delta: number, maxConfidence = 1.0): boolean {
-    const nowSec = Math.floor(Date.now() / 1000);
-
-    const tx = this.liveDb.transaction(() => {
-      const row = this.liveDb.prepare(`SELECT confidence FROM facts WHERE id = ?`).get(id) as
-        | { confidence: number }
-        | undefined;
-      if (!row) return false;
-
-      const current = typeof row.confidence === "number" ? row.confidence : 1.0;
-      const boosted = Math.min(maxConfidence, current + delta);
-
-      this.liveDb
-        .prepare(
-          `UPDATE facts SET confidence = ?, reinforced_count = reinforced_count + 1, last_reinforced_at = ? WHERE id = ?`,
-        )
-        .run(boosted, nowSec, id);
-      return true;
-    });
-
-    return tx() as boolean;
+    return boostConfidenceHelper(this.liveDb, id, delta, maxConfidence);
   }
 
   /**
@@ -2579,90 +2431,14 @@ export class FactsDB {
     context?: ReinforcementContext,
     opts?: { trackContext?: boolean; maxEventsPerFact?: number; boostAmount?: number },
   ): boolean {
-    const nowSec = Math.floor(Date.now() / 1000);
-    const trackContext = opts?.trackContext !== false;
-    const maxEventsPerFact = opts?.maxEventsPerFact ?? 50;
-    const boostAmount = Math.max(0, opts?.boostAmount ?? 1);
-
-    const tx = this.liveDb.transaction(() => {
-      const row = this.liveDb.prepare(`SELECT reinforced_quotes FROM facts WHERE id = ?`).get(id) as
-        | { reinforced_quotes: string | null }
-        | undefined;
-      if (!row) return false;
-
-      const quotesJson = this.appendReinforcementQuote(row.reinforced_quotes, quoteSnippet);
-
-      this.liveDb
-        .prepare(
-          `UPDATE facts SET reinforced_count = reinforced_count + ?, last_reinforced_at = ?, reinforced_quotes = ? WHERE id = ?`,
-        )
-        .run(boostAmount, nowSec, quotesJson, id);
-
-      // Insert rich context event into reinforcement_log (#259)
-      if (trackContext) {
-        const eventId = randomUUID();
-        this.liveDb
-          .prepare(
-            `INSERT INTO reinforcement_log (id, fact_id, signal, query_snippet, topic, tool_sequence, session_file, occurred_at)
-             VALUES (?, ?, 'positive', ?, ?, ?, ?, ?)`,
-          )
-          .run(
-            eventId,
-            id,
-            context?.querySnippet ?? null,
-            context?.topic ?? null,
-            context?.toolSequence ? JSON.stringify(context.toolSequence) : null,
-            context?.sessionFile ?? null,
-            nowSec,
-          );
-
-        // FIFO eviction: keep only the most recent maxEventsPerFact events
-        const countRow = this.liveDb
-          .prepare(`SELECT COUNT(*) as cnt FROM reinforcement_log WHERE fact_id = ?`)
-          .get(id) as { cnt: number };
-        if (countRow.cnt > maxEventsPerFact) {
-          this.liveDb
-            .prepare(
-              `DELETE FROM reinforcement_log WHERE fact_id = ? AND id NOT IN (
-                SELECT id FROM reinforcement_log WHERE fact_id = ? ORDER BY occurred_at DESC, rowid DESC LIMIT ?
-              )`,
-            )
-            .run(id, id, maxEventsPerFact);
-        }
-      }
-
-      return true;
-    });
-
-    return tx();
+    return reinforceFactHelper(this.liveDb, id, quoteSnippet, context, opts);
   }
 
   /**
    * Get all reinforcement events for a fact from reinforcement_log (#259).
    */
   getReinforcementEvents(factId: string): ReinforcementEvent[] {
-    const rows = this.liveDb
-      .prepare(`SELECT * FROM reinforcement_log WHERE fact_id = ? ORDER BY occurred_at DESC`)
-      .all(factId) as Array<{
-      id: string;
-      fact_id: string;
-      signal: string;
-      query_snippet: string | null;
-      topic: string | null;
-      tool_sequence: string | null;
-      session_file: string | null;
-      occurred_at: number;
-    }>;
-    return rows.map((r) => ({
-      id: r.id,
-      factId: r.fact_id,
-      signal: (r.signal === "negative" ? "negative" : "positive") as "positive" | "negative",
-      querySnippet: r.query_snippet,
-      topic: r.topic,
-      toolSequence: r.tool_sequence ? (JSON.parse(r.tool_sequence) as string[]) : null,
-      sessionFile: r.session_file,
-      occurredAt: r.occurred_at,
-    }));
+    return getReinforcementEventsHelper(this.liveDb, factId);
   }
 
   /**
@@ -2671,20 +2447,7 @@ export class FactsDB {
    * Returns 1.0 if no valid snippets exist, otherwise unique stems / valid snippet count.
    */
   private static computeDiversityFromEvents(events: ReinforcementEvent[]): number {
-    if (events.length === 0) return 1.0;
-    const stems = events
-      .map((e) => e.querySnippet?.trim())
-      .filter((s): s is string => !!s)
-      .map((s) =>
-        s
-          .toLowerCase()
-          .replace(/[^a-z0-9\s]/g, "")
-          .replace(/\s+/g, " ")
-          .slice(0, 50),
-      );
-    if (stems.length === 0) return 1.0;
-    const uniqueStems = new Set(stems).size;
-    return uniqueStems / stems.length;
+    return computeDiversityFromEventsHelper(events);
   }
 
   /**
@@ -2692,38 +2455,7 @@ export class FactsDB {
    * Returns a Map<factId, ReinforcementEvent[]> for efficient lookup.
    */
   private batchGetReinforcementEvents(factIds: string[]): Map<string, ReinforcementEvent[]> {
-    if (factIds.length === 0) return new Map();
-    const placeholders = factIds.map(() => "?").join(",");
-    const rows = this.liveDb
-      .prepare(`SELECT * FROM reinforcement_log WHERE fact_id IN (${placeholders}) ORDER BY fact_id, occurred_at DESC`)
-      .all(...factIds) as Array<{
-      id: string;
-      fact_id: string;
-      signal: string;
-      query_snippet: string | null;
-      topic: string | null;
-      tool_sequence: string | null;
-      session_file: string | null;
-      occurred_at: number;
-    }>;
-    const eventsByFactId = new Map<string, ReinforcementEvent[]>();
-    for (const r of rows) {
-      const event: ReinforcementEvent = {
-        id: r.id,
-        factId: r.fact_id,
-        signal: (r.signal === "negative" ? "negative" : "positive") as "positive" | "negative",
-        querySnippet: r.query_snippet,
-        topic: r.topic,
-        toolSequence: r.tool_sequence ? (JSON.parse(r.tool_sequence) as string[]) : null,
-        sessionFile: r.session_file,
-        occurredAt: r.occurred_at,
-      };
-      if (!eventsByFactId.has(r.fact_id)) {
-        eventsByFactId.set(r.fact_id, []);
-      }
-      eventsByFactId.get(r.fact_id)!.push(event);
-    }
-    return eventsByFactId;
+    return batchGetReinforcementEventsHelper(this.liveDb, factIds);
   }
 
   /**
@@ -2731,8 +2463,7 @@ export class FactsDB {
    * Score 1.0 = all events from different queries; 0.0 = all from same query (#259).
    */
   calculateDiversityScore(factId: string): number {
-    const events = this.getReinforcementEvents(factId);
-    return FactsDB.computeDiversityFromEvents(events);
+    return calculateDiversityScoreHelper(this.liveDb, factId);
   }
 
   /**
@@ -2743,43 +2474,7 @@ export class FactsDB {
    * Returns true if procedure was updated.
    */
   reinforceProcedure(id: string, quoteSnippet: string, promotionThreshold = 2): boolean {
-    const nowSec = Math.floor(Date.now() / 1000);
-
-    const tx = this.liveDb.transaction(() => {
-      const row = this.liveDb
-        .prepare(`SELECT reinforced_quotes, reinforced_count, confidence FROM procedures WHERE id = ?`)
-        .get(id) as { reinforced_quotes: string | null; reinforced_count: number; confidence: number } | undefined;
-      if (!row) return false;
-
-      const quotesJson = this.appendReinforcementQuote(row.reinforced_quotes, quoteSnippet);
-
-      const newReinforcedCount = (row.reinforced_count ?? 0) + 1;
-
-      // Phase 2: Auto-promote if reinforced_count >= threshold and confidence < 0.8
-      let newConfidence = row.confidence;
-      let promotedAt: number | null = null;
-      if (newReinforcedCount >= promotionThreshold && row.confidence < 0.8) {
-        newConfidence = Math.max(row.confidence, 0.8);
-        promotedAt = nowSec;
-      }
-
-      if (promotedAt !== null) {
-        this.liveDb
-          .prepare(
-            `UPDATE procedures SET reinforced_count = ?, last_reinforced_at = ?, reinforced_quotes = ?, confidence = ?, promoted_at = ? WHERE id = ?`,
-          )
-          .run(newReinforcedCount, nowSec, quotesJson, newConfidence, promotedAt, id);
-      } else {
-        this.liveDb
-          .prepare(
-            `UPDATE procedures SET reinforced_count = ?, last_reinforced_at = ?, reinforced_quotes = ? WHERE id = ?`,
-          )
-          .run(newReinforcedCount, nowSec, quotesJson, id);
-      }
-      return true;
-    });
-
-    return tx();
+    return reinforceProcedureHelper(this.liveDb, id, quoteSnippet, promotionThreshold);
   }
 
   saveCheckpoint(context: {
