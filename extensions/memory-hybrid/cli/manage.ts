@@ -3166,6 +3166,12 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
                 ...repoArgs,
                 "--state",
                 "open",
+                // Apply required label filters before limiting so eligible issues
+                // are not dropped by an early global limit.
+                "--label",
+                "autonomous",
+                "--label",
+                "enriched",
                 "--limit",
                 String(limit),
                 "--json",
