@@ -127,6 +127,8 @@ describe("memory index", () => {
     expect(written).toContain("# MEMORY_INDEX");
     expect(written).toContain("## Recent Decisions");
     expect(written).toContain("decision:");
-    expect(written).not.toContain("Deployments for API Gateway require staged rollout approval in production environments");
+    expect(written).not.toContain(
+      "Deployments for API Gateway require staged rollout approval in production environments",
+    );
   });
 });
