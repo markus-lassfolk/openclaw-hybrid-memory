@@ -12,7 +12,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
@@ -520,6 +520,37 @@ describe("runDreamCycle", () => {
     );
     expect(typeof result.digestSummary).toBe("string");
     expect(result.digestSummary.length).toBeGreaterThan(0);
+  });
+
+  it("writes MEMORY_INDEX.md during the nightly cycle", async () => {
+    const originalWorkspace = process.env.OPENCLAW_WORKSPACE;
+    process.env.OPENCLAW_WORKSPACE = tmpDir;
+
+    factsDb.store({
+      text: "Use staged deploy validation for the release workflow after smoke tests pass",
+      category: "decision",
+      importance: 0.9,
+      entity: "Release",
+      key: "deploy-validation",
+      value: "staged",
+      source: "test",
+    });
+
+    const openaiStub = {
+      chat: { completions: { create: vi.fn().mockRejectedValue(new Error("no key")) } },
+    } as never;
+    const embeddingsStub = { embed: vi.fn().mockRejectedValue(new Error("no key")) } as never;
+
+    try {
+      await runDreamCycle(factsDb, {} as never, embeddingsStub, openaiStub, null, baseConfig, silentLogger);
+
+      const indexPath = join(tmpDir, "MEMORY_INDEX.md");
+      expect(existsSync(indexPath)).toBe(true);
+      expect(readFileSync(indexPath, "utf-8")).toContain("## Recent Decisions");
+    } finally {
+      if (originalWorkspace !== undefined) process.env.OPENCLAW_WORKSPACE = originalWorkspace;
+      else delete process.env.OPENCLAW_WORKSPACE;
+    }
   });
 
   it("permanent facts are not pruned by pruneExpired", async () => {
