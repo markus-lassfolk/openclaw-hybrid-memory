@@ -2,7 +2,7 @@
  * SQLite + FTS5 backend for structured facts.
  */
 
-import Database from "better-sqlite3";
+import { DatabaseSync } from "node:sqlite";
 import { mkdirSync, readFileSync, existsSync } from "node:fs";
 import { dirname } from "node:path";
 import { randomUUID } from "node:crypto";
@@ -16,6 +16,7 @@ import { computeDynamicSalience } from "../utils/salience.js";
 import { estimateTokensForDisplay } from "../utils/text.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { getLanguageKeywordsFilePath } from "../utils/language-keywords.js";
+import { createTransaction } from "../utils/sqlite-transaction.js";
 import { searchFts } from "../services/fts-search.js";
 import {
   batchGetReinforcementEvents as batchGetReinforcementEventsHelper,
@@ -62,7 +63,7 @@ export class FactsDB {
   // Responsibility note:
   // - This class is the stable API boundary.
   // - Extracted implementation modules under backends/facts-db/ own links/reinforcement/scan-cursor logic.
-  private db: Database.Database;
+  private db: DatabaseSync;
   private readonly dbPath: string;
   private readonly fuzzyDedupe: boolean;
   private supersededTextsCache: Set<string> | null = null;
@@ -89,7 +90,7 @@ export class FactsDB {
     this.dbPath = dbPath;
     this.fuzzyDedupe = options?.fuzzyDedupe ?? false;
     mkdirSync(dirname(dbPath), { recursive: true });
-    this.db = new Database(dbPath);
+    this.db = new DatabaseSync(dbPath);
     this.applyPragmas();
 
     // Create main table
@@ -278,7 +279,7 @@ export class FactsDB {
     }>;
     const hasFk = fkList.some((fk) => fk.from === "fact_id" && fk.table === "facts");
     if (!hasFk) {
-      this.liveDb.transaction(() => {
+      createTransaction(this.liveDb, () => {
         this.liveDb.exec(`ALTER TABLE reinforcement_log RENAME TO reinforcement_log_v1`);
         this.liveDb.exec(`
           CREATE TABLE reinforcement_log (
@@ -312,7 +313,7 @@ export class FactsDB {
     const factsCols = this.liveDb.prepare(`PRAGMA table_info(facts)`).all() as Array<{ name: string; type: string }>;
     const factsReinforcedCol = factsCols.find((c) => c.name === "reinforced_count");
     if (factsReinforcedCol && factsReinforcedCol.type !== "REAL") {
-      this.liveDb.transaction(() => {
+      createTransaction(this.liveDb, () => {
         this.liveDb.exec(`DROP INDEX IF EXISTS idx_facts_reinforced`);
         this.liveDb.exec(`ALTER TABLE facts ADD COLUMN reinforced_count_real REAL NOT NULL DEFAULT 0`);
         this.liveDb.exec(`UPDATE facts SET reinforced_count_real = CAST(reinforced_count AS REAL)`);
@@ -330,7 +331,7 @@ export class FactsDB {
     }>;
     const proceduresReinforcedCol = proceduresCols.find((c) => c.name === "reinforced_count");
     if (proceduresReinforcedCol && proceduresReinforcedCol.type !== "REAL") {
-      this.liveDb.transaction(() => {
+      createTransaction(this.liveDb, () => {
         this.liveDb.exec(`DROP INDEX IF EXISTS idx_procedures_reinforced`);
         this.liveDb.exec(`ALTER TABLE procedures ADD COLUMN reinforced_count_real REAL NOT NULL DEFAULT 0`);
         this.liveDb.exec(`UPDATE procedures SET reinforced_count_real = CAST(reinforced_count AS REAL)`);
@@ -419,7 +420,7 @@ export class FactsDB {
     }>;
     const hasFk = fkList.some((fk) => fk.from === "rule_id" && fk.table === "facts");
     if (!hasFk) {
-      this.liveDb.transaction(() => {
+      createTransaction(this.liveDb, () => {
         this.liveDb.exec(`ALTER TABLE feedback_effectiveness RENAME TO feedback_effectiveness_v1`);
         this.liveDb.exec(`
           CREATE TABLE feedback_effectiveness (
@@ -798,9 +799,9 @@ export class FactsDB {
       .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='verified_facts'")
       .get();
     if (!tableInfo) return;
-    const fkCheck = this.liveDb.pragma("foreign_key_list(verified_facts)") as Array<{ table: string }> | undefined;
+    const fkCheck = this.liveDb.prepare(`PRAGMA foreign_key_list(verified_facts)`).all() as Array<{ table: string }>;
     if (Array.isArray(fkCheck) && fkCheck.length > 0) return; // FK already present — nothing to do
-    this.liveDb.transaction(() => {
+    createTransaction(this.liveDb, () => {
       this.liveDb.exec(`
         CREATE TABLE verified_facts_new (
           id TEXT PRIMARY KEY,
@@ -899,7 +900,7 @@ export class FactsDB {
 
   /**
    * Copy a Buffer (which may have unaligned byteOffset) into a Float32Array.
-   * Node.js Buffers from better-sqlite3 can share a pooled ArrayBuffer with
+   * Node.js Buffers from node:sqlite can share a pooled ArrayBuffer with
    * byteOffset not divisible by 4, which would make Float32Array constructor throw.
    */
   private static bufferToFloat32Array(buf: Buffer): Float32Array {
@@ -964,7 +965,7 @@ export class FactsDB {
     if (row && row.sql && row.sql.includes("tags")) return;
 
     // Wrap the entire migration in a transaction so any failure leaves the DB consistent.
-    const migrate = this.liveDb.transaction(() => {
+    const migrate = createTransaction(this.liveDb, () => {
       // Drop old triggers first (they reference the old column list).
       this.liveDb.exec(`
         DROP TRIGGER IF EXISTS facts_ai;
@@ -1143,7 +1144,7 @@ export class FactsDB {
 
       if (hasTargetCascade) {
         // Table exists with old CASCADE FK on target_fact_id — recreate without it.
-        const recreate = this.liveDb.transaction(() => {
+        const recreate = createTransaction(this.liveDb, () => {
           this.liveDb.exec(`
             CREATE TABLE memory_links_new (
               id TEXT PRIMARY KEY,
@@ -1220,11 +1221,11 @@ export class FactsDB {
 
   /** Re-apply connection pragmas (used on initial open and auto-reopen). */
   private applyPragmas(): void {
-    this.db.pragma("journal_mode = WAL");
-    this.db.pragma("busy_timeout = 5000");
-    this.db.pragma("synchronous = NORMAL");
-    this.db.pragma("wal_autocheckpoint = 1000");
-    this.db.pragma("foreign_keys = ON"); // Required for memory_links ON DELETE CASCADE
+    this.db.exec("PRAGMA journal_mode = WAL");
+    this.db.exec("PRAGMA busy_timeout = 5000");
+    this.db.exec("PRAGMA synchronous = NORMAL");
+    this.db.exec("PRAGMA wal_autocheckpoint = 1000");
+    this.db.exec("PRAGMA foreign_keys = ON"); // Required for memory_links ON DELETE CASCADE
   }
 
   private migrateDecayColumns(): void {
@@ -1452,7 +1453,7 @@ export class FactsDB {
     const nowSec = Math.floor(Date.now() / 1000);
     const BATCH_SIZE = 500; // SQLite variable limit
 
-    const tx = this.liveDb.transaction(() => {
+    const tx = createTransaction(this.liveDb, () => {
       for (let i = 0; i < ids.length; i += BATCH_SIZE) {
         const batch = ids.slice(i, i + BATCH_SIZE);
         const placeholders = batch.map(() => "?").join(",");
@@ -2884,7 +2885,7 @@ export class FactsDB {
     const update = this.liveDb.prepare(`UPDATE facts SET decay_class = ?, expires_at = ? WHERE rowid = ?`);
 
     const counts: Record<string, number> = {};
-    const tx = this.liveDb.transaction(() => {
+    const tx = createTransaction(this.liveDb, () => {
       for (const row of rows) {
         const dc = classifyDecay(row.entity, row.key, row.value, row.text);
         if (dc === "stable") continue;
@@ -2928,20 +2929,20 @@ export class FactsDB {
   }
 
   /** Get the live DB handle, reopening if closed after a SIGUSR1 restart. */
-  private get liveDb(): Database.Database {
+  private get liveDb(): DatabaseSync {
     if (!this.db.open) {
-      this.db = new Database(this.dbPath);
+      this.db = new DatabaseSync(this.dbPath);
       this.applyPragmas();
     }
     return this.db;
   }
 
   /**
-   * Expose the underlying better-sqlite3 Database for services that require direct
+   * Expose the underlying node:sqlite DatabaseSync for services that require direct
    * SQL access (e.g. the FTS5 search service used by the RRF retrieval pipeline).
    * Returned instance is the same live handle used internally (with auto-reopen).
    */
-  getRawDb(): Database.Database {
+  getRawDb(): DatabaseSync {
     return this.liveDb;
   }
 
@@ -3663,9 +3664,9 @@ export class FactsDB {
    */
   updateConfidence(id: string, delta: number): number | null {
     // Atomic single-statement UPDATE with RETURNING-like pattern.
-    // No explicit transaction wrapper needed — better-sqlite3 is synchronous,
+    // No explicit transaction wrapper needed — node:sqlite is synchronous,
     // and this method is also called from within recordContradiction's transaction
-    // where a nested transaction() call would throw.
+    // where createTransaction() handles nested SAVEPOINT semantics.
     const row = this.liveDb.prepare(`SELECT confidence FROM facts WHERE id = ?`).get(id) as
       | { confidence: number }
       | undefined;
@@ -3760,7 +3761,7 @@ export class FactsDB {
     const id = randomUUID();
     const detectedAt = new Date().toISOString();
 
-    const tx = this.liveDb.transaction(() => {
+    const tx = createTransaction(this.liveDb, () => {
       // Get the old fact's current confidence before reducing it
       const oldFactRow = this.liveDb.prepare(`SELECT confidence FROM facts WHERE id = ?`).get(factIdOld) as
         | { confidence: number }
@@ -4373,7 +4374,7 @@ export class FactsDB {
       `INSERT OR IGNORE INTO cluster_members (cluster_id, fact_id) VALUES (?, ?)`,
     );
 
-    this.liveDb.transaction(() => {
+    createTransaction(this.liveDb, () => {
       // Replace all clusters
       this.liveDb.exec(`DELETE FROM cluster_members`);
       this.liveDb.exec(`DELETE FROM clusters`);

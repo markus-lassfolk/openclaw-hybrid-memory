@@ -1,4 +1,4 @@
-import Database from "better-sqlite3";
+import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { createLink, getConnectedFactIds, strengthenRelatedLinksBatch } from "../backends/facts-db/links.js";
@@ -6,14 +6,14 @@ import { appendReinforcementQuote } from "../backends/facts-db/reinforcement.js"
 import { getScanCursor, migrateScanCursorsTable, updateScanCursor } from "../backends/facts-db/scan-cursors.js";
 
 describe("facts-db scan cursor module", () => {
-  let db: Database.Database;
+  let db: DatabaseSync;
 
   afterEach(() => {
     db?.close();
   });
 
   it("keeps last_session_ts unchanged when sessionsProcessed is zero", () => {
-    db = new Database(":memory:");
+    db = new DatabaseSync(":memory:");
     migrateScanCursorsTable(db);
 
     updateScanCursor(db, "self-correction", 1000, 4, 2000);
@@ -50,14 +50,14 @@ describe("facts-db reinforcement module", () => {
 });
 
 describe("facts-db links module", () => {
-  let db: Database.Database;
+  let db: DatabaseSync;
 
   afterEach(() => {
     db?.close();
   });
 
   it("updates RELATED_TO strength in-place during batch strengthening", () => {
-    db = new Database(":memory:");
+    db = new DatabaseSync(":memory:");
     db.exec(`
       CREATE TABLE memory_links (
         id TEXT PRIMARY KEY,
@@ -82,7 +82,7 @@ describe("facts-db links module", () => {
   });
 
   it("excludes CONTRADICTS links from connectivity traversal", () => {
-    db = new Database(":memory:");
+    db = new DatabaseSync(":memory:");
     db.exec(`
       CREATE TABLE memory_links (
         id TEXT PRIMARY KEY,
