@@ -1,0 +1,25 @@
+You are writing a concise chronological narrative for an AI resuming work after a session.
+
+Session:
+- session_id: {{session_id}}
+- period_start: {{period_start}}
+- period_end: {{period_end}}
+- event_count: {{event_count}}
+- workflow_count: {{workflow_count}}
+
+Event stream (chronological):
+{{events}}
+
+Workflow traces:
+{{workflows}}
+
+Output format (plain prose, no bullets):
+**Context** — What was the goal?
+**Chronicle** — What happened step by step?
+**Decisions** — What was concluded and what should happen next?
+
+Rules:
+- No bullet lists.
+- No fact duplication. Reference facts/events by id or topic when needed.
+- Maximum {{max_chars}} characters.
+- If session is trivial/idle, output exactly: NO_NARRATIVE

@@ -20,6 +20,7 @@
     "cli/**/*.ts",
     "routes/**/*.ts",
     "services/**/*.ts",
+    "src/**/*.ts",
     "tools/**/*.ts",
     "utils/**/*.ts",
     "types/**/*.ts"

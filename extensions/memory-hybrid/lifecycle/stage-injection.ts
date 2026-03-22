@@ -71,6 +71,7 @@ async function runInjection(
   const {
     candidates,
     issueBlock,
+    narrativeBlock,
     hotBlock,
     procedureBlock,
     withProcedures,
@@ -87,6 +88,7 @@ async function runInjection(
     ambientCfg,
     ambientSeenFacts,
   } = r;
+  const baseContext = issueBlock + narrativeBlock + hotBlock;
 
   function buildProgressiveIndex(
     list: typeof candidates,
@@ -179,13 +181,13 @@ async function runInjection(
           `memory-hybrid: progressive_hybrid — ${pinnedPart.length} pinned in full, no index (~${pinnedTokens} tokens)`,
         );
         return {
-          prependContext: markDegradedLatency(wrapRecalledContext(issueBlock + hotBlock + withProcedures(fullContent))),
+          prependContext: markDegradedLatency(wrapRecalledContext(baseContext + withProcedures(fullContent))),
         };
       }
       if (procedureBlock) {
-        return { prependContext: markDegradedLatency(wrapRecalledContext(issueBlock + hotBlock + procedureBlock)) };
+        return { prependContext: markDegradedLatency(wrapRecalledContext(baseContext + procedureBlock)) };
       }
-      const combinedContext = issueBlock + hotBlock;
+      const combinedContext = baseContext;
       return combinedContext
         ? { prependContext: markDegradedLatency(wrapRecalledContext(combinedContext)) }
         : undefined;
@@ -209,7 +211,7 @@ async function runInjection(
       `memory-hybrid: progressive_hybrid — ${pinnedPart.length} pinned in full, index of ${indexIds.length} (~${pinnedTokens + estimateTokens(indexContent)} tokens)`,
     );
     return {
-      prependContext: markDegradedLatency(wrapRecalledContext(issueBlock + hotBlock + withProcedures(fullContent))),
+      prependContext: markDegradedLatency(wrapRecalledContext(baseContext + withProcedures(fullContent))),
     };
   }
 
@@ -223,9 +225,9 @@ async function runInjection(
     } = buildProgressiveIndex(candidates, indexCap - estimateTokens(indexHeader + indexFooter), 1);
     if (indexLines.length === 0) {
       if (procedureBlock) {
-        return { prependContext: markDegradedLatency(wrapRecalledContext(issueBlock + hotBlock + procedureBlock)) };
+        return { prependContext: markDegradedLatency(wrapRecalledContext(baseContext + procedureBlock)) };
       }
-      const combinedContext = issueBlock + hotBlock;
+      const combinedContext = baseContext;
       return combinedContext
         ? { prependContext: markDegradedLatency(wrapRecalledContext(combinedContext)) }
         : undefined;
@@ -243,7 +245,7 @@ async function runInjection(
     );
     return {
       prependContext: markDegradedLatency(
-        wrapRecalledContext(issueBlock + hotBlock + withProcedures(`${indexHeader}${indexContent}${indexFooter}`)),
+        wrapRecalledContext(baseContext + withProcedures(`${indexHeader}${indexContent}${indexFooter}`)),
       ),
     };
   }
@@ -271,9 +273,9 @@ async function runInjection(
 
   if (lines.length === 0) {
     if (procedureBlock) {
-      return { prependContext: markDegradedLatency(wrapRecalledContext(issueBlock + hotBlock + procedureBlock)) };
+      return { prependContext: markDegradedLatency(wrapRecalledContext(baseContext + procedureBlock)) };
     }
-    const combinedContext = issueBlock + hotBlock;
+    const combinedContext = baseContext;
     return combinedContext ? { prependContext: markDegradedLatency(wrapRecalledContext(combinedContext)) } : undefined;
   }
 
@@ -332,9 +334,9 @@ async function runInjection(
 
   if (!memoryContext) {
     if (procedureBlock) {
-      return { prependContext: markDegradedLatency(wrapRecalledContext(issueBlock + hotBlock + procedureBlock)) };
+      return { prependContext: markDegradedLatency(wrapRecalledContext(baseContext + procedureBlock)) };
     }
-    const combinedContext = issueBlock + hotBlock;
+    const combinedContext = baseContext;
     return combinedContext ? { prependContext: markDegradedLatency(wrapRecalledContext(combinedContext)) } : undefined;
   }
 
@@ -344,7 +346,7 @@ async function runInjection(
 
   return {
     prependContext: markDegradedLatency(
-      wrapRecalledContext(issueBlock + hotBlock + withProcedures(`${header}${memoryContext}${footer}`)),
+      wrapRecalledContext(baseContext + withProcedures(`${header}${memoryContext}${footer}`)),
     ),
   };
 }
