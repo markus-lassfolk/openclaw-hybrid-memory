@@ -21,6 +21,18 @@ if (!pkg.scripts?.postinstall) {
   console.log("OK: postinstall present");
 }
 
+// 1b. npm-shrinkwrap.json should ship with the package so installer upgrades keep
+// native/runtime dependency resolution stable.
+if (!pkg.files?.includes("npm-shrinkwrap.json")) {
+  console.error('FAIL: npm-shrinkwrap.json missing from package.json "files" - published package will resolve deps loosely during upgrade');
+  failed = true;
+} else if (!fs.existsSync(path.join(root, "npm-shrinkwrap.json"))) {
+  console.error("FAIL: npm-shrinkwrap.json is listed in package.json files but does not exist on disk");
+  failed = true;
+} else {
+  console.log("OK: npm-shrinkwrap.json is included for publish");
+}
+
 // 2. Collect relative imports from index.ts (from "./foo.js" or './bar/baz.js')
 const indexPath = path.join(root, "index.ts");
 const indexContent = fs.readFileSync(indexPath, "utf8");

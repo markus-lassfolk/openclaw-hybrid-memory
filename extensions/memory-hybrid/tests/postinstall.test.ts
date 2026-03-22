@@ -26,6 +26,12 @@ describe("postinstall", () => {
     expect(pkg.files).toContain("scripts");
   });
 
+  it("npm-shrinkwrap.json is in package files for publish", () => {
+    const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf-8"));
+    expect(pkg.files).toContain("npm-shrinkwrap.json");
+    expect(existsSync(join(root, "npm-shrinkwrap.json"))).toBe(true);
+  });
+
   it("postinstall-rebuild.cjs has guard to skip rebuild when bindings are functional", () => {
     const scriptPath = join(root, "scripts", "postinstall-rebuild.cjs");
     const content = readFileSync(scriptPath, "utf-8");
@@ -39,5 +45,14 @@ describe("postinstall", () => {
     // Guard uses try/require pattern: returns false on success, true on catch
     expect(content).toContain("return false");
     expect(content).toContain("return true");
+  });
+
+  it("standalone installer verifies @lancedb/lancedb after npm install", () => {
+    const installerPath = join(root, "..", "..", "packages", "openclaw-hybrid-memory-install", "install.js");
+    expect(existsSync(installerPath)).toBe(true);
+    const content = readFileSync(installerPath, "utf-8");
+    expect(content).toContain('const requiredRuntimeDependencies = ["@lancedb/lancedb"]');
+    expect(content).toContain("ensureRuntimeDependenciesInstalled");
+    expect(content).toContain('npm", ["install", "--no-save", "--omit=dev", ...missing]');
   });
 });
