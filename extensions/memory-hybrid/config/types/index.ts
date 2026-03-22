@@ -1,4 +1,5 @@
 export * from "./core.js";
+export * from "./bootstrap.js";
 export * from "./retrieval.js";
 export * from "./capture.js";
 export * from "./maintenance.js";
