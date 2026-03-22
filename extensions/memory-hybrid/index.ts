@@ -38,7 +38,6 @@ import {
   DECAY_CLASSES,
   type DecayClass,
   type HybridMemoryConfig,
-  hybridConfigSchema,
   vectorDimsForModel,
   CREDENTIAL_TYPES,
   type CredentialType,
@@ -46,6 +45,7 @@ import {
   type IdentityFileType,
   type ConfigMode,
 } from "./config.js";
+import { hybridConfigSchema } from "./config/hybrid-schema.js";
 import { versionInfo } from "./versionInfo.js";
 import { WriteAheadLog } from "./backends/wal.js";
 import { VectorDB } from "./backends/vector-db.js";
