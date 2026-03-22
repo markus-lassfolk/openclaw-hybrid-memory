@@ -20,6 +20,7 @@ import type { EventLog, EventLogEntry } from "../backends/event-log.js";
 import type { MemoryCategory } from "../types/memory.js";
 import type { ProvenanceService } from "./provenance.js";
 import { runReflection, runReflectionRules, type ReflectionConfig } from "./reflection.js";
+import { generateMemoryIndex } from "./memory-index.js";
 import { capturePluginError } from "./error-reporter.js";
 
 /** Prune modes for the dream cycle. */
@@ -41,6 +42,8 @@ export interface DreamCycleConfig {
   eventLogArchivePath: string;
   /** Delete unconsolidated event log entries older than this many days. */
   maxUnconsolidatedAgeDays: number;
+  /** Workspace root where MEMORY_INDEX.md is written. */
+  workspaceRoot?: string;
 }
 
 /** Result returned by a single dream cycle run. */
@@ -61,6 +64,10 @@ export interface DreamCycleResult {
   rulesGenerated: number;
   /** Human-readable summary of the cycle. */
   digestSummary: string;
+  /** Whether MEMORY_INDEX.md was generated successfully. */
+  memoryIndexGenerated: boolean;
+  /** Output path for MEMORY_INDEX.md when generated. */
+  memoryIndexPath: string | null;
   /** True when the cycle was skipped because nightlyCycle.enabled = false. */
   skipped: boolean;
 }
@@ -116,6 +123,7 @@ export function buildDigestSummary(counts: {
   factsCreated: number;
   patternsFound: number;
   rulesGenerated: number;
+  memoryIndexGenerated?: boolean;
 }): string {
   const parts: string[] = [];
   if (counts.factsPruned > 0) parts.push(`${counts.factsPruned} facts pruned`);
@@ -126,6 +134,7 @@ export function buildDigestSummary(counts: {
   }
   if (counts.patternsFound > 0) parts.push(`${counts.patternsFound} patterns extracted`);
   if (counts.rulesGenerated > 0) parts.push(`${counts.rulesGenerated} rules generated`);
+  if (counts.memoryIndexGenerated) parts.push("memory index updated");
   if (parts.length === 0) return "No changes.";
   return parts.join(", ") + ".";
 }
@@ -315,6 +324,8 @@ export async function runDreamCycle(
       patternsFound: 0,
       rulesGenerated: 0,
       digestSummary: "Dream cycle disabled.",
+      memoryIndexGenerated: false,
+      memoryIndexPath: null,
       skipped: true,
     };
   }
@@ -479,7 +490,32 @@ export async function runDreamCycle(
     }
   }
 
-  // ── Step 5: Digest summary ───────────────────────────────────────────────
+  // ── Step 5: Generate MEMORY_INDEX.md ─────────────────────────────────────
+  let memoryIndexGenerated = false;
+  let memoryIndexPath: string | null = null;
+  try {
+    const indexResult = await generateMemoryIndex(
+      factsDb,
+      openai,
+      {
+        workspaceRoot: config.workspaceRoot ?? process.cwd(),
+        model: config.model,
+        fallbackModels: config.fallbackModels ?? [],
+        reflectWindowDays: config.reflectWindowDays,
+      },
+      logger,
+    );
+    memoryIndexGenerated = indexResult.generated;
+    memoryIndexPath = indexResult.path;
+  } catch (err) {
+    logger.warn(`memory-hybrid: dream-cycle — memory-index generation failed: ${err}`);
+    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+      operation: "dream-cycle-memory-index",
+      subsystem: "reflection",
+    });
+  }
+
+  // ── Step 6: Digest summary ───────────────────────────────────────────────
   const digestSummary = buildDigestSummary({
     factsPruned,
     factsDecayed,
@@ -488,6 +524,7 @@ export async function runDreamCycle(
     factsCreated,
     patternsFound,
     rulesGenerated,
+    memoryIndexGenerated,
   });
 
   logger.info(`memory-hybrid: dream-cycle — complete. ${digestSummary}`);
@@ -501,6 +538,8 @@ export async function runDreamCycle(
     patternsFound,
     rulesGenerated,
     digestSummary,
+    memoryIndexGenerated,
+    memoryIndexPath,
     skipped: false,
   };
 }

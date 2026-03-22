@@ -124,12 +124,14 @@ describe("buildDigestSummary", () => {
       factsCreated: 1,
       patternsFound: 3,
       rulesGenerated: 1,
+      memoryIndexGenerated: true,
     });
     expect(s).toContain("1 facts pruned");
     expect(s).toContain("2 facts decayed");
     expect(s).toContain("5 events consolidated");
     expect(s).toContain("3 patterns extracted");
     expect(s).toContain("1 rules generated");
+    expect(s).toContain("memory index updated");
     expect(s.endsWith(".")).toBe(true);
   });
 });
@@ -336,6 +338,7 @@ describe("runDreamCycle", () => {
     eventLogArchivalDays: 90,
     eventLogArchivePath: join(tmpdir(), "event-log-archive"),
     maxUnconsolidatedAgeDays: 90,
+    workspaceRoot: join(tmpdir(), "dream-cycle-index"),
   };
 
   it("returns skipped=true when enabled=false", async () => {

@@ -1,0 +1,32 @@
+Generate a compact MEMORY_INDEX markdown from the provided memory digest data.
+
+Hard constraints:
+- Maximum output budget: ~500 tokens.
+- Do not duplicate full facts.
+- Prefer references by fact/cluster IDs already included in the input.
+- Keep content concise and high-signal.
+- Output only markdown (no prose before/after).
+
+Required markdown shape:
+# MEMORY_INDEX
+
+_Auto-generated: {{generated_at}}_
+
+## Active Clusters
+- cluster: [label], [fact count], [last active], [cluster id]
+
+## Recent Decisions
+- [date]: [decision summary] (fact:[id])
+
+## Key Entities
+- [entity]: type=entity, last seen [date], importance=[low|medium|high], refs=[count]
+
+Input:
+### Clusters
+{{cluster_data}}
+
+### Decisions
+{{decision_data}}
+
+### Entities
+{{entity_data}}

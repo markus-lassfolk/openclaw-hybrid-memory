@@ -424,6 +424,7 @@ function buildCliContextServices(ctx: HybridMemCliRegistrationContext, api: Claw
           eventLogArchivalDays: cfg.eventLog.archivalDays,
           eventLogArchivePath: cfg.eventLog.archivePath,
           maxUnconsolidatedAgeDays: cfg.nightlyCycle.maxUnconsolidatedAgeDays,
+          workspaceRoot: process.env.OPENCLAW_WORKSPACE ?? join(homedir(), ".openclaw", "workspace"),
         },
         logSink,
         provenanceService,
