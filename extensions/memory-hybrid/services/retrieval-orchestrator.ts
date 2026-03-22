@@ -411,6 +411,7 @@ function buildSemanticCacheFilterKey(config: RetrievalConfig, options: Retrieval
     clustersEnabled: options.clustersConfig?.enabled ?? false,
     clustersMinSize: options.clustersConfig?.minClusterSize ?? null,
     rerankingEnabled: options.rerankingConfig?.enabled ?? false,
+    documentGradingEnabled: options.documentGradingConfig?.enabled ?? false,
   });
 }
 
