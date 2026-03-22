@@ -86,7 +86,7 @@ async function runRecall(
       };
     }
 
-    const interactivePolicy = resolveInteractiveRecallPolicy(ctx.cfg.autoRecall);
+    const interactivePolicy = resolveInteractiveRecallPolicy(ctx.cfg.autoRecall, ctx.cfg.queryExpansion);
     const { degradationQueueDepth, degradationMaxLatencyMs } = interactivePolicy;
     const forceDegraded = degradationQueueDepth > 0 && ctx.recallInFlightRef.value > degradationQueueDepth;
 
@@ -263,6 +263,7 @@ async function runRecall(
       errorPrefix: "auto-recall-",
       precomputedVector: promptEmbedding ?? undefined,
       interactive: true,
+      policy: interactivePolicy,
     });
 
     if (interactivePolicy.allowAmbientMultiQuery && ambientCfg.enabled && ambientCfg.multiQuery) {
@@ -292,6 +293,7 @@ async function runRecall(
                 errorPrefix: `ambient-${q.type}-`,
                 limitHydeOnce: true,
                 interactive: true,
+                policy: interactivePolicy,
               });
               extraResultSets.push(qResults);
             } catch (err) {
@@ -407,6 +409,7 @@ async function runRecall(
               errorPrefix: "directive-",
               limitHydeOnce: true,
               interactive: true,
+              policy: interactivePolicy,
             });
             directiveCalls += 1;
             addDirectiveResults(results, `entity:${entity}`);
@@ -421,6 +424,7 @@ async function runRecall(
               errorPrefix: "directive-",
               limitHydeOnce: true,
               interactive: true,
+              policy: interactivePolicy,
             });
             directiveCalls += 1;
             addDirectiveResults(results, `keyword:${keyword}`);
@@ -434,6 +438,7 @@ async function runRecall(
             errorPrefix: "directive-",
             limitHydeOnce: true,
             interactive: true,
+            policy: interactivePolicy,
           });
           directiveCalls += 1;
           addDirectiveResults(results, `taskType:${taskType}`);
@@ -446,6 +451,7 @@ async function runRecall(
               errorPrefix: "directive-",
               limitHydeOnce: true,
               interactive: true,
+              policy: interactivePolicy,
             });
             directiveCalls += 1;
             addDirectiveResults(results, "sessionStart");

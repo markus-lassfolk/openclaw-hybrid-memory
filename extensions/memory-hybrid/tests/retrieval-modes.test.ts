@@ -22,36 +22,75 @@ function makeMockOpenAI(response: string | Error): object {
 
 describe("retrieval mode policy", () => {
   it("names the interactive recall owner and keeps HyDE off by default", () => {
-    const policy = resolveInteractiveRecallPolicy({
-      enabled: true,
-      maxTokens: 700,
-      maxPerMemoryChars: 240,
-      injectionFormat: "minimal",
-      limit: 8,
-      minScore: 0.2,
-      preferLongTerm: false,
-      useImportanceRecency: true,
-      entityLookup: { enabled: false, entities: [], maxFactsPerEntity: 0 },
-      retrievalDirectives: {
-        enabled: false,
-        entityMentioned: false,
-        keywords: [],
-        taskTypes: {},
-        sessionStart: false,
-        limit: 0,
-        maxPerPrompt: 0,
+    const policy = resolveInteractiveRecallPolicy(
+      {
+        enabled: true,
+        maxTokens: 700,
+        maxPerMemoryChars: 240,
+        injectionFormat: "minimal",
+        limit: 8,
+        minScore: 0.2,
+        preferLongTerm: false,
+        useImportanceRecency: true,
+        entityLookup: { enabled: false, entities: [], maxFactsPerEntity: 0 },
+        retrievalDirectives: {
+          enabled: false,
+          entityMentioned: false,
+          keywords: [],
+          taskTypes: {},
+          sessionStart: false,
+          limit: 0,
+          maxPerPrompt: 0,
+        },
+        summaryThreshold: 0,
+        summaryMaxChars: 0,
+        useSummaryInInjection: false,
+        summarizeWhenOverBudget: false,
+        authFailure: { enabled: false, patterns: [], maxRecallsPerTarget: 0, includeVaultHints: false },
       },
-      summaryThreshold: 0,
-      summaryMaxChars: 0,
-      useSummaryInInjection: false,
-      summarizeWhenOverBudget: false,
-      authFailure: { enabled: false, patterns: [], maxRecallsPerTarget: 0, includeVaultHints: false },
-    });
+      { enabled: true, skipForInteractiveTurns: true },
+    );
 
     expect(policy.mode).toBe("interactive-recall");
     expect(policy.ownerModule).toBe("lifecycle/stage-recall.ts");
     expect(policy.contextBudgetTokens).toBe(700);
     expect(policy.allowHyde).toBe(false);
+  });
+
+  it("allows HyDE on interactive turns when skipForInteractiveTurns is false", () => {
+    const policy = resolveInteractiveRecallPolicy(
+      {
+        enabled: true,
+        maxTokens: 700,
+        maxPerMemoryChars: 240,
+        injectionFormat: "minimal",
+        limit: 8,
+        minScore: 0.2,
+        preferLongTerm: false,
+        useImportanceRecency: true,
+        entityLookup: { enabled: false, entities: [], maxFactsPerEntity: 0 },
+        retrievalDirectives: {
+          enabled: false,
+          entityMentioned: false,
+          keywords: [],
+          taskTypes: {},
+          sessionStart: false,
+          limit: 0,
+          maxPerPrompt: 0,
+        },
+        summaryThreshold: 0,
+        summaryMaxChars: 0,
+        useSummaryInInjection: false,
+        summarizeWhenOverBudget: false,
+        authFailure: { enabled: false, patterns: [], maxRecallsPerTarget: 0, includeVaultHints: false },
+      },
+      { enabled: true, skipForInteractiveTurns: false },
+    );
+
+    expect(policy.mode).toBe("interactive-recall");
+    expect(policy.ownerModule).toBe("lifecycle/stage-recall.ts");
+    expect(policy.contextBudgetTokens).toBe(700);
+    expect(policy.allowHyde).toBe(true);
   });
 
   it("names the explicit/deep owner and uses explicit retrieval budget", () => {
