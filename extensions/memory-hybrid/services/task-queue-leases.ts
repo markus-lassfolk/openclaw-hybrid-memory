@@ -219,6 +219,12 @@ async function withRegistryLock<T>(stateDir: string, fn: (registryPath: string) 
     if (await isLockStale(lockPath, nowMs)) {
       try {
         await unlink(lockPath);
+        // Re-check staleness after unlinking to avoid removing a fresh lock
+        // that another process acquired between our stale check and unlink.
+        if (await isLockStale(lockPath, Date.now())) {
+          // Lock is still stale (or gone), safe to retry acquisition.
+          continue;
+        }
       } catch {
         // Another process may have cleaned it; keep retrying.
       }
@@ -362,6 +368,14 @@ export async function transitionDispatchLease(input: TransitionDispatchLeaseInpu
 
     if (input.toState === "leased") {
       // Explicitly disallow transitioning back to leased from the API.
+      if (changedByExpiry) {
+        await writeRegistry(registryPath, registry);
+      }
+      return false;
+    }
+
+    // Prevent transitions from terminal states to preserve audit trail.
+    if (!isActiveState(lease.state)) {
       if (changedByExpiry) {
         await writeRegistry(registryPath, registry);
       }
