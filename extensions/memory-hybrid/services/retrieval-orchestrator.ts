@@ -30,6 +30,12 @@ import { detectClusters, type ClusterFactLookup } from "./topic-clusters.js";
 import { expandGraph, type GraphFactLookup } from "./graph-retrieval.js";
 import type { EmbeddingRegistry } from "./embedding-registry.js";
 import { capturePluginError } from "./error-reporter.js";
+import {
+  getRetrievalModePolicy,
+  RETRIEVAL_MODE,
+  resolveOrchestratorBudgetTokens,
+  type RetrievalMode,
+} from "./retrieval-mode-policy.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -382,6 +388,8 @@ export function invalidateClusterCache(): void {
  * without touching every call site.
  */
 export interface RetrievalPipelineOptions {
+  /** Retrieval mode policy. Defaults to explicit/deep retrieval path. */
+  mode?: RetrievalMode;
   /** Retrieval pipeline configuration. Defaults to `DEFAULT_RETRIEVAL_CONFIG`. */
   config?: RetrievalConfig;
   /** Token budget for packing. Defaults to `config.explicitBudgetTokens`. */
@@ -443,7 +451,9 @@ export async function runRetrievalPipeline(
   options: RetrievalPipelineOptions = {},
 ): Promise<OrchestratorResult> {
   const config = options.config ?? DEFAULT_RETRIEVAL_CONFIG;
-  const budgetTokens = options.budgetTokens ?? config.explicitBudgetTokens;
+  const mode = options.mode ?? RETRIEVAL_MODE.EXPLICIT_DEEP;
+  const modePolicy = getRetrievalModePolicy(mode);
+  const budgetTokens = resolveOrchestratorBudgetTokens(mode, config, options.budgetTokens);
   const nowSec = options.nowSec ?? Math.floor(Date.now() / 1000);
   const {
     tagFilter,
@@ -454,19 +464,22 @@ export async function runRetrievalPipeline(
     clustersConfig,
     embeddingRegistry,
     factsDbForEmbeddings,
-    queryExpander,
+    queryExpander: rawQueryExpander,
     embedFn,
     queryExpansionContext,
-    rerankingConfig,
+    rerankingConfig: rawRerankingConfig,
     rerankingOpenai,
   } = options;
+  const queryExpander = modePolicy.allowQueryExpansion ? rawQueryExpander : null;
+  const rerankingConfig = modePolicy.allowReranking ? rawRerankingConfig : null;
   const runOnce = async (expansion: {
     useLlm: boolean;
     variants: string[] | null;
     skipReranking?: boolean;
   }): Promise<OrchestratorResult> => {
     const k = config.rrf_k;
-    const { strategies, semanticTopK, fts5TopK } = config;
+    const { semanticTopK, fts5TopK } = config;
+    const strategies = modePolicy.allowGraphStrategy ? config.strategies : config.strategies.filter((s) => s !== "graph");
 
     // --- Run strategies in parallel ---
     const strategyPromises: Array<Promise<[string, RankedResult[]]>> = [];
