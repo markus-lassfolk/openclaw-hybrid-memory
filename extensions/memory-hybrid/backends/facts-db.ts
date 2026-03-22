@@ -18,7 +18,6 @@ import { capturePluginError } from "../services/error-reporter.js";
 import { getLanguageKeywordsFilePath } from "../utils/language-keywords.js";
 import { searchFts } from "../services/fts-search.js";
 import {
-  appendReinforcementQuote as appendReinforcementQuoteHelper,
   batchGetReinforcementEvents as batchGetReinforcementEventsHelper,
   boostConfidence as boostConfidenceHelper,
   calculateDiversityScore as calculateDiversityScoreHelper,
@@ -2399,14 +2398,6 @@ export class FactsDB {
       .prepare(`UPDATE facts SET confidence = 1.0, last_confirmed_at = ?, expires_at = ? WHERE id = ?`)
       .run(nowSec, newExpiry, id);
     return true;
-  }
-
-  /**
-   * Helper: Parse existing reinforced_quotes JSON, append a new quote snippet, and cap at 10 entries.
-   * Returns the updated JSON string.
-   */
-  private appendReinforcementQuote(existingJson: string | null, newSnippet: string): string {
-    return appendReinforcementQuoteHelper(existingJson, newSnippet);
   }
 
   /**
