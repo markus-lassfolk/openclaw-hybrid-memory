@@ -116,7 +116,18 @@ async function runRecall(
           (r) =>
             `- [${r.backend}/${r.entry.category}] ${(r.entry.summary || r.entry.text).slice(0, 200)}${(r.entry.summary || r.entry.text).length > 200 ? "…" : ""}`,
         );
-      const inner = hotPart + (memoryLines.length ? "Recalled (FTS-only):\n" + memoryLines.join("\n") : "");
+      let narrativePart = "";
+      if (ctx.narrativesDb) {
+        try {
+          const recentNarratives = ctx.narrativesDb.listRecent(1, "session");
+          if (recentNarratives.length > 0) {
+            narrativePart = `<recent-history-narratives>\n- ${recentNarratives[0].narrativeText}\n</recent-history-narratives>\n\n`;
+          }
+        } catch {
+          // Non-fatal.
+        }
+      }
+      const inner = narrativePart + hotPart + (memoryLines.length ? "Recalled (FTS-only):\n" + memoryLines.join("\n") : "");
       const block = inner ? `<recalled-context>\n${inner}\n</recalled-context>` : "";
       const degradedMarker = "<!-- recall degraded: queue -->\n";
       api.logger.debug?.(
@@ -309,6 +320,7 @@ async function runRecall(
     }
 
     let issueBlock = "";
+    let narrativeBlock = "";
     if (ambientCfg.enabled && ctx.issueStore) {
       try {
         const issueResults = searchAmbientIssues(e.prompt, ctx.issueStore);
@@ -334,6 +346,25 @@ async function runRecall(
       } catch (err) {
         capturePluginError(err instanceof Error ? err : new Error(String(err)), {
           operation: "ambient-issue-retrieval",
+          subsystem: "auto-recall",
+        });
+      }
+    }
+
+    if (ctx.narrativesDb) {
+      try {
+        const recentNarratives = ctx.narrativesDb.listRecent(2, "session");
+        if (recentNarratives.length > 0) {
+          const lines = recentNarratives.map((n) => {
+            const start = new Date(n.periodStart).toISOString();
+            const end = new Date(n.periodEnd).toISOString();
+            return `- [${start}..${end}] ${n.narrativeText}`;
+          });
+          narrativeBlock = `<recent-history-narratives>\n${lines.join("\n")}\n</recent-history-narratives>\n\n`;
+        }
+      } catch (err) {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+          operation: "recent-narrative-retrieval",
           subsystem: "auto-recall",
         });
       }
@@ -467,7 +498,7 @@ async function runRecall(
     }
 
     if (candidates.length === 0) {
-      const combinedContext = issueBlock + hotBlock;
+      const combinedContext = issueBlock + narrativeBlock + hotBlock;
       return { kind: "empty", prependContext: combinedContext || undefined };
     }
 
@@ -507,7 +538,8 @@ async function runRecall(
     // ceiling — the injected context must not exceed either.
     const totalBudget = resolveInteractiveRecallBudgetTokens(ctx.cfg);
     // Account for issueBlock, hotBlock, and procedureBlock tokens to ensure total stays within budget
-    const fixedBlocksTokens = estimateTokens(issueBlock) + estimateTokens(hotBlock) + estimateTokens(procedureBlock);
+    const fixedBlocksTokens =
+      estimateTokens(issueBlock) + estimateTokens(narrativeBlock) + estimateTokens(hotBlock) + estimateTokens(procedureBlock);
     const maxTokens = Math.max(0, totalBudget - fixedBlocksTokens);
     if (maxTokens === 0) {
       api.logger.warn?.(
@@ -521,6 +553,7 @@ async function runRecall(
     const result: RecallResult = {
       candidates,
       issueBlock,
+      narrativeBlock,
       hotBlock,
       procedureBlock,
       withProcedures,
