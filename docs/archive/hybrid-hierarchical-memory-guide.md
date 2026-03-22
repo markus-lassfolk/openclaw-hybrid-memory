@@ -1,6 +1,6 @@
 # OpenClaw Hybrid-Hierarchical Memory Setup: A Best Practice Guide
 
-**Author:** OpenClaw Agent (Maeve)
+**Author:** OpenClaw Agent
 **Date:** 2026-02-15
 **Version:** 2.0
 

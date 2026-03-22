@@ -20,6 +20,7 @@ import { homedir } from "node:os";
 import { execFile as execFileCb } from "node:child_process";
 import { promisify } from "node:util";
 import { capturePluginError } from "./error-reporter.js";
+import { expireDispatchLeases, transitionDispatchLease } from "./task-queue-leases.js";
 import { readJsonFile } from "../utils/fs.js";
 
 const execFile = promisify(execFileCb);
@@ -67,6 +68,7 @@ export interface TaskQueueItem {
   issue?: number;
   title?: string;
   branch?: string;
+  dispatchToken?: string;
   pid?: number;
   started?: string;
   status?: string;
@@ -208,6 +210,13 @@ export async function runTaskQueueWatchdog(
   const currentPath = join(stateDir, "current.json");
   const historyDir = join(stateDir, "history");
 
+  // Keep lease registry fresh even when there is no active current.json.
+  try {
+    await expireDispatchLeases(stateDir);
+  } catch {
+    // Non-fatal: watchdog should still function for current.json hygiene.
+  }
+
   if (!existsSync(currentPath)) {
     return { action: "no-current" };
   }
@@ -252,6 +261,22 @@ export async function runTaskQueueWatchdog(
 
   const action: WatchdogAction = isExhausted ? "quarantined" : "cleared";
   const now = new Date().toISOString();
+
+  // If we can identify a lease for this issue, force it terminal so dispatch
+  // dedupe does not depend on GitHub branch propagation.
+  if (item.issue != null) {
+    try {
+      await transitionDispatchLease({
+        stateDir,
+        issue: item.issue,
+        token: item.dispatchToken,
+        toState: "lease-expired",
+        reason: staleReason,
+      });
+    } catch {
+      // Lease transition is best-effort here.
+    }
+  }
 
   const enrichedItem: TaskQueueItem = {
     ...item,

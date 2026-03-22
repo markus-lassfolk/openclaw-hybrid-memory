@@ -150,6 +150,7 @@ Status emojis: 🟢 active, 🟡 paused, 🔵 completed. Keep the index under ~3
 
 ## Related docs
 
+- [ARCHITECTURE-CENTER.md](ARCHITECTURE-CENTER.md) — Core runtime boundary vs adjacent subsystems
 - [DEEP-DIVE.md](DEEP-DIVE.md) — Storage internals, search algorithms, tags, links, deduplication
 - [HOW-IT-WORKS.md](HOW-IT-WORKS.md) — Runtime flow (auto-recall, auto-capture)
 - [QUICKSTART.md](QUICKSTART.md) — Installation and first run
