@@ -1183,10 +1183,10 @@ describe("FactsDB.pruneOrphanedLinks", () => {
     // Insert a link with a non-existent source_fact_id directly, bypassing FK constraints
     const rawDb = (
       db as unknown as {
-        liveDb: { pragma: (s: string) => void; prepare: (s: string) => { run: (...args: unknown[]) => void } };
+        liveDb: { exec: (s: string) => void; prepare: (s: string) => { run: (...args: unknown[]) => void } };
       }
     ).liveDb;
-    rawDb.pragma("foreign_keys = OFF");
+    rawDb.exec("PRAGMA foreign_keys = OFF");
     rawDb
       .prepare(
         "INSERT INTO memory_links (id, source_fact_id, target_fact_id, link_type, strength, created_at) VALUES (?,?,?,?,?,?)",
@@ -1199,7 +1199,7 @@ describe("FactsDB.pruneOrphanedLinks", () => {
         1.0,
         Math.floor(Date.now() / 1000),
       );
-    rawDb.pragma("foreign_keys = ON");
+    rawDb.exec("PRAGMA foreign_keys = ON");
     const deleted = db.pruneOrphanedLinks();
     expect(deleted).toBe(1);
   });

@@ -8,11 +8,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+---
+
+## [2026.3.181] - 2026-03-18
+
+### Fixed
+
+- **Release workflow:** Resolved concurrency deadlock when Release runs on tag push (caller and called CI workflow shared the same concurrency group). Release now uses a distinct group (`release-cd-${{ github.ref }}`) so the workflow completes and creates the GitHub Release and publishes to npm.
+
+---
+
+## [2026.3.180] - 2026-03-18
+
+### Release summary (user-friendly)
+
+This release includes a **security override** for the Hono node server dependency and documents **migration steps** for the retrieval pipeline API and Google embedding default change.
+
 ### Security
 
 - **Override @hono/node-server to >=1.19.10 <2 (GHSA-wc8c-qw6v-h7f6):** Added npm `overrides` to force `@hono/node-server` to a patched version. The unbounded range is capped at `<2` to prevent accidental major-version upgrades.
 
-### Migration Notes
+### Migration notes
 
 - **`runRetrievalPipeline` signature changed to options bag — breaking change (#501):** The function signature was refactored from many optional positional parameters to a single `RetrievalPipelineOptions` object. `runRetrievalPipeline` is re-exported from the package root (`extensions/memory-hybrid/index.ts`), so **any external consumer calling the old positional form must migrate**.
 
@@ -763,7 +779,10 @@ Major feature release including procedural memory, directive extraction, reinfor
 
 ---
 
-[Unreleased]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.3.151...HEAD
+[Unreleased]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.3.181...HEAD
+[2026.3.181]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/releases/tag/v2026.3.181
+[2026.3.180]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/releases/tag/v2026.3.180
+[2026.3.152]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/releases/tag/v2026.3.152
 [2026.3.151]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/releases/tag/v2026.3.151
 [2026.3.150]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/releases/tag/v2026.3.150
 [2026.3.140]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/releases/tag/v2026.3.140

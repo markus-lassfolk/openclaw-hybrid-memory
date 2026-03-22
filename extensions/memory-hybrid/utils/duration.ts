@@ -38,7 +38,7 @@ export function parseDuration(input: string): number {
 
   // Plain integer: treat as minutes (backward compat for staleHours migration)
   if (/^\d+$/.test(trimmed)) {
-    const minutes = parseInt(trimmed, 10);
+    const minutes = Number.parseInt(trimmed, 10);
     if (minutes <= 0) {
       throw new Error(`parseDuration: duration must be > 0 minutes (got "${input}").`);
     }
@@ -69,9 +69,9 @@ export function parseDuration(input: string): number {
   }
 
   const totalMinutes =
-    (daysStr ? parseInt(daysStr, 10) * 1440 : 0) +
-    (hoursStr ? parseInt(hoursStr, 10) * 60 : 0) +
-    (minutesStr ? parseInt(minutesStr, 10) : 0);
+    (daysStr ? Number.parseInt(daysStr, 10) * 1440 : 0) +
+    (hoursStr ? Number.parseInt(hoursStr, 10) * 60 : 0) +
+    (minutesStr ? Number.parseInt(minutesStr, 10) : 0);
 
   if (totalMinutes <= 0) {
     throw new Error(`parseDuration: duration must be > 0 minutes (got "${input}").`);

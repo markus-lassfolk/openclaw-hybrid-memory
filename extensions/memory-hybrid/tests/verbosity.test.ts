@@ -23,6 +23,7 @@ import { hybridConfigSchema, parseVerbosityLevel } from "../config.js";
 import type { VerbosityLevel } from "../config.js";
 import { createLifecycleHooks } from "../lifecycle/hooks.js";
 import type { LifecycleContext } from "../lifecycle/hooks.js";
+import { pluginLogger } from "../utils/logger.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -76,7 +77,7 @@ describe("VerbosityLevel — hybridConfigSchema", () => {
   });
 
   it("warns and defaults to 'normal' for invalid verbosity", () => {
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const warnSpy = vi.spyOn(pluginLogger, "warn").mockImplementation(() => {});
     const cfg = parseWithVerbosity("loud");
     expect(cfg.verbosity).toBe("normal");
     expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("invalid verbosity"));
@@ -153,14 +154,14 @@ describe("parseVerbosityLevel()", () => {
   });
 
   it("returns 'normal' and warns for unknown value", () => {
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const warnSpy = vi.spyOn(pluginLogger, "warn").mockImplementation(() => {});
     expect(parseVerbosityLevel({ verbosity: "loud" })).toBe("normal");
     expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("invalid verbosity"));
     warnSpy.mockRestore();
   });
 
   it("returns 'normal' for numeric value", () => {
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const warnSpy = vi.spyOn(pluginLogger, "warn").mockImplementation(() => {});
     expect(parseVerbosityLevel({ verbosity: 0 })).toBe("normal");
     warnSpy.mockRestore();
   });
@@ -312,9 +313,9 @@ describe("memory_prune — verbosity output", () => {
   let factsDb: any;
 
   beforeEach(async () => {
-    const { mkdtempSync } = await import("fs");
-    const { tmpdir } = await import("os");
-    const { join } = await import("path");
+    const { mkdtempSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
     tmpDir = mkdtempSync(join(tmpdir(), "verbosity-prune-"));
     const { FactsDB } = await import("../backends/facts-db.js");
     factsDb = new FactsDB(join(tmpDir, "facts.db"), {});
@@ -393,9 +394,9 @@ describe("memory_reflect — verbosity output", () => {
   let vectorDb: any;
 
   beforeEach(async () => {
-    const { mkdtempSync } = await import("fs");
-    const { tmpdir } = await import("os");
-    const { join } = await import("path");
+    const { mkdtempSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
     tmpDir = mkdtempSync(join(tmpdir(), "verbosity-reflect-"));
     const { FactsDB } = await import("../backends/facts-db.js");
     const { VectorDB } = await import("../backends/vector-db.js");
@@ -475,9 +476,9 @@ describe("memory_store — verbosity output", () => {
   let vectorDb: any;
 
   beforeEach(async () => {
-    const { mkdtempSync } = await import("fs");
-    const { tmpdir } = await import("os");
-    const { join } = await import("path");
+    const { mkdtempSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
     tmpDir = mkdtempSync(join(tmpdir(), "verbosity-store-"));
     const { FactsDB } = await import("../backends/facts-db.js");
     const { VectorDB } = await import("../backends/vector-db.js");
@@ -527,8 +528,8 @@ describe("memory_store — verbosity output", () => {
       pendingLLMWarnings: { warnings: [] },
     } as any;
     const buildToolScopeFilter = vi.fn();
-    const walWrite = vi.fn().mockReturnValue("wal-id");
-    const walRemove = vi.fn();
+    const walWrite = vi.fn().mockResolvedValue("wal-id");
+    const walRemove = vi.fn().mockResolvedValue(undefined);
     const findSimilarByEmbedding = vi.fn().mockResolvedValue([]);
     registerMemoryTools(ctx, api as any, buildToolScopeFilter, walWrite, walRemove, findSimilarByEmbedding);
     const storeTool = tools.get("memory_store");
@@ -684,7 +685,7 @@ describe("VerbosityLevel — silent mode", () => {
   });
 
   it("parseVerbosityLevel includes 'silent' in valid values warning message", () => {
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const warnSpy = vi.spyOn(pluginLogger, "warn").mockImplementation(() => {});
     parseVerbosityLevel({ verbosity: "supersecret" });
     expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("silent"));
     warnSpy.mockRestore();
@@ -727,8 +728,8 @@ function makeMinimalLifecycleContext(verbosity: VerbosityLevel): LifecycleContex
     openai: {} as unknown as LifecycleContext["openai"],
     issueStore: null,
     pendingLLMWarnings: { drain: () => [] } as unknown as LifecycleContext["pendingLLMWarnings"],
-    walWrite: vi.fn() as unknown as LifecycleContext["walWrite"],
-    walRemove: vi.fn() as unknown as LifecycleContext["walRemove"],
+    walWrite: vi.fn().mockResolvedValue("wal-id") as unknown as LifecycleContext["walWrite"],
+    walRemove: vi.fn().mockResolvedValue(undefined) as unknown as LifecycleContext["walRemove"],
     findSimilarByEmbedding: vi.fn() as unknown as LifecycleContext["findSimilarByEmbedding"],
     shouldCapture: () => false,
     detectCategory: () => "general" as const,
@@ -761,13 +762,14 @@ describe("silent mode — hook suppression", () => {
     const silentCount = countBeforeAgentStart(silentApi);
     const normalCount = countBeforeAgentStart(normalApi);
 
-    // Silent mode suppresses auto-recall, auth-failure-recall, active-task, and credential-hint
-    // before_agent_start handlers. Only the unconditional agent-detection handler (registered
-    // by onAgentStart) should fire. onFrustrationDetect is a separate export and still
-    // registers its handler to preserve analytics, but skips injection via an inner guard.
-    expect(silentCount).toBe(1);
-    // Normal mode registers all of those handlers.
-    expect(normalCount).toBeGreaterThan(1);
+    // Silent mode suppresses active-task and credential-hint before_agent_start handlers,
+    // but does NOT suppress auto-recall or auth-failure-recall — verbosity is a log-noise
+    // preference, not a feature-disable flag. Functional recall must work in silent mode.
+    // setup(1) + recall(1) + auth-failure(1) = 3 in silent; active-task + credential-hint
+    // are additionally registered in normal mode.
+    expect(silentCount).toBe(3);
+    // Normal mode registers all handlers (active-task and credential-hint on top).
+    expect(normalCount).toBeGreaterThan(silentCount);
   });
 
   it("registers a single agent_end handler in both silent and normal mode (credential steps gated inside runCaptureStage)", () => {

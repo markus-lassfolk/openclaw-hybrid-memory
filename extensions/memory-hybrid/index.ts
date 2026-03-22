@@ -10,8 +10,7 @@
  */
 
 import { Type } from "@sinclair/typebox";
-import Database from "better-sqlite3";
-import OpenAI from "openai";
+import type OpenAI from "openai";
 import { randomUUID } from "node:crypto";
 import {
   appendFileSync,
@@ -113,6 +112,7 @@ import { gatherIngestFiles } from "./services/ingest-utils.js";
 import type { MemoryEntry, SearchResult, ScopeFilter } from "./types/memory.js";
 import { MEMORY_SCOPES } from "./types/memory.js";
 import { loadPrompt, fillPrompt } from "./utils/prompt-loader.js";
+import { initPluginLogger } from "./utils/logger.js";
 import {
   truncateText,
   truncateForStorage,
@@ -226,8 +226,9 @@ import { migrateCredentialsToVault, CREDENTIAL_REDACTION_MIGRATION_FLAG } from "
 import { createPluginService, type PluginServiceContext } from "./setup/plugin-service.js";
 import { initializeDatabases, closeOldDatabases } from "./setup/init-databases.js";
 import type { MemoryPluginAPI } from "./api/memory-plugin-api.js";
+import { type PluginRuntime, createTimers } from "./api/plugin-runtime.js";
 import { registerTools } from "./setup/register-tools.js";
-import { registerLifecycleHooks, type LifecycleHooksHandle } from "./setup/register-hooks.js";
+import { registerLifecycleHooks } from "./setup/register-hooks.js";
 import { capturePluginError } from "./services/error-reporter.js";
 import { PythonBridge } from "./services/python-bridge.js";
 import type { EmbeddingRegistry } from "./services/embedding-registry.js";
@@ -246,6 +247,7 @@ import { ProposalsDB, type ProposalEntry } from "./backends/proposals-db.js";
 import { EventLog } from "./backends/event-log.js";
 import { EventBus, computeFingerprint } from "./backends/event-bus.js";
 import { IssueStore } from "./backends/issue-store.js";
+import { LearningsDB } from "./backends/learnings-db.js";
 import {
   WorkflowStore,
   sequenceDistance,
@@ -253,7 +255,7 @@ import {
   extractGoalKeywords,
   hashToolSequence,
 } from "./backends/workflow-store.js";
-import { WorkflowTracker, _resetRateLimitForTest } from "./services/workflow-tracker.js";
+import { WorkflowTracker } from "./services/workflow-tracker.js";
 import { CrystallizationStore } from "./backends/crystallization-store.js";
 import { PatternDetector, computePatternId, scorePattern } from "./services/pattern-detector.js";
 import { SkillCrystallizer, deriveSkillName, isExecOnlySequence } from "./services/skill-crystallizer.js";
@@ -267,10 +269,9 @@ import { ToolProposer } from "./services/tool-proposer.js";
 
 // Helper Functions
 
-/** Get top-N existing facts by embedding similarity. Resolves vector search ids via factsDb (filters superseded). Falls back to empty array on vector search failure. */
-/** Wrappers for extracted helper functions that need access to module-level config */
+/** Wrappers for extracted helper functions that need access to per-instance config via runtimeRef. */
 function shouldCapture(text: string): boolean {
-  return shouldCaptureUtil(text, cfg.captureMaxChars, getMemoryTriggers());
+  return shouldCaptureUtil(text, runtimeRef.value!.cfg.captureMaxChars, getMemoryTriggers());
 }
 
 function detectCategory(text: string): MemoryCategory {
@@ -283,94 +284,21 @@ function detectCategory(text: string): MemoryCategory {
   );
 }
 
-// LLM-based Auto-Classifier
-
-/** Minimum "other" facts before we run category discovery (avoid noise on tiny sets). */
 // Plugin Definition
 
-// Mutable module-level state so that ALL closures (tools, event handlers,
-// timers) always see the *current* instances — even after a SIGUSR1 reload
-// where stop() closes the old DB and register() creates a new one.
-// Without this, old closures captured const locals from the first register()
-// call and kept using a closed database after restart.
-let cfg: HybridMemoryConfig;
-let resolvedLancePath: string;
-let resolvedSqlitePath: string;
-let factsDb: FactsDB;
-let vectorDb: VectorDB;
-let embeddings: EmbeddingProvider;
-let embeddingRegistry: EmbeddingRegistry;
-let openai: OpenAI;
-let credentialsDb: CredentialsDB | null = null;
-let wal: WriteAheadLog | null = null;
-let proposalsDb: ProposalsDB | null = null;
-let eventLog: EventLog | null = null;
-let aliasDb: AliasDB | null = null;
-let eventBus: EventBus | null = null;
-
-let costTracker: import("./backends/cost-tracker.js").CostTracker | null = null;
-let issueStore: IssueStore | null = null;
-let workflowStore: WorkflowStore | null = null;
-let crystallizationStore: import("./backends/crystallization-store.js").CrystallizationStore | null = null;
-let toolProposalStore: import("./backends/tool-proposal-store.js").ToolProposalStore | null = null;
-let provenanceService: ProvenanceService | null = null;
-let verificationStore: VerificationStore | null = null;
-let pythonBridge: PythonBridge | null = null;
-/** Issue #463: Handle for lifecycle hook cleanup (stale session sweep timer, etc.) */
-let lifecycleHooksHandle: LifecycleHooksHandle | null = null;
-let variantQueue: VariantGenerationQueue | null = null;
-let pendingLLMWarnings = createPendingLLMWarnings();
-
-// Timer references (wrapped in objects so they can be passed by reference)
-const timers = {
-  pruneTimer: { value: null as ReturnType<typeof setInterval> | null },
-  classifyTimer: { value: null as ReturnType<typeof setInterval> | null },
-  classifyStartupTimeout: { value: null as ReturnType<typeof setTimeout> | null },
-  proposalsPruneTimer: { value: null as ReturnType<typeof setInterval> | null },
-  languageKeywordsTimer: { value: null as ReturnType<typeof setInterval> | null },
-  languageKeywordsStartupTimeout: { value: null as ReturnType<typeof setTimeout> | null },
-  postUpgradeTimeout: { value: null as ReturnType<typeof setTimeout> | null },
-  passiveObserverTimer: { value: null as ReturnType<typeof setInterval> | null },
-};
-
-/** Last progressive index fact IDs (1-based position → fact id) so memory_recall(id: 1) can resolve. */
-const lastProgressiveIndexIds: string[] = [];
-
-/** Runtime-detected agent identity. Used for dynamic scope filtering and default store scope. */
-// Runtime-detected agent identity
-//
-// ⚠️ MODULE-LEVEL STATE WARNING:
-// This is a singleton variable shared across all plugin invocations within the same OpenClaw process.
-// ASSUMPTION: OpenClaw plugins are single-threaded and do not run in parallel for different agents.
-// If OpenClaw ever implements multi-threaded plugin execution, this approach will cause race conditions
-// (Agent A's memory operations could be attributed to Agent B).
-//
-// Mitigation strategies (if threading is added):
-// 1. Use AsyncLocalStorage to maintain per-request context
-// 2. Use a Map keyed by session/request ID
-// 3. Pass agentId explicitly through all memory operations
-//
-// Current behavior:
-// - Updated on each before_agent_start event
-// - Used by memory_store to auto-scope facts to the current agent
-// - Falls back to cfg.multiAgent.orchestratorId if detection fails
-//
-// ⚠️ THREADING WARNING: This is a module-level singleton. If OpenClaw's plugin
-// host ever switches to concurrent request handling, this variable could race
-// between agent sessions. Current implementation assumes serial execution per
-// plugin instance.
-//
-// Config option `multiAgent.strictAgentScoping` can be enabled to throw an error
-// if agent detection fails in "agent" or "auto" scope modes, rather than silently
-// falling back to orchestrator.
-// Note: Using a mutable ref object { value } so that lifecycle hooks can update the value
-// and tools will see the updated value (fixes pass-by-value bug from refactor).
-const currentAgentIdRef: { value: string | null } = { value: null };
-
-const restartPendingClearedRef: { value: boolean } = { value: false };
-
-/** Phase 2.1: In-flight recall count for degradation (queue depth). */
-const recallInFlightRef: { value: number } = { value: 0 };
+/**
+ * Module-level ref holding the active PluginRuntime instance.
+ *
+ * All closures (tools, event handlers, timers) capture this ref object rather than
+ * individual module-level variables.  When register() creates a fresh PluginRuntime
+ * after a SIGUSR1 reload, those closures automatically see the new instance through
+ * `runtimeRef.value`.
+ *
+ * Using a ref object (rather than scattered module-level `let`s) means two independent
+ * plugin instances can each maintain their own runtime without any shared module-level
+ * mutable state — see tests/plugin-runtime.test.ts for isolation proof.
+ */
+const runtimeRef: { value: PluginRuntime | null } = { value: null };
 
 const memoryHybridPlugin = {
   id: PLUGIN_ID,
@@ -381,48 +309,30 @@ const memoryHybridPlugin = {
   versionInfo,
 
   register(api: ClawdbotPluginApi) {
+    // Initialize structured logger early so all runtime code (services/backends/lifecycle)
+    // routes through api.logger instead of raw console.*.
+    initPluginLogger(api.logger);
+
     // Reopen guard: ensure any previous instance is closed before creating new one (avoids duplicate
     // DB instances if host calls register() before stop(), e.g. on SIGUSR1 or rapid reload).
-    closeOldDatabases({
-      factsDb,
-      vectorDb,
-      credentialsDb,
-      proposalsDb,
-      eventLog,
-      aliasDb,
-      eventBus,
-      issueStore,
-      workflowStore,
-      crystallizationStore,
-      toolProposalStore,
-      verificationStore,
-      provenanceService,
-    });
-    credentialsDb = null;
-    proposalsDb = null;
-    eventLog = null;
-    aliasDb = null;
-    eventBus = null;
-
-    issueStore = null;
-    workflowStore = null;
-    crystallizationStore = null;
-    toolProposalStore = null;
-    provenanceService = null;
-    verificationStore = null;
-    // Issue #463: Dispose lifecycle hooks (stale session sweep timer, per-session state)
-    if (lifecycleHooksHandle) {
-      lifecycleHooksHandle.dispose();
-      lifecycleHooksHandle = null;
+    const old = runtimeRef.value;
+    if (old) {
+      // Clear old timer handles to prevent leaks
+      if (old.timers.pruneTimer.value) clearInterval(old.timers.pruneTimer.value);
+      if (old.timers.classifyTimer.value) clearInterval(old.timers.classifyTimer.value);
+      if (old.timers.classifyStartupTimeout.value) clearTimeout(old.timers.classifyStartupTimeout.value);
+      if (old.timers.proposalsPruneTimer.value) clearInterval(old.timers.proposalsPruneTimer.value);
+      if (old.timers.languageKeywordsTimer.value) clearInterval(old.timers.languageKeywordsTimer.value);
+      if (old.timers.languageKeywordsStartupTimeout.value)
+        clearTimeout(old.timers.languageKeywordsStartupTimeout.value);
+      if (old.timers.postUpgradeTimeout.value) clearTimeout(old.timers.postUpgradeTimeout.value);
+      if (old.timers.passiveObserverTimer.value) clearInterval(old.timers.passiveObserverTimer.value);
+      if (old.timers.watchdogTimer.value) clearInterval(old.timers.watchdogTimer.value);
+      // Issue #463: Dispose lifecycle hooks (stale session sweep timer, per-session state)
+      old.lifecycleHooksHandle?.dispose();
     }
-    // pythonBridge shutdown will be added by #206
-    if (pythonBridge) {
-      pythonBridge.shutdown().catch(() => {});
-      pythonBridge = null;
-    }
-    variantQueue = null;
-    pendingLLMWarnings = createPendingLLMWarnings();
 
+    let cfg: HybridMemoryConfig;
     try {
       cfg = hybridConfigSchema.parse(api.pluginConfig);
     } catch (err) {
@@ -433,27 +343,9 @@ const memoryHybridPlugin = {
       throw err;
     }
 
+    let dbContext: ReturnType<typeof initializeDatabases>;
     try {
-      const dbContext = initializeDatabases(cfg, api);
-      factsDb = dbContext.factsDb;
-      vectorDb = dbContext.vectorDb;
-      embeddings = dbContext.embeddings;
-      embeddingRegistry = dbContext.embeddingRegistry;
-      openai = dbContext.openai;
-      credentialsDb = dbContext.credentialsDb;
-      wal = dbContext.wal;
-      proposalsDb = dbContext.proposalsDb;
-      eventLog = dbContext.eventLog;
-      aliasDb = dbContext.aliasDb;
-      issueStore = dbContext.issueStore;
-      workflowStore = dbContext.workflowStore;
-      crystallizationStore = dbContext.crystallizationStore;
-      toolProposalStore = dbContext.toolProposalStore;
-      provenanceService = dbContext.provenanceService;
-      verificationStore = dbContext.verificationStore;
-      costTracker = dbContext.costTracker;
-      resolvedLancePath = dbContext.resolvedLancePath;
-      resolvedSqlitePath = dbContext.resolvedSqlitePath;
+      dbContext = initializeDatabases(cfg, api);
     } catch (err) {
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
         subsystem: "registration",
@@ -461,6 +353,8 @@ const memoryHybridPlugin = {
       });
       throw err;
     }
+
+    const { resolvedSqlitePath, resolvedLancePath } = dbContext;
 
     api.logger.info(
       `memory-hybrid: registered (v${versionInfo.pluginVersion}, memory-manager ${versionInfo.memoryManagerVersion}) sqlite: ${resolvedSqlitePath}, lance: ${resolvedLancePath}`,
@@ -470,6 +364,7 @@ const memoryHybridPlugin = {
     // Event Bus for Sensor Sweep (Issue #236)
     // ========================================================================
 
+    let eventBus: EventBus | null = null;
     if (cfg.sensorSweep.enabled) {
       try {
         const eventBusPath = join(dirname(resolvedSqlitePath), "event-bus.db");
@@ -483,16 +378,14 @@ const memoryHybridPlugin = {
         });
         eventBus = null;
       }
-    } else {
-      eventBus = null;
     }
 
     // ========================================================================
-    // Python Bridge (lazy — only when documents.enabled, spawns on first use)
+    // Python Bridge (lazy -- only when documents.enabled, spawns on first use)
     // ========================================================================
 
-    // Initialized lazily — PythonBridge only spawns the subprocess on first convert() call
-    pythonBridge = cfg.documents.enabled ? new PythonBridge(cfg.documents.pythonPath) : null;
+    // Initialized lazily -- PythonBridge only spawns the subprocess on first convert() call
+    const pythonBridge = cfg.documents.enabled ? new PythonBridge(cfg.documents.pythonPath) : null;
 
     // Eagerly check Python dependencies at startup so missing packages surface
     // immediately (in logs) rather than on first document conversion (issue #422).
@@ -518,44 +411,126 @@ const memoryHybridPlugin = {
     // Contextual Variant Generator (Issue #159)
     // ========================================================================
 
+    let variantQueue: VariantGenerationQueue | null = null;
     if (cfg.contextualVariants.enabled) {
-      const variantGenerator = new ContextualVariantGenerator(cfg.contextualVariants, openai);
+      const variantGenerator = new ContextualVariantGenerator(cfg.contextualVariants, dbContext.openai);
       variantQueue = new VariantGenerationQueue(variantGenerator, async (factId, variantType, variants) => {
         for (const v of variants) {
-          factsDb.storeVariant(factId, variantType, v);
+          dbContext.factsDb.storeVariant(factId, variantType, v);
         }
       });
-    } else {
-      variantQueue = null;
     }
+
+    // ========================================================================
+    // Learnings Intake Buffer (Issue #617)
+    // ========================================================================
+
+    let learningsDb: LearningsDB | null = null;
+    try {
+      const learningsDbPath = join(dirname(resolvedSqlitePath), "learnings.db");
+      learningsDb = new LearningsDB(learningsDbPath);
+      api.logger.info(`memory-hybrid: learnings DB initialized at ${learningsDbPath}`);
+    } catch (err) {
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        subsystem: "registration",
+        operation: "plugin-register:learnings-db-init",
+        severity: "warning",
+      });
+      learningsDb = null;
+    }
+
+    // ========================================================================
+    // Build PluginRuntime -- single instance-scoped container for all state
+    // ========================================================================
+
+    const newRuntime: PluginRuntime = {
+      cfg,
+      resolvedLancePath,
+      resolvedSqlitePath,
+      factsDb: dbContext.factsDb,
+      vectorDb: dbContext.vectorDb,
+      embeddings: dbContext.embeddings,
+      embeddingRegistry: dbContext.embeddingRegistry,
+      openai: dbContext.openai,
+      credentialsDb: dbContext.credentialsDb,
+      wal: dbContext.wal,
+      proposalsDb: dbContext.proposalsDb,
+      eventLog: dbContext.eventLog,
+      aliasDb: dbContext.aliasDb,
+      eventBus,
+      costTracker: dbContext.costTracker,
+      issueStore: dbContext.issueStore,
+      workflowStore: dbContext.workflowStore,
+      crystallizationStore: dbContext.crystallizationStore,
+      toolProposalStore: dbContext.toolProposalStore,
+      provenanceService: dbContext.provenanceService,
+      verificationStore: dbContext.verificationStore,
+      apitapStore: dbContext.apitapStore,
+      pythonBridge,
+      variantQueue,
+      learningsDb,
+      lifecycleHooksHandle: null, // set after registerLifecycleHooks below
+      pendingLLMWarnings: createPendingLLMWarnings(),
+      currentAgentIdRef: { value: null },
+      restartPendingClearedRef: { value: false },
+      recallInFlightRef: { value: 0 },
+      lastProgressiveIndexIds: [],
+      timers: createTimers(),
+    };
+
+    runtimeRef.value = newRuntime;
+
+    // Clean up old resources immediately after atomic swap to prevent leaks if registration fails (Issue #590)
+    if (old) {
+      closeOldDatabases({
+        factsDb: old.factsDb,
+        vectorDb: old.vectorDb,
+        credentialsDb: old.credentialsDb,
+        proposalsDb: old.proposalsDb,
+        eventLog: old.eventLog,
+        aliasDb: old.aliasDb,
+        eventBus: old.eventBus,
+        issueStore: old.issueStore,
+        workflowStore: old.workflowStore,
+        crystallizationStore: old.crystallizationStore,
+        toolProposalStore: old.toolProposalStore,
+        verificationStore: old.verificationStore,
+        provenanceService: old.provenanceService,
+        learningsDb: old.learningsDb,
+        apitapStore: old.apitapStore,
+      });
+      old.pythonBridge?.shutdown().catch(() => {});
+    }
+
+    const runtime = newRuntime;
 
     // Phase 2.6 / Phase 3: Single plugin context satisfying MemoryPluginAPI (stable internal API).
     const pluginContext: MemoryPluginAPI = {
-      factsDb,
-      vectorDb,
-      cfg,
-      embeddings,
-      embeddingRegistry,
-      openai,
-      wal,
-      credentialsDb,
-      aliasDb,
-      proposalsDb,
-      eventLog,
-      provenanceService,
-      issueStore: issueStore ?? null,
-      workflowStore,
-      crystallizationStore,
-      toolProposalStore,
-      verificationStore,
-      variantQueue,
-      lastProgressiveIndexIds,
-      currentAgentIdRef,
-      restartPendingClearedRef,
-      recallInFlightRef,
-      pendingLLMWarnings,
-      resolvedSqlitePath,
-      timers: { proposalsPruneTimer: timers.proposalsPruneTimer },
+      factsDb: runtime.factsDb,
+      vectorDb: runtime.vectorDb,
+      cfg: runtime.cfg,
+      embeddings: runtime.embeddings,
+      embeddingRegistry: runtime.embeddingRegistry,
+      openai: runtime.openai,
+      wal: runtime.wal,
+      credentialsDb: runtime.credentialsDb,
+      aliasDb: runtime.aliasDb,
+      proposalsDb: runtime.proposalsDb,
+      eventLog: runtime.eventLog,
+      provenanceService: runtime.provenanceService,
+      issueStore: runtime.issueStore ?? null,
+      workflowStore: runtime.workflowStore,
+      crystallizationStore: runtime.crystallizationStore,
+      toolProposalStore: runtime.toolProposalStore,
+      verificationStore: runtime.verificationStore,
+      variantQueue: runtime.variantQueue,
+      lastProgressiveIndexIds: runtime.lastProgressiveIndexIds,
+      currentAgentIdRef: runtime.currentAgentIdRef,
+      restartPendingClearedRef: runtime.restartPendingClearedRef,
+      recallInFlightRef: runtime.recallInFlightRef,
+      pendingLLMWarnings: runtime.pendingLLMWarnings,
+      resolvedSqlitePath: runtime.resolvedSqlitePath,
+      timers: { proposalsPruneTimer: runtime.timers.proposalsPruneTimer },
       buildToolScopeFilter,
       walWrite,
       walRemove,
@@ -565,7 +540,8 @@ const memoryHybridPlugin = {
       runReflection,
       runReflectionRules,
       runReflectionMeta,
-      pythonBridge,
+      pythonBridge: runtime.pythonBridge,
+      apitapStore: runtime.apitapStore,
     };
 
     // ========================================================================
@@ -584,22 +560,22 @@ const memoryHybridPlugin = {
     // CLI Commands
     try {
       registerHybridMemCliWithApi(api, {
-        factsDb,
-        vectorDb,
-        embeddings,
-        openai,
-        cfg,
-        credentialsDb,
-        aliasDb,
-        wal,
-        proposalsDb,
-        eventLog,
-        verificationStore,
-        provenanceService,
-        costTracker,
-        eventBus,
-        resolvedSqlitePath,
-        resolvedLancePath,
+        factsDb: runtime.factsDb,
+        vectorDb: runtime.vectorDb,
+        embeddings: runtime.embeddings,
+        openai: runtime.openai,
+        cfg: runtime.cfg,
+        credentialsDb: runtime.credentialsDb,
+        aliasDb: runtime.aliasDb,
+        wal: runtime.wal,
+        proposalsDb: runtime.proposalsDb,
+        eventLog: runtime.eventLog,
+        verificationStore: runtime.verificationStore,
+        provenanceService: runtime.provenanceService,
+        costTracker: runtime.costTracker,
+        eventBus: runtime.eventBus,
+        resolvedSqlitePath: runtime.resolvedSqlitePath,
+        resolvedLancePath: runtime.resolvedLancePath,
         pluginId: PLUGIN_ID,
         detectCategory,
       });
@@ -611,16 +587,16 @@ const memoryHybridPlugin = {
       throw err;
     }
 
-    // ContextEngine Plugin Slot (Issue #273) — feature-detected, non-fatal if unavailable
+    // ContextEngine Plugin Slot (Issue #273) -- feature-detected, non-fatal if unavailable
 
     import("./services/context-engine.js")
       .then(({ registerHybridContextEngine }) =>
         registerHybridContextEngine({
-          factsDb,
-          vectorDb,
-          wal,
-          embeddings,
-          cfg,
+          factsDb: runtime.factsDb,
+          vectorDb: runtime.vectorDb,
+          wal: runtime.wal,
+          embeddings: runtime.embeddings,
+          cfg: runtime.cfg,
           logger: api.logger,
           pluginVersion: versionInfo.pluginVersion,
         }),
@@ -631,7 +607,7 @@ const memoryHybridPlugin = {
 
     // Lifecycle Hooks (issueStore may be null; issue-related behavior is gated inside hooks)
     try {
-      lifecycleHooksHandle = registerLifecycleHooks(pluginContext, api);
+      runtime.lifecycleHooksHandle = registerLifecycleHooks(pluginContext, api);
     } catch (err) {
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
         subsystem: "registration",
@@ -646,23 +622,23 @@ const memoryHybridPlugin = {
       api.registerService(
         createPluginService({
           PLUGIN_ID,
-          factsDb,
-          vectorDb,
-          embeddings,
-          embeddingRegistry,
-          credentialsDb,
-          proposalsDb,
-          wal,
-          eventLog,
-          cfg,
-          openai,
-          resolvedLancePath,
-          resolvedSqlitePath,
+          factsDb: runtime.factsDb,
+          vectorDb: runtime.vectorDb,
+          embeddings: runtime.embeddings,
+          embeddingRegistry: runtime.embeddingRegistry,
+          credentialsDb: runtime.credentialsDb,
+          proposalsDb: runtime.proposalsDb,
+          wal: runtime.wal,
+          eventLog: runtime.eventLog,
+          cfg: runtime.cfg,
+          openai: runtime.openai,
+          resolvedLancePath: runtime.resolvedLancePath,
+          resolvedSqlitePath: runtime.resolvedSqlitePath,
           api,
-          timers,
-          pythonBridge,
-          provenanceService,
-          costTracker,
+          timers: runtime.timers,
+          pythonBridge: runtime.pythonBridge,
+          provenanceService: runtime.provenanceService,
+          costTracker: runtime.costTracker,
         }),
       );
     } catch (err) {
@@ -673,11 +649,11 @@ const memoryHybridPlugin = {
       throw err;
     }
 
-    // Issue #281 — Verify cron health on boot
+    // Issue #281 -- Verify cron health on boot
     //
     // When `maintenance.cronReliability.verifyOnBoot` is true (the default), check
     // whether a backup cron entry exists and log a warning if missing. This does NOT
-    // auto-install the cron entry — users must explicitly run `hybrid-mem backup schedule`
+    // auto-install the cron entry -- users must explicitly run `hybrid-mem backup schedule`
     // to install it.
     //
     // This runs asynchronously and is entirely non-fatal: cron check failures
@@ -698,20 +674,20 @@ const memoryHybridPlugin = {
             }
 
             if (currentCrontab.includes("hybrid-mem backup")) {
-              // Already scheduled — nothing to do
-              api.logger.debug?.("memory-hybrid: boot-check — weekly backup cron already present");
+              // Already scheduled -- nothing to do
+              api.logger.debug?.("memory-hybrid: boot-check -- weekly backup cron already present");
               return;
             }
 
-            // Cron not found — log warning
+            // Cron not found -- log warning
             const weeklyExpr = cfg.maintenance?.cronReliability?.weeklyBackupCron ?? "0 4 * * 0";
             api.logger.warn?.(
-              `memory-hybrid: boot-check — weekly backup cron not found. ` +
+              `memory-hybrid: boot-check -- weekly backup cron not found. ` +
                 `Run 'hybrid-mem backup schedule' to install (${weeklyExpr}).`,
             );
           } catch (err) {
-            // Non-fatal — crontab may not be available (containers, read-only envs)
-            api.logger.debug?.(`memory-hybrid: boot-check — could not verify backup cron (non-fatal): ${err}`);
+            // Non-fatal -- crontab may not be available (containers, read-only envs)
+            api.logger.debug?.(`memory-hybrid: boot-check -- could not verify backup cron (non-fatal): ${err}`);
           }
         })();
       });
@@ -817,7 +793,6 @@ export const _testing = {
   sequenceSimilarity,
   extractGoalKeywords,
   hashToolSequence,
-  _resetRateLimitForTest,
   // Workflow crystallization (Issue #208)
   CrystallizationStore,
   PatternDetector,
@@ -840,6 +815,8 @@ export const _testing = {
   VerificationError,
   // Provenance tracing (Issue #163)
   ProvenanceService,
+  // Learnings intake buffer — staged memory promotion (Issue #617)
+  LearningsDB,
 };
 
 export { versionInfo } from "./versionInfo.js";

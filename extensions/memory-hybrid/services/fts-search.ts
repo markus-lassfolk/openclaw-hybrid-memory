@@ -8,7 +8,9 @@
  * can call it as an independent retrieval strategy alongside vector search.
  */
 
-import type Database from "better-sqlite3";
+import type { DatabaseSync } from "node:sqlite";
+import type { SQLInputValue } from "node:sqlite";
+import { pluginLogger } from "../utils/logger.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -110,14 +112,14 @@ export function buildFts5Query(raw: string): string | null {
 /**
  * Search the FTS5 index for facts matching `query`.
  *
- * @param db      - A better-sqlite3 `Database` instance.
+ * @param db      - A node:sqlite `DatabaseSync` instance.
  * @param query   - Raw search string. May contain FTS5 operators (AND/OR/NOT/*),
  *                  phrase quotes, or plain keywords.
  * @param options - Optional filters and limits.
  * @returns Ranked list of matching facts (best first).
  */
 export function searchFts(
-  db: Database.Database,
+  db: DatabaseSync,
   query: string,
   options: {
     /** Maximum results to return (default: 20). */
@@ -156,21 +158,21 @@ export function searchFts(
 
   // Build WHERE clauses for structured filters.
   const extraClauses: string[] = [];
-  const params: Record<string, unknown> = { query: matchExpr, limit };
+  const params: Record<string, SQLInputValue> = { "@query": matchExpr, "@limit": limit };
 
   if (!includeSuperseded) {
     // Use asOf when provided so point-in-time queries filter against the correct timestamp.
     const nowSec = asOf ?? Math.floor(Date.now() / 1000);
     extraClauses.push("AND f.superseded_at IS NULL AND (f.expires_at IS NULL OR f.expires_at > @nowSec)");
-    params.nowSec = nowSec;
+    params["@nowSec"] = nowSec;
   }
   if (entityFilter && entityFilter.trim()) {
     extraClauses.push("AND LOWER(f.entity) = LOWER(@entityFilter)");
-    params.entityFilter = entityFilter.trim();
+    params["@entityFilter"] = entityFilter.trim();
   }
   if (tagFilter && tagFilter.trim()) {
     extraClauses.push("AND (',' || COALESCE(f.tags,'') || ',') LIKE @tagPattern");
-    params.tagPattern = `%,${tagFilter.toLowerCase().trim()},%`;
+    params["@tagPattern"] = `%,${tagFilter.toLowerCase().trim()},%`;
   }
 
   let rows: Array<{
@@ -207,7 +209,7 @@ export function searchFts(
       )
       .all(params) as typeof rows;
   } catch (err) {
-    console.warn("memory-hybrid: FTS query failed");
+    pluginLogger.warn(`memory-hybrid: FTS query failed: ${err instanceof Error ? err.message : String(err)}`);
     return [];
   }
 
@@ -237,7 +239,7 @@ export function searchFts(
  *
  * @returns Number of facts indexed.
  */
-export function rebuildFtsIndex(db: Database.Database): number {
+export function rebuildFtsIndex(db: DatabaseSync): number {
   // Delete whatever is currently in the FTS index.
   db.exec(`DELETE FROM facts_fts`);
 

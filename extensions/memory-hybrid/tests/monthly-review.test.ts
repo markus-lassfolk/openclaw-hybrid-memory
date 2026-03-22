@@ -27,8 +27,7 @@ const { FactsDB } = _testing;
 type DB = InstanceType<typeof FactsDB>;
 
 function rawDb(db: DB) {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  return (db as any).liveDb as import("better-sqlite3").Database;
+  return db.getRawDb();
 }
 
 function insertFact(

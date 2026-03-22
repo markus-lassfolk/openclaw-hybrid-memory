@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import Database from "better-sqlite3";
+import { DatabaseSync } from "node:sqlite";
 import { EventBus, computeFingerprint } from "../backends/event-bus.js";
 
 let tmpDir: string;
@@ -59,7 +59,7 @@ describe("EventBus.appendEvent", () => {
   });
 
   it("throws RangeError for NaN importance", () => {
-    expect(() => bus.appendEvent("sensor.test", "test", {}, NaN)).toThrow(RangeError);
+    expect(() => bus.appendEvent("sensor.test", "test", {}, Number.NaN)).toThrow(RangeError);
   });
 
   it("stores fingerprint when provided", () => {
@@ -218,7 +218,7 @@ describe("EventBus.dedup", () => {
     // Back-date the row to 2 hours ago via a second DB connection so it is
     // deterministically outside a 1-hour cooldown window.
     const twoHoursAgo = new Date(Date.now() - 2 * 3600 * 1000).toISOString();
-    const db2 = new Database(join(tmpDir, "event-bus.db"));
+    const db2 = new DatabaseSync(join(tmpDir, "event-bus.db"));
     db2.prepare("UPDATE memory_events SET created_at = ? WHERE fingerprint = ?").run(twoHoursAgo, fp);
     db2.close();
 
@@ -253,7 +253,7 @@ describe("EventBus.pruneArchived", () => {
     bus.updateStatus(id2, "archived");
 
     // Back-date both rows to be well in the past via a second DB connection
-    const db2 = new Database(join(tmpDir, "event-bus.db"));
+    const db2 = new DatabaseSync(join(tmpDir, "event-bus.db"));
     db2.prepare("UPDATE memory_events SET created_at = '2000-01-01T00:00:00.000Z'").run();
     db2.close();
 
@@ -280,7 +280,7 @@ describe("EventBus.pruneArchived", () => {
     bus.updateStatus(id, "processed");
 
     // Back-date to make it look ancient — still not archived so must survive
-    const db2 = new Database(join(tmpDir, "event-bus.db"));
+    const db2 = new DatabaseSync(join(tmpDir, "event-bus.db"));
     db2.prepare("UPDATE memory_events SET created_at = '2000-01-01T00:00:00.000Z'").run();
     db2.close();
 

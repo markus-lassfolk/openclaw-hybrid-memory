@@ -24,7 +24,8 @@ export const MODEL_PRICING: Record<string, ModelPricing> = {
   "openai/o3-mini": { inputPer1M: 1.1, outputPer1M: 4.4 },
   "openai/gpt-5.4": { inputPer1M: 2.0, outputPer1M: 8.0 },
   // Google
-  "google/gemini-2.0-flash-lite": { inputPer1M: 0.075, outputPer1M: 0.3 },
+  "google/gemini-2.5-flash-lite": { inputPer1M: 0.075, outputPer1M: 0.3 },
+  "google/gemini-2.0-flash-lite": { inputPer1M: 0.075, outputPer1M: 0.3 }, // deprecated; kept for backward compat
   "google/gemini-2.0-flash": { inputPer1M: 0.1, outputPer1M: 0.4 },
   "google/gemini-3.1-pro-preview": { inputPer1M: 1.25, outputPer1M: 10.0 },
   // Anthropic

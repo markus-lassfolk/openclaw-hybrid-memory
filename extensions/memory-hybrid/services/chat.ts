@@ -3,9 +3,16 @@
  * Uses a multi-provider OpenAI-compatible proxy; provider-agnostic model fallback (issue #87).
  */
 
-import OpenAI from "openai";
+import type OpenAI from "openai";
 import { capturePluginError } from "./error-reporter.js";
 import { withCostFeature } from "./cost-context.js";
+import { pluginLogger } from "../utils/logger.js";
+import {
+  getDistillBatchTokenLimit as getDistillBatchTokenLimitFromCatalog,
+  getDistillMaxOutputTokens as getDistillMaxOutputTokensFromCatalog,
+  requiresMaxCompletionTokens,
+  isReasoningModel,
+} from "./model-capabilities.js";
 
 /**
  * Thrown when a model's provider has no API key or base URL configured in llm.providers.
@@ -47,12 +54,6 @@ export function createPendingLLMWarnings(): PendingLLMWarnings {
       return msgs;
     },
   };
-}
-
-/** True when model name suggests long-context (e.g. Gemini). Used only for token limits. Only "gemini" is matched; "thinking" is not, to avoid false positives with gateway aliases. */
-function isLongContextModel(model: string): boolean {
-  const m = model.toLowerCase();
-  return m.includes("gemini");
 }
 
 /** Default timeout for chat completion (prevents indefinite hang if gateway/LLM never responds). */
@@ -282,10 +283,10 @@ function parseRetryAfterMs(err: unknown): number | undefined {
   const raw = headers["retry-after"] ?? headers["Retry-After"];
   if (!raw) return undefined;
   // Retry-After can be either a delay-seconds integer or an HTTP-date
-  const secs = parseInt(raw, 10);
-  if (!isNaN(secs) && secs > 0) return secs * 1000;
+  const secs = Number.parseInt(raw, 10);
+  if (!Number.isNaN(secs) && secs > 0) return secs * 1000;
   const date = Date.parse(raw);
-  if (!isNaN(date)) return Math.max(0, date - Date.now());
+  if (!Number.isNaN(date)) return Math.max(0, date - Date.now());
   return undefined;
 }
 
@@ -316,16 +317,20 @@ export async function chatComplete(opts: {
   }
 
   try {
+    // Newer models (GPT-5+, o-series) require max_completion_tokens and reject max_tokens; reasoning models also reject temperature/top_p.
+    const useMaxCompletionTokens = requiresMaxCompletionTokens(model);
+    const body: Record<string, unknown> = {
+      model,
+      messages: [{ role: "user", content }],
+      ...(useMaxCompletionTokens ? { max_completion_tokens: effectiveMaxTokens } : { max_tokens: effectiveMaxTokens }),
+    };
+    if (!isReasoningModel(model)) {
+      body.temperature = temperature;
+    }
     const doCreate = () =>
-      opts.openai.chat.completions.create(
-        {
-          model,
-          messages: [{ role: "user", content }],
-          temperature,
-          max_tokens: effectiveMaxTokens,
-        },
-        { signal: controller.signal },
-      );
+      opts.openai.chat.completions.create(body as Parameters<OpenAI["chat"]["completions"]["create"]>[0], {
+        signal: controller.signal,
+      });
     // If feature is provided, wrap in withCostFeature so the proxy attributes the call correctly.
     // Cost recording itself is done by the OpenAI proxy in setup/init-databases.ts.
     const resp = await (feature ? withCostFeature(feature, doCreate) : doCreate());
@@ -382,15 +387,14 @@ export async function chatComplete(opts: {
   }
 }
 
+/** Max input tokens for one distill batch request. From model-capabilities catalog (docs/MODEL-REFERENCE.md). */
 export function distillBatchTokenLimit(model: string): number {
-  // Use conservative limits that work across all common fallback models
-  // o3 has 450k TPM limit, so we use 400k to be safe
-  return isLongContextModel(model) ? 400_000 : 80_000;
+  return getDistillBatchTokenLimitFromCatalog(model);
 }
 
-/** Max output tokens for distill/ingest LLM calls. Long-context models (e.g. gateway-routed Gemini) support 65k+; else 8k. */
+/** Max output tokens for distill/ingest LLM calls. From model-capabilities catalog (docs/MODEL-REFERENCE.md). */
 export function distillMaxOutputTokens(model: string): number {
-  return isLongContextModel(model) ? 65_536 : 8000;
+  return getDistillMaxOutputTokensFromCatalog(model);
 }
 
 /**
@@ -440,14 +444,14 @@ export async function withLLMRetry<T>(
       // Don't retry 404 — model doesn't exist, let chatCompleteWithRetry try next model
       if (is404Like(lastError)) {
         const modelHint = lastError.message.match(/model[:\s]+(\S+)/i)?.[1];
-        console.warn(
+        pluginLogger.warn(
           `memory-hybrid: Model not found (404)${modelHint ? ` for ${modelHint}` : ""} — check model name or provider availability`,
         );
         throw lastError;
       }
       // Don't retry 400 context-length errors — input was too long; retrying won't fix it (#442)
       if (isContextLengthError(lastError)) {
-        console.warn(
+        pluginLogger.warn(
           `memory-hybrid: Input exceeds model context length — retrying will not help; truncate input before calling`,
         );
         throw lastError;
@@ -465,9 +469,8 @@ export async function withLLMRetry<T>(
       // Ollama OOM: never retry — model requires more memory than available, won't be fixed by retrying.
       // chatCompleteWithRetry will try the next fallback model (e.g. Gemini, OpenAI).
       if (isOllamaOOM(lastError)) {
-        console.warn(
-          `memory-hybrid: Ollama model OOM — model requires more memory than is available. ` +
-            `Skipping retries; will try next fallback model.`,
+        pluginLogger.warn(
+          `memory-hybrid: Ollama model OOM — model requires more memory than is available. Skipping retries; will try next fallback model.`,
         );
         throw lastError;
       }
@@ -516,16 +519,40 @@ export async function withLLMRetry<T>(
         }
         throw retryError;
       }
+
       // 429: respect Retry-After header if present; otherwise use exponential backoff (2s → 4s → 8s)
       let delay: number;
       if (is429) {
         const retryAfterMs = parseRetryAfterMs(err);
         delay = retryAfterMs ?? Math.pow(2, attempt + 1) * 1000;
-        console.warn(`memory-hybrid: Rate limited by provider — backing off ${delay}ms`);
+        pluginLogger.warn(`memory-hybrid: Rate limited by provider — backing off ${delay}ms`);
       } else {
         delay = Math.pow(3, attempt) * 1000; // 1s, 3s, 9s
       }
-      await new Promise((r) => setTimeout(r, delay));
+      // Abort-aware backoff sleep: if the signal fires while we are waiting, reject immediately
+      // instead of sleeping through the full delay. The listener is removed on normal resolve to
+      // prevent leaks; the { once: true } option is not relied on alone for cleanup.
+      await new Promise<void>((resolve, reject) => {
+        const onAbort = () => {
+          clearTimeout(timeout);
+          const reason = opts!.signal!.reason;
+          const msg = reason instanceof Error ? reason.message : reason != null ? String(reason) : "Aborted";
+          const abortError = new Error(msg);
+          abortError.name = "AbortError";
+          reject(abortError);
+        };
+        const timeout = setTimeout(() => {
+          opts?.signal?.removeEventListener("abort", onAbort);
+          resolve();
+        }, delay);
+        if (opts?.signal) {
+          if (opts.signal.aborted) {
+            onAbort();
+          } else {
+            opts.signal.addEventListener("abort", onAbort, { once: true });
+          }
+        }
+      });
     }
   }
   throw new Error("unreachable");
@@ -572,7 +599,8 @@ export async function chatCompleteWithRetry(opts: {
   for (let i = 0; i < modelsToTry.length; i++) {
     if (signal?.aborted) {
       const reason = (signal as AbortSignal).reason;
-      const abortError = reason instanceof Error ? reason : new Error(reason != null ? String(reason) : "Aborted");
+      const msg = reason instanceof Error ? reason.message : reason != null ? String(reason) : "Aborted";
+      const abortError = new Error(msg);
       abortError.name = "AbortError";
       throw abortError;
     }
@@ -628,7 +656,9 @@ export async function chatCompleteWithRetry(opts: {
                       : isContextLength
                         ? "input too long" // #488
                         : "failed after retries";
-          console.warn(`${label}: model ${currentModel} ${reason}, trying fallback model ${modelsToTry[i + 1]}...`);
+          pluginLogger.warn(
+            `${label}: model ${currentModel} ${reason}, trying fallback model ${modelsToTry[i + 1]}...`,
+          );
         }
       }
     }

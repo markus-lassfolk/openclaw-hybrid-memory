@@ -26,11 +26,12 @@ export const hybridConfigSchema = {
 
 // LLM model utilities
 import type { CronModelConfig, CronModelTier, HybridMemoryConfig } from "./types/index.js";
+import { resolveSecretRef } from "./parsers/core.js";
 
 const OPENAI_NANO_CRON_MODEL = "openai/gpt-4.1-nano";
 const OPENAI_DEFAULT_CRON_MODEL = "openai/gpt-4.1-mini";
 const OPENAI_HEAVY_CRON_MODEL = "openai/gpt-5.4";
-const GEMINI_NANO_MODEL = "google/gemini-2.0-flash-lite";
+const GEMINI_NANO_MODEL = "google/gemini-2.5-flash-lite";
 const GEMINI_DEFAULT_MODEL = "google/gemini-2.5-flash";
 const GEMINI_HEAVY_MODEL = "google/gemini-3.1-pro-preview";
 const CLAUDE_NANO_MODEL = "anthropic/claude-haiku-4-5-20251001";
@@ -39,6 +40,14 @@ const CLAUDE_HEAVY_MODEL = "anthropic/claude-opus-4-6";
 
 function hasKey(apiKey: string | undefined): boolean {
   return typeof apiKey === "string" && apiKey.length >= 10;
+}
+
+/** True if apiKey is present and, for env:/file: SecretRefs, resolvable at runtime (verify / getProvidersWithKeys). */
+function hasEffectiveKey(apiKey: string | undefined): boolean {
+  if (!hasKey(apiKey)) return false;
+  const k = apiKey!.trim();
+  if (k.startsWith("env:") || k.startsWith("file:")) return resolveSecretRef(k) !== undefined;
+  return true;
 }
 
 /** Legacy single-model resolution (for backward compat when no llm config). Used only when no list is built. */
@@ -211,17 +220,33 @@ export function getProvidersWithKeys(pluginConfig: CronModelConfig | undefined):
     }
   }
 
-  // Legacy / built-in key fields
-  if (hasKey(pluginConfig.distill?.apiKey)) add("google");
-  if (hasKey(pluginConfig.embedding?.apiKey)) add("openai");
-  if (hasKey(pluginConfig.claude?.apiKey)) add("anthropic");
+  // Legacy / built-in key fields (resolve env:/file: so GOOGLE_API_KEY etc. count when set)
+  if (hasEffectiveKey(pluginConfig.distill?.apiKey)) add("google");
+  if (hasEffectiveKey(pluginConfig.embedding?.apiKey)) add("openai");
+  if (hasEffectiveKey(pluginConfig.claude?.apiKey)) add("anthropic");
 
   // llm.providers map — any provider with an explicit apiKey
   const providers = pluginConfig.llm?.providers;
   if (providers && typeof providers === "object") {
     for (const [prefix, pCfg] of Object.entries(providers)) {
-      if (pCfg && hasKey(pCfg.apiKey)) add(prefix);
+      if (pCfg && hasEffectiveKey(pCfg.apiKey)) add(prefix);
     }
+  }
+
+  // Env fallbacks so providers show as configured when only env is set (e.g. GOOGLE_API_KEY on Doris)
+  if (
+    !seen.has("google") &&
+    typeof process.env.GOOGLE_API_KEY === "string" &&
+    process.env.GOOGLE_API_KEY.trim().length >= 10
+  ) {
+    add("google");
+  }
+  if (
+    !seen.has("anthropic") &&
+    typeof process.env.ANTHROPIC_API_KEY === "string" &&
+    process.env.ANTHROPIC_API_KEY.trim().length >= 10
+  ) {
+    add("anthropic");
   }
 
   return out;

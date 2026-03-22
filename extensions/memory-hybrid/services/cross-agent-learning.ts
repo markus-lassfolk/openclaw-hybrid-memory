@@ -211,6 +211,7 @@ async function callLLMForGeneralisation(
     content: prompt,
     maxTokens: 2000,
     timeoutMs: 40000,
+    feature: "cross-agent-learning",
   });
 
   if (!text || text.trim().length === 0) return [];
@@ -420,8 +421,8 @@ export async function getCrossAgentLessons(
   factsDb: FactsDB,
   targetAgent: string,
   context: string,
-  limit: number = 5,
-  minConfidence: number = 0.6,
+  limit = 5,
+  minConfidence = 0.6,
 ): Promise<MemoryEntry[]> {
   const db = factsDb.getRawDb();
   if (!db) return [];
@@ -546,7 +547,7 @@ export async function verifyLessonForAgent(
   factsDb: FactsDB,
   lessonId: string,
   verifyingAgent: string,
-  boost: number = 0.1,
+  boost = 0.1,
 ): Promise<void> {
   const db = factsDb.getRawDb();
   if (!db) return;

@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { runConsolidate } from "../services/consolidation.js";
 import type { MemoryEntry } from "../types/memory.js";
+import { getCurrentCostFeature } from "../services/cost-context.js";
 
 function makeEntry(overrides: Partial<MemoryEntry> = {}): MemoryEntry {
   return {
@@ -120,5 +121,34 @@ describe("runConsolidate", () => {
 
     expect(result.merged).toBe(0);
     expect(factsDb.store).not.toHaveBeenCalled();
+  });
+
+  it("LLM call is attributed to 'consolidation' feature", async () => {
+    let capturedFeature: string | undefined;
+    const entries = [makeEntry({ id: "a", text: "Fact A" }), makeEntry({ id: "b", text: "Fact B" })];
+    const factsDb = makeFactsDb(entries);
+    const vectorDb = { store: vi.fn().mockResolvedValue(undefined) };
+    const embeddings = makeEmbeddings({ "Fact A": [1, 0], "Fact B": [1, 0] });
+    const openai = {
+      chat: {
+        completions: {
+          create: vi.fn().mockImplementation(async () => {
+            capturedFeature = getCurrentCostFeature();
+            return { choices: [{ message: { content: "Merged fact" } }] };
+          }),
+        },
+      },
+    } as never;
+
+    await runConsolidate(
+      factsDb as never,
+      vectorDb as never,
+      embeddings as never,
+      openai,
+      { threshold: 0.9, includeStructured: true, dryRun: false, limit: 10, model: "test-model" },
+      { info: () => undefined, warn: () => undefined },
+    );
+
+    expect(capturedFeature).toBe("consolidation");
   });
 });

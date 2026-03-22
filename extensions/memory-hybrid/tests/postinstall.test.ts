@@ -17,7 +17,7 @@ describe("postinstall", () => {
     const scriptPath = join(root, "scripts", "postinstall-rebuild.cjs");
     expect(existsSync(scriptPath)).toBe(true);
     const content = readFileSync(scriptPath, "utf-8");
-    expect(content).toContain("better-sqlite3");
+    expect(content).not.toContain("better-sqlite3");
     expect(content).toContain("@lancedb/lancedb");
   });
 

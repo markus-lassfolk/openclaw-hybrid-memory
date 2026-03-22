@@ -18,13 +18,19 @@ export const SENSITIVE_PATTERNS = [
   /password/i,
   /api.?key/i,
   /secret/i,
-  /token\s+is/i,
+  /token\s+is/i, // More specific: only "token is" not just "token" (used by consolidation.ts to exclude from consolidation)
+  /bearer/i, // Bearer tokens (no word boundary to catch bearer_token, etc.)
+  /authorization/i, // Authorization headers (no word boundary to catch authorization_header, etc.)
+  /credentials?/i, // Credentials keyword (no word boundary to catch credentials_file, etc.)
   /\bssn\b/i,
   /credit.?card/i,
   /AKIA[0-9A-Z]{16}/, // AWS access keys
   /-----BEGIN .*PRIVATE KEY/, // Private key headers (RSA, EC, etc.)
   /:\/\/[^\s:@]+:[^\s@]+@[^\s/]+/, // Connection strings with embedded passwords (e.g., mongodb://user:pass@host) - Note: usernames with colons will fail
 ];
+
+/** Patterns for capture filtering - uses broader /token/i instead of /token\s+is/i for security */
+export const CAPTURE_FILTER_PATTERNS = [...SENSITIVE_PATTERNS.slice(0, 3), /token/i, ...SENSITIVE_PATTERNS.slice(4)];
 
 /** Patterns that suggest a credential value - for auto-detect prompt to store */
 const CREDENTIAL_PATTERNS: Array<{ regex: RegExp; type: string; hint: string }> = [
@@ -77,7 +83,7 @@ export function isCredentialLike(
   const e = (entity ?? "").toLowerCase();
   if (["api_key", "password", "token", "secret", "bearer"].some((x) => k.includes(x) || e.includes(x))) return true;
   if (value && value.length >= 8 && /^(eyJ|sk-|ghp_|gho_|xox[baprs]-)/i.test(value)) return true;
-  return CREDENTIAL_PATTERNS.some((p) => p.regex.test(text)) || SENSITIVE_PATTERNS.some((r) => r.test(text));
+  return CREDENTIAL_PATTERNS.some((p) => p.regex.test(text)) || CAPTURE_FILTER_PATTERNS.some((r) => r.test(text));
 }
 
 export const VAULT_POINTER_PREFIX = "vault:";

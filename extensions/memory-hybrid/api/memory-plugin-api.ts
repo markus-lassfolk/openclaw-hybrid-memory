@@ -28,6 +28,7 @@ import type { ProvenanceService } from "../services/provenance.js";
 import type { VerificationStore } from "../services/verification-store.js";
 import type { VariantGenerationQueue } from "../services/contextual-variants.js";
 import type { PythonBridge } from "../services/python-bridge.js";
+import type { ApitapStore } from "../backends/apitap-store.js";
 import type OpenAI from "openai";
 import type { HybridMemoryConfig, MemoryCategory } from "../config.js";
 import type { MemoryEntry, ScopeFilter } from "../types/memory.js";
@@ -84,6 +85,7 @@ export interface MemoryPluginAPI {
   verificationStore: VerificationStore | null;
   variantQueue: VariantGenerationQueue | null;
   pythonBridge: PythonBridge | null;
+  apitapStore: ApitapStore | null;
 
   // --- Refs (lifecycle / degradation) ---
   restartPendingClearedRef: { value: boolean };

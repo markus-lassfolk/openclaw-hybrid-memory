@@ -329,3 +329,35 @@ export type DashboardConfig = {
   /** Optional owner/repo for GitHub queries (e.g. "markus-lassfolk/openclaw-hybrid-memory"). */
   gitRepo?: string;
 };
+
+/** ApiTap integration — intercept browser traffic to auto-generate API skill specs (Issue #614, default: disabled). */
+export type ApiTapConfig = {
+  /** Enable ApiTap integration (default: false — explicit opt-in required). */
+  enabled: boolean;
+  /** Timeout in seconds for a live capture session (default: 60). */
+  captureTimeoutSeconds: number;
+  /** Days before a discovered endpoint record expires (default: 30). */
+  endpointTtlDays: number;
+  /** Max endpoints stored per capture session (default: 50). */
+  maxEndpointsPerSession: number;
+  /** URL glob patterns allowed for capture (empty = allow all non-blocked). */
+  allowedPatterns: string[];
+  /** URL glob patterns blocked from capture (auth/OAuth flows, default: blocked). */
+  blockedPatterns: string[];
+};
+
+/** Humanizer style scoring: quality-loop metric for detecting AI-writing patterns (Issue #616). */
+export type HumanizerConfig = {
+  /** Enable humanizer scoring on agent replies (default: false — opt-in). */
+  enabled: boolean;
+  /** Path to the humanizer binary (default: "humanizer"). */
+  bin: string;
+  /** Minimum reply length in characters before scoring (default: 100). */
+  minTextLength: number;
+  /** Maximum reply length in characters sent to humanizer (default: 4000). */
+  maxTextLength: number;
+  /** Optional model name to tag in the stored quality_loop fact. */
+  modelTag?: string;
+  /** Optional skill/context tag for the stored fact. */
+  skillTag?: string;
+};

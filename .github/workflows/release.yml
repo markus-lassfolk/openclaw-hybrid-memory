@@ -1,17 +1,22 @@
+# Release: creates GitHub Release (with docs/RELEASE-NOTES-<version>.md when present) and publishes to npm.
+# - Tag push (v*): run appears under the tag in Actions (change branch filter to "All" or the tag to see it).
+# - Manual run: Actions → Release → "Run workflow", enter version (e.g. v2026.3.180), use branch main.
 name: Release
 
 on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Release version tag (e.g. v2026.03.01)'
+        description: 'Release version tag (e.g. v2026.3.180)'
         required: true
   push:
     tags:
       - 'v*'
 
+# Use a distinct group name so the caller does not share a group with the called CI workflow
+# (when called via workflow_call, CI inherits github.workflow = "Release", which would otherwise cause a deadlock)
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: release-cd-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -36,11 +41,32 @@ jobs:
           INPUT_VERSION: ${{ github.event.inputs.version }}
         run: |
           if [[ "${{ github.event_name }}" == "push" ]]; then
-            echo "tag=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+            TAG="${GITHUB_REF#refs/tags/}"
           else
-            echo "tag=${INPUT_VERSION}" >> "$GITHUB_OUTPUT"
+            TAG="${INPUT_VERSION}"
           fi
-      - name: Create GitHub Release
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+      - name: Prepare release body
+        id: prep
+        run: |
+          if [ -f "docs/RELEASE-NOTES-${{ steps.version.outputs.version }}.md" ]; then
+            echo "has_release_notes=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_release_notes=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Create GitHub Release (with release notes file)
+        if: steps.prep.outputs.has_release_notes == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: Release ${{ steps.version.outputs.tag }}
+          body_path: docs/RELEASE-NOTES-${{ steps.version.outputs.version }}.md
+          generate_release_notes: false
+          draft: false
+          prerelease: false
+      - name: Create GitHub Release (auto-generated notes)
+        if: steps.prep.outputs.has_release_notes != 'true'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.version.outputs.tag }}
