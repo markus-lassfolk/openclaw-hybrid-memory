@@ -10,6 +10,7 @@ const path = require("path");
 
 const root = path.join(__dirname, "..");
 const pkg = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
+const requiredRuntimeDeps = ["better-sqlite3", "@lancedb/lancedb"];
 
 let failed = false;
 
@@ -19,6 +20,29 @@ if (!pkg.scripts?.postinstall) {
   failed = true;
 } else {
   console.log("OK: postinstall present");
+}
+
+// 1b. Native runtime dependencies must be explicit direct dependencies.
+let depsCheckFailed = false;
+for (const dep of requiredRuntimeDeps) {
+  if (!pkg.dependencies?.[dep]) {
+    console.error(`FAIL: missing required runtime dependency in package.json dependencies: ${dep}`);
+    failed = true;
+    depsCheckFailed = true;
+  }
+  if (pkg.optionalDependencies?.[dep]) {
+    console.error(`FAIL: ${dep} must not be declared in optionalDependencies`);
+    failed = true;
+    depsCheckFailed = true;
+  }
+  if (pkg.peerDependencies?.[dep]) {
+    console.error(`FAIL: ${dep} must not be declared in peerDependencies`);
+    failed = true;
+    depsCheckFailed = true;
+  }
+}
+if (!depsCheckFailed) {
+  console.log("OK: required native runtime dependencies are declared correctly");
 }
 
 // 2. Collect relative imports from index.ts (from "./foo.js" or './bar/baz.js')
