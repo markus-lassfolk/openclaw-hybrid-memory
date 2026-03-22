@@ -476,9 +476,7 @@ export function registerMemoryTools(
             score: r.score,
             backend: r.backend,
             tags: r.entry.tags?.length ? r.entry.tags : undefined,
-            sourceDate: r.entry.sourceDate
-              ? new Date(r.entry.sourceDate * 1000).toISOString().slice(0, 10)
-              : undefined,
+            sourceDate: r.entry.sourceDate ? new Date(r.entry.sourceDate * 1000).toISOString().slice(0, 10) : undefined,
           })),
         },
       };
@@ -560,7 +558,8 @@ export function registerMemoryTools(
         embedFn,
         rerankingConfig: cfg.reranking,
         rerankingOpenai: openai,
-        adaptiveOpenai: openai,
+        adaptiveOpenai: cfg.documentGrading?.enabled ? openai : undefined,
+        documentGradingConfig: cfg.documentGrading,
       });
 
       // Merge entity-lookup results first, then append RRF results (deduped).
