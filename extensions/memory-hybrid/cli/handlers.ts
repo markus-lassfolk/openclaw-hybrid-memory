@@ -119,6 +119,11 @@ import type { EventBus } from "../backends/event-bus.js";
 import { getModeCostEstimates } from "../services/model-pricing.js";
 import { buildGuardPrefix } from "../services/cron-guard.js";
 import { preFilterSessions, type PreFilterConfig } from "../services/session-pre-filter.js";
+import {
+  assessReflectionPromotionCandidates,
+  buildPromotionInsightsBlock,
+  summarizePromotionAssessments,
+} from "../services/persona-promotion.js";
 
 /**
  * Build a PreFilterConfig from the plugin config.
@@ -2738,43 +2743,25 @@ export async function runGenerateProposalsForCli(
       "memory-hybrid: generate-proposals — autoRecall.scopeFilter is not set; all stored facts are included regardless of which agent or user created them. Set autoRecall.scopeFilter (e.g. agentId/userId) to restrict proposals to a specific user/agent and avoid cross-user contamination.",
     );
   }
-  const patterns = allRelevant.filter((f) => f.category === "pattern");
-  const rules = allRelevant.filter((f) => f.category === "rule");
-  const metaPatterns = patterns.filter((f) => f.tags?.includes("meta"));
-  const insights: string[] = [];
-  if (patterns.length) {
-    insights.push(
-      "Patterns:\n" +
-        patterns
-          .slice(0, 30)
-          .map((f) => `- ${f.text}`)
-          .join("\n"),
+  const assessments = assessReflectionPromotionCandidates(allRelevant, nowSec);
+  const summary = summarizePromotionAssessments(assessments);
+  if (opts.verbose) {
+    ctx.logger.info?.(
+      `memory-hybrid: generate-proposals — promotion classification: durable=${summary.durableForPromotion}, useful_non_durable=${summary.usefulNonDurable}, transient=${summary.transient}`,
     );
   }
-  if (rules.length) {
-    insights.push(
-      "Rules:\n" +
-        rules
-          .slice(0, 30)
-          .map((f) => `- ${f.text}`)
-          .join("\n"),
-    );
-  }
-  if (metaPatterns.length) {
-    insights.push(
-      "Meta-patterns:\n" +
-        metaPatterns
-          .slice(0, 10)
-          .map((f) => `- ${f.text}`)
-          .join("\n"),
-    );
-  }
-  if (insights.length === 0) {
-    if (opts.verbose)
-      ctx.logger.info?.("memory-hybrid: generate-proposals — no patterns/rules/meta in memory; skipping.");
+  if (summary.durableForPromotion === 0) {
+    if (opts.verbose) {
+      ctx.logger.info?.(
+        "memory-hybrid: generate-proposals — no durable reflection insights; skipping persona promotion.",
+      );
+    }
     return { created: 0 };
   }
-  const insightsBlock = insights.join("\n\n");
+  const durableEvidenceIds = assessments
+    .filter((a) => a.classification === "durable_for_promotion")
+    .map((a) => `fact:${a.factId}`);
+  const insightsBlock = buildPromotionInsightsBlock(assessments);
   const allowedFiles = cfg.personaProposals.allowedFiles;
   const identityFilesContent: string[] = [];
   for (const file of allowedFiles) {
@@ -2834,6 +2821,8 @@ export async function runGenerateProposalsForCli(
     observation: string;
     suggestedChange: string;
     confidence: number;
+    evidenceFactIds?: string[];
+    promotionClassification?: "durable_for_promotion" | "useful_non_durable" | "transient";
   }>;
   try {
     const firstBracket = rawResponse.indexOf("[");
@@ -2855,10 +2844,7 @@ export async function runGenerateProposalsForCli(
   const recentCount = proposalsDb.countRecentProposals(weekDays);
   const limit = cfg.personaProposals.maxProposalsPerWeek;
   const minConf = cfg.personaProposals.minConfidence;
-  const evidenceSessions = Array.from(
-    { length: Math.max(1, cfg.personaProposals.minSessionEvidence) },
-    () => "reflection-pipeline",
-  );
+  const minimumEvidence = Math.max(1, cfg.personaProposals.minSessionEvidence);
   const expiresAt =
     cfg.personaProposals.proposalTTLDays > 0 ? nowSec + cfg.personaProposals.proposalTTLDays * 24 * 3600 : null;
   let created = 0;
@@ -2881,6 +2867,25 @@ export async function runGenerateProposalsForCli(
     const observation = String(item.observation ?? "").slice(0, 2000);
     const suggestedChange = String(item.suggestedChange ?? "").slice(0, 50000);
     if (!suggestedChange.trim()) continue;
+    const proposedClass = String(item.promotionClassification ?? "").trim();
+    if (proposedClass && proposedClass !== "durable_for_promotion") {
+      if (opts.verbose) {
+        ctx.logger.info?.(
+          `memory-hybrid: proposal dropped — classification ${proposedClass} is not durable: ${title.slice(0, 80)} -> ${targetFile}`,
+        );
+      }
+      continue;
+    }
+    const evidenceFactIdsRaw = Array.isArray(item.evidenceFactIds) ? item.evidenceFactIds : [];
+    const normalizedEvidence = evidenceFactIdsRaw
+      .map((id) => String(id ?? "").trim())
+      .filter(Boolean)
+      .map((id) => (id.startsWith("fact:") ? id : `fact:${id}`))
+      .filter((id) => durableEvidenceIds.includes(id));
+    const evidenceSessions =
+      normalizedEvidence.length >= minimumEvidence
+        ? Array.from(new Set(normalizedEvidence)).slice(0, 20)
+        : durableEvidenceIds.slice(0, Math.max(minimumEvidence, 3));
     if (opts.dryRun) {
       if (opts.verbose) ctx.logger.info?.(`memory-hybrid: [dry-run] would create proposal: ${title} -> ${targetFile}`);
       created++;
