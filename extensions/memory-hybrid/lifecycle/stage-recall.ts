@@ -9,21 +9,18 @@ import type { ClawdbotPluginApi } from "openclaw/plugin-sdk";
 import type { ScopeFilter } from "../types/memory.js";
 import type { SearchResult } from "../types/memory.js";
 import {
-  generateAmbientQueries,
-  detectTopicShift,
   deduplicateResultsById,
-  SessionSeenFacts,
+  detectTopicShift,
+  generateAmbientQueries,
   searchAmbientIssues,
+  SessionSeenFacts,
 } from "../services/ambient-retrieval.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { withTimeout } from "../utils/timeout.js";
 import { estimateTokens } from "../utils/text.js";
 import type { LifecycleContext, RecallResult, RecallStageResult, SessionState } from "./types.js";
-import { runRecallPipelineQuery, type RecallPipelineDeps } from "../services/recall-pipeline.js";
-import {
-  INTERACTIVE_RECALL_POLICY,
-  resolveInteractiveRecallBudgetTokens,
-} from "../services/retrieval-mode-policy.js";
+import { type RecallPipelineDeps, runRecallPipelineQuery } from "../services/recall-pipeline.js";
+import { INTERACTIVE_RECALL_POLICY, resolveInteractiveRecallBudgetTokens } from "../services/retrieval-mode-policy.js";
 
 export const RECALL_STAGE_TIMEOUT_MS = INTERACTIVE_RECALL_POLICY.stageTimeoutMs;
 
@@ -105,7 +102,9 @@ async function runRecall(
         if (hotResults.length > 0) {
           const hotLines = hotResults.map(
             (r) =>
-              `- [hot/${r.entry.category}] ${(r.entry.summary || r.entry.text).slice(0, 200)}${(r.entry.summary || r.entry.text).length > 200 ? "…" : ""}`,
+              `- [hot/${r.entry.category}] ${(r.entry.summary || r.entry.text).slice(0, 200)}${
+                (r.entry.summary || r.entry.text).length > 200 ? "…" : ""
+              }`,
           );
           hotPart = "Hot memories:\n" + hotLines.join("\n") + "\n\n";
         }
@@ -114,20 +113,25 @@ async function runRecall(
         .slice(0, degradedLimit)
         .map(
           (r) =>
-            `- [${r.backend}/${r.entry.category}] ${(r.entry.summary || r.entry.text).slice(0, 200)}${(r.entry.summary || r.entry.text).length > 200 ? "…" : ""}`,
+            `- [${r.backend}/${r.entry.category}] ${(r.entry.summary || r.entry.text).slice(0, 200)}${
+              (r.entry.summary || r.entry.text).length > 200 ? "…" : ""
+            }`,
         );
       let narrativePart = "";
       if (ctx.narrativesDb) {
         try {
           const recentNarratives = ctx.narrativesDb.listRecent(1, "session");
           if (recentNarratives.length > 0) {
-            narrativePart = `<recent-history-narratives>\n- ${recentNarratives[0].narrativeText}\n</recent-history-narratives>\n\n`;
+            narrativePart = `<recent-history-narratives>\n- ${
+              recentNarratives[0].narrativeText
+            }\n</recent-history-narratives>\n\n`;
           }
         } catch {
           // Non-fatal.
         }
       }
-      const inner = narrativePart + hotPart + (memoryLines.length ? "Recalled (FTS-only):\n" + memoryLines.join("\n") : "");
+      const inner = narrativePart + hotPart +
+        (memoryLines.length ? "Recalled (FTS-only):\n" + memoryLines.join("\n") : "");
       const block = inner ? `<recalled-context>\n${inner}\n</recalled-context>` : "";
       const degradedMarker = "<!-- recall degraded: queue -->\n";
       api.logger.debug?.(
@@ -207,7 +211,9 @@ async function runRecall(
       if (hotResults.length > 0) {
         const hotLines = hotResults.map(
           (r) =>
-            `- [hot/${r.entry.category}] ${(r.entry.summary || r.entry.text).slice(0, 200)}${(r.entry.summary || r.entry.text).length > 200 ? "…" : ""}`,
+            `- [hot/${r.entry.category}] ${(r.entry.summary || r.entry.text).slice(0, 200)}${
+              (r.entry.summary || r.entry.text).length > 200 ? "…" : ""
+            }`,
         );
         hotBlock = `<hot-memories>\n${hotLines.join("\n")}\n</hot-memories>\n\n`;
       }
@@ -272,8 +278,7 @@ async function runRecall(
 
     if (ambientCfg.enabled && ambientCfg.multiQuery) {
       try {
-        const isTopicShift =
-          ambientLastEmbedding !== null &&
+        const isTopicShift = ambientLastEmbedding !== null &&
           promptEmbedding !== null &&
           detectTopicShift(ambientLastEmbedding, promptEmbedding, ambientCfg.topicShiftThreshold ?? 0.15);
         if (isTopicShift) api.logger.info?.("memory-hybrid: topic shift detected — re-running ambient retrieval");
@@ -511,10 +516,9 @@ async function runRecall(
       }
       if (ctx.cfg.autoRecall.useImportanceRecency) {
         const importanceFactor = 0.7 + 0.3 * r.entry.importance;
-        const recencyFactor =
-          r.entry.lastConfirmedAt === 0
-            ? 1
-            : 0.8 + 0.2 * Math.max(0, 1 - (nowSec - r.entry.lastConfirmedAt) / NINETY_DAYS_SEC);
+        const recencyFactor = r.entry.lastConfirmedAt === 0
+          ? 1
+          : 0.8 + 0.2 * Math.max(0, 1 - (nowSec - r.entry.lastConfirmedAt) / NINETY_DAYS_SEC);
         s *= importanceFactor * recencyFactor;
       }
       const recallCount = r.entry.recallCount ?? 0;
@@ -538,8 +542,8 @@ async function runRecall(
     // ceiling — the injected context must not exceed either.
     const totalBudget = resolveInteractiveRecallBudgetTokens(ctx.cfg);
     // Account for issueBlock, hotBlock, and procedureBlock tokens to ensure total stays within budget
-    const fixedBlocksTokens =
-      estimateTokens(issueBlock) + estimateTokens(narrativeBlock) + estimateTokens(hotBlock) + estimateTokens(procedureBlock);
+    const fixedBlocksTokens = estimateTokens(issueBlock) + estimateTokens(narrativeBlock) + estimateTokens(hotBlock) +
+      estimateTokens(procedureBlock);
     const maxTokens = Math.max(0, totalBudget - fixedBlocksTokens);
     if (maxTokens === 0) {
       api.logger.warn?.(

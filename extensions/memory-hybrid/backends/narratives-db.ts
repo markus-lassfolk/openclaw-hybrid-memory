@@ -95,14 +95,12 @@ export class NarrativesDB {
   }
 
   listRecent(limit = 3, tag: "session" | "weekly-rollup" | "all" = "session"): NarrativeEntry[] {
-    const sql =
-      tag === "all"
-        ? "SELECT * FROM narratives ORDER BY created_at DESC LIMIT ?"
-        : "SELECT * FROM narratives WHERE tag = ? ORDER BY created_at DESC LIMIT ?";
-    const rows =
-      tag === "all"
-        ? (this.db.prepare(sql).all(limit) as NarrativeRow[])
-        : (this.db.prepare(sql).all(tag, limit) as NarrativeRow[]);
+    const sql = tag === "all"
+      ? "SELECT * FROM narratives ORDER BY created_at DESC LIMIT ?"
+      : "SELECT * FROM narratives WHERE tag = ? ORDER BY created_at DESC LIMIT ?";
+    const rows = tag === "all"
+      ? (this.db.prepare(sql).all(limit) as NarrativeRow[])
+      : (this.db.prepare(sql).all(tag, limit) as NarrativeRow[]);
     return rows.map((r) => this.rowToEntry(r));
   }
 
@@ -131,4 +129,3 @@ export class NarrativesDB {
     };
   }
 }
-

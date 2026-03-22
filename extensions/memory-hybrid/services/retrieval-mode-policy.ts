@@ -77,8 +77,9 @@ export function resolveOrchestratorBudgetTokens(
   retrievalConfig: RetrievalConfig,
   budgetOverride?: number,
 ): number {
-  const defaultBudget =
-    mode === RETRIEVAL_MODE.INTERACTIVE_RECALL ? retrievalConfig.ambientBudgetTokens : retrievalConfig.explicitBudgetTokens;
+  const defaultBudget = mode === RETRIEVAL_MODE.INTERACTIVE_RECALL
+    ? retrievalConfig.ambientBudgetTokens
+    : retrievalConfig.explicitBudgetTokens;
   const requested = budgetOverride ?? defaultBudget;
   if (mode === RETRIEVAL_MODE.INTERACTIVE_RECALL) {
     return Math.min(requested, retrievalConfig.ambientBudgetTokens);
@@ -92,4 +93,3 @@ export function resolveOrchestratorBudgetTokens(
 export function shouldSkipHydeForMode(mode: RetrievalMode, skipForInteractiveTurns: boolean): boolean {
   return mode === RETRIEVAL_MODE.INTERACTIVE_RECALL && skipForInteractiveTurns;
 }
-

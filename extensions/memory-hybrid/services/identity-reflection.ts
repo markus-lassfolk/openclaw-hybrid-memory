@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { chatCompleteWithRetry, LLMRetryError } from "./chat.js";
-import { loadPrompt, fillPrompt } from "../utils/prompt-loader.js";
+import { fillPrompt, loadPrompt } from "../utils/prompt-loader.js";
 import type { FactsDB } from "../backends/facts-db.js";
 import type OpenAI from "openai";
 import type { ScopeFilter } from "../types/memory.js";
@@ -59,10 +59,9 @@ function normalizeForDedupe(text: string): string {
 export function parseIdentityReflectionResponse(raw: string): ParsedIdentityItem[] {
   const firstBracket = raw.indexOf("[");
   const lastBracket = raw.lastIndexOf("]");
-  const json =
-    firstBracket !== -1 && lastBracket !== -1 && lastBracket >= firstBracket
-      ? raw.slice(firstBracket, lastBracket + 1)
-      : raw;
+  const json = firstBracket !== -1 && lastBracket !== -1 && lastBracket >= firstBracket
+    ? raw.slice(firstBracket, lastBracket + 1)
+    : raw;
   let parsed: unknown;
   try {
     parsed = JSON.parse(json);
@@ -77,8 +76,9 @@ export function parseIdentityReflectionResponse(raw: string): ParsedIdentityItem
     const questionKey = typeof obj.questionKey === "string" ? obj.questionKey.trim() : "";
     const insight = typeof obj.insight === "string" ? obj.insight.trim() : "";
     const durabilityRaw = typeof obj.durability === "string" ? obj.durability.trim().toLowerCase() : "";
-    const confidenceRaw =
-      typeof obj.confidence === "number" ? obj.confidence : Number.parseFloat(String(obj.confidence ?? ""));
+    const confidenceRaw = typeof obj.confidence === "number"
+      ? obj.confidence
+      : Number.parseFloat(String(obj.confidence ?? ""));
     const evidence = Array.isArray(obj.evidence)
       ? obj.evidence.filter((x): x is string => typeof x === "string").map((s) => s.trim())
       : [];
@@ -115,13 +115,19 @@ export async function runIdentityReflection(
   const windowStart = nowSec - windowDays * 24 * 3600;
   const scopeFilter = opts.scopeFilter;
 
-  const all = factsDb.getAll({ scopeFilter }).filter((f) => !f.supersededAt && (f.expiresAt === null || f.expiresAt > nowSec));
-  const patterns = all.filter((f) => f.category === "pattern" && !f.tags?.includes("meta") && f.createdAt >= windowStart);
+  const all = factsDb.getAll({ scopeFilter }).filter((f) =>
+    !f.supersededAt && (f.expiresAt === null || f.expiresAt > nowSec)
+  );
+  const patterns = all.filter((f) =>
+    f.category === "pattern" && !f.tags?.includes("meta") && f.createdAt >= windowStart
+  );
   const rules = all.filter((f) => f.category === "rule" && f.createdAt >= windowStart);
   const metas = all.filter((f) => f.category === "pattern" && f.tags?.includes("meta") && f.createdAt >= windowStart);
   const insightCount = patterns.length + rules.length + metas.length;
   if (insightCount < config.minInsights) {
-    logger.info(`memory-hybrid: reflect-identity — insufficient reflection insights (${insightCount}/${config.minInsights})`);
+    logger.info(
+      `memory-hybrid: reflect-identity — insufficient reflection insights (${insightCount}/${config.minInsights})`,
+    );
     return { insightsExtracted: 0, insightsStored: 0, questionsAsked: config.questions.length };
   }
 
@@ -195,7 +201,9 @@ export async function runIdentityReflection(
     stored++;
     if (opts.verbose) {
       logger.info(
-        `memory-hybrid: reflect-identity — stored ${item.questionKey} (${item.durability}, conf=${item.confidence.toFixed(2)})`,
+        `memory-hybrid: reflect-identity — stored ${item.questionKey} (${item.durability}, conf=${
+          item.confidence.toFixed(2)
+        })`,
       );
     }
   }

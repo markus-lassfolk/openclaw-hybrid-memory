@@ -3,14 +3,14 @@
  */
 
 import Database from "better-sqlite3";
-import { mkdirSync, readFileSync, existsSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { randomUUID } from "node:crypto";
 
-import type { MemoryCategory, DecayClass } from "../config.js";
+import type { DecayClass, MemoryCategory } from "../config.js";
 import { TTL_DEFAULTS } from "../config.js";
-import type { MemoryEntry, ProcedureEntry, SearchResult, MemoryTier, ScopeFilter } from "../types/memory.js";
-import { normalizedHash, serializeTags, parseTags } from "../utils/tags.js";
+import type { MemoryEntry, MemoryTier, ProcedureEntry, ScopeFilter, SearchResult } from "../types/memory.js";
+import { normalizedHash, parseTags, serializeTags } from "../utils/tags.js";
 import { calculateExpiry, classifyDecay } from "../utils/decay.js";
 import { computeDynamicSalience } from "../utils/salience.js";
 import { estimateTokensForDisplay } from "../utils/text.js";
@@ -21,10 +21,10 @@ import {
   batchGetReinforcementEvents as batchGetReinforcementEventsHelper,
   boostConfidence as boostConfidenceHelper,
   calculateDiversityScore as calculateDiversityScoreHelper,
+  computeDiversityFromEvents as computeDiversityFromEventsHelper,
   getReinforcementEvents as getReinforcementEventsHelper,
   reinforceFact as reinforceFactHelper,
   reinforceProcedure as reinforceProcedureHelper,
-  computeDiversityFromEvents as computeDiversityFromEventsHelper,
 } from "./facts-db/reinforcement.js";
 import {
   createLink as createLinkHelper,
@@ -846,11 +846,11 @@ export class FactsDB {
       this.liveDb
         .prepare(`SELECT id, variant_type, variant_text, created_at FROM fact_variants WHERE fact_id = ?`)
         .all(factId) as Array<{
-        id: number;
-        variant_type: string;
-        variant_text: string;
-        created_at: string;
-      }>
+          id: number;
+          variant_type: string;
+          variant_text: string;
+          created_at: string;
+        }>
     ).map((r) => ({
       id: r.id,
       variantType: r.variant_type,
@@ -928,10 +928,9 @@ export class FactsDB {
    * (by fact_embeddings.id DESC) to avoid excluding recent facts when capping for performance.
    */
   getEmbeddingsByModel(model: string, limit?: number): Array<{ factId: string; embedding: Float32Array }> {
-    const sql =
-      limit != null
-        ? `SELECT fact_id, embedding FROM fact_embeddings WHERE model = ? AND variant = 'canonical' ORDER BY id DESC LIMIT ?`
-        : `SELECT fact_id, embedding FROM fact_embeddings WHERE model = ? AND variant = 'canonical'`;
+    const sql = limit != null
+      ? `SELECT fact_id, embedding FROM fact_embeddings WHERE model = ? AND variant = 'canonical' ORDER BY id DESC LIMIT ?`
+      : `SELECT fact_id, embedding FROM fact_embeddings WHERE model = ? AND variant = 'canonical'`;
     const rows = (
       limit != null ? this.liveDb.prepare(sql).all(model, limit) : this.liveDb.prepare(sql).all(model)
     ) as Array<{ fact_id: string; embedding: Buffer }>;
@@ -1356,12 +1355,11 @@ export class FactsDB {
     const successCount = entry.successCount ?? 0;
     const lastValidated = entry.lastValidated ?? null;
     const sourceSessionsRaw = entry.sourceSessions ?? null;
-    const sourceSessionsStr =
-      sourceSessionsRaw == null
-        ? null
-        : typeof sourceSessionsRaw === "string"
-          ? sourceSessionsRaw
-          : JSON.stringify(sourceSessionsRaw);
+    const sourceSessionsStr = sourceSessionsRaw == null
+      ? null
+      : typeof sourceSessionsRaw === "string"
+      ? sourceSessionsRaw
+      : JSON.stringify(sourceSessionsRaw);
     const provenanceSession = entry.provenanceSession ?? null;
     const sourceTurn = entry.sourceTurn ?? null;
     const extractionMethod = entry.extractionMethod ?? null;
@@ -1373,8 +1371,9 @@ export class FactsDB {
     const decayFreezeUntil = rawFreeze !== null && Number.isFinite(rawFreeze) ? rawFreeze : null;
     // Fix #1: ensure expires_at covers the full freeze period so the fact is not pruned
     // before the freeze expires
-    const adjustedExpiresAt =
-      decayFreezeUntil !== null && expiresAt !== null && expiresAt < decayFreezeUntil ? decayFreezeUntil : expiresAt;
+    const adjustedExpiresAt = decayFreezeUntil !== null && expiresAt !== null && expiresAt < decayFreezeUntil
+      ? decayFreezeUntil
+      : expiresAt;
     this.liveDb
       .prepare(
         `INSERT INTO facts (id, text, category, importance, entity, key, value, source, created_at, decay_class, expires_at, last_confirmed_at, confidence, summary, embedding_model, normalized_hash, source_date, tags, valid_from, valid_until, supersedes_id, tier, scope, scope_target, procedure_type, success_count, last_validated, source_sessions, decay_freeze_until, provenance_session, source_turn, extraction_method, extraction_confidence)
@@ -1681,12 +1680,11 @@ export class FactsDB {
 
     const nowSec = Math.floor(Date.now() / 1000);
     const expiryFilter = includeExpired ? "" : "AND (f.expires_at IS NULL OR f.expires_at > @now)";
-    const temporalFilter =
-      asOf != null
-        ? "AND f.valid_from <= @asOf AND (f.valid_until IS NULL OR f.valid_until > @asOf)"
-        : includeSuperseded
-          ? ""
-          : "AND f.superseded_at IS NULL";
+    const temporalFilter = asOf != null
+      ? "AND f.valid_from <= @asOf AND (f.valid_until IS NULL OR f.valid_until > @asOf)"
+      : includeSuperseded
+      ? ""
+      : "AND f.superseded_at IS NULL";
     const tagFilter = tag && tag.trim() ? "AND (',' || COALESCE(f.tags,'') || ',') LIKE @tagPattern" : "";
     const tagPattern = tag && tag.trim() ? `%,${tag.toLowerCase().trim()},%` : null;
     const tierFilterClause = tierFilter === "warm" ? "AND (f.tier IS NULL OR f.tier = 'warm' OR f.tier = 'hot')" : "";
@@ -1787,12 +1785,11 @@ export class FactsDB {
     const nowSec = Math.floor(Date.now() / 1000);
     const { includeSuperseded = false, asOf, scopeFilter } = options ?? {};
     const limit = typeof options?.limit === "number" && options.limit > 0 ? Math.floor(options.limit) : null;
-    const temporalFilter =
-      asOf != null
-        ? " AND valid_from <= ? AND (valid_until IS NULL OR valid_until > ?)"
-        : includeSuperseded
-          ? ""
-          : " AND superseded_at IS NULL";
+    const temporalFilter = asOf != null
+      ? " AND valid_from <= ? AND (valid_until IS NULL OR valid_until > ?)"
+      : includeSuperseded
+      ? ""
+      : " AND superseded_at IS NULL";
     const tagFilter = tag && tag.trim() ? " AND (',' || COALESCE(tags,'') || ',') LIKE ?" : "";
     const tagParam = tag && tag.trim() ? `%,${tag.toLowerCase().trim()},%` : null;
     const { clause: scopeClause, params: scopeParamsArr } = this.scopeFilterClausePositional(scopeFilter);
@@ -1808,15 +1805,15 @@ export class FactsDB {
           ? [...[entity, key, nowSec, asOf, asOf, tagParam], ...scopeParamsArr]
           : [...[entity, key, nowSec, tagParam], ...scopeParamsArr]
         : asOf != null
-          ? [...[entity, key, nowSec, asOf, asOf], ...scopeParamsArr]
-          : [...[entity, key, nowSec], ...scopeParamsArr]
+        ? [...[entity, key, nowSec, asOf, asOf], ...scopeParamsArr]
+        : [...[entity, key, nowSec], ...scopeParamsArr]
       : tagParam !== null
-        ? asOf != null
-          ? [...[entity, nowSec, asOf, asOf, tagParam], ...scopeParamsArr]
-          : [...[entity, nowSec, tagParam], ...scopeParamsArr]
-        : asOf != null
-          ? [...[entity, nowSec, asOf, asOf], ...scopeParamsArr]
-          : [...[entity, nowSec], ...scopeParamsArr];
+      ? asOf != null
+        ? [...[entity, nowSec, asOf, asOf, tagParam], ...scopeParamsArr]
+        : [...[entity, nowSec, tagParam], ...scopeParamsArr]
+      : asOf != null
+      ? [...[entity, nowSec, asOf, asOf], ...scopeParamsArr]
+      : [...[entity, nowSec], ...scopeParamsArr];
     const finalParams = limit ? [...params, limit] : params;
     const rows = this.liveDb.prepare(base).all(...finalParams) as Array<Record<string, unknown>>;
 
@@ -2079,8 +2076,7 @@ export class FactsDB {
       const scope = entry.scope ?? "global";
       if (scope === "global") return entry;
       const target = entry.scopeTarget ?? null;
-      const matches =
-        (scope === "user" && (scopeFilter.userId ?? null) === target) ||
+      const matches = (scope === "user" && (scopeFilter.userId ?? null) === target) ||
         (scope === "agent" && (scopeFilter.agentId ?? null) === target) ||
         (scope === "session" && (scopeFilter.sessionId ?? null) === target);
       if (!matches) return null;
@@ -2176,12 +2172,11 @@ export class FactsDB {
   getAll(options?: { includeSuperseded?: boolean; asOf?: number; scopeFilter?: ScopeFilter | null }): MemoryEntry[] {
     const nowSec = Math.floor(Date.now() / 1000);
     const { includeSuperseded = false, asOf, scopeFilter } = options ?? {};
-    const temporalFilter =
-      asOf != null
-        ? " AND valid_from <= ? AND (valid_until IS NULL OR valid_until > ?)"
-        : includeSuperseded
-          ? ""
-          : " AND superseded_at IS NULL";
+    const temporalFilter = asOf != null
+      ? " AND valid_from <= ? AND (valid_until IS NULL OR valid_until > ?)"
+      : includeSuperseded
+      ? ""
+      : " AND superseded_at IS NULL";
     const { clause: scopeClause, params: scopeParams } = this.scopeFilterClausePositional(scopeFilter);
     const params = asOf != null ? [...[nowSec, asOf, asOf], ...scopeParams] : [...[nowSec], ...scopeParams];
     const rows = this.liveDb
@@ -2628,14 +2623,13 @@ export class FactsDB {
       entity: row.entity ?? null,
       key: row.key ?? null,
       value: row.value ?? null,
-      tags:
-        typeof row.tags === "string"
-          ? (row.tags || "")
-              .split(",")
-              .map((t: string) => t.trim())
-              .filter(Boolean)
-              .join(",")
-          : "",
+      tags: typeof row.tags === "string"
+        ? (row.tags || "")
+          .split(",")
+          .map((t: string) => t.trim())
+          .filter(Boolean)
+          .join(",")
+        : "",
       tier: (row.tier as string) || "warm",
       decay_class: (row.decay_class as string) || "stable",
       scope: (row.scope as string) || "global",
@@ -2720,11 +2714,11 @@ export class FactsDB {
            LIMIT ?`,
         )
         .all(limit) as Array<{
-        task_pattern: string;
-        recipe_json: string;
-        procedure_type: "positive" | "negative";
-        confidence: number;
-      }>;
+          task_pattern: string;
+          recipe_json: string;
+          procedure_type: "positive" | "negative";
+          confidence: number;
+        }>;
       return rows.map((r) => ({
         taskPattern: r.task_pattern,
         recipeJson: r.recipe_json,
@@ -3157,7 +3151,8 @@ export class FactsDB {
     try {
       // Apply scope filter to procedures search
       const { clause: scopeClause, params: scopeParams } = this.scopeFilterClausePositional(scopeFilter);
-      const baseSql = `SELECT p.*, bm25(procedures_fts) as fts_score FROM procedures p JOIN procedures_fts fts ON p.rowid = fts.rowid WHERE procedures_fts MATCH ?${scopeClause} ORDER BY p.procedure_type DESC, bm25(procedures_fts) LIMIT ?`;
+      const baseSql =
+        `SELECT p.*, bm25(procedures_fts) as fts_score FROM procedures p JOIN procedures_fts fts ON p.rowid = fts.rowid WHERE procedures_fts MATCH ?${scopeClause} ORDER BY p.procedure_type DESC, bm25(procedures_fts) LIMIT ?`;
       const rows = this.liveDb.prepare(baseSql).all(safeQuery, ...scopeParams, limit * 2) as Array<
         Record<string, unknown>
       >;
@@ -3268,10 +3263,9 @@ export class FactsDB {
         // Recency factor (decay over 30 days, min 0.3)
         const lastActive = proc.lastValidated ?? proc.createdAt;
         const ageSeconds = nowSec - lastActive;
-        const recencyFactor =
-          ageSeconds > RECENCY_WINDOW
-            ? MIN_RECENCY_FACTOR
-            : Math.max(MIN_RECENCY_FACTOR, 1 - ageSeconds / RECENCY_WINDOW);
+        const recencyFactor = ageSeconds > RECENCY_WINDOW
+          ? MIN_RECENCY_FACTOR
+          : Math.max(MIN_RECENCY_FACTOR, 1 - ageSeconds / RECENCY_WINDOW);
 
         // Success rate (50-100% weight based on successCount/failureCount)
         const totalTrials = proc.successCount + proc.failureCount;
@@ -3726,9 +3720,7 @@ export class FactsDB {
   ): MemoryEntry[] {
     const nowSec = Math.floor(Date.now() / 1000);
     const scopeClause = scope
-      ? scopeTarget != null
-        ? "AND scope = ? AND scope_target = ?"
-        : "AND scope = ? AND scope_target IS NULL"
+      ? scopeTarget != null ? "AND scope = ? AND scope_target = ?" : "AND scope = ? AND scope_target IS NULL"
       : "";
     const baseParams: unknown[] = [entity, key, value, excludeFactId, nowSec];
     const scopeParams: unknown[] = scope ? (scopeTarget != null ? [scope, scopeTarget] : [scope]) : [];
@@ -3829,11 +3821,11 @@ export class FactsDB {
   getContradictions(factId?: string): ContradictionRecord[] {
     const rows = factId
       ? (this.liveDb
-          .prepare(`SELECT * FROM contradictions WHERE fact_id_new = ? OR fact_id_old = ? ORDER BY detected_at DESC`)
-          .all(factId, factId) as Array<Record<string, unknown>>)
+        .prepare(`SELECT * FROM contradictions WHERE fact_id_new = ? OR fact_id_old = ? ORDER BY detected_at DESC`)
+        .all(factId, factId) as Array<Record<string, unknown>>)
       : (this.liveDb
-          .prepare(`SELECT * FROM contradictions WHERE resolved = 0 ORDER BY detected_at DESC`)
-          .all() as Array<Record<string, unknown>>);
+        .prepare(`SELECT * FROM contradictions WHERE resolved = 0 ORDER BY detected_at DESC`)
+        .all() as Array<Record<string, unknown>>);
     return rows.map((r) => ({
       id: r.id as string,
       factIdNew: r.fact_id_new as string,
@@ -4208,9 +4200,7 @@ export class FactsDB {
     if (entity?.trim() && key?.trim()) {
       const nowSec = Math.floor(Date.now() / 1000);
       const scopeClause = scope
-        ? scopeTarget != null
-          ? "AND scope = ? AND scope_target = ?"
-          : "AND scope = ? AND scope_target IS NULL"
+        ? scopeTarget != null ? "AND scope = ? AND scope_target = ?" : "AND scope = ? AND scope_target IS NULL"
         : "";
       const baseParams: unknown[] = [entity.trim(), key.trim(), newFactId, nowSec];
       const scopeParams: unknown[] = scope ? (scopeTarget != null ? [scope, scopeTarget] : [scope]) : [];
@@ -4227,12 +4217,11 @@ export class FactsDB {
         )
         .all(...baseParams, ...scopeParams) as Array<Record<string, unknown>>;
 
-      const newVal =
-        ((
-          this.liveDb.prepare(`SELECT value FROM facts WHERE id = ?`).get(newFactId) as
-            | { value: string | null }
-            | undefined
-        )?.value as string) ?? null;
+      const newVal = ((
+        this.liveDb.prepare(`SELECT value FROM facts WHERE id = ?`).get(newFactId) as
+          | { value: string | null }
+          | undefined
+      )?.value as string) ?? null;
 
       // Skip supersession entirely when new fact has no value — a valueless fact
       // cannot meaningfully supersede an existing value.

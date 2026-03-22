@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -125,4 +125,3 @@ describe("buildDailyNarrative", () => {
     expect(narrativesDb.listRecent(5, "session").length).toBe(0);
   });
 });
-

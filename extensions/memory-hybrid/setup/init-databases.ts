@@ -1,6 +1,6 @@
 /** @module init-databases — Provider routing, cost instrumentation, and database bootstrap. */
 import { dirname, join } from "node:path";
-import { existsSync, readFileSync, constants } from "node:fs";
+import { constants, existsSync, readFileSync } from "node:fs";
 import { open } from "node:fs/promises";
 import OpenAI from "openai";
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk";
@@ -15,23 +15,23 @@ import { WriteAheadLog } from "../backends/wal.js";
 import { createEmbeddingProvider, type EmbeddingProvider } from "../services/embeddings.js";
 import { buildEmbeddingRegistry, type EmbeddingRegistry } from "../services/embedding-registry.js";
 import type {
-  HybridMemoryConfig,
-  LLMProviderConfig,
   CredentialType,
   EmbeddingModelConfig,
+  HybridMemoryConfig,
+  LLMProviderConfig,
   ResolvedGatewayAuthConfig,
 } from "../config.js";
 import { UnconfiguredProviderError } from "../services/chat.js";
 import { hasOAuthProfiles } from "../utils/auth.js";
 import {
-  isOAuthInBackoff,
-  recordOAuthFailure,
   DEFAULT_BACKOFF_MINUTES,
   DEFAULT_RESET_AFTER_HOURS,
+  isOAuthInBackoff,
+  recordOAuthFailure,
 } from "../utils/auth-failover.js";
 import { setKeywordsPath } from "../utils/language-keywords.js";
-import { setMemoryCategories, getMemoryCategories } from "../config.js";
-import { migrateCredentialsToVault, CREDENTIAL_REDACTION_MIGRATION_FLAG } from "../services/credential-migration.js";
+import { getMemoryCategories, setMemoryCategories } from "../config.js";
+import { CREDENTIAL_REDACTION_MIGRATION_FLAG, migrateCredentialsToVault } from "../services/credential-migration.js";
 import { runEmbeddingMaintenance } from "../services/embedding-migration.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { getCurrentCostFeature } from "../services/cost-context.js";
@@ -45,7 +45,7 @@ import { ToolProposalStore } from "../backends/tool-proposal-store.js";
 import { VerificationStore } from "../services/verification-store.js";
 import { CostTracker } from "../backends/cost-tracker.js";
 import { ApitapStore } from "../backends/apitap-store.js";
-import { isNanoModel, isHeavyModel, isLightModel } from "../utils/model-tier.js";
+import { isHeavyModel, isLightModel, isNanoModel } from "../utils/model-tier.js";
 
 /**
  * Provider prefixes that resolveClient() handles natively without explicit llm.providers config.
@@ -69,8 +69,9 @@ function extractGatewayConfig(cfg: HybridMemoryConfig): {
   const gatewayPort = gatewayPortRaw ? Number.parseInt(gatewayPortRaw, 10) : undefined;
   const gatewayAuthResolved = (cfg.gateway?.auth as ResolvedGatewayAuthConfig | undefined)?._resolvedToken;
   const gatewayToken = gatewayAuthResolved ?? process.env.OPENCLAW_GATEWAY_TOKEN;
-  const gatewayBaseUrl =
-    gatewayPort && gatewayPort >= 1 && gatewayPort <= 65535 ? `http://127.0.0.1:${gatewayPort}/v1` : undefined;
+  const gatewayBaseUrl = gatewayPort && gatewayPort >= 1 && gatewayPort <= 65535
+    ? `http://127.0.0.1:${gatewayPort}/v1`
+    : undefined;
   return {
     gatewayPortRaw,
     gatewayPort,
@@ -159,8 +160,9 @@ function inferFeatureLabel(body: Record<string, unknown>, _model: string): strin
     content.includes("identify behavioral patterns") ||
     content.includes("synthesizing behavioral patterns") ||
     content.includes("interaction history to identify")
-  )
+  ) {
     return "reflection";
+  }
 
   // self-correction-analyze.txt: "You are a self-improvement analyst"
   // self-correction-rewrite-tools.txt: "You are an editor for a behavioral instructions file"
@@ -168,12 +170,14 @@ function inferFeatureLabel(body: Record<string, unknown>, _model: string): strin
     content.includes("self-improvement analyst") ||
     content.includes("self-correction") ||
     content.includes("behavioral instructions file")
-  )
+  ) {
     return "self-correction";
+  }
 
   // reinforcement-analyze.txt: "You are a positive-reinforcement analyst"
-  if (content.includes("positive-reinforcement analyst") || content.includes("positive reinforcement analyst"))
+  if (content.includes("positive-reinforcement analyst") || content.includes("positive reinforcement analyst")) {
     return "reinforcement-extract";
+  }
 
   // analyze-feedback-phrases.txt: "analyzing chat logs to discover how this specific user expresses"
   if (content.includes("implicit") && content.includes("feedback")) return "implicit-feedback";
@@ -183,8 +187,9 @@ function inferFeatureLabel(body: Record<string, unknown>, _model: string): strin
   if (content.includes("trajectory analyst")) return "trajectory-analysis";
 
   // frustration detection: looks for frustration keywords in analysis context
-  if (content.includes("frustration") && (content.includes("detect") || content.includes("analys")))
+  if (content.includes("frustration") && (content.includes("detect") || content.includes("analys"))) {
     return "frustration-detection";
+  }
 
   // cross-agent-generalize.txt: "identify which of these lessons are general enough"
   if (content.includes("cross-agent") || content.includes("lessons are general enough")) return "cross-agent-learning";
@@ -209,8 +214,9 @@ function inferFeatureLabel(body: Record<string, unknown>, _model: string): strin
   if (
     content.includes("persona file update proposals") ||
     (content.includes("persona") && content.includes("proposal"))
-  )
+  ) {
     return "persona-proposals";
+  }
 
   // continuous verification
   if (content.includes("continuous") && content.includes("verification")) return "continuous-verification";
@@ -473,20 +479,20 @@ function buildMultiProviderOpenAI(
   const preferOAuthWhenBoth = cfg.auth?.preferOAuthWhenBoth !== false;
   const failoverOpts = authBackoffStatePath
     ? {
-        statePath: authBackoffStatePath,
-        backoffScheduleMinutes: cfg.auth?.backoffScheduleMinutes?.length
-          ? cfg.auth.backoffScheduleMinutes
-          : DEFAULT_BACKOFF_MINUTES,
-        resetBackoffAfterHours: cfg.auth?.resetBackoffAfterHours ?? DEFAULT_RESET_AFTER_HOURS,
-      }
+      statePath: authBackoffStatePath,
+      backoffScheduleMinutes: cfg.auth?.backoffScheduleMinutes?.length
+        ? cfg.auth.backoffScheduleMinutes
+        : DEFAULT_BACKOFF_MINUTES,
+      resetBackoffAfterHours: cfg.auth?.resetBackoffAfterHours ?? DEFAULT_RESET_AFTER_HOURS,
+    }
     : undefined;
 
   function hasApiKeyForProvider(prefix: string): boolean {
     const providerCfg: LLMProviderConfig | undefined = (
       cfg.llm?.providers as Record<string, LLMProviderConfig | undefined> | undefined
     )?.[prefix];
-    const hasCustomExternalBaseURL =
-      prefix === "openai" && Boolean(providerCfg?.baseURL && providerCfg.baseURL !== gatewayBaseUrl);
+    const hasCustomExternalBaseURL = prefix === "openai" &&
+      Boolean(providerCfg?.baseURL && providerCfg.baseURL !== gatewayBaseUrl);
     // Exclude gatewayToken from the check for OAuth routing decisions — we only want to detect
     // a real direct API key (llm.providers.X.apiKey, embedding.apiKey, or env var).
     const { value } = resolveProviderApiKey(prefix, providerCfg, cfg, resolveApiKey, {
@@ -653,8 +659,7 @@ function buildMultiProviderOpenAI(
       const apiKey = resolvedApiKey ?? "no-key";
       const baseURL = providerCfg?.baseURL;
       // Azure OpenAI / Foundry expect the key in the api-key header for reliable auth.
-      const isAzure =
-        typeof baseURL === "string" &&
+      const isAzure = typeof baseURL === "string" &&
         /\.openai\.azure\.com\/|\.cognitiveservices\.azure\.com\/|\.services\.ai\.azure\.com\//i.test(baseURL);
       const clientOpts: { apiKey: string; baseURL?: string; defaultHeaders?: Record<string, string> } = {
         apiKey,
@@ -736,16 +741,16 @@ function buildMultiProviderOpenAI(
                 );
               let promise: ReturnType<typeof makeCall> = ollamaBaseUrl
                 ? ((async () => {
-                    const available = await probeOllamaEndpoint(ollamaBaseUrl);
-                    if (!available) {
-                      const err = Object.assign(
-                        new Error(`Ollama not available at ${ollamaBaseUrl} (ECONNREFUSED) — try next model`),
-                        { code: "ECONNREFUSED" },
-                      );
-                      throw err;
-                    }
-                    return makeCall();
-                  })() as ReturnType<typeof makeCall>)
+                  const available = await probeOllamaEndpoint(ollamaBaseUrl);
+                  if (!available) {
+                    const err = Object.assign(
+                      new Error(`Ollama not available at ${ollamaBaseUrl} (ECONNREFUSED) — try next model`),
+                      { code: "ECONNREFUSED" },
+                    );
+                    throw err;
+                  }
+                  return makeCall();
+                })() as ReturnType<typeof makeCall>)
                 : makeCall();
               if (authType === "oauth" && failoverOpts) {
                 promise = promise.catch((err: unknown) => {
@@ -885,19 +890,19 @@ export function initializeDatabases(cfg: HybridMemoryConfig, api: ClawdbotPlugin
   // can see all available providers (issue #487 fix).
   // Check three paths: models.providers (standard), llm.providers (legacy), providers (top-level).
   const gwConfig = api.config as Record<string, unknown> | undefined;
-  const gwProviders =
-    (gwConfig?.models as Record<string, unknown> | undefined)?.providers ??
+  const gwProviders = (gwConfig?.models as Record<string, unknown> | undefined)?.providers ??
     (gwConfig?.llm as Record<string, unknown> | undefined)?.providers ??
     (gwConfig?.providers as Record<string, unknown> | undefined);
   const mergedProviderNames: string[] = [];
   const mergedProviderOriginalNames = new Map<string, string>();
-  if (!cfg.llm)
+  if (!cfg.llm) {
     (cfg as Record<string, unknown>).llm = {
       providers: {},
       default: [],
       heavy: [],
       nano: [],
     };
+  }
   const plm = cfg.llm as Record<string, unknown>;
   if (!plm.providers || typeof plm.providers !== "object") plm.providers = {};
   const prov = plm.providers as Record<string, Record<string, unknown>>;
@@ -911,14 +916,13 @@ export function initializeDatabases(cfg: HybridMemoryConfig, api: ClawdbotPlugin
       const normalizedName = name.toLowerCase();
       // Merge if: (a) no plugin entry exists, or (b) plugin entry has no apiKey — allows gateway key
       // to fill in when plugin config has a placeholder/empty key for this provider (issue #386).
-      const pluginHasKey =
-        typeof prov[normalizedName]?.apiKey === "string" && (prov[normalizedName].apiKey as string).trim().length > 0;
+      const pluginHasKey = typeof prov[normalizedName]?.apiKey === "string" &&
+        (prov[normalizedName].apiKey as string).trim().length > 0;
       if (!prov[normalizedName] || !pluginHasKey) {
         prov[normalizedName] = {
           ...prov[normalizedName],
           apiKey: rawKey.trim(),
-          baseURL:
-            prov[normalizedName]?.baseURL ??
+          baseURL: prov[normalizedName]?.baseURL ??
             (gw as Record<string, unknown>).baseURL ??
             (gw as Record<string, unknown>).base_url ??
             (gw as Record<string, unknown>).baseUrl,
@@ -931,8 +935,7 @@ export function initializeDatabases(cfg: HybridMemoryConfig, api: ClawdbotPlugin
       } else {
         // Plugin already has a key for this provider; still merge baseURL from gateway if plugin has none
         // (OpenClaw config often uses camelCase baseUrl; plugin expects baseURL).
-        const gwBase =
-          (gw as Record<string, unknown>).baseURL ??
+        const gwBase = (gw as Record<string, unknown>).baseURL ??
           (gw as Record<string, unknown>).base_url ??
           (gw as Record<string, unknown>).baseUrl;
         if (typeof gwBase === "string" && gwBase.trim() && !prov[normalizedName]?.baseURL) {
@@ -1042,14 +1045,13 @@ export function initializeDatabases(cfg: HybridMemoryConfig, api: ClawdbotPlugin
       const heavyTier = [...heavy, ...medium, ...light];
 
       // nano: cheap first — never use Opus/heavy for classify/summarize. Use nano models if present; else when heavy-only use cheap fallback; else use light then medium from agent list.
-      const nanoList =
-        nano.length > 0
-          ? [...nano, ...light, ...medium]
-          : defaultIsHeavyOnly
-            ? RECOMMENDED_CHEAP_FALLBACK
-            : light.length > 0 || medium.length > 0
-              ? [...light, ...medium]
-              : [];
+      const nanoList = nano.length > 0
+        ? [...nano, ...light, ...medium]
+        : defaultIsHeavyOnly
+        ? RECOMMENDED_CHEAP_FALLBACK
+        : light.length > 0 || medium.length > 0
+        ? [...light, ...medium]
+        : [];
 
       cfg.llm = {
         ...(cfg.llm?.localAutoStart !== undefined ? { localAutoStart: cfg.llm.localAutoStart } : {}),
@@ -1062,15 +1064,20 @@ export function initializeDatabases(cfg: HybridMemoryConfig, api: ClawdbotPlugin
         _source: "gateway",
       };
       api.logger.info?.(
-        `memory-hybrid: llm model tiers auto-derived from agents.defaults.model (default: ${(cfg.llm.default ?? []).slice(0, 3).join(", ")}${(cfg.llm.default ?? []).length > 3 ? "…" : ""}${nanoList.length > 0 ? `; nano: ${(cfg.llm.nano ?? []).slice(0, 2).join(", ")}` : ""})`,
+        `memory-hybrid: llm model tiers auto-derived from agents.defaults.model (default: ${
+          (cfg.llm.default ?? []).slice(0, 3).join(", ")
+        }${(cfg.llm.default ?? []).length > 3 ? "…" : ""}${
+          nanoList.length > 0 ? `; nano: ${(cfg.llm.nano ?? []).slice(0, 2).join(", ")}` : ""
+        })`,
       );
     }
   }
   // CostTracker — created early so proxy can instrument every chat.completions.create call (Issue #270).
   // Shares FactsDB's SQLite connection (same memory.db, avoids a second DB handle).
   // Gated on cfg.costTracking.enabled (default: true).
-  const costTracker: CostTracker | null =
-    cfg.costTracking?.enabled !== false ? new CostTracker(factsDb.getRawDb()) : null;
+  const costTracker: CostTracker | null = cfg.costTracking?.enabled !== false
+    ? new CostTracker(factsDb.getRawDb())
+    : null;
   if (costTracker) {
     api.logger.info("memory-hybrid: LLM cost tracker initialized");
   }
@@ -1154,10 +1161,9 @@ export function initializeDatabases(cfg: HybridMemoryConfig, api: ClawdbotPlugin
         if (Array.isArray(gw.models) && gw.models.length > 0) {
           for (const entry of gw.models) {
             if (!isChatEntry(entry)) continue;
-            const modelId =
-              typeof entry === "string"
-                ? entry.trim()
-                : String((entry as Record<string, unknown>).id ?? (entry as Record<string, unknown>).name ?? "").trim();
+            const modelId = typeof entry === "string"
+              ? entry.trim()
+              : String((entry as Record<string, unknown>).id ?? (entry as Record<string, unknown>).name ?? "").trim();
             if (modelId) {
               // Gateway may already use "provider/model" ids; avoid double prefix (e.g. azure-foundry/azure-foundry/model-router).
               defaultModel = modelId.includes("/") ? modelId : `${name}/${modelId}`;
@@ -1167,8 +1173,11 @@ export function initializeDatabases(cfg: HybridMemoryConfig, api: ClawdbotPlugin
         }
         // Fall back to singular defaultModel or model field (also filter non-chat models)
         if (!defaultModel) {
-          const gwModel =
-            typeof gw.defaultModel === "string" ? gw.defaultModel : typeof gw.model === "string" ? gw.model : null;
+          const gwModel = typeof gw.defaultModel === "string"
+            ? gw.defaultModel
+            : typeof gw.model === "string"
+            ? gw.model
+            : null;
           const trimmed = gwModel?.trim();
           if (trimmed && isChatEntry(gwModel)) {
             defaultModel = trimmed.includes("/") ? trimmed : `${name}/${trimmed}`;
@@ -1205,10 +1214,9 @@ export function initializeDatabases(cfg: HybridMemoryConfig, api: ClawdbotPlugin
     if (hasOllamaModels) {
       void (async () => {
         try {
-          const ollamaBase =
-            (cfg.llm?.providers as Record<string, { baseURL?: string } | undefined> | undefined)?.[
-              "ollama"
-            ]?.baseURL?.replace(/\/v1\/?$/, "") ?? OLLAMA_DEFAULT_BASE_URL;
+          const ollamaBase = (cfg.llm?.providers as Record<string, { baseURL?: string } | undefined> | undefined)?.[
+            "ollama"
+          ]?.baseURL?.replace(/\/v1\/?$/, "") ?? OLLAMA_DEFAULT_BASE_URL;
           const running = await probeOllamaEndpoint(ollamaBase);
           if (!running) {
             api.logger.info("memory-hybrid: Ollama is not running — attempting auto-start (llm.localAutoStart: true)");
@@ -1426,10 +1434,11 @@ export function initializeDatabases(cfg: HybridMemoryConfig, api: ClawdbotPlugin
         phase: "initialization",
         backend: cfg.embedding.provider,
       });
-      const hint =
-        cfg.embedding.provider === "ollama"
-          ? `Ensure Ollama is running at ${cfg.embedding.endpoint ?? "http://localhost:11434"} and model '${cfg.embedding.model}' is pulled. Run 'openclaw hybrid-mem verify' for details.`
-          : "Set a valid embedding.apiKey in plugin config and ensure the model is accessible. Run 'openclaw hybrid-mem verify' for details.";
+      const hint = cfg.embedding.provider === "ollama"
+        ? `Ensure Ollama is running at ${
+          cfg.embedding.endpoint ?? "http://localhost:11434"
+        } and model '${cfg.embedding.model}' is pulled. Run 'openclaw hybrid-mem verify' for details.`
+        : "Set a valid embedding.apiKey in plugin config and ensure the model is accessible. Run 'openclaw hybrid-mem verify' for details.";
       api.logger.error(
         `memory-hybrid: ⚠️  EMBEDDING CHECK FAILED (provider=${cfg.embedding.provider}) — ${String(e)}. ` +
           `Plugin will continue but semantic search will not work. ${hint}`,
@@ -1593,8 +1602,8 @@ export function initializeDatabases(cfg: HybridMemoryConfig, api: ClawdbotPlugin
             embeddingConfigChanged
               ? `memory-hybrid: embedding config changed (${currentEmbeddingMeta.provider}/${currentEmbeddingMeta.model}) — re-embedding existing facts...`
               : vectorDb.wasRepaired
-                ? "memory-hybrid: VectorDB was auto-repaired — re-embedding existing facts from SQLite..."
-                : "memory-hybrid: resuming re-embedding after hot reload...",
+              ? "memory-hybrid: VectorDB was auto-repaired — re-embedding existing facts from SQLite..."
+              : "memory-hybrid: resuming re-embedding after hot reload...",
           );
           const facts = factsDb.getAll({ includeSuperseded: false });
           let reembedded = completedIds.size;

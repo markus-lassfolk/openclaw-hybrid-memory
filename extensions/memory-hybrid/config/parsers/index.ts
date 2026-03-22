@@ -1,79 +1,79 @@
-import { setMemoryCategories, getMemoryCategories, PRESET_OVERRIDES } from "../utils.js";
+import { getMemoryCategories, PRESET_OVERRIDES, setMemoryCategories } from "../utils.js";
 import { versionInfo } from "../../versionInfo.js";
 import { isVersionAtLeast } from "../../utils/version-check.js";
-import type { HybridMemoryConfig, EmbeddingModelConfig, ConfigMode } from "../types/index.js";
+import type { ConfigMode, EmbeddingModelConfig, HybridMemoryConfig } from "../types/index.js";
 import { pluginLogger } from "../../utils/logger.js";
 import {
-  DEFAULT_MODEL,
   DEFAULT_LANCE_PATH,
+  DEFAULT_MODEL,
   DEFAULT_SQLITE_PATH,
   EMBEDDING_DIMENSIONS,
   OPENAI_MODELS,
+  parseActiveTaskConfig,
+  parseAuthConfig,
+  parseCredentialsConfig,
+  parseEventLogConfig,
+  parseGatewayConfig,
+  parseLLMConfig,
+  parsePathConfig,
+  parseSelfCorrectionConfig,
+  parseStoreConfig,
+  parseVectorConfig,
+  parseWALConfig,
   resolveEnvVars,
   resolveSecretRef,
-  parseStoreConfig,
-  parseWALConfig,
-  parseEventLogConfig,
-  parsePathConfig,
-  parseVectorConfig,
-  parseCredentialsConfig,
-  parseActiveTaskConfig,
-  parseSelfCorrectionConfig,
-  parseLLMConfig,
-  parseGatewayConfig,
-  parseAuthConfig,
 } from "./core.js";
 import {
   parseAutoClassifyConfig,
   parseAutoRecallConfig,
-  parseRetrievalConfig,
-  parseSearchConfig,
+  parseContextualVariantsConfig,
   parseQueryExpansionConfig,
   parseRerankingConfig,
-  parseContextualVariantsConfig,
+  parseRetrievalConfig,
+  parseSearchConfig,
 } from "./retrieval.js";
 import {
-  parsePassiveObserverConfig,
-  parseReflectionConfig,
-  parseIdentityReflectionConfig,
-  parseProceduresConfig,
   parseExtractionConfig,
+  parseIdentityReflectionConfig,
+  parsePassiveObserverConfig,
+  parseProceduresConfig,
+  parseReflectionConfig,
 } from "./capture.js";
 import {
-  parseVerificationConfig,
-  parseProvenanceConfig,
-  parseNightlyCycleConfig,
   parseHealthConfig,
   parseMaintenanceConfig,
+  parseNightlyCycleConfig,
+  parseProvenanceConfig,
+  parseVerificationConfig,
 } from "./maintenance.js";
 import { parseSensorSweepConfig } from "./sensors.js";
 import {
+  parseAliasesConfig,
+  parseAmbientConfig,
+  parseApiTapConfig,
+  parseClosedLoopConfig,
+  parseClustersConfig,
+  parseCostTrackingConfig,
+  parseCrossAgentLearningConfig,
+  parseCrystallizationConfig,
+  parseDashboardConfig,
+  parseDocumentsConfig,
+  parseErrorReportingConfig,
+  parseFrustrationDetectionConfig,
+  parseFutureDateProtectionConfig,
+  parseGapsConfig,
   parseGraphConfig,
   parseGraphRetrievalConfig,
-  parseClustersConfig,
-  parseGapsConfig,
-  parseAliasesConfig,
+  parseHumanizerConfig,
+  parseImplicitFeedbackConfig,
   parseIngestConfig,
   parseMemoryTieringConfig,
-  parseAmbientConfig,
-  parseReinforcementConfig,
-  parseFutureDateProtectionConfig,
-  parseDocumentsConfig,
-  parsePersonaProposalsConfig,
   parseMultiAgentConfig,
-  parseErrorReportingConfig,
-  parseWorkflowTrackingConfig,
-  parseCrystallizationConfig,
+  parsePersonaProposalsConfig,
+  parseReinforcementConfig,
   parseSelfExtensionConfig,
-  parseImplicitFeedbackConfig,
-  parseClosedLoopConfig,
-  parseFrustrationDetectionConfig,
-  parseCrossAgentLearningConfig,
   parseToolEffectivenessConfig,
-  parseCostTrackingConfig,
-  parseDashboardConfig,
-  parseApiTapConfig,
-  parseHumanizerConfig,
+  parseWorkflowTrackingConfig,
 } from "./features.js";
 
 /** Deep-merge: base + overrides (overrides win). Used to apply preset then user config. */
@@ -136,8 +136,9 @@ function deepEqual(a: unknown, b: unknown): boolean {
 /** True if user value explicitly overrides a preset key (same key, different value). Extra keys in user (e.g. encryptionKey) do not count. */
 function userOverridesPresetValue(userVal: unknown, presetVal: unknown): boolean {
   if (presetVal !== undefined && presetVal !== null && typeof presetVal === "object" && !Array.isArray(presetVal)) {
-    if (userVal === undefined || userVal === null || typeof userVal !== "object" || Array.isArray(userVal))
+    if (userVal === undefined || userVal === null || typeof userVal !== "object" || Array.isArray(userVal)) {
       return false;
+    }
     const u = userVal as Record<string, unknown>;
     const p = presetVal as Record<string, unknown>;
     for (const key of Object.keys(p)) {
@@ -175,10 +176,9 @@ function applyPhase1CoreOnlyMigration(cfg: Record<string, unknown>): void {
   ];
   for (const key of forceDisabledKeys) {
     const existing = cfg[key];
-    const base =
-      typeof existing === "object" && existing !== null && !Array.isArray(existing)
-        ? (existing as Record<string, unknown>)
-        : {};
+    const base = typeof existing === "object" && existing !== null && !Array.isArray(existing)
+      ? (existing as Record<string, unknown>)
+      : {};
     (cfg as Record<string, unknown>)[key] = { ...base, enabled: false };
   }
   const g = cfg.graph as Record<string, unknown> | undefined;
@@ -265,11 +265,11 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
     cfg.llm as { providers?: Record<string, { apiKey?: string; baseURL?: string }> } | undefined
   )?.providers;
   const distillApiKeyRaw = typeof distillForEmbed?.apiKey === "string" ? distillForEmbed.apiKey.trim() : "";
-  const llmGoogleApiKeyRaw =
-    typeof llmProvidersForEmbed?.google?.apiKey === "string" ? llmProvidersForEmbed.google.apiKey.trim() : "";
+  const llmGoogleApiKeyRaw = typeof llmProvidersForEmbed?.google?.apiKey === "string"
+    ? llmProvidersForEmbed.google.apiKey.trim()
+    : "";
   const azureFoundryForEmbed = llmProvidersForEmbed?.["azure-foundry"];
-  const hasAzureFoundryForEmbed =
-    azureFoundryForEmbed &&
+  const hasAzureFoundryForEmbed = azureFoundryForEmbed &&
     typeof azureFoundryForEmbed.apiKey === "string" &&
     azureFoundryForEmbed.apiKey.trim().length >= 10 &&
     typeof azureFoundryForEmbed.baseURL === "string" &&
@@ -289,8 +289,7 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
   } else {
     // Infer provider when omitted: openai if apiKey + OpenAI model; google if no openai/ollama but have google key; else ollama.
     const rawApiKey = embedding && typeof embedding.apiKey === "string" ? (embedding.apiKey as string).trim() : "";
-    const hasApiKey =
-      rawApiKey &&
+    const hasApiKey = rawApiKey &&
       (rawApiKey.startsWith("env:") || rawApiKey.startsWith("file:") || rawApiKey.length >= 10) &&
       rawApiKey !== "YOUR_OPENAI_API_KEY" &&
       rawApiKey !== "<OPENAI_API_KEY>";
@@ -298,7 +297,7 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
     const llm = cfg.llm as { nano?: string[]; default?: string[]; heavy?: string[] } | undefined;
     const llmListsForProvider = [llm?.nano, llm?.default, llm?.heavy].filter(Array.isArray) as string[][];
     const hasOllamaInLlmForProvider = llmListsForProvider.some((list) =>
-      list.some((m) => typeof m === "string" && (m as string).startsWith("ollama/")),
+      list.some((m) => typeof m === "string" && (m as string).startsWith("ollama/"))
     );
     if (hasApiKey && modelStr && isOpenAIModel(modelStr)) {
       embeddingProvider = "openai";
@@ -323,8 +322,7 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
     const rawEmbedKey = embedding && typeof embedding.apiKey === "string" ? (embedding.apiKey as string).trim() : "";
     const azureFoundry = (cfg.llm as { providers?: Record<string, { apiKey?: string; baseURL?: string }> } | undefined)
       ?.providers?.["azure-foundry"];
-    const hasAzureFoundry =
-      azureFoundry &&
+    const hasAzureFoundry = azureFoundry &&
       typeof azureFoundry.apiKey === "string" &&
       azureFoundry.apiKey.trim().length >= 10 &&
       typeof azureFoundry.baseURL === "string" &&
@@ -356,8 +354,9 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
       resolvedApiKey = resolvedKey;
     } else if (hasAzureFoundry) {
       const rawKey = azureFoundry!.apiKey!.trim();
-      const resolvedKey =
-        rawKey.startsWith("env:") || rawKey.startsWith("file:") ? resolveSecretRef(rawKey) : resolveEnvVars(rawKey);
+      const resolvedKey = rawKey.startsWith("env:") || rawKey.startsWith("file:")
+        ? resolveSecretRef(rawKey)
+        : resolveEnvVars(rawKey);
       if (!resolvedKey || resolvedKey.length < 10) {
         throw new Error(
           'embedding (openai) with llm.providers["azure-foundry"]: apiKey could not be resolved or is invalid. Set embedding.apiKey or fix the azure-foundry key.',
@@ -412,22 +411,21 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
   // Resolve model from explicit 'model' field or provider-specific aliases (ollamaModel, onnxModelPath)
   const primaryModelStr = typeof embedding?.model === "string" ? embedding.model.trim() : "";
   const ollamaModelAlias = typeof embedding?.ollamaModel === "string" ? (embedding.ollamaModel as string).trim() : "";
-  const onnxModelPathAlias =
-    typeof embedding?.onnxModelPath === "string" ? (embedding.onnxModelPath as string).trim() : "";
-  const resolvedModelStr =
-    primaryModelStr ||
+  const onnxModelPathAlias = typeof embedding?.onnxModelPath === "string"
+    ? (embedding.onnxModelPath as string).trim()
+    : "";
+  const resolvedModelStr = primaryModelStr ||
     (embeddingProvider === "ollama" ? ollamaModelAlias : "") ||
     (embeddingProvider === "onnx" ? onnxModelPathAlias : "") ||
     "";
 
   // Validate that model is specified for non-OpenAI providers
   if (embeddingProvider !== "openai" && !resolvedModelStr) {
-    const fieldHint =
-      embeddingProvider === "ollama"
-        ? "embedding.model (or embedding.ollamaModel)"
-        : embeddingProvider === "onnx"
-          ? "embedding.model (or embedding.onnxModelPath)"
-          : "embedding.model";
+    const fieldHint = embeddingProvider === "ollama"
+      ? "embedding.model (or embedding.ollamaModel)"
+      : embeddingProvider === "onnx"
+      ? "embedding.model (or embedding.onnxModelPath)"
+      : "embedding.model";
     throw new Error(
       `${fieldHint} is required when provider='${embeddingProvider}'. Specify the model name (e.g., 'nomic-embed-text' for Ollama).`,
     );
@@ -435,8 +433,8 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
   const singleModel = resolvedModelStr || DEFAULT_MODEL;
   const modelsRaw = Array.isArray(embedding?.models)
     ? (embedding.models as string[])
-        .filter((m) => typeof m === "string" && (m as string).trim().length > 0)
-        .map((m) => (m as string).trim())
+      .filter((m) => typeof m === "string" && (m as string).trim().length > 0)
+      .map((m) => (m as string).trim())
     : [];
   let embeddingModels: string[] | undefined;
   // Parse models for all providers (#6): for openai, these are the model preference list;
@@ -477,8 +475,9 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
   let model = embeddingProvider === "openai" ? (embeddingModels?.[0] ?? singleModel) : singleModel;
 
   // Resolve vector dimensions: explicit config takes priority, then look up from known models
-  const configDimensions =
-    typeof embedding?.dimensions === "number" && embedding.dimensions > 0 ? embedding.dimensions : undefined;
+  const configDimensions = typeof embedding?.dimensions === "number" && embedding.dimensions > 0
+    ? embedding.dimensions
+    : undefined;
   let resolvedDimensions: number;
   if (configDimensions !== undefined) {
     resolvedDimensions = configDimensions;
@@ -529,19 +528,23 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
       );
     } else {
       throw new Error(
-        `memory-hybrid: embedding.dimensions is ${configDimensions} but model '${model}' supports at most ${vectorDimsForModel(model)}. ` +
-          `Set embedding.model to a model that supports ${configDimensions} dimensions (e.g. text-embedding-3-large for 3072) or set dimensions to ${vectorDimsForModel(model)}.`,
+        `memory-hybrid: embedding.dimensions is ${configDimensions} but model '${model}' supports at most ${
+          vectorDimsForModel(model)
+        }. ` +
+          `Set embedding.model to a model that supports ${configDimensions} dimensions (e.g. text-embedding-3-large for 3072) or set dimensions to ${
+            vectorDimsForModel(model)
+          }.`,
       );
     }
   }
 
-  const resolvedEndpoint =
-    embeddingEndpointOverride ??
+  const resolvedEndpoint = embeddingEndpointOverride ??
     (typeof embedding?.endpoint === "string" && embedding.endpoint.trim().length > 0
       ? embedding.endpoint.trim()
       : undefined);
-  const resolvedBatchSize =
-    typeof embedding?.batchSize === "number" && embedding.batchSize > 0 ? Math.floor(embedding.batchSize) : 50;
+  const resolvedBatchSize = typeof embedding?.batchSize === "number" && embedding.batchSize > 0
+    ? Math.floor(embedding.batchSize)
+    : 50;
 
   // preferredProviders: explicit list or infer from LLM config (align with failover / Ollama-as-tier)
   const preferredProvidersRaw = embedding?.preferredProviders;
@@ -571,13 +574,11 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
   // back to llmGoogleApiKeyRaw so a short/malformed distill.apiKey never silently blocks a valid llm google key
   // (Issues #2921626579 / #2921640291 / #2921658704 — reuses already-computed trimmed vars, avoids IIFE).
   const rawGoogleKey = looksLikeSecretRefOrKey(distillApiKeyRaw) ? distillApiKeyRaw : llmGoogleApiKeyRaw;
-  const resolvedGoogleApiKey =
-    (preferredProviders.includes("google") || embeddingProvider === "google") && hasGoogleKey
-      ? resolveSecretRef(rawGoogleKey)
-      : undefined;
+  const resolvedGoogleApiKey = (preferredProviders.includes("google") || embeddingProvider === "google") && hasGoogleKey
+    ? resolveSecretRef(rawGoogleKey)
+    : undefined;
   if (embeddingProvider === "google" && (!resolvedGoogleApiKey || resolvedGoogleApiKey.length < 10)) {
-    const isSecretRef =
-      rawGoogleKey.startsWith("env:") ||
+    const isSecretRef = rawGoogleKey.startsWith("env:") ||
       rawGoogleKey.startsWith("file:") ||
       (rawGoogleKey.includes("${") && rawGoogleKey.includes("}"));
     const hint = isSecretRef
@@ -592,28 +593,28 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
   const multiModelRoles = ["general", "domain", "query", "custom"] as const;
   const parsedMultiModels: EmbeddingModelConfig[] = Array.isArray(multiModelsRaw)
     ? (multiModelsRaw as unknown[])
-        .filter((item): item is EmbeddingModelConfig => {
-          if (!item || typeof item !== "object") return false;
-          const o = item as Record<string, unknown>;
-          if (typeof o.name !== "string" || o.name.trim().length === 0) return false;
-          if (!multiModelProviders.includes(o.provider as "openai" | "ollama" | "onnx")) return false;
-          if (typeof o.dimensions !== "number" || o.dimensions <= 0) return false;
-          if (!multiModelRoles.includes(o.role as "general" | "domain" | "query" | "custom")) return false;
-          return true;
-        })
-        .map((o) => ({
-          name: (o as unknown as Record<string, unknown>).name as string,
-          provider: (o as unknown as Record<string, unknown>).provider as "openai" | "ollama" | "onnx",
-          dimensions: (o as unknown as Record<string, unknown>).dimensions as number,
-          role: (o as unknown as Record<string, unknown>).role as "general" | "domain" | "query" | "custom",
-          ...(typeof (o as unknown as Record<string, unknown>).apiKey === "string"
-            ? { apiKey: (o as unknown as Record<string, unknown>).apiKey as string }
-            : {}),
-          ...(typeof (o as unknown as Record<string, unknown>).endpoint === "string"
-            ? { endpoint: (o as unknown as Record<string, unknown>).endpoint as string }
-            : {}),
-          ...((o as unknown as Record<string, unknown>).enabled === false ? { enabled: false } : {}),
-        }))
+      .filter((item): item is EmbeddingModelConfig => {
+        if (!item || typeof item !== "object") return false;
+        const o = item as Record<string, unknown>;
+        if (typeof o.name !== "string" || o.name.trim().length === 0) return false;
+        if (!multiModelProviders.includes(o.provider as "openai" | "ollama" | "onnx")) return false;
+        if (typeof o.dimensions !== "number" || o.dimensions <= 0) return false;
+        if (!multiModelRoles.includes(o.role as "general" | "domain" | "query" | "custom")) return false;
+        return true;
+      })
+      .map((o) => ({
+        name: (o as unknown as Record<string, unknown>).name as string,
+        provider: (o as unknown as Record<string, unknown>).provider as "openai" | "ollama" | "onnx",
+        dimensions: (o as unknown as Record<string, unknown>).dimensions as number,
+        role: (o as unknown as Record<string, unknown>).role as "general" | "domain" | "query" | "custom",
+        ...(typeof (o as unknown as Record<string, unknown>).apiKey === "string"
+          ? { apiKey: (o as unknown as Record<string, unknown>).apiKey as string }
+          : {}),
+        ...(typeof (o as unknown as Record<string, unknown>).endpoint === "string"
+          ? { endpoint: (o as unknown as Record<string, unknown>).endpoint as string }
+          : {}),
+        ...((o as unknown as Record<string, unknown>).enabled === false ? { enabled: false } : {}),
+      }))
     : [];
 
   // Parse custom categories
@@ -626,60 +627,54 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
     setMemoryCategories(customCategories);
   }
 
-  const captureMaxChars =
-    typeof cfg.captureMaxChars === "number" && cfg.captureMaxChars > 0 ? cfg.captureMaxChars : 5000;
+  const captureMaxChars = typeof cfg.captureMaxChars === "number" && cfg.captureMaxChars > 0
+    ? cfg.captureMaxChars
+    : 5000;
 
   const langKwRaw = cfg.languageKeywords as Record<string, unknown> | undefined;
-  const languageKeywords =
-    langKwRaw && typeof langKwRaw === "object"
-      ? {
-          autoBuild: langKwRaw.autoBuild !== false,
-          weeklyIntervalDays:
-            typeof langKwRaw.weeklyIntervalDays === "number" && langKwRaw.weeklyIntervalDays >= 1
-              ? Math.min(30, Math.floor(langKwRaw.weeklyIntervalDays))
-              : 7,
-        }
-      : { autoBuild: true, weeklyIntervalDays: 7 };
+  const languageKeywords = langKwRaw && typeof langKwRaw === "object"
+    ? {
+      autoBuild: langKwRaw.autoBuild !== false,
+      weeklyIntervalDays: typeof langKwRaw.weeklyIntervalDays === "number" && langKwRaw.weeklyIntervalDays >= 1
+        ? Math.min(30, Math.floor(langKwRaw.weeklyIntervalDays))
+        : 7,
+    }
+    : { autoBuild: true, weeklyIntervalDays: 7 };
 
   // Parse optional distill config (Gemini for session distillation)
   const distillRaw = cfg.distill as Record<string, unknown> | undefined;
-  const distill =
-    distillRaw && typeof distillRaw === "object"
-      ? {
-          apiKey: typeof distillRaw.apiKey === "string" ? distillRaw.apiKey : undefined,
-          defaultModel: typeof distillRaw.defaultModel === "string" ? distillRaw.defaultModel : undefined,
-          fallbackModels:
-            Array.isArray(distillRaw.fallbackModels) && distillRaw.fallbackModels.every((m) => typeof m === "string")
-              ? (distillRaw.fallbackModels as string[])
-              : undefined,
-          extractDirectives: distillRaw.extractDirectives !== false,
-          extractReinforcement: distillRaw.extractReinforcement !== false,
-          reinforcementBoost:
-            typeof distillRaw.reinforcementBoost === "number" &&
-            distillRaw.reinforcementBoost >= 0 &&
-            distillRaw.reinforcementBoost <= 1.0
-              ? distillRaw.reinforcementBoost
-              : 0.1,
-          reinforcementProcedureBoost:
-            typeof distillRaw.reinforcementProcedureBoost === "number" &&
-            distillRaw.reinforcementProcedureBoost >= 0 &&
-            distillRaw.reinforcementProcedureBoost <= 1.0
-              ? distillRaw.reinforcementProcedureBoost
-              : 0.1,
-          reinforcementPromotionThreshold:
-            typeof distillRaw.reinforcementPromotionThreshold === "number" &&
-            distillRaw.reinforcementPromotionThreshold >= 1
-              ? Math.floor(distillRaw.reinforcementPromotionThreshold)
-              : 2,
-          extractionModelTier: (() => {
-            const v =
-              typeof distillRaw.extractionModelTier === "string"
-                ? distillRaw.extractionModelTier.trim().toLowerCase()
-                : "";
-            return v === "nano" || v === "default" || v === "heavy" ? (v as "nano" | "default" | "heavy") : undefined;
-          })(),
-        }
-      : undefined;
+  const distill = distillRaw && typeof distillRaw === "object"
+    ? {
+      apiKey: typeof distillRaw.apiKey === "string" ? distillRaw.apiKey : undefined,
+      defaultModel: typeof distillRaw.defaultModel === "string" ? distillRaw.defaultModel : undefined,
+      fallbackModels:
+        Array.isArray(distillRaw.fallbackModels) && distillRaw.fallbackModels.every((m) => typeof m === "string")
+          ? (distillRaw.fallbackModels as string[])
+          : undefined,
+      extractDirectives: distillRaw.extractDirectives !== false,
+      extractReinforcement: distillRaw.extractReinforcement !== false,
+      reinforcementBoost: typeof distillRaw.reinforcementBoost === "number" &&
+          distillRaw.reinforcementBoost >= 0 &&
+          distillRaw.reinforcementBoost <= 1.0
+        ? distillRaw.reinforcementBoost
+        : 0.1,
+      reinforcementProcedureBoost: typeof distillRaw.reinforcementProcedureBoost === "number" &&
+          distillRaw.reinforcementProcedureBoost >= 0 &&
+          distillRaw.reinforcementProcedureBoost <= 1.0
+        ? distillRaw.reinforcementProcedureBoost
+        : 0.1,
+      reinforcementPromotionThreshold: typeof distillRaw.reinforcementPromotionThreshold === "number" &&
+          distillRaw.reinforcementPromotionThreshold >= 1
+        ? Math.floor(distillRaw.reinforcementPromotionThreshold)
+        : 2,
+      extractionModelTier: (() => {
+        const v = typeof distillRaw.extractionModelTier === "string"
+          ? distillRaw.extractionModelTier.trim().toLowerCase()
+          : "";
+        return v === "nano" || v === "default" || v === "heavy" ? (v as "nano" | "default" | "heavy") : undefined;
+      })(),
+    }
+    : undefined;
 
   return {
     embedding: {

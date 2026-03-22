@@ -15,25 +15,25 @@ import type { VectorDB } from "../backends/vector-db.js";
 import type { MemoryEntry, SearchResult } from "../types/memory.js";
 import { searchFts } from "./fts-search.js";
 import {
-  fuseResults,
   applyPostRrfAdjustments,
-  RRF_K_DEFAULT,
-  type RankedResult,
-  type FusedResult,
   type FactMetadata,
+  type FusedResult,
+  fuseResults,
+  type RankedResult,
+  RRF_K_DEFAULT,
 } from "./rrf-fusion.js";
-import type { RetrievalConfig, ClustersConfig, RerankingConfig } from "../config.js";
+import type { ClustersConfig, RerankingConfig, RetrievalConfig } from "../config.js";
 import { rerankResults, type ScoredFact } from "./reranker.js";
 import type { QueryExpander } from "./query-expander.js";
-import { searchAliasStrategy, type AliasDB } from "./retrieval-aliases.js";
-import { detectClusters, type ClusterFactLookup } from "./topic-clusters.js";
+import { type AliasDB, searchAliasStrategy } from "./retrieval-aliases.js";
+import { type ClusterFactLookup, detectClusters } from "./topic-clusters.js";
 import { expandGraph, type GraphFactLookup } from "./graph-retrieval.js";
 import type { EmbeddingRegistry } from "./embedding-registry.js";
 import { capturePluginError } from "./error-reporter.js";
 import {
   getRetrievalModePolicy,
-  RETRIEVAL_MODE,
   resolveOrchestratorBudgetTokens,
+  RETRIEVAL_MODE,
   type RetrievalMode,
 } from "./retrieval-mode-policy.js";
 
@@ -479,7 +479,9 @@ export async function runRetrievalPipeline(
   }): Promise<OrchestratorResult> => {
     const k = config.rrf_k;
     const { semanticTopK, fts5TopK } = config;
-    const strategies = modePolicy.allowGraphStrategy ? config.strategies : config.strategies.filter((s) => s !== "graph");
+    const strategies = modePolicy.allowGraphStrategy
+      ? config.strategies
+      : config.strategies.filter((s) => s !== "graph");
 
     // --- Run strategies in parallel ---
     const strategyPromises: Array<Promise<[string, RankedResult[]]>> = [];
@@ -769,23 +771,20 @@ export async function runRetrievalPipeline(
     return { fused: scopedFused, packed, packedFactIds, tokensUsed, entries: resolvedEntries };
   };
 
-  const expanderMode =
-    queryExpander && typeof (queryExpander as QueryExpander).getMode === "function"
-      ? queryExpander.getMode()
-      : queryExpander
-        ? "always"
-        : "off";
+  const expanderMode = queryExpander && typeof (queryExpander as QueryExpander).getMode === "function"
+    ? queryExpander.getMode()
+    : queryExpander
+    ? "always"
+    : "off";
 
   if (expanderMode === "conditional") {
-    const alias =
-      queryExpander && typeof (queryExpander as QueryExpander).getRuleBasedAlias === "function"
-        ? queryExpander.getRuleBasedAlias(query)
-        : null;
+    const alias = queryExpander && typeof (queryExpander as QueryExpander).getRuleBasedAlias === "function"
+      ? queryExpander.getRuleBasedAlias(query)
+      : null;
     const initial = await runOnce({ useLlm: false, variants: alias ? [alias] : [], skipReranking: true });
-    const threshold =
-      queryExpander && typeof (queryExpander as QueryExpander).getThreshold === "function"
-        ? queryExpander.getThreshold()
-        : 0.03;
+    const threshold = queryExpander && typeof (queryExpander as QueryExpander).getThreshold === "function"
+      ? queryExpander.getThreshold()
+      : 0.03;
     const topScore = initial.fused[0]?.finalScore ?? 0;
     if (topScore < threshold) {
       return runOnce({ useLlm: true, variants: null, skipReranking: false });

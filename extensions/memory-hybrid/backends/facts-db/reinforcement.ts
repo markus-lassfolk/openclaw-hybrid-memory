@@ -107,15 +107,15 @@ export function getReinforcementEvents(db: Database.Database, factId: string): R
   const rows = db
     .prepare(`SELECT * FROM reinforcement_log WHERE fact_id = ? ORDER BY occurred_at DESC`)
     .all(factId) as Array<{
-    id: string;
-    fact_id: string;
-    signal: string;
-    query_snippet: string | null;
-    topic: string | null;
-    tool_sequence: string | null;
-    session_file: string | null;
-    occurred_at: number;
-  }>;
+      id: string;
+      fact_id: string;
+      signal: string;
+      query_snippet: string | null;
+      topic: string | null;
+      tool_sequence: string | null;
+      session_file: string | null;
+      occurred_at: number;
+    }>;
   return rows.map((r) => ({
     id: r.id,
     factId: r.fact_id,
@@ -138,7 +138,7 @@ export function computeDiversityFromEvents(events: ReinforcementEvent[]): number
         .toLowerCase()
         .replace(/[^a-z0-9\s]/g, "")
         .replace(/\s+/g, " ")
-        .slice(0, 50),
+        .slice(0, 50)
     );
   if (stems.length === 0) return 1.0;
   const uniqueStems = new Set(stems).size;
@@ -154,15 +154,15 @@ export function batchGetReinforcementEvents(
   const rows = db
     .prepare(`SELECT * FROM reinforcement_log WHERE fact_id IN (${placeholders}) ORDER BY fact_id, occurred_at DESC`)
     .all(...factIds) as Array<{
-    id: string;
-    fact_id: string;
-    signal: string;
-    query_snippet: string | null;
-    topic: string | null;
-    tool_sequence: string | null;
-    session_file: string | null;
-    occurred_at: number;
-  }>;
+      id: string;
+      fact_id: string;
+      signal: string;
+      query_snippet: string | null;
+      topic: string | null;
+      tool_sequence: string | null;
+      session_file: string | null;
+      occurred_at: number;
+    }>;
   const eventsByFactId = new Map<string, ReinforcementEvent[]>();
   for (const r of rows) {
     const event: ReinforcementEvent = {

@@ -150,19 +150,20 @@ async function runInjection(
     const pinnedBudget = Math.min(maxTokens, Math.floor(maxTokens * 0.6));
     for (const x of pinned) {
       let text = useSummaryInInjection && x.entry.summary ? x.entry.summary : x.entry.text;
-      if (maxPerMemoryChars > 0 && text.length > maxPerMemoryChars)
+      if (maxPerMemoryChars > 0 && text.length > maxPerMemoryChars) {
         text = text.slice(0, maxPerMemoryChars).trim() + "…";
+      }
       const line = `- [${x.backend}/${x.entry.category}] ${text}`;
       const lineTokens = estimateTokens(line + "\n");
       if (pinnedTokens + lineTokens > pinnedBudget) break;
       pinnedPart.push(line);
       pinnedTokens += lineTokens;
     }
-    const indexIntro =
-      pinnedPart.length > 0
-        ? `\nOther memories (index — use memory_recall(id: N) or memory_recall("query") to fetch):\n`
-        : `<relevant-memories format="index">\n`;
-    const indexFooter = `\n→ Use memory_recall("query"), memory_recall(id: N), or entity/key to fetch full details.\n</relevant-memories>`;
+    const indexIntro = pinnedPart.length > 0
+      ? `\nOther memories (index — use memory_recall(id: N) or memory_recall("query") to fetch):\n`
+      : `<relevant-memories format="index">\n`;
+    const indexFooter =
+      `\n→ Use memory_recall("query"), memory_recall(id: N), or entity/key to fetch full details.\n</relevant-memories>`;
     const indexBudget = indexCap - estimateTokens(pinnedHeader + pinnedPart.join("\n") + indexIntro + indexFooter);
     if (indexBudget <= 0) {
       lastProgressiveIndexIdsRef.length = 0;
@@ -203,12 +204,13 @@ async function runInjection(
       strengthenHebbianLinks(allIds, ctx.factsDb, api.logger);
     }
     const indexContent = indexLines.join("\n");
-    const fullContent =
-      pinnedPart.length > 0
-        ? `${pinnedHeader}${pinnedPart.join("\n")}${indexIntro}${indexContent}${indexFooter}`
-        : `${indexIntro}${indexContent}${indexFooter}`;
+    const fullContent = pinnedPart.length > 0
+      ? `${pinnedHeader}${pinnedPart.join("\n")}${indexIntro}${indexContent}${indexFooter}`
+      : `${indexIntro}${indexContent}${indexFooter}`;
     api.logger.info?.(
-      `memory-hybrid: progressive_hybrid — ${pinnedPart.length} pinned in full, index of ${indexIds.length} (~${pinnedTokens + estimateTokens(indexContent)} tokens)`,
+      `memory-hybrid: progressive_hybrid — ${pinnedPart.length} pinned in full, index of ${indexIds.length} (~${
+        pinnedTokens + estimateTokens(indexContent)
+      } tokens)`,
     );
     return {
       prependContext: markDegradedLatency(wrapRecalledContext(baseContext + withProcedures(fullContent))),
@@ -217,7 +219,8 @@ async function runInjection(
 
   if (injectionFormat === "progressive") {
     const indexHeader = `<relevant-memories format="index">\n`;
-    const indexFooter = `\n→ Use memory_recall("query"), memory_recall(id: N), or entity/key to fetch full details.\n</relevant-memories>`;
+    const indexFooter =
+      `\n→ Use memory_recall("query"), memory_recall(id: N), or entity/key to fetch full details.\n</relevant-memories>`;
     const {
       lines: indexLines,
       ids: indexIds,
@@ -258,12 +261,11 @@ async function runInjection(
   for (const x of candidates) {
     let text = useSummaryInInjection && x.entry.summary ? x.entry.summary : x.entry.text;
     if (maxPerMemoryChars > 0 && text.length > maxPerMemoryChars) text = text.slice(0, maxPerMemoryChars).trim() + "…";
-    const line =
-      injectionFormat === "minimal"
-        ? `- ${text}`
-        : injectionFormat === "short"
-          ? `- ${x.entry.category}: ${text}`
-          : `- [${x.backend}/${x.entry.category}] ${text}`;
+    const line = injectionFormat === "minimal"
+      ? `- ${text}`
+      : injectionFormat === "short"
+      ? `- ${x.entry.category}: ${text}`
+      : `- [${x.backend}/${x.entry.category}] ${text}`;
     const lineTokens = estimateTokens(line + "\n");
     if (usedTokens + lineTokens > maxTokens) break;
     lines.push(line);
@@ -291,13 +293,14 @@ async function runInjection(
     const fullBullets = candidates
       .map((x) => {
         let text = useSummaryInInjection && x.entry.summary ? x.entry.summary : x.entry.text;
-        if (maxPerMemoryChars > 0 && text.length > maxPerMemoryChars)
+        if (maxPerMemoryChars > 0 && text.length > maxPerMemoryChars) {
           text = text.slice(0, maxPerMemoryChars).trim() + "…";
+        }
         return injectionFormat === "minimal"
           ? `- ${text}`
           : injectionFormat === "short"
-            ? `- ${x.entry.category}: ${text}`
-            : `- [${x.backend}/${x.entry.category}] ${text}`;
+          ? `- ${x.entry.category}: ${text}`
+          : `- [${x.backend}/${x.entry.category}] ${text}`;
       })
       .join("\n");
     try {
@@ -309,7 +312,9 @@ async function runInjection(
             messages: [
               {
                 role: "user",
-                content: `Summarize these memories into 2-3 short sentences. Preserve key facts.\n\n${fullBullets.slice(0, 4000)}`,
+                content: `Summarize these memories into 2-3 short sentences. Preserve key facts.\n\n${
+                  fullBullets.slice(0, 4000)
+                }`,
               },
             ],
             temperature: 0,

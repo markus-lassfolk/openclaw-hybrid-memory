@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
-  RETRIEVAL_MODE,
   resolveInteractiveRecallBudgetTokens,
   resolveOrchestratorBudgetTokens,
+  RETRIEVAL_MODE,
   shouldSkipHydeForMode,
 } from "../services/retrieval-mode-policy.js";
 
@@ -30,4 +30,3 @@ describe("retrieval-mode-policy", () => {
     expect(shouldSkipHydeForMode(RETRIEVAL_MODE.EXPLICIT_DEEP, true)).toBe(false);
   });
 });
-

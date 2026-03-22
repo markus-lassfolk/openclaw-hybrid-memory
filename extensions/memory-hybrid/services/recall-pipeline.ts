@@ -13,11 +13,11 @@ import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
 import type { EmbeddingProvider } from "../services/embeddings.js";
 import type OpenAI from "openai";
-import type { SearchResult, ScopeFilter } from "../types/memory.js";
+import type { ScopeFilter, SearchResult } from "../types/memory.js";
 import type { QueryExpansionConfig } from "../config.js";
 import type { PendingLLMWarnings } from "../services/chat.js";
-import { mergeResults, filterByScope } from "../services/merge-results.js";
-import { chatCompleteWithRetry, is500Like, is404Like, isOllamaOOM } from "../services/chat.js";
+import { filterByScope, mergeResults } from "../services/merge-results.js";
+import { chatCompleteWithRetry, is404Like, is500Like, isOllamaOOM } from "../services/chat.js";
 import { computeDynamicSalience } from "../utils/salience.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { getCronModelConfig, getLLMModelPreference } from "../config.js";
@@ -25,8 +25,8 @@ import {
   EXPLICIT_DEEP_RETRIEVAL_POLICY,
   INTERACTIVE_RECALL_POLICY,
   RETRIEVAL_MODE,
-  shouldSkipHydeForMode,
   type RetrievalMode,
+  shouldSkipHydeForMode,
 } from "./retrieval-mode-policy.js";
 
 /** Logger subset required by the recall pipeline (avoids importing ClawdbotPluginApi). */
@@ -108,7 +108,8 @@ export async function runRecallPipelineQuery(
 
   const trimmed = query.trim();
   if (!trimmed) return [];
-  const mode = opts?.mode ?? (opts?.interactive === true ? RETRIEVAL_MODE.INTERACTIVE_RECALL : RETRIEVAL_MODE.EXPLICIT_DEEP);
+  const mode = opts?.mode ??
+    (opts?.interactive === true ? RETRIEVAL_MODE.INTERACTIVE_RECALL : RETRIEVAL_MODE.EXPLICIT_DEEP);
   const vectorStepTimeoutMs = getVectorStepTimeoutMs(mode);
 
   const stageMs = { fts: 0, embed: 0, vector: 0, merge: 0 };
@@ -134,8 +135,7 @@ export async function runRecallPipelineQuery(
         let textToEmbed = trimmed;
         // Skip HyDE on interactive turns when skipForInteractiveTurns is enabled (default true).
         // This prevents a full LLM round-trip on the hot before_agent_start path (#581).
-        const allowHyde =
-          cfg.queryExpansion.enabled &&
+        const allowHyde = cfg.queryExpansion.enabled &&
           !shouldSkipHydeForMode(mode, cfg.queryExpansion.skipForInteractiveTurns) &&
           (!opts?.limitHydeOnce || !hydeUsedRef.value);
         t0 = Date.now();
@@ -150,7 +150,8 @@ export async function runRecallPipelineQuery(
             const hydeContent = await chatCompleteWithRetry({
               model: hydeModel,
               fallbackModels,
-              content: `Write a short factual statement (1-2 sentences) that answers: ${trimmed}\n\nOutput only the statement, no preamble.`,
+              content:
+                `Write a short factual statement (1-2 sentences) that answers: ${trimmed}\n\nOutput only the statement, no preamble.`,
               temperature: 0.3,
               maxTokens: 150,
               openai,
@@ -164,8 +165,7 @@ export async function runRecallPipelineQuery(
           } catch (err) {
             if (!directiveAbort.signal.aborted) {
               const hydeErr = err instanceof Error ? err : new Error(String(err));
-              const isTransient =
-                isOllamaOOM(hydeErr) ||
+              const isTransient = isOllamaOOM(hydeErr) ||
                 is500Like(hydeErr) ||
                 is404Like(hydeErr) ||
                 /timed out|llm request timeout|request was aborted|econnrefused/i.test(hydeErr.message);
@@ -196,10 +196,9 @@ export async function runRecallPipelineQuery(
           throw abortError;
         }
 
-        const vector =
-          opts?.precomputedVector && textToEmbed === trimmed
-            ? opts.precomputedVector
-            : await embeddings.embed(textToEmbed);
+        const vector = opts?.precomputedVector && textToEmbed === trimmed
+          ? opts.precomputedVector
+          : await embeddings.embed(textToEmbed);
         stageMs.embed = Date.now() - t0;
         t0 = Date.now();
         let results = await vectorDb.search(vector, limitNum * 2, minScore);
@@ -262,7 +261,9 @@ export async function runRecallPipelineQuery(
   }
 
   logger.debug?.(
-    `memory-hybrid: recall pipeline timing (ms) — FTS: ${stageMs.fts}, embed: ${stageMs.embed}, vector: ${stageMs.vector}, merge: ${stageMs.merge}, total: ${stageMs.fts + stageMs.embed + stageMs.vector + stageMs.merge}`,
+    `memory-hybrid: recall pipeline timing (ms) — FTS: ${stageMs.fts}, embed: ${stageMs.embed}, vector: ${stageMs.vector}, merge: ${stageMs.merge}, total: ${
+      stageMs.fts + stageMs.embed + stageMs.vector + stageMs.merge
+    }`,
   );
 
   return results;

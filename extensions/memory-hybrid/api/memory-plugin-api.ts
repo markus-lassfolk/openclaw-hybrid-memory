@@ -33,7 +33,7 @@ import type { ApitapStore } from "../backends/apitap-store.js";
 import type OpenAI from "openai";
 import type { HybridMemoryConfig, MemoryCategory } from "../config.js";
 import type { MemoryEntry, ScopeFilter } from "../types/memory.js";
-import type { RunReflectionFn, RunReflectionRulesFn, RunReflectionMetaFn } from "../tools/utility-tools.js";
+import type { RunReflectionFn, RunReflectionMetaFn, RunReflectionRulesFn } from "../tools/utility-tools.js";
 
 /** Raw WAL helpers (caller binds wal). Used by tools and lifecycle. */
 export type WalWriteFn = typeof import("../services/wal-helpers.js").walWrite;

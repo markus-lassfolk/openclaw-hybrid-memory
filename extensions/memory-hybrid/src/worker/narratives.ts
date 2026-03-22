@@ -1,6 +1,6 @@
 import type OpenAI from "openai";
 import { chatCompleteWithRetry } from "../../services/chat.js";
-import { loadPrompt, fillPrompt } from "../../utils/prompt-loader.js";
+import { fillPrompt, loadPrompt } from "../../utils/prompt-loader.js";
 import { capturePluginError } from "../../services/error-reporter.js";
 import type { EventLog } from "../../backends/event-log.js";
 import type { WorkflowStore } from "../../backends/workflow-store.js";
@@ -71,7 +71,9 @@ export async function buildDailyNarrative(params: BuildDailyNarrativeParams): Pr
     workflows
       .map(
         (w) =>
-          `[${w.createdAt}] tools=${w.toolSequence.join(" -> ") || "none"} outcome=${w.outcome} duration_ms=${w.durationMs}`,
+          `[${w.createdAt}] tools=${
+            w.toolSequence.join(" -> ") || "none"
+          } outcome=${w.outcome} duration_ms=${w.durationMs}`,
       )
       .join("\n"),
     MAX_BLOCK_CHARS,
@@ -122,4 +124,3 @@ export async function buildDailyNarrative(params: BuildDailyNarrativeParams): Pr
     return false;
   }
 }
-

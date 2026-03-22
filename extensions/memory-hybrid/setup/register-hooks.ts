@@ -10,7 +10,7 @@ import type { MemoryPluginAPI } from "../api/memory-plugin-api.js";
 import { getMemoryCategories } from "../config.js";
 import { createLifecycleHooks, type LifecycleContext } from "../lifecycle/hooks.js";
 import { capturePluginError } from "../services/error-reporter.js";
-import { sanitizeMessagesForClaude, type MessageLike } from "../utils/sanitize-messages.js";
+import { type MessageLike, sanitizeMessagesForClaude } from "../utils/sanitize-messages.js";
 import { replayWalEntries } from "../utils/wal-replay.js";
 
 /** Lifecycle hooks receive the stable plugin API (Phase 3). */
@@ -140,8 +140,9 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
     // Build once and cache — these never change within a gateway session.
     const buildStaticInstructions = (): string => {
       const cats = getMemoryCategories();
-      const catList =
-        cats.length > 0 ? cats.join(", ") : "preference, fact, decision, entity, pattern, rule, other, technical";
+      const catList = cats.length > 0
+        ? cats.join(", ")
+        : "preference, fact, decision, entity, pattern, rule, other, technical";
       return [
         "<!-- memory-hybrid: capability hints -->",
         "You have access to long-term memory tools for this session.",
@@ -201,7 +202,9 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
       const msgCount = ev.messageCount ?? 0;
       const tokenCount = ev.tokenCount ?? 0;
       api.logger.info?.(
-        `memory-hybrid: before_compaction — messages=${msgCount} tokens≈${tokenCount} compacting=${ev.compactingCount ?? "?"}`,
+        `memory-hybrid: before_compaction — messages=${msgCount} tokens≈${tokenCount} compacting=${
+          ev.compactingCount ?? "?"
+        }`,
       );
     });
   } catch (err) {

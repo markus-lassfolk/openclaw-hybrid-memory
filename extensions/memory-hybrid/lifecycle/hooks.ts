@@ -5,7 +5,7 @@
  * All stage logic lives in stage-*.ts and session-state.ts; this file stays <200 lines.
  */
 
-import { join, isAbsolute } from "node:path";
+import { isAbsolute, join } from "node:path";
 import { homedir } from "node:os";
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk";
 import { getCronModelConfig, getDefaultCronModel } from "../config.js";
@@ -13,7 +13,7 @@ import { runSetupStage } from "./stage-setup.js";
 import { runRecallStage } from "./stage-recall.js";
 import { runInjectionStage } from "./stage-injection.js";
 import { runCaptureStage } from "./stage-capture.js";
-import { registerCleanupHandlers, createStaleSweepTimer, getDispose } from "./stage-cleanup.js";
+import { createStaleSweepTimer, getDispose, registerCleanupHandlers } from "./stage-cleanup.js";
 import { registerActiveTaskInjection } from "./stage-active-task.js";
 import { registerAuthFailureRecall } from "./stage-auth-failure.js";
 import { registerCredentialHint } from "./stage-credential-hint.js";

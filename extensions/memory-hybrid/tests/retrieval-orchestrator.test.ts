@@ -3,12 +3,12 @@
  * Ensures graph strategy is wired into the RRF pipeline.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { _testing } from "../index.js";
-import { runRetrievalPipeline, DEFAULT_RETRIEVAL_CONFIG } from "../services/retrieval-orchestrator.js";
+import { DEFAULT_RETRIEVAL_CONFIG, runRetrievalPipeline } from "../services/retrieval-orchestrator.js";
 import { RETRIEVAL_MODE } from "../services/retrieval-mode-policy.js";
 
 const { FactsDB } = _testing;

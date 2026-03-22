@@ -16,9 +16,9 @@
  *   - hydeUsedRef state is mutated correctly across multiple calls
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { runRecallPipelineQuery, type RecallPipelineDeps } from "../services/recall-pipeline.js";
-import type { SearchResult, MemoryEntry } from "../types/memory.js";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { type RecallPipelineDeps, runRecallPipelineQuery } from "../services/recall-pipeline.js";
+import type { MemoryEntry, SearchResult } from "../types/memory.js";
 import { createPendingLLMWarnings } from "../services/chat.js";
 import * as chatModule from "../services/chat.js";
 import { RETRIEVAL_MODE } from "../services/retrieval-mode-policy.js";
@@ -179,7 +179,7 @@ describe("runRecallPipelineQuery — semantic mode", () => {
     (deps.factsDb.search as ReturnType<typeof vi.fn>).mockReturnValue([ftsResult]);
     (deps.vectorDb.search as ReturnType<typeof vi.fn>).mockResolvedValue([vecResult]);
     (deps.factsDb.getById as ReturnType<typeof vi.fn>).mockImplementation((id: string) =>
-      id === "vec-1" ? makeEntry("vec-1") : null,
+      id === "vec-1" ? makeEntry("vec-1") : null
     );
 
     const result = await runRecallPipelineQuery("vector query", 10, deps, { value: false });
