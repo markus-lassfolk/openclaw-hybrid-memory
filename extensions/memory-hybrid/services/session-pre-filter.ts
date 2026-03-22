@@ -109,7 +109,7 @@ export async function extractSessionSample(filePath: string, maxChars: number): 
   try {
     const rl = createInterface({
       input: createReadStream(filePath, { encoding: "utf-8" }),
-      crlfDelay: Infinity,
+      crlfDelay: Number.POSITIVE_INFINITY,
     });
     for await (const line of rl) {
       if (totalChars >= maxChars) break;

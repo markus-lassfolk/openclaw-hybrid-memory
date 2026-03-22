@@ -5,27 +5,47 @@
  * machine transitions.
  */
 
-import Database from "better-sqlite3";
+import { DatabaseSync } from "node:sqlite";
+import type { SQLInputValue } from "node:sqlite";
 import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 
 import { SQLITE_BUSY_TIMEOUT_MS } from "../utils/constants.js";
 import { capturePluginError } from "../services/error-reporter.js";
-import type { Issue, CreateIssueInput, IssueStatus } from "../types/issue-types.js";
+import type { Issue, CreateIssueInput, IssueStatus, IssueSeverity } from "../types/issue-types.js";
 import { ISSUE_TRANSITIONS } from "../types/issue-types.js";
 
 export type { Issue, CreateIssueInput, IssueStatus } from "../types/issue-types.js";
 
+interface IssueRow {
+  id: string;
+  title: string;
+  status: string;
+  severity: string;
+  symptoms: string;
+  root_cause: string | null;
+  fix: string | null;
+  rollback: string | null;
+  related_facts: string;
+  detected_at: string;
+  resolved_at: string | null;
+  verified_at: string | null;
+  tags: string;
+  metadata: string;
+  created_at: string;
+  updated_at: string;
+}
+
 export class IssueStore {
-  private db: Database.Database;
+  private db: DatabaseSync;
   private closed = false;
 
   constructor(dbPath: string) {
     mkdirSync(dirname(dbPath), { recursive: true });
-    this.db = new Database(dbPath);
-    this.db.pragma("journal_mode = WAL");
-    this.db.pragma(`busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
+    this.db = new DatabaseSync(dbPath);
+    this.db.exec("PRAGMA journal_mode = WAL");
+    this.db.exec(`PRAGMA busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
 
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS issues (
@@ -77,7 +97,7 @@ export class IssueStore {
   }
 
   get(id: string): Issue | null {
-    const row = this.db.prepare("SELECT * FROM issues WHERE id = ?").get(id) as any;
+    const row = this.db.prepare("SELECT * FROM issues WHERE id = ?").get(id) as unknown as IssueRow | undefined;
     if (!row) return null;
     return this.rowToIssue(row);
   }
@@ -88,7 +108,7 @@ export class IssueStore {
 
     const now = new Date().toISOString();
     const sets: string[] = ["updated_at = ?"];
-    const params: unknown[] = [now];
+    const params: SQLInputValue[] = [now];
 
     if (patch.title !== undefined) {
       sets.push("title = ?");
@@ -174,7 +194,7 @@ export class IssueStore {
 
   list(filter?: { status?: IssueStatus[]; severity?: string[]; tags?: string[]; limit?: number }): Issue[] {
     let query = "SELECT * FROM issues WHERE 1=1";
-    const params: unknown[] = [];
+    const params: SQLInputValue[] = [];
 
     if (filter?.status && filter.status.length > 0) {
       query += ` AND status IN (${filter.status.map(() => "?").join(", ")})`;
@@ -193,7 +213,7 @@ export class IssueStore {
       params.push(filter.limit);
     }
 
-    const rows = this.db.prepare(query).all(...params) as any[];
+    const rows = this.db.prepare(query).all(...params) as unknown as IssueRow[];
     let results = rows.map((r) => this.rowToIssue(r));
 
     // Tags filtering (JSON array — done in-memory for simplicity)
@@ -214,7 +234,7 @@ export class IssueStore {
     const term = `%${query}%`;
     const rows = this.db
       .prepare(`SELECT * FROM issues WHERE title LIKE ? OR symptoms LIKE ? ORDER BY created_at DESC LIMIT 50`)
-      .all(term, term) as any[];
+      .all(term, term) as unknown as IssueRow[];
     return rows.map((r) => this.rowToIssue(r));
   }
 
@@ -236,10 +256,10 @@ export class IssueStore {
     const result = this.db
       .prepare(`DELETE FROM issues WHERE status IN ('verified', 'wont-fix') AND updated_at < ?`)
       .run(cutoff);
-    return result.changes;
+    return Number(result.changes);
   }
 
-  private rowToIssue(row: any): Issue {
+  private rowToIssue(row: IssueRow): Issue {
     function parseJson<T>(value: string | null | undefined, fallback: T): T {
       if (!value) return fallback;
       try {
@@ -258,7 +278,7 @@ export class IssueStore {
       id: row.id,
       title: row.title,
       status: row.status as IssueStatus,
-      severity: row.severity,
+      severity: row.severity as IssueSeverity,
       symptoms: parseJson<string[]>(row.symptoms, []),
       rootCause: row.root_cause ?? undefined,
       fix: row.fix ?? undefined,

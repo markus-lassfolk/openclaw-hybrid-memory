@@ -162,7 +162,7 @@ jobs:
         run: cd extensions/memory-hybrid && npx knip --no-exit-code
 
   format-check:
-    name: Format Check (Prettier)
+    name: Format Check (Biome)
     needs: changes
     if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
@@ -176,11 +176,7 @@ jobs:
       - name: Install dependencies
         run: cd extensions/memory-hybrid && npm ci
       - name: Check formatting
-        run: |
-          cd extensions/memory-hybrid
-          find backends cli config lifecycle routes services setup tools utils types tests -name '*.ts' 2>/dev/null | sort -u > /tmp/tsfiles.txt
-          find . -maxdepth 1 -name '*.ts' 2>/dev/null >> /tmp/tsfiles.txt
-          xargs -r npx prettier --check < /tmp/tsfiles.txt
+        run: cd extensions/memory-hybrid && npm run format:check
 
   strict-typecheck:
     name: Strict TypeScript Check

@@ -3,12 +3,35 @@
  * Stores LLM-generated suggestions for persona file updates.
  */
 
-import Database from "better-sqlite3";
+import { DatabaseSync } from "node:sqlite";
 import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { SQLITE_BUSY_TIMEOUT_MS } from "../utils/constants.js";
 import { capturePluginError } from "../services/error-reporter.js";
+
+interface ProposalRow {
+  id: string;
+  target_file: string;
+  title: string;
+  observation: string;
+  suggested_change: string;
+  confidence: number;
+  evidence_sessions: string;
+  status: string;
+  created_at: number;
+  reviewed_at: number | null;
+  reviewed_by: string | null;
+  applied_at: number | null;
+  expires_at: number | null;
+  rejection_reason: string | null;
+  target_mtime_ms: number | null;
+  target_hash: string | null;
+}
+
+interface CountRow {
+  count: number;
+}
 
 export type ProposalEntry = {
   id: string;
@@ -30,16 +53,16 @@ export type ProposalEntry = {
 };
 
 export class ProposalsDB {
-  private db: Database.Database;
+  private db: DatabaseSync;
   private readonly dbPath: string;
   private closed = false;
 
   constructor(dbPath: string) {
     this.dbPath = dbPath;
     mkdirSync(dirname(dbPath), { recursive: true });
-    this.db = new Database(dbPath);
-    this.db.pragma("journal_mode = WAL");
-    this.db.pragma(`busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
+    this.db = new DatabaseSync(dbPath);
+    this.db.exec("PRAGMA journal_mode = WAL");
+    this.db.exec(`PRAGMA busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
 
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS proposals (
@@ -126,7 +149,7 @@ export class ProposalsDB {
   }
 
   get(id: string): ProposalEntry | null {
-    const row = this.db.prepare("SELECT * FROM proposals WHERE id = ?").get(id) as any;
+    const row = this.db.prepare("SELECT * FROM proposals WHERE id = ?").get(id) as unknown as ProposalRow | undefined;
     if (!row) return null;
     return this.rowToEntry(row);
   }
@@ -146,7 +169,7 @@ export class ProposalsDB {
 
     query += " ORDER BY created_at DESC";
 
-    const rows = this.db.prepare(query).all(...params) as any[];
+    const rows = this.db.prepare(query).all(...params) as unknown as ProposalRow[];
     return rows.map((r) => this.rowToEntry(r));
   }
 
@@ -166,7 +189,9 @@ export class ProposalsDB {
 
   countRecentProposals(daysBack: number): number {
     const cutoff = Math.floor(Date.now() / 1000) - daysBack * 24 * 3600;
-    const row = this.db.prepare("SELECT COUNT(*) as count FROM proposals WHERE created_at >= ?").get(cutoff) as any;
+    const row = this.db
+      .prepare("SELECT COUNT(*) as count FROM proposals WHERE created_at >= ?")
+      .get(cutoff) as unknown as CountRow | undefined;
     return row?.count ?? 0;
   }
 
@@ -175,10 +200,10 @@ export class ProposalsDB {
     const result = this.db
       .prepare("DELETE FROM proposals WHERE expires_at IS NOT NULL AND expires_at < ? AND status = 'pending'")
       .run(now);
-    return result.changes;
+    return Number(result.changes);
   }
 
-  private rowToEntry(row: any): ProposalEntry {
+  private rowToEntry(row: ProposalRow): ProposalEntry {
     // Parse evidence_sessions with error handling for corrupted data
     let evidenceSessions: string[] = [];
     try {

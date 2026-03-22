@@ -22,11 +22,14 @@ import type {
   ToolEffectivenessConfig,
   CostTrackingConfig,
   DashboardConfig,
+  ApiTapConfig,
+  HumanizerConfig,
 } from "../types/features.js";
 import type { PersonaProposalsConfig } from "../types/agents.js";
 import { IDENTITY_FILE_TYPES, type IdentityFileType } from "../types/agents.js";
 import type { ErrorReportingConfig, MultiAgentConfig } from "../types/index.js";
 import { DEFAULT_GLITCHTIP_DSN } from "../../services/error-reporter.js";
+import { pluginLogger } from "../../utils/logger.js";
 
 export function parseGraphConfig(cfg: Record<string, unknown>): GraphConfig {
   const graphRaw = cfg.graph as Record<string, unknown> | undefined;
@@ -310,9 +313,20 @@ export function parseMultiAgentConfig(cfg: Record<string, unknown>): MultiAgentC
 }
 
 /**
- * Parse error reporting config. Sentinel/GlitchTip is enabled by default (opt-out) and reports to
- * the public community DSN. Presets do not set errorReporting — this parser is the single source
- * of defaults. Do not change to opt-in or remove the public DSN default without explicit product decision.
+ * Parse error reporting config. Error reporting and telemetry default to **opt-out** (enabled = true)
+ * during the active development phase of this tool. This is a deliberate product decision:
+ *
+ * - During early development, crash reports and error telemetry are essential for quickly identifying
+ *   and fixing issues across diverse user environments.
+ * - The community DSN reports to a shared GlitchTip instance operated by the project maintainer.
+ * - Users can opt out at any time by setting `errorReporting.enabled: false` or `errorReporting.consent: false`
+ *   in their config.
+ *
+ * DESIGN DECISION: Opt-out (not opt-in) is intentional for the development phase.
+ * This default SHOULD be revisited and switched to opt-in before a stable/production release.
+ * Track this at: https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/600
+ *
+ * Do not change this default without an explicit product decision and changelog entry.
  */
 export function parseErrorReportingConfig(cfg: Record<string, unknown>): ErrorReportingConfig {
   const errorReportingRaw = cfg.errorReporting as Record<string, unknown> | undefined;
@@ -320,7 +334,7 @@ export function parseErrorReportingConfig(cfg: Record<string, unknown>): ErrorRe
   // When errorReporting is not specified: opt-out defaults (enabled + consent true, community DSN)
   if (!errorReportingRaw || typeof errorReportingRaw !== "object") {
     return {
-      enabled: true,
+      enabled: true, // opt-out during dev phase — see JSDoc above
       dsn: DEFAULT_GLITCHTIP_DSN,
       consent: true,
       mode: "community",
@@ -329,7 +343,7 @@ export function parseErrorReportingConfig(cfg: Record<string, unknown>): ErrorRe
   }
 
   // enabled defaults to true — user must explicitly set enabled: false to opt out
-  let enabled = errorReportingRaw.enabled !== false;
+  let enabled = errorReportingRaw.enabled !== false; // opt-out: true unless user explicitly disables
   // consent defaults to true — user must explicitly set consent: false to opt out
   const consent = errorReportingRaw.consent !== false;
   const dsnRaw = typeof errorReportingRaw.dsn === "string" ? errorReportingRaw.dsn.trim() : "";
@@ -337,7 +351,7 @@ export function parseErrorReportingConfig(cfg: Record<string, unknown>): ErrorRe
   const mode: "community" | "self-hosted" = modeRaw === "self-hosted" ? "self-hosted" : "community";
 
   if (enabled && !consent) {
-    console.warn("memory-hybrid: errorReporting.enabled=true but consent is false; disabling error reporting.");
+    pluginLogger.warn("memory-hybrid: errorReporting.enabled=true but consent is false; disabling error reporting.");
     enabled = false;
   }
 
@@ -378,7 +392,7 @@ export function parseErrorReportingConfig(cfg: Record<string, unknown>): ErrorRe
           Object.entries(errorReportingRaw.resolvedIssues).filter((entry): entry is [string, string] => {
             if (typeof entry[1] !== "string") return false;
             if (!validVersionPattern.test(entry[1])) {
-              console.warn(
+              pluginLogger.warn(
                 `memory-hybrid: errorReporting.resolvedIssues["${entry[0]}"] has invalid version "${entry[1]}" — skipped.`,
               );
               return false;
@@ -625,5 +639,50 @@ export function parseDashboardConfig(cfg: Record<string, unknown>): DashboardCon
     enabled: raw?.enabled !== false,
     port: typeof raw?.port === "number" && raw.port >= 1024 && raw.port <= 65535 ? Math.floor(raw.port) : 7700,
     gitRepo: typeof raw?.gitRepo === "string" ? raw.gitRepo : undefined,
+  };
+}
+
+export function parseApiTapConfig(cfg: Record<string, unknown>): ApiTapConfig {
+  const raw = cfg.apiTap as Record<string, unknown> | undefined;
+  return {
+    enabled: raw?.enabled === true,
+    captureTimeoutSeconds:
+      typeof raw?.captureTimeoutSeconds === "number" && raw.captureTimeoutSeconds >= 5
+        ? Math.min(300, Math.floor(raw.captureTimeoutSeconds))
+        : 60,
+    endpointTtlDays:
+      typeof raw?.endpointTtlDays === "number" && raw.endpointTtlDays >= 1
+        ? Math.min(365, Math.floor(raw.endpointTtlDays))
+        : 30,
+    maxEndpointsPerSession:
+      typeof raw?.maxEndpointsPerSession === "number" && raw.maxEndpointsPerSession >= 1
+        ? Math.min(500, Math.floor(raw.maxEndpointsPerSession))
+        : 50,
+    allowedPatterns: Array.isArray(raw?.allowedPatterns)
+      ? (raw.allowedPatterns as unknown[]).filter((p): p is string => typeof p === "string" && p.trim().length > 0)
+      : [],
+    blockedPatterns: Array.isArray(raw?.blockedPatterns)
+      ? (raw.blockedPatterns as unknown[]).filter((p): p is string => typeof p === "string" && p.trim().length > 0)
+      : ["**/*oauth*/**", "**/*auth*/**", "**/*login*/**", "**/*signin*/**", "**/*token*/**", "**/*password*/**"],
+  };
+}
+
+export function parseHumanizerConfig(cfg: Record<string, unknown>): HumanizerConfig {
+  const raw = cfg.humanizer as Record<string, unknown> | undefined;
+  const maxTextLength =
+    typeof raw?.maxTextLength === "number" && raw.maxTextLength >= 1
+      ? Math.min(20_000, Math.floor(raw.maxTextLength))
+      : 4000;
+  const minTextLength =
+    typeof raw?.minTextLength === "number" && raw.minTextLength >= 0
+      ? Math.min(maxTextLength, Math.floor(raw.minTextLength))
+      : 100;
+  return {
+    enabled: raw?.enabled === true,
+    bin: typeof raw?.bin === "string" && raw.bin.trim().length > 0 ? raw.bin.trim() : "humanizer",
+    minTextLength,
+    maxTextLength,
+    modelTag: typeof raw?.modelTag === "string" && raw.modelTag.trim().length > 0 ? raw.modelTag.trim() : undefined,
+    skillTag: typeof raw?.skillTag === "string" && raw.skillTag.trim().length > 0 ? raw.skillTag.trim() : undefined,
   };
 }

@@ -10,7 +10,7 @@
  *   - graph: Graph-walk spreading activation (GraphRAG expansion)
  */
 
-import type Database from "better-sqlite3";
+import type { DatabaseSync } from "node:sqlite";
 import type { VectorDB } from "../backends/vector-db.js";
 import type { MemoryEntry, SearchResult } from "../types/memory.js";
 import { searchFts } from "./fts-search.js";
@@ -148,7 +148,7 @@ export function packIntoBudget(
  * Returns ranked results (best = rank 1).
  */
 function runFts5Strategy(
-  db: Database.Database,
+  db: DatabaseSync,
   query: string,
   limit: number,
   tagFilter?: string,
@@ -429,7 +429,7 @@ export interface RetrievalPipelineOptions {
  * @param query - Raw search query string.
  * @param queryVector - Pre-computed embedding vector for semantic search.
  *   Pass null to skip semantic strategy.
- * @param db - better-sqlite3 Database instance for FTS5 queries.
+ * @param db - node:sqlite DatabaseSync instance for FTS5 queries.
  * @param vectorDb - LanceDB VectorDB instance for semantic queries.
  * @param factsDb - FactsDB for metadata lookup.
  * @param options - Optional settings; see `RetrievalPipelineOptions`.
@@ -437,7 +437,7 @@ export interface RetrievalPipelineOptions {
 export async function runRetrievalPipeline(
   query: string,
   queryVector: number[] | null,
-  db: Database.Database,
+  db: DatabaseSync,
   vectorDb: VectorDB,
   factsDb: FactLookup,
   options: RetrievalPipelineOptions = {},
@@ -709,7 +709,9 @@ export async function runRetrievalPipeline(
         // Rebuild orderedEntries in the new order.
         const rerankedOrder = new Map(reranked.map((f, i) => [f.factId, i]));
         orderedEntries.sort(
-          (a, b) => (rerankedOrder.get(a.factId) ?? Infinity) - (rerankedOrder.get(b.factId) ?? Infinity),
+          (a, b) =>
+            (rerankedOrder.get(a.factId) ?? Number.POSITIVE_INFINITY) -
+            (rerankedOrder.get(b.factId) ?? Number.POSITIVE_INFINITY),
         );
         // Trim to the outputCount returned by the reranker.
         if (orderedEntries.length > reranked.length) {
@@ -717,7 +719,9 @@ export async function runRetrievalPipeline(
         }
         // Also reorder scopedFused to stay consistent with orderedEntries.
         scopedFused.sort(
-          (a, b) => (rerankedOrder.get(a.factId) ?? Infinity) - (rerankedOrder.get(b.factId) ?? Infinity),
+          (a, b) =>
+            (rerankedOrder.get(a.factId) ?? Number.POSITIVE_INFINITY) -
+            (rerankedOrder.get(b.factId) ?? Number.POSITIVE_INFINITY),
         );
         if (scopedFused.length > reranked.length) {
           scopedFused.length = reranked.length;

@@ -25,6 +25,7 @@ import { readFile, writeFile, mkdir, readdir, unlink, stat, realpath } from "nod
 import { dirname, join, resolve, relative, isAbsolute } from "node:path";
 import { randomUUID } from "node:crypto";
 import { formatDuration } from "../utils/duration.js";
+import { pluginLogger } from "../utils/logger.js";
 
 /** Valid task statuses */
 export const ACTIVE_TASK_STATUSES = ["In progress", "Waiting", "Stalled", "Failed", "Done"] as const;
@@ -252,7 +253,7 @@ export function detectStaleTasks(tasks: ActiveTaskEntry[], staleMinutes: number)
   const staleMs = staleMinutes * 60 * 1000;
   return tasks.map((t) => {
     const updatedMs = new Date(t.updated).getTime();
-    const isStale = !isNaN(updatedMs) && now - updatedMs > staleMs;
+    const isStale = !Number.isNaN(updatedMs) && now - updatedMs > staleMs;
     return { ...t, stale: isStale };
   });
 }
@@ -414,7 +415,7 @@ export function buildStaleWarningInjection(tasks: ActiveTaskEntry[], staleMinute
     const now = Date.now();
     for (const task of staleTasks) {
       const updatedMs = new Date(task.updated).getTime();
-      const hoursAgo = isNaN(updatedMs) ? "?" : Math.floor((now - updatedMs) / (60 * 60 * 1000));
+      const hoursAgo = Number.isNaN(updatedMs) ? "?" : Math.floor((now - updatedMs) / (60 * 60 * 1000));
       const line1 = `- [${task.label}]: ${task.description} — last updated ${task.updated} (${hoursAgo}h ago)`;
       const nextPart = task.next ? `, Next: ${task.next}` : "";
       const line2 = `  Status: ${task.status}${nextPart}`;
@@ -754,7 +755,7 @@ export async function writeActiveTaskFileOptimistic(
   }
 
   // Exhausted retries — write whatever we have (last-write-wins fallback)
-  console.warn(
+  pluginLogger.warn(
     `memory-hybrid: writeActiveTaskFileOptimistic exhausted ${maxRetries} retries for ${filePath}; applying last-write-wins fallback`,
   );
   await writeActiveTaskFile(filePath, currentActive, currentCompleted);

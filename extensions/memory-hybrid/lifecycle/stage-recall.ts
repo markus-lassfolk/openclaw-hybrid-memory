@@ -252,6 +252,7 @@ async function runRecall(
       hydeLabel: "HyDE",
       errorPrefix: "auto-recall-",
       precomputedVector: promptEmbedding ?? undefined,
+      interactive: true,
     });
 
     if (ambientCfg.enabled && ambientCfg.multiQuery) {
@@ -280,6 +281,7 @@ async function runRecall(
                 hydeLabel: "HyDE",
                 errorPrefix: `ambient-${q.type}-`,
                 limitHydeOnce: true,
+                interactive: true,
               });
               extraResultSets.push(qResults);
             } catch (err) {
@@ -394,6 +396,7 @@ async function runRecall(
               hydeLabel: "HyDE",
               errorPrefix: "directive-",
               limitHydeOnce: true,
+              interactive: true,
             });
             directiveCalls += 1;
             addDirectiveResults(results, `entity:${entity}`);
@@ -407,6 +410,7 @@ async function runRecall(
               hydeLabel: "HyDE",
               errorPrefix: "directive-",
               limitHydeOnce: true,
+              interactive: true,
             });
             directiveCalls += 1;
             addDirectiveResults(results, `keyword:${keyword}`);
@@ -419,6 +423,7 @@ async function runRecall(
             hydeLabel: "HyDE",
             errorPrefix: "directive-",
             limitHydeOnce: true,
+            interactive: true,
           });
           directiveCalls += 1;
           addDirectiveResults(results, `taskType:${taskType}`);
@@ -430,6 +435,7 @@ async function runRecall(
               hydeLabel: "HyDE",
               errorPrefix: "directive-",
               limitHydeOnce: true,
+              interactive: true,
             });
             directiveCalls += 1;
             addDirectiveResults(results, "sessionStart");
@@ -484,7 +490,6 @@ async function runRecall(
     candidates = boosted;
 
     const {
-      maxTokens,
       maxPerMemoryChars,
       useSummaryInInjection,
       summarizeWhenOverBudget,
@@ -493,7 +498,19 @@ async function runRecall(
       progressiveGroupByCategory,
       progressivePinnedRecallCount,
     } = ctx.cfg.autoRecall;
-    const indexCap = progressiveIndexMaxTokens ?? maxTokens;
+    // Enforce retrieval.ambientBudgetTokens as a hard total-token cap (#581).
+    // autoRecall.maxTokens is a user preference; ambientBudgetTokens is the architectural
+    // ceiling — the injected context must not exceed either.
+    const totalBudget = Math.min(ctx.cfg.autoRecall.maxTokens, ctx.cfg.retrieval.ambientBudgetTokens);
+    // Account for issueBlock, hotBlock, and procedureBlock tokens to ensure total stays within budget
+    const fixedBlocksTokens = estimateTokens(issueBlock) + estimateTokens(hotBlock) + estimateTokens(procedureBlock);
+    const maxTokens = Math.max(0, totalBudget - fixedBlocksTokens);
+    if (maxTokens === 0) {
+      api.logger.warn?.(
+        `memory-hybrid: fixed blocks (${fixedBlocksTokens} tokens) exhausted total budget (${totalBudget} tokens); recall suppressed`,
+      );
+    }
+    const indexCap = Math.min(progressiveIndexMaxTokens ?? maxTokens, maxTokens);
     const groupByCategory = progressiveGroupByCategory === true;
     const pinnedRecallThreshold = progressivePinnedRecallCount ?? 3;
 

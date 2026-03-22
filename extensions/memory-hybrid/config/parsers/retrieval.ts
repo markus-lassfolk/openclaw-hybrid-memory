@@ -11,6 +11,7 @@ import type {
   RerankingConfig,
   ContextualVariantsConfig,
 } from "../types/retrieval.js";
+import { pluginLogger } from "../../utils/logger.js";
 
 // Minimum timeout floors (#384): prevent spurious timeouts for slow thinking models like Gemini 2.5 Flash.
 // Exported so tests can reference the canonical values without hardcoding magic numbers.
@@ -25,6 +26,10 @@ export function parseAutoClassifyConfig(cfg: Record<string, unknown>): AutoClass
     batchSize: typeof acCfg?.batchSize === "number" ? acCfg.batchSize : 20,
     suggestCategories: acCfg?.suggestCategories !== false,
     minFactsForNewCategory: typeof acCfg?.minFactsForNewCategory === "number" ? acCfg.minFactsForNewCategory : 10,
+    discoveryIntervalHours:
+      typeof acCfg?.discoveryIntervalHours === "number" && acCfg.discoveryIntervalHours >= 0
+        ? acCfg.discoveryIntervalHours
+        : 72,
   };
 }
 
@@ -269,11 +274,8 @@ export function parseQueryExpansionConfig(cfg: Record<string, unknown>): QueryEx
   const qeExplicitlySet = qeRaw?.enabled !== undefined;
 
   if (hydeEnabled) {
-    console.warn(
-      "memory-hybrid: search.hydeEnabled is DEPRECATED — use queryExpansion.enabled instead. " +
-        (qeExplicitlySet
-          ? "Both are set; queryExpansion config takes precedence. Remove search.hydeEnabled from your config."
-          : "Auto-migrating: queryExpansion.enabled has been set to true. Update your config to silence this warning."),
+    pluginLogger.warn(
+      `memory-hybrid: search.hydeEnabled is DEPRECATED — use queryExpansion.enabled instead. ${qeExplicitlySet ? "Both are set; queryExpansion config takes precedence. Remove search.hydeEnabled from your config." : "Auto-migrating: queryExpansion.enabled has been set to true. Update your config to silence this warning."}`,
     );
   }
 
@@ -311,6 +313,10 @@ export function parseQueryExpansionConfig(cfg: Record<string, unknown>): QueryEx
   // because the new QE path has its own minimum floor enforcement (#384).
   const defaultTimeout = hydeEnabled && !qeExplicitlySet ? 25000 : 15000;
 
+  // skipForInteractiveTurns: defaults to true — prevents HyDE LLM calls on the hot interactive
+  // before_agent_start path to avoid latency spikes (#581). Set to false to re-enable.
+  const skipForInteractiveTurns = qeRaw?.skipForInteractiveTurns !== false;
+
   const rawQeTimeoutRaw = qeRaw?.timeoutMs;
   // Treat 0 or negative as an explicit "no config-level floor" bypass: caller receives undefined
   // and chatComplete falls back to its own internal default timeout. Use Number.isFinite to reject
@@ -324,6 +330,7 @@ export function parseQueryExpansionConfig(cfg: Record<string, unknown>): QueryEx
       maxVariants,
       cacheSize,
       timeoutMs: undefined,
+      skipForInteractiveTurns,
     };
   }
 
@@ -333,10 +340,8 @@ export function parseQueryExpansionConfig(cfg: Record<string, unknown>): QueryEx
       : null;
 
   if (rawQeTimeout !== null && rawQeTimeout < MIN_QE_TIMEOUT_MS) {
-    console.warn(
-      `memory-hybrid: queryExpansion.timeoutMs=${rawQeTimeout} is below the minimum floor of ${MIN_QE_TIMEOUT_MS}ms` +
-        ` and has been raised to ${MIN_QE_TIMEOUT_MS}ms to prevent spurious timeouts on thinking models (#384).` +
-        ` Set timeoutMs to 0 or a negative value to bypass the floor entirely.`,
+    pluginLogger.warn(
+      `memory-hybrid: queryExpansion.timeoutMs=${rawQeTimeout} is below the minimum floor of ${MIN_QE_TIMEOUT_MS}ms and has been raised to ${MIN_QE_TIMEOUT_MS}ms to prevent spurious timeouts on thinking models (#384). Set timeoutMs to 0 or a negative value to bypass the floor entirely.`,
     );
   }
 
@@ -348,6 +353,7 @@ export function parseQueryExpansionConfig(cfg: Record<string, unknown>): QueryEx
     maxVariants,
     cacheSize,
     timeoutMs: rawQeTimeout !== null ? Math.max(MIN_QE_TIMEOUT_MS, rawQeTimeout) : defaultTimeout,
+    skipForInteractiveTurns,
   };
 }
 
@@ -379,10 +385,8 @@ export function parseRerankingConfig(cfg: Record<string, unknown>): RerankingCon
       ? Math.floor(rawRerankTimeoutRaw)
       : null;
   if (rawRerankTimeout !== null && rawRerankTimeout < MIN_RERANK_TIMEOUT_MS) {
-    console.warn(
-      `memory-hybrid: reranking.timeoutMs=${rawRerankTimeout} is below the minimum floor of ${MIN_RERANK_TIMEOUT_MS}ms` +
-        ` and has been raised to ${MIN_RERANK_TIMEOUT_MS}ms to prevent spurious timeouts (#384).` +
-        ` Set timeoutMs to 0 or a negative value to bypass the floor entirely.`,
+    pluginLogger.warn(
+      `memory-hybrid: reranking.timeoutMs=${rawRerankTimeout} is below the minimum floor of ${MIN_RERANK_TIMEOUT_MS}ms and has been raised to ${MIN_RERANK_TIMEOUT_MS}ms to prevent spurious timeouts (#384). Set timeoutMs to 0 or a negative value to bypass the floor entirely.`,
     );
   }
   return {

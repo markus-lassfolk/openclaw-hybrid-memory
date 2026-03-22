@@ -1,6 +1,6 @@
 {
   "name": "openclaw-hybrid-memory",
-  "version": "2026.3.152",
+  "version": "2026.3.181",
   "type": "module",
   "description": "Give your OpenClaw agent lasting memory: structured facts, semantic search, auto-capture & recall, decay, optional credential vault. Part of Hybrid Memory v3.",
   "files": [
@@ -28,14 +28,7 @@
     "type": "git",
     "url": "git+https://github.com/markus-lassfolk/openclaw-hybrid-memory.git"
   },
-  "keywords": [
-    "openclaw",
-    "plugin",
-    "memory",
-    "sqlite",
-    "lancedb",
-    "embeddings"
-  ],
+  "keywords": ["openclaw", "plugin", "memory", "sqlite", "lancedb", "embeddings"],
   "peerDependencies": {
     "openclaw": ">=2026.3.8",
     "openai": "^6.16.0",
@@ -43,45 +36,39 @@
   },
   "dependencies": {
     "@lancedb/lancedb": "^0.26.2",
-    "better-sqlite3": "^12.0.0"
+    "@types/node": "^25.2.3"
   },
   "openclaw": {
-    "extensions": [
-      "./index.ts"
-    ]
+    "extensions": ["./index.ts"]
   },
   "scripts": {
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
-    "lint": "eslint .",
-    "lint:fix": "eslint . --fix",
-    "format": "prettier --write \"{api,backends,cli,config,lifecycle,prompts,routes,scripts,services,setup,tests,tools,types,utils}/**/*.ts\" index.ts config.ts versionInfo.ts vitest.config.ts",
-    "format:check": "prettier --check \"{api,backends,cli,config,lifecycle,prompts,routes,scripts,services,setup,tests,tools,types,utils}/**/*.ts\" index.ts config.ts versionInfo.ts vitest.config.ts",
+    "lint": "biome lint .",
+    "lint:fix": "biome lint --write .",
+    "format": "biome format --write .",
+    "format:check": "biome format .",
     "lint:arch": "bash scripts/lint-arch.sh",
     "postinstall": "node scripts/postinstall-rebuild.cjs",
     "verify:publish": "node scripts/verify-publish.cjs",
     "release:publish": "npm run verify:publish && npm publish --otp=$OTP"
   },
   "devDependencies": {
-    "@eslint/js": "^9.0.0",
-    "@types/better-sqlite3": "^7.6.13",
-    "@types/node": "^25.2.3",
+    "@biomejs/biome": "^1.9.0",
     "@vitest/coverage-v8": "^4.0.18",
-    "eslint": "^9.0.0",
     "knip": "^5.0.0",
-    "prettier": "^3.0.0",
     "typescript": "^5.9.3",
-    "typescript-eslint": "^8.0.0",
     "vitest": "^4.0.18"
   },
   "overrides": {
     "@hono/node-server": ">=1.19.10 <2",
+    "fast-xml-parser": ">=5.5.6",
     "opusscript": "0.1.1",
     "yauzl": ">=3.2.1"
   },
   "engines": {
-    "node": "^20.19.0 || >=22.12.0"
+    "node": ">=22.12.0"
   },
   "homepage": "https://github.com/markus-lassfolk/openclaw-hybrid-memory#readme",
   "bugs": {

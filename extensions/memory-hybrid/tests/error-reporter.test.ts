@@ -16,8 +16,9 @@ describe("Error Reporter", () => {
   describe("Module Loading", () => {
     it("should load successfully and export required functions", async () => {
       // No external dependencies required — uses native fetch (Node 20+)
-      const { initErrorReporter, isErrorReporterActive, DEFAULT_GLITCHTIP_DSN } =
-        await import("../services/error-reporter.js");
+      const { initErrorReporter, isErrorReporterActive, DEFAULT_GLITCHTIP_DSN } = await import(
+        "../services/error-reporter.js"
+      );
       expect(typeof initErrorReporter).toBe("function");
       expect(typeof isErrorReporterActive).toBe("function");
       expect(typeof DEFAULT_GLITCHTIP_DSN).toBe("string");
@@ -359,7 +360,10 @@ describe("Error Reporter", () => {
       expect(sanitized?.tags?.phase).toBe("runtime");
       expect(sanitized?.tags?.backend).toBe("sqlite");
       expect(sanitized?.contexts?.config_shape?.apiKey).toBe("[REDACTED]");
-      expect(sanitized?.contexts?.runtime).toEqual({ name: "node", version: "v20.10.0" });
+      expect(sanitized?.contexts?.runtime).toEqual({
+        name: "node",
+        version: "v20.10.0",
+      });
       expect(sanitized?.contexts?.os).toEqual({ name: "linux" }); // Only name, no version
       // User context preserved so GlitchTip "Users Affected" and grouping work (id/username only)
       expect(sanitized?.user).toEqual({ id: "secret", username: undefined });
@@ -387,7 +391,7 @@ describe("Error Reporter", () => {
 
   describe("Security Boundaries", () => {
     it("should verify error reporter enforces security config", async () => {
-      const serviceCode = await import("fs").then((fs) =>
+      const serviceCode = await import("node:fs").then((fs) =>
         fs.promises.readFile(new URL("../services/error-reporter.ts", import.meta.url), "utf-8"),
       );
 
@@ -417,7 +421,9 @@ describe("Error Reporter", () => {
         backend: "sqlite",
         retryAttempt: 2,
         memoryCount: 42,
-        configShape: { key: "sk-ant-api03-secret123456789012345678901234567890" },
+        configShape: {
+          key: "sk-ant-api03-secret123456789012345678901234567890",
+        },
       });
 
       // When initialized (from previous test), should return event ID string or undefined (if rate limited)
@@ -602,10 +608,14 @@ describe("Error Reporter", () => {
         event_id: "int-test-1",
         level: "error",
         release: "openclaw-hybrid-memory@2026.3.100",
-        exception: { values: [{ type: "TypeError", value: "Cannot read properties of null" }] },
+        exception: {
+          values: [{ type: "TypeError", value: "Cannot read properties of null" }],
+        },
         tags: { subsystem: "sqlite" },
       };
-      const resolvedIssues = { "TypeError:Cannot read properties of null": "2026.3.110" };
+      const resolvedIssues = {
+        "TypeError:Cannot read properties of null": "2026.3.110",
+      };
 
       // Step 1: sanitize (as beforeSend does first)
       const sanitized = sanitizeEvent(rawEvent);
@@ -623,9 +633,13 @@ describe("Error Reporter", () => {
         event_id: "int-test-2",
         level: "error",
         release: "openclaw-hybrid-memory@2026.3.110",
-        exception: { values: [{ type: "TypeError", value: "Cannot read properties of null" }] },
+        exception: {
+          values: [{ type: "TypeError", value: "Cannot read properties of null" }],
+        },
       };
-      const resolvedIssues = { "TypeError:Cannot read properties of null": "2026.3.110" };
+      const resolvedIssues = {
+        "TypeError:Cannot read properties of null": "2026.3.110",
+      };
 
       const sanitized = sanitizeEvent(rawEvent);
       expect(sanitized).not.toBeNull();
@@ -640,7 +654,9 @@ describe("Error Reporter", () => {
         event_id: "int-test-3",
         level: "error",
         release: "openclaw-hybrid-memory@2026.3.100",
-        exception: { values: [{ type: "TypeError", value: "Cannot read properties of null" }] },
+        exception: {
+          values: [{ type: "TypeError", value: "Cannot read properties of null" }],
+        },
       };
 
       const sanitized = sanitizeEvent(rawEvent);
@@ -658,10 +674,19 @@ describe("Error Reporter", () => {
         event_id: "int-test-4",
         level: "error",
         release: "openclaw-hybrid-memory@2026.3.100",
-        exception: { values: [{ type: "Error", value: "File not found: /home/user/.openclaw/config.yaml" }] },
+        exception: {
+          values: [
+            {
+              type: "Error",
+              value: "File not found: /home/user/.openclaw/config.yaml",
+            },
+          ],
+        },
       };
       // Fingerprint key uses the scrubbed form
-      const resolvedIssues = { "Error:File not found: $HOME/.openclaw/config.yaml": "2026.3.110" };
+      const resolvedIssues = {
+        "Error:File not found: $HOME/.openclaw/config.yaml": "2026.3.110",
+      };
 
       const sanitized = sanitizeEvent(rawEvent);
       expect(sanitized).not.toBeNull();
@@ -775,7 +800,10 @@ describe("UnconfiguredProviderError suppression", () => {
       },
     );
 
-    const result = capturePluginError(err, { operation: "test-suppression", subsystem: "auto-classifier" });
+    const result = capturePluginError(err, {
+      operation: "test-suppression",
+      subsystem: "auto-classifier",
+    });
 
     // Must return undefined without touching Sentry, regardless of initialization state
     expect(result).toBeUndefined();

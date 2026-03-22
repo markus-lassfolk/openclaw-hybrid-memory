@@ -125,7 +125,7 @@ function detectDirectiveCategories(text: string): { categories: DirectiveCategor
   // Emotional emphasis (ALL CAPS words, multiple !!!, frustrated emoji)
   const hasAllCaps = /\b[A-Z]{4,}\b/.test(text);
   const hasMultipleExclamation = /!{2,}/.test(text);
-  const hasFrustratedEmoji = /[🤬😤😡]/.test(text);
+  const hasFrustratedEmoji = /[🤬😤😡]/u.test(text);
   if (hasAllCaps || hasMultipleExclamation || hasFrustratedEmoji) {
     categories.push("emotional_emphasis");
   }

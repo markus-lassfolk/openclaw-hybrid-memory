@@ -8,6 +8,7 @@ import type { MemoryCategory, DecayClass } from "../config.js";
 import type { MemoryEntry, SearchResult } from "../types/memory.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { UUID_REGEX } from "../utils/constants.js";
+import { pluginLogger } from "../utils/logger.js";
 
 const LANCE_TABLE = "memories";
 /** Substring of the LanceDB error thrown on vector-dimension mismatch (issue #366). */
@@ -55,6 +56,13 @@ export class VectorDB {
    * and abort when it changes, preventing them from running on a closed instance.
    */
   private closeGeneration = 0;
+  /**
+   * When true, this VectorDB is a long-lived singleton connection (set via setPersistent()).
+   * removeSession() becomes a safe no-op when persistent — the connection is only closed
+   * by an explicit close() call (e.g. gateway shutdown). This prevents fragile session
+   * refcounting from accidentally closing a shared connection (#581).
+   */
+  private isPersistent = false;
 
   constructor(
     private readonly dbPath: string,
@@ -68,7 +76,7 @@ export class VectorDB {
 
   private logWarn(msg: string): void {
     if (this.logger) this.logger.warn(msg);
-    else if (typeof console !== "undefined" && console.warn) console.warn(msg);
+    else pluginLogger.warn(msg);
   }
 
   private async ensureInitialized(): Promise<void> {
@@ -233,6 +241,35 @@ export class VectorDB {
     }
   }
 
+  /**
+   * Drop the vector table and recreate it empty with the current dimension.
+   * Use before re-embedding all facts (e.g. after switching to a new embedding model).
+   * Call ensureInitialized() first so the connection exists.
+   */
+  async resetTableForReindex(): Promise<void> {
+    await this.ensureInitialized();
+    if (!this.db) throw new Error("VectorDB connection not initialized.");
+    const tables = await this.db.tableNames();
+    if (tables.includes(LANCE_TABLE)) {
+      await this.db.dropTable(LANCE_TABLE);
+    }
+    this.table = await this.db.createTable(LANCE_TABLE, [
+      {
+        id: "__schema__",
+        text: "",
+        vector: new Array(this.vectorDim).fill(0),
+        importance: 0,
+        category: "other",
+        createdAt: 0,
+      },
+    ]);
+    try {
+      await this.table.delete('id = "__schema__"');
+    } catch (deleteErr) {
+      this.logWarn(`memory-hybrid: failed to delete schema seed row after reset (non-fatal): ${deleteErr}`);
+    }
+  }
+
   /** Get initialized table or throw descriptive error. */
   private getTable(): lancedb.Table {
     if (!this.table) {
@@ -354,18 +391,22 @@ export class VectorDB {
               text: row.text as string,
               category: row.category as MemoryCategory,
               importance: row.importance as number,
+              // Fields NOT stored in LanceDB — partial/unknown placeholders.
+              // Callers should enrich via factsDb.getById(entry.id) before trusting
+              // these values. Conservative (non-optimistic) defaults are used so that
+              // un-enriched results are not falsely ranked highly (issue #599).
               entity: null,
               key: null,
               value: null,
-              source: "conversation",
+              source: "unknown",
               createdAt:
                 (row.createdAt as number) > 10_000_000_000
                   ? Math.floor((row.createdAt as number) / 1000)
                   : (row.createdAt as number),
-              decayClass: "stable" as DecayClass,
+              decayClass: "normal" as DecayClass,
               expiresAt: null,
               lastConfirmedAt: 0,
-              confidence: 1.0,
+              confidence: 0,
             },
             score,
             backend: "lancedb" as const,
@@ -438,10 +479,33 @@ export class VectorDB {
   }
 
   async count(): Promise<number> {
-    try {
+    const tryCount = async (): Promise<number> => {
       await this.ensureInitialized();
-      return await this.getTable().countRows();
+      const t = this.getTable();
+      return await t.countRows();
+    };
+    try {
+      return await tryCount();
     } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      // Race: DB may have been closed (e.g. plugin reload) between ensureInitialized() and getTable().
+      // Retry once to allow reconnect so verify CLI and other callers get a result instead of 0.
+      if (msg.includes("VectorDB not initialized") || msg.includes("close() was called")) {
+        try {
+          this.table = null;
+          this.closed = true;
+          this.initPromise = null;
+          return await tryCount();
+        } catch (retryErr) {
+          capturePluginError(retryErr instanceof Error ? retryErr : new Error(String(retryErr)), {
+            operation: "vector-count-retry",
+            severity: "info",
+            subsystem: "vector",
+          });
+          this.logWarn(`memory-hybrid: LanceDB count failed (after retry): ${retryErr}`);
+          return 0;
+        }
+      }
       capturePluginError(err as Error, {
         operation: "vector-count",
         severity: "info",
@@ -460,11 +524,27 @@ export class VectorDB {
   }
 
   /**
+   * Mark this VectorDB as a persistent long-lived singleton connection (#581).
+   *
+   * Once called, `removeSession()` becomes a safe no-op — the connection can only be
+   * closed by an explicit `close()` call (e.g. gateway shutdown). This eliminates the
+   * risk of fragile session refcounting accidentally closing the shared connection while
+   * the plugin is still running.
+   *
+   * Should be called once at plugin startup after the initial `count()` / schema check.
+   */
+  setPersistent(): void {
+    this.isPersistent = true;
+  }
+
+  /**
    * Increment the session refcount. Called when an agent session begins using this VectorDB.
    * If the DB was previously closed (e.g. by a premature stop()), resets the closed flag so
    * the next operation auto-reconnects via ensureInitialized().
-   * Note: The main plugin lifecycle uses a single long-lived connection and no longer calls
-   * open()/removeSession() per turn; these remain for tests and backward compatibility.
+   *
+   * @deprecated The main plugin lifecycle uses a single long-lived connection (setPersistent())
+   * and no longer calls open()/removeSession() per turn. These remain for tests and
+   * backward compatibility only.
    */
   open(): void {
     this.sessionCount++;
@@ -476,10 +556,20 @@ export class VectorDB {
   /**
    * Decrement the session refcount. Called when an agent session ends.
    * Only actually closes the underlying DB when the refcount reaches zero.
-   * Use this in session teardown hooks instead of close() to prevent premature
-   * shutdown of a shared singleton while other sessions are still active.
+   *
+   * When `setPersistent()` has been called, this method is a safe no-op — the persistent
+   * connection can only be closed by `close()` (gateway shutdown).
+   *
+   * @deprecated Prefer the single long-lived connection model (setPersistent()) over
+   * refcounted open()/removeSession() calls.
    */
   removeSession(): void {
+    if (this.isPersistent) {
+      // Persistent connections are managed by close() (gateway shutdown only).
+      // Ignore refcount decrements to prevent accidental premature closure (#581).
+      // This is a safe no-op by design; no log needed for expected behavior.
+      return;
+    }
     if (this.sessionCount <= 0) {
       this.logWarn(
         "memory-hybrid: VectorDB.removeSession() called with sessionCount already 0 — possible session lifecycle mismatch (open()/removeSession() calls are unbalanced)",
@@ -515,6 +605,9 @@ export class VectorDB {
    * after this (lazy reconnect safety net).
    */
   close(): void {
+    // Note: isPersistent is intentionally not reset here.
+    // A persistent connection, once closed (gateway shutdown), should not be
+    // re-promoted to managed-lifecycle mode by any remaining callers.
     this.sessionCount = 0;
     this.closeGeneration++;
     this._doClose();

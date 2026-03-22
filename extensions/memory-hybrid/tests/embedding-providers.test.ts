@@ -140,6 +140,102 @@ describe("Embeddings (OpenAI) implements EmbeddingProvider interface", () => {
     expect(mockCreate.mock.calls[2][0].input).toEqual(["e"]);
   });
 
+  // #589: embedBatch() cache integration
+  it("#589: embedBatch() reuses vectors cached by embed()", async () => {
+    const vec = [0.1, 0.2, 0.3];
+    const mockCreate = vi.fn().mockImplementation((params: { input: string | string[] }) => {
+      const count = Array.isArray(params.input) ? params.input.length : 1;
+      return Promise.resolve({ data: Array.from({ length: count }, (_, i) => ({ index: i, embedding: vec })) });
+    });
+    const client = { embeddings: { create: mockCreate } } as unknown as import("openai").default;
+    const provider = new Embeddings(client, "text-embedding-3-small", 3);
+
+    // Warm the cache via embed()
+    await provider.embed("cached text");
+    expect(mockCreate).toHaveBeenCalledTimes(1);
+    mockCreate.mockClear();
+
+    // embedBatch() with the same text — should hit cache, not the API
+    const results = await provider.embedBatch(["cached text"]);
+    expect(results).toEqual([vec]);
+    expect(mockCreate).not.toHaveBeenCalled();
+  });
+
+  it("#589: embedBatch() populates the cache for subsequent embed() calls", async () => {
+    const vec = [0.4, 0.5, 0.6];
+    const mockCreate = vi.fn().mockImplementation((params: { input: string | string[] }) => {
+      const count = Array.isArray(params.input) ? params.input.length : 1;
+      return Promise.resolve({ data: Array.from({ length: count }, (_, i) => ({ index: i, embedding: vec })) });
+    });
+    const client = { embeddings: { create: mockCreate } } as unknown as import("openai").default;
+    const provider = new Embeddings(client, "text-embedding-3-small", 3);
+
+    // Warm the cache via embedBatch()
+    await provider.embedBatch(["warm me"]);
+    expect(mockCreate).toHaveBeenCalledTimes(1);
+    mockCreate.mockClear();
+
+    // embed() with the same text — should hit cache, not the API
+    const result = await provider.embed("warm me");
+    expect(result).toEqual(vec);
+    expect(mockCreate).not.toHaveBeenCalled();
+  });
+
+  it("#589: embedBatch() handles mixed cached/uncached inputs, only calling API for uncached", async () => {
+    const cachedVec = [0.1, 0.2];
+    const freshVec = [0.9, 0.8];
+    const mockCreate = vi.fn().mockImplementation((params: { input: string | string[] }) => {
+      const inputs = Array.isArray(params.input) ? params.input : [params.input];
+      return Promise.resolve({
+        data: inputs.map((_, i) => ({ index: i, embedding: freshVec })),
+      });
+    });
+    const client = { embeddings: { create: mockCreate } } as unknown as import("openai").default;
+    const provider = new Embeddings(client, "text-embedding-3-small", 2);
+
+    // Seed one text into cache via a dedicated seed call
+    const seedCreate = vi.fn().mockResolvedValue({ data: [{ index: 0, embedding: cachedVec }] });
+    (client.embeddings as { create: unknown }).create = seedCreate;
+    await provider.embed("cached item");
+    (client.embeddings as { create: unknown }).create = mockCreate;
+    mockCreate.mockClear();
+
+    // Call with 3 texts: 1 cached + 2 uncached
+    const results = await provider.embedBatch(["uncached A", "cached item", "uncached B"]);
+
+    // Only the 2 uncached texts should have been sent to the API
+    expect(mockCreate).toHaveBeenCalledOnce();
+    const [callArg] = mockCreate.mock.calls[0] as [{ input: string[] }];
+    expect(callArg.input).toEqual(["uncached A", "uncached B"]);
+
+    // Results are in original input order
+    expect(results[0]).toEqual(freshVec); // uncached A — from API
+    expect(results[1]).toEqual(cachedVec); // cached item — from cache
+    expect(results[2]).toEqual(freshVec); // uncached B — from API
+  });
+
+  it("#589: embedBatch() second call returns all results from cache (no API calls)", async () => {
+    const vec = [0.5, 0.6];
+    const mockCreate = vi.fn().mockImplementation((params: { input: string | string[] }) => {
+      const inputs = Array.isArray(params.input) ? params.input : [params.input];
+      return Promise.resolve({ data: inputs.map((_, i) => ({ index: i, embedding: vec })) });
+    });
+    const client = { embeddings: { create: mockCreate } } as unknown as import("openai").default;
+    // batchSize=2 to exercise multi-chunk code path; text-embedding-3-small supports custom dims
+    const provider = new Embeddings(client, "text-embedding-3-small", 2, 2);
+
+    const texts = ["a", "b", "c", "d", "e"];
+    const first = await provider.embedBatch(texts);
+    expect(first).toHaveLength(5);
+
+    mockCreate.mockClear();
+
+    // Second call — all texts cached, zero API calls
+    const second = await provider.embedBatch(texts);
+    expect(mockCreate).not.toHaveBeenCalled();
+    expect(second).toEqual(first);
+  });
+
   it("throws when dimensions exceed model max", () => {
     const client = makeMockOpenAI([]);
     expect(() => new Embeddings(client, "text-embedding-3-small", 2000)).toThrow(/exceed/i);
@@ -529,6 +625,147 @@ describe("FallbackEmbeddingProvider", () => {
         ),
     ).toThrow(/must have matching dimensions/);
   });
+
+  it("#560: retryIntervalMs constructor parameter controls when primary retry is attempted", async () => {
+    vi.useFakeTimers();
+    try {
+      let primaryCallCount = 0;
+      const primary = {
+        embed: vi.fn().mockImplementation(() => {
+          primaryCallCount++;
+          if (primaryCallCount === 1) return Promise.reject(new Error("connection failed"));
+          return Promise.resolve([0.1, 0.2]);
+        }),
+        embedBatch: vi.fn(),
+        dimensions: 2,
+        modelName: "primary",
+      };
+      const fallback = {
+        embed: vi.fn().mockResolvedValue([0.9, 0.9]),
+        embedBatch: vi.fn(),
+        dimensions: 2,
+        modelName: "fallback",
+      };
+      const wrapper = new FallbackEmbeddingProvider(
+        primary as unknown as import("../services/embeddings.js").EmbeddingProvider,
+        fallback as unknown as import("../services/embeddings.js").EmbeddingProvider,
+        undefined,
+        "primary",
+        "fallback",
+        5000, // 5 second retry interval (non-default)
+      );
+      // First call triggers switch to fallback
+      await wrapper.embed("test1");
+      expect(wrapper.activeProvider).toBe("fallback");
+
+      // Advance 4 seconds — not enough for retry
+      await vi.advanceTimersByTimeAsync(4000);
+      await wrapper.embed("test2");
+      // Should still use fallback (retry interval not elapsed)
+      expect(primary.embed).toHaveBeenCalledTimes(1); // only initial attempt
+
+      // Advance 2 more seconds (total 6s > 5s interval)
+      await vi.advanceTimersByTimeAsync(2000);
+      const result = await wrapper.embed("test3");
+      // Primary should have been retried and recovered
+      expect(result).toEqual([0.1, 0.2]);
+      expect(wrapper.activeProvider).toBe("primary");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("#560: embedBatch primary recovery resets switched state", async () => {
+    vi.useFakeTimers();
+    try {
+      let batchCallCount = 0;
+      const primary = {
+        embed: vi.fn(),
+        embedBatch: vi.fn().mockImplementation(() => {
+          batchCallCount++;
+          if (batchCallCount === 1) return Promise.reject(new Error("connection failed"));
+          return Promise.resolve([[0.1, 0.2]]);
+        }),
+        dimensions: 2,
+        modelName: "primary-model",
+      };
+      const fallback = {
+        embed: vi.fn(),
+        embedBatch: vi.fn().mockResolvedValue([[0.9, 0.9]]),
+        dimensions: 2,
+        modelName: "fallback-model",
+      };
+      const wrapper = new FallbackEmbeddingProvider(
+        primary as unknown as import("../services/embeddings.js").EmbeddingProvider,
+        fallback as unknown as import("../services/embeddings.js").EmbeddingProvider,
+        undefined,
+        "ollama",
+        "openai",
+      );
+      // First call — primary fails, switch to fallback
+      await wrapper.embedBatch(["test1"]);
+      expect(wrapper.activeProvider).toBe("openai");
+
+      // Advance past retry interval — primary should recover
+      await vi.advanceTimersByTimeAsync(61000);
+      const result = await wrapper.embedBatch(["test2"]);
+      expect(result).toEqual([[0.1, 0.2]]); // primary result
+      expect(wrapper.activeProvider).toBe("ollama"); // switched back to primary label
+
+      // Next call should use primary directly (switched = false)
+      await wrapper.embedBatch(["test3"]);
+      expect(primary.embedBatch).toHaveBeenCalledTimes(3); // initial fail + retry + direct call
+      expect(fallback.embedBatch).toHaveBeenCalledTimes(1); // only during switch period
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("#560: embed primary recovery resets switched state", async () => {
+    vi.useFakeTimers();
+    try {
+      let embedCallCount = 0;
+      const primary = {
+        embed: vi.fn().mockImplementation(() => {
+          embedCallCount++;
+          if (embedCallCount === 1) return Promise.reject(new Error("connection failed"));
+          return Promise.resolve([0.3, 0.4]);
+        }),
+        embedBatch: vi.fn(),
+        dimensions: 2,
+        modelName: "primary-model",
+      };
+      const fallback = {
+        embed: vi.fn().mockResolvedValue([0.9, 0.9]),
+        embedBatch: vi.fn(),
+        dimensions: 2,
+        modelName: "fallback-model",
+      };
+      const wrapper = new FallbackEmbeddingProvider(
+        primary as unknown as import("../services/embeddings.js").EmbeddingProvider,
+        fallback as unknown as import("../services/embeddings.js").EmbeddingProvider,
+        undefined,
+        "ollama",
+        "openai",
+      );
+      // First call — primary fails, switch to fallback
+      await wrapper.embed("test1");
+      expect(wrapper.activeProvider).toBe("openai");
+
+      // Advance past retry interval — primary should recover
+      await vi.advanceTimersByTimeAsync(61000);
+      const result = await wrapper.embed("test2");
+      expect(result).toEqual([0.3, 0.4]); // primary result
+      expect(wrapper.activeProvider).toBe("ollama"); // switched back to primary label
+
+      // Next call should use primary directly (switched = false)
+      await wrapper.embed("test3");
+      expect(primary.embed).toHaveBeenCalledTimes(3); // initial fail + retry + direct call
+      expect(fallback.embed).toHaveBeenCalledTimes(1); // only during switch period
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -820,6 +1057,71 @@ describe("FallbackEmbeddingProvider — 403 suppression (#394)", () => {
     const result = await wrapper.embedBatch(["test"]);
     expect(result).toEqual(fallbackVecs);
     expect(vi.mocked(capturePluginError)).not.toHaveBeenCalled();
+  });
+});
+
+describe("#560: ChainEmbeddingProvider.activeProvider reflects nested FallbackEmbeddingProvider state", () => {
+  afterEach(() => {
+    _resetOllamaCircuitBreakerForTesting();
+  });
+
+  it("reports inner fallback provider name when nested FallbackEmbeddingProvider has switched", async () => {
+    // Nested FallbackEmbeddingProvider: ollama (primary) → openai (fallback)
+    const ollamaPrimary = {
+      embed: vi.fn().mockRejectedValue(new Error("ECONNREFUSED")),
+      embedBatch: vi.fn().mockRejectedValue(new Error("ECONNREFUSED")),
+      dimensions: 2,
+      modelName: "nomic-embed-text",
+    };
+    const openAIFallback = {
+      embed: vi.fn().mockResolvedValue([0.9, 0.9]),
+      embedBatch: vi.fn().mockResolvedValue([[0.9, 0.9]]),
+      dimensions: 2,
+      modelName: "text-embedding-3-small",
+    };
+    const fallbackProvider = new FallbackEmbeddingProvider(
+      ollamaPrimary as unknown as import("../services/embeddings.js").EmbeddingProvider,
+      openAIFallback as unknown as import("../services/embeddings.js").EmbeddingProvider,
+      undefined,
+      "ollama",
+      "openai",
+    );
+    // Second provider in chain (never reached)
+    const googleProvider = {
+      embed: vi.fn().mockResolvedValue([0.5, 0.5]),
+      embedBatch: vi.fn().mockResolvedValue([[0.5, 0.5]]),
+      dimensions: 2,
+      modelName: "text-embedding-005",
+    };
+    const chain = new ChainEmbeddingProvider(
+      [fallbackProvider, googleProvider] as unknown as import("../services/embeddings.js").EmbeddingProvider[],
+      ["ollama", "google"],
+    );
+
+    // Initially, chain reports "ollama" (primary label)
+    expect(chain.activeProvider).toBe("ollama");
+
+    // After embed — ollama fails internally, FallbackEmbeddingProvider switches to openai
+    await chain.embed("test");
+
+    // Chain should now reflect the inner switch: openai (not "ollama")
+    expect(chain.activeProvider).toBe("openai");
+  });
+
+  it("reports chain label when nested provider has no activeProvider (plain provider)", async () => {
+    const p1 = {
+      embed: vi.fn().mockResolvedValue([0.1, 0.2]),
+      embedBatch: vi.fn().mockResolvedValue([[0.1, 0.2]]),
+      dimensions: 2,
+      modelName: "some-model",
+      activeProvider: undefined, // no nested provider awareness
+    };
+    const chain = new ChainEmbeddingProvider(
+      [p1] as unknown as import("../services/embeddings.js").EmbeddingProvider[],
+      ["plain-label"],
+    );
+    await chain.embed("test");
+    expect(chain.activeProvider).toBe("plain-label");
   });
 });
 
@@ -1246,7 +1548,12 @@ describe("#486: safeEmbed suppresses AllEmbeddingProvidersFailed with 429/circui
 
   it("does NOT report when AllEmbeddingProvidersFailed cause is circuit-breaker-open", async () => {
     const cbErr = new Error("Ollama circuit breaker open — retrying in 30s");
-    const p1 = { embed: vi.fn().mockRejectedValue(cbErr), embedBatch: vi.fn(), dimensions: 768, modelName: "ollama" };
+    const p1 = {
+      embed: vi.fn().mockRejectedValue(cbErr),
+      embedBatch: vi.fn(),
+      dimensions: 768,
+      modelName: "ollama",
+    };
     const chain = new ChainEmbeddingProvider(
       [p1] as unknown as import("../services/embeddings.js").EmbeddingProvider[],
       ["ollama"],

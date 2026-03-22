@@ -1,8 +1,9 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { _testing } from "../index.js";
+import { pluginLogger } from "../utils/logger.js";
 
 const { CredentialsDB, deriveKey, encryptValue, decryptValue } = _testing;
 
@@ -313,14 +314,11 @@ describe("CredentialsDB plaintext vault", () => {
     plainDb.store({ service: "test", type: "api_key", value: "plain-value" });
     plainDb.close();
     // Capture warning during construction
-    const originalWarn = console.warn;
-    const warnings: string[] = [];
-    console.warn = (...args: unknown[]) => {
-      warnings.push(String(args[0]));
-    };
+    const warnSpy = vi.spyOn(pluginLogger, "warn").mockImplementation(() => {});
     // Reopen with a valid key (should handle gracefully and warn)
     const db2 = new CredentialsDB(dbPath, TEST_ENCRYPTION_KEY);
-    console.warn = originalWarn;
+    const warnings = warnSpy.mock.calls.map((args) => String(args[0]));
+    warnSpy.mockRestore();
     // Verify warning was issued
     expect(warnings.some((w) => w.includes("plaintext mode"))).toBe(true);
     // Verify data is still accessible in plaintext

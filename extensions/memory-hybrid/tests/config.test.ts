@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { pluginLogger } from "../utils/logger.js";
 import {
   DECAY_CLASSES,
   TTL_DEFAULTS,
@@ -324,7 +325,7 @@ describe("hybridConfigSchema.parse", () => {
   // Finding 3: unresolvable SecretRef in fallback path warns instead of silently dropping
   it("warns when fallback embedding.apiKey SecretRef cannot be resolved", () => {
     delete process.env.TEST_EMBED_FALLBACK_UNSET_333;
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const warnSpy = vi.spyOn(pluginLogger, "warn").mockImplementation(() => {});
     try {
       const result = hybridConfigSchema.parse({
         embedding: { provider: "ollama", model: "nomic-embed-text", apiKey: "env:TEST_EMBED_FALLBACK_UNSET_333" },
@@ -435,7 +436,7 @@ describe("hybridConfigSchema.parse", () => {
   });
 
   it("warns when embedding section present but provider is not set", () => {
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const warnSpy = vi.spyOn(pluginLogger, "warn").mockImplementation(() => {});
     try {
       hybridConfigSchema.parse({
         embedding: { apiKey: "sk-test-key-that-is-long-enough-to-pass", model: "nomic-embed-text" },
@@ -448,7 +449,7 @@ describe("hybridConfigSchema.parse", () => {
 
   it("does not warn about provider when embedding section is absent", () => {
     // When no embedding section, default to ollama and throw model required; provider warn should NOT fire
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const warnSpy = vi.spyOn(pluginLogger, "warn").mockImplementation(() => {});
     try {
       expect(() => hybridConfigSchema.parse({})).toThrow(/embedding\.model|embedding\.apiKey/);
       const warnCalls = warnSpy.mock.calls.filter(
@@ -491,6 +492,20 @@ describe("hybridConfigSchema.parse", () => {
     });
     expect(result.embedding.models).toBeUndefined();
     expect(result.embedding.model).toBe("text-embedding-3-small");
+  });
+
+  it("uses text-embedding-3-large when dimensions 3072 and model was small (backward compat)", () => {
+    const result = hybridConfigSchema.parse({
+      ...validBase,
+      embedding: {
+        apiKey: "sk-test-key-that-is-long-enough-to-pass",
+        model: "text-embedding-3-small",
+        dimensions: 3072,
+      },
+    });
+    expect(result.embedding.model).toBe("text-embedding-3-large");
+    expect(result.embedding.dimensions).toBe(3072);
+    expect(result.embedding.models).toEqual(["text-embedding-3-large"]);
   });
 
   it("respects autoCapture = false", () => {
@@ -1511,7 +1526,7 @@ describe("hybridConfigSchema.parse", () => {
   it("queryExpansion.timeoutMs (#384): 2026.3.140 baseline Infinity coerced to default", () => {
     const result = hybridConfigSchema.parse({
       ...validBase,
-      queryExpansion: { enabled: true, timeoutMs: Infinity },
+      queryExpansion: { enabled: true, timeoutMs: Number.POSITIVE_INFINITY },
     });
     expect(result.queryExpansion.enabled).toBe(false);
     expect(result.queryExpansion.timeoutMs).toBe(15000); // parser uses default when not finite
@@ -1519,7 +1534,7 @@ describe("hybridConfigSchema.parse", () => {
   it("reranking.timeoutMs (#384): 2026.3.140 baseline Infinity coerced to default", () => {
     const result = hybridConfigSchema.parse({
       ...validBase,
-      reranking: { enabled: true, timeoutMs: Infinity },
+      reranking: { enabled: true, timeoutMs: Number.POSITIVE_INFINITY },
     });
     expect(result.reranking.enabled).toBe(false);
     expect(result.reranking.timeoutMs).toBe(10000); // parser uses default when not finite
@@ -1678,7 +1693,7 @@ describe("hybridConfigSchema.parse", () => {
     });
 
     it("deprecated mode name 'normal' is interpreted as local and warns", () => {
-      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const warnSpy = vi.spyOn(pluginLogger, "warn").mockImplementation(() => {});
       try {
         const result = hybridConfigSchema.parse({
           ...validBase,

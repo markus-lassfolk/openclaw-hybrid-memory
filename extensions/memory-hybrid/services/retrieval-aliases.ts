@@ -5,7 +5,7 @@
  * their embeddings — so facts can be found from multiple semantic angles.
  */
 
-import Database from "better-sqlite3";
+import { DatabaseSync } from "node:sqlite";
 import * as lancedb from "@lancedb/lancedb";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
@@ -17,6 +17,7 @@ import { chatComplete } from "./chat.js";
 import { capturePluginError } from "./error-reporter.js";
 import type { AliasesConfig } from "../config.js";
 import { UUID_REGEX } from "../utils/constants.js";
+import { pluginLogger } from "../utils/logger.js";
 
 // ---------------------------------------------------------------------------
 // AliasDB
@@ -83,7 +84,7 @@ class AliasVectorIndex {
       await this.table.delete('id = "__schema__"');
     } catch (deleteErr) {
       // Non-fatal; keep the seed row if delete fails.
-      console.warn(`memory-hybrid: failed to delete alias schema seed row (non-fatal): ${deleteErr}`);
+      pluginLogger.warn(`memory-hybrid: failed to delete alias schema seed row (non-fatal): ${deleteErr}`);
     }
   }
 
@@ -95,23 +96,20 @@ class AliasVectorIndex {
           typeof f.type?.typeId === "number" && f.type.typeId === 16,
       );
       if (!vectorField) {
-        console.warn(
-          `memory-hybrid: ⚠️  Alias LanceDB table '${ALIAS_LANCE_TABLE}' has no vector column — ` +
-            `alias search will fall back to linear scan.`,
+        pluginLogger.warn(
+          `memory-hybrid: ⚠️  Alias LanceDB table '${ALIAS_LANCE_TABLE}' has no vector column — alias search will fall back to linear scan.`,
         );
         return;
       }
       const actualDim = (vectorField.type as { listSize?: number }).listSize;
       if (typeof actualDim !== "number" || actualDim !== this.vectorDim) {
         const actual = typeof actualDim === "number" ? actualDim : "unknown";
-        console.warn(
-          `memory-hybrid: ⚠️  Alias LanceDB dimension mismatch — table has dim=${actual}, ` +
-            `configured embedding model expects dim=${this.vectorDim}. ` +
-            `Alias search will fall back to linear scan until resolved.`,
+        pluginLogger.warn(
+          `memory-hybrid: ⚠️  Alias LanceDB dimension mismatch — table has dim=${actual}, configured embedding model expects dim=${this.vectorDim}. Alias search will fall back to linear scan until resolved.`,
         );
       }
     } catch (err) {
-      console.warn(`memory-hybrid: alias LanceDB schema validation failed (non-fatal): ${err}`);
+      pluginLogger.warn(`memory-hybrid: alias LanceDB schema validation failed (non-fatal): ${err}`);
     }
   }
 
@@ -139,7 +137,7 @@ class AliasVectorIndex {
         operation: "alias-vector-store",
         subsystem: "aliases",
       });
-      console.warn(`memory-hybrid: alias LanceDB store failed (non-fatal): ${err}`);
+      pluginLogger.warn(`memory-hybrid: alias LanceDB store failed (non-fatal): ${err}`);
     }
   }
 
@@ -169,7 +167,7 @@ class AliasVectorIndex {
         severity: "info",
         subsystem: "aliases",
       });
-      console.warn(`memory-hybrid: alias LanceDB search failed (non-fatal): ${err}`);
+      pluginLogger.warn(`memory-hybrid: alias LanceDB search failed (non-fatal): ${err}`);
       return [];
     }
   }
@@ -178,7 +176,7 @@ class AliasVectorIndex {
     try {
       await this.ensureInitialized();
       if (!UUID_REGEX.test(factId)) {
-        console.warn(`memory-hybrid: skipping alias LanceDB delete for non-UUID factId: ${factId}`);
+        pluginLogger.warn(`memory-hybrid: skipping alias LanceDB delete for non-UUID factId: ${factId}`);
         return;
       }
       await this.getTable().delete(`factId = '${factId.toLowerCase()}'`);
@@ -187,7 +185,7 @@ class AliasVectorIndex {
         operation: "alias-vector-delete",
         subsystem: "aliases",
       });
-      console.warn(`memory-hybrid: alias LanceDB delete failed (non-fatal): ${err}`);
+      pluginLogger.warn(`memory-hybrid: alias LanceDB delete failed (non-fatal): ${err}`);
     }
   }
 
@@ -212,15 +210,15 @@ class AliasVectorIndex {
  * fast deserialization during linear cosine-similarity search.
  */
 export class AliasDB {
-  private db: Database.Database;
+  private db: DatabaseSync;
   private aliasIndex: AliasVectorIndex;
   /** Cached alias count — invalidated on store/delete to avoid COUNT(*) on every search. */
   private aliasCountCache: number | null = null;
 
   constructor(dbPath: string, aliasLancePath: string, vectorDim: number) {
     mkdirSync(dirname(dbPath), { recursive: true });
-    this.db = new Database(dbPath);
-    this.db.pragma("journal_mode = WAL");
+    this.db = new DatabaseSync(dbPath);
+    this.db.exec("PRAGMA journal_mode = WAL");
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS fact_aliases (
         id TEXT PRIMARY KEY,
@@ -256,7 +254,7 @@ export class AliasDB {
     const normalizedFactId = factId.toLowerCase();
     return this.db
       .prepare(`SELECT id, factId, aliasText FROM fact_aliases WHERE factId COLLATE NOCASE = ?`)
-      .all(normalizedFactId) as AliasRow[];
+      .all(normalizedFactId) as unknown as AliasRow[];
   }
 
   /** Delete all aliases for a fact (e.g., when the fact is superseded). */
@@ -265,7 +263,7 @@ export class AliasDB {
     const normalizedFactId = factId.toLowerCase();
     const res = this.db.prepare(`DELETE FROM fact_aliases WHERE factId = ?`).run(normalizedFactId);
     if (this.aliasCountCache != null) {
-      this.aliasCountCache = Math.max(0, this.aliasCountCache - (res.changes ?? 0));
+      this.aliasCountCache = Math.max(0, this.aliasCountCache - Number(res.changes ?? 0));
     }
     void this.aliasIndex.deleteByFactId(factId);
   }

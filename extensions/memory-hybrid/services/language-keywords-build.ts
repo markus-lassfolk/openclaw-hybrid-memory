@@ -151,7 +151,7 @@ ${englishPayload}
 === OUTPUT FORMAT ===
 Reply with ONLY valid JSON (no markdown, no explanation). One top-level key per language code. Each language object must contain:
 
-1. All keyword groups (same keys as English): triggers, categoryDecision, categoryPreference, categoryEntity, categoryFact, decayPermanent, decaySession, decayActive. Each value: array of strings (natural equivalents for that intent; can be more or fewer than English).
+1. All keyword groups (same keys as English): ${KEYWORD_GROUPS.join(", ")}. Each value: array of strings (natural equivalents for that intent; can be more or fewer than English).
 
 2. "triggerStructures": array of strings — natural phrases for first-person preference, possessive fact, and always/never rule in this language.
 
@@ -326,8 +326,10 @@ English keywords:
 ${payload}
 
 Reply with ONLY valid JSON in this exact shape (no markdown, no explanation):
-{"<langCode>": {"triggers": ["...", ...], "categoryDecision": [...], "categoryPreference": [...], "categoryEntity": [...], "categoryFact": [...], "decayPermanent": [...], "decaySession": [...], "decayActive": [...], "correctionSignals": [...]}, ...}
-Each key must be one of: triggers, categoryDecision, categoryPreference, categoryEntity, categoryFact, decayPermanent, decaySession, decayActive, correctionSignals.
+{"<langCode>": {"triggers": ["...", ...], "categoryDecision": [...], ..., ${KEYWORD_GROUPS.slice(-1)
+    .map((g) => `"${g}": [...]`)
+    .join("")}}, ...}
+Each key must be one of: ${KEYWORD_GROUPS.join(", ")}.
 Each value must be an array of translated strings in the same order as the English list. Translate correctionSignals as natural phrases users say when correcting an AI (e.g. "that was wrong", "try again", "you misunderstood") in the target language.`;
 
   try {
