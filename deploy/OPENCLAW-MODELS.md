@@ -1,8 +1,8 @@
-# OpenClaw `models` and Doris (2026.3.x)
+# OpenClaw `models` Configuration (2026.3.x)
 
 Some OpenClaw CLI commands validate `~/.openclaw/openclaw.json` with a **strict schema** that may reject a **top-level `models`** block (error: `models: Unrecognized key: "models"`), even though other tools document `models.providers` for the gateway.
 
-**Workaround on Doris:** keep **model provider API keys and routing** in the **memory-hybrid plugin** config instead:
+**Workaround:** keep **model provider API keys and routing** in the **memory-hybrid plugin** config instead:
 
 - `plugins.entries["openclaw-hybrid-memory"].config.llm.providers` (and `llm.default` / `llm.heavy` / `llm.nano`)
 - Environment: `OPENAI_API_KEY`, `AZURE_OPENAI_API_KEY`, `GOOGLE_API_KEY`, `ANTHROPIC_API_KEY`, etc.

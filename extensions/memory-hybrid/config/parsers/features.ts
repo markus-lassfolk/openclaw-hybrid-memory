@@ -378,7 +378,7 @@ export function parseErrorReportingConfig(cfg: Record<string, unknown>): ErrorRe
   const uuidLike = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
   const botId = botIdRaw.length > 0 && uuidLike.test(botIdRaw) ? botIdRaw : undefined;
 
-  // Optional friendly name (e.g. Maeve, Doris) for readable GlitchTip reports
+  // Optional friendly name for readable GlitchTip reports
   const botNameRaw = typeof errorReportingRaw.botName === "string" ? errorReportingRaw.botName.trim() : "";
   const botName = botNameRaw.length > 0 ? botNameRaw.slice(0, 64) : undefined;
 

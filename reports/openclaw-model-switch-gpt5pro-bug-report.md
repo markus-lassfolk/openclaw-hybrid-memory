@@ -82,7 +82,7 @@ This bug is separate from:
 - bad config on a host
 - missing credentials
 - provider quota/auth failures
-- Doris-specific runtime issues
+- Instance-specific runtime issues
 
 Those can also exist, but this specific failure mode was an **OpenClaw bug in live session model switching**.
 

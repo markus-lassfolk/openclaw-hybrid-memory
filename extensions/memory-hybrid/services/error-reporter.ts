@@ -40,7 +40,7 @@ export interface ErrorReporterConfig {
   botId?: string;
   /**
    * Opt-in: Only sent when explicitly configured. Not sent by default for privacy.
-   * Optional friendly name (e.g. Maeve, Doris); sent as tag for readable reports.
+   * Optional friendly name for this bot; sent as tag for readable reports.
    */
   botName?: string;
   /**

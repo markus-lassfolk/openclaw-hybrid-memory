@@ -177,7 +177,7 @@ export type ErrorReportingConfig = {
    * Optional UUID identifying this bot instance; sent as tag so GlitchTip can group errors by bot. */
   botId?: string;
   /** Opt-in: Only sent when explicitly configured. Not sent by default for privacy.
-   * Optional friendly name for this bot (e.g. Maeve, Doris); sent as tag for readable reports. */
+   * Optional friendly name for this bot; sent as tag for readable reports. */
   botName?: string;
   /**
    * Optional map of error fingerprints to the version that fixed them.

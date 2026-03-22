@@ -1518,7 +1518,7 @@ Enabled by default. Access it at `http://localhost:7700` while the gateway is ru
 |---------|---------------|
 | 🧠 Memory Stats | Active/expired facts, vector index count, SQLite and LanceDB storage sizes |
 | 📋 Task Queue | Current task in progress + last 5 completed tasks (from `~/.openclaw/workspace/state/task-queue/`) |
-| ⚒️ Agent Status | Active Forge agent tasks (from `~/.openclaw/workspace/state/forge/*.json`). Agent avatars: 🦊 Maeve, ⚒️ Forge, 📚 Scholar, 🏠 Hearth, 🛡️ Warden, 🔧 Reaver |
+| ⚒️ Agent Status | Active Forge agent tasks (from `~/.openclaw/workspace/state/forge/*.json`). Agent avatars: ⚒️ Forge, 📚 Scholar, 🏠 Hearth, 🛡️ Warden, 🔧 Reaver |
 | ⏰ Cron Jobs | All registered cron jobs with schedule, last run time, and status (from `~/.openclaw/cron/jobs.json`) |
 | 🔀 Git Activity | Last 10 open PRs and issues via `gh` CLI (requires GitHub CLI installed and authenticated) |
 | 💰 Cost Tracking (7d) | LLM cost breakdown by feature for the last 7 days (requires cost tracking enabled) |
@@ -1550,7 +1550,7 @@ See [ERROR-REPORTING.md](ERROR-REPORTING.md) for full privacy and audit details.
             "mode": "community",
             "sampleRate": 1.0,
             "environment": "production",
-            "botName": "Maeve"
+            "botName": "MyBot"
           }
         }
       }

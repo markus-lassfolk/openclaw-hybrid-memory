@@ -233,8 +233,8 @@ export function parseObserverResponse(raw: string, categories: string[]): Extrac
  * These facts should be stored as global/permanent instead of session-scoped.
  *
  * @param text - The fact text to classify.
- * @param agentName - Optional known agent name (e.g. "Doris"). When provided, adds a
- *   name-specific pattern so "Doris's email is …" is also detected.
+ * @param agentName - Optional known agent name. When provided, adds a
+ *   name-specific pattern so "[AgentName]'s email is …" is also detected.
  */
 export function isIdentityFact(text: string, agentName?: string): boolean {
   const patterns: RegExp[] = [
@@ -272,7 +272,7 @@ export async function runPassiveObserver(
     provenanceService?: ProvenanceService | null;
     /** Episodic event log (Issue #150). When set, each stored fact is also appended to Layer 1. */
     eventLog?: EventLog | null;
-    /** Agent's own name (e.g. "Doris"). Used by isIdentityFact() for name-specific detection. */
+    /** Agent's own name. Used by isIdentityFact() for name-specific detection. */
     agentName?: string;
   },
   logger: { info: (msg: string) => void; warn: (msg: string) => void },

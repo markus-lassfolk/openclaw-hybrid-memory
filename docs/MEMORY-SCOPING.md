@@ -239,7 +239,7 @@ async function handleUserCommand(message: string, authenticatedSession: Session)
 
 ## Multi-Agent Configuration
 
-**Multi-agent scoping** enables specialist agents (Forge, Scholar, Hearth) to build domain expertise while maintaining shared global knowledge with the orchestrator (Maeve).
+**Multi-agent scoping** enables specialist agents (Forge, Scholar, Hearth) to build domain expertise while maintaining shared global knowledge with the orchestrator.
 
 ### Configuration
 
@@ -280,7 +280,7 @@ Add `multiAgent` section to plugin config:
 
 | Agent | Stores | Sees (auto-recall) | Rationale |
 |-------|--------|-------------------|-----------|
-| **Maeve (orchestrator)** | `scope='global'` | All memories | Needs full context for coordination |
+| **Orchestrator** | `scope='global'` | All memories | Needs full context for coordination |
 | **Forge (coding)** | `scope='agent'` `target='forge'` | Global + Forge | Builds code expertise privately |
 | **Scholar (research)** | `scope='agent'` `target='scholar'` | Global + Scholar | Accumulates research methods |
 | **Hearth (HA)** | `scope='agent'` `target='hearth'` | Global + Hearth | Home Assistant domain knowledge |
@@ -314,7 +314,7 @@ await memory_store({
 #### Cross-agent queries
 
 ```typescript
-// Maeve (orchestrator) can query Hearth's domain knowledge
+// Orchestrator can query Hearth's domain knowledge
 await memory_recall({
   query: "NIBE heat pump configuration",
   agentId: "hearth"  // Explicitly query Hearth's scope
@@ -356,7 +356,7 @@ upsertProcedure({
 });
 
 // Hearth won't see Forge's procedures in auto-recall
-// Maeve (orchestrator) sees all procedures for coordination
+// Orchestrator sees all procedures for coordination
 ```
 
 **Tool usage:** `memory_recall_procedures` respects scoping:
