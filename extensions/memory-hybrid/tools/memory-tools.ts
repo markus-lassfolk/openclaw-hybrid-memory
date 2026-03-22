@@ -29,6 +29,7 @@ import { isCredentialLike, tryParseCredentialForVault, VAULT_POINTER_PREFIX } fr
 import { capturePluginError, addOperationBreadcrumb } from "../services/error-reporter.js";
 import { runRetrievalPipeline } from "../services/retrieval-orchestrator.js";
 import { QueryExpander } from "../services/query-expander.js";
+import { validateQueryForMemoryLookup } from "../services/query-validator.js";
 import { storeAliases, type AliasDB } from "../services/retrieval-aliases.js";
 import { expandGraph, formatLinkPath } from "../services/graph-retrieval.js";
 import {
@@ -449,6 +450,40 @@ export function registerMemoryTools(
       entityResults = factsDb.lookup(entity, undefined, tag, { ...recallOpts, limit: 100 });
     }
 
+    const queryValidation = validateQueryForMemoryLookup(query);
+    if (!queryValidation.requiresLookup) {
+      logRecall(entityResults.length > 0);
+      return {
+        content: [
+          {
+            type: "text",
+            text:
+              entityResults.length > 0
+                ? `Found ${entityResults.length} entity-targeted memory match(es).`
+                : "No memory lookup needed for this request.",
+          },
+        ],
+        details: {
+          count: entityResults.length,
+          skippedRag: true,
+          reason: queryValidation.reason,
+          memories: entityResults.map((r) => ({
+            id: r.entry.id,
+            text: r.entry.text,
+            category: r.entry.category,
+            entity: r.entry.entity,
+            importance: r.entry.importance,
+            score: r.score,
+            backend: r.backend,
+            tags: r.entry.tags?.length ? r.entry.tags : undefined,
+            sourceDate: r.entry.sourceDate
+              ? new Date(r.entry.sourceDate * 1000).toISOString().slice(0, 10)
+              : undefined,
+          })),
+        },
+      };
+    }
+
     // Compute embedding for semantic strategy (with optional HyDE query expansion). Skip when FTS-only.
     let queryVector: number[] | null = null;
     let semanticWarning: string | null = null;
@@ -509,7 +544,7 @@ export function registerMemoryTools(
         cfg.queryExpansion?.enabled && cfg.retrieval.strategies.includes("semantic")
           ? new QueryExpander(cfg.queryExpansion, openai)
           : null;
-      const embedFn = queryExpander && queryVector != null ? (text: string) => embeddings.embed(text) : null;
+      const embedFn = queryVector != null ? (text: string) => embeddings.embed(text) : null;
       const rrfOutput = await runRetrievalPipeline(query, queryVector, factsDb.getRawDb(), vectorDb, factsDb, {
         config: rrfConfig,
         budgetTokens: cfg.retrieval.explicitBudgetTokens,
@@ -525,6 +560,7 @@ export function registerMemoryTools(
         embedFn,
         rerankingConfig: cfg.reranking,
         rerankingOpenai: openai,
+        adaptiveOpenai: openai,
       });
 
       // Merge entity-lookup results first, then append RRF results (deduped).
