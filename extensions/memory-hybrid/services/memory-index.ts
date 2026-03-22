@@ -6,7 +6,7 @@ import type { MemoryEntry } from "../types/memory.js";
 import { detectClusters } from "./topic-clusters.js";
 import { loadPrompt, fillPrompt } from "../utils/prompt-loader.js";
 import { capturePluginError } from "./error-reporter.js";
-import { chatCompleteWithRetry, LLMRetryError } from "./chat.js";
+import { chatCompleteWithRetry, LLMRetryError, is500Like, is404Like, isOllamaOOM } from "./chat.js";
 
 const MAX_CLUSTERS = 5;
 const MAX_DECISIONS = 5;
@@ -251,12 +251,20 @@ async function synthesizeMemoryIndex(
     return sanitizeIndexMarkdown(response);
   } catch (err) {
     logger.warn(`memory-hybrid: memory-index — synthesis failed, using fallback: ${err}`);
-    const retryAttempt = err instanceof LLMRetryError ? err.attemptNumber : 1;
-    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-      operation: "memory-index-llm",
-      subsystem: "openai",
-      retryAttempt,
-    });
+    const error = err instanceof Error ? err : new Error(String(err));
+    const isTransient =
+      isOllamaOOM(error) ||
+      is500Like(error) ||
+      is404Like(error) ||
+      /timed out|llm request timeout|request was aborted|econnrefused/i.test(error.message);
+    if (!isTransient) {
+      const retryAttempt = err instanceof LLMRetryError ? err.attemptNumber : 1;
+      capturePluginError(error, {
+        operation: "memory-index-llm",
+        subsystem: "openai",
+        retryAttempt,
+      });
+    }
     return null;
   }
 }
