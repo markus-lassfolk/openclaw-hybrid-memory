@@ -1138,7 +1138,7 @@ describe("isIdentityFact", () => {
 
   it("is case-insensitive", () => {
     expect(isIdentityFact("YOUR EMAIL IS TESTBOT@EXAMPLE.COM")).toBe(true);
-    expect(isIdentityFact("the ASSISTANT's name is doris", "testbot")).toBe(true);
+    expect(isIdentityFact("the ASSISTANT's name is TESTBOT", "testbot")).toBe(true);
   });
 
   it("does NOT flag 'The user's email is ...'", () => {
