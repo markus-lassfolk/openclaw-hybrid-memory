@@ -20,6 +20,7 @@ import type { WriteAheadLog } from "../backends/wal.js";
 import type { CredentialsDB } from "../backends/credentials-db.js";
 import type { ProposalsDB } from "../backends/proposals-db.js";
 import type { EventLog } from "../backends/event-log.js";
+import type { NarrativesDB } from "../backends/narratives-db.js";
 import type { AliasDB } from "../services/retrieval-aliases.js";
 import type { EventBus } from "../backends/event-bus.js";
 import type { CostTracker } from "../backends/cost-tracker.js";
@@ -57,6 +58,7 @@ export interface PluginRuntime {
   wal: WriteAheadLog | null;
   proposalsDb: ProposalsDB | null;
   eventLog: EventLog | null;
+  narrativesDb: NarrativesDB | null;
   aliasDb: AliasDB | null;
   eventBus: EventBus | null;
   costTracker: CostTracker | null;

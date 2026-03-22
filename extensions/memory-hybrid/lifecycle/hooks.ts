@@ -8,6 +8,7 @@
 import { join, isAbsolute } from "node:path";
 import { homedir } from "node:os";
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk";
+import { getCronModelConfig, getDefaultCronModel } from "../config.js";
 import { runSetupStage } from "./stage-setup.js";
 import { runRecallStage } from "./stage-recall.js";
 import { runInjectionStage } from "./stage-injection.js";
@@ -20,6 +21,7 @@ import { registerFrustrationHandlers } from "./stage-frustration.js";
 import { createSessionState } from "./session-state.js";
 import type { LifecycleContext, SessionState } from "./types.js";
 import { capturePluginError } from "../services/error-reporter.js";
+import { buildDailyNarrative } from "../src/worker/narratives.js";
 
 export type { LifecycleContext } from "./types.js";
 
@@ -84,6 +86,26 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
   const onAgentEnd = (api: ClawdbotPluginApi) => {
     api.on("agent_end", async (event: unknown) => {
       await runCaptureStage(event, api, ctx, sessionState);
+      const sessionId = sessionState.resolveSessionKey(event, api) ?? ctx.currentAgentIdRef.value ?? "default";
+      try {
+        await buildDailyNarrative({
+          sessionId,
+          eventLog: ctx.eventLog,
+          workflowStore: ctx.workflowStore,
+          narrativesDb: ctx.narrativesDb,
+          openai: ctx.openai,
+          model: getDefaultCronModel(getCronModelConfig(ctx.cfg), "nano"),
+          logger: api.logger,
+          fallbackModels: [],
+        });
+      } catch (err) {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+          subsystem: "narratives",
+          operation: "agent-end-build-narrative",
+          sessionId,
+        });
+        api.logger.warn(`memory-hybrid: session narrative build failed: ${String(err)}`);
+      }
     });
   };
 

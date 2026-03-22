@@ -41,6 +41,8 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
       aliasDb: ctx.aliasDb,
       wal: ctx.wal,
       eventLog: ctx.eventLog,
+      narrativesDb: ctx.narrativesDb,
+      workflowStore: ctx.workflowStore,
       currentAgentIdRef: ctx.currentAgentIdRef,
       lastProgressiveIndexIds: ctx.lastProgressiveIndexIds,
       restartPendingClearedRef: ctx.restartPendingClearedRef,
