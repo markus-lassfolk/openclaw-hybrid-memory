@@ -136,7 +136,10 @@ Output only the statement, no preamble.`,
       });
     }
     logger.warn(`memory-hybrid: embedding generation failed: ${err}`);
-    return { queryVector: null, warning: "Semantic search unavailable due to embedding failure; results may be incomplete." };
+    return {
+      queryVector: null,
+      warning: "Semantic search unavailable due to embedding failure; results may be incomplete.",
+    };
   }
 }
 
@@ -782,7 +785,7 @@ export async function runExplicitDeepRetrieval(
     // After RRF fusion (and cluster boost), optionally re-rank the top candidates via LLM.
     // On any failure or timeout, falls back to the original RRF order (no behavior change).
     // Skip re-ranking if explicitly requested (e.g., conditional mode first pass).
-    if (rerankingConfig?.enabled && rerankingOpenai && !expansion.skipReranking) {
+    if (policy.allowReranking && rerankingConfig?.enabled && rerankingOpenai && !expansion.skipReranking) {
       try {
         const rrfScoreMap = new Map<string, number>(scopedFused.map((r) => [r.factId, r.finalScore]));
         const scoredFacts: ScoredFact[] = orderedEntries.map(({ factId, entry }) => {
