@@ -1,13 +1,9 @@
 /**
- * Multi-Strategy Retrieval Orchestrator (Issue #152).
+ * Explicit/deep retrieval owner.
  *
- * Runs configured retrieval strategies in parallel, fuses results via RRF,
- * applies post-RRF score adjustments, and packs results into a token budget.
- *
- * Strategies:
- *   - semantic: LanceDB vector similarity search
- *   - fts5: SQLite FTS5 full-text search (Issue #151)
- *   - graph: Graph-walk spreading activation (GraphRAG expansion)
+ * This module owns the richer retrieval path used for explicit tools and deeper
+ * analysis. It may spend more latency budget on HyDE, query expansion, RRF,
+ * graph expansion, multi-model semantic search, and reranking.
  */
 
 import type { DatabaseSync } from "node:sqlite";
@@ -22,14 +18,25 @@ import {
   type FusedResult,
   type FactMetadata,
 } from "./rrf-fusion.js";
-import type { RetrievalConfig, ClustersConfig, RerankingConfig } from "../config.js";
+import type {
+  getCronModelConfig,
+  HybridMemoryConfig,
+  RetrievalConfig,
+  ClustersConfig,
+  RerankingConfig,
+} from "../config.js";
 import { rerankResults, type ScoredFact } from "./reranker.js";
 import type { QueryExpander } from "./query-expander.js";
 import { searchAliasStrategy, type AliasDB } from "./retrieval-aliases.js";
 import { detectClusters, type ClusterFactLookup } from "./topic-clusters.js";
 import { expandGraph, type GraphFactLookup } from "./graph-retrieval.js";
 import type { EmbeddingRegistry } from "./embedding-registry.js";
-import { capturePluginError } from "./error-reporter.js";
+import type { EmbeddingProvider } from "./embeddings.js";
+import { AllEmbeddingProvidersFailed } from "./embeddings.js";
+import { capturePluginError, addOperationBreadcrumb } from "./error-reporter.js";
+import type { PendingLLMWarnings } from "./chat.js";
+import { resolveExplicitDeepRetrievalPolicy, type ExplicitDeepRetrievalPolicy } from "./retrieval-mode-policy.js";
+import { expandQueryWithHyde } from "./hyde-helper.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -52,6 +59,68 @@ export interface OrchestratorResult {
 // ---------------------------------------------------------------------------
 // Defaults
 // ---------------------------------------------------------------------------
+
+export interface ExplicitRetrievalLogger {
+  warn: (msg: string) => void;
+}
+
+export interface BuildExplicitSemanticQueryVectorDeps {
+  query: string;
+  cfg: Pick<HybridMemoryConfig, "retrieval" | "queryExpansion" | "llm" | "embedding" | "distill" | "reflection">;
+  embeddings: Pick<EmbeddingProvider, "embed">;
+  openai: import("openai").default;
+  pendingLLMWarnings: PendingLLMWarnings;
+  logger: ExplicitRetrievalLogger;
+  policy?: ExplicitDeepRetrievalPolicy;
+}
+
+export async function buildExplicitSemanticQueryVector({
+  query,
+  cfg,
+  embeddings,
+  openai,
+  pendingLLMWarnings,
+  logger,
+  policy = resolveExplicitDeepRetrievalPolicy(cfg.retrieval),
+}: BuildExplicitSemanticQueryVectorDeps): Promise<{ queryVector: number[] | null; warning: string | null }> {
+  if (!cfg.retrieval.strategies.includes("semantic")) {
+    return { queryVector: null, warning: null };
+  }
+
+  try {
+    addOperationBreadcrumb("retrieval", `${policy.mode}-vector-recall`);
+    let textToEmbed = query;
+
+    if (policy.allowHyde && cfg.queryExpansion.enabled) {
+      textToEmbed = await expandQueryWithHyde({
+        query,
+        rawCfg: cfg as Parameters<typeof getCronModelConfig>[0],
+        model: cfg.queryExpansion.model,
+        timeoutMs: cfg.queryExpansion.timeoutMs,
+        openai,
+        label: "HyDE",
+        pendingWarnings: pendingLLMWarnings,
+        logger,
+        subsystem: "retrieval",
+        operation: "explicit-hyde-generation",
+      });
+    }
+
+    return { queryVector: await embeddings.embed(textToEmbed), warning: null };
+  } catch (err) {
+    if (!(err instanceof AllEmbeddingProvidersFailed)) {
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        subsystem: "retrieval",
+        operation: "explicit-vector-embed",
+      });
+    }
+    logger.warn(`memory-hybrid: embedding generation failed: ${err}`);
+    return {
+      queryVector: null,
+      warning: "Semantic search unavailable due to embedding failure; results may be incomplete.",
+    };
+  }
+}
 
 export const DEFAULT_RETRIEVAL_CONFIG: RetrievalConfig = {
   strategies: ["semantic", "fts5", "graph"],
@@ -373,7 +442,7 @@ export function invalidateClusterCache(): void {
 }
 
 /**
- * Options bag for `runRetrievalPipeline`.
+ * Options bag for `runExplicitDeepRetrieval` (also exported as `runRetrievalPipeline`).
  *
  * All fields are optional. Required inputs (`query`, `queryVector`, `db`,
  * `vectorDb`, `factsDb`) are kept as positional parameters because they are
@@ -382,6 +451,8 @@ export function invalidateClusterCache(): void {
  * without touching every call site.
  */
 export interface RetrievalPipelineOptions {
+  /** Explicit/deep retrieval policy. Defaults to `resolveExplicitDeepRetrievalPolicy(config)`. */
+  policy?: ExplicitDeepRetrievalPolicy;
   /** Retrieval pipeline configuration. Defaults to `DEFAULT_RETRIEVAL_CONFIG`. */
   config?: RetrievalConfig;
   /** Token budget for packing. Defaults to `config.explicitBudgetTokens`. */
@@ -417,7 +488,8 @@ export interface RetrievalPipelineOptions {
 }
 
 /**
- * Run the multi-strategy retrieval pipeline and return fused, ranked results.
+ * Run the explicit/deep retrieval pipeline and return fused, ranked results.
+ * `runRetrievalPipeline` remains as a backward-compatible alias.
  *
  * Steps:
  * 1. Run configured strategies in parallel (semantic, fts5) and optional graph expansion.
@@ -434,7 +506,7 @@ export interface RetrievalPipelineOptions {
  * @param factsDb - FactsDB for metadata lookup.
  * @param options - Optional settings; see `RetrievalPipelineOptions`.
  */
-export async function runRetrievalPipeline(
+export async function runExplicitDeepRetrieval(
   query: string,
   queryVector: number[] | null,
   db: DatabaseSync,
@@ -443,7 +515,8 @@ export async function runRetrievalPipeline(
   options: RetrievalPipelineOptions = {},
 ): Promise<OrchestratorResult> {
   const config = options.config ?? DEFAULT_RETRIEVAL_CONFIG;
-  const budgetTokens = options.budgetTokens ?? config.explicitBudgetTokens;
+  const policy = options.policy ?? resolveExplicitDeepRetrievalPolicy(config);
+  const budgetTokens = options.budgetTokens ?? policy.budgetTokens;
   const nowSec = options.nowSec ?? Math.floor(Date.now() / 1000);
   const {
     tagFilter,
@@ -500,13 +573,13 @@ export async function runRetrievalPipeline(
     }
 
     // Issue #149: alias search — participates in RRF fusion as "aliases" strategy
-    if (aliasDb && queryVector) {
+    if (policy.allowAliasExpansion && aliasDb && queryVector) {
       strategyPromises.push(safeStrategy("aliases", () => searchAliasStrategy(aliasDb, queryVector, semanticTopK)));
     }
 
     // Issue #160: query expansion — generate variant queries, embed each, run semantic search.
     // Only runs when semantic strategy is active, expander is provided, and embedFn is available.
-    if (strategies.includes("semantic") && queryVector && queryExpander && embedFn) {
+    if (policy.allowQueryExpansion && strategies.includes("semantic") && queryVector && queryExpander && embedFn) {
       try {
         let additionalVariants: string[] = [];
         if (expansion.useLlm) {
@@ -535,6 +608,7 @@ export async function runRetrievalPipeline(
     // Issue #158: start multi-model semantic strategies in parallel with other strategies.
     let multiModelPromise: Promise<Map<string, RankedResult[]>> | null = null;
     if (
+      policy.allowMultiModelSemantic &&
       strategies.includes("semantic") &&
       embeddingRegistry &&
       embeddingRegistry.isMultiModel() &&
@@ -572,7 +646,7 @@ export async function runRetrievalPipeline(
     }
 
     // Graph walk strategy (Issue #152) — expand from semantic/FTS5 seeds
-    if (strategies.includes("graph")) {
+    if (policy.allowGraphExpansion && strategies.includes("graph")) {
       const seedScores = new Map<string, number>();
       const seedEntries = new Map<string, MemoryEntry>();
       const getByIdOpts = scopeFilter || asOf != null ? { scopeFilter, asOf } : undefined;
@@ -600,7 +674,7 @@ export async function runRetrievalPipeline(
     }
 
     // --- RRF Fusion ---
-    const fused = fuseResults(strategyMap, k);
+    const fused = policy.allowRrfFusion ? fuseResults(strategyMap, k) : [];
 
     if (fused.length === 0) {
       return { fused: [], packed: [], packedFactIds: [], tokensUsed: 0, entries: [] };
@@ -690,7 +764,7 @@ export async function runRetrievalPipeline(
     // After RRF fusion (and cluster boost), optionally re-rank the top candidates via LLM.
     // On any failure or timeout, falls back to the original RRF order (no behavior change).
     // Skip re-ranking if explicitly requested (e.g., conditional mode first pass).
-    if (rerankingConfig?.enabled && rerankingOpenai && !expansion.skipReranking) {
+    if (policy.allowReranking && rerankingConfig?.enabled && rerankingOpenai && !expansion.skipReranking) {
       try {
         const rrfScoreMap = new Map<string, number>(scopedFused.map((r) => [r.factId, r.finalScore]));
         const scoredFacts: ScoredFact[] = orderedEntries.map(({ factId, entry }) => {
@@ -778,7 +852,7 @@ export async function runRetrievalPipeline(
       return runOnce({ useLlm: true, variants: null, skipReranking: false });
     }
     // When above threshold we skipped LLM expansion but must still apply reranking if enabled.
-    if (rerankingConfig?.enabled && rerankingOpenai) {
+    if (policy.allowReranking && rerankingConfig?.enabled && rerankingOpenai) {
       try {
         const rrfScoreMap = new Map(initial.fused.map((r) => [r.factId, r.finalScore]));
         // Build factId→entry map from fused results (same length/order as entries) to avoid
@@ -845,3 +919,5 @@ export async function runRetrievalPipeline(
 
   return runOnce({ useLlm: false, variants: [] });
 }
+
+export const runRetrievalPipeline = runExplicitDeepRetrieval;

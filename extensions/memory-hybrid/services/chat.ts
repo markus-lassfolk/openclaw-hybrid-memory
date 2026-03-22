@@ -4,6 +4,7 @@
  */
 
 import type OpenAI from "openai";
+import type { ChatCompletionCreateParamsNonStreaming } from "openai/resources/chat/completions";
 import { capturePluginError } from "./error-reporter.js";
 import { withCostFeature } from "./cost-context.js";
 import { pluginLogger } from "../utils/logger.js";
@@ -319,8 +320,9 @@ export async function chatComplete(opts: {
   try {
     // Newer models (GPT-5+, o-series) require max_completion_tokens and reject max_tokens; reasoning models also reject temperature/top_p.
     const useMaxCompletionTokens = requiresMaxCompletionTokens(model);
-    const body: Record<string, unknown> = {
+    const body: ChatCompletionCreateParamsNonStreaming = {
       model,
+      stream: false,
       messages: [{ role: "user", content }],
       ...(useMaxCompletionTokens ? { max_completion_tokens: effectiveMaxTokens } : { max_tokens: effectiveMaxTokens }),
     };
@@ -328,9 +330,7 @@ export async function chatComplete(opts: {
       body.temperature = temperature;
     }
     const doCreate = () =>
-      opts.openai.chat.completions.create(body as Parameters<OpenAI["chat"]["completions"]["create"]>[0], {
-        signal: controller.signal,
-      });
+      opts.openai.chat.completions.create(body, { signal: controller.signal });
     // If feature is provided, wrap in withCostFeature so the proxy attributes the call correctly.
     // Cost recording itself is done by the OpenAI proxy in setup/init-databases.ts.
     const resp = await (feature ? withCostFeature(feature, doCreate) : doCreate());
