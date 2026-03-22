@@ -40,8 +40,8 @@ describe("distillMaxOutputTokens", () => {
     expect(distillMaxOutputTokens("models/gemini-2.0-flash")).toBe(65_536);
   });
 
-  it("returns 8000 for non-Gemini models", () => {
-    expect(distillMaxOutputTokens("gpt-4o-mini")).toBe(8000);
+  it("returns catalog max output for known models, 8000 default for unknown", () => {
+    expect(distillMaxOutputTokens("gpt-4o-mini")).toBe(16_384);
     expect(distillMaxOutputTokens("gpt-4")).toBe(8000);
   });
 });
@@ -77,7 +77,7 @@ describe("chatComplete", () => {
     );
   });
 
-  it("uses 8000 max_tokens for OpenAI when maxTokens not provided", async () => {
+  it("uses catalog max_tokens for gpt-4o-mini (16k) when maxTokens not provided", async () => {
     await chatComplete({
       model: "gpt-4o-mini",
       content: "test",
@@ -85,7 +85,7 @@ describe("chatComplete", () => {
     });
     expect(mockOpenai.chat.completions.create).toHaveBeenCalledWith(
       expect.objectContaining({
-        max_tokens: 8000,
+        max_tokens: 16_384,
       }),
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
@@ -1057,7 +1057,7 @@ describe("chatCompleteWithRetry — OOM falls through to next model (#387)", () 
       model: "ollama/qwen3:8b",
       content: "test",
       openai: mockOpenai,
-      fallbackModels: ["google/gemini-2.0-flash-lite"],
+      fallbackModels: ["google/gemini-2.5-flash-lite"],
     });
 
     await vi.runAllTimersAsync();

@@ -4,7 +4,7 @@
  * Extracted from index.ts - pure function for classifying memory operations
  */
 
-import OpenAI from "openai";
+import type OpenAI from "openai";
 import type { MemoryEntry } from "../types/memory.js";
 import { loadPrompt, fillPrompt } from "../utils/prompt-loader.js";
 import { capturePluginError } from "./error-reporter.js";

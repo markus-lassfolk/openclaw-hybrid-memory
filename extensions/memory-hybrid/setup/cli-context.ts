@@ -31,10 +31,10 @@ import {
   resolveReflectionModelAndFallbacks,
 } from "../config.js";
 import { versionInfo } from "../versionInfo.js";
-import { safeEmbed } from "../services/embeddings.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { applyApprovedProposal } from "../cli/proposals.js";
 import { runBackup as runBackupFn, runBackupVerify as runBackupVerifyFn } from "../cli/backup.js";
+import { pluginLogger } from "../utils/logger.js";
 
 /** Help text shown after hybrid-mem commands list */
 export const HYBRID_MEM_HELP_GROUPED = `
@@ -50,6 +50,7 @@ Commands by category:
     compact              Tier compaction: move facts between hot/warm/cold
     prune                Remove expired (decayed) facts
     checkpoint           Checkpoint vector DB to disk
+    re-index             Reset LanceDB and re-embed all facts (after changing embedding model)
     backfill-decay       Backfill decay fields (one-time migration)
     backfill             Seed memory from workspace Markdown/text files
 
@@ -292,9 +293,9 @@ function buildCliContextServices(ctx: HybridMemCliRegistrationContext, api: Claw
     provenanceService,
   } = ctx;
   const discoveredPath = join(dirname(resolvedSqlitePath), ".discovered-categories.json");
-  const logSink = { info: (m: string) => console.log(m), warn: (m: string) => console.warn(m) };
+  const logSink = { info: (m: string) => pluginLogger.info(m), warn: (m: string) => pluginLogger.warn(m) };
   return {
-    runFindDuplicates: (opts) => runFindDuplicates(factsDb, vectorDb, embeddings, safeEmbed, opts, api.logger),
+    runFindDuplicates: (opts) => runFindDuplicates(factsDb, vectorDb, embeddings, opts, api.logger),
     runConsolidate: (opts) => {
       // Skip if OpenAI provider is configured but API key is missing
       if (cfg.embedding?.provider === "openai" && !cfg.embedding?.apiKey) {
@@ -424,6 +425,8 @@ function buildCliContextServices(ctx: HybridMemCliRegistrationContext, api: Claw
           eventLogArchivalDays: cfg.eventLog.archivalDays,
           eventLogArchivePath: cfg.eventLog.archivePath,
           maxUnconsolidatedAgeDays: cfg.nightlyCycle.maxUnconsolidatedAgeDays,
+          logRetentionDays: cfg.nightlyCycle.logRetentionDays,
+          vacuumOnCycle: cfg.nightlyCycle.vacuumOnCycle,
         },
         logSink,
         provenanceService,
@@ -481,7 +484,7 @@ function buildRichStatsExtras(ctx: HandlerContext): NonNullable<HybridMemCliCont
     getCredentialsCount: () => (credentialsDb ? credentialsDb.list().length : 0),
     getProposalsPending: () => (proposalsDb ? proposalsDb.list({ status: "pending" }).length : 0),
     getProposalsAvailable: () => !!proposalsDb,
-    getWalPending: () => (wal ? wal.getValidEntries().length : 0),
+    getWalPending: async () => (wal ? (await wal.getValidEntries()).length : 0),
     getLastRunTimestamps: () => {
       const out: { distill?: string; reflect?: string; compact?: string } = {};
       for (const [key, file] of [
@@ -529,7 +532,7 @@ function buildRichStatsExtras(ctx: HandlerContext): NonNullable<HybridMemCliCont
                 return;
               }
               const match = /^(\d+)/.exec(stdout.trim());
-              resolve(match ? parseInt(match[1], 10) * 1024 : 0);
+              resolve(match ? Number.parseInt(match[1], 10) * 1024 : 0);
             });
           });
         } catch (err) {

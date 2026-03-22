@@ -37,7 +37,7 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
       await runSetupStage(event, api, ctx, sessionState);
     });
 
-    if (ctx.cfg.autoRecall.enabled && ctx.cfg.verbosity !== "silent") {
+    if (ctx.cfg.autoRecall.enabled) {
       api.on("before_agent_start", async (event: unknown) => {
         try {
           const recallStageResult = await runRecallStage(event, api, ctx, sessionState);
@@ -63,8 +63,18 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
 
     registerActiveTaskInjection(api, ctx, resolvedActiveTaskPath);
     registerCleanupHandlers(api, ctx, sessionState, resolvedActiveTaskPath, workspaceRoot);
-    registerAuthFailureRecall(api, ctx, sessionState);
-    registerCredentialHint(api, ctx);
+    // Guard experimental/optional features at the registration point — avoids registering
+    // event listeners whose bodies immediately return when disabled (#581).
+    if (ctx.cfg.autoRecall.enabled && ctx.cfg.autoRecall.authFailure.enabled) {
+      registerAuthFailureRecall(api, ctx, sessionState);
+    }
+    // Note: credential hints are gated on verbosity !== "silent" because their output
+    // (a prepended hint block) is meaningless in silent mode. This is intentional:
+    // the feature adds context only when the agent can surface it. If credential detection
+    // without output injection is ever needed, split the guard accordingly.
+    if (ctx.cfg.credentials.enabled && ctx.cfg.credentials.autoDetect && ctx.cfg.verbosity !== "silent") {
+      registerCredentialHint(api, ctx);
+    }
   };
 
   const onFrustrationDetect = (api: ClawdbotPluginApi) => {

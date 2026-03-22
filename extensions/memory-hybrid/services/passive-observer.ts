@@ -210,7 +210,8 @@ export function parseObserverResponse(raw: string, categories: string[]): Extrac
     const text = typeof obj.text === "string" ? obj.text.trim() : "";
     if (!text || text.length < 10) continue;
 
-    const importanceRaw = typeof obj.importance === "number" ? obj.importance : parseFloat(String(obj.importance));
+    const importanceRaw =
+      typeof obj.importance === "number" ? obj.importance : Number.parseFloat(String(obj.importance));
     // Default to 0.0 when importance is missing/invalid — forces the LLM to explicitly assign
     // importance rather than having invalid/missing values silently pass the minImportance filter.
     const importance = Number.isFinite(importanceRaw) ? Math.max(0, Math.min(1, importanceRaw)) : 0.0;

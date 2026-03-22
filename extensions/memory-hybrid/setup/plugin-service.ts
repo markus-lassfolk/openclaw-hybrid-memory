@@ -28,6 +28,7 @@ import { runBuildLanguageKeywords } from "../services/language-keywords-build.js
 import { getLanguageKeywordsFilePath } from "../utils/language-keywords.js";
 import { versionInfo } from "../versionInfo.js";
 import { checkOpenClawVersion } from "../utils/version-check.js";
+import { runTaskQueueWatchdog } from "../services/task-queue-watchdog.js";
 
 export interface PluginServiceContext {
   PLUGIN_ID: string;
@@ -57,6 +58,7 @@ export interface PluginServiceContext {
     languageKeywordsStartupTimeout: { value: ReturnType<typeof setTimeout> | null };
     postUpgradeTimeout: { value: ReturnType<typeof setTimeout> | null };
     passiveObserverTimer: { value: ReturnType<typeof setInterval> | null };
+    watchdogTimer: { value: ReturnType<typeof setInterval> | null };
   };
 }
 
@@ -91,6 +93,8 @@ export function createPluginService(ctx: PluginServiceContext) {
 
   let observerRunning = false;
   let observerRunPromise: Promise<void> | null = null;
+  let watchdogRunning = false;
+  let watchdogRunPromise: Promise<void> | null = null;
   let shuttingDown = false;
   let dashboardServer: DashboardServer | null = null;
 
@@ -150,7 +154,7 @@ export function createPluginService(ctx: PluginServiceContext) {
 
       // WAL Recovery: replay uncommitted operations from previous session
       if (wal) {
-        const pendingEntries = wal.getValidEntries();
+        const pendingEntries = await wal.getValidEntries();
         if (pendingEntries.length > 0) {
           api.logger.info(`memory-hybrid: WAL recovery starting — found ${pendingEntries.length} pending operation(s)`);
           let recovered = 0;
@@ -211,7 +215,7 @@ export function createPluginService(ctx: PluginServiceContext) {
                 );
               }
 
-              walRemove(wal, entry.id, api.logger);
+              await walRemove(wal, entry.id, api.logger);
             } catch (err) {
               api.logger.warn(`memory-hybrid: WAL recovery failed for entry ${entry.id}: ${err}`);
               capturePluginError(err instanceof Error ? err : new Error(String(err)), {
@@ -230,7 +234,7 @@ export function createPluginService(ctx: PluginServiceContext) {
 
           // Prune any remaining stale entries
           try {
-            const pruned = wal.pruneStale();
+            const pruned = await wal.pruneStale();
             if (pruned > 0) {
               api.logger.info(`memory-hybrid: WAL pruned ${pruned} stale entries`);
             }
@@ -443,6 +447,30 @@ export function createPluginService(ctx: PluginServiceContext) {
         );
       }
 
+      // Task queue watchdog: periodically detect stale/broken autonomous queue runs and self-heal
+      const WATCHDOG_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
+      const watchdogRun = async () => {
+        try {
+          await runTaskQueueWatchdog({ repoDir: process.env.OPENCLAW_WORKSPACE ?? process.cwd() }, api.logger);
+        } catch (err) {
+          api.logger.warn?.(`memory-hybrid: task-queue-watchdog failed (non-fatal): ${err}`);
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+            subsystem: "plugin-service",
+            operation: "task-queue-watchdog",
+          });
+        }
+      };
+      timers.watchdogTimer.value = setInterval(() => {
+        if (shuttingDown) return;
+        if (watchdogRunning) return;
+        watchdogRunning = true;
+        watchdogRunPromise = watchdogRun().finally(() => {
+          watchdogRunning = false;
+          watchdogRunPromise = null;
+        });
+      }, WATCHDOG_INTERVAL_MS);
+      api.logger.info("memory-hybrid: task-queue-watchdog enabled (interval: 5m)");
+
       // Post-upgrade pipeline: once per version bump, run build-languages, self-correction, reflection, procedures (via CLI)
       const rawVersionFilePath = join(dirname(resolvedSqlitePath), ".last-post-upgrade-version");
       // Expand literal $HOME or leading ~ if the sqlite path wasn't fully resolved before being stored.
@@ -561,6 +589,10 @@ export function createPluginService(ctx: PluginServiceContext) {
         clearTimeout(timers.postUpgradeTimeout.value);
         timers.postUpgradeTimeout.value = null;
       }
+      if (timers.watchdogTimer.value) {
+        clearInterval(timers.watchdogTimer.value);
+        timers.watchdogTimer.value = null;
+      }
       if (dashboardServer) {
         try {
           dashboardServer.close();
@@ -578,6 +610,16 @@ export function createPluginService(ctx: PluginServiceContext) {
         ]);
         if (!completed) {
           api.logger.warn("memory-hybrid: passive-observer shutdown timed out; closing databases anyway");
+        }
+      }
+      if (watchdogRunPromise) {
+        const timeoutMs = 5000;
+        const completed = await Promise.race([
+          watchdogRunPromise.then(() => true).catch(() => true),
+          new Promise<boolean>((resolve) => setTimeout(() => resolve(false), timeoutMs)),
+        ]);
+        if (!completed) {
+          api.logger.warn("memory-hybrid: task-queue-watchdog shutdown timed out; continuing shutdown anyway");
         }
       }
       if (ctx.pythonBridge) {

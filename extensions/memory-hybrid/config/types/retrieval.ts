@@ -9,6 +9,8 @@ export type AutoClassifyConfig = {
   suggestCategories?: boolean;
   /** Minimum facts with the same suggested label before we create that category (default 10). Not told to the LLM. */
   minFactsForNewCategory?: number;
+  /** Hours between category discovery LLM runs; 0 = no cooldown (default 72). Prevents O(facts/batch) LLM calls on every cron tick when categories are settled. */
+  discoveryIntervalHours: number;
 };
 
 /** Entity-centric recall: when prompt mentions an entity from the list, merge lookup(entity) facts into candidates */
@@ -135,6 +137,14 @@ export type QueryExpansionConfig = {
    * `undefined` here means "no config-level timeout" — chatComplete uses its internal default.
    */
   timeoutMs: number | undefined;
+  /**
+   * When true (default), HyDE is skipped during interactive `before_agent_start` turns.
+   * HyDE adds a full LLM round-trip before embedding, which can add 5–15 s of latency on
+   * the hot interactive path. Background/cron recall is unaffected. Set to `false` only if
+   * you explicitly want HyDE expansion on every user-facing turn (Engineering Goal 2: latency).
+   * Defaults to `true` when not explicitly set.
+   */
+  skipForInteractiveTurns: boolean;
 };
 
 /** LLM re-ranking of RRF fusion results (Issue #161). */

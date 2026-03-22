@@ -10,14 +10,15 @@
 import { createServer } from "node:http";
 import type { Server } from "node:http";
 import { existsSync } from "node:fs";
-import { readFile, readdir, stat } from "node:fs/promises";
+import { readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { execFile as execFileCb } from "node:child_process";
 import { promisify } from "node:util";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
-import { getDirSize, getFileSizeAsync } from "../utils/fs.js";
+import { getDirSize, getFileSizeAsync, readJsonFile } from "../utils/fs.js";
+import { pluginLogger } from "../utils/logger.js";
 
 const execFile = promisify(execFileCb);
 
@@ -83,8 +84,20 @@ export interface ForgeTaskItem {
 }
 
 export interface GitActivity {
-  prs: Array<{ number: number; title: string; state: string; url: string; createdAt: string }>;
-  issues: Array<{ number: number; title: string; state: string; url: string; createdAt: string }>;
+  prs: Array<{
+    number: number;
+    title: string;
+    state: string;
+    url: string;
+    createdAt: string;
+  }>;
+  issues: Array<{
+    number: number;
+    title: string;
+    state: string;
+    url: string;
+    createdAt: string;
+  }>;
   gitError?: string;
 }
 
@@ -127,14 +140,6 @@ export interface DashboardStatus {
 const _lanceSizeCache = new Map<string, { size: number; ts: number }>();
 const _lanceInFlight = new Map<string, Promise<number>>();
 const LANCE_CACHE_TTL_MS = 300_000; // 5 minutes
-
-async function readJsonFile<T>(filePath: string): Promise<T | null> {
-  try {
-    return JSON.parse(await readFile(filePath, "utf-8")) as T;
-  } catch {
-    return null;
-  }
-}
 
 async function collectMemoryStats(ctx: DashboardContext): Promise<MemoryStats> {
   const activeFacts = ctx.factsDb.count();
@@ -296,7 +301,13 @@ async function collectGitActivity(repo?: string): Promise<GitActivity> {
         encoding: "utf-8",
       }),
     ]);
-    type GitItem = { number: number; title: string; state: string; url: string; createdAt: string };
+    type GitItem = {
+      number: number;
+      title: string;
+      state: string;
+      url: string;
+      createdAt: string;
+    };
     const prJson = prResult.stdout.trim();
     const issueJson = issueResult.stdout.trim();
     return {
@@ -343,9 +354,9 @@ function collectCostStats(ctx: DashboardContext): CostStats {
     const db = ctx.factsDb.getRawDb();
     const cutoff = Math.floor(Date.now() / 1000) - days * 86400;
 
-    const tableExists = db
-      .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='llm_cost_log'")
-      .get() as { name: string } | undefined;
+    const tableExists = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='llm_cost_log'").get() as
+      | { name: string }
+      | undefined;
 
     if (!tableExists) return empty;
 
@@ -771,7 +782,7 @@ export async function createDashboardServer(ctx: DashboardContext, port: number)
     // Port is occupied (likely a previous instance that didn't shut down
     // cleanly). Fall back to an OS-assigned ephemeral port so the dashboard
     // remains available rather than failing entirely.
-    const log = ctx.logger?.error ? (m: string) => ctx.logger!.error!(m) : (m: string) => console.warn(m);
+    const log = ctx.logger?.error ? (m: string) => ctx.logger!.error!(m) : (m: string) => pluginLogger.warn(m);
     log(`[dashboard-server] Port ${port} in use (EADDRINUSE), falling back to OS-assigned port`);
     server.removeAllListeners("listening");
     boundPort = await tryListen(0);
@@ -779,10 +790,11 @@ export async function createDashboardServer(ctx: DashboardContext, port: number)
 
   // Install permanent error handler now that the server is bound.
   server.on("error", (err: NodeJS.ErrnoException) => {
+    const errMsg = err instanceof Error ? `${err.message}\n${err.stack ?? ""}` : String(err);
     if (ctx.logger?.error) {
-      ctx.logger.error(`[dashboard-server] Server error: ${err}`);
+      ctx.logger.error(`[dashboard-server] Server error: ${errMsg}`);
     } else {
-      console.error("[dashboard-server] Server error:", err);
+      pluginLogger.error(`[dashboard-server] Server error: ${errMsg}`);
     }
   });
 

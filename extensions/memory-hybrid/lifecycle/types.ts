@@ -36,8 +36,8 @@ export interface LifecycleContext {
     operation: "store" | "update",
     data: Record<string, unknown>,
     logger: { warn: (msg: string) => void },
-  ) => string;
-  walRemove: (id: string, logger: { warn: (msg: string) => void }) => void;
+  ) => Promise<string>;
+  walRemove: (id: string, logger: { warn: (msg: string) => void }) => Promise<void>;
   findSimilarByEmbedding: (
     vectorDb: VectorDB,
     factsDb: { getById(id: string): MemoryEntry | null },

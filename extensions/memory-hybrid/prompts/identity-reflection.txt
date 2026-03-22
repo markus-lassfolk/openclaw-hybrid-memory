@@ -1,0 +1,29 @@
+You are synthesizing identity-level reflections for an AI assistant from prior reflection outputs.
+
+You are given recurring identity questions plus existing reflection insights (patterns, rules, meta-patterns) from the last {{window}} days.
+
+Return JSON only: an array of objects with keys:
+- questionKey: one of the provided question keys
+- insight: 1-3 sentences, concrete and specific (not generic)
+- durability: "durable" or "temporary"
+- confidence: number 0-1
+- evidence: short list (1-3 strings) citing the source patterns/rules/meta that support the insight
+
+Rules:
+- Answer only with valid JSON (no markdown, no commentary).
+- Use only the provided question keys.
+- If evidence is weak, mark as "temporary" with lower confidence.
+- Prefer concise insights that can later be promoted into SOUL.md / IDENTITY.md.
+- Do not repeat raw inputs verbatim; synthesize.
+
+Questions:
+{{questions}}
+
+Patterns:
+{{patterns}}
+
+Rules:
+{{rules}}
+
+Meta-patterns:
+{{meta}}

@@ -132,6 +132,36 @@ describe("buildDigestSummary", () => {
     expect(s).toContain("1 rules generated");
     expect(s.endsWith(".")).toBe(true);
   });
+
+  it("reports log rows pruned and VACUUM (Issue #573)", () => {
+    const s = buildDigestSummary({
+      factsPruned: 0,
+      factsDecayed: 0,
+      eventsConsolidated: 0,
+      factsCreated: 0,
+      patternsFound: 0,
+      rulesGenerated: 0,
+      logRowsPruned: 42,
+      vacuumRan: true,
+    });
+    expect(s).toContain("42 log rows pruned");
+    expect(s).toContain("VACUUM ran");
+  });
+
+  it("omits log rows pruned when count is zero (Issue #573)", () => {
+    const s = buildDigestSummary({
+      factsPruned: 1,
+      factsDecayed: 0,
+      eventsConsolidated: 0,
+      factsCreated: 0,
+      patternsFound: 0,
+      rulesGenerated: 0,
+      logRowsPruned: 0,
+      vacuumRan: false,
+    });
+    expect(s).not.toContain("log rows");
+    expect(s).not.toContain("VACUUM");
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -336,6 +366,8 @@ describe("runDreamCycle", () => {
     eventLogArchivalDays: 90,
     eventLogArchivePath: join(tmpdir(), "event-log-archive"),
     maxUnconsolidatedAgeDays: 90,
+    logRetentionDays: 30,
+    vacuumOnCycle: false, // keep tests fast — VACUUM is slow
   };
 
   it("returns skipped=true when enabled=false", async () => {
@@ -591,6 +623,29 @@ describe("NightlyCycleConfig parsing", () => {
     });
     expect(cfg.nightlyCycle.pruneMode).toBe("both");
   });
+
+  it("defaults logRetentionDays to 30 and vacuumOnCycle to true (Issue #573)", () => {
+    const cfg = hybridConfigSchema.parse({ ...minimalConfig, mode: "minimal" });
+    expect(cfg.nightlyCycle.logRetentionDays).toBe(30);
+    expect(cfg.nightlyCycle.vacuumOnCycle).toBe(true);
+  });
+
+  it("accepts custom logRetentionDays and vacuumOnCycle=false (Issue #573)", () => {
+    const cfg = hybridConfigSchema.parse({
+      ...minimalConfig,
+      nightlyCycle: { logRetentionDays: 60, vacuumOnCycle: false },
+    });
+    expect(cfg.nightlyCycle.logRetentionDays).toBe(60);
+    expect(cfg.nightlyCycle.vacuumOnCycle).toBe(false);
+  });
+
+  it("accepts logRetentionDays=0 to disable log pruning (Issue #573)", () => {
+    const cfg = hybridConfigSchema.parse({
+      ...minimalConfig,
+      nightlyCycle: { logRetentionDays: 0 },
+    });
+    expect(cfg.nightlyCycle.logRetentionDays).toBe(0);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -624,5 +679,150 @@ describe("EventLogConfig parsing", () => {
     });
     expect(cfg.eventLog.archivalDays).toBe(120);
     expect(cfg.eventLog.archivePath).toBe("/tmp/custom-archive");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// FactsDB maintenance methods — Issue #573
+// ---------------------------------------------------------------------------
+
+describe("FactsDB maintenance (Issue #573)", () => {
+  it("pruneLogTables deletes old recall_log, reinforcement_log, feedback_trajectories rows", () => {
+    const oldTs = Math.floor(Date.now() / 1000) - 60 * 86400; // 60 days ago
+    const newTs = Math.floor(Date.now() / 1000) - 1 * 86400; // 1 day ago
+
+    // Insert a fact for FK constraint in reinforcement_log
+    const fact = factsDb.store({
+      text: "test fact for reinforcement",
+      category: "fact",
+      importance: 0.5,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+      decayClass: "stable",
+    });
+
+    // Populate log tables with old and new rows
+    factsDb.logRecall(true, oldTs);
+    factsDb.logRecall(false, newTs);
+    factsDb.logRecall(true, oldTs);
+
+    const deleted = factsDb.pruneLogTables(30);
+    // At least the 2 old recall_log rows should be deleted
+    expect(deleted).toBeGreaterThanOrEqual(2);
+
+    // New row must remain
+    factsDb.delete(fact.id);
+  });
+
+  it("pruneLogTables with retentionDays=0 deletes nothing", () => {
+    factsDb.logRecall(true);
+    const deleted = factsDb.pruneLogTables(0);
+    expect(deleted).toBe(0);
+  });
+
+  it("optimizeFts runs without throwing", () => {
+    expect(() => factsDb.optimizeFts()).not.toThrow();
+  });
+
+  it("vacuumAndCheckpoint runs without throwing", () => {
+    expect(() => factsDb.vacuumAndCheckpoint()).not.toThrow();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// runDreamCycle — maintenance integration (Issue #573)
+// ---------------------------------------------------------------------------
+
+describe("runDreamCycle maintenance (Issue #573)", () => {
+  const baseConfig: DreamCycleConfig = {
+    enabled: true,
+    schedule: "45 2 * * *",
+    reflectWindowDays: 7,
+    pruneMode: "both",
+    model: "gpt-4o-mini",
+    consolidateAfterDays: 7,
+    eventLogArchivalDays: 90,
+    eventLogArchivePath: join(tmpdir(), "event-log-archive"),
+    maxUnconsolidatedAgeDays: 90,
+    logRetentionDays: 30,
+    vacuumOnCycle: false,
+  };
+
+  it("pruneLogTables is called and logRowsPruned is reported", async () => {
+    // Insert two old recall_log rows (61 days old — beyond retention)
+    const oldTs = Math.floor(Date.now() / 1000) - 61 * 86400;
+    factsDb.logRecall(true, oldTs);
+    factsDb.logRecall(false, oldTs);
+
+    const openaiStub = {
+      chat: { completions: { create: vi.fn().mockRejectedValue(new Error("no key")) } },
+    } as never;
+    const embeddingsStub = { embed: vi.fn().mockRejectedValue(new Error("no key")) } as never;
+
+    const result = await runDreamCycle(
+      factsDb,
+      {} as never,
+      embeddingsStub,
+      openaiStub,
+      null,
+      { ...baseConfig, logRetentionDays: 30 },
+      silentLogger,
+    );
+    expect(result.logRowsPruned).toBeGreaterThanOrEqual(2);
+    expect(result.digestSummary).toContain("log rows pruned");
+  });
+
+  it("vacuumRan=true when vacuumOnCycle=true", async () => {
+    const openaiStub = {
+      chat: { completions: { create: vi.fn().mockRejectedValue(new Error("no key")) } },
+    } as never;
+    const embeddingsStub = { embed: vi.fn().mockRejectedValue(new Error("no key")) } as never;
+
+    const result = await runDreamCycle(
+      factsDb,
+      {} as never,
+      embeddingsStub,
+      openaiStub,
+      null,
+      { ...baseConfig, vacuumOnCycle: true },
+      silentLogger,
+    );
+    expect(result.vacuumRan).toBe(true);
+    expect(result.digestSummary).toContain("VACUUM ran");
+  });
+
+  it("vacuumRan=false when vacuumOnCycle=false", async () => {
+    const openaiStub = {
+      chat: { completions: { create: vi.fn().mockRejectedValue(new Error("no key")) } },
+    } as never;
+    const embeddingsStub = { embed: vi.fn().mockRejectedValue(new Error("no key")) } as never;
+
+    const result = await runDreamCycle(
+      factsDb,
+      {} as never,
+      embeddingsStub,
+      openaiStub,
+      null,
+      { ...baseConfig, vacuumOnCycle: false },
+      silentLogger,
+    );
+    expect(result.vacuumRan).toBe(false);
+  });
+
+  it("logRowsPruned and vacuumRan are 0/false in skipped result", async () => {
+    const result = await runDreamCycle(
+      factsDb,
+      {} as never,
+      {} as never,
+      {} as never,
+      null,
+      { ...baseConfig, enabled: false },
+      silentLogger,
+    );
+    expect(result.skipped).toBe(true);
+    expect(result.logRowsPruned).toBe(0);
+    expect(result.vacuumRan).toBe(false);
   });
 });

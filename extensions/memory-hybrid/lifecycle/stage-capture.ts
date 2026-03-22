@@ -20,9 +20,42 @@ import { extractCredentialsFromToolCalls } from "../services/credential-scanner.
 import { capturePluginError } from "../services/error-reporter.js";
 import { isOllamaCircuitBreakerOpen } from "../services/embeddings.js";
 import { withTimeout } from "../utils/timeout.js";
+import { runHumanizerScore, formatQualityLoopEntry } from "../services/humanizer-score.js";
 import type { LifecycleContext, SessionState } from "./types.js";
 
 const CAPTURE_STAGE_TIMEOUT_MS = 60_000;
+
+/**
+ * Extract text content from the last assistant message in a message array.
+ * Returns undefined if no assistant message is found or if the content is empty.
+ */
+function extractLastAssistantText(messages: unknown[]): string | undefined {
+  const assistantMsgs = messages.filter(
+    (m) => m && typeof m === "object" && (m as { role?: string }).role === "assistant",
+  );
+  const lastAssistant = assistantMsgs[assistantMsgs.length - 1] as { content?: unknown } | undefined;
+  if (!lastAssistant) return undefined;
+
+  if (typeof lastAssistant.content === "string") {
+    return lastAssistant.content;
+  } else if (Array.isArray(lastAssistant.content)) {
+    const textBlocks: string[] = [];
+    for (const block of lastAssistant.content) {
+      if (
+        block &&
+        typeof block === "object" &&
+        "type" in block &&
+        (block as { type?: string }).type === "text" &&
+        "text" in block &&
+        typeof (block as { text?: unknown }).text === "string"
+      ) {
+        textBlocks.push((block as { text: string }).text);
+      }
+    }
+    if (textBlocks.length > 0) return textBlocks.join(" ");
+  }
+  return undefined;
+}
 
 export async function runCaptureStage(
   event: unknown,
@@ -44,41 +77,16 @@ async function runCapture(
   const ev = event as { success?: boolean; messages?: unknown[] };
   const messages = ev?.messages ?? [];
 
+  const assistantText = messages.length > 0 ? extractLastAssistantText(messages as unknown[]) : undefined;
+
   // 1. Frustration: append last assistant message to session turn history
-  if (messages.length > 0) {
+  if (assistantText?.trim()) {
     try {
-      const assistantMsgs = (messages as unknown[]).filter(
-        (m) => m && typeof m === "object" && (m as { role?: string }).role === "assistant",
-      );
-      const lastAssistant = assistantMsgs[assistantMsgs.length - 1] as { content?: unknown } | undefined;
-      if (lastAssistant) {
-        let assistantContent: string | undefined;
-        if (typeof lastAssistant.content === "string") {
-          assistantContent = lastAssistant.content;
-        } else if (Array.isArray(lastAssistant.content)) {
-          const textBlocks: string[] = [];
-          for (const block of lastAssistant.content) {
-            if (
-              block &&
-              typeof block === "object" &&
-              "type" in block &&
-              (block as { type?: string }).type === "text" &&
-              "text" in block &&
-              typeof (block as { text?: unknown }).text === "string"
-            ) {
-              textBlocks.push((block as { text: string }).text);
-            }
-          }
-          if (textBlocks.length > 0) assistantContent = textBlocks.join(" ");
-        }
-        if (assistantContent?.trim()) {
-          const state = frustrationStateMap.get(sessionKey);
-          if (state) {
-            state.turns.push({ role: "assistant", content: assistantContent });
-            if (state.turns.length > 20) state.turns.splice(0, state.turns.length - 20);
-            frustrationStateMap.set(sessionKey, state);
-          }
-        }
+      const state = frustrationStateMap.get(sessionKey);
+      if (state) {
+        state.turns.push({ role: "assistant", content: assistantText });
+        if (state.turns.length > 20) state.turns.splice(0, state.turns.length - 20);
+        frustrationStateMap.set(sessionKey, state);
       }
     } catch (err) {
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
@@ -89,7 +97,43 @@ async function runCapture(
     }
   }
 
-  // 2. Event log session_end
+  // 2. Humanizer quality-loop scoring (Issue #616 — Phase 1: evaluator only, no rewriting)
+  if (ctx.cfg.humanizer?.enabled && assistantText?.trim()) {
+    try {
+      const humCfg = ctx.cfg.humanizer;
+      const result = await runHumanizerScore(assistantText, {
+        bin: humCfg.bin,
+        minTextLength: humCfg.minTextLength,
+        maxTextLength: humCfg.maxTextLength,
+      });
+      if (result !== null) {
+        const entryText = formatQualityLoopEntry(result, {
+          modelTag: humCfg.modelTag,
+          skillTag: humCfg.skillTag,
+        });
+        await ctx.factsDb.store({
+          text: entryText,
+          category: "quality_loop",
+          importance: 0.6,
+          entity: null,
+          key: null,
+          value: null,
+          source: "humanizer",
+          decayClass: "normal",
+        });
+        api.logger.debug?.(`memory-hybrid: humanizer_score=${result.score.toFixed(2)} stored`);
+      }
+    } catch (err) {
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        operation: "humanizer-score-capture",
+        subsystem: "humanizer",
+        severity: "info",
+      });
+      api.logger.debug?.(`memory-hybrid: humanizer scoring skipped: ${String(err)}`);
+    }
+  }
+
+  // 3. Event log session_end
   if (ctx.eventLog) {
     try {
       ctx.eventLog.append({
@@ -103,11 +147,11 @@ async function runCapture(
     }
   }
 
-  // 3. Centralized session state cleanup (Issue #463)
+  // 4. Centralized session state cleanup (Issue #463)
   clearSessionState(sessionKey);
   api.logger.debug?.(`memory-hybrid: cleared all session state for ${sessionKey}`);
 
-  // 4. Compaction on session end
+  // 5. Compaction on session end
   if (ctx.cfg.memoryTiering.enabled && ctx.cfg.memoryTiering.compactionOnSessionEnd) {
     try {
       const counts = ctx.factsDb.runCompaction({
@@ -127,7 +171,7 @@ async function runCapture(
     }
   }
 
-  // 5. Auto-capture from conversation messages
+  // 6. Auto-capture from conversation messages
   if (ctx.cfg.autoCapture && ev.success && messages.length > 0) {
     try {
       const texts: string[] = [];
@@ -212,7 +256,7 @@ async function runCapture(
                   const oldFact = ctx.factsDb.getById(classification.targetId);
                   if (oldFact) {
                     const finalImportance = Math.max(0.7, oldFact.importance);
-                    const walEntryId = ctx.walWrite(
+                    const walEntryId = await ctx.walWrite(
                       "update",
                       {
                         text: textToStore,
@@ -266,7 +310,7 @@ async function runCapture(
                       });
                       api.logger.warn(`memory-hybrid: vector capture failed: ${vecErr}`);
                     }
-                    ctx.walRemove(walEntryId, api.logger);
+                    await ctx.walRemove(walEntryId, api.logger);
                     api.logger.info?.(
                       `memory-hybrid: auto-capture UPDATE — superseded ${classification.targetId} with ${newEntry.id}`,
                     );
@@ -283,7 +327,7 @@ async function runCapture(
               }
             }
           }
-          const walEntryId = ctx.walWrite(
+          const walEntryId = await ctx.walWrite(
             "store",
             {
               text: textToStore,
@@ -330,7 +374,7 @@ async function runCapture(
             });
             api.logger.warn(`memory-hybrid: vector capture failed: ${vecErr}`);
           }
-          ctx.walRemove(walEntryId, api.logger);
+          await ctx.walRemove(walEntryId, api.logger);
           stored++;
         }
         if (stored > 0) api.logger.info(`memory-hybrid: auto-captured ${stored} memories`);
@@ -344,7 +388,7 @@ async function runCapture(
     }
   }
 
-  // 6. Credential auto-detect: persist hint for next turn
+  // 7. Credential auto-detect: persist hint for next turn
   if (
     ctx.cfg.credentials.enabled &&
     ctx.cfg.credentials.autoDetect &&
@@ -399,7 +443,7 @@ async function runCapture(
     }
   }
 
-  // 7. Tool-call credential auto-capture
+  // 8. Tool-call credential auto-capture
   if (ctx.cfg.credentials.enabled && ctx.cfg.credentials.autoCapture?.toolCalls && messages.length > 0) {
     const logCaptures = ctx.cfg.credentials.autoCapture.logCaptures !== false;
     try {

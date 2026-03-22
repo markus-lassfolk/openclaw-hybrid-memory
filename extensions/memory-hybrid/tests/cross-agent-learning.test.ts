@@ -24,6 +24,7 @@ import {
 } from "../services/cross-agent-learning.js";
 import { parseCrossAgentLearningConfig } from "../config/parsers/features.js";
 import type { CrossAgentLearningConfig } from "../config/types/features.js";
+import { getCurrentCostFeature } from "../services/cost-context.js";
 
 const { FactsDB } = _testing;
 
@@ -431,6 +432,47 @@ describe("runCrossAgentLearning — LLM mock", () => {
     // The error counter increments on batch LLM error
     // (either 0 if just empty result from bad JSON, or 1 if exception)
     expect(result.errors).toBeGreaterThanOrEqual(0);
+  });
+
+  it("LLM call is attributed to 'cross-agent-learning' feature", async () => {
+    let capturedFeature: string | undefined;
+    const now = Math.floor(Date.now() / 1000);
+    rawDb(db)
+      .prepare(
+        `INSERT INTO facts (id, text, category, scope, scope_target, confidence, importance, source, created_at, last_confirmed_at, decay_class)
+       VALUES (?, ?, 'pattern', 'agent', 'forge', 0.8, 0.7, 'test', ?, ?, 'stable')`,
+      )
+      .run("agent-feat-1", "Always run tests before committing code changes", now, now);
+
+    const lesson = {
+      text: "Always validate inputs before executing critical operations",
+      rationale: "Applies across all agent types",
+      sourceAgents: ["forge"],
+      importance: 0.8,
+    };
+
+    const mockOpenAI = {
+      chat: {
+        completions: {
+          create: async () => {
+            capturedFeature = getCurrentCostFeature();
+            return { choices: [{ message: { content: JSON.stringify([lesson]) } }] };
+          },
+        },
+      },
+    };
+
+    const cfg: CrossAgentLearningConfig = {
+      enabled: true,
+      windowDays: 30,
+      batchSize: 20,
+      minSourceConfidence: 0.3,
+      model: "gpt-4o-mini",
+      runInNightlyCycle: true,
+    };
+
+    await runCrossAgentLearning(db, mockOpenAI as never, cfg);
+    expect(capturedFeature).toBe("cross-agent-learning");
   });
 });
 

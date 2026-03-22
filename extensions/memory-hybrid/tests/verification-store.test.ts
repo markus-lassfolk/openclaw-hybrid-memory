@@ -129,7 +129,7 @@ describe("VerificationStore.getVerified", () => {
     store.verify("fact-corrupted", "Original text", "agent");
 
     // Directly corrupt the stored text in the DB
-    const db = (store as unknown as { db: import("better-sqlite3").Database }).db;
+    const db = (store as unknown as { db: import("node:sqlite").DatabaseSync }).db;
     db.prepare(`UPDATE verified_facts SET canonical_text = 'Tampered text' WHERE fact_id = ?`).run("fact-corrupted");
 
     expect(() => store.getVerified("fact-corrupted")).toThrow(VerificationError);
@@ -138,7 +138,7 @@ describe("VerificationStore.getVerified", () => {
 
   it("throws VerificationError whose message mentions the fact", async () => {
     store.verify("important-fact", "Important data", "user");
-    const db = (store as unknown as { db: import("better-sqlite3").Database }).db;
+    const db = (store as unknown as { db: import("node:sqlite").DatabaseSync }).db;
     db.prepare(`UPDATE verified_facts SET canonical_text = 'Changed' WHERE fact_id = ?`).run("important-fact");
 
     expect(() => store.getVerified("important-fact")).toThrow(/important-fact/);
@@ -168,7 +168,7 @@ describe("VerificationStore.checkIntegrity", () => {
 
   it("returns valid=false and lists corrupted ids when text is tampered", async () => {
     const id = store.verify("f-tamper", "Original", "agent");
-    const db = (store as unknown as { db: import("better-sqlite3").Database }).db;
+    const db = (store as unknown as { db: import("node:sqlite").DatabaseSync }).db;
     db.prepare(`UPDATE verified_facts SET canonical_text = 'Tampered' WHERE id = ?`).run(id);
 
     const report = store.checkIntegrity();
@@ -181,7 +181,7 @@ describe("VerificationStore.checkIntegrity", () => {
     store.verify("fact-ok", "Good text", "agent");
     const id2 = store.verify("fact-bad", "Also good", "agent");
 
-    const db = (store as unknown as { db: import("better-sqlite3").Database }).db;
+    const db = (store as unknown as { db: import("node:sqlite").DatabaseSync }).db;
     db.prepare(`UPDATE verified_facts SET canonical_text = 'Tampered' WHERE id = ?`).run(id2);
 
     // Scoped to fact-ok — should be clean
@@ -213,7 +213,7 @@ describe("VerificationStore.update", () => {
     const id = store.verify("fact-link", "V1", "agent");
     const newId = store.update(id, "V2", "user");
 
-    const db = (store as unknown as { db: import("better-sqlite3").Database }).db;
+    const db = (store as unknown as { db: import("node:sqlite").DatabaseSync }).db;
     const row = db.prepare(`SELECT * FROM verified_facts WHERE id = ?`).get(newId) as {
       previous_version_id: string | null;
     };
@@ -224,7 +224,7 @@ describe("VerificationStore.update", () => {
     const id = store.verify("fact-old", "Old text", "agent");
     store.update(id, "New text", "user");
 
-    const db = (store as unknown as { db: import("better-sqlite3").Database }).db;
+    const db = (store as unknown as { db: import("node:sqlite").DatabaseSync }).db;
     const oldRow = db.prepare(`SELECT * FROM verified_facts WHERE id = ?`).get(id) as { canonical_text: string };
     expect(oldRow.canonical_text).toBe("Old text");
   });
@@ -233,7 +233,7 @@ describe("VerificationStore.update", () => {
     const id = store.verify("fact-super", "Original", "agent");
     store.update(id, "Updated", "user");
 
-    const db = (store as unknown as { db: import("better-sqlite3").Database }).db;
+    const db = (store as unknown as { db: import("node:sqlite").DatabaseSync }).db;
     const oldRow = db.prepare(`SELECT next_verification FROM verified_facts WHERE id = ?`).get(id) as {
       next_verification: string | null;
     };
@@ -276,7 +276,7 @@ describe("VerificationStore.listDueForReverification", () => {
   it("returns entries whose next_verification is in the past", async () => {
     // Store a fact then manually backdate its next_verification
     const id = store.verify("fact-overdue", "Old fact", "agent");
-    const db = (store as unknown as { db: import("better-sqlite3").Database }).db;
+    const db = (store as unknown as { db: import("node:sqlite").DatabaseSync }).db;
     db.prepare(`UPDATE verified_facts SET next_verification = '2020-01-01T00:00:00.000Z' WHERE id = ?`).run(id);
 
     const due = store.listDueForReverification();
@@ -293,7 +293,7 @@ describe("VerificationStore.listDueForReverification", () => {
 
   it("returns entries whose verified_at is older than reverificationDays", async () => {
     const id = store.verify("fact-stale", "Stale fact", "agent");
-    const db = (store as unknown as { db: import("better-sqlite3").Database }).db;
+    const db = (store as unknown as { db: import("node:sqlite").DatabaseSync }).db;
     db.prepare(`UPDATE verified_facts SET verified_at = '2020-01-01T00:00:00.000Z' WHERE id = ?`).run(id);
 
     const due = store.listDueForReverification();
@@ -303,7 +303,7 @@ describe("VerificationStore.listDueForReverification", () => {
   it("does not return superseded versions even if they are stale", async () => {
     const id = store.verify("fact-latest", "Original", "agent");
     const newId = store.update(id, "Updated", "system");
-    const db = (store as unknown as { db: import("better-sqlite3").Database }).db;
+    const db = (store as unknown as { db: import("node:sqlite").DatabaseSync }).db;
     db.prepare(`UPDATE verified_facts SET verified_at = '2020-01-01T00:00:00.000Z' WHERE id = ?`).run(id);
     db.prepare(`UPDATE verified_facts SET next_verification = '2020-01-01T00:00:00.000Z' WHERE id = ?`).run(newId);
 

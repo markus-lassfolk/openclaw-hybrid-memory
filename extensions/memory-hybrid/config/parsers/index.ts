@@ -2,6 +2,7 @@ import { setMemoryCategories, getMemoryCategories, PRESET_OVERRIDES } from "../u
 import { versionInfo } from "../../versionInfo.js";
 import { isVersionAtLeast } from "../../utils/version-check.js";
 import type { HybridMemoryConfig, EmbeddingModelConfig, ConfigMode } from "../types/index.js";
+import { pluginLogger } from "../../utils/logger.js";
 import {
   DEFAULT_MODEL,
   DEFAULT_LANCE_PATH,
@@ -34,6 +35,7 @@ import {
 import {
   parsePassiveObserverConfig,
   parseReflectionConfig,
+  parseIdentityReflectionConfig,
   parseProceduresConfig,
   parseExtractionConfig,
 } from "./capture.js";
@@ -70,6 +72,8 @@ import {
   parseToolEffectivenessConfig,
   parseCostTrackingConfig,
   parseDashboardConfig,
+  parseApiTapConfig,
+  parseHumanizerConfig,
 } from "./features.js";
 
 /** Deep-merge: base + overrides (overrides win). Used to apply preset then user config. */
@@ -224,7 +228,7 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
       appliedMode = trimmed as ConfigMode;
     } else if (deprecatedModeNames.includes(trimmed as (typeof deprecatedModeNames)[number])) {
       appliedMode = deprecatedModeMapping[trimmed] ?? "local";
-      console.warn(
+      pluginLogger.warn(
         `memory-hybrid: Config mode "${trimmed}" is deprecated and has been mapped to "${appliedMode}". Update your config to use the new mode names: local, minimal, enhanced, or complete.`,
       );
     } else {
@@ -257,10 +261,19 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
   const validProviders = ["openai", "ollama", "onnx", "google"];
   type EmbeddingProviderName = "openai" | "ollama" | "onnx" | "google";
   const distillForEmbed = cfg.distill as { apiKey?: string } | undefined;
-  const llmProvidersForEmbed = (cfg.llm as { providers?: Record<string, { apiKey?: string }> } | undefined)?.providers;
+  const llmProvidersForEmbed = (
+    cfg.llm as { providers?: Record<string, { apiKey?: string; baseURL?: string }> } | undefined
+  )?.providers;
   const distillApiKeyRaw = typeof distillForEmbed?.apiKey === "string" ? distillForEmbed.apiKey.trim() : "";
   const llmGoogleApiKeyRaw =
     typeof llmProvidersForEmbed?.google?.apiKey === "string" ? llmProvidersForEmbed.google.apiKey.trim() : "";
+  const azureFoundryForEmbed = llmProvidersForEmbed?.["azure-foundry"];
+  const hasAzureFoundryForEmbed =
+    azureFoundryForEmbed &&
+    typeof azureFoundryForEmbed.apiKey === "string" &&
+    azureFoundryForEmbed.apiKey.trim().length >= 10 &&
+    typeof azureFoundryForEmbed.baseURL === "string" &&
+    azureFoundryForEmbed.baseURL.trim().length > 0;
   // Recognize all SecretRef formats: env:VAR, file:/path, ${VAR} templates, or long literal keys.
   // Template detection uses .includes/${} pair check (no regex → no ReDoS risk).
   const looksLikeSecretRefOrKey = (k: string) =>
@@ -289,11 +302,13 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
     );
     if (hasApiKey && modelStr && isOpenAIModel(modelStr)) {
       embeddingProvider = "openai";
+    } else if (!hasApiKey && hasAzureFoundryForEmbed && modelStr && isOpenAIModel(modelStr)) {
+      embeddingProvider = "openai";
     } else if (!hasApiKey && !hasOllamaInLlmForProvider && hasGoogleKey) {
       embeddingProvider = "google";
     } else {
       if (embedding !== undefined) {
-        console.warn(
+        pluginLogger.warn(
           `memory-hybrid: embedding.provider not set; defaulting to "ollama". Set embedding.provider explicitly (openai, ollama, onnx, google).`,
         );
       }
@@ -301,38 +316,63 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
     }
   }
 
-  // apiKey is required for openai provider only
+  // apiKey is required for openai provider only (or use llm.providers["azure-foundry"] when unset)
   let resolvedApiKey: string | undefined;
+  let embeddingEndpointOverride: string | undefined;
   if (embeddingProvider === "openai") {
-    if (!embedding || typeof embedding.apiKey !== "string") {
-      throw new Error(
-        "embedding.apiKey is required. Set it in plugins.entries[\"openclaw-hybrid-memory\"].config.embedding. Run 'openclaw hybrid-mem verify --fix' for help.",
-      );
-    }
-    const rawKey = (embedding.apiKey as string).trim();
-    // Resolve env:/file: SecretRef format (e.g. "env:OPENAI_API_KEY") as well as ${VAR} templates.
-    let resolvedKey: string;
-    if (rawKey.startsWith("env:") || rawKey.startsWith("file:")) {
-      const resolved = resolveSecretRef(rawKey);
-      if (!resolved) {
-        const refDesc = rawKey.startsWith("env:")
-          ? `environment variable '${rawKey.slice(4)}'`
-          : `file '${rawKey.slice(5)}'`;
+    const rawEmbedKey = embedding && typeof embedding.apiKey === "string" ? (embedding.apiKey as string).trim() : "";
+    const azureFoundry = (cfg.llm as { providers?: Record<string, { apiKey?: string; baseURL?: string }> } | undefined)
+      ?.providers?.["azure-foundry"];
+    const hasAzureFoundry =
+      azureFoundry &&
+      typeof azureFoundry.apiKey === "string" &&
+      azureFoundry.apiKey.trim().length >= 10 &&
+      typeof azureFoundry.baseURL === "string" &&
+      azureFoundry.baseURL.trim().length > 0;
+
+    if (rawEmbedKey && rawEmbedKey.length > 0) {
+      const rawKey = rawEmbedKey;
+      // Resolve env:/file: SecretRef format (e.g. "env:OPENAI_API_KEY") as well as ${VAR} templates.
+      let resolvedKey: string;
+      if (rawKey.startsWith("env:") || rawKey.startsWith("file:")) {
+        const resolved = resolveSecretRef(rawKey);
+        if (!resolved) {
+          const refDesc = rawKey.startsWith("env:")
+            ? `environment variable '${rawKey.slice(4)}'`
+            : `file '${rawKey.slice(5)}'`;
+          throw new Error(
+            `embedding.apiKey references ${refDesc} which could not be resolved. Ensure it is set and non-empty.`,
+          );
+        }
+        resolvedKey = resolved;
+      } else {
+        resolvedKey = resolveEnvVars(rawKey);
+      }
+      if (resolvedKey.length < 10 || resolvedKey === "YOUR_OPENAI_API_KEY" || resolvedKey === "<OPENAI_API_KEY>") {
         throw new Error(
-          `embedding.apiKey references ${refDesc} which could not be resolved. Ensure it is set and non-empty.`,
+          "embedding.apiKey is missing or a placeholder. Set a valid OpenAI API key in config. Run 'openclaw hybrid-mem verify --fix' for help.",
         );
       }
-      resolvedKey = resolved;
+      resolvedApiKey = resolvedKey;
+    } else if (hasAzureFoundry) {
+      const rawKey = azureFoundry!.apiKey!.trim();
+      const resolvedKey =
+        rawKey.startsWith("env:") || rawKey.startsWith("file:") ? resolveSecretRef(rawKey) : resolveEnvVars(rawKey);
+      if (!resolvedKey || resolvedKey.length < 10) {
+        throw new Error(
+          'embedding (openai) with llm.providers["azure-foundry"]: apiKey could not be resolved or is invalid. Set embedding.apiKey or fix the azure-foundry key.',
+        );
+      }
+      resolvedApiKey = resolvedKey;
+      embeddingEndpointOverride = azureFoundry!.baseURL!.trim();
+      pluginLogger.info(
+        'memory-hybrid: using llm.providers["azure-foundry"] for embeddings (same API as LLM). Set embedding.endpoint and embedding.apiKey to override.',
+      );
     } else {
-      resolvedKey = resolveEnvVars(rawKey);
-    }
-    // Validate the resolved key — catches placeholders/short values originating from SecretRefs too.
-    if (resolvedKey.length < 10 || resolvedKey === "YOUR_OPENAI_API_KEY" || resolvedKey === "<OPENAI_API_KEY>") {
       throw new Error(
-        "embedding.apiKey is missing or a placeholder. Set a valid OpenAI API key in config. Run 'openclaw hybrid-mem verify --fix' for help.",
+        'embedding.apiKey is required. Set it in plugins.entries["openclaw-hybrid-memory"].config.embedding, or configure llm.providers["azure-foundry"] with apiKey and baseURL to use Azure Foundry for embeddings. Run \'openclaw hybrid-mem verify --fix\' for help.',
       );
     }
-    resolvedApiKey = resolvedKey;
   } else if (embedding && typeof embedding.apiKey === "string") {
     // Optional fallback apiKey for ollama/onnx (used for fallback to OpenAI when provider unavailable)
     const rawKey = (embedding.apiKey as string).trim();
@@ -341,16 +381,12 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
       if (!resolved) {
         // Do not throw — this apiKey is optional fallback; warn so the misconfiguration is diagnosable.
         // Intentionally omit the SecretRef path from the message to avoid clear-text logging (CWE-312).
-        console.warn(
-          "Warning: embedding.apiKey fallback SecretRef could not be resolved. " +
-            "Fallback to OpenAI embeddings will be disabled. " +
-            'Update plugins.entries["openclaw-hybrid-memory"].config.embedding.apiKey or fix the SecretRef.',
+        pluginLogger.warn(
+          `Warning: embedding.apiKey fallback SecretRef could not be resolved. Fallback to OpenAI embeddings will be disabled. Update plugins.entries["openclaw-hybrid-memory"].config.embedding.apiKey or fix the SecretRef.`,
         );
       } else if (resolved.length < 10 || resolved === "YOUR_OPENAI_API_KEY" || resolved === "<OPENAI_API_KEY>") {
-        console.warn(
-          `Warning: embedding.apiKey fallback resolved to a placeholder or invalid value. ` +
-            "Fallback to OpenAI embeddings will be disabled. " +
-            `Update plugins.entries["openclaw-hybrid-memory"].config.embedding.apiKey with a valid key.`,
+        pluginLogger.warn(
+          `Warning: embedding.apiKey fallback resolved to a placeholder or invalid value. Fallback to OpenAI embeddings will be disabled. Update plugins.entries["openclaw-hybrid-memory"].config.embedding.apiKey with a valid key.`,
         );
       } else {
         resolvedApiKey = resolved;
@@ -359,19 +395,15 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
       try {
         const resolved = resolveEnvVars(rawKey);
         if (resolved.length < 10 || resolved === "YOUR_OPENAI_API_KEY" || resolved === "<OPENAI_API_KEY>") {
-          console.warn(
-            `Warning: embedding.apiKey fallback resolved to a placeholder or invalid value. ` +
-              "Fallback to OpenAI embeddings will be disabled. " +
-              `Update plugins.entries["openclaw-hybrid-memory"].config.embedding.apiKey with a valid key.`,
+          pluginLogger.warn(
+            `Warning: embedding.apiKey fallback resolved to a placeholder or invalid value. Fallback to OpenAI embeddings will be disabled. Update plugins.entries["openclaw-hybrid-memory"].config.embedding.apiKey with a valid key.`,
           );
         } else {
           resolvedApiKey = resolved;
         }
       } catch {
-        console.warn(
-          "Warning: embedding.apiKey fallback contains unresolved environment variable references. " +
-            "Fallback to OpenAI embeddings will be disabled. " +
-            'Update plugins.entries["openclaw-hybrid-memory"].config.embedding.apiKey or set the required environment variables.',
+        pluginLogger.warn(
+          `Warning: embedding.apiKey fallback contains unresolved environment variable references. Fallback to OpenAI embeddings will be disabled. Update plugins.entries["openclaw-hybrid-memory"].config.embedding.apiKey or set the required environment variables.`,
         );
       }
     }
@@ -416,14 +448,14 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
         vectorDimsForModel(m);
         // For ollama/onnx providers, models field contains OpenAI fallback names — reject non-OpenAI models
         if (embeddingProvider !== "openai" && !isOpenAIModel(m)) {
-          console.warn(
+          pluginLogger.warn(
             `memory-hybrid: embedding.models — model "${m}" is not an OpenAI model and will be skipped. For provider='${embeddingProvider}', the models field must contain OpenAI fallback model names (e.g. text-embedding-3-small, text-embedding-3-large, text-embedding-ada-002).`,
           );
           continue;
         }
         valid.push(m);
       } catch {
-        console.warn(
+        pluginLogger.warn(
           `memory-hybrid: embedding.models — model "${m}" is not recognized and will be skipped. Check spelling or use a supported model (e.g. text-embedding-3-small, text-embedding-3-large, text-embedding-ada-002).`,
         );
       }
@@ -434,7 +466,7 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
         embeddingModels = valid;
       } else {
         const dims = valid.map((m) => `${m}=${vectorDimsForModel(m)}`).join(", ");
-        console.warn(
+        pluginLogger.warn(
           `memory-hybrid: embedding.models — models have mismatched vector dimensions (${dims}); all will be ignored. Models in a list must share the same output dimension.`,
         );
       }
@@ -442,7 +474,7 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
   }
   // For OpenAI, the models list is a preference list so use its first entry as the primary model.
   // For Ollama/ONNX, models contains OpenAI fallback names — the primary model is always singleModel.
-  const model = embeddingProvider === "openai" ? (embeddingModels?.[0] ?? singleModel) : singleModel;
+  let model = embeddingProvider === "openai" ? (embeddingModels?.[0] ?? singleModel) : singleModel;
 
   // Resolve vector dimensions: explicit config takes priority, then look up from known models
   const configDimensions =
@@ -478,10 +510,36 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
     resolvedDimensions = vectorDimsForModel(model, 768); // 768 default for known ollama models
   }
 
+  // Backward compatibility: when explicit dimensions exceed the primary model's max (e.g. 3072 with
+  // text-embedding-3-small), use a model that supports that dimension (e.g. text-embedding-3-large).
+  // The Embeddings constructor validates every model in the list, so we pass only the chosen model.
+  if (
+    embeddingProvider === "openai" &&
+    configDimensions !== undefined &&
+    configDimensions > vectorDimsForModel(model)
+  ) {
+    const modelForDims = Object.keys(EMBEDDING_DIMENSIONS).find(
+      (m) => OPENAI_MODELS.has(m) && EMBEDDING_DIMENSIONS[m] === configDimensions,
+    );
+    if (modelForDims) {
+      model = modelForDims;
+      embeddingModels = [model];
+      pluginLogger.info(
+        `memory-hybrid: embedding.dimensions ${configDimensions} requires a larger model; using ${model} (backward compatible with existing config).`,
+      );
+    } else {
+      throw new Error(
+        `memory-hybrid: embedding.dimensions is ${configDimensions} but model '${model}' supports at most ${vectorDimsForModel(model)}. ` +
+          `Set embedding.model to a model that supports ${configDimensions} dimensions (e.g. text-embedding-3-large for 3072) or set dimensions to ${vectorDimsForModel(model)}.`,
+      );
+    }
+  }
+
   const resolvedEndpoint =
-    typeof embedding?.endpoint === "string" && embedding.endpoint.trim().length > 0
+    embeddingEndpointOverride ??
+    (typeof embedding?.endpoint === "string" && embedding.endpoint.trim().length > 0
       ? embedding.endpoint.trim()
-      : undefined;
+      : undefined);
   const resolvedBatchSize =
     typeof embedding?.batchSize === "number" && embedding.batchSize > 0 ? Math.floor(embedding.batchSize) : 50;
 
@@ -652,6 +710,7 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
     personaProposals: parsePersonaProposalsConfig(cfg),
     passiveObserver: parsePassiveObserverConfig(cfg),
     reflection: parseReflectionConfig(cfg),
+    identityReflection: parseIdentityReflectionConfig(cfg),
     procedures: parseProceduresConfig(cfg),
     extraction: parseExtractionConfig(cfg),
     memoryTiering: parseMemoryTieringConfig(cfg),
@@ -695,6 +754,8 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
     costTracking: parseCostTrackingConfig(cfg),
     dashboard: parseDashboardConfig(cfg),
     sensorSweep: parseSensorSweepConfig(cfg),
+    apiTap: parseApiTapConfig(cfg),
+    humanizer: parseHumanizerConfig(cfg),
     verbosity: parseVerbosityLevel(cfg),
     mode: hasPresetOverrides ? "custom" : appliedMode,
     gateway: parseGatewayConfig(cfg),
@@ -709,7 +770,7 @@ export function parseVerbosityLevel(cfg: Record<string, unknown>): import("../ty
     return raw as import("../types/index.js").VerbosityLevel;
   }
   if (raw !== undefined) {
-    console.warn(
+    pluginLogger.warn(
       `memory-hybrid: invalid verbosity "${raw}"; expected one of: ${valid.join(", ")}. Defaulting to "normal".`,
     );
   }

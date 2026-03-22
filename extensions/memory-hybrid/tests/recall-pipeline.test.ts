@@ -16,10 +16,11 @@
  *   - hydeUsedRef state is mutated correctly across multiple calls
  */
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { runRecallPipelineQuery, type RecallPipelineDeps } from "../services/recall-pipeline.js";
 import type { SearchResult, MemoryEntry } from "../types/memory.js";
 import { createPendingLLMWarnings } from "../services/chat.js";
+import * as chatModule from "../services/chat.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -78,6 +79,7 @@ function makeDeps(overrides: Partial<RecallPipelineDeps> = {}): RecallPipelineDe
         maxVariants: 4,
         cacheSize: 100,
         timeoutMs: 15_000,
+        skipForInteractiveTurns: true,
       },
       retrievalStrategies: ["fts5"],
       memoryTieringEnabled: false,
@@ -160,7 +162,13 @@ describe("runRecallPipelineQuery — semantic mode", () => {
 
     const deps = makeDeps({
       cfg: {
-        queryExpansion: { enabled: false, maxVariants: 4, cacheSize: 100, timeoutMs: 15_000 },
+        queryExpansion: {
+          enabled: false,
+          maxVariants: 4,
+          cacheSize: 100,
+          timeoutMs: 15_000,
+          skipForInteractiveTurns: true,
+        },
         retrievalStrategies: ["semantic", "fts5"],
         memoryTieringEnabled: false,
         rawCfg: { llm: undefined } as unknown as RecallPipelineDeps["cfg"]["rawCfg"],
@@ -187,7 +195,13 @@ describe("runRecallPipelineQuery — semantic mode", () => {
     const precomputed = [1, 2, 3, 4];
     const deps = makeDeps({
       cfg: {
-        queryExpansion: { enabled: false, maxVariants: 4, cacheSize: 100, timeoutMs: 15_000 },
+        queryExpansion: {
+          enabled: false,
+          maxVariants: 4,
+          cacheSize: 100,
+          timeoutMs: 15_000,
+          skipForInteractiveTurns: true,
+        },
         retrievalStrategies: ["semantic"],
         memoryTieringEnabled: false,
         rawCfg: { llm: undefined } as unknown as RecallPipelineDeps["cfg"]["rawCfg"],
@@ -256,7 +270,13 @@ describe("runRecallPipelineQuery — HyDE disabled (queryExpansion.enabled = fal
     // HyDE-generated text. With HyDE off, embed is called with the raw query.
     const deps = makeDeps({
       cfg: {
-        queryExpansion: { enabled: false, maxVariants: 4, cacheSize: 100, timeoutMs: 15_000 },
+        queryExpansion: {
+          enabled: false,
+          maxVariants: 4,
+          cacheSize: 100,
+          timeoutMs: 15_000,
+          skipForInteractiveTurns: true,
+        },
         retrievalStrategies: ["semantic"],
         memoryTieringEnabled: false,
         rawCfg: { llm: undefined } as unknown as RecallPipelineDeps["cfg"]["rawCfg"],
@@ -276,7 +296,13 @@ describe("runRecallPipelineQuery — hydeUsedRef mutation", () => {
   it("limitHydeOnce marks hydeUsedRef.value = true on first call", async () => {
     const deps = makeDeps({
       cfg: {
-        queryExpansion: { enabled: true, maxVariants: 4, cacheSize: 100, timeoutMs: 15_000 },
+        queryExpansion: {
+          enabled: true,
+          maxVariants: 4,
+          cacheSize: 100,
+          timeoutMs: 15_000,
+          skipForInteractiveTurns: true,
+        },
         retrievalStrategies: ["fts5"],
         memoryTieringEnabled: false,
         rawCfg: { llm: undefined } as unknown as RecallPipelineDeps["cfg"]["rawCfg"],
@@ -299,7 +325,13 @@ describe("runRecallPipelineQuery — hydeUsedRef mutation", () => {
     // the ref is set on first call so subsequent calls skip the HyDE attempt.
     const deps = makeDeps({
       cfg: {
-        queryExpansion: { enabled: true, maxVariants: 4, cacheSize: 100, timeoutMs: 500 },
+        queryExpansion: {
+          enabled: true,
+          maxVariants: 4,
+          cacheSize: 100,
+          timeoutMs: 500,
+          skipForInteractiveTurns: true,
+        },
         retrievalStrategies: ["semantic"],
         memoryTieringEnabled: false,
         rawCfg: {
@@ -341,7 +373,13 @@ describe("runRecallPipelineQuery — memory tiering", () => {
 
     const deps = makeDeps({
       cfg: {
-        queryExpansion: { enabled: false, maxVariants: 4, cacheSize: 100, timeoutMs: 15_000 },
+        queryExpansion: {
+          enabled: false,
+          maxVariants: 4,
+          cacheSize: 100,
+          timeoutMs: 15_000,
+          skipForInteractiveTurns: true,
+        },
         retrievalStrategies: ["fts5"],
         memoryTieringEnabled: true,
         rawCfg: { llm: undefined } as unknown as RecallPipelineDeps["cfg"]["rawCfg"],
@@ -390,5 +428,226 @@ describe("runRecallPipelineQuery — limit", () => {
     const result = await runRecallPipelineQuery("query", 5, deps, { value: false });
 
     expect(result.length).toBeLessThanOrEqual(5);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Abort signal propagation — Issue #558
+// ---------------------------------------------------------------------------
+
+describe("runRecallPipelineQuery — abort cancels embed after HyDE (#558)", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.useRealTimers();
+  });
+
+  it("does not call embeddings.embed when vector-step timeout fires while HyDE is running", async () => {
+    // Use fake timers so we can fast-forward the 30s VECTOR_STEP_TIMEOUT_MS.
+    vi.useFakeTimers();
+
+    // Make chatCompleteWithRetry hang until the passed abort signal fires (which the
+    // 30s timeout inside recall-pipeline will trigger), then return a result.
+    // The abort guard added by #558 must fire before embeddings.embed is called.
+    vi.spyOn(chatModule, "chatCompleteWithRetry").mockImplementation(async (opts) => {
+      await new Promise<void>((resolve) => {
+        if (opts.signal?.aborted) {
+          resolve();
+          return;
+        }
+        opts.signal?.addEventListener("abort", () => resolve(), { once: true });
+        // Safety valve — resolves when fake-timers advance past this point
+        setTimeout(resolve, 60_000);
+      });
+      // Return a result AFTER the abort — the abort guard must prevent embed from running
+      return "HyDE result that arrived after timeout abort";
+    });
+
+    const deps = makeDeps({
+      cfg: {
+        queryExpansion: {
+          enabled: true,
+          maxVariants: 4,
+          cacheSize: 100,
+          timeoutMs: 60_000,
+          skipForInteractiveTurns: true,
+        },
+        retrievalStrategies: ["semantic"],
+        memoryTieringEnabled: false,
+        rawCfg: { llm: undefined } as unknown as RecallPipelineDeps["cfg"]["rawCfg"],
+      },
+    });
+
+    (deps.factsDb.search as ReturnType<typeof vi.fn>).mockReturnValue([]);
+    (deps.vectorDb.search as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+
+    // Start pipeline — it will hang inside chatCompleteWithRetry mock
+    const pipelinePromise = runRecallPipelineQuery(
+      "test abort query",
+      5,
+      deps,
+      { value: false },
+      {
+        hydeLabel: "HyDE-test",
+      },
+    );
+
+    // Advance fake timers past the 30s VECTOR_STEP_TIMEOUT_MS.
+    // This fires the internal setTimeout → directiveAbort.abort() → HyDE mock resolves.
+    await vi.advanceTimersByTimeAsync(31_000);
+
+    // Pipeline should now settle (timeout path)
+    await pipelinePromise;
+
+    // Key assertion: embeddings.embed must NOT have been called after abort
+    expect(deps.embeddings.embed).not.toHaveBeenCalled();
+  });
+
+  it("still calls embeddings.embed with raw query when HyDE fails non-abort", async () => {
+    // When HyDE fails for a transient reason (not abort), embed should still be called
+    // with the raw query — verifying the abort guard does not fire for normal HyDE failures.
+    vi.spyOn(chatModule, "chatCompleteWithRetry").mockRejectedValue(
+      new Error("LLM request timeout after 5000ms (model: test-model)"),
+    );
+
+    const deps = makeDeps({
+      cfg: {
+        queryExpansion: {
+          enabled: true,
+          maxVariants: 4,
+          cacheSize: 100,
+          timeoutMs: 5_000,
+          skipForInteractiveTurns: true,
+        },
+        retrievalStrategies: ["semantic"],
+        memoryTieringEnabled: false,
+        rawCfg: { llm: undefined } as unknown as RecallPipelineDeps["cfg"]["rawCfg"],
+      },
+    });
+
+    (deps.factsDb.search as ReturnType<typeof vi.fn>).mockReturnValue([]);
+    (deps.vectorDb.search as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+
+    await runRecallPipelineQuery("raw query fallback", 5, deps, { value: false });
+
+    // HyDE failed but the vector-step timeout did NOT fire — embed should proceed with raw query
+    expect(deps.embeddings.embed).toHaveBeenCalledWith("raw query fallback");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// HyDE skipForInteractiveTurns (#581)
+// ---------------------------------------------------------------------------
+
+describe("runRecallPipelineQuery — skipForInteractiveTurns (#581)", () => {
+  beforeEach(() => {
+    vi.spyOn(chatModule, "chatCompleteWithRetry").mockResolvedValue("HyDE generated text");
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("skips HyDE when interactive=true and skipForInteractiveTurns is true", async () => {
+    const deps = makeDeps({
+      cfg: {
+        queryExpansion: {
+          enabled: true,
+          maxVariants: 4,
+          cacheSize: 100,
+          timeoutMs: 15_000,
+          skipForInteractiveTurns: true,
+        },
+        retrievalStrategies: ["semantic"],
+        memoryTieringEnabled: false,
+        rawCfg: { llm: undefined } as unknown as RecallPipelineDeps["cfg"]["rawCfg"],
+      },
+    });
+    (deps.factsDb.search as ReturnType<typeof vi.fn>).mockReturnValue([]);
+    (deps.vectorDb.search as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+
+    await runRecallPipelineQuery("my interactive query", 5, deps, { value: false }, { interactive: true });
+
+    // HyDE was blocked — embed must be called with raw query, not HyDE-generated text
+    expect(deps.embeddings.embed).toHaveBeenCalledWith("my interactive query");
+    expect(chatModule.chatCompleteWithRetry).not.toHaveBeenCalled();
+  });
+
+  it("allows HyDE when interactive=true but skipForInteractiveTurns is explicitly false", async () => {
+    const deps = makeDeps({
+      cfg: {
+        queryExpansion: {
+          enabled: true,
+          maxVariants: 4,
+          cacheSize: 100,
+          timeoutMs: 15_000,
+          skipForInteractiveTurns: false,
+        },
+        retrievalStrategies: ["semantic"],
+        memoryTieringEnabled: false,
+        rawCfg: { llm: undefined } as unknown as RecallPipelineDeps["cfg"]["rawCfg"],
+      },
+    });
+    (deps.factsDb.search as ReturnType<typeof vi.fn>).mockReturnValue([]);
+    (deps.vectorDb.search as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+
+    await runRecallPipelineQuery("query with hyde", 5, deps, { value: false }, { interactive: true });
+
+    // HyDE was allowed — chatCompleteWithRetry must have been called
+    expect(chatModule.chatCompleteWithRetry).toHaveBeenCalled();
+    // embed should be called with HyDE-generated text (not raw query)
+    expect(deps.embeddings.embed).toHaveBeenCalledWith("HyDE generated text");
+  });
+
+  it("allows HyDE when interactive is not set (background/cron recall)", async () => {
+    const deps = makeDeps({
+      cfg: {
+        queryExpansion: {
+          enabled: true,
+          maxVariants: 4,
+          cacheSize: 100,
+          timeoutMs: 15_000,
+          skipForInteractiveTurns: true,
+        },
+        retrievalStrategies: ["semantic"],
+        memoryTieringEnabled: false,
+        rawCfg: { llm: undefined } as unknown as RecallPipelineDeps["cfg"]["rawCfg"],
+      },
+    });
+    (deps.factsDb.search as ReturnType<typeof vi.fn>).mockReturnValue([]);
+    (deps.vectorDb.search as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+
+    // No interactive option — background/cron path
+    await runRecallPipelineQuery("background query", 5, deps, { value: false });
+
+    // HyDE was allowed on the background path
+    expect(chatModule.chatCompleteWithRetry).toHaveBeenCalled();
+    expect(deps.embeddings.embed).toHaveBeenCalledWith("HyDE generated text");
+  });
+
+  it("allows HyDE when interactive=false (explicit non-interactive flag)", async () => {
+    // interactive=false should NOT block HyDE — only interactive=true does
+    // opts.interactive === true short-circuits to false when interactive is false
+    const deps = makeDeps({
+      cfg: {
+        queryExpansion: {
+          enabled: true,
+          maxVariants: 4,
+          cacheSize: 100,
+          timeoutMs: 15_000,
+          skipForInteractiveTurns: true,
+        },
+        retrievalStrategies: ["semantic"],
+        memoryTieringEnabled: false,
+        rawCfg: { llm: undefined } as unknown as RecallPipelineDeps["cfg"]["rawCfg"],
+      },
+    });
+    (deps.factsDb.search as ReturnType<typeof vi.fn>).mockReturnValue([]);
+    (deps.vectorDb.search as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+
+    await runRecallPipelineQuery("explicit non-interactive query", 5, deps, { value: false }, { interactive: false });
+
+    // HyDE was allowed — interactive=false does not block HyDE
+    expect(chatModule.chatCompleteWithRetry).toHaveBeenCalled();
+    expect(deps.embeddings.embed).toHaveBeenCalledWith("HyDE generated text");
   });
 });

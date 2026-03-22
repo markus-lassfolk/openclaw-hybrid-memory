@@ -40,6 +40,8 @@ When `llm.nano` is not configured, nano ops fall back to `llm.default[0]`.
 
 > **Why Gemini first for heavy?** Distillation processes entire session histories — up to 500k tokens. Google's Gemini Pro is currently the only model with 1024k context at the heavy tier, making it far more effective for distill than Claude Opus (195k) or OpenAI o3 (195k).
 
+For **context window**, **max output tokens**, **model versions**, and **training data cutoff** per model (Azure and others), see [Model reference (context, tokens, versions)](MODEL-REFERENCE.md).
+
 ---
 
 ## OAuth authentication
@@ -118,6 +120,11 @@ If you use **only** OAuth and do not add any API keys to OpenClaw, everything ab
 **Yes.** Run `openclaw hybrid-mem verify` to see **Embeddings Tests (Critical)** and **LLM Providers** tables without running live tests. Run `openclaw hybrid-mem verify --test-llm` to run minimal completions and show **OAuth Result** and **API Result** separately.
 
 When a provider has both OAuth and API credentials, both paths are tested: one request goes through the gateway (OAuth) and one uses the direct API key. So you can see e.g. **OAuth Result: ✅ Success** and **API Result: ❌ Failed** (or the other way around) and fix the failing path. Both tables show **Credentials Available** (OAuth / API) and **Source** (where the key comes from: `env`, `file`, `plugin`, `gateway`, or `local`). The LLM table also shows **Enabled/Disabled**. With `--test-llm`, only enabled providers are tested; disabled ones still show `—` for both result columns.
+
+### Google Gemini (verify + plugin)
+
+- **`distill.apiKey`** (or **`llm.providers.google.apiKey`**) is the Gemini / Google Generative Language API key used for `google/*` models and distill. Use **`env:GOOGLE_API_KEY`** and set `GOOGLE_API_KEY` in the environment (e.g. `~/.openclaw/.env` and systemd `EnvironmentFile` on the gateway unit).
+- **`getProvidersWithKeys`** treats `env:` / `file:` SecretRefs as present when the env var or file resolves, so verify `--test-llm` runs Google API tests when the key is set at runtime.
 
 ### Embeddings and OAuth
 
@@ -221,7 +228,7 @@ When `llm` is **not configured** in the plugin, the plugin automatically derives
 
 This means a freshly installed plugin works with whatever models you have configured in OpenClaw — no `llm` block required. The verify output shows `(auto from agents.defaults.model)` when this is in effect.
 
-**If your only model is heavy (e.g. Claude Opus):** The plugin detects when the gateway list is heavy-only and **prepends a cheap fallback** (`gpt-4.1-nano`, `gemini-2.0-flash-lite`, `claude-3-5-haiku`) to the default and nano tiers. That way maintenance tasks (classify, summarize, cron job runner, etc.) try a cheaper model first instead of running hundreds of tasks as Opus. Set **`llm.default`** and **`llm.nano`** explicitly in plugin config if you want to override. After upgrading, run **`openclaw hybrid-mem verify --fix`** so stored cron job models are re-resolved from the updated tiers.
+**If your only model is heavy (e.g. Claude Opus):** The plugin detects when the gateway list is heavy-only and **prepends a cheap fallback** (`gpt-4.1-nano`, `gemini-2.5-flash-lite`, `claude-3-5-haiku`) to the default and nano tiers. That way maintenance tasks (classify, summarize, cron job runner, etc.) try a cheaper model first instead of running hundreds of tasks as Opus. Set **`llm.default`** and **`llm.nano`** explicitly in plugin config if you want to override. After upgrading, run **`openclaw hybrid-mem verify --fix`** so stored cron job models are re-resolved from the updated tiers.
 
 ---
 
@@ -239,9 +246,38 @@ Each provider in `llm.providers` can have:
 | Provider prefix | Built-in endpoint | Key source |
 |-----------------|-------------------|------------|
 | `google` | `https://generativelanguage.googleapis.com/v1beta/openai/` | `llm.providers.google.apiKey` or legacy `distill.apiKey` |
-| `openai` | `https://api.openai.com/v1` | `llm.providers.openai.apiKey` or `embedding.apiKey` |
+| `openai` | `https://api.openai.com/v1` | `llm.providers.openai.apiKey`, then `OPENAI_API_KEY` env, then `embedding.apiKey` |
 | `anthropic` | `https://api.anthropic.com/v1` | `llm.providers.anthropic.apiKey` (required; no fallback) |
 | `minimax` | `https://api.minimax.io/v1` | `llm.providers.minimax.apiKey` or `MINIMAX_API_KEY` env var |
+
+### Azure vs OpenAI keys (no conflict)
+
+To use **both** Azure Foundry and OpenAI (e.g. Azure for embeddings and/or `azure-foundry/*` models, OpenAI for `openai/*` models), set **separate** keys so they do not override each other:
+
+| Use case | Key | When it is used |
+|----------|-----|------------------|
+| **OpenAI** (api.openai.com, `openai/*` models) | `OPENAI_API_KEY` env or `llm.providers.openai.apiKey` | Chat/completion for `openai/gpt-4.1-nano`, `openai/o3`, etc. |
+| **Azure Foundry** (Azure OpenAI / Foundry, `azure-foundry/*` models) | `AZURE_OPENAI_API_KEY` env or `llm.providers["azure-foundry"].apiKey` | Chat/completion and (if configured) embeddings when using Azure endpoint. |
+
+**Precedence:** For the **openai** provider, the plugin uses `OPENAI_API_KEY` (or explicit `llm.providers.openai.apiKey`) **before** `embedding.apiKey`. So you can set `embedding.apiKey` to your Azure key (or use `llm.providers["azure-foundry"]` for embeddings) and `OPENAI_API_KEY` for OpenAI chat — both work without conflict. For **azure-foundry** and **azure-foundry-responses**, the plugin uses `AZURE_OPENAI_API_KEY` when no key is set in `llm.providers`.
+
+Example (env only, no keys in config):
+
+```bash
+export OPENAI_API_KEY='sk-proj-...'       # OpenAI chat (openai/*)
+export AZURE_OPENAI_API_KEY='...'         # Azure Foundry (azure-foundry/*, optional embeddings)
+```
+
+Or in config with SecretRefs:
+
+```json
+"llm": {
+  "providers": {
+    "openai":    { "apiKey": "env:OPENAI_API_KEY" },
+    "azure-foundry": { "apiKey": "env:AZURE_OPENAI_API_KEY", "baseURL": "https://YOUR_RESOURCE.openai.azure.com/" }
+  }
+}
+```
 
 ### MiniMax configuration
 
@@ -359,7 +395,7 @@ Embeddings are required. The plugin supports four providers — choose the one t
 | **OpenAI** | `"openai"` (default) | Yes (`embedding.apiKey`) | `text-embedding-3-small` (1536d) or `text-embedding-3-large` (3072d) |
 | **Ollama** | `"ollama"` | No | Fully local. Any Ollama model (e.g. `nomic-embed-text`, `mxbai-embed-large`). Ollama must be running. |
 | **ONNX** | `"onnx"` | No | Fully local. Models auto-downloaded from HuggingFace. Requires `onnxruntime-node`. |
-| **Google** | `"google"` | Yes (Google API key) | `text-embedding-004` via Gemini API. Reuses `llm.providers.google.apiKey` or `distill.apiKey`. |
+| **Google** | `"google"` | Yes (Google API key) | `text-embedding-004` or `text-embedding-005` via Gemini API. Reuses `llm.providers.google.apiKey` or `distill.apiKey`. Not `text-embedding-3-*` (OpenAI). |
 
 **What if I have no provider that supports embeddings?** The plugin **requires** at least one valid embedding configuration to load. If you do not set any embedding provider (or the one you set is invalid — e.g. OpenAI with no key, Ollama not running), the plugin will fail at config parse or startup with a clear error (e.g. missing `embedding.apiKey`, or embedding check failed). You cannot run the plugin with zero embedding access. To avoid paid embedding APIs, use **Ollama** or **ONNX** (local only; no API key).
 
@@ -385,6 +421,17 @@ Embeddings are required. The plugin supports four providers — choose the one t
   "models": ["text-embedding-3-small"]
 }
 ```
+
+**Azure Foundry (same API as LLM):** To use Azure OpenAI / Foundry for embeddings (e.g. **Azure Foundry Embedding Large** / `text-embedding-3-large`) with the same API key and endpoint as your chat models:
+
+1. **Recommended:** Configure `llm.providers["azure-foundry"]` with `apiKey` and `baseURL` (as you already do for chat). Then set only:
+   - `embedding.provider`: `"openai"`
+   - `embedding.model`: `"text-embedding-3-large"` (or your Azure embedding deployment name)
+   - Do **not** set `embedding.apiKey` or `embedding.endpoint` — the plugin will use the azure-foundry provider for embeddings automatically.
+
+2. **Explicit override:** To point embeddings at a different endpoint (e.g. a dedicated embedding deployment URL), set `embedding.endpoint` to your Azure base URL (e.g. `https://YOUR_RESOURCE.openai.azure.com/openai` or `https://YOUR_RESOURCE.openai.azure.com/openai/deployments/YOUR_EMBEDDING_DEPLOYMENT`) and `embedding.apiKey` to your Azure API key. Use `embedding.model` as the deployment name if using a deployment-style URL.
+
+For Azure, the plugin sends the API key in the `api-key` header and does not append `/v1` when the endpoint already contains `/openai/deployments/`. Set `embedding.dimensions` to `3072` for `text-embedding-3-large`.
 
 ---
 
@@ -486,6 +533,8 @@ Uses Google's `text-embedding-004` model via the Gemini API's OpenAI-compatible 
 ```
 
 Default dimensions for `text-embedding-004`: 768. Set `embedding.dimensions` explicitly to override.
+
+**Model names:** For `embedding.provider: "google"` only **`text-embedding-004`** and **`text-embedding-005`** are valid. Do not use `text-embedding-3-small` or `text-embedding-3-large` (those are OpenAI models); the plugin will send a Google model instead and verify may still show the config name — if embedding tests fail, set `embedding.model` to `text-embedding-005` or `text-embedding-004`.
 
 ---
 

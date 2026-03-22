@@ -63,6 +63,28 @@ export const ENGLISH_KEYWORDS = {
   decayPermanent: ["decided", "architecture", "always use", "never use"],
   decaySession: ["currently debugging", "right now", "this session"],
   decayActive: ["working on", "need to", "todo", "blocker", "sprint"],
+  /** Key-field fragments that classify a fact as permanent. Translatable for multilingual key matching. */
+  decayPermanentKeys: [
+    "name",
+    "email",
+    "api_key",
+    "api_endpoint",
+    "architecture",
+    "decision",
+    "birthday",
+    "born",
+    "phone",
+    "language",
+    "location",
+  ],
+  /** Key-field fragments that classify a fact as session. Translatable for multilingual key matching. */
+  decaySessionKeys: ["current_file", "temp", "debug", "working_on_right_now"],
+  /** Key-field fragments that classify a fact as active. Translatable for multilingual key matching. */
+  decayActiveKeys: ["task", "todo", "wip", "branch", "sprint", "blocker"],
+  /** Entity exact-match values that classify a fact as permanent. Translatable for multilingual entity matching. */
+  decayPermanentEntities: ["decision", "convention"],
+  /** Key-field fragments that classify a fact as checkpoint. Translatable for multilingual key matching. */
+  decayCheckpointKeys: ["checkpoint", "preflight"],
   /** Self-correction detection. Phrases that suggest the user is correcting the agent. Translated via build-languages for multi-language support. */
   correctionSignals: [
     "every time",
@@ -440,16 +462,27 @@ function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+const LOWERCASE_GROUPS = new Set<KeywordGroup>([
+  "decayPermanentKeys",
+  "decaySessionKeys",
+  "decayActiveKeys",
+  "decayPermanentEntities",
+  "decayCheckpointKeys",
+]);
+
 function mergeGroup(
   english: readonly string[],
   translationsByLang: Record<string, Record<string, string[]>> | undefined,
   group: KeywordGroup,
 ): string[] {
-  const set = new Set<string>(english);
+  const shouldLowercase = LOWERCASE_GROUPS.has(group);
+  const set = new Set<string>(shouldLowercase ? english.map((s) => s.toLowerCase()) : english);
   if (translationsByLang) {
     for (const langData of Object.values(translationsByLang)) {
       const list = langData?.[group];
-      if (Array.isArray(list)) for (const w of list) if (typeof w === "string" && w.trim()) set.add(w.trim());
+      if (Array.isArray(list))
+        for (const w of list)
+          if (typeof w === "string" && w.trim()) set.add(shouldLowercase ? w.trim().toLowerCase() : w.trim());
     }
   }
   return [...set];
@@ -473,7 +506,10 @@ export function loadMergedKeywords(): MergedKeywords {
   if (!path) {
     cache = null;
     return Object.fromEntries(
-      (Object.keys(ENGLISH_KEYWORDS) as KeywordGroup[]).map((k) => [k, [...ENGLISH_KEYWORDS[k]]]),
+      (Object.keys(ENGLISH_KEYWORDS) as KeywordGroup[]).map((k) => [
+        k,
+        LOWERCASE_GROUPS.has(k) ? ENGLISH_KEYWORDS[k].map((s) => s.toLowerCase()) : [...ENGLISH_KEYWORDS[k]],
+      ]),
     ) as MergedKeywords;
   }
   const filePath = join(path, LANG_FILE_NAME);
@@ -626,6 +662,31 @@ export function getDecaySessionRegex(): RegExp {
 
 export function getDecayActiveRegex(): RegExp {
   return buildRegexFromKeywords(loadMergedKeywords().decayActive);
+}
+
+/** Merged key-field fragments for permanent decay classification (English + translations). */
+export function getDecayPermanentKeys(): string[] {
+  return loadMergedKeywords().decayPermanentKeys;
+}
+
+/** Merged key-field fragments for session decay classification (English + translations). */
+export function getDecaySessionKeys(): string[] {
+  return loadMergedKeywords().decaySessionKeys;
+}
+
+/** Merged key-field fragments for active decay classification (English + translations). */
+export function getDecayActiveKeys(): string[] {
+  return loadMergedKeywords().decayActiveKeys;
+}
+
+/** Merged entity exact-match values for permanent decay classification (English + translations). */
+export function getDecayPermanentEntities(): string[] {
+  return loadMergedKeywords().decayPermanentEntities;
+}
+
+/** Merged key-field fragments for checkpoint decay classification (English + translations). */
+export function getDecayCheckpointKeys(): string[] {
+  return loadMergedKeywords().decayCheckpointKeys;
 }
 
 /** Emoji that indicate user dissatisfaction — trigger self-correction extraction (with or without follow-up text). */
