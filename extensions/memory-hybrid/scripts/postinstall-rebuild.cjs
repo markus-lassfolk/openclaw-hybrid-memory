@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Rebuild native modules (better-sqlite3, @lancedb/lancedb) after install.
+ * Rebuild native modules (@lancedb/lancedb) after install.
  * Skips rebuild when the module already loads successfully (warm cache).
  * Exits 1 on failure with a clear message — no silent failures.
  */
@@ -8,7 +8,7 @@ const { execSync } = require("child_process");
 const path = require("path");
 
 const root = path.join(__dirname, "..");
-const REQUIRED_NATIVE_MODULES = ["better-sqlite3", "@lancedb/lancedb"];
+const REQUIRED_NATIVE_MODULES = ["@lancedb/lancedb"];
 
 function run(cmd, desc) {
   try {
@@ -18,7 +18,7 @@ function run(cmd, desc) {
     console.error(`\n✗ ${desc} failed.`);
     console.error("  The plugin requires native modules built for your platform.");
     console.error("  Ensure you have: C++ toolchain, Python 3, node-gyp");
-    console.error(`  Retry: cd ${root} && npm rebuild better-sqlite3 @lancedb/lancedb`);
+    console.error(`  Retry: cd ${root} && npm rebuild @lancedb/lancedb`);
     return false;
   }
 }

@@ -10,7 +10,7 @@ const path = require("path");
 
 const root = path.join(__dirname, "..");
 const pkg = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
-const requiredRuntimeDeps = ["better-sqlite3", "@lancedb/lancedb"];
+const requiredRuntimeDeps = ["@lancedb/lancedb"];
 
 let failed = false;
 

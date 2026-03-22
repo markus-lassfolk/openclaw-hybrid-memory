@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
-import type Database from "better-sqlite3";
+import type { DatabaseSync } from "node:sqlite";
 
 import { capturePluginError } from "../../services/error-reporter.js";
+import { createTransaction } from "../../utils/sqlite-transaction.js";
 import type { ReinforcementContext, ReinforcementEvent } from "./types.js";
 
 export function appendReinforcementQuote(existingJson: string | null, newSnippet: string): string {
@@ -24,13 +25,13 @@ export function appendReinforcementQuote(existingJson: string | null, newSnippet
 }
 
 export function boostConfidence(
-  db: Database.Database,
+  db: DatabaseSync,
   id: string,
   delta: number,
   maxConfidence = 1.0,
   nowSec: number = Math.floor(Date.now() / 1000),
 ): boolean {
-  const tx = db.transaction(() => {
+  const tx = createTransaction(db, () => {
     const row = db.prepare(`SELECT confidence FROM facts WHERE id = ?`).get(id) as { confidence: number } | undefined;
     if (!row) return false;
 
@@ -47,7 +48,7 @@ export function boostConfidence(
 }
 
 export function reinforceFact(
-  db: Database.Database,
+  db: DatabaseSync,
   id: string,
   quoteSnippet: string,
   context?: ReinforcementContext,
@@ -58,7 +59,7 @@ export function reinforceFact(
   const maxEventsPerFact = opts?.maxEventsPerFact ?? 50;
   const boostAmount = Math.max(0, opts?.boostAmount ?? 1);
 
-  const tx = db.transaction(() => {
+  const tx = createTransaction(db, () => {
     const row = db.prepare(`SELECT reinforced_quotes FROM facts WHERE id = ?`).get(id) as
       | { reinforced_quotes: string | null }
       | undefined;
@@ -103,7 +104,7 @@ export function reinforceFact(
   return tx();
 }
 
-export function getReinforcementEvents(db: Database.Database, factId: string): ReinforcementEvent[] {
+export function getReinforcementEvents(db: DatabaseSync, factId: string): ReinforcementEvent[] {
   const rows = db
     .prepare(`SELECT * FROM reinforcement_log WHERE fact_id = ? ORDER BY occurred_at DESC`)
     .all(factId) as Array<{
@@ -146,7 +147,7 @@ export function computeDiversityFromEvents(events: ReinforcementEvent[]): number
 }
 
 export function batchGetReinforcementEvents(
-  db: Database.Database,
+  db: DatabaseSync,
   factIds: string[],
 ): Map<string, ReinforcementEvent[]> {
   if (factIds.length === 0) return new Map();
@@ -183,18 +184,18 @@ export function batchGetReinforcementEvents(
   return eventsByFactId;
 }
 
-export function calculateDiversityScore(db: Database.Database, factId: string): number {
+export function calculateDiversityScore(db: DatabaseSync, factId: string): number {
   return computeDiversityFromEvents(getReinforcementEvents(db, factId));
 }
 
 export function reinforceProcedure(
-  db: Database.Database,
+  db: DatabaseSync,
   id: string,
   quoteSnippet: string,
   promotionThreshold = 2,
   nowSec: number = Math.floor(Date.now() / 1000),
 ): boolean {
-  const tx = db.transaction(() => {
+  const tx = createTransaction(db, () => {
     const row = db
       .prepare(`SELECT reinforced_quotes, reinforced_count, confidence FROM procedures WHERE id = ?`)
       .get(id) as { reinforced_quotes: string | null; reinforced_count: number; confidence: number } | undefined;

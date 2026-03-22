@@ -17,11 +17,11 @@ Part of the [OpenClaw Hybrid Memory](https://github.com/markus-lassfolk/openclaw
   - **Google** (Gemini API): set `embedding.provider: "google"`, `embedding.model: "text-embedding-004"`, `embedding.dimensions: 768`, and `llm.providers.google.apiKey`.
   
   Use `embedding.preferredProviders` (e.g. `["ollama", "openai"]`) for automatic ordered failover between providers. Optional features (auto-classify, summarize, consolidate, **memory classification**) use a chat model (e.g. `gpt-4o-mini`). With `store.classifyBeforeWrite: true`, new facts are classified as ADD/UPDATE/DELETE/NOOP against similar existing facts before storing; reduces duplicates and stale contradictions. Applies to the `memory_store` tool, auto-capture, CLI `hybrid-mem store`, and `extract-daily`. **Maintenance cron jobs and self-correction spawn** use a model chosen from your config (Gemini / OpenAI / Claude)—no hardcoded model names. See [CONFIGURATION.md](../../docs/CONFIGURATION.md) and [LLM-AND-PROVIDERS.md](../../docs/LLM-AND-PROVIDERS.md#embedding-providers) and [TROUBLESHOOTING.md](../../docs/TROUBLESHOOTING.md).
-- **Build tools** for `better-sqlite3`: C++ toolchain (e.g. `build-essential` on Linux, Visual Studio Build Tools on Windows), Python 3.
+- **Build tools** for `@lancedb/lancedb`: C++ toolchain (e.g. `build-essential` on Linux, Visual Studio Build Tools on Windows), Python 3.
 
 ## Installation
 
-**1. Install the plugin** (OpenClaw installs to `~/.openclaw/extensions` and runs `npm install`; a `postinstall` script rebuilds `better-sqlite3` for your platform):
+**1. Install the plugin** (OpenClaw installs to `~/.openclaw/extensions` and runs `npm install`; a `postinstall` script rebuilds `@lancedb/lancedb` for your platform if needed):
 
 ```bash
 openclaw plugins install openclaw-hybrid-memory
@@ -99,12 +99,12 @@ Routes are only registered when `health.enabled` is `true` (the default). OpenCl
 
 ## Dependencies
 
-- `better-sqlite3` ^12.0.0
+- Built-in `node:sqlite` (ships with supported Node.js versions)
 - `@lancedb/lancedb` ^0.26.2
 - `@sinclair/typebox` 0.34.48
 - `openai` ^6.16.0 — **peer dependency (must be directly provided by the host)**. The `openai` package is not bundled with this plugin. Your host environment must directly declare and install `openai ^6.16.0` — a transitive copy (e.g. one pulled in via a sub-dependency of OpenClaw) is **not** sufficient under pnpm, Yarn PnP, or other strict package managers. Install it explicitly alongside this plugin: `npm i openai`.
 
-Build tools required for `better-sqlite3`: C++ toolchain (e.g. `build-essential` on Linux, Visual Studio Build Tools on Windows), Python 3. You may see an `npm warn deprecated prebuild-install` message during install; it comes from better-sqlite3's optional dependency and is harmless until [WiseLibs/better-sqlite3#655](https://github.com/WiseLibs/better-sqlite3/issues/655) is resolved.
+Build tools required for `@lancedb/lancedb`: C++ toolchain (e.g. `build-essential` on Linux, Visual Studio Build Tools on Windows), Python 3.
 
 ## Local ONNX Embeddings (optional)
 

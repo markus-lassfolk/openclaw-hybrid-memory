@@ -1,4 +1,4 @@
-import type Database from "better-sqlite3";
+import type { DatabaseSync } from "node:sqlite";
 
 export interface ScanCursor {
   lastSessionTs: number;
@@ -6,7 +6,7 @@ export interface ScanCursor {
   sessionsProcessed: number;
 }
 
-export function migrateScanCursorsTable(db: Database.Database): void {
+export function migrateScanCursorsTable(db: DatabaseSync): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS scan_cursors (
       scan_type TEXT PRIMARY KEY,
@@ -17,7 +17,7 @@ export function migrateScanCursorsTable(db: Database.Database): void {
   `);
 }
 
-export function getScanCursor(db: Database.Database, scanType: string): ScanCursor | null {
+export function getScanCursor(db: DatabaseSync, scanType: string): ScanCursor | null {
   const row = db
     .prepare(`SELECT last_session_ts, last_run_at, sessions_processed FROM scan_cursors WHERE scan_type = ?`)
     .get(scanType) as { last_session_ts: number; last_run_at: number; sessions_processed: number } | undefined;
@@ -30,7 +30,7 @@ export function getScanCursor(db: Database.Database, scanType: string): ScanCurs
 }
 
 export function updateScanCursor(
-  db: Database.Database,
+  db: DatabaseSync,
   scanType: string,
   lastSessionTs: number,
   sessionsProcessed: number,

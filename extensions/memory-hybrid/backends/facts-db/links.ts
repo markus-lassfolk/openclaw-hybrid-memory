@@ -1,10 +1,12 @@
 import { randomUUID } from "node:crypto";
-import type Database from "better-sqlite3";
+import type { DatabaseSync } from "node:sqlite";
+
+import { createTransaction } from "../../utils/sqlite-transaction.js";
 
 import type { MemoryLinkType } from "./types.js";
 
 export function createLink(
-  db: Database.Database,
+  db: DatabaseSync,
   sourceFactId: string,
   targetFactId: string,
   linkType: MemoryLinkType,
@@ -19,7 +21,7 @@ export function createLink(
 }
 
 export function createOrStrengthenRelatedLink(
-  db: Database.Database,
+  db: DatabaseSync,
   factIdA: string,
   factIdB: string,
   deltaStrength = 0.1,
@@ -42,7 +44,7 @@ export function createOrStrengthenRelatedLink(
 }
 
 export function strengthenRelatedLinksBatch(
-  db: Database.Database,
+  db: DatabaseSync,
   pairs: [string, string][],
   deltaStrength = 0.1,
 ): void {
@@ -55,7 +57,7 @@ export function strengthenRelatedLinksBatch(
     `INSERT INTO memory_links (id, source_fact_id, target_fact_id, link_type, strength, created_at) VALUES (?, ?, ?, 'RELATED_TO', ?, ?)`,
   );
   const now = Math.floor(Date.now() / 1000);
-  const tx = db.transaction(() => {
+  const tx = createTransaction(db, () => {
     for (const [factIdA, factIdB] of pairs) {
       if (factIdA === factIdB) continue;
       const [source, target] = factIdA < factIdB ? [factIdA, factIdB] : [factIdB, factIdA];
@@ -72,7 +74,7 @@ export function strengthenRelatedLinksBatch(
 }
 
 export function getLinksFrom(
-  db: Database.Database,
+  db: DatabaseSync,
   factId: string,
 ): Array<{ id: string; targetFactId: string; linkType: string; strength: number }> {
   const rows = db
@@ -87,7 +89,7 @@ export function getLinksFrom(
 }
 
 export function getLinksTo(
-  db: Database.Database,
+  db: DatabaseSync,
   factId: string,
 ): Array<{ id: string; sourceFactId: string; linkType: string; strength: number }> {
   const rows = db
@@ -101,7 +103,7 @@ export function getLinksTo(
   }));
 }
 
-export function getConnectedFactIds(db: Database.Database, factIds: string[], maxDepth: number): string[] {
+export function getConnectedFactIds(db: DatabaseSync, factIds: string[], maxDepth: number): string[] {
   if (factIds.length === 0 || maxDepth < 1) return [...factIds];
   const seen = new Set<string>(factIds);
   let frontier = [...factIds];
