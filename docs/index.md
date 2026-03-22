@@ -49,6 +49,7 @@ Your OpenClaw agent forgets everything between sessions. Hybrid Memory fixes thi
 | Document | Description |
 |----------|-------------|
 | [Architecture](ARCHITECTURE) | Four-part hybrid architecture, workspace layout, bootstrap files |
+| [Architecture Center](ARCHITECTURE-CENTER) | Core runtime vs adjacent subsystems, design constraints, module ownership map |
 | [How It Works](HOW-IT-WORKS) | End-to-end flow of memory capture, storage, and recall |
 | [Memory Protocol](MEMORY-PROTOCOL) | Paste-ready AGENTS.md block |
 
