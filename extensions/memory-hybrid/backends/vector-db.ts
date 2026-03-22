@@ -406,7 +406,11 @@ export class VectorDB {
           similarity,
         };
 
-        if (!bestMatch || entry.similarity > bestMatch.similarity || (entry.similarity === bestMatch.similarity && entry.cachedAt > bestMatch.cachedAt)) {
+        if (
+          !bestMatch ||
+          entry.similarity > bestMatch.similarity ||
+          (entry.similarity === bestMatch.similarity && entry.cachedAt > bestMatch.cachedAt)
+        ) {
           bestMatch = entry;
         }
       }

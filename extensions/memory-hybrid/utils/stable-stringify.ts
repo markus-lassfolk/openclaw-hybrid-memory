@@ -19,5 +19,6 @@ export function stableStringify(value: unknown): string {
     const entries = Object.entries(value as Record<string, unknown>).sort(([a], [b]) => a.localeCompare(b));
     return `{${entries.map(([key, item]) => `${JSON.stringify(key)}:${stableStringify(item)}`).join(",")}}`;
   }
-  return JSON.stringify(value);
+  const serialized = JSON.stringify(value);
+  return serialized === undefined ? "null" : serialized;
 }

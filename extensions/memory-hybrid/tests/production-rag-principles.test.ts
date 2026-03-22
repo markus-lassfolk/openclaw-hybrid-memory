@@ -113,20 +113,13 @@ describe("runRetrievalPipeline production RAG additions", () => {
       storeSemanticQueryCache: vi.fn(),
     } as unknown as VectorDB;
 
-    const result = await runRetrievalPipeline(
-      "where is my api key",
-      [1, 0, 0],
-      factsDb.getRawDb(),
-      vectorDb,
-      factsDb,
-      {
-        config: { ...DEFAULT_RETRIEVAL_CONFIG, strategies: ["semantic", "fts5"] },
-      },
-    );
+    const result = await runRetrievalPipeline("where is my api key", [1, 0, 0], factsDb.getRawDb(), vectorDb, factsDb, {
+      config: { ...DEFAULT_RETRIEVAL_CONFIG, strategies: ["semantic", "fts5"] },
+    });
 
     expect(result.fused[0]?.factId).toBe(stored.id);
-    expect((vectorDb.search as ReturnType<typeof vi.fn>)).not.toHaveBeenCalled();
-    expect((vectorDb.storeSemanticQueryCache as ReturnType<typeof vi.fn>)).not.toHaveBeenCalled();
+    expect(vectorDb.search as ReturnType<typeof vi.fn>).not.toHaveBeenCalled();
+    expect(vectorDb.storeSemanticQueryCache as ReturnType<typeof vi.fn>).not.toHaveBeenCalled();
   });
 
   it("rewrites the query when all graded documents are irrelevant", async () => {

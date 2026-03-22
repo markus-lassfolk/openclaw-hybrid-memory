@@ -102,7 +102,11 @@ export class DocumentGrader {
         timeoutMs: this.config.timeoutMs,
       });
 
-      const rewritten = response.replace(/^['"`\s]+|['"`\s]+$/g, "").split(/\r?\n/, 1)[0]?.trim() ?? "";
+      const rewritten =
+        response
+          .replace(/^['"`\s]+|['"`\s]+$/g, "")
+          .split(/\r?\n/, 1)[0]
+          ?.trim() ?? "";
       if (!rewritten) return null;
       if (previousQueries.some((previous) => previous.toLowerCase() === rewritten.toLowerCase())) return null;
       return rewritten;
