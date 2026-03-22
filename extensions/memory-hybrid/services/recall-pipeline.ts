@@ -17,14 +17,10 @@ import type { SearchResult, ScopeFilter } from "../types/memory.js";
 import type { QueryExpansionConfig } from "../config.js";
 import type { PendingLLMWarnings } from "../services/chat.js";
 import { mergeResults, filterByScope } from "../services/merge-results.js";
-import { chatCompleteWithRetry, is500Like, is404Like, isOllamaOOM } from "../services/chat.js";
 import { computeDynamicSalience } from "../utils/salience.js";
 import { capturePluginError } from "../services/error-reporter.js";
-import { getCronModelConfig, getLLMModelPreference } from "../config.js";
-import {
-  DEFAULT_INTERACTIVE_RECALL_POLICY,
-  type InteractiveRecallPolicy,
-} from "./retrieval-mode-policy.js";
+import { DEFAULT_INTERACTIVE_RECALL_POLICY, type InteractiveRecallPolicy } from "./retrieval-mode-policy.js";
+import { expandQueryWithHyde } from "./hyde-helper.js";
 
 /** Logger subset required by the recall pipeline (avoids importing ClawdbotPluginApi). */
 export interface RecallLogger {
@@ -61,7 +57,6 @@ export interface RecallPipelineDeps {
   pendingLLMWarnings: PendingLLMWarnings;
   logger: RecallLogger;
 }
-
 
 /**
  * Run a single recall query: FTS + optional vector search, merge, tier-filter.
@@ -131,48 +126,20 @@ export async function runRecallPipelineQuery(
 
         if (allowHyde) {
           if (opts?.limitHydeOnce) hydeUsedRef.value = true;
-          try {
-            const cronCfg = getCronModelConfig(cfg.rawCfg);
-            const pref = getLLMModelPreference(cronCfg, "nano");
-            const hydeModel = cfg.queryExpansion.model ?? pref[0];
-            const fallbackModels = cfg.queryExpansion.model ? [] : pref.slice(1);
-            const hydeContent = await chatCompleteWithRetry({
-              model: hydeModel,
-              fallbackModels,
-              content: `Write a short factual statement (1-2 sentences) that answers: ${trimmed}\n\nOutput only the statement, no preamble.`,
-              temperature: 0.3,
-              maxTokens: 150,
+          if (!directiveAbort.signal.aborted) {
+            textToEmbed = await expandQueryWithHyde({
+              query: trimmed,
+              rawCfg: cfg.rawCfg,
+              model: cfg.queryExpansion.model,
+              timeoutMs: cfg.queryExpansion.timeoutMs,
               openai,
               label: opts?.hydeLabel ?? "HyDE",
-              timeoutMs: cfg.queryExpansion.timeoutMs,
               signal: directiveAbort.signal,
               pendingWarnings: pendingLLMWarnings,
+              logger,
+              subsystem: "auto-recall",
+              operation: `${opts?.errorPrefix ?? ""}hyde-generation`,
             });
-            const hydeText = hydeContent.trim();
-            if (hydeText.length > 10) textToEmbed = hydeText;
-          } catch (err) {
-            if (!directiveAbort.signal.aborted) {
-              const hydeErr = err instanceof Error ? err : new Error(String(err));
-              const isTransient =
-                isOllamaOOM(hydeErr) ||
-                is500Like(hydeErr) ||
-                is404Like(hydeErr) ||
-                /timed out|llm request timeout|request was aborted|econnrefused/i.test(hydeErr.message);
-              if (!isTransient) {
-                capturePluginError(hydeErr, {
-                  operation: `${opts?.errorPrefix ?? ""}hyde-generation`,
-                  subsystem: "auto-recall",
-                });
-              }
-              if (isOllamaOOM(hydeErr)) {
-                logger.warn(
-                  `memory-hybrid: Ollama model OOM during HyDE generation — model requires more memory than available. ` +
-                    `Using raw query. Consider using a smaller model or configuring a cloud fallback.`,
-                );
-              } else {
-                logger.warn(`memory-hybrid: ${opts?.errorPrefix ?? ""}HyDE generation failed, using raw query: ${err}`);
-              }
-            }
           }
         }
 

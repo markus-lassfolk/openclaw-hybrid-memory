@@ -35,9 +35,9 @@ import type { EmbeddingRegistry } from "./embedding-registry.js";
 import type { EmbeddingProvider } from "./embeddings.js";
 import { AllEmbeddingProvidersFailed } from "./embeddings.js";
 import { capturePluginError, addOperationBreadcrumb } from "./error-reporter.js";
-import { chatCompleteWithRetry, type PendingLLMWarnings } from "./chat.js";
-import { is500Like, is404Like, isOllamaOOM } from "./chat.js";
+import { type PendingLLMWarnings } from "./chat.js";
 import { resolveExplicitDeepRetrievalPolicy, type ExplicitDeepRetrievalPolicy } from "./retrieval-mode-policy.js";
+import { expandQueryWithHyde } from "./hyde-helper.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -93,38 +93,18 @@ export async function buildExplicitSemanticQueryVector({
     let textToEmbed = query;
 
     if (policy.allowHyde && cfg.queryExpansion.enabled) {
-      try {
-        const cronCfg = getCronModelConfig(cfg as Parameters<typeof getCronModelConfig>[0]);
-        const pref = getLLMModelPreference(cronCfg, "nano");
-        const hydeModel = cfg.queryExpansion.model ?? pref[0];
-        const fallbackModels = cfg.queryExpansion.model ? [] : pref.slice(1);
-        const hydeContent = await chatCompleteWithRetry({
-          model: hydeModel,
-          fallbackModels,
-          content: `Write a short factual statement (1-2 sentences) that answers: ${query}
-
-Output only the statement, no preamble.`,
-          temperature: 0.3,
-          maxTokens: 150,
-          openai,
-          label: "HyDE",
-          timeoutMs: cfg.queryExpansion.timeoutMs,
-          pendingWarnings: pendingLLMWarnings,
-        });
-        const hydeText = hydeContent.trim();
-        if (hydeText.length > 10) textToEmbed = hydeText;
-      } catch (err) {
-        const hydeErr = err instanceof Error ? err : new Error(String(err));
-        const isTransient =
-          isOllamaOOM(hydeErr) ||
-          is500Like(hydeErr) ||
-          is404Like(hydeErr) ||
-          /timed out|llm request timeout|request was aborted|econnrefused/i.test(hydeErr.message);
-        if (!isTransient) {
-          capturePluginError(hydeErr, { subsystem: "retrieval", operation: "explicit-hyde-generation" });
-        }
-        logger.warn(`memory-hybrid: HyDE generation failed, using raw query: ${err}`);
-      }
+      textToEmbed = await expandQueryWithHyde({
+        query,
+        rawCfg: cfg as Parameters<typeof getCronModelConfig>[0],
+        model: cfg.queryExpansion.model,
+        timeoutMs: cfg.queryExpansion.timeoutMs,
+        openai,
+        label: "HyDE",
+        pendingWarnings: pendingLLMWarnings,
+        logger,
+        subsystem: "retrieval",
+        operation: "explicit-hyde-generation",
+      });
     }
 
     return { queryVector: await embeddings.embed(textToEmbed), warning: null };
