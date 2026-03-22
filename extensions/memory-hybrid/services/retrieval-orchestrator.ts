@@ -32,6 +32,7 @@ import type { EmbeddingRegistry } from "./embedding-registry.js";
 import { capturePluginError } from "./error-reporter.js";
 import { validateQueryForMemoryLookup, type QueryValidationResult } from "./query-validator.js";
 import { DocumentGrader } from "./document-grader.js";
+import { stableStringify } from "../utils/stable-stringify.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -381,14 +382,11 @@ interface SemanticCacheCapableVectorDB extends VectorDB {
   getSemanticQueryCacheMatch?(
     vector: number[],
     options?: { minSimilarity?: number; ttlMs?: number; filterKey?: string; candidateLimit?: number },
-  ): Promise<
-    | {
-        factIds: string[];
-        packedFactIds: string[];
-        similarity: number;
-      }
-    | null
-  >;
+  ): Promise<{
+    factIds: string[];
+    packedFactIds: string[];
+    similarity: number;
+  } | null>;
   storeSemanticQueryCache?(entry: {
     queryText: string;
     vector: number[];
@@ -397,17 +395,6 @@ interface SemanticCacheCapableVectorDB extends VectorDB {
     filterKey?: string;
     cachedAt?: number;
   }): Promise<void>;
-}
-
-function stableStringify(value: unknown): string {
-  if (Array.isArray(value)) {
-    return `[${value.map((item) => stableStringify(item)).join(",")}]`;
-  }
-  if (value && typeof value === "object") {
-    const entries = Object.entries(value as Record<string, unknown>).sort(([a], [b]) => a.localeCompare(b));
-    return `{${entries.map(([key, item]) => `${JSON.stringify(key)}:${stableStringify(item)}`).join(",")}}`;
-  }
-  return JSON.stringify(value);
 }
 
 function buildSemanticCacheFilterKey(config: RetrievalConfig, options: RetrievalPipelineOptions): string {
@@ -427,7 +414,10 @@ function buildSemanticCacheFilterKey(config: RetrievalConfig, options: Retrieval
   });
 }
 
-function collectContradictedIds(factsDb: FactLookup, orderedEntries: Array<{ factId: string; entry: MemoryEntry }>): Set<string> {
+function collectContradictedIds(
+  factsDb: FactLookup,
+  orderedEntries: Array<{ factId: string; entry: MemoryEntry }>,
+): Set<string> {
   const contradictedIds = new Set<string>();
   if (factsDb.getContradictedIds) {
     const allIds = orderedEntries.map((entry) => entry.factId);
@@ -470,7 +460,8 @@ function buildCachedResult(
   budgetTokens: number,
   options: { includeSuperseded?: boolean; scopeFilter?: unknown; asOf?: number; nowSec: number },
 ): OrchestratorResult {
-  const getByIdOpts = options.scopeFilter || options.asOf != null ? { scopeFilter: options.scopeFilter, asOf: options.asOf } : undefined;
+  const getByIdOpts =
+    options.scopeFilter || options.asOf != null ? { scopeFilter: options.scopeFilter, asOf: options.asOf } : undefined;
   const effectiveNow = options.asOf ?? options.nowSec;
 
   const orderedEntries: Array<{ factId: string; entry: MemoryEntry }> = [];
@@ -548,6 +539,8 @@ export interface RetrievalPipelineOptions {
   documentGrader?: DocumentGrader | null;
   /** OpenAI-compatible client for adaptive grading/rewrite loops. */
   adaptiveOpenai?: import("openai").default | null;
+  /** Document grading configuration. */
+  documentGradingConfig?: import("../config.js").DocumentGradingConfig | null;
 }
 
 /**
@@ -598,12 +591,20 @@ export async function runRetrievalPipeline(
     queryValidator,
     documentGrader,
     adaptiveOpenai,
+    documentGradingConfig,
   } = options;
 
   const validator = queryValidator ?? validateQueryForMemoryLookup;
   const vectorDbWithCache = vectorDb as SemanticCacheCapableVectorDB;
   const semanticCacheFilterKey = buildSemanticCacheFilterKey(config, options);
-  const activeDocumentGrader = documentGrader ?? (adaptiveOpenai ? new DocumentGrader(adaptiveOpenai) : null);
+  const activeDocumentGrader =
+    documentGrader ??
+    (adaptiveOpenai && documentGradingConfig?.enabled
+      ? new DocumentGrader(adaptiveOpenai, {
+          model: documentGradingConfig.model,
+          timeoutMs: documentGradingConfig.timeoutMs,
+        })
+      : null);
 
   const applyConditionalReranking = async (
     queryText: string,

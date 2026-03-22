@@ -10,6 +10,7 @@ import type {
   QueryExpansionConfig,
   RerankingConfig,
   ContextualVariantsConfig,
+  DocumentGradingConfig,
 } from "../types/retrieval.js";
 import { pluginLogger } from "../../utils/logger.js";
 
@@ -413,5 +414,34 @@ export function parseContextualVariantsConfig(cfg: Record<string, unknown>): Con
       Array.isArray(cvRaw?.categories) && (cvRaw.categories as unknown[]).length > 0
         ? (cvRaw.categories as unknown[]).filter((c): c is string => typeof c === "string" && c.trim().length > 0)
         : undefined,
+  };
+}
+
+export function parseDocumentGradingConfig(cfg: Record<string, unknown>): DocumentGradingConfig {
+  const dgRaw = cfg.documentGrading as Record<string, unknown> | undefined;
+
+  const enabled = dgRaw?.enabled === true;
+  const model = typeof dgRaw?.model === "string" && dgRaw.model.trim().length > 0 ? dgRaw.model.trim() : undefined;
+
+  const rawTimeoutRaw = dgRaw?.timeoutMs;
+  // Treat 0 or negative as an explicit "no config-level floor" bypass: caller receives undefined
+  // and chatComplete falls back to its own internal default timeout.
+  if (typeof rawTimeoutRaw === "number" && rawTimeoutRaw <= 0) {
+    return {
+      enabled,
+      model,
+      timeoutMs: undefined,
+    };
+  }
+
+  const rawTimeout =
+    typeof rawTimeoutRaw === "number" && Number.isFinite(rawTimeoutRaw) && rawTimeoutRaw > 0
+      ? Math.floor(rawTimeoutRaw)
+      : null;
+
+  return {
+    enabled,
+    model,
+    timeoutMs: rawTimeout !== null ? rawTimeout : 10000,
   };
 }
