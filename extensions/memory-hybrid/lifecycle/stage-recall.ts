@@ -245,7 +245,12 @@ async function runRecall(
     const ambientLastEmbedding = ambientLastEmbeddingMap.get(sessionScopeKey) ?? null;
 
     let promptEmbedding: number[] | null = null;
-    if (interactivePolicy.allowAmbientMultiQuery && ambientCfg.enabled && ambientCfg.multiQuery && ctx.cfg.retrieval.strategies.includes("semantic")) {
+    if (
+      interactivePolicy.allowAmbientMultiQuery &&
+      ambientCfg.enabled &&
+      ambientCfg.multiQuery &&
+      ctx.cfg.retrieval.strategies.includes("semantic")
+    ) {
       try {
         promptEmbedding = await ctx.embeddings.embed(e.prompt);
       } catch {
@@ -401,6 +406,7 @@ async function runRecall(
               hydeLabel: "HyDE",
               errorPrefix: "directive-",
               limitHydeOnce: true,
+              policy: interactivePolicy,
             });
             directiveCalls += 1;
             addDirectiveResults(results, `entity:${entity}`);
@@ -414,6 +420,7 @@ async function runRecall(
               hydeLabel: "HyDE",
               errorPrefix: "directive-",
               limitHydeOnce: true,
+              policy: interactivePolicy,
             });
             directiveCalls += 1;
             addDirectiveResults(results, `keyword:${keyword}`);
@@ -426,6 +433,7 @@ async function runRecall(
             hydeLabel: "HyDE",
             errorPrefix: "directive-",
             limitHydeOnce: true,
+            policy: interactivePolicy,
           });
           directiveCalls += 1;
           addDirectiveResults(results, `taskType:${taskType}`);
@@ -437,6 +445,7 @@ async function runRecall(
               hydeLabel: "HyDE",
               errorPrefix: "directive-",
               limitHydeOnce: true,
+              policy: interactivePolicy,
             });
             directiveCalls += 1;
             addDirectiveResults(results, "sessionStart");

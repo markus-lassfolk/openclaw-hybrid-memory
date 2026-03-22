@@ -67,7 +67,7 @@ export interface ExplicitRetrievalLogger {
 
 export interface BuildExplicitSemanticQueryVectorDeps {
   query: string;
-  cfg: Pick<HybridMemoryConfig, "retrieval" | "queryExpansion" | "llm">;
+  cfg: Pick<HybridMemoryConfig, "retrieval" | "queryExpansion" | "llm" | "embedding" | "distill" | "reflection">;
   embeddings: Pick<EmbeddingProvider, "embed">;
   openai: import("openai").default;
   pendingLLMWarnings: PendingLLMWarnings;
