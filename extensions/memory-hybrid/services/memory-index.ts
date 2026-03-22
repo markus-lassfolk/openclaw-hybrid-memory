@@ -77,6 +77,7 @@ function labelFromEntry(entry: MemoryEntry): string {
     .split(" ")
     .filter(Boolean);
   if (words.length > 6) return `${words.slice(0, 6).join(" ")}…`;
+  if (words.length > 0) return words.join(" ");
   return `${entry.category} note`;
 }
 
