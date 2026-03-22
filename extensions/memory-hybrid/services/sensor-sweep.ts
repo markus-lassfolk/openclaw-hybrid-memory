@@ -14,6 +14,7 @@ import { join } from "node:path";
 import { homedir } from "node:os";
 import { type EventBus, computeFingerprint } from "../backends/event-bus.js";
 import { capturePluginError } from "./error-reporter.js";
+import { stableStringify } from "../utils/stable-stringify.js";
 import type {
   SensorSweepConfig,
   HomeAssistantSensorConfig,
@@ -49,21 +50,6 @@ export interface SweepAllResult {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-/** Stringify an object with sorted keys for stable, order-independent fingerprints. */
-function stableStringify(obj: Record<string, unknown>): string {
-  function sortDeep(value: unknown): unknown {
-    if (value === null || value === undefined) return value;
-    if (typeof value !== "object") return value;
-    if (Array.isArray(value)) return value.map(sortDeep);
-    const sorted: Record<string, unknown> = {};
-    for (const key of Object.keys(value as Record<string, unknown>).sort()) {
-      sorted[key] = sortDeep((value as Record<string, unknown>)[key]);
-    }
-    return sorted;
-  }
-  return JSON.stringify(sortDeep(obj));
-}
 
 // ---------------------------------------------------------------------------
 // HA REST helpers

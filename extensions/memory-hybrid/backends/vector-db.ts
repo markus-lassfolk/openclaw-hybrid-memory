@@ -11,6 +11,7 @@ import { UUID_REGEX } from "../utils/constants.js";
 import { pluginLogger } from "../utils/logger.js";
 
 const LANCE_TABLE = "memories";
+const SEMANTIC_QUERY_CACHE_TABLE = "semantic_query_cache";
 /** Substring of the LanceDB error thrown on vector-dimension mismatch (issue #366). */
 const LANCE_NO_VECTOR_COL_MSG = "No vector column found";
 
@@ -28,9 +29,20 @@ const _OPTIMIZE_FAILURE_WARN_THRESHOLD = 3;
 
 export type VectorDBLogger = { warn: (msg: string) => void };
 
+export interface SemanticQueryCacheEntry {
+  id: string;
+  queryText: string;
+  factIds: string[];
+  packedFactIds: string[];
+  cachedAt: number;
+  similarity: number;
+  filterKey: string;
+}
+
 export class VectorDB {
   private db: lancedb.Connection | null = null;
   private table: lancedb.Table | null = null;
+  private semanticQueryCacheTable: lancedb.Table | null = null;
   private initPromise: Promise<void> | null = null;
   private closed = false;
   private sessionCount = 0;
@@ -157,6 +169,45 @@ export class VectorDB {
         this.logWarn(`memory-hybrid: failed to delete schema seed row (non-fatal): ${deleteErr}`);
       }
     }
+
+    await this.ensureSemanticQueryCacheTable();
+  }
+
+  private async ensureSemanticQueryCacheTable(): Promise<void> {
+    if (!this.db) throw new Error("VectorDB connection not initialized.");
+    const tables = await this.db.tableNames();
+
+    if (tables.includes(SEMANTIC_QUERY_CACHE_TABLE)) {
+      try {
+        this.semanticQueryCacheTable = await this.db.openTable(SEMANTIC_QUERY_CACHE_TABLE);
+        return;
+      } catch (err) {
+        this.logWarn(`memory-hybrid: failed to open semantic query cache table, rebuilding: ${err}`);
+        try {
+          await this.db.dropTable(SEMANTIC_QUERY_CACHE_TABLE);
+        } catch {
+          /* ignore */
+        }
+      }
+    }
+
+    this.semanticQueryCacheTable = await this.db.createTable(SEMANTIC_QUERY_CACHE_TABLE, [
+      {
+        id: "__schema__",
+        queryText: "",
+        filterKey: "",
+        vector: new Array(this.vectorDim).fill(0),
+        factIds: "[]",
+        packedFactIds: "[]",
+        cachedAt: 0,
+      },
+    ]);
+
+    try {
+      await this.semanticQueryCacheTable.delete('id = "__schema__"');
+    } catch (deleteErr) {
+      this.logWarn(`memory-hybrid: failed to delete semantic cache seed row (non-fatal): ${deleteErr}`);
+    }
   }
 
   /**
@@ -276,6 +327,135 @@ export class VectorDB {
       throw new Error("VectorDB not initialized. Call ensureInitialized() first or check if close() was called.");
     }
     return this.table;
+  }
+
+  private getSemanticQueryCacheTable(): lancedb.Table {
+    if (!this.semanticQueryCacheTable) {
+      throw new Error("Semantic query cache table not initialized.");
+    }
+    return this.semanticQueryCacheTable;
+  }
+
+  private computeCosineSimilarity(a: readonly number[], b: readonly number[]): number {
+    if (a.length === 0 || a.length !== b.length) return 0;
+
+    let dot = 0;
+    let normA = 0;
+    let normB = 0;
+    for (let index = 0; index < a.length; index++) {
+      dot += a[index] * b[index];
+      normA += a[index] * a[index];
+      normB += b[index] * b[index];
+    }
+
+    const denom = Math.sqrt(normA) * Math.sqrt(normB);
+    if (denom === 0) return 0;
+    return dot / denom;
+  }
+
+  private parseCacheIds(raw: unknown): string[] {
+    if (typeof raw !== "string") return [];
+    try {
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed.filter((value): value is string => typeof value === "string") : [];
+    } catch {
+      return [];
+    }
+  }
+
+  async getSemanticQueryCacheMatch(
+    vector: number[],
+    options: { minSimilarity?: number; ttlMs?: number; filterKey?: string; candidateLimit?: number } = {},
+  ): Promise<SemanticQueryCacheEntry | null> {
+    try {
+      await this.ensureInitialized();
+      const nowSec = Math.floor(Date.now() / 1000);
+      const minSimilarity = options.minSimilarity ?? 0.95;
+      const ttlSec = Math.max(1, Math.floor((options.ttlMs ?? 5 * 60 * 1000) / 1000));
+      const filterKey = options.filterKey ?? "default";
+      const candidateLimit = options.candidateLimit ?? 25;
+
+      const candidates = await this.getSemanticQueryCacheTable().vectorSearch(vector).limit(candidateLimit).toArray();
+
+      let bestMatch: SemanticQueryCacheEntry | null = null;
+      for (const row of candidates) {
+        if ((row.filterKey as string | undefined) !== filterKey) continue;
+
+        const cachedAt = Number(row.cachedAt ?? 0);
+        const ageSec = nowSec - cachedAt;
+        if (!Number.isFinite(cachedAt) || ageSec > ttlSec) {
+          continue;
+        }
+
+        const candidateVector = Array.isArray(row.vector)
+          ? row.vector.map((value) => Number(value))
+          : ArrayBuffer.isView(row.vector)
+            ? Array.from(row.vector as ArrayLike<number>, (value) => Number(value))
+            : [];
+
+        const similarity = this.computeCosineSimilarity(vector, candidateVector);
+        if (similarity < minSimilarity) continue;
+
+        const entry: SemanticQueryCacheEntry = {
+          id: String(row.id),
+          queryText: String(row.queryText ?? ""),
+          filterKey,
+          factIds: this.parseCacheIds(row.factIds),
+          packedFactIds: this.parseCacheIds(row.packedFactIds),
+          cachedAt,
+          similarity,
+        };
+
+        if (
+          !bestMatch ||
+          entry.similarity > bestMatch.similarity ||
+          (entry.similarity === bestMatch.similarity && entry.cachedAt > bestMatch.cachedAt)
+        ) {
+          bestMatch = entry;
+        }
+      }
+
+      return bestMatch;
+    } catch (err) {
+      capturePluginError(err as Error, {
+        operation: "semantic-query-cache-lookup",
+        severity: "info",
+        subsystem: "vector",
+      });
+      this.logWarn(`memory-hybrid: semantic query cache lookup failed: ${err}`);
+      return null;
+    }
+  }
+
+  async storeSemanticQueryCache(entry: {
+    queryText: string;
+    vector: number[];
+    factIds: string[];
+    packedFactIds: string[];
+    filterKey?: string;
+    cachedAt?: number;
+  }): Promise<void> {
+    try {
+      await this.ensureInitialized();
+      await this.getSemanticQueryCacheTable().add([
+        {
+          id: randomUUID(),
+          queryText: entry.queryText,
+          filterKey: entry.filterKey ?? "default",
+          vector: entry.vector,
+          factIds: JSON.stringify(entry.factIds),
+          packedFactIds: JSON.stringify(entry.packedFactIds),
+          cachedAt: entry.cachedAt ?? Math.floor(Date.now() / 1000),
+        },
+      ]);
+    } catch (err) {
+      capturePluginError(err as Error, {
+        operation: "semantic-query-cache-store",
+        severity: "info",
+        subsystem: "vector",
+      });
+      this.logWarn(`memory-hybrid: semantic query cache store failed: ${err}`);
+    }
   }
 
   /** Store a vector row. If id is provided (e.g. fact id from SQLite), it is used so search returns fact ids for classification. */
@@ -585,6 +765,7 @@ export class VectorDB {
     this.closed = true;
     this.closeGeneration++;
     this.table = null;
+    this.semanticQueryCacheTable = null;
     if (this.db) {
       try {
         this.db.close();
