@@ -20,8 +20,12 @@ import { withTimeout } from "../utils/timeout.js";
 import { estimateTokens } from "../utils/text.js";
 import type { LifecycleContext, RecallResult, RecallStageResult, SessionState } from "./types.js";
 import { runRecallPipelineQuery, type RecallPipelineDeps } from "../services/recall-pipeline.js";
+import {
+  INTERACTIVE_RECALL_POLICY,
+  resolveInteractiveRecallBudgetTokens,
+} from "../services/retrieval-mode-policy.js";
 
-export const RECALL_STAGE_TIMEOUT_MS = 35_000;
+export const RECALL_STAGE_TIMEOUT_MS = INTERACTIVE_RECALL_POLICY.stageTimeoutMs;
 
 export async function runRecallStage(
   event: unknown,
@@ -252,7 +256,7 @@ async function runRecall(
       hydeLabel: "HyDE",
       errorPrefix: "auto-recall-",
       precomputedVector: promptEmbedding ?? undefined,
-      interactive: true,
+      mode: INTERACTIVE_RECALL_POLICY.mode,
     });
 
     if (ambientCfg.enabled && ambientCfg.multiQuery) {
@@ -281,7 +285,7 @@ async function runRecall(
                 hydeLabel: "HyDE",
                 errorPrefix: `ambient-${q.type}-`,
                 limitHydeOnce: true,
-                interactive: true,
+                mode: INTERACTIVE_RECALL_POLICY.mode,
               });
               extraResultSets.push(qResults);
             } catch (err) {
@@ -396,7 +400,7 @@ async function runRecall(
               hydeLabel: "HyDE",
               errorPrefix: "directive-",
               limitHydeOnce: true,
-              interactive: true,
+              mode: INTERACTIVE_RECALL_POLICY.mode,
             });
             directiveCalls += 1;
             addDirectiveResults(results, `entity:${entity}`);
@@ -410,7 +414,7 @@ async function runRecall(
               hydeLabel: "HyDE",
               errorPrefix: "directive-",
               limitHydeOnce: true,
-              interactive: true,
+              mode: INTERACTIVE_RECALL_POLICY.mode,
             });
             directiveCalls += 1;
             addDirectiveResults(results, `keyword:${keyword}`);
@@ -423,7 +427,7 @@ async function runRecall(
             hydeLabel: "HyDE",
             errorPrefix: "directive-",
             limitHydeOnce: true,
-            interactive: true,
+            mode: INTERACTIVE_RECALL_POLICY.mode,
           });
           directiveCalls += 1;
           addDirectiveResults(results, `taskType:${taskType}`);
@@ -435,7 +439,7 @@ async function runRecall(
               hydeLabel: "HyDE",
               errorPrefix: "directive-",
               limitHydeOnce: true,
-              interactive: true,
+              mode: INTERACTIVE_RECALL_POLICY.mode,
             });
             directiveCalls += 1;
             addDirectiveResults(results, "sessionStart");
@@ -501,7 +505,7 @@ async function runRecall(
     // Enforce retrieval.ambientBudgetTokens as a hard total-token cap (#581).
     // autoRecall.maxTokens is a user preference; ambientBudgetTokens is the architectural
     // ceiling — the injected context must not exceed either.
-    const totalBudget = Math.min(ctx.cfg.autoRecall.maxTokens, ctx.cfg.retrieval.ambientBudgetTokens);
+    const totalBudget = resolveInteractiveRecallBudgetTokens(ctx.cfg);
     // Account for issueBlock, hotBlock, and procedureBlock tokens to ensure total stays within budget
     const fixedBlocksTokens = estimateTokens(issueBlock) + estimateTokens(hotBlock) + estimateTokens(procedureBlock);
     const maxTokens = Math.max(0, totalBudget - fixedBlocksTokens);

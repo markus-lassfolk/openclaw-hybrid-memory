@@ -21,6 +21,13 @@ import { chatCompleteWithRetry, is500Like, is404Like, isOllamaOOM } from "../ser
 import { computeDynamicSalience } from "../utils/salience.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { getCronModelConfig, getLLMModelPreference } from "../config.js";
+import {
+  EXPLICIT_DEEP_RETRIEVAL_POLICY,
+  INTERACTIVE_RECALL_POLICY,
+  RETRIEVAL_MODE,
+  shouldSkipHydeForMode,
+  type RetrievalMode,
+} from "./retrieval-mode-policy.js";
 
 /** Logger subset required by the recall pipeline (avoids importing ClawdbotPluginApi). */
 export interface RecallLogger {
@@ -58,7 +65,10 @@ export interface RecallPipelineDeps {
   logger: RecallLogger;
 }
 
-const VECTOR_STEP_TIMEOUT_MS = 30_000;
+function getVectorStepTimeoutMs(mode: RetrievalMode): number {
+  if (mode === RETRIEVAL_MODE.INTERACTIVE_RECALL) return INTERACTIVE_RECALL_POLICY.vectorStepTimeoutMs;
+  return EXPLICIT_DEEP_RETRIEVAL_POLICY.vectorStepTimeoutMs;
+}
 
 /**
  * Run a single recall query: FTS + optional vector search, merge, tier-filter.
@@ -83,10 +93,13 @@ export async function runRecallPipelineQuery(
     errorPrefix?: string;
     limitHydeOnce?: boolean;
     precomputedVector?: number[];
+    /** Explicit retrieval mode contract. Prefer this over `interactive`. */
+    mode?: RetrievalMode;
     /**
      * When true, this is an interactive (before_agent_start) recall turn.
      * If `cfg.queryExpansion.skipForInteractiveTurns` is true (the default), HyDE is
      * skipped to prevent LLM latency spikes on the hot user-facing path (#581).
+     * @deprecated Use opts.mode=RETRIEVAL_MODE.INTERACTIVE_RECALL.
      */
     interactive?: boolean;
   },
@@ -95,6 +108,8 @@ export async function runRecallPipelineQuery(
 
   const trimmed = query.trim();
   if (!trimmed) return [];
+  const mode = opts?.mode ?? (opts?.interactive === true ? RETRIEVAL_MODE.INTERACTIVE_RECALL : RETRIEVAL_MODE.EXPLICIT_DEEP);
+  const vectorStepTimeoutMs = getVectorStepTimeoutMs(mode);
 
   const stageMs = { fts: 0, embed: 0, vector: 0, merge: 0 };
   let t0 = Date.now();
@@ -119,9 +134,10 @@ export async function runRecallPipelineQuery(
         let textToEmbed = trimmed;
         // Skip HyDE on interactive turns when skipForInteractiveTurns is enabled (default true).
         // This prevents a full LLM round-trip on the hot before_agent_start path (#581).
-        const hydeBlockedByInteractive = opts?.interactive === true && cfg.queryExpansion.skipForInteractiveTurns;
         const allowHyde =
-          cfg.queryExpansion.enabled && !hydeBlockedByInteractive && (!opts?.limitHydeOnce || !hydeUsedRef.value);
+          cfg.queryExpansion.enabled &&
+          !shouldSkipHydeForMode(mode, cfg.queryExpansion.skipForInteractiveTurns) &&
+          (!opts?.limitHydeOnce || !hydeUsedRef.value);
         t0 = Date.now();
 
         if (allowHyde) {
@@ -175,7 +191,7 @@ export async function runRecallPipelineQuery(
         // The HyDE call above may have completed just before the abort — we must not
         // waste an embedding provider call whose result will be discarded.
         if (directiveAbort.signal.aborted) {
-          const abortError = new Error(`recall pipeline timed out after ${VECTOR_STEP_TIMEOUT_MS}ms`);
+          const abortError = new Error(`recall pipeline timed out after ${vectorStepTimeoutMs}ms`);
           abortError.name = "AbortError";
           throw abortError;
         }
@@ -201,8 +217,8 @@ export async function runRecallPipelineQuery(
       const timeoutPromise = new Promise<never>((_, reject) => {
         timeoutId = setTimeout(() => {
           directiveAbort.abort();
-          reject(new Error(`recall pipeline timed out after ${VECTOR_STEP_TIMEOUT_MS}ms`));
-        }, VECTOR_STEP_TIMEOUT_MS);
+          reject(new Error(`recall pipeline timed out after ${vectorStepTimeoutMs}ms`));
+        }, vectorStepTimeoutMs);
       });
 
       try {
