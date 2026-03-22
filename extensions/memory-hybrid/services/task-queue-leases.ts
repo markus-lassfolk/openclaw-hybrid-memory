@@ -377,12 +377,7 @@ export async function transitionDispatchLease(input: TransitionDispatchLeaseInpu
 
     if (input.toState === "running") {
       // Refresh expiry while work is active.
-      if (lease.expiresAt) {
-        const expiresMs = parseIsoMs(lease.expiresAt);
-        if (Number.isFinite(expiresMs) && expiresMs < now.getTime()) {
-          lease.expiresAt = undefined;
-        }
-      }
+      lease.expiresAt = undefined;
     } else {
       lease.completedAt = nowIso;
     }
