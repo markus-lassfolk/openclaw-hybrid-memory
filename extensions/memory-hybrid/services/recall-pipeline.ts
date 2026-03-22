@@ -21,6 +21,10 @@ import { chatCompleteWithRetry, is500Like, is404Like, isOllamaOOM } from "../ser
 import { computeDynamicSalience } from "../utils/salience.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { getCronModelConfig, getLLMModelPreference } from "../config.js";
+import {
+  DEFAULT_INTERACTIVE_RECALL_POLICY,
+  type InteractiveRecallPolicy,
+} from "./retrieval-mode-policy.js";
 
 /** Logger subset required by the recall pipeline (avoids importing ClawdbotPluginApi). */
 export interface RecallLogger {
@@ -58,7 +62,6 @@ export interface RecallPipelineDeps {
   logger: RecallLogger;
 }
 
-const VECTOR_STEP_TIMEOUT_MS = 30_000;
 
 /**
  * Run a single recall query: FTS + optional vector search, merge, tier-filter.
@@ -92,6 +95,8 @@ export async function runRecallPipelineQuery(
   },
 ): Promise<SearchResult[]> {
   const { factsDb, vectorDb, embeddings, openai, cfg, recallOpts, minScore, pendingLLMWarnings, logger } = deps;
+
+  const policy = opts?.policy ?? DEFAULT_INTERACTIVE_RECALL_POLICY;
 
   const trimmed = query.trim();
   if (!trimmed) return [];
@@ -201,8 +206,8 @@ export async function runRecallPipelineQuery(
       const timeoutPromise = new Promise<never>((_, reject) => {
         timeoutId = setTimeout(() => {
           directiveAbort.abort();
-          reject(new Error(`recall pipeline timed out after ${VECTOR_STEP_TIMEOUT_MS}ms`));
-        }, VECTOR_STEP_TIMEOUT_MS);
+          reject(new Error(`${policy.mode} timed out after ${policy.vectorStepTimeoutMs}ms`));
+        }, policy.vectorStepTimeoutMs);
       });
 
       try {
@@ -246,7 +251,7 @@ export async function runRecallPipelineQuery(
   }
 
   logger.debug?.(
-    `memory-hybrid: recall pipeline timing (ms) — FTS: ${stageMs.fts}, embed: ${stageMs.embed}, vector: ${stageMs.vector}, merge: ${stageMs.merge}, total: ${stageMs.fts + stageMs.embed + stageMs.vector + stageMs.merge}`,
+    `memory-hybrid: ${policy.mode} timing (ms) — FTS: ${stageMs.fts}, embed: ${stageMs.embed}, vector: ${stageMs.vector}, merge: ${stageMs.merge}, total: ${stageMs.fts + stageMs.embed + stageMs.vector + stageMs.merge}`,
   );
 
   return results;
