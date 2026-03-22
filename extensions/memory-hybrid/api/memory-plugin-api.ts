@@ -16,6 +16,7 @@ import type { WriteAheadLog } from "../backends/wal.js";
 import type { CredentialsDB } from "../backends/credentials-db.js";
 import type { ProposalsDB } from "../backends/proposals-db.js";
 import type { EventLog } from "../backends/event-log.js";
+import type { NarrativesDB } from "../backends/narratives-db.js";
 import type { IssueStore } from "../backends/issue-store.js";
 import type { WorkflowStore } from "../backends/workflow-store.js";
 import type { CrystallizationStore } from "../backends/crystallization-store.js";
@@ -77,6 +78,7 @@ export interface MemoryPluginAPI {
   aliasDb: AliasDB | null;
   proposalsDb: ProposalsDB | null;
   eventLog: EventLog | null;
+  narrativesDb: NarrativesDB | null;
   provenanceService: ProvenanceService | null;
   issueStore: IssueStore | null;
   workflowStore: WorkflowStore | null;

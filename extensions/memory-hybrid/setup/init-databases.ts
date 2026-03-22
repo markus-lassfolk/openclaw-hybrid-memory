@@ -10,6 +10,7 @@ import { VectorDB } from "../backends/vector-db.js";
 import { CredentialsDB } from "../backends/credentials-db.js";
 import { ProposalsDB } from "../backends/proposals-db.js";
 import { EventLog } from "../backends/event-log.js";
+import { NarrativesDB } from "../backends/narratives-db.js";
 import { WriteAheadLog } from "../backends/wal.js";
 import { createEmbeddingProvider, type EmbeddingProvider } from "../services/embeddings.js";
 import { buildEmbeddingRegistry, type EmbeddingRegistry } from "../services/embedding-registry.js";
@@ -827,6 +828,7 @@ export interface DatabaseContext {
   wal: WriteAheadLog | null;
   proposalsDb: ProposalsDB | null;
   eventLog: EventLog | null;
+  narrativesDb: NarrativesDB;
   aliasDb: AliasDB | null;
   issueStore: IssueStore;
   workflowStore: WorkflowStore;
@@ -1289,6 +1291,10 @@ export function initializeDatabases(cfg: HybridMemoryConfig, api: ClawdbotPlugin
     api.logger.info(`memory-hybrid: event log initialized (${eventLogPath})`);
   }
 
+  const narrativesPath = join(dirname(resolvedSqlitePath), "narratives.db");
+  const narrativesDb = new NarrativesDB(narrativesPath);
+  api.logger.info(`memory-hybrid: narratives store initialized (${narrativesPath})`);
+
   // Initialize alias DB (Issue #149)
   let aliasDb: AliasDB | null = null;
   if (cfg.aliases?.enabled) {
@@ -1676,6 +1682,7 @@ export function initializeDatabases(cfg: HybridMemoryConfig, api: ClawdbotPlugin
     wal,
     proposalsDb,
     eventLog,
+    narrativesDb,
     aliasDb,
     issueStore,
     workflowStore,
@@ -1715,6 +1722,7 @@ export function closeOldDatabases(context: {
   credentialsDb?: CredentialsDB | null;
   proposalsDb?: ProposalsDB | null;
   eventLog?: EventLog | null;
+  narrativesDb?: NarrativesDB | null;
   aliasDb?: AliasDB | null;
   eventBus?: import("../backends/event-bus.js").EventBus | null;
   issueStore?: IssueStore | null;
@@ -1732,6 +1740,7 @@ export function closeOldDatabases(context: {
     credentialsDb,
     proposalsDb,
     eventLog,
+    narrativesDb,
     aliasDb,
     eventBus,
     issueStore,
@@ -1793,6 +1802,16 @@ export function closeOldDatabases(context: {
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
         operation: "close-databases",
         subsystem: "eventLog",
+      });
+    }
+  }
+  if (narrativesDb) {
+    try {
+      narrativesDb.close();
+    } catch (err) {
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        subsystem: "narrativesDb",
+        operation: "close",
       });
     }
   }

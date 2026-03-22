@@ -10,6 +10,8 @@ import type { EmbeddingRegistry } from "../services/embedding-registry.js";
 import type { WriteAheadLog } from "../backends/wal.js";
 import type { CredentialsDB } from "../backends/credentials-db.js";
 import type { EventLog } from "../backends/event-log.js";
+import type { NarrativesDB } from "../backends/narratives-db.js";
+import type { WorkflowStore } from "../backends/workflow-store.js";
 import type OpenAI from "openai";
 import type { HybridMemoryConfig, MemoryCategory } from "../config.js";
 import type { MemoryEntry, ScopeFilter, SearchResult } from "../types/memory.js";
@@ -28,6 +30,8 @@ export interface LifecycleContext {
   aliasDb: import("../services/retrieval-aliases.js").AliasDB | null;
   wal: WriteAheadLog | null;
   eventLog: EventLog | null;
+  narrativesDb: NarrativesDB | null;
+  workflowStore: WorkflowStore | null;
   currentAgentIdRef: { value: string | null };
   lastProgressiveIndexIds: string[];
   restartPendingClearedRef: { value: boolean };
@@ -73,6 +77,7 @@ export interface SessionState {
 export interface RecallResult {
   candidates: SearchResult[];
   issueBlock: string;
+  narrativeBlock: string;
   hotBlock: string;
   procedureBlock: string;
   withProcedures: (s: string) => string;
