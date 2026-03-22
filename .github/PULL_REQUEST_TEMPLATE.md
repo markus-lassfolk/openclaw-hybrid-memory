@@ -23,6 +23,14 @@ Run from repo root (package lives under `extensions/memory-hybrid/`):
 - [ ] No secrets, credentials, or API keys committed
 - [ ] No `console.log` debug statements left in production code
 
+## Documentation Impact (REQUIRED)
+
+<!-- Have you checked if this change affects the broader architecture or other functions? -->
+
+- [ ] Inline code comments (JSDoc) updated for modified functions and types
+- [ ] `docs/` or `README.md` updated to reflect architectural or usage changes
+- [ ] Cross-referenced functions/services checked for outdated documentation
+
 ## Testing
 
 <!-- Describe how you tested this change. -->
