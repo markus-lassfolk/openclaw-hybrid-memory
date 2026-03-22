@@ -71,11 +71,7 @@ function labelFromEntry(entry: MemoryEntry): string {
   if (entity) return entity;
   const summary = entry.summary?.trim();
   if (summary && summary !== entry.text.trim()) return summary.split(/\s+/).slice(0, 8).join(" ");
-  const words = entry.text
-    .trim()
-    .replace(/\s+/g, " ")
-    .split(" ")
-    .filter(Boolean);
+  const words = entry.text.trim().replace(/\s+/g, " ").split(" ").filter(Boolean);
   if (words.length > 6) return `${words.slice(0, 6).join(" ")}…`;
   if (words.length > 0) return words.join(" ");
   return `${entry.category} note`;
@@ -119,11 +115,13 @@ export function buildMemoryIndexSnapshot(
     };
   });
 
-  const recentDecisions = takeLiveRecent(factsDb.listFactsByCategory("decision", MAX_DECISIONS * 3), MAX_DECISIONS).map((entry) => ({
-    date: toDateLabel(entry.sourceDate ?? entry.createdAt),
-    label: labelFromEntry(entry),
-    ref: `decision:${shortRef(entry.id)}`,
-  }));
+  const recentDecisions = takeLiveRecent(factsDb.listFactsByCategory("decision", MAX_DECISIONS * 3), MAX_DECISIONS).map(
+    (entry) => ({
+      date: toDateLabel(entry.sourceDate ?? entry.createdAt),
+      label: labelFromEntry(entry),
+      ref: `decision:${shortRef(entry.id)}`,
+    }),
+  );
 
   const recentPatterns = [
     ...takeLiveRecent(factsDb.listFactsByCategory("pattern", MAX_PATTERNS * 2), MAX_PATTERNS),
