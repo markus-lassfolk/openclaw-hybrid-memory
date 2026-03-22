@@ -4,6 +4,10 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 vi.mock("../services/retrieval-orchestrator.js", () => ({
+  buildExplicitSemanticQueryVector: vi.fn().mockResolvedValue({
+    queryVector: [0.1, 0.2, 0.3, 0.4],
+    warning: null,
+  }),
   runRetrievalPipeline: vi.fn().mockResolvedValue({
     fused: [],
     packed: [],

@@ -18,13 +18,12 @@ import {
   type FusedResult,
   type FactMetadata,
 } from "./rrf-fusion.js";
-import {
+import type {
   getCronModelConfig,
-  getLLMModelPreference,
-  type HybridMemoryConfig,
-  type RetrievalConfig,
-  type ClustersConfig,
-  type RerankingConfig,
+  HybridMemoryConfig,
+  RetrievalConfig,
+  ClustersConfig,
+  RerankingConfig,
 } from "../config.js";
 import { rerankResults, type ScoredFact } from "./reranker.js";
 import type { QueryExpander } from "./query-expander.js";
@@ -35,7 +34,7 @@ import type { EmbeddingRegistry } from "./embedding-registry.js";
 import type { EmbeddingProvider } from "./embeddings.js";
 import { AllEmbeddingProvidersFailed } from "./embeddings.js";
 import { capturePluginError, addOperationBreadcrumb } from "./error-reporter.js";
-import { type PendingLLMWarnings } from "./chat.js";
+import type { PendingLLMWarnings } from "./chat.js";
 import { resolveExplicitDeepRetrievalPolicy, type ExplicitDeepRetrievalPolicy } from "./retrieval-mode-policy.js";
 import { expandQueryWithHyde } from "./hyde-helper.js";
 

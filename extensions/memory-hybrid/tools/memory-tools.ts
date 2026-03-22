@@ -27,7 +27,7 @@ import { extractStructuredFields } from "../services/fact-extraction.js";
 import type { ProvenanceService } from "../services/provenance.js";
 import { isCredentialLike, tryParseCredentialForVault, VAULT_POINTER_PREFIX } from "../services/auto-capture.js";
 import { capturePluginError, addOperationBreadcrumb } from "../services/error-reporter.js";
-import { buildExplicitSemanticQueryVector, runExplicitDeepRetrieval } from "../services/retrieval-orchestrator.js";
+import { buildExplicitSemanticQueryVector, runRetrievalPipeline } from "../services/retrieval-orchestrator.js";
 import { resolveExplicitDeepRetrievalPolicy } from "../services/retrieval-mode-policy.js";
 import { QueryExpander } from "../services/query-expander.js";
 import { storeAliases, type AliasDB } from "../services/retrieval-aliases.js";
@@ -479,7 +479,7 @@ export function registerMemoryTools(
           ? new QueryExpander(cfg.queryExpansion, openai)
           : null;
       const embedFn = queryExpander && queryVector != null ? (text: string) => embeddings.embed(text) : null;
-      const rrfOutput = await runExplicitDeepRetrieval(query, queryVector, factsDb.getRawDb(), vectorDb, factsDb, {
+      const rrfOutput = await runRetrievalPipeline(query, queryVector, factsDb.getRawDb(), vectorDb, factsDb, {
         config: rrfConfig,
         policy: explicitPolicy,
         tagFilter: tag ?? undefined,
