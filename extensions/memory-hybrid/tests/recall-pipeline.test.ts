@@ -514,6 +514,7 @@ describe("runRecallPipelineQuery — abort cancels embed after HyDE (#558)", () 
       { value: false },
       {
         hydeLabel: "HyDE-test",
+        policy: { ...DEFAULT_INTERACTIVE_RECALL_POLICY, allowHyde: true },
       },
     );
 
@@ -616,7 +617,13 @@ describe("runRecallPipelineQuery — skipForInteractiveTurns (#581)", () => {
     (deps.factsDb.search as ReturnType<typeof vi.fn>).mockReturnValue([]);
     (deps.vectorDb.search as ReturnType<typeof vi.fn>).mockResolvedValue([]);
 
-    await runRecallPipelineQuery("query with hyde", 5, deps, { value: false }, { interactive: true });
+    await runRecallPipelineQuery(
+      "query with hyde",
+      5,
+      deps,
+      { value: false },
+      { interactive: true, policy: { ...DEFAULT_INTERACTIVE_RECALL_POLICY, allowHyde: true } },
+    );
 
     // HyDE was allowed — chatCompleteWithRetry must have been called
     expect(chatModule.chatCompleteWithRetry).toHaveBeenCalled();
@@ -643,7 +650,13 @@ describe("runRecallPipelineQuery — skipForInteractiveTurns (#581)", () => {
     (deps.vectorDb.search as ReturnType<typeof vi.fn>).mockResolvedValue([]);
 
     // No interactive option — background/cron path
-    await runRecallPipelineQuery("background query", 5, deps, { value: false });
+    await runRecallPipelineQuery(
+      "background query",
+      5,
+      deps,
+      { value: false },
+      { policy: { ...DEFAULT_INTERACTIVE_RECALL_POLICY, allowHyde: true } },
+    );
 
     // HyDE was allowed on the background path
     expect(chatModule.chatCompleteWithRetry).toHaveBeenCalled();
@@ -670,7 +683,13 @@ describe("runRecallPipelineQuery — skipForInteractiveTurns (#581)", () => {
     (deps.factsDb.search as ReturnType<typeof vi.fn>).mockReturnValue([]);
     (deps.vectorDb.search as ReturnType<typeof vi.fn>).mockResolvedValue([]);
 
-    await runRecallPipelineQuery("explicit non-interactive query", 5, deps, { value: false }, { interactive: false });
+    await runRecallPipelineQuery(
+      "explicit non-interactive query",
+      5,
+      deps,
+      { value: false },
+      { interactive: false, policy: { ...DEFAULT_INTERACTIVE_RECALL_POLICY, allowHyde: true } },
+    );
 
     // HyDE was allowed — interactive=false does not block HyDE
     expect(chatModule.chatCompleteWithRetry).toHaveBeenCalled();

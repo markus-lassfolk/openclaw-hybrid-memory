@@ -1,8 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import {
-  buildExplicitSemanticQueryVector,
-  DEFAULT_RETRIEVAL_CONFIG,
-} from "../services/retrieval-orchestrator.js";
+import { buildExplicitSemanticQueryVector, DEFAULT_RETRIEVAL_CONFIG } from "../services/retrieval-orchestrator.js";
 import {
   resolveExplicitDeepRetrievalPolicy,
   resolveInteractiveRecallPolicy,
