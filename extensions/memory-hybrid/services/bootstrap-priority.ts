@@ -8,8 +8,10 @@ const BOOTSTRAP_PHASE_PRIORITY = new Map<BootstrapPhase, number>(
 );
 
 export function compareBootstrapPhase(a: BootstrapPhase, b: BootstrapPhase): number {
-  return (BOOTSTRAP_PHASE_PRIORITY.get(a) ?? Number.MAX_SAFE_INTEGER) -
-    (BOOTSTRAP_PHASE_PRIORITY.get(b) ?? Number.MAX_SAFE_INTEGER);
+  return (
+    (BOOTSTRAP_PHASE_PRIORITY.get(a) ?? Number.MAX_SAFE_INTEGER) -
+    (BOOTSTRAP_PHASE_PRIORITY.get(b) ?? Number.MAX_SAFE_INTEGER)
+  );
 }
 
 export function orderByBootstrapPhase<T extends BootstrapPhaseConfig>(entries: readonly T[]): T[] {
