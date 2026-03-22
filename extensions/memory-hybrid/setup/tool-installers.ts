@@ -163,13 +163,19 @@ function installWorkflowTools(ctx: ToolInstallerContext, api: ClawdbotPluginApi)
 
 function installCrystallizationTools(ctx: ToolInstallerContext, api: ClawdbotPluginApi): void {
   if (ctx.crystallizationStore && ctx.workflowStore) {
-    registerCrystallizationTools({ crystallizationStore: ctx.crystallizationStore, workflowStore: ctx.workflowStore, cfg: ctx.cfg }, api);
+    registerCrystallizationTools(
+      { crystallizationStore: ctx.crystallizationStore, workflowStore: ctx.workflowStore, cfg: ctx.cfg },
+      api,
+    );
   }
 }
 
 function installSelfExtensionTools(ctx: ToolInstallerContext, api: ClawdbotPluginApi): void {
   if (ctx.toolProposalStore && ctx.workflowStore) {
-    registerSelfExtensionTools({ toolProposalStore: ctx.toolProposalStore, workflowStore: ctx.workflowStore, cfg: ctx.cfg }, api);
+    registerSelfExtensionTools(
+      { toolProposalStore: ctx.toolProposalStore, workflowStore: ctx.workflowStore, cfg: ctx.cfg },
+      api,
+    );
   }
 }
 

@@ -3,7 +3,11 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { hybridConfigSchema } from "../config.js";
-import { bootstrapInstallers, installCoreBootstrapServices, installOptionalBootstrapServices } from "../services/index.js";
+import {
+  bootstrapInstallers,
+  installCoreBootstrapServices,
+  installOptionalBootstrapServices,
+} from "../services/index.js";
 
 describe("bootstrap installers", () => {
   it("orders core storage before optional adjacent services", () => {
