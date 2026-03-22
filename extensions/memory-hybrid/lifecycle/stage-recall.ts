@@ -245,7 +245,12 @@ async function runRecall(
     const ambientLastEmbedding = ambientLastEmbeddingMap.get(sessionScopeKey) ?? null;
 
     let promptEmbedding: number[] | null = null;
-    if (interactivePolicy.allowAmbientMultiQuery && ambientCfg.enabled && ambientCfg.multiQuery && ctx.cfg.retrieval.strategies.includes("semantic")) {
+    if (
+      interactivePolicy.allowAmbientMultiQuery &&
+      ambientCfg.enabled &&
+      ambientCfg.multiQuery &&
+      ctx.cfg.retrieval.strategies.includes("semantic")
+    ) {
       try {
         promptEmbedding = await ctx.embeddings.embed(e.prompt);
       } catch {
