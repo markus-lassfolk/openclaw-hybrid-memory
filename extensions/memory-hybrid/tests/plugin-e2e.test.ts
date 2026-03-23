@@ -155,6 +155,7 @@ describe("Plugin registration e2e", () => {
 
     expect(mockApi.getTool("memory_store")).toBeDefined();
     expect(mockApi.getTool("memory_recall")).toBeDefined();
+    expect(mockApi.getTool("memory_recall_timeline")).toBeDefined();
     expect(mockApi.getTool("memory_forget")).toBeDefined();
     expect(mockApi.getTool("memory_promote")).toBeDefined();
   });
