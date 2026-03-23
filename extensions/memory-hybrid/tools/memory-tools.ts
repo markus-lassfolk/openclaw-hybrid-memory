@@ -10,11 +10,12 @@ import type OpenAI from "openai";
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk";
 import { stringEnum } from "openclaw/plugin-sdk";
 
+import type { BuildToolScopeFilterFn, FindSimilarByEmbeddingFn } from "../api/memory-plugin-api.js";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
-import type { WriteAheadLog } from "../backends/wal.js";
 import type { CredentialsDB } from "../backends/credentials-db.js";
 import type { EventLog } from "../backends/event-log.js";
+import type { NarrativesDB } from "../backends/narratives-db.js";
 import { categoryToEventType } from "../backends/event-log.js";
 import type { EmbeddingProvider } from "../services/embeddings.js";
 import { AllEmbeddingProvidersFailed } from "../services/embeddings.js";
@@ -53,8 +54,17 @@ import type { VerificationStore } from "../services/verification-store.js";
 import { shouldAutoVerify } from "../services/verification-store.js";
 import type { VariantGenerationQueue } from "../services/contextual-variants.js";
 import { UUID_REGEX } from "../utils/constants.js";
+import { formatNarrativeRange, recallNarrativeSummaries } from "../services/narrative-recall.js";
 
-export interface PluginContext {
+export type BoundWalWriteFn = (
+  operation: "store" | "update",
+  data: Record<string, unknown>,
+  logger: { warn: (msg: string) => void },
+) => Promise<string>;
+
+export type BoundWalRemoveFn = (id: string, logger: { warn: (msg: string) => void }) => Promise<void>;
+
+export interface MemoryToolsContext {
   factsDb: FactsDB;
   vectorDb: VectorDB;
   cfg: HybridMemoryConfig;
@@ -62,15 +72,41 @@ export interface PluginContext {
   embeddings: EmbeddingProvider;
   embeddingRegistry?: EmbeddingRegistry | null;
   openai: OpenAI;
-  wal: WriteAheadLog | null;
   credentialsDb: CredentialsDB | null;
   eventLog: EventLog | null;
+  narrativesDb?: NarrativesDB | null;
   provenanceService?: ProvenanceService | null;
   verificationStore?: VerificationStore | null;
   lastProgressiveIndexIds: string[];
   currentAgentIdRef: { value: string | null };
   pendingLLMWarnings: PendingLLMWarnings;
   variantQueue?: VariantGenerationQueue | null;
+  buildToolScopeFilter: BuildToolScopeFilterFn;
+  walWrite: BoundWalWriteFn;
+  walRemove: BoundWalRemoveFn;
+  findSimilarByEmbedding: FindSimilarByEmbeddingFn;
+}
+
+type LegacyMemoryToolsContext = Omit<
+  MemoryToolsContext,
+  "buildToolScopeFilter" | "walWrite" | "walRemove" | "findSimilarByEmbedding"
+> & {
+  wal?: unknown;
+};
+
+function hasBoundMemoryToolHelpers(ctx: MemoryToolsContext | LegacyMemoryToolsContext): ctx is MemoryToolsContext {
+  const maybe = ctx as Partial<MemoryToolsContext> & { wal?: unknown };
+
+  const hasAllNewHelpers =
+    typeof maybe.buildToolScopeFilter === "function" &&
+    typeof maybe.walWrite === "function" &&
+    typeof maybe.walRemove === "function" &&
+    typeof maybe.findSimilarByEmbedding === "function";
+
+  // If a legacy `wal` helper object is still present, treat this as a legacy context.
+  const hasLegacyWal = typeof maybe.wal === "object" && maybe.wal !== null;
+
+  return hasAllNewHelpers && !hasLegacyWal;
 }
 
 async function storeRegistryEmbeddings({
@@ -162,37 +198,54 @@ async function storeRegistryEmbeddings({
  * This includes: memory_recall, memory_recall_procedures, memory_store,
  * memory_promote, and memory_forget.
  */
+export function registerMemoryTools(ctx: MemoryToolsContext, api: ClawdbotPluginApi): void;
 export function registerMemoryTools(
-  ctx: PluginContext,
+  ctx: LegacyMemoryToolsContext,
   api: ClawdbotPluginApi,
-  buildToolScopeFilter: (
-    params: { userId?: string | null; agentId?: string | null; sessionId?: string | null },
-    currentAgent: string | null,
-    config: { multiAgent: { orchestratorId: string }; autoRecall: { scopeFilter?: ScopeFilter } },
-  ) => ScopeFilter | undefined,
-  walWrite: (
-    operation: "store" | "update",
-    data: Record<string, unknown>,
-    logger: { warn: (msg: string) => void },
-  ) => Promise<string>,
-  walRemove: (id: string, logger: { warn: (msg: string) => void }) => Promise<void>,
-  findSimilarByEmbedding: (
-    vectorDb: VectorDB,
-    factsDb: { getById(id: string): MemoryEntry | null },
-    vector: number[],
-    limit: number,
-    minScore?: number,
-  ) => Promise<MemoryEntry[]>,
+  buildToolScopeFilter: BuildToolScopeFilterFn,
+  walWrite: BoundWalWriteFn,
+  walRemove: BoundWalRemoveFn,
+  findSimilarByEmbedding: FindSimilarByEmbeddingFn,
+): void;
+export function registerMemoryTools(
+  ctx: MemoryToolsContext | LegacyMemoryToolsContext,
+  api: ClawdbotPluginApi,
+  legacyBuildToolScopeFilter?: BuildToolScopeFilterFn,
+  legacyWalWrite?: BoundWalWriteFn,
+  legacyWalRemove?: BoundWalRemoveFn,
+  legacyFindSimilarByEmbedding?: FindSimilarByEmbeddingFn,
 ): void {
+  let resolvedContext: MemoryToolsContext;
+
+  if (hasBoundMemoryToolHelpers(ctx)) {
+    resolvedContext = ctx;
+  } else {
+    if (
+      typeof legacyBuildToolScopeFilter !== "function" ||
+      typeof legacyWalWrite !== "function" ||
+      typeof legacyWalRemove !== "function" ||
+      typeof legacyFindSimilarByEmbedding !== "function"
+    ) {
+      throw new Error("registerMemoryTools: Missing required legacy helper functions for memory tools initialization.");
+    }
+    resolvedContext = {
+      ...ctx,
+      buildToolScopeFilter: legacyBuildToolScopeFilter,
+      walWrite: legacyWalWrite,
+      walRemove: legacyWalRemove,
+      findSimilarByEmbedding: legacyFindSimilarByEmbedding,
+    };
+  }
+
   const {
     factsDb,
     vectorDb,
     cfg,
     embeddings,
     openai,
-    wal,
     credentialsDb,
     eventLog,
+    narrativesDb,
     provenanceService,
     aliasDb,
     embeddingRegistry,
@@ -201,7 +254,11 @@ export function registerMemoryTools(
     currentAgentIdRef,
     pendingLLMWarnings,
     variantQueue,
-  } = ctx;
+    buildToolScopeFilter,
+    walWrite,
+    walRemove,
+    findSimilarByEmbedding,
+  } = resolvedContext;
 
   api.registerTool(
     {
@@ -293,6 +350,110 @@ export function registerMemoryTools(
       },
     },
     { name: "memory_recall" },
+  );
+
+  api.registerTool(
+    {
+      name: "memory_recall_timeline",
+      label: "Memory Recall Timeline",
+      description: "Recall chronological summaries of recent sessions, decisions, and attempts.",
+      parameters: Type.Object({
+        query: Type.Optional(
+          Type.String({
+            description: "Optional topic or project query used to rank narrative summaries.",
+          }),
+        ),
+        sessionId: Type.Optional(
+          Type.String({
+            description:
+              "Optional session id to fetch a specific session narrative or event timeline. In multi-tenant environments, only pass a sessionId derived from the authenticated context; never accept arbitrary end-user input here, to avoid cross-session data exposure.",
+          }),
+        ),
+        days: Type.Optional(
+          Type.Number({
+            description: "Look back window in days when sessionId is omitted (default: 7).",
+            minimum: 1,
+            maximum: 365,
+          }),
+        ),
+        limit: Type.Optional(
+          Type.Number({
+            description: "Max summaries to return (default: 3).",
+            minimum: 1,
+            maximum: 50,
+          }),
+        ),
+      }),
+      async execute(_toolCallId: string, params: Record<string, unknown>) {
+        const MAX_DAYS_LOOKBACK = 365;
+        const MIN_DAYS_LOOKBACK = 1;
+        const MAX_SUMMARY_LIMIT = 50;
+        const MIN_SUMMARY_LIMIT = 1;
+
+        const query = typeof params.query === "string" && params.query.trim().length > 0 ? params.query.trim() : null;
+        const sessionId =
+          typeof params.sessionId === "string" && params.sessionId.trim().length > 0 ? params.sessionId.trim() : null;
+
+        let days = typeof params.days === "number" && params.days > 0 ? Math.floor(params.days) : 7;
+        days = Math.min(MAX_DAYS_LOOKBACK, Math.max(MIN_DAYS_LOOKBACK, days));
+
+        let limit = typeof params.limit === "number" && params.limit > 0 ? Math.floor(params.limit) : 3;
+        limit = Math.min(MAX_SUMMARY_LIMIT, Math.max(MIN_SUMMARY_LIMIT, limit));
+        const nowSec = Math.floor(Date.now() / 1000);
+        const summaries = recallNarrativeSummaries({
+          narrativesDb: narrativesDb ?? null,
+          eventLog,
+          query,
+          sessionId,
+          limit,
+          nowSec,
+          sinceSec: sessionId ? undefined : nowSec - days * 86_400,
+        });
+
+        if (summaries.length === 0) {
+          return {
+            content: [
+              {
+                type: "text" as const,
+                text: sessionId
+                  ? `No narrative summary found for session ${sessionId}.`
+                  : `No narrative summaries found in the last ${days} day(s).`,
+              },
+            ],
+            details: { count: 0, narratives: [] },
+          };
+        }
+
+        const lines = summaries.map(
+          (summary, index) =>
+            `${index + 1}. [${summary.source}] ${formatNarrativeRange(summary.periodStart, summary.periodEnd)} ` +
+            `(session: ${summary.sessionId})\n${summary.text}`,
+        );
+
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: `Found ${summaries.length} narrative summar${summaries.length === 1 ? "y" : "ies"}:\n\n${lines.join("\n\n")}`,
+            },
+          ],
+          details: {
+            count: summaries.length,
+            narratives: summaries.map((summary) => ({
+              id: summary.id,
+              source: summary.source,
+              sessionId: summary.sessionId,
+              periodStart: new Date(summary.periodStart * 1000).toISOString(),
+              periodEnd: new Date(summary.periodEnd * 1000).toISOString(),
+              tag: summary.tag,
+              text: summary.text,
+              score: Number(summary.score.toFixed(3)),
+            })),
+          },
+        };
+      },
+    },
+    { name: "memory_recall_timeline" },
   );
 
   // Internal implementation so we can return from the try block
