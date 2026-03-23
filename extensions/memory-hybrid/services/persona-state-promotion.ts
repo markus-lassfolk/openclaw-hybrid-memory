@@ -220,11 +220,24 @@ export function promotePersonaStateFromReflections(
       if (!existing) {
         promoted++;
       } else {
+        const mergedEvidence = uniqueStrings([...existing.evidence, ...candidate.evidence]);
+        const mergedSourceReflectionIds = uniqueStrings([
+          ...existing.sourceReflectionIds,
+          ...candidate.sourceReflectionIds,
+        ]);
+        const nextConfidence = Math.max(existing.confidence, candidate.averageConfidence);
+        const nextDurableCount = Math.max(existing.durableCount, candidate.durableCount);
+        const nextFirstSeenAt = Math.min(existing.firstSeenAt, candidate.firstSeenAt);
+        const nextLastSeenAt = Math.max(existing.lastSeenAt, candidate.lastSeenAt);
         const wouldChange =
           existing.insight !== candidate.insight ||
           existing.targetFile !== candidate.targetFile ||
-          existing.confidence !== candidate.averageConfidence ||
-          existing.durableCount !== candidate.durableCount;
+          existing.confidence !== nextConfidence ||
+          existing.durableCount !== nextDurableCount ||
+          existing.firstSeenAt !== nextFirstSeenAt ||
+          existing.lastSeenAt !== nextLastSeenAt ||
+          JSON.stringify(existing.evidence) !== JSON.stringify(mergedEvidence) ||
+          JSON.stringify(existing.sourceReflectionIds) !== JSON.stringify(mergedSourceReflectionIds);
         if (wouldChange) {
           updated++;
         } else {
