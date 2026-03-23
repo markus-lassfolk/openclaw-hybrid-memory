@@ -4,7 +4,11 @@ import { buildForgeRemediationRequest } from "../../../.github/scripts/forge-fee
 describe("buildForgeRemediationRequest", () => {
   it("dispatches when CI fails and review feedback is still open", () => {
     const result = buildForgeRemediationRequest({
-      repo: { owner: "markus-lassfolk", repo: "openclaw-hybrid-memory", fullName: "markus-lassfolk/openclaw-hybrid-memory" },
+      repo: {
+        owner: "markus-lassfolk",
+        repo: "openclaw-hybrid-memory",
+        fullName: "markus-lassfolk/openclaw-hybrid-memory",
+      },
       pullRequest: {
         number: 664,
         title: "Feature: Automated CI and Review Feedback Resolution Loop",
@@ -80,7 +84,11 @@ describe("buildForgeRemediationRequest", () => {
 
   it("treats human comments older than the latest push as already addressed", () => {
     const result = buildForgeRemediationRequest({
-      repo: { owner: "markus-lassfolk", repo: "openclaw-hybrid-memory", fullName: "markus-lassfolk/openclaw-hybrid-memory" },
+      repo: {
+        owner: "markus-lassfolk",
+        repo: "openclaw-hybrid-memory",
+        fullName: "markus-lassfolk/openclaw-hybrid-memory",
+      },
       pullRequest: { number: 12, title: "Cleanup", baseRef: "main", headRef: "fix/12", headSha: "def456" },
       headCommit: { committedAt: "2026-03-23T11:00:00Z" },
       checkRuns: [],
@@ -113,7 +121,11 @@ describe("buildForgeRemediationRequest", () => {
 
   it("ignores bot-authored feedback and approvals", () => {
     const result = buildForgeRemediationRequest({
-      repo: { owner: "markus-lassfolk", repo: "openclaw-hybrid-memory", fullName: "markus-lassfolk/openclaw-hybrid-memory" },
+      repo: {
+        owner: "markus-lassfolk",
+        repo: "openclaw-hybrid-memory",
+        fullName: "markus-lassfolk/openclaw-hybrid-memory",
+      },
       pullRequest: { number: 99, title: "Bot PR", baseRef: "main", headRef: "copilot-fix/99", headSha: "987xyz" },
       headCommit: { committedAt: "2026-03-23T10:00:00Z" },
       checkRuns: [],
@@ -160,5 +172,33 @@ describe("buildForgeRemediationRequest", () => {
     expect(result.issueComments).toHaveLength(0);
     expect(result.reviews).toHaveLength(0);
     expect(result.unresolvedThreads).toHaveLength(0);
+  });
+
+  it("ignores dismissed reviews", () => {
+    const result = buildForgeRemediationRequest({
+      repo: {
+        owner: "markus-lassfolk",
+        repo: "openclaw-hybrid-memory",
+        fullName: "markus-lassfolk/openclaw-hybrid-memory",
+      },
+      pullRequest: { number: 100, title: "Test PR", baseRef: "main", headRef: "test/100", headSha: "abc789" },
+      headCommit: { committedAt: "2026-03-23T10:00:00Z" },
+      checkRuns: [],
+      issueComments: [],
+      reviews: [
+        {
+          id: 1,
+          state: "DISMISSED",
+          body: "This review was dismissed by a maintainer",
+          submitted_at: "2026-03-23T10:05:00Z",
+          user: { login: "reviewer", type: "User" },
+        },
+      ],
+      reviewThreads: [],
+    });
+
+    expect(result.summary.shouldDispatch).toBe(false);
+    expect(result.summary.completionReady).toBe(true);
+    expect(result.reviews).toHaveLength(0);
   });
 });
