@@ -29,6 +29,8 @@ import { searchAliasStrategy, type AliasDB } from "./retrieval-aliases.js";
 import { detectClusters, type ClusterFactLookup } from "./topic-clusters.js";
 import { expandGraph, type GraphFactLookup } from "./graph-retrieval.js";
 import type { EmbeddingRegistry } from "./embedding-registry.js";
+import { resolveExplicitDeepRetrievalPolicy, type ExplicitDeepRetrievalPolicy } from "./retrieval-mode-policy.js";
+import { expandQueryWithHyde } from "./hyde-helper.js";
 import { capturePluginError } from "./error-reporter.js";
 import { validateQueryForMemoryLookup, type QueryValidationResult } from "./query-validator.js";
 import { DocumentGrader } from "./document-grader.js";
@@ -55,6 +57,64 @@ export interface OrchestratorResult {
 // ---------------------------------------------------------------------------
 // Defaults
 // ---------------------------------------------------------------------------
+
+export interface BuildExplicitSemanticQueryVectorDeps {
+  query: string;
+  cfg: Pick<import("../config.js").HybridMemoryConfig, "retrieval" | "queryExpansion" | "llm" | "embedding" | "distill" | "reflection" >;
+  embeddings: import("./embeddings.js").EmbeddingProvider;
+  openai: import("openai").default | null;
+  pendingLLMWarnings: import("./chat.js").PendingLLMWarnings;
+  logger: { info: (msg: string) => void; warn: (msg: string) => void; debug?: (msg: string) => void };
+  policy?: ExplicitDeepRetrievalPolicy;
+}
+
+export async function buildExplicitSemanticQueryVector({
+  query,
+  cfg,
+  embeddings,
+  openai,
+  pendingLLMWarnings,
+  logger,
+  policy = resolveExplicitDeepRetrievalPolicy(cfg.retrieval),
+}: BuildExplicitSemanticQueryVectorDeps): Promise<{ queryVector: number[] | null; warning: string | null }> {
+  if (!cfg.retrieval.strategies.includes("semantic")) {
+    return { queryVector: null, warning: null };
+  }
+
+  try {
+    import("./error-reporter.js").then(({ addOperationBreadcrumb }) => addOperationBreadcrumb("retrieval", `${policy.mode}-vector-recall`));
+    let textToEmbed = query;
+
+    if (policy.allowHyde && cfg.queryExpansion.enabled) {
+      textToEmbed = await expandQueryWithHyde({
+        query,
+        rawCfg: cfg as Parameters<typeof import("../config/index.js").getCronModelConfig>[0],
+        model: cfg.queryExpansion.model,
+        timeoutMs: cfg.queryExpansion.timeoutMs,
+        openai: openai as any,
+        label: "HyDE",
+        pendingWarnings: pendingLLMWarnings,
+        logger,
+        subsystem: "retrieval",
+        operation: "explicit-hyde-generation",
+      });
+    }
+
+    return { queryVector: await embeddings.embed(textToEmbed), warning: null };
+  } catch (err) {
+    if (err && (err as any).name !== "AllEmbeddingProvidersFailed") {
+      import("./error-reporter.js").then(({ capturePluginError }) => capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        subsystem: "retrieval",
+        operation: "explicit-vector-embed",
+      }));
+    }
+    logger.warn(`memory-hybrid: embedding generation failed: ${err}`);
+    return {
+      queryVector: null,
+      warning: "Semantic search unavailable due to embedding failure; results may be incomplete.",
+    };
+  }
+}
 
 export const DEFAULT_RETRIEVAL_CONFIG: RetrievalConfig = {
   strategies: ["semantic", "fts5", "graph"],
@@ -527,7 +587,6 @@ function buildCachedResult(
     orderedEntries.push({ factId, entry });
     fused.push({
       factId,
-      rrfScore: 1 / (acceptedCount + 1),
       sources: [{ strategy: "semantic-cache", rank: acceptedCount + 1 }],
       finalScore: 1 / (acceptedCount + 1),
     });
@@ -547,6 +606,8 @@ function buildCachedResult(
  * without touching every call site.
  */
 export interface RetrievalPipelineOptions {
+  /** Explicit/deep retrieval policy. Defaults to resolveExplicitDeepRetrievalPolicy(config). */
+  policy?: ExplicitDeepRetrievalPolicy;
   /** Retrieval pipeline configuration. Defaults to `DEFAULT_RETRIEVAL_CONFIG`. */
   config?: RetrievalConfig;
   /** Token budget for packing. Defaults to `config.explicitBudgetTokens`. */
@@ -611,7 +672,7 @@ export interface RetrievalPipelineOptions {
  * @param factsDb - FactsDB for metadata lookup.
  * @param options - Optional settings; see `RetrievalPipelineOptions`.
  */
-export async function runRetrievalPipeline(
+export async function runExplicitDeepRetrieval(
   query: string,
   queryVector: number[] | null,
   db: DatabaseSync,
@@ -620,6 +681,7 @@ export async function runRetrievalPipeline(
   options: RetrievalPipelineOptions = {},
 ): Promise<OrchestratorResult> {
   const config = options.config ?? DEFAULT_RETRIEVAL_CONFIG;
+  const policy = options.policy ?? resolveExplicitDeepRetrievalPolicy(config);
   const budgetTokens = options.budgetTokens ?? config.explicitBudgetTokens;
   const nowSec = options.nowSec ?? Math.floor(Date.now() / 1000);
   const {
@@ -660,7 +722,7 @@ export async function runRetrievalPipeline(
     queryText: string,
     initial: OrchestratorResult,
   ): Promise<OrchestratorResult> => {
-    if (!rerankingConfig?.enabled || !rerankingOpenai) return initial;
+    if (!policy.allowReranking || !rerankingConfig?.enabled || !rerankingOpenai) return initial;
 
     try {
       const rrfScoreMap = new Map(initial.fused.map((result) => [result.factId, result.finalScore]));
@@ -778,13 +840,13 @@ export async function runRetrievalPipeline(
       );
     }
 
-    if (aliasDb && currentQueryVector) {
+    if (policy.allowAliasExpansion && aliasDb && currentQueryVector) {
       strategyPromises.push(
         safeStrategy("aliases", () => searchAliasStrategy(aliasDb, currentQueryVector, semanticTopK)),
       );
     }
 
-    if (strategies.includes("semantic") && currentQueryVector && queryExpander && embedFn) {
+    if (policy.allowQueryExpansion && strategies.includes("semantic") && currentQueryVector && queryExpander && embedFn) {
       try {
         let additionalVariants: string[] = [];
         if (expansion.useLlm) {
@@ -845,7 +907,7 @@ export async function runRetrievalPipeline(
       }
     }
 
-    if (strategies.includes("graph")) {
+    if (policy.allowGraphExpansion && strategies.includes("graph")) {
       const seedScores = new Map<string, number>();
       const seedEntries = new Map<string, MemoryEntry>();
       const getByIdOpts = scopeFilter || asOf != null ? { scopeFilter, asOf } : undefined;
@@ -872,7 +934,32 @@ export async function runRetrievalPipeline(
       }
     }
 
-    const fused = fuseResults(strategyMap, k);
+    let fused: import("./rrf-fusion.js").FusedResult[];
+    if (policy.allowRrfFusion) {
+      fused = fuseResults(strategyMap, k);
+    } else {
+      const allResults = Array.from(strategyMap.values()).flat();
+      const deduped = new Map<string, import("./rrf-fusion.js").FusedResult>();
+
+      for (const res of allResults) {
+        if (!deduped.has(res.factId)) {
+          deduped.set(res.factId, {
+            factId: res.factId,
+            finalScore: 1 / (k + res.rank),
+            rrfScore: 1 / (k + res.rank),
+            rrfScore: 1 / (k + res.rank),
+            sources: [{ strategy: (res as any).strategyName || "unknown", rank: res.rank }],
+          });
+        } else {
+          deduped.get(res.factId)!.sources.push({ strategy: (res as any).strategyName || "unknown", rank: res.rank });
+        }
+      }
+
+      fused = Array.from(deduped.values()).sort((a, b) => {
+        if (b.finalScore !== a.finalScore) return b.finalScore - a.finalScore;
+        return a.factId.localeCompare(b.factId);
+      });
+    }
     if (fused.length === 0) {
       return {
         result: { fused: [], packed: [], packedFactIds: [], tokensUsed: 0, entries: [] },
