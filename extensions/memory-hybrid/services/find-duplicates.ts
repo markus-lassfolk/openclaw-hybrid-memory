@@ -71,25 +71,31 @@ export async function runFindDuplicates(
 
   for (let i = 0; i < ids.length; i += BATCH_SIZE) {
     const batch = ids.slice(i, i + BATCH_SIZE);
-    const batchTexts = batch.map((id) => idToFact.get(id)?.text);
+    const batchFacts = batch.flatMap((id) => {
+      const fact = idToFact.get(id);
+      return fact ? [{ id, fact }] : [];
+    });
+    const batchTexts = batchFacts.map(({ fact }) => fact.text);
     const vecs = await safeEmbedBatch(embeddings, batchTexts, (msg) => logger.warn(msg));
     // Whole batch failed: all slots are null — log once instead of once-per-fact to avoid log spam.
     if (vecs.every((v) => v === null || v.length === 0)) {
       logger.warn(
-        `memory-hybrid: find-duplicates -- skipping batch of ${batch.length} facts (ids ${batch[0]}…${batch[batch.length - 1]}) due to embedding failure`,
+        `memory-hybrid: find-duplicates -- skipping batch of ${batch.length} facts (ids ${batch[0] ?? "unknown"}…${batch[batch.length - 1] ?? "unknown"}) due to embedding failure`,
       );
       skippedEmbeddings += batch.length;
       continue;
     }
-    for (let j = 0; j < batch.length; j++) {
+    for (let j = 0; j < batchFacts.length; j++) {
+      const item = batchFacts[j];
+      if (!item) continue;
       const vec = vecs[j];
       if (!vec || vec.length === 0) {
-        logger.warn(`memory-hybrid: find-duplicates -- skipping fact ${batch[j]} due to embedding failure`);
+        logger.warn(`memory-hybrid: find-duplicates -- skipping fact ${item.id} due to embedding failure`);
         skippedEmbeddings++;
         continue;
       }
       vectors.push(vec);
-      validIds.push(batch[j]);
+      validIds.push(item.id);
     }
   }
 
@@ -104,16 +110,19 @@ export async function runFindDuplicates(
   // Use LanceDB vector search (indexed) instead of O(n^2) pairwise loop
   for (let i = 0; i < validIds.length; i++) {
     const vi = vectors[i];
+    const idA = validIds[i];
+    if (!vi || !idA) continue;
     const results = await vectorDb.search(vi, searchLimit, opts.threshold);
     for (const r of results) {
       const j = idToIndex.get(r.entry.id);
+      const idB = j !== undefined ? validIds[j] : undefined;
       if (j !== undefined && j > i) {
         pairs.push({
-          idA: validIds[i],
-          idB: validIds[j],
+          idA,
+          idB: idB ?? r.entry.id,
           score: r.score,
-          textA: idToFact.get(validIds[i])?.text,
-          textB: idToFact.get(validIds[j])?.text,
+          textA: idToFact.get(idA)?.text ?? "",
+          textB: idToFact.get(idB ?? r.entry.id)?.text ?? "",
         });
       }
     }

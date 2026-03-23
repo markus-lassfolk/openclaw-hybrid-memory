@@ -49,6 +49,12 @@ import { installCoreBootstrapServices, installOptionalBootstrapServices } from "
  */
 const ROUTABLE_BUILTIN_PROVIDERS = new Set(["google", "openai", "anthropic", "ollama", "openrouter", "minimax"]);
 
+function getConfiguredEnvValue(value: string | undefined): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  return trimmed && trimmed !== "undefined" ? trimmed : undefined;
+}
+
 /**
  * Extract gateway configuration from environment and plugin config.
  * Centralized to avoid duplicating this logic across buildMultiProviderOpenAI and initializeDatabases.
@@ -60,10 +66,10 @@ function extractGatewayConfig(cfg: HybridMemoryConfig): {
   gatewayToken: string | undefined;
   gatewayBaseUrl: string | undefined;
 } {
-  const gatewayPortRaw = process.env.OPENCLAW_GATEWAY_PORT;
+  const gatewayPortRaw = getConfiguredEnvValue(process.env.OPENCLAW_GATEWAY_PORT);
   const gatewayPort = gatewayPortRaw ? Number.parseInt(gatewayPortRaw, 10) : undefined;
   const gatewayAuthResolved = (cfg.gateway?.auth as ResolvedGatewayAuthConfig | undefined)?._resolvedToken;
-  const gatewayToken = gatewayAuthResolved ?? process.env.OPENCLAW_GATEWAY_TOKEN;
+  const gatewayToken = gatewayAuthResolved ?? getConfiguredEnvValue(process.env.OPENCLAW_GATEWAY_TOKEN);
   const gatewayBaseUrl =
     gatewayPort && gatewayPort >= 1 && gatewayPort <= 65535 ? `http://127.0.0.1:${gatewayPort}/v1` : undefined;
   return {
@@ -296,6 +302,7 @@ export function resolveProviderApiKey(
   } = {},
 ): ResolvedApiKey {
   const { gatewayToken, hasCustomExternalBaseURL = false, env = process.env } = opts;
+  const readEnvKey = (name: string): string | undefined => getConfiguredEnvValue(env[name]);
 
   // Highest priority: explicit per-provider key in llm.providers config (all providers).
   const fromProviderCfg = resolveKey(providerCfg?.apiKey);
@@ -305,14 +312,14 @@ export function resolveProviderApiKey(
     // Legacy fallback: distill.apiKey doubles as the Google API key for distillation.
     const fromDistill = resolveKey(cfg.distill?.apiKey);
     if (fromDistill) return { value: fromDistill, source: "distill.apiKey" };
-    const fromEnv = env.GOOGLE_API_KEY?.trim() || undefined;
+    const fromEnv = readEnvKey("GOOGLE_API_KEY");
     if (fromEnv) return { value: fromEnv, source: "GOOGLE_API_KEY" };
     return { source: "none" };
   }
 
   if (prefix === "openai") {
     // Prefer OPENAI_API_KEY over embedding.apiKey so Azure (embedding) and OpenAI (chat) can use different keys.
-    const fromEnv = env.OPENAI_API_KEY?.trim() || undefined;
+    const fromEnv = readEnvKey("OPENAI_API_KEY");
     if (fromEnv) return { value: fromEnv, source: "OPENAI_API_KEY" };
     // Security: never send gateway/embedding credentials to an arbitrary external endpoint.
     if (!hasCustomExternalBaseURL) {
@@ -325,25 +332,25 @@ export function resolveProviderApiKey(
 
   // Azure Foundry (and Responses) use AZURE_OPENAI_API_KEY so it does not conflict with OPENAI_API_KEY.
   if (prefix === "azure-foundry" || prefix === "azure-foundry-responses") {
-    const fromEnv = env.AZURE_OPENAI_API_KEY?.trim() || undefined;
+    const fromEnv = readEnvKey("AZURE_OPENAI_API_KEY");
     if (fromEnv) return { value: fromEnv, source: "AZURE_OPENAI_API_KEY" };
     return { source: "none" };
   }
 
   if (prefix === "anthropic") {
-    const fromEnv = env.ANTHROPIC_API_KEY?.trim() || undefined;
+    const fromEnv = readEnvKey("ANTHROPIC_API_KEY");
     if (fromEnv) return { value: fromEnv, source: "ANTHROPIC_API_KEY" };
     return { source: "none" };
   }
 
   if (prefix === "openrouter") {
-    const fromEnv = env.OPENROUTER_API_KEY?.trim() || undefined;
+    const fromEnv = readEnvKey("OPENROUTER_API_KEY");
     if (fromEnv) return { value: fromEnv, source: "OPENROUTER_API_KEY" };
     return { source: "none" };
   }
 
   if (prefix === "minimax") {
-    const fromEnv = env.MINIMAX_API_KEY?.trim() || undefined;
+    const fromEnv = readEnvKey("MINIMAX_API_KEY");
     if (fromEnv) return { value: fromEnv, source: "MINIMAX_API_KEY" };
     return { source: "none" };
   }
@@ -356,7 +363,7 @@ export function resolveProviderApiKey(
   // Generic env fallback: <PREFIX>_API_KEY (covers any provider following this convention).
   // NOTE: the gateway token is intentionally excluded — it is scoped to the local gateway
   // and must never be sent to arbitrary external endpoints.
-  const fromGenericEnv = env[`${prefix.toUpperCase()}_API_KEY`]?.trim();
+  const fromGenericEnv = readEnvKey(`${prefix.toUpperCase()}_API_KEY`);
   if (fromGenericEnv) return { value: fromGenericEnv, source: `${prefix.toUpperCase()}_API_KEY` };
 
   return { source: "none" };
@@ -820,6 +827,8 @@ export interface DatabaseContext {
   credentialsDb: CredentialsDB | null;
   wal: WriteAheadLog | null;
   proposalsDb: ProposalsDB | null;
+  identityReflectionStore: import("../backends/identity-reflection-store.js").IdentityReflectionStore | null;
+  personaStateStore: import("../backends/persona-state-store.js").PersonaStateStore | null;
   eventLog: EventLog | null;
   narrativesDb: NarrativesDB;
   aliasDb: AliasDB | null;
@@ -1062,7 +1071,7 @@ export function initializeDatabases(cfg: HybridMemoryConfig, api: ClawdbotPlugin
   const heavyList = Array.isArray(cfg.llm?.heavy) ? cfg.llm.heavy : [];
   const hasAnthropicModel = (list: string[]) => list.some((m) => m.startsWith("anthropic/") || m.startsWith("claude-"));
   if (!prov.anthropic && (hasAnthropicModel(defaultList) || hasAnthropicModel(heavyList))) {
-    const envKey = typeof process.env.ANTHROPIC_API_KEY === "string" ? process.env.ANTHROPIC_API_KEY.trim() : "";
+    const envKey = getConfiguredEnvValue(process.env.ANTHROPIC_API_KEY) ?? "";
     if (envKey.length >= 10) {
       prov.anthropic = { apiKey: envKey };
       mergedProviderNames.push("anthropic");

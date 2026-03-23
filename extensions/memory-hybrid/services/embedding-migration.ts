@@ -116,7 +116,7 @@ export async function migrateEmbeddings(opts: MigrateEmbeddingsOptions): Promise
       break;
     }
 
-    const batch = useBatched
+    const batch = (useBatched
       ? (
           factsDb as {
             getBatch: (
@@ -126,7 +126,7 @@ export async function migrateEmbeddings(opts: MigrateEmbeddingsOptions): Promise
             ) => Array<{ id: string; text: string; importance?: number; category: string }>;
           }
         ).getBatch(offset, batchSize, { includeSuperseded: false })
-      : facts?.slice(offset, offset + batchSize);
+      : facts?.slice(offset, offset + batchSize)) ?? [];
     if (batch.length === 0) break;
     const texts = batch.map((f) => f.text);
 
@@ -168,6 +168,7 @@ export async function migrateEmbeddings(opts: MigrateEmbeddingsOptions): Promise
     for (let j = 0; j < batch.length; j++) {
       const fact = batch[j];
       const vec = vectors[j];
+      if (!fact) continue;
 
       if (vec === null || !vec || vec.length === 0) {
         skipped++;

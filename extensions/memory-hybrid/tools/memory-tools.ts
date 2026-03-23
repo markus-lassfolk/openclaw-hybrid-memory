@@ -1839,7 +1839,8 @@ export function registerMemoryTools(
               details: { error: "scope_target_required" },
             };
           }
-          const ok = factsDb.promoteScope(memoryId, scope, scope === "agent" ? scopeTarget?.trim() : null);
+          const scopeTargetValue = scope === "agent" ? (scopeTarget?.trim() ?? null) : null;
+          const ok = factsDb.promoteScope(memoryId, scope, scopeTargetValue);
           if (!ok) {
             return {
               content: [{ type: "text", text: `Could not promote memory ${memoryId}.` }],

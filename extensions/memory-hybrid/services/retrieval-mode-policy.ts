@@ -73,7 +73,7 @@ export function resolveInteractiveRecallPolicy(
   retrieval?: { ambientBudgetTokens: number },
 ): InteractiveRecallPolicy {
   // When queryExpansion.skipForInteractiveTurns is false, allow HyDE on interactive turns
-  const allowHyde = queryExpansion?.enabled && !queryExpansion.skipForInteractiveTurns;
+  const allowHyde = queryExpansion?.enabled === true && queryExpansion.skipForInteractiveTurns !== true;
   // Enforce retrieval.ambientBudgetTokens as a hard total-token cap.
   // autoRecall.maxTokens is a user preference; ambientBudgetTokens is the architectural
   // ceiling — the injected context must not exceed either.
@@ -83,7 +83,7 @@ export function resolveInteractiveRecallPolicy(
     contextBudgetTokens,
     degradationQueueDepth: cfg.degradationQueueDepth ?? DEFAULT_INTERACTIVE_RECALL_DEGRADATION_QUEUE_DEPTH,
     degradationMaxLatencyMs: cfg.degradationMaxLatencyMs ?? DEFAULT_INTERACTIVE_RECALL_DEGRADATION_MAX_LATENCY_MS,
-    allowAmbientMultiQuery: cfg.enabled,
+    allowAmbientMultiQuery: cfg.enabled === true,
     allowHyde,
   };
 }

@@ -72,6 +72,31 @@ function tokenizeInsight(text: string): string[] {
     .filter((token) => token.length >= 3 && !INSIGHT_STOPWORDS.has(token));
 }
 
+function buildCharacterBigrams(text: string): string[] {
+  const normalized = ` ${normalizePersonaInsight(text)} `;
+  const bigrams: string[] = [];
+  for (let index = 0; index < normalized.length - 1; index++) {
+    bigrams.push(normalized.slice(index, index + 2));
+  }
+  return bigrams;
+}
+
+function diceCoefficient(left: string[], right: string[]): number {
+  if (left.length === 0 || right.length === 0) return 0;
+  const rightCounts = new Map<string, number>();
+  for (const token of right) {
+    rightCounts.set(token, (rightCounts.get(token) ?? 0) + 1);
+  }
+  let intersection = 0;
+  for (const token of left) {
+    const remaining = rightCounts.get(token) ?? 0;
+    if (remaining <= 0) continue;
+    intersection++;
+    rightCounts.set(token, remaining - 1);
+  }
+  return (2 * intersection) / (left.length + right.length);
+}
+
 export function calculatePersonaInsightSimilarity(left: string, right: string): number {
   const leftTokens = new Set(tokenizeInsight(left));
   const rightTokens = new Set(tokenizeInsight(right));
@@ -82,7 +107,9 @@ export function calculatePersonaInsightSimilarity(left: string, right: string): 
   for (const token of leftTokens) {
     if (rightTokens.has(token)) intersection++;
   }
-  return (2 * intersection) / (leftTokens.size + rightTokens.size);
+  const tokenSimilarity = (2 * intersection) / (leftTokens.size + rightTokens.size);
+  const bigramSimilarity = diceCoefficient(buildCharacterBigrams(left), buildCharacterBigrams(right));
+  return Math.max(tokenSimilarity, bigramSimilarity);
 }
 
 export function inferPersonaTargetFile(questionKey: string, insight: string): IdentityFileType {
@@ -109,6 +136,7 @@ export function collectPersonaPromotionCandidates(
     .sort((left, right) => left.createdAt - right.createdAt);
 
   const clusters: Array<{
+    stateKey: string;
     questionKey: string;
     canonicalInsight: string;
     normalizedInsight: string;
@@ -129,6 +157,7 @@ export function collectPersonaPromotionCandidates(
     );
     if (!match) {
       clusters.push({
+        stateKey: buildStateKey(reflection.questionKey, reflection.insight),
         questionKey: reflection.questionKey,
         canonicalInsight: reflection.insight,
         normalizedInsight: normalizePersonaInsight(reflection.insight),
@@ -157,7 +186,7 @@ export function collectPersonaPromotionCandidates(
 
   return clusters
     .map((cluster) => ({
-      stateKey: buildStateKey(cluster.questionKey, cluster.canonicalInsight),
+      stateKey: cluster.stateKey,
       questionKey: cluster.questionKey,
       targetFile: cluster.targetFile,
       insight: cluster.canonicalInsight,

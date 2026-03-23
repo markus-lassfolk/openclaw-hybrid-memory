@@ -442,9 +442,10 @@ export class OnnxEmbeddingProvider implements EmbeddingProvider {
     const allResults: number[][] = [];
     for (let i = 0; i < texts.length; i += this.batchSize) {
       const batch = texts.slice(i, i + this.batchSize);
-      const encoded = batch.map((t) => this.tokenizer?.encode(t, this.maxSeqLength));
+      const tokenizer = this.tokenizer;
+      const encoded = batch.map((t) => tokenizer.encode(t, this.maxSeqLength));
       const maxLen = Math.min(this.maxSeqLength, Math.max(...encoded.map((e) => e.inputIds.length)));
-      const padId = this.tokenizer?.getPadTokenId();
+      const padId = tokenizer.getPadTokenId();
       for (const e of encoded) {
         while (e.inputIds.length < maxLen) {
           e.inputIds.push(padId);
@@ -458,6 +459,7 @@ export class OnnxEmbeddingProvider implements EmbeddingProvider {
       const tokenTypeIds = new BigInt64Array(batchSize * maxLen);
       for (let b = 0; b < batchSize; b++) {
         const e = encoded[b];
+        if (!e) continue;
         for (let t = 0; t < maxLen; t++) {
           const idx = b * maxLen + t;
           inputIds[idx] = BigInt(e.inputIds[t] ?? 0);
