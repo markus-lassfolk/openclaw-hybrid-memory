@@ -455,6 +455,7 @@ function buildCachedResult(
 
   let orderedEntries: Array<{ factId: string; entry: MemoryEntry }> = [];
   const fused: FusedResult[] = [];
+  let acceptedCount = 0;
 
   for (const [index, factId] of factIds.entries()) {
     const entry = factsDb.getById(factId, getByIdOpts);
@@ -467,10 +468,11 @@ function buildCachedResult(
     orderedEntries.push({ factId, entry });
     fused.push({
       factId,
-      rrfScore: 1 / (index + 1),
-      sources: [{ strategy: "semantic-cache", rank: index + 1 }],
-      finalScore: 1 / (index + 1),
+      rrfScore: 1 / (acceptedCount + 1),
+      sources: [{ strategy: "semantic-cache", rank: acceptedCount + 1 }],
+      finalScore: 1 / (acceptedCount + 1),
     });
+    acceptedCount++;
   }
 
   return buildOrchestratorResult(factsDb, fused, orderedEntries, budgetTokens);
