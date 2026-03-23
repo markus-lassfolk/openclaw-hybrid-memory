@@ -12,13 +12,18 @@ const INSIGHT_STOPWORDS = new Set([
   "as",
   "at",
   "be",
+  "best",
   "by",
   "for",
   "from",
+  "good",
   "i",
   "in",
+  "into",
   "is",
   "it",
+  "mean",
+  "means",
   "of",
   "on",
   "or",
@@ -27,7 +32,54 @@ const INSIGHT_STOPWORDS = new Set([
   "to",
   "when",
   "with",
+  "work",
 ]);
+
+function stemToken(token: string): string {
+  if (token.length <= 3) return token;
+
+  // Remove common suffixes to normalize morphological variants
+  // Order matters: check longer suffixes first
+  if (token.endsWith("ing")) {
+    let stem = token.slice(0, -3);
+    // Handle doubling: "running" -> "run", but "working" -> "work"
+    if (stem.length >= 2 && stem[stem.length - 1] === stem[stem.length - 2]) {
+      stem = stem.slice(0, -1);
+    }
+    // Add 'e' back for words ending in certain consonants: "preserving" -> "preserve", "optimizing" -> "optimize"
+    if (stem.length >= 3 && (stem.endsWith("v") || stem.endsWith("z"))) {
+      return stem + "e";
+    }
+    return stem.length >= 3 ? stem : token;
+  }
+  if (token.endsWith("ed")) {
+    let stem = token.slice(0, -2);
+    // Add 'e' back for words ending in certain consonants: "preserved" -> "preserve", "optimized" -> "optimize", "involved" -> "involve"
+    if (stem.length >= 3 && (stem.endsWith("v") || stem.endsWith("z"))) {
+      return stem + "e";
+    }
+    return stem.length >= 3 ? stem : token;
+  }
+  if (token.endsWith("es") && token.length > 4) {
+    let stem = token.slice(0, -2);
+    // Add 'e' back for words ending in 'c': "surfaces" -> "surface"
+    if (stem.length >= 3 && stem.endsWith("c")) {
+      return stem + "e";
+    }
+    return stem.length >= 3 ? stem : token;
+  }
+  if (token.endsWith("s") && !token.endsWith("ss")) {
+    const stem = token.slice(0, -1);
+    return stem.length >= 3 ? stem : token;
+  }
+  // Remove "ly" suffix for adverbs: "clearly" -> "clear"
+  if (token.endsWith("ly") && token.length > 4) {
+    const stem = token.slice(0, -2);
+    return stem.length >= 3 ? stem : token;
+  }
+
+  return token;
+}
 
 export interface PersonaPromotionCandidate {
   stateKey: string;
@@ -66,7 +118,8 @@ function tokenizeInsight(text: string): string[] {
   return normalizePersonaInsight(text)
     .split(" ")
     .map((token) => token.trim())
-    .filter((token) => token.length >= 3 && !INSIGHT_STOPWORDS.has(token));
+    .filter((token) => token.length >= 3 && !INSIGHT_STOPWORDS.has(token))
+    .map((token) => stemToken(token));
 }
 
 export function calculatePersonaInsightSimilarity(left: string, right: string): number {
@@ -107,6 +160,7 @@ export function collectPersonaPromotionCandidates(
 
   const clusters: Array<{
     questionKey: string;
+    firstInsight: string;
     canonicalInsight: string;
     normalizedInsight: string;
     targetFile: IdentityFileType;
@@ -127,6 +181,7 @@ export function collectPersonaPromotionCandidates(
     if (!match) {
       clusters.push({
         questionKey: reflection.questionKey,
+        firstInsight: reflection.insight,
         canonicalInsight: reflection.insight,
         normalizedInsight: normalizePersonaInsight(reflection.insight),
         targetFile: inferPersonaTargetFile(reflection.questionKey, reflection.insight),
@@ -157,7 +212,7 @@ export function collectPersonaPromotionCandidates(
 
   return clusters
     .map((cluster) => ({
-      stateKey: buildStateKey(cluster.questionKey, cluster.canonicalInsight),
+      stateKey: buildStateKey(cluster.questionKey, cluster.firstInsight),
       questionKey: cluster.questionKey,
       targetFile: cluster.targetFile,
       insight: cluster.canonicalInsight,
