@@ -109,6 +109,55 @@ describe("task queue dispatch leases", () => {
     expect(second.lease?.attempt).toBe(2);
   });
 
+  it("blocks reacquire for legacy completed leases without expiresAt (fallback cooldown)", async () => {
+    // Seed the registry with a legacy completed lease
+    const fs = await import("fs");
+    const p = await import("path");
+    const registryPath = p.join(stateDir, "dispatch-leases.json");
+
+    const legacyRegistry = {
+      version: 1,
+      leases: {
+        "504": {
+          issue: 504,
+          token: "legacy-token-123",
+          state: "completed",
+          leasedAt: "2026-03-16T20:50:00.000Z",
+          updatedAt: "2026-03-16T20:51:00.000Z",
+          completedAt: "2026-03-16T20:51:00.000Z",
+          expiresAt: undefined, // Missing expiresAt
+          attempt: 1,
+          branch: "feat/issue-504",
+          history: [],
+        },
+      },
+    };
+    fs.mkdirSync(p.dirname(registryPath), { recursive: true });
+    fs.writeFileSync(registryPath, JSON.stringify(legacyRegistry));
+
+    // Try to acquire within the 10-minute fallback cooldown window (20:55 is < 21:01)
+    const withinCooldown = await acquireDispatchLease({
+      stateDir,
+      issue: 504,
+      branch: "feat/issue-504-retry",
+      runId: "run-2",
+      now: new Date("2026-03-16T20:55:00.000Z"),
+    });
+    expect(withinCooldown.acquired).toBe(false);
+    expect(withinCooldown.existing?.state).toBe("completed");
+    expect(withinCooldown.reason).toContain("cooling down");
+
+    // Try to acquire after the fallback cooldown elapses (21:02 is > 21:01)
+    const afterCooldown = await acquireDispatchLease({
+      stateDir,
+      issue: 504,
+      branch: "feat/issue-504-retry2",
+      runId: "run-3",
+      now: new Date("2026-03-16T21:02:00.000Z"),
+    });
+    expect(afterCooldown.acquired).toBe(true);
+  });
+
   it("expires active leases by TTL and allows reacquire", async () => {
     const now = new Date("2026-03-16T20:50:00.000Z");
     const first = await acquireDispatchLease({

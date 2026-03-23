@@ -105,7 +105,17 @@ function blocksAcquire(lease: DispatchLeaseRecord, now: Date): boolean {
     return false;
   }
 
-  const expiresAtMs = parseIsoMs(lease.expiresAt);
+  let expiresAtMs = parseIsoMs(lease.expiresAt);
+
+  // For legacy or partially written records that lack expiresAt, fall back to
+  // completedAt + DEFAULT_COMPLETED_VISIBILITY_WINDOW_MS to enforce cooldown.
+  if (!Number.isFinite(expiresAtMs)) {
+    const completedAtMs = parseIsoMs(lease.completedAt);
+    if (Number.isFinite(completedAtMs)) {
+      expiresAtMs = completedAtMs + DEFAULT_COMPLETED_VISIBILITY_WINDOW_MS;
+    }
+  }
+
   return Number.isFinite(expiresAtMs) && now.getTime() < expiresAtMs;
 }
 
@@ -416,8 +426,12 @@ export async function transitionDispatchLease(input: TransitionDispatchLeaseInpu
       lease.expiresAt = undefined;
     } else if (input.toState === "completed") {
       lease.completedAt = nowIso;
+      // NOTE: `expiresAt` is overloaded:
+      // - for active/leased states, it represents the lease TTL;
+      // - for the `completed` state, it acts as a visibility cooldown / acquire-block-until timestamp.
       lease.expiresAt = new Date(now.getTime() + DEFAULT_COMPLETED_VISIBILITY_WINDOW_MS).toISOString();
     } else {
+      // Other terminal states clear `expiresAt`; callers must not assume it is set for all non-active states.
       lease.completedAt = nowIso;
       lease.expiresAt = undefined;
     }
