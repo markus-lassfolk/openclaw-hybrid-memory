@@ -90,7 +90,7 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
   // Inject pending LLM config warnings into the agent's context once per occurrence.
   // Fires when all models in a tier fail due to missing provider API keys, so the AI
   // can relay the issue to the user in its response.
-  api.on("before_prompt_build", (): void | { prependContext: string } => {
+  api.on("before_prompt_build", (): undefined | { prependContext: string } => {
     if (!ctx.pendingLLMWarnings) return;
     const warnings = ctx.pendingLLMWarnings.drain();
     if (warnings.length === 0) return;
@@ -157,7 +157,7 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
     // Register a before_prompt_build hook that injects static memory instructions.
     // Uses prependContext — the only field supported by the current SDK (see TODO above).
     // The content is built once and cached to minimise per-turn overhead.
-    api.on("before_prompt_build", (): void | { prependContext: string } => {
+    api.on("before_prompt_build", (): undefined | { prependContext: string } => {
       if (!staticMemoryInstructions) {
         staticMemoryInstructions = buildStaticInstructions();
       }
@@ -214,7 +214,7 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
   }
 
   try {
-    api.on("after_compaction", async (event: unknown): Promise<void | { prependContext: string }> => {
+    api.on("after_compaction", async (event: unknown): Promise<undefined | { prependContext: string }> => {
       const ev = event as {
         messageCount?: number;
         tokenCount?: number;
@@ -261,7 +261,7 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
           summaryLines.push("Key memories retained across compaction:");
           for (const f of summaryFacts) {
             const entityPrefix = f.entity ? `[${f.entity}] ` : "";
-            const preview = f.text.length > 150 ? f.text.slice(0, 150) + "…" : f.text;
+            const preview = f.text.length > 150 ? `${f.text.slice(0, 150)}…` : f.text;
             summaryLines.push(`- ${entityPrefix}${preview}`);
           }
         }

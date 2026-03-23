@@ -168,8 +168,8 @@ describe("expandGraph: 1-hop expansion", () => {
     expect(result).toHaveLength(2);
     const expanded = result.find((r) => r.factId === "b");
     expect(expanded).toBeDefined();
-    expect(expanded!.expansionSource).toBe("graph");
-    expect(expanded!.hopCount).toBe(1);
+    expect(expanded?.expansionSource).toBe("graph");
+    expect(expanded?.hopCount).toBe(1);
   });
 
   it("expands via incoming link (getLinksTo — bidirectional)", () => {
@@ -180,8 +180,8 @@ describe("expandGraph: 1-hop expansion", () => {
     expect(result).toHaveLength(2);
     const expanded = result.find((r) => r.factId === "c");
     expect(expanded).toBeDefined();
-    expect(expanded!.expansionSource).toBe("graph");
-    expect(expanded!.hopCount).toBe(1);
+    expect(expanded?.expansionSource).toBe("graph");
+    expect(expanded?.hopCount).toBe(1);
   });
 
   it("does not include seed facts in expanded results (no duplication)", () => {
@@ -222,7 +222,7 @@ describe("expandGraph: multi-hop traversal", () => {
 
   it("reaches facts 3 hops away when depth=3", () => {
     const facts = ["a", "b", "c", "d"].map((id) => makeEntry(id));
-    const [a, b, c, d] = facts;
+    const [a, _b, _c, _d] = facts;
     const db = buildMockDb(
       facts,
       {
@@ -238,7 +238,7 @@ describe("expandGraph: multi-hop traversal", () => {
 
   it("respects depth limit — stops at depth=1 and does not reach 2-hop facts", () => {
     const facts = ["a", "b", "c"].map((id) => makeEntry(id));
-    const [a, b] = facts;
+    const [a, _b] = facts;
     const db = buildMockDb(
       facts,
       {
@@ -367,8 +367,8 @@ describe("expandGraph: ranking and scoring", () => {
     const b = makeEntry("b");
     const db = buildMockDb([a, b], { a: [{ id: "l1", targetFactId: "b", linkType: "RELATED_TO", strength: 1.0 }] }, {});
     const result = expandGraph(db, [{ factId: "a", score: 0.9, entry: a }], { maxDepth: 1 });
-    const directScore = result.find((r) => r.factId === "a")!.score;
-    const expandedScore = result.find((r) => r.factId === "b")!.score;
+    const directScore = result.find((r) => r.factId === "a")?.score;
+    const expandedScore = result.find((r) => r.factId === "b")?.score;
     expect(directScore).toBeGreaterThan(expandedScore);
   });
 });
@@ -614,9 +614,9 @@ describe("Integration: expandGraph with real FactsDB", () => {
     expect(result).toHaveLength(2);
     const bResult = result.find((r) => r.factId === factB.id);
     expect(bResult).toBeDefined();
-    expect(bResult!.expansionSource).toBe("graph");
-    expect(bResult!.hopCount).toBe(1);
-    expect(bResult!.linkPath[0].linkType).toBe("RELATED_TO");
+    expect(bResult?.expansionSource).toBe("graph");
+    expect(bResult?.hopCount).toBe(1);
+    expect(bResult?.linkPath[0].linkType).toBe("RELATED_TO");
   });
 
   it("traverses 2-hop chain in real DB", () => {
@@ -633,8 +633,8 @@ describe("Integration: expandGraph with real FactsDB", () => {
 
     const cResult = result.find((r) => r.factId === factC.id);
     expect(cResult).toBeDefined();
-    expect(cResult!.hopCount).toBe(2);
-    expect(cResult!.score).toBeCloseTo(0.8 * HOP_SCORE_DECAY[2], 5);
+    expect(cResult?.hopCount).toBe(2);
+    expect(cResult?.score).toBeCloseTo(0.8 * HOP_SCORE_DECAY[2], 5);
   });
 
   it("depth=1 does not reach fact 2 hops away in real DB", () => {
@@ -698,6 +698,6 @@ describe("Integration: expandGraph with real FactsDB", () => {
 
     const bResult = result.find((r) => r.factId === factB.id);
     expect(bResult).toBeDefined();
-    expect(bResult!.expansionSource).toBe("graph");
+    expect(bResult?.expansionSource).toBe("graph");
   });
 });

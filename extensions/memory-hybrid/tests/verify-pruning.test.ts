@@ -47,7 +47,7 @@ function runPruningCheck(
     );
 
     if (opts.fix) {
-      delete agentsDefaults.pruning;
+      agentsDefaults.pruning = undefined;
       writeFileSync(configPath, JSON.stringify(rawConfig, null, 2), "utf-8");
       fixes.pop();
       issues.pop();

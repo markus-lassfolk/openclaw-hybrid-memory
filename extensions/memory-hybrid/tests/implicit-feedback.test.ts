@@ -379,8 +379,8 @@ describe("detectCopyPaste", () => {
     // Create messages with very high keyword overlap (> 0.8 cosine similarity)
     const shared = "deploy application production kubernetes cluster configuration settings optimization scaling";
     const turns: ConversationTurn[] = [
-      { role: "assistant", content: shared + " ingress replicas namespace service" },
-      { role: "user", content: shared + " ingress replicas namespace service verified" },
+      { role: "assistant", content: `${shared} ingress replicas namespace service` },
+      { role: "user", content: `${shared} ingress replicas namespace service verified` },
     ];
     const signal = detectCopyPaste(turns, DEFAULT_CONFIG, 1);
     expect(signal).not.toBeNull();

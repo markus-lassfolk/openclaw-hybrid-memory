@@ -59,7 +59,7 @@ describe("FactsDB uses live connection (no stale this.db)", () => {
     closeInternalConnection(db);
     const found = db.getById(entry.id);
     expect(found).not.toBeNull();
-    expect(found!.text).toBe("User prefers dark mode");
+    expect(found?.text).toBe("User prefers dark mode");
   });
 
   it("store reopens connection after internal close", () => {
@@ -147,7 +147,7 @@ describe("CredentialsDB uses live connection (no stale this.db)", () => {
     closeInternalConnection(db);
     const retrieved = db.get("github", "api_key");
     expect(retrieved).not.toBeNull();
-    expect(retrieved!.value).toBe("ghp_secret123");
+    expect(retrieved?.value).toBe("ghp_secret123");
   });
 
   it("store reopens connection after internal close", () => {
@@ -155,7 +155,7 @@ describe("CredentialsDB uses live connection (no stale this.db)", () => {
     db.store({ service: "openai", type: "api_key", value: "sk-secret" });
     const retrieved = db.get("openai", "api_key");
     expect(retrieved).not.toBeNull();
-    expect(retrieved!.value).toBe("sk-secret");
+    expect(retrieved?.value).toBe("sk-secret");
   });
 
   it("list reopens connection after internal close", () => {

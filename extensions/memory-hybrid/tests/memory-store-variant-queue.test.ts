@@ -162,7 +162,7 @@ describe("memory_store — variant queue integration (Issue #159)", () => {
     const storeTool = api.getTool("memory_store");
     expect(storeTool).toBeDefined();
 
-    const result = (await storeTool!.execute("call-1", {
+    const result = (await storeTool?.execute("call-1", {
       text: "HA runs on Proxmox VM 100 at 192.168.1.212",
       importance: 0.8,
       category: "technical",
@@ -212,7 +212,7 @@ describe("memory_store — variant queue integration (Issue #159)", () => {
     );
 
     const storeTool = api.getTool("memory_store");
-    const result = (await storeTool!.execute("call-2", {
+    const result = (await storeTool?.execute("call-2", {
       text: "The user prefers dark mode",
       importance: 0.7,
       category: "preference",
@@ -277,7 +277,7 @@ describe("memory_store — variant queue integration (Issue #159)", () => {
 
     const storeTool = api.getTool("memory_store");
     const start = Date.now();
-    const result = (await storeTool!.execute("call-3", {
+    const result = (await storeTool?.execute("call-3", {
       text: "Non-blocking fact store",
       importance: 0.7,
     })) as { details: { id: string } };

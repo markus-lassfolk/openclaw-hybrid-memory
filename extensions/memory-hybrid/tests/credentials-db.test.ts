@@ -138,9 +138,9 @@ describe("CredentialsDB.get", () => {
 
     const retrieved = db.get("openai", "api_key");
     expect(retrieved).not.toBeNull();
-    expect(retrieved!.service).toBe("openai");
-    expect(retrieved!.type).toBe("api_key");
-    expect(retrieved!.value).toBe(secret);
+    expect(retrieved?.service).toBe("openai");
+    expect(retrieved?.type).toBe("api_key");
+    expect(retrieved?.value).toBe(secret);
   });
 
   it("returns null for non-existent service", () => {
@@ -153,7 +153,7 @@ describe("CredentialsDB.get", () => {
 
     const result = db.get("github");
     expect(result).not.toBeNull();
-    expect(result!.service).toBe("github");
+    expect(result?.service).toBe("github");
   });
 
   it("upserts on conflict (same service + type)", () => {
@@ -161,7 +161,7 @@ describe("CredentialsDB.get", () => {
     db.store({ service: "openai", type: "api_key", value: "new-key" });
 
     const result = db.get("openai", "api_key");
-    expect(result!.value).toBe("new-key");
+    expect(result?.value).toBe("new-key");
   });
 });
 
@@ -224,7 +224,7 @@ describe("CredentialsDB cross-instance", () => {
 
     const db2 = new CredentialsDB(dbPath, TEST_ENCRYPTION_KEY);
     const result = db2.get("test", "api_key");
-    expect(result!.value).toBe("shared-secret");
+    expect(result?.value).toBe("shared-secret");
     db2.close();
   });
 
@@ -252,7 +252,7 @@ describe("CredentialsDB plaintext vault", () => {
     plainDb.store({ service: "api", type: "api_key", value: "plain-secret" });
     const got = plainDb.get("api", "api_key");
     expect(got).not.toBeNull();
-    expect(got!.value).toBe("plain-secret");
+    expect(got?.value).toBe("plain-secret");
     plainDb.close();
     rmSync(dir, { recursive: true, force: true });
   });
@@ -301,7 +301,7 @@ describe("CredentialsDB plaintext vault", () => {
     const db2 = new CredentialsDB(dbPath, "");
     const got = db2.get("persist", "password");
     expect(got).not.toBeNull();
-    expect(got!.value).toBe("my-password-123");
+    expect(got?.value).toBe("my-password-123");
     db2.close();
     rmSync(dir, { recursive: true, force: true });
   });
@@ -324,7 +324,7 @@ describe("CredentialsDB plaintext vault", () => {
     // Verify data is still accessible in plaintext
     const got = db2.get("test", "api_key");
     expect(got).not.toBeNull();
-    expect(got!.value).toBe("plain-value");
+    expect(got?.value).toBe("plain-value");
     db2.close();
     rmSync(dir, { recursive: true, force: true });
   });
@@ -342,7 +342,7 @@ describe("CredentialsDB legacy vault mode mismatch", () => {
     const encDb = new CredentialsDB(dbPath, TEST_ENCRYPTION_KEY);
     encDb.store({ service: "legacy", type: "api_key", value: "encrypted-secret" });
     // Manually delete vault_meta to simulate legacy vault
-    const db = encDb["db"]; // Access private db
+    const db = encDb.db; // Access private db
     db.prepare("DELETE FROM vault_meta").run();
     encDb.close();
     // Try to open without key → must throw

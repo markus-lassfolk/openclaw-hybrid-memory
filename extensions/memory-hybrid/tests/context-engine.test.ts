@@ -268,7 +268,7 @@ describe("HybridMemoryContextEngine.prepareSubagentSpawn()", () => {
     });
 
     expect(prep).toBeDefined();
-    expect(typeof prep!.rollback).toBe("function");
+    expect(typeof prep?.rollback).toBe("function");
 
     // Extended field: contextAddition should contain the injected parent facts
     const extended = prep as { rollback: () => void; contextAddition?: string };
@@ -286,7 +286,7 @@ describe("HybridMemoryContextEngine.prepareSubagentSpawn()", () => {
 
     // Should still return a valid preparation (not throw / not return undefined)
     expect(prep).toBeDefined();
-    expect(typeof prep!.rollback).toBe("function");
+    expect(typeof prep?.rollback).toBe("function");
   });
 
   it("rollback is a no-op (does not throw)", async () => {
@@ -307,7 +307,7 @@ describe("HybridMemoryContextEngine.prepareSubagentSpawn()", () => {
     });
 
     // Rollback should resolve cleanly
-    await expect(prep!.rollback()).resolves.not.toThrow();
+    await expect(prep?.rollback()).resolves.not.toThrow();
   });
 
   it("respects autoRecall.limit when fetching parent facts", async () => {
@@ -333,7 +333,7 @@ describe("HybridMemoryContextEngine.prepareSubagentSpawn()", () => {
 
     // contextAddition should not contain all 20 facts (limited to min(5, 15))
     expect(extended.contextAddition).toBeDefined();
-    const bulletCount = (extended.contextAddition!.match(/^- /gm) ?? []).length;
+    const bulletCount = (extended.contextAddition?.match(/^- /gm) ?? []).length;
     expect(bulletCount).toBeLessThanOrEqual(15);
   });
 });
@@ -344,7 +344,7 @@ describe("HybridMemoryContextEngine.prepareSubagentSpawn()", () => {
 
 describe("HybridMemoryContextEngine.onSubagentEnded()", () => {
   it("logs fact count when child session has captured facts", async () => {
-    const childSessionKey = "child-session-" + randomUUID();
+    const childSessionKey = `child-session-${randomUUID()}`;
 
     // Simulate facts captured by the child session
     factsDb.store({
@@ -379,7 +379,7 @@ describe("HybridMemoryContextEngine.onSubagentEnded()", () => {
   });
 
   it("logs debug (not info) when child session has no captured facts", async () => {
-    const childSessionKey = "child-no-facts-" + randomUUID();
+    const childSessionKey = `child-no-facts-${randomUUID()}`;
     const logger = makeLogger();
     const engine = makeEngine({ logger });
 
@@ -420,7 +420,7 @@ describe("HybridMemoryContextEngine.onSubagentEnded()", () => {
 
     for (const reason of reasons) {
       await expect(
-        engine.onSubagentEnded?.({ childSessionKey: "child-" + randomUUID(), reason }),
+        engine.onSubagentEnded?.({ childSessionKey: `child-${randomUUID()}`, reason }),
       ).resolves.not.toThrow();
     }
   });

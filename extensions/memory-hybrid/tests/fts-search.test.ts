@@ -129,7 +129,7 @@ describe("trigger sync", () => {
 
     // Update the text directly (triggers facts_au).
     rawDb(db)
-      .prepare(`UPDATE facts SET text = ? WHERE id = ?`)
+      .prepare("UPDATE facts SET text = ? WHERE id = ?")
       .run("Python is a high-level programming language", entry.id);
 
     const old = searchFts(rawDb(db), "scripting");

@@ -130,7 +130,7 @@ export class ProvenanceService {
 
   getEdges(factId: string): ProvenanceEdgeRecord[] {
     const rows = this.db
-      .prepare(`SELECT * FROM provenance_edges WHERE fact_id = ? ORDER BY created_at ASC`)
+      .prepare("SELECT * FROM provenance_edges WHERE fact_id = ? ORDER BY created_at ASC")
       .all(factId) as unknown as ProvenanceEdgeRow[];
     return rows.map((r) => ({
       id: r.id,
@@ -197,7 +197,7 @@ export class ProvenanceService {
 
   getFactsFromSource(sourceId: string): string[] {
     const rows = this.db
-      .prepare(`SELECT DISTINCT fact_id FROM provenance_edges WHERE source_id = ?`)
+      .prepare("SELECT DISTINCT fact_id FROM provenance_edges WHERE source_id = ?")
       .all(sourceId) as Array<{ fact_id: string }>;
     return rows.map((r) => r.fact_id);
   }
@@ -208,7 +208,7 @@ export class ProvenanceService {
 
   prune(retentionDays: number): number {
     const cutoff = new Date(Date.now() - retentionDays * 24 * 3600 * 1000).toISOString();
-    const result = this.db.prepare(`DELETE FROM provenance_edges WHERE created_at < ?`).run(cutoff);
+    const result = this.db.prepare("DELETE FROM provenance_edges WHERE created_at < ?").run(cutoff);
     return Number(result.changes);
   }
 

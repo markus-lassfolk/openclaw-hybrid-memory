@@ -184,7 +184,7 @@ export async function runReflection(
   const uniqueNewPatterns = parsePatternsFromReflectionResponse(rawResponse);
 
   if (uniqueNewPatterns.length === 0) {
-    logger.info(`memory-hybrid: reflection — 0 patterns extracted from LLM`);
+    logger.info("memory-hybrid: reflection — 0 patterns extracted from LLM");
     return { factsAnalyzed: recentFacts.length, patternsExtracted: 0, patternsStored: 0, window: windowDays };
   }
 

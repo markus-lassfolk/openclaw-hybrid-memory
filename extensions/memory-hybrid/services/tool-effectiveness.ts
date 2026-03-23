@@ -201,10 +201,10 @@ export class ToolEffectivenessStore {
     let rows: Row[];
     if (context !== undefined) {
       rows = this.db
-        .prepare(`SELECT * FROM tool_effectiveness WHERE tool = ? AND context = ?`)
+        .prepare("SELECT * FROM tool_effectiveness WHERE tool = ? AND context = ?")
         .all(tool, context) as Row[];
     } else {
-      rows = this.db.prepare(`SELECT * FROM tool_effectiveness WHERE tool = ? ORDER BY context`).all(tool) as Row[];
+      rows = this.db.prepare("SELECT * FROM tool_effectiveness WHERE tool = ? ORDER BY context").all(tool) as Row[];
     }
 
     return rows.map((r) => ({
@@ -225,12 +225,12 @@ export class ToolEffectivenessStore {
 
   /** Apply decay to all scores. */
   applyDecay(factor: number): void {
-    this.db.prepare(`UPDATE tool_effectiveness SET composite_score = composite_score * ?`).run(factor);
+    this.db.prepare("UPDATE tool_effectiveness SET composite_score = composite_score * ?").run(factor);
   }
 
   /** Get all scores ordered by composite_score DESC. */
   getAll(): ToolMetrics[] {
-    const rows = this.db.prepare(`SELECT * FROM tool_effectiveness ORDER BY composite_score DESC`).all() as Array<{
+    const rows = this.db.prepare("SELECT * FROM tool_effectiveness ORDER BY composite_score DESC").all() as Array<{
       tool: string;
       context: string;
       total_calls: number;
@@ -261,7 +261,7 @@ export class ToolEffectivenessStore {
 
   /** Get score for a specific tool (first context row, or "general"). */
   getByTool(tool: string): ToolMetrics | null {
-    const row = this.db.prepare(`SELECT * FROM tool_effectiveness WHERE tool = ? ORDER BY context LIMIT 1`).get(tool) as
+    const row = this.db.prepare("SELECT * FROM tool_effectiveness WHERE tool = ? ORDER BY context LIMIT 1").get(tool) as
       | {
           tool: string;
           context: string;
@@ -295,7 +295,7 @@ export class ToolEffectivenessStore {
 
   /** Count of scored tools. */
   count(): number {
-    const row = this.db.prepare(`SELECT COUNT(*) as n FROM tool_effectiveness`).get() as { n: number };
+    const row = this.db.prepare("SELECT COUNT(*) as n FROM tool_effectiveness").get() as { n: number };
     return row.n;
   }
 
@@ -513,7 +513,7 @@ export async function computeToolEffectiveness(
 
     // Pull all traces
     const rows = traceDb
-      .prepare(`SELECT tool_sequence, outcome, duration_ms, session_id FROM workflow_traces`)
+      .prepare("SELECT tool_sequence, outcome, duration_ms, session_id FROM workflow_traces")
       .all() as unknown as TraceRow[];
 
     if (rows.length === 0) {

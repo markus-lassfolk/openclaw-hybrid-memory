@@ -117,7 +117,7 @@ function extractCandidates(text: string, nowMs: number): number[] {
       dayNum = Number.parseInt(m[2], 10);
     } else {
       // "20 March"
-      monthStr = m[4]!.toLowerCase();
+      monthStr = m[4]?.toLowerCase();
       dayNum = Number.parseInt(m[3]!, 10);
     }
     const moIdx = MONTH_MAP[monthStr];
@@ -155,7 +155,7 @@ function extractCandidates(text: string, nowMs: number): number[] {
   const nextWdRe =
     /\bnext\s+(sunday|monday|tuesday|wednesday|thursday|friday|saturday|sun|mon|tue|wed|thu|fri|sat)\b/gi;
   while ((m = nextWdRe.exec(text)) !== null) {
-    const targetWd = WEEKDAY_MAP[m[1]!.toLowerCase()];
+    const targetWd = WEEKDAY_MAP[m[1]?.toLowerCase()];
     if (targetWd === undefined) continue;
     const currentWd = now.getUTCDay();
     let daysAhead = targetWd - currentWd;
@@ -185,7 +185,7 @@ function extractCandidates(text: string, nowMs: number): number[] {
   const inOffsetRe = /\bin\s+(\d+)\s+(day|days|week|weeks|month|months)\b/gi;
   while ((m = inOffsetRe.exec(text)) !== null) {
     const n = Number.parseInt(m[1]!, 10);
-    const unit = m[2]!.toLowerCase();
+    const unit = m[2]?.toLowerCase();
     let daysAhead = 0;
     if (unit === "day" || unit === "days") daysAhead = n;
     else if (unit === "week" || unit === "weeks") daysAhead = n * 7;

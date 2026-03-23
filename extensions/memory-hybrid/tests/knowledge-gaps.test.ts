@@ -110,7 +110,7 @@ function buildVectorDb(results: Record<string, Array<{ entry: { id: string }; sc
   return {
     search: async (_vector, _limit, minScore) => {
       // Return the first entry from results (keyed by "default" for simplicity)
-      const all = results["default"] ?? [];
+      const all = results.default ?? [];
       return all.filter((r) => r.score >= minScore);
     },
   };
@@ -489,7 +489,7 @@ describe("analyzeKnowledgeGaps", () => {
     const db = buildFactsDb([a, b], { a: [{ id: "l1", targetFactId: "b", linkType: "RELATED_TO", strength: 1.0 }] });
     const vectorDb = buildVectorDb({ default: [] });
     const embeds = buildEmbeddings();
-    const report = await analyzeKnowledgeGaps(db, vectorDb, embeds, "orphans", 20, 0.8, NOW_SEC);
+    const _report = await analyzeKnowledgeGaps(db, vectorDb, embeds, "orphans", 20, 0.8, NOW_SEC);
     // 'b' has 1 incoming → not an orphan. Neither is 'a' (has outgoing). Actually both have 1 link.
     // Let's test with no-link facts
     const x = makeEntry("x");

@@ -58,7 +58,7 @@ function isIncludeDirRef(val: unknown): boolean {
 function renderRef(val: unknown): string {
   if (isIncludeRef(val)) return `*(includes: ${val.substring(HA_INCLUDE_PREFIX.length)})*`;
   if (isSecretRef(val)) return `*(secret: ${val.substring(HA_SECRET_PREFIX.length)})*`;
-  if (isIncludeDirRef(val)) return `*(includes directory)*`;
+  if (isIncludeDirRef(val)) return "*(includes directory)*";
   return String(val);
 }
 
@@ -82,18 +82,18 @@ function renderAutomation(auto: unknown, idx: number): string {
   if (typeof auto !== "object" || auto === null) return `- Automation ${idx + 1}: *(invalid)*`;
   const a = auto as Record<string, unknown>;
   const alias = getStr(a, "alias", `automation_${idx + 1}`);
-  const id = a["id"] ? ` (id: ${getStr(a, "id")})` : "";
-  const description = a["description"] ? `\n  - Description: ${getStr(a, "description")}` : "";
+  const id = a.id ? ` (id: ${getStr(a, "id")})` : "";
+  const description = a.description ? `\n  - Description: ${getStr(a, "description")}` : "";
 
-  const triggerList = asArray(a["trigger"]);
+  const triggerList = asArray(a.trigger);
   const triggers = triggerList.length
     ? `\n  - Triggers: ${triggerList.map((t) => summariseTrigger(t)).join(", ")}`
     : "";
 
-  const conditionList = asArray(a["condition"]);
+  const conditionList = asArray(a.condition);
   const conditions = conditionList.length ? `\n  - Conditions: ${conditionList.length} condition(s)` : "";
 
-  const actionList = asArray(a["action"]);
+  const actionList = asArray(a.action);
   const actions = actionList.length ? `\n  - Actions: ${actionList.map((ac) => summariseAction(ac)).join(", ")}` : "";
 
   return `- **${alias}**${id}${description}${triggers}${conditions}${actions}`;
@@ -105,10 +105,10 @@ function summariseTrigger(t: unknown): string {
   const platform = getStr(obj, "platform", "unknown");
   if (platform === "state") return `state(${getStr(obj, "entity_id")})`;
   if (platform === "time") return `time(${getStr(obj, "at")})`;
-  if (platform === "time_pattern") return `time_pattern`;
+  if (platform === "time_pattern") return "time_pattern";
   if (platform === "homeassistant") return `ha_event(${getStr(obj, "event")})`;
   if (platform === "sun") return `sun(${getStr(obj, "event")})`;
-  if (platform === "template") return `template`;
+  if (platform === "template") return "template";
   if (platform === "numeric_state") return `numeric_state(${getStr(obj, "entity_id")})`;
   return platform;
 }
@@ -116,12 +116,12 @@ function summariseTrigger(t: unknown): string {
 function summariseAction(a: unknown): string {
   if (typeof a !== "object" || a === null) return "*(invalid action)*";
   const obj = a as Record<string, unknown>;
-  if (obj["service"]) return `service(${getStr(obj, "service")})`;
-  if (obj["delay"]) return `delay`;
-  if (obj["wait_template"]) return `wait_template`;
-  if (obj["condition"]) return `condition`;
-  if (obj["choose"]) return `choose`;
-  if (obj["repeat"]) return `repeat`;
+  if (obj.service) return `service(${getStr(obj, "service")})`;
+  if (obj.delay) return "delay";
+  if (obj.wait_template) return "wait_template";
+  if (obj.condition) return "condition";
+  if (obj.choose) return "choose";
+  if (obj.repeat) return "repeat";
   return "action";
 }
 
@@ -129,8 +129,8 @@ function renderScript(name: string, script: unknown): string {
   if (typeof script !== "object" || script === null) return `- **${name}**: *(invalid)*`;
   const s = script as Record<string, unknown>;
   const alias = getStr(s, "alias", name);
-  const description = s["description"] ? ` — ${getStr(s, "description")}` : "";
-  const sequence = asArray(s["sequence"]);
+  const description = s.description ? ` — ${getStr(s, "description")}` : "";
+  const sequence = asArray(s.sequence);
   const steps = sequence.length ? ` (${sequence.length} step(s))` : "";
   return `- **${alias}**${description}${steps}`;
 }
@@ -142,7 +142,7 @@ function renderScene(scene: unknown, idx: number): string {
   if (typeof scene !== "object" || scene === null) return `- Scene ${idx + 1}: *(invalid)*`;
   const s = scene as Record<string, unknown>;
   const name = getStr(s, "name", `scene_${idx + 1}`);
-  const entities = s["entities"];
+  const entities = s.entities;
   const count = typeof entities === "object" && entities !== null ? Object.keys(entities).length : 0;
   return `- **${name}** (${count} entity states)`;
 }
@@ -154,8 +154,8 @@ function renderEntity(entity: unknown, idx: number): string {
   if (typeof entity !== "object" || entity === null) return `- Entity ${idx + 1}: *(invalid)*`;
   const e = entity as Record<string, unknown>;
   const name = getStr(e, "name", `entity_${idx + 1}`);
-  const platform = e["platform"] ? ` — platform: ${getStr(e, "platform")}` : "";
-  const uniqueId = e["unique_id"] ? ` (unique_id: ${getStr(e, "unique_id")})` : "";
+  const platform = e.platform ? ` — platform: ${getStr(e, "platform")}` : "";
+  const uniqueId = e.unique_id ? ` (unique_id: ${getStr(e, "unique_id")})` : "";
   return `- **${name}**${platform}${uniqueId}`;
 }
 
@@ -184,13 +184,13 @@ export const haYamlConverter: Converter = {
     const sections: string[] = [`# ${title}\n`];
 
     // Automations
-    const automations = asArray(doc["automation"]);
+    const automations = asArray(doc.automation);
     if (automations.length > 0) {
       sections.push(`## Automations\n\n${automations.map((a, i) => renderAutomation(a, i)).join("\n")}\n`);
     }
 
     // Scripts
-    const scripts = doc["script"];
+    const scripts = doc.script;
     if (scripts && typeof scripts === "object" && !Array.isArray(scripts)) {
       const scriptEntries = Object.entries(scripts as Record<string, unknown>);
       if (scriptEntries.length > 0) {
@@ -200,7 +200,7 @@ export const haYamlConverter: Converter = {
     }
 
     // Scenes
-    const scenes = asArray(doc["scene"]);
+    const scenes = asArray(doc.scene);
     if (scenes.length > 0) {
       sections.push(`## Scenes\n\n${scenes.map((s, i) => renderScene(s, i)).join("\n")}\n`);
     }
@@ -223,11 +223,11 @@ export const haYamlConverter: Converter = {
     }
 
     // HA global config
-    if (doc["homeassistant"]) {
-      const ha = doc["homeassistant"] as Record<string, unknown>;
+    if (doc.homeassistant) {
+      const ha = doc.homeassistant as Record<string, unknown>;
       const name = getStr(ha, "name", "");
-      const lat = ha["latitude"] ? String(ha["latitude"]) : "";
-      const lon = ha["longitude"] ? String(ha["longitude"]) : "";
+      const lat = ha.latitude ? String(ha.latitude) : "";
+      const lon = ha.longitude ? String(ha.longitude) : "";
       const unit = getStr(ha, "unit_system", "");
       const info = [name && `Name: ${name}`, lat && lon && `Location: ${lat}, ${lon}`, unit && `Units: ${unit}`]
         .filter(Boolean)
@@ -273,12 +273,12 @@ export const haYamlConverter: Converter = {
       metadata: {
         source: "ha-yaml-converter",
         filePath,
-        automationCount: asArray(doc["automation"]).length,
+        automationCount: asArray(doc.automation).length,
         scriptCount:
-          typeof doc["script"] === "object" && doc["script"] !== null && !Array.isArray(doc["script"])
-            ? Object.keys(doc["script"]).length
+          typeof doc.script === "object" && doc.script !== null && !Array.isArray(doc.script)
+            ? Object.keys(doc.script).length
             : 0,
-        sceneCount: asArray(doc["scene"]).length,
+        sceneCount: asArray(doc.scene).length,
       },
     };
   },

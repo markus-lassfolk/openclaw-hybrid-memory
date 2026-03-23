@@ -460,7 +460,7 @@ describe("chatCompleteWithRetry", () => {
     // Advance through retries for primary model (3 retries = 4 total attempts)
     for (let i = 0; i < 3; i++) {
       await vi.advanceTimersByTimeAsync(1);
-      await vi.advanceTimersByTimeAsync(Math.pow(3, i) * 1000);
+      await vi.advanceTimersByTimeAsync(3 ** i * 1000);
     }
 
     // Final attempt fails, now switch to fallback
@@ -506,7 +506,7 @@ describe("chatCompleteWithRetry", () => {
     for (let modelIdx = 0; modelIdx < 2; modelIdx++) {
       for (let retry = 0; retry < 3; retry++) {
         await vi.advanceTimersByTimeAsync(1);
-        await vi.advanceTimersByTimeAsync(Math.pow(3, retry) * 1000);
+        await vi.advanceTimersByTimeAsync(3 ** retry * 1000);
       }
       await vi.advanceTimersByTimeAsync(1);
     }

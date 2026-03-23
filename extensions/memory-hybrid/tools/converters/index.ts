@@ -74,7 +74,7 @@ export function getConverter(filePath: string, content?: string): Converter | nu
 function sniffYamlConverter(content: string, fileName: string, ext: string): Converter | null {
   const candidates = extraConverters.filter((c) => c.extensions.includes(ext));
   for (const converter of candidates) {
-    if (converter.canHandle && converter.canHandle(content, fileName)) {
+    if (converter.canHandle?.(content, fileName)) {
       return converter;
     }
   }
@@ -93,7 +93,7 @@ function sniffJsonConverter(content: string): Converter | null {
 
   // Try content-based selection first (fileName not available for JSON path)
   for (const converter of candidates) {
-    if (converter.canHandle && converter.canHandle(content, "")) {
+    if (converter.canHandle?.(content, "")) {
       return converter;
     }
   }

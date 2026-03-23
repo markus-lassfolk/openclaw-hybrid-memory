@@ -31,7 +31,7 @@ export const RECALL_STAGE_TIMEOUT_MS = INTERACTIVE_RECALL_STAGE_TIMEOUT_MS;
 
 function clipNarrativeText(text: string, maxChars = 360): string {
   if (text.length <= maxChars) return text;
-  return text.slice(0, Math.max(0, maxChars - 1)).trimEnd() + "…";
+  return `${text.slice(0, Math.max(0, maxChars - 1)).trimEnd()}…`;
 }
 
 export async function runRecallStage(
@@ -118,7 +118,7 @@ async function runRecall(
             (r) =>
               `- [hot/${r.entry.category}] ${(r.entry.summary || r.entry.text).slice(0, 200)}${(r.entry.summary || r.entry.text).length > 200 ? "…" : ""}`,
           );
-          hotPart = "Hot memories:\n" + hotLines.join("\n") + "\n\n";
+          hotPart = `Hot memories:\n${hotLines.join("\n")}\n\n`;
         }
       }
       const memoryLines = ftsOnly
@@ -138,24 +138,21 @@ async function runRecall(
           });
           if (recentNarratives.length > 0) {
             const narrative = recentNarratives[0];
-            narrativePart =
-              `<recent-history-narratives>\n- [` +
-              `${narrative.source}/${formatNarrativeRange(narrative.periodStart, narrative.periodEnd)}] ` +
-              `${clipNarrativeText(narrative.text)}\n</recent-history-narratives>\n\n`;
+            narrativePart = `<recent-history-narratives>\n- [${narrative.source}/${formatNarrativeRange(narrative.periodStart, narrative.periodEnd)}] ${clipNarrativeText(narrative.text)}\n</recent-history-narratives>\n\n`;
           }
         } catch {
           // Non-fatal.
         }
       }
       const inner =
-        narrativePart + hotPart + (memoryLines.length ? "Recalled (FTS-only):\n" + memoryLines.join("\n") : "");
+        narrativePart + hotPart + (memoryLines.length ? `Recalled (FTS-only):\n${memoryLines.join("\n")}` : "");
       const block = inner ? `<recalled-context>\n${inner}\n</recalled-context>` : "";
       const degradedMarker = "<!-- recall degraded: queue -->\n";
       api.logger.debug?.(
         `memory-hybrid: recall degraded (queue depth ${ctx.recallInFlightRef.value} > ${degradationQueueDepth}), using FTS-only + HOT`,
       );
-      if (block) return { kind: "degraded", prependContext: degradedMarker + block + "\n\n" };
-      return { kind: "degraded", prependContext: degradedMarker + "\n\n" };
+      if (block) return { kind: "degraded", prependContext: `${degradedMarker + block}\n\n` };
+      return { kind: "degraded", prependContext: `${degradedMarker}\n\n` };
     }
 
     // Procedural memory
@@ -219,7 +216,7 @@ async function runRecall(
         procedureBlock = block;
       }
     }
-    const withProcedures = (s: string) => (procedureBlock ? procedureBlock + "\n" + s : s);
+    const withProcedures = (s: string) => (procedureBlock ? `${procedureBlock}\n${s}` : s);
 
     // HOT block
     let hotBlock = "";
@@ -367,7 +364,7 @@ async function runRecall(
             }
             issueLines.push("</resolved-issues>");
           }
-          if (issueLines.length > 0) issueBlock = issueLines.join("\n") + "\n\n";
+          if (issueLines.length > 0) issueBlock = `${issueLines.join("\n")}\n\n`;
         }
       } catch (err) {
         capturePluginError(err instanceof Error ? err : new Error(String(err)), {

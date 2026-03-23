@@ -415,7 +415,7 @@ export async function runCrossAgentLearningForCli(ctx: HandlerContext): Promise<
  */
 export async function runToolEffectivenessForCli(
   ctx: HandlerContext,
-  opts: { verbose?: boolean } = {},
+  _opts: { verbose?: boolean } = {},
 ): Promise<string> {
   const { cfg } = ctx;
   const teCfg = cfg.toolEffectiveness;
@@ -439,7 +439,7 @@ export async function runToolEffectivenessForCli(
     try {
       const rawDb = ctx.factsDb.getRawDb();
       const existing = rawDb
-        .prepare(`SELECT id FROM facts WHERE key = ? AND superseded_at IS NULL LIMIT 1`)
+        .prepare("SELECT id FROM facts WHERE key = ? AND superseded_at IS NULL LIMIT 1")
         .get(monthlyKey);
       if (!existing) {
         await generateMonthlyReport(effStore, ctx.factsDb);
@@ -516,7 +516,7 @@ export function runCostReportForCli(
       }
     }
     if (!compact) {
-      log(`Set mode: openclaw hybrid-mem config-mode <mode>`);
+      log("Set mode: openclaw hybrid-mem config-mode <mode>");
     }
     return;
   }
@@ -550,7 +550,7 @@ export function runCostReportForCli(
         log(`No LLM cost data in the last ${days} days.`);
       } else {
         log(`\n✅ Cost tracking is active — no data yet for the last ${days} days.`);
-        log(`   Data appears after your first LLM calls (~1 hour of typical use).`);
+        log("   Data appears after your first LLM calls (~1 hour of typical use).");
       }
       return;
     }
@@ -627,7 +627,7 @@ export function runCostReportForCli(
         log(`No LLM cost data in the last ${days} days.`);
       } else {
         log(`\n✅ Cost tracking is active — no data yet for the last ${days} days.`);
-        log(`   Costs will appear here after your first LLM calls (~1 hour of typical use).`);
+        log("   Costs will appear here after your first LLM calls (~1 hour of typical use).");
       }
       // Still show savings if any exist (value delivered without cost)
       if (savingsReport.total.estimatedSavingUsd > 0 && !compact) {

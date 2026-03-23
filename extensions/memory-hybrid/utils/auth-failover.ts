@@ -54,7 +54,7 @@ function saveState(statePath: string, state: AuthFailoverState): void {
  * Also runs reset-if-due so the counter is cleared after resetBackoffAfterHours.
  */
 export function isOAuthInBackoff(provider: string, options: AuthFailoverOptions = {}): boolean {
-  const schedule = options.backoffScheduleMinutes ?? DEFAULT_BACKOFF_MINUTES;
+  const _schedule = options.backoffScheduleMinutes ?? DEFAULT_BACKOFF_MINUTES;
   const resetHours = options.resetBackoffAfterHours ?? DEFAULT_RESET_AFTER_HOURS;
   const statePath = options.statePath;
   const state = statePath ? loadState(statePath) : { lastResetTs: Date.now(), providers: {} };

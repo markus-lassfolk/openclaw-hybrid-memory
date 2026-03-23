@@ -88,8 +88,8 @@ describe("measureRuleEffectiveness", () => {
     const result = measureRuleEffectiveness(rule.id, db, DEFAULT_CONFIG);
     expect(result).not.toBeNull();
     const windowDaySec = 7 * 24 * 60 * 60;
-    expect(result!.windowStart).toBe(rule.createdAt - windowDaySec);
-    expect(result!.windowEnd).toBe(rule.createdAt + windowDaySec);
+    expect(result?.windowStart).toBe(rule.createdAt - windowDaySec);
+    expect(result?.windowEnd).toBe(rule.createdAt + windowDaySec);
   });
 
   it("uses 0 sample size when no feedback signals exist", () => {

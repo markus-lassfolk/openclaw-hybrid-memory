@@ -542,8 +542,8 @@ describe("completeTask", () => {
     expect(updated).toHaveLength(1);
     expect(updated[0].label).toBe("task-b");
     expect(completed).not.toBeNull();
-    expect(completed!.label).toBe("task-a");
-    expect(completed!.status).toBe("Done");
+    expect(completed?.label).toBe("task-a");
+    expect(completed?.status).toBe("Done");
   });
 
   it("returns null completed when label not found", () => {
@@ -557,7 +557,7 @@ describe("completeTask", () => {
     const before = new Date().toISOString();
     const active = [makeEntry({ label: "task", updated: "2020-01-01T00:00:00.000Z" })];
     const { completed } = completeTask(active, "task");
-    expect(completed!.updated >= before).toBe(true);
+    expect(completed?.updated >= before).toBe(true);
   });
 });
 
@@ -586,8 +586,8 @@ describe("readActiveTaskFile / writeActiveTaskFile", () => {
     await writeActiveTaskFile(filePath, [makeEntry({ label: "test-task" })], []);
     const result = await readActiveTaskFile(filePath, 1440);
     expect(result).not.toBeNull();
-    expect(result!.active).toHaveLength(1);
-    expect(result!.active[0].label).toBe("test-task");
+    expect(result?.active).toHaveLength(1);
+    expect(result?.active[0].label).toBe("test-task");
   });
 
   it("writes and reads back correctly (round-trip)", async () => {
@@ -596,11 +596,11 @@ describe("readActiveTaskFile / writeActiveTaskFile", () => {
     const completed = [makeEntry({ label: "old-task", status: "Done" })];
     await writeActiveTaskFile(filePath, active, completed);
     const result = await readActiveTaskFile(filePath, 1440);
-    expect(result!.active).toHaveLength(1);
-    expect(result!.active[0].branch).toBe("feature/test");
-    expect(result!.active[0].next).toBe("Run tests");
-    expect(result!.completed).toHaveLength(1);
-    expect(result!.completed[0].label).toBe("old-task");
+    expect(result?.active).toHaveLength(1);
+    expect(result?.active[0].branch).toBe("feature/test");
+    expect(result?.active[0].next).toBe("Run tests");
+    expect(result?.completed).toHaveLength(1);
+    expect(result?.completed[0].label).toBe("old-task");
   });
 
   it("creates parent directories as needed", async () => {
@@ -615,7 +615,7 @@ describe("readActiveTaskFile / writeActiveTaskFile", () => {
     const filePath = join(tmpDir, "ACTIVE-TASK.md");
     await writeActiveTaskFile(filePath, [makeEntry({ updated: staleTime })], []);
     const result = await readActiveTaskFile(filePath, 1440);
-    expect(result!.active[0].stale).toBe(true);
+    expect(result?.active[0].stale).toBe(true);
   });
 });
 
@@ -809,11 +809,11 @@ describe("runActiveTaskComplete", () => {
     expect(result.ok).toBe(true);
 
     const updated = await readActiveTaskFile(ctx.activeTaskFilePath, 1440);
-    expect(updated!.active).toHaveLength(1);
-    expect(updated!.active[0].label).toBe("other-task");
-    expect(updated!.completed).toHaveLength(1);
-    expect(updated!.completed[0].label).toBe("target-task");
-    expect(updated!.completed[0].status).toBe("Done");
+    expect(updated?.active).toHaveLength(1);
+    expect(updated?.active[0].label).toBe("other-task");
+    expect(updated?.completed).toHaveLength(1);
+    expect(updated?.completed[0].label).toBe("target-task");
+    expect(updated?.completed[0].status).toBe("Done");
   });
 
   it("flushes to memory log when flushOnComplete=true", async () => {
@@ -864,8 +864,8 @@ describe("runActiveTaskAdd", () => {
     expect(ok.upserted).toBe(false);
 
     const taskFile = await readActiveTaskFile(ctx.activeTaskFilePath, 1440);
-    expect(taskFile!.active).toHaveLength(1);
-    expect(taskFile!.active[0].label).toBe("new-task");
+    expect(taskFile?.active).toHaveLength(1);
+    expect(taskFile?.active[0].label).toBe("new-task");
   });
 
   it("adds optional fields when provided", async () => {
@@ -878,7 +878,7 @@ describe("runActiveTaskAdd", () => {
       status: "Waiting",
     });
     const taskFile = await readActiveTaskFile(ctx.activeTaskFilePath, 1440);
-    const task = taskFile!.active[0];
+    const task = taskFile?.active[0];
     expect(task.branch).toBe("fix/something");
     expect(task.subagent).toBe("forge-session");
     expect(task.next).toBe("Deploy");
@@ -897,9 +897,9 @@ describe("runActiveTaskAdd", () => {
     expect(ok.upserted).toBe(true);
 
     const taskFile = await readActiveTaskFile(ctx.activeTaskFilePath, 1440);
-    expect(taskFile!.active).toHaveLength(1);
-    expect(taskFile!.active[0].description).toBe("Updated description");
-    expect(taskFile!.active[0].next).toBe("new next");
+    expect(taskFile?.active).toHaveLength(1);
+    expect(taskFile?.active[0].description).toBe("Updated description");
+    expect(taskFile?.active[0].next).toBe("new next");
   });
 
   it("rejects invalid status gracefully (falls back to In progress)", async () => {
@@ -909,7 +909,7 @@ describe("runActiveTaskAdd", () => {
       status: "InvalidStatus",
     });
     const taskFile = await readActiveTaskFile(ctx.activeTaskFilePath, 1440);
-    expect(taskFile!.active[0].status).toBe("In progress");
+    expect(taskFile?.active[0].status).toBe("In progress");
   });
 });
 
@@ -1118,9 +1118,9 @@ describe("readActiveTaskFileWithMtime", () => {
     await writeActiveTaskFile(filePath, [makeEntry()], []);
     const result = await readActiveTaskFileWithMtime(filePath);
     expect(result).not.toBeNull();
-    expect(result!.active).toHaveLength(1);
-    expect(typeof result!.mtime).toBe("number");
-    expect(result!.mtime).toBeGreaterThan(0);
+    expect(result?.active).toHaveLength(1);
+    expect(typeof result?.mtime).toBe("number");
+    expect(result?.mtime).toBeGreaterThan(0);
   });
 
   it("returns a different mtime after the file is updated", async () => {
@@ -1133,8 +1133,8 @@ describe("readActiveTaskFileWithMtime", () => {
     await writeActiveTaskFile(filePath, [makeEntry({ label: "second" })], []);
     const second = await readActiveTaskFileWithMtime(filePath);
 
-    expect(second!.mtime).toBeGreaterThanOrEqual(first!.mtime);
-    expect(second!.active[0].label).toBe("second");
+    expect(second?.mtime).toBeGreaterThanOrEqual(first?.mtime);
+    expect(second?.active[0].label).toBe("second");
   });
 });
 
@@ -1159,14 +1159,14 @@ describe("writeActiveTaskFileGuarded", () => {
     const result = await writeActiveTaskFileGuarded(filePath, [makeEntry()], []);
     expect(result.skipped).toBe(false);
     const taskFile = await readActiveTaskFile(filePath);
-    expect(taskFile!.active).toHaveLength(1);
+    expect(taskFile?.active).toHaveLength(1);
   });
 
   it("writes normally when orchestrator session key is provided", async () => {
     const result = await writeActiveTaskFileGuarded(filePath, [makeEntry()], [], "agent:main:main");
     expect(result.skipped).toBe(false);
     const taskFile = await readActiveTaskFile(filePath);
-    expect(taskFile!.active).toHaveLength(1);
+    expect(taskFile?.active).toHaveLength(1);
   });
 
   it("skips write when session is a sub-agent", async () => {
@@ -1186,7 +1186,7 @@ describe("writeActiveTaskFileGuarded", () => {
   it("provides a reason when skipped", async () => {
     const result = await writeActiveTaskFileGuarded(filePath, [makeEntry()], [], "agent:x:subagent:y");
     expect(result.reason).toBeDefined();
-    expect(result.reason!.length).toBeGreaterThan(0);
+    expect(result.reason?.length).toBeGreaterThan(0);
   });
 });
 
@@ -1214,7 +1214,7 @@ describe("writeActiveTaskFileOptimistic", () => {
 
     const newActive = [makeEntry({ label: "updated" })];
     let mergeCalled = false;
-    await writeActiveTaskFileOptimistic(filePath, newActive, [], read!.mtime, async () => {
+    await writeActiveTaskFileOptimistic(filePath, newActive, [], read?.mtime, async () => {
       mergeCalled = true;
       return null;
     });
@@ -1222,7 +1222,7 @@ describe("writeActiveTaskFileOptimistic", () => {
     // No conflict — merge should NOT have been called
     expect(mergeCalled).toBe(false);
     const result = await readActiveTaskFile(filePath);
-    expect(result!.active[0].label).toBe("updated");
+    expect(result?.active[0].label).toBe("updated");
   });
 
   it("calls merge when file was modified concurrently", async () => {
@@ -1238,7 +1238,7 @@ describe("writeActiveTaskFileOptimistic", () => {
       filePath,
       [makeEntry({ label: "mine" })],
       [],
-      read!.mtime, // stale mtime — triggers merge
+      read?.mtime, // stale mtime — triggers merge
       async (fresh) => {
         mergeCalled = true;
         // Accept the fresh state plus our label
@@ -1248,7 +1248,7 @@ describe("writeActiveTaskFileOptimistic", () => {
 
     expect(mergeCalled).toBe(true);
     const result = await readActiveTaskFile(filePath);
-    const labels = result!.active.map((t) => t.label);
+    const labels = result?.active.map((t) => t.label);
     expect(labels).toContain("concurrent");
     expect(labels).toContain("mine");
   });
@@ -1265,13 +1265,13 @@ describe("writeActiveTaskFileOptimistic", () => {
       filePath,
       [makeEntry({ label: "mine" })],
       [],
-      read!.mtime,
+      read?.mtime,
       async () => null, // Abort
     );
 
     const result = await readActiveTaskFile(filePath);
     // File should remain as "concurrent" — our write was aborted
-    expect(result!.active[0].label).toBe("concurrent");
+    expect(result?.active[0].label).toBe("concurrent");
   });
 
   it("writes successfully to non-existent file (no conflict possible)", async () => {
@@ -1284,6 +1284,6 @@ describe("writeActiveTaskFileOptimistic", () => {
       async () => null,
     );
     const result = await readActiveTaskFile(newPath);
-    expect(result!.active[0].label).toBe("new");
+    expect(result?.active[0].label).toBe("new");
   });
 });

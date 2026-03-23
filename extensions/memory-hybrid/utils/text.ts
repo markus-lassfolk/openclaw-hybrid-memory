@@ -13,7 +13,7 @@ export function truncateText(text: string, maxLen: number, suffix = "…"): stri
 /** Truncate for storage (config-driven); appends " [truncated]" when truncated. */
 export function truncateForStorage(text: string, maxChars: number): string {
   if (text.length <= maxChars) return text.trim();
-  return text.slice(0, maxChars).trim() + " [truncated]";
+  return `${text.slice(0, maxChars).trim()} [truncated]`;
 }
 
 /** Rough token count (OpenAI-style: ~4 chars per token for English). Used for auto-recall cap. */
@@ -107,7 +107,7 @@ export function extractMessageText(content: unknown): string {
 export function truncate(s: string, max: number): string {
   const t = s.trim();
   if (t.length <= max) return t;
-  return t.slice(0, max) + "...";
+  return `${t.slice(0, max)}...`;
 }
 
 /**

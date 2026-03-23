@@ -89,7 +89,7 @@ describe("self-correction-extract", () => {
   });
 
   it("truncates long user and assistant messages", () => {
-    const longUser = "That was wrong. " + "word ".repeat(200);
+    const longUser = `That was wrong. ${"word ".repeat(200)}`;
     const jsonl = [msg("assistant", "x".repeat(600)), msg("user", longUser), msg("assistant", "y".repeat(600))].join(
       "\n",
     );

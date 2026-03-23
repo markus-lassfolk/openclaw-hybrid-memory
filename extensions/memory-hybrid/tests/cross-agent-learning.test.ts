@@ -174,7 +174,7 @@ describe("getCrossAgentFacts", () => {
 
     const facts = getCrossAgentFacts(db);
     expect(facts).toHaveLength(1);
-    expect(facts[0]!.text).toContain("verify");
+    expect(facts[0]?.text).toContain("verify");
   });
 
   it("does not return superseded facts", () => {
@@ -312,12 +312,12 @@ describe("runCrossAgentLearning — LLM mock", () => {
     expect(result.agentsScanned).toBeGreaterThanOrEqual(1);
     expect(result.generalisedStored).toBe(1);
     expect(result.newFacts).toHaveLength(1);
-    expect(result.newFacts[0]!.text).toContain("validate");
+    expect(result.newFacts[0]?.text).toContain("validate");
 
     // Check stored in DB
     const globalFacts = getCrossAgentFacts(db);
     expect(globalFacts).toHaveLength(1);
-    expect(globalFacts[0]!.importance).toBeGreaterThan(0.7); // boosted
+    expect(globalFacts[0]?.importance).toBeGreaterThan(0.7); // boosted
   });
 
   it("skips duplicate facts in second run", async () => {
@@ -650,7 +650,7 @@ describe("getCrossAgentLessons", () => {
     // At minimum, both should be returned; top should be the more relevant one
     expect(lessons.length).toBeGreaterThanOrEqual(1);
     // The first lesson should contain "test" since context mentions "test"
-    expect(lessons[0]!.text.toLowerCase()).toContain("test");
+    expect(lessons[0]?.text.toLowerCase()).toContain("test");
   });
 });
 
@@ -758,7 +758,7 @@ describe("verifyLessonForAgent", () => {
   it("boosts confidence by default amount (0.1)", async () => {
     const id = insertCrossAgentFact("Verify before committing", 0.7);
     await verifyLessonForAgent(db, id, "scholar");
-    const row = rawDb(db).prepare(`SELECT confidence FROM facts WHERE id = ?`).get(id) as
+    const row = rawDb(db).prepare("SELECT confidence FROM facts WHERE id = ?").get(id) as
       | { confidence: number }
       | undefined;
     expect(row?.confidence).toBeCloseTo(0.8, 3);
@@ -767,7 +767,7 @@ describe("verifyLessonForAgent", () => {
   it("adds verified-by tag", async () => {
     const id = insertCrossAgentFact("Lesson to verify", 0.7);
     await verifyLessonForAgent(db, id, "forge");
-    const row = rawDb(db).prepare(`SELECT tags FROM facts WHERE id = ?`).get(id) as { tags: string | null } | undefined;
+    const row = rawDb(db).prepare("SELECT tags FROM facts WHERE id = ?").get(id) as { tags: string | null } | undefined;
     expect(row?.tags).toContain("verified-by:forge");
   });
 
@@ -775,7 +775,7 @@ describe("verifyLessonForAgent", () => {
     const id = insertCrossAgentFact("Lesson to verify twice", 0.7);
     await verifyLessonForAgent(db, id, "forge");
     await verifyLessonForAgent(db, id, "forge");
-    const row = rawDb(db).prepare(`SELECT tags FROM facts WHERE id = ?`).get(id) as { tags: string | null } | undefined;
+    const row = rawDb(db).prepare("SELECT tags FROM facts WHERE id = ?").get(id) as { tags: string | null } | undefined;
     const tagCount = (row?.tags?.match(/verified-by:forge/g) ?? []).length;
     expect(tagCount).toBe(1);
   });
@@ -783,7 +783,7 @@ describe("verifyLessonForAgent", () => {
   it("caps confidence at 1.0", async () => {
     const id = insertCrossAgentFact("High confidence lesson", 0.95);
     await verifyLessonForAgent(db, id, "scholar", 0.2);
-    const row = rawDb(db).prepare(`SELECT confidence FROM facts WHERE id = ?`).get(id) as
+    const row = rawDb(db).prepare("SELECT confidence FROM facts WHERE id = ?").get(id) as
       | { confidence: number }
       | undefined;
     expect(row?.confidence).toBeLessThanOrEqual(1.0);
@@ -793,7 +793,7 @@ describe("verifyLessonForAgent", () => {
   it("accepts custom boost value", async () => {
     const id = insertCrossAgentFact("Custom boost lesson", 0.6);
     await verifyLessonForAgent(db, id, "warden", 0.2);
-    const row = rawDb(db).prepare(`SELECT confidence FROM facts WHERE id = ?`).get(id) as
+    const row = rawDb(db).prepare("SELECT confidence FROM facts WHERE id = ?").get(id) as
       | { confidence: number }
       | undefined;
     expect(row?.confidence).toBeCloseTo(0.8, 3);
@@ -808,7 +808,7 @@ describe("verifyLessonForAgent", () => {
     const id = insertCrossAgentFact("Multi-agent verified lesson", 0.6);
     await verifyLessonForAgent(db, id, "forge", 0.05);
     await verifyLessonForAgent(db, id, "scholar", 0.05);
-    const row = rawDb(db).prepare(`SELECT tags FROM facts WHERE id = ?`).get(id) as { tags: string | null } | undefined;
+    const row = rawDb(db).prepare("SELECT tags FROM facts WHERE id = ?").get(id) as { tags: string | null } | undefined;
     expect(row?.tags).toContain("verified-by:forge");
     expect(row?.tags).toContain("verified-by:scholar");
   });

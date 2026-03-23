@@ -233,7 +233,7 @@ describe("FactsDB.findEntityAnchor", () => {
     });
     const anchor = db.findEntityAnchor("project");
     expect(anchor).not.toBeNull();
-    expect(anchor!.id).toBe(newer.id);
+    expect(anchor?.id).toBe(newer.id);
   });
 
   it("is case-insensitive", () => {
@@ -298,7 +298,7 @@ describe("FactsDB.autoLinkEntities — entity-based RELATED_TO links", () => {
     const links = db.getLinksFrom(newFact.id);
     const toAnchor = links.find((l) => l.targetFactId === anchor.id && l.linkType === "RELATED_TO");
     expect(toAnchor).toBeDefined();
-    expect(toAnchor!.strength).toBe(1.0); // exact word-boundary match
+    expect(toAnchor?.strength).toBe(1.0); // exact word-boundary match
   });
 
   it("creates RELATED_TO link for IP address extracted from text", () => {
@@ -329,7 +329,7 @@ describe("FactsDB.autoLinkEntities — entity-based RELATED_TO links", () => {
     expect(toAnchor).toBeDefined();
     // The IP "10.0.0.5" is a known entity and gets exact word-boundary match (weight 1.0);
     // IP NER (weight 0.5) is the fallback when no known entity exists for that IP.
-    expect(toAnchor!.strength).toBeGreaterThanOrEqual(0.5);
+    expect(toAnchor?.strength).toBeGreaterThanOrEqual(0.5);
   });
 
   it("creates RELATED_TO link via IP NER when IP is not a known entity", () => {
@@ -432,7 +432,7 @@ describe("FactsDB.autoLinkEntities — temporal co-occurrence", () => {
     });
     // Manually set source_sessions (normally done by memory-tools)
     (db as unknown as { db: { prepare: (s: string) => { run: (...a: unknown[]) => void } } }).db
-      .prepare(`UPDATE facts SET source_sessions = ? WHERE id = ?`)
+      .prepare("UPDATE facts SET source_sessions = ? WHERE id = ?")
       .run(sessionId, factA.id);
 
     const factB = db.store({
@@ -449,7 +449,7 @@ describe("FactsDB.autoLinkEntities — temporal co-occurrence", () => {
     const links = db.getLinksFrom(factB.id);
     const coLink = links.find((l) => l.targetFactId === factA.id && l.linkType === "RELATED_TO");
     expect(coLink).toBeDefined();
-    expect(coLink!.strength).toBeCloseTo(0.3);
+    expect(coLink?.strength).toBeCloseTo(0.3);
   });
 
   it("links to facts with same entity via entity co-occurrence", () => {
@@ -466,7 +466,7 @@ describe("FactsDB.autoLinkEntities — temporal co-occurrence", () => {
     });
     // Populate source_sessions so the session-based co-occurrence query can find factA
     (db as unknown as { db: { prepare: (s: string) => { run: (...a: unknown[]) => void } } }).db
-      .prepare(`UPDATE facts SET source_sessions = ? WHERE id = ?`)
+      .prepare("UPDATE facts SET source_sessions = ? WHERE id = ?")
       .run(sessionId, factA.id);
     const factB = db.store({
       text: "Second fact",
@@ -545,7 +545,7 @@ describe("FactsDB.autoLinkEntities — supersession detection", () => {
     const links = db.getLinksFrom(newer.id);
     const supersedes = links.find((l) => l.targetFactId === old.id && l.linkType === "SUPERSEDES");
     expect(supersedes).toBeDefined();
-    expect(supersedes!.strength).toBe(1.0);
+    expect(supersedes?.strength).toBe(1.0);
   });
 
   it("does NOT mark old fact as superseded when autoSupersede is false", () => {
@@ -637,7 +637,7 @@ describe("FactsDB.autoLinkEntities — supersession detection", () => {
   });
 
   it("does NOT create SUPERSEDES edge when value matches (same value)", () => {
-    const old = db.store({
+    const _old = db.store({
       text: "same value",
       entity: "project",
       key: "lead",
@@ -747,7 +747,7 @@ describe("autoLinkEntities — config variants", () => {
       source: "test",
     });
     (db as unknown as { db: { prepare: (s: string) => { run: (...a: unknown[]) => void } } }).db
-      .prepare(`UPDATE facts SET source_sessions = ? WHERE id = ?`)
+      .prepare("UPDATE facts SET source_sessions = ? WHERE id = ?")
       .run(sessionId, factA.id);
     const factB = db.store({
       text: "Second",
@@ -764,7 +764,7 @@ describe("autoLinkEntities — config variants", () => {
     const links = db.getLinksFrom(factB.id);
     const coLink = links.find((l) => l.targetFactId === factA.id);
     expect(coLink).toBeDefined();
-    expect(coLink!.strength).toBe(0);
+    expect(coLink?.strength).toBe(0);
   });
 });
 
@@ -862,7 +862,7 @@ describe("autoLinkEntities — edge cases", () => {
   });
 
   it("handles entity with special regex characters safely", () => {
-    const anchor = db.store({
+    const _anchor = db.store({
       text: "user(admin)",
       entity: "user(admin)",
       key: null,

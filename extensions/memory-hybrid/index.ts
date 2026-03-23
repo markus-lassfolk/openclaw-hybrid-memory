@@ -271,7 +271,7 @@ import { ToolProposer } from "./services/tool-proposer.js";
 
 /** Wrappers for extracted helper functions that need access to per-instance config via runtimeRef. */
 function shouldCapture(text: string): boolean {
-  return shouldCaptureUtil(text, runtimeRef.value!.cfg.captureMaxChars, getMemoryTriggers());
+  return shouldCaptureUtil(text, runtimeRef.value?.cfg.captureMaxChars, getMemoryTriggers());
 }
 
 function detectCategory(text: string): MemoryCategory {
@@ -685,8 +685,7 @@ const memoryHybridPlugin = {
             // Cron not found -- log warning
             const weeklyExpr = cfg.maintenance?.cronReliability?.weeklyBackupCron ?? "0 4 * * 0";
             api.logger.warn?.(
-              `memory-hybrid: boot-check -- weekly backup cron not found. ` +
-                `Run 'hybrid-mem backup schedule' to install (${weeklyExpr}).`,
+              `memory-hybrid: boot-check -- weekly backup cron not found. Run 'hybrid-mem backup schedule' to install (${weeklyExpr}).`,
             );
           } catch (err) {
             // Non-fatal -- crontab may not be available (containers, read-only envs)

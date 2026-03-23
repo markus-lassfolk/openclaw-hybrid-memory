@@ -21,8 +21,8 @@ beforeEach(() => {
 
   // Apply a minimal base schema (core facts table + FTS virtual table only;
   // excludes FTS sync triggers and auxiliary indexes that FactsDB also creates)
-  db.exec(`PRAGMA journal_mode = WAL`);
-  db.exec(`PRAGMA foreign_keys = ON`);
+  db.exec("PRAGMA journal_mode = WAL");
+  db.exec("PRAGMA foreign_keys = ON");
   db.exec(`
     CREATE TABLE IF NOT EXISTS facts (
       id TEXT PRIMARY KEY,

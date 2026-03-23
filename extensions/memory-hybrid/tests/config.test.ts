@@ -260,7 +260,7 @@ describe("hybridConfigSchema.parse", () => {
   });
 
   it("throws when embedding.apiKey env: SecretRef references an unset env var", () => {
-    delete process.env.TEST_EMBED_KEY_UNSET_333;
+    process.env.TEST_EMBED_KEY_UNSET_333 = undefined;
     expect(() =>
       hybridConfigSchema.parse({
         embedding: { provider: "openai", apiKey: "env:TEST_EMBED_KEY_UNSET_333", model: "text-embedding-3-small" },
@@ -324,7 +324,7 @@ describe("hybridConfigSchema.parse", () => {
 
   // Finding 3: unresolvable SecretRef in fallback path warns instead of silently dropping
   it("warns when fallback embedding.apiKey SecretRef cannot be resolved", () => {
-    delete process.env.TEST_EMBED_FALLBACK_UNSET_333;
+    process.env.TEST_EMBED_FALLBACK_UNSET_333 = undefined;
     const warnSpy = vi.spyOn(pluginLogger, "warn").mockImplementation(() => {});
     try {
       const result = hybridConfigSchema.parse({
@@ -920,7 +920,7 @@ describe("hybridConfigSchema.parse", () => {
   });
 
   it("throws when distill.apiKey env: SecretRef for google embedding references an unset env var (Issue #344)", () => {
-    delete process.env.TEST_GEMINI_KEY_UNSET_344;
+    process.env.TEST_GEMINI_KEY_UNSET_344 = undefined;
     expect(() =>
       hybridConfigSchema.parse({
         embedding: { provider: "google", model: "text-embedding-004", dimensions: 768 },
@@ -965,7 +965,7 @@ describe("hybridConfigSchema.parse", () => {
   });
 
   it("throws when distill.apiKey ${VAR} template references an unset env var (Issue #373)", () => {
-    delete process.env.TEST_GEMINI_TMPL_UNSET_373;
+    process.env.TEST_GEMINI_TMPL_UNSET_373 = undefined;
     expect(() =>
       hybridConfigSchema.parse({
         embedding: { provider: "google", model: "text-embedding-004", dimensions: 768 },
@@ -975,7 +975,7 @@ describe("hybridConfigSchema.parse", () => {
   });
 
   it("resolves embedding.googleApiKey when distill.apiKey is a file: SecretRef (Issue #373)", () => {
-    const tmpFile = require("node:os").tmpdir() + "/test-gemini-key-373.txt";
+    const tmpFile = `${require("node:os").tmpdir()}/test-gemini-key-373.txt`;
     require("node:fs").writeFileSync(tmpFile, "AIzaSy-file-key-that-is-long-enough-to-pass\n");
     try {
       const result = hybridConfigSchema.parse({
@@ -1073,10 +1073,10 @@ describe("hybridConfigSchema.parse", () => {
       },
     });
     expect(result.llm).toBeDefined();
-    expect(result.llm!.default).toEqual(["gemini-2.0-flash", "gpt-4o-mini"]);
-    expect(result.llm!.heavy).toEqual(["gemini-2.0-flash-thinking", "gpt-4o"]);
-    expect(result.llm!.fallbackToDefault).toBe(true);
-    expect(result.llm!.fallbackModel).toBe("gpt-4o-mini");
+    expect(result.llm?.default).toEqual(["gemini-2.0-flash", "gpt-4o-mini"]);
+    expect(result.llm?.heavy).toEqual(["gemini-2.0-flash-thinking", "gpt-4o"]);
+    expect(result.llm?.fallbackToDefault).toBe(true);
+    expect(result.llm?.fallbackModel).toBe("gpt-4o-mini");
   });
 
   it("allows single-tier llm (only default or only heavy)", () => {
@@ -1085,15 +1085,15 @@ describe("hybridConfigSchema.parse", () => {
       llm: { default: [], heavy: ["gpt-4o"] },
     });
     expect(withHeavyOnly.llm).toBeDefined();
-    expect(withHeavyOnly.llm!.default).toEqual([]);
-    expect(withHeavyOnly.llm!.heavy).toEqual(["gpt-4o"]);
+    expect(withHeavyOnly.llm?.default).toEqual([]);
+    expect(withHeavyOnly.llm?.heavy).toEqual(["gpt-4o"]);
     const withDefaultOnly = hybridConfigSchema.parse({
       ...validBase,
       llm: { default: ["gpt-4o-mini"], heavy: [] },
     });
     expect(withDefaultOnly.llm).toBeDefined();
-    expect(withDefaultOnly.llm!.default).toEqual(["gpt-4o-mini"]);
-    expect(withDefaultOnly.llm!.heavy).toEqual([]);
+    expect(withDefaultOnly.llm?.default).toEqual(["gpt-4o-mini"]);
+    expect(withDefaultOnly.llm?.heavy).toEqual([]);
   });
 
   it("getLLMModelPreference does not append fallback when fallbackModel is unset", () => {
@@ -1660,7 +1660,7 @@ describe("hybridConfigSchema.parse", () => {
         expect(result.credentials.autoDetect).toBe(false);
         expect(result.credentials.autoCapture?.toolCalls).toBe(true);
       } finally {
-        delete process.env.OPENCLAW_CRED_KEY;
+        process.env.OPENCLAW_CRED_KEY = undefined;
       }
     });
 

@@ -165,7 +165,7 @@ export class PythonBridge {
         timer,
       });
       const msg = JSON.stringify({ jsonrpc: "2.0", id, method, params: params ?? {} });
-      this.proc!.stdin.write(msg + "\n");
+      this.proc?.stdin.write(`${msg}\n`);
     });
   }
 

@@ -14,11 +14,11 @@ function normalizeRuleLine(line: string): string {
  * Section is identified by exact match of ## <sectionTitle> (case-insensitive for title).
  */
 function findSectionStart(lines: string[], sectionTitle: string): number {
-  const needle = "## " + sectionTitle.trim();
+  const needle = `## ${sectionTitle.trim()}`;
   const lower = needle.toLowerCase();
   for (let i = 0; i < lines.length; i++) {
     const trimmed = lines[i].trim();
-    if (trimmed.toLowerCase() === lower || trimmed.toLowerCase().startsWith(lower + " ")) {
+    if (trimmed.toLowerCase() === lower || trimmed.toLowerCase().startsWith(`${lower} `)) {
       return i;
     }
   }
@@ -85,7 +85,7 @@ export function insertRulesUnderSection(
     return { inserted: 0, sectionExisted: sectionStart >= 0 };
   }
 
-  const bulletLines = toInsert.map((t) => "- " + t);
+  const bulletLines = toInsert.map((t) => `- ${t}`);
   let newContent: string;
 
   if (sectionStart >= 0) {
@@ -93,10 +93,10 @@ export function insertRulesUnderSection(
     const before = lines.slice(0, sectionEnd).join("\n");
     const after = lines.slice(sectionEnd).join("\n");
     const insertBlock = (before.trimEnd().endsWith("\n") ? "" : "\n") + bulletLines.join("\n") + (after ? "\n" : "");
-    newContent = before + insertBlock + (after ? "\n" + after : "");
+    newContent = before + insertBlock + (after ? `\n${after}` : "");
   } else {
-    const sectionHeader = "\n\n## " + sectionTitle + "\n\n";
-    newContent = (content.trimEnd() || defaultHeading) + sectionHeader + bulletLines.join("\n") + "\n";
+    const sectionHeader = `\n\n## ${sectionTitle}\n\n`;
+    newContent = `${(content.trimEnd() || defaultHeading) + sectionHeader + bulletLines.join("\n")}\n`;
   }
 
   writeFileSync(filePath, newContent, "utf-8");

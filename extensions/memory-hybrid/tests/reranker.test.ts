@@ -118,7 +118,7 @@ describe("buildRerankPrompt", () => {
     const fact = makeFact({ text: longText });
     const prompt = buildRerankPrompt("query", [fact]);
     // The snippet should be at most 200 chars (197 + "...")
-    expect(prompt).toContain("A".repeat(197) + "...");
+    expect(prompt).toContain(`${"A".repeat(197)}...`);
     expect(prompt).not.toContain("A".repeat(200));
   });
 

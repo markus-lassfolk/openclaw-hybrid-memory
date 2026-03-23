@@ -51,8 +51,8 @@ describe("converter registry", () => {
 
     const converter = getConverter("/path/to/file.testfmt", "hello");
     expect(converter).not.toBeNull();
-    const result = converter!.convert("hello", "/path/to/file.testfmt");
-    expect(result.metadata["source"]).toBe("custom-test-converter");
+    const result = converter?.convert("hello", "/path/to/file.testfmt");
+    expect(result.metadata.source).toBe("custom-test-converter");
   });
 
   it("returns registered YAML converter when one is registered", () => {
@@ -67,6 +67,6 @@ describe("converter registry", () => {
     registerConverter(yamlConverter);
     const converter = getConverter("/path/device.yml", "esphome:\n  name: x");
     expect(converter).not.toBeNull();
-    expect(converter!.convert("", "").metadata["source"]).toBe("registered-yaml");
+    expect(converter?.convert("", "").metadata.source).toBe("registered-yaml");
   });
 });

@@ -72,7 +72,7 @@ export const MAINTENANCE_CRON_JOBS: Array<
 > = [
   // Daily 02:00 | nightly-memory-sweep | prune → distill --days 3 → extract-daily
   {
-    pluginJobId: PLUGIN_JOB_ID_PREFIX + "nightly-distill",
+    pluginJobId: `${PLUGIN_JOB_ID_PREFIX}nightly-distill`,
     name: "nightly-memory-sweep",
     schedule: { kind: "cron", expr: "0 2 * * *" },
     channel: "system",
@@ -85,7 +85,7 @@ export const MAINTENANCE_CRON_JOBS: Array<
   },
   // Daily 02:30 | self-correction-analysis | self-correction-run
   {
-    pluginJobId: PLUGIN_JOB_ID_PREFIX + "self-correction-analysis",
+    pluginJobId: `${PLUGIN_JOB_ID_PREFIX}self-correction-analysis`,
     name: "self-correction-analysis",
     schedule: { kind: "cron", expr: "30 2 * * *" },
     channel: "system",
@@ -98,7 +98,7 @@ export const MAINTENANCE_CRON_JOBS: Array<
   },
   // Sunday 03:00 | weekly-reflection | reflect --verbose → reflect-rules → reflect-meta
   {
-    pluginJobId: PLUGIN_JOB_ID_PREFIX + "weekly-reflection",
+    pluginJobId: `${PLUGIN_JOB_ID_PREFIX}weekly-reflection`,
     name: "weekly-reflection",
     schedule: { kind: "cron", expr: "0 3 * * 0" },
     channel: "system",
@@ -111,7 +111,7 @@ export const MAINTENANCE_CRON_JOBS: Array<
   },
   // Sunday 04:00 | weekly-extract-procedures (nano = background model, avoids locking main AI)
   {
-    pluginJobId: PLUGIN_JOB_ID_PREFIX + "weekly-extract-procedures",
+    pluginJobId: `${PLUGIN_JOB_ID_PREFIX}weekly-extract-procedures`,
     name: "weekly-extract-procedures",
     schedule: { kind: "cron", expr: "0 4 * * 0" },
     channel: "system",
@@ -124,7 +124,7 @@ export const MAINTENANCE_CRON_JOBS: Array<
   },
   // Saturday 04:00 | weekly-deep-maintenance | compact → vectordb-optimize → scope promote
   {
-    pluginJobId: PLUGIN_JOB_ID_PREFIX + "weekly-deep-maintenance",
+    pluginJobId: `${PLUGIN_JOB_ID_PREFIX}weekly-deep-maintenance`,
     name: "weekly-deep-maintenance",
     schedule: { kind: "cron", expr: "0 4 * * 6" },
     channel: "system",
@@ -137,7 +137,7 @@ export const MAINTENANCE_CRON_JOBS: Array<
   },
   // Sunday 10:00 | weekly-persona-proposals | generate-proposals → notify if pending
   {
-    pluginJobId: PLUGIN_JOB_ID_PREFIX + "weekly-persona-proposals",
+    pluginJobId: `${PLUGIN_JOB_ID_PREFIX}weekly-persona-proposals`,
     name: "weekly-persona-proposals",
     schedule: { kind: "cron", expr: "0 10 * * 0" },
     channel: "system",
@@ -150,7 +150,7 @@ export const MAINTENANCE_CRON_JOBS: Array<
   },
   // 1st of month 05:00 | monthly-consolidation | consolidate → build-languages → backfill-decay
   {
-    pluginJobId: PLUGIN_JOB_ID_PREFIX + "monthly-consolidation",
+    pluginJobId: `${PLUGIN_JOB_ID_PREFIX}monthly-consolidation`,
     name: "monthly-consolidation",
     schedule: { kind: "cron", expr: "0 5 1 * *" },
     channel: "system",
@@ -164,7 +164,7 @@ export const MAINTENANCE_CRON_JOBS: Array<
   // Daily 02:45 | nightly-dream-cycle | dream-cycle (prune → consolidate → reflect)
   // Phase 2.7: Only install when nightlyCycle.enabled; off by default (Phase 1).
   {
-    pluginJobId: PLUGIN_JOB_ID_PREFIX + "nightly-dream-cycle",
+    pluginJobId: `${PLUGIN_JOB_ID_PREFIX}nightly-dream-cycle`,
     name: "nightly-dream-cycle",
     schedule: { kind: "cron", expr: "45 2 * * *" },
     channel: "system",
@@ -179,7 +179,7 @@ export const MAINTENANCE_CRON_JOBS: Array<
   // Every 4h | sensor-sweep | tier-1 + tier-2 data collection (no LLM, Issue #236)
   // Default schedule; overridden by cfg.sensorSweep.schedule during install/verify/upgrade.
   {
-    pluginJobId: PLUGIN_JOB_ID_PREFIX + "sensor-sweep",
+    pluginJobId: `${PLUGIN_JOB_ID_PREFIX}sensor-sweep`,
     name: "sensor-sweep",
     schedule: { kind: "cron", expr: "0 */4 * * *" },
     channel: "system",
@@ -213,22 +213,22 @@ function resolveCronJob(
 }
 
 export const LEGACY_JOB_MATCHERS: Record<string, (j: Record<string, unknown>) => boolean> = {
-  [PLUGIN_JOB_ID_PREFIX + "nightly-distill"]: (j) =>
+  [`${PLUGIN_JOB_ID_PREFIX}nightly-distill`]: (j) =>
     String(j.name ?? "")
       .toLowerCase()
       .includes("nightly-memory-sweep"),
-  [PLUGIN_JOB_ID_PREFIX + "weekly-reflection"]: (j) =>
+  [`${PLUGIN_JOB_ID_PREFIX}weekly-reflection`]: (j) =>
     /weekly-reflection|memory reflection|pattern synthesis/i.test(String(j.name ?? "")),
-  [PLUGIN_JOB_ID_PREFIX + "weekly-extract-procedures"]: (j) =>
+  [`${PLUGIN_JOB_ID_PREFIX}weekly-extract-procedures`]: (j) =>
     /extract-procedures|weekly-extract-procedures|procedural memory/i.test(String(j.name ?? "")),
-  [PLUGIN_JOB_ID_PREFIX + "self-correction-analysis"]: (j) =>
+  [`${PLUGIN_JOB_ID_PREFIX}self-correction-analysis`]: (j) =>
     /self-correction-analysis|self-correction\b/i.test(String(j.name ?? "")),
-  [PLUGIN_JOB_ID_PREFIX + "weekly-deep-maintenance"]: (j) =>
+  [`${PLUGIN_JOB_ID_PREFIX}weekly-deep-maintenance`]: (j) =>
     /weekly-deep-maintenance|deep maintenance/i.test(String(j.name ?? "")),
-  [PLUGIN_JOB_ID_PREFIX + "weekly-persona-proposals"]: (j) =>
+  [`${PLUGIN_JOB_ID_PREFIX}weekly-persona-proposals`]: (j) =>
     /weekly-persona-proposals|persona proposals/i.test(String(j.name ?? "")),
-  [PLUGIN_JOB_ID_PREFIX + "monthly-consolidation"]: (j) => /monthly-consolidation/i.test(String(j.name ?? "")),
-  [PLUGIN_JOB_ID_PREFIX + "nightly-dream-cycle"]: (j) => /nightly-dream-cycle|dream.cycle/i.test(String(j.name ?? "")),
+  [`${PLUGIN_JOB_ID_PREFIX}monthly-consolidation`]: (j) => /monthly-consolidation/i.test(String(j.name ?? "")),
+  [`${PLUGIN_JOB_ID_PREFIX}nightly-dream-cycle`]: (j) => /nightly-dream-cycle|dream.cycle/i.test(String(j.name ?? "")),
 };
 
 /**
@@ -293,7 +293,7 @@ export function ensureMaintenanceCronJobs(
       existing.featureGateDisabled === true
     ) {
       existing.enabled = true;
-      delete existing.featureGateDisabled;
+      existing.featureGateDisabled = undefined;
       jobsChanged = true;
     }
     if (!existing) {
@@ -584,7 +584,7 @@ export function runInstallForCli(opts: { dryRun: boolean }): InstallCliResult {
     }
   }
   const existingApiKey =
-    (config?.plugins as Record<string, unknown>)?.["entries"] &&
+    (config?.plugins as Record<string, unknown>)?.entries &&
     ((config.plugins as Record<string, unknown>).entries as Record<string, unknown>)?.[PLUGIN_ID] &&
     (
       ((config.plugins as Record<string, unknown>).entries as Record<string, unknown>)[PLUGIN_ID] as Record<
@@ -651,8 +651,8 @@ export function runInstallForCli(opts: { dryRun: boolean }): InstallCliResult {
           : undefined;
       const installScheduleOverrides: Record<string, string> = {};
       if (dreamCycleSchedule)
-        installScheduleOverrides[PLUGIN_JOB_ID_PREFIX + "nightly-dream-cycle"] = dreamCycleSchedule;
-      if (sensorSweepSchedule) installScheduleOverrides[PLUGIN_JOB_ID_PREFIX + "sensor-sweep"] = sensorSweepSchedule;
+        installScheduleOverrides[`${PLUGIN_JOB_ID_PREFIX}nightly-dream-cycle`] = dreamCycleSchedule;
+      if (sensorSweepSchedule) installScheduleOverrides[`${PLUGIN_JOB_ID_PREFIX}sensor-sweep`] = sensorSweepSchedule;
       ensureMaintenanceCronJobs(openclawDir, pluginConfig, {
         normalizeExisting: false,
         reEnableDisabled: false,
@@ -776,10 +776,10 @@ export async function runUpgradeForCli(ctx: HandlerContext, requestedVersion?: s
     const pluginConfig = getCronModelConfig(cfg);
     const scheduleOverrides: Record<string, string> = {};
     if (typeof cfg.nightlyCycle?.schedule === "string" && cfg.nightlyCycle.schedule.trim().length > 0) {
-      scheduleOverrides[PLUGIN_JOB_ID_PREFIX + "nightly-dream-cycle"] = cfg.nightlyCycle.schedule;
+      scheduleOverrides[`${PLUGIN_JOB_ID_PREFIX}nightly-dream-cycle`] = cfg.nightlyCycle.schedule;
     }
     if (typeof cfg.sensorSweep?.schedule === "string" && cfg.sensorSweep.schedule.trim().length > 0) {
-      scheduleOverrides[PLUGIN_JOB_ID_PREFIX + "sensor-sweep"] = cfg.sensorSweep.schedule;
+      scheduleOverrides[`${PLUGIN_JOB_ID_PREFIX}sensor-sweep`] = cfg.sensorSweep.schedule;
     }
     const { added, normalized } = ensureMaintenanceCronJobs(openclawDir, pluginConfig, {
       normalizeExisting: true,

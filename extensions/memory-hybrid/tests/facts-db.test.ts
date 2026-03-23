@@ -116,8 +116,8 @@ describe("FactsDB.getById", () => {
     });
     const retrieved = db.getById(stored.id);
     expect(retrieved).not.toBeNull();
-    expect(retrieved!.text).toBe("Test fact");
-    expect(retrieved!.id).toBe(stored.id);
+    expect(retrieved?.text).toBe("Test fact");
+    expect(retrieved?.id).toBe(stored.id);
   });
 
   it("returns null for non-existent id", () => {
@@ -824,7 +824,7 @@ describe("FactsDB bi-temporal", () => {
       supersedesId: old.id,
     });
     db.supersede(old.id, newer.id);
-    const supersessionTime = db.getById(old.id)!.validUntil!;
+    const supersessionTime = db.getById(old.id)?.validUntil!;
 
     const current = db.search("theme", 5);
     expect(current.some((r) => r.entry.id === newer.id)).toBe(true);
@@ -891,7 +891,7 @@ describe("FactsDB bi-temporal", () => {
       supersedesId: old.id,
     });
     db.supersede(old.id, newer.id);
-    const supersessionTime = db.getById(old.id)!.validUntil!;
+    const supersessionTime = db.getById(old.id)?.validUntil!;
 
     const at1500 = db.lookup("Entity", "key", undefined, { asOf: 1500 });
     expect(at1500.length).toBe(1);
@@ -1291,10 +1291,10 @@ describe("FactsDB checkpoint", () => {
 
     const restored = db.restoreCheckpoint();
     expect(restored).not.toBeNull();
-    expect(restored!.intent).toBe("Testing the checkpoint system");
-    expect(restored!.state).toBe("in_progress");
-    expect(restored!.expectedOutcome).toBe("all tests pass");
-    expect(restored!.workingFiles).toEqual(["index.ts", "config.ts"]);
+    expect(restored?.intent).toBe("Testing the checkpoint system");
+    expect(restored?.state).toBe("in_progress");
+    expect(restored?.expectedOutcome).toBe("all tests pass");
+    expect(restored?.workingFiles).toEqual(["index.ts", "config.ts"]);
   });
 
   it("returns null when no checkpoint exists", () => {
@@ -2275,8 +2275,8 @@ describe("FactsDB search reinforcement ranking", () => {
     expect(ids).toContain(a.id);
     expect(ids).toContain(b.id);
     expect(ids.indexOf(a.id)).toBeLessThan(ids.indexOf(b.id));
-    const scoreA = results.find((r) => r.entry.id === a.id)!.score;
-    const scoreB = results.find((r) => r.entry.id === b.id)!.score;
+    const scoreA = results.find((r) => r.entry.id === a.id)?.score;
+    const scoreB = results.find((r) => r.entry.id === b.id)?.score;
     expect(scoreA).toBeGreaterThanOrEqual(scoreB);
   });
 
@@ -2290,7 +2290,7 @@ describe("FactsDB search reinforcement ranking", () => {
       value: null,
       source: "conversation",
     });
-    const b = db.store({
+    const _b = db.store({
       text: "API auth setup",
       category: "fact",
       importance: 0.8,
@@ -2377,7 +2377,7 @@ describe("FactsDB.findByIdPrefix", () => {
     for (const id of ids) {
       const p = id.slice(0, 4);
       if (!prefixMap.has(p)) prefixMap.set(p, []);
-      prefixMap.get(p)!.push(id);
+      prefixMap.get(p)?.push(id);
     }
     const ambiguousPrefix = [...prefixMap.entries()].find(([, v]) => v.length >= 2);
     if (ambiguousPrefix) {
@@ -2562,7 +2562,7 @@ describe("FactsDB migration #237: access_count and last_accessed_at", () => {
     expect(updated?.lastAccessedAt).toBeDefined();
     expect(updated?.lastAccessedAt).not.toBeNull();
     // Must be strict UTC ISO 8601 format: YYYY-MM-DDTHH:MM:SSZ
-    expect(updated!.lastAccessedAt!).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/);
+    expect(updated?.lastAccessedAt!).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/);
   });
 
   it("refreshAccessedFacts increments access_count cumulatively", () => {

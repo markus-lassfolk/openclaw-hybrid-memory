@@ -270,7 +270,7 @@ describe("Error Reporter", () => {
     it("should scrub GitHub tokens and Bearer tokens", async () => {
       const { scrubString } = await import("../services/error-reporter.js");
 
-      expect(scrubString("Token: ghp_" + "a".repeat(36))).toBe("Token: [REDACTED]");
+      expect(scrubString(`Token: ghp_${"a".repeat(36)}`)).toBe("Token: [REDACTED]");
       expect(scrubString("Authorization: Bearer abc123.def456.ghi789")).toBe("Authorization: [REDACTED]");
     });
 

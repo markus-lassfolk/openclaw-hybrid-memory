@@ -75,8 +75,8 @@ function countFeedbackInWindow(
   try {
     // Praise from reinforcement_log (positive signal = reinforcement)
     const praiseQ = topic
-      ? `SELECT COUNT(*) as cnt FROM reinforcement_log WHERE occurred_at >= ? AND occurred_at <= ? AND (topic LIKE ?)`
-      : `SELECT COUNT(*) as cnt FROM reinforcement_log WHERE occurred_at >= ? AND occurred_at <= ?`;
+      ? "SELECT COUNT(*) as cnt FROM reinforcement_log WHERE occurred_at >= ? AND occurred_at <= ? AND (topic LIKE ?)"
+      : "SELECT COUNT(*) as cnt FROM reinforcement_log WHERE occurred_at >= ? AND occurred_at <= ?";
     const praiseRow = topic
       ? (db.prepare(praiseQ).get(windowStart, windowEnd, `%${topic}%`) as { cnt: number })
       : (db.prepare(praiseQ).get(windowStart, windowEnd) as { cnt: number });
@@ -88,8 +88,8 @@ function countFeedbackInWindow(
   try {
     // Implicit signals
     const implQ = topic
-      ? `SELECT polarity, COUNT(*) as cnt FROM implicit_signals WHERE created_at >= ? AND created_at <= ? AND (user_message LIKE ? OR agent_message LIKE ?) GROUP BY polarity`
-      : `SELECT polarity, COUNT(*) as cnt FROM implicit_signals WHERE created_at >= ? AND created_at <= ? GROUP BY polarity`;
+      ? "SELECT polarity, COUNT(*) as cnt FROM implicit_signals WHERE created_at >= ? AND created_at <= ? AND (user_message LIKE ? OR agent_message LIKE ?) GROUP BY polarity"
+      : "SELECT polarity, COUNT(*) as cnt FROM implicit_signals WHERE created_at >= ? AND created_at <= ? GROUP BY polarity";
     const implRows = topic
       ? (db.prepare(implQ).all(windowStart, windowEnd, `%${topic}%`, `%${topic}%`) as Array<{
           polarity: string;
@@ -227,7 +227,7 @@ export function runClosedLoopAnalysis(factsDb: FactsDB, config: Partial<ClosedLo
       if (m.effectScore < deprecateThreshold) {
         try {
           // Lower confidence to 0.1 to effectively deprecate the rule
-          db.prepare(`UPDATE facts SET importance = 0.1 WHERE id = ?`).run(row.id);
+          db.prepare("UPDATE facts SET importance = 0.1 WHERE id = ?").run(row.id);
           report.deprecated++;
         } catch (err) {
           capturePluginError(err instanceof Error ? err : new Error(String(err)), {
@@ -241,7 +241,7 @@ export function runClosedLoopAnalysis(factsDb: FactsDB, config: Partial<ClosedLo
       // Auto-boost proven rules
       if (m.effectScore > boostThreshold) {
         try {
-          db.prepare(`UPDATE facts SET importance = MIN(1.0, importance + 0.2) WHERE id = ?`).run(row.id);
+          db.prepare("UPDATE facts SET importance = MIN(1.0, importance + 0.2) WHERE id = ?").run(row.id);
           report.boosted++;
         } catch (err) {
           capturePluginError(err instanceof Error ? err : new Error(String(err)), {

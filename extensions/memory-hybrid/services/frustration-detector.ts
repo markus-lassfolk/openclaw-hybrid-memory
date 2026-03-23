@@ -308,7 +308,7 @@ export function detectFrustration(
   const avgUserLen = allUserContents.reduce((s, c) => s + c.length, 0) / Math.max(1, allUserContents.length);
 
   // Previous user messages for context (up to last 5)
-  const previousUserMsgs = allUserContents.slice(0, -1).reverse(); // reverse so index 0 = most recent previous
+  const _previousUserMsgs = allUserContents.slice(0, -1).reverse(); // reverse so index 0 = most recent previous
 
   const triggers: FrustrationTrigger[] = [];
 
@@ -316,7 +316,7 @@ export function detectFrustration(
   for (let i = 0; i < userTurns.length; i++) {
     const turn = userTurns[i]!;
     const turnsAgo = userTurns.length - 1 - i; // 0 = most recent
-    const recency = Math.pow(decayRate, turnsAgo);
+    const recency = decayRate ** turnsAgo;
 
     // Find the actual index of this turn in allUserTurns
     const turnIndexInAll = allUserTurns.indexOf(turn);
@@ -385,10 +385,10 @@ export function detectFrustration(
   // Apply decay to previous level if no fresh signals
   let level: number;
   if (triggers.length === 0) {
-    level = prevLevel * Math.pow(decayRate, turnsSinceLastReset);
+    level = prevLevel * decayRate ** turnsSinceLastReset;
   } else {
     // Blend new score with decayed previous (max of the two, with decay dampening)
-    const decayed = prevLevel * Math.pow(decayRate, 1);
+    const decayed = prevLevel * decayRate ** 1;
     level = Math.max(rawScore, decayed * 0.5 + rawScore * 0.5);
   }
   level = Math.min(1, Math.max(0, level));

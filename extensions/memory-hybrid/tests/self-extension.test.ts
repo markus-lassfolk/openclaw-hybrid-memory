@@ -121,7 +121,7 @@ describe("ToolProposalStore", () => {
 
     const fetched = proposalStore.getById(proposal.id);
     expect(fetched).not.toBeNull();
-    expect(fetched!.name).toBe("memory_bulk_recall");
+    expect(fetched?.name).toBe("memory_bulk_recall");
   });
 
   it("lists proposals", () => {
@@ -183,7 +183,7 @@ describe("ToolProposalStore", () => {
       implementationHint: "",
     });
     const updated = proposalStore.updateStatus(p.id, "approved");
-    expect(updated!.status).toBe("approved");
+    expect(updated?.status).toBe("approved");
   });
 
   it("updateStatus returns null for missing id", () => {
@@ -513,7 +513,7 @@ describe("ToolProposer — proposal lifecycle", () => {
     const proposer = new ToolProposer(detector, proposalStore, DEFAULT_CFG.selfExtension);
     const result = proposer.approveProposal(p.id);
     expect(result.success).toBe(true);
-    expect(result.proposal!.status).toBe("approved");
+    expect(result.proposal?.status).toBe("approved");
   });
 
   it("rejects a proposed proposal", () => {
@@ -530,7 +530,7 @@ describe("ToolProposer — proposal lifecycle", () => {
     const proposer = new ToolProposer(detector, proposalStore, DEFAULT_CFG.selfExtension);
     const result = proposer.rejectProposal(p.id);
     expect(result.success).toBe(true);
-    expect(result.proposal!.status).toBe("rejected");
+    expect(result.proposal?.status).toBe("rejected");
   });
 
   it("returns failure for non-existent proposal id", () => {

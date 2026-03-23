@@ -63,7 +63,7 @@ async function runInjection(
       api.logger.debug?.(
         `memory-hybrid: recall degraded (latency ${Date.now() - r.recallStartMs}ms > ${r.degradationMaxLatencyMs}ms)`,
       );
-      return "<!-- recall degraded: latency -->\n" + content;
+      return `<!-- recall degraded: latency -->\n${content}`;
     }
     return content;
   };
@@ -102,12 +102,12 @@ async function runInjection(
     for (let i = 0; i < list.length; i++) {
       const x = list[i];
       const title = x.entry.key
-        ? `${x.entry.entity ? x.entry.entity + ": " : ""}${x.entry.key}`
+        ? `${x.entry.entity ? `${x.entry.entity}: ` : ""}${x.entry.key}`
         : x.entry.summary || x.entry.text.slice(0, 60).trim() + (x.entry.text.length > 60 ? "…" : "");
       const tokenCost = estimateTokensForDisplay(x.entry.summary || x.entry.text);
       const pos = startPosition + indexEntries.length;
       const line = formatProgressiveIndexLine(x.entry.category, title, tokenCost, pos);
-      const lineTokens = estimateTokens(line + "\n");
+      const lineTokens = estimateTokens(`${line}\n`);
       if (usedTokens + lineTokens > cap) break;
       indexEntries.push({ line, id: x.entry.id, category: x.entry.category, position: pos });
       usedTokens += lineTokens;
@@ -151,9 +151,9 @@ async function runInjection(
     for (const x of pinned) {
       let text = useSummaryInInjection && x.entry.summary ? x.entry.summary : x.entry.text;
       if (maxPerMemoryChars > 0 && text.length > maxPerMemoryChars)
-        text = text.slice(0, maxPerMemoryChars).trim() + "…";
+        text = `${text.slice(0, maxPerMemoryChars).trim()}…`;
       const line = `- [${x.backend}/${x.entry.category}] ${text}`;
-      const lineTokens = estimateTokens(line + "\n");
+      const lineTokens = estimateTokens(`${line}\n`);
       if (pinnedTokens + lineTokens > pinnedBudget) break;
       pinnedPart.push(line);
       pinnedTokens += lineTokens;
@@ -257,14 +257,14 @@ async function runInjection(
   const injectedIds: string[] = [];
   for (const x of candidates) {
     let text = useSummaryInInjection && x.entry.summary ? x.entry.summary : x.entry.text;
-    if (maxPerMemoryChars > 0 && text.length > maxPerMemoryChars) text = text.slice(0, maxPerMemoryChars).trim() + "…";
+    if (maxPerMemoryChars > 0 && text.length > maxPerMemoryChars) text = `${text.slice(0, maxPerMemoryChars).trim()}…`;
     const line =
       injectionFormat === "minimal"
         ? `- ${text}`
         : injectionFormat === "short"
           ? `- ${x.entry.category}: ${text}`
           : `- [${x.backend}/${x.entry.category}] ${text}`;
-    const lineTokens = estimateTokens(line + "\n");
+    const lineTokens = estimateTokens(`${line}\n`);
     if (usedTokens + lineTokens > maxTokens) break;
     lines.push(line);
     injectedIds.push(x.entry.id);
@@ -292,7 +292,7 @@ async function runInjection(
       .map((x) => {
         let text = useSummaryInInjection && x.entry.summary ? x.entry.summary : x.entry.text;
         if (maxPerMemoryChars > 0 && text.length > maxPerMemoryChars)
-          text = text.slice(0, maxPerMemoryChars).trim() + "…";
+          text = `${text.slice(0, maxPerMemoryChars).trim()}…`;
         return injectionFormat === "minimal"
           ? `- ${text}`
           : injectionFormat === "short"

@@ -32,7 +32,7 @@ describe("tool installers", () => {
     const memoryCoreInstaller = toolInstallers.find((installer) => installer.id === "memoryCore");
     expect(memoryCoreInstaller).toBeTruthy();
 
-    const selected = memoryCoreInstaller!.selectContext(
+    const selected = memoryCoreInstaller?.selectContext(
       {
         factsDb: { kind: "facts" },
         vectorDb: { kind: "vectors" },

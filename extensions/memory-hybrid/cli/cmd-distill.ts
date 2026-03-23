@@ -171,7 +171,7 @@ export function runRecordDistillForCli(ctx: HandlerContext): RecordDistillResult
   const path = join(memoryDir, ".distill_last_run");
   const ts = new Date().toISOString();
   try {
-    writeFileSync(path, ts + "\n", "utf-8");
+    writeFileSync(path, `${ts}\n`, "utf-8");
     return { path, timestamp: ts };
   } catch (err) {
     capturePluginError(err as Error, { subsystem: "cli", operation: "runRecordDistillForCli" });
@@ -319,7 +319,7 @@ export async function runDistillForCli(
     const progress = createProgressReporter(sink, batches.length, "Distilling sessions");
     for (let b = 0; b < batches.length; b++) {
       progress.update(b + 1);
-      const userContent = distillPrompt + "\n\n" + batches[b];
+      const userContent = `${distillPrompt}\n\n${batches[b]}`;
       try {
         const content = await chatCompleteWithRetry({
           model,

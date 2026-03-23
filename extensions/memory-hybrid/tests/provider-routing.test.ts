@@ -117,9 +117,9 @@ describe("MiniMax provider routing — direct API key", () => {
     origGatewayToken = process.env.OPENCLAW_GATEWAY_TOKEN;
     origMinimaxApiKey = process.env.MINIMAX_API_KEY;
     // Unset gateway env vars to ensure direct routing
-    delete process.env.OPENCLAW_GATEWAY_PORT;
-    delete process.env.OPENCLAW_GATEWAY_TOKEN;
-    delete process.env.MINIMAX_API_KEY;
+    process.env.OPENCLAW_GATEWAY_PORT = undefined;
+    process.env.OPENCLAW_GATEWAY_TOKEN = undefined;
+    process.env.MINIMAX_API_KEY = undefined;
   });
 
   afterEach(() => {
@@ -165,8 +165,8 @@ describe("MiniMax provider routing — direct API key", () => {
       ([args]) => (args as Record<string, unknown>)?.baseURL === MINIMAX_BASE_URL,
     );
     expect(minimaxCall).toBeDefined();
-    expect((minimaxCall![0] as Record<string, unknown>).apiKey).toBe("sk-cp-minimax-test-key-1234");
-    expect((minimaxCall![0] as Record<string, unknown>).baseURL).toBe("https://api.minimax.io/v1");
+    expect((minimaxCall?.[0] as Record<string, unknown>).apiKey).toBe("sk-cp-minimax-test-key-1234");
+    expect((minimaxCall?.[0] as Record<string, unknown>).baseURL).toBe("https://api.minimax.io/v1");
   });
 
   it("routes to custom baseURL when explicitly overridden in llm.providers.minimax", async () => {
@@ -195,7 +195,7 @@ describe("MiniMax provider routing — direct API key", () => {
       ([args]) => (args as Record<string, unknown>)?.baseURL === customURL,
     );
     expect(minimaxCall).toBeDefined();
-    expect((minimaxCall![0] as Record<string, unknown>).baseURL).toBe(customURL);
+    expect((minimaxCall?.[0] as Record<string, unknown>).baseURL).toBe(customURL);
   });
 
   it("uses MINIMAX_API_KEY env var as fallback when no apiKey in config", async () => {
@@ -222,7 +222,7 @@ describe("MiniMax provider routing — direct API key", () => {
       ([args]) => (args as Record<string, unknown>)?.baseURL === MINIMAX_BASE_URL,
     );
     expect(minimaxCall).toBeDefined();
-    expect((minimaxCall![0] as Record<string, unknown>).apiKey).toBe("sk-cp-from-env-123456");
+    expect((minimaxCall?.[0] as Record<string, unknown>).apiKey).toBe("sk-cp-from-env-123456");
   });
 
   it("throws UnconfiguredProviderError when no apiKey is available for minimax", async () => {
@@ -242,7 +242,7 @@ describe("MiniMax provider routing — direct API key", () => {
     // resolveClient throws synchronously for unconfigured providers,
     // so we test with a sync toThrow matcher (not rejects)
     expect(() =>
-      ctx!.openai.chat.completions.create({
+      ctx?.openai.chat.completions.create({
         model: "minimax/MiniMax-M2.5",
         messages: [{ role: "user", content: "hello" }],
       }),
@@ -315,7 +315,7 @@ describe("MiniMax provider routing — direct API key", () => {
       ([args]) => (args as Record<string, unknown>)?.baseURL === MINIMAX_BASE_URL,
     );
     expect(minimaxCall).toBeDefined();
-    expect((minimaxCall![0] as Record<string, unknown>).apiKey).toBe("sk-cp-bare-prefix-test");
+    expect((minimaxCall?.[0] as Record<string, unknown>).apiKey).toBe("sk-cp-bare-prefix-test");
   });
 
   it("normalizes Ollama-style 'minimax-m2.5:cloud' to MiniMax-M2.5 and routes to MINIMAX_BASE_URL (issue #400)", async () => {
@@ -348,7 +348,7 @@ describe("MiniMax provider routing — direct API key", () => {
       ([args]) => (args as Record<string, unknown>)?.baseURL === MINIMAX_BASE_URL,
     );
     expect(minimaxCall).toBeDefined();
-    expect((minimaxCall![0] as Record<string, unknown>).apiKey).toBe("sk-cp-issue400-test");
+    expect((minimaxCall?.[0] as Record<string, unknown>).apiKey).toBe("sk-cp-issue400-test");
 
     // The model sent to the MiniMax API must be the canonical "MiniMax-M2.5", not "minimax-m2.5:cloud"
     const minimaxClientIdx = MockOpenAI.mock.calls.findIndex(
@@ -384,9 +384,9 @@ describe("MiniMax provider routing — gateway key auto-merge", () => {
     origGatewayPort = process.env.OPENCLAW_GATEWAY_PORT;
     origGatewayToken = process.env.OPENCLAW_GATEWAY_TOKEN;
     origMinimaxApiKey = process.env.MINIMAX_API_KEY;
-    delete process.env.OPENCLAW_GATEWAY_PORT;
-    delete process.env.OPENCLAW_GATEWAY_TOKEN;
-    delete process.env.MINIMAX_API_KEY;
+    process.env.OPENCLAW_GATEWAY_PORT = undefined;
+    process.env.OPENCLAW_GATEWAY_TOKEN = undefined;
+    process.env.MINIMAX_API_KEY = undefined;
   });
 
   afterEach(() => {
@@ -431,7 +431,7 @@ describe("MiniMax provider routing — gateway key auto-merge", () => {
       ([args]) => (args as Record<string, unknown>)?.baseURL === MINIMAX_BASE_URL,
     );
     expect(minimaxCall).toBeDefined();
-    expect((minimaxCall![0] as Record<string, unknown>).baseURL).toBe(MINIMAX_BASE_URL);
+    expect((minimaxCall?.[0] as Record<string, unknown>).baseURL).toBe(MINIMAX_BASE_URL);
 
     // Should NOT have created a client without baseURL for the gateway's minimax key
     const wrongCall = MockOpenAI.mock.calls.find(
@@ -717,9 +717,9 @@ describe("OpenRouter provider routing (issue #380)", () => {
     origOpenrouterApiKey = process.env.OPENROUTER_API_KEY;
     origGatewayPort = process.env.OPENCLAW_GATEWAY_PORT;
     origGatewayToken = process.env.OPENCLAW_GATEWAY_TOKEN;
-    delete process.env.OPENROUTER_API_KEY;
-    delete process.env.OPENCLAW_GATEWAY_PORT;
-    delete process.env.OPENCLAW_GATEWAY_TOKEN;
+    process.env.OPENROUTER_API_KEY = undefined;
+    process.env.OPENCLAW_GATEWAY_PORT = undefined;
+    process.env.OPENCLAW_GATEWAY_TOKEN = undefined;
   });
 
   afterEach(() => {
@@ -765,7 +765,7 @@ describe("OpenRouter provider routing (issue #380)", () => {
       ([args]) => (args as Record<string, unknown>)?.baseURL === OPENROUTER_BASE_URL,
     );
     expect(openrouterCall).toBeDefined();
-    expect((openrouterCall![0] as Record<string, unknown>).apiKey).toBe("sk-or-test-key-1234");
+    expect((openrouterCall?.[0] as Record<string, unknown>).apiKey).toBe("sk-or-test-key-1234");
   });
 
   it("strips the openrouter/ prefix and sends bare model name to the API", async () => {
@@ -832,7 +832,7 @@ describe("OpenRouter provider routing (issue #380)", () => {
       ([args]) => (args as Record<string, unknown>)?.baseURL === OPENROUTER_BASE_URL,
     );
     expect(openrouterCall).toBeDefined();
-    expect((openrouterCall![0] as Record<string, unknown>).apiKey).toBe("sk-or-from-env-key");
+    expect((openrouterCall?.[0] as Record<string, unknown>).apiKey).toBe("sk-or-from-env-key");
   });
 
   it("throws UnconfiguredProviderError when no apiKey is available for openrouter", async () => {
@@ -850,7 +850,7 @@ describe("OpenRouter provider routing (issue #380)", () => {
     ctx = initializeDatabases(cfg, api as never);
 
     expect(() =>
-      ctx!.openai.chat.completions.create({
+      ctx?.openai.chat.completions.create({
         model: "openrouter/anthropic/claude-3.5-sonnet",
         messages: [{ role: "user", content: "hello" }],
       }),
@@ -905,9 +905,9 @@ describe("Anthropic provider routing — issue #386", () => {
     origAnthropicApiKey = process.env.ANTHROPIC_API_KEY;
     origGatewayPort = process.env.OPENCLAW_GATEWAY_PORT;
     origGatewayToken = process.env.OPENCLAW_GATEWAY_TOKEN;
-    delete process.env.ANTHROPIC_API_KEY;
-    delete process.env.OPENCLAW_GATEWAY_PORT;
-    delete process.env.OPENCLAW_GATEWAY_TOKEN;
+    process.env.ANTHROPIC_API_KEY = undefined;
+    process.env.OPENCLAW_GATEWAY_PORT = undefined;
+    process.env.OPENCLAW_GATEWAY_TOKEN = undefined;
   });
 
   afterEach(() => {
@@ -944,7 +944,7 @@ describe("Anthropic provider routing — issue #386", () => {
       ([args]) => (args as Record<string, unknown>)?.baseURL === ANTHROPIC_BASE_URL,
     );
     expect(anthropicCall).toBeDefined();
-    expect((anthropicCall![0] as Record<string, unknown>).apiKey).toBe("sk-ant-direct-key-1234567890");
+    expect((anthropicCall?.[0] as Record<string, unknown>).apiKey).toBe("sk-ant-direct-key-1234567890");
   });
 
   it("picks up Anthropic key from api.config.models.providers (standard gateway path)", async () => {
@@ -978,7 +978,7 @@ describe("Anthropic provider routing — issue #386", () => {
       ([args]) => (args as Record<string, unknown>)?.baseURL === ANTHROPIC_BASE_URL,
     );
     expect(anthropicCall).toBeDefined();
-    expect((anthropicCall![0] as Record<string, unknown>).apiKey).toBe("sk-ant-from-gateway-models-providers");
+    expect((anthropicCall?.[0] as Record<string, unknown>).apiKey).toBe("sk-ant-from-gateway-models-providers");
   });
 
   it("picks up Anthropic key from api.config.providers (top-level gateway path, issue #386)", async () => {
@@ -1011,7 +1011,7 @@ describe("Anthropic provider routing — issue #386", () => {
       ([args]) => (args as Record<string, unknown>)?.baseURL === ANTHROPIC_BASE_URL,
     );
     expect(anthropicCall).toBeDefined();
-    expect((anthropicCall![0] as Record<string, unknown>).apiKey).toBe("sk-ant-from-gateway-top-level-providers");
+    expect((anthropicCall?.[0] as Record<string, unknown>).apiKey).toBe("sk-ant-from-gateway-top-level-providers");
   });
 
   it("gateway key fills in when plugin provider entry has undefined apiKey (issue #386 stale placeholder)", async () => {
@@ -1048,7 +1048,7 @@ describe("Anthropic provider routing — issue #386", () => {
       ([args]) => (args as Record<string, unknown>)?.baseURL === ANTHROPIC_BASE_URL,
     );
     expect(anthropicCall).toBeDefined();
-    expect((anthropicCall![0] as Record<string, unknown>).apiKey).toBe("sk-ant-gateway-fills-empty-plugin-entry");
+    expect((anthropicCall?.[0] as Record<string, unknown>).apiKey).toBe("sk-ant-gateway-fills-empty-plugin-entry");
   });
 
   it("throws UnconfiguredProviderError when no Anthropic key is found anywhere", async () => {
@@ -1063,7 +1063,7 @@ describe("Anthropic provider routing — issue #386", () => {
     ctx = initializeDatabases(cfg, api as never);
 
     expect(() =>
-      ctx!.openai.chat.completions.create({
+      ctx?.openai.chat.completions.create({
         model: "anthropic/claude-sonnet-4-6",
         messages: [{ role: "user", content: "hello" }],
       }),
@@ -1091,9 +1091,9 @@ describe("OpenRouter gateway merge — issue #392", () => {
     origOpenrouterApiKey = process.env.OPENROUTER_API_KEY;
     origGatewayPort = process.env.OPENCLAW_GATEWAY_PORT;
     origGatewayToken = process.env.OPENCLAW_GATEWAY_TOKEN;
-    delete process.env.OPENROUTER_API_KEY;
-    delete process.env.OPENCLAW_GATEWAY_PORT;
-    delete process.env.OPENCLAW_GATEWAY_TOKEN;
+    process.env.OPENROUTER_API_KEY = undefined;
+    process.env.OPENCLAW_GATEWAY_PORT = undefined;
+    process.env.OPENCLAW_GATEWAY_TOKEN = undefined;
   });
 
   afterEach(() => {
@@ -1141,7 +1141,7 @@ describe("OpenRouter gateway merge — issue #392", () => {
       ([args]) => (args as Record<string, unknown>)?.baseURL === OPENROUTER_BASE_URL,
     );
     expect(openrouterCall).toBeDefined();
-    expect((openrouterCall![0] as Record<string, unknown>).apiKey).toBe("sk-or-from-gateway-models-providers");
+    expect((openrouterCall?.[0] as Record<string, unknown>).apiKey).toBe("sk-or-from-gateway-models-providers");
   });
 
   it("picks up OpenRouter key from api.config.providers (top-level gateway path)", async () => {
@@ -1174,7 +1174,7 @@ describe("OpenRouter gateway merge — issue #392", () => {
       ([args]) => (args as Record<string, unknown>)?.baseURL === OPENROUTER_BASE_URL,
     );
     expect(openrouterCall).toBeDefined();
-    expect((openrouterCall![0] as Record<string, unknown>).apiKey).toBe("sk-or-from-gateway-top-level-providers");
+    expect((openrouterCall?.[0] as Record<string, unknown>).apiKey).toBe("sk-or-from-gateway-top-level-providers");
   });
 
   it("gateway key fills in when plugin provider entry has undefined apiKey (stale placeholder)", async () => {
@@ -1211,7 +1211,7 @@ describe("OpenRouter gateway merge — issue #392", () => {
       ([args]) => (args as Record<string, unknown>)?.baseURL === OPENROUTER_BASE_URL,
     );
     expect(openrouterCall).toBeDefined();
-    expect((openrouterCall![0] as Record<string, unknown>).apiKey).toBe("sk-or-gateway-fills-empty-plugin-entry");
+    expect((openrouterCall?.[0] as Record<string, unknown>).apiKey).toBe("sk-or-gateway-fills-empty-plugin-entry");
   });
 
   it("strips openrouter/ prefix correctly for multi-segment models like openrouter/qwen/qwen3-14b", async () => {
@@ -1269,8 +1269,8 @@ describe("gateway model auto-derivation — unknown provider prefix filter", () 
     ctx = undefined;
     origGatewayPort = process.env.OPENCLAW_GATEWAY_PORT;
     origGatewayToken = process.env.OPENCLAW_GATEWAY_TOKEN;
-    delete process.env.OPENCLAW_GATEWAY_PORT;
-    delete process.env.OPENCLAW_GATEWAY_TOKEN;
+    process.env.OPENCLAW_GATEWAY_PORT = undefined;
+    process.env.OPENCLAW_GATEWAY_TOKEN = undefined;
   });
 
   afterEach(() => {

@@ -87,7 +87,7 @@ function stripOllamaPrefix(model: string): string {
  * Ollama exposes an OpenAI-compatible `/v1` endpoint.
  */
 function createOllamaClient(endpoint: string): OpenAI {
-  const baseURL = endpoint.replace(/\/+$/, "") + "/v1";
+  const baseURL = `${endpoint.replace(/\/+$/, "")}/v1`;
   return new OpenAI({
     apiKey: "ollama", // Ollama does not require a real API key
     baseURL,
@@ -128,7 +128,7 @@ export async function extractSessionSample(filePath: string, maxChars: number): 
         if (Array.isArray(content)) {
           for (const block of content as Array<{ type?: string; text?: string }>) {
             if (block?.type === "text" && typeof block.text === "string") {
-              text += block.text + " ";
+              text += `${block.text} `;
             }
           }
         } else if (typeof content === "string") {

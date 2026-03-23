@@ -23,7 +23,8 @@ export function buildToolScopeFilter(
   const trustParams = config.multiAgent.trustToolScopeParams === true;
   if ((userId || agentId || sessionId) && trustParams) {
     return { userId: userId ?? null, agentId: agentId ?? null, sessionId: sessionId ?? null };
-  } else if ((userId || agentId || sessionId) && !trustParams) {
+  }
+  if ((userId || agentId || sessionId) && !trustParams) {
     // Debug: Log when explicit scope params are ignored for security
     addOperationBreadcrumb("scope-filter", "params-ignored-security");
   }
@@ -34,7 +35,6 @@ export function buildToolScopeFilter(
       agentId: currentAgent,
       sessionId: config.autoRecall.scopeFilter?.sessionId ?? null,
     };
-  } else {
-    return undefined;
   }
+  return undefined;
 }

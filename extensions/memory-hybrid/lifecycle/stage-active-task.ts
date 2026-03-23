@@ -36,10 +36,9 @@ export function registerActiveTaskInjection(
       const context = [injection, staleWarningBlock].filter(Boolean).join("\n\n");
       const staleCount = taskFile.active.filter((t) => t.stale).length;
       api.logger.info?.(
-        `memory-hybrid: injecting ${taskFile.active.length} active task(s) from ACTIVE-TASK.md` +
-          (staleCount > 0 ? ` (${staleCount} stale)` : ""),
+        `memory-hybrid: injecting ${taskFile.active.length} active task(s) from ACTIVE-TASK.md${staleCount > 0 ? ` (${staleCount} stale)` : ""}`,
       );
-      return { prependContext: context + "\n\n" };
+      return { prependContext: `${context}\n\n` };
     } catch (err) {
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
         operation: "active-task-injection",

@@ -59,7 +59,7 @@ export function buildHealthReport(
   const nowSec = Math.floor(Date.now() / 1000);
 
   // Total facts (all rows)
-  const totalRow = db.prepare(`SELECT COUNT(*) AS cnt FROM facts`).get() as { cnt: number };
+  const totalRow = db.prepare("SELECT COUNT(*) AS cnt FROM facts").get() as { cnt: number };
   const totalFacts = totalRow.cnt;
 
   // Active facts (not superseded, not expired)
@@ -97,7 +97,7 @@ export function buildHealthReport(
 
   // Decay class distribution (all facts)
   const decayRows = db
-    .prepare(`SELECT decay_class, COUNT(*) AS cnt FROM facts GROUP BY decay_class ORDER BY cnt DESC`)
+    .prepare("SELECT decay_class, COUNT(*) AS cnt FROM facts GROUP BY decay_class ORDER BY cnt DESC")
     .all() as Array<{ decay_class: string; cnt: number }>;
   const decayClassDistribution: Record<string, number> = {};
   for (const row of decayRows) {
@@ -187,7 +187,7 @@ export function buildHealthReport(
   const retrievalHitRate7d = recallTotal > 0 ? Math.round((recallHits / recallTotal) * 1000) / 1000 : 0;
 
   // Unresolved contradictions
-  const contradictionRow = db.prepare(`SELECT COUNT(*) AS cnt FROM contradictions WHERE resolved = 0`).get() as {
+  const contradictionRow = db.prepare("SELECT COUNT(*) AS cnt FROM contradictions WHERE resolved = 0").get() as {
     cnt: number;
   };
   const unresolvedContradictions = contradictionRow.cnt;
@@ -213,15 +213,15 @@ export function buildHealthReport(
 
   // Last prune: derived from MAX(valid_until) of superseded facts (best approximation)
   const pruneRow = db
-    .prepare(`SELECT MAX(valid_until) AS last_at FROM facts WHERE valid_until IS NOT NULL AND valid_until <= ?`)
+    .prepare("SELECT MAX(valid_until) AS last_at FROM facts WHERE valid_until IS NOT NULL AND valid_until <= ?")
     .get(nowSec) as { last_at: number | null };
   const lastPruneAt = pruneRow.last_at != null ? new Date(pruneRow.last_at * 1000).toISOString() : null;
 
   // Storage sizes
   const sqliteSize = getFileSize(resolvedSqlitePath);
   // Also count WAL / SHM sidecars
-  const sqliteWalSize = getFileSize(resolvedSqlitePath + "-wal");
-  const sqliteShmSize = getFileSize(resolvedSqlitePath + "-shm");
+  const sqliteWalSize = getFileSize(`${resolvedSqlitePath}-wal`);
+  const sqliteShmSize = getFileSize(`${resolvedSqlitePath}-shm`);
   const totalSqliteSize = sqliteSize + sqliteWalSize + sqliteShmSize;
   const lanceSize = getDirSizeSync(resolvedLancePath);
 
@@ -276,16 +276,16 @@ export function registerHealthTools(ctx: HealthPluginContext, api: ClawdbotPlugi
 
           const lines: string[] = [
             `Memory Health Dashboard (${report.generatedAt})`,
-            ``,
+            "",
             `Facts: ${report.activeFacts} active / ${report.totalFacts} total (${report.supersededFacts} superseded)`,
             `Stale facts (confidence < 0.3, non-permanent): ${report.staleFacts}`,
             `Orphan facts (no links): ${report.orphanFacts}`,
             `Avg confidence: ${report.avgConfidence.toFixed(3)}`,
             `Retrieval hit rate (7d): ${(report.retrievalHitRate7d * 100).toFixed(1)}%`,
             `Unresolved contradictions: ${report.unresolvedContradictions}`,
-            ``,
+            "",
             `Links: ${report.totalLinks} total, ${report.avgLinksPerFact.toFixed(2)} avg per active fact`,
-            ``,
+            "",
             `Categories: ${Object.entries(report.categoryDistribution)
               .map(([k, v]) => `${k}=${v}`)
               .join(", ")}`,
@@ -300,10 +300,10 @@ export function registerHealthTools(ctx: HealthPluginContext, api: ClawdbotPlugi
                 ? report.topClusters.map((c) => `${c.label}(${c.factCount})`).join(", ")
                 : "none"
             }`,
-            ``,
+            "",
             `Last reflection: ${report.lastReflectionAt ?? "never"}`,
             `Last prune: ${report.lastPruneAt ?? "none recorded"}`,
-            ``,
+            "",
             `Storage: SQLite ${(report.storageSizeBytes.sqlite / 1024).toFixed(1)} KB, ` +
               `LanceDB ${(report.storageSizeBytes.lance / 1024).toFixed(1)} KB, ` +
               `Total ${(report.storageSizeBytes.total / 1024).toFixed(1)} KB`,

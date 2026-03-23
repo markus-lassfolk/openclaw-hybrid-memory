@@ -185,7 +185,7 @@ export function registerApitapTools(ctx: ApitapToolsContext, api: ClawdbotPlugin
           url,
           cfg,
           apitapStore,
-          `ApiTap capture complete`,
+          "ApiTap capture complete",
           "",
         );
 
@@ -274,7 +274,7 @@ export function registerApitapTools(ctx: ApitapToolsContext, api: ClawdbotPlugin
           url,
           cfg,
           apitapStore,
-          `ApiTap peek complete`,
+          "ApiTap peek complete",
           "No API endpoints discovered. Try apitap_capture for a more thorough scan.",
         );
 
@@ -374,7 +374,7 @@ export function registerApitapTools(ctx: ApitapToolsContext, api: ClawdbotPlugin
           );
         });
 
-        const summary = `Found ${endpoints.length} endpoint(s):\n\n` + lines.join("\n\n");
+        const summary = `Found ${endpoints.length} endpoint(s):\n\n${lines.join("\n\n")}`;
 
         return {
           content: [{ type: "text", text: summary }],

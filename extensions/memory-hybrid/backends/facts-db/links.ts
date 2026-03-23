@@ -15,7 +15,7 @@ export function createLink(
   const id = randomUUID();
   const now = Math.floor(Date.now() / 1000);
   db.prepare(
-    `INSERT INTO memory_links (id, source_fact_id, target_fact_id, link_type, strength, created_at) VALUES (?, ?, ?, ?, ?, ?)`,
+    "INSERT INTO memory_links (id, source_fact_id, target_fact_id, link_type, strength, created_at) VALUES (?, ?, ?, ?, ?, ?)",
   ).run(id, sourceFactId, targetFactId, linkType, Math.max(0, Math.min(1, strength)), now);
   return id;
 }
@@ -37,7 +37,7 @@ export function createOrStrengthenRelatedLink(
 
   const newStrength = Math.min(1, (existing?.strength ?? 0) + deltaStrength);
   if (existing) {
-    db.prepare(`UPDATE memory_links SET strength = ? WHERE id = ?`).run(newStrength, existing.id);
+    db.prepare("UPDATE memory_links SET strength = ? WHERE id = ?").run(newStrength, existing.id);
   } else {
     createLink(db, source, target, "RELATED_TO", newStrength);
   }
@@ -48,7 +48,7 @@ export function strengthenRelatedLinksBatch(db: DatabaseSync, pairs: [string, st
   const selectStmt = db.prepare(
     `SELECT id, strength FROM memory_links WHERE source_fact_id = ? AND target_fact_id = ? AND link_type = 'RELATED_TO'`,
   );
-  const updateStmt = db.prepare(`UPDATE memory_links SET strength = ? WHERE id = ?`);
+  const updateStmt = db.prepare("UPDATE memory_links SET strength = ? WHERE id = ?");
   const insertStmt = db.prepare(
     `INSERT INTO memory_links (id, source_fact_id, target_fact_id, link_type, strength, created_at) VALUES (?, ?, ?, 'RELATED_TO', ?, ?)`,
   );
@@ -74,7 +74,7 @@ export function getLinksFrom(
   factId: string,
 ): Array<{ id: string; targetFactId: string; linkType: string; strength: number }> {
   const rows = db
-    .prepare(`SELECT id, target_fact_id, link_type, strength FROM memory_links WHERE source_fact_id = ?`)
+    .prepare("SELECT id, target_fact_id, link_type, strength FROM memory_links WHERE source_fact_id = ?")
     .all(factId) as Array<{ id: string; target_fact_id: string; link_type: string; strength: number }>;
   return rows.map((r) => ({
     id: r.id,
@@ -89,7 +89,7 @@ export function getLinksTo(
   factId: string,
 ): Array<{ id: string; sourceFactId: string; linkType: string; strength: number }> {
   const rows = db
-    .prepare(`SELECT id, source_fact_id, link_type, strength FROM memory_links WHERE target_fact_id = ?`)
+    .prepare("SELECT id, source_fact_id, link_type, strength FROM memory_links WHERE target_fact_id = ?")
     .all(factId) as Array<{ id: string; source_fact_id: string; link_type: string; strength: number }>;
   return rows.map((r) => ({
     id: r.id,

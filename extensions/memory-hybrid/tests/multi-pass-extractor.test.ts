@@ -135,7 +135,7 @@ describe("parseCandidateFacts", () => {
   });
 
   it("handles markdown code fences", () => {
-    const json = "```json\n" + JSON.stringify([{ text: "Fact B", category: "other", importance: 0.5 }]) + "\n```";
+    const json = `\`\`\`json\n${JSON.stringify([{ text: "Fact B", category: "other", importance: 0.5 }])}\n\`\`\``;
     const facts = parseCandidateFacts(json, 2);
     expect(facts).toHaveLength(1);
     expect(facts[0].pass).toBe(2);

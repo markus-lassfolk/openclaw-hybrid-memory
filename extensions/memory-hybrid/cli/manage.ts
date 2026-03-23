@@ -328,7 +328,7 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
               log(`Backfilled decay for ${total} facts.`);
               if (backfillDonePath) {
                 try {
-                  writeFileSync(backfillDonePath, new Date().toISOString() + "\n");
+                  writeFileSync(backfillDonePath, `${new Date().toISOString()}\n`);
                 } catch (err) {
                   capturePluginError(err instanceof Error ? err : new Error(String(err)), {
                     subsystem: "cli",
@@ -596,8 +596,8 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
           const proceduresValidated = factsDb.proceduresValidatedCount();
           const proceduresPromoted = factsDb.proceduresPromotedCount();
           const directives = factsDb.directivesCount();
-          const rules = byCategory["rule"] ?? 0;
-          const patterns = byCategory["pattern"] ?? 0;
+          const rules = byCategory.rule ?? 0;
+          const patterns = byCategory.pattern ?? 0;
           const metaPatterns = factsDb.metaPatternsCount();
           const links = factsDb.linksCount();
           const entities = factsDb.entityCount();
@@ -1517,8 +1517,8 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
       }),
     );
 
-  mem!
-    .command("export")
+  mem
+    ?.command("export")
     .description(
       "Export memory to MEMORY.md + memory/ directory (vanilla OpenClaw format). Use --output to specify path.",
     )
@@ -2099,7 +2099,7 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
             console.log(`  Negative signals: ${res.negativeCount}`);
             console.log(`  Trajectories built: ${res.trajectoriesBuilt}`);
             if (res.closedLoopReport) {
-              console.log("\n" + res.closedLoopReport);
+              console.log(`\n${res.closedLoopReport}`);
             }
           },
         ),
@@ -2131,7 +2131,7 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
           });
           throw err;
         }
-        console.log(`Cross-agent learning complete:`);
+        console.log("Cross-agent learning complete:");
         console.log(`  Agents scanned: ${res.agentsScanned}`);
         console.log(`  Lessons considered: ${res.lessonsConsidered}`);
         console.log(`  Generalised stored: ${res.generalisedStored}`);
@@ -2362,7 +2362,7 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
         if (opts.showValue) {
           console.log(`value: ${entry.value}`);
         } else {
-          console.log(`value: *** (use --show-value to reveal, or --value-only to pipe)`);
+          console.log("value: *** (use --show-value to reveal, or --value-only to pipe)");
         }
         if (entry.url) console.log(`url: ${entry.url}`);
         if (entry.notes) console.log(`notes: ${entry.notes}`);
@@ -2450,8 +2450,8 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
         }
       }),
     );
-  scope!
-    .command("prune")
+  scope
+    ?.command("prune")
     .description("Prune all facts in a specific scope (WARNING: destructive)")
     .requiredOption("--scope <s>", "Scope to prune (global/user/agent/session)")
     .option(
@@ -2471,8 +2471,8 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
         );
       }),
     );
-  scope!
-    .command("promote")
+  scope
+    ?.command("promote")
     .description("Promote high-importance session-scoped facts to global scope")
     .option("--dry-run", "Preview without making changes")
     .option("--threshold-days <n>", "Minimum age in days for a session fact to be promoted (default: 7)", "7")
@@ -2671,13 +2671,7 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
   const backup = mem
     .command("backup")
     .description(
-      "Create a snapshot backup of memory state (SQLite + LanceDB). " +
-        "Default destination: ~/.openclaw/backups/memory/TIMESTAMP/\n" +
-        "\n" +
-        "NOTE: To include memory in scheduled openclaw backups, add these paths to " +
-        "your openclaw.yaml backup config:\n" +
-        `  - ${resolvedSqlitePath ?? "<memoryDir>/memory.db"}\n` +
-        `  - ${resolvedLancePath ?? "<memoryDir>/lance/"}`,
+      `Create a snapshot backup of memory state (SQLite + LanceDB). Default destination: ~/.openclaw/backups/memory/TIMESTAMP/\n\nNOTE: To include memory in scheduled openclaw backups, add these paths to your openclaw.yaml backup config:\n  - ${resolvedSqlitePath ?? "<memoryDir>/memory.db"}\n  - ${resolvedLancePath ?? "<memoryDir>/lance/"}`,
     )
     .option("--dest <dir>", "Override backup destination directory")
     .action(
@@ -2709,7 +2703,7 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
             mkdirSync(stateDir, { recursive: true });
             writeFileSync(
               backupStateFile,
-              JSON.stringify(
+              `${JSON.stringify(
                 {
                   ok: true,
                   timestamp: new Date().toISOString(),
@@ -2721,7 +2715,7 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
                 },
                 null,
                 2,
-              ) + "\n",
+              )}\n`,
             );
           } catch {
             // Non-fatal — state file is advisory only
@@ -2733,7 +2727,7 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
             mkdirSync(stateDir, { recursive: true });
             writeFileSync(
               backupStateFile,
-              JSON.stringify(
+              `${JSON.stringify(
                 {
                   ok: false,
                   timestamp: new Date().toISOString(),
@@ -2741,7 +2735,7 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
                 },
                 null,
                 2,
-              ) + "\n",
+              )}\n`,
             );
             console.error(`  ⚠ Backup failure recorded to: ${backupStateFile}`);
             console.error("  Add to HEARTBEAT.md to get alerted:");
@@ -2823,7 +2817,7 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
           return;
         }
 
-        const newCrontab = (currentCrontab.trimEnd() ? currentCrontab.trimEnd() + "\n" : "") + cronLine + "\n";
+        const newCrontab = `${(currentCrontab.trimEnd() ? `${currentCrontab.trimEnd()}\n` : "") + cronLine}\n`;
         try {
           const tmpFile = join(tmpdir(), `crontab-hybrid-mem-${Date.now()}.txt`);
           writeFileSync(tmpFile, newCrontab, "utf-8");

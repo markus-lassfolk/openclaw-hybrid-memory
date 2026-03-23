@@ -22,7 +22,7 @@ describe("victronVrmConverter (CSV)", () => {
     expect(result.markdown).toContain("Date range");
     expect(result.markdown).toContain("Total rows: 5");
     expect(result.markdown).toContain("## Key Metrics");
-    expect(result.metadata["rowCount"]).toBe(5);
+    expect(result.metadata.rowCount).toBe(5);
   });
 
   it("summarises a large CSV without dumping all rows", () => {
@@ -83,7 +83,7 @@ describe("victronVrmConverter (JSON)", () => {
     expect(result.title).toBe("Victron Energy Data: victron.json");
     expect(result.markdown).toContain("## Summary");
     expect(result.markdown).toContain("Total records: 3");
-    expect(result.metadata["recordCount"]).toBe(3);
+    expect(result.metadata.recordCount).toBe(3);
   });
 
   it("parses a Victron-style JSON with data array", () => {

@@ -193,8 +193,8 @@ describe("WorkflowStore.getById", () => {
     const t = store.record({ goal: "test goal", toolSequence: ["exec", "read"] });
     const fetched = store.getById(t.id);
     expect(fetched).not.toBeNull();
-    expect(fetched!.id).toBe(t.id);
-    expect(fetched!.goal).toBe("test goal");
+    expect(fetched?.id).toBe(t.id);
+    expect(fetched?.goal).toBe("test goal");
   });
 });
 
@@ -314,13 +314,13 @@ describe("WorkflowStore.getPatterns", () => {
     const patterns = store.getPatterns();
     const execPattern = patterns.find((p) => p.toolSequence.includes("exec"));
     expect(execPattern).toBeDefined();
-    expect(execPattern!.successRate).toBe(1);
+    expect(execPattern?.successRate).toBe(1);
   });
 
   it("computes avgDurationMs", () => {
     const patterns = store.getPatterns();
     const execPattern = patterns.find((p) => p.toolSequence.includes("exec"));
-    expect(execPattern!.avgDurationMs).toBe(1500);
+    expect(execPattern?.avgDurationMs).toBe(1500);
   });
 
   it("filters by minSuccessRate", () => {
@@ -425,8 +425,8 @@ describe("WorkflowTracker", () => {
 
     const saved = store.getById(id!);
     expect(saved).not.toBeNull();
-    expect(saved!.outcome).toBe("success");
-    expect(saved!.toolSequence).toEqual(["exec", "read"]);
+    expect(saved?.outcome).toBe("success");
+    expect(saved?.toolSequence).toEqual(["exec", "read"]);
   });
 
   it("flush returns null for empty buffer (no prior push)", () => {
@@ -441,7 +441,7 @@ describe("WorkflowTracker", () => {
     expect(id).not.toBeNull();
     const saved = store.getById(id!);
     expect(saved).not.toBeNull();
-    expect(saved!.outcome).toBe("failure");
+    expect(saved?.outcome).toBe("failure");
   });
 
   it("discard removes buffer without saving", () => {

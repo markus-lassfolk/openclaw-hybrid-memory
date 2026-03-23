@@ -38,7 +38,7 @@ function validateAndWriteConfig(
   } catch (schemaErr: unknown) {
     capturePluginError(schemaErr instanceof Error ? schemaErr : new Error(String(schemaErr)), {
       subsystem: "cli",
-      operation: "runConfigSetForCli:validation-" + operation,
+      operation: `runConfigSetForCli:validation-${operation}`,
     });
     return { ok: false, error: `Invalid config value: ${schemaErr}` };
   }
@@ -46,7 +46,7 @@ function validateAndWriteConfig(
     writeFileSync(configPath, JSON.stringify(root, null, 2), "utf-8");
     writeFileSync(getRestartPendingPath(), "", "utf-8");
   } catch (e) {
-    capturePluginError(e as Error, { subsystem: "cli", operation: "runConfigSetForCli:write-" + operation });
+    capturePluginError(e as Error, { subsystem: "cli", operation: `runConfigSetForCli:write-${operation}` });
     return { ok: false, error: `Could not write config: ${e}` };
   }
   return { ok: true };
@@ -115,43 +115,43 @@ export function runConfigViewForCli(ctx: HandlerContext, sink: VerifyCliSink): v
   const on = (b: boolean) => (b ? ON : OFF);
 
   const modeLabel = cfg.mode && cfg.mode !== "custom" ? cfg.mode.charAt(0).toUpperCase() + cfg.mode.slice(1) : "Custom";
-  log("Memory mode: " + modeLabel);
-  log("Verbosity: " + (cfg.verbosity ?? "normal"));
+  log(`Memory mode: ${modeLabel}`);
+  log(`Verbosity: ${cfg.verbosity ?? "normal"}`);
   log("");
 
   log("Core");
-  log("  Auto-capture: " + on(cfg.autoCapture));
-  log("  Auto-recall: " + on(cfg.autoRecall.enabled));
-  log("  Credentials vault: " + on(cfg.credentials.enabled));
-  log("  Procedures: " + on(cfg.procedures.enabled));
-  log("  Memory tiering: " + on(cfg.memoryTiering.enabled));
-  log("  Graph (links between facts): " + on(cfg.graph.enabled));
-  log("  Auto-classify: " + on(cfg.autoClassify.enabled));
+  log(`  Auto-capture: ${on(cfg.autoCapture)}`);
+  log(`  Auto-recall: ${on(cfg.autoRecall.enabled)}`);
+  log(`  Credentials vault: ${on(cfg.credentials.enabled)}`);
+  log(`  Procedures: ${on(cfg.procedures.enabled)}`);
+  log(`  Memory tiering: ${on(cfg.memoryTiering.enabled)}`);
+  log(`  Graph (links between facts): ${on(cfg.graph.enabled)}`);
+  log(`  Auto-classify: ${on(cfg.autoClassify.enabled)}`);
   log("");
 
   log("Optional features");
-  log("  Nightly dream cycle: " + on(cfg.nightlyCycle?.enabled ?? false));
-  log("  Passive observer: " + on(cfg.passiveObserver?.enabled ?? false));
-  log("  Reflection (patterns/rules): " + on(cfg.reflection.enabled));
-  log("  Persona proposals: " + on(cfg.personaProposals.enabled));
-  log("  Self-correction: " + on(!!cfg.selfCorrection));
-  log("  Self-extension (tool proposals): " + on(cfg.selfExtension?.enabled ?? false));
-  log("  Crystallization (skill proposals): " + on(cfg.crystallization?.enabled ?? false));
-  log("  Extraction (multi-pass): " + on(!!cfg.extraction?.extractionPasses));
-  log("  Active task (ACTIVE-TASK.md): " + on(cfg.activeTask.enabled));
-  log("  Frustration detection: " + on(cfg.frustrationDetection.enabled));
-  log("  Cross-agent learning: " + on(cfg.crossAgentLearning.enabled));
-  log("  Tool effectiveness: " + on(cfg.toolEffectiveness.enabled));
-  log("  Documents (MarkItDown): " + on(cfg.documents.enabled));
-  log("  Provenance: " + on(cfg.provenance.enabled));
-  log("  Error reporting: " + on(cfg.errorReporting?.enabled ?? false));
-  log("  Cost tracking: " + on(cfg.costTracking?.enabled ?? false));
+  log(`  Nightly dream cycle: ${on(cfg.nightlyCycle?.enabled ?? false)}`);
+  log(`  Passive observer: ${on(cfg.passiveObserver?.enabled ?? false)}`);
+  log(`  Reflection (patterns/rules): ${on(cfg.reflection.enabled)}`);
+  log(`  Persona proposals: ${on(cfg.personaProposals.enabled)}`);
+  log(`  Self-correction: ${on(!!cfg.selfCorrection)}`);
+  log(`  Self-extension (tool proposals): ${on(cfg.selfExtension?.enabled ?? false)}`);
+  log(`  Crystallization (skill proposals): ${on(cfg.crystallization?.enabled ?? false)}`);
+  log(`  Extraction (multi-pass): ${on(!!cfg.extraction?.extractionPasses)}`);
+  log(`  Active task (ACTIVE-TASK.md): ${on(cfg.activeTask.enabled)}`);
+  log(`  Frustration detection: ${on(cfg.frustrationDetection.enabled)}`);
+  log(`  Cross-agent learning: ${on(cfg.crossAgentLearning.enabled)}`);
+  log(`  Tool effectiveness: ${on(cfg.toolEffectiveness.enabled)}`);
+  log(`  Documents (MarkItDown): ${on(cfg.documents.enabled)}`);
+  log(`  Provenance: ${on(cfg.provenance.enabled)}`);
+  log(`  Error reporting: ${on(cfg.errorReporting?.enabled ?? false)}`);
+  log(`  Cost tracking: ${on(cfg.costTracking?.enabled ?? false)}`);
   log("");
 
   log("Advanced");
-  log("  Query expansion: " + on(cfg.queryExpansion.enabled));
-  log("  Retrieval directives: " + on(cfg.autoRecall.retrievalDirectives?.enabled ?? false));
-  log("  Entity lookup: " + on(cfg.autoRecall.entityLookup.enabled));
+  log(`  Query expansion: ${on(cfg.queryExpansion.enabled)}`);
+  log(`  Retrieval directives: ${on(cfg.autoRecall.retrievalDirectives?.enabled ?? false)}`);
+  log(`  Entity lookup: ${on(cfg.autoRecall.entityLookup.enabled)}`);
   log("");
 
   log("To change a setting: openclaw hybrid-mem config-set <key> <value>");
@@ -162,7 +162,7 @@ export function runConfigViewForCli(ctx: HandlerContext, sink: VerifyCliSink): v
 /**
  * Show help for config key
  */
-export function runConfigSetHelpForCli(ctx: HandlerContext, key: string): ConfigCliResult {
+export function runConfigSetHelpForCli(_ctx: HandlerContext, key: string): ConfigCliResult {
   const k = key.trim();
   if (!k) return { ok: false, error: "Key is required (e.g. autoCapture, credentials.enabled)" };
   const openclawDir = join(homedir(), ".openclaw");
@@ -182,7 +182,7 @@ export function runConfigSetHelpForCli(ctx: HandlerContext, key: string): Config
       };
       const hint = plugin.uiHints?.[k];
       if (hint?.help) {
-        desc = hint.help.length > MAX_DESC_LEN ? hint.help.slice(0, MAX_DESC_LEN - 3) + "..." : hint.help;
+        desc = hint.help.length > MAX_DESC_LEN ? `${hint.help.slice(0, MAX_DESC_LEN - 3)}...` : hint.help;
       } else if (hint?.label) {
         desc = hint.label;
       }
@@ -198,7 +198,7 @@ export function runConfigSetHelpForCli(ctx: HandlerContext, key: string): Config
 /**
  * Set config mode and apply the full preset so the file matches the preset (avoids "Custom" when parser sees overrides).
  */
-export function runConfigModeForCli(ctx: HandlerContext, mode: string): ConfigCliResult {
+export function runConfigModeForCli(_ctx: HandlerContext, mode: string): ConfigCliResult {
   const valid: ConfigMode[] = ["local", "minimal", "enhanced", "complete"];
   if (!valid.includes(mode as ConfigMode)) {
     return { ok: false, error: `Invalid mode: ${mode}. Use one of: ${valid.join(", ")}` };
@@ -228,7 +228,7 @@ export function runConfigModeForCli(ctx: HandlerContext, mode: string): ConfigCl
 /**
  * Set config value
  */
-export function runConfigSetForCli(ctx: HandlerContext, key: string, value: string): ConfigCliResult {
+export function runConfigSetForCli(_ctx: HandlerContext, key: string, value: string): ConfigCliResult {
   if (!key.trim())
     return {
       ok: false,

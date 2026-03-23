@@ -393,9 +393,7 @@ function buildMultiProviderOpenAI(
   // silently falling back to OPENCLAW_GATEWAY_TOKEN — a stale env token would mask rollout mistakes.
   if (cfg.gateway?.auth?.token && !gatewayAuthResolved) {
     throw new Error(
-      `memory-hybrid: gateway.auth.token is configured (SecretRef "${cfg.gateway.auth.token}") but could not be resolved. ` +
-        `Ensure the referenced env var or file is accessible, or remove gateway.auth.token from the plugin config. ` +
-        `Not falling back to OPENCLAW_GATEWAY_TOKEN to prevent silent auth misconfiguration.`,
+      `memory-hybrid: gateway.auth.token is configured (SecretRef "${cfg.gateway.auth.token}") but could not be resolved. Ensure the referenced env var or file is accessible, or remove gateway.auth.token from the plugin config. Not falling back to OPENCLAW_GATEWAY_TOKEN to prevent silent auth misconfiguration.`,
     );
   }
   if (gatewayPortRaw && (!gatewayPort || gatewayPort < 1 || gatewayPort > 65535)) {
@@ -988,8 +986,8 @@ export function initializeDatabases(cfg: HybridMemoryConfig, api: ClawdbotPlugin
 
     if (gatewayModels.length === 0 && [primary, ...fallbacks].some(Boolean)) {
       api.logger.warn?.(
-        `memory-hybrid: all models from agents.defaults.model were filtered out (unknown provider prefixes). ` +
-          `No LLM tiers auto-configured. Set llm.default explicitly or add provider entries to llm.providers.`,
+        "memory-hybrid: all models from agents.defaults.model were filtered out (unknown provider prefixes). " +
+          "No LLM tiers auto-configured. Set llm.default explicitly or add provider entries to llm.providers.",
       );
     }
 
@@ -1019,7 +1017,7 @@ export function initializeDatabases(cfg: HybridMemoryConfig, api: ClawdbotPlugin
       if (defaultIsHeavyOnly) {
         defaultTier = [...RECOMMENDED_CHEAP_FALLBACK, ...defaultTier];
         api.logger.info?.(
-          `memory-hybrid: agents.defaults.model is heavy-only; prepending cheap fallback for default tier so maintenance tasks use a cheaper model first. Set llm.default / llm.nano explicitly in plugin config to override.`,
+          "memory-hybrid: agents.defaults.model is heavy-only; prepending cheap fallback for default tier so maintenance tasks use a cheaper model first. Set llm.default / llm.nano explicitly in plugin config to override.",
         );
       }
       // heavy tier: capable first (heavy → medium → light) for distill/self-correction
@@ -1176,7 +1174,7 @@ export function initializeDatabases(cfg: HybridMemoryConfig, api: ClawdbotPlugin
       (cfg.llm as Record<string, unknown>).default = defaultList;
       (cfg.llm as Record<string, unknown>).heavy = heavyList;
       api.logger.info?.(
-        `memory-hybrid: appended gateway provider models to llm.default/heavy so they are tested and used as fallbacks.`,
+        "memory-hybrid: appended gateway provider models to llm.default/heavy so they are tested and used as fallbacks.",
       );
     }
   }
@@ -1190,9 +1188,9 @@ export function initializeDatabases(cfg: HybridMemoryConfig, api: ClawdbotPlugin
       void (async () => {
         try {
           const ollamaBase =
-            (cfg.llm?.providers as Record<string, { baseURL?: string } | undefined> | undefined)?.[
-              "ollama"
-            ]?.baseURL?.replace(/\/v1\/?$/, "") ?? OLLAMA_DEFAULT_BASE_URL;
+            (
+              cfg.llm?.providers as Record<string, { baseURL?: string } | undefined> | undefined
+            )?.ollama?.baseURL?.replace(/\/v1\/?$/, "") ?? OLLAMA_DEFAULT_BASE_URL;
           const running = await probeOllamaEndpoint(ollamaBase);
           if (!running) {
             api.logger.info("memory-hybrid: Ollama is not running — attempting auto-start (llm.localAutoStart: true)");
@@ -1368,9 +1366,7 @@ export function initializeDatabases(cfg: HybridMemoryConfig, api: ClawdbotPlugin
           backend: "sqlite",
         });
         api.logger.error(
-          `memory-hybrid: ⚠️  CREDENTIALS VAULT CHECK FAILED — ${String(e)}. ` +
-            "Plugin will continue but credential storage will not work. " +
-            "Check OPENCLAW_CRED_KEY (or credentials.encryptionKey). Wrong key or corrupted DB. Run 'openclaw hybrid-mem verify' for details.",
+          `memory-hybrid: ⚠️  CREDENTIALS VAULT CHECK FAILED — ${String(e)}. Plugin will continue but credential storage will not work. Check OPENCLAW_CRED_KEY (or credentials.encryptionKey). Wrong key or corrupted DB. Run 'openclaw hybrid-mem verify' for details.`,
         );
       }
       // When vault is enabled: once per install, move existing credential facts into vault and redact from memory

@@ -1131,7 +1131,7 @@ export function registerMemoryTools(
 
           if (factsDb.hasDuplicate(textToStore)) {
             return {
-              content: [{ type: "text", text: `Similar memory already exists.` }],
+              content: [{ type: "text", text: "Similar memory already exists." }],
               details: { action: "duplicate" },
             };
           }
@@ -1296,7 +1296,7 @@ export function registerMemoryTools(
           const summaryThreshold = cfg.autoRecall.summaryThreshold;
           const summary =
             summaryThreshold > 0 && textToStore.length > summaryThreshold
-              ? textToStore.slice(0, cfg.autoRecall.summaryMaxChars).trim() + "…"
+              ? `${textToStore.slice(0, cfg.autoRecall.summaryMaxChars).trim()}…`
               : undefined;
 
           // Generate vector first (needed for WAL and storage)
@@ -1512,9 +1512,7 @@ export function registerMemoryTools(
               (cfg.multiAgent.defaultStoreScope === "agent" || cfg.multiAgent.defaultStoreScope === "auto")
             ) {
               throw new Error(
-                `Agent detection failed (currentAgentId is null) and multiAgent.strictAgentScoping is enabled. ` +
-                  `Cannot auto-determine scope for defaultStoreScope="${cfg.multiAgent.defaultStoreScope}". ` +
-                  `Fix: ensure agent_id is provided in session context, or disable strictAgentScoping.`,
+                `Agent detection failed (currentAgentId is null) and multiAgent.strictAgentScoping is enabled. Cannot auto-determine scope for defaultStoreScope="${cfg.multiAgent.defaultStoreScope}". Fix: ensure agent_id is provided in session context, or disable strictAgentScoping.`,
               );
             }
 
@@ -1552,12 +1550,11 @@ export function registerMemoryTools(
                 ],
                 details: { error: "scope_target_required" },
               };
-            } else {
-              // Auto-determined scope ended up without target (shouldn't happen with current logic,
-              // but handle gracefully by falling back to global)
-              scope = "global";
-              scopeTarget = null;
             }
+            // Auto-determined scope ended up without target (shouldn't happen with current logic,
+            // but handle gracefully by falling back to global)
+            scope = "global";
+            scopeTarget = null;
           }
           const decayFreezeUntil =
             paramDecayFreezeUntil != null && Number.isFinite(paramDecayFreezeUntil)
@@ -1744,23 +1741,22 @@ export function registerMemoryTools(
           let storedMsg: string;
           if (isCompactVerbosity(verbosity)) {
             // Quiet: only report the ID and any warnings (contradictions are important)
-            storedMsg =
-              `Stored: ${entry.id}` +
-              (contradictions.length > 0
+            storedMsg = `Stored: ${entry.id}${
+              contradictions.length > 0
                 ? ` (⚠️ contradicts ${contradictions.length} existing fact${contradictions.length === 1 ? "" : "s"})`
-                : "");
+                : ""
+            }`;
           } else {
             // normal / verbose: full details (verbose adds scope/category info)
-            storedMsg =
-              `Stored: "${textToStore.slice(0, 100)}${textToStore.length > 100 ? "..." : ""}"${entity ? ` [entity: ${entity}]` : ""} [decay: ${entry.decayClass}]` +
-              (supersedes?.trim() ? " (supersedes previous fact)" : "") +
-              (totalLinked > 0 ? ` (linked to ${totalLinked} related fact${totalLinked === 1 ? "" : "s"})` : "") +
-              (autoSupersededIds.length > 0
+            storedMsg = `Stored: "${textToStore.slice(0, 100)}${textToStore.length > 100 ? "..." : ""}"${entity ? ` [entity: ${entity}]` : ""} [decay: ${entry.decayClass}]${supersedes?.trim() ? " (supersedes previous fact)" : ""}${totalLinked > 0 ? ` (linked to ${totalLinked} related fact${totalLinked === 1 ? "" : "s"})` : ""}${
+              autoSupersededIds.length > 0
                 ? ` (auto-superseded ${autoSupersededIds.length} fact${autoSupersededIds.length === 1 ? "" : "s"})`
-                : "") +
-              (contradictions.length > 0
+                : ""
+            }${
+              contradictions.length > 0
                 ? ` (⚠️ contradicts ${contradictions.length} existing fact${contradictions.length === 1 ? "" : "s"})`
-                : "");
+                : ""
+            }`;
             if (verbosity === "verbose") {
               storedMsg += ` [id: ${entry.id}]`;
               if (entry.scope)
@@ -1843,7 +1839,7 @@ export function registerMemoryTools(
               details: { error: "scope_target_required" },
             };
           }
-          const ok = factsDb.promoteScope(memoryId, scope, scope === "agent" ? scopeTarget!.trim() : null);
+          const ok = factsDb.promoteScope(memoryId, scope, scope === "agent" ? scopeTarget?.trim() : null);
           if (!ok) {
             return {
               content: [{ type: "text", text: `Could not promote memory ${memoryId}.` }],

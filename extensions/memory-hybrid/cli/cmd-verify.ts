@@ -62,13 +62,13 @@ export async function runVerifyForCli(
     : rawLog;
   /** Always print tables (embedding + LLM) so they are never suppressed in quiet mode. */
   const tableLog = rawLog;
-  const err = sink.error ?? rawLog;
+  const _err = sink.error ?? rawLog;
   const noEmoji = process.env.HYBRID_MEM_NO_EMOJI === "1";
   const OK = noEmoji ? "[OK]" : "✅";
   const FAIL = noEmoji ? "[FAIL]" : "❌";
   const PAUSE = noEmoji ? "[paused]" : "⏸️ ";
-  const ON = noEmoji ? "[on]" : "✅ on";
-  const OFF = noEmoji ? "[off]" : "❌ off";
+  const _ON = noEmoji ? "[on]" : "✅ on";
+  const _OFF = noEmoji ? "[off]" : "❌ off";
   const issues: string[] = [];
   const fixes: string[] = [];
   let configOk = true;
@@ -132,7 +132,7 @@ export async function runVerifyForCli(
           'Remove "pruning" from agents.defaults in openclaw.json. Memory pruning is handled automatically by the plugin (every 60 min).',
         );
         if (opts.fix) {
-          delete agentsDefaults.pruning;
+          agentsDefaults.pruning = undefined;
           writeFileSync(defaultConfigPath, JSON.stringify(rawConfig, null, 2), "utf-8");
           log(`  → Removed agents.defaults.pruning from ${defaultConfigPath}`);
           fixes.pop();
@@ -149,7 +149,7 @@ export async function runVerifyForCli(
     /bindings|better_sqlite3\.node|compiled against|ABI|NODE_MODULE_VERSION|@lancedb\/lancedb|Cannot find module/.test(
       msg,
     );
-  let sqliteBindingsFailed = false;
+  let _sqliteBindingsFailed = false;
   let lanceBindingsFailed = false;
 
   try {
@@ -160,8 +160,8 @@ export async function runVerifyForCli(
     const msg = String(e);
     issues.push(`SQLite: ${msg}`);
     if (isBindingsError(msg)) {
-      sqliteBindingsFailed = true;
-      fixes.push(`node:sqlite is not available. Upgrade Node.js to >=22.12.0 or use a compatible version.`);
+      _sqliteBindingsFailed = true;
+      fixes.push("node:sqlite is not available. Upgrade Node.js to >=22.12.0 or use a compatible version.");
     } else {
       fixes.push(
         `SQLite: Ensure path is writable and not corrupted. Path: ${resolvedSqlitePath}. If corrupted, back up and remove the file to recreate, or run from a process with write access.`,
@@ -183,7 +183,7 @@ export async function runVerifyForCli(
       fixes.push(`Native module (@lancedb/lancedb) needs rebuild. Run: cd ${extDir} && npm rebuild @lancedb/lancedb`);
     } else if (msg.includes("VectorDB not initialized") || msg.includes("close() was called")) {
       fixes.push(
-        `LanceDB connection was not ready (often transient after plugin load or reload). Re-run verify; the plugin will reconnect automatically. Not caused by reindexing.`,
+        "LanceDB connection was not ready (often transient after plugin load or reload). Re-run verify; the plugin will reconnect automatically. Not caused by reindexing.",
       );
     } else {
       fixes.push(
@@ -354,14 +354,12 @@ export async function runVerifyForCli(
   tableLog(
     `  ${embCols[0].padEnd(embW1)}  ${embCols[1].padEnd(embW2)}  ${embCols[2].padEnd(embW3)}${opts.testLlm ? `  ${embCols[3]}` : ""}`,
   );
-  tableLog("  " + "-".repeat(embW1 + embW2 + embW3 + 4 + (opts.testLlm ? embW4 + 2 : 0)));
+  tableLog(`  ${"-".repeat(embW1 + embW2 + embW3 + 4 + (opts.testLlm ? embW4 + 2 : 0))}`);
   for (const row of embTableRows) {
     const credStr = `OAuth:${row.oauth ? "True" : "False"} / API:${row.api}`;
-    const line =
-      `  ${row.label.padEnd(embW1)}  ${credStr.padEnd(embW2)}  ${row.source.padEnd(embW3)}` +
-      (opts.testLlm
-        ? `  ${row.success ? (noEmoji ? "Success" : "✅ Success") : noEmoji ? "Failed" : "❌ Failed"}`
-        : "");
+    const line = `  ${row.label.padEnd(embW1)}  ${credStr.padEnd(embW2)}  ${row.source.padEnd(embW3)}${
+      opts.testLlm ? `  ${row.success ? (noEmoji ? "Success" : "✅ Success") : noEmoji ? "Failed" : "❌ Failed"}` : ""
+    }`;
     tableLog(line);
   }
   const failedEmbRows = opts.testLlm ? embTableRows.filter((r) => r.success === false && r.error) : [];
@@ -404,7 +402,7 @@ export async function runVerifyForCli(
     ...getLLMModelPreferenceUnfiltered(cronCfg, "default"),
     ...getLLMModelPreferenceUnfiltered(cronCfg, "heavy"),
   ];
-  const allModelsFiltered: string[] = [
+  const _allModelsFiltered: string[] = [
     ...getLLMModelPreference(cronCfg, "nano"),
     ...getLLMModelPreference(cronCfg, "default"),
     ...getLLMModelPreference(cronCfg, "heavy"),
@@ -436,7 +434,7 @@ export async function runVerifyForCli(
     return "openai";
   };
   const disabledSet = new Set((cfg.llm?.disabledProviders ?? []).map((p) => String(p).trim().toLowerCase()));
-  const defaultTestModel: Record<string, string> = {
+  const _defaultTestModel: Record<string, string> = {
     openai: "openai/gpt-4.1-nano",
     google: "google/gemini-2.5-flash-lite",
     anthropic: "anthropic/claude-haiku-4-5-20251001",
@@ -673,7 +671,7 @@ export async function runVerifyForCli(
       `  ${llmCols[0].padEnd(llmW1)}  ${llmCols[1].padEnd(llmW2)}  ${llmCols[2].padEnd(llmW3)}  ${llmCols[3].padEnd(llmW4)}  ${llmCols[4].padEnd(llmW5)}  ${llmCols[5].padEnd(llmW6)}${opts.testLlm ? `  ${llmCols[6].padEnd(llmW7)}  ${llmCols[7]}` : ""}`,
     );
     const llmSepLen = llmW1 + llmW2 + llmW3 + llmW4 + llmW5 + llmW6 + 12 + (opts.testLlm ? llmW7 + llmW8 + 4 : 0);
-    tableLog("  " + "-".repeat(llmSepLen));
+    tableLog(`  ${"-".repeat(llmSepLen)}`);
     for (const row of llmRows) {
       const credStr = `OAuth:${row.hasOAuth ? "True" : "False"} / API:${row.hasApi ? "True" : "False"}`;
       const inConfigStr = row.inConfig ? (noEmoji ? "Yes" : "✅ Yes") : noEmoji ? "No" : "No";
@@ -760,7 +758,7 @@ export async function runVerifyForCli(
       ? "Custom"
       : cfg.mode.charAt(0).toUpperCase() + cfg.mode.slice(1)
     : "Custom";
-  log(`\n───── Config ─────`);
+  log("\n───── Config ─────");
   log(`  Config source: ${defaultConfigPath} (plugins.entries["${PLUGIN_ID}"].config)`);
   log(`  Mode: ${modeLabel}${restartPending ? " (restart pending)" : ""}`);
   log(`  Run 'openclaw hybrid-mem config' to view or change settings.`);
@@ -781,7 +779,7 @@ export async function runVerifyForCli(
         const encrypted = (cfg.credentials.encryptionKey?.length ?? 0) >= 16;
         if (encrypted) {
           fixes.push(
-            `Credentials vault: Wrong encryption key or corrupted DB. Set OPENCLAW_CRED_KEY to the key used when credentials were stored, or use a new vault path for plaintext. See docs/CREDENTIALS.md.`,
+            "Credentials vault: Wrong encryption key or corrupted DB. Set OPENCLAW_CRED_KEY to the key used when credentials were stored, or use a new vault path for plaintext. See docs/CREDENTIALS.md.",
           );
         } else {
           fixes.push(
@@ -852,17 +850,23 @@ export async function runVerifyForCli(
       (msg && /nightly memory distillation|memory distillation pipeline/i.test(msg))
     ) {
       return "nightly-memory-sweep";
-    } else if (weeklyReflectionRe.test(nameLower)) {
+    }
+    if (weeklyReflectionRe.test(nameLower)) {
       return "weekly-reflection";
-    } else if (extractProceduresRe.test(nameLower)) {
+    }
+    if (extractProceduresRe.test(nameLower)) {
       return "weekly-extract-procedures";
-    } else if (selfCorrectionRe.test(nameLower)) {
+    }
+    if (selfCorrectionRe.test(nameLower)) {
       return "self-correction-analysis";
-    } else if (weeklyDeepMaintenanceRe.test(nameLower)) {
+    }
+    if (weeklyDeepMaintenanceRe.test(nameLower)) {
       return "weekly-deep-maintenance";
-    } else if (weeklyPersonaProposalsRe.test(nameLower)) {
+    }
+    if (weeklyPersonaProposalsRe.test(nameLower)) {
       return "weekly-persona-proposals";
-    } else if (monthlyConsolidationRe.test(nameLower)) {
+    }
+    if (monthlyConsolidationRe.test(nameLower)) {
       return "monthly-consolidation";
     }
     // Fallback: if slug matches a known key exactly (e.g. "Weekly Reflection" -> "weekly-reflection"), use it
@@ -896,7 +900,7 @@ export async function runVerifyForCli(
     }
 
     if (parts.length > 0) {
-      statusDetails = "  " + parts.join("  ");
+      statusDetails = `  ${parts.join("  ")}`;
     }
 
     log(`${indent}${statusIcon} ${label.padEnd(30)} ${statusText}${statusDetails}`);
@@ -1032,7 +1036,7 @@ export async function runVerifyForCli(
 
   if (unknownJobs.length > 0) {
     log("\n  Other custom jobs:");
-    for (const [key, job] of unknownJobs) {
+    for (const [_key, job] of unknownJobs) {
       formatJobStatus(job, job.name, "    ", log);
     }
   }
@@ -1087,9 +1091,7 @@ export async function runVerifyForCli(
     log("\n--- Fixes for detected issues ---");
     fixes.forEach((f) => log(`  • ${f}`));
     log(
-      "\nEdit config: " +
-        defaultConfigPath +
-        " (or OPENCLAW_HOME/openclaw.json). Restart gateway after changing plugin config.",
+      `\nEdit config: ${defaultConfigPath} (or OPENCLAW_HOME/openclaw.json). Restart gateway after changing plugin config.`,
     );
   }
 
@@ -1143,7 +1145,7 @@ export async function runVerifyForCli(
         const memoryDirPath = dirname(resolvedSqlitePath);
         if (!existsSync(memoryDirPath)) {
           mkdirSync(memoryDirPath, { recursive: true });
-          applied.push("Created memory directory: " + memoryDirPath);
+          applied.push(`Created memory directory: ${memoryDirPath}`);
         }
 
         // Add cron jobs (same logic as install)
@@ -1170,7 +1172,7 @@ export async function runVerifyForCli(
           added.forEach((name) => applied.push(`Added ${name} job to ${cronStorePath}`));
           normalized.forEach((name) => applied.push(`Normalized ${name} job (schedule/pluginJobId)`));
         } catch (e) {
-          log("Could not add optional jobs to cron store: " + String(e));
+          log(`Could not add optional jobs to cron store: ${String(e)}`);
           capturePluginError(e as Error, { subsystem: "cli", operation: "runVerifyForCli:add-cron-jobs" });
         }
 
@@ -1179,11 +1181,11 @@ export async function runVerifyForCli(
         }
         if (applied.length > 0) {
           log("\n--- Applied fixes ---");
-          applied.forEach((a) => log("  • " + a));
-          if (changed) log("Config written: " + defaultConfigPath + ". Restart the gateway and run verify again.");
+          applied.forEach((a) => log(`  • ${a}`));
+          if (changed) log(`Config written: ${defaultConfigPath}. Restart the gateway and run verify again.`);
         }
       } catch (e) {
-        log("\nCould not apply fixes to config: " + String(e));
+        log(`\nCould not apply fixes to config: ${String(e)}`);
         capturePluginError(e as Error, { subsystem: "cli", operation: "runVerifyForCli:apply-fixes" });
         const snippet = {
           embedding: { apiKey: "<set your key or use ${OPENAI_API_KEY}>", model: "text-embedding-3-small" },

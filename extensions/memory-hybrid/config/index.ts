@@ -42,7 +42,7 @@ function hasKey(apiKey: string | undefined): boolean {
 /** True if apiKey is present and, for env:/file: SecretRefs, resolvable at runtime (verify / getProvidersWithKeys). */
 function hasEffectiveKey(apiKey: string | undefined): boolean {
   if (!hasKey(apiKey)) return false;
-  const k = apiKey!.trim();
+  const k = apiKey?.trim();
   if (k.startsWith("env:") || k.startsWith("file:")) return resolveSecretRef(k) !== undefined;
   return true;
 }

@@ -5,22 +5,22 @@ describe("getModelPricing", () => {
   it("returns pricing for known OpenAI models", () => {
     const p = getModelPricing("openai/gpt-4.1-nano");
     expect(p).not.toBeNull();
-    expect(p!.inputPer1M).toBe(0.1);
-    expect(p!.outputPer1M).toBe(0.4);
+    expect(p?.inputPer1M).toBe(0.1);
+    expect(p?.outputPer1M).toBe(0.4);
   });
 
   it("returns pricing for known Google models", () => {
     const p = getModelPricing("google/gemini-2.5-flash-lite");
     expect(p).not.toBeNull();
-    expect(p!.inputPer1M).toBe(0.075);
-    expect(p!.outputPer1M).toBe(0.3);
+    expect(p?.inputPer1M).toBe(0.075);
+    expect(p?.outputPer1M).toBe(0.3);
   });
 
   it("returns pricing for known Anthropic models", () => {
     const p = getModelPricing("anthropic/claude-sonnet-4-6");
     expect(p).not.toBeNull();
-    expect(p!.inputPer1M).toBe(3.0);
-    expect(p!.outputPer1M).toBe(15.0);
+    expect(p?.inputPer1M).toBe(3.0);
+    expect(p?.outputPer1M).toBe(15.0);
   });
 
   it("returns null for unknown model", () => {
@@ -31,8 +31,8 @@ describe("getModelPricing", () => {
   it("returns $0 for ollama/* models (local inference, no API cost)", () => {
     const p = getModelPricing("ollama/qwen3:8b");
     expect(p).not.toBeNull();
-    expect(p!.inputPer1M).toBe(0);
-    expect(p!.outputPer1M).toBe(0);
+    expect(p?.inputPer1M).toBe(0);
+    expect(p?.outputPer1M).toBe(0);
   });
 
   it("returns $0 for any ollama/* model regardless of model name", () => {

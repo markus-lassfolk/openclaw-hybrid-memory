@@ -100,7 +100,7 @@ describe("fuseResults — multiple strategies", () => {
     const uniqueA = fused.find((r) => r.factId === "unique-a");
     expect(shared).toBeDefined();
     expect(uniqueA).toBeDefined();
-    expect(shared!.rrfScore).toBeGreaterThan(uniqueA!.rrfScore);
+    expect(shared?.rrfScore).toBeGreaterThan(uniqueA?.rrfScore);
   });
 
   it("fact in all 3 strategies accumulates scores from each", () => {
@@ -141,10 +141,10 @@ describe("fuseResults — k parameter", () => {
     const fused10 = fuseResults(k10Strategy, 10);
     const fused100 = fuseResults(k100Strategy, 100);
 
-    const score10a = fused10.find((r) => r.factId === "a")!.rrfScore;
-    const score10b = fused10.find((r) => r.factId === "b")!.rrfScore;
-    const score100a = fused100.find((r) => r.factId === "a")!.rrfScore;
-    const score100b = fused100.find((r) => r.factId === "b")!.rrfScore;
+    const score10a = fused10.find((r) => r.factId === "a")?.rrfScore;
+    const score10b = fused10.find((r) => r.factId === "b")?.rrfScore;
+    const score100a = fused100.find((r) => r.factId === "a")?.rrfScore;
+    const score100b = fused100.find((r) => r.factId === "b")?.rrfScore;
 
     const ratio10 = score10a / score10b;
     const ratio100 = score100a / score100b;
@@ -354,7 +354,7 @@ describe("fuseResults — edge cases", () => {
     const onlySemantic = fused.find((r) => r.factId === "fact-0");
     expect(inBoth).toBeDefined();
     expect(onlySemantic).toBeDefined();
-    expect(inBoth!.rrfScore).toBeGreaterThan(onlySemantic!.rrfScore);
+    expect(inBoth?.rrfScore).toBeGreaterThan(onlySemantic?.rrfScore);
   });
 });
 

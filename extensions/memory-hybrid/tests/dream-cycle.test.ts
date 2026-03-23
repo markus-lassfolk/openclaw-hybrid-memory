@@ -297,7 +297,7 @@ describe("runEpisodicConsolidation", () => {
     expect(consolidated).toBeDefined();
 
     // Check DERIVED_FROM links from consolidated fact
-    const links = factsDb.getLinksFrom(consolidated!.id);
+    const links = factsDb.getLinksFrom(consolidated?.id);
     const derivedLinks = links.filter((l) => l.linkType === "DERIVED_FROM");
     expect(derivedLinks.length).toBeGreaterThanOrEqual(1);
   });
@@ -549,7 +549,7 @@ describe("runDreamCycle", () => {
       expect(readFileSync(indexPath, "utf-8")).toContain("## Recent Decisions");
     } finally {
       if (originalWorkspace !== undefined) process.env.OPENCLAW_WORKSPACE = originalWorkspace;
-      else delete process.env.OPENCLAW_WORKSPACE;
+      else process.env.OPENCLAW_WORKSPACE = undefined;
     }
   });
 

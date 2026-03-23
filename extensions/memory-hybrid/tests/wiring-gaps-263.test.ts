@@ -304,7 +304,7 @@ describe("Gap 3 — generateMonthlyReport monthly gating in nightly cycle", () =
 
     // First call
     const existing1 = rawDb
-      .prepare(`SELECT id FROM facts WHERE key = ? AND superseded_at IS NULL LIMIT 1`)
+      .prepare("SELECT id FROM facts WHERE key = ? AND superseded_at IS NULL LIMIT 1")
       .get(monthlyKey);
     if (!existing1) {
       await generateMonthlyReport(store, factsDb);
@@ -312,7 +312,7 @@ describe("Gap 3 — generateMonthlyReport monthly gating in nightly cycle", () =
 
     // Second call (should be skipped by gating logic)
     const existing2 = rawDb
-      .prepare(`SELECT id FROM facts WHERE key = ? AND superseded_at IS NULL LIMIT 1`)
+      .prepare("SELECT id FROM facts WHERE key = ? AND superseded_at IS NULL LIMIT 1")
       .get(monthlyKey);
     if (!existing2) {
       await generateMonthlyReport(store, factsDb);
@@ -333,7 +333,7 @@ describe("Gap 3 — generateMonthlyReport monthly gating in nightly cycle", () =
       .get() as { key: string } | undefined;
 
     expect(row).toBeDefined();
-    expect(row!.key).toBe(`tool-effectiveness-monthly-${month}`);
+    expect(row?.key).toBe(`tool-effectiveness-monthly-${month}`);
   });
 
   it("monthly report fact has source='tool-effectiveness' and category='pattern'", async () => {
@@ -342,9 +342,9 @@ describe("Gap 3 — generateMonthlyReport monthly gating in nightly cycle", () =
     const facts = factsDb.getByCategory("pattern");
     const report = facts.find((f) => f.tags?.includes("monthly-report"));
     expect(report).toBeDefined();
-    expect(report!.source).toBe("tool-effectiveness");
-    expect(report!.importance).toBeCloseTo(0.7, 2);
-    expect(report!.confidence).toBeCloseTo(0.9, 2);
+    expect(report?.source).toBe("tool-effectiveness");
+    expect(report?.importance).toBeCloseTo(0.7, 2);
+    expect(report?.confidence).toBeCloseTo(0.9, 2);
   });
 
   it("spy: generateMonthlyReport is called when no monthly fact exists yet", async () => {
@@ -356,7 +356,7 @@ describe("Gap 3 — generateMonthlyReport monthly gating in nightly cycle", () =
     const monthlyKey = `tool-effectiveness-monthly-${month}`;
     const rawDb = factsDb.getRawDb();
     const existing = rawDb
-      .prepare(`SELECT id FROM facts WHERE key = ? AND superseded_at IS NULL LIMIT 1`)
+      .prepare("SELECT id FROM facts WHERE key = ? AND superseded_at IS NULL LIMIT 1")
       .get(monthlyKey);
 
     if (!existing) {

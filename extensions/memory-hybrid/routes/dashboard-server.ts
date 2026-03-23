@@ -151,8 +151,8 @@ async function collectMemoryStats(ctx: DashboardContext): Promise<MemoryStats> {
     /* non-fatal */
   }
   const sqliteSize = await getFileSizeAsync(ctx.resolvedSqlitePath);
-  const sqliteWalSize = await getFileSizeAsync(ctx.resolvedSqlitePath + "-wal");
-  const sqliteShmSize = await getFileSizeAsync(ctx.resolvedSqlitePath + "-shm");
+  const sqliteWalSize = await getFileSizeAsync(`${ctx.resolvedSqlitePath}-wal`);
+  const sqliteShmSize = await getFileSizeAsync(`${ctx.resolvedSqlitePath}-shm`);
   const sqliteSizeBytes = sqliteSize + sqliteWalSize + sqliteShmSize;
 
   // Use cached LanceDB size to avoid blocking on large directory traversals
@@ -172,7 +172,7 @@ async function collectMemoryStats(ctx: DashboardContext): Promise<MemoryStats> {
       ts: Date.now(),
     });
   }
-  const lanceSizeBytes = _lanceSizeCache.get(ctx.resolvedLancePath)!.size;
+  const lanceSizeBytes = _lanceSizeCache.get(ctx.resolvedLancePath)?.size;
 
   return {
     activeFacts,
@@ -782,7 +782,7 @@ export async function createDashboardServer(ctx: DashboardContext, port: number)
     // Port is occupied (likely a previous instance that didn't shut down
     // cleanly). Fall back to an OS-assigned ephemeral port so the dashboard
     // remains available rather than failing entirely.
-    const log = ctx.logger?.error ? (m: string) => ctx.logger!.error!(m) : (m: string) => pluginLogger.warn(m);
+    const log = ctx.logger?.error ? (m: string) => ctx.logger?.error?.(m) : (m: string) => pluginLogger.warn(m);
     log(`[dashboard-server] Port ${port} in use (EADDRINUSE), falling back to OS-assigned port`);
     server.removeAllListeners("listening");
     boundPort = await tryListen(0);

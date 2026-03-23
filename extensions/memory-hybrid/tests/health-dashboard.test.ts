@@ -133,15 +133,15 @@ describe("buildHealthReport", () => {
     storeMinimalFact(factsDb, { category: "preference" });
     storeMinimalFact(factsDb, { category: "fact" });
     const report = buildHealthReport(factsDb, join(tmpDir, "facts.db"), join(tmpDir, "lance"));
-    expect(report.categoryDistribution["preference"]).toBe(2);
-    expect(report.categoryDistribution["fact"]).toBe(1);
+    expect(report.categoryDistribution.preference).toBe(2);
+    expect(report.categoryDistribution.fact).toBe(1);
   });
 
   it("categoryDistribution excludes expired facts", () => {
     storeMinimalFact(factsDb, { category: "preference" });
     storeMinimalFact(factsDb, { category: "preference", expiresAt: 1 }); // expired
     const report = buildHealthReport(factsDb, join(tmpDir, "facts.db"), join(tmpDir, "lance"));
-    expect(report.categoryDistribution["preference"]).toBe(1);
+    expect(report.categoryDistribution.preference).toBe(1);
   });
 
   it("decayClassDistribution groups all facts by decay class", () => {
@@ -149,8 +149,8 @@ describe("buildHealthReport", () => {
     storeMinimalFact(factsDb, { decayClass: "stable" });
     storeMinimalFact(factsDb, { decayClass: "stable" });
     const report = buildHealthReport(factsDb, join(tmpDir, "facts.db"), join(tmpDir, "lance"));
-    expect(report.decayClassDistribution["permanent"]).toBe(1);
-    expect(report.decayClassDistribution["stable"]).toBe(2);
+    expect(report.decayClassDistribution.permanent).toBe(1);
+    expect(report.decayClassDistribution.stable).toBe(2);
   });
 
   it("tierDistribution groups all facts by tier", () => {
@@ -158,8 +158,8 @@ describe("buildHealthReport", () => {
     storeMinimalFact(factsDb, { tier: "warm" });
     storeMinimalFact(factsDb, { tier: "warm" });
     const report = buildHealthReport(factsDb, join(tmpDir, "facts.db"), join(tmpDir, "lance"));
-    expect(report.tierDistribution["hot"]).toBe(1);
-    expect(report.tierDistribution["warm"]).toBe(2);
+    expect(report.tierDistribution.hot).toBe(1);
+    expect(report.tierDistribution.warm).toBe(2);
   });
 
   it("avgConfidence is the mean of active fact confidences", () => {

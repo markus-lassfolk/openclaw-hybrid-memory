@@ -44,9 +44,9 @@ scene:
     expect(result.markdown).toContain("## Scenes");
     expect(result.markdown).toContain("Evening Chill");
     expect(result.markdown).toContain("## Global Config");
-    expect(result.metadata["automationCount"]).toBe(1);
-    expect(result.metadata["scriptCount"]).toBe(1);
-    expect(result.metadata["sceneCount"]).toBe(1);
+    expect(result.metadata.automationCount).toBe(1);
+    expect(result.metadata.scriptCount).toBe(1);
+    expect(result.metadata.sceneCount).toBe(1);
   });
 
   it("handles a minimal config with just sensors", () => {
@@ -131,7 +131,7 @@ automation:
 `.trim();
 
     const result = haYamlConverter.convert(yaml, "/config/automations.yaml");
-    expect(result.metadata["automationCount"]).toBe(2);
+    expect(result.metadata.automationCount).toBe(2);
     expect(result.markdown).toContain("Morning Routine");
     expect(result.markdown).toContain("Security Alert");
     expect(result.markdown).toContain("time(07:00:00)");
@@ -152,10 +152,10 @@ light:
   });
 
   it("returns correct file path in metadata", () => {
-    const yaml = `sensor:\n  - platform: template\n    name: test\n`;
+    const yaml = "sensor:\n  - platform: template\n    name: test\n";
     const result = haYamlConverter.convert(yaml, "/home/user/ha/sensors.yaml");
-    expect(result.metadata["filePath"]).toBe("/home/user/ha/sensors.yaml");
-    expect(result.metadata["source"]).toBe("ha-yaml-converter");
+    expect(result.metadata.filePath).toBe("/home/user/ha/sensors.yaml");
+    expect(result.metadata.source).toBe("ha-yaml-converter");
   });
 
   it("handles a config with no recognisable HA keys", () => {

@@ -57,7 +57,7 @@ export function registerAuthFailureRecall(
           if (!msg || typeof msg !== "object") continue;
           const msgObj = msg as Record<string, unknown>;
           const content = msgObj.content;
-          if (typeof content === "string") textToScan += "\n" + content;
+          if (typeof content === "string") textToScan += `\n${content}`;
         }
       }
 
@@ -145,7 +145,7 @@ export function registerAuthFailureRecall(
           `memory-hybrid: injecting ${credentialFacts.length} credential facts for ${detection.target}`,
         );
         authFailureRecallsThisSession.set(recallKey, recallCount + 1);
-        return { prependContext: hint + "\n\n" };
+        return { prependContext: `${hint}\n\n` };
       }
     } catch (err) {
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {

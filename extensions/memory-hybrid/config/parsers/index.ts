@@ -242,9 +242,9 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
   // Apply preset for resolved mode (covers both explicit mode and default-mode paths, eliminating duplication)
   const preset = PRESET_OVERRIDES[appliedMode];
   const userRaw = { ...cfg } as Record<string, unknown>;
-  delete userRaw.mode;
+  userRaw.mode = undefined;
   cfg = deepMergePreset(preset, cfg) as Record<string, unknown>;
-  delete cfg.mode;
+  cfg.mode = undefined;
   // Phase 1 (2026.3.140+): force core-only baseline for all installations (overrides user-set values too)
   if (isVersionAtLeast(versionInfo.pluginVersion, "2026.3.140")) {
     applyPhase1CoreOnlyMigration(cfg);
@@ -356,7 +356,7 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
       }
       resolvedApiKey = resolvedKey;
     } else if (hasAzureFoundry) {
-      const rawKey = azureFoundry!.apiKey!.trim();
+      const rawKey = azureFoundry?.apiKey?.trim();
       const resolvedKey =
         rawKey.startsWith("env:") || rawKey.startsWith("file:") ? resolveSecretRef(rawKey) : resolveEnvVars(rawKey);
       if (!resolvedKey || resolvedKey.length < 10) {
@@ -365,7 +365,7 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
         );
       }
       resolvedApiKey = resolvedKey;
-      embeddingEndpointOverride = azureFoundry!.baseURL!.trim();
+      embeddingEndpointOverride = azureFoundry?.baseURL?.trim();
       pluginLogger.info(
         'memory-hybrid: using llm.providers["azure-foundry"] for embeddings (same API as LLM). Set embedding.endpoint and embedding.apiKey to override.',
       );
@@ -486,9 +486,7 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
   } else if (embeddingProvider === "openai") {
     if (!EMBEDDING_DIMENSIONS[model]) {
       throw new Error(
-        `memory-hybrid: embedding model '${model}' is not in the known-models list. ` +
-          `Set embedding.dimensions explicitly to the vector size your model produces. ` +
-          `Known models: ${Object.keys(EMBEDDING_DIMENSIONS).join(", ")}.`,
+        `memory-hybrid: embedding model '${model}' is not in the known-models list. Set embedding.dimensions explicitly to the vector size your model produces. Known models: ${Object.keys(EMBEDDING_DIMENSIONS).join(", ")}.`,
       );
     }
     resolvedDimensions = vectorDimsForModel(model);
@@ -503,9 +501,7 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
     // silent schema mismatches with existing LanceDB tables (e.g. 768 vs 1536 dimensions).
     if (!EMBEDDING_DIMENSIONS[model]) {
       throw new Error(
-        `memory-hybrid: embedding model '${model}' is not in the known-models list. ` +
-          `Set embedding.dimensions explicitly to the vector size your model produces. ` +
-          `Known models: ${Object.keys(EMBEDDING_DIMENSIONS).join(", ")}.`,
+        `memory-hybrid: embedding model '${model}' is not in the known-models list. Set embedding.dimensions explicitly to the vector size your model produces. Known models: ${Object.keys(EMBEDDING_DIMENSIONS).join(", ")}.`,
       );
     }
     resolvedDimensions = vectorDimsForModel(model, 768); // 768 default for known ollama models
@@ -582,7 +578,7 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
       rawGoogleKey.startsWith("file:") ||
       (rawGoogleKey.includes("${") && rawGoogleKey.includes("}"));
     const hint = isSecretRef
-      ? ` (SecretRef could not be resolved — check the referenced env var, file, or template placeholder is set and non-empty.)`
+      ? " (SecretRef could not be resolved — check the referenced env var, file, or template placeholder is set and non-empty.)"
       : " Set distill.apiKey or llm.providers.google.apiKey in plugin config.";
     throw new Error(`embedding.provider is 'google' but no valid key found.${hint}`);
   }

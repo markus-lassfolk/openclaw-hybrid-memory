@@ -27,8 +27,8 @@ function renderMQTT(mqtt: Record<string, unknown>): string {
 
 function renderSerial(serial: Record<string, unknown>): string {
   const port = getStr(serial, "port", "*(not set)*");
-  const adapter = serial["adapter"] ? getStr(serial, "adapter") : "auto";
-  const baudrate = serial["baudrate"] ? String(serial["baudrate"]) : "default";
+  const adapter = serial.adapter ? getStr(serial, "adapter") : "auto";
+  const baudrate = serial.baudrate ? String(serial.baudrate) : "default";
   return `- Port: ${port}\n- Adapter: ${adapter}\n- Baudrate: ${baudrate}`;
 }
 
@@ -44,7 +44,7 @@ interface Z2MDevice {
 function renderDevice(ieeeOrKey: string, device: unknown): string {
   if (typeof device !== "object" || device === null) return `- ${ieeeOrKey}: *(invalid)*`;
   const d = device as Z2MDevice;
-  const name = d.friendly_name ? `**${d.friendly_name}**` : `*(unnamed)*`;
+  const name = d.friendly_name ? `**${d.friendly_name}**` : "*(unnamed)*";
   const ieee = d.ieee_address ?? ieeeOrKey;
   const model = d.model ? ` model: ${d.model}` : "";
   const mfr = d.manufacturer ? ` (${d.manufacturer})` : "";
@@ -82,29 +82,29 @@ function convertConfigYAML(doc: Z2MDoc, filePath: string): ConversionResult {
   const sections: string[] = [`# ${title}\n`];
 
   // MQTT
-  const mqtt = doc["mqtt"] as Record<string, unknown> | undefined;
+  const mqtt = doc.mqtt as Record<string, unknown> | undefined;
   if (mqtt) {
     sections.push(`## MQTT\n\n${renderMQTT(mqtt)}\n`);
   }
 
   // Serial
-  const serial = doc["serial"] as Record<string, unknown> | undefined;
+  const serial = doc.serial as Record<string, unknown> | undefined;
   if (serial) {
     sections.push(`## Serial\n\n${renderSerial(serial)}\n`);
   }
 
   // Advanced — redact network_key
-  const advanced = doc["advanced"] as Record<string, unknown> | undefined;
+  const advanced = doc.advanced as Record<string, unknown> | undefined;
   if (advanced) {
-    const panId = advanced["pan_id"] ? `PAN ID: ${String(advanced["pan_id"])}` : "";
-    const channel = advanced["channel"] ? `Channel: ${String(advanced["channel"])}` : "";
+    const panId = advanced.pan_id ? `PAN ID: ${String(advanced.pan_id)}` : "";
+    const channel = advanced.channel ? `Channel: ${String(advanced.channel)}` : "";
     const networkKey = "Network key: [REDACTED]";
     const info = [panId, channel, networkKey].filter(Boolean).join("\n- ");
     sections.push(`## Advanced\n\n- ${info}\n`);
   }
 
   // Devices
-  const devices = doc["devices"] as Record<string, unknown> | undefined;
+  const devices = doc.devices as Record<string, unknown> | undefined;
   if (devices && typeof devices === "object") {
     const entries = Object.entries(devices);
     if (entries.length > 0) {
@@ -114,7 +114,7 @@ function convertConfigYAML(doc: Z2MDoc, filePath: string): ConversionResult {
   }
 
   // Groups
-  const groups = doc["groups"] as Record<string, unknown> | undefined;
+  const groups = doc.groups as Record<string, unknown> | undefined;
   if (groups && typeof groups === "object") {
     const entries = Object.entries(groups);
     if (entries.length > 0) {
@@ -124,7 +124,7 @@ function convertConfigYAML(doc: Z2MDoc, filePath: string): ConversionResult {
   }
 
   // Frontend/homeassistant settings (non-sensitive)
-  const ha = doc["homeassistant"];
+  const ha = doc.homeassistant;
   if (ha !== undefined) {
     sections.push(`## Home Assistant Integration\n\n- Enabled: ${Boolean(ha)}\n`);
   }

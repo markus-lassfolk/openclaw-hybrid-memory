@@ -109,7 +109,7 @@ export class HybridMemoryContextEngine implements MinimalContextEngine {
    *  1. Drain the WAL — replay pending entries to SQLite (and LanceDB if embeddings available)
    *  2. Snapshot session-scoped facts to WAL for durability
    */
-  async compact(params: {
+  async compact(_params: {
     sessionId: string;
     sessionFile: string;
     tokenBudget?: number;
@@ -161,7 +161,7 @@ export class HybridMemoryContextEngine implements MinimalContextEngine {
           ];
           for (const f of topFacts) {
             const entityPrefix = f.entity ? `[${f.entity}] ` : "";
-            const preview = f.text.length > 150 ? f.text.slice(0, 150) + "…" : f.text;
+            const preview = f.text.length > 150 ? `${f.text.slice(0, 150)}…` : f.text;
             lines.push(`- ${entityPrefix}${preview}`);
           }
           lines.push("<!-- /memory-hybrid: post-compaction memory summary -->");
@@ -219,7 +219,7 @@ export class HybridMemoryContextEngine implements MinimalContextEngine {
 
       const lines = topFacts.map((f) => {
         const entityPrefix = f.entity ? `[${f.entity}] ` : "";
-        const preview = f.text.length > 200 ? f.text.slice(0, 200) + "…" : f.text;
+        const preview = f.text.length > 200 ? `${f.text.slice(0, 200)}…` : f.text;
         return `- ${entityPrefix}${preview}`;
       });
 
@@ -229,7 +229,7 @@ export class HybridMemoryContextEngine implements MinimalContextEngine {
         `<!-- memory-hybrid: parent context injected for subagent ${params.childSessionKey} -->`,
         `Relevant memories from parent session (${params.parentSessionKey}):`,
         ...lines,
-        `<!-- /memory-hybrid: parent context -->`,
+        "<!-- /memory-hybrid: parent context -->",
       ].join("\n");
 
       logger.debug?.(

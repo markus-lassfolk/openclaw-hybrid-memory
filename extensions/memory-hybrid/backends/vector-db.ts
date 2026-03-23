@@ -282,10 +282,7 @@ export class VectorDB {
       if (!vectorField) {
         this.schemaValid = false;
         this.logWarn(
-          `memory-hybrid: ⚠️  LanceDB table '${LANCE_TABLE}' has no vector column — ` +
-            `vector search will return empty results. ` +
-            `This may indicate schema corruption. ` +
-            `Delete the LanceDB directory and restart to rebuild the index.`,
+          `memory-hybrid: ⚠️  LanceDB table '${LANCE_TABLE}' has no vector column — vector search will return empty results. This may indicate schema corruption. Delete the LanceDB directory and restart to rebuild the index.`,
         );
         return;
       }
@@ -294,21 +291,16 @@ export class VectorDB {
       if (typeof actualDim !== "number" || actualDim !== this.vectorDim) {
         const actual = typeof actualDim === "number" ? actualDim : "unknown";
         this.logWarn(
-          `memory-hybrid: ⚠️  LanceDB dimension mismatch — table has dim=${actual}, ` +
-            `configured embedding model expects dim=${this.vectorDim}. ` +
-            `Vector search will return empty results until resolved (issue #128). ` +
-            `Set vector.autoRepair=true in plugin config to automatically rebuild the index.`,
+          `memory-hybrid: ⚠️  LanceDB dimension mismatch — table has dim=${actual}, configured embedding model expects dim=${this.vectorDim}. Vector search will return empty results until resolved (issue #128). Set vector.autoRepair=true in plugin config to automatically rebuild the index.`,
         );
         if (this.autoRepair && typeof actualDim === "number" && actualDim !== this.vectorDim) {
           // schemaValid stays true — it will be valid again after repair
           this.logWarn(
-            `memory-hybrid: vector.autoRepair=true — dropping '${LANCE_TABLE}' and recreating ` +
-              `with dim=${this.vectorDim} (was ${actual}). ` +
-              `Existing vectors are lost; facts will be re-embedded from SQLite automatically.`,
+            `memory-hybrid: vector.autoRepair=true — dropping '${LANCE_TABLE}' and recreating with dim=${this.vectorDim} (was ${actual}). Existing vectors are lost; facts will be re-embedded from SQLite automatically.`,
           );
-          await this.db!.dropTable(LANCE_TABLE);
+          await this.db?.dropTable(LANCE_TABLE);
           tableDropped = true;
-          this.table = await this.db!.createTable(LANCE_TABLE, [
+          this.table = await this.db?.createTable(LANCE_TABLE, [
             {
               id: "__schema__",
               text: "",

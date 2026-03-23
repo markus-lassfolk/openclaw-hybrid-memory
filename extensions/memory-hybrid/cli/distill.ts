@@ -324,7 +324,7 @@ export function registerDistillCommands(mem: Chainable, ctx: DistillContext): vo
           `\nSessions scanned: ${result.sessionsScanned}; reinforcement incidents found: ${result.incidents.length}`,
         );
         if (opts.dryRun) {
-          console.log(`[dry-run] Would annotate facts/procedures with reinforcement data.`);
+          console.log("[dry-run] Would annotate facts/procedures with reinforcement data.");
         } else {
           const factsReinforced = result.incidents.reduce((sum, i) => sum + i.recalledMemoryIds.length, 0);
           console.log(`Annotated ${factsReinforced} facts with reinforcement data.`);
