@@ -271,7 +271,7 @@ import { ToolProposer } from "./services/tool-proposer.js";
 
 /** Wrappers for extracted helper functions that need access to per-instance config via runtimeRef. */
 function shouldCapture(text: string): boolean {
-  return shouldCaptureUtil(text, runtimeRef.value?.cfg.captureMaxChars, getMemoryTriggers());
+  return shouldCaptureUtil(text, runtimeRef.value?.cfg.captureMaxChars ?? 5000, getMemoryTriggers());
 }
 
 function detectCategory(text: string): MemoryCategory {

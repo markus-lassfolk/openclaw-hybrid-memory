@@ -196,7 +196,9 @@ export class PersonaProposer {
       this.cfg.personaProposals.proposalTTLDays > 0
         ? Math.floor(Date.now() / 1000) + this.cfg.personaProposals.proposalTTLDays * 24 * 3600
         : null;
-    const evidenceSessions = reflections.slice(0, Math.max(1, this.cfg.personaProposals.minSessionEvidence)).map((r) => r.id);
+    const evidenceSessions = reflections
+      .slice(0, Math.max(1, this.cfg.personaProposals.minSessionEvidence))
+      .map((r) => r.id);
     const existingPendingOrApproved = this.proposalsDb
       .list()
       .filter((proposal) => proposal.status === "pending" || proposal.status === "approved");

@@ -300,18 +300,19 @@ export class VectorDB {
           );
           await this.db?.dropTable(LANCE_TABLE);
           tableDropped = true;
-          this.table = await this.db?.createTable(LANCE_TABLE, [
-            {
-              id: "__schema__",
-              text: "",
-              vector: new Array(this.vectorDim).fill(0),
-              importance: 0,
-              category: "other",
-              createdAt: 0,
-            },
-          ]);
+          this.table =
+            (await this.db?.createTable(LANCE_TABLE, [
+              {
+                id: "__schema__",
+                text: "",
+                vector: new Array(this.vectorDim).fill(0),
+                importance: 0,
+                category: "other",
+                createdAt: 0,
+              },
+            ])) ?? null;
           try {
-            await this.table.delete('id = "__schema__"');
+            await this.table?.delete('id = "__schema__"');
           } catch (deleteErr) {
             this.logWarn(`memory-hybrid: failed to delete schema seed row (non-fatal): ${deleteErr}`);
           }

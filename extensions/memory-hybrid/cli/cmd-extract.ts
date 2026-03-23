@@ -13,7 +13,12 @@ import { join } from "node:path";
 import { homedir } from "node:os";
 
 import type { MemoryCategory, HybridMemoryConfig } from "../config.js";
-import { getCronModelConfig, getLLMModelPreference, getDefaultCronModel, resolveReflectionModelAndFallbacks } from "../config.js";
+import {
+  getCronModelConfig,
+  getLLMModelPreference,
+  getDefaultCronModel,
+  resolveReflectionModelAndFallbacks,
+} from "../config.js";
 import { chatCompleteWithRetry, distillMaxOutputTokens } from "../services/chat.js";
 import { extractProceduresFromSessions } from "../services/procedure-extractor.js";
 import { generateAutoSkills } from "../services/procedure-skill-generator.js";

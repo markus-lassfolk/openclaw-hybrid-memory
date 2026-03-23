@@ -71,7 +71,7 @@ export async function runFindDuplicates(
 
   for (let i = 0; i < ids.length; i += BATCH_SIZE) {
     const batch = ids.slice(i, i + BATCH_SIZE);
-    const batchTexts = batch.map((id) => idToFact.get(id)?.text);
+    const batchTexts = batch.map((id) => idToFact.get(id)?.text ?? "");
     const vecs = await safeEmbedBatch(embeddings, batchTexts, (msg) => logger.warn(msg));
     // Whole batch failed: all slots are null — log once instead of once-per-fact to avoid log spam.
     if (vecs.every((v) => v === null || v.length === 0)) {
@@ -112,8 +112,8 @@ export async function runFindDuplicates(
           idA: validIds[i],
           idB: validIds[j],
           score: r.score,
-          textA: idToFact.get(validIds[i])?.text,
-          textB: idToFact.get(validIds[j])?.text,
+          textA: idToFact.get(validIds[i])?.text ?? "",
+          textB: idToFact.get(validIds[j])?.text ?? "",
         });
       }
     }

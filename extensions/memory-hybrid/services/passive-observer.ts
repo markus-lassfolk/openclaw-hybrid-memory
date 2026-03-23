@@ -344,7 +344,8 @@ export async function runPassiveObserver(
   let hasNewContent = false;
 
   for (const filePath of filePaths) {
-    const sessionId = filePath.replace(/\\/g, "/").split("/").pop()?.replace(".jsonl", "");
+    const sessionId = filePath.replace(/\\/g, "/").split("/").pop()?.replace(".jsonl", "") ?? "";
+    if (!sessionId) continue;
     activeSessionIds.add(sessionId);
     let fileBytelen: number;
     try {

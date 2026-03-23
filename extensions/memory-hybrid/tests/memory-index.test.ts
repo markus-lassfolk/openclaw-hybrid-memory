@@ -25,7 +25,7 @@ describe("memory index", () => {
     factsDb.close();
     rmSync(tmpDir, { recursive: true, force: true });
     if (originalWorkspace !== undefined) process.env.OPENCLAW_WORKSPACE = originalWorkspace;
-    else process.env.OPENCLAW_WORKSPACE = undefined;
+    else delete process.env.OPENCLAW_WORKSPACE;
   });
 
   it("builds a compact awareness snapshot from clusters, decisions, entities, and patterns", () => {
