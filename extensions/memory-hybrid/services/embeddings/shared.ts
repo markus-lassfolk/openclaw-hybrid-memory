@@ -27,10 +27,10 @@ export const KNOWN_GOOGLE_EMBED_MODELS = new Set([
 /** Default Google embedding model at the OpenAI-compatible endpoint. */
 export const GOOGLE_EMBED_DEFAULT_MODEL = "text-embedding-005";
 
-/** Default output dimensions for Google text-embedding-005/004 (used when config has an OpenAI model name). */
+/** Default output dimensions when mapping OpenAI-only model names to Google embeddings (768). */
 export const GOOGLE_EMBED_DEFAULT_DIMENSIONS = 768;
 
-/** OpenAI-only embedding model names; for provider=google we map these to text-embedding-005 and 768 dims. */
+/** OpenAI-only embedding model names; for provider=google we substitute GOOGLE_EMBED_DEFAULT_MODEL and these dims. */
 export const OPENAI_ONLY_EMBED_MODELS = new Set([
   "text-embedding-3-small",
   "text-embedding-3-large",
