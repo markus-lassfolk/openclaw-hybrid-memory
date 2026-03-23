@@ -20,7 +20,13 @@ import type {
 
 import type { StoreConfig, WALConfig, EventLogConfig, PathConfig } from "./core.js";
 
-import type { PassiveObserverConfig, ReflectionConfig, ProceduresConfig, ExtractionConfig } from "./capture.js";
+import type {
+  PassiveObserverConfig,
+  ReflectionConfig,
+  IdentityReflectionConfig,
+  ProceduresConfig,
+  ExtractionConfig,
+} from "./capture.js";
 
 import type {
   VerificationConfig,
@@ -426,6 +432,8 @@ export type HybridMemoryConfig = {
   passiveObserver: PassiveObserverConfig;
   /** Reflection layer — synthesize behavioral patterns from facts (default: disabled) */
   reflection: ReflectionConfig;
+  /** Identity reflection layer — synthesize persona-level insights from reflection outputs (default: disabled) */
+  identityReflection: IdentityReflectionConfig;
   /** Procedural memory — procedure tagging and auto-skills (default: enabled) */
   procedures: ProceduresConfig;
   /** Multi-pass extraction with LLM verification (Issue #166, default: disabled). */

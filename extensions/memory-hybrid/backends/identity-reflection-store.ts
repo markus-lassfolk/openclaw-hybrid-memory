@@ -130,7 +130,7 @@ export class IdentityReflectionStore {
   listRecent(limit = 50): IdentityReflectionEntry[] {
     const rows = this.db
       .prepare(`SELECT * FROM identity_reflections ORDER BY created_at DESC LIMIT ?`)
-      .all(limit) as IdentityReflectionRow[];
+      .all(limit) as unknown as IdentityReflectionRow[];
     return rows.map((row) => this.rowToEntry(row));
   }
 

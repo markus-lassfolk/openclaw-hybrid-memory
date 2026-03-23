@@ -101,8 +101,8 @@ export class NarrativesDB {
         : "SELECT * FROM narratives WHERE tag = ? ORDER BY created_at DESC LIMIT ?";
     const rows =
       tag === "all"
-        ? (this.db.prepare(sql).all(limit) as NarrativeRow[])
-        : (this.db.prepare(sql).all(tag, limit) as NarrativeRow[]);
+        ? (this.db.prepare(sql).all(limit) as unknown as NarrativeRow[])
+        : (this.db.prepare(sql).all(tag, limit) as unknown as NarrativeRow[]);
     return rows.map((r) => this.rowToEntry(r));
   }
 

@@ -2,7 +2,7 @@
  * SQLite + FTS5 backend for structured facts.
  */
 
-import { DatabaseSync } from "node:sqlite";
+import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import { mkdirSync, readFileSync, existsSync } from "node:fs";
 import { dirname } from "node:path";
 import { randomUUID } from "node:crypto";
@@ -65,6 +65,7 @@ export class FactsDB {
   // - Extracted implementation modules under backends/facts-db/ own links/reinforcement/scan-cursor logic.
   private db: DatabaseSync;
   private readonly dbPath: string;
+  private _dbOpen = true;
   private readonly fuzzyDedupe: boolean;
   private supersededTextsCache: Set<string> | null = null;
   private supersededTextsCacheTime = 0;
@@ -91,6 +92,7 @@ export class FactsDB {
     this.fuzzyDedupe = options?.fuzzyDedupe ?? false;
     mkdirSync(dirname(dbPath), { recursive: true });
     this.db = new DatabaseSync(dbPath);
+    this._dbOpen = true;
     this.applyPragmas();
 
     // Create main table
@@ -1055,13 +1057,13 @@ export class FactsDB {
    * Build SQL fragment for scope filtering with positional params (for lookup/getAll).
    * Same security constraints as scopeFilterClause — derive from trusted identity only.
    */
-  private scopeFilterClausePositional(filter: ScopeFilter | null | undefined): { clause: string; params: unknown[] } {
+  private scopeFilterClausePositional(filter: ScopeFilter | null | undefined): { clause: string; params: SQLInputValue[] } {
     if (!filter || (!filter.userId && !filter.agentId && !filter.sessionId)) {
       return { clause: "", params: [] };
     }
     const parts: string[] = ["("];
     parts.push("scope = 'global'");
-    const params: unknown[] = [];
+    const params: SQLInputValue[] = [];
     if (filter.userId) {
       parts.push("OR (scope = 'user' AND scope_target = ?)");
       params.push(filter.userId);
@@ -1497,7 +1499,7 @@ export class FactsDB {
   /** Prune recall_log entries older than N days to prevent unbounded growth (Issue #148). */
   pruneRecallLog(olderThanDays = 30): number {
     const cutoff = Math.floor(Date.now() / 1000) - olderThanDays * 24 * 3600;
-    return this.liveDb.prepare(`DELETE FROM recall_log WHERE occurred_at < ?`).run(cutoff).changes;
+    return Number(this.liveDb.prepare(`DELETE FROM recall_log WHERE occurred_at < ?`).run(cutoff).changes ?? 0);
   }
 
   /** Read the last stored embedding provider+model metadata (Issue #153). */
@@ -2235,7 +2237,7 @@ export class FactsDB {
   ): MemoryEntry[] {
     const nowSec = Math.floor(Date.now() / 1000);
     const parts: string[] = ["(expires_at IS NULL OR expires_at > ?)", "superseded_at IS NULL"];
-    const params: unknown[] = [nowSec];
+    const params: SQLInputValue[] = [nowSec];
     if (filters?.category != null) {
       parts.push("category = ?");
       params.push(filters.category);
@@ -2310,7 +2312,7 @@ export class FactsDB {
                 AND id NOT IN (SELECT fact_id FROM verified_facts)`,
       )
       .run({ now: nowSec });
-    return result.changes;
+    return Number(result.changes ?? 0);
   }
 
   /** Prune session-scoped memories for a given session (cleared on session end). Returns count deleted. */
@@ -2332,7 +2334,7 @@ export class FactsDB {
                 AND id NOT IN (SELECT fact_id FROM verified_facts)`,
       )
       .run(sessionId);
-    return result.changes;
+    return Number(result.changes ?? 0);
   }
 
   /** Promote a fact's scope (e.g. session → global or agent). Returns true if updated. */
@@ -2384,7 +2386,7 @@ export class FactsDB {
                 AND id NOT IN (SELECT fact_id FROM verified_facts)`,
       )
       .run({ now: nowSec });
-    return result.changes;
+    return Number(result.changes ?? 0);
   }
 
   confirmFact(id: string): boolean {
@@ -2602,7 +2604,7 @@ export class FactsDB {
   }): { facts: Array<Record<string, unknown>>; total: number } {
     const nowSec = Math.floor(Date.now() / 1000);
     let where = "superseded_at IS NULL AND (expires_at IS NULL OR expires_at > ?)";
-    const params: unknown[] = [nowSec];
+    const params: SQLInputValue[] = [nowSec];
 
     if (opts.category) {
       where += " AND category = ?";
@@ -2930,8 +2932,9 @@ export class FactsDB {
 
   /** Get the live DB handle, reopening if closed after a SIGUSR1 restart. */
   private get liveDb(): DatabaseSync {
-    if (!this.db.open) {
-      this.db = new DatabaseSync(this.dbPath);
+    if (!this._dbOpen) {
+      this.db.open();
+      this._dbOpen = true;
       this.applyPragmas();
     }
     return this.db;
@@ -3013,8 +3016,8 @@ export class FactsDB {
       const successCount = proc.successCount ?? existing.successCount;
       const failureCount = proc.failureCount ?? existing.failureCount;
       const confidence = proc.confidence ?? Math.max(0.1, Math.min(0.95, 0.5 + 0.1 * (successCount - failureCount)));
-      const scope = proc.scope ?? existing.scope;
-      const scopeTarget = proc.scopeTarget ?? existing.scopeTarget;
+      const scope = proc.scope ?? existing.scope ?? "global";
+      const scopeTarget = proc.scopeTarget ?? existing.scopeTarget ?? null;
       this.liveDb
         .prepare(
           `UPDATE procedures SET task_pattern = ?, recipe_json = ?, procedure_type = ?, success_count = ?, failure_count = ?, last_validated = ?, last_failed = ?, confidence = ?, ttl_days = ?, scope = ?, scope_target = ?, updated_at = ? WHERE id = ?`,
@@ -3030,7 +3033,7 @@ export class FactsDB {
           confidence,
           proc.ttlDays ?? existing.ttlDays,
           scope,
-          scopeTarget,
+          scopeTarget ?? null,
           now,
           id,
         );
@@ -3486,12 +3489,36 @@ export class FactsDB {
            AND link_type != 'DERIVED_FROM'`,
       )
       .run();
-    return result.changes;
+    return Number(result.changes ?? 0);
   }
 
   /** Alias for backfillDecayClasses() for backward compatibility */
   backfillDecay(): Record<string, number> {
     return this.backfillDecayClasses();
+  }
+
+  /**
+   * Prune log tables that accumulate indefinitely (Issue #573).
+   * Deletes rows older than `retentionDays` from recall/reinforcement/feedback logs.
+   */
+  pruneLogTables(retentionDays: number): number {
+    if (retentionDays <= 0) return 0;
+    const cutoff = Math.floor(Date.now() / 1000) - retentionDays * 86400;
+    const recall = this.liveDb.prepare(`DELETE FROM recall_log WHERE occurred_at < ?`).run(cutoff);
+    const reinforcement = this.liveDb.prepare(`DELETE FROM reinforcement_log WHERE occurred_at < ?`).run(cutoff);
+    const feedback = this.liveDb.prepare(`DELETE FROM feedback_trajectories WHERE created_at < ?`).run(cutoff);
+    return Number(recall.changes ?? 0) + Number(reinforcement.changes ?? 0) + Number(feedback.changes ?? 0);
+  }
+
+  /** Compact FTS5 shadow tables after bulk deletes. */
+  optimizeFts(): void {
+    this.liveDb.exec(`INSERT INTO facts_fts(facts_fts) VALUES('optimize')`);
+  }
+
+  /** Reclaim freed pages and truncate WAL after maintenance work. */
+  vacuumAndCheckpoint(): void {
+    this.liveDb.exec("VACUUM");
+    this.liveDb.exec("PRAGMA wal_checkpoint(TRUNCATE)");
   }
 
   /** Get reflection statistics */
@@ -3630,7 +3657,7 @@ export class FactsDB {
 
     const query = `DELETE FROM facts WHERE ${conditions.join(" OR ")}`;
     const result = this.liveDb.prepare(query).run(...params);
-    return result.changes;
+    return Number(result.changes ?? 0);
   }
 
   /**
@@ -3731,8 +3758,8 @@ export class FactsDB {
         ? "AND scope = ? AND scope_target = ?"
         : "AND scope = ? AND scope_target IS NULL"
       : "";
-    const baseParams: unknown[] = [entity, key, value, excludeFactId, nowSec];
-    const scopeParams: unknown[] = scope ? (scopeTarget != null ? [scope, scopeTarget] : [scope]) : [];
+    const baseParams: SQLInputValue[] = [entity, key, value, excludeFactId, nowSec];
+    const scopeParams: SQLInputValue[] = scope ? (scopeTarget != null ? [scope, scopeTarget] : [scope]) : [];
     const rows = this.liveDb
       .prepare(
         `SELECT * FROM facts
@@ -4213,8 +4240,8 @@ export class FactsDB {
           ? "AND scope = ? AND scope_target = ?"
           : "AND scope = ? AND scope_target IS NULL"
         : "";
-      const baseParams: unknown[] = [entity.trim(), key.trim(), newFactId, nowSec];
-      const scopeParams: unknown[] = scope ? (scopeTarget != null ? [scope, scopeTarget] : [scope]) : [];
+      const baseParams: SQLInputValue[] = [entity.trim(), key.trim(), newFactId, nowSec];
+      const scopeParams: SQLInputValue[] = scope ? (scopeTarget != null ? [scope, scopeTarget] : [scope]) : [];
       const conflicting = this.liveDb
         .prepare(
           `SELECT * FROM facts
@@ -4418,6 +4445,7 @@ export class FactsDB {
   }
 
   close(): void {
+    this._dbOpen = false;
     try {
       this.db.close();
     } catch (err) {
