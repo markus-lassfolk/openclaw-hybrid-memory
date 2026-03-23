@@ -177,12 +177,12 @@ export const ARCHITECTURE_CENTER = {
     },
   ] satisfies readonly ArchitectureDecisionRule[],
   constraints: [
-    "Multi-agent plugin first: this runtime is primarily an OpenClaw multi-agent memory plugin, not a generic hostile multi-tenant SaaS backend.",
+    "Multi-agent plugin first: This runtime is primarily an OpenClaw multi-agent memory plugin, not a generic hostile multi-tenant SaaS backend.",
     "Multiple stores are intentional: SQLite/FTS and LanceDB serve different retrieval modes; refactors must preserve this split and clarify consistency semantics rather than forcing naive consolidation.",
-    "Consistency is explicit: any write/read path spanning stores must define ordering, idempotency, replay, and failure behavior (WAL + replay + reconciliation).",
-    "Interactive vs deep retrieval differ: interactive turn-time recall prioritizes latency/predictability; deeper/offline retrieval can spend more latency/compute for completeness.",
-    "Adjacent features must not back-drive core complexity: optional subsystems may consume core interfaces, but core runtime contracts should not become shaped by any one adjacent feature.",
-    "Core contracts are stable: memory lifecycle hooks and primary memory tools are compatibility surfaces and should change conservatively.",
+    "Consistency is explicit: Any write/read path spanning stores must define ordering, idempotency, replay, and failure behavior (WAL + replay + reconciliation).",
+    "Interactive vs deep retrieval differ: Interactive turn-time recall prioritizes latency/predictability; deeper/offline retrieval can spend more latency/compute for completeness.",
+    "Adjacent features must not back-drive core complexity: Optional subsystems may consume core interfaces, but core runtime contracts should not become shaped by any one adjacent feature.",
+    "Core contracts are stable: Memory lifecycle hooks and primary memory tools are compatibility surfaces and should change conservatively.",
   ],
   refactorGuardrails: [
     "Changes that touch core runtime files should avoid importing adjacent stores/services directly; prefer narrow interfaces passed through MemoryPluginAPI.",
