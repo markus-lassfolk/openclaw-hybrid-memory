@@ -36,6 +36,31 @@ const { FactsDB, VectorDB } = _testing;
 
 const VECTOR_DIM = 4;
 
+async function detectLoopbackBindSupport(): Promise<boolean> {
+  const { createServer } = await import("node:http");
+  const probe = createServer();
+  try {
+    await new Promise<void>((resolve, reject) => {
+      probe.once("error", reject);
+      probe.listen(0, "127.0.0.1", () => resolve());
+    });
+    return true;
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "EPERM") {
+      return false;
+    }
+    throw err;
+  } finally {
+    try {
+      await new Promise<void>((resolve) => probe.close(() => resolve()));
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
+const describeCreateDashboardServer = (await detectLoopbackBindSupport()) ? describe : describe.skip;
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -199,8 +224,6 @@ describe("collectStatus", () => {
   });
 
   it("costs.enabled is false when llm_cost_log table does not exist", async () => {
-    // The table is created by CostTracker; FactsDB raw db does not create it.
-    // Without the table, enabled should be false.
     const status = await collectStatus(ctx);
     expect(status.costs.enabled).toBe(false);
   });
@@ -212,7 +235,7 @@ describe("collectStatus", () => {
   });
 });
 
-describe("createDashboardServer", () => {
+describeCreateDashboardServer("createDashboardServer", () => {
   let tmpDir: string;
   let ctx: ReturnType<typeof makeContext>;
   let port: number;
@@ -287,13 +310,11 @@ describe("createDashboardServer", () => {
 
   it("close() stops the server", async () => {
     server.close();
-    // Give the underlying HTTP server time to finish closing before asserting failure
     await new Promise<void>((resolve) => setTimeout(resolve, 50));
     await expect(httpGet(port, "/")).rejects.toThrow();
   });
 
   it("falls back to ephemeral port on EADDRINUSE (issue #428)", async () => {
-    // Occupy the port that the second server will try to bind to
     const { createServer } = await import("node:http");
     const blocker = createServer();
     const blockerPort = await new Promise<number>((resolve) => {
@@ -304,12 +325,10 @@ describe("createDashboardServer", () => {
     });
 
     try {
-      // Attempt to start dashboard on the occupied port — should fall back
       const fallback = await createDashboardServer(ctx, blockerPort);
       try {
         expect(fallback.port).not.toBe(blockerPort);
         expect(fallback.port).toBeGreaterThan(0);
-        // Verify the fallback server actually works
         const { status } = await httpGet(fallback.port, "/");
         expect(status).toBe(200);
       } finally {

@@ -378,14 +378,14 @@ describe("Error Reporter", () => {
         level: "error",
         user: {
           id: "550e8400-e29b-41d4-a716-446655440000",
-          username: "Maeve",
+          username: "TestBot",
         },
       };
 
       const sanitized = sanitizeEvent(mockEvent);
 
       expect(sanitized?.user?.id).toBe("550e8400-e29b-41d4-a716-446655440000");
-      expect(sanitized?.user?.username).toBe("Maeve");
+      expect(sanitized?.user?.username).toBe("TestBot");
     });
   });
 
@@ -745,10 +745,10 @@ describe("Error Reporter", () => {
       const event: any = {
         event_id: "e1",
         level: "error",
-        tags: { bot_name: "Maeve", bot_id: "uuid-1234" },
+        tags: { bot_name: "TestBot", bot_id: "uuid-1234" },
       };
       const sanitized = sanitizeEvent(event);
-      expect(sanitized?.tags?.bot_name).toBe("Maeve");
+      expect(sanitized?.tags?.bot_name).toBe("TestBot");
       expect(sanitized?.tags?.bot_id).toBe("uuid-1234");
     });
 

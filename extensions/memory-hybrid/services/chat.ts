@@ -40,8 +40,6 @@ export type PendingLLMWarnings = {
   drain: () => string[];
 };
 
-type ChatCompletionCreateParams = Parameters<OpenAI["chat"]["completions"]["create"]>[0];
-
 /** Create a per-instance pending LLM warning queue. */
 export function createPendingLLMWarnings(): PendingLLMWarnings {
   const pending = new Set<string>();
@@ -321,21 +319,21 @@ export async function chatComplete(opts: {
   try {
     // Newer models (GPT-5+, o-series) require max_completion_tokens and reject max_tokens; reasoning models also reject temperature/top_p.
     const useMaxCompletionTokens = requiresMaxCompletionTokens(model);
-    const body: ChatCompletionCreateParams = {
+    const body: OpenAI.ChatCompletionCreateParamsNonStreaming = {
       model,
-      stream: false,
       messages: [{ role: "user", content }],
       ...(useMaxCompletionTokens ? { max_completion_tokens: effectiveMaxTokens } : { max_tokens: effectiveMaxTokens }),
     };
     if (!isReasoningModel(model)) {
       body.temperature = temperature;
     }
-    const doCreate = () => opts.openai.chat.completions.create(body, { signal: controller.signal });
+    const doCreate = () =>
+      opts.openai.chat.completions.create(body as unknown as Parameters<OpenAI["chat"]["completions"]["create"]>[0], {
+        signal: controller.signal,
+      });
     // If feature is provided, wrap in withCostFeature so the proxy attributes the call correctly.
     // Cost recording itself is done by the OpenAI proxy in setup/init-databases.ts.
-    const resp = (await (feature
-      ? withCostFeature(feature, doCreate)
-      : doCreate())) as OpenAI.Chat.Completions.ChatCompletion;
+    const resp = (await (feature ? withCostFeature(feature, doCreate) : doCreate())) as OpenAI.Chat.ChatCompletion;
     clearTimeout(timeoutId);
     if (signal) signal.removeEventListener("abort", onAbort);
     const msg = resp.choices[0]?.message;

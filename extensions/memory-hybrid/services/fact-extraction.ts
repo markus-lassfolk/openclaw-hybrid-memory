@@ -120,7 +120,7 @@ export function extractStructuredFields(
 
   if (category === "entity") {
     const words = text.split(/\s+/);
-    // Include Swedish/Nordic letters (åäö) and other Unicode letters so names like Doris, Lotta, Åsa match
+    // Include Swedish/Nordic letters (åäö) and other Unicode letters for proper name matching
     const properNouns = words.filter((w) => /^\p{Lu}\p{L}+$/u.test(w));
     if (properNouns.length > 0) {
       return { entity: properNouns[0], key: null, value: null };

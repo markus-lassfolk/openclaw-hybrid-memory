@@ -478,7 +478,7 @@ export function registerMemoryTools(
         cfg.queryExpansion?.enabled && cfg.retrieval.strategies.includes("semantic")
           ? new QueryExpander(cfg.queryExpansion, openai)
           : null;
-      const embedFn = queryExpander && queryVector != null ? (text: string) => embeddings.embed(text) : null;
+      const embedFn = queryVector != null ? (text: string) => embeddings.embed(text) : null;
       const rrfOutput = await runRetrievalPipeline(query, queryVector, factsDb.getRawDb(), vectorDb, factsDb, {
         config: rrfConfig,
         policy: explicitPolicy,
@@ -494,6 +494,8 @@ export function registerMemoryTools(
         embedFn,
         rerankingConfig: cfg.reranking,
         rerankingOpenai: openai,
+        adaptiveOpenai: cfg.documentGrading?.enabled ? openai : undefined,
+        documentGradingConfig: cfg.documentGrading,
       });
 
       // Merge entity-lookup results first, then append RRF results (deduped).

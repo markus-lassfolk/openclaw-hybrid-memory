@@ -506,7 +506,7 @@ function getDashboardHtml(): string {
   </div>
 </main>
 <script>
-const AGENT_AVATARS = { Maeve: '🦊', Forge: '⚒️', Scholar: '📚', Hearth: '🏠', Warden: '🛡️', Reaver: '🔧' };
+const AGENT_AVATARS = { Forge: '⚒️', Scholar: '📚', Hearth: '🏠', Warden: '🛡️', Reaver: '🔧' };
 const STATUS_BADGE = {
   running: '<span class="badge badge-green">running</span>',
   active: '<span class="badge badge-green">active</span>',

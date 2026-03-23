@@ -20,6 +20,53 @@ openclaw hybrid-mem stats         # show fact/vector counts
 
 ---
 
+## OpenClaw: `Invalid config … plugins.entries.memory-hybrid: Unrecognized key: "llm"`
+
+**Cause:** `llm` (and all other memory-hybrid settings) must live **inside** the plugin entry’s **`config`** object. If `llm` is a **sibling** of `config` under `plugins.entries`, OpenClaw rejects it.
+
+**Wrong:**
+
+```json
+"plugins": {
+  "entries": {
+    "memory-hybrid": {
+      "enabled": true,
+      "llm": { "nano": ["…"], "providers": { … } }
+    }
+  }
+}
+```
+
+**Correct:**
+
+```json
+"plugins": {
+  "slots": { "memory": "openclaw-hybrid-memory" },
+  "entries": {
+    "openclaw-hybrid-memory": {
+      "enabled": true,
+      "config": {
+        "embedding": { … },
+        "llm": { "nano": ["…"], "default": ["…"], "heavy": ["…"], "providers": { … } }
+      }
+    }
+  }
+}
+```
+
+- Use the plugin id **`openclaw-hybrid-memory`** for the entry (not `memory-hybrid`). If you still have a stray `memory-hybrid` block, merge its `config` into `openclaw-hybrid-memory.config` and remove the duplicate entry.
+- After fixing, restart the gateway: `openclaw gateway stop && openclaw gateway start` (or your usual method).
+
+---
+
+## Config warning: `plugins.entries.memory-hybrid: plugin not found: memory-hybrid (stale config entry ignored)`
+
+**Cause:** An old entry key `memory-hybrid` is still in `plugins.entries`. The real plugin id is **`openclaw-hybrid-memory`**.
+
+**Fix:** Remove the entire `memory-hybrid` object from `plugins.entries` in `~/.openclaw/openclaw.json`. Keep only `openclaw-hybrid-memory` (and any other real plugins). If anything was only under `memory-hybrid`, merge it into `openclaw-hybrid-memory.config` first, then delete the stale entry.
+
+---
+
 ## WSL2 / no systemd: run gateway under cron (last-known-good recovery)
 
 On **WSL2** or in **containers**, `systemctl --user` is often unavailable (`Failed to connect to bus: No medium found`). The gateway should **not** be run as a systemd service; run it in the foreground or let a **cron watchdog** start and supervise it.

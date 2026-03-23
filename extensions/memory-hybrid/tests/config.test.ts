@@ -785,10 +785,10 @@ describe("hybridConfigSchema.parse", () => {
       errorReporting: {
         enabled: true,
         consent: true,
-        botName: "Maeve",
+        botName: "TestBot",
       },
     });
-    expect(result.errorReporting?.botName).toBe("Maeve");
+    expect(result.errorReporting?.botName).toBe("TestBot");
   });
 
   it("truncates errorReporting.botName to 64 chars", () => {
@@ -1550,11 +1550,11 @@ describe("hybridConfigSchema.parse", () => {
     const result = hybridConfigSchema.parse({
       ...validBase,
       multiAgent: {
-        orchestratorId: "maeve",
+        orchestratorId: "orchestrator",
         defaultStoreScope: "global",
       },
     });
-    expect(result.multiAgent.orchestratorId).toBe("maeve");
+    expect(result.multiAgent.orchestratorId).toBe("orchestrator");
     expect(result.multiAgent.defaultStoreScope).toBe("global");
   });
 
@@ -1584,10 +1584,10 @@ describe("hybridConfigSchema.parse", () => {
     const result = hybridConfigSchema.parse({
       ...validBase,
       multiAgent: {
-        orchestratorId: "  maeve  ",
+        orchestratorId: "  orchestrator  ",
       },
     });
-    expect(result.multiAgent.orchestratorId).toBe("maeve");
+    expect(result.multiAgent.orchestratorId).toBe("orchestrator");
   });
 
   it("multiAgent.defaultStoreScope defaults to 'global' for invalid values", () => {

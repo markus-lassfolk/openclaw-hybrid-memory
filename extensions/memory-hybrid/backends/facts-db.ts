@@ -2304,7 +2304,9 @@ export class FactsDB {
   /** List non-superseded facts by category (for CLI list command). */
   listFactsByCategory(category: string, limit = 100): MemoryEntry[] {
     const rows = this.liveDb
-      .prepare(`SELECT * FROM facts WHERE category = ? AND (superseded_at IS NULL) ORDER BY created_at DESC LIMIT ?`)
+      .prepare(
+        `SELECT * FROM facts WHERE category = ? AND (superseded_at IS NULL) ORDER BY COALESCE(source_date, created_at) DESC LIMIT ?`,
+      )
       .all(category, limit) as Array<Record<string, unknown>>;
     return rows.map((row) => this.rowToEntry(row));
   }

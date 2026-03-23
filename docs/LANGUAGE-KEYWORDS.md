@@ -8,7 +8,7 @@ nav_order: 1
 
 Memory capture (auto-capture, category detection, decay classification, and distillation) uses **keyword and phrase patterns** to decide what to store and how to classify it. By default only **English** patterns are hardcoded. The plugin can **detect the main languages** used in your memory and **generate equivalent patterns** for those languages, then **reuse them automatically** so that conversations in Swedish, German, or any other detected language are captured and classified correctly.
 
-This avoids the “Doris has 297 facts vs 2,688” effect: if one user (or persona) mostly speaks Swedish, auto-capture and category logic will still fire once Swedish (and other detected languages) are added via the language keywords system.
+This avoids the effect where one user or persona mostly speaks a non-English language: auto-capture and category logic will still fire once that language (and other detected languages) are added via the language keywords system.
 
 ---
 

@@ -5,21 +5,15 @@ import { open } from "node:fs/promises";
 import OpenAI from "openai";
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk";
 import { resolveSecretRef } from "../config/parsers/core.js";
-import { FactsDB } from "../backends/facts-db.js";
-import { VectorDB } from "../backends/vector-db.js";
-import { CredentialsDB } from "../backends/credentials-db.js";
-import { ProposalsDB } from "../backends/proposals-db.js";
-import { EventLog } from "../backends/event-log.js";
-import { WriteAheadLog } from "../backends/wal.js";
-import { createEmbeddingProvider, type EmbeddingProvider } from "../services/embeddings.js";
-import { buildEmbeddingRegistry, type EmbeddingRegistry } from "../services/embedding-registry.js";
-import type {
-  HybridMemoryConfig,
-  LLMProviderConfig,
-  CredentialType,
-  EmbeddingModelConfig,
-  ResolvedGatewayAuthConfig,
-} from "../config.js";
+import type { FactsDB } from "../backends/facts-db.js";
+import type { VectorDB } from "../backends/vector-db.js";
+import type { CredentialsDB } from "../backends/credentials-db.js";
+import type { ProposalsDB } from "../backends/proposals-db.js";
+import type { EventLog } from "../backends/event-log.js";
+import type { WriteAheadLog } from "../backends/wal.js";
+import type { EmbeddingProvider } from "../services/embeddings.js";
+import type { EmbeddingRegistry } from "../services/embedding-registry.js";
+import type { HybridMemoryConfig, LLMProviderConfig, CredentialType, ResolvedGatewayAuthConfig } from "../config.js";
 import { UnconfiguredProviderError } from "../services/chat.js";
 import { hasOAuthProfiles } from "../utils/auth.js";
 import {
@@ -34,17 +28,18 @@ import { migrateCredentialsToVault, CREDENTIAL_REDACTION_MIGRATION_FLAG } from "
 import { runEmbeddingMaintenance } from "../services/embedding-migration.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { getCurrentCostFeature } from "../services/cost-context.js";
-import { AliasDB } from "../services/retrieval-aliases.js";
+import type { AliasDB } from "../services/retrieval-aliases.js";
 import { invalidateClusterCache } from "../services/retrieval-orchestrator.js";
-import { IssueStore } from "../backends/issue-store.js";
-import { CrystallizationStore } from "../backends/crystallization-store.js";
-import { ProvenanceService } from "../services/provenance.js";
-import { WorkflowStore } from "../backends/workflow-store.js";
-import { ToolProposalStore } from "../backends/tool-proposal-store.js";
-import { VerificationStore } from "../services/verification-store.js";
+import type { IssueStore } from "../backends/issue-store.js";
+import type { CrystallizationStore } from "../backends/crystallization-store.js";
+import type { ProvenanceService } from "../services/provenance.js";
+import type { WorkflowStore } from "../backends/workflow-store.js";
+import type { ToolProposalStore } from "../backends/tool-proposal-store.js";
+import type { VerificationStore } from "../services/verification-store.js";
 import { CostTracker } from "../backends/cost-tracker.js";
-import { ApitapStore } from "../backends/apitap-store.js";
+import type { ApitapStore } from "../backends/apitap-store.js";
 import { isNanoModel, isHeavyModel, isLightModel } from "../utils/model-tier.js";
+import { installCoreBootstrapServices, installOptionalBootstrapServices } from "../services/index.js";
 
 /**
  * Provider prefixes that resolveClient() handles natively without explicit llm.providers config.
@@ -861,23 +856,12 @@ export function initializeDatabases(cfg: HybridMemoryConfig, api: ClawdbotPlugin
   const resolvedSqlitePath = api.resolvePath(cfg.sqlitePath);
   setKeywordsPath(dirname(resolvedSqlitePath));
 
-  const factsDb = new FactsDB(resolvedSqlitePath, {
-    fuzzyDedupe: cfg.store.fuzzyDedupe,
+  const { factsDb, vectorDb, embeddings, embeddingRegistry } = installCoreBootstrapServices({
+    cfg,
+    api,
+    resolvedSqlitePath,
+    resolvedLancePath,
   });
-  const vectorDim = cfg.embedding.dimensions;
-  const vectorDb = new VectorDB(resolvedLancePath, vectorDim, cfg.vector.autoRepair);
-  vectorDb.setLogger(api.logger);
-  // Create embedding provider from config (supports openai, ollama, onnx, google; chain/failover when preferredProviders set)
-  const embeddings = createEmbeddingProvider(cfg.embedding, (err) => {
-    api.logger.warn(
-      `memory-hybrid: ${cfg.embedding.provider} embedding unavailable (${err}), switching to OpenAI fallback`,
-    );
-  });
-  const embeddingRegistry = buildEmbeddingRegistry(
-    embeddings,
-    cfg.embedding.model,
-    resolveEmbeddingRegistryModels(cfg.embedding),
-  );
 
   // Merge gateway provider keys into plugin llm.providers BEFORE auto-derivation so canRoute
   // can see all available providers (issue #487 fix).
@@ -1251,93 +1235,25 @@ export function initializeDatabases(cfg: HybridMemoryConfig, api: ClawdbotPlugin
   const authBackoffStatePath = join(dirname(resolvedSqlitePath), ".auth-backoff.json");
   const openai = buildMultiProviderOpenAI(cfg, api, costTracker, authBackoffStatePath);
 
-  let credentialsDb: CredentialsDB | null = null;
-  if (cfg.credentials.enabled) {
-    const credPath = join(dirname(resolvedSqlitePath), "credentials.db");
-    credentialsDb = new CredentialsDB(credPath, cfg.credentials.encryptionKey ?? "");
-    const encrypted = (cfg.credentials.encryptionKey?.length ?? 0) >= 16;
-    api.logger.info(
-      encrypted
-        ? `memory-hybrid: credentials vault enabled (encrypted) (${credPath})`
-        : `memory-hybrid: credentials vault enabled (plaintext; secure by other means) (${credPath})`,
-    );
-  }
-
-  // Initialize Write-Ahead Log for crash resilience
-  let wal: WriteAheadLog | null = null;
-  if (cfg.wal.enabled) {
-    const walPath = cfg.wal.walPath || join(dirname(resolvedSqlitePath), "memory.wal");
-    wal = new WriteAheadLog(walPath, cfg.wal.maxAge);
-    api.logger.info(`memory-hybrid: WAL enabled (${walPath})`);
-  }
-
-  let proposalsDb: ProposalsDB | null = null;
-  if (cfg.personaProposals.enabled) {
-    const proposalsPath = join(dirname(resolvedSqlitePath), "proposals.db");
-    proposalsDb = new ProposalsDB(proposalsPath);
-    api.logger.info(`memory-hybrid: persona proposals enabled (${proposalsPath})`);
-  }
-
-  // Initialize EventLog whenever any episodic feature is enabled: nightlyCycle (consolidation,
-  // contradiction resolution), graph.autoSupersede (contradiction events), or passiveObserver
-  // (Layer 1 write-before-store, Issue #150). This ensures any code path that appends to
-  // event_log gets a live instance rather than silently skipping.
-  let eventLog: EventLog | null = null;
-  if (cfg.nightlyCycle.enabled || cfg.graph?.autoSupersede || cfg.passiveObserver.enabled) {
-    const eventLogPath = join(dirname(resolvedSqlitePath), "event-log.db");
-    eventLog = new EventLog(eventLogPath);
-    api.logger.info(`memory-hybrid: event log initialized (${eventLogPath})`);
-  }
-
-  // Initialize alias DB (Issue #149)
-  let aliasDb: AliasDB | null = null;
-  if (cfg.aliases?.enabled) {
-    const aliasPath = join(dirname(resolvedSqlitePath), "aliases.db");
-    const aliasLancePath = join(dirname(resolvedSqlitePath), "aliases.lance");
-    aliasDb = new AliasDB(aliasPath, aliasLancePath, cfg.embedding.dimensions);
-    api.logger.info(`memory-hybrid: retrieval aliases enabled (${aliasPath}, ${aliasLancePath})`);
-  }
-
-  // Initialize IssueStore — always enabled, lightweight SQLite table (Issue #137)
-  const issueStorePath = join(dirname(resolvedSqlitePath), "issues.db");
-  const issueStore = new IssueStore(issueStorePath);
-  api.logger.info(`memory-hybrid: issue store initialized (${issueStorePath})`);
-
-  // Initialize WorkflowStore — always created; recording gated by cfg.workflowTracking.enabled (Issue #209)
-  const workflowStorePath = join(dirname(resolvedSqlitePath), "workflow-traces.db");
-  const workflowStore = new WorkflowStore(workflowStorePath);
-  api.logger.info(`memory-hybrid: workflow store initialized (${workflowStorePath})`);
-
-  // Initialize CrystallizationStore — always created; proposals gated by cfg.crystallization.enabled (Issue #208)
-  const crystallizationStorePath = join(dirname(resolvedSqlitePath), "crystallization-proposals.db");
-  const crystallizationStore = new CrystallizationStore(crystallizationStorePath);
-  api.logger.info(`memory-hybrid: crystallization store initialized (${crystallizationStorePath})`);
-
-  // Initialize ToolProposalStore — always created; proposals gated by cfg.selfExtension.enabled (Issue #210)
-  const toolProposalStorePath = join(dirname(resolvedSqlitePath), "tool-proposals.db");
-  const toolProposalStore = new ToolProposalStore(toolProposalStorePath);
-  api.logger.info(`memory-hybrid: tool proposal store initialized (${toolProposalStorePath})`);
-
-  // Initialize VerificationStore when enabled (Issue #162).
-  // Share FactsDB's db instance so verified_facts lives in the same connection —
-  // avoids a second Database handle on facts.db and prevents dual table-creation conflicts.
-  let verificationStore: VerificationStore | null = null;
-  if (cfg.verification.enabled) {
-    verificationStore = new VerificationStore(factsDb.getRawDb(), {
-      backupPath: cfg.verification.backupPath,
-      reverificationDays: cfg.verification.reverificationDays,
-      logger: api.logger,
-    });
-    api.logger.info("memory-hybrid: verification store enabled");
-  }
-
-  // Initialize ProvenanceService when enabled (Issue #163)
-  let provenanceService: ProvenanceService | null = null;
-  if (cfg.provenance.enabled) {
-    const provenancePath = join(dirname(resolvedSqlitePath), "provenance.db");
-    provenanceService = new ProvenanceService(provenancePath);
-    api.logger.info(`memory-hybrid: provenance tracing enabled (${provenancePath})`);
-  }
+  const {
+    credentialsDb,
+    wal,
+    proposalsDb,
+    eventLog,
+    aliasDb,
+    issueStore,
+    workflowStore,
+    crystallizationStore,
+    toolProposalStore,
+    verificationStore,
+    provenanceService,
+    apitapStore,
+  } = installOptionalBootstrapServices({
+    cfg,
+    api,
+    factsDb,
+    resolvedSqlitePath,
+  });
 
   // Load previously discovered categories so they remain available after restart
   const discoveredPath = join(dirname(resolvedSqlitePath), ".discovered-categories.json");
@@ -1656,11 +1572,6 @@ export function initializeDatabases(cfg: HybridMemoryConfig, api: ClawdbotPlugin
     })();
   }
 
-  // Initialize ApitapStore — always created; capture gated by cfg.apiTap.enabled (Issue #614)
-  const apitapStorePath = join(dirname(resolvedSqlitePath), "apitap-endpoints.db");
-  const apitapStore = new ApitapStore(apitapStorePath);
-  api.logger.info(`memory-hybrid: apitap store initialized (${apitapStorePath})`);
-
   // Mark the VectorDB as a persistent long-lived singleton connection (#581).
   // This prevents fragile session refcounting from accidentally closing the shared
   // connection via removeSession() — the connection is only closed by close() (gateway shutdown).
@@ -1690,19 +1601,6 @@ export function initializeDatabases(cfg: HybridMemoryConfig, api: ClawdbotPlugin
     initialized,
     apitapStore,
   };
-}
-
-function resolveEmbeddingRegistryModels(
-  embedding: HybridMemoryConfig["embedding"],
-): EmbeddingModelConfig[] | undefined {
-  if (Array.isArray(embedding.multiModels) && embedding.multiModels.length > 0) {
-    return embedding.multiModels;
-  }
-  const rawModels = (embedding as unknown as { models?: unknown }).models;
-  if (!Array.isArray(rawModels) || rawModels.length === 0) return undefined;
-  const hasObjectModels = rawModels.every((item) => item && typeof item === "object");
-  if (!hasObjectModels) return undefined;
-  return rawModels as EmbeddingModelConfig[];
 }
 
 /**

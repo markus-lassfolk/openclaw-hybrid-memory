@@ -63,5 +63,5 @@ The pipeline is implemented in the **memory-hybrid** extension with **multi-lang
 
 - [GitHub issue #34: Nightly Self-Correction Analysis](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/34)
 - Related: [Procedural Memory #23](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/23) (stores learned procedures; this pipeline *discovers* what to learn).
-- Manual analysis: `memory/reports/maeve-failure-analysis-v2-2026-02-18.md` (if present in workspace).
+- Manual analysis: `memory/reports/failure-analysis-v2-2026-02-18.md` (if present in workspace).
 - Raw extracts POC: `memory/reports/correction-extracts-raw.md` (if present).

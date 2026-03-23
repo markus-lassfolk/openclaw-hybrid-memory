@@ -63,9 +63,9 @@ You can also switch to a **self-hosted** GlitchTip or Sentry instance by setting
 | `environment` | string | No | `"production"` | Environment tag (e.g., "development", "staging"). If omitted, the reporter sets it to `"production"`. |
 | `sampleRate` | number | No | `1.0` | Sample rate (0.0–1.0). 1.0 = report all errors |
 | `botId` | string | No | — | **Optional.** UUID for this bot instance (e.g. `550e8400-e29b-41d4-a716-446655440000`). Sent as a tag so GlitchTip can **group and filter errors by bot**. Omit to not tag by bot. Must be a valid UUID format. If unset, the plugin uses OpenClaw's runtime context (`api.context.agentId`) when available; there is no hostname fallback (to avoid PII leakage). |
-| `botName` | string | No | — | **Optional.** Friendly name for this bot (e.g. `Maeve`, `Doris`). Sent as a tag so reports show a readable name in GlitchTip. Max 64 characters. |
+| `botName` | string | No | — | **Optional.** Friendly name for this bot. Sent as a tag so reports show a readable name in GlitchTip. Max 64 characters. |
 
-At plugin init the reporter applies `bot_id` / `bot_name` **tags** only (no Sentry user context), so GlitchTip can filter and group errors by bot without transmitting user identity. Example tag filter: `bot_name:Doris`.
+At plugin init the reporter applies `bot_id` / `bot_name` **tags** only (no Sentry user context), so GlitchTip can filter and group errors by bot without transmitting user identity. Example tag filter: `bot_name:MyBot`.
 
 ### Setting via config-set
 
@@ -74,7 +74,7 @@ You can set any error-reporting key with the CLI so you don't have to edit JSON 
 ```bash
 openclaw hybrid-mem config-set errorReporting.enabled true
 openclaw hybrid-mem config-set errorReporting.consent true
-openclaw hybrid-mem config-set errorReporting.botName Maeve
+openclaw hybrid-mem config-set errorReporting.botName MyBot
 openclaw hybrid-mem config-set errorReporting.botId 550e8400-e29b-41d4-a716-446655440000
 ```
 
@@ -135,12 +135,12 @@ If you run multiple bots (or gateways) and send errors to the same GlitchTip pro
   "enabled": true,
   "consent": true,
   "botId": "550e8400-e29b-41d4-a716-446655440000",
-  "botName": "Maeve"
+  "botName": "MyBot"
 }
 ```
 
 - **botId**: Generate a UUID per bot (e.g. `uuidgen` on macOS/Linux, or [uuidgenerator.net](https://www.uuidgenerator.net/)) and set it in config. In GlitchTip, use the **bot_id** tag to filter or group issues by bot.
-- **botName**: Set a friendly name (e.g. `Maeve`, `Doris`) so reports show a readable name in GlitchTip (sent as **bot_name** tag). Max 64 characters.
+- **botName**: Set a friendly name so reports show a readable name in GlitchTip (sent as **bot_name** tag). Max 64 characters.
 
 Omit either or both if you do not need them.
 
@@ -157,7 +157,7 @@ Omit either or both if you do not need them.
 - **Environment tag** (e.g., `production`)
 - **Operation context** (e.g., `subsystem: "vector-db"`, `operation: "store"`)
 - **Bot ID** (optional): if you set `errorReporting.botId` to a UUID, it is sent as a tag so you can **group and filter errors by bot** in GlitchTip
-- **Friendly name** (optional): if you set `errorReporting.botName` (e.g. `Maeve`, `Doris`), it is sent as a tag so reports show a readable name in GlitchTip
+- **Friendly name** (optional): if you set `errorReporting.botName`, it is sent as a tag so reports show a readable name in GlitchTip
 
 ### ❌ What IS NOT Sent
 

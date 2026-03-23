@@ -1,4 +1,5 @@
 export * from "./core.js";
+export * from "./bootstrap.js";
 export * from "./retrieval.js";
 export * from "./capture.js";
 export * from "./maintenance.js";
@@ -16,6 +17,7 @@ import type {
   QueryExpansionConfig,
   RerankingConfig,
   ContextualVariantsConfig,
+  DocumentGradingConfig,
 } from "./retrieval.js";
 
 import type { StoreConfig, WALConfig, EventLogConfig, PathConfig } from "./core.js";
@@ -177,7 +179,7 @@ export type ErrorReportingConfig = {
    * Optional UUID identifying this bot instance; sent as tag so GlitchTip can group errors by bot. */
   botId?: string;
   /** Opt-in: Only sent when explicitly configured. Not sent by default for privacy.
-   * Optional friendly name for this bot (e.g. Maeve, Doris); sent as tag for readable reports. */
+   * Optional friendly name for this bot; sent as tag for readable reports. */
   botName?: string;
   /**
    * Optional map of error fingerprints to the version that fixed them.
@@ -523,6 +525,8 @@ export type HybridMemoryConfig = {
   queryExpansion: QueryExpansionConfig;
   /** LLM re-ranking of RRF fusion results (Issue #161, default: disabled). */
   reranking: RerankingConfig;
+  /** Adaptive document grading and query rewriting for retrieval quality (default: disabled). */
+  documentGrading: DocumentGradingConfig;
   /** Verification store for critical facts (Issue #162, default: disabled). */
   verification: VerificationConfig;
   /** Provenance tracing for fact-to-source chains (Issue #163, default: disabled). */
