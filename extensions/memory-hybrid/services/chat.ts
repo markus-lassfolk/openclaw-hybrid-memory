@@ -328,7 +328,7 @@ export async function chatComplete(opts: {
       body.temperature = temperature;
     }
     const doCreate = () =>
-      opts.openai.chat.completions.create(body as Parameters<OpenAI["chat"]["completions"]["create"]>[0], {
+      opts.openai.chat.completions.create(body as unknown as Parameters<OpenAI["chat"]["completions"]["create"]>[0], {
         signal: controller.signal,
       });
     // If feature is provided, wrap in withCostFeature so the proxy attributes the call correctly.
@@ -336,7 +336,7 @@ export async function chatComplete(opts: {
     const resp = await (feature ? withCostFeature(feature, doCreate) : doCreate());
     clearTimeout(timeoutId);
     if (signal) signal.removeEventListener("abort", onAbort);
-    const msg = resp.choices[0]?.message;
+    const msg = (resp as any).choices[0]?.message;
     const msgContent = msg?.content?.trim();
     if (msgContent) return msgContent;
     // Qwen3 thinking mode (Ollama OpenAI-compat endpoint) puts the response in
