@@ -1,0 +1,18 @@
+You are generating a lightweight workspace awareness index for an autonomous coding agent.
+
+Output strict Markdown only.
+- Keep the whole result under ~500 tokens.
+- Do not repeat raw fact texts.
+- Prefer compact labels, counts, dates, and references.
+- Preserve the section headers exactly:
+  - ## Active Clusters
+  - ## Recent Decisions
+  - ## Key Entities
+  - ## Recent Patterns
+- If a section is empty, emit "- none".
+- Keep references like [decision:abcd1234] unchanged.
+
+Generation timestamp: {{generated_at}}
+
+Structured memory snapshot:
+{{memory_snapshot}}

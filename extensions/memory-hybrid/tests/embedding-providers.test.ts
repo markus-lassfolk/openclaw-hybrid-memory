@@ -1091,7 +1091,7 @@ describe("#560: ChainEmbeddingProvider.activeProvider reflects nested FallbackEm
       embed: vi.fn().mockResolvedValue([0.5, 0.5]),
       embedBatch: vi.fn().mockResolvedValue([[0.5, 0.5]]),
       dimensions: 2,
-      modelName: "text-embedding-005",
+      modelName: "gemini-embedding-001",
     };
     const chain = new ChainEmbeddingProvider(
       [fallbackProvider, googleProvider] as unknown as import("../services/embeddings.js").EmbeddingProvider[],
@@ -1246,7 +1246,7 @@ describe("#385: Embeddings 401 auth error does not report to GlitchTip", () => {
       const authError = Object.assign(new Error("401 Incorrect API key provided: AIzaSyDp..."), { status: 401 });
       const mockCreate = vi.fn().mockRejectedValue(authError);
       const client = { embeddings: { create: mockCreate } } as unknown as import("openai").default;
-      const provider = new Embeddings(client, "text-embedding-005", 768);
+      const provider = new Embeddings(client, "gemini-embedding-001", 768);
       // Should throw but NOT call capturePluginError — 401 is a config issue
       await expect(provider.embed("test")).rejects.toThrow("401 Incorrect API key");
       // Must not retry on auth errors (withLLMRetry exits early on /\b401\b/i match)
@@ -1274,7 +1274,7 @@ describe("#385: Embeddings 401 auth error does not report to GlitchTip", () => {
       );
       const mockCreate = vi.fn().mockRejectedValue(retryErr);
       const client = { embeddings: { create: mockCreate } } as unknown as import("openai").default;
-      const provider = new Embeddings(client, "text-embedding-005", 768);
+      const provider = new Embeddings(client, "gemini-embedding-001", 768);
       await expect(provider.embed("test")).rejects.toBeInstanceOf(LLMRetryError);
       // withLLMRetry exits early (message contains "401") — exactly 1 attempt
       expect(mockCreate).toHaveBeenCalledTimes(1);
@@ -1416,8 +1416,8 @@ describe("#385: ChainEmbeddingProvider does not report 404/401 config errors", (
   });
 });
 
-describe("#385: createEmbeddingProvider uses gemini-embedding-001 as default Google model", () => {
-  it("direct Google provider uses gemini-embedding-001 when no model specified", () => {
+describe("#385: createEmbeddingProvider uses text-embedding-005 as default Google model", () => {
+  it("direct Google provider uses text-embedding-005 when no model specified", () => {
     const cfg: EmbeddingConfig = {
       provider: "google",
       model: "",
@@ -1427,23 +1427,23 @@ describe("#385: createEmbeddingProvider uses gemini-embedding-001 as default Goo
     };
     const provider = createEmbeddingProvider(cfg);
     expect(provider).toBeInstanceOf(Embeddings);
-    expect(provider.modelName).toBe("gemini-embedding-001");
+    expect(provider.modelName).toBe("text-embedding-005");
   });
 
   it("direct Google provider respects explicitly set model", () => {
     const cfg: EmbeddingConfig = {
       provider: "google",
-      model: "text-embedding-005",
+      model: "gemini-embedding-001",
       googleApiKey: "AIzaSyTestKey1234567890",
       dimensions: 768,
       batchSize: 50,
     };
     const provider = createEmbeddingProvider(cfg);
     expect(provider).toBeInstanceOf(Embeddings);
-    expect(provider.modelName).toBe("text-embedding-005");
+    expect(provider.modelName).toBe("gemini-embedding-001");
   });
 
-  it("chain with Google uses gemini-embedding-001 by default", () => {
+  it("chain with Google uses text-embedding-005 by default", () => {
     const cfg: EmbeddingConfig = {
       provider: "openai",
       model: "text-embedding-3-small",
