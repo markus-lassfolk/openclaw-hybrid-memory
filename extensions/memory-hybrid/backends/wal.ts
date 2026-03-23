@@ -137,7 +137,7 @@ export class WriteAheadLog {
       throw new Error(`WAL write failed: ${err}`);
     } finally {
       // biome-ignore lint/style/noNonNullAssertion: Synchronous
-        releaseLock!();
+      releaseLock!();
     }
   }
 
@@ -232,7 +232,7 @@ export class WriteAheadLog {
       throw new Error(`WAL remove failed: ${err}`);
     } finally {
       // biome-ignore lint/style/noNonNullAssertion: Synchronous
-        releaseLock!();
+      releaseLock!();
     }
   }
 
@@ -261,7 +261,7 @@ export class WriteAheadLog {
       await this._clearInternal();
     } finally {
       // biome-ignore lint/style/noNonNullAssertion: Synchronous
-        releaseLock!();
+      releaseLock!();
     }
   }
 
@@ -301,7 +301,7 @@ export class WriteAheadLog {
       return pruned;
     } finally {
       // biome-ignore lint/style/noNonNullAssertion: Synchronous
-        releaseLock!();
+      releaseLock!();
     }
   }
 }

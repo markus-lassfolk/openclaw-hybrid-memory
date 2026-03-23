@@ -385,11 +385,14 @@ export class VectorDB {
           continue;
         }
 
-        const candidateVector = Array.isArray(row.vector)
-          ? row.vector.map((value: any) => Number(value))
-          : ArrayBuffer.isView(row.vector)
-            ? Array.from(row.vector as ArrayLike<number>, (value: number) => Number(value))
-            : [];
+        const candidateVector =
+          typeof row.vector?.toArray === "function"
+            ? row.vector.toArray().map(Number)
+            : Array.isArray(row.vector)
+              ? row.vector.map((value: any) => Number(value))
+              : ArrayBuffer.isView(row.vector)
+                ? Array.from(row.vector as ArrayLike<number>, (value: number) => Number(value))
+                : Array.from((row as any).vector ?? []).map((value: any) => Number(value));
 
         const similarity = this.computeCosineSimilarity(vector, candidateVector);
         if (similarity < minSimilarity) continue;
