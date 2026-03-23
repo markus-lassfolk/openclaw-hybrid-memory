@@ -90,7 +90,7 @@ function selectConsolidatedKeyValue(facts: MemoryEntry[]): { key: string | null;
 
   const keyToBest = new Map<string, MemoryEntry>();
   for (const fact of factsWithKey) {
-    const key = fact.key?.trim();
+    const key = fact.key?.trim() ?? "";
     const prev = keyToBest.get(key);
     if (!prev || fact.confidence > prev.confidence) {
       keyToBest.set(key, fact);

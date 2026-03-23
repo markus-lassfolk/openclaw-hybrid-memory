@@ -83,8 +83,8 @@ export function resolveInteractiveRecallPolicy(
     contextBudgetTokens,
     degradationQueueDepth: cfg.degradationQueueDepth ?? DEFAULT_INTERACTIVE_RECALL_DEGRADATION_QUEUE_DEPTH,
     degradationMaxLatencyMs: cfg.degradationMaxLatencyMs ?? DEFAULT_INTERACTIVE_RECALL_DEGRADATION_MAX_LATENCY_MS,
-    allowAmbientMultiQuery: cfg.enabled,
-    allowHyde,
+    allowAmbientMultiQuery: cfg.enabled ?? false,
+    allowHyde: allowHyde ?? false,
   };
 }
 

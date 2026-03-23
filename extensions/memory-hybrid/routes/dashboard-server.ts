@@ -172,7 +172,7 @@ async function collectMemoryStats(ctx: DashboardContext): Promise<MemoryStats> {
       ts: Date.now(),
     });
   }
-  const lanceSizeBytes = _lanceSizeCache.get(ctx.resolvedLancePath)?.size;
+  const lanceSizeBytes = _lanceSizeCache.get(ctx.resolvedLancePath)?.size ?? 0;
 
   return {
     activeFacts,

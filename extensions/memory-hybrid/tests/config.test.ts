@@ -260,7 +260,7 @@ describe("hybridConfigSchema.parse", () => {
   });
 
   it("throws when embedding.apiKey env: SecretRef references an unset env var", () => {
-    process.env.TEST_EMBED_KEY_UNSET_333 = undefined;
+    delete process.env.TEST_EMBED_KEY_UNSET_333;
     expect(() =>
       hybridConfigSchema.parse({
         embedding: { provider: "openai", apiKey: "env:TEST_EMBED_KEY_UNSET_333", model: "text-embedding-3-small" },
@@ -324,7 +324,7 @@ describe("hybridConfigSchema.parse", () => {
 
   // Finding 3: unresolvable SecretRef in fallback path warns instead of silently dropping
   it("warns when fallback embedding.apiKey SecretRef cannot be resolved", () => {
-    process.env.TEST_EMBED_FALLBACK_UNSET_333 = undefined;
+    delete process.env.TEST_EMBED_FALLBACK_UNSET_333;
     const warnSpy = vi.spyOn(pluginLogger, "warn").mockImplementation(() => {});
     try {
       const result = hybridConfigSchema.parse({

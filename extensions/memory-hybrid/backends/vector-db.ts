@@ -164,7 +164,7 @@ export class VectorDB {
         },
       ]);
       try {
-        await this.table.delete('id = "__schema__"');
+        await this.table?.delete('id = "__schema__"');
       } catch (deleteErr) {
         this.logWarn(`memory-hybrid: failed to delete schema seed row (non-fatal): ${deleteErr}`);
       }
@@ -300,7 +300,7 @@ export class VectorDB {
           );
           await this.db?.dropTable(LANCE_TABLE);
           tableDropped = true;
-          this.table = await this.db?.createTable(LANCE_TABLE, [
+          this.table = (await this.db?.createTable(LANCE_TABLE, [
             {
               id: "__schema__",
               text: "",
@@ -309,9 +309,9 @@ export class VectorDB {
               category: "other",
               createdAt: 0,
             },
-          ]);
+          ])) ?? null;
           try {
-            await this.table.delete('id = "__schema__"');
+            await this.table?.delete('id = "__schema__"');
           } catch (deleteErr) {
             this.logWarn(`memory-hybrid: failed to delete schema seed row (non-fatal): ${deleteErr}`);
           }
@@ -355,7 +355,7 @@ export class VectorDB {
       },
     ]);
     try {
-      await this.table.delete('id = "__schema__"');
+      await this.table?.delete('id = "__schema__"');
     } catch (deleteErr) {
       this.logWarn(`memory-hybrid: failed to delete schema seed row after reset (non-fatal): ${deleteErr}`);
     }

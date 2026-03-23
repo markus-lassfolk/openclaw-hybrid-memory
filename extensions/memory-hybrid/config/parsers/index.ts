@@ -357,7 +357,7 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
       }
       resolvedApiKey = resolvedKey;
     } else if (hasAzureFoundry) {
-      const rawKey = azureFoundry?.apiKey?.trim();
+      const rawKey = azureFoundry?.apiKey?.trim() ?? "";
       const resolvedKey =
         rawKey.startsWith("env:") || rawKey.startsWith("file:") ? resolveSecretRef(rawKey) : resolveEnvVars(rawKey);
       if (!resolvedKey || resolvedKey.length < 10) {
