@@ -14,7 +14,9 @@ let failed = false;
 
 // 1. postinstall required for native deps
 if (!pkg.scripts?.postinstall) {
-  console.error("FAIL: postinstall missing from package.json - published package will not rebuild native deps");
+  console.error(
+    "FAIL: postinstall missing from package.json - published package will not rebuild native deps",
+  );
   failed = true;
 } else {
   console.log("OK: postinstall present");
@@ -25,20 +27,32 @@ if (!pkg.scripts?.postinstall) {
 const shrinkwrapFilesListed = pkg.files?.includes("npm-shrinkwrap.json");
 const packageLockExists = fs.existsSync(path.join(root, "package-lock.json"));
 const shrinkwrapScriptPath = path.join(root, "scripts", "manage-shrinkwrap.cjs");
-const hasShrinkwrapCreate = pkg.scripts?.prepack?.includes("manage-shrinkwrap.cjs create");
-const hasShrinkwrapClean = pkg.scripts?.postpack?.includes("manage-shrinkwrap.cjs clean");
+const hasShrinkwrapCreate = pkg.scripts?.prepack?.includes(
+  "manage-shrinkwrap.cjs create",
+);
+const hasShrinkwrapClean = pkg.scripts?.postpack?.includes(
+  "manage-shrinkwrap.cjs clean",
+);
 
 if (!shrinkwrapFilesListed) {
-  console.error('FAIL: npm-shrinkwrap.json missing from package.json "files" - published package will resolve deps loosely during upgrade');
+  console.error(
+    'FAIL: npm-shrinkwrap.json missing from package.json "files" - published package will resolve deps loosely during upgrade',
+  );
   failed = true;
 } else if (!packageLockExists) {
-  console.error("FAIL: package-lock.json missing - cannot generate npm-shrinkwrap.json for publish");
+  console.error(
+    "FAIL: package-lock.json missing - cannot generate npm-shrinkwrap.json for publish",
+  );
   failed = true;
 } else if (!fs.existsSync(shrinkwrapScriptPath)) {
-  console.error("FAIL: scripts/manage-shrinkwrap.cjs missing - cannot generate npm-shrinkwrap.json for publish");
+  console.error(
+    "FAIL: scripts/manage-shrinkwrap.cjs missing - cannot generate npm-shrinkwrap.json for publish",
+  );
   failed = true;
 } else if (!hasShrinkwrapCreate || !hasShrinkwrapClean) {
-  console.error("FAIL: package.json must generate npm-shrinkwrap.json in prepack and remove it in postpack");
+  console.error(
+    "FAIL: package.json must generate npm-shrinkwrap.json in prepack and remove it in postpack",
+  );
   failed = true;
 } else {
   console.log("OK: npm-shrinkwrap.json is generated only for pack/publish");
@@ -59,11 +73,19 @@ const filesEntries = new Set(pkg.files || []);
 // 3. Ensure every imported root is covered by a files entry prefix
 const uncovered = importedRoots.filter((r) => {
   const firstSeg = r.split("/")[0];
-  return !filesEntries.has(firstSeg) && !filesEntries.has(`${firstSeg}.ts`) && !filesEntries.has(r) && !filesEntries.has(`${r}.ts`);
+  return (
+    !filesEntries.has(firstSeg) &&
+    !filesEntries.has(`${firstSeg}.ts`) &&
+    !filesEntries.has(r) &&
+    !filesEntries.has(`${r}.ts`)
+  );
 });
 
 if (uncovered.length > 0) {
-  console.error('FAIL: package.json "files" does not cover imports from index.ts:', uncovered);
+  console.error(
+    'FAIL: package.json "files" does not cover imports from index.ts:',
+    uncovered,
+  );
   failed = true;
 } else {
   console.log('OK: all index.ts imports are covered by package.json "files"');
