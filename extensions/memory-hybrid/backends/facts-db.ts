@@ -1057,7 +1057,10 @@ export class FactsDB {
    * Build SQL fragment for scope filtering with positional params (for lookup/getAll).
    * Same security constraints as scopeFilterClause — derive from trusted identity only.
    */
-  private scopeFilterClausePositional(filter: ScopeFilter | null | undefined): { clause: string; params: SQLInputValue[] } {
+  private scopeFilterClausePositional(filter: ScopeFilter | null | undefined): {
+    clause: string;
+    params: SQLInputValue[];
+  } {
     if (!filter || (!filter.userId && !filter.agentId && !filter.sessionId)) {
       return { clause: "", params: [] };
     }
