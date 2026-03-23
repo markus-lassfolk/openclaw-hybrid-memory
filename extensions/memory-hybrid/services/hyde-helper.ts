@@ -36,7 +36,7 @@ export interface HydeOptions {
 }
 
 /**
- * Run HyDE query expansion: generate a hypothetical answer, then embed it.
+ * Run HyDE query expansion: generate a hypothetical answer for downstream embedding.
  *
  * @returns The expanded text if successful, or the original query on failure.
  */
