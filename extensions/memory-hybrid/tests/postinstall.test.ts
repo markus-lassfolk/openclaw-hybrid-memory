@@ -50,8 +50,8 @@ describe("postinstall", () => {
   it("shrinkwrap helper copies package-lock and removes generated shrinkwrap", () => {
     const scriptPath = join(root, "scripts", "manage-shrinkwrap.cjs");
     const content = readFileSync(scriptPath, "utf-8");
-    expect(content).toContain('fs.copyFileSync(packageLockPath, shrinkwrapPath)');
-    expect(content).toContain('fs.rmSync(shrinkwrapPath, { force: true })');
+    expect(content).toContain("fs.copyFileSync(packageLockPath, shrinkwrapPath)");
+    expect(content).toContain("fs.rmSync(shrinkwrapPath, { force: true })");
   });
 
   it("standalone installer verifies @lancedb/lancedb after npm install", () => {
