@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, beforeAll } from "vitest";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -6,13 +6,18 @@ import { ARCHITECTURE_CENTER, allArchitectureOwnershipPaths } from "../src/archi
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(__dirname, "..", "..", "..");
-const architectureCenterDoc = readFileSync(resolve(repoRoot, "docs/ARCHITECTURE-CENTER.md"), "utf8");
+let architectureCenterDoc = "";
 
 function normalizeMarkdown(text: string): string {
   return text.replaceAll("`", "").replaceAll("**", "").replace(/\r/g, "").replace(/\s+/g, " ").trim();
 }
 
 describe("architecture center contract", () => {
+  beforeAll(() => {
+    const docPath = resolve(repoRoot, "docs/ARCHITECTURE-CENTER.md");
+    if (!existsSync(docPath)) throw new Error("Doc not found");
+    architectureCenterDoc = readFileSync(docPath, "utf8");
+  });
   it("keeps core runtime and adjacent ownership disjoint", () => {
     const corePaths = new Set(ARCHITECTURE_CENTER.coreRuntime.flatMap((area) => area.ownership));
     const adjacentPaths = new Set(ARCHITECTURE_CENTER.adjacentSubsystems.flatMap((area) => area.ownership));
@@ -48,9 +53,7 @@ describe("architecture center contract", () => {
 
     for (const rule of ARCHITECTURE_CENTER.classificationHeuristics) {
       expect(normalizedDoc).toContain(rule.prompt);
-      expect(normalizedDoc).toContain(
-        rule.classification === "core runtime" ? "Core runtime" : "Adjacent subsystem",
-      );
+      expect(normalizedDoc).toContain(rule.classification === "core runtime" ? "Core runtime" : "Adjacent subsystem");
     }
 
     for (const constraint of ARCHITECTURE_CENTER.constraints) {
