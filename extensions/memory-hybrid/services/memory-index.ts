@@ -105,6 +105,7 @@ export function buildMemoryIndexSnapshot(
     getAllLinkedFactIds: () => factsDb.getAllLinkedFactIds().filter((id) => liveFactIds.has(id)),
     getAllLinks: () =>
       factsDb.getAllLinks().filter((l) => liveFactIds.has(l.sourceFactId) && liveFactIds.has(l.targetFactId)),
+    getById: (id: string) => factsDb.getById(id),
     getByIds: (ids: string[]) => factsDb.getByIds(ids),
   };
   const clusterResult = detectClusters(filteredFactsDb, { minClusterSize: 3 });
