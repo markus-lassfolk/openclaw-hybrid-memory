@@ -708,10 +708,7 @@ export async function runExplicitDeepRetrieval(
   } else {
     resolvedPolicy = resolveExplicitDeepRetrievalPolicy(config);
   }
-  // Cast is safe: properties below (allowReranking etc.) are only accessed when
-  // mode is explicit-deep (where resolvedPolicy is ExplicitDeepRetrievalPolicy).
-  // When mode is interactive-recall those branches return early anyway.
-  const policy = resolvedPolicy as ExplicitDeepRetrievalPolicy | InteractiveRecallPolicy;
+  const policy = resolvedPolicy;
   const budgetTokens = options.budgetTokens ?? config.explicitBudgetTokens;
   const nowSec = options.nowSec ?? Math.floor(Date.now() / 1000);
   const {
@@ -752,7 +749,7 @@ export async function runExplicitDeepRetrieval(
     queryText: string,
     initial: OrchestratorResult,
   ): Promise<OrchestratorResult> => {
-    if (!policy.allowReranking || !rerankingConfig?.enabled || !rerankingOpenai) return initial;
+    if (!(policy as ExplicitDeepRetrievalPolicy).allowReranking || !rerankingConfig?.enabled || !rerankingOpenai) return initial;
 
     try {
       const rrfScoreMap = new Map(initial.fused.map((result) => [result.factId, result.finalScore]));
@@ -870,14 +867,14 @@ export async function runExplicitDeepRetrieval(
       );
     }
 
-    if (policy.allowAliasExpansion && aliasDb && currentQueryVector) {
+    if ((policy as ExplicitDeepRetrievalPolicy).allowAliasExpansion && aliasDb && currentQueryVector) {
       strategyPromises.push(
         safeStrategy("aliases", () => searchAliasStrategy(aliasDb, currentQueryVector, semanticTopK)),
       );
     }
 
     if (
-      policy.allowQueryExpansion &&
+      (policy as ExplicitDeepRetrievalPolicy).allowQueryExpansion &&
       strategies.includes("semantic") &&
       currentQueryVector &&
       queryExpander &&
@@ -943,7 +940,7 @@ export async function runExplicitDeepRetrieval(
       }
     }
 
-    if (policy.allowGraphExpansion && strategies.includes("graph")) {
+    if ((policy as ExplicitDeepRetrievalPolicy).allowGraphExpansion && strategies.includes("graph")) {
       const seedScores = new Map<string, number>();
       const seedEntries = new Map<string, MemoryEntry>();
       const getByIdOpts = scopeFilter || asOf != null ? { scopeFilter, asOf } : undefined;
@@ -971,7 +968,7 @@ export async function runExplicitDeepRetrieval(
     }
 
     let fused: import("./rrf-fusion.js").FusedResult[];
-    if (policy.allowRrfFusion) {
+    if ((policy as ExplicitDeepRetrievalPolicy).allowRrfFusion) {
       fused = fuseResults(strategyMap, k);
     } else {
       const allResults = Array.from(strategyMap.values()).flat();
