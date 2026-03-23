@@ -29,7 +29,13 @@ import { searchAliasStrategy, type AliasDB } from "./retrieval-aliases.js";
 import { detectClusters, type ClusterFactLookup } from "./topic-clusters.js";
 import { expandGraph, type GraphFactLookup } from "./graph-retrieval.js";
 import type { EmbeddingRegistry } from "./embedding-registry.js";
-import { resolveExplicitDeepRetrievalPolicy, resolveInteractiveRecallPolicy, DEFAULT_INTERACTIVE_RECALL_POLICY, type ExplicitDeepRetrievalPolicy, type InteractiveRecallPolicy } from "./retrieval-mode-policy.js";
+import {
+  resolveExplicitDeepRetrievalPolicy,
+  resolveInteractiveRecallPolicy,
+  DEFAULT_INTERACTIVE_RECALL_POLICY,
+  type ExplicitDeepRetrievalPolicy,
+  type InteractiveRecallPolicy,
+} from "./retrieval-mode-policy.js";
 import { expandQueryWithHyde } from "./hyde-helper.js";
 import { capturePluginError } from "./error-reporter.js";
 import { validateQueryForMemoryLookup, type QueryValidationResult } from "./query-validator.js";
