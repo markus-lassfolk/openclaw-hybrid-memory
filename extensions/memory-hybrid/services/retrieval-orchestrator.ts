@@ -676,17 +676,33 @@ export async function runExplicitDeepRetrieval(
     // --- RRF Fusion ---
     // When fusion is disabled, return raw strategy results sorted by rank (best first).
     // This ensures that disabling fusion doesn't discard all the expensive strategy work.
-    const fused = policy.allowRrfFusion
-      ? fuseResults(strategyMap, k)
-      : Array.from(strategyMap.values())
-          .flat()
-          .map((r) => ({
-            factId: r.factId,
-            rrfScore: 1 / (k + r.rank),
-            finalScore: 1 / (k + r.rank),
-            sources: [{ strategy: r.source, rank: r.rank }],
-          }))
-          .sort((a, b) => b.finalScore - a.finalScore);
+    let fused: FusedResult[];
+    if (policy.allowRrfFusion) {
+      fused = fuseResults(strategyMap, k);
+    } else {
+      // Non-RRF fallback: deduplicate by factId and merge sources from multiple strategies.
+      const deduped = new Map<string, { score: number; sources: Array<{ strategy: string; rank: number }> }>();
+      for (const results of strategyMap.values()) {
+        for (const r of results) {
+          const score = 1 / (k + r.rank);
+          const existing = deduped.get(r.factId);
+          if (existing) {
+            existing.sources.push({ strategy: r.source, rank: r.rank });
+            if (score > existing.score) existing.score = score;
+          } else {
+            deduped.set(r.factId, { score, sources: [{ strategy: r.source, rank: r.rank }] });
+          }
+        }
+      }
+      fused = Array.from(deduped.entries())
+        .map(([factId, { score, sources }]) => ({
+          factId,
+          rrfScore: score,
+          finalScore: score,
+          sources,
+        }))
+        .sort((a, b) => b.finalScore - a.finalScore);
+    }
 
     if (fused.length === 0) {
       return { fused: [], packed: [], packedFactIds: [], tokensUsed: 0, entries: [] };
