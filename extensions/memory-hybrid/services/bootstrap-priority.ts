@@ -1,5 +1,5 @@
 import type { BootstrapPhase, BootstrapPhaseConfig } from "../config.js";
-import { BOOTSTRAP_PHASES } from "../config.js";
+import { BOOTSTRAP_PHASES } from "../config/types/bootstrap.js";
 
 /** Explicit startup ordering so core subsystems are always installed first. */
 export const BOOTSTRAP_PHASE_ORDER: readonly BootstrapPhase[] = BOOTSTRAP_PHASES;

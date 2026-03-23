@@ -2,7 +2,7 @@ import type { ClawdbotPluginApi } from "openclaw/plugin-sdk";
 import type { MemoryPluginAPI } from "../api/memory-plugin-api.js";
 import type { BootstrapPhaseConfig } from "../config.js";
 import { capturePluginError } from "../services/error-reporter.js";
-import { orderByBootstrapPhase } from "../services/index.js";
+import { orderByBootstrapPhase } from "../services/bootstrap-priority.js";
 import { registerCredentialTools } from "../tools/credential-tools.js";
 import { registerCrystallizationTools } from "../tools/crystallization-tools.js";
 import { registerDashboardHttpRoutes } from "../tools/dashboard-routes.js";
