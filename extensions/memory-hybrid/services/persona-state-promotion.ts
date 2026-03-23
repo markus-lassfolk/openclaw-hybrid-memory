@@ -205,7 +205,8 @@ export function promotePersonaStateFromReflections(
     };
   }
 
-  const reflections = reflectionStore.listRecent(opts?.limit ?? 250);
+  const lookbackCutoff = Math.floor(Date.now() / 1000) - config.lookbackDays * 24 * 3600;
+  const reflections = reflectionStore.listSince(lookbackCutoff, opts?.limit ?? 250);
   const durableReflections = reflections.filter((entry) => entry.durability === "durable");
   const candidates = collectPersonaPromotionCandidates(reflections, config);
   const entries: PersonaStateEntry[] = [];

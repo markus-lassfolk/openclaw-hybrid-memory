@@ -185,6 +185,7 @@ export class PersonaStateStore {
         `UPDATE persona_state
          SET target_file = ?,
              insight = ?,
+             normalized_insight = ?,
              confidence = ?,
              durable_count = ?,
              evidence = ?,
@@ -197,6 +198,7 @@ export class PersonaStateStore {
       .run(
         entry.targetFile,
         entry.insight,
+        entry.normalizedInsight,
         nextConfidence,
         nextDurableCount,
         JSON.stringify(mergedEvidence),
