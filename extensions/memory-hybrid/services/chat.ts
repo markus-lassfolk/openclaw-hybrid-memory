@@ -3,7 +3,7 @@
  * Uses a multi-provider OpenAI-compatible proxy; provider-agnostic model fallback (issue #87).
  */
 
-import type * as OpenAI from "openai";
+import type { OpenAI } from "openai";
 import { capturePluginError } from "./error-reporter.js";
 import { withCostFeature } from "./cost-context.js";
 import { pluginLogger } from "../utils/logger.js";
@@ -319,7 +319,7 @@ export async function chatComplete(opts: {
   try {
     // Newer models (GPT-5+, o-series) require max_completion_tokens and reject max_tokens; reasoning models also reject temperature/top_p.
     const useMaxCompletionTokens = requiresMaxCompletionTokens(model);
-    const body: Record<string, unknown> = {
+    const body: OpenAI.ChatCompletionCreateParamsNonStreaming = {
       model,
       messages: [{ role: "user", content }],
       ...(useMaxCompletionTokens ? { max_completion_tokens: effectiveMaxTokens } : { max_tokens: effectiveMaxTokens }),
@@ -333,18 +333,10 @@ export async function chatComplete(opts: {
       });
     // If feature is provided, wrap in withCostFeature so the proxy attributes the call correctly.
     // Cost recording itself is done by the OpenAI proxy in setup/init-databases.ts.
-    const resp = (await (feature ? withCostFeature(feature, doCreate) : doCreate())) as {
-      choices: Array<{
-        message?: {
-          content?: string | null;
-          reasoning_content?: string | null;
-          reasoning?: string | null;
-        };
-      }>;
-    };
+    const resp = (await (feature ? withCostFeature(feature, doCreate) : doCreate())) as OpenAI.Chat.ChatCompletion;
     clearTimeout(timeoutId);
     if (signal) signal.removeEventListener("abort", onAbort);
-    const msg = resp.choices[0]?.message;
+    const msg = (resp as any).choices[0]?.message;
     const msgContent = msg?.content?.trim();
     if (msgContent) return msgContent;
     // Qwen3 thinking mode (Ollama OpenAI-compat endpoint) puts the response in

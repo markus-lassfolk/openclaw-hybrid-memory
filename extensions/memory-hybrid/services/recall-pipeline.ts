@@ -15,19 +15,13 @@ import type { EmbeddingProvider } from "../services/embeddings.js";
 import type OpenAI from "openai";
 import type { SearchResult, ScopeFilter } from "../types/memory.js";
 import type { QueryExpansionConfig } from "../config.js";
+import type { getCronModelConfig } from "../config.js";
 import type { PendingLLMWarnings } from "../services/chat.js";
 import { mergeResults, filterByScope } from "../services/merge-results.js";
-import { chatCompleteWithRetry, is500Like, is404Like, isOllamaOOM } from "../services/chat.js";
 import { computeDynamicSalience } from "../utils/salience.js";
 import { capturePluginError } from "../services/error-reporter.js";
-import { getCronModelConfig, getLLMModelPreference } from "../config.js";
-import {
-  EXPLICIT_DEEP_RETRIEVAL_POLICY,
-  INTERACTIVE_RECALL_POLICY,
-  RETRIEVAL_MODE,
-  shouldSkipHydeForMode,
-  type RetrievalMode,
-} from "./retrieval-mode-policy.js";
+import { DEFAULT_INTERACTIVE_RECALL_POLICY, type InteractiveRecallPolicy } from "./retrieval-mode-policy.js";
+import { expandQueryWithHyde } from "./hyde-helper.js";
 
 /** Logger subset required by the recall pipeline (avoids importing ClawdbotPluginApi). */
 export interface RecallLogger {
@@ -65,11 +59,6 @@ export interface RecallPipelineDeps {
   logger: RecallLogger;
 }
 
-function getVectorStepTimeoutMs(mode: RetrievalMode): number {
-  if (mode === RETRIEVAL_MODE.INTERACTIVE_RECALL) return INTERACTIVE_RECALL_POLICY.vectorStepTimeoutMs;
-  return EXPLICIT_DEEP_RETRIEVAL_POLICY.vectorStepTimeoutMs;
-}
-
 /**
  * Run a single recall query: FTS + optional vector search, merge, tier-filter.
  *
@@ -93,24 +82,15 @@ export async function runRecallPipelineQuery(
     errorPrefix?: string;
     limitHydeOnce?: boolean;
     precomputedVector?: number[];
-    /** Explicit retrieval mode contract. Prefer this over `interactive`. */
-    mode?: RetrievalMode;
-    /**
-     * When true, this is an interactive (before_agent_start) recall turn.
-     * If `cfg.queryExpansion.skipForInteractiveTurns` is true (the default), HyDE is
-     * skipped to prevent LLM latency spikes on the hot user-facing path (#581).
-     * @deprecated Use opts.mode=RETRIEVAL_MODE.INTERACTIVE_RECALL.
-     */
-    interactive?: boolean;
+    policy?: InteractiveRecallPolicy;
   },
 ): Promise<SearchResult[]> {
   const { factsDb, vectorDb, embeddings, openai, cfg, recallOpts, minScore, pendingLLMWarnings, logger } = deps;
 
+  const policy = opts?.policy ?? DEFAULT_INTERACTIVE_RECALL_POLICY;
+
   const trimmed = query.trim();
   if (!trimmed) return [];
-  const mode =
-    opts?.mode ?? (opts?.interactive === true ? RETRIEVAL_MODE.INTERACTIVE_RECALL : RETRIEVAL_MODE.EXPLICIT_DEEP);
-  const vectorStepTimeoutMs = getVectorStepTimeoutMs(mode);
 
   const stageMs = { fts: 0, embed: 0, vector: 0, merge: 0 };
   let t0 = Date.now();
@@ -133,58 +113,26 @@ export async function runRecallPipelineQuery(
     try {
       const vectorStepPromise = (async (): Promise<SearchResult[]> => {
         let textToEmbed = trimmed;
-        // Skip HyDE on interactive turns when skipForInteractiveTurns is enabled (default true).
-        // This prevents a full LLM round-trip on the hot before_agent_start path (#581).
         const allowHyde =
-          cfg.queryExpansion.enabled &&
-          !shouldSkipHydeForMode(mode, cfg.queryExpansion.skipForInteractiveTurns) &&
-          (!opts?.limitHydeOnce || !hydeUsedRef.value);
+          policy.allowHyde && cfg.queryExpansion.enabled && (!opts?.limitHydeOnce || !hydeUsedRef.value);
         t0 = Date.now();
 
         if (allowHyde) {
           if (opts?.limitHydeOnce) hydeUsedRef.value = true;
-          try {
-            const cronCfg = getCronModelConfig(cfg.rawCfg);
-            const pref = getLLMModelPreference(cronCfg, "nano");
-            const hydeModel = cfg.queryExpansion.model ?? pref[0];
-            const fallbackModels = cfg.queryExpansion.model ? [] : pref.slice(1);
-            const hydeContent = await chatCompleteWithRetry({
-              model: hydeModel,
-              fallbackModels,
-              content: `Write a short factual statement (1-2 sentences) that answers: ${trimmed}\n\nOutput only the statement, no preamble.`,
-              temperature: 0.3,
-              maxTokens: 150,
+          if (!directiveAbort.signal.aborted) {
+            textToEmbed = await expandQueryWithHyde({
+              query: trimmed,
+              rawCfg: cfg.rawCfg,
+              model: cfg.queryExpansion.model,
+              timeoutMs: cfg.queryExpansion.timeoutMs,
               openai,
               label: opts?.hydeLabel ?? "HyDE",
-              timeoutMs: cfg.queryExpansion.timeoutMs,
               signal: directiveAbort.signal,
               pendingWarnings: pendingLLMWarnings,
+              logger,
+              subsystem: "auto-recall",
+              operation: `${opts?.errorPrefix ?? ""}hyde-generation`,
             });
-            const hydeText = hydeContent.trim();
-            if (hydeText.length > 10) textToEmbed = hydeText;
-          } catch (err) {
-            if (!directiveAbort.signal.aborted) {
-              const hydeErr = err instanceof Error ? err : new Error(String(err));
-              const isTransient =
-                isOllamaOOM(hydeErr) ||
-                is500Like(hydeErr) ||
-                is404Like(hydeErr) ||
-                /timed out|llm request timeout|request was aborted|econnrefused/i.test(hydeErr.message);
-              if (!isTransient) {
-                capturePluginError(hydeErr, {
-                  operation: `${opts?.errorPrefix ?? ""}hyde-generation`,
-                  subsystem: "auto-recall",
-                });
-              }
-              if (isOllamaOOM(hydeErr)) {
-                logger.warn(
-                  `memory-hybrid: Ollama model OOM during HyDE generation — model requires more memory than available. ` +
-                    `Using raw query. Consider using a smaller model or configuring a cloud fallback.`,
-                );
-              } else {
-                logger.warn(`memory-hybrid: ${opts?.errorPrefix ?? ""}HyDE generation failed, using raw query: ${err}`);
-              }
-            }
           }
         }
 
@@ -192,7 +140,7 @@ export async function runRecallPipelineQuery(
         // The HyDE call above may have completed just before the abort — we must not
         // waste an embedding provider call whose result will be discarded.
         if (directiveAbort.signal.aborted) {
-          const abortError = new Error(`recall pipeline timed out after ${vectorStepTimeoutMs}ms`);
+          const abortError = new Error(`recall pipeline timed out after ${policy.vectorStepTimeoutMs}ms`);
           abortError.name = "AbortError";
           throw abortError;
         }
@@ -218,8 +166,8 @@ export async function runRecallPipelineQuery(
       const timeoutPromise = new Promise<never>((_, reject) => {
         timeoutId = setTimeout(() => {
           directiveAbort.abort();
-          reject(new Error(`recall pipeline timed out after ${vectorStepTimeoutMs}ms`));
-        }, vectorStepTimeoutMs);
+          reject(new Error(`${policy.mode} timed out after ${policy.vectorStepTimeoutMs}ms`));
+        }, policy.vectorStepTimeoutMs);
       });
 
       try {
@@ -263,7 +211,7 @@ export async function runRecallPipelineQuery(
   }
 
   logger.debug?.(
-    `memory-hybrid: recall pipeline timing (ms) — FTS: ${stageMs.fts}, embed: ${stageMs.embed}, vector: ${stageMs.vector}, merge: ${stageMs.merge}, total: ${stageMs.fts + stageMs.embed + stageMs.vector + stageMs.merge}`,
+    `memory-hybrid: ${policy.mode} timing (ms) — FTS: ${stageMs.fts}, embed: ${stageMs.embed}, vector: ${stageMs.vector}, merge: ${stageMs.merge}, total: ${stageMs.fts + stageMs.embed + stageMs.vector + stageMs.merge}`,
   );
 
   return results;

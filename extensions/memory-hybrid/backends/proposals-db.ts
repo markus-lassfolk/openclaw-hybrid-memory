@@ -145,6 +145,7 @@ export class ProposalsDB {
         entry.targetHash ?? null,
       );
 
+    // biome-ignore lint/style/noNonNullAssertion: Known to exist
     return this.get(id)!;
   }
 
@@ -156,7 +157,7 @@ export class ProposalsDB {
 
   list(filters?: { status?: string; targetFile?: string }): ProposalEntry[] {
     let query = "SELECT * FROM proposals WHERE 1=1";
-    const params: any[] = [];
+    const params: string[] = [];
 
     if (filters?.status) {
       query += " AND status = ?";

@@ -1,6 +1,10 @@
 // Re-export all types
 export * from "./types/index.js";
 
+// Config schema — isolated module so `hybridConfigSchema` is never undefined when the config
+// barrel re-exports parsers (avoids circular init: parsers → … → config/index before `hybridConfigSchema` is set).
+export { hybridConfigSchema } from "./hybrid-schema.js";
+
 // Re-export utilities
 export {
   DEFAULT_MEMORY_CATEGORIES,
@@ -16,13 +20,6 @@ export { EMBEDDING_DIMENSIONS, OPENAI_MODELS } from "./parsers/core.js";
 
 // Re-export vectorDimsForModel and parseVerbosityLevel from parsers/index
 export { vectorDimsForModel, parseVerbosityLevel } from "./parsers/index.js";
-
-// Main config schema
-import { parseConfig } from "./parsers/index.js";
-
-export const hybridConfigSchema = {
-  parse: parseConfig,
-};
 
 // LLM model utilities
 import type { CronModelConfig, CronModelTier, HybridMemoryConfig } from "./types/index.js";

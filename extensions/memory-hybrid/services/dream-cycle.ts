@@ -21,6 +21,7 @@ import type { MemoryCategory } from "../types/memory.js";
 import type { ProvenanceService } from "./provenance.js";
 import { runReflection, runReflectionRules, type ReflectionConfig } from "./reflection.js";
 import { capturePluginError } from "./error-reporter.js";
+import { writeMemoryIndex } from "./memory-index.js";
 
 /** Prune modes for the dream cycle. */
 export type DreamCyclePruneMode = "expired" | "decay" | "both";
@@ -497,6 +498,26 @@ export async function runDreamCycle(
         subsystem: "reflection",
       });
     }
+  }
+
+  // ── Step 4b: Refresh memory awareness index ─────────────────────────────
+  try {
+    await writeMemoryIndex(
+      factsDb,
+      openai,
+      {
+        model: config.model,
+        fallbackModels: config.fallbackModels ?? [],
+        recentWindowDays: config.reflectWindowDays,
+      },
+      logger,
+    );
+  } catch (err) {
+    logger.warn(`memory-hybrid: dream-cycle — memory index update failed: ${err}`);
+    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+      operation: "dream-cycle-memory-index",
+      subsystem: "reflection",
+    });
   }
 
   // ── Step 5: Prune log tables ─────────────────────────────────────────────

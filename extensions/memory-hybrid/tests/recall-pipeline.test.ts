@@ -18,6 +18,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { runRecallPipelineQuery, type RecallPipelineDeps } from "../services/recall-pipeline.js";
+import { DEFAULT_INTERACTIVE_RECALL_POLICY } from "../services/retrieval-mode-policy.js";
 import type { SearchResult, MemoryEntry } from "../types/memory.js";
 import { createPendingLLMWarnings } from "../services/chat.js";
 import * as chatModule from "../services/chat.js";
@@ -266,6 +267,25 @@ describe("runRecallPipelineQuery — entity option", () => {
 // ---------------------------------------------------------------------------
 
 describe("runRecallPipelineQuery — HyDE disabled (queryExpansion.enabled = false)", () => {
+  it("keeps HyDE off by default on the interactive path even when queryExpansion is enabled", async () => {
+    const deps = makeDeps({
+      cfg: {
+        queryExpansion: { enabled: true, maxVariants: 4, cacheSize: 100, timeoutMs: 15_000 },
+        retrievalStrategies: ["semantic"],
+        memoryTieringEnabled: false,
+        rawCfg: { llm: undefined } as unknown as RecallPipelineDeps["cfg"]["rawCfg"],
+      },
+    });
+    (deps.factsDb.search as ReturnType<typeof vi.fn>).mockReturnValue([]);
+    (deps.vectorDb.search as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+
+    const hydeUsedRef = { value: false };
+    await runRecallPipelineQuery("raw query", 5, deps, hydeUsedRef);
+
+    expect(deps.embeddings.embed).toHaveBeenCalledWith("raw query");
+    expect(hydeUsedRef.value).toBe(false);
+  });
+
   it("never calls chat when queryExpansion is disabled", async () => {
     // We can observe this indirectly: if HyDE ran, it would call embed with the
     // HyDE-generated text. With HyDE off, embed is called with the raw query.
@@ -348,13 +368,19 @@ describe("runRecallPipelineQuery — hydeUsedRef mutation", () => {
 
     // First call with limitHydeOnce — HyDE will fail (no real openai) but
     // should set the ref to true inside the semantic branch.
-    await runRecallPipelineQuery("first call", 5, deps, hydeUsedRef, { limitHydeOnce: true });
+    await runRecallPipelineQuery("first call", 5, deps, hydeUsedRef, {
+      limitHydeOnce: true,
+      policy: { ...DEFAULT_INTERACTIVE_RECALL_POLICY, allowHyde: true },
+    });
     // hydeUsedRef.value is set to true inside the vector step
     expect(hydeUsedRef.value).toBe(true);
 
     // Second call — HyDE is skipped, so embed is called with raw query
     const embedCallsBefore = (deps.embeddings.embed as ReturnType<typeof vi.fn>).mock.calls.length;
-    await runRecallPipelineQuery("second call", 5, deps, hydeUsedRef, { limitHydeOnce: true });
+    await runRecallPipelineQuery("second call", 5, deps, hydeUsedRef, {
+      limitHydeOnce: true,
+      policy: { ...DEFAULT_INTERACTIVE_RECALL_POLICY, allowHyde: true },
+    });
     const embedCallsAfter = (deps.embeddings.embed as ReturnType<typeof vi.fn>).mock.calls.length;
 
     // embed was called for the second query (with raw text, since HyDE was skipped)
@@ -489,6 +515,7 @@ describe("runRecallPipelineQuery — abort cancels embed after HyDE (#558)", () 
       { value: false },
       {
         hydeLabel: "HyDE-test",
+        policy: { ...DEFAULT_INTERACTIVE_RECALL_POLICY, allowHyde: true },
       },
     );
 
@@ -566,14 +593,14 @@ describe("runRecallPipelineQuery — skipForInteractiveTurns (#581)", () => {
     (deps.factsDb.search as ReturnType<typeof vi.fn>).mockReturnValue([]);
     (deps.vectorDb.search as ReturnType<typeof vi.fn>).mockResolvedValue([]);
 
-    await runRecallPipelineQuery("my interactive query", 5, deps, { value: false }, { interactive: true });
+    await runRecallPipelineQuery("my interactive query", 5, deps, { value: false });
 
     // HyDE was blocked — embed must be called with raw query, not HyDE-generated text
     expect(deps.embeddings.embed).toHaveBeenCalledWith("my interactive query");
     expect(chatModule.chatCompleteWithRetry).not.toHaveBeenCalled();
   });
 
-  it("allows HyDE when interactive=true but skipForInteractiveTurns is explicitly false", async () => {
+  it("allows HyDE when policy.allowHyde is true", async () => {
     const deps = makeDeps({
       cfg: {
         queryExpansion: {
@@ -591,7 +618,13 @@ describe("runRecallPipelineQuery — skipForInteractiveTurns (#581)", () => {
     (deps.factsDb.search as ReturnType<typeof vi.fn>).mockReturnValue([]);
     (deps.vectorDb.search as ReturnType<typeof vi.fn>).mockResolvedValue([]);
 
-    await runRecallPipelineQuery("query with hyde", 5, deps, { value: false }, { interactive: true });
+    await runRecallPipelineQuery(
+      "query with hyde",
+      5,
+      deps,
+      { value: false },
+      { policy: { ...DEFAULT_INTERACTIVE_RECALL_POLICY, allowHyde: true } },
+    );
 
     // HyDE was allowed — chatCompleteWithRetry must have been called
     expect(chatModule.chatCompleteWithRetry).toHaveBeenCalled();
@@ -618,16 +651,21 @@ describe("runRecallPipelineQuery — skipForInteractiveTurns (#581)", () => {
     (deps.vectorDb.search as ReturnType<typeof vi.fn>).mockResolvedValue([]);
 
     // No interactive option — background/cron path
-    await runRecallPipelineQuery("background query", 5, deps, { value: false });
+    await runRecallPipelineQuery(
+      "background query",
+      5,
+      deps,
+      { value: false },
+      { policy: { ...DEFAULT_INTERACTIVE_RECALL_POLICY, allowHyde: true } },
+    );
 
     // HyDE was allowed on the background path
     expect(chatModule.chatCompleteWithRetry).toHaveBeenCalled();
     expect(deps.embeddings.embed).toHaveBeenCalledWith("HyDE generated text");
   });
 
-  it("allows HyDE when interactive=false (explicit non-interactive flag)", async () => {
-    // interactive=false should NOT block HyDE — only interactive=true does
-    // opts.interactive === true short-circuits to false when interactive is false
+  it("allows HyDE when policy.allowHyde is true regardless of skipForInteractiveTurns", async () => {
+    // The policy controls HyDE behavior, not the config directly
     const deps = makeDeps({
       cfg: {
         queryExpansion: {
@@ -645,9 +683,15 @@ describe("runRecallPipelineQuery — skipForInteractiveTurns (#581)", () => {
     (deps.factsDb.search as ReturnType<typeof vi.fn>).mockReturnValue([]);
     (deps.vectorDb.search as ReturnType<typeof vi.fn>).mockResolvedValue([]);
 
-    await runRecallPipelineQuery("explicit non-interactive query", 5, deps, { value: false }, { interactive: false });
+    await runRecallPipelineQuery(
+      "explicit non-interactive query",
+      5,
+      deps,
+      { value: false },
+      { policy: { ...DEFAULT_INTERACTIVE_RECALL_POLICY, allowHyde: true } },
+    );
 
-    // HyDE was allowed — interactive=false does not block HyDE
+    // HyDE was allowed because policy.allowHyde is true
     expect(chatModule.chatCompleteWithRetry).toHaveBeenCalled();
     expect(deps.embeddings.embed).toHaveBeenCalledWith("HyDE generated text");
   });

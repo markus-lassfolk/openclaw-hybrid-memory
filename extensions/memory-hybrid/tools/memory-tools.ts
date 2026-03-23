@@ -20,14 +20,15 @@ import type { EmbeddingProvider } from "../services/embeddings.js";
 import { AllEmbeddingProvidersFailed } from "../services/embeddings.js";
 import type { EmbeddingRegistry } from "../services/embedding-registry.js";
 import { toFloat32Array } from "../services/embedding-registry.js";
-import { chatCompleteWithRetry, type PendingLLMWarnings } from "../services/chat.js";
+import type { PendingLLMWarnings } from "../services/chat.js";
 import { mergeResults, filterByScope } from "../services/merge-results.js";
 import { classifyMemoryOperation } from "../services/classification.js";
 import { extractStructuredFields } from "../services/fact-extraction.js";
 import type { ProvenanceService } from "../services/provenance.js";
 import { isCredentialLike, tryParseCredentialForVault, VAULT_POINTER_PREFIX } from "../services/auto-capture.js";
 import { capturePluginError, addOperationBreadcrumb } from "../services/error-reporter.js";
-import { runRetrievalPipeline } from "../services/retrieval-orchestrator.js";
+import { buildExplicitSemanticQueryVector, runExplicitDeepRetrieval } from "../services/retrieval-orchestrator.js";
+import { resolveExplicitDeepRetrievalPolicy } from "../services/retrieval-mode-policy.js";
 import { QueryExpander } from "../services/query-expander.js";
 import { storeAliases, type AliasDB } from "../services/retrieval-aliases.js";
 import { expandGraph, formatLinkPath } from "../services/graph-retrieval.js";
@@ -449,55 +450,9 @@ export function registerMemoryTools(
       entityResults = factsDb.lookup(entity, undefined, tag, { ...recallOpts, limit: 100 });
     }
 
-    // Compute embedding for semantic strategy (with optional HyDE query expansion). Skip when FTS-only.
+    // Explicit/deep retrieval owns richer semantic prep, including optional HyDE.
     let queryVector: number[] | null = null;
     let semanticWarning: string | null = null;
-    if (!tag && cfg.retrieval.strategies.includes("semantic")) {
-      try {
-        addOperationBreadcrumb("search", "vector-recall");
-        let textToEmbed = query;
-        if (cfg.queryExpansion.enabled) {
-          try {
-            const cronCfg = getCronModelConfig(cfg);
-            const pref = getLLMModelPreference(cronCfg, "nano");
-            const hydeModel = cfg.queryExpansion.model ?? pref[0];
-            const fallbackModels = cfg.queryExpansion.model ? [] : pref.slice(1);
-            const hydeContent = await chatCompleteWithRetry({
-              model: hydeModel,
-              fallbackModels,
-              content: `Write a short factual statement (1-2 sentences) that answers: ${query}\n\nOutput only the statement, no preamble.`,
-              temperature: 0.3,
-              maxTokens: 150,
-              openai,
-              label: "HyDE",
-              timeoutMs: cfg.queryExpansion.timeoutMs,
-              pendingWarnings: pendingLLMWarnings,
-            });
-            const hydeText = hydeContent.trim();
-            if (hydeText.length > 10) textToEmbed = hydeText;
-          } catch (err) {
-            capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-              subsystem: "search",
-              operation: "hyde-generation",
-              phase: "runtime",
-            });
-            api.logger.warn(`memory-hybrid: HyDE/query-expansion generation failed, using raw query: ${err}`);
-          }
-        }
-        queryVector = await embeddings.embed(textToEmbed);
-      } catch (err) {
-        // AllEmbeddingProvidersFailed is expected when no providers are configured — don't report to Sentry.
-        if (!(err instanceof AllEmbeddingProvidersFailed)) {
-          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-            subsystem: "search",
-            operation: "vector-embed",
-            phase: "runtime",
-          });
-        }
-        api.logger.warn(`memory-hybrid: embedding generation failed: ${err}`);
-        semanticWarning = "Semantic search unavailable due to embedding failure; results may be incomplete.";
-      }
-    }
 
     // RRF multi-strategy retrieval pipeline (Issue #152)
     // When tag is set, skip semantic strategy (same behaviour as before).
@@ -505,14 +460,28 @@ export function registerMemoryTools(
     try {
       const rrfStrategies = tag ? cfg.retrieval.strategies.filter((s) => s !== "semantic") : cfg.retrieval.strategies;
       const rrfConfig = { ...cfg.retrieval, strategies: rrfStrategies };
+      const explicitPolicy = resolveExplicitDeepRetrievalPolicy(rrfConfig);
+      if (!tag) {
+        const vectorPrep = await buildExplicitSemanticQueryVector({
+          query,
+          cfg,
+          embeddings,
+          openai,
+          pendingLLMWarnings,
+          logger: api.logger,
+          policy: explicitPolicy,
+        });
+        queryVector = vectorPrep.queryVector;
+        semanticWarning = vectorPrep.warning;
+      }
       const queryExpander =
         cfg.queryExpansion?.enabled && cfg.retrieval.strategies.includes("semantic")
           ? new QueryExpander(cfg.queryExpansion, openai)
           : null;
-      const embedFn = queryExpander && queryVector != null ? (text: string) => embeddings.embed(text) : null;
-      const rrfOutput = await runRetrievalPipeline(query, queryVector, factsDb.getRawDb(), vectorDb, factsDb, {
+      const embedFn = queryVector != null ? (text: string) => embeddings.embed(text) : null;
+      const rrfOutput = await runExplicitDeepRetrieval(query, queryVector, factsDb.getRawDb(), vectorDb, factsDb, {
         config: rrfConfig,
-        budgetTokens: cfg.retrieval.explicitBudgetTokens,
+        policy: explicitPolicy,
         tagFilter: tag ?? undefined,
         includeSuperseded,
         scopeFilter,
@@ -525,6 +494,8 @@ export function registerMemoryTools(
         embedFn,
         rerankingConfig: cfg.reranking,
         rerankingOpenai: openai,
+        adaptiveOpenai: cfg.documentGrading?.enabled ? openai : undefined,
+        documentGradingConfig: cfg.documentGrading,
       });
 
       // Merge entity-lookup results first, then append RRF results (deduped).

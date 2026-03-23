@@ -31,6 +31,7 @@ import {
   parseQueryExpansionConfig,
   parseRerankingConfig,
   parseContextualVariantsConfig,
+  parseDocumentGradingConfig,
 } from "./retrieval.js";
 import {
   parsePassiveObserverConfig,
@@ -749,6 +750,7 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
     contextualVariants: parseContextualVariantsConfig(cfg),
     queryExpansion: parseQueryExpansionConfig(cfg),
     reranking: parseRerankingConfig(cfg),
+    documentGrading: parseDocumentGradingConfig(cfg),
     verification: parseVerificationConfig(cfg),
     provenance: parseProvenanceConfig(cfg),
     costTracking: parseCostTrackingConfig(cfg),

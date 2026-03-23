@@ -1,6 +1,7 @@
 /**
  * Lifecycle stage: Recall (Phase 2.3).
- * Runs the full recall pipeline: degradation check, FTS+vector, ambient, directives,
+ * Owns the interactive recall path for chat turns.
+ * Runs the bounded recall pipeline: degradation check, FTS+vector, ambient, directives,
  * entity lookup, scoring. Returns either degraded/empty prependContext or RecallResult for injection.
  * Config: autoRecall.enabled. Timeout: 35s.
  */
@@ -20,9 +21,12 @@ import { withTimeout } from "../utils/timeout.js";
 import { estimateTokens } from "../utils/text.js";
 import type { LifecycleContext, RecallResult, RecallStageResult, SessionState } from "./types.js";
 import { runRecallPipelineQuery, type RecallPipelineDeps } from "../services/recall-pipeline.js";
-import { INTERACTIVE_RECALL_POLICY, resolveInteractiveRecallBudgetTokens } from "../services/retrieval-mode-policy.js";
+import {
+  INTERACTIVE_RECALL_STAGE_TIMEOUT_MS,
+  resolveInteractiveRecallPolicy,
+} from "../services/retrieval-mode-policy.js";
 
-export const RECALL_STAGE_TIMEOUT_MS = INTERACTIVE_RECALL_POLICY.stageTimeoutMs;
+export const RECALL_STAGE_TIMEOUT_MS = INTERACTIVE_RECALL_STAGE_TIMEOUT_MS;
 
 export async function runRecallStage(
   event: unknown,
@@ -82,8 +86,8 @@ async function runRecall(
       };
     }
 
-    const degradationQueueDepth = ctx.cfg.autoRecall.degradationQueueDepth ?? 10;
-    const degradationMaxLatencyMs = ctx.cfg.autoRecall.degradationMaxLatencyMs ?? 5000;
+    const interactivePolicy = resolveInteractiveRecallPolicy(ctx.cfg.autoRecall, ctx.cfg.queryExpansion);
+    const { degradationQueueDepth, degradationMaxLatencyMs } = interactivePolicy;
     const forceDegraded = degradationQueueDepth > 0 && ctx.recallInFlightRef.value > degradationQueueDepth;
 
     if (forceDegraded) {
@@ -253,7 +257,12 @@ async function runRecall(
     const ambientLastEmbedding = ambientLastEmbeddingMap.get(sessionScopeKey) ?? null;
 
     let promptEmbedding: number[] | null = null;
-    if (ambientCfg.enabled && ambientCfg.multiQuery && ctx.cfg.retrieval.strategies.includes("semantic")) {
+    if (
+      interactivePolicy.allowAmbientMultiQuery &&
+      ambientCfg.enabled &&
+      ambientCfg.multiQuery &&
+      ctx.cfg.retrieval.strategies.includes("semantic")
+    ) {
       try {
         promptEmbedding = await ctx.embeddings.embed(e.prompt);
       } catch {
@@ -265,10 +274,10 @@ async function runRecall(
       hydeLabel: "HyDE",
       errorPrefix: "auto-recall-",
       precomputedVector: promptEmbedding ?? undefined,
-      mode: INTERACTIVE_RECALL_POLICY.mode,
+      policy: interactivePolicy,
     });
 
-    if (ambientCfg.enabled && ambientCfg.multiQuery) {
+    if (interactivePolicy.allowAmbientMultiQuery && ambientCfg.enabled && ambientCfg.multiQuery) {
       try {
         const isTopicShift =
           ambientLastEmbedding !== null &&
@@ -294,7 +303,7 @@ async function runRecall(
                 hydeLabel: "HyDE",
                 errorPrefix: `ambient-${q.type}-`,
                 limitHydeOnce: true,
-                mode: INTERACTIVE_RECALL_POLICY.mode,
+                policy: interactivePolicy,
               });
               extraResultSets.push(qResults);
             } catch (err) {
@@ -429,7 +438,7 @@ async function runRecall(
               hydeLabel: "HyDE",
               errorPrefix: "directive-",
               limitHydeOnce: true,
-              mode: INTERACTIVE_RECALL_POLICY.mode,
+              policy: interactivePolicy,
             });
             directiveCalls += 1;
             addDirectiveResults(results, `entity:${entity}`);
@@ -443,7 +452,7 @@ async function runRecall(
               hydeLabel: "HyDE",
               errorPrefix: "directive-",
               limitHydeOnce: true,
-              mode: INTERACTIVE_RECALL_POLICY.mode,
+              policy: interactivePolicy,
             });
             directiveCalls += 1;
             addDirectiveResults(results, `keyword:${keyword}`);
@@ -456,7 +465,7 @@ async function runRecall(
             hydeLabel: "HyDE",
             errorPrefix: "directive-",
             limitHydeOnce: true,
-            mode: INTERACTIVE_RECALL_POLICY.mode,
+            policy: interactivePolicy,
           });
           directiveCalls += 1;
           addDirectiveResults(results, `taskType:${taskType}`);
@@ -468,7 +477,7 @@ async function runRecall(
               hydeLabel: "HyDE",
               errorPrefix: "directive-",
               limitHydeOnce: true,
-              mode: INTERACTIVE_RECALL_POLICY.mode,
+              policy: interactivePolicy,
             });
             directiveCalls += 1;
             addDirectiveResults(results, "sessionStart");
@@ -534,7 +543,7 @@ async function runRecall(
     // Enforce retrieval.ambientBudgetTokens as a hard total-token cap (#581).
     // autoRecall.maxTokens is a user preference; ambientBudgetTokens is the architectural
     // ceiling — the injected context must not exceed either.
-    const totalBudget = resolveInteractiveRecallBudgetTokens(ctx.cfg);
+    const totalBudget = interactivePolicy.contextBudgetTokens;
     // Account for issueBlock, hotBlock, and procedureBlock tokens to ensure total stays within budget
     const fixedBlocksTokens =
       estimateTokens(issueBlock) +

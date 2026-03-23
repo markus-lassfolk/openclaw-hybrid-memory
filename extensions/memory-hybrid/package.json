@@ -21,6 +21,7 @@
     "types",
     "prompts",
     "scripts",
+    "npm-shrinkwrap.json",
     "openclaw.plugin.json",
     "package.json",
     "README.md"
@@ -36,7 +37,7 @@
     "@sinclair/typebox": "^0.34.48"
   },
   "dependencies": {
-    "@lancedb/lancedb": "^0.26.2",
+    "@lancedb/lancedb": "^0.27.1",
     "@types/node": "^25.2.3"
   },
   "openclaw": {
@@ -52,6 +53,8 @@
     "format:check": "biome format .",
     "lint:arch": "bash scripts/lint-arch.sh",
     "postinstall": "node scripts/postinstall-rebuild.cjs",
+    "prepack": "node scripts/manage-shrinkwrap.cjs create",
+    "postpack": "node scripts/manage-shrinkwrap.cjs clean",
     "verify:publish": "node scripts/verify-publish.cjs",
     "release:publish": "npm run verify:publish && npm publish --otp=$OTP"
   },

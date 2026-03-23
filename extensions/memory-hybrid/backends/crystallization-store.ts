@@ -99,6 +99,7 @@ export class CrystallizationStore {
       )
       .run(id, input.patternId, input.skillName, input.skillContent, input.patternSnapshot, now, now);
 
+    // biome-ignore lint/style/noNonNullAssertion: Known to exist
     return this.getById(id)!;
   }
 

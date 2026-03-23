@@ -1,4 +1,5 @@
 export * from "./core.js";
+export * from "./bootstrap.js";
 export * from "./retrieval.js";
 export * from "./capture.js";
 export * from "./maintenance.js";
@@ -16,6 +17,7 @@ import type {
   QueryExpansionConfig,
   RerankingConfig,
   ContextualVariantsConfig,
+  DocumentGradingConfig,
 } from "./retrieval.js";
 
 import type { StoreConfig, WALConfig, EventLogConfig, PathConfig } from "./core.js";
@@ -531,6 +533,8 @@ export type HybridMemoryConfig = {
   queryExpansion: QueryExpansionConfig;
   /** LLM re-ranking of RRF fusion results (Issue #161, default: disabled). */
   reranking: RerankingConfig;
+  /** Adaptive document grading and query rewriting for retrieval quality (default: disabled). */
+  documentGrading: DocumentGradingConfig;
   /** Verification store for critical facts (Issue #162, default: disabled). */
   verification: VerificationConfig;
   /** Provenance tracing for fact-to-source chains (Issue #163, default: disabled). */
