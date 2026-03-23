@@ -996,10 +996,16 @@ export async function runRetrievalPipeline(
   let currentQuery = query;
   let currentQueryVector = queryVector;
   let lastRun: { result: OrchestratorResult; shouldRewrite: boolean; fromCache: boolean } | null = null;
+  let bestResult: OrchestratorResult | null = null;
 
   for (let iteration = 0; iteration <= MAX_REWRITE_ITERATIONS; iteration++) {
     const run = await executePipelineQuery(currentQuery, currentQueryVector);
     lastRun = run;
+    
+    if (!bestResult || run.result.fused.length > bestResult.fused.length) {
+      bestResult = run.result;
+    }
+    
     if (!run.shouldRewrite || !activeDocumentGrader) {
       if (
         !run.fromCache &&
@@ -1015,16 +1021,16 @@ export async function runRetrievalPipeline(
           cachedAt: nowSec,
         });
       }
-      return run.result;
+      return bestResult;
     }
 
     if (iteration === MAX_REWRITE_ITERATIONS) {
-      return run.result;
+      return bestResult;
     }
 
     const rewritten = await activeDocumentGrader.rewriteQuery(query, attemptedQueries);
     if (!rewritten) {
-      return run.result;
+      return bestResult;
     }
 
     attemptedQueries.push(rewritten);
@@ -1044,5 +1050,5 @@ export async function runRetrievalPipeline(
     }
   }
 
-  return lastRun?.result ?? { fused: [], packed: [], packedFactIds: [], tokensUsed: 0, entries: [] };
+  return bestResult ?? { fused: [], packed: [], packedFactIds: [], tokensUsed: 0, entries: [] };
 }
