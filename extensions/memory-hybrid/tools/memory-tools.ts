@@ -10,9 +10,9 @@ import type OpenAI from "openai";
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk";
 import { stringEnum } from "openclaw/plugin-sdk";
 
+import type { BuildToolScopeFilterFn, FindSimilarByEmbeddingFn } from "../api/memory-plugin-api.js";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
-import type { WriteAheadLog } from "../backends/wal.js";
 import type { CredentialsDB } from "../backends/credentials-db.js";
 import type { EventLog } from "../backends/event-log.js";
 import { categoryToEventType } from "../backends/event-log.js";
@@ -54,7 +54,15 @@ import { shouldAutoVerify } from "../services/verification-store.js";
 import type { VariantGenerationQueue } from "../services/contextual-variants.js";
 import { UUID_REGEX } from "../utils/constants.js";
 
-export interface PluginContext {
+export type BoundWalWriteFn = (
+  operation: "store" | "update",
+  data: Record<string, unknown>,
+  logger: { warn: (msg: string) => void },
+) => Promise<string>;
+
+export type BoundWalRemoveFn = (id: string, logger: { warn: (msg: string) => void }) => Promise<void>;
+
+export interface MemoryToolsContext {
   factsDb: FactsDB;
   vectorDb: VectorDB;
   cfg: HybridMemoryConfig;
@@ -62,7 +70,6 @@ export interface PluginContext {
   embeddings: EmbeddingProvider;
   embeddingRegistry?: EmbeddingRegistry | null;
   openai: OpenAI;
-  wal: WriteAheadLog | null;
   credentialsDb: CredentialsDB | null;
   eventLog: EventLog | null;
   provenanceService?: ProvenanceService | null;
@@ -71,6 +78,32 @@ export interface PluginContext {
   currentAgentIdRef: { value: string | null };
   pendingLLMWarnings: PendingLLMWarnings;
   variantQueue?: VariantGenerationQueue | null;
+  buildToolScopeFilter: BuildToolScopeFilterFn;
+  walWrite: BoundWalWriteFn;
+  walRemove: BoundWalRemoveFn;
+  findSimilarByEmbedding: FindSimilarByEmbeddingFn;
+}
+
+type LegacyMemoryToolsContext = Omit<
+  MemoryToolsContext,
+  "buildToolScopeFilter" | "walWrite" | "walRemove" | "findSimilarByEmbedding"
+> & {
+  wal?: unknown;
+};
+
+function hasBoundMemoryToolHelpers(ctx: MemoryToolsContext | LegacyMemoryToolsContext): ctx is MemoryToolsContext {
+  const maybe = ctx as Partial<MemoryToolsContext> & { wal?: unknown };
+
+  const hasAllNewHelpers =
+    typeof maybe.buildToolScopeFilter === "function" &&
+    typeof maybe.walWrite === "function" &&
+    typeof maybe.walRemove === "function" &&
+    typeof maybe.findSimilarByEmbedding === "function";
+
+  // If a legacy `wal` helper object is still present, treat this as a legacy context.
+  const hasLegacyWal = typeof maybe.wal === "object" && maybe.wal !== null;
+
+  return hasAllNewHelpers && !hasLegacyWal;
 }
 
 async function storeRegistryEmbeddings({
@@ -162,35 +195,51 @@ async function storeRegistryEmbeddings({
  * This includes: memory_recall, memory_recall_procedures, memory_store,
  * memory_promote, and memory_forget.
  */
+export function registerMemoryTools(ctx: MemoryToolsContext, api: ClawdbotPluginApi): void;
 export function registerMemoryTools(
-  ctx: PluginContext,
+  ctx: LegacyMemoryToolsContext,
   api: ClawdbotPluginApi,
-  buildToolScopeFilter: (
-    params: { userId?: string | null; agentId?: string | null; sessionId?: string | null },
-    currentAgent: string | null,
-    config: { multiAgent: { orchestratorId: string }; autoRecall: { scopeFilter?: ScopeFilter } },
-  ) => ScopeFilter | undefined,
-  walWrite: (
-    operation: "store" | "update",
-    data: Record<string, unknown>,
-    logger: { warn: (msg: string) => void },
-  ) => Promise<string>,
-  walRemove: (id: string, logger: { warn: (msg: string) => void }) => Promise<void>,
-  findSimilarByEmbedding: (
-    vectorDb: VectorDB,
-    factsDb: { getById(id: string): MemoryEntry | null },
-    vector: number[],
-    limit: number,
-    minScore?: number,
-  ) => Promise<MemoryEntry[]>,
+  buildToolScopeFilter: BuildToolScopeFilterFn,
+  walWrite: BoundWalWriteFn,
+  walRemove: BoundWalRemoveFn,
+  findSimilarByEmbedding: FindSimilarByEmbeddingFn,
+): void;
+export function registerMemoryTools(
+  ctx: MemoryToolsContext | LegacyMemoryToolsContext,
+  api: ClawdbotPluginApi,
+  legacyBuildToolScopeFilter?: BuildToolScopeFilterFn,
+  legacyWalWrite?: BoundWalWriteFn,
+  legacyWalRemove?: BoundWalRemoveFn,
+  legacyFindSimilarByEmbedding?: FindSimilarByEmbeddingFn,
 ): void {
+  let resolvedContext: MemoryToolsContext;
+
+  if (hasBoundMemoryToolHelpers(ctx)) {
+    resolvedContext = ctx;
+  } else {
+    if (
+      typeof legacyBuildToolScopeFilter !== "function" ||
+      typeof legacyWalWrite !== "function" ||
+      typeof legacyWalRemove !== "function" ||
+      typeof legacyFindSimilarByEmbedding !== "function"
+    ) {
+      throw new Error("registerMemoryTools: Missing required legacy helper functions for memory tools initialization.");
+    }
+    resolvedContext = {
+      ...ctx,
+      buildToolScopeFilter: legacyBuildToolScopeFilter,
+      walWrite: legacyWalWrite,
+      walRemove: legacyWalRemove,
+      findSimilarByEmbedding: legacyFindSimilarByEmbedding,
+    };
+  }
+
   const {
     factsDb,
     vectorDb,
     cfg,
     embeddings,
     openai,
-    wal,
     credentialsDb,
     eventLog,
     provenanceService,
@@ -201,7 +250,11 @@ export function registerMemoryTools(
     currentAgentIdRef,
     pendingLLMWarnings,
     variantQueue,
-  } = ctx;
+    buildToolScopeFilter,
+    walWrite,
+    walRemove,
+    findSimilarByEmbedding,
+  } = resolvedContext;
 
   api.registerTool(
     {

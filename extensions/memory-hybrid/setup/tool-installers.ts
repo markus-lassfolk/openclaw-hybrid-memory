@@ -5,27 +5,60 @@ import { capturePluginError } from "../services/error-reporter.js";
 import { orderByBootstrapPhase } from "../services/bootstrap-priority.js";
 import { registerCredentialTools } from "../tools/credential-tools.js";
 import { registerCrystallizationTools } from "../tools/crystallization-tools.js";
-import { registerDashboardHttpRoutes } from "../tools/dashboard-routes.js";
+import { registerDashboardHttpRoutes, type DashboardRoutesContext } from "../tools/dashboard-routes.js";
 import { registerDocumentTools } from "../tools/document-tools.js";
-import { registerGraphTools } from "../tools/graph-tools.js";
+import { registerGraphTools, type PluginContext as GraphToolsContext } from "../tools/graph-tools.js";
 import { registerIssueTools } from "../tools/issue-tools.js";
-import { registerMemoryTools } from "../tools/memory-tools.js";
-import { registerPersonaTools } from "../tools/persona-tools.js";
+import { registerMemoryTools, type MemoryToolsContext } from "../tools/memory-tools.js";
+import { registerPersonaTools, type PluginContext as PersonaToolsContext } from "../tools/persona-tools.js";
 import { registerProvenanceTools } from "../tools/provenance-tools.js";
 import { registerSelfExtensionTools } from "../tools/self-extension-tools.js";
 import { registerApitapTools } from "../tools/apitap-tools.js";
-import { registerUtilityTools } from "../tools/utility-tools.js";
+import { registerUtilityTools, type PluginContext as UtilityToolsContext } from "../tools/utility-tools.js";
 import { registerVerificationTools } from "../tools/verification-tools.js";
 import { registerWorkflowTools } from "../tools/workflow-tools.js";
 
-export type ToolInstallerContext = MemoryPluginAPI;
+export type ToolsContext = MemoryPluginAPI;
 
 export type ToolInstaller = BootstrapPhaseConfig & {
   id: string;
-  install(context: ToolInstallerContext, api: ClawdbotPluginApi): void;
+  selectContext(context: ToolsContext, api: ClawdbotPluginApi): unknown;
+  install(context: unknown, api: ClawdbotPluginApi): void;
 };
 
-function installMemoryCoreTools(ctx: ToolInstallerContext, api: ClawdbotPluginApi): void {
+type UtilityInstallerContext = {
+  toolContext: UtilityToolsContext;
+  runReflection: MemoryPluginAPI["runReflection"];
+  runReflectionRules: MemoryPluginAPI["runReflectionRules"];
+  runReflectionMeta: MemoryPluginAPI["runReflectionMeta"];
+  walWrite: (operation: "store" | "update", data: Record<string, unknown>) => Promise<string>;
+  walRemove: (id: string) => Promise<void>;
+};
+
+type ProvenanceInstallerContext = Pick<ToolsContext, "factsDb" | "eventLog" | "provenanceService" | "cfg">;
+type CredentialInstallerContext = Pick<ToolsContext, "credentialsDb" | "cfg">;
+type DocumentInstallerContext = Pick<
+  ToolsContext,
+  "factsDb" | "vectorDb" | "cfg" | "embeddings" | "pythonBridge" | "openai" | "provenanceService"
+>;
+type VerificationInstallerContext = Pick<ToolsContext, "factsDb" | "verificationStore" | "cfg">;
+type IssueInstallerContext = Pick<ToolsContext, "issueStore" | "cfg">;
+type WorkflowInstallerContext = Pick<ToolsContext, "workflowStore">;
+type CrystallizationInstallerContext = Pick<ToolsContext, "crystallizationStore" | "workflowStore" | "cfg">;
+type SelfExtensionInstallerContext = Pick<ToolsContext, "toolProposalStore" | "workflowStore" | "cfg">;
+type ApitapInstallerContext = Pick<ToolsContext, "apitapStore" | "cfg">;
+
+function defineToolInstaller<TSelectedContext>(
+  installer: BootstrapPhaseConfig & {
+    id: string;
+    selectContext(context: ToolsContext, api: ClawdbotPluginApi): TSelectedContext;
+    install(context: TSelectedContext, api: ClawdbotPluginApi): void;
+  },
+): ToolInstaller {
+  return installer as ToolInstaller;
+}
+
+function selectMemoryCoreToolsContext(ctx: ToolsContext): MemoryToolsContext {
   const {
     factsDb,
     vectorDb,
@@ -44,72 +77,111 @@ function installMemoryCoreTools(ctx: ToolInstallerContext, api: ClawdbotPluginAp
     currentAgentIdRef,
     pendingLLMWarnings,
     buildToolScopeFilter,
+    findSimilarByEmbedding,
     walWrite,
     walRemove,
-    findSimilarByEmbedding,
   } = ctx;
 
-  registerMemoryTools(
-    {
-      factsDb,
-      vectorDb,
-      cfg,
-      embeddings,
-      embeddingRegistry,
-      openai,
-      wal,
-      credentialsDb,
-      eventLog,
-      provenanceService,
-      aliasDb,
-      verificationStore,
-      variantQueue,
-      lastProgressiveIndexIds,
-      currentAgentIdRef,
-      pendingLLMWarnings,
-    },
-    api,
+  return {
+    factsDb,
+    vectorDb,
+    cfg,
+    embeddings,
+    embeddingRegistry,
+    openai,
+    credentialsDb,
+    eventLog,
+    provenanceService,
+    aliasDb,
+    verificationStore,
+    variantQueue,
+    lastProgressiveIndexIds,
+    currentAgentIdRef,
+    pendingLLMWarnings,
     buildToolScopeFilter,
-    (operation, data, logger) => walWrite(wal, operation, data, logger),
-    (id, logger) => walRemove(wal, id, logger),
+    walWrite: (operation, data, logger) => walWrite(wal, operation, data, logger),
+    walRemove: (id, logger) => walRemove(wal, id, logger),
     findSimilarByEmbedding,
-  );
+  };
 }
 
-function installGraphTools({ factsDb, cfg }: ToolInstallerContext, api: ClawdbotPluginApi): void {
+function installMemoryCoreTools(ctx: MemoryToolsContext, api: ClawdbotPluginApi): void {
+  registerMemoryTools(ctx, api);
+}
+
+function selectGraphToolsContext({ factsDb, cfg }: ToolsContext): GraphToolsContext {
+  return { factsDb, cfg };
+}
+
+function installGraphTools({ factsDb, cfg }: GraphToolsContext, api: ClawdbotPluginApi): void {
   if (cfg.graph.enabled) {
     registerGraphTools({ factsDb, cfg }, api);
   }
 }
 
-function installUtilityTools(ctx: ToolInstallerContext, api: ClawdbotPluginApi): void {
+function selectUtilityToolsContext(ctx: ToolsContext, api: ClawdbotPluginApi): UtilityInstallerContext {
   const { factsDb, vectorDb, embeddings, openai, cfg, wal, resolvedSqlitePath, provenanceService } = ctx;
+  return {
+    toolContext: { factsDb, vectorDb, embeddings, openai, cfg, wal, resolvedSqlitePath, provenanceService },
+    runReflection: ctx.runReflection,
+    runReflectionRules: ctx.runReflectionRules,
+    runReflectionMeta: ctx.runReflectionMeta,
+    walWrite: (operation, data) => ctx.walWrite(wal, operation, data, api.logger),
+    walRemove: (id) => ctx.walRemove(wal, id, api.logger),
+  };
+}
+
+function installUtilityTools(ctx: UtilityInstallerContext, api: ClawdbotPluginApi): void {
   registerUtilityTools(
-    { factsDb, vectorDb, embeddings, openai, cfg, wal, resolvedSqlitePath, provenanceService },
+    ctx.toolContext,
     api,
     ctx.runReflection,
     ctx.runReflectionRules,
     ctx.runReflectionMeta,
-    (operation, data) => ctx.walWrite(wal, operation, data, api.logger),
-    (id) => ctx.walRemove(wal, id, api.logger),
+    ctx.walWrite,
+    ctx.walRemove,
   );
 }
 
-function installProvenanceTools(ctx: ToolInstallerContext, api: ClawdbotPluginApi): void {
+function selectProvenanceToolsContext({
+  factsDb,
+  eventLog,
+  provenanceService,
+  cfg,
+}: ToolsContext): ProvenanceInstallerContext {
+  return { factsDb, eventLog, provenanceService, cfg };
+}
+
+function installProvenanceTools(ctx: ProvenanceInstallerContext, api: ClawdbotPluginApi): void {
   const { factsDb, eventLog, provenanceService, cfg } = ctx;
   if (cfg.provenance.enabled && provenanceService) {
     registerProvenanceTools({ factsDb, eventLog, provenanceService, cfg }, api);
   }
 }
 
-function installCredentialTools(ctx: ToolInstallerContext, api: ClawdbotPluginApi): void {
+function selectCredentialToolsContext({ credentialsDb, cfg }: ToolsContext): CredentialInstallerContext {
+  return { credentialsDb, cfg };
+}
+
+function installCredentialTools(ctx: CredentialInstallerContext, api: ClawdbotPluginApi): void {
   const { credentialsDb, cfg } = ctx;
   if (cfg.credentials.enabled && credentialsDb) {
     registerCredentialTools({ credentialsDb, cfg, api }, api);
   }
 }
 
-function installPersonaTools(ctx: ToolInstallerContext, api: ClawdbotPluginApi): void {
+type PersonaInstallerContext = PersonaToolsContext & Pick<ToolsContext, "timers">;
+
+function selectPersonaToolsContext({
+  proposalsDb,
+  cfg,
+  resolvedSqlitePath,
+  timers,
+}: ToolsContext): PersonaInstallerContext {
+  return { proposalsDb: proposalsDb ?? undefined, cfg, resolvedSqlitePath, timers };
+}
+
+function installPersonaTools(ctx: PersonaInstallerContext, api: ClawdbotPluginApi): void {
   const { proposalsDb, cfg, resolvedSqlitePath, timers } = ctx;
   if (!(cfg.personaProposals.enabled && proposalsDb)) return;
 
@@ -135,33 +207,69 @@ function installPersonaTools(ctx: ToolInstallerContext, api: ClawdbotPluginApi):
   );
 }
 
-function installDocumentTools(ctx: ToolInstallerContext, api: ClawdbotPluginApi): void {
+function selectDocumentToolsContext({
+  factsDb,
+  vectorDb,
+  cfg,
+  embeddings,
+  pythonBridge,
+  openai,
+  provenanceService,
+}: ToolsContext): DocumentInstallerContext {
+  return { factsDb, vectorDb, cfg, embeddings, pythonBridge, openai, provenanceService };
+}
+
+function installDocumentTools(ctx: DocumentInstallerContext, api: ClawdbotPluginApi): void {
   const { factsDb, vectorDb, cfg, embeddings, pythonBridge, openai, provenanceService } = ctx;
   if (cfg.documents.enabled && pythonBridge) {
     registerDocumentTools({ factsDb, vectorDb, cfg, embeddings, pythonBridge, openai, provenanceService }, api);
   }
 }
 
-function installVerificationTools(ctx: ToolInstallerContext, api: ClawdbotPluginApi): void {
+function selectVerificationToolsContext({
+  factsDb,
+  verificationStore,
+  cfg,
+}: ToolsContext): VerificationInstallerContext {
+  return { factsDb, verificationStore, cfg };
+}
+
+function installVerificationTools(ctx: VerificationInstallerContext, api: ClawdbotPluginApi): void {
   const { factsDb, verificationStore, cfg } = ctx;
   if (cfg.verification.enabled && verificationStore) {
     registerVerificationTools({ factsDb, verificationStore }, api);
   }
 }
 
-function installIssueTools(ctx: ToolInstallerContext, api: ClawdbotPluginApi): void {
+function selectIssueToolsContext({ issueStore, cfg }: ToolsContext): IssueInstallerContext {
+  return { issueStore, cfg };
+}
+
+function installIssueTools(ctx: IssueInstallerContext, api: ClawdbotPluginApi): void {
   if (ctx.issueStore) {
     registerIssueTools({ issueStore: ctx.issueStore, cfg: ctx.cfg }, api);
   }
 }
 
-function installWorkflowTools(ctx: ToolInstallerContext, api: ClawdbotPluginApi): void {
+function selectWorkflowToolsContext({ workflowStore }: ToolsContext): WorkflowInstallerContext {
+  return { workflowStore };
+}
+
+function installWorkflowTools(ctx: WorkflowInstallerContext, api: ClawdbotPluginApi): void {
   if (ctx.workflowStore) {
     registerWorkflowTools({ workflowStore: ctx.workflowStore }, api);
   }
 }
 
-function installCrystallizationTools(ctx: ToolInstallerContext, api: ClawdbotPluginApi): void {
+function selectCrystallizationToolsContext({
+  crystallizationStore,
+  workflowStore,
+  cfg,
+}: ToolsContext): CrystallizationInstallerContext {
+  return { crystallizationStore, workflowStore, cfg };
+}
+
+function installCrystallizationTools(ctx: CrystallizationInstallerContext, api: ClawdbotPluginApi): void {
   if (ctx.crystallizationStore && ctx.workflowStore) {
     registerCrystallizationTools(
       { crystallizationStore: ctx.crystallizationStore, workflowStore: ctx.workflowStore, cfg: ctx.cfg },
@@ -170,7 +278,15 @@ function installCrystallizationTools(ctx: ToolInstallerContext, api: ClawdbotPlu
   }
 }
 
-function installSelfExtensionTools(ctx: ToolInstallerContext, api: ClawdbotPluginApi): void {
+function selectSelfExtensionToolsContext({
+  toolProposalStore,
+  workflowStore,
+  cfg,
+}: ToolsContext): SelfExtensionInstallerContext {
+  return { toolProposalStore, workflowStore, cfg };
+}
+
+function installSelfExtensionTools(ctx: SelfExtensionInstallerContext, api: ClawdbotPluginApi): void {
   if (ctx.toolProposalStore && ctx.workflowStore) {
     registerSelfExtensionTools(
       { toolProposalStore: ctx.toolProposalStore, workflowStore: ctx.workflowStore, cfg: ctx.cfg },
@@ -179,29 +295,107 @@ function installSelfExtensionTools(ctx: ToolInstallerContext, api: ClawdbotPlugi
   }
 }
 
-function installApitapTools(ctx: ToolInstallerContext, api: ClawdbotPluginApi): void {
+function selectApitapToolsContext({ apitapStore, cfg }: ToolsContext): ApitapInstallerContext {
+  return { apitapStore, cfg };
+}
+
+function installApitapTools(ctx: ApitapInstallerContext, api: ClawdbotPluginApi): void {
   if (ctx.apitapStore) {
     registerApitapTools({ apitapStore: ctx.apitapStore, cfg: ctx.cfg }, api);
   }
 }
 
-function installDashboardRoutes({ cfg }: ToolInstallerContext, api: ClawdbotPluginApi): void {
+function selectDashboardRoutesContext({ cfg }: ToolsContext): DashboardRoutesContext {
+  return { cfg };
+}
+
+function installDashboardRoutes({ cfg }: DashboardRoutesContext, api: ClawdbotPluginApi): void {
   registerDashboardHttpRoutes({ cfg }, api);
 }
 
 export const toolInstallers = orderByBootstrapPhase<ToolInstaller>([
-  { id: "memoryCore", bootstrapPhase: "core", install: installMemoryCoreTools },
-  { id: "retrievalGraph", bootstrapPhase: "core", install: installGraphTools },
-  { id: "memoryUtility", bootstrapPhase: "core", install: installUtilityTools },
-  { id: "provenance", bootstrapPhase: "optional", install: installProvenanceTools },
-  { id: "credentials", bootstrapPhase: "optional", install: installCredentialTools },
-  { id: "persona", bootstrapPhase: "optional", install: installPersonaTools },
-  { id: "documents", bootstrapPhase: "optional", install: installDocumentTools },
-  { id: "verification", bootstrapPhase: "optional", install: installVerificationTools },
-  { id: "issues", bootstrapPhase: "optional", install: installIssueTools },
-  { id: "workflow", bootstrapPhase: "optional", install: installWorkflowTools },
-  { id: "crystallization", bootstrapPhase: "optional", install: installCrystallizationTools },
-  { id: "selfExtension", bootstrapPhase: "optional", install: installSelfExtensionTools },
-  { id: "apitap", bootstrapPhase: "optional", install: installApitapTools },
-  { id: "dashboard", bootstrapPhase: "optional", install: installDashboardRoutes },
+  defineToolInstaller({
+    id: "memoryCore",
+    bootstrapPhase: "core",
+    selectContext: (ctx) => selectMemoryCoreToolsContext(ctx),
+    install: installMemoryCoreTools,
+  }),
+  defineToolInstaller({
+    id: "retrievalGraph",
+    bootstrapPhase: "core",
+    selectContext: (ctx) => selectGraphToolsContext(ctx),
+    install: installGraphTools,
+  }),
+  defineToolInstaller({
+    id: "memoryUtility",
+    bootstrapPhase: "core",
+    selectContext: (ctx, api) => selectUtilityToolsContext(ctx, api),
+    install: installUtilityTools,
+  }),
+  defineToolInstaller({
+    id: "provenance",
+    bootstrapPhase: "optional",
+    selectContext: (ctx) => selectProvenanceToolsContext(ctx),
+    install: installProvenanceTools,
+  }),
+  defineToolInstaller({
+    id: "credentials",
+    bootstrapPhase: "optional",
+    selectContext: (ctx) => selectCredentialToolsContext(ctx),
+    install: installCredentialTools,
+  }),
+  defineToolInstaller({
+    id: "persona",
+    bootstrapPhase: "optional",
+    selectContext: (ctx) => selectPersonaToolsContext(ctx),
+    install: installPersonaTools,
+  }),
+  defineToolInstaller({
+    id: "documents",
+    bootstrapPhase: "optional",
+    selectContext: (ctx) => selectDocumentToolsContext(ctx),
+    install: installDocumentTools,
+  }),
+  defineToolInstaller({
+    id: "verification",
+    bootstrapPhase: "optional",
+    selectContext: (ctx) => selectVerificationToolsContext(ctx),
+    install: installVerificationTools,
+  }),
+  defineToolInstaller({
+    id: "issues",
+    bootstrapPhase: "optional",
+    selectContext: (ctx) => selectIssueToolsContext(ctx),
+    install: installIssueTools,
+  }),
+  defineToolInstaller({
+    id: "workflow",
+    bootstrapPhase: "optional",
+    selectContext: (ctx) => selectWorkflowToolsContext(ctx),
+    install: installWorkflowTools,
+  }),
+  defineToolInstaller({
+    id: "crystallization",
+    bootstrapPhase: "optional",
+    selectContext: (ctx) => selectCrystallizationToolsContext(ctx),
+    install: installCrystallizationTools,
+  }),
+  defineToolInstaller({
+    id: "selfExtension",
+    bootstrapPhase: "optional",
+    selectContext: (ctx) => selectSelfExtensionToolsContext(ctx),
+    install: installSelfExtensionTools,
+  }),
+  defineToolInstaller({
+    id: "apitap",
+    bootstrapPhase: "optional",
+    selectContext: (ctx) => selectApitapToolsContext(ctx),
+    install: installApitapTools,
+  }),
+  defineToolInstaller({
+    id: "dashboard",
+    bootstrapPhase: "optional",
+    selectContext: (ctx) => selectDashboardRoutesContext(ctx),
+    install: installDashboardRoutes,
+  }),
 ]);
