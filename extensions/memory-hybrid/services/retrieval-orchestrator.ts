@@ -663,16 +663,19 @@ export async function runRetrievalPipeline(
         filterKey: semanticCacheFilterKey,
       });
       if (cached) {
-        return {
-          result: buildCachedResult(factsDb, cached.factIds, cached.packedFactIds, budgetTokens, {
-            includeSuperseded,
-            scopeFilter,
-            asOf,
-            nowSec,
-          }),
-          shouldRewrite: false,
-          fromCache: true,
-        };
+        const cachedResult = buildCachedResult(factsDb, cached.factIds, cached.packedFactIds, budgetTokens, {
+          includeSuperseded,
+          scopeFilter,
+          asOf,
+          nowSec,
+        });
+        if (cachedResult.fused.length > 0) {
+          return {
+            result: cachedResult,
+            shouldRewrite: false,
+            fromCache: true,
+          };
+        }
       }
     }
 
