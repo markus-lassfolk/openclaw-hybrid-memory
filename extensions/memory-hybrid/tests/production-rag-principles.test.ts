@@ -45,7 +45,6 @@ describe("VectorDB semantic query cache", () => {
       queryText: "where is the api key stored",
       vector: [1, 0, 0],
       factIds: ["fact-1", "fact-2"],
-      packedFactIds: ["fact-1"],
       filterKey: "test",
     });
 
@@ -56,7 +55,6 @@ describe("VectorDB semantic query cache", () => {
     });
 
     expect(match?.factIds).toEqual(["fact-1", "fact-2"]);
-    expect(match?.packedFactIds).toEqual(["fact-1"]);
   });
 
   it("ignores expired semantic cache entries", async () => {
@@ -64,7 +62,6 @@ describe("VectorDB semantic query cache", () => {
       queryText: "stale query",
       vector: [1, 0, 0],
       factIds: ["fact-1"],
-      packedFactIds: ["fact-1"],
       filterKey: "test",
       cachedAt: Math.floor(Date.now() / 1000) - 600,
     });
@@ -107,7 +104,6 @@ describe("runRetrievalPipeline production RAG additions", () => {
       search: vi.fn(),
       getSemanticQueryCacheMatch: vi.fn().mockResolvedValue({
         factIds: [stored.id],
-        packedFactIds: [stored.id],
         similarity: 0.99,
       }),
       storeSemanticQueryCache: vi.fn(),

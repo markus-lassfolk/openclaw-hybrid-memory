@@ -107,8 +107,7 @@ export class LearningsDB {
 
       this.db.exec("COMMIT");
       // biome-ignore lint/style/noNonNullAssertion: Known to exist
-      // biome-ignore lint/style/noNonNullAssertion: Known to exist
-    return this.get(id)!;
+      return this.get(id)!;
     } catch (err) {
       this.db.exec("ROLLBACK");
       throw err;
