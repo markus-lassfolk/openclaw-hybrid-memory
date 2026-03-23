@@ -271,6 +271,11 @@ export function promotePersonaStateFromReflections(
         promotedAt: candidate.lastSeenAt,
         updatedAt: candidate.lastSeenAt,
       });
+      if (matchingEntry) {
+        updated++;
+      } else {
+        promoted++;
+      }
       continue;
     }
 
