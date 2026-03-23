@@ -24,6 +24,7 @@ const tmpDir = path.join(
   os.tmpdir(),
   `openclaw-plugin-install-${process.pid}`
 );
+const requiredRuntimeDependencies = ["@lancedb/lancedb"];
 
 function run(cmd, args = [], opts = {}) {
   const isWindows = process.platform === "win32";
@@ -52,6 +53,33 @@ function run(cmd, args = [], opts = {}) {
   return execFileSync(cmd, args, { stdio: "inherit", ...opts });
 }
 
+function packageDependencyDir(pkgName) {
+  return path.join(pluginDir, "node_modules", ...pkgName.split("/"));
+}
+
+function getMissingRuntimeDependencies() {
+  return requiredRuntimeDependencies.filter((pkgName) => {
+    const pkgJsonPath = path.join(packageDependencyDir(pkgName), "package.json");
+    return !fs.existsSync(pkgJsonPath);
+  });
+}
+
+function ensureRuntimeDependenciesInstalled() {
+  const missing = getMissingRuntimeDependencies();
+  if (missing.length === 0) {
+    return;
+  }
+
+  console.log(`Missing runtime deps detected: ${missing.join(", ")}`);
+  console.log("Installing missing runtime deps explicitly...");
+  run("npm", ["install", "--no-save", "--omit=dev", ...missing], { cwd: pluginDir });
+
+  const stillMissing = getMissingRuntimeDependencies();
+  if (stillMissing.length > 0) {
+    throw new Error(`Missing runtime deps after install: ${stillMissing.join(", ")}`);
+  }
+}
+
 try {
   console.log(`Installing openclaw-hybrid-memory@${version} to ${pluginDir}\n`);
 
@@ -74,6 +102,7 @@ try {
 
   console.log("Installing deps and rebuilding native modules...");
   run("npm", ["install", "--omit=dev"], { cwd: pluginDir });
+  ensureRuntimeDependenciesInstalled();
 
   console.log("Cleaning up...");
   fs.rmSync(tmpDir, { recursive: true, force: true });
