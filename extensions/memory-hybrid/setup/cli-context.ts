@@ -266,6 +266,8 @@ export interface HybridMemCliRegistrationContext {
   aliasDb: HandlerContext["aliasDb"];
   wal: HandlerContext["wal"];
   proposalsDb: HandlerContext["proposalsDb"];
+  identityReflectionStore: HandlerContext["identityReflectionStore"];
+  personaStateStore: HandlerContext["personaStateStore"];
   verificationStore?: import("../services/verification-store.js").VerificationStore | null;
   provenanceService?: import("../services/provenance.js").ProvenanceService | null;
   resolvedSqlitePath: string;

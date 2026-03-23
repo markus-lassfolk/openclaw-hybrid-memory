@@ -5,6 +5,7 @@ import type {
   PassiveObserverConfig,
   ReflectionConfig,
   IdentityReflectionConfig,
+  IdentityPromotionConfig,
   ProceduresConfig,
   ExtractionConfig,
   ExtractionPreFilterConfig,
@@ -84,6 +85,31 @@ export function parseIdentityReflectionConfig(cfg: Record<string, unknown>): Ide
         ? Math.min(20, Math.floor(raw.maxInsightsPerRun))
         : 8,
     questions: parsedQuestions.length > 0 ? parsedQuestions : DEFAULT_IDENTITY_REFLECTION_QUESTIONS,
+  };
+}
+
+export function parseIdentityPromotionConfig(cfg: Record<string, unknown>): IdentityPromotionConfig {
+  const raw = cfg.identityPromotion as Record<string, unknown> | undefined;
+  return {
+    enabled: raw?.enabled !== false,
+    lookbackDays:
+      typeof raw?.lookbackDays === "number" && raw.lookbackDays >= 1 ? Math.min(365, Math.floor(raw.lookbackDays)) : 90,
+    minDurableReflections:
+      typeof raw?.minDurableReflections === "number" && raw.minDurableReflections >= 1
+        ? Math.min(10, Math.floor(raw.minDurableReflections))
+        : 2,
+    minConfidence:
+      typeof raw?.minConfidence === "number" && raw.minConfidence >= 0 && raw.minConfidence <= 1
+        ? raw.minConfidence
+        : 0.72,
+    similarityThreshold:
+      typeof raw?.similarityThreshold === "number" && raw.similarityThreshold >= 0 && raw.similarityThreshold <= 1
+        ? raw.similarityThreshold
+        : 0.72,
+    maxPromotionsPerRun:
+      typeof raw?.maxPromotionsPerRun === "number" && raw.maxPromotionsPerRun >= 1
+        ? Math.min(50, Math.floor(raw.maxPromotionsPerRun))
+        : 8,
   };
 }
 

@@ -1241,6 +1241,8 @@ export function initializeDatabases(cfg: HybridMemoryConfig, api: ClawdbotPlugin
     credentialsDb,
     wal,
     proposalsDb,
+    identityReflectionStore,
+    personaStateStore,
     eventLog,
     aliasDb,
     issueStore,
@@ -1592,6 +1594,8 @@ export function initializeDatabases(cfg: HybridMemoryConfig, api: ClawdbotPlugin
     credentialsDb,
     wal,
     proposalsDb,
+    identityReflectionStore,
+    personaStateStore,
     eventLog,
     narrativesDb,
     aliasDb,
@@ -1620,6 +1624,8 @@ export function closeOldDatabases(context: {
   vectorDb?: VectorDB | null;
   credentialsDb?: CredentialsDB | null;
   proposalsDb?: ProposalsDB | null;
+  identityReflectionStore?: import("../backends/identity-reflection-store.js").IdentityReflectionStore | null;
+  personaStateStore?: import("../backends/persona-state-store.js").PersonaStateStore | null;
   eventLog?: EventLog | null;
   aliasDb?: AliasDB | null;
   eventBus?: import("../backends/event-bus.js").EventBus | null;
@@ -1638,6 +1644,8 @@ export function closeOldDatabases(context: {
     vectorDb,
     credentialsDb,
     proposalsDb,
+    identityReflectionStore,
+    personaStateStore,
     eventLog,
     aliasDb,
     eventBus,
@@ -1700,6 +1708,26 @@ export function closeOldDatabases(context: {
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
         operation: "close-databases",
         subsystem: "proposalsDb",
+      });
+    }
+  }
+  if (identityReflectionStore) {
+    try {
+      identityReflectionStore.close();
+    } catch (err) {
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        operation: "close-databases",
+        subsystem: "identityReflectionStore",
+      });
+    }
+  }
+  if (personaStateStore) {
+    try {
+      personaStateStore.close();
+    } catch (err) {
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        operation: "close-databases",
+        subsystem: "personaStateStore",
       });
     }
   }

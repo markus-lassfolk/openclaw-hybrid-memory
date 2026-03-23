@@ -855,6 +855,41 @@
           }
         }
       },
+      "identityPromotion": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "Promote repeated durable identity reflections into separate durable persona state.",
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "description": "Enable durable persona-state promotion pipeline (default: true)"
+          },
+          "lookbackDays": {
+            "type": "number",
+            "description": "Days of identity reflections considered for promotion (default: 90)"
+          },
+          "minDurableReflections": {
+            "type": "number",
+            "description": "Repeated durable reflections required before promotion (default: 2)"
+          },
+          "minConfidence": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "description": "Minimum average confidence for promotion (default: 0.72)"
+          },
+          "similarityThreshold": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "description": "Similarity threshold for grouping paraphrased reflections (default: 0.72)"
+          },
+          "maxPromotionsPerRun": {
+            "type": "number",
+            "description": "Max persona-state promotions or upserts per run (default: 8)"
+          }
+        }
+      },
       "wal": {
         "type": "object",
         "additionalProperties": false,

@@ -134,6 +134,13 @@ export class IdentityReflectionStore {
     return rows.map((row) => this.rowToEntry(row));
   }
 
+  listSince(createdAtCutoff: number, limit = 250): IdentityReflectionEntry[] {
+    const rows = this.db
+      .prepare(`SELECT * FROM identity_reflections WHERE created_at >= ? ORDER BY created_at DESC LIMIT ?`)
+      .all(createdAtCutoff, limit) as unknown as IdentityReflectionRow[];
+    return rows.map((row) => this.rowToEntry(row));
+  }
+
   getLatestByQuestion(questionKey: string): IdentityReflectionEntry | null {
     const row = this.db
       .prepare(`SELECT * FROM identity_reflections WHERE question_key = ? ORDER BY created_at DESC LIMIT 1`)

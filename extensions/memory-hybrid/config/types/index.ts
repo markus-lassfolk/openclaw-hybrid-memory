@@ -26,6 +26,7 @@ import type {
   PassiveObserverConfig,
   ReflectionConfig,
   IdentityReflectionConfig,
+  IdentityPromotionConfig,
   ProceduresConfig,
   ExtractionConfig,
 } from "./capture.js";
@@ -436,6 +437,8 @@ export type HybridMemoryConfig = {
   reflection: ReflectionConfig;
   /** Identity reflection layer — synthesize persona-level insights from reflection outputs (default: disabled) */
   identityReflection: IdentityReflectionConfig;
+  /** Promotion pipeline — cluster repeated durable identity reflections into stable persona state. */
+  identityPromotion: IdentityPromotionConfig;
   /** Procedural memory — procedure tagging and auto-skills (default: enabled) */
   procedures: ProceduresConfig;
   /** Multi-pass extraction with LLM verification (Issue #166, default: disabled). */

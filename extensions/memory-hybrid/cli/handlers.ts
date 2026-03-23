@@ -15,7 +15,9 @@ import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
 import type { EmbeddingProvider } from "../services/embeddings.js";
 import type { CredentialsDB } from "../backends/credentials-db.js";
+import type { IdentityReflectionStore } from "../backends/identity-reflection-store.js";
 import type { WriteAheadLog } from "../backends/wal.js";
+import type { PersonaStateStore } from "../backends/persona-state-store.js";
 import type { ProposalsDB } from "../backends/proposals-db.js";
 import type { CostTracker } from "../backends/cost-tracker.js";
 import type { EventBus } from "../backends/event-bus.js";
@@ -31,6 +33,8 @@ export interface HandlerContext {
   aliasDb: import("../services/retrieval-aliases.js").AliasDB | null;
   wal: WriteAheadLog | null;
   proposalsDb: ProposalsDB | null;
+  identityReflectionStore: IdentityReflectionStore | null;
+  personaStateStore: PersonaStateStore | null;
   resolvedSqlitePath: string;
   resolvedLancePath: string;
   pluginId: string;

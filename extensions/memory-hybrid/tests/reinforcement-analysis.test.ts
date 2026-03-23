@@ -115,6 +115,8 @@ function makeCtx(openai: any, extra: Partial<HandlerContext> = {}): HandlerConte
     credentialsDb: null,
     aliasDb: null,
     wal: null,
+    identityReflectionStore: null,
+    personaStateStore: null,
     resolvedSqlitePath: join(tmpDir, "facts.db"),
     resolvedLancePath: join(tmpDir, "lance"),
     pluginId: "test",

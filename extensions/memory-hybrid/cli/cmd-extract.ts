@@ -13,10 +13,12 @@ import { join } from "node:path";
 import { homedir } from "node:os";
 
 import type { MemoryCategory, HybridMemoryConfig } from "../config.js";
-import { getCronModelConfig, getLLMModelPreference, getDefaultCronModel } from "../config.js";
+import { getCronModelConfig, getLLMModelPreference, getDefaultCronModel, resolveReflectionModelAndFallbacks } from "../config.js";
 import { chatCompleteWithRetry, distillMaxOutputTokens } from "../services/chat.js";
 import { extractProceduresFromSessions } from "../services/procedure-extractor.js";
 import { generateAutoSkills } from "../services/procedure-skill-generator.js";
+import { runIdentityReflection } from "../services/identity-reflection.js";
+import { buildPersonaStateInsightsBlock, promotePersonaStateFromReflections } from "../services/persona-state-promotion.js";
 import { loadPrompt, fillPrompt } from "../utils/prompt-loader.js";
 import { extractTags } from "../utils/tags.js";
 import { getDirectiveSignalRegex, getReinforcementSignalRegex } from "../utils/language-keywords.js";
@@ -639,6 +641,56 @@ export async function runGenerateProposalsForCli(
   const patterns = allRelevant.filter((f) => f.category === "pattern");
   const rules = allRelevant.filter((f) => f.category === "rule");
   const metaPatterns = patterns.filter((f) => f.tags?.includes("meta"));
+
+  let personaStateBlock = "";
+  if (ctx.personaStateStore) {
+    const personaStateEntries = new Map(
+      ctx.personaStateStore.listRecent(12).map((entry) => [entry.stateKey, entry] as const),
+    );
+
+    if (ctx.identityReflectionStore) {
+      if (cfg.identityReflection.enabled) {
+        const { defaultModel, fallbackModels } = resolveReflectionModelAndFallbacks(cfg, "default");
+        await runIdentityReflection(
+          factsDb,
+          ctx.identityReflectionStore,
+          openai,
+          cfg.identityReflection,
+          {
+            dryRun: opts.dryRun,
+            model: cfg.identityReflection.model ?? defaultModel,
+            fallbackModels,
+            verbose: opts.verbose,
+            scopeFilter,
+          },
+          {
+            info: (msg) => ctx.logger.info?.(msg),
+            warn: (msg) => ctx.logger.warn?.(msg),
+          },
+        );
+      }
+
+      if (cfg.identityPromotion.enabled) {
+        const promotion = promotePersonaStateFromReflections(
+          ctx.identityReflectionStore,
+          ctx.personaStateStore,
+          cfg.identityPromotion,
+          { dryRun: opts.dryRun },
+        );
+        for (const entry of promotion.entries) {
+          personaStateEntries.set(entry.stateKey, entry);
+        }
+        if (opts.verbose && promotion.candidatesFound > 0) {
+          ctx.logger.info?.(
+            `memory-hybrid: persona-state promotion — ${promotion.promoted} created, ${promotion.updated} updated, ${promotion.unchanged} unchanged`,
+          );
+        }
+      }
+    }
+
+    personaStateBlock = buildPersonaStateInsightsBlock(Array.from(personaStateEntries.values()).slice(0, 12));
+  }
+
   const insights: string[] = [];
   if (patterns.length) {
     insights.push(
@@ -666,6 +718,9 @@ export async function runGenerateProposalsForCli(
           .map((f) => `- ${f.text}`)
           .join("\n"),
     );
+  }
+  if (personaStateBlock) {
+    insights.push(`Durable persona state:\n${personaStateBlock}`);
   }
   if (insights.length === 0) {
     if (opts.verbose)
