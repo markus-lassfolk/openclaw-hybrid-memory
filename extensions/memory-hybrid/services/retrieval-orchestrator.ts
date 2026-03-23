@@ -1212,3 +1212,6 @@ export async function runExplicitDeepRetrieval(
 
   return bestResult ?? { fused: [], packed: [], packedFactIds: [], tokensUsed: 0, entries: [] };
 }
+
+/** @deprecated Use runExplicitDeepRetrieval instead */
+export const runRetrievalPipeline = runExplicitDeepRetrieval;

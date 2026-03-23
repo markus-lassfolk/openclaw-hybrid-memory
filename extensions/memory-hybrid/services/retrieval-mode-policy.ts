@@ -2,6 +2,7 @@ import type { AutoRecallConfig, RetrievalConfig, HybridMemoryConfig } from "../c
 
 export type RetrievalMode = "interactive-recall" | "explicit-deep";
 
+/** @deprecated Use string literals directly or InteractiveRecallPolicy / ExplicitDeepRetrievalPolicy types */
 export const RETRIEVAL_MODE = {
   INTERACTIVE_RECALL: "interactive-recall" as const,
   EXPLICIT_DEEP: "explicit-deep" as const,
