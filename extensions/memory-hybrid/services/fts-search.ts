@@ -166,11 +166,11 @@ export function searchFts(
     extraClauses.push("AND f.superseded_at IS NULL AND (f.expires_at IS NULL OR f.expires_at > @nowSec)");
     params["@nowSec"] = nowSec;
   }
-  if (entityFilter && entityFilter.trim()) {
+  if (entityFilter?.trim()) {
     extraClauses.push("AND LOWER(f.entity) = LOWER(@entityFilter)");
     params["@entityFilter"] = entityFilter.trim();
   }
-  if (tagFilter && tagFilter.trim()) {
+  if (tagFilter?.trim()) {
     extraClauses.push("AND (',' || COALESCE(f.tags,'') || ',') LIKE @tagPattern");
     params["@tagPattern"] = `%,${tagFilter.toLowerCase().trim()},%`;
   }
@@ -241,7 +241,7 @@ export function searchFts(
  */
 export function rebuildFtsIndex(db: DatabaseSync): number {
   // Delete whatever is currently in the FTS index.
-  db.exec(`DELETE FROM facts_fts`);
+  db.exec("DELETE FROM facts_fts");
 
   // Re-insert all facts.
   db.exec(`
@@ -249,6 +249,6 @@ export function rebuildFtsIndex(db: DatabaseSync): number {
     SELECT rowid, text, category, entity, tags, key, value FROM facts
   `);
 
-  const row = db.prepare(`SELECT COUNT(*) AS cnt FROM facts`).get() as { cnt: number };
+  const row = db.prepare("SELECT COUNT(*) AS cnt FROM facts").get() as { cnt: number };
   return row.cnt;
 }

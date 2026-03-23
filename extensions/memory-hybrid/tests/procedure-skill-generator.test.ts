@@ -62,8 +62,8 @@ describe("generateAutoSkills", () => {
     expect(recipeContent).toHaveLength(2);
 
     const updated = db.getProcedureById(proc.id);
-    expect(updated!.promotedToSkill).toBe(1);
-    expect(updated!.skillPath).toContain("check-moltbook-notifications");
+    expect(updated?.promotedToSkill).toBe(1);
+    expect(updated?.skillPath).toContain("check-moltbook-notifications");
   });
 
   it("dry-run does not write files", () => {

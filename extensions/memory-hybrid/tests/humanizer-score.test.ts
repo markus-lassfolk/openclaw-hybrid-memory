@@ -40,34 +40,34 @@ describe("parseHumanizerOutput", () => {
   it("parses minimal valid output", () => {
     const result = parseHumanizerOutput(JSON.stringify({ score: 0.5 }));
     expect(result).not.toBeNull();
-    expect(result!.score).toBe(0.5);
-    expect(result!.patternsTriggered).toEqual([]);
-    expect(result!.categoryBreakdown).toEqual({});
+    expect(result?.score).toBe(0.5);
+    expect(result?.patternsTriggered).toEqual([]);
+    expect(result?.categoryBreakdown).toEqual({});
   });
 
   it("clamps score to [0, 1]", () => {
-    expect(parseHumanizerOutput(JSON.stringify({ score: 1.5 }))!.score).toBe(1);
-    expect(parseHumanizerOutput(JSON.stringify({ score: -0.3 }))!.score).toBe(0);
+    expect(parseHumanizerOutput(JSON.stringify({ score: 1.5 }))?.score).toBe(1);
+    expect(parseHumanizerOutput(JSON.stringify({ score: -0.3 }))?.score).toBe(0);
   });
 
   it("extracts patterns_triggered as strings", () => {
     const result = parseHumanizerOutput(
       JSON.stringify({ score: 0.7, patterns_triggered: ["great_question", "happy_to_help", 42, null] }),
     );
-    expect(result!.patternsTriggered).toEqual(["great_question", "happy_to_help"]);
+    expect(result?.patternsTriggered).toEqual(["great_question", "happy_to_help"]);
   });
 
   it("extracts category_breakdown as number map", () => {
     const result = parseHumanizerOutput(
       JSON.stringify({ score: 0.3, category_breakdown: { gush: 0.2, filler: 0.1, invalid: "x" } }),
     );
-    expect(result!.categoryBreakdown).toEqual({ gush: 0.2, filler: 0.1 });
+    expect(result?.categoryBreakdown).toEqual({ gush: 0.2, filler: 0.1 });
   });
 
   it("includes optional uniformity_score and pattern_score", () => {
     const result = parseHumanizerOutput(JSON.stringify({ score: 0.6, uniformity_score: 0.4, pattern_score: 0.7 }));
-    expect(result!.rawOutput.uniformity_score).toBe(0.4);
-    expect(result!.rawOutput.pattern_score).toBe(0.7);
+    expect(result?.rawOutput.uniformity_score).toBe(0.4);
+    expect(result?.rawOutput.pattern_score).toBe(0.7);
   });
 
   it("handles trailing whitespace around JSON", () => {

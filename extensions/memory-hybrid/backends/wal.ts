@@ -125,7 +125,7 @@ export class WriteAheadLog {
 
     try {
       await prevLock;
-      const line = JSON.stringify(entry) + "\n";
+      const line = `${JSON.stringify(entry)}\n`;
       await appendFile(this.walPath, line, "utf-8");
       this.activeIds.add(entry.id);
       await this.fsyncAfterWrite();
@@ -217,7 +217,7 @@ export class WriteAheadLog {
 
     try {
       await prevLock;
-      const line = JSON.stringify({ op: "remove", id }) + "\n";
+      const line = `${JSON.stringify({ op: "remove", id })}\n`;
       await appendFile(this.walPath, line, "utf-8");
       this.activeIds.delete(id);
       await this.fsyncAfterWrite();

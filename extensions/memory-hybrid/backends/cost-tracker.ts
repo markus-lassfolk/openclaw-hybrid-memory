@@ -216,7 +216,7 @@ export class CostTracker {
          FROM llm_cost_log WHERE timestamp >= ? AND estimated_cost_usd IS NULL`;
       const unknownParams: (number | string)[] = [cutoff];
       if (options.feature) {
-        unknownQuery += ` AND feature = ?`;
+        unknownQuery += " AND feature = ?";
         unknownParams.push(options.feature);
       }
       const unknownRow = this.db.prepare(unknownQuery).get(...unknownParams) as
@@ -366,8 +366,8 @@ export class CostTracker {
    */
   pruneOldEntries(retainDays = 90): number {
     const cutoff = Math.floor(Date.now() / 1000) - retainDays * 86400;
-    const costResult = this.db.prepare(`DELETE FROM llm_cost_log WHERE timestamp < ?`).run(cutoff);
-    const savingsResult = this.db.prepare(`DELETE FROM llm_savings_log WHERE timestamp < ?`).run(cutoff);
+    const costResult = this.db.prepare("DELETE FROM llm_cost_log WHERE timestamp < ?").run(cutoff);
+    const savingsResult = this.db.prepare("DELETE FROM llm_savings_log WHERE timestamp < ?").run(cutoff);
     return Number(costResult.changes) + Number(savingsResult.changes);
   }
 }

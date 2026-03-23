@@ -439,7 +439,7 @@ describe("SkillCrystallizer.crystallize", () => {
   });
 
   it("expands ~ in outputDir", () => {
-    const homeDir = process.env["HOME"] ?? "/root";
+    const homeDir = process.env.HOME ?? "/root";
     const cfg = { ...DEFAULT_CRYSTALLIZATION_CFG, outputDir: "~/.openclaw/workspace/skills/auto" };
     const crystallizer = new SkillCrystallizer(cfg);
     const pattern = {
@@ -468,7 +468,7 @@ describe("SkillValidator", () => {
   });
 
   it("passes valid SKILL.md content", () => {
-    const content = `# my-skill\n\nUse when deploying.\n\n## Steps\n\n1. Call exec.\n`;
+    const content = "# my-skill\n\nUse when deploying.\n\n## Steps\n\n1. Call exec.\n";
     expect(validator.validate(content).valid).toBe(true);
   });
 

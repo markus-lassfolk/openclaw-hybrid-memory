@@ -86,7 +86,7 @@ function splitByParagraphs(text: string, headingPrefix: string, maxSize: number)
         chunks.push(current.trim());
       }
       // If the paragraph alone is longer than maxSize, hard-split by characters
-      if ((headingPrefix + "\n\n" + trimmed).length > maxSize) {
+      if (`${headingPrefix}\n\n${trimmed}`.length > maxSize) {
         const parts = splitByChars(trimmed, headingPrefix, maxSize);
         // The last part becomes the new "current"
         for (let i = 0; i < parts.length - 1; i++) {

@@ -487,7 +487,7 @@ export async function flushCompletedTaskToMemory(task: ActiveTaskEntry, memoryDi
 
   const summary = [
     `## Completed Task: [${task.label}] ${task.description}`,
-    `- **Status:** Done`,
+    "- **Status:** Done",
     `- **Started:** ${task.started}`,
     `- **Completed:** ${task.updated}`,
     ...(task.branch ? [`- **Branch:** ${task.branch}`] : []),
@@ -495,7 +495,7 @@ export async function flushCompletedTaskToMemory(task: ActiveTaskEntry, memoryDi
     "",
   ].join("\n");
 
-  const newContent = existing ? existing.trimEnd() + "\n\n" + summary : `# Memory Log — ${date}\n\n` + summary;
+  const newContent = existing ? `${existing.trimEnd()}\n\n${summary}` : `# Memory Log — ${date}\n\n${summary}`;
 
   await writeFile(filePath, newContent, "utf-8");
   return filePath;
@@ -626,10 +626,7 @@ export async function readPendingSignals(memoryDir: string): Promise<PendingTask
         continue; // Skip signals with missing required fields
       }
       signals.push({ ...parsed, _filePath: resolvedFilePath });
-    } catch {
-      // Skip malformed or unreadable files — don't crash the orchestrator
-      continue;
-    }
+    } catch {}
   }
 
   return signals;

@@ -48,7 +48,7 @@ async function auditProposal(
   };
   const auditPath = join(auditDir, `proposal-${proposalId}.jsonl`);
   try {
-    await writeFile(auditPath, JSON.stringify(entry) + "\n", { flag: "a" });
+    await writeFile(auditPath, `${JSON.stringify(entry)}\n`, { flag: "a" });
   } catch (err) {
     capturePluginError(err instanceof Error ? err : new Error(String(err)), {
       operation: "proposals-audit",
@@ -64,7 +64,7 @@ async function auditProposal(
   }
 }
 
-const PROPOSAL_STATUSES = ["pending", "approved", "rejected", "applied"] as const;
+const _PROPOSAL_STATUSES = ["pending", "approved", "rejected", "applied"] as const;
 
 function formatExpires(proposal: { expiresAt: number | null; createdAt: number }): string {
   if (!proposal.expiresAt) return "never";
@@ -232,14 +232,14 @@ export function registerProposalsCli(program: Chainable, ctx: ProposalsCliContex
           const current = readFileSync(targetPath, "utf-8");
           const proposed = buildAppliedContent(current, proposal, new Date().toISOString()).content;
           diffText = buildUnifiedDiff(current, proposed, proposal.targetFile);
-        } catch (err) {
+        } catch (_err) {
           diffText = null;
         }
       } else if (includeDiff) {
         try {
           const proposed = buildAppliedContent("", proposal, new Date().toISOString()).content;
           diffText = buildUnifiedDiff("", proposed, proposal.targetFile);
-        } catch (err) {
+        } catch (_err) {
           diffText = null;
         }
       }

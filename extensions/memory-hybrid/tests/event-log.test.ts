@@ -391,8 +391,8 @@ describe("EventLog.getStats", () => {
 
     const stats = log.getStats();
     expect(stats.total).toBe(3);
-    expect(stats.byType["fact_learned"]).toBe(2);
-    expect(stats.byType["decision_made"]).toBe(1);
+    expect(stats.byType.fact_learned).toBe(2);
+    expect(stats.byType.decision_made).toBe(1);
   });
 
   it("tracks unconsolidated count correctly", () => {

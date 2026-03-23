@@ -143,24 +143,24 @@ describe("extractCredentialMatch", () => {
       "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c";
     const result = extractCredentialMatch(`Authorization: Bearer ${jwt}`);
     expect(result).not.toBeNull();
-    expect(result!.type).toBe("bearer");
-    expect(result!.secretValue).toBe(jwt);
-    expect(result!.secretValue.startsWith("Bearer")).toBe(false);
+    expect(result?.type).toBe("bearer");
+    expect(result?.secretValue).toBe(jwt);
+    expect(result?.secretValue.startsWith("Bearer")).toBe(false);
   });
 
   it("extracts sk- API key", () => {
     // The pattern requires sk- followed by 20+ alphanumeric chars (no internal dashes)
     const result = extractCredentialMatch(`export OPENAI_KEY=${SK_KEY}`);
     expect(result).not.toBeNull();
-    expect(result!.type).toBe("api_key");
-    expect(result!.secretValue).toMatch(/^sk-/);
+    expect(result?.type).toBe("api_key");
+    expect(result?.secretValue).toMatch(/^sk-/);
   });
 
   it("extracts GitHub personal access token", () => {
     const result = extractCredentialMatch(GHP_TOKEN);
     expect(result).not.toBeNull();
-    expect(result!.type).toBe("api_key");
-    expect(result!.secretValue).toMatch(/^ghp_/);
+    expect(result?.type).toBe("api_key");
+    expect(result?.secretValue).toMatch(/^ghp_/);
   });
 
   it("returns null when no credential pattern found", () => {
@@ -291,32 +291,32 @@ describe("tryParseCredentialForVault", () => {
   it("parses a Bearer JWT token from text", () => {
     const result = tryParseCredentialForVault(`Authorization: Bearer ${VALID_JWT}`, null, null, null);
     expect(result).not.toBeNull();
-    expect(result!.type).toBe("bearer");
-    expect(result!.secretValue).toBe(VALID_JWT);
+    expect(result?.type).toBe("bearer");
+    expect(result?.secretValue).toBe(VALID_JWT);
   });
 
   it("uses entity+key as service when entity is 'credentials'", () => {
     const result = tryParseCredentialForVault(`Bearer ${VALID_JWT}`, "credentials", "home-assistant", null);
     expect(result).not.toBeNull();
-    expect(result!.service).toBe("home-assistant");
+    expect(result?.service).toBe("home-assistant");
   });
 
   it("falls back to key as service when entity is not 'credentials'", () => {
     const result = tryParseCredentialForVault(`Bearer ${VALID_JWT}`, "myapp", "myapp-token", null);
     expect(result).not.toBeNull();
-    expect(result!.service).toBe("myapp-token");
+    expect(result?.service).toBe("myapp-token");
   });
 
   it("falls back to entity as service when no key provided", () => {
     const result = tryParseCredentialForVault(`Bearer ${VALID_JWT}`, "github", null, null);
     expect(result).not.toBeNull();
-    expect(result!.service).toBe("github");
+    expect(result?.service).toBe("github");
   });
 
   it("infers service from text when no entity/key given", () => {
     const result = tryParseCredentialForVault(`github personal access token ${GHP_TOKEN}`, null, null, null);
     expect(result).not.toBeNull();
-    expect(result!.service).toBe("github");
+    expect(result?.service).toBe("github");
   });
 
   it("returns null with requirePatternMatch=true when no regex match found", () => {
@@ -331,7 +331,7 @@ describe("tryParseCredentialForVault", () => {
     const text = `github token: ${GHP_TOKEN}`;
     const result = tryParseCredentialForVault(text, null, null, null);
     expect(result).not.toBeNull();
-    expect(result!.notes).toBe(text);
+    expect(result?.notes).toBe(text);
   });
 
   it("returns null when service name is invalid (too long / invalid chars)", () => {

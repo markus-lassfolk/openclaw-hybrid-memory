@@ -268,8 +268,6 @@ When `autoBuild` is `true`, the plugin samples recent facts, detects the top lan
       "memorySearch": {
         "enabled": true,
         "sources": ["memory"],
-        "provider": "openai",
-        "model": "text-embedding-3-small",
         "sync": {
           "onSessionStart": true,
           "onSearch": true,
@@ -289,6 +287,8 @@ When `autoBuild` is `true`, the plugin samples recent facts, detects the top lan
   }
 }
 ```
+
+`memorySearch.provider` and `memorySearch.model` are optional. Leaving them unset lets OpenClaw reuse the embedding provider/model you already configured elsewhere, which avoids pinning memorySearch to a fixed provider enum and works better for Azure Foundry and other gateway-routed providers.
 
 ---
 

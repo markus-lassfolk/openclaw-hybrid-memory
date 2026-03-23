@@ -90,7 +90,7 @@ class AliasVectorIndex {
 
   private async validateSchema(): Promise<void> {
     try {
-      const schema = await this.table!.schema();
+      const schema = await this.table?.schema();
       const vectorField = schema.fields.find(
         (f: { type?: { typeId?: number; listSize?: number } }) =>
           typeof f.type?.typeId === "number" && f.type.typeId === 16,
@@ -227,7 +227,7 @@ export class AliasDB {
         embedding BLOB NOT NULL
       )
     `);
-    this.db.exec(`CREATE INDEX IF NOT EXISTS idx_fact_aliases_factId ON fact_aliases(factId)`);
+    this.db.exec("CREATE INDEX IF NOT EXISTS idx_fact_aliases_factId ON fact_aliases(factId)");
     this.aliasIndex = new AliasVectorIndex(aliasLancePath, vectorDim);
   }
 
@@ -240,7 +240,7 @@ export class AliasDB {
     const floatArray = Float32Array.from(embedding);
     const blob = Buffer.from(floatArray.buffer.slice(0));
     this.db
-      .prepare(`INSERT INTO fact_aliases (id, factId, aliasText, embedding) VALUES (?, ?, ?, ?)`)
+      .prepare("INSERT INTO fact_aliases (id, factId, aliasText, embedding) VALUES (?, ?, ?, ?)")
       .run(id, normalizedFactId, aliasText, blob);
     if (this.aliasCountCache != null) this.aliasCountCache += 1;
     void this.aliasIndex.store({ id, factId: normalizedFactId, aliasText, vector: embedding });
@@ -253,7 +253,7 @@ export class AliasDB {
     // can use the idx_fact_aliases_factId index (COLLATE NOCASE would bypass it).
     const normalizedFactId = factId.toLowerCase();
     return this.db
-      .prepare(`SELECT id, factId, aliasText FROM fact_aliases WHERE factId COLLATE NOCASE = ?`)
+      .prepare("SELECT id, factId, aliasText FROM fact_aliases WHERE factId COLLATE NOCASE = ?")
       .all(normalizedFactId) as unknown as AliasRow[];
   }
 
@@ -261,7 +261,7 @@ export class AliasDB {
   deleteByFactId(factId: string): void {
     // Pre-lowercase to match normalized storage; avoids COLLATE NOCASE index bypass.
     const normalizedFactId = factId.toLowerCase();
-    const res = this.db.prepare(`DELETE FROM fact_aliases WHERE factId = ?`).run(normalizedFactId);
+    const res = this.db.prepare("DELETE FROM fact_aliases WHERE factId = ?").run(normalizedFactId);
     if (this.aliasCountCache != null) {
       this.aliasCountCache = Math.max(0, this.aliasCountCache - Number(res.changes ?? 0));
     }
@@ -271,7 +271,7 @@ export class AliasDB {
   /** Total alias count (cached to avoid COUNT(*) on every search call). */
   count(): number {
     if (this.aliasCountCache != null) return this.aliasCountCache;
-    const row = this.db.prepare(`SELECT COUNT(*) as n FROM fact_aliases`).get() as { n: number };
+    const row = this.db.prepare("SELECT COUNT(*) as n FROM fact_aliases").get() as { n: number };
     this.aliasCountCache = row.n;
     return row.n;
   }
@@ -302,7 +302,7 @@ export class AliasDB {
     const queryNormSq = queryVector.reduce((sum, v) => sum + v * v, 0);
     if (queryNormSq === 0) return [];
 
-    const stmt = this.db.prepare(`SELECT factId, embedding FROM fact_aliases`);
+    const stmt = this.db.prepare("SELECT factId, embedding FROM fact_aliases");
     for (const row of stmt.iterate() as Iterable<{ factId: string; embedding: Buffer }>) {
       if (row.embedding.byteLength % 4 !== 0) continue;
       const floats = new Float32Array(
@@ -355,12 +355,7 @@ export async function generateAliases(
   model: string,
   maxAliases: number,
 ): Promise<string[]> {
-  const prompt =
-    `Generate ${maxAliases} alternative phrasings for the following fact. ` +
-    `The alternatives should differ in wording but preserve the meaning, ` +
-    `to enable retrieval of this fact from different semantic angles. ` +
-    `Return only the alternatives, one per line, no numbering or bullets.\n\n` +
-    `Fact: ${factText}`;
+  const prompt = `Generate ${maxAliases} alternative phrasings for the following fact. The alternatives should differ in wording but preserve the meaning, to enable retrieval of this fact from different semantic angles. Return only the alternatives, one per line, no numbering or bullets.\n\nFact: ${factText}`;
 
   try {
     const response = await chatComplete({

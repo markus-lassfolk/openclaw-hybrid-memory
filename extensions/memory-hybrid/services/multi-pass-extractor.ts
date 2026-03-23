@@ -99,18 +99,9 @@ function normalizeCategory(category: string): string {
   return "other";
 }
 
-const PASS1_SYSTEM_PROMPT =
-  "You are a fact extractor. Extract clearly and explicitly stated facts from the transcript. " +
-  `Return a JSON array of objects with keys: text (string), category (string), importance (0.0–1.0). Categories: ${EXTRACTION_CATEGORIES}. ` +
-  "Only include facts explicitly stated, not implied or inferred. " +
-  "Return [] if no clear facts are found.";
+const PASS1_SYSTEM_PROMPT = `You are a fact extractor. Extract clearly and explicitly stated facts from the transcript. Return a JSON array of objects with keys: text (string), category (string), importance (0.0–1.0). Categories: ${EXTRACTION_CATEGORIES}. Only include facts explicitly stated, not implied or inferred. Return [] if no clear facts are found.`;
 
-const PASS2_SYSTEM_PROMPT =
-  "You are an implicit preference analyst. Extract implied preferences, corrections, and contextual signals " +
-  "from the transcript that were NOT explicitly stated but can be reliably inferred. " +
-  'Focus on: preference changes ("actually let\'s try X"), implicit corrections, unstated constraints, workflow signals. ' +
-  `Return a JSON array of objects with keys: text (string), category (string), importance (0.0–1.0). Categories: ${EXTRACTION_CATEGORIES}. ` +
-  "Return [] if no implicit facts can be reliably inferred.";
+const PASS2_SYSTEM_PROMPT = `You are an implicit preference analyst. Extract implied preferences, corrections, and contextual signals from the transcript that were NOT explicitly stated but can be reliably inferred. Focus on: preference changes ("actually let\'s try X"), implicit corrections, unstated constraints, workflow signals. Return a JSON array of objects with keys: text (string), category (string), importance (0.0–1.0). Categories: ${EXTRACTION_CATEGORIES}. Return [] if no implicit facts can be reliably inferred.`;
 
 const PASS3_SYSTEM_PROMPT =
   "You are a fact verifier. Given a candidate fact and the original conversation transcript, " +
@@ -145,11 +136,7 @@ export function buildPass2Prompt(transcript: string): string {
 
 /** Build the Pass 3 verification prompt for a single candidate fact. */
 export function buildVerificationPrompt(fact: CandidateFact, transcript: string): string {
-  return (
-    `Candidate fact: "${fact.text}"\n\n` +
-    `Original transcript:\n${transcript}\n\n` +
-    `Is this fact supported by the transcript? Answer with CONFIRMED, UNCERTAIN, or REJECTED.`
-  );
+  return `Candidate fact: "${fact.text}"\n\nOriginal transcript:\n${transcript}\n\nIs this fact supported by the transcript? Answer with CONFIRMED, UNCERTAIN, or REJECTED.`;
 }
 
 // ---------------------------------------------------------------------------

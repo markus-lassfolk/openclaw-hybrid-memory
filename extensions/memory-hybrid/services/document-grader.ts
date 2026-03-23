@@ -28,13 +28,7 @@ function buildGradePrompt(query: string, docs: GradeableDocument[]): string {
     })
     .join("\n\n");
 
-  return (
-    `You are grading retrieval relevance for a memory system. ` +
-    `For each document, answer if it helps answer the query. ` +
-    `Return ONLY a JSON array with one string per document: \"yes\" or \"no\".\n\n` +
-    `Query: "${query}"\n\n` +
-    `Documents:\n${renderedDocs}`
-  );
+  return `You are grading retrieval relevance for a memory system. For each document, answer if it helps answer the query. Return ONLY a JSON array with one string per document: \"yes\" or \"no\".\n\nQuery: "${query}"\n\nDocuments:\n${renderedDocs}`;
 }
 
 function parseGrades(response: string, count: number): Array<"yes" | "no"> {
@@ -52,13 +46,7 @@ function parseGrades(response: string, count: number): Array<"yes" | "no"> {
 
 function buildRewritePrompt(query: string, previousQueries: string[]): string {
   const previous = previousQueries.length > 0 ? previousQueries.map((q) => `- ${q}`).join("\n") : "- none";
-  return (
-    `Rewrite this memory lookup query so retrieval is more precise and grounded in likely stored facts. ` +
-    `Prefer concise concrete nouns, entities, file names, settings, projects, dates, or error terms when helpful. ` +
-    `Do not repeat any previous query exactly. Return ONLY the rewritten query text.\n\n` +
-    `Original query: ${query}\n` +
-    `Previous queries:\n${previous}`
-  );
+  return `Rewrite this memory lookup query so retrieval is more precise and grounded in likely stored facts. Prefer concise concrete nouns, entities, file names, settings, projects, dates, or error terms when helpful. Do not repeat any previous query exactly. Return ONLY the rewritten query text.\n\nOriginal query: ${query}\nPrevious queries:\n${previous}`;
 }
 
 export class DocumentGrader {

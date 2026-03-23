@@ -114,7 +114,7 @@ describe("memory_recall_timeline tool", () => {
     const tool = api.getTool("memory_recall_timeline");
     expect(tool).toBeTruthy();
 
-    const result = (await tool!.execute("tool-call", {
+    const result = (await tool?.execute("tool-call", {
       query: "queue deadlock lease",
       limit: 1,
       days: 30,

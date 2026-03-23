@@ -75,11 +75,11 @@ export function registerVerifyCommands(mem: Chainable, ctx: VerifyContext): void
           return;
         }
         if (result.dryRun) {
-          console.log("Would merge into " + result.configPath + ":");
+          console.log(`Would merge into ${result.configPath}:`);
           console.log(result.configJson ?? "");
           return;
         }
-        console.log("Config written: " + result.configPath);
+        console.log(`Config written: ${result.configPath}`);
         console.log(
           `Applied: plugins.slots.memory=${result.pluginId}, ${result.pluginId} config (all features), memorySearch, compaction prompts, bootstrap limits, autoClassify. Add cron jobs via 'openclaw cron add' if needed (see docs/SESSION-DISTILLATION.md).`,
         );

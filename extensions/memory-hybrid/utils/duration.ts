@@ -52,9 +52,7 @@ export function parseDuration(input: string): number {
 
   if (!match) {
     throw new Error(
-      `parseDuration: unrecognised duration "${input}". ` +
-        `Expected format like "1d12h30m", "2h", "45m", "1d", or a plain number (minutes). ` +
-        `Components must appear in d→h→m order.`,
+      `parseDuration: unrecognised duration "${input}". Expected format like "1d12h30m", "2h", "45m", "1d", or a plain number (minutes). Components must appear in d→h→m order.`,
     );
   }
 
@@ -63,8 +61,7 @@ export function parseDuration(input: string): number {
   // The regex matches the empty string too — reject that case explicitly.
   if (!daysStr && !hoursStr && !minutesStr) {
     throw new Error(
-      `parseDuration: unrecognised duration "${input}". ` +
-        `Expected at least one component: d (days), h (hours), or m (minutes).`,
+      `parseDuration: unrecognised duration "${input}". Expected at least one component: d (days), h (hours), or m (minutes).`,
     );
   }
 

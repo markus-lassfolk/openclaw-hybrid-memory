@@ -139,7 +139,7 @@ describe("memory_store event_log integration", () => {
     const storeTool = api.getTool("memory_store");
     expect(storeTool).toBeDefined();
 
-    await storeTool!.execute("call-1", {
+    await storeTool?.execute("call-1", {
       text: "The user prefers TypeScript over JavaScript",
       importance: 0.8,
       category: "preference",
@@ -183,7 +183,7 @@ describe("memory_store event_log integration", () => {
 
     const storeTool = api.getTool("memory_store");
     await expect(
-      storeTool!.execute("call-2", {
+      storeTool?.execute("call-2", {
         text: "Null event log should not throw",
         importance: 0.7,
       }),
@@ -219,7 +219,7 @@ describe("memory_store event_log integration", () => {
     );
 
     const storeTool = api.getTool("memory_store");
-    const result = (await storeTool!.execute("call-3", {
+    const result = (await storeTool?.execute("call-3", {
       text: "Event should contain the new fact ID",
       importance: 0.7,
       entity: "FactIdTest",
@@ -229,7 +229,7 @@ describe("memory_store event_log integration", () => {
     const events = eventLog.getBySession("test-session-123");
     const factLearned = events.find((e) => e.eventType === "fact_learned");
     expect(factLearned).toBeDefined();
-    expect(factLearned!.content.factId).toBe(storedFactId);
-    expect(factLearned!.entities).toEqual(["FactIdTest"]);
+    expect(factLearned?.content.factId).toBe(storedFactId);
+    expect(factLearned?.entities).toEqual(["FactIdTest"]);
   });
 });

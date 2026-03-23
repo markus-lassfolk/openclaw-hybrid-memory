@@ -166,16 +166,16 @@ describe("EventBus.updateStatus", () => {
     const events = bus.queryEvents({ status: "surfaced" });
     const event = events.find((e) => e.id === id);
     expect(event).toBeDefined();
-    expect(event!.processed_at).not.toBeNull();
+    expect(event?.processed_at).not.toBeNull();
   });
 
   it("does not overwrite existing processed_at on subsequent transitions", () => {
     const id = bus.appendEvent("sensor.test", "test", {});
     bus.updateStatus(id, "processed");
-    const afterFirst = bus.queryEvents().find((e) => e.id === id)!.processed_at;
+    const afterFirst = bus.queryEvents().find((e) => e.id === id)?.processed_at;
 
     bus.updateStatus(id, "surfaced");
-    const afterSecond = bus.queryEvents().find((e) => e.id === id)!.processed_at;
+    const afterSecond = bus.queryEvents().find((e) => e.id === id)?.processed_at;
 
     expect(afterFirst).toBe(afterSecond);
   });
@@ -345,7 +345,7 @@ describe("EventBus integration", () => {
     bus.updateStatus(id, "processed");
     const processedEvents = bus.queryEvents({ status: "processed" });
     expect(processedEvents.some((e) => e.id === id)).toBe(true);
-    expect(processedEvents.find((e) => e.id === id)!.processed_at).not.toBeNull();
+    expect(processedEvents.find((e) => e.id === id)?.processed_at).not.toBeNull();
 
     // 5. No longer in raw
     const stillRaw = bus.queryEvents({ status: "raw", type: "sensor.github" });

@@ -488,8 +488,8 @@ describe("runEmbeddingMaintenance — migration trigger", () => {
     expect(result.changed).toBe(true);
     expect(result.migrated).toBe(true);
     expect(result.result).toBeDefined();
-    expect(result.result!.total).toBe(2);
-    expect(result.result!.migrated).toBe(2);
+    expect(result.result?.total).toBe(2);
+    expect(result.result?.migrated).toBe(2);
   });
 
   it("returns migrated=false (not throws) when migration itself fails", async () => {

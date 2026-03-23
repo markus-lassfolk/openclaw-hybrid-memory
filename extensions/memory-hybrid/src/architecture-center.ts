@@ -64,10 +64,7 @@ export const ARCHITECTURE_CENTER = {
     },
     {
       name: "Primary memory tool API surface",
-      ownership: [
-        "extensions/memory-hybrid/setup/register-tools.ts",
-        "extensions/memory-hybrid/tools/memory-tools.ts",
-      ],
+      ownership: ["extensions/memory-hybrid/setup/register-tools.ts", "extensions/memory-hybrid/tools/memory-tools.ts"],
       rationale: "Stable external contract for memory operations",
     },
     {
@@ -109,10 +106,7 @@ export const ARCHITECTURE_CENTER = {
     },
     {
       name: "Issue tracking",
-      ownership: [
-        "extensions/memory-hybrid/backends/issue-store.ts",
-        "extensions/memory-hybrid/tools/issue-tools.ts",
-      ],
+      ownership: ["extensions/memory-hybrid/backends/issue-store.ts", "extensions/memory-hybrid/tools/issue-tools.ts"],
       rationale: "Adjacent operational state",
     },
     {
@@ -164,7 +158,8 @@ export const ARCHITECTURE_CENTER = {
       classification: "core runtime",
     },
     {
-      prompt: "Does it define a compatibility surface other features rely on, such as memory lifecycle hooks, storage semantics, or primary memory tools?",
+      prompt:
+        "Does it define a compatibility surface other features rely on, such as memory lifecycle hooks, storage semantics, or primary memory tools?",
       classification: "core runtime",
     },
     {
@@ -172,7 +167,8 @@ export const ARCHITECTURE_CENTER = {
       classification: "adjacent subsystem",
     },
     {
-      prompt: "Is it mainly observability, specialized ingestion, maintenance, workflow mining, or self-optimization on top of core memory flows?",
+      prompt:
+        "Is it mainly observability, specialized ingestion, maintenance, workflow mining, or self-optimization on top of core memory flows?",
       classification: "adjacent subsystem",
     },
   ] satisfies readonly ArchitectureDecisionRule[],

@@ -133,7 +133,7 @@ describe("buildProvenanceMetadata", () => {
     const { headers, receipt } = buildProvenanceMetadata("meta", "sk");
     expect(headers).not.toBeNull();
     expect(receipt).toBeNull();
-    expect(headers!["X-Session-Key"]).toBe("sk");
+    expect(headers?.["X-Session-Key"]).toBe("sk");
   });
 
   it("mode='receipt' returns no headers but includes receipt", () => {
@@ -153,7 +153,7 @@ describe("buildProvenanceMetadata", () => {
     const { headers, receipt } = buildProvenanceMetadata("meta+receipt", "sk", {
       traceId: "trace-cafebabe",
     });
-    expect(headers!["X-Trace-Id"]).toBe("trace-cafebabe");
+    expect(headers?.["X-Trace-Id"]).toBe("trace-cafebabe");
     expect(receipt).toContain("trace-id=trace-cafebabe");
   });
 
@@ -162,8 +162,8 @@ describe("buildProvenanceMetadata", () => {
       councilMember: "🔮 Gemini",
       parentSession: "main",
     });
-    expect(headers!["X-Council-Member"]).toBe("🔮 Gemini");
-    expect(headers!["X-Parent-Session"]).toBe("main");
+    expect(headers?.["X-Council-Member"]).toBe("🔮 Gemini");
+    expect(headers?.["X-Parent-Session"]).toBe("main");
   });
 });
 

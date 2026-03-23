@@ -100,7 +100,7 @@ describe("registerDashboardHttpRoutes", () => {
     registerDashboardHttpRoutes({ cfg: { health: { enabled: true, authenticated: true } } }, api);
     const rootRoute = routes.find((r) => r.path === `${DASHBOARD_PREFIX}${DASHBOARD_PATHS.root}`);
     expect(rootRoute).toBeDefined();
-    const response = await rootRoute!.handler(fakeReq());
+    const response = await rootRoute?.handler(fakeReq());
     expect(response.status).toBe(200);
     expect(response.headers?.["Content-Type"]).toMatch(/text\/html/);
     expect(response.body).toContain("<!DOCTYPE html>");
@@ -111,7 +111,7 @@ describe("registerDashboardHttpRoutes", () => {
     registerDashboardHttpRoutes({ cfg: { health: { enabled: true, authenticated: true } } }, api);
     const healthRoute = routes.find((r) => r.path === `${DASHBOARD_PREFIX}${DASHBOARD_PATHS.healthApi}`);
     expect(healthRoute).toBeDefined();
-    const response = await healthRoute!.handler(fakeReq());
+    const response = await healthRoute?.handler(fakeReq());
     expect(response.status).toBe(200);
     expect(response.headers?.["Content-Type"]).toMatch(/application\/json/);
     const body = JSON.parse(response.body) as { status: string; generatedAt: string };

@@ -233,7 +233,7 @@ export class IssueStore {
   search(query: string): Issue[] {
     const term = `%${query}%`;
     const rows = this.db
-      .prepare(`SELECT * FROM issues WHERE title LIKE ? OR symptoms LIKE ? ORDER BY created_at DESC LIMIT 50`)
+      .prepare("SELECT * FROM issues WHERE title LIKE ? OR symptoms LIKE ? ORDER BY created_at DESC LIMIT 50")
       .all(term, term) as unknown as IssueRow[];
     return rows.map((r) => this.rowToIssue(r));
   }

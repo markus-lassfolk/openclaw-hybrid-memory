@@ -75,9 +75,9 @@ switch:
     expect(result.markdown).toContain("## API");
     expect(result.markdown).toContain("## OTA");
     expect(result.markdown).toContain("## Logger");
-    expect(result.metadata["sensorCount"]).toBe(2);
-    expect(result.metadata["binarySensorCount"]).toBe(1);
-    expect(result.metadata["switchCount"]).toBe(1);
+    expect(result.metadata.sensorCount).toBe(2);
+    expect(result.metadata.binarySensorCount).toBe(1);
+    expect(result.metadata.switchCount).toBe(1);
   });
 
   it("SECURITY: never includes passwords in output", () => {
@@ -125,7 +125,7 @@ wifi:
     // !secret gets replaced with [REDACTED] by our schema
     expect(result.markdown).not.toContain("wifi_password");
     expect(result.markdown).toContain("[REDACTED]");
-    expect(result.metadata["platform"]).toBe("ESP8266");
+    expect(result.metadata.platform).toBe("ESP8266");
   });
 
   it("handles minimal ESPHome config (board only)", () => {
@@ -141,7 +141,7 @@ esp32:
     expect(result.title).toBe("ESPHome Device: minimal_device");
     expect(result.markdown).toContain("## Board");
     expect(result.markdown).toContain("lolin32");
-    expect(result.metadata["sensorCount"]).toBe(0);
+    expect(result.metadata.sensorCount).toBe(0);
   });
 
   it("handles ESP8266 device", () => {
@@ -164,7 +164,7 @@ sensor:
     const result = esphomeYamlConverter.convert(yaml, "/config/wemos.yaml");
     expect(result.markdown).toContain("ESP8266");
     expect(result.markdown).toContain("d1_mini");
-    expect(result.metadata["platform"]).toBe("ESP8266");
+    expect(result.metadata.platform).toBe("ESP8266");
   });
 
   it("includes static IP in WiFi section", () => {

@@ -388,9 +388,9 @@ describe("Multi-model semantic search via fact_embeddings", () => {
     expect(idxShared).toBeLessThan(idxOnlyB);
 
     // Verify the raw RRF scores satisfy the expected math
-    const scoreShared = result.fused.find((r) => r.factId === factShared)!.rrfScore;
-    const scoreOnlyA = result.fused.find((r) => r.factId === factOnlyA)!.rrfScore;
-    const scoreOnlyB = result.fused.find((r) => r.factId === factOnlyB)!.rrfScore;
+    const scoreShared = result.fused.find((r) => r.factId === factShared)?.rrfScore;
+    const scoreOnlyA = result.fused.find((r) => r.factId === factOnlyA)?.rrfScore;
+    const scoreOnlyB = result.fused.find((r) => r.factId === factOnlyB)?.rrfScore;
 
     // factShared gets contributions from two model lanes; each single-model fact gets one
     expect(scoreShared).toBeGreaterThan(scoreOnlyA);

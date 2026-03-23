@@ -48,16 +48,7 @@ export function buildVerificationPrompt(factText: string, entity: string, recent
   const recentSection =
     recentFacts.length > 0 ? recentFacts.map((f, i) => `${i + 1}. ${f}`).join("\n") : "(no recent facts available)";
 
-  return (
-    `You are a fact-verification assistant. Determine whether the following verified fact is still accurate based on recent knowledge.\n\n` +
-    `Verified fact: ${factText}\n\n` +
-    `Recent knowledge about "${entity}":\n${recentSection}\n\n` +
-    `Is this still accurate based on recent knowledge?\n` +
-    `Answer with exactly one of: CONFIRMED, STALE, or UNCERTAIN, followed by a brief reason.\n` +
-    `Example: "CONFIRMED – the IP address is still in use"\n` +
-    `Example: "STALE – the server was decommissioned last month"\n` +
-    `Example: "UNCERTAIN – no recent information available"`
-  );
+  return `You are a fact-verification assistant. Determine whether the following verified fact is still accurate based on recent knowledge.\n\nVerified fact: ${factText}\n\nRecent knowledge about "${entity}":\n${recentSection}\n\nIs this still accurate based on recent knowledge?\nAnswer with exactly one of: CONFIRMED, STALE, or UNCERTAIN, followed by a brief reason.\nExample: "CONFIRMED – the IP address is still in use"\nExample: "STALE – the server was decommissioned last month"\nExample: "UNCERTAIN – no recent information available"`;
 }
 
 // ---------------------------------------------------------------------------
@@ -184,7 +175,7 @@ export class ContinuousVerifier {
     for (const e of recentEntries) {
       const entity = e.entity?.toLowerCase() ?? "";
       if (!recentByEntity.has(entity)) recentByEntity.set(entity, []);
-      recentByEntity.get(entity)!.push(e.text);
+      recentByEntity.get(entity)?.push(e.text);
     }
 
     for (const fact of due) {

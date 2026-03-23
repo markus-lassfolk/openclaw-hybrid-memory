@@ -99,8 +99,8 @@ function buildAdjacency(
   for (const { sourceFactId, targetFactId } of edges) {
     if (!adj.has(sourceFactId)) adj.set(sourceFactId, new Set());
     if (!adj.has(targetFactId)) adj.set(targetFactId, new Set());
-    adj.get(sourceFactId)!.add(targetFactId);
-    adj.get(targetFactId)!.add(sourceFactId);
+    adj.get(sourceFactId)?.add(targetFactId);
+    adj.get(targetFactId)?.add(sourceFactId);
   }
 
   return adj;

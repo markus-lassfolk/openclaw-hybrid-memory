@@ -243,7 +243,7 @@ export class VerificationStore {
   // -------------------------------------------------------------------------
 
   verify(factId: string, text: string, verifiedBy: "agent" | "user" | "system"): string {
-    const existing = this.db.prepare(`SELECT 1 FROM verified_facts WHERE fact_id = ? LIMIT 1`).get(factId);
+    const existing = this.db.prepare("SELECT 1 FROM verified_facts WHERE fact_id = ? LIMIT 1").get(factId);
     if (existing) {
       throw new VerificationError(`Fact ${factId} is already verified; use update() to create a new version`);
     }
@@ -286,10 +286,10 @@ export class VerificationStore {
     let rows: VerifiedFactRow[];
     if (factId !== undefined) {
       rows = this.db
-        .prepare(`SELECT * FROM verified_facts WHERE fact_id = ? ORDER BY version DESC`)
+        .prepare("SELECT * FROM verified_facts WHERE fact_id = ? ORDER BY version DESC")
         .all(factId) as unknown as VerifiedFactRow[];
     } else {
-      rows = this.db.prepare(`SELECT * FROM verified_facts`).all() as unknown as VerifiedFactRow[];
+      rows = this.db.prepare("SELECT * FROM verified_facts").all() as unknown as VerifiedFactRow[];
     }
 
     const corrupted: string[] = [];
@@ -314,7 +314,7 @@ export class VerificationStore {
 
   getVerified(factId: string): VerifiedFact | null {
     const row = this.db
-      .prepare(`SELECT * FROM verified_facts WHERE fact_id = ? ORDER BY version DESC LIMIT 1`)
+      .prepare("SELECT * FROM verified_facts WHERE fact_id = ? ORDER BY version DESC LIMIT 1")
       .get(factId) as VerifiedFactRow | undefined;
 
     if (!row) return null;
@@ -382,7 +382,7 @@ export class VerificationStore {
   // -------------------------------------------------------------------------
 
   update(id: string, newText: string, verifiedBy: "agent" | "user" | "system"): string {
-    const existing = this.db.prepare(`SELECT * FROM verified_facts WHERE id = ?`).get(id) as
+    const existing = this.db.prepare("SELECT * FROM verified_facts WHERE id = ?").get(id) as
       | VerifiedFactRow
       | undefined;
 
@@ -391,7 +391,7 @@ export class VerificationStore {
     }
 
     const latest = this.db
-      .prepare(`SELECT id FROM verified_facts WHERE fact_id = ? ORDER BY version DESC LIMIT 1`)
+      .prepare("SELECT id FROM verified_facts WHERE fact_id = ? ORDER BY version DESC LIMIT 1")
       .get(existing.fact_id) as { id: string } | undefined;
     if (!latest || latest.id !== id) {
       throw new VerificationError(
@@ -413,7 +413,7 @@ export class VerificationStore {
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(newId, existing.fact_id, newText, checksum, now, verifiedBy, nextVerification, newVersion, id, now);
-      this.db.prepare(`UPDATE verified_facts SET next_verification = NULL WHERE id = ?`).run(id);
+      this.db.prepare("UPDATE verified_facts SET next_verification = NULL WHERE id = ?").run(id);
     })();
 
     this.writeBackup({
@@ -484,7 +484,7 @@ export class VerificationStore {
     ts: string;
   }): void {
     try {
-      const line = JSON.stringify(entry) + "\n";
+      const line = `${JSON.stringify(entry)}\n`;
       appendFileSync(this.backupPath, line, { encoding: "utf8", mode: 0o600 });
     } catch (err) {
       if (!this.hasLoggedBackupError) {

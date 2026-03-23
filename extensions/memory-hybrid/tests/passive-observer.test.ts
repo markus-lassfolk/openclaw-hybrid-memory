@@ -87,7 +87,7 @@ describe("extractTextFromJsonlChunk", () => {
   });
 
   it("skips invalid JSON lines without throwing", () => {
-    const chunk = "not-json\n" + JSON.stringify({ message: { role: "user", content: "Valid" } });
+    const chunk = `not-json\n${JSON.stringify({ message: { role: "user", content: "Valid" } })}`;
     expect(() => extractTextFromJsonlChunk(chunk)).not.toThrow();
     expect(extractTextFromJsonlChunk(chunk)).toContain("user: Valid");
   });
@@ -131,20 +131,14 @@ describe("parseObserverResponse", () => {
   });
 
   it("parses JSON wrapped in markdown code fence", () => {
-    const raw =
-      "```json\n" +
-      JSON.stringify([{ text: "The team decided to adopt GraphQL", category: "decision", importance: 0.9 }]) +
-      "\n```";
+    const raw = `\`\`\`json\n${JSON.stringify([{ text: "The team decided to adopt GraphQL", category: "decision", importance: 0.9 }])}\n\`\`\``;
     const facts = parseObserverResponse(raw, categories);
     expect(facts).toHaveLength(1);
     expect(facts[0].category).toBe("decision");
   });
 
   it("parses JSON wrapped in plain code fence", () => {
-    const raw =
-      "```\n" +
-      JSON.stringify([{ text: "Maria is the project owner", category: "entity", importance: 0.85 }]) +
-      "\n```";
+    const raw = `\`\`\`\n${JSON.stringify([{ text: "Maria is the project owner", category: "entity", importance: 0.85 }])}\n\`\`\``;
     const facts = parseObserverResponse(raw, categories);
     expect(facts).toHaveLength(1);
   });
@@ -237,9 +231,9 @@ describe("cursor management", () => {
     const path = getCursorsPath(tmpDir);
     writeFileSync(path, JSON.stringify({ good: 100, bad: "string", negative: -1 }));
     const cursors = await loadCursors(path);
-    expect(cursors["good"]).toBe(100);
-    expect(cursors["bad"]).toBeUndefined();
-    expect(cursors["negative"]).toBeUndefined(); // -1 fails >= 0 check
+    expect(cursors.good).toBe(100);
+    expect(cursors.bad).toBeUndefined();
+    expect(cursors.negative).toBeUndefined(); // -1 fails >= 0 check
   });
 
   it("loadCursors returns empty object for invalid JSON", async () => {
@@ -254,7 +248,7 @@ describe("cursor management", () => {
     const path = getCursorsPath(nestedDir);
     await saveCursors(path, { s1: 99 });
     const loaded = await loadCursors(path);
-    expect(loaded["s1"]).toBe(99);
+    expect(loaded.s1).toBe(99);
   });
 });
 
@@ -326,7 +320,7 @@ describe("runPassiveObserver", () => {
 
   it("skips sessions where cursor equals file size (nothing new)", async () => {
     const sessionFile = join(sessionsDir, "session-1.jsonl");
-    const content = JSON.stringify({ message: { role: "user", content: "Hello" } }) + "\n";
+    const content = `${JSON.stringify({ message: { role: "user", content: "Hello" } })}\n`;
     writeFileSync(sessionFile, content);
 
     // Pre-set cursor to file size
@@ -362,14 +356,13 @@ describe("runPassiveObserver", () => {
     // Create a mock that intercepts chatCompleteWithRetry
     const { runPassiveObserver: runFn } = await import("../services/passive-observer.js");
 
-    const sessionContent =
-      JSON.stringify({
-        message: { role: "user", content: "We use React and had lunch" },
-      }) + "\n";
+    const sessionContent = `${JSON.stringify({
+      message: { role: "user", content: "We use React and had lunch" },
+    })}\n`;
     writeFileSync(join(sessionsDir, "s1.jsonl"), sessionContent);
 
     const storedFacts: ExtractedFact[] = [];
-    const factsDb = {
+    const _factsDb = {
       getRecentFacts: vi.fn().mockReturnValue([]),
       store: vi.fn().mockImplementation((f: unknown) => {
         storedFacts.push(f as ExtractedFact);
@@ -385,8 +378,7 @@ describe("runPassiveObserver", () => {
   });
 
   it("deduplication: skips facts when vectorDb.search returns a match", async () => {
-    const sessionContent =
-      JSON.stringify({ message: { role: "user", content: "The team uses React for frontend development." } }) + "\n";
+    const sessionContent = `${JSON.stringify({ message: { role: "user", content: "The team uses React for frontend development." } })}\n`;
     writeFileSync(join(sessionsDir, "dedup-test.jsonl"), sessionContent);
 
     const chatSpy = vi
@@ -432,7 +424,7 @@ describe("runPassiveObserver", () => {
 
     // Run with an LLM that returns empty results (no facts to store)
     // We verify cursor update via the saved cursors file
-    const cfg = makeConfig({ sessionsDir, minImportance: 0.99 });
+    const _cfg = makeConfig({ sessionsDir, minImportance: 0.99 });
 
     // Suppress chat call by returning no facts
     // We can't easily mock the module import here, so we test cursor logic directly
@@ -442,14 +434,13 @@ describe("runPassiveObserver", () => {
   });
 
   it("dryRun mode does not call factsDb.store", async () => {
-    const sessionContent =
-      JSON.stringify({
-        message: { role: "user", content: "The system is built with TypeScript and Node.js" },
-      }) + "\n";
+    const sessionContent = `${JSON.stringify({
+      message: { role: "user", content: "The system is built with TypeScript and Node.js" },
+    })}\n`;
     writeFileSync(join(sessionsDir, "dry-run.jsonl"), sessionContent);
 
     const factsDb = makeFactsDb();
-    const cfg = makeConfig({ sessionsDir });
+    const _cfg = makeConfig({ sessionsDir });
 
     // The dryRun is passed as an opt — verify store is not called
     // We validate parseObserverResponse+filter logic separately above;
@@ -461,10 +452,9 @@ describe("runPassiveObserver", () => {
   });
 
   it("stores extracted facts end-to-end with mocked LLM + DBs", async () => {
-    const sessionContent =
-      JSON.stringify({
-        message: { role: "user", content: "We decided to use Rust for the CLI tool." },
-      }) + "\n";
+    const sessionContent = `${JSON.stringify({
+      message: { role: "user", content: "We decided to use Rust for the CLI tool." },
+    })}\n`;
     writeFileSync(join(sessionsDir, "e2e.jsonl"), sessionContent);
 
     const chatSpy = vi
@@ -553,8 +543,7 @@ describe("runPassiveObserver — LanceDB dedup (Issue #499)", () => {
   });
 
   it("calls vectorDb.search once per extracted fact", async () => {
-    const sessionContent =
-      JSON.stringify({ message: { role: "user", content: "The team uses TypeScript everywhere." } }) + "\n";
+    const sessionContent = `${JSON.stringify({ message: { role: "user", content: "The team uses TypeScript everywhere." } })}\n`;
     writeFileSync(join(sessionsDir, "search-call-test.jsonl"), sessionContent);
 
     const chatSpy = vi.spyOn(chat, "chatCompleteWithRetry").mockResolvedValue(
@@ -592,8 +581,7 @@ describe("runPassiveObserver — LanceDB dedup (Issue #499)", () => {
 
   it("uses deduplicationThreshold as minScore for vectorDb.search", async () => {
     const threshold = 0.88;
-    const sessionContent =
-      JSON.stringify({ message: { role: "user", content: "We use PostgreSQL as the main database." } }) + "\n";
+    const sessionContent = `${JSON.stringify({ message: { role: "user", content: "We use PostgreSQL as the main database." } })}\n`;
     writeFileSync(join(sessionsDir, "threshold-test.jsonl"), sessionContent);
 
     const chatSpy = vi
@@ -627,8 +615,7 @@ describe("runPassiveObserver — LanceDB dedup (Issue #499)", () => {
   });
 
   it("reinforcement: boosts matched fact when vectorDb.search finds a near-duplicate", async () => {
-    const sessionContent =
-      JSON.stringify({ message: { role: "user", content: "I still use TypeScript for everything." } }) + "\n";
+    const sessionContent = `${JSON.stringify({ message: { role: "user", content: "I still use TypeScript for everything." } })}\n`;
     writeFileSync(join(sessionsDir, "reinforce-test.jsonl"), sessionContent);
 
     const chatSpy = vi
@@ -674,8 +661,7 @@ describe("runPassiveObserver — LanceDB dedup (Issue #499)", () => {
   });
 
   it("search failure does not crash observer — proceeds without dedup", async () => {
-    const sessionContent =
-      JSON.stringify({ message: { role: "user", content: "We decided to adopt Kubernetes." } }) + "\n";
+    const sessionContent = `${JSON.stringify({ message: { role: "user", content: "We decided to adopt Kubernetes." } })}\n`;
     writeFileSync(join(sessionsDir, "search-fail-test.jsonl"), sessionContent);
 
     const chatSpy = vi
@@ -713,8 +699,7 @@ describe("runPassiveObserver — LanceDB dedup (Issue #499)", () => {
   });
 
   it("does not call getRecentFacts — LanceDB is the single source of truth", async () => {
-    const sessionContent =
-      JSON.stringify({ message: { role: "user", content: "The service runs on AWS Lambda." } }) + "\n";
+    const sessionContent = `${JSON.stringify({ message: { role: "user", content: "The service runs on AWS Lambda." } })}\n`;
     writeFileSync(join(sessionsDir, "no-getrecent-test.jsonl"), sessionContent);
 
     const chatSpy = vi
@@ -797,8 +782,7 @@ describe("runPassiveObserver event_log integration", () => {
     const { EventLog } = await import("../backends/event-log.js");
     const eventLog = new EventLog(join(tmpDir, "event-log.db"));
 
-    const sessionContent =
-      JSON.stringify({ message: { role: "user", content: "The team uses TypeScript everywhere." } }) + "\n";
+    const sessionContent = `${JSON.stringify({ message: { role: "user", content: "The team uses TypeScript everywhere." } })}\n`;
     writeFileSync(join(sessionsDir, "sess-abc.jsonl"), sessionContent);
 
     const chatSpy = vi
@@ -833,7 +817,7 @@ describe("runPassiveObserver event_log integration", () => {
     const { EventLog } = await import("../backends/event-log.js");
     const eventLog = new EventLog(join(tmpDir, "event-log-pref.db"));
 
-    const sessionContent = JSON.stringify({ message: { role: "user", content: "I always prefer dark mode." } }) + "\n";
+    const sessionContent = `${JSON.stringify({ message: { role: "user", content: "I always prefer dark mode." } })}\n`;
     writeFileSync(join(sessionsDir, "sess-pref.jsonl"), sessionContent);
 
     const chatSpy = vi
@@ -861,7 +845,7 @@ describe("runPassiveObserver event_log integration", () => {
   });
 
   it("does not write to event_log when eventLog is null", async () => {
-    const sessionContent = JSON.stringify({ message: { role: "user", content: "The team uses Rust for CLI." } }) + "\n";
+    const sessionContent = `${JSON.stringify({ message: { role: "user", content: "The team uses Rust for CLI." } })}\n`;
     writeFileSync(join(sessionsDir, "sess-noelog.jsonl"), sessionContent);
 
     const chatSpy = vi
@@ -886,8 +870,7 @@ describe("runPassiveObserver event_log integration", () => {
   });
 
   it("writes to event_log before factsDb.store (Layer 1 write order)", async () => {
-    const sessionContent =
-      JSON.stringify({ message: { role: "user", content: "We use Postgres as our primary database." } }) + "\n";
+    const sessionContent = `${JSON.stringify({ message: { role: "user", content: "We use Postgres as our primary database." } })}\n`;
     writeFileSync(join(sessionsDir, "sess-order.jsonl"), sessionContent);
 
     const chatSpy = vi
@@ -1207,8 +1190,7 @@ describe("runPassiveObserver identity fact promotion", () => {
   });
 
   it("stores identity fact with scope=global, decayClass=permanent", async () => {
-    const sessionContent =
-      JSON.stringify({ message: { role: "user", content: "Your email is agent@example.com" } }) + "\n";
+    const sessionContent = `${JSON.stringify({ message: { role: "user", content: "Your email is agent@example.com" } })}\n`;
     writeFileSync(join(sessionsDir, "identity-sess.jsonl"), sessionContent);
 
     const chatSpy = vi
@@ -1247,7 +1229,7 @@ describe("runPassiveObserver identity fact promotion", () => {
   });
 
   it("stores non-identity fact with scope=session (default unchanged)", async () => {
-    const sessionContent = JSON.stringify({ message: { role: "user", content: "The team uses TypeScript." } }) + "\n";
+    const sessionContent = `${JSON.stringify({ message: { role: "user", content: "The team uses TypeScript." } })}\n`;
     writeFileSync(join(sessionsDir, "regular-sess.jsonl"), sessionContent);
 
     const chatSpy = vi
@@ -1280,8 +1262,7 @@ describe("runPassiveObserver identity fact promotion", () => {
   });
 
   it("promotes fact with explicit agentName='TestBot'", async () => {
-    const sessionContent =
-      JSON.stringify({ message: { role: "user", content: "TestBot email is agent@example.com" } }) + "\n";
+    const sessionContent = `${JSON.stringify({ message: { role: "user", content: "TestBot email is agent@example.com" } })}\n`;
     writeFileSync(join(sessionsDir, "doris-sess.jsonl"), sessionContent);
 
     const chatSpy = vi

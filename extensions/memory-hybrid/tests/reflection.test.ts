@@ -49,7 +49,7 @@ Other content ignored.
   });
 
   it("ignores lines that are too short (<20 chars)", () => {
-    const raw = `PATTERN: Too short`;
+    const raw = "PATTERN: Too short";
     const parsed = parsePatternsFromReflectionResponse(raw);
     expect(parsed).toHaveLength(0);
   });
@@ -81,7 +81,7 @@ PATTERN: User prefers composition over inheritance
   });
 
   it("handles leading whitespace before PATTERN:", () => {
-    const raw = `  PATTERN: User prefers explicit error handling`;
+    const raw = "  PATTERN: User prefers explicit error handling";
     const parsed = parsePatternsFromReflectionResponse(raw);
     expect(parsed).toHaveLength(1);
     expect(parsed[0]).toBe("User prefers explicit error handling");

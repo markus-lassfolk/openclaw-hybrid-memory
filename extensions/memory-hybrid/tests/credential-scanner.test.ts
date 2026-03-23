@@ -150,8 +150,8 @@ describe("extractCredentialsFromToolCalls — sshpass pattern", () => {
     expect(creds.length).toBeGreaterThanOrEqual(1);
     const cred = creds.find((c) => c.type === "password");
     expect(cred).toBeDefined();
-    expect(cred!.value).toBe("mysecretpass");
-    expect(cred!.service).toContain("example.com");
+    expect(cred?.value).toBe("mysecretpass");
+    expect(cred?.service).toContain("example.com");
   });
 
   it("rejects sshpass with too-short password (< 4 chars)", () => {
@@ -170,7 +170,7 @@ describe("extractCredentialsFromToolCalls — curl Bearer token", () => {
     expect(creds.length).toBeGreaterThanOrEqual(1);
     const cred = creds.find((c) => c.type === "bearer");
     expect(cred).toBeDefined();
-    expect(cred!.value).toContain("eyJhbGci");
+    expect(cred?.value).toContain("eyJhbGci");
   });
 
   it("resolves service from URL in the same command", () => {
@@ -180,7 +180,7 @@ describe("extractCredentialsFromToolCalls — curl Bearer token", () => {
     const creds = extractCredentialsFromToolCalls(text);
     const cred = creds.find((c) => c.type === "bearer");
     expect(cred).toBeDefined();
-    expect(cred!.service).toBe("api.github.com");
+    expect(cred?.service).toBe("api.github.com");
   });
 });
 
@@ -190,7 +190,7 @@ describe("extractCredentialsFromToolCalls — curl -u user:pass", () => {
     const creds = extractCredentialsFromToolCalls(text);
     const cred = creds.find((c) => c.type === "password");
     expect(cred).toBeDefined();
-    expect(cred!.value).toBe("secretpass123");
+    expect(cred?.value).toBe("secretpass123");
   });
 
   it("extracts password from curl -u (quoted)", () => {
@@ -198,7 +198,7 @@ describe("extractCredentialsFromToolCalls — curl -u user:pass", () => {
     const creds = extractCredentialsFromToolCalls(text);
     const cred = creds.find((c) => c.type === "password");
     expect(cred).toBeDefined();
-    expect(cred!.value).toBe("my password 99");
+    expect(cred?.value).toBe("my password 99");
   });
 
   it("rejects curl -u with too-short password", () => {
@@ -215,8 +215,8 @@ describe("extractCredentialsFromToolCalls — X-API-Key header", () => {
     const creds = extractCredentialsFromToolCalls(text);
     const cred = creds.find((c) => c.type === "api_key");
     expect(cred).toBeDefined();
-    expect(cred!.value).toBe(fakeKey);
-    expect(cred!.service).toBe("api.openai.com");
+    expect(cred?.value).toBe(fakeKey);
+    expect(cred?.service).toBe("api.openai.com");
   });
 
   it("rejects X-API-Key shorter than 8 chars", () => {
@@ -232,8 +232,8 @@ describe("extractCredentialsFromToolCalls — connection strings", () => {
     const creds = extractCredentialsFromToolCalls(text);
     const cred = creds.find((c) => c.type === "password");
     expect(cred).toBeDefined();
-    expect(cred!.value).toBe("s3cr3tpassword");
-    expect(cred!.service).toContain("db.example.com");
+    expect(cred?.value).toBe("s3cr3tpassword");
+    expect(cred?.service).toContain("db.example.com");
   });
 
   it("extracts password from mysql connection string", () => {
@@ -263,8 +263,8 @@ describe("extractCredentialsFromToolCalls — export VAR=value", () => {
     const creds = extractCredentialsFromToolCalls(text);
     const cred = creds.find((c) => c.type === "token");
     expect(cred).toBeDefined();
-    expect(cred!.value).toBe(fakeToken);
-    expect(cred!.service).toBe("github");
+    expect(cred?.value).toBe(fakeToken);
+    expect(cred?.service).toBe("github");
   });
 
   it("extracts api_key from export OPENAI_API_KEY=...", () => {
@@ -275,7 +275,7 @@ describe("extractCredentialsFromToolCalls — export VAR=value", () => {
     const cred = creds.find((c) => c.type === "api_key");
     expect(cred).toBeDefined();
     // OPENAI_API_KEY → strip _KEY → OPENAI_API → slugify → "openai-api"
-    expect(cred!.service).toBe("openai-api");
+    expect(cred?.service).toBe("openai-api");
   });
 
   it("extracts password from export DB_PASSWORD=...", () => {
@@ -283,7 +283,7 @@ describe("extractCredentialsFromToolCalls — export VAR=value", () => {
     const creds = extractCredentialsFromToolCalls(text);
     const cred = creds.find((c) => c.type === "password");
     expect(cred).toBeDefined();
-    expect(cred!.value).toBe("supersecretdbpassword");
+    expect(cred?.value).toBe("supersecretdbpassword");
   });
 });
 
@@ -293,7 +293,7 @@ describe("extractCredentialsFromToolCalls — .env-style KEY=value", () => {
     const creds = extractCredentialsFromToolCalls(text);
     const cred = creds.find((c) => c.type === "api_key");
     expect(cred).toBeDefined();
-    expect(cred!.value).toBe("myverylongapikey12345");
+    expect(cred?.value).toBe("myverylongapikey12345");
   });
 
   it("does not double-extract when line has both export and assignment form", () => {

@@ -676,7 +676,7 @@ export function capturePluginError(
     if (context.configShape) {
       scope.setContext("config_shape", context.configShape);
     }
-    eventId = reporter!.captureException(error);
+    eventId = reporter?.captureException(error);
   });
 
   return eventId;

@@ -250,8 +250,8 @@ describe("PATTERN_FACT stores with correct category and tags (#260)", () => {
     const allFacts = factsDb.getAll({});
     const patternFact = allFacts.find((f) => f.category === "pattern" && f.text.includes("CI fixes"));
     expect(patternFact).toBeDefined();
-    expect(patternFact!.source).toBe("reinforcement-analysis");
-    const rawTags = patternFact!.tags;
+    expect(patternFact?.source).toBe("reinforcement-analysis");
+    const rawTags = patternFact?.tags;
     const tags: string[] =
       typeof rawTags === "string"
         ? (JSON.parse(rawTags) as string[])
@@ -314,7 +314,7 @@ describe("MEMORY_STORE stores fact with semantic dedup (#260)", () => {
     const allFacts = factsDb.getAll({});
     const stored = allFacts.find((f) => f.category === "technical" && f.text.includes("async/await"));
     expect(stored).toBeDefined();
-    expect(stored!.source).toBe("reinforcement-analysis");
+    expect(stored?.source).toBe("reinforcement-analysis");
   });
 
   it("skips MEMORY_STORE when vectorDb.hasDuplicate returns true", async () => {
@@ -446,8 +446,8 @@ describe("PROPOSAL creates entry in proposals DB (#260)", () => {
     const proposals = proposalsDb.list();
     const prop = proposals.find((p) => p.targetFile === "USER.md");
     expect(prop).toBeDefined();
-    expect(prop!.suggestedChange).toContain("Working Style");
-    expect(prop!.title).toContain("Reinforcement");
+    expect(prop?.suggestedChange).toContain("Working Style");
+    expect(prop?.title).toContain("Reinforcement");
   });
 });
 
@@ -469,7 +469,7 @@ describe("AGENTS_RULE from self-correction creates proposal in DB (#260)", () =>
 
     const openai = makeOpenAIMock(llmResponse);
 
-    const reportDir = join(tmpDir, "memory", "reports");
+    const _reportDir = join(tmpDir, "memory", "reports");
     const sessionFile = join(tmpDir, "2026-01-01-session.jsonl");
     writeFileSync(
       sessionFile,
@@ -506,9 +506,9 @@ describe("AGENTS_RULE from self-correction creates proposal in DB (#260)", () =>
     const proposals = proposalsDb.list();
     const agentsRuleProp = proposals.find((p) => p.suggestedChange.includes("sub-agent"));
     expect(agentsRuleProp).toBeDefined();
-    expect(agentsRuleProp!.title).toContain("Self-correction");
+    expect(agentsRuleProp?.title).toContain("Self-correction");
     // SOUL.md is the default for behavioral content
-    expect(agentsRuleProp!.targetFile).toBe("SOUL.md");
+    expect(agentsRuleProp?.targetFile).toBe("SOUL.md");
   });
 });
 

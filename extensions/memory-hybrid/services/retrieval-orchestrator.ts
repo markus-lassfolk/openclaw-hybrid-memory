@@ -317,9 +317,9 @@ async function runMultiModelSemanticStrategies(
 /** Compute cosine similarity between two Float32Arrays. Returns [-1, 1]. */
 function cosineSimilarity(a: Float32Array, b: Float32Array): number {
   if (a.length === 0 || a.length !== b.length) return 0;
-  let dot = 0,
-    normA = 0,
-    normB = 0;
+  let dot = 0;
+  let normA = 0;
+  let normB = 0;
   for (let i = 0; i < a.length; i++) {
     dot += a[i] * b[i];
     normA += a[i] * a[i];
@@ -985,7 +985,7 @@ export async function runExplicitDeepRetrieval(
             sources: [{ strategy: (res as any).strategyName || "unknown", rank: res.rank }],
           });
         } else {
-          deduped.get(res.factId)!.sources.push({ strategy: (res as any).strategyName || "unknown", rank: res.rank });
+          deduped.get(res.factId)?.sources.push({ strategy: (res as any).strategyName || "unknown", rank: res.rank });
         }
       }
 

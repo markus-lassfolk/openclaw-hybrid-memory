@@ -175,7 +175,7 @@ describe("ContinuousVerifier.verifyFact", () => {
     const mockOpenAI = makeMockOpenAI("CONFIRMED – still accurate");
     const verifier = new ContinuousVerifier(store, factsDb, mockOpenAI as never);
 
-    const id = await store.verify("fact-1", "Server IP is 10.0.0.1", "agent");
+    const _id = await store.verify("fact-1", "Server IP is 10.0.0.1", "agent");
     const vf = await store.getVerified("fact-1");
     const outcome = await verifier.verifyFact(vf!, ["The server is still running at 10.0.0.1"]);
     expect(outcome).toBe("CONFIRMED");
@@ -297,8 +297,8 @@ describe("ContinuousVerifier.runCycle — STALE", () => {
 
     const updated = factsDb.getById(factId);
     expect(updated).not.toBeNull();
-    expect(updated!.confidence).toBe(0.2);
-    expect(updated!.tags).toContain("needs-verification");
+    expect(updated?.confidence).toBe(0.2);
+    expect(updated?.tags).toContain("needs-verification");
   });
 
   it("increments stale counter", async () => {
@@ -333,7 +333,7 @@ describe("ContinuousVerifier.runCycle — UNCERTAIN", () => {
       source: "test",
     });
     const factId = adminEntry.id;
-    const originalConfidence = factsDb.getById(factId)!.confidence;
+    const originalConfidence = factsDb.getById(factId)?.confidence;
 
     const storeId = await store.verify(factId, "Admin endpoint URL", "agent");
     const db = (store as unknown as { db: import("node:sqlite").DatabaseSync }).db;
@@ -345,8 +345,8 @@ describe("ContinuousVerifier.runCycle — UNCERTAIN", () => {
     expect(result.stale).toBe(0);
 
     const updated = factsDb.getById(factId);
-    expect(updated!.confidence).toBe(originalConfidence);
-    expect(updated!.tags).toContain("review-needed");
+    expect(updated?.confidence).toBe(originalConfidence);
+    expect(updated?.tags).toContain("review-needed");
   });
 });
 

@@ -111,8 +111,8 @@ describe("task queue dispatch leases", () => {
 
   it("blocks reacquire for legacy completed leases without expiresAt (fallback cooldown)", async () => {
     // Seed the registry with a legacy completed lease
-    const fs = await import("fs");
-    const p = await import("path");
+    const fs = await import("node:fs");
+    const p = await import("node:path");
     const registryPath = p.join(stateDir, "dispatch-leases.json");
 
     const legacyRegistry = {

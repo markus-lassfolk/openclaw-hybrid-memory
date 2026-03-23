@@ -55,7 +55,7 @@ export class OllamaEmbeddingProvider implements EmbeddingProvider {
   async embed(text: string): Promise<number[]> {
     const results = await this.embedBatch([text]);
     if (results.length === 0) {
-      throw new Error(`Ollama embed returned empty results for single text`);
+      throw new Error("Ollama embed returned empty results for single text");
     }
     return results[0];
   }
@@ -116,9 +116,7 @@ export class OllamaEmbeddingProvider implements EmbeddingProvider {
           circuit.disabledUntil = Date.now() + OLLAMA_COOLDOWN_MS;
           circuit.failCount = OLLAMA_MAX_FAILS;
           pluginLogger.warn(
-            `memory-hybrid: Ollama model OOM (${this.modelName}) — model requires more memory than available. ` +
-              `Circuit breaker tripped; disabling endpoint ${this.endpoint} for 5min. ` +
-              `Consider using a smaller model or configuring a cloud embedding fallback.`,
+            `memory-hybrid: Ollama model OOM (${this.modelName}) — model requires more memory than available. Circuit breaker tripped; disabling endpoint ${this.endpoint} for 5min. Consider using a smaller model or configuring a cloud embedding fallback.`,
           );
         }
         throw new Error(errMsg);

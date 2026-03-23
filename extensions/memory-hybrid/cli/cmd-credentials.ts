@@ -69,9 +69,9 @@ export function runCredentialsAuditForCli(ctx: HandlerContext): CredentialsAudit
     const flags = [...auditCredentialValue(value, row.type), ...auditServiceName(row.service)];
     const normKey = `${normalizeServiceForDedup(row.service)}:${row.type}`;
     if (!valueToEntries.has(value)) valueToEntries.set(value, []);
-    valueToEntries.get(value)!.push({ service: row.service, type: row.type, updated });
+    valueToEntries.get(value)?.push({ service: row.service, type: row.type, updated });
     if (!normKeyToEntries.has(normKey)) normKeyToEntries.set(normKey, []);
-    normKeyToEntries.get(normKey)!.push({ service: row.service, type: row.type, updated });
+    normKeyToEntries.get(normKey)?.push({ service: row.service, type: row.type, updated });
     entries.push({ service: row.service, type: row.type, url: row.url, flags });
   }
   for (const [, group] of valueToEntries) {

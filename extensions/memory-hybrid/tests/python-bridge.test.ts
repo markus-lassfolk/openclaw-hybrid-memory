@@ -35,7 +35,7 @@ class FakeProcess extends EventEmitter {
 
   /** Helper: simulate Python worker responding with a JSON-RPC result */
   respond(response: object): void {
-    this.stdout.emit("data", Buffer.from(JSON.stringify(response) + "\n"));
+    this.stdout.emit("data", Buffer.from(`${JSON.stringify(response)}\n`));
   }
 }
 
@@ -288,7 +288,7 @@ describe("PythonBridge", () => {
       expect(result.ok).toBe(false);
       expect(result.missing).toEqual([]);
       expect(result.spawnError).toBeInstanceOf(Error);
-      expect(result.spawnError!.message).toMatch(/status=1/);
+      expect(result.spawnError?.message).toMatch(/status=1/);
     });
   });
 

@@ -90,7 +90,7 @@ function selectConsolidatedKeyValue(facts: MemoryEntry[]): { key: string | null;
 
   const keyToBest = new Map<string, MemoryEntry>();
   for (const fact of factsWithKey) {
-    const key = fact.key!.trim();
+    const key = fact.key?.trim();
     const prev = keyToBest.get(key);
     if (!prev || fact.confidence > prev.confidence) {
       keyToBest.set(key, fact);
@@ -167,7 +167,7 @@ export async function runConsolidate(
     if (i + 20 < ids.length) await new Promise((r) => setTimeout(r, 200));
   }
 
-  const idToIndex = new Map(ids.map((id, idx) => [id, idx]));
+  const _idToIndex = new Map(ids.map((id, idx) => [id, idx]));
   const edges: Array<[string, string]> = [];
   for (let i = 0; i < ids.length; i++) {
     const vi = vectors[i];
@@ -185,7 +185,7 @@ export async function runConsolidate(
   for (const id of ids) {
     const r = getRoot(parent, id);
     if (!rootToCluster.has(r)) rootToCluster.set(r, []);
-    rootToCluster.get(r)!.push(id);
+    rootToCluster.get(r)?.push(id);
   }
   const clusters = [...rootToCluster.values()].filter((c) => c.length >= 2);
   logger.info(`memory-hybrid: consolidate — ${clusters.length} clusters (≥2 facts)`);
@@ -196,7 +196,7 @@ export async function runConsolidate(
   let deleted = 0;
   const consolidationRunId = provenanceService ? randomUUID() : null;
   for (const clusterIds of clusters) {
-    const texts = clusterIds.map((id) => idToFact.get(id)!.text);
+    const texts = clusterIds.map((id) => idToFact.get(id)?.text);
     const factsList = texts.map((t, i) => `${i + 1}. ${t}`).join("\n");
     const prompt = fillPrompt(loadPrompt("consolidate"), { facts_list: factsList });
     let mergedText: string;

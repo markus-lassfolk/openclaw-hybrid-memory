@@ -452,7 +452,7 @@ export async function withLLMRetry<T>(
       // Don't retry 400 context-length errors — input was too long; retrying won't fix it (#442)
       if (isContextLengthError(lastError)) {
         pluginLogger.warn(
-          `memory-hybrid: Input exceeds model context length — retrying will not help; truncate input before calling`,
+          "memory-hybrid: Input exceeds model context length — retrying will not help; truncate input before calling",
         );
         throw lastError;
       }
@@ -470,7 +470,7 @@ export async function withLLMRetry<T>(
       // chatCompleteWithRetry will try the next fallback model (e.g. Gemini, OpenAI).
       if (isOllamaOOM(lastError)) {
         pluginLogger.warn(
-          `memory-hybrid: Ollama model OOM — model requires more memory than is available. Skipping retries; will try next fallback model.`,
+          "memory-hybrid: Ollama model OOM — model requires more memory than is available. Skipping retries; will try next fallback model.",
         );
         throw lastError;
       }
@@ -524,10 +524,10 @@ export async function withLLMRetry<T>(
       let delay: number;
       if (is429) {
         const retryAfterMs = parseRetryAfterMs(err);
-        delay = retryAfterMs ?? Math.pow(2, attempt + 1) * 1000;
+        delay = retryAfterMs ?? 2 ** (attempt + 1) * 1000;
         pluginLogger.warn(`memory-hybrid: Rate limited by provider — backing off ${delay}ms`);
       } else {
-        delay = Math.pow(3, attempt) * 1000; // 1s, 3s, 9s
+        delay = 3 ** attempt * 1000; // 1s, 3s, 9s
       }
       // Abort-aware backoff sleep: if the signal fires while we are waiting, reject immediately
       // instead of sleeping through the full delay. The listener is removed on normal resolve to
@@ -535,7 +535,7 @@ export async function withLLMRetry<T>(
       await new Promise<void>((resolve, reject) => {
         const onAbort = () => {
           clearTimeout(timeout);
-          const reason = opts!.signal!.reason;
+          const reason = opts?.signal?.reason;
           const msg = reason instanceof Error ? reason.message : reason != null ? String(reason) : "Aborted";
           const abortError = new Error(msg);
           abortError.name = "AbortError";
@@ -605,7 +605,7 @@ export async function chatCompleteWithRetry(opts: {
       throw abortError;
     }
     const currentModel = modelsToTry[i];
-    const isFallback = i > 0;
+    const _isFallback = i > 0;
     // Use per-model max_tokens so fallbacks (e.g. gpt-4o) don't receive primary model's limit (e.g. 65k for Gemini)
     const effectiveMaxTokens = maxTokens ?? distillMaxOutputTokens(currentModel);
 
@@ -682,15 +682,13 @@ export async function chatCompleteWithRetry(opts: {
   if (unconfiguredCount > 0 && unconfiguredCount === modelsToTry.length) {
     const unconfiguredProviders = [...new Set(modelsToTry.map((m) => (m.includes("/") ? m.split("/")[0] : "openai")))];
     pendingWarnings?.add(
-      `⚠️ Memory plugin: No LLM provider keys are configured for ${unconfiguredProviders.join(", ")}. ` +
-        `Memory features (HyDE search, classification, distillation) are degraded. ` +
-        `Add API keys via: llm.providers.<provider>.apiKey in plugin config, then run: openclaw hybrid-mem verify --test-llm`,
+      `⚠️ Memory plugin: No LLM provider keys are configured for ${unconfiguredProviders.join(", ")}. Memory features (HyDE search, classification, distillation) are degraded. Add API keys via: llm.providers.<provider>.apiKey in plugin config, then run: openclaw hybrid-mem verify --test-llm`,
     );
   } else if (unconfiguredCount > 0) {
     // Some models were unconfigured — warn user even if final error was 500/404
     pendingWarnings?.add(
-      `⚠️ Memory plugin: Some LLM provider keys are missing. ` +
-        `Add API keys via: llm.providers.<provider>.apiKey in plugin config, then run: openclaw hybrid-mem verify --test-llm`,
+      "⚠️ Memory plugin: Some LLM provider keys are missing. " +
+        "Add API keys via: llm.providers.<provider>.apiKey in plugin config, then run: openclaw hybrid-mem verify --test-llm",
     );
     // Don't report UnconfiguredProviderError to GlitchTip — it's a config issue, not a code bug.
     // This can happen when the final model in the fallback chain is also unconfigured but an
@@ -717,46 +715,46 @@ export async function chatCompleteWithRetry(opts: {
   } else if (finalIsOOM) {
     // #387: OOM is a persistent condition (model too large for RAM), not transient — warn user to use smaller model
     pendingWarnings?.add(
-      `⚠️ Memory plugin: LLM model requires more memory than available (OOM). ` +
-        `Consider using a smaller model or configuring a cloud fallback. ` +
-        `Run: openclaw hybrid-mem verify --test-llm`,
+      "⚠️ Memory plugin: LLM model requires more memory than available (OOM). " +
+        "Consider using a smaller model or configuring a cloud fallback. " +
+        "Run: openclaw hybrid-mem verify --test-llm",
     );
   } else if (finalIsContextLength) {
     // #488: input too long for model's context window — config issue (model too small), not a code bug
     pendingWarnings?.add(
-      `⚠️ Memory plugin: LLM input exceeds model context window. ` +
-        `Consider using a model with a larger context window or reducing input size. ` +
-        `Run: openclaw hybrid-mem verify --test-llm`,
+      "⚠️ Memory plugin: LLM input exceeds model context window. " +
+        "Consider using a model with a larger context window or reducing input size. " +
+        "Run: openclaw hybrid-mem verify --test-llm",
     );
   } else if (finalIs500) {
     // #302: 500 server errors are transient — don't report to GlitchTip; request will be retried naturally
   } else if (finalIs404) {
     // #303: model not found across all fallbacks = misconfigured model name — surface to user, skip Sentry
     pendingWarnings?.add(
-      `⚠️ Memory plugin: LLM model not found (404) for all configured models. ` +
-        `Check model names in llm.default / llm.heavy / llm.nano config. ` +
-        `Run: openclaw hybrid-mem verify --test-llm`,
+      "⚠️ Memory plugin: LLM model not found (404) for all configured models. " +
+        "Check model names in llm.default / llm.heavy / llm.nano config. " +
+        "Run: openclaw hybrid-mem verify --test-llm",
     );
   } else if (finalIs403) {
     // #394: country/region restriction / IP block = operator config issue, not a bug — skip GlitchTip
     pendingWarnings?.add(
-      `⚠️ Memory plugin: LLM access denied (403) — your API key may be restricted by country/region, ` +
-        `IP block, or billing. Check provider settings. ` +
-        `Run: openclaw hybrid-mem verify --test-llm`,
+      "⚠️ Memory plugin: LLM access denied (403) — your API key may be restricted by country/region, " +
+        "IP block, or billing. Check provider settings. " +
+        "Run: openclaw hybrid-mem verify --test-llm",
     );
   } else if (finalIs401) {
     // #475: invalid API key = operator config issue, not a bug — skip GlitchTip
     pendingWarnings?.add(
-      `⚠️ Memory plugin: LLM unauthorized (401) — your API key is invalid or expired. Check provider settings. ` +
-        `Run: openclaw hybrid-mem verify --test-llm`,
+      "⚠️ Memory plugin: LLM unauthorized (401) — your API key is invalid or expired. Check provider settings. " +
+        "Run: openclaw hybrid-mem verify --test-llm",
     );
   } else if (finalIsTimeout) {
     // #339: timeout errors are transient — don't report to GlitchTip
   } else if (finalIs429) {
     // #397: rate limit / usage limit — transient provider error, don't report to GlitchTip
     pendingWarnings?.add(
-      `⚠️ Memory plugin: LLM provider rate limited (429 Too Many Requests). ` +
-        `Memory features may be degraded. Try again later or upgrade your provider plan.`,
+      "⚠️ Memory plugin: LLM provider rate limited (429 Too Many Requests). " +
+        "Memory features may be degraded. Try again later or upgrade your provider plan.",
     );
   } else {
     // Only report unexpected failures to Sentry — not pure config/key issues

@@ -179,45 +179,44 @@ export function parseAutoRecallConfig(cfg: Record<string, unknown>): AutoRecallC
           ? Math.floor(ar.degradationMaxLatencyMs)
           : 5000,
     };
-  } else {
-    return {
-      enabled: arRaw !== false,
-      maxTokens: 800,
-      maxPerMemoryChars: 0,
-      injectionFormat: "full",
-      limit: 10,
-      minScore: 0.3,
-      preferLongTerm: false,
-      useImportanceRecency: false,
-      entityLookup: { enabled: false, entities: [], maxFactsPerEntity: 2 },
-      retrievalDirectives: {
-        enabled: true,
-        entityMentioned: true,
-        keywords: [],
-        taskTypes: {},
-        sessionStart: false,
-        limit: 3,
-        maxPerPrompt: 4,
-      },
-      degradationQueueDepth: 10,
-      degradationMaxLatencyMs: 5000,
-      summaryThreshold: 300,
-      summaryMaxChars: 80,
-      useSummaryInInjection: true,
-      summarizeWhenOverBudget: false,
-      summarizeModel: undefined,
-      progressiveMaxCandidates: 15,
-      progressiveIndexMaxTokens: undefined,
-      progressiveGroupByCategory: false,
-      progressivePinnedRecallCount: 3,
-      authFailure: {
-        enabled: true,
-        patterns: [],
-        maxRecallsPerTarget: 1,
-        includeVaultHints: true,
-      },
-    };
   }
+  return {
+    enabled: arRaw !== false,
+    maxTokens: 800,
+    maxPerMemoryChars: 0,
+    injectionFormat: "full",
+    limit: 10,
+    minScore: 0.3,
+    preferLongTerm: false,
+    useImportanceRecency: false,
+    entityLookup: { enabled: false, entities: [], maxFactsPerEntity: 2 },
+    retrievalDirectives: {
+      enabled: true,
+      entityMentioned: true,
+      keywords: [],
+      taskTypes: {},
+      sessionStart: false,
+      limit: 3,
+      maxPerPrompt: 4,
+    },
+    degradationQueueDepth: 10,
+    degradationMaxLatencyMs: 5000,
+    summaryThreshold: 300,
+    summaryMaxChars: 80,
+    useSummaryInInjection: true,
+    summarizeWhenOverBudget: false,
+    summarizeModel: undefined,
+    progressiveMaxCandidates: 15,
+    progressiveIndexMaxTokens: undefined,
+    progressiveGroupByCategory: false,
+    progressivePinnedRecallCount: 3,
+    authFailure: {
+      enabled: true,
+      patterns: [],
+      maxRecallsPerTarget: 1,
+      includeVaultHints: true,
+    },
+  };
 }
 
 export function parseRetrievalConfig(cfg: Record<string, unknown>): RetrievalConfig {

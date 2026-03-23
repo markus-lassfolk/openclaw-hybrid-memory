@@ -74,13 +74,13 @@ describe("runStoreForCli credential happy path", () => {
       // Verify vault entry exists
       const vaultEntry = credentialsDb.get("openai", "api_key");
       expect(vaultEntry).not.toBeNull();
-      expect(vaultEntry!.value).toBe("sk-testAbCdEfGh1234IjKlMnOpQrSt");
+      expect(vaultEntry?.value).toBe("sk-testAbCdEfGh1234IjKlMnOpQrSt");
 
       // Verify pointer entry exists with correct format
       const pointerEntry = factsDb.getById(result.id);
       expect(pointerEntry).not.toBeNull();
-      expect(pointerEntry!.value).toBe("vault:openai:api_key");
-      expect(pointerEntry!.entity).toBe("Credentials");
+      expect(pointerEntry?.value).toBe("vault:openai:api_key");
+      expect(pointerEntry?.entity).toBe("Credentials");
     }
   });
 });

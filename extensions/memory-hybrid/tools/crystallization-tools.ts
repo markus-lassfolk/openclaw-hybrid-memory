@@ -40,17 +40,17 @@ export function registerCrystallizationTools(ctx: CrystallizationToolsContext, a
         const result = proposer.runCycle();
 
         const lines: string[] = [];
-        lines.push(`Crystallization cycle complete.`);
+        lines.push("Crystallization cycle complete.");
         lines.push(`  Proposed: ${result.proposed}`);
         lines.push(`  Skipped:  ${result.skipped}`);
         if (result.reasons.length > 0) {
-          lines.push(`  Details:`);
+          lines.push("  Details:");
           result.reasons.forEach((r) => lines.push(`    - ${r}`));
         }
         if (result.proposed > 0) {
-          lines.push(``);
-          lines.push(`Use memory_crystallize_list to review proposals.`);
-          lines.push(`Use memory_crystallize_approve <id> to approve and write a skill.`);
+          lines.push("");
+          lines.push("Use memory_crystallize_list to review proposals.");
+          lines.push("Use memory_crystallize_approve <id> to approve and write a skill.");
         }
 
         return {
@@ -136,8 +136,7 @@ export function registerCrystallizationTools(ctx: CrystallizationToolsContext, a
           );
         });
 
-        const summary =
-          `Found ${proposals.length} proposal(s)` + (status ? ` (${status})` : "") + ":\n\n" + lines.join("\n\n");
+        const summary = `Found ${proposals.length} proposal(s)${status ? ` (${status})` : ""}:\n\n${lines.join("\n\n")}`;
 
         return {
           content: [{ type: "text", text: summary }],

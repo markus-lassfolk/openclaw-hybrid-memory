@@ -1189,7 +1189,7 @@ describe("Embeddings (OpenAI) — context-length truncation (#442)", () => {
 
   it("#442: truncates text > 32768 chars before calling the API", async () => {
     const vector = [0.1, 0.2, 0.3];
-    const mockCreate = vi.fn().mockImplementation((params: { input: string }) => {
+    const mockCreate = vi.fn().mockImplementation((_params: { input: string }) => {
       return Promise.resolve({ data: [{ embedding: vector }] });
     });
     const client = { embeddings: { create: mockCreate } } as unknown as import("openai").default;
@@ -1204,7 +1204,7 @@ describe("Embeddings (OpenAI) — context-length truncation (#442)", () => {
 
   it("#442: does not truncate text within the limit", async () => {
     const vector = [0.1, 0.2, 0.3];
-    const mockCreate = vi.fn().mockImplementation((params: { input: string }) => {
+    const mockCreate = vi.fn().mockImplementation((_params: { input: string }) => {
       return Promise.resolve({ data: [{ embedding: vector }] });
     });
     const client = { embeddings: { create: mockCreate } } as unknown as import("openai").default;
@@ -1268,7 +1268,7 @@ describe("#385: Embeddings 401 auth error does not report to GlitchTip", () => {
       // on the wrapper error itself, not cause unwrapping (same path as the direct-status test above).
       const inner = new Error("Incorrect API key provided: AIzaSyDp...");
       const retryErr = new LLMRetryError(
-        `Failed after 3 attempts: 401 Incorrect API key provided: AIzaSyDp...`,
+        "Failed after 3 attempts: 401 Incorrect API key provided: AIzaSyDp...",
         inner,
         3,
       );

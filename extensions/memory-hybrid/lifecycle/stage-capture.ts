@@ -38,7 +38,8 @@ function extractLastAssistantText(messages: unknown[]): string | undefined {
 
   if (typeof lastAssistant.content === "string") {
     return lastAssistant.content;
-  } else if (Array.isArray(lastAssistant.content)) {
+  }
+  if (Array.isArray(lastAssistant.content)) {
     const textBlocks: string[] = [];
     for (const block of lastAssistant.content) {
       if (
@@ -212,7 +213,7 @@ async function runCapture(
           const summaryThreshold = ctx.cfg.autoRecall.summaryThreshold;
           const summary =
             summaryThreshold > 0 && textToStore.length > summaryThreshold
-              ? textToStore.slice(0, ctx.cfg.autoRecall.summaryMaxChars).trim() + "…"
+              ? `${textToStore.slice(0, ctx.cfg.autoRecall.summaryMaxChars).trim()}…`
               : undefined;
           let vector: number[] | undefined;
           if (ctx.cfg.retrieval.strategies.includes("semantic")) {

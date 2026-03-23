@@ -115,12 +115,12 @@ describe("findShortestPath: trivial cases", () => {
     const db = buildMockDb([a], {}, {});
     const result = findShortestPath(db, "a", "a");
     expect(result).not.toBeNull();
-    expect(result!.hops).toBe(0);
-    expect(result!.steps).toHaveLength(0);
-    expect(result!.fromFactId).toBe("a");
-    expect(result!.toFactId).toBe("a");
-    expect(result!.chain).toHaveLength(1);
-    expect(result!.chain[0].id).toBe("a");
+    expect(result?.hops).toBe(0);
+    expect(result?.steps).toHaveLength(0);
+    expect(result?.fromFactId).toBe("a");
+    expect(result?.toFactId).toBe("a");
+    expect(result?.chain).toHaveLength(1);
+    expect(result?.chain[0].id).toBe("a");
   });
 
   it("returns null when start fact not found", () => {
@@ -175,12 +175,12 @@ describe("findShortestPath: 1-hop paths", () => {
     const db = buildMockDb([a, b], { a: [{ id: "l1", targetFactId: "b", linkType: "RELATED_TO", strength: 0.9 }] }, {});
     const result = findShortestPath(db, "a", "b");
     expect(result).not.toBeNull();
-    expect(result!.hops).toBe(1);
-    expect(result!.steps).toHaveLength(1);
-    expect(result!.steps[0].fromFactId).toBe("a");
-    expect(result!.steps[0].toFactId).toBe("b");
-    expect(result!.steps[0].linkType).toBe("RELATED_TO");
-    expect(result!.steps[0].strength).toBeCloseTo(0.9);
+    expect(result?.hops).toBe(1);
+    expect(result?.steps).toHaveLength(1);
+    expect(result?.steps[0].fromFactId).toBe("a");
+    expect(result?.steps[0].toFactId).toBe("b");
+    expect(result?.steps[0].linkType).toBe("RELATED_TO");
+    expect(result?.steps[0].strength).toBeCloseTo(0.9);
   });
 
   it("finds direct path via incoming edge (B→A traversed as A←B)", () => {
@@ -191,8 +191,8 @@ describe("findShortestPath: 1-hop paths", () => {
     // Path from b to a: b→a via the link (b is source, a is target)
     const result = findShortestPath(db, "b", "a");
     expect(result).not.toBeNull();
-    expect(result!.hops).toBe(1);
-    expect(result!.steps[0].linkType).toBe("CAUSED_BY");
+    expect(result?.hops).toBe(1);
+    expect(result?.steps[0].linkType).toBe("CAUSED_BY");
   });
 
   it("returns correct chain for 1-hop path", () => {
@@ -200,9 +200,9 @@ describe("findShortestPath: 1-hop paths", () => {
     const b = makeEntry("b");
     const db = buildMockDb([a, b], { a: [{ id: "l1", targetFactId: "b", linkType: "PART_OF", strength: 1.0 }] }, {});
     const result = findShortestPath(db, "a", "b");
-    expect(result!.chain).toHaveLength(2);
-    expect(result!.chain[0].id).toBe("a");
-    expect(result!.chain[1].id).toBe("b");
+    expect(result?.chain).toHaveLength(2);
+    expect(result?.chain[0].id).toBe("a");
+    expect(result?.chain[1].id).toBe("b");
   });
 
   it("hops equals steps.length", () => {
@@ -210,7 +210,7 @@ describe("findShortestPath: 1-hop paths", () => {
     const b = makeEntry("b");
     const db = buildMockDb([a, b], { a: [{ id: "l1", targetFactId: "b", linkType: "DEPENDS_ON", strength: 0.5 }] }, {});
     const result = findShortestPath(db, "a", "b");
-    expect(result!.hops).toBe(result!.steps.length);
+    expect(result?.hops).toBe(result?.steps.length);
   });
 });
 
@@ -233,11 +233,11 @@ describe("findShortestPath: multi-hop paths", () => {
     );
     const result = findShortestPath(db, "a", "c");
     expect(result).not.toBeNull();
-    expect(result!.hops).toBe(2);
-    expect(result!.steps[0].fromFactId).toBe("a");
-    expect(result!.steps[0].toFactId).toBe("b");
-    expect(result!.steps[1].fromFactId).toBe("b");
-    expect(result!.steps[1].toFactId).toBe("c");
+    expect(result?.hops).toBe(2);
+    expect(result?.steps[0].fromFactId).toBe("a");
+    expect(result?.steps[0].toFactId).toBe("b");
+    expect(result?.steps[1].fromFactId).toBe("b");
+    expect(result?.steps[1].toFactId).toBe("c");
   });
 
   it("finds 3-hop path A→B→C→D", () => {
@@ -256,7 +256,7 @@ describe("findShortestPath: multi-hop paths", () => {
     );
     const result = findShortestPath(db, "a", "d", { maxDepth: 5 });
     expect(result).not.toBeNull();
-    expect(result!.hops).toBe(3);
+    expect(result?.hops).toBe(3);
   });
 
   it("finds 4-hop path with bidirectional BFS", () => {
@@ -281,9 +281,9 @@ describe("findShortestPath: multi-hop paths", () => {
     );
     const result = findShortestPath(db, "a", "e", { maxDepth: 5 });
     expect(result).not.toBeNull();
-    expect(result!.hops).toBe(4);
-    expect(result!.fromFactId).toBe("a");
-    expect(result!.toFactId).toBe("e");
+    expect(result?.hops).toBe(4);
+    expect(result?.fromFactId).toBe("a");
+    expect(result?.toFactId).toBe("e");
   });
 
   it("fromFactId and toFactId are preserved in result", () => {
@@ -291,8 +291,8 @@ describe("findShortestPath: multi-hop paths", () => {
     const b = makeEntry("b");
     const db = buildMockDb([a, b], { a: [{ id: "l1", targetFactId: "b", linkType: "RELATED_TO", strength: 1.0 }] }, {});
     const result = findShortestPath(db, "a", "b");
-    expect(result!.fromFactId).toBe("a");
-    expect(result!.toFactId).toBe("b");
+    expect(result?.fromFactId).toBe("a");
+    expect(result?.toFactId).toBe("b");
   });
 });
 
@@ -315,7 +315,7 @@ describe("findShortestPath: maxDepth enforcement", () => {
     const db = buildMockDb([a, b], { a: [{ id: "l1", targetFactId: "b", linkType: "RELATED_TO", strength: 1.0 }] }, {});
     const result = findShortestPath(db, "a", "b", { maxDepth: 1 });
     expect(result).not.toBeNull();
-    expect(result!.hops).toBe(1);
+    expect(result?.hops).toBe(1);
   });
 
   it("maxDepth=1 blocks 2-hop path", () => {
@@ -369,7 +369,7 @@ describe("findShortestPath: maxDepth enforcement", () => {
     );
     const result = findShortestPath(db, "a", "d", { maxDepth: 3 });
     expect(result).not.toBeNull();
-    expect(result!.hops).toBe(3);
+    expect(result?.hops).toBe(3);
   });
 });
 
@@ -395,9 +395,9 @@ describe("findShortestPath: shortest path selection", () => {
       {},
     );
     const result = findShortestPath(db, "a", "b");
-    expect(result!.hops).toBe(1);
-    expect(result!.steps[0].fromFactId).toBe("a");
-    expect(result!.steps[0].toFactId).toBe("b");
+    expect(result?.hops).toBe(1);
+    expect(result?.steps[0].fromFactId).toBe("a");
+    expect(result?.steps[0].toFactId).toBe("b");
   });
 
   it("finds 2-hop path when 1-hop is unavailable", () => {
@@ -413,7 +413,7 @@ describe("findShortestPath: shortest path selection", () => {
       {},
     );
     const result = findShortestPath(db, "a", "b");
-    expect(result!.hops).toBe(2);
+    expect(result?.hops).toBe(2);
   });
 });
 
@@ -427,7 +427,7 @@ describe("findShortestPath: link types and strengths", () => {
     const b = makeEntry("b");
     const db = buildMockDb([a, b], { a: [{ id: "l1", targetFactId: "b", linkType: "SUPERSEDES", strength: 1.0 }] }, {});
     const result = findShortestPath(db, "a", "b");
-    expect(result!.steps[0].linkType).toBe("SUPERSEDES");
+    expect(result?.steps[0].linkType).toBe("SUPERSEDES");
   });
 
   it("traverses INSTANCE_OF and DERIVED_FROM links", () => {
@@ -443,8 +443,8 @@ describe("findShortestPath: link types and strengths", () => {
       {},
     );
     const result = findShortestPath(db, "a", "c");
-    expect(result!.steps[0].linkType).toBe("INSTANCE_OF");
-    expect(result!.steps[1].linkType).toBe("DERIVED_FROM");
+    expect(result?.steps[0].linkType).toBe("INSTANCE_OF");
+    expect(result?.steps[1].linkType).toBe("DERIVED_FROM");
   });
 
   it("preserves edge strength in steps", () => {
@@ -456,7 +456,7 @@ describe("findShortestPath: link types and strengths", () => {
       {},
     );
     const result = findShortestPath(db, "a", "b");
-    expect(result!.steps[0].strength).toBeCloseTo(0.42);
+    expect(result?.steps[0].strength).toBeCloseTo(0.42);
   });
 });
 
@@ -578,8 +578,8 @@ describe("findShortestPath: integration with FactsDB", () => {
 
     const result = findShortestPath(factsDb, aId, bId, { maxDepth: 5 });
     expect(result).not.toBeNull();
-    expect(result!.hops).toBe(1);
-    expect(result!.steps[0].linkType).toBe("RELATED_TO");
+    expect(result?.hops).toBe(1);
+    expect(result?.steps[0].linkType).toBe("RELATED_TO");
   });
 
   it("finds 2-hop path in real DB", () => {
@@ -615,7 +615,7 @@ describe("findShortestPath: integration with FactsDB", () => {
 
     const result = findShortestPath(factsDb, aId, cId, { maxDepth: 5 });
     expect(result).not.toBeNull();
-    expect(result!.hops).toBe(2);
+    expect(result?.hops).toBe(2);
   });
 
   it("returns null when no path in real DB", () => {
@@ -664,8 +664,8 @@ describe("findShortestPath: integration with FactsDB", () => {
     factsDb.createLink(aId, bId, "RELATED_TO", 1.0);
 
     const result = findShortestPath(factsDb, aId, bId, { maxDepth: 5 });
-    expect(result!.chain).toHaveLength(2);
-    expect(result!.chain[0].text).toBe("Fact A");
-    expect(result!.chain[1].text).toBe("Fact B");
+    expect(result?.chain).toHaveLength(2);
+    expect(result?.chain[0].text).toBe("Fact A");
+    expect(result?.chain[1].text).toBe("Fact B");
   });
 });

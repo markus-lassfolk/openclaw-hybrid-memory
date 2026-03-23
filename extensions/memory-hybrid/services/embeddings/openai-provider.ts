@@ -109,7 +109,6 @@ export class Embeddings implements EmbeddingProvider {
         return vector;
       } catch (err) {
         lastErr = err instanceof Error ? err : new Error(String(err));
-        continue;
       }
     }
     // lastErr is always defined here: constructor enforces models.length >= 1, so
@@ -186,7 +185,6 @@ export class Embeddings implements EmbeddingProvider {
           break;
         } catch (err) {
           lastErr = err instanceof Error ? err : new Error(String(err));
-          continue;
         }
       }
       if (resp !== undefined && succeededModel !== undefined) {

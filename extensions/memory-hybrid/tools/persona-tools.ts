@@ -51,7 +51,7 @@ export function registerPersonaTools(ctx: PluginContext, api: ClawdbotPluginApi)
     };
     const auditPath = join(auditDir, `proposal-${proposalId}.jsonl`);
     try {
-      await writeFile(auditPath, JSON.stringify(entry) + "\n", { flag: "a" });
+      await writeFile(auditPath, `${JSON.stringify(entry)}\n`, { flag: "a" });
     } catch (err) {
       const msg = `Audit log write failed: ${err}`;
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
@@ -70,7 +70,7 @@ export function registerPersonaTools(ctx: PluginContext, api: ClawdbotPluginApi)
   // Helper: rate limiting check
   const checkRateLimit = (): { allowed: boolean; count: number; limit: number } => {
     const weekInDays = 7;
-    const count = proposalsDb!.countRecentProposals(weekInDays);
+    const count = proposalsDb?.countRecentProposals(weekInDays);
     const limit = cfg.personaProposals.maxProposalsPerWeek;
     return { allowed: count < limit, count, limit };
   };
@@ -240,7 +240,7 @@ export function registerPersonaTools(ctx: PluginContext, api: ClawdbotPluginApi)
 
         // Create proposal
         const snapshot = getFileSnapshot(api.resolvePath(targetFile));
-        const proposal = proposalsDb!.create({
+        const proposal = proposalsDb?.create({
           targetFile,
           title,
           observation,
@@ -267,7 +267,7 @@ export function registerPersonaTools(ctx: PluginContext, api: ClawdbotPluginApi)
         api.logger.info(`memory-hybrid: persona proposal created — ${proposal.id} (${title})`);
 
         if (cfg.personaProposals.autoApply) {
-          proposalsDb!.updateStatus(proposal.id, "approved", "auto");
+          proposalsDb?.updateStatus(proposal.id, "approved", "auto");
           await auditProposal(
             "approved",
             proposal.id,
@@ -310,7 +310,7 @@ export function registerPersonaTools(ctx: PluginContext, api: ClawdbotPluginApi)
             }
             const changePreview =
               applyResult.suggestedChange.length > 500
-                ? applyResult.suggestedChange.slice(0, 500) + "…"
+                ? `${applyResult.suggestedChange.slice(0, 500)}…`
                 : applyResult.suggestedChange;
             return {
               content: [
@@ -381,7 +381,7 @@ export function registerPersonaTools(ctx: PluginContext, api: ClawdbotPluginApi)
         const { status, targetFile } = params as { status?: string; targetFile?: string };
         const verbosity = cfg.verbosity ?? "normal";
 
-        let proposals = proposalsDb!.list({ status, targetFile });
+        let proposals = proposalsDb?.list({ status, targetFile });
 
         // Quiet mode: suppress freshly-created pending proposals (< 24h old) to reduce noise,
         // but keep all non-pending proposals (approved/rejected/applied/wont-fix) visible.
@@ -413,7 +413,7 @@ export function registerPersonaTools(ctx: PluginContext, api: ClawdbotPluginApi)
             const expireStr = expires !== null ? ` (expires ${expires}d)` : "";
             return `[${p.status.toUpperCase()}] ${p.id} — ${p.title}${expireStr}`;
           }
-          return `[${p.status.toUpperCase()}] ${p.id}\n  Title: ${p.title}\n  Target: ${p.targetFile}\n  Confidence: ${p.confidence}\n  Evidence: ${p.evidenceSessions.length} sessions\n  Age: ${age}d${expires !== null ? `, expires in ${expires}d` : ""}\n  Observation: ${p.observation.length > 120 ? p.observation.slice(0, 120) + "..." : p.observation}`;
+          return `[${p.status.toUpperCase()}] ${p.id}\n  Title: ${p.title}\n  Target: ${p.targetFile}\n  Confidence: ${p.confidence}\n  Evidence: ${p.evidenceSessions.length} sessions\n  Age: ${age}d${expires !== null ? `, expires in ${expires}d` : ""}\n  Observation: ${p.observation.length > 120 ? `${p.observation.slice(0, 120)}...` : p.observation}`;
         });
 
         const pendingCount = proposals.filter((p) => p.status === "pending").length;

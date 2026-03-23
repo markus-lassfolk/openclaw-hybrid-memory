@@ -77,8 +77,8 @@ Output only the statement, no preamble.`,
     }
     if (isOllamaOOM(hydeErr)) {
       opts.logger.warn(
-        `memory-hybrid: Ollama model OOM during HyDE generation — model requires more memory than available. ` +
-          `Using raw query. Consider using a smaller model or configuring a cloud fallback.`,
+        "memory-hybrid: Ollama model OOM during HyDE generation — model requires more memory than available. " +
+          "Using raw query. Consider using a smaller model or configuring a cloud fallback.",
       );
     } else {
       opts.logger.warn(`memory-hybrid: HyDE generation failed, using raw query: ${err}`);

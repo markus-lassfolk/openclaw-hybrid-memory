@@ -313,7 +313,7 @@ export async function runPassiveObserver(
   // Prune stale consecutiveFailures entries before any early returns, so sessions that
   // disappear from disk (or when there are no session files at all) get cleaned up every tick.
   {
-    const activeIds = new Set(filePaths.map((fp) => fp.replace(/\\/g, "/").split("/").pop()!.replace(".jsonl", "")));
+    const activeIds = new Set(filePaths.map((fp) => fp.replace(/\\/g, "/").split("/").pop()?.replace(".jsonl", "")));
     for (const id of consecutiveFailures.keys()) {
       if (!activeIds.has(id)) consecutiveFailures.delete(id);
     }
@@ -344,7 +344,7 @@ export async function runPassiveObserver(
   let hasNewContent = false;
 
   for (const filePath of filePaths) {
-    const sessionId = filePath.replace(/\\/g, "/").split("/").pop()!.replace(".jsonl", "");
+    const sessionId = filePath.replace(/\\/g, "/").split("/").pop()?.replace(".jsonl", "");
     activeSessionIds.add(sessionId);
     let fileBytelen: number;
     try {

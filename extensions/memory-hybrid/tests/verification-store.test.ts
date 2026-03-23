@@ -56,28 +56,28 @@ describe("VerificationStore.verify", () => {
     store.verify("fact-2", "Admin password reset", "user");
     const vf = store.getVerified("fact-2");
     expect(vf).not.toBeNull();
-    expect(vf!.factId).toBe("fact-2");
-    expect(vf!.canonicalText).toBe("Admin password reset");
-    expect(vf!.verifiedBy).toBe("user");
+    expect(vf?.factId).toBe("fact-2");
+    expect(vf?.canonicalText).toBe("Admin password reset");
+    expect(vf?.verifiedBy).toBe("user");
   });
 
   it("computes and stores the correct SHA-256 checksum", async () => {
     const text = "Critical infrastructure fact";
     store.verify("fact-3", text, "system");
     const vf = store.getVerified("fact-3");
-    expect(vf!.checksum).toBe(sha256(text));
+    expect(vf?.checksum).toBe(sha256(text));
   });
 
   it("sets version to 1 for initial entry", async () => {
     store.verify("fact-4", "Some fact", "agent");
     const vf = store.getVerified("fact-4");
-    expect(vf!.version).toBe(1);
+    expect(vf?.version).toBe(1);
   });
 
   it("sets previousVersionId to null for initial entry", async () => {
     store.verify("fact-5", "Another fact", "agent");
     const vf = store.getVerified("fact-5");
-    expect(vf!.previousVersionId).toBeNull();
+    expect(vf?.previousVersionId).toBeNull();
   });
 
   it("sets nextVerification to approximately 30 days from now", async () => {
@@ -86,7 +86,7 @@ describe("VerificationStore.verify", () => {
     const after = new Date();
 
     const vf = store.getVerified("fact-6");
-    const next = new Date(vf!.nextVerification!);
+    const next = new Date(vf?.nextVerification!);
     const expectedMin = new Date(before.getTime() + 29 * 24 * 3600 * 1000);
     const expectedMax = new Date(after.getTime() + 31 * 24 * 3600 * 1000);
     expect(next >= expectedMin).toBe(true);
@@ -97,7 +97,7 @@ describe("VerificationStore.verify", () => {
     store.verify("fact-dup", "First", "agent");
     expect(() => store.verify("fact-dup", "Second", "agent")).toThrow(VerificationError);
     const vf = store.getVerified("fact-dup");
-    expect(vf!.canonicalText).toBe("First");
+    expect(vf?.canonicalText).toBe("First");
   });
 
   it("accepts all three verifiedBy values", async () => {
@@ -109,9 +109,9 @@ describe("VerificationStore.verify", () => {
     const b = store.getVerified("fact-b");
     const c = store.getVerified("fact-c");
 
-    expect(a!.verifiedBy).toBe("agent");
-    expect(b!.verifiedBy).toBe("user");
-    expect(c!.verifiedBy).toBe("system");
+    expect(a?.verifiedBy).toBe("agent");
+    expect(b?.verifiedBy).toBe("user");
+    expect(c?.verifiedBy).toBe("system");
   });
 });
 
@@ -205,8 +205,8 @@ describe("VerificationStore.update", () => {
 
     expect(newId).not.toBe(id);
     const vf = store.getVerified("fact-v");
-    expect(vf!.version).toBe(2);
-    expect(vf!.canonicalText).toBe("Version 2");
+    expect(vf?.version).toBe(2);
+    expect(vf?.canonicalText).toBe("Version 2");
   });
 
   it("links new version to the previous version via previousVersionId", async () => {
@@ -214,7 +214,7 @@ describe("VerificationStore.update", () => {
     const newId = store.update(id, "V2", "user");
 
     const db = (store as unknown as { db: import("node:sqlite").DatabaseSync }).db;
-    const row = db.prepare(`SELECT * FROM verified_facts WHERE id = ?`).get(newId) as {
+    const row = db.prepare("SELECT * FROM verified_facts WHERE id = ?").get(newId) as {
       previous_version_id: string | null;
     };
     expect(row.previous_version_id).toBe(id);
@@ -225,7 +225,7 @@ describe("VerificationStore.update", () => {
     store.update(id, "New text", "user");
 
     const db = (store as unknown as { db: import("node:sqlite").DatabaseSync }).db;
-    const oldRow = db.prepare(`SELECT * FROM verified_facts WHERE id = ?`).get(id) as { canonical_text: string };
+    const oldRow = db.prepare("SELECT * FROM verified_facts WHERE id = ?").get(id) as { canonical_text: string };
     expect(oldRow.canonical_text).toBe("Old text");
   });
 
@@ -234,7 +234,7 @@ describe("VerificationStore.update", () => {
     store.update(id, "Updated", "user");
 
     const db = (store as unknown as { db: import("node:sqlite").DatabaseSync }).db;
-    const oldRow = db.prepare(`SELECT next_verification FROM verified_facts WHERE id = ?`).get(id) as {
+    const oldRow = db.prepare("SELECT next_verification FROM verified_facts WHERE id = ?").get(id) as {
       next_verification: string | null;
     };
     expect(oldRow.next_verification).toBeNull();
@@ -249,8 +249,8 @@ describe("VerificationStore.update", () => {
     const id2 = store.update(id1, "V2", "user");
     expect(() => store.update(id1, "V2-alt", "user")).toThrow(VerificationError);
     const vf = store.getVerified("fact-chain");
-    expect(vf!.canonicalText).toBe("V2");
-    expect(vf!.id).toBe(id2);
+    expect(vf?.canonicalText).toBe("V2");
+    expect(vf?.id).toBe(id2);
   });
 
   it("update computes correct checksum for new text", async () => {
@@ -258,7 +258,7 @@ describe("VerificationStore.update", () => {
     store.update(id, "Updated text", "system");
 
     const vf = store.getVerified("fact-cs");
-    expect(vf!.checksum).toBe(sha256("Updated text"));
+    expect(vf?.checksum).toBe(sha256("Updated text"));
   });
 });
 
@@ -459,7 +459,7 @@ describe("VerificationConfig defaults", () => {
       s.verify("fact-cfg", "Config test", "agent");
       const vf = s.getVerified("fact-cfg");
       const now = Date.now();
-      const next = new Date(vf!.nextVerification!).getTime();
+      const next = new Date(vf?.nextVerification!).getTime();
       const diffDays = (next - now) / (24 * 3600 * 1000);
       expect(diffDays).toBeGreaterThan(28);
       expect(diffDays).toBeLessThan(32);
@@ -476,7 +476,7 @@ describe("VerificationConfig defaults", () => {
 
     custom.verify("fact-7d", "7-day reverification", "agent");
     const vf = custom.getVerified("fact-7d");
-    const next = new Date(vf!.nextVerification!).getTime();
+    const next = new Date(vf?.nextVerification!).getTime();
     const diffDays = (next - Date.now()) / (24 * 3600 * 1000);
     expect(diffDays).toBeGreaterThan(5);
     expect(diffDays).toBeLessThan(9);

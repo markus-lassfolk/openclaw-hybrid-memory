@@ -98,11 +98,7 @@ export function registerWorkflowTools(ctx: WorkflowToolsContext, api: ClawdbotPl
           );
         });
 
-        const summary =
-          `Found ${filtered.length} workflow pattern(s)` +
-          (goal ? ` matching "${goal}"` : "") +
-          ":\n\n" +
-          lines.join("\n\n");
+        const summary = `Found ${filtered.length} workflow pattern(s)${goal ? ` matching "${goal}"` : ""}:\n\n${lines.join("\n\n")}`;
 
         return {
           content: [{ type: "text", text: summary }],

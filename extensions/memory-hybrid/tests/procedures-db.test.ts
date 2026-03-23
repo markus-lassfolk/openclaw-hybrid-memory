@@ -47,7 +47,7 @@ describe("FactsDB procedures table", () => {
     });
     const found = db.getProcedureById(created.id);
     expect(found).not.toBeNull();
-    expect(found!.taskPattern).toBe("HA health check");
+    expect(found?.taskPattern).toBe("HA health check");
   });
 
   it("searchProcedures finds by task pattern words", () => {
@@ -86,8 +86,8 @@ describe("FactsDB procedures table", () => {
     const ok = db.recordProcedureSuccess(created.id);
     expect(ok).toBe(true);
     const after = db.getProcedureById(created.id);
-    expect(after!.successCount).toBe(3);
-    expect(after!.lastValidated).toBeGreaterThan(0);
+    expect(after?.successCount).toBe(3);
+    expect(after?.lastValidated).toBeGreaterThan(0);
   });
 
   it("recordProcedureFailure increments failure_count", () => {
@@ -99,7 +99,7 @@ describe("FactsDB procedures table", () => {
     });
     db.recordProcedureFailure(created.id);
     const after = db.getProcedureById(created.id);
-    expect(after!.failureCount).toBe(2);
+    expect(after?.failureCount).toBe(2);
   });
 
   it("getProceduresReadyForSkill returns only positive with success_count >= threshold", () => {
@@ -130,8 +130,8 @@ describe("FactsDB procedures table", () => {
     const ok = db.markProcedurePromoted(created.id, "skills/auto/check-moltbook");
     expect(ok).toBe(true);
     const after = db.getProcedureById(created.id);
-    expect(after!.promotedToSkill).toBe(1);
-    expect(after!.skillPath).toBe("skills/auto/check-moltbook");
+    expect(after?.promotedToSkill).toBe(1);
+    expect(after?.skillPath).toBe("skills/auto/check-moltbook");
   });
 
   it("getStaleProcedures returns procedures past TTL", () => {
@@ -166,8 +166,8 @@ describe("FactsDB procedure columns on facts", () => {
     expect(entry.procedureType).toBe("positive");
     expect(entry.successCount).toBe(3);
     const retrieved = db.getById(entry.id);
-    expect(retrieved!.procedureType).toBe("positive");
-    expect(retrieved!.successCount).toBe(3);
+    expect(retrieved?.procedureType).toBe("positive");
+    expect(retrieved?.successCount).toBe(3);
   });
 });
 
@@ -209,9 +209,9 @@ describe("searchProceduresRanked (confidence-weighted ranking)", () => {
     expect(recent).toBeDefined();
     expect(old).toBeDefined();
     // Recent should have higher score due to recency
-    expect(recent!.relevanceScore).toBeGreaterThan(old!.relevanceScore);
+    expect(recent?.relevanceScore).toBeGreaterThan(old?.relevanceScore);
     // Old procedure should have at least 0.3 recency factor
-    expect(old!.relevanceScore).toBeGreaterThan(0);
+    expect(old?.relevanceScore).toBeGreaterThan(0);
   });
 
   it("applies success rate boost (50-100% weight)", () => {
@@ -239,7 +239,7 @@ describe("searchProceduresRanked (confidence-weighted ranking)", () => {
     expect(high).toBeDefined();
     expect(low).toBeDefined();
     // High success rate should have higher score
-    expect(high!.relevanceScore).toBeGreaterThan(low!.relevanceScore);
+    expect(high?.relevanceScore).toBeGreaterThan(low?.relevanceScore);
   });
 
   it("penalizes procedures that failed in last 7 days (0.5 multiplier)", () => {
@@ -270,7 +270,7 @@ describe("searchProceduresRanked (confidence-weighted ranking)", () => {
     expect(recent).toBeDefined();
     expect(old).toBeDefined();
     // Recent failure should have lower score (penalty applied)
-    expect(recent!.relevanceScore).toBeLessThan(old!.relevanceScore);
+    expect(recent?.relevanceScore).toBeLessThan(old?.relevanceScore);
   });
 
   it("penalizes never-validated procedures (30% penalty)", () => {
@@ -294,9 +294,9 @@ describe("searchProceduresRanked (confidence-weighted ranking)", () => {
     expect(val).toBeDefined();
     expect(never).toBeDefined();
     // Validated should have higher score
-    expect(val!.relevanceScore).toBeGreaterThan(never!.relevanceScore);
+    expect(val?.relevanceScore).toBeGreaterThan(never?.relevanceScore);
     // Never-validated should have ~70% of validated score (30% penalty)
-    expect(never!.relevanceScore).toBeLessThan(val!.relevanceScore * 0.75);
+    expect(never?.relevanceScore).toBeLessThan(val?.relevanceScore * 0.75);
   });
 
   it("returns procedures matching FTS query", () => {

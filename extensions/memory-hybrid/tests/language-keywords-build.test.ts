@@ -57,7 +57,7 @@ describe("language-keywords-build", () => {
 
     it("deduplicates by first 80 chars", () => {
       const prefix = "A".repeat(80);
-      const facts = [{ text: prefix + " suffix one" }, { text: prefix + " suffix two" }];
+      const facts = [{ text: `${prefix} suffix one` }, { text: `${prefix} suffix two` }];
       const out = collectSamplesFromFacts(facts, 10, 400);
       expect(out.length).toBe(1);
     });
