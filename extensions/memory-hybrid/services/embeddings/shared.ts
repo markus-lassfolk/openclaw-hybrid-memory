@@ -14,7 +14,8 @@ export const GOOGLE_EMBEDDING_BASE_URL = "https://generativelanguage.googleapis.
 /**
  * Known Google Gemini embedding models at the OpenAI-compatible endpoint
  * (generativelanguage.googleapis.com/v1beta/openai/). The endpoint expects
- * gemini-embedding-001 (text) or gemini-embedding-2-preview (multimodal), not text-embedding-004/005.
+ * gemini-embedding-001 (text), gemini-embedding-2-preview (multimodal), and
+ * the OpenAI-compatible text-embedding-004/005 aliases exposed by Google.
  */
 export const KNOWN_GOOGLE_EMBED_MODELS = new Set([
   "gemini-embedding-001",
@@ -23,8 +24,8 @@ export const KNOWN_GOOGLE_EMBED_MODELS = new Set([
   "text-embedding-004",
 ]);
 
-/** Default Google embedding model when config has an OpenAI-only name (OpenAI-compatible endpoint). */
-export const GOOGLE_EMBED_DEFAULT_MODEL = "gemini-embedding-001";
+/** Default Google embedding model at the OpenAI-compatible endpoint. */
+export const GOOGLE_EMBED_DEFAULT_MODEL = "text-embedding-005";
 
 /** Default output dimensions for Google text-embedding-005/004 (used when config has an OpenAI model name). */
 export const GOOGLE_EMBED_DEFAULT_DIMENSIONS = 768;

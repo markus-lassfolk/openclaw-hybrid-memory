@@ -333,9 +333,15 @@ export async function chatComplete(opts: {
       });
     // If feature is provided, wrap in withCostFeature so the proxy attributes the call correctly.
     // Cost recording itself is done by the OpenAI proxy in setup/init-databases.ts.
-    const resp = (await (feature ? withCostFeature(feature, doCreate) : doCreate())) as import(
-      "openai",
-    ).default.ChatCompletion;
+    const resp = (await (feature ? withCostFeature(feature, doCreate) : doCreate())) as {
+      choices: Array<{
+        message?: {
+          content?: string | null;
+          reasoning_content?: string | null;
+          reasoning?: string | null;
+        };
+      }>;
+    };
     clearTimeout(timeoutId);
     if (signal) signal.removeEventListener("abort", onAbort);
     const msg = resp.choices[0]?.message;
