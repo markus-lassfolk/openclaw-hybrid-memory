@@ -74,10 +74,10 @@ const filesEntries = new Set(pkg.files || []);
 const uncovered = importedRoots.filter((r) => {
   const firstSeg = r.split("/")[0];
   return (
-    !filesEntries.has(firstSeg) &&
+    !filesEntries.has(`${r}.ts`) &&
     !filesEntries.has(`${firstSeg}.ts`) &&
     !filesEntries.has(r) &&
-    !filesEntries.has(`${r}.ts`)
+    !filesEntries.has(firstSeg)
   );
 });
 
