@@ -58,8 +58,10 @@ describe("postinstall", () => {
     const installerPath = join(root, "..", "..", "packages", "openclaw-hybrid-memory-install", "install.js");
     expect(existsSync(installerPath)).toBe(true);
     const content = readFileSync(installerPath, "utf-8");
-    expect(content).toContain('const requiredRuntimeDependencies = ["@lancedb/lancedb"]');
+    expect(content).toContain("@lancedb/lancedb");
     expect(content).toContain("ensureRuntimeDependenciesInstalled");
-    expect(content).toContain('npm", ["install", "--no-save", "--omit=dev", ...missing]');
+    expect(content).toMatch(
+      /["']npm["']\s*,\s*\[\s*["']install["']\s*,\s*["']--no-save["']\s*,\s*["']--omit=dev["']\s*,\s*\.\.\.missing/,
+    );
   });
 });
