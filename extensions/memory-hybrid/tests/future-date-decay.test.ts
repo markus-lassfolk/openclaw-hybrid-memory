@@ -378,7 +378,7 @@ describe("FactsDB — decayConfidence skips frozen facts", () => {
     const rawDb = db.getRawDb();
     const expiresAt = nowSec + 2 * 86400; // expires in 2 days
     rawDb
-      .prepare(`UPDATE facts SET last_confirmed_at = ?, expires_at = ?, confidence = 0.9 WHERE id = ?`)
+      .prepare("UPDATE facts SET last_confirmed_at = ?, expires_at = ?, confidence = 0.9 WHERE id = ?")
       .run(nowSec - 20 * 86400, expiresAt, entry.id);
 
     db.decayConfidence();
@@ -406,7 +406,7 @@ describe("FactsDB — decayConfidence skips frozen facts", () => {
     const rawDb = db.getRawDb();
     const expiresAt = nowSec + 2 * 86400;
     rawDb
-      .prepare(`UPDATE facts SET last_confirmed_at = ?, expires_at = ?, confidence = 0.9 WHERE id = ?`)
+      .prepare("UPDATE facts SET last_confirmed_at = ?, expires_at = ?, confidence = 0.9 WHERE id = ?")
       .run(nowSec - 20 * 86400, expiresAt, entry.id);
 
     db.decayConfidence();
@@ -436,7 +436,7 @@ describe("FactsDB — decayConfidence skips frozen facts", () => {
     const rawDb = db.getRawDb();
     const expiresAt = nowSec + 2 * 86400;
     rawDb
-      .prepare(`UPDATE facts SET last_confirmed_at = ?, expires_at = ?, confidence = 0.9 WHERE id = ?`)
+      .prepare("UPDATE facts SET last_confirmed_at = ?, expires_at = ?, confidence = 0.9 WHERE id = ?")
       .run(nowSec - 20 * 86400, expiresAt, entry.id);
 
     db.decayConfidence();
@@ -468,7 +468,7 @@ describe("FactsDB — decayConfidence deletes low-confidence frozen facts that e
     const expiresAt = nowSec + 1 * 86400;
     // Set confidence very low and last_confirmed far back
     rawDb
-      .prepare(`UPDATE facts SET last_confirmed_at = ?, expires_at = ?, confidence = 0.15 WHERE id = ?`)
+      .prepare("UPDATE facts SET last_confirmed_at = ?, expires_at = ?, confidence = 0.15 WHERE id = ?")
       .run(nowSec - 20 * 86400, expiresAt, entry.id);
 
     db.decayConfidence();
@@ -499,7 +499,7 @@ describe("FactsDB — pruneExpired respects decay_freeze_until", () => {
 
     const rawDb = db.getRawDb();
     const expiresAt = nowSec - 1 * 86400;
-    rawDb.prepare(`UPDATE facts SET expires_at = ? WHERE id = ?`).run(expiresAt, entry.id);
+    rawDb.prepare("UPDATE facts SET expires_at = ? WHERE id = ?").run(expiresAt, entry.id);
 
     db.pruneExpired();
 
@@ -523,7 +523,7 @@ describe("FactsDB — pruneExpired respects decay_freeze_until", () => {
 
     const rawDb = db.getRawDb();
     const expiresAt = nowSec - 1 * 86400;
-    rawDb.prepare(`UPDATE facts SET expires_at = ? WHERE id = ?`).run(expiresAt, entry.id);
+    rawDb.prepare("UPDATE facts SET expires_at = ? WHERE id = ?").run(expiresAt, entry.id);
 
     db.pruneExpired();
 
@@ -549,7 +549,7 @@ describe("FactsDB — pruneExpired respects decay_freeze_until", () => {
 
     const rawDb = db.getRawDb();
     const expiresAt = nowSec - 1 * 86400;
-    rawDb.prepare(`UPDATE facts SET expires_at = ? WHERE id = ?`).run(expiresAt, entry.id);
+    rawDb.prepare("UPDATE facts SET expires_at = ? WHERE id = ?").run(expiresAt, entry.id);
 
     db.pruneExpired();
 
@@ -702,7 +702,7 @@ describe("FactsDB — combined freeze+prune: frozen survives, unfrozen decays", 
 
     // Force both to have a past expires_at
     const rawDb = db.getRawDb();
-    rawDb.prepare(`UPDATE facts SET expires_at = ? WHERE id IN (?, ?)`).run(pastExpiry, frozen.id, unfrozen.id);
+    rawDb.prepare("UPDATE facts SET expires_at = ? WHERE id IN (?, ?)").run(pastExpiry, frozen.id, unfrozen.id);
 
     db.pruneExpired();
 

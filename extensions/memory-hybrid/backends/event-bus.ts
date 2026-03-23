@@ -160,7 +160,7 @@ export class EventBus {
   updateStatus(id: number, newStatus: EventStatus): void {
     const processedAt = newStatus !== "raw" ? new Date().toISOString() : null;
     const result = this.liveDb
-      .prepare(`UPDATE memory_events SET status = ?, processed_at = COALESCE(processed_at, ?) WHERE id = ?`)
+      .prepare("UPDATE memory_events SET status = ?, processed_at = COALESCE(processed_at, ?) WHERE id = ?")
       .run(newStatus, processedAt, id);
     if (result.changes === 0) {
       throw new Error(`EventBus: no event found with id ${id}`);
@@ -201,7 +201,7 @@ export class EventBus {
   private rowToEvent(row: Record<string, unknown>): MemoryEvent {
     let payload: Record<string, unknown> = {};
     try {
-      payload = JSON.parse(row["payload"] as string) as Record<string, unknown>;
+      payload = JSON.parse(row.payload as string) as Record<string, unknown>;
     } catch (err) {
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
         operation: "json-parse-payload",
@@ -211,15 +211,15 @@ export class EventBus {
     }
 
     return {
-      id: row["id"] as number,
-      event_type: row["event_type"] as string,
-      source: row["source"] as string,
+      id: row.id as number,
+      event_type: row.event_type as string,
+      source: row.source as string,
       payload,
-      importance: row["importance"] as number,
-      status: row["status"] as EventStatus,
-      created_at: row["created_at"] as string,
-      processed_at: (row["processed_at"] as string | null) ?? null,
-      fingerprint: (row["fingerprint"] as string | null) ?? null,
+      importance: row.importance as number,
+      status: row.status as EventStatus,
+      created_at: row.created_at as string,
+      processed_at: (row.processed_at as string | null) ?? null,
+      fingerprint: (row.fingerprint as string | null) ?? null,
     };
   }
 

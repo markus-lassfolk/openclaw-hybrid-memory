@@ -402,7 +402,7 @@ export function resolveSecretRef(value: string): string | undefined {
     const varName = v.slice(4).trim();
     if (!varName) return undefined;
     const resolved = process.env[varName];
-    return resolved && resolved.trim() ? resolved.trim() : undefined;
+    return resolved?.trim() ? resolved.trim() : undefined;
   }
   if (v.startsWith("file:")) {
     const filePath = v.slice(5).trim();
@@ -421,7 +421,7 @@ export function resolveSecretRef(value: string): string | undefined {
   if (v.includes("${")) {
     try {
       const resolved = resolveEnvVars(v);
-      return resolved && resolved.trim() ? resolved.trim() : undefined;
+      return resolved?.trim() ? resolved.trim() : undefined;
     } catch {
       return undefined;
     }

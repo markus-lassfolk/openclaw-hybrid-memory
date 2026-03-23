@@ -114,7 +114,7 @@ export function groupEventsByEntity(events: EventLogEntry[]): Map<string, EventL
   for (const event of events) {
     const primaryEntity = event.entities?.[0] ?? "__default__";
     if (!groups.has(primaryEntity)) groups.set(primaryEntity, []);
-    groups.get(primaryEntity)!.push(event);
+    groups.get(primaryEntity)?.push(event);
   }
   return groups;
 }
@@ -146,7 +146,7 @@ export function buildDigestSummary(counts: {
   if (counts.logRowsPruned && counts.logRowsPruned > 0) parts.push(`${counts.logRowsPruned} log rows pruned`);
   if (counts.vacuumRan) parts.push("VACUUM ran");
   if (parts.length === 0) return "No changes.";
-  return parts.join(", ") + ".";
+  return `${parts.join(", ")}.`;
 }
 
 // ---------------------------------------------------------------------------
@@ -291,9 +291,7 @@ export async function runEpisodicConsolidation(
     }
 
     logger.info(
-      `memory-hybrid: dream-cycle — consolidated ${groupEvents.length} events` +
-        (entityLabel ? ` for entity "${entityLabel}"` : "") +
-        ` → fact ${consolidatedFact.id.slice(0, 8)}`,
+      `memory-hybrid: dream-cycle — consolidated ${groupEvents.length} events${entityLabel ? ` for entity "${entityLabel}"` : ""} → fact ${consolidatedFact.id.slice(0, 8)}`,
     );
   }
 

@@ -114,9 +114,9 @@ describe("CostTracker", () => {
       expect(report.features.length).toBe(2);
       const classifyFeature = report.features.find((f) => f.feature === "auto-classify");
       expect(classifyFeature).toBeDefined();
-      expect(classifyFeature!.calls).toBe(5);
-      expect(classifyFeature!.inputTokens).toBe(5000);
-      expect(classifyFeature!.outputTokens).toBe(1000);
+      expect(classifyFeature?.calls).toBe(5);
+      expect(classifyFeature?.inputTokens).toBe(5000);
+      expect(classifyFeature?.outputTokens).toBe(1000);
     });
 
     it("computes correct totals", () => {
@@ -155,7 +155,7 @@ describe("CostTracker", () => {
 
       const report = tracker.getReport({ days: 1, feature: "auto-classify" });
       expect(report.features.length).toBe(1);
-      expect(report.features[0]!.feature).toBe("auto-classify");
+      expect(report.features[0]?.feature).toBe("auto-classify");
     });
 
     it("returns empty report when no data in window", () => {
@@ -201,7 +201,7 @@ describe("CostTracker", () => {
       expect(breakdown.length).toBe(2);
       const nanoRow = breakdown.find((b) => b.model === "openai/gpt-4.1-nano");
       expect(nanoRow).toBeDefined();
-      expect(nanoRow!.calls).toBe(2);
+      expect(nanoRow?.calls).toBe(2);
     });
   });
 
@@ -371,7 +371,7 @@ describe("CostTracker", () => {
         | { name: string }
         | undefined;
       expect(tableInfo).toBeDefined();
-      expect(tableInfo!.name).toBe("llm_cost_log");
+      expect(tableInfo?.name).toBe("llm_cost_log");
     });
 
     it("creates the llm_savings_log table on construction", () => {
@@ -379,7 +379,7 @@ describe("CostTracker", () => {
         .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='llm_savings_log'")
         .get() as { name: string } | undefined;
       expect(tableInfo).toBeDefined();
-      expect(tableInfo!.name).toBe("llm_savings_log");
+      expect(tableInfo?.name).toBe("llm_savings_log");
     });
 
     it("creates the expected indexes", () => {
@@ -484,14 +484,14 @@ describe("CostTracker", () => {
 
       const sc = report.features.find((f) => f.feature === "self-correction");
       expect(sc).toBeDefined();
-      expect(sc!.entries).toBe(2);
-      expect(sc!.countAvoided).toBe(3);
-      expect(sc!.estimatedSavingUsd).toBeCloseTo(0.006, 6);
+      expect(sc?.entries).toBe(2);
+      expect(sc?.countAvoided).toBe(3);
+      expect(sc?.estimatedSavingUsd).toBeCloseTo(0.006, 6);
 
       const ac = report.features.find((f) => f.feature === "auto-classify");
       expect(ac).toBeDefined();
-      expect(ac!.entries).toBe(1);
-      expect(ac!.countAvoided).toBe(19);
+      expect(ac?.entries).toBe(1);
+      expect(ac?.countAvoided).toBe(19);
     });
 
     it("computes correct totals", () => {
@@ -551,8 +551,8 @@ describe("CostTracker", () => {
       });
 
       const report = tracker.getSavingsReport(7);
-      expect(report.features[0]!.feature).toBe("expensive-feature");
-      expect(report.features[1]!.feature).toBe("cheap-feature");
+      expect(report.features[0]?.feature).toBe("expensive-feature");
+      expect(report.features[1]?.feature).toBe("cheap-feature");
     });
   });
 

@@ -32,14 +32,14 @@ export function boostConfidence(
   nowSec: number = Math.floor(Date.now() / 1000),
 ): boolean {
   const tx = createTransaction(db, () => {
-    const row = db.prepare(`SELECT confidence FROM facts WHERE id = ?`).get(id) as { confidence: number } | undefined;
+    const row = db.prepare("SELECT confidence FROM facts WHERE id = ?").get(id) as { confidence: number } | undefined;
     if (!row) return false;
 
     const current = typeof row.confidence === "number" ? row.confidence : 1.0;
     const boosted = Math.min(maxConfidence, current + delta);
 
     db.prepare(
-      `UPDATE facts SET confidence = ?, reinforced_count = reinforced_count + 1, last_reinforced_at = ? WHERE id = ?`,
+      "UPDATE facts SET confidence = ?, reinforced_count = reinforced_count + 1, last_reinforced_at = ? WHERE id = ?",
     ).run(boosted, nowSec, id);
     return true;
   });
@@ -60,7 +60,7 @@ export function reinforceFact(
   const boostAmount = Math.max(0, opts?.boostAmount ?? 1);
 
   const tx = createTransaction(db, () => {
-    const row = db.prepare(`SELECT reinforced_quotes FROM facts WHERE id = ?`).get(id) as
+    const row = db.prepare("SELECT reinforced_quotes FROM facts WHERE id = ?").get(id) as
       | { reinforced_quotes: string | null }
       | undefined;
     if (!row) return false;
@@ -68,7 +68,7 @@ export function reinforceFact(
     const quotesJson = appendReinforcementQuote(row.reinforced_quotes, quoteSnippet);
 
     db.prepare(
-      `UPDATE facts SET reinforced_count = reinforced_count + ?, last_reinforced_at = ?, reinforced_quotes = ? WHERE id = ?`,
+      "UPDATE facts SET reinforced_count = reinforced_count + ?, last_reinforced_at = ?, reinforced_quotes = ? WHERE id = ?",
     ).run(boostAmount, nowSec, quotesJson, id);
 
     if (trackContext) {
@@ -86,7 +86,7 @@ export function reinforceFact(
         nowSec,
       );
 
-      const countRow = db.prepare(`SELECT COUNT(*) as cnt FROM reinforcement_log WHERE fact_id = ?`).get(id) as {
+      const countRow = db.prepare("SELECT COUNT(*) as cnt FROM reinforcement_log WHERE fact_id = ?").get(id) as {
         cnt: number;
       };
       if (countRow.cnt > maxEventsPerFact) {
@@ -106,7 +106,7 @@ export function reinforceFact(
 
 export function getReinforcementEvents(db: DatabaseSync, factId: string): ReinforcementEvent[] {
   const rows = db
-    .prepare(`SELECT * FROM reinforcement_log WHERE fact_id = ? ORDER BY occurred_at DESC`)
+    .prepare("SELECT * FROM reinforcement_log WHERE fact_id = ? ORDER BY occurred_at DESC")
     .all(factId) as Array<{
     id: string;
     fact_id: string;
@@ -176,7 +176,7 @@ export function batchGetReinforcementEvents(db: DatabaseSync, factIds: string[])
     if (!eventsByFactId.has(r.fact_id)) {
       eventsByFactId.set(r.fact_id, []);
     }
-    eventsByFactId.get(r.fact_id)!.push(event);
+    eventsByFactId.get(r.fact_id)?.push(event);
   }
   return eventsByFactId;
 }
@@ -194,7 +194,7 @@ export function reinforceProcedure(
 ): boolean {
   const tx = createTransaction(db, () => {
     const row = db
-      .prepare(`SELECT reinforced_quotes, reinforced_count, confidence FROM procedures WHERE id = ?`)
+      .prepare("SELECT reinforced_quotes, reinforced_count, confidence FROM procedures WHERE id = ?")
       .get(id) as { reinforced_quotes: string | null; reinforced_count: number; confidence: number } | undefined;
     if (!row) return false;
 
@@ -211,11 +211,11 @@ export function reinforceProcedure(
 
     if (promotedAt !== null) {
       db.prepare(
-        `UPDATE procedures SET reinforced_count = ?, last_reinforced_at = ?, reinforced_quotes = ?, confidence = ?, promoted_at = ? WHERE id = ?`,
+        "UPDATE procedures SET reinforced_count = ?, last_reinforced_at = ?, reinforced_quotes = ?, confidence = ?, promoted_at = ? WHERE id = ?",
       ).run(newReinforcedCount, nowSec, quotesJson, newConfidence, promotedAt, id);
     } else {
       db.prepare(
-        `UPDATE procedures SET reinforced_count = ?, last_reinforced_at = ?, reinforced_quotes = ? WHERE id = ?`,
+        "UPDATE procedures SET reinforced_count = ?, last_reinforced_at = ?, reinforced_quotes = ? WHERE id = ?",
       ).run(newReinforcedCount, nowSec, quotesJson, id);
     }
     return true;

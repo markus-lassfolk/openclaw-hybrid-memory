@@ -41,7 +41,7 @@ type MockEmbeddings = {
  * tokens (github_pat_...) are not matched by the current extractor, so no second variant
  * is needed here.
  */
-const TOKEN_VALUE = "ghp_" + "A".repeat(36);
+const TOKEN_VALUE = `ghp_${"A".repeat(36)}`;
 
 function makeFactsDB(overrides: Partial<MockFactsDB> = {}): MockFactsDB {
   return {
@@ -290,7 +290,7 @@ describe("migrateCredentialsToVault", () => {
     it("collects error and continues when credentialsDb.store throws on first item", async () => {
       // Two facts: first fails to store, second succeeds
       const fact1 = makeCredentialFact({ id: "fact-1", key: "github" });
-      const TOKEN2 = "sk-" + "B".repeat(48);
+      const TOKEN2 = `sk-${"B".repeat(48)}`;
       const fact2 = makeCredentialFact({
         id: "fact-2",
         key: "openai",

@@ -29,7 +29,7 @@ function toSec(iso: string): number {
 
 function clip(text: string, maxChars: number): string {
   if (text.length <= maxChars) return text;
-  return text.slice(0, Math.max(0, maxChars - 1)).trimEnd() + "…";
+  return `${text.slice(0, Math.max(0, maxChars - 1)).trimEnd()}…`;
 }
 
 function normalizeNarrative(raw: string): string {

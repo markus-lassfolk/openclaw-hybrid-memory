@@ -96,18 +96,18 @@ export class ProposalsDB {
   }
 
   private migrateRejectionReasonColumn(): void {
-    const cols = this.db.prepare(`PRAGMA table_info(proposals)`).all() as Array<{ name: string }>;
+    const cols = this.db.prepare("PRAGMA table_info(proposals)").all() as Array<{ name: string }>;
     if (cols.some((c) => c.name === "rejection_reason")) return;
-    this.db.exec(`ALTER TABLE proposals ADD COLUMN rejection_reason TEXT`);
+    this.db.exec("ALTER TABLE proposals ADD COLUMN rejection_reason TEXT");
   }
 
   private migrateTargetSnapshotColumns(): void {
-    const cols = this.db.prepare(`PRAGMA table_info(proposals)`).all() as Array<{ name: string }>;
+    const cols = this.db.prepare("PRAGMA table_info(proposals)").all() as Array<{ name: string }>;
     if (!cols.some((c) => c.name === "target_mtime_ms")) {
-      this.db.exec(`ALTER TABLE proposals ADD COLUMN target_mtime_ms REAL`);
+      this.db.exec("ALTER TABLE proposals ADD COLUMN target_mtime_ms REAL");
     }
     if (!cols.some((c) => c.name === "target_hash")) {
-      this.db.exec(`ALTER TABLE proposals ADD COLUMN target_hash TEXT`);
+      this.db.exec("ALTER TABLE proposals ADD COLUMN target_hash TEXT");
     }
   }
 

@@ -160,8 +160,7 @@ export function registerSelfExtensionTools(ctx: SelfExtensionToolsContext, api: 
           );
         });
 
-        const summary =
-          `Found ${proposals.length} proposal(s)` + (status ? ` (${status})` : "") + ":\n\n" + lines.join("\n\n");
+        const summary = `Found ${proposals.length} proposal(s)${status ? ` (${status})` : ""}:\n\n${lines.join("\n\n")}`;
 
         return {
           content: [{ type: "text", text: summary }],

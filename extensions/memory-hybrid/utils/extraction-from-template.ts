@@ -103,7 +103,7 @@ export function buildExtractionRunners(template: LanguageExtractionTemplate): Pa
       const m = text.match(re);
       if (!m) return null;
       const verbMatch = text.match(
-        new RegExp(`(?:${subject})\\s+(${template.preference!.verbs.map(escapeRegex).join("|")})\\s+(.+?)\\.?$`, "i"),
+        new RegExp(`(?:${subject})\\s+(${template.preference?.verbs.map(escapeRegex).join("|")})\\s+(.+?)\\.?$`, "i"),
       );
       const verb = verbMatch ? verbMatch[1] : "prefer";
       return {

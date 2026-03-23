@@ -46,7 +46,7 @@ function formatFactContent(entry: MemoryEntry): string {
   if (entry.entity && entry.key && entry.value) {
     parts.push(`${entry.entity}'s ${entry.key} is ${entry.value}.`);
   }
-  if (entry.text && !parts.some((p) => p.includes(entry.text!.slice(0, 30)))) {
+  if (entry.text && !parts.some((p) => p.includes(entry.text?.slice(0, 30)))) {
     parts.push(entry.text);
   }
   return parts.length > 0 ? parts.join("\n\n") : entry.text;
@@ -111,7 +111,7 @@ export function runExport(
   for (const f of facts) {
     const cat = categoryDir(f.category);
     if (!byCategory.has(cat)) byCategory.set(cat, []);
-    byCategory.get(cat)!.push(f);
+    byCategory.get(cat)?.push(f);
   }
 
   const memLinks: string[] = [];
@@ -125,7 +125,7 @@ export function runExport(
     for (const e of entries) {
       const sub = tagSubdir(e.tags);
       if (!byTag.has(sub)) byTag.set(sub, []);
-      byTag.get(sub)!.push(e);
+      byTag.get(sub)?.push(e);
     }
 
     for (const [sub, items] of byTag) {

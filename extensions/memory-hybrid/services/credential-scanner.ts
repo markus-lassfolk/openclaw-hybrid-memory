@@ -228,7 +228,7 @@ export function extractCredentialsFromToolCalls(text: string): ToolCallCredentia
   for (const { regex, extract } of TOOL_CALL_CREDENTIAL_PATTERNS) {
     try {
       // Use a global copy of the regex so we find all occurrences, not just the first.
-      const globalRegex = new RegExp(regex.source, regex.flags.includes("g") ? regex.flags : regex.flags + "g");
+      const globalRegex = new RegExp(regex.source, regex.flags.includes("g") ? regex.flags : `${regex.flags}g`);
       for (const match of text.matchAll(globalRegex)) {
         try {
           const cred = extract(match, text);
@@ -249,8 +249,6 @@ export function extractCredentialsFromToolCalls(text: string): ToolCallCredentia
             severity: "info",
             subsystem: "credentials",
           });
-          // Skip this match if extraction fails, continue with others
-          continue;
         }
       }
     } catch (regexErr) {
@@ -259,8 +257,6 @@ export function extractCredentialsFromToolCalls(text: string): ToolCallCredentia
         severity: "info",
         subsystem: "credentials",
       });
-      // Skip this pattern if regex fails, continue with others
-      continue;
     }
   }
 

@@ -225,7 +225,7 @@ export function runBackupVerify(ctx: { resolvedSqlitePath: string }): BackupVeri
 
     const message = integrityOk
       ? `SQLite integrity OK — ${factCount} active facts`
-      : `SQLite integrity FAILED — database may be corrupt`;
+      : "SQLite integrity FAILED — database may be corrupt";
 
     return { ok: true, integrityOk, sqlitePath: ctx.resolvedSqlitePath, factCount: factCount, message };
   } catch (err) {

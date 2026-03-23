@@ -216,7 +216,7 @@ export function minimalRecipe(steps: ProcedureStep[]): ProcedureStep[] {
         if (SECRET_KEYS.has(k.toLowerCase())) continue;
         if (k === "query" || k === "url" || k === "path" || k === "command" || k === "name") {
           const str = typeof v === "string" ? v : JSON.stringify(v);
-          safeArgs[k] = str.length > 200 ? str.slice(0, 200) + "…" : v;
+          safeArgs[k] = str.length > 200 ? `${str.slice(0, 200)}…` : v;
         } else if (typeof v !== "object" || v === null) {
           safeArgs[k] = v;
         }

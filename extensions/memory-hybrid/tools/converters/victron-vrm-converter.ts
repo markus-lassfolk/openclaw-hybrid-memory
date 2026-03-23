@@ -155,7 +155,7 @@ function isVictronJSON(obj: unknown): obj is VictronJSON {
   if (typeof obj !== "object" || obj === null) return false;
   const o = obj as Record<string, unknown>;
   // Accept if it has records/data arrays, or Victron-style fields
-  if (Array.isArray(o["records"]) || Array.isArray(o["data"])) return true;
+  if (Array.isArray(o.records) || Array.isArray(o.data)) return true;
   // Check for Victron-style top-level keys
   const keys = Object.keys(o).join(" ").toLowerCase();
   return keys.includes("soc") || keys.includes("pv") || keys.includes("battery") || keys.includes("victron");
@@ -209,7 +209,7 @@ export const victronVrmConverter: Converter = {
       const { headers, rows } = parseCSV(content);
 
       if (!isVictronCSV(headers)) {
-        sections.push(`*Note: CSV may not be a Victron VRM export (unrecognised headers)*\n`);
+        sections.push("*Note: CSV may not be a Victron VRM export (unrecognised headers)*\n");
       }
 
       sections.push(`## Summary\n\n${summariseCSV(headers, rows)}\n`);
@@ -222,32 +222,32 @@ export const victronVrmConverter: Converter = {
         );
       }
 
-      metadata["rowCount"] = rows.length;
-      metadata["headers"] = headers;
+      metadata.rowCount = rows.length;
+      metadata.headers = headers;
     } else {
       // JSON
       let parsed: unknown;
       try {
         parsed = JSON.parse(content);
       } catch {
-        sections.push(`*Error: Could not parse JSON*\n`);
+        sections.push("*Error: Could not parse JSON*\n");
         return { markdown: sections.join("\n"), title, metadata };
       }
 
       if (!isVictronJSON(parsed)) {
-        sections.push(`*Note: JSON may not be a Victron VRM export*\n`);
+        sections.push("*Note: JSON may not be a Victron VRM export*\n");
       }
 
       const obj = parsed as VictronJSON;
-      const records: VictronRecord[] = Array.isArray(obj["records"])
-        ? obj["records"]
-        : Array.isArray(obj["data"])
-          ? obj["data"]
+      const records: VictronRecord[] = Array.isArray(obj.records)
+        ? obj.records
+        : Array.isArray(obj.data)
+          ? obj.data
           : [];
 
       if (records.length > 0) {
         sections.push(`## Summary\n\n${summariseJSONRecords(records)}\n`);
-        metadata["recordCount"] = records.length;
+        metadata.recordCount = records.length;
       } else {
         // Flat JSON object
         const keys = Object.keys(obj).filter((k) => k !== "records" && k !== "data");

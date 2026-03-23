@@ -333,8 +333,8 @@ describe("detectClusters: cluster properties", () => {
       { factId: "x", score: 0.9 }, // not in cluster
     ];
     const boosted = searchResults.map((r) => (clusterFactSet.has(r.factId) ? { ...r, score: r.score + 0.1 } : r));
-    expect(boosted.find((r) => r.factId === "a")!.score).toBeCloseTo(0.6);
-    expect(boosted.find((r) => r.factId === "x")!.score).toBeCloseTo(0.9);
+    expect(boosted.find((r) => r.factId === "a")?.score).toBeCloseTo(0.6);
+    expect(boosted.find((r) => r.factId === "x")?.score).toBeCloseTo(0.9);
   });
 });
 

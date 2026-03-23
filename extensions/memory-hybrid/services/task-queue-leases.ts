@@ -17,6 +17,7 @@ const LEASES_FILE = "dispatch-leases.json";
 const LOCK_FILE = "dispatch-leases.lock";
 const LEASES_SCHEMA_VERSION = 1;
 const DEFAULT_LEASE_TTL_MS = 30 * 60 * 1000; // 30 minutes
+const DEFAULT_COMPLETED_VISIBILITY_WINDOW_MS = 10 * 60 * 1000; // 10 minutes
 const DEFAULT_LOCK_TIMEOUT_MS = 5000;
 const LOCK_POLL_MS = 50;
 const STALE_LOCK_MS = 2 * 60 * 1000;
@@ -93,6 +94,37 @@ function parseIsoMs(iso?: string): number {
 
 function isActiveState(state: DispatchLeaseState): boolean {
   return state === "leased" || state === "running";
+}
+
+function blocksAcquire(lease: DispatchLeaseRecord, now: Date): boolean {
+  if (isActiveState(lease.state)) {
+    return true;
+  }
+
+  if (lease.state !== "completed") {
+    return false;
+  }
+
+  let expiresAtMs = parseIsoMs(lease.expiresAt);
+
+  // For legacy or partially written records that lack expiresAt, fall back to
+  // completedAt + DEFAULT_COMPLETED_VISIBILITY_WINDOW_MS to enforce cooldown.
+  if (!Number.isFinite(expiresAtMs)) {
+    const completedAtMs = parseIsoMs(lease.completedAt);
+    if (Number.isFinite(completedAtMs)) {
+      expiresAtMs = completedAtMs + DEFAULT_COMPLETED_VISIBILITY_WINDOW_MS;
+    }
+  }
+
+  return Number.isFinite(expiresAtMs) && now.getTime() < expiresAtMs;
+}
+
+function formatAcquireBlockReason(issue: number, lease: DispatchLeaseRecord): string {
+  if (isActiveState(lease.state)) {
+    return `issue #${issue} already has active lease (${lease.state})`;
+  }
+
+  return `issue #${issue} is cooling down after completed dispatch (${lease.state})`;
 }
 
 function emptyRegistry(): DispatchLeaseRegistry {
@@ -304,14 +336,14 @@ export async function acquireDispatchLease(input: AcquireDispatchLeaseInput): Pr
 
     const key = issueKey(input.issue);
     const existing = registry.leases[key];
-    if (existing && isActiveState(existing.state)) {
+    if (existing && blocksAcquire(existing, now)) {
       if (changedByExpiry) {
         await writeRegistry(registryPath, registry);
       }
       return {
         acquired: false,
         existing,
-        reason: `issue #${input.issue} already has active lease (${existing.state})`,
+        reason: formatAcquireBlockReason(input.issue, existing),
       };
     }
 
@@ -392,8 +424,16 @@ export async function transitionDispatchLease(input: TransitionDispatchLeaseInpu
     if (input.toState === "running") {
       // Refresh expiry while work is active.
       lease.expiresAt = undefined;
-    } else {
+    } else if (input.toState === "completed") {
       lease.completedAt = nowIso;
+      // NOTE: `expiresAt` is overloaded:
+      // - for active/leased states, it represents the lease TTL;
+      // - for the `completed` state, it acts as a visibility cooldown / acquire-block-until timestamp.
+      lease.expiresAt = new Date(now.getTime() + DEFAULT_COMPLETED_VISIBILITY_WINDOW_MS).toISOString();
+    } else {
+      // Other terminal states clear `expiresAt`; callers must not assume it is set for all non-active states.
+      lease.completedAt = nowIso;
+      lease.expiresAt = undefined;
     }
 
     if (input.reason) {

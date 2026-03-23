@@ -56,8 +56,6 @@ const fullDefaults = {
       memorySearch: {
         enabled: true,
         sources: ["memory"],
-        provider: "openai",
-        model: "text-embedding-3-small",
         sync: { onSessionStart: true, onSearch: true, watch: true },
         chunking: { tokens: 500, overlap: 50 },
         query: { maxResults: 8, minScore: 0.3, hybrid: { enabled: true } },

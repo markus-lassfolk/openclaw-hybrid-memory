@@ -70,7 +70,7 @@ export function extractTarget(text: string, type: "ssh" | "http" | "api" | "gene
   // Try SSH patterns: user@host
   if (type === "ssh") {
     const sshUserHostMatch = text.match(/(?:ssh\s+)?[\w.-]+@([\w.-]+)/i);
-    if (sshUserHostMatch && sshUserHostMatch[1]) return sshUserHostMatch[1];
+    if (sshUserHostMatch?.[1]) return sshUserHostMatch[1];
   }
 
   // Try to find hostname-like strings (at least 3 chars, contains dot or dash)
@@ -79,7 +79,7 @@ export function extractTarget(text: string, type: "ssh" | "http" | "api" | "gene
 
   // Try to find service names mentioned after "to/from/at/for" (excluding common words)
   const serviceMatch = text.match(/(?:to|from|at|for)\s+["']?([\w-]{4,})["']?/i);
-  if (serviceMatch && serviceMatch[1]) {
+  if (serviceMatch?.[1]) {
     const serviceName = serviceMatch[1].toLowerCase();
     // Filter out common words that aren't service names
     const commonWords = ["the", "this", "that", "with", "your", "from", "failed", "authentication", "connection"];

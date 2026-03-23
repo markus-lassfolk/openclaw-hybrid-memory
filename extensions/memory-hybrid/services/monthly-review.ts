@@ -70,7 +70,7 @@ export class MonthlyReviewService {
       .slice(0, 10)
       .map((row) => ({ entity: row.entity, count: row.cnt }));
 
-    const avgRow = rawDb.prepare(`SELECT AVG(confidence) as avg FROM facts WHERE superseded_at IS NULL`).get() as
+    const avgRow = rawDb.prepare("SELECT AVG(confidence) as avg FROM facts WHERE superseded_at IS NULL").get() as
       | { avg: number | null }
       | undefined;
     const averageConfidence = normalizeAverage(avgRow?.avg ?? 0);
@@ -162,9 +162,7 @@ export class MonthlyReviewService {
     try {
       const response = await chatComplete({
         model: this.model,
-        content:
-          `Given this knowledge base statistics, list 3-8 uncovered domains (short labels). ` +
-          `Return one per line with no numbering or bullets.\n\nStatistics:\n${JSON.stringify(statsPayload, null, 2)}`,
+        content: `Given this knowledge base statistics, list 3-8 uncovered domains (short labels). Return one per line with no numbering or bullets.\n\nStatistics:\n${JSON.stringify(statsPayload, null, 2)}`,
         temperature: 0.2,
         openai: this.openai,
       });

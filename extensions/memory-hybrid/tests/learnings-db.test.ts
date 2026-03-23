@@ -88,14 +88,14 @@ describe("LearningsDB — get & getBySlug", () => {
     const created = db.create({ type: "learning", area: "test", content: "lesson A" });
     const fetched = db.get(created.id);
     expect(fetched).not.toBeNull();
-    expect(fetched!.id).toBe(created.id);
+    expect(fetched?.id).toBe(created.id);
   });
 
   it("retrieves by slug", () => {
     const created = db.create({ type: "error", area: "test", content: "err A" });
     const fetched = db.getBySlug(created.slug);
     expect(fetched).not.toBeNull();
-    expect(fetched!.id).toBe(created.id);
+    expect(fetched?.id).toBe(created.id);
   });
 
   it("returns null for unknown id", () => {
@@ -234,7 +234,7 @@ describe("LearningsDB — prune", () => {
     // Verify ERR-002 still exists
     const e2Fetched = db.getBySlug("ERR-002");
     expect(e2Fetched).not.toBeNull();
-    expect(e2Fetched!.id).toBe(e2.id);
+    expect(e2Fetched?.id).toBe(e2.id);
   });
 });
 

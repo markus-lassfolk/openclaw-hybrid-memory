@@ -129,7 +129,7 @@ export async function sweepGarmin(
     for (const entity of entities) {
       payload[entity.entity_id] = {
         state: entity.state,
-        unit: entity.attributes["unit_of_measurement"] ?? null,
+        unit: entity.attributes.unit_of_measurement ?? null,
         last_updated: entity.last_updated,
       };
     }
@@ -138,7 +138,7 @@ export async function sweepGarmin(
     for (const entity of entities) {
       fingerprintPayload[entity.entity_id] = {
         state: entity.state,
-        unit: entity.attributes["unit_of_measurement"] ?? null,
+        unit: entity.attributes.unit_of_measurement ?? null,
       };
     }
 
@@ -657,7 +657,7 @@ export async function sweepWeather(
     const location = cfg.location ?? "auto";
 
     const url =
-      location === "auto" ? `https://wttr.in/?format=j1` : `https://wttr.in/${encodeURIComponent(location)}?format=j1`;
+      location === "auto" ? "https://wttr.in/?format=j1" : `https://wttr.in/${encodeURIComponent(location)}?format=j1`;
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 10_000);
     let weatherData: Record<string, unknown> = {};
@@ -726,7 +726,7 @@ export async function sweepYarbo(
         e.state === "error" ||
         e.state === "unavailable" ||
         e.state === "unknown" ||
-        String(e.attributes["error_count"] ?? 0) !== "0",
+        String(e.attributes.error_count ?? 0) !== "0",
     );
 
     // Only write if there's something notable
@@ -747,7 +747,7 @@ export async function sweepYarbo(
     for (const entity of entities) {
       fingerprintPayload[entity.entity_id] = {
         state: entity.state,
-        error_count: entity.attributes["error_count"] ?? 0,
+        error_count: entity.attributes.error_count ?? 0,
       };
     }
 

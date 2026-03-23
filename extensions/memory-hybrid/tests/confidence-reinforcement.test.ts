@@ -327,7 +327,7 @@ describe("Passive observer — reinforcement on similarity", () => {
     const sessionFile = join(sessionsDir, "session-abc.jsonl");
     writeFileSync(
       sessionFile,
-      JSON.stringify({ type: "message", message: { role: "user", content: "I use TypeScript" } }) + "\n",
+      `${JSON.stringify({ type: "message", message: { role: "user", content: "I use TypeScript" } })}\n`,
     );
 
     const factsDb = makeFactsDb([{ id: "existing-fact-1", text: "I use TypeScript", confidence: 0.7 }]);

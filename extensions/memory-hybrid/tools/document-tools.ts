@@ -170,7 +170,7 @@ function collectFilesRecursive(dir: string, predicate: (path: string) => boolean
         out.push(full);
       }
     }
-  } catch (err) {
+  } catch (_err) {
     // Skip unreadable directories (permission denied, broken mounts, etc.)
   }
   return out;
@@ -247,7 +247,6 @@ async function describeImageWithVision(opts: {
       return { text, model };
     } catch (err) {
       lastError = err instanceof Error ? err : new Error(String(err));
-      continue;
     }
   }
 
@@ -444,7 +443,7 @@ export function registerDocumentTools(ctx: DocumentToolsContext, api: ClawdbotPl
           const vision = await describeImageWithVision({ openai, cfg, filePath: realPath });
           markdown = vision.text;
           title = basename(realPath);
-        } catch (visionErr) {
+        } catch (_visionErr) {
           const result = await pythonBridge.convert(realPath);
           markdown = result.markdown;
           title = result.title;
@@ -646,12 +645,7 @@ export function registerDocumentTools(ctx: DocumentToolsContext, api: ClawdbotPl
       content: [
         {
           type: "text",
-          text:
-            `${progress.summary()}\n\n` +
-            `Ingested "${title}" (${fileName}): ` +
-            `${storedCount} chunk(s) stored` +
-            (errorCount > 0 ? `, ${errorCount} error(s)` : "") +
-            `.`,
+          text: `${progress.summary()}\n\nIngested "${title}" (${fileName}): ${storedCount} chunk(s) stored${errorCount > 0 ? `, ${errorCount} error(s)` : ""}.`,
         },
       ],
       details: {
@@ -857,12 +851,7 @@ export function registerDocumentTools(ctx: DocumentToolsContext, api: ClawdbotPl
           content: [
             {
               type: "text",
-              text:
-                `Folder ingest complete: ${summaries.length} file(s), ${totalStored} chunk(s) stored` +
-                (totalErrors > 0 ? `, ${totalErrors} error(s)` : "") +
-                `.\n\n` +
-                `Progress:\n${progressLines.join("\n")}` +
-                (errorLines.length > 0 ? `\n\nErrors:\n${errorLines.join("\n")}` : ""),
+              text: `Folder ingest complete: ${summaries.length} file(s), ${totalStored} chunk(s) stored${totalErrors > 0 ? `, ${totalErrors} error(s)` : ""}.\n\nProgress:\n${progressLines.join("\n")}${errorLines.length > 0 ? `\n\nErrors:\n${errorLines.join("\n")}` : ""}`,
             },
           ],
           details: {

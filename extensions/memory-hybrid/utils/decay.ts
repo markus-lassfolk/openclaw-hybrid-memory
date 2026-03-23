@@ -24,7 +24,7 @@ export function calculateExpiry(decayClass: DecayClass, fromTimestamp = Math.flo
 export function classifyDecay(
   entity: string | null,
   key: string | null,
-  value: string | null,
+  _value: string | null,
   text: string,
 ): DecayClass {
   const keyLower = (key || "").toLowerCase();

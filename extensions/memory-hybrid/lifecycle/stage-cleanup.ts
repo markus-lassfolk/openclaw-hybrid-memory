@@ -95,8 +95,7 @@ export async function consumePendingTaskSignals(
     const byDescription = activeEntries.filter((t) => t.description === signal.taskRef);
     if (byDescription.length === 1) {
       logger?.warn?.(
-        `memory-hybrid: matched signal for "${signal.taskRef}" by description (not label); ` +
-          `sub-agents should use the exact task label in taskRef for reliable matching`,
+        `memory-hybrid: matched signal for "${signal.taskRef}" by description (not label); sub-agents should use the exact task label in taskRef for reliable matching`,
       );
       return byDescription[0];
     }
@@ -273,7 +272,7 @@ export function getDispose(timerRef: ReturnType<typeof setInterval> | null, sess
 export function registerCleanupHandlers(
   api: ClawdbotPluginApi,
   ctx: LifecycleContext,
-  sessionState: SessionState,
+  _sessionState: SessionState,
   resolvedActiveTaskPath: string,
   workspaceRoot: string,
 ): void {

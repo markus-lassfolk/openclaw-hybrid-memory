@@ -52,8 +52,8 @@ groups:
     expect(result.markdown).toContain("## Groups");
     expect(result.markdown).toContain("All Lights");
     expect(result.markdown).toContain("## Home Assistant Integration");
-    expect(result.metadata["deviceCount"]).toBe(2);
-    expect(result.metadata["groupCount"]).toBe(1);
+    expect(result.metadata.deviceCount).toBe(2);
+    expect(result.metadata.groupCount).toBe(1);
   });
 
   it("SECURITY: strips MQTT password from output", () => {
@@ -107,7 +107,7 @@ serial:
     const result = zigbee2mqttConverter.convert(yaml, "/config/configuration.yaml");
     expect(result.title).toBe("Zigbee2MQTT Configuration");
     expect(result.markdown).toContain("mqtt://localhost");
-    expect(result.metadata["deviceCount"]).toBe(0);
+    expect(result.metadata.deviceCount).toBe(0);
   });
 
   it("handles disabled devices", () => {
@@ -162,8 +162,8 @@ describe("zigbee2mqttConverter (device database JSON)", () => {
     expect(result.markdown).toContain("Garden Light");
     expect(result.markdown).toContain("Aqara");
     expect(result.markdown).toContain("Gledopto");
-    expect(result.metadata["deviceCount"]).toBe(2);
-    expect(result.metadata["type"]).toBe("device-database");
+    expect(result.metadata.deviceCount).toBe(2);
+    expect(result.metadata.type).toBe("device-database");
   });
 
   it("handles malformed JSON gracefully", () => {
@@ -175,6 +175,6 @@ describe("zigbee2mqttConverter (device database JSON)", () => {
     const json = JSON.stringify({});
     const result = zigbee2mqttConverter.convert(json, "/config/empty_devices.json");
     expect(result.markdown).toContain("No devices found");
-    expect(result.metadata["deviceCount"]).toBe(0);
+    expect(result.metadata.deviceCount).toBe(0);
   });
 });

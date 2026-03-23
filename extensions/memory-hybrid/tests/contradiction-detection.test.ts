@@ -110,7 +110,7 @@ describe("detectContradictions: confidence reduction", () => {
 
     const afterOld = db.getById(old.id);
     expect(afterOld).not.toBeNull();
-    expect(afterOld!.confidence).toBeCloseTo(0.8, 5);
+    expect(afterOld?.confidence).toBeCloseTo(0.8, 5);
   });
 
   it("does not reduce below the floor of 0.1", () => {
@@ -120,14 +120,14 @@ describe("detectContradictions: confidence reduction", () => {
 
     // Confidence should now be 0.1 (floor), not 0.0
     const afterFirst = db.getById(old.id);
-    expect(afterFirst!.confidence).toBeCloseTo(0.1, 5);
+    expect(afterFirst?.confidence).toBeCloseTo(0.1, 5);
 
     // Store another contradicting fact — confidence must stay at 0.1
     const new2 = storeFact("user", "theme", "solarized", "User switched to solarized");
     db.detectContradictions(new2.id, "user", "theme", "solarized");
 
     const afterSecond = db.getById(old.id);
-    expect(afterSecond!.confidence).toBeCloseTo(0.1, 5);
+    expect(afterSecond?.confidence).toBeCloseTo(0.1, 5);
   });
 });
 
@@ -243,7 +243,7 @@ describe("resolveContradictions", () => {
   });
 
   it("returns ambiguous when new fact does not have higher confidence", () => {
-    const old = storeFact("user", "theme", "dark", "User prefers dark mode", 1.0);
+    const _old = storeFact("user", "theme", "dark", "User prefers dark mode", 1.0);
     const newFact = storeFact("user", "theme", "light", "User switched to light mode", 0.5);
 
     db.detectContradictions(newFact.id, "user", "theme", "light");
@@ -306,8 +306,8 @@ describe("resolveContradiction", () => {
     const records = db.getContradictions(old.id);
     const record = records.find((r) => r.id === contradictionId);
     expect(record).toBeDefined();
-    expect(record!.resolved).toBe(true);
-    expect(record!.resolution).toBe("superseded");
+    expect(record?.resolved).toBe(true);
+    expect(record?.resolution).toBe("superseded");
   });
 
   it("returns false when the record does not exist", () => {

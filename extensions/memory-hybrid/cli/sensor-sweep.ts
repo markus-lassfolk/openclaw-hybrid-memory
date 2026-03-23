@@ -69,7 +69,7 @@ export function registerSensorSweepCommands(mem: Chainable, ctx: SensorSweepCont
           };
 
           if (opts.json) {
-            process.stdout.write(JSON.stringify(cliResult, null, 2) + "\n");
+            process.stdout.write(`${JSON.stringify(cliResult, null, 2)}\n`);
           } else {
             const prefix = opts.dryRun ? "[dry-run] " : "";
             process.stdout.write(`${prefix}Sensor sweep complete:\n`);
@@ -79,7 +79,7 @@ export function registerSensorSweepCommands(mem: Chainable, ctx: SensorSweepCont
             }
             process.stdout.write(`Total: ${result.totalWritten} written, ${result.totalSkipped} skipped\n`);
             if (result.errors.length > 0) {
-              process.stdout.write(`Errors:\n`);
+              process.stdout.write("Errors:\n");
               for (const e of result.errors) {
                 process.stdout.write(`  - ${e}\n`);
               }
@@ -115,7 +115,7 @@ export function registerSensorSweepCommands(mem: Chainable, ctx: SensorSweepCont
           });
 
           if (opts.json) {
-            process.stdout.write(JSON.stringify(events, null, 2) + "\n");
+            process.stdout.write(`${JSON.stringify(events, null, 2)}\n`);
           } else {
             if (events.length === 0) {
               process.stdout.write("No events found.\n");

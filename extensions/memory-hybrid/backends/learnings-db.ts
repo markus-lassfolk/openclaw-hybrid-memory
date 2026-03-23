@@ -120,7 +120,7 @@ export class LearningsDB {
     if (!existing) throw new Error(`LearningEntry not found: ${id}`);
 
     const now = new Date().toISOString();
-    this.db.prepare(`UPDATE learnings SET recurrence = recurrence + 1, updated_at = ? WHERE id = ?`).run(now, id);
+    this.db.prepare("UPDATE learnings SET recurrence = recurrence + 1, updated_at = ? WHERE id = ?").run(now, id);
 
     // biome-ignore lint/style/noNonNullAssertion: Known to exist
     return this.get(id)!;
@@ -278,7 +278,7 @@ export class LearningsDB {
   /** Return the next sequential number for slugs of a given type. */
   private nextSeq(type: LearningEntryType): number {
     const prefix = TYPE_PREFIX[type];
-    const rows = this.db.prepare(`SELECT slug FROM learnings WHERE slug LIKE ?`).all(`${prefix}-%`) as unknown as {
+    const rows = this.db.prepare("SELECT slug FROM learnings WHERE slug LIKE ?").all(`${prefix}-%`) as unknown as {
       slug: string;
     }[];
 

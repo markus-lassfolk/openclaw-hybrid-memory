@@ -56,7 +56,7 @@ const DEFAULT_SELF_CORRECTION = {
  * Extract self-correction incidents from sessions.
  */
 export function runSelfCorrectionExtractForCli(
-  ctx: HandlerContext,
+  _ctx: HandlerContext,
   opts: {
     days?: number;
     outputPath?: string;

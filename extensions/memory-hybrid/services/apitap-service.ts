@@ -68,7 +68,7 @@ function matchesPattern(url: string, pattern: string): boolean {
     if (regex.test(url)) return true;
     // Also test with trailing slash to catch patterns like **/auth/** matching /auth
     if (!url.endsWith("/")) {
-      return regex.test(url + "/");
+      return regex.test(`${url}/`);
     }
     return false;
   } catch {
@@ -132,7 +132,7 @@ export function validateUrl(url: string, cfg: ApiTapConfig): string | null {
   if (cfg.allowedPatterns.length > 0) {
     const allowed = cfg.allowedPatterns.some((p) => matchesPattern(normalizedUrl, p));
     if (!allowed) {
-      return `URL does not match any allowed pattern. Configure apiTap.allowedPatterns to permit this site.`;
+      return "URL does not match any allowed pattern. Configure apiTap.allowedPatterns to permit this site.";
     }
   }
 

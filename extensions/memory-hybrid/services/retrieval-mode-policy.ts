@@ -73,7 +73,7 @@ export function resolveInteractiveRecallPolicy(
   retrieval?: { ambientBudgetTokens: number },
 ): InteractiveRecallPolicy {
   // When queryExpansion.skipForInteractiveTurns is false, allow HyDE on interactive turns
-  const allowHyde = queryExpansion !== undefined && queryExpansion.enabled && !queryExpansion.skipForInteractiveTurns;
+  const allowHyde = queryExpansion?.enabled && !queryExpansion.skipForInteractiveTurns;
   // Enforce retrieval.ambientBudgetTokens as a hard total-token cap.
   // autoRecall.maxTokens is a user preference; ambientBudgetTokens is the architectural
   // ceiling — the injected context must not exceed either.

@@ -126,7 +126,7 @@ export async function migrateEmbeddings(opts: MigrateEmbeddingsOptions): Promise
             ) => Array<{ id: string; text: string; importance?: number; category: string }>;
           }
         ).getBatch(offset, batchSize, { includeSuperseded: false })
-      : facts!.slice(offset, offset + batchSize);
+      : facts?.slice(offset, offset + batchSize);
     if (batch.length === 0) break;
     const texts = batch.map((f) => f.text);
 
@@ -220,8 +220,7 @@ export async function migrateEmbeddings(opts: MigrateEmbeddingsOptions): Promise
   }
 
   log.info(
-    `memory-hybrid: embedding-migration: complete — ` +
-      `${migrated} migrated, ${skipped} skipped, ${errors.length} errors (total ${total})`,
+    `memory-hybrid: embedding-migration: complete — ${migrated} migrated, ${skipped} skipped, ${errors.length} errors (total ${total})`,
   );
 
   return { total, migrated, skipped, errors };
@@ -271,21 +270,19 @@ export async function runEmbeddingMaintenance(opts: EmbeddingMaintenanceOptions)
     return { changed: false, migrated: false };
   }
 
-  log.info(
-    `memory-hybrid: embedding config changed — ` + `now using provider=${currentProvider}, model=${currentModel}`,
-  );
+  log.info(`memory-hybrid: embedding config changed — now using provider=${currentProvider}, model=${currentModel}`);
 
   if (!autoMigrate) {
     log.warn(
-      `memory-hybrid: embedding.autoMigrate=false — skipping automatic re-embedding. ` +
-        `Set embedding.autoMigrate=true in plugin config to automatically re-generate ` +
-        `embeddings when the model changes, or run the maintenance command manually.`,
+      "memory-hybrid: embedding.autoMigrate=false — skipping automatic re-embedding. " +
+        "Set embedding.autoMigrate=true in plugin config to automatically re-generate " +
+        "embeddings when the model changes, or run the maintenance command manually.",
     );
     factsDb.setEmbeddingMeta(currentProvider, currentModel);
     return { changed: true, migrated: false };
   }
 
-  log.info(`memory-hybrid: embedding.autoMigrate=true — starting re-embedding of existing facts...`);
+  log.info("memory-hybrid: embedding.autoMigrate=true — starting re-embedding of existing facts...");
 
   try {
     const result = await migrateEmbeddings(opts);

@@ -41,7 +41,7 @@ function normalizeSuggestedLabel(s: string): string {
  * Exported for testing.
  */
 export function getLastDiscoveryPath(discoveredCategoriesPath: string): string {
-  return discoveredCategoriesPath.replace(/\.json$/i, "") + ".last-run.json";
+  return `${discoveredCategoriesPath.replace(/\.json$/i, "")}.last-run.json`;
 }
 
 /**
@@ -147,7 +147,7 @@ async function discoverCategoriesFromOther(
         const label = normalizeSuggestedLabel(raw);
         if (!label) continue;
         if (!labelToIds.has(label)) labelToIds.set(label, []);
-        labelToIds.get(label)!.push(batch[j].id);
+        labelToIds.get(label)?.push(batch[j].id);
       }
     } catch (err) {
       const discErr = err instanceof Error ? err : new Error(String(err));
@@ -310,7 +310,7 @@ function createProgressReporter(
       const dots = Math.max(0, width - filled - arrow);
       const bar = "=".repeat(filled) + ">".repeat(arrow) + ".".repeat(dots);
       const line = `${label}: ${pct}% [${bar}] ${current}/${total}${extra ? ` (${extra})` : ""}`;
-      process.stdout.write("\r" + line + " ".repeat(Math.max(0, lastLen - line.length)));
+      process.stdout.write(`\r${line}${" ".repeat(Math.max(0, lastLen - line.length))}`);
       lastLen = line.length;
     },
     done() {

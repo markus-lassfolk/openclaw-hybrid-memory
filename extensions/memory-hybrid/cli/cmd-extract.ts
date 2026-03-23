@@ -89,7 +89,7 @@ export function getMaxMtime(filePaths: string[]): number | undefined {
       if (maxMtime === undefined || mtime > maxMtime) {
         maxMtime = mtime;
       }
-    } catch (err) {
+    } catch (_err) {
       // Ignore files that can't be stat'd
     }
   }
@@ -534,7 +534,7 @@ export async function runExtractReinforcementForCli(
               proposalsDb.create({
                 targetFile,
                 title: `Reinforcement: ${a.category}`,
-                observation: `Positive signal from reinforcement analysis`,
+                observation: "Positive signal from reinforcement analysis",
                 suggestedChange: suggestedChange.trim(),
                 confidence: 0.7,
                 evidenceSessions: result.incidents
@@ -694,29 +694,26 @@ export async function runGenerateProposalsForCli(
   const insights: string[] = [];
   if (patterns.length) {
     insights.push(
-      "Patterns:\n" +
-        patterns
-          .slice(0, 30)
-          .map((f) => `- ${f.text}`)
-          .join("\n"),
+      `Patterns:\n${patterns
+        .slice(0, 30)
+        .map((f) => `- ${f.text}`)
+        .join("\n")}`,
     );
   }
   if (rules.length) {
     insights.push(
-      "Rules:\n" +
-        rules
-          .slice(0, 30)
-          .map((f) => `- ${f.text}`)
-          .join("\n"),
+      `Rules:\n${rules
+        .slice(0, 30)
+        .map((f) => `- ${f.text}`)
+        .join("\n")}`,
     );
   }
   if (metaPatterns.length) {
     insights.push(
-      "Meta-patterns:\n" +
-        metaPatterns
-          .slice(0, 10)
-          .map((f) => `- ${f.text}`)
-          .join("\n"),
+      `Meta-patterns:\n${metaPatterns
+        .slice(0, 10)
+        .map((f) => `- ${f.text}`)
+        .join("\n")}`,
     );
   }
   if (personaStateBlock) {
@@ -797,7 +794,7 @@ export async function runGenerateProposalsForCli(
         : rawResponse;
     items = JSON.parse(trimmed);
     if (!Array.isArray(items)) items = [];
-  } catch (err) {
+  } catch (_err) {
     if (opts.verbose)
       ctx.logger.warn?.(
         `memory-hybrid: generate-proposals — LLM output was not valid JSON: ${rawResponse.slice(0, 200)}`,

@@ -120,7 +120,7 @@ export class IdentityReflectionStore {
   }
 
   get(id: string): IdentityReflectionEntry | null {
-    const row = this.db.prepare(`SELECT * FROM identity_reflections WHERE id = ?`).get(id) as
+    const row = this.db.prepare("SELECT * FROM identity_reflections WHERE id = ?").get(id) as
       | IdentityReflectionRow
       | undefined;
     if (!row) return null;
@@ -129,7 +129,7 @@ export class IdentityReflectionStore {
 
   listRecent(limit = 50): IdentityReflectionEntry[] {
     const rows = this.db
-      .prepare(`SELECT * FROM identity_reflections ORDER BY created_at DESC LIMIT ?`)
+      .prepare("SELECT * FROM identity_reflections ORDER BY created_at DESC LIMIT ?")
       .all(limit) as unknown as IdentityReflectionRow[];
     return rows.map((row) => this.rowToEntry(row));
   }
@@ -143,7 +143,7 @@ export class IdentityReflectionStore {
 
   getLatestByQuestion(questionKey: string): IdentityReflectionEntry | null {
     const row = this.db
-      .prepare(`SELECT * FROM identity_reflections WHERE question_key = ? ORDER BY created_at DESC LIMIT 1`)
+      .prepare("SELECT * FROM identity_reflections WHERE question_key = ? ORDER BY created_at DESC LIMIT 1")
       .get(questionKey) as IdentityReflectionRow | undefined;
     if (!row) return null;
     return this.rowToEntry(row);

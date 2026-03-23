@@ -312,7 +312,7 @@ describe("consolidation provenance chain", () => {
     const mergedFact = remainingFacts.find((f) => f.id !== source1.id && f.id !== source2.id);
     expect(mergedFact).toBeDefined();
 
-    const edges = provenanceService.getEdges(mergedFact!.id);
+    const edges = provenanceService.getEdges(mergedFact?.id);
     const consolidatedFrom = edges.filter((e) => e.edgeType === "CONSOLIDATED_FROM");
     const sourceIds = consolidatedFrom.map((e) => e.sourceId).sort();
 

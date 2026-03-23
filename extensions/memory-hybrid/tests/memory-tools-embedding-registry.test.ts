@@ -136,7 +136,7 @@ describe("memory tools embedding registry wiring", () => {
 
     const tool = api.getTool("memory_recall");
     expect(tool).toBeTruthy();
-    await tool!.execute("tool-call", { query: "where is the API key stored", limit: 5 });
+    await tool?.execute("tool-call", { query: "where is the API key stored", limit: 5 });
 
     const runMock = vi.mocked(runExplicitDeepRetrieval);
     expect(runMock).toHaveBeenCalled();
@@ -187,7 +187,7 @@ describe("memory tools embedding registry wiring", () => {
 
     const tool = api.getTool("memory_store");
     expect(tool).toBeTruthy();
-    const result = await tool!.execute("tool-call", { text: "hello", category: "fact", importance: 0.6 });
+    const result = await tool?.execute("tool-call", { text: "hello", category: "fact", importance: 0.6 });
     const id = (result as { details?: { id?: string } }).details?.id;
     expect(id).toBeTruthy();
 

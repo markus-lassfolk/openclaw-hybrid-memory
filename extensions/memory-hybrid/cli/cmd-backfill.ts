@@ -162,7 +162,7 @@ function extractBackfillFact(line: string): {
           category = "preference";
         } else {
           const templateResult = tryExtractionFromTemplates(getExtractionTemplates(), t);
-          if (templateResult && templateResult.entity && templateResult.value) {
+          if (templateResult?.entity && templateResult.value) {
             entity = templateResult.entity;
             key = templateResult.key;
             value = templateResult.value;
@@ -337,7 +337,7 @@ export async function runAnalyzeFeedbackPhrasesForCli(
       reinforcement: [],
       correction: [],
       sessionsScanned: 0,
-      error: "No session files found under ~/.openclaw/agents/*/sessions/ in the last " + effectiveDays + " days.",
+      error: `No session files found under ~/.openclaw/agents/*/sessions/ in the last ${effectiveDays} days.`,
     };
   }
 
@@ -363,9 +363,7 @@ export async function runAnalyzeFeedbackPhrasesForCli(
     for (let i = 0; i < unmatched.length; i += SENTIMENT_BATCH_SIZE) {
       const batch = unmatched.slice(i, i + SENTIMENT_BATCH_SIZE);
       const truncated = batch.map((t) => t.slice(0, SENTIMENT_MSG_MAX_CHARS).replace(/\n/g, " "));
-      const prompt =
-        "For each of the following user messages (one per line), output exactly one word per line in the same order: positive_feedback, negative_feedback, or neutral. Output ONLY one word per line, no preamble, no explanation.\n\n" +
-        truncated.join("\n");
+      const prompt = `For each of the following user messages (one per line), output exactly one word per line in the same order: positive_feedback, negative_feedback, or neutral. Output ONLY one word per line, no preamble, no explanation.\n\n${truncated.join("\n")}`;
       try {
         const content = await chatCompleteWithRetry({
           model: nanoModel,
@@ -401,9 +399,9 @@ export async function runAnalyzeFeedbackPhrasesForCli(
   }
 
   const maxChars = 400_000;
-  const userMessagesBlock = toAnalyze.map((t) => "User: " + t).join("\n");
+  const userMessagesBlock = toAnalyze.map((t) => `User: ${t}`).join("\n");
   const truncatedBlock =
-    userMessagesBlock.length > maxChars ? userMessagesBlock.slice(0, maxChars) + "\n[truncated...]" : userMessagesBlock;
+    userMessagesBlock.length > maxChars ? `${userMessagesBlock.slice(0, maxChars)}\n[truncated...]` : userMessagesBlock;
   const prompt = fillPrompt(loadPrompt("analyze-feedback-phrases"), { user_messages: truncatedBlock });
   const cronCfg = getCronModelConfig(cfg);
   const defaultPref = getLLMModelPreference(cronCfg, "default");
@@ -479,7 +477,7 @@ export async function runAnalyzeFeedbackPhrasesForCli(
           reinforcement: [],
           correction: [],
           sessionsScanned: sessionFiles.length,
-          error: "Failed to locate JSON object in LLM output: " + trimmedContent.slice(0, 500),
+          error: `Failed to locate JSON object in LLM output: ${trimmedContent.slice(0, 500)}`,
         };
       }
       try {
@@ -489,7 +487,7 @@ export async function runAnalyzeFeedbackPhrasesForCli(
           reinforcement: [],
           correction: [],
           sessionsScanned: sessionFiles.length,
-          error: "Failed to parse LLM JSON: " + String(e),
+          error: `Failed to parse LLM JSON: ${String(e)}`,
         };
       }
     }
@@ -610,7 +608,7 @@ export async function runIngestFilesForCli(
   }> = [];
   for (let b = 0; b < batches.length; b++) {
     sink.log(`Processing batch ${b + 1}/${batches.length}...`);
-    const userContent = ingestPrompt + "\n\n" + batches[b];
+    const userContent = `${ingestPrompt}\n\n${batches[b]}`;
     try {
       const content = await chatCompleteWithRetry({
         model: model,

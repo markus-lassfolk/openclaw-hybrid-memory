@@ -195,9 +195,7 @@ async function resolveOnnxModelFiles(
         await downloadFile(vocabUrl, candidatePath);
         vocabPath = candidatePath;
         break;
-      } catch {
-        continue;
-      }
+      } catch {}
     }
   }
   if (!vocabPath) {
@@ -444,9 +442,9 @@ export class OnnxEmbeddingProvider implements EmbeddingProvider {
     const allResults: number[][] = [];
     for (let i = 0; i < texts.length; i += this.batchSize) {
       const batch = texts.slice(i, i + this.batchSize);
-      const encoded = batch.map((t) => this.tokenizer!.encode(t, this.maxSeqLength));
+      const encoded = batch.map((t) => this.tokenizer?.encode(t, this.maxSeqLength));
       const maxLen = Math.min(this.maxSeqLength, Math.max(...encoded.map((e) => e.inputIds.length)));
-      const padId = this.tokenizer!.getPadTokenId();
+      const padId = this.tokenizer?.getPadTokenId();
       for (const e of encoded) {
         while (e.inputIds.length < maxLen) {
           e.inputIds.push(padId);
@@ -472,23 +470,23 @@ export class OnnxEmbeddingProvider implements EmbeddingProvider {
       if (!inputNames.includes("input_ids")) {
         throw new Error("ONNX model input does not include input_ids");
       }
-      feeds["input_ids"] = new this.ort.Tensor("int64", inputIds, [batchSize, maxLen]);
+      feeds.input_ids = new this.ort.Tensor("int64", inputIds, [batchSize, maxLen]);
       if (inputNames.includes("attention_mask")) {
-        feeds["attention_mask"] = new this.ort.Tensor("int64", attentionMask, [batchSize, maxLen]);
+        feeds.attention_mask = new this.ort.Tensor("int64", attentionMask, [batchSize, maxLen]);
       }
       if (inputNames.includes("token_type_ids")) {
-        feeds["token_type_ids"] = new this.ort.Tensor("int64", tokenTypeIds, [batchSize, maxLen]);
+        feeds.token_type_ids = new this.ort.Tensor("int64", tokenTypeIds, [batchSize, maxLen]);
       }
 
       const output = await this.session.run(feeds);
-      const outputTensor = output["sentence_embedding"] ?? output["pooler_output"] ?? output["last_hidden_state"];
+      const outputTensor = output.sentence_embedding ?? output.pooler_output ?? output.last_hidden_state;
       if (!outputTensor) {
         throw new Error("ONNX output missing sentence_embedding/pooler_output/last_hidden_state");
       }
       const data = outputTensor.data as Float32Array;
       const dims = outputTensor.dims as number[];
       let vectors: Float32Array[] = [];
-      if (outputTensor === output["last_hidden_state"]) {
+      if (outputTensor === output.last_hidden_state) {
         const [b, s, h] = dims;
         if (!b || !s || !h) throw new Error("ONNX last_hidden_state has invalid dims");
         vectors = meanPool(data, attentionMask, b, s, h);

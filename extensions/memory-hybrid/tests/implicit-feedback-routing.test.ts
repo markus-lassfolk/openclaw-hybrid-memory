@@ -223,7 +223,7 @@ describe("implicit feedback routing — positive → reinforcement", () => {
     expect(result.positiveCount).toBeGreaterThan(0);
 
     // No reinforcement_log entries should have been created.
-    const logRows = rawDb(db).prepare(`SELECT COUNT(*) as cnt FROM reinforcement_log`).get() as { cnt: number };
+    const logRows = rawDb(db).prepare("SELECT COUNT(*) as cnt FROM reinforcement_log").get() as { cnt: number };
     expect(logRows.cnt).toBe(0);
   });
 });
@@ -338,7 +338,7 @@ describe("implicit feedback routing — dry-run mode", () => {
 
     expect(result.signalsExtracted).toBeGreaterThan(0);
 
-    const sigRows = rawDb(db).prepare(`SELECT COUNT(*) as cnt FROM implicit_signals`).get() as { cnt: number };
+    const sigRows = rawDb(db).prepare("SELECT COUNT(*) as cnt FROM implicit_signals").get() as { cnt: number };
     expect(sigRows.cnt).toBe(0);
 
     const factRows = rawDb(db)

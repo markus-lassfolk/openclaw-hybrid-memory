@@ -307,7 +307,7 @@ export async function runCrossAgentLearning(
         for (const lesson of generalised) {
           if (!lesson.text || lesson.text.trim().length < 10) continue;
           if (lesson.text.length > 500) {
-            lesson.text = lesson.text.slice(0, 497) + "...";
+            lesson.text = `${lesson.text.slice(0, 497)}...`;
           }
 
           // Skip if already exists globally
@@ -554,7 +554,7 @@ export async function verifyLessonForAgent(
 
   try {
     const row = db
-      .prepare(`SELECT id, confidence, tags FROM facts WHERE id = ? AND source = ? AND superseded_at IS NULL`)
+      .prepare("SELECT id, confidence, tags FROM facts WHERE id = ? AND source = ? AND superseded_at IS NULL")
       .get(lessonId, CROSS_AGENT_SOURCE) as { id: string; confidence: number; tags: string | null } | undefined;
 
     if (!row) return;
@@ -568,7 +568,7 @@ export async function verifyLessonForAgent(
     // Boost confidence, cap at 1.0
     const newConfidence = Math.min(1.0, (row.confidence ?? 0.6) + boost);
 
-    db.prepare(`UPDATE facts SET confidence = ?, tags = ? WHERE id = ?`).run(
+    db.prepare("UPDATE facts SET confidence = ?, tags = ? WHERE id = ?").run(
       newConfidence,
       serializeTags(updatedTags),
       lessonId,

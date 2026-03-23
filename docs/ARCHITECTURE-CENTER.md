@@ -35,8 +35,8 @@ Core runtime is the set of modules that must remain cohesive and first-class:
 | Retrieval core and orchestration | `extensions/memory-hybrid/services/retrieval-orchestrator.ts`, `extensions/memory-hybrid/services/recall-pipeline.ts`, `extensions/memory-hybrid/services/vector-search.ts`, `extensions/memory-hybrid/services/fts-search.ts`, `extensions/memory-hybrid/services/rrf-fusion.ts`, `extensions/memory-hybrid/services/reranker.ts` | Determines memory relevance and recall quality |
 | Lifecycle integration | `extensions/memory-hybrid/setup/register-hooks.ts`, `extensions/memory-hybrid/lifecycle/hooks.ts`, `extensions/memory-hybrid/lifecycle/stage-capture.ts`, `extensions/memory-hybrid/lifecycle/stage-recall.ts`, `extensions/memory-hybrid/lifecycle/stage-injection.ts` | Connects memory runtime to agent turn flow |
 | Primary memory tool API surface | `extensions/memory-hybrid/setup/register-tools.ts`, `extensions/memory-hybrid/tools/memory-tools.ts` | Stable external contract for memory operations |
-| Core trust/provenance seams | `extensions/memory-hybrid/services/provenance.ts`, `extensions/memory-hybrid/tools/provenance-tools.ts`, `extensions/memory-hybrid/backends/event-log.ts` | Supports explainability/auditability for memory behavior |
-| Core config/types | `extensions/memory-hybrid/config.ts`, `extensions/memory-hybrid/config/**`, `extensions/memory-hybrid/types/memory.ts` | Runtime behavior policy and compatibility surface |
+| Core trust/provenance seams | `extensions/memory-hybrid/services/provenance.ts`, `extensions/memory-hybrid/tools/provenance-tools.ts`, `extensions/memory-hybrid/backends/event-log.ts` | Supports explainability and auditability for memory behavior |
+| Core config/types | `extensions/memory-hybrid/config.ts`, `extensions/memory-hybrid/config/`, `extensions/memory-hybrid/types/memory.ts` | Runtime behavior policy and compatibility surface |
 
 ---
 
@@ -46,13 +46,28 @@ These are valuable, but they are not the architecture center and should evolve w
 
 | Subsystem | Primary ownership (module/files) | Classification |
 |---|---|---|
-| Dashboard and HTTP routes | `extensions/memory-hybrid/routes/dashboard-server.ts`, `extensions/memory-hybrid/tools/dashboard-routes.ts`, `dashboard/` | Adjacent observability/UI surface |
+| Dashboard and HTTP routes | `extensions/memory-hybrid/routes/dashboard-server.ts`, `extensions/memory-hybrid/tools/dashboard-routes.ts` | Adjacent observability/UI surface |
 | Workflow mining and pattern tracking | `extensions/memory-hybrid/backends/workflow-store.ts`, `extensions/memory-hybrid/services/workflow-tracker.ts`, `extensions/memory-hybrid/tools/workflow-tools.ts` | Adjacent learning/analytics layer |
 | Issue tracking | `extensions/memory-hybrid/backends/issue-store.ts`, `extensions/memory-hybrid/tools/issue-tools.ts` | Adjacent operational state |
 | Crystallization and self-extension | `extensions/memory-hybrid/backends/crystallization-store.ts`, `extensions/memory-hybrid/backends/tool-proposal-store.ts`, `extensions/memory-hybrid/services/crystallization-proposer.ts`, `extensions/memory-hybrid/services/skill-crystallizer.ts`, `extensions/memory-hybrid/services/tool-proposer.ts`, `extensions/memory-hybrid/tools/crystallization-tools.ts`, `extensions/memory-hybrid/tools/self-extension-tools.ts` | Adjacent autonomy/optimization features |
 | ApiTap capture and tooling | `extensions/memory-hybrid/backends/apitap-store.ts`, `extensions/memory-hybrid/services/apitap-service.ts`, `extensions/memory-hybrid/tools/apitap-tools.ts` | Adjacent specialized ingestion |
 | Advanced maintenance/analysis utilities | `extensions/memory-hybrid/services/reflection.ts`, `extensions/memory-hybrid/services/monthly-review.ts`, `extensions/memory-hybrid/services/continuous-verifier.ts`, `extensions/memory-hybrid/tools/verification-tools.ts`, `extensions/memory-hybrid/cli/cmd-verify.ts` | Adjacent maintenance plane |
 | Optional document ingestion | `extensions/memory-hybrid/tools/document-tools.ts`, `extensions/memory-hybrid/services/document-chunker.ts`, `extensions/memory-hybrid/services/python-bridge.ts` | Adjacent opt-in ingestion pipeline |
+
+---
+
+## Classification Heuristic
+
+Use these questions before promoting any new feature into the architecture center:
+
+| Question | If yes, classify as |
+|---|---|
+| If removed, would live turn-time capture, persistence, retrieval, injection, or provenance break? | Core runtime |
+| Does it define a compatibility surface other features rely on, such as memory lifecycle hooks, storage semantics, or primary memory tools? | Core runtime |
+| Can it be disabled or replaced without breaking the baseline memory runtime contract? | Adjacent subsystem |
+| Is it mainly observability, specialized ingestion, maintenance, workflow mining, or self-optimization on top of core memory flows? | Adjacent subsystem |
+
+This keeps core small and stable while leaving room for optional capabilities to evolve quickly.
 
 ---
 
@@ -81,7 +96,8 @@ openclaw-hybrid-memory
 │   ├── tools/memory-tools.ts              # primary tool API
 │   └── services/provenance.ts + event-log.ts
 └── Adjacent subsystems
-    ├── routes/ + dashboard/               # dashboard/UI
+    ├── routes/dashboard-server.ts         # dashboard/UI endpoint
+    ├── tools/dashboard-routes.ts          # dashboard HTTP routes
     ├── workflow/issue/crystallization/*   # learning and operations layers
     ├── self-extension/*                   # proposal and generation paths
     ├── apitap/*                           # browser capture specialization
@@ -96,4 +112,3 @@ openclaw-hybrid-memory
 - Changes that touch core runtime files should avoid importing adjacent stores/services directly; prefer narrow interfaces passed through `MemoryPluginAPI`.
 - If an adjacent subsystem requires core data, add adapter/seam code in setup wiring instead of expanding core module responsibilities.
 - If a proposal removes a store, it must replace current retrieval/latency/quality semantics and document migration + rollback.
-

@@ -19,7 +19,7 @@ export function migrateScanCursorsTable(db: DatabaseSync): void {
 
 export function getScanCursor(db: DatabaseSync, scanType: string): ScanCursor | null {
   const row = db
-    .prepare(`SELECT last_session_ts, last_run_at, sessions_processed FROM scan_cursors WHERE scan_type = ?`)
+    .prepare("SELECT last_session_ts, last_run_at, sessions_processed FROM scan_cursors WHERE scan_type = ?")
     .get(scanType) as { last_session_ts: number; last_run_at: number; sessions_processed: number } | undefined;
   if (!row) return null;
   return {

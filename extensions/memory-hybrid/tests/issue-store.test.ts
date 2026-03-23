@@ -100,8 +100,8 @@ describe("IssueStore.get", () => {
     const created = store.create({ title: "Auth fails", symptoms: ["401 error"] });
     const fetched = store.get(created.id);
     expect(fetched).not.toBeNull();
-    expect(fetched!.id).toBe(created.id);
-    expect(fetched!.title).toBe("Auth fails");
+    expect(fetched?.id).toBe(created.id);
+    expect(fetched?.title).toBe("Auth fails");
   });
 
   it("returns null for unknown id", () => {
