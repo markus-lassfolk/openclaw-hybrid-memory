@@ -31,15 +31,15 @@ describe("recallNarrativeSummaries", () => {
 
     narrativesDb.store({
       sessionId: "deploy-session",
-      periodStart: 1_742_688_000,
-      periodEnd: 1_742_688_600,
+      periodStart: 1_774_224_000,
+      periodEnd: 1_774_224_600,
       tag: "session",
       narrativeText: "Yesterday you debugged the deploy pipeline, retried npm test, and decided to patch CI next.",
     });
     narrativesDb.store({
       sessionId: "gardening-session",
-      periodStart: 1_742_774_400,
-      periodEnd: 1_742_775_000,
+      periodStart: 1_774_310_400,
+      periodEnd: 1_774_311_000,
       tag: "session",
       narrativeText: "You planned garden watering and discussed tomatoes.",
     });
@@ -84,8 +84,8 @@ describe("recallNarrativeSummaries", () => {
   });
 
   it("formats stored second-based timestamps as real ISO ranges", () => {
-    expect(formatNarrativeRange(1_742_688_000, 1_742_688_600)).toBe(
-      "2025-03-23T00:00:00.000Z..2025-03-23T00:10:00.000Z",
+    expect(formatNarrativeRange(1_774_224_000, 1_774_224_600)).toBe(
+      "2026-03-23T00:00:00.000Z..2026-03-23T00:10:00.000Z",
     );
   });
 });
