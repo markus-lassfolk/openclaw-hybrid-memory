@@ -1443,7 +1443,7 @@ describe("#385: createEmbeddingProvider uses gemini-embedding-001 as default Goo
     expect(provider.modelName).toBe("text-embedding-005");
   });
 
-  it("chain with Google uses gemini-embedding-001 for Google when primary model is OpenAI-only", () => {
+  it("chain fallback is initialized when preferredProviders contains multiple entries including Google", () => {
     const cfg: EmbeddingConfig = {
       provider: "openai",
       model: "text-embedding-3-small",
