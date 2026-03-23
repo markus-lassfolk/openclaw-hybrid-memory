@@ -17,6 +17,7 @@ import type { FindDuplicatesResult } from "../cli/types.js";
 import { runFindDuplicates } from "../services/find-duplicates.js";
 import { runConsolidate } from "../services/consolidation.js";
 import { runReflection, runReflectionRules, runReflectionMeta } from "../services/reflection.js";
+import { runIdentityReflection } from "../services/identity-reflection.js";
 import { runDreamCycle, type DreamCycleResult } from "../services/dream-cycle.js";
 import { runVerificationCycle, type VerificationCycleResult } from "../services/continuous-verifier.js";
 import { runClassifyForCli } from "../services/auto-classifier.js";
@@ -83,6 +84,7 @@ Commands by category:
     extract-directives   Extract directive rules from sessions
     extract-reinforcement  Extract reinforcement from praise
     generate-auto-skills   Generate skills from procedures
+    reflect-identity      Synthesize persona insights from reflection outputs
     generate-proposals    Generate persona proposals from reflection (--dry-run, --verbose)
 
   Reflection & classification
@@ -147,6 +149,7 @@ export const HYBRID_MEM_CLI_COMMANDS = [
   "hybrid-mem extract-daily",
   "hybrid-mem extract-procedures",
   "hybrid-mem generate-auto-skills",
+  "hybrid-mem reflect-identity",
   "hybrid-mem generate-proposals",
   "hybrid-mem extract-directives",
   "hybrid-mem extract-reinforcement",
@@ -224,6 +227,12 @@ export interface CliContextServices {
     model: string;
     verbose?: boolean;
   }) => Promise<{ metaExtracted: number; metaStored: number }>;
+  runReflectIdentity: (opts: {
+    dryRun: boolean;
+    model: string;
+    verbose?: boolean;
+    window?: number;
+  }) => Promise<{ insightsExtracted: number; insightsStored: number; questionsAsked: number }>;
   runClassify: (opts: { dryRun: boolean; limit: number; model?: string }) => Promise<{
     reclassified: number;
     total: number;
@@ -266,6 +275,7 @@ export interface HybridMemCliRegistrationContext {
   aliasDb: HandlerContext["aliasDb"];
   wal: HandlerContext["wal"];
   proposalsDb: HandlerContext["proposalsDb"];
+  identityReflectionStore: HandlerContext["identityReflectionStore"];
   verificationStore?: import("../services/verification-store.js").VerificationStore | null;
   provenanceService?: import("../services/provenance.js").ProvenanceService | null;
   resolvedSqlitePath: string;
@@ -289,6 +299,7 @@ function buildCliContextServices(ctx: HybridMemCliRegistrationContext, api: Claw
     cfg,
     resolvedSqlitePath,
     aliasDb,
+    identityReflectionStore,
     verificationStore,
     provenanceService,
   } = ctx;
@@ -353,6 +364,29 @@ function buildCliContextServices(ctx: HybridMemCliRegistrationContext, api: Claw
         { ...opts, model: opts.model ?? defaultModel, fallbackModels },
         logSink,
         provenanceService,
+      );
+    },
+    runReflectIdentity: (opts) => {
+      if (!identityReflectionStore) {
+        return Promise.resolve({
+          insightsExtracted: 0,
+          insightsStored: 0,
+          questionsAsked: cfg.identityReflection.questions.length,
+        });
+      }
+      const { defaultModel, fallbackModels } = resolveReflectionModelAndFallbacks(cfg, "default");
+      return runIdentityReflection(
+        factsDb,
+        identityReflectionStore,
+        openai,
+        cfg.identityReflection,
+        {
+          ...opts,
+          model: opts.model ?? cfg.identityReflection.model ?? defaultModel,
+          fallbackModels,
+          scopeFilter: cfg.autoRecall?.scopeFilter ?? undefined,
+        },
+        logSink,
       );
     },
     runClassify: async (opts) => {
@@ -804,6 +838,7 @@ export function createHybridMemCliContext(
     runReflection: services.runReflection,
     runReflectionRules: services.runReflectionRules,
     runReflectionMeta: services.runReflectionMeta,
+    runReflectIdentity: services.runReflectIdentity,
     runDreamCycle: services.runDreamCycle,
     runContinuousVerification: services.runContinuousVerification,
     runResolveContradictions: services.runResolveContradictions,
@@ -843,6 +878,7 @@ export function createHybridMemCliContext(
         backupDir: opts?.backupDir,
       }),
     runBackupVerify: () => runBackupVerifyFn({ resolvedSqlitePath: handlerCtx.resolvedSqlitePath }),
+    runReflectIdentity: (opts) => services.runReflectIdentity(opts),
     runGenerateProposals: (opts) => handlers.runGenerateProposalsForCli(handlerCtx, opts, api),
     activeTask: handlerCtx.cfg.activeTask.enabled ? buildActiveTaskCliContext(handlerCtx) : undefined,
     eventBus: handlerCtx.eventBus ?? null,

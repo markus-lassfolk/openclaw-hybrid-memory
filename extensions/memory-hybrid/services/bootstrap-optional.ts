@@ -4,6 +4,7 @@ import { ApitapStore } from "../backends/apitap-store.js";
 import { CredentialsDB } from "../backends/credentials-db.js";
 import { CrystallizationStore } from "../backends/crystallization-store.js";
 import { EventLog } from "../backends/event-log.js";
+import { IdentityReflectionStore } from "../backends/identity-reflection-store.js";
 import { IssueStore } from "../backends/issue-store.js";
 import { ProposalsDB } from "../backends/proposals-db.js";
 import { ToolProposalStore } from "../backends/tool-proposal-store.js";
@@ -26,6 +27,7 @@ export interface OptionalBootstrapServices {
   credentialsDb: CredentialsDB | null;
   wal: WriteAheadLog | null;
   proposalsDb: ProposalsDB | null;
+  identityReflectionStore: IdentityReflectionStore | null;
   eventLog: EventLog | null;
   aliasDb: AliasDB | null;
   issueStore: IssueStore;
@@ -72,6 +74,13 @@ export const optionalBootstrapInstaller: OptionalBootstrapInstaller = {
       const proposalsPath = join(baseDir, "proposals.db");
       proposalsDb = new ProposalsDB(proposalsPath);
       api.logger.info(`memory-hybrid: persona proposals enabled (${proposalsPath})`);
+    }
+
+    let identityReflectionStore: IdentityReflectionStore | null = null;
+    if (cfg.identityReflection.enabled || cfg.personaProposals.enabled) {
+      const identityReflectionPath = join(baseDir, "identity-reflection.db");
+      identityReflectionStore = new IdentityReflectionStore(identityReflectionPath);
+      api.logger.info(`memory-hybrid: identity reflection store initialized (${identityReflectionPath})`);
     }
 
     let eventLog: EventLog | null = null;
@@ -130,6 +139,7 @@ export const optionalBootstrapInstaller: OptionalBootstrapInstaller = {
       credentialsDb,
       wal,
       proposalsDb,
+      identityReflectionStore,
       eventLog,
       aliasDb,
       issueStore,

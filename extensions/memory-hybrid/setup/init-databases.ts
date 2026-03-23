@@ -9,6 +9,7 @@ import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
 import type { CredentialsDB } from "../backends/credentials-db.js";
 import type { ProposalsDB } from "../backends/proposals-db.js";
+import type { IdentityReflectionStore } from "../backends/identity-reflection-store.js";
 import type { EventLog } from "../backends/event-log.js";
 import { NarrativesDB } from "../backends/narratives-db.js";
 import type { WriteAheadLog } from "../backends/wal.js";
@@ -820,6 +821,7 @@ export interface DatabaseContext {
   credentialsDb: CredentialsDB | null;
   wal: WriteAheadLog | null;
   proposalsDb: ProposalsDB | null;
+  identityReflectionStore: IdentityReflectionStore | null;
   eventLog: EventLog | null;
   narrativesDb: NarrativesDB;
   aliasDb: AliasDB | null;
@@ -1239,6 +1241,7 @@ export function initializeDatabases(cfg: HybridMemoryConfig, api: ClawdbotPlugin
     credentialsDb,
     wal,
     proposalsDb,
+    identityReflectionStore,
     eventLog,
     aliasDb,
     issueStore,
@@ -1588,6 +1591,7 @@ export function initializeDatabases(cfg: HybridMemoryConfig, api: ClawdbotPlugin
     credentialsDb,
     wal,
     proposalsDb,
+    identityReflectionStore,
     eventLog,
     narrativesDb,
     aliasDb,
@@ -1616,6 +1620,7 @@ export function closeOldDatabases(context: {
   vectorDb?: VectorDB | null;
   credentialsDb?: CredentialsDB | null;
   proposalsDb?: ProposalsDB | null;
+  identityReflectionStore?: IdentityReflectionStore | null;
   eventLog?: EventLog | null;
   aliasDb?: AliasDB | null;
   eventBus?: import("../backends/event-bus.js").EventBus | null;
@@ -1634,6 +1639,7 @@ export function closeOldDatabases(context: {
     vectorDb,
     credentialsDb,
     proposalsDb,
+    identityReflectionStore,
     eventLog,
     aliasDb,
     eventBus,
@@ -1696,6 +1702,16 @@ export function closeOldDatabases(context: {
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
         operation: "close-databases",
         subsystem: "proposalsDb",
+      });
+    }
+  }
+  if (identityReflectionStore) {
+    try {
+      identityReflectionStore.close();
+    } catch (err) {
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        operation: "close-databases",
+        subsystem: "identityReflectionStore",
       });
     }
   }

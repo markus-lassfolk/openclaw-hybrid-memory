@@ -255,6 +255,12 @@ export type HybridMemCliContext = {
     closedLoopReport?: string;
   }>;
   runGenerateProposals?: (opts: { dryRun: boolean; verbose?: boolean }) => Promise<{ created: number }>;
+  runReflectIdentity?: (opts: {
+    dryRun: boolean;
+    verbose?: boolean;
+    model?: string;
+    window?: number;
+  }) => Promise<{ insightsExtracted: number; insightsStored: number; questionsAsked: number }>;
   runExport: (opts: {
     outputPath: string;
     excludeCredentials?: boolean;
