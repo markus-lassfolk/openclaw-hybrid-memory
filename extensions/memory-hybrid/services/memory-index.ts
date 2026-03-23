@@ -100,7 +100,14 @@ export function buildMemoryIndexSnapshot(
   const allFacts = factsDb.getAll();
   const recentCutoffSec = Math.floor(Date.now() / 1000) - recentWindowDays * 86400;
   const recentFacts = allFacts.filter((entry) => (entry.sourceDate ?? entry.createdAt) >= recentCutoffSec);
-  const clusterResult = detectClusters(factsDb, { minClusterSize: 3 });
+  const liveFactIds = new Set(allFacts.map((f) => f.id));
+  const filteredFactsDb = {
+    getAllLinkedFactIds: () => factsDb.getAllLinkedFactIds().filter((id) => liveFactIds.has(id)),
+    getAllLinks: () =>
+      factsDb.getAllLinks().filter((l) => liveFactIds.has(l.sourceFactId) && liveFactIds.has(l.targetFactId)),
+    getByIds: (ids: string[]) => factsDb.getByIds(ids),
+  };
+  const clusterResult = detectClusters(filteredFactsDb, { minClusterSize: 3 });
 
   const clusters = clusterResult.clusters.slice(0, MAX_CLUSTERS).map((cluster) => {
     const entries = [...factsDb.getByIds(cluster.factIds).values()];
