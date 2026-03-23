@@ -674,7 +674,19 @@ export async function runExplicitDeepRetrieval(
     }
 
     // --- RRF Fusion ---
-    const fused = policy.allowRrfFusion ? fuseResults(strategyMap, k) : [];
+    // When fusion is disabled, return raw strategy results sorted by rank (best first).
+    // This ensures that disabling fusion doesn't discard all the expensive strategy work.
+    const fused = policy.allowRrfFusion
+      ? fuseResults(strategyMap, k)
+      : Array.from(strategyMap.values())
+          .flat()
+          .map((r) => ({
+            factId: r.factId,
+            rrfScore: 1 / (k + r.rank),
+            finalScore: 1 / (k + r.rank),
+            sources: [{ strategy: r.source, rank: r.rank }],
+          }))
+          .sort((a, b) => b.finalScore - a.finalScore);
 
     if (fused.length === 0) {
       return { fused: [], packed: [], packedFactIds: [], tokensUsed: 0, entries: [] };
