@@ -378,25 +378,7 @@ export function invalidateClusterCache(): void {
   clusterCache.invalidate();
 }
 
-interface SemanticCacheCapableVectorDB extends VectorDB {
-  getSemanticQueryCacheMatch?(
-    vector: number[],
-    options?: { minSimilarity?: number; ttlMs?: number; filterKey?: string; candidateLimit?: number },
-  ): Promise<{
-    factIds: string[];
-    packedFactIds: string[];
-    similarity: number;
-  } | null>;
-  storeSemanticQueryCache?(entry: {
-    queryText: string;
-    vector: number[];
-    factIds: string[];
-    packedFactIds: string[];
-    filterKey?: string;
-    cachedAt?: number;
-  }): Promise<void>;
-}
-
+type SemanticCacheCapableVectorDB = import("../backends/vector-db.js").VectorDB;
 function buildSemanticCacheFilterKey(config: RetrievalConfig, options: RetrievalPipelineOptions): string {
   return stableStringify({
     strategies: [...config.strategies].sort(),

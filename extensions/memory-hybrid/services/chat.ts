@@ -334,7 +334,6 @@ export async function chatComplete(opts: {
     // If feature is provided, wrap in withCostFeature so the proxy attributes the call correctly.
     // Cost recording itself is done by the OpenAI proxy in setup/init-databases.ts.
     const resp = (await (feature ? withCostFeature(feature, doCreate) : doCreate())) as OpenAI.Chat.ChatCompletion;
->>>>>>> 431f5dd (fix(types): correct OpenAI.ChatCompletion casts and update test model expectations for gemini-embedding-001)
     clearTimeout(timeoutId);
     if (signal) signal.removeEventListener("abort", onAbort);
     const msg = resp.choices[0]?.message;

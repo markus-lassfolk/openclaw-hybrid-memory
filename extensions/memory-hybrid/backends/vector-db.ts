@@ -388,9 +388,9 @@ export class VectorDB {
         }
 
         const candidateVector = Array.isArray(row.vector)
-          ? row.vector.map((value) => Number(value))
+          ? row.vector.map((value: any) => Number(value))
           : ArrayBuffer.isView(row.vector)
-            ? Array.from(row.vector as ArrayLike<number>, (value) => Number(value))
+            ? Array.from(row.vector as ArrayLike<number>, (value: number) => Number(value))
             : [];
 
         const similarity = this.computeCosineSimilarity(vector, candidateVector);
