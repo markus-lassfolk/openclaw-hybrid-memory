@@ -86,7 +86,11 @@ async function runRecall(
       };
     }
 
-    const interactivePolicy = resolveInteractiveRecallPolicy(ctx.cfg.autoRecall, ctx.cfg.queryExpansion);
+    const interactivePolicy = resolveInteractiveRecallPolicy(
+      ctx.cfg.autoRecall,
+      ctx.cfg.queryExpansion,
+      ctx.cfg.retrieval,
+    );
     const { degradationQueueDepth, degradationMaxLatencyMs } = interactivePolicy;
     const forceDegraded = degradationQueueDepth > 0 && ctx.recallInFlightRef.value > degradationQueueDepth;
 
