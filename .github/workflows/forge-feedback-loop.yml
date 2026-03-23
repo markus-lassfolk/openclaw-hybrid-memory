@@ -100,6 +100,12 @@ jobs:
               core.setOutput('skip_reason', `PR #${prNumber} is not open.`);
               return;
             }
+            // Reject fork PRs to prevent untrusted code from triggering write operations.
+            if (pr.head?.repo?.full_name !== pr.base?.repo?.full_name) {
+              core.setOutput('should_skip', 'true');
+              core.setOutput('skip_reason', `PR #${prNumber} is from a fork — skipping untrusted PR.`);
+              return;
+            }
 
             const { data: headCommit } = await github.rest.repos.getCommit({ owner, repo, ref: pr.head.sha });
             const checkRuns = await github.paginate(github.rest.checks.listForRef, {
@@ -240,7 +246,13 @@ jobs:
                   owner,
                   repo,
                   event_type: 'forge-pr-remediation.requested',
-                  client_payload: workItem,
+                  client_payload: {
+                    pr_number: workItem.pullRequest.number,
+                    head_sha: workItem.pullRequest.headSha,
+                    fingerprint: workItem.fingerprint,
+                    repo: workItem.repo,
+                    pullRequest: workItem.pullRequest,
+                  },
                 });
                 lines.push('- Dispatch: queued `forge-pr-remediation.requested` for Forge/Codex `gpt-5.4-pro`.');
               }

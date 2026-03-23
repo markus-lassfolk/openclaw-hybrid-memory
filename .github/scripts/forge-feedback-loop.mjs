@@ -6,7 +6,7 @@ import { dirname, resolve } from 'node:path';
 const DEFAULT_MAX_BODY_CHARS = 1200;
 const DEFAULT_MAX_ITEMS_PER_SECTION = 12;
 const BOT_LOGIN_RE = /\[bot\]$/i;
-const NON_BLOCKING_REVIEW_STATES = new Set(['APPROVED']);
+const NON_BLOCKING_REVIEW_STATES = new Set(['APPROVED', 'DISMISSED']);
 const PASSING_CONCLUSIONS = new Set(['success', 'skipped', 'neutral']);
 
 function normalizeWhitespace(value) {
