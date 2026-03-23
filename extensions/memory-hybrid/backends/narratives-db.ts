@@ -64,29 +64,31 @@ export class NarrativesDB {
       CREATE INDEX IF NOT EXISTS idx_narratives_created_at ON narratives(created_at DESC);
       CREATE INDEX IF NOT EXISTS idx_narratives_session ON narratives(session_id, created_at DESC);
       CREATE INDEX IF NOT EXISTS idx_narratives_tag ON narratives(tag, created_at DESC);
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_narratives_session_tag ON narratives(session_id, tag);
     `);
   }
 
   store(input: StoreNarrativeInput): NarrativeEntry {
-    // Idempotency: only one narrative per session/tag (latest overwrite).
-    const existing = this.db
-      .prepare("SELECT id FROM narratives WHERE session_id = ? AND tag = ? LIMIT 1")
-      .get(input.sessionId, input.tag) as { id: string } | undefined;
-    const id = existing?.id ?? randomUUID();
+    const id = randomUUID();
     const createdAt = Date.now();
+    const safeNarrativeText = input.narrativeText.replace(/</g, "&lt;").replace(/>/g, "&gt;");
     this.db.exec("PRAGMA journal_mode = WAL");
     this.db
       .prepare(
         `INSERT INTO narratives (id, session_id, period_start, period_end, tag, narrative_text, created_at)
          VALUES (?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT(id) DO UPDATE SET
+         ON CONFLICT(session_id, tag) DO UPDATE SET
            period_start = excluded.period_start,
            period_end = excluded.period_end,
            narrative_text = excluded.narrative_text,
            created_at = excluded.created_at`,
       )
-      .run(id, input.sessionId, input.periodStart, input.periodEnd, input.tag, input.narrativeText, createdAt);
-    return this.getById(id)!;
+      .run(id, input.sessionId, input.periodStart, input.periodEnd, input.tag, safeNarrativeText, createdAt);
+
+    const row = this.db
+      .prepare("SELECT * FROM narratives WHERE session_id = ? AND tag = ? LIMIT 1")
+      .get(input.sessionId, input.tag) as any;
+    return this.rowToEntry(row);
   }
 
   getById(id: string): NarrativeEntry | null {

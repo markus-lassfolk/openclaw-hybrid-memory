@@ -1039,15 +1039,15 @@ export class FactsDB {
     const params: Record<string, unknown> = {};
     if (filter.userId) {
       parts.push("OR (scope = 'user' AND scope_target = @scopeUserId)");
-      params.scopeUserId = filter.userId;
+      params["@scopeUserId"] = filter.userId;
     }
     if (filter.agentId) {
       parts.push("OR (scope = 'agent' AND scope_target = @scopeAgentId)");
-      params.scopeAgentId = filter.agentId;
+      params["@scopeAgentId"] = filter.agentId;
     }
     if (filter.sessionId) {
       parts.push("OR (scope = 'session' AND scope_target = @scopeSessionId)");
-      params.scopeSessionId = filter.sessionId;
+      params["@scopeSessionId"] = filter.sessionId;
     }
     parts.push(")");
     return { clause: "AND " + parts.join(" "), params };
@@ -1718,12 +1718,12 @@ export class FactsDB {
          LIMIT @limit`,
       )
       .all({
-        query: safeQuery,
-        now: nowSec,
-        ...(asOf != null ? { asOf } : {}),
-        limit: limit * 2,
-        decay_window: 7 * 24 * 3600,
-        ...(tagPattern ? { tagPattern } : {}),
+        "@query": safeQuery,
+        "@now": nowSec,
+        ...(asOf != null ? { "@asOf": asOf } : {}),
+        "@limit": limit * 2,
+        "@decay_window": 7 * 24 * 3600,
+        ...(tagPattern ? { "@tagPattern": tagPattern } : {}),
         ...scopeParams,
       }) as Array<Record<string, unknown>>;
 
@@ -2307,14 +2307,14 @@ export class FactsDB {
          )
          AND link_type != 'DERIVED_FROM'`,
       )
-      .run({ now: nowSec });
+      .run({ "@now": nowSec });
     const result = this.liveDb
       .prepare(
         `DELETE FROM facts WHERE expires_at IS NOT NULL AND expires_at < @now
                 AND (decay_freeze_until IS NULL OR decay_freeze_until <= @now)
                 AND id NOT IN (SELECT fact_id FROM verified_facts)`,
       )
-      .run({ now: nowSec });
+      .run({ "@now": nowSec });
     return Number(result.changes ?? 0);
   }
 
@@ -2368,7 +2368,7 @@ export class FactsDB {
            AND (decay_freeze_until IS NULL OR decay_freeze_until <= @now)
            AND id NOT IN (SELECT fact_id FROM verified_facts)`,
       )
-      .run({ now: nowSec });
+      .run({ "@now": nowSec });
 
     // Clean up links where deleted facts are targets (except DERIVED_FROM)
     this.liveDb
@@ -2381,14 +2381,14 @@ export class FactsDB {
          )
          AND link_type != 'DERIVED_FROM'`,
       )
-      .run({ now: nowSec });
+      .run({ "@now": nowSec });
     const result = this.liveDb
       .prepare(
         `DELETE FROM facts WHERE confidence < 0.1
                 AND (decay_freeze_until IS NULL OR decay_freeze_until <= @now)
                 AND id NOT IN (SELECT fact_id FROM verified_facts)`,
       )
-      .run({ now: nowSec });
+      .run({ "@now": nowSec });
     return Number(result.changes ?? 0);
   }
 

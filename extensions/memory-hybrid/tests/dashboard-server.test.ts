@@ -77,7 +77,12 @@ function makeContext(tmpDir: string) {
 }
 
 function isListenPermissionError(err: unknown): boolean {
-  return typeof err === "object" && err !== null && "code" in err && (err as { code?: string }).code === "EPERM";
+  return (
+    typeof err === "object" &&
+    err !== null &&
+    "code" in err &&
+    ((err as { code?: string }).code === "EPERM" || (err as { code?: string }).code === "EACCES")
+  );
 }
 
 // Port 0 lets the OS assign an unused port — no EADDRINUSE races in parallel tests
