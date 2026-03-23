@@ -166,6 +166,20 @@ export type RerankingConfig = {
   timeoutMs: number | undefined;
 };
 
+/** Adaptive document grading and query rewriting for retrieval quality. */
+export type DocumentGradingConfig = {
+  /** Enable LLM-based document grading and adaptive query rewriting (default: false). */
+  enabled: boolean;
+  /** LLM model for grading; when unset, defaults to "openai/gpt-4.1-nano". */
+  model?: string;
+  /**
+   * Timeout in ms for the LLM call; on timeout, skip grading (default: 10000).
+   * Set to `0` or a negative value in config to bypass timeout enforcement.
+   * `undefined` here means "no config-level timeout" — chatComplete uses its internal default.
+   */
+  timeoutMs: number | undefined;
+};
+
 /** Contextual variant generation at index time (Issue #159). */
 export type ContextualVariantsConfig = {
   /** Enable contextual variant generation (default: false). */

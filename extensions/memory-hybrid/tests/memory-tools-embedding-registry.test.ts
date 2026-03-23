@@ -125,7 +125,7 @@ describe("memory tools embedding registry wiring", () => {
 
     const tool = api.getTool("memory_recall");
     expect(tool).toBeTruthy();
-    await tool!.execute("tool-call", { query: "hello", limit: 5 });
+    await tool!.execute("tool-call", { query: "where is the API key stored", limit: 5 });
 
     const runMock = vi.mocked(runRetrievalPipeline);
     expect(runMock).toHaveBeenCalled();
