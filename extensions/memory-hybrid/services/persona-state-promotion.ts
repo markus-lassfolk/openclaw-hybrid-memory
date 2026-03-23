@@ -2,6 +2,7 @@ import type { IdentityFileType } from "../config/types/agents.js";
 import type { IdentityPromotionConfig } from "../config/types/capture.js";
 import type { IdentityReflectionEntry, IdentityReflectionStore } from "../backends/identity-reflection-store.js";
 import type { PersonaStateEntry, PersonaStateStore } from "../backends/persona-state-store.js";
+import { uniqueStrings } from "../utils/text.js";
 
 const INSIGHT_STOPWORDS = new Set([
   "a",
@@ -50,10 +51,6 @@ export interface PersonaPromotionResult {
   updated: number;
   unchanged: number;
   entries: PersonaStateEntry[];
-}
-
-function uniqueStrings(values: string[]): string[] {
-  return Array.from(new Set(values.map((value) => value.trim()).filter((value) => value.length > 0)));
 }
 
 export function normalizePersonaInsight(text: string): string {
@@ -189,7 +186,7 @@ export function collectPersonaPromotionCandidates(
 
   return clusters
     .map((cluster) => ({
-      stateKey: cluster.stateKey,
+      stateKey: buildStateKey(cluster.questionKey, cluster.canonicalInsight),
       questionKey: cluster.questionKey,
       targetFile: cluster.targetFile,
       insight: cluster.canonicalInsight,
@@ -245,7 +242,18 @@ export function promotePersonaStateFromReflections(
   let updated = 0;
   let unchanged = 0;
 
+  const existingEntries = personaStateStore.listRecent(100);
+
   for (const candidate of candidates) {
+    const matchingEntry = existingEntries.find(
+      (entry) =>
+        entry.questionKey === candidate.questionKey &&
+        calculatePersonaInsightSimilarity(entry.insight, candidate.insight) >= config.similarityThreshold,
+    );
+    if (matchingEntry) {
+      candidate.stateKey = matchingEntry.stateKey;
+    }
+
     if (opts?.dryRun) {
       entries.push({
         id: candidate.stateKey,

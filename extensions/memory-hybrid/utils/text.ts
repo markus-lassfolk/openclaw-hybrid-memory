@@ -135,3 +135,10 @@ export function slugifyForSkill(text: string, fallback = "skill"): string {
     .slice(0, 60);
   return slug || fallback;
 }
+
+/**
+ * Deduplicate and clean an array of strings (trim, filter empty).
+ */
+export function uniqueStrings(values: string[]): string[] {
+  return Array.from(new Set(values.map((value) => value.trim()).filter((value) => value.length > 0)));
+}

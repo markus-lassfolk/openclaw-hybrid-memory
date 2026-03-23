@@ -11,6 +11,7 @@ import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { SQLITE_BUSY_TIMEOUT_MS } from "../utils/constants.js";
 import { capturePluginError } from "../services/error-reporter.js";
+import { uniqueStrings } from "../utils/text.js";
 import type { IdentityFileType } from "../config/types/agents.js";
 
 interface PersonaStateRow {
@@ -65,10 +66,6 @@ export type UpsertPersonaStateResult = {
   action: "created" | "updated" | "unchanged";
   entry: PersonaStateEntry;
 };
-
-function uniqueStrings(values: string[]): string[] {
-  return Array.from(new Set(values.map((value) => value.trim()).filter((value) => value.length > 0)));
-}
 
 export class PersonaStateStore {
   private readonly db: DatabaseSync;
