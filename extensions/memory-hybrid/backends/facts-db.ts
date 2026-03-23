@@ -17,6 +17,7 @@ import { estimateTokensForDisplay } from "../utils/text.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { getLanguageKeywordsFilePath } from "../utils/language-keywords.js";
 import { createTransaction } from "../utils/sqlite-transaction.js";
+import { runFactsMigrations } from "./migrations/facts-migrations.js";
 import { searchFts } from "../services/fts-search.js";
 import {
   batchGetReinforcementEvents as batchGetReinforcementEventsHelper,
@@ -154,106 +155,8 @@ export class FactsDB {
       CREATE INDEX IF NOT EXISTS idx_facts_created ON facts(created_at);
     `);
 
-    // ---- TTL/Decay migration ----
-    this.migrateDecayColumns();
-
-    // ---- Fix ms/s unit mismatch from earlier versions ----
-    this.migrateTimestampUnits();
-
-    // ---- Summary column for chunked long facts (4.3) ----
-    this.migrateSummaryColumn();
-
-    // ---- Normalized hash for fuzzy dedupe (2.3) ----
-    this.migrateNormalizedHash();
-
-    // ---- Source date for provenance ----
-    this.migrateSourceDateColumn();
-
-    // ---- Tags for topic filtering ----
-    this.migrateTagsColumn();
-
-    // ---- Access tracking for dynamic salience ----
-    this.migrateAccessTracking();
-
-    // ---- Supersession columns for contradiction resolution ----
-    this.migrateSupersessionColumns();
-
-    // ---- Bi-temporal valid_from / valid_until / supersedes_id ----
-    this.migrateBiTemporalColumns();
-
-    // ---- Graph-based spreading activation ----
-    this.migrateMemoryLinksTable();
-
-    // ---- Dynamic memory tiering (hot/warm/cold) ----
-    this.migrateTierColumn();
-
-    // ---- Memory scoping (global, user, agent, session) ----
-    this.migrateScopeColumns();
-
-    // ---- Procedural memory: procedure columns on facts + procedures table ----
-    this.migrateProcedureColumns();
-    this.migrateProceduresTable();
-
-    // ---- Reinforcement-as-Metadata ----
-    this.migrateReinforcementColumns();
-
-    // ---- Phase 2: Reinforcement for procedures ----
-    this.migrateReinforcementColumnsProcedures();
-
-    // ---- Memory scoping for procedures ----
-    this.migrateProcedureScopeColumns();
-
-    // ---- FTS5 tags support (Issue #151) ----
-    this.migrateFtsTagsSupport();
-
-    // ---- Contradiction tracking (Issue #157) ----
-    this.migrateContradictionsTable();
-
-    // ---- Topic cluster storage (Issue #146) ----
-    this.migrateClusterTables();
-
-    // ---- Recall hit-rate tracking (Issue #148) ----
-    this.migrateRecallLog();
-
-    // ---- Embedding model tracking (Issue #153) ----
-    this.migrateEmbeddingModelColumn();
-    this.migrateEmbeddingMetaTable();
-
-    // ---- Future-date decay freeze (#144) ----
-    this.migrateDecayFreezeColumn();
-
-    // ---- Multi-model embeddings (Issue #158) ----
-    this.migrateFactEmbeddingsTable();
-
-    // ---- Contextual variants (Issue #159) ----
-    this.migrateFactVariantsTable();
-
-    // ---- Provenance tracing (Issue #163) ----
-    this.migrateProvenanceColumns();
-
-    // ---- Verification store (Issue #162) ----
-    this.migrateVerifiedFactsTable();
-
-    // ---- Rich reinforcement context log (#259) ----
-    this.migrateReinforcementLogTable();
-
-    // ---- Change reinforced_count to REAL for fractional boosts (#259, #260) ----
-    this.migrateReinforcedCountToReal();
-
-    // ---- Implicit signals table (#262) ----
-    this.migrateImplicitSignalsTable();
-
-    // ---- Feedback trajectories table (#262) ----
-    this.migrateFeedbackTrajectoriesTable();
-
-    // ---- Feedback effectiveness table (#262) ----
-    this.migrateFeedbackEffectivenessTable();
-
-    // ---- Scan cursors for incremental processing (#288) ----
-    this.migrateScanCursorsTable();
-
-    // ---- access_count and last_accessed_at for salience scoring (#237) ----
-    this.migrateAccessCountAndLastAccessedAt();
+    // Run all schema migrations
+    runFactsMigrations(this.liveDb);
   }
 
   /** Create reinforcement_log table for per-event context (#259). */
@@ -1236,24 +1139,23 @@ export class FactsDB {
   private migrateDecayColumns(): void {
     const cols = this.liveDb.prepare(`PRAGMA table_info(facts)`).all() as Array<{ name: string }>;
     const colNames = new Set(cols.map((c) => c.name));
-
-    if (colNames.has("decay_class")) return;
-
-    this.liveDb.exec(`
-      ALTER TABLE facts ADD COLUMN decay_class TEXT NOT NULL DEFAULT 'stable';
-      ALTER TABLE facts ADD COLUMN expires_at INTEGER;
-      ALTER TABLE facts ADD COLUMN last_confirmed_at INTEGER;
-      ALTER TABLE facts ADD COLUMN confidence REAL NOT NULL DEFAULT 1.0;
-    `);
-
+    if (!colNames.has("decay_class")) {
+      this.liveDb.exec(`ALTER TABLE facts ADD COLUMN decay_class TEXT NOT NULL DEFAULT 'stable'`);
+    }
+    if (!colNames.has("expires_at")) {
+      this.liveDb.exec(`ALTER TABLE facts ADD COLUMN expires_at INTEGER`);
+    }
+    if (!colNames.has("last_confirmed_at")) {
+      this.liveDb.exec(`ALTER TABLE facts ADD COLUMN last_confirmed_at INTEGER`);
+      this.liveDb.exec(`UPDATE facts SET last_confirmed_at = created_at WHERE last_confirmed_at IS NULL`);
+    }
+    if (!colNames.has("confidence")) {
+      this.liveDb.exec(`ALTER TABLE facts ADD COLUMN confidence REAL NOT NULL DEFAULT 1.0`);
+    }
     this.liveDb.exec(`
       CREATE INDEX IF NOT EXISTS idx_facts_expires ON facts(expires_at)
         WHERE expires_at IS NOT NULL;
       CREATE INDEX IF NOT EXISTS idx_facts_decay ON facts(decay_class);
-    `);
-
-    this.liveDb.exec(`
-      UPDATE facts SET last_confirmed_at = created_at WHERE last_confirmed_at IS NULL;
     `);
   }
 
