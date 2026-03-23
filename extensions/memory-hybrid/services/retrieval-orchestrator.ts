@@ -701,7 +701,12 @@ export async function runExplicitDeepRetrieval(
           finalScore: score,
           sources,
         }))
-        .sort((a, b) => b.finalScore - a.finalScore);
+        .sort((a, b) => {
+          if (b.finalScore !== a.finalScore) {
+            return b.finalScore - a.finalScore;
+          }
+          return a.factId.localeCompare(b.factId);
+        });
     }
 
     if (fused.length === 0) {
