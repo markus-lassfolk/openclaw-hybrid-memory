@@ -43,11 +43,12 @@ describe("task queue dispatch leases", () => {
     expect(second.existing?.state).toBe("leased");
   });
 
-  it("persists lease across reads and allows reacquire after terminal transition", async () => {
+  it("blocks reacquire while a completed dispatch is cooling down", async () => {
     const first = await acquireDispatchLease({
       stateDir,
       issue: 502,
       branch: "feat/issue-502",
+      now: new Date("2026-03-16T20:50:00.000Z"),
     });
     expect(first.acquired).toBe(true);
     expect(first.lease).toBeDefined();
@@ -62,6 +63,7 @@ describe("task queue dispatch leases", () => {
       token: first.lease?.token,
       toState: "completed",
       reason: "PR created",
+      now: new Date("2026-03-16T20:51:00.000Z"),
     });
     expect(transitioned).toBe(true);
 
@@ -70,6 +72,38 @@ describe("task queue dispatch leases", () => {
       issue: 502,
       branch: "feat/issue-502-retry",
       runId: "run-2",
+      now: new Date("2026-03-16T20:55:00.000Z"),
+    });
+    expect(second.acquired).toBe(false);
+    expect(second.existing?.state).toBe("completed");
+    expect(second.reason).toContain("cooling down");
+  });
+
+  it("allows reacquire after completed dispatch visibility cooldown elapses", async () => {
+    const first = await acquireDispatchLease({
+      stateDir,
+      issue: 503,
+      branch: "feat/issue-503",
+      now: new Date("2026-03-16T20:50:00.000Z"),
+    });
+    expect(first.acquired).toBe(true);
+
+    const transitioned = await transitionDispatchLease({
+      stateDir,
+      issue: 503,
+      token: first.lease?.token,
+      toState: "completed",
+      reason: "PR created",
+      now: new Date("2026-03-16T20:51:00.000Z"),
+    });
+    expect(transitioned).toBe(true);
+
+    const second = await acquireDispatchLease({
+      stateDir,
+      issue: 503,
+      branch: "feat/issue-503-retry",
+      runId: "run-2",
+      now: new Date("2026-03-16T21:02:00.000Z"),
     });
     expect(second.acquired).toBe(true);
     expect(second.lease?.attempt).toBe(2);
