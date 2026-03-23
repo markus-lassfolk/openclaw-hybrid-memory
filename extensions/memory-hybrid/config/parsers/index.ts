@@ -36,6 +36,7 @@ import {
 import {
   parsePassiveObserverConfig,
   parseReflectionConfig,
+  parseIdentityReflectionConfig,
   parseProceduresConfig,
   parseExtractionConfig,
 } from "./capture.js";
@@ -710,6 +711,7 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
     personaProposals: parsePersonaProposalsConfig(cfg),
     passiveObserver: parsePassiveObserverConfig(cfg),
     reflection: parseReflectionConfig(cfg),
+    identityReflection: parseIdentityReflectionConfig(cfg),
     procedures: parseProceduresConfig(cfg),
     extraction: parseExtractionConfig(cfg),
     memoryTiering: parseMemoryTieringConfig(cfg),

@@ -51,10 +51,10 @@ npx -y openclaw-hybrid-memory-install 2026.2.181   # specific version
 openclaw gateway stop && openclaw gateway start
 ```
 
-**If the gateway then reports "Could not locate the bindings file" (better_sqlite3)** — the native rebuild may have been interrupted. Run:
+**If the gateway then reports "Could not locate the bindings file" for `@lancedb/lancedb`** — the native rebuild may have been interrupted. Run:
 
 ```bash
-cd ~/.openclaw/extensions/openclaw-hybrid-memory && npm rebuild better-sqlite3 @lancedb/lancedb
+cd ~/.openclaw/extensions/openclaw-hybrid-memory && npm rebuild @lancedb/lancedb
 openclaw gateway stop && openclaw gateway start
 ```
 
@@ -209,10 +209,10 @@ npx -y openclaw-hybrid-memory-install 2026.2.181   # specific version
 openclaw gateway stop && openclaw gateway start
 ```
 
-**If the gateway then reports "Could not locate the bindings file" (better_sqlite3)** — the native rebuild may have been interrupted. Run:
+**If the gateway then reports "Could not locate the bindings file" for `@lancedb/lancedb`** — the native rebuild may have been interrupted. Run:
 
 ```bash
-cd ~/.openclaw/extensions/openclaw-hybrid-memory && npm rebuild better-sqlite3 @lancedb/lancedb
+cd ~/.openclaw/extensions/openclaw-hybrid-memory && npm rebuild @lancedb/lancedb
 openclaw gateway stop && openclaw gateway start
 ```
 

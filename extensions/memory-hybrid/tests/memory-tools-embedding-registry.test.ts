@@ -14,10 +14,16 @@ vi.mock("../services/retrieval-orchestrator.js", () => ({
     packedFactIds: [],
     entries: [],
   }),
+  runExplicitDeepRetrieval: vi.fn().mockResolvedValue({
+    fused: [],
+    packed: [],
+    packedFactIds: [],
+    entries: [],
+  }),
 }));
 
 import { registerMemoryTools } from "../tools/memory-tools.js";
-import { runRetrievalPipeline } from "../services/retrieval-orchestrator.js";
+import { runExplicitDeepRetrieval } from "../services/retrieval-orchestrator.js";
 import { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
 import { buildEmbeddingRegistry } from "../services/embedding-registry.js";
@@ -66,6 +72,7 @@ function makeMockVectorDb(): VectorDB {
   return {
     hasDuplicate: vi.fn().mockResolvedValue(false),
     store: vi.fn().mockResolvedValue(undefined),
+    search: vi.fn().mockResolvedValue([]),
   } as unknown as VectorDB;
 }
 
@@ -131,7 +138,7 @@ describe("memory tools embedding registry wiring", () => {
     expect(tool).toBeTruthy();
     await tool!.execute("tool-call", { query: "where is the API key stored", limit: 5 });
 
-    const runMock = vi.mocked(runRetrievalPipeline);
+    const runMock = vi.mocked(runExplicitDeepRetrieval);
     expect(runMock).toHaveBeenCalled();
     const call = runMock.mock.calls[0];
     expect(call[5]?.embeddingRegistry).toBe(embeddingRegistry);

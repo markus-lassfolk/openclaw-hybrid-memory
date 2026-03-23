@@ -40,6 +40,13 @@ describe("postinstall", () => {
     expect(content).toContain("skipping rebuild");
   });
 
+  it("postinstall-rebuild.cjs self-heals missing native modules before rebuild", () => {
+    const scriptPath = join(root, "scripts", "postinstall-rebuild.cjs");
+    const content = readFileSync(scriptPath, "utf-8");
+    expect(content).toContain("require.resolve");
+    expect(content).toContain("npm install --no-save --ignore-scripts");
+  });
+
   it("needsRebuild guard returns false on successful require, true on failure", () => {
     const scriptPath = join(root, "scripts", "postinstall-rebuild.cjs");
     const content = readFileSync(scriptPath, "utf-8");

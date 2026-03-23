@@ -10,6 +10,7 @@ import type { VectorDB } from "../backends/vector-db.js";
 import type { CredentialsDB } from "../backends/credentials-db.js";
 import type { ProposalsDB } from "../backends/proposals-db.js";
 import type { EventLog } from "../backends/event-log.js";
+import { NarrativesDB } from "../backends/narratives-db.js";
 import type { WriteAheadLog } from "../backends/wal.js";
 import type { EmbeddingProvider } from "../services/embeddings.js";
 import type { EmbeddingRegistry } from "../services/embedding-registry.js";
@@ -822,6 +823,7 @@ export interface DatabaseContext {
   wal: WriteAheadLog | null;
   proposalsDb: ProposalsDB | null;
   eventLog: EventLog | null;
+  narrativesDb: NarrativesDB;
   aliasDb: AliasDB | null;
   issueStore: IssueStore;
   workflowStore: WorkflowStore;
@@ -1255,6 +1257,10 @@ export function initializeDatabases(cfg: HybridMemoryConfig, api: ClawdbotPlugin
     resolvedSqlitePath,
   });
 
+  const narrativesPath = join(dirname(resolvedSqlitePath), "narratives.db");
+  const narrativesDb = new NarrativesDB(narrativesPath);
+  api.logger.info(`memory-hybrid: narratives store initialized (${narrativesPath})`);
+
   // Load previously discovered categories so they remain available after restart
   const discoveredPath = join(dirname(resolvedSqlitePath), ".discovered-categories.json");
   if (existsSync(discoveredPath)) {
@@ -1587,6 +1593,7 @@ export function initializeDatabases(cfg: HybridMemoryConfig, api: ClawdbotPlugin
     wal,
     proposalsDb,
     eventLog,
+    narrativesDb,
     aliasDb,
     issueStore,
     workflowStore,
@@ -1609,6 +1616,7 @@ export function initializeDatabases(cfg: HybridMemoryConfig, api: ClawdbotPlugin
  */
 export function closeOldDatabases(context: {
   factsDb?: FactsDB | null;
+  narrativesDb?: NarrativesDB | null;
   vectorDb?: VectorDB | null;
   credentialsDb?: CredentialsDB | null;
   proposalsDb?: ProposalsDB | null;
@@ -1626,6 +1634,7 @@ export function closeOldDatabases(context: {
 }): void {
   const {
     factsDb,
+    narrativesDb,
     vectorDb,
     credentialsDb,
     proposalsDb,
@@ -1671,6 +1680,16 @@ export function closeOldDatabases(context: {
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
         operation: "close-databases",
         subsystem: "credentialsDb",
+      });
+    }
+  }
+  if (narrativesDb) {
+    try {
+      narrativesDb.close();
+    } catch (err) {
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        operation: "close-databases",
+        subsystem: "narrativesDb",
       });
     }
   }

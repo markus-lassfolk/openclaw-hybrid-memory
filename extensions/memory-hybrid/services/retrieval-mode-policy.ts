@@ -1,6 +1,12 @@
-import type { AutoRecallConfig, RetrievalConfig } from "../config.js";
+import type { AutoRecallConfig, RetrievalConfig, HybridMemoryConfig } from "../config.js";
 
 export type RetrievalMode = "interactive-recall" | "explicit-deep";
+
+/** @deprecated Use string literals directly or InteractiveRecallPolicy / ExplicitDeepRetrievalPolicy types */
+export const RETRIEVAL_MODE = {
+  INTERACTIVE_RECALL: "interactive-recall" as const,
+  EXPLICIT_DEEP: "explicit-deep" as const,
+};
 
 export interface InteractiveRecallPolicy {
   mode: "interactive-recall";
@@ -64,12 +70,17 @@ export const DEFAULT_INTERACTIVE_RECALL_POLICY: InteractiveRecallPolicy = {
 export function resolveInteractiveRecallPolicy(
   cfg: AutoRecallConfig,
   queryExpansion?: { enabled: boolean; skipForInteractiveTurns: boolean },
+  retrieval?: { ambientBudgetTokens: number },
 ): InteractiveRecallPolicy {
   // When queryExpansion.skipForInteractiveTurns is false, allow HyDE on interactive turns
   const allowHyde = queryExpansion !== undefined && queryExpansion.enabled && !queryExpansion.skipForInteractiveTurns;
+  // Enforce retrieval.ambientBudgetTokens as a hard total-token cap.
+  // autoRecall.maxTokens is a user preference; ambientBudgetTokens is the architectural
+  // ceiling — the injected context must not exceed either.
+  const contextBudgetTokens = retrieval ? Math.min(cfg.maxTokens, retrieval.ambientBudgetTokens) : cfg.maxTokens;
   return {
     ...DEFAULT_INTERACTIVE_RECALL_POLICY,
-    contextBudgetTokens: cfg.maxTokens,
+    contextBudgetTokens,
     degradationQueueDepth: cfg.degradationQueueDepth ?? DEFAULT_INTERACTIVE_RECALL_DEGRADATION_QUEUE_DEPTH,
     degradationMaxLatencyMs: cfg.degradationMaxLatencyMs ?? DEFAULT_INTERACTIVE_RECALL_DEGRADATION_MAX_LATENCY_MS,
     allowAmbientMultiQuery: cfg.enabled,
@@ -99,4 +110,37 @@ export function resolveExplicitDeepRetrievalPolicy(cfg: RetrievalConfig): Explic
       "Uses retrieval.explicitBudgetTokens as its packing budget.",
     ],
   };
+}
+
+/**
+ * Resolve the interactive recall budget tokens, capping to the minimum of
+ * autoRecall.maxTokens and retrieval.ambientBudgetTokens.
+ */
+export function resolveInteractiveRecallBudgetTokens(cfg: HybridMemoryConfig): number {
+  return Math.min(cfg.autoRecall.maxTokens, cfg.retrieval.ambientBudgetTokens);
+}
+
+/**
+ * Resolve orchestrator budget tokens for a given retrieval mode.
+ * For interactive recall mode, caps to ambientBudgetTokens.
+ * For explicit deep mode, uses explicitBudgetTokens.
+ */
+export function resolveOrchestratorBudgetTokens(
+  mode: RetrievalMode,
+  retrievalCfg: RetrievalConfig,
+  requestedBudget?: number,
+): number {
+  if (mode === RETRIEVAL_MODE.INTERACTIVE_RECALL) {
+    return requestedBudget !== undefined
+      ? Math.min(requestedBudget, retrievalCfg.ambientBudgetTokens)
+      : retrievalCfg.ambientBudgetTokens;
+  }
+  return requestedBudget !== undefined ? requestedBudget : retrievalCfg.explicitBudgetTokens;
+}
+
+/**
+ * Determine if HyDE should be skipped for a given retrieval mode.
+ */
+export function shouldSkipHydeForMode(mode: RetrievalMode, skipForInteractiveTurns: boolean): boolean {
+  return mode === RETRIEVAL_MODE.INTERACTIVE_RECALL && skipForInteractiveTurns;
 }

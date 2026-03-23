@@ -22,6 +22,7 @@ import { DEFAULT_INTERACTIVE_RECALL_POLICY } from "../services/retrieval-mode-po
 import type { SearchResult, MemoryEntry } from "../types/memory.js";
 import { createPendingLLMWarnings } from "../services/chat.js";
 import * as chatModule from "../services/chat.js";
+import { RETRIEVAL_MODE } from "../services/retrieval-mode-policy.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -693,5 +694,47 @@ describe("runRecallPipelineQuery — skipForInteractiveTurns (#581)", () => {
     // HyDE was allowed because policy.allowHyde is true
     expect(chatModule.chatCompleteWithRetry).toHaveBeenCalled();
     expect(deps.embeddings.embed).toHaveBeenCalledWith("HyDE generated text");
+  });
+});
+
+describe("runRecallPipelineQuery — retrieval mode policy (#639)", () => {
+  beforeEach(() => {
+    vi.spyOn(chatModule, "chatCompleteWithRetry").mockResolvedValue("HyDE generated text");
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("treats mode=interactive-recall-path as hot-path even without interactive flag", async () => {
+    const deps = makeDeps({
+      cfg: {
+        queryExpansion: {
+          enabled: true,
+          maxVariants: 4,
+          cacheSize: 100,
+          timeoutMs: 15_000,
+          skipForInteractiveTurns: true,
+        },
+        retrievalStrategies: ["semantic"],
+        memoryTieringEnabled: false,
+        rawCfg: { llm: undefined } as unknown as RecallPipelineDeps["cfg"]["rawCfg"],
+      },
+    });
+    (deps.factsDb.search as ReturnType<typeof vi.fn>).mockReturnValue([]);
+    (deps.vectorDb.search as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+
+    await runRecallPipelineQuery(
+      "interactive mode query",
+      5,
+      deps,
+      { value: false },
+      {
+        mode: RETRIEVAL_MODE.INTERACTIVE_RECALL,
+      },
+    );
+
+    expect(chatModule.chatCompleteWithRetry).not.toHaveBeenCalled();
+    expect(deps.embeddings.embed).toHaveBeenCalledWith("interactive mode query");
   });
 });

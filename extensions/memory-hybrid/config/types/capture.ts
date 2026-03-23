@@ -24,6 +24,16 @@ export type ReflectionConfig = {
   minObservations: number; // Min observations to support a pattern (default: 2)
 };
 
+/** Identity reflection: persona-level synthesis from reflection outputs */
+export type IdentityReflectionConfig = {
+  enabled: boolean;
+  model?: string; // when unset, runtime uses getDefaultCronModel(cfg, "default")
+  defaultWindow: number; // Time window in days (default: 30)
+  minInsights: number; // Min pattern/rule/meta insights required (default: 3)
+  maxInsightsPerRun: number; // Max identity insights stored per run (default: 8)
+  questions: Array<{ key: string; prompt: string }>; // Recurring identity questions
+};
+
 /** Two-tier LLM pre-filter configuration for bulk session triage (Issue #290). */
 export type ExtractionPreFilterConfig = {
   /** Enable local LLM pre-filtering (default: false). When true, each session is triaged by a local Ollama model before cloud LLM analysis. */

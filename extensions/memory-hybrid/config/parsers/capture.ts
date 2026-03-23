@@ -4,10 +4,12 @@ import { expandHomePlaceholders } from "../../utils/path.js";
 import type {
   PassiveObserverConfig,
   ReflectionConfig,
+  IdentityReflectionConfig,
   ProceduresConfig,
   ExtractionConfig,
   ExtractionPreFilterConfig,
 } from "../types/capture.js";
+import { DEFAULT_IDENTITY_REFLECTION_QUESTIONS } from "../../services/identity-reflection.js";
 
 export function parsePassiveObserverConfig(cfg: Record<string, unknown>): PassiveObserverConfig {
   const observerRaw = cfg.passiveObserver as Record<string, unknown> | undefined;
@@ -55,6 +57,33 @@ export function parseReflectionConfig(cfg: Record<string, unknown>): ReflectionC
       typeof reflectionRaw?.minObservations === "number" && reflectionRaw.minObservations >= 1
         ? Math.floor(reflectionRaw.minObservations)
         : 2,
+  };
+}
+
+export function parseIdentityReflectionConfig(cfg: Record<string, unknown>): IdentityReflectionConfig {
+  const raw = cfg.identityReflection as Record<string, unknown> | undefined;
+  const parsedQuestions = Array.isArray(raw?.questions)
+    ? raw.questions
+        .filter((q): q is Record<string, unknown> => !!q && typeof q === "object")
+        .map((q) => ({
+          key: typeof q.key === "string" ? q.key.trim() : "",
+          prompt: typeof q.prompt === "string" ? q.prompt.trim() : "",
+        }))
+        .filter((q) => q.key.length > 0 && q.prompt.length > 0)
+    : [];
+  return {
+    enabled: raw?.enabled === true,
+    model: typeof raw?.model === "string" && raw.model.trim().length > 0 ? raw.model.trim() : undefined,
+    defaultWindow:
+      typeof raw?.defaultWindow === "number" && raw.defaultWindow > 0
+        ? Math.min(90, Math.floor(raw.defaultWindow))
+        : 30,
+    minInsights: typeof raw?.minInsights === "number" && raw.minInsights >= 1 ? Math.floor(raw.minInsights) : 3,
+    maxInsightsPerRun:
+      typeof raw?.maxInsightsPerRun === "number" && raw.maxInsightsPerRun >= 1
+        ? Math.min(20, Math.floor(raw.maxInsightsPerRun))
+        : 8,
+    questions: parsedQuestions.length > 0 ? parsedQuestions : DEFAULT_IDENTITY_REFLECTION_QUESTIONS,
   };
 }
 

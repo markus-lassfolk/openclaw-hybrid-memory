@@ -10,6 +10,7 @@ const path = require("node:path");
 const root = path.resolve(__dirname, "..");
 const pkgPath = path.join(root, "package.json");
 const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8"));
+const requiredRuntimeDeps = ["@lancedb/lancedb"];
 let failed = false;
 
 // 1. postinstall required for native deps
@@ -22,7 +23,30 @@ if (!pkg.scripts?.postinstall) {
   console.log("OK: postinstall present");
 }
 
-// 1b. npm-shrinkwrap.json should ship with the package, but it must be generated
+// 1b. Native runtime dependencies must be explicit direct dependencies.
+let depsCheckFailed = false;
+for (const dep of requiredRuntimeDeps) {
+  if (!pkg.dependencies?.[dep]) {
+    console.error(`FAIL: missing required runtime dependency in package.json dependencies: ${dep}`);
+    failed = true;
+    depsCheckFailed = true;
+  }
+  if (pkg.optionalDependencies?.[dep]) {
+    console.error(`FAIL: ${dep} must not be declared in optionalDependencies`);
+    failed = true;
+    depsCheckFailed = true;
+  }
+  if (pkg.peerDependencies?.[dep]) {
+    console.error(`FAIL: ${dep} must not be declared in peerDependencies`);
+    failed = true;
+    depsCheckFailed = true;
+  }
+}
+if (!depsCheckFailed) {
+  console.log("OK: required native runtime dependencies are declared correctly");
+}
+
+// 1c. npm-shrinkwrap.json should ship with the package, but it must be generated
 // only for packing/publishing so local npm ci continues to honor package-lock.json.
 const shrinkwrapFilesListed = pkg.files?.includes("npm-shrinkwrap.json");
 const packageLockExists = fs.existsSync(path.join(root, "package-lock.json"));

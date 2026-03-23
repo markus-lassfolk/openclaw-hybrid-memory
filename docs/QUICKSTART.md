@@ -27,7 +27,7 @@ Get an agent that **remembers you** and **gets better at giving the right contex
 
 ## 1. Install the plugin
 
-**Recommended (NPM):** OpenClaw installs the plugin into `~/.openclaw/extensions` and runs `npm install` (including a `postinstall` that rebuilds `better-sqlite3`). If you ever see "duplicate plugin id detected", run once: `./scripts/use-npm-only.sh` from this repo so only the NPM copy is used.
+**Recommended (NPM):** OpenClaw installs the plugin into `~/.openclaw/extensions` and runs `npm install` (including a `postinstall` that rebuilds `@lancedb/lancedb` if needed). If you ever see "duplicate plugin id detected", run once: `./scripts/use-npm-only.sh` from this repo so only the NPM copy is used.
 
 ```bash
 openclaw plugins install openclaw-hybrid-memory
@@ -54,7 +54,7 @@ node -e "let p=require('./package.json'); delete p.devDependencies; require('fs'
 npm install
 ```
 
-If `better-sqlite3` fails to compile, install the C++ build toolchain (Linux: `build-essential`, `python3`; Windows: Visual Studio Build Tools 2022 with "Desktop development with C++"). The published package runs `npm rebuild better-sqlite3` in a postinstall step.
+If `@lancedb/lancedb` fails to build, install the C++ build toolchain (Linux: `build-essential`, `python3`; Windows: Visual Studio Build Tools 2022 with "Desktop development with C++"). The published package runs `npm rebuild @lancedb/lancedb` in a postinstall step.
 
 ---
 
