@@ -838,6 +838,7 @@ export function createHybridMemCliContext(
     runReflection: services.runReflection,
     runReflectionRules: services.runReflectionRules,
     runReflectionMeta: services.runReflectionMeta,
+    runReflectIdentity: services.runReflectIdentity,
     runDreamCycle: services.runDreamCycle,
     runContinuousVerification: services.runContinuousVerification,
     runResolveContradictions: services.runResolveContradictions,
