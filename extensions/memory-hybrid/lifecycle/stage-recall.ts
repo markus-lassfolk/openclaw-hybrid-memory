@@ -17,6 +17,7 @@ import {
   searchAmbientIssues,
 } from "../services/ambient-retrieval.js";
 import { capturePluginError } from "../services/error-reporter.js";
+import { formatNarrativeRange, recallNarrativeSummaries } from "../services/narrative-recall.js";
 import { withTimeout } from "../utils/timeout.js";
 import { estimateTokens } from "../utils/text.js";
 import type { LifecycleContext, RecallResult, RecallStageResult, SessionState } from "./types.js";
@@ -27,6 +28,11 @@ import {
 } from "../services/retrieval-mode-policy.js";
 
 export const RECALL_STAGE_TIMEOUT_MS = INTERACTIVE_RECALL_STAGE_TIMEOUT_MS;
+
+function clipNarrativeText(text: string, maxChars = 360): string {
+  if (text.length <= maxChars) return text;
+  return text.slice(0, Math.max(0, maxChars - 1)).trimEnd() + "…";
+}
 
 export async function runRecallStage(
   event: unknown,
@@ -122,11 +128,20 @@ async function runRecall(
             `- [${r.backend}/${r.entry.category}] ${(r.entry.summary || r.entry.text).slice(0, 200)}${(r.entry.summary || r.entry.text).length > 200 ? "…" : ""}`,
         );
       let narrativePart = "";
-      if (ctx.narrativesDb) {
+      if (ctx.narrativesDb || ctx.eventLog) {
         try {
-          const recentNarratives = ctx.narrativesDb.listRecent(1, "session");
+          const recentNarratives = recallNarrativeSummaries({
+            narrativesDb: ctx.narrativesDb,
+            eventLog: ctx.eventLog,
+            query: e.prompt,
+            limit: 1,
+          });
           if (recentNarratives.length > 0) {
-            narrativePart = `<recent-history-narratives>\n- ${recentNarratives[0].narrativeText}\n</recent-history-narratives>\n\n`;
+            const narrative = recentNarratives[0];
+            narrativePart =
+              `<recent-history-narratives>\n- [` +
+              `${narrative.source}/${formatNarrativeRange(narrative.periodStart, narrative.periodEnd)}] ` +
+              `${clipNarrativeText(narrative.text)}\n</recent-history-narratives>\n\n`;
           }
         } catch {
           // Non-fatal.
@@ -362,14 +377,17 @@ async function runRecall(
       }
     }
 
-    if (ctx.narrativesDb) {
+    if (ctx.narrativesDb || ctx.eventLog) {
       try {
-        const recentNarratives = ctx.narrativesDb.listRecent(2, "session");
+        const recentNarratives = recallNarrativeSummaries({
+          narrativesDb: ctx.narrativesDb,
+          eventLog: ctx.eventLog,
+          query: e.prompt,
+          limit: 2,
+        });
         if (recentNarratives.length > 0) {
           const lines = recentNarratives.map((n) => {
-            const start = new Date(n.periodStart).toISOString();
-            const end = new Date(n.periodEnd).toISOString();
-            return `- [${start}..${end}] ${n.narrativeText}`;
+            return `- [${n.source}/${formatNarrativeRange(n.periodStart, n.periodEnd)}] ${clipNarrativeText(n.text)}`;
           });
           narrativeBlock = `<recent-history-narratives>\n${lines.join("\n")}\n</recent-history-narratives>\n\n`;
         }

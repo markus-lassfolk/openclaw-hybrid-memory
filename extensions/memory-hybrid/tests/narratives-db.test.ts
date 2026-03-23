@@ -81,4 +81,32 @@ describe("NarrativesDB", () => {
     const rows = db.listRecent(10, "all");
     expect(rows.map((r) => r.sessionId)).toEqual(["new-session"]);
   });
+
+  it("lists narratives for one session across tags", () => {
+    db.store({
+      sessionId: "focus-session",
+      periodStart: 1000,
+      periodEnd: 2000,
+      tag: "session",
+      narrativeText: "Session summary",
+    });
+    db.store({
+      sessionId: "focus-session",
+      periodStart: 2001,
+      periodEnd: 3000,
+      tag: "weekly-rollup",
+      narrativeText: "Weekly rollup",
+    });
+    db.store({
+      sessionId: "other-session",
+      periodStart: 3001,
+      periodEnd: 4000,
+      tag: "session",
+      narrativeText: "Other",
+    });
+
+    const rows = db.listBySession("focus-session", 10, "all");
+    expect(rows).toHaveLength(2);
+    expect(rows.map((row) => row.tag).sort()).toEqual(["session", "weekly-rollup"]);
+  });
 });

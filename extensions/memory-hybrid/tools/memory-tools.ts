@@ -15,6 +15,7 @@ import type { VectorDB } from "../backends/vector-db.js";
 import type { WriteAheadLog } from "../backends/wal.js";
 import type { CredentialsDB } from "../backends/credentials-db.js";
 import type { EventLog } from "../backends/event-log.js";
+import type { NarrativesDB } from "../backends/narratives-db.js";
 import { categoryToEventType } from "../backends/event-log.js";
 import type { EmbeddingProvider } from "../services/embeddings.js";
 import { AllEmbeddingProvidersFailed } from "../services/embeddings.js";
@@ -53,6 +54,7 @@ import type { VerificationStore } from "../services/verification-store.js";
 import { shouldAutoVerify } from "../services/verification-store.js";
 import type { VariantGenerationQueue } from "../services/contextual-variants.js";
 import { UUID_REGEX } from "../utils/constants.js";
+import { formatNarrativeRange, recallNarrativeSummaries } from "../services/narrative-recall.js";
 
 export interface PluginContext {
   factsDb: FactsDB;
@@ -65,6 +67,7 @@ export interface PluginContext {
   wal: WriteAheadLog | null;
   credentialsDb: CredentialsDB | null;
   eventLog: EventLog | null;
+  narrativesDb?: NarrativesDB | null;
   provenanceService?: ProvenanceService | null;
   verificationStore?: VerificationStore | null;
   lastProgressiveIndexIds: string[];
@@ -193,6 +196,7 @@ export function registerMemoryTools(
     wal,
     credentialsDb,
     eventLog,
+    narrativesDb,
     provenanceService,
     aliasDb,
     embeddingRegistry,
@@ -293,6 +297,92 @@ export function registerMemoryTools(
       },
     },
     { name: "memory_recall" },
+  );
+
+  api.registerTool(
+    {
+      name: "memory_recall_timeline",
+      label: "Memory Recall Timeline",
+      description: "Recall chronological summaries of recent sessions, decisions, and attempts.",
+      parameters: Type.Object({
+        query: Type.Optional(
+          Type.String({
+            description: "Optional topic or project query used to rank narrative summaries.",
+          }),
+        ),
+        sessionId: Type.Optional(
+          Type.String({
+            description: "Optional session id to fetch a specific session narrative or event timeline.",
+          }),
+        ),
+        days: Type.Optional(
+          Type.Number({
+            description: "Look back window in days when sessionId is omitted (default: 7).",
+          }),
+        ),
+        limit: Type.Optional(Type.Number({ description: "Max summaries to return (default: 3)." })),
+      }),
+      async execute(_toolCallId: string, params: Record<string, unknown>) {
+        const query = typeof params.query === "string" && params.query.trim().length > 0 ? params.query.trim() : null;
+        const sessionId =
+          typeof params.sessionId === "string" && params.sessionId.trim().length > 0 ? params.sessionId.trim() : null;
+        const days = typeof params.days === "number" && params.days > 0 ? Math.floor(params.days) : 7;
+        const limit = typeof params.limit === "number" && params.limit > 0 ? Math.floor(params.limit) : 3;
+        const nowSec = Math.floor(Date.now() / 1000);
+        const summaries = recallNarrativeSummaries({
+          narrativesDb: narrativesDb ?? null,
+          eventLog,
+          query,
+          sessionId,
+          limit,
+          nowSec,
+          sinceSec: sessionId ? undefined : nowSec - days * 86_400,
+        });
+
+        if (summaries.length === 0) {
+          return {
+            content: [
+              {
+                type: "text" as const,
+                text: sessionId
+                  ? `No narrative summary found for session ${sessionId}.`
+                  : `No narrative summaries found in the last ${days} day(s).`,
+              },
+            ],
+            details: { count: 0, narratives: [] },
+          };
+        }
+
+        const lines = summaries.map(
+          (summary, index) =>
+            `${index + 1}. [${summary.source}] ${formatNarrativeRange(summary.periodStart, summary.periodEnd)} ` +
+            `(session: ${summary.sessionId})\n${summary.text}`,
+        );
+
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: `Found ${summaries.length} narrative summar${summaries.length === 1 ? "y" : "ies"}:\n\n${lines.join("\n\n")}`,
+            },
+          ],
+          details: {
+            count: summaries.length,
+            narratives: summaries.map((summary) => ({
+              id: summary.id,
+              source: summary.source,
+              sessionId: summary.sessionId,
+              periodStart: new Date(summary.periodStart * 1000).toISOString(),
+              periodEnd: new Date(summary.periodEnd * 1000).toISOString(),
+              tag: summary.tag,
+              text: summary.text,
+              score: Number(summary.score.toFixed(3)),
+            })),
+          },
+        };
+      },
+    },
+    { name: "memory_recall_timeline" },
   );
 
   // Internal implementation so we can return from the try block
