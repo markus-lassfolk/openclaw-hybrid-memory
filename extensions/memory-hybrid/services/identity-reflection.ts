@@ -131,7 +131,7 @@ export async function runIdentityReflection(
     return { insightsExtracted: 0, insightsStored: 0, questionsAsked: config.questions.length };
   }
 
-  const questionMap = new Map(config.questions.map((q) => [q.key, q.prompt]));
+  const questionKeys = new Set(config.questions.map((q) => q.key));
   const questionsBlock = config.questions.map((q, i) => `${i + 1}. ${q.key}: ${q.prompt}`).join("\n");
   const patternsBlock = patterns
     .slice(0, 30)
@@ -178,7 +178,7 @@ export async function runIdentityReflection(
   }
 
   const parsed = parseIdentityReflectionResponse(rawResponse)
-    .filter((x) => questionMap.has(x.questionKey))
+    .filter((x) => questionKeys.has(x.questionKey))
     .slice(0, config.maxInsightsPerRun);
   if (parsed.length === 0) {
     return { insightsExtracted: 0, insightsStored: 0, questionsAsked: config.questions.length };
@@ -195,10 +195,11 @@ export async function runIdentityReflection(
       stored++;
       continue;
     }
+    const question = config.questions.find((q) => q.key === item.questionKey);
     store.create({
       runId,
       questionKey: item.questionKey,
-      questionText: questionMap.get(item.questionKey) ?? item.questionKey,
+      questionText: question?.prompt ?? item.questionKey,
       insight: item.insight,
       durability: item.durability,
       confidence: item.confidence,

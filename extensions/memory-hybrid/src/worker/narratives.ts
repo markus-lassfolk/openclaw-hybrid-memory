@@ -22,9 +22,9 @@ export interface BuildDailyNarrativeParams {
   fallbackModels?: string[];
 }
 
-function toMs(iso: string): number {
+function toSec(iso: string): number {
   const ts = Date.parse(iso);
-  return Number.isFinite(ts) ? ts : Date.now();
+  return Number.isFinite(ts) ? Math.floor(ts / 1000) : Math.floor(Date.now() / 1000);
 }
 
 function clip(text: string, maxChars: number): string {
@@ -44,8 +44,8 @@ export async function buildDailyNarrative(params: BuildDailyNarrativeParams): Pr
   if (events.length < 2) return false;
 
   const workflows = workflowStore ? workflowStore.list({ sessionId, limit: MAX_WORKFLOWS_FOR_PROMPT }) : [];
-  const periodStart = toMs(events[0].timestamp);
-  const periodEnd = toMs(events[events.length - 1].timestamp);
+  const periodStart = toSec(events[0].timestamp);
+  const periodEnd = toSec(events[events.length - 1].timestamp);
 
   const eventsBlock = clip(
     events
@@ -79,8 +79,8 @@ export async function buildDailyNarrative(params: BuildDailyNarrativeParams): Pr
 
   const prompt = fillPrompt(loadPrompt("narrative-summary"), {
     session_id: sessionId,
-    period_start: new Date(periodStart).toISOString(),
-    period_end: new Date(periodEnd).toISOString(),
+    period_start: new Date(periodStart * 1000).toISOString(),
+    period_end: new Date(periodEnd * 1000).toISOString(),
     event_count: String(events.length),
     workflow_count: String(workflows.length),
     events: eventsBlock || "none",

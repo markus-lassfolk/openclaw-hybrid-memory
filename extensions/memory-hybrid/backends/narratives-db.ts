@@ -70,7 +70,7 @@ export class NarrativesDB {
 
   store(input: StoreNarrativeInput): NarrativeEntry {
     const id = randomUUID();
-    const createdAt = Date.now();
+    const createdAt = Math.floor(Date.now() / 1000);
     this.db
       .prepare(
         `INSERT INTO narratives (id, session_id, period_start, period_end, tag, narrative_text, created_at)
@@ -108,7 +108,7 @@ export class NarrativesDB {
 
   pruneOlderThan(days: number): number {
     if (days <= 0) return 0;
-    const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
+    const cutoff = Math.floor(Date.now() / 1000) - days * 24 * 60 * 60;
     const result = this.db.prepare("DELETE FROM narratives WHERE created_at < ?").run(cutoff);
     return Number(result.changes ?? 0);
   }
