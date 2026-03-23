@@ -33,7 +33,6 @@ export interface SemanticQueryCacheEntry {
   id: string;
   queryText: string;
   factIds: string[];
-  packedFactIds: string[];
   cachedAt: number;
   similarity: number;
   filterKey: string;
@@ -198,7 +197,6 @@ export class VectorDB {
         filterKey: "",
         vector: new Array(this.vectorDim).fill(0),
         factIds: "[]",
-        packedFactIds: "[]",
         cachedAt: 0,
       },
     ]);
@@ -401,7 +399,6 @@ export class VectorDB {
           queryText: String(row.queryText ?? ""),
           filterKey,
           factIds: this.parseCacheIds(row.factIds),
-          packedFactIds: this.parseCacheIds(row.packedFactIds),
           cachedAt,
           similarity,
         };
@@ -431,7 +428,6 @@ export class VectorDB {
     queryText: string;
     vector: number[];
     factIds: string[];
-    packedFactIds: string[];
     filterKey?: string;
     cachedAt?: number;
   }): Promise<void> {
@@ -444,7 +440,6 @@ export class VectorDB {
           filterKey: entry.filterKey ?? "default",
           vector: entry.vector,
           factIds: JSON.stringify(entry.factIds),
-          packedFactIds: JSON.stringify(entry.packedFactIds),
           cachedAt: entry.cachedAt ?? Math.floor(Date.now() / 1000),
         },
       ]);

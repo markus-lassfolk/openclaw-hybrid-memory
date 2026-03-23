@@ -380,6 +380,12 @@ export function invalidateClusterCache(): void {
 
 type SemanticCacheCapableVectorDB = import("../backends/vector-db.js").VectorDB;
 function buildSemanticCacheFilterKey(config: RetrievalConfig, options: RetrievalPipelineOptions): string {
+  const expanderMode =
+    options.queryExpander && typeof (options.queryExpander as QueryExpander).getMode === "function"
+      ? options.queryExpander.getMode()
+      : options.queryExpander
+        ? "always"
+        : "off";
   return stableStringify({
     strategies: [...config.strategies].sort(),
     rrfK: config.rrf_k,
@@ -394,6 +400,7 @@ function buildSemanticCacheFilterKey(config: RetrievalConfig, options: Retrieval
     clustersMinSize: options.clustersConfig?.minClusterSize ?? null,
     rerankingEnabled: options.rerankingConfig?.enabled ?? false,
     documentGradingEnabled: options.documentGradingConfig?.enabled ?? false,
+    queryExpansionMode: expanderMode,
   });
 }
 
@@ -439,7 +446,6 @@ function buildOrchestratorResult(
 function buildCachedResult(
   factsDb: FactLookup,
   factIds: string[],
-  _packedFactIds: string[],
   budgetTokens: number,
   options: { includeSuperseded?: boolean; scopeFilter?: unknown; asOf?: number; nowSec: number },
 ): OrchestratorResult {
@@ -663,7 +669,7 @@ export async function runRetrievalPipeline(
         filterKey: semanticCacheFilterKey,
       });
       if (cached) {
-        const cachedResult = buildCachedResult(factsDb, cached.factIds, cached.packedFactIds, budgetTokens, {
+        const cachedResult = buildCachedResult(factsDb, cached.factIds, budgetTokens, {
           includeSuperseded,
           scopeFilter,
           asOf,
@@ -884,12 +890,17 @@ export async function runRetrievalPipeline(
         queryText,
         orderedEntries.map(({ factId, entry }) => ({ factId, text: entry.text })),
       );
-      if (grades.length > 0 && grades.every((grade) => !grade.relevant)) {
-        return {
-          result: buildOrchestratorResult(factsDb, scopedFused, orderedEntries, budgetTokens),
-          shouldRewrite: true,
-          fromCache: false,
-        };
+      if (grades.length > 0) {
+        if (grades.every((grade) => !grade.relevant)) {
+          return {
+            result: buildOrchestratorResult(factsDb, scopedFused, orderedEntries, budgetTokens),
+            shouldRewrite: true,
+            fromCache: false,
+          };
+        }
+        const relevantFactIds = new Set(grades.filter((grade) => grade.relevant).map((grade) => grade.factId));
+        orderedEntries = orderedEntries.filter(({ factId }) => relevantFactIds.has(factId));
+        scopedFused = scopedFused.filter((result) => relevantFactIds.has(result.factId));
       }
     }
 
@@ -998,7 +1009,6 @@ export async function runRetrievalPipeline(
           queryText: currentQuery,
           vector: currentQueryVector,
           factIds: run.result.fused.map((result) => result.factId),
-          packedFactIds: run.result.packedFactIds,
           filterKey: semanticCacheFilterKey,
           cachedAt: nowSec,
         });
