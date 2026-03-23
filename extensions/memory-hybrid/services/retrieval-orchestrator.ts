@@ -702,7 +702,10 @@ export async function runExplicitDeepRetrieval(
   } else {
     resolvedPolicy = resolveExplicitDeepRetrievalPolicy(config);
   }
-  const policy = resolvedPolicy;
+  // Cast is safe: properties below (allowReranking etc.) are only accessed when
+  // mode is explicit-deep (where resolvedPolicy is ExplicitDeepRetrievalPolicy).
+  // When mode is interactive-recall those branches return early anyway.
+  const policy = resolvedPolicy as ExplicitDeepRetrievalPolicy | InteractiveRecallPolicy;
   const budgetTokens = options.budgetTokens ?? config.explicitBudgetTokens;
   const nowSec = options.nowSec ?? Math.floor(Date.now() / 1000);
   const {
