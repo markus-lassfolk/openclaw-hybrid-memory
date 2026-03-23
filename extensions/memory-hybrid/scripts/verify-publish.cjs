@@ -1,16 +1,15 @@
 #!/usr/bin/env node
 /**
- * Pre-publish verification for openclaw-hybrid-memory.
+ * Verifies publish packaging invariants for openclaw-hybrid-memory.
  * Ensures: postinstall present, and all modules imported by index.ts are
- * included in package.json "files" and exist on disk (avoids broken publish
- * with modular index but missing lifecycle/tools/setup dirs).
+ * included in package.json "files" and exist on disk.
  */
-const fs = require("fs");
-const path = require("path");
+const fs = require("node:fs");
+const path = require("node:path");
 
-const root = path.join(__dirname, "..");
-const pkg = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
-
+const root = path.resolve(__dirname, "..");
+const pkgPath = path.join(root, "package.json");
+const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8"));
 let failed = false;
 
 // 1. postinstall required for native deps
@@ -21,63 +20,64 @@ if (!pkg.scripts?.postinstall) {
   console.log("OK: postinstall present");
 }
 
-// 1b. npm-shrinkwrap.json should ship with the package so installer upgrades keep
-// native/runtime dependency resolution stable.
-if (!pkg.files?.includes("npm-shrinkwrap.json")) {
+// 1b. npm-shrinkwrap.json should ship with the package, but it must be generated
+// only for packing/publishing so local npm ci continues to honor package-lock.json.
+const shrinkwrapFilesListed = pkg.files?.includes("npm-shrinkwrap.json");
+const packageLockExists = fs.existsSync(path.join(root, "package-lock.json"));
+const shrinkwrapScriptPath = path.join(root, "scripts", "manage-shrinkwrap.cjs");
+const hasShrinkwrapCreate = pkg.scripts?.prepack?.includes("manage-shrinkwrap.cjs create");
+const hasShrinkwrapClean = pkg.scripts?.postpack?.includes("manage-shrinkwrap.cjs clean");
+
+if (!shrinkwrapFilesListed) {
   console.error('FAIL: npm-shrinkwrap.json missing from package.json "files" - published package will resolve deps loosely during upgrade');
   failed = true;
-} else if (!fs.existsSync(path.join(root, "npm-shrinkwrap.json"))) {
-  console.error("FAIL: npm-shrinkwrap.json is listed in package.json files but does not exist on disk");
+} else if (!packageLockExists) {
+  console.error("FAIL: package-lock.json missing - cannot generate npm-shrinkwrap.json for publish");
+  failed = true;
+} else if (!fs.existsSync(shrinkwrapScriptPath)) {
+  console.error("FAIL: scripts/manage-shrinkwrap.cjs missing - cannot generate npm-shrinkwrap.json for publish");
+  failed = true;
+} else if (!hasShrinkwrapCreate || !hasShrinkwrapClean) {
+  console.error("FAIL: package.json must generate npm-shrinkwrap.json in prepack and remove it in postpack");
   failed = true;
 } else {
-  console.log("OK: npm-shrinkwrap.json is included for publish");
+  console.log("OK: npm-shrinkwrap.json is generated only for pack/publish");
 }
 
 // 2. Collect relative imports from index.ts (from "./foo.js" or './bar/baz.js')
 const indexPath = path.join(root, "index.ts");
 const indexContent = fs.readFileSync(indexPath, "utf8");
-const importRegex = /from\s+["'](\.\/[^"']+)["']/g;
-const importedPaths = new Set();
-let m;
-while ((m = importRegex.exec(indexContent)) !== null) {
-  const spec = m[1];
-  if (spec.startsWith("./")) {
-    // Normalize to source path: .js -> .ts
-    const rel = spec.slice(2).replace(/\.js$/, ".ts");
-    importedPaths.add(rel);
-  }
+const importRegex = /from\s+["'](\.\/.+?\.js)["']/g;
+const importedJs = new Set();
+for (const match of indexContent.matchAll(importRegex)) {
+  importedJs.add(match[1]);
 }
 
-// 3. Which "files" entries cover a given path? (exact match or directory prefix)
-const files = pkg.files || [];
-function isCovered(relPath) {
-  if (files.includes(relPath)) return true;
-  const dir = relPath.includes("/") ? relPath.split("/")[0] : null;
-  if (dir && files.includes(dir)) return true;
-  return false;
-}
+const importedRoots = [...importedJs].map((p) => p.replace(/^\.\//, "").replace(/\.js$/, ""));
+const filesEntries = new Set(pkg.files || []);
 
-// 4. Check each imported path is covered and exists
-const missingFromFiles = [];
-const missingFromDisk = [];
-for (const rel of [...importedPaths].sort()) {
-  if (!isCovered(rel)) missingFromFiles.push(rel);
-  const full = path.join(root, rel);
-  if (!fs.existsSync(full)) missingFromDisk.push(rel);
-}
+// 3. Ensure every imported root is covered by a files entry prefix
+const uncovered = importedRoots.filter((r) => {
+  const firstSeg = r.split("/")[0];
+  return !filesEntries.has(firstSeg) && !filesEntries.has(`${firstSeg}.ts`) && !filesEntries.has(r) && !filesEntries.has(`${r}.ts`);
+});
 
-if (missingFromFiles.length > 0) {
-  console.error('FAIL: The following modules are imported by index.ts but are NOT included in package.json "files":');
-  missingFromFiles.forEach((p) => console.error("  - " + p));
-  console.error('  Add the missing path or its parent directory (e.g. "lifecycle", "setup", "tools") to "files".');
+if (uncovered.length > 0) {
+  console.error('FAIL: package.json "files" does not cover imports from index.ts:', uncovered);
   failed = true;
 } else {
   console.log('OK: all index.ts imports are covered by package.json "files"');
 }
 
-if (missingFromDisk.length > 0) {
-  console.error("FAIL: The following imported paths do not exist on disk:");
-  missingFromDisk.forEach((p) => console.error("  - " + p));
+// 4. Ensure files actually exist on disk as .ts or directories/files
+const missingOnDisk = importedRoots.filter((r) => {
+  const tsFile = path.join(root, `${r}.ts`);
+  const dir = path.join(root, r);
+  return !fs.existsSync(tsFile) && !fs.existsSync(dir);
+});
+
+if (missingOnDisk.length > 0) {
+  console.error("FAIL: imported paths missing on disk:", missingOnDisk);
   failed = true;
 } else {
   console.log("OK: all imported files exist on disk");

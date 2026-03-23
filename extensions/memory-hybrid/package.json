@@ -52,6 +52,8 @@
     "format:check": "biome format .",
     "lint:arch": "bash scripts/lint-arch.sh",
     "postinstall": "node scripts/postinstall-rebuild.cjs",
+    "prepack": "node scripts/manage-shrinkwrap.cjs create",
+    "postpack": "node scripts/manage-shrinkwrap.cjs clean",
     "verify:publish": "node scripts/verify-publish.cjs",
     "release:publish": "npm run verify:publish && npm publish --otp=$OTP"
   },

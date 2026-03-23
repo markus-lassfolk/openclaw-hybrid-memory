@@ -30,3 +30,5 @@ internal/
 Thumbs.db
 .claude/settings.json
 extensions/memory-hybrid/dist/
+
+extensions/memory-hybrid/npm-shrinkwrap.json
