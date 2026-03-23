@@ -379,6 +379,31 @@ export function invalidateClusterCache(): void {
 }
 
 type SemanticCacheCapableVectorDB = import("../backends/vector-db.js").VectorDB;
+
+function describeEmbeddingRegistry(registry: EmbeddingRegistry | null | undefined): unknown {
+  if (!registry) return null;
+
+  const primaryModel = typeof registry.getPrimaryModel === "function" ? registry.getPrimaryModel() : null;
+  const additionalModels =
+    typeof registry.getModels === "function"
+      ? registry
+          .getModels()
+          .map((model) => ({
+            name: model.name,
+            provider: model.provider,
+            dimensions: model.dimensions,
+            role: model.role ?? null,
+          }))
+          .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
+      : [];
+
+  return {
+    primaryModel,
+    additionalModels,
+    multiModel: typeof registry.isMultiModel === "function" ? registry.isMultiModel() : additionalModels.length > 0,
+  };
+}
+
 function buildSemanticCacheFilterKey(config: RetrievalConfig, options: RetrievalPipelineOptions): string {
   const expanderMode =
     options.queryExpander && typeof (options.queryExpander as QueryExpander).getMode === "function"
@@ -386,6 +411,11 @@ function buildSemanticCacheFilterKey(config: RetrievalConfig, options: Retrieval
       : options.queryExpander
         ? "always"
         : "off";
+  const expanderThreshold =
+    options.queryExpander && typeof (options.queryExpander as QueryExpander).getThreshold === "function"
+      ? options.queryExpander.getThreshold()
+      : null;
+
   return stableStringify({
     strategies: [...config.strategies].sort(),
     rrfK: config.rrf_k,
@@ -396,12 +426,41 @@ function buildSemanticCacheFilterKey(config: RetrievalConfig, options: Retrieval
     includeSuperseded: options.includeSuperseded ?? false,
     scopeFilter: options.scopeFilter ?? null,
     asOf: options.asOf ?? null,
-    clustersEnabled: options.clustersConfig?.enabled ?? false,
-    clustersMinSize: options.clustersConfig?.minClusterSize ?? null,
-    rerankingEnabled: options.rerankingConfig?.enabled ?? false,
-    documentGradingEnabled: options.documentGradingConfig?.enabled ?? false,
+    clustersConfig: options.clustersConfig ?? null,
+    rerankingAvailable: Boolean(options.rerankingConfig?.enabled && options.rerankingOpenai),
+    rerankingConfig: options.rerankingConfig ?? null,
+    documentGradingAvailable: Boolean(
+      options.documentGrader || (options.documentGradingConfig?.enabled && options.adaptiveOpenai),
+    ),
+    documentGradingConfig: options.documentGradingConfig ?? null,
+    documentGraderOverride: options.documentGrader ? (options.documentGrader.constructor?.name ?? "custom") : null,
+    aliasDbEnabled: Boolean(options.aliasDb),
     queryExpansionMode: expanderMode,
+    queryExpansionThreshold: expanderThreshold,
+    queryExpansionContext: options.queryExpansionContext ?? null,
+    embeddingRegistry: describeEmbeddingRegistry(options.embeddingRegistry),
+    embeddingFactsEnabled: Boolean(options.factsDbForEmbeddings),
   });
+}
+
+function shouldPreferResult(
+  candidate: { result: OrchestratorResult; shouldRewrite: boolean },
+  incumbent: OrchestratorResult | null,
+  incumbentWasIrrelevant: boolean,
+): boolean {
+  if (!incumbent) return true;
+
+  const candidateHasRelevantDocs = !candidate.shouldRewrite;
+  const incumbentHasRelevantDocs = !incumbentWasIrrelevant;
+  if (candidateHasRelevantDocs !== incumbentHasRelevantDocs) {
+    return candidateHasRelevantDocs;
+  }
+
+  if (candidate.result.fused.length !== incumbent.fused.length) {
+    return candidate.result.fused.length > incumbent.fused.length;
+  }
+
+  return (candidate.result.fused[0]?.finalScore ?? 0) > (incumbent.fused[0]?.finalScore ?? 0);
 }
 
 function collectContradictedIds(
@@ -457,7 +516,7 @@ function buildCachedResult(
   const fused: FusedResult[] = [];
   let acceptedCount = 0;
 
-  for (const [index, factId] of factIds.entries()) {
+  for (const factId of factIds) {
     const entry = factsDb.getById(factId, getByIdOpts);
     if (!entry) continue;
     if (!options.includeSuperseded) {
@@ -995,19 +1054,13 @@ export async function runRetrievalPipeline(
   const attemptedQueries = [query];
   let currentQuery = query;
   let currentQueryVector = queryVector;
-  let lastRun: { result: OrchestratorResult; shouldRewrite: boolean; fromCache: boolean } | null = null;
   let bestResult: OrchestratorResult | null = null;
   let bestResultWasIrrelevant = false;
 
   for (let iteration = 0; iteration <= MAX_REWRITE_ITERATIONS; iteration++) {
     const run = await executePipelineQuery(currentQuery, currentQueryVector);
-    lastRun = run;
 
-    if (
-      !bestResult ||
-      (!run.shouldRewrite && bestResultWasIrrelevant) ||
-      (!run.shouldRewrite && !bestResultWasIrrelevant && run.result.fused.length > bestResult.fused.length)
-    ) {
+    if (shouldPreferResult(run, bestResult, bestResultWasIrrelevant)) {
       bestResult = run.result;
       bestResultWasIrrelevant = run.shouldRewrite;
     }
@@ -1027,16 +1080,16 @@ export async function runRetrievalPipeline(
           cachedAt: nowSec,
         });
       }
-      return bestResult;
+      return bestResult ?? run.result;
     }
 
     if (iteration === MAX_REWRITE_ITERATIONS) {
-      return bestResult;
+      return bestResult ?? run.result;
     }
 
     const rewritten = await activeDocumentGrader.rewriteQuery(query, attemptedQueries);
     if (!rewritten) {
-      return bestResult;
+      return bestResult ?? run.result;
     }
 
     attemptedQueries.push(rewritten);

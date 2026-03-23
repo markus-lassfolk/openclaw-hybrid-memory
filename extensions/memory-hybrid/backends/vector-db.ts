@@ -5,7 +5,7 @@
 import * as lancedb from "@lancedb/lancedb";
 import { randomUUID } from "node:crypto";
 import type { MemoryCategory, DecayClass } from "../config.js";
-import type { MemoryEntry, SearchResult } from "../types/memory.js";
+import type { SearchResult } from "../types/memory.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { UUID_REGEX } from "../utils/constants.js";
 import { pluginLogger } from "../utils/logger.js";
@@ -26,6 +26,7 @@ const _optimizingByPath = new Map<string, boolean>();
 /** Module-level consecutive optimize-failure counter keyed by dbPath. */
 const _optimizeFailuresByPath = new Map<string, number>();
 const _OPTIMIZE_FAILURE_WARN_THRESHOLD = 3;
+const SEMANTIC_QUERY_CACHE_MAX_ROWS_PER_FILTER_KEY = 100;
 
 export type VectorDBLogger = { warn: (msg: string) => void };
 
@@ -129,7 +130,7 @@ export class VectorDB {
       }
       this.initPromise = null;
     }
-    if (this.table) return;
+    if (this.table && this.semanticQueryCacheTable) return;
     if (this.initPromise) return this.initPromise;
     this.initPromise = this.doInitialize().catch((err) => {
       capturePluginError(err as Error, {
@@ -179,6 +180,7 @@ export class VectorDB {
     if (tables.includes(SEMANTIC_QUERY_CACHE_TABLE)) {
       try {
         this.semanticQueryCacheTable = await this.db.openTable(SEMANTIC_QUERY_CACHE_TABLE);
+        await this.validateOrRepairSemanticQueryCacheTable();
         return;
       } catch (err) {
         this.logWarn(`memory-hybrid: failed to open semantic query cache table, rebuilding: ${err}`);
@@ -190,6 +192,11 @@ export class VectorDB {
       }
     }
 
+    await this.recreateSemanticQueryCacheTable();
+  }
+
+  private async recreateSemanticQueryCacheTable(): Promise<void> {
+    if (!this.db) throw new Error("VectorDB connection not initialized.");
     this.semanticQueryCacheTable = await this.db.createTable(SEMANTIC_QUERY_CACHE_TABLE, [
       {
         id: "__schema__",
@@ -206,6 +213,49 @@ export class VectorDB {
     } catch (deleteErr) {
       this.logWarn(`memory-hybrid: failed to delete semantic cache seed row (non-fatal): ${deleteErr}`);
     }
+  }
+
+  private findVectorField(schema: { fields: Array<{ type?: { typeId?: number; listSize?: number } }> }):
+    | { type?: { typeId?: number; listSize?: number } }
+    | undefined {
+    return schema.fields.find((field) => typeof field.type?.typeId === "number" && field.type.typeId === 16);
+  }
+
+  private async validateOrRepairSemanticQueryCacheTable(): Promise<void> {
+    const table = this.semanticQueryCacheTable;
+    if (!table || !this.db) throw new Error("Semantic query cache table not initialized.");
+
+    let shouldRebuild = false;
+    let reason = "unknown schema mismatch";
+
+    try {
+      const schema = await table.schema();
+      const vectorField = this.findVectorField(schema);
+      if (!vectorField) {
+        shouldRebuild = true;
+        reason = "missing vector column";
+      } else {
+        const actualDim = vectorField.type?.listSize;
+        if (typeof actualDim !== "number" || actualDim !== this.vectorDim) {
+          shouldRebuild = true;
+          reason = `vector dim=${typeof actualDim === "number" ? actualDim : "unknown"}, expected ${this.vectorDim}`;
+        }
+      }
+    } catch (err) {
+      shouldRebuild = true;
+      reason = `schema validation failed: ${err}`;
+    }
+
+    if (!shouldRebuild) return;
+
+    this.logWarn(`memory-hybrid: rebuilding semantic query cache table due to ${reason}`);
+    try {
+      await this.db.dropTable(SEMANTIC_QUERY_CACHE_TABLE);
+    } catch {
+      /* ignore */
+    }
+    this.semanticQueryCacheTable = null;
+    await this.recreateSemanticQueryCacheTable();
   }
 
   /**
@@ -361,6 +411,35 @@ export class VectorDB {
     }
   }
 
+  private escapeSqlString(value: string): string {
+    return value.replaceAll("'", "''");
+  }
+
+  private async pruneSemanticQueryCache(filterKey: string): Promise<void> {
+    const table = this.getSemanticQueryCacheTable();
+    const rows = await table
+      .query()
+      .where(`filterKey = '${this.escapeSqlString(filterKey)}'`)
+      .select(["id", "cachedAt"])
+      .toArray();
+
+    if (rows.length <= SEMANTIC_QUERY_CACHE_MAX_ROWS_PER_FILTER_KEY) return;
+
+    const staleRows = rows
+      .map((row) => ({
+        id: String(row.id ?? ""),
+        cachedAt: Number(row.cachedAt ?? 0),
+      }))
+      .filter((row) => row.id.length > 0)
+      .sort((a, b) => b.cachedAt - a.cachedAt || a.id.localeCompare(b.id))
+      .slice(SEMANTIC_QUERY_CACHE_MAX_ROWS_PER_FILTER_KEY);
+
+    if (staleRows.length === 0) return;
+
+    const idList = staleRows.map((row) => `'${this.escapeSqlString(row.id)}'`).join(", ");
+    await table.delete(`id IN (${idList})`);
+  }
+
   async getSemanticQueryCacheMatch(
     vector: number[],
     options: { minSimilarity?: number; ttlMs?: number; filterKey?: string; candidateLimit?: number } = {},
@@ -438,16 +517,18 @@ export class VectorDB {
   }): Promise<void> {
     try {
       await this.ensureInitialized();
+      const filterKey = entry.filterKey ?? "default";
       await this.getSemanticQueryCacheTable().add([
         {
           id: randomUUID(),
           queryText: entry.queryText,
-          filterKey: entry.filterKey ?? "default",
+          filterKey,
           vector: entry.vector,
           factIds: JSON.stringify(entry.factIds),
           cachedAt: entry.cachedAt ?? Math.floor(Date.now() / 1000),
         },
       ]);
+      await this.pruneSemanticQueryCache(filterKey);
     } catch (err) {
       capturePluginError(err as Error, {
         operation: "semantic-query-cache-store",
