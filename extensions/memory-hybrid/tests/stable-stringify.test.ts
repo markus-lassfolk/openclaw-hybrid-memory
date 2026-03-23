@@ -5,7 +5,7 @@ import { stableStringify } from "../utils/stable-stringify.js";
 describe("stableStringify", () => {
   it("does not rely on localeCompare for key ordering", () => {
     const originalLocaleCompare = String.prototype.localeCompare;
-    const localeCompareSpy = function (): number {
+    const localeCompareSpy = (): number => {
       throw new Error("localeCompare should not be used");
     };
 

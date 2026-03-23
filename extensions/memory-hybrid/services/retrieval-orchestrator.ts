@@ -585,7 +585,7 @@ function buildCachedResult(
     options.scopeFilter || options.asOf != null ? { scopeFilter: options.scopeFilter, asOf: options.asOf } : undefined;
   const effectiveNow = options.asOf ?? options.nowSec;
 
-  let orderedEntries: Array<{ factId: string; entry: MemoryEntry }> = [];
+  const orderedEntries: Array<{ factId: string; entry: MemoryEntry }> = [];
   const fused: FusedResult[] = [];
   let acceptedCount = 0;
 
