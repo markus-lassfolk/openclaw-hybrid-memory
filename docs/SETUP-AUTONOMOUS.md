@@ -95,13 +95,13 @@ For the API key: check if `OPENAI_API_KEY` is set in the environment. If yes, us
 {
   "enabled": true,
   "sources": ["memory"],
-  "provider": "openai",
-  "model": "text-embedding-3-small",
   "sync": { "onSessionStart": true, "onSearch": true, "watch": true },
   "chunking": { "tokens": 500, "overlap": 50 },
   "query": { "maxResults": 8, "minScore": 0.3, "hybrid": { "enabled": true } }
 }
 ```
+
+Leave `provider` and `model` unset unless you specifically need to override them. That lets `memorySearch` reuse your configured embedding provider/model instead of forcing an OpenAI-only example, which is important for Azure Foundry and other providers.
 
 **4c. Memory backend** — set `memory.backend` to `"builtin"`, `memory.citations` to `"auto"`.
 

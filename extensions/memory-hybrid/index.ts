@@ -51,7 +51,7 @@ import { WriteAheadLog } from "./backends/wal.js";
 import { VectorDB } from "./backends/vector-db.js";
 import { FactsDB, MEMORY_LINK_TYPES, type MemoryLinkType, type ContradictionRecord } from "./backends/facts-db.js";
 import { registerHybridMemCliWithApi } from "./setup/cli-context.js";
-import { deepMerge } from "./cli/handlers.js";
+import { buildInstallDefaults, deepMerge } from "./cli/handlers.js";
 import { Embeddings, safeEmbed, type EmbeddingProvider } from "./services/embeddings.js";
 import {
   chatComplete,
@@ -730,6 +730,7 @@ export const _testing = {
   filterByScope,
   safeEmbed,
   deepMerge,
+  buildInstallDefaults,
   // Encryption primitives (used by CredentialsDB)
   deriveKey,
   encryptValue,

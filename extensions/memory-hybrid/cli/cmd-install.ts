@@ -475,31 +475,21 @@ export function getPluginConfigFromFile(
   return { config, root };
 }
 
-/** Get plugin entry config from root openclaw config (for schedule overrides etc.). */
-function getPluginEntryConfig(root: Record<string, unknown>): Record<string, unknown> | undefined {
-  const plugins = root?.plugins as Record<string, unknown> | undefined;
-  const entries = plugins?.entries as Record<string, unknown> | undefined;
-  const entry = entries?.[PLUGIN_ID] as Record<string, unknown> | undefined;
-  const config = entry?.config;
-  return config && typeof config === "object" && !Array.isArray(config)
-    ? (config as Record<string, unknown>)
-    : undefined;
-}
-
-/**
- * Install plugin configuration and cron jobs
+/** Build install-time OpenClaw defaults for hybrid memory.
+ *
+ * `agents.defaults.memorySearch` intentionally omits `provider` and `model` so
+ * OpenClaw can use the same embedding provider/model the user already configured
+ * elsewhere (for example Azure Foundry, Cohere, NVIDIA, or other gateway-backed
+ * providers) instead of pinning memorySearch to a fixed provider enum.
  */
-export function runInstallForCli(opts: { dryRun: boolean }): InstallCliResult {
-  const openclawDir = join(homedir(), ".openclaw");
-  const configPath = join(openclawDir, "openclaw.json");
-
-  const fullDefaults = {
+export function buildInstallDefaults(pluginId: string = PLUGIN_ID): Record<string, unknown> {
+  return {
     memory: { backend: "builtin" as const, citations: "auto" as const },
     plugins: {
-      slots: { memory: PLUGIN_ID },
+      slots: { memory: pluginId },
       entries: {
         "memory-core": { enabled: true },
-        [PLUGIN_ID]: {
+        [pluginId]: {
           enabled: true,
           config: {
             mode: "local",
@@ -544,8 +534,6 @@ export function runInstallForCli(opts: { dryRun: boolean }): InstallCliResult {
         memorySearch: {
           enabled: true,
           sources: ["memory"],
-          provider: "openai",
-          model: "text-embedding-3-small",
           sync: { onSessionStart: true, onSearch: true, watch: true },
           chunking: { tokens: 500, overlap: 50 },
           query: { maxResults: 8, minScore: 0.3, hybrid: { enabled: true } },
@@ -562,12 +550,29 @@ export function runInstallForCli(opts: { dryRun: boolean }): InstallCliResult {
               "URGENT: Context is about to be compacted. Scan the full conversation and:\n1. Use memory_store for each important fact, preference, decision, or entity (structured storage survives compaction)\n2. Write a session summary to memory/YYYY-MM-DD.md with key topics, decisions, and open items\n3. Update any relevant memory/ files if project state or technical details changed\n\nDo NOT skip this. Reply NO_REPLY only if there is truly nothing worth saving.",
           },
         },
-        // NOTE: agents.defaults.pruning is intentionally NOT included here.
-        // OpenClaw core does not recognize this key; it has no effect and only causes confusion.
-        // Memory pruning is handled internally by the plugin (every 60 min) via the memory_prune tool.
       },
     },
   };
+}
+
+/** Get plugin entry config from root openclaw config (for schedule overrides etc.). */
+function getPluginEntryConfig(root: Record<string, unknown>): Record<string, unknown> | undefined {
+  const plugins = root?.plugins as Record<string, unknown> | undefined;
+  const entries = plugins?.entries as Record<string, unknown> | undefined;
+  const entry = entries?.[PLUGIN_ID] as Record<string, unknown> | undefined;
+  const config = entry?.config;
+  return config && typeof config === "object" && !Array.isArray(config)
+    ? (config as Record<string, unknown>)
+    : undefined;
+}
+
+/**
+ * Install plugin configuration and cron jobs
+ */
+export function runInstallForCli(opts: { dryRun: boolean }): InstallCliResult {
+  const openclawDir = join(homedir(), ".openclaw");
+  const configPath = join(openclawDir, "openclaw.json");
+  const fullDefaults = buildInstallDefaults();
 
   let config: Record<string, unknown> = {};
   if (existsSync(configPath)) {
