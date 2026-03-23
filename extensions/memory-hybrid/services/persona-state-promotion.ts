@@ -2,6 +2,7 @@ import type { IdentityFileType } from "../config/types/agents.js";
 import type { IdentityPromotionConfig } from "../config/types/capture.js";
 import type { IdentityReflectionEntry, IdentityReflectionStore } from "../backends/identity-reflection-store.js";
 import type { PersonaStateEntry, PersonaStateStore } from "../backends/persona-state-store.js";
+import { uniqueStrings } from "../utils/text.js";
 
 const INSIGHT_STOPWORDS = new Set([
   "a",
@@ -50,10 +51,6 @@ export interface PersonaPromotionResult {
   updated: number;
   unchanged: number;
   entries: PersonaStateEntry[];
-}
-
-function uniqueStrings(values: string[]): string[] {
-  return Array.from(new Set(values.map((value) => value.trim()).filter((value) => value.length > 0)));
 }
 
 export function normalizePersonaInsight(text: string): string {
@@ -219,6 +216,21 @@ export function promotePersonaStateFromReflections(
 
   for (const candidate of candidates) {
     if (opts?.dryRun) {
+      const existing = personaStateStore.getByStateKey(candidate.stateKey);
+      if (!existing) {
+        promoted++;
+      } else {
+        const wouldChange =
+          existing.insight !== candidate.insight ||
+          existing.targetFile !== candidate.targetFile ||
+          existing.confidence !== candidate.averageConfidence ||
+          existing.durableCount !== candidate.durableCount;
+        if (wouldChange) {
+          updated++;
+        } else {
+          unchanged++;
+        }
+      }
       entries.push({
         id: candidate.stateKey,
         stateKey: candidate.stateKey,

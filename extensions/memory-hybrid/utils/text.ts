@@ -135,3 +135,11 @@ export function slugifyForSkill(text: string, fallback = "skill"): string {
     .slice(0, 60);
   return slug || fallback;
 }
+
+/**
+ * Returns unique non-empty trimmed strings from the input array.
+ * Used for deduplicating evidence and source reflection IDs.
+ */
+export function uniqueStrings(values: string[]): string[] {
+  return Array.from(new Set(values.map((value) => value.trim()).filter((value) => value.length > 0)));
+}
