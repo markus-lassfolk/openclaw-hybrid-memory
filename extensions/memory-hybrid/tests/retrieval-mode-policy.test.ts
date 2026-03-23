@@ -30,4 +30,3 @@ describe("retrieval-mode-policy", () => {
     expect(shouldSkipHydeForMode(RETRIEVAL_MODE.EXPLICIT_DEEP, true)).toBe(false);
   });
 });
-

@@ -125,4 +125,3 @@ describe("buildDailyNarrative", () => {
     expect(narrativesDb.listRecent(5, "session").length).toBe(0);
   });
 });
-

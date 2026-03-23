@@ -108,7 +108,8 @@ export async function runRecallPipelineQuery(
 
   const trimmed = query.trim();
   if (!trimmed) return [];
-  const mode = opts?.mode ?? (opts?.interactive === true ? RETRIEVAL_MODE.INTERACTIVE_RECALL : RETRIEVAL_MODE.EXPLICIT_DEEP);
+  const mode =
+    opts?.mode ?? (opts?.interactive === true ? RETRIEVAL_MODE.INTERACTIVE_RECALL : RETRIEVAL_MODE.EXPLICIT_DEEP);
   const vectorStepTimeoutMs = getVectorStepTimeoutMs(mode);
 
   const stageMs = { fts: 0, embed: 0, vector: 0, merge: 0 };

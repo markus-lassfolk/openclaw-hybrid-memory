@@ -146,10 +146,7 @@ export function computeDiversityFromEvents(events: ReinforcementEvent[]): number
   return uniqueStems / stems.length;
 }
 
-export function batchGetReinforcementEvents(
-  db: DatabaseSync,
-  factIds: string[],
-): Map<string, ReinforcementEvent[]> {
+export function batchGetReinforcementEvents(db: DatabaseSync, factIds: string[]): Map<string, ReinforcementEvent[]> {
   if (factIds.length === 0) return new Map();
   const placeholders = factIds.map(() => "?").join(",");
   const rows = db

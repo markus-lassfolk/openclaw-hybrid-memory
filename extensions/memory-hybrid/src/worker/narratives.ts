@@ -122,4 +122,3 @@ export async function buildDailyNarrative(params: BuildDailyNarrativeParams): Pr
     return false;
   }
 }
-

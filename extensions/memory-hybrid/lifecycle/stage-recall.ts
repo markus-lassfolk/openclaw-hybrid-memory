@@ -20,10 +20,7 @@ import { withTimeout } from "../utils/timeout.js";
 import { estimateTokens } from "../utils/text.js";
 import type { LifecycleContext, RecallResult, RecallStageResult, SessionState } from "./types.js";
 import { runRecallPipelineQuery, type RecallPipelineDeps } from "../services/recall-pipeline.js";
-import {
-  INTERACTIVE_RECALL_POLICY,
-  resolveInteractiveRecallBudgetTokens,
-} from "../services/retrieval-mode-policy.js";
+import { INTERACTIVE_RECALL_POLICY, resolveInteractiveRecallBudgetTokens } from "../services/retrieval-mode-policy.js";
 
 export const RECALL_STAGE_TIMEOUT_MS = INTERACTIVE_RECALL_POLICY.stageTimeoutMs;
 
@@ -127,7 +124,8 @@ async function runRecall(
           // Non-fatal.
         }
       }
-      const inner = narrativePart + hotPart + (memoryLines.length ? "Recalled (FTS-only):\n" + memoryLines.join("\n") : "");
+      const inner =
+        narrativePart + hotPart + (memoryLines.length ? "Recalled (FTS-only):\n" + memoryLines.join("\n") : "");
       const block = inner ? `<recalled-context>\n${inner}\n</recalled-context>` : "";
       const degradedMarker = "<!-- recall degraded: queue -->\n";
       api.logger.debug?.(
@@ -539,7 +537,10 @@ async function runRecall(
     const totalBudget = resolveInteractiveRecallBudgetTokens(ctx.cfg);
     // Account for issueBlock, hotBlock, and procedureBlock tokens to ensure total stays within budget
     const fixedBlocksTokens =
-      estimateTokens(issueBlock) + estimateTokens(narrativeBlock) + estimateTokens(hotBlock) + estimateTokens(procedureBlock);
+      estimateTokens(issueBlock) +
+      estimateTokens(narrativeBlock) +
+      estimateTokens(hotBlock) +
+      estimateTokens(procedureBlock);
     const maxTokens = Math.max(0, totalBudget - fixedBlocksTokens);
     if (maxTokens === 0) {
       api.logger.warn?.(

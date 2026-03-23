@@ -115,21 +115,36 @@ export async function runIdentityReflection(
   const windowStart = nowSec - windowDays * 24 * 3600;
   const scopeFilter = opts.scopeFilter;
 
-  const all = factsDb.getAll({ scopeFilter }).filter((f) => !f.supersededAt && (f.expiresAt === null || f.expiresAt > nowSec));
-  const patterns = all.filter((f) => f.category === "pattern" && !f.tags?.includes("meta") && f.createdAt >= windowStart);
+  const all = factsDb
+    .getAll({ scopeFilter })
+    .filter((f) => !f.supersededAt && (f.expiresAt === null || f.expiresAt > nowSec));
+  const patterns = all.filter(
+    (f) => f.category === "pattern" && !f.tags?.includes("meta") && f.createdAt >= windowStart,
+  );
   const rules = all.filter((f) => f.category === "rule" && f.createdAt >= windowStart);
   const metas = all.filter((f) => f.category === "pattern" && f.tags?.includes("meta") && f.createdAt >= windowStart);
   const insightCount = patterns.length + rules.length + metas.length;
   if (insightCount < config.minInsights) {
-    logger.info(`memory-hybrid: reflect-identity — insufficient reflection insights (${insightCount}/${config.minInsights})`);
+    logger.info(
+      `memory-hybrid: reflect-identity — insufficient reflection insights (${insightCount}/${config.minInsights})`,
+    );
     return { insightsExtracted: 0, insightsStored: 0, questionsAsked: config.questions.length };
   }
 
   const questionMap = new Map(config.questions.map((q) => [q.key, q.prompt]));
   const questionsBlock = config.questions.map((q, i) => `${i + 1}. ${q.key}: ${q.prompt}`).join("\n");
-  const patternsBlock = patterns.slice(0, 30).map((f) => `- ${f.text}`).join("\n");
-  const rulesBlock = rules.slice(0, 30).map((f) => `- ${f.text}`).join("\n");
-  const metasBlock = metas.slice(0, 15).map((f) => `- ${f.text}`).join("\n");
+  const patternsBlock = patterns
+    .slice(0, 30)
+    .map((f) => `- ${f.text}`)
+    .join("\n");
+  const rulesBlock = rules
+    .slice(0, 30)
+    .map((f) => `- ${f.text}`)
+    .join("\n");
+  const metasBlock = metas
+    .slice(0, 15)
+    .map((f) => `- ${f.text}`)
+    .join("\n");
 
   const prompt = fillPrompt(loadPrompt("identity-reflection"), {
     window: String(windowDays),

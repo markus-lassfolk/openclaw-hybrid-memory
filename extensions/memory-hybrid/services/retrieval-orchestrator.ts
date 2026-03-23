@@ -479,7 +479,9 @@ export async function runRetrievalPipeline(
   }): Promise<OrchestratorResult> => {
     const k = config.rrf_k;
     const { semanticTopK, fts5TopK } = config;
-    const strategies = modePolicy.allowGraphStrategy ? config.strategies : config.strategies.filter((s) => s !== "graph");
+    const strategies = modePolicy.allowGraphStrategy
+      ? config.strategies
+      : config.strategies.filter((s) => s !== "graph");
 
     // --- Run strategies in parallel ---
     const strategyPromises: Array<Promise<[string, RankedResult[]]>> = [];

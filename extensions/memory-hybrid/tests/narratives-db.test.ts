@@ -82,4 +82,3 @@ describe("NarrativesDB", () => {
     expect(rows.map((r) => r.sessionId)).toEqual(["new-session"]);
   });
 });
-

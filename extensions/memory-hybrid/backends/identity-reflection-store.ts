@@ -120,9 +120,9 @@ export class IdentityReflectionStore {
   }
 
   get(id: string): IdentityReflectionEntry | null {
-    const row = this.db
-      .prepare(`SELECT * FROM identity_reflections WHERE id = ?`)
-      .get(id) as IdentityReflectionRow | undefined;
+    const row = this.db.prepare(`SELECT * FROM identity_reflections WHERE id = ?`).get(id) as
+      | IdentityReflectionRow
+      | undefined;
     if (!row) return null;
     return this.rowToEntry(row);
   }

@@ -680,9 +680,15 @@ describe("runRecallPipelineQuery — retrieval mode policy (#639)", () => {
     (deps.factsDb.search as ReturnType<typeof vi.fn>).mockReturnValue([]);
     (deps.vectorDb.search as ReturnType<typeof vi.fn>).mockResolvedValue([]);
 
-    await runRecallPipelineQuery("interactive mode query", 5, deps, { value: false }, {
-      mode: RETRIEVAL_MODE.INTERACTIVE_RECALL,
-    });
+    await runRecallPipelineQuery(
+      "interactive mode query",
+      5,
+      deps,
+      { value: false },
+      {
+        mode: RETRIEVAL_MODE.INTERACTIVE_RECALL,
+      },
+    );
 
     expect(chatModule.chatCompleteWithRetry).not.toHaveBeenCalled();
     expect(deps.embeddings.embed).toHaveBeenCalledWith("interactive mode query");

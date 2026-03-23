@@ -43,11 +43,7 @@ export function createOrStrengthenRelatedLink(
   }
 }
 
-export function strengthenRelatedLinksBatch(
-  db: DatabaseSync,
-  pairs: [string, string][],
-  deltaStrength = 0.1,
-): void {
+export function strengthenRelatedLinksBatch(db: DatabaseSync, pairs: [string, string][], deltaStrength = 0.1): void {
   if (pairs.length === 0) return;
   const selectStmt = db.prepare(
     `SELECT id, strength FROM memory_links WHERE source_fact_id = ? AND target_fact_id = ? AND link_type = 'RELATED_TO'`,
