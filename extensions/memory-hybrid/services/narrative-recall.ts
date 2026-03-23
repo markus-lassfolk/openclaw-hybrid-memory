@@ -131,7 +131,13 @@ function collectNarrativeMatches(
       periodEnd: row.periodEnd,
       tag: row.tag,
       text: row.narrativeText,
-      score: scoreCandidate(`${row.sessionId} ${row.tag} ${row.narrativeText}`, options.query, options.queryTerms, row.periodEnd, options.nowSec),
+      score: scoreCandidate(
+        `${row.sessionId} ${row.tag} ${row.narrativeText}`,
+        options.query,
+        options.queryTerms,
+        row.periodEnd,
+        options.nowSec,
+      ),
     }))
     .sort(compareMatches);
 }
@@ -155,7 +161,9 @@ function collectEventMatches(
     const events = eventLog.getBySession(options.sessionId, 200);
     if (events.length > 0) sessionEvents.set(options.sessionId, events);
   } else {
-    const fromIso = new Date((options.sinceSec ?? options.nowSec - DEFAULT_LOOKBACK_DAYS * 86_400) * 1000).toISOString();
+    const fromIso = new Date(
+      (options.sinceSec ?? options.nowSec - DEFAULT_LOOKBACK_DAYS * 86_400) * 1000,
+    ).toISOString();
     const toIso = new Date(options.nowSec * 1000).toISOString();
     const maxSessions = Math.max(1, options.limit);
     const maxEventsPerSession = Math.max(1, options.maxEventsPerSession);
@@ -204,7 +212,13 @@ function collectEventMatches(
         periodEnd: toSec(last?.timestamp),
         tag: "event-log",
         text: summaryText,
-        score: scoreCandidate(`${sessionId} ${summaryText}`, options.query, options.queryTerms, toSec(last?.timestamp), options.nowSec),
+        score: scoreCandidate(
+          `${sessionId} ${summaryText}`,
+          options.query,
+          options.queryTerms,
+          toSec(last?.timestamp),
+          options.nowSec,
+        ),
       };
     })
     .filter((entry) => entry.periodEnd > 0)
@@ -214,8 +228,12 @@ function collectEventMatches(
 
 function summarizeEvents(events: EventLogEntry[], maxEvents: number): string {
   const ordered = [...events].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
-  const parts = ordered.slice(0, maxEvents).map(describeEvent).filter((part) => part.length > 0);
-  if (parts.length === 0) return `${ordered.length} event(s) recorded for session ${events[0]?.sessionId ?? "unknown"}.`;
+  const parts = ordered
+    .slice(0, maxEvents)
+    .map(describeEvent)
+    .filter((part) => part.length > 0);
+  if (parts.length === 0)
+    return `${ordered.length} event(s) recorded for session ${events[0]?.sessionId ?? "unknown"}.`;
   const summary = parts.join(" Then ");
   return ordered.length > maxEvents ? `${summary} Then ${ordered.length - maxEvents} more event(s) followed.` : summary;
 }
@@ -224,28 +242,45 @@ function describeEvent(event: EventLogEntry): string {
   const prefix = `[${event.timestamp}]`;
   switch (event.eventType) {
     case "decision_made":
-      return typeof event.content.decision === "string" ? `${prefix} decided ${event.content.decision}` : `${prefix} decision recorded`;
+      return typeof event.content.decision === "string"
+        ? `${prefix} decided ${event.content.decision}`
+        : `${prefix} decision recorded`;
     case "action_taken":
-      return typeof event.content.action === "string" ? `${prefix} tried ${event.content.action}` : `${prefix} action recorded`;
+      return typeof event.content.action === "string"
+        ? `${prefix} tried ${event.content.action}`
+        : `${prefix} action recorded`;
     case "fact_learned":
-      return typeof event.content.text === "string" ? `${prefix} learned ${event.content.text}` : `${prefix} fact recorded`;
+      return typeof event.content.text === "string"
+        ? `${prefix} learned ${event.content.text}`
+        : `${prefix} fact recorded`;
     case "entity_mentioned":
       return event.entities && event.entities.length > 0
         ? `${prefix} focused on ${event.entities.join(", ")}`
         : `${prefix} entity mentioned`;
     case "preference_expressed":
-      return typeof event.content.text === "string" ? `${prefix} noted preference ${event.content.text}` : `${prefix} preference recorded`;
+      return typeof event.content.text === "string"
+        ? `${prefix} noted preference ${event.content.text}`
+        : `${prefix} preference recorded`;
     case "correction":
-      return typeof event.content.text === "string" ? `${prefix} corrected ${event.content.text}` : `${prefix} correction recorded`;
+      return typeof event.content.text === "string"
+        ? `${prefix} corrected ${event.content.text}`
+        : `${prefix} correction recorded`;
     default:
       return `${prefix} ${event.eventType}`;
   }
 }
 
-function scoreCandidate(text: string, query: string | null, queryTerms: string[], periodEnd: number, nowSec: number): number {
+function scoreCandidate(
+  text: string,
+  query: string | null,
+  queryTerms: string[],
+  periodEnd: number,
+  nowSec: number,
+): number {
   const normalizedText = text.toLowerCase();
   const phraseBoost = query && normalizedText.includes(query) ? 2 : 0;
-  const overlap = queryTerms.length > 0 ? queryTerms.filter((term) => normalizedText.includes(term)).length / queryTerms.length : 0;
+  const overlap =
+    queryTerms.length > 0 ? queryTerms.filter((term) => normalizedText.includes(term)).length / queryTerms.length : 0;
   const ageSec = Math.max(0, nowSec - periodEnd);
   const recency = Math.max(0, 1 - ageSec / (30 * 86_400));
   return phraseBoost + overlap * 4 + recency;
