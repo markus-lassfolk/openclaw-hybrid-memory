@@ -52,7 +52,7 @@ export const OPENAI_MODELS = new Set([
 
 const MAX_ENV_RESOLVE_LENGTH = 10000;
 
-function normalizeResolvedSecretValue(value: string | undefined): string | undefined {
+export function normalizeResolvedSecretValue(value: string | undefined): string | undefined {
   if (typeof value !== "string") return undefined;
   const trimmed = value.trim();
   return trimmed && trimmed !== "undefined" ? trimmed : undefined;

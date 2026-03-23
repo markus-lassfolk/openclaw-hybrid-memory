@@ -116,17 +116,18 @@ export async function migrateEmbeddings(opts: MigrateEmbeddingsOptions): Promise
       break;
     }
 
-    const batch = (useBatched
-      ? (
-          factsDb as {
-            getBatch: (
-              offset: number,
-              limit: number,
-              opts: { includeSuperseded: boolean },
-            ) => Array<{ id: string; text: string; importance?: number; category: string }>;
-          }
-        ).getBatch(offset, batchSize, { includeSuperseded: false })
-      : facts?.slice(offset, offset + batchSize)) ?? [];
+    const batch =
+      (useBatched
+        ? (
+            factsDb as {
+              getBatch: (
+                offset: number,
+                limit: number,
+                opts: { includeSuperseded: boolean },
+              ) => Array<{ id: string; text: string; importance?: number; category: string }>;
+            }
+          ).getBatch(offset, batchSize, { includeSuperseded: false })
+        : facts?.slice(offset, offset + batchSize)) ?? [];
     if (batch.length === 0) break;
     const texts = batch.map((f) => f.text);
 

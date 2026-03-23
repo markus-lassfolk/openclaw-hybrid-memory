@@ -13,12 +13,20 @@ import { join } from "node:path";
 import { homedir } from "node:os";
 
 import type { MemoryCategory, HybridMemoryConfig } from "../config.js";
-import { getCronModelConfig, getLLMModelPreference, getDefaultCronModel, resolveReflectionModelAndFallbacks } from "../config.js";
+import {
+  getCronModelConfig,
+  getLLMModelPreference,
+  getDefaultCronModel,
+  resolveReflectionModelAndFallbacks,
+} from "../config.js";
 import { chatCompleteWithRetry, distillMaxOutputTokens } from "../services/chat.js";
 import { extractProceduresFromSessions } from "../services/procedure-extractor.js";
 import { generateAutoSkills } from "../services/procedure-skill-generator.js";
 import { runIdentityReflection } from "../services/identity-reflection.js";
-import { buildPersonaStateInsightsBlock, promotePersonaStateFromReflections } from "../services/persona-state-promotion.js";
+import {
+  buildPersonaStateInsightsBlock,
+  promotePersonaStateFromReflections,
+} from "../services/persona-state-promotion.js";
 import { loadPrompt, fillPrompt } from "../utils/prompt-loader.js";
 import { extractTags } from "../utils/tags.js";
 import { getDirectiveSignalRegex, getReinforcementSignalRegex } from "../utils/language-keywords.js";

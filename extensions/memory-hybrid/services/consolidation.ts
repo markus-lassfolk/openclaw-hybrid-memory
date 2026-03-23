@@ -85,7 +85,9 @@ export function isStructuredForConsolidation(text: string, entity: string | null
 function selectConsolidatedKeyValue(facts: MemoryEntry[]): { key: string | null; value: string | null } {
   if (facts.length === 0) return { key: null, value: null };
   const highestConfidence = facts.reduce((best, f) => (f.confidence > best.confidence ? f : best), facts[0]);
-  const factsWithKey = facts.filter((f): f is MemoryEntry & { key: string } => typeof f.key === "string" && f.key.trim().length > 0);
+  const factsWithKey = facts.filter(
+    (f): f is MemoryEntry & { key: string } => typeof f.key === "string" && f.key.trim().length > 0,
+  );
   if (factsWithKey.length === 0) return { key: null, value: null };
 
   const keyToBest = new Map<string, MemoryEntry>();

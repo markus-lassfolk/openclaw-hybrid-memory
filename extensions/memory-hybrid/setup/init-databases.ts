@@ -4,7 +4,7 @@ import { existsSync, readFileSync, constants } from "node:fs";
 import { open } from "node:fs/promises";
 import OpenAI from "openai";
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk";
-import { resolveSecretRef } from "../config/parsers/core.js";
+import { resolveSecretRef, normalizeResolvedSecretValue } from "../config/parsers/core.js";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
 import type { CredentialsDB } from "../backends/credentials-db.js";
@@ -49,12 +49,6 @@ import { installCoreBootstrapServices, installOptionalBootstrapServices } from "
  */
 const ROUTABLE_BUILTIN_PROVIDERS = new Set(["google", "openai", "anthropic", "ollama", "openrouter", "minimax"]);
 
-function getConfiguredEnvValue(value: string | undefined): string | undefined {
-  if (typeof value !== "string") return undefined;
-  const trimmed = value.trim();
-  return trimmed && trimmed !== "undefined" ? trimmed : undefined;
-}
-
 /**
  * Extract gateway configuration from environment and plugin config.
  * Centralized to avoid duplicating this logic across buildMultiProviderOpenAI and initializeDatabases.
@@ -66,10 +60,10 @@ function extractGatewayConfig(cfg: HybridMemoryConfig): {
   gatewayToken: string | undefined;
   gatewayBaseUrl: string | undefined;
 } {
-  const gatewayPortRaw = getConfiguredEnvValue(process.env.OPENCLAW_GATEWAY_PORT);
+  const gatewayPortRaw = normalizeResolvedSecretValue(process.env.OPENCLAW_GATEWAY_PORT);
   const gatewayPort = gatewayPortRaw ? Number.parseInt(gatewayPortRaw, 10) : undefined;
   const gatewayAuthResolved = (cfg.gateway?.auth as ResolvedGatewayAuthConfig | undefined)?._resolvedToken;
-  const gatewayToken = gatewayAuthResolved ?? getConfiguredEnvValue(process.env.OPENCLAW_GATEWAY_TOKEN);
+  const gatewayToken = gatewayAuthResolved ?? normalizeResolvedSecretValue(process.env.OPENCLAW_GATEWAY_TOKEN);
   const gatewayBaseUrl =
     gatewayPort && gatewayPort >= 1 && gatewayPort <= 65535 ? `http://127.0.0.1:${gatewayPort}/v1` : undefined;
   return {
@@ -302,7 +296,7 @@ export function resolveProviderApiKey(
   } = {},
 ): ResolvedApiKey {
   const { gatewayToken, hasCustomExternalBaseURL = false, env = process.env } = opts;
-  const readEnvKey = (name: string): string | undefined => getConfiguredEnvValue(env[name]);
+  const readEnvKey = (name: string): string | undefined => normalizeResolvedSecretValue(env[name]);
 
   // Highest priority: explicit per-provider key in llm.providers config (all providers).
   const fromProviderCfg = resolveKey(providerCfg?.apiKey);
@@ -1071,7 +1065,7 @@ export function initializeDatabases(cfg: HybridMemoryConfig, api: ClawdbotPlugin
   const heavyList = Array.isArray(cfg.llm?.heavy) ? cfg.llm.heavy : [];
   const hasAnthropicModel = (list: string[]) => list.some((m) => m.startsWith("anthropic/") || m.startsWith("claude-"));
   if (!prov.anthropic && (hasAnthropicModel(defaultList) || hasAnthropicModel(heavyList))) {
-    const envKey = getConfiguredEnvValue(process.env.ANTHROPIC_API_KEY) ?? "";
+    const envKey = normalizeResolvedSecretValue(process.env.ANTHROPIC_API_KEY) ?? "";
     if (envKey.length >= 10) {
       prov.anthropic = { apiKey: envKey };
       mergedProviderNames.push("anthropic");

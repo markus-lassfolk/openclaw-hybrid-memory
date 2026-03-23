@@ -177,7 +177,10 @@ export function collectPersonaPromotionCandidates(
     match.evidence.push(...reflection.evidence);
     match.sourceReflectionIds.push(reflection.id);
     match.lastSeenAt = Math.max(match.lastSeenAt, reflection.createdAt);
-    if (reflection.confidence > match.confidenceSum / match.durableCount || reflection.insight.length > match.canonicalInsight.length) {
+    if (
+      reflection.confidence > match.confidenceSum / match.durableCount ||
+      reflection.insight.length > match.canonicalInsight.length
+    ) {
       match.canonicalInsight = reflection.insight;
       match.normalizedInsight = normalizePersonaInsight(reflection.insight);
       match.targetFile = inferPersonaTargetFile(reflection.questionKey, reflection.insight);
