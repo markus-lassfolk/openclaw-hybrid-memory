@@ -215,9 +215,9 @@ export class VectorDB {
     }
   }
 
-  private findVectorField(schema: { fields: Array<{ type?: { typeId?: number; listSize?: number } }> }):
-    | { type?: { typeId?: number; listSize?: number } }
-    | undefined {
+  private findVectorField(schema: {
+    fields: Array<{ type?: { typeId?: number; listSize?: number } }>;
+  }): { type?: { typeId?: number; listSize?: number } } | undefined {
     return schema.fields.find((field) => typeof field.type?.typeId === "number" && field.type.typeId === 16);
   }
 

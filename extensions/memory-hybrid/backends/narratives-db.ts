@@ -106,6 +106,18 @@ export class NarrativesDB {
     return rows.map((r) => this.rowToEntry(r));
   }
 
+  listBySession(sessionId: string, limit = 5, tag: "session" | "weekly-rollup" | "all" = "all"): NarrativeEntry[] {
+    const sql =
+      tag === "all"
+        ? "SELECT * FROM narratives WHERE session_id = ? ORDER BY created_at DESC LIMIT ?"
+        : "SELECT * FROM narratives WHERE session_id = ? AND tag = ? ORDER BY created_at DESC LIMIT ?";
+    const rows =
+      tag === "all"
+        ? (this.db.prepare(sql).all(sessionId, limit) as unknown as NarrativeRow[])
+        : (this.db.prepare(sql).all(sessionId, tag, limit) as unknown as NarrativeRow[]);
+    return rows.map((r) => this.rowToEntry(r));
+  }
+
   pruneOlderThan(days: number): number {
     if (days <= 0) return 0;
     const cutoff = Math.floor(Date.now() / 1000) - days * 24 * 60 * 60;
