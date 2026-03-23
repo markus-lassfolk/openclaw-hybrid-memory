@@ -749,7 +749,8 @@ export async function runExplicitDeepRetrieval(
     queryText: string,
     initial: OrchestratorResult,
   ): Promise<OrchestratorResult> => {
-    if (!(policy as ExplicitDeepRetrievalPolicy).allowReranking || !rerankingConfig?.enabled || !rerankingOpenai) return initial;
+    if (!(policy as ExplicitDeepRetrievalPolicy).allowReranking || !rerankingConfig?.enabled || !rerankingOpenai)
+      return initial;
 
     try {
       const rrfScoreMap = new Map(initial.fused.map((result) => [result.factId, result.finalScore]));
