@@ -79,7 +79,7 @@ export const optionalBootstrapInstaller: OptionalBootstrapInstaller = {
     }
 
     let identityReflectionStore: IdentityReflectionStore | null = null;
-    if (cfg.identityReflection.enabled || cfg.personaProposals.enabled) {
+    if (cfg.identityReflection.enabled || cfg.personaProposals.enabled || cfg.identityPromotion.enabled) {
       const identityReflectionsPath = join(baseDir, "identity-reflections.db");
       identityReflectionStore = new IdentityReflectionStore(identityReflectionsPath);
       api.logger.info(`memory-hybrid: identity reflections enabled (${identityReflectionsPath})`);
