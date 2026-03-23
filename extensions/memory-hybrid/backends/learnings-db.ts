@@ -106,7 +106,9 @@ export class LearningsDB {
         .run(id, slug, input.type, input.area, input.content, JSON.stringify(input.tags ?? []), now, now);
 
       this.db.exec("COMMIT");
-      return this.get(id)!;
+      // biome-ignore lint/style/noNonNullAssertion: Known to exist
+      // biome-ignore lint/style/noNonNullAssertion: Known to exist
+    return this.get(id)!;
     } catch (err) {
       this.db.exec("ROLLBACK");
       throw err;
@@ -121,6 +123,7 @@ export class LearningsDB {
     const now = new Date().toISOString();
     this.db.prepare(`UPDATE learnings SET recurrence = recurrence + 1, updated_at = ? WHERE id = ?`).run(now, id);
 
+    // biome-ignore lint/style/noNonNullAssertion: Known to exist
     return this.get(id)!;
   }
 
@@ -151,6 +154,7 @@ export class LearningsDB {
     params.push(id);
     this.db.prepare(`UPDATE learnings SET ${sets.join(", ")} WHERE id = ?`).run(...params);
 
+    // biome-ignore lint/style/noNonNullAssertion: Known to exist
     return this.get(id)!;
   }
 

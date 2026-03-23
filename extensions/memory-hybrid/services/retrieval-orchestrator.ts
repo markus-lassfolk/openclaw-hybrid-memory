@@ -453,7 +453,7 @@ function buildCachedResult(
     options.scopeFilter || options.asOf != null ? { scopeFilter: options.scopeFilter, asOf: options.asOf } : undefined;
   const effectiveNow = options.asOf ?? options.nowSec;
 
-  const orderedEntries: Array<{ factId: string; entry: MemoryEntry }> = [];
+  let orderedEntries: Array<{ factId: string; entry: MemoryEntry }> = [];
   const fused: FusedResult[] = [];
 
   for (const [index, factId] of factIds.entries()) {
@@ -822,7 +822,7 @@ export async function runRetrievalPipeline(
 
     const getByIdOpts = scopeFilter || asOf != null ? { scopeFilter, asOf } : undefined;
     const factMetaMap = new Map<string, FactMetadata>();
-    const orderedEntries: Array<{ factId: string; entry: MemoryEntry }> = [];
+    let orderedEntries: Array<{ factId: string; entry: MemoryEntry }> = [];
     const effectiveNow = asOf ?? nowSec;
 
     for (const result of fused) {
@@ -841,7 +841,7 @@ export async function runRetrievalPipeline(
       orderedEntries.push({ factId: result.factId, entry });
     }
 
-    const scopedFused = fused.filter((result) => factMetaMap.has(result.factId));
+    let scopedFused = fused.filter((result) => factMetaMap.has(result.factId));
     applyPostRrfAdjustments(scopedFused, factMetaMap, nowSec);
 
     if (clustersConfig?.enabled && hasClusterLookup(factsDb)) {

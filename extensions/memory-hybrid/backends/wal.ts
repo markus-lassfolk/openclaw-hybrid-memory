@@ -75,6 +75,7 @@ export class WriteAheadLog {
       } catch {
         this.activeIds = new Set();
       } finally {
+        // biome-ignore lint/style/noNonNullAssertion: Synchronous
         releaseLock!();
       }
     })();
@@ -135,7 +136,8 @@ export class WriteAheadLog {
       });
       throw new Error(`WAL write failed: ${err}`);
     } finally {
-      releaseLock!();
+      // biome-ignore lint/style/noNonNullAssertion: Synchronous
+        releaseLock!();
     }
   }
 
@@ -229,7 +231,8 @@ export class WriteAheadLog {
       });
       throw new Error(`WAL remove failed: ${err}`);
     } finally {
-      releaseLock!();
+      // biome-ignore lint/style/noNonNullAssertion: Synchronous
+        releaseLock!();
     }
   }
 
@@ -257,7 +260,8 @@ export class WriteAheadLog {
       await prevLock;
       await this._clearInternal();
     } finally {
-      releaseLock!();
+      // biome-ignore lint/style/noNonNullAssertion: Synchronous
+        releaseLock!();
     }
   }
 
@@ -296,7 +300,8 @@ export class WriteAheadLog {
       }
       return pruned;
     } finally {
-      releaseLock!();
+      // biome-ignore lint/style/noNonNullAssertion: Synchronous
+        releaseLock!();
     }
   }
 }
