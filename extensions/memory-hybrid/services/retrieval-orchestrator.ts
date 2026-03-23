@@ -29,7 +29,7 @@ import { searchAliasStrategy, type AliasDB } from "./retrieval-aliases.js";
 import { detectClusters, type ClusterFactLookup } from "./topic-clusters.js";
 import { expandGraph, type GraphFactLookup } from "./graph-retrieval.js";
 import type { EmbeddingRegistry } from "./embedding-registry.js";
-import { resolveExplicitDeepRetrievalPolicy, type ExplicitDeepRetrievalPolicy } from "./retrieval-mode-policy.js";
+import { resolveExplicitDeepRetrievalPolicy, resolveInteractiveRecallPolicy, DEFAULT_INTERACTIVE_RECALL_POLICY, type ExplicitDeepRetrievalPolicy, type InteractiveRecallPolicy } from "./retrieval-mode-policy.js";
 import { expandQueryWithHyde } from "./hyde-helper.js";
 import { capturePluginError } from "./error-reporter.js";
 import { validateQueryForMemoryLookup, type QueryValidationResult } from "./query-validator.js";
@@ -614,6 +614,11 @@ function buildCachedResult(
  * without touching every call site.
  */
 export interface RetrievalPipelineOptions {
+  /** Retrieval mode shortcut. When provided, derives the policy automatically.
+   * 'interactive-recall' -> interactive recall policy (disables graph expansion).
+   * 'explicit-deep' -> explicit deep retrieval policy.
+   * Overridden by an explicit `policy` option. */
+  mode?: import("./retrieval-mode-policy.js").RetrievalMode;
   /** Explicit/deep retrieval policy. Defaults to resolveExplicitDeepRetrievalPolicy(config). */
   policy?: ExplicitDeepRetrievalPolicy;
   /** Retrieval pipeline configuration. Defaults to `DEFAULT_RETRIEVAL_CONFIG`. */
@@ -689,7 +694,15 @@ export async function runExplicitDeepRetrieval(
   options: RetrievalPipelineOptions = {},
 ): Promise<OrchestratorResult> {
   const config = options.config ?? DEFAULT_RETRIEVAL_CONFIG;
-  const policy = options.policy ?? resolveExplicitDeepRetrievalPolicy(config);
+  let resolvedPolicy: ExplicitDeepRetrievalPolicy | InteractiveRecallPolicy;
+  if (options.policy) {
+    resolvedPolicy = options.policy;
+  } else if (options.mode === "interactive-recall") {
+    resolvedPolicy = DEFAULT_INTERACTIVE_RECALL_POLICY;
+  } else {
+    resolvedPolicy = resolveExplicitDeepRetrievalPolicy(config);
+  }
+  const policy = resolvedPolicy;
   const budgetTokens = options.budgetTokens ?? config.explicitBudgetTokens;
   const nowSec = options.nowSec ?? Math.floor(Date.now() / 1000);
   const {
