@@ -136,8 +136,6 @@ jobs:
                           isOutdated
                           path
                           line
-                          createdAt
-                          updatedAt
                           comments(first: 20) {
                             nodes {
                               body

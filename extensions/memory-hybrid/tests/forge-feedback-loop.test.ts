@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildForgeRemediationRequest } from "../../.github/scripts/forge-feedback-loop.mjs";
+import { buildForgeRemediationRequest } from "../../../.github/scripts/forge-feedback-loop.mjs";
 
 describe("buildForgeRemediationRequest", () => {
   it("dispatches when CI fails and review feedback is still open", () => {

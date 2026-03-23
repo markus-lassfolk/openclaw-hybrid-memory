@@ -111,7 +111,13 @@ function summarizeReviews(reviews, headCommittedAt) {
 }
 
 function summarizeUnresolvedThreads(reviewThreads) {
-  return sortNewestFirst(reviewThreads ?? [], (thread) => thread.updatedAt ?? thread.createdAt)
+  // Thread-level createdAt/updatedAt are not available on PullRequestReviewThread in GitHub's API.
+  // Use the newest comment's date as a proxy for thread age.
+  const getThreadDate = (thread) => {
+    const firstComment = thread.comments?.nodes?.[0];
+    return firstComment?.updatedAt ?? firstComment?.createdAt ?? thread.updatedAt ?? thread.createdAt ?? null;
+  };
+  return sortNewestFirst(reviewThreads ?? [], getThreadDate)
     .filter((thread) => thread && typeof thread === 'object' && thread.isResolved === false)
     .slice(0, DEFAULT_MAX_ITEMS_PER_SECTION)
     .map((thread) => {
