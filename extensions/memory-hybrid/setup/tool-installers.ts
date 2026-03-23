@@ -143,7 +143,12 @@ function installUtilityTools(ctx: UtilityInstallerContext, api: ClawdbotPluginAp
   );
 }
 
-function selectProvenanceToolsContext({ factsDb, eventLog, provenanceService, cfg }: ToolsContext): ProvenanceInstallerContext {
+function selectProvenanceToolsContext({
+  factsDb,
+  eventLog,
+  provenanceService,
+  cfg,
+}: ToolsContext): ProvenanceInstallerContext {
   return { factsDb, eventLog, provenanceService, cfg };
 }
 
@@ -167,7 +172,12 @@ function installCredentialTools(ctx: CredentialInstallerContext, api: ClawdbotPl
 
 type PersonaInstallerContext = PersonaToolsContext & Pick<ToolsContext, "timers">;
 
-function selectPersonaToolsContext({ proposalsDb, cfg, resolvedSqlitePath, timers }: ToolsContext): PersonaInstallerContext {
+function selectPersonaToolsContext({
+  proposalsDb,
+  cfg,
+  resolvedSqlitePath,
+  timers,
+}: ToolsContext): PersonaInstallerContext {
   return { proposalsDb: proposalsDb ?? undefined, cfg, resolvedSqlitePath, timers };
 }
 
@@ -197,7 +207,15 @@ function installPersonaTools(ctx: PersonaInstallerContext, api: ClawdbotPluginAp
   );
 }
 
-function selectDocumentToolsContext({ factsDb, vectorDb, cfg, embeddings, pythonBridge, openai, provenanceService }: ToolsContext): DocumentInstallerContext {
+function selectDocumentToolsContext({
+  factsDb,
+  vectorDb,
+  cfg,
+  embeddings,
+  pythonBridge,
+  openai,
+  provenanceService,
+}: ToolsContext): DocumentInstallerContext {
   return { factsDb, vectorDb, cfg, embeddings, pythonBridge, openai, provenanceService };
 }
 
@@ -208,7 +226,11 @@ function installDocumentTools(ctx: DocumentInstallerContext, api: ClawdbotPlugin
   }
 }
 
-function selectVerificationToolsContext({ factsDb, verificationStore, cfg }: ToolsContext): VerificationInstallerContext {
+function selectVerificationToolsContext({
+  factsDb,
+  verificationStore,
+  cfg,
+}: ToolsContext): VerificationInstallerContext {
   return { factsDb, verificationStore, cfg };
 }
 
@@ -239,7 +261,11 @@ function installWorkflowTools(ctx: WorkflowInstallerContext, api: ClawdbotPlugin
   }
 }
 
-function selectCrystallizationToolsContext({ crystallizationStore, workflowStore, cfg }: ToolsContext): CrystallizationInstallerContext {
+function selectCrystallizationToolsContext({
+  crystallizationStore,
+  workflowStore,
+  cfg,
+}: ToolsContext): CrystallizationInstallerContext {
   return { crystallizationStore, workflowStore, cfg };
 }
 
@@ -252,7 +278,11 @@ function installCrystallizationTools(ctx: CrystallizationInstallerContext, api: 
   }
 }
 
-function selectSelfExtensionToolsContext({ toolProposalStore, workflowStore, cfg }: ToolsContext): SelfExtensionInstallerContext {
+function selectSelfExtensionToolsContext({
+  toolProposalStore,
+  workflowStore,
+  cfg,
+}: ToolsContext): SelfExtensionInstallerContext {
   return { toolProposalStore, workflowStore, cfg };
 }
 

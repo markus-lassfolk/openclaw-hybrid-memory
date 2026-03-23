@@ -92,7 +92,18 @@ type LegacyMemoryToolsContext = Omit<
 };
 
 function hasBoundMemoryToolHelpers(ctx: MemoryToolsContext | LegacyMemoryToolsContext): ctx is MemoryToolsContext {
-  return typeof (ctx as Partial<MemoryToolsContext>).buildToolScopeFilter === "function";
+  const maybe = ctx as Partial<MemoryToolsContext> & { wal?: unknown };
+
+  const hasAllNewHelpers =
+    typeof maybe.buildToolScopeFilter === "function" &&
+    typeof maybe.walWrite === "function" &&
+    typeof maybe.walRemove === "function" &&
+    typeof maybe.findSimilarByEmbedding === "function";
+
+  // If a legacy `wal` helper object is still present, treat this as a legacy context.
+  const hasLegacyWal = typeof maybe.wal === "object" && maybe.wal !== null;
+
+  return hasAllNewHelpers && !hasLegacyWal;
 }
 
 async function storeRegistryEmbeddings({
@@ -201,15 +212,27 @@ export function registerMemoryTools(
   legacyWalRemove?: BoundWalRemoveFn,
   legacyFindSimilarByEmbedding?: FindSimilarByEmbeddingFn,
 ): void {
-  const resolvedContext: MemoryToolsContext = hasBoundMemoryToolHelpers(ctx)
-    ? ctx
-    : {
-        ...ctx,
-        buildToolScopeFilter: legacyBuildToolScopeFilter as BuildToolScopeFilterFn,
-        walWrite: legacyWalWrite as BoundWalWriteFn,
-        walRemove: legacyWalRemove as BoundWalRemoveFn,
-        findSimilarByEmbedding: legacyFindSimilarByEmbedding as FindSimilarByEmbeddingFn,
-      };
+  let resolvedContext: MemoryToolsContext;
+
+  if (hasBoundMemoryToolHelpers(ctx)) {
+    resolvedContext = ctx;
+  } else {
+    if (
+      typeof legacyBuildToolScopeFilter !== "function" ||
+      typeof legacyWalWrite !== "function" ||
+      typeof legacyWalRemove !== "function" ||
+      typeof legacyFindSimilarByEmbedding !== "function"
+    ) {
+      throw new Error("registerMemoryTools: Missing required legacy helper functions for memory tools initialization.");
+    }
+    resolvedContext = {
+      ...ctx,
+      buildToolScopeFilter: legacyBuildToolScopeFilter,
+      walWrite: legacyWalWrite,
+      walRemove: legacyWalRemove,
+      findSimilarByEmbedding: legacyFindSimilarByEmbedding,
+    };
+  }
 
   const {
     factsDb,
