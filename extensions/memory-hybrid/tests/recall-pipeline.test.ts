@@ -592,14 +592,14 @@ describe("runRecallPipelineQuery — skipForInteractiveTurns (#581)", () => {
     (deps.factsDb.search as ReturnType<typeof vi.fn>).mockReturnValue([]);
     (deps.vectorDb.search as ReturnType<typeof vi.fn>).mockResolvedValue([]);
 
-    await runRecallPipelineQuery("my interactive query", 5, deps, { value: false }, { interactive: true });
+    await runRecallPipelineQuery("my interactive query", 5, deps, { value: false });
 
     // HyDE was blocked — embed must be called with raw query, not HyDE-generated text
     expect(deps.embeddings.embed).toHaveBeenCalledWith("my interactive query");
     expect(chatModule.chatCompleteWithRetry).not.toHaveBeenCalled();
   });
 
-  it("allows HyDE when interactive=true but skipForInteractiveTurns is explicitly false", async () => {
+  it("allows HyDE when policy.allowHyde is true", async () => {
     const deps = makeDeps({
       cfg: {
         queryExpansion: {
@@ -622,7 +622,7 @@ describe("runRecallPipelineQuery — skipForInteractiveTurns (#581)", () => {
       5,
       deps,
       { value: false },
-      { interactive: true, policy: { ...DEFAULT_INTERACTIVE_RECALL_POLICY, allowHyde: true } },
+      { policy: { ...DEFAULT_INTERACTIVE_RECALL_POLICY, allowHyde: true } },
     );
 
     // HyDE was allowed — chatCompleteWithRetry must have been called
@@ -663,9 +663,8 @@ describe("runRecallPipelineQuery — skipForInteractiveTurns (#581)", () => {
     expect(deps.embeddings.embed).toHaveBeenCalledWith("HyDE generated text");
   });
 
-  it("allows HyDE when interactive=false (explicit non-interactive flag)", async () => {
-    // interactive=false should NOT block HyDE — only interactive=true does
-    // opts.interactive === true short-circuits to false when interactive is false
+  it("allows HyDE when policy.allowHyde is true regardless of skipForInteractiveTurns", async () => {
+    // The policy controls HyDE behavior, not the config directly
     const deps = makeDeps({
       cfg: {
         queryExpansion: {
@@ -688,10 +687,10 @@ describe("runRecallPipelineQuery — skipForInteractiveTurns (#581)", () => {
       5,
       deps,
       { value: false },
-      { interactive: false, policy: { ...DEFAULT_INTERACTIVE_RECALL_POLICY, allowHyde: true } },
+      { policy: { ...DEFAULT_INTERACTIVE_RECALL_POLICY, allowHyde: true } },
     );
 
-    // HyDE was allowed — interactive=false does not block HyDE
+    // HyDE was allowed because policy.allowHyde is true
     expect(chatModule.chatCompleteWithRetry).toHaveBeenCalled();
     expect(deps.embeddings.embed).toHaveBeenCalledWith("HyDE generated text");
   });

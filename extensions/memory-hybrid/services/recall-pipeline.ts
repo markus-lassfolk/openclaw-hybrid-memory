@@ -82,12 +82,6 @@ export async function runRecallPipelineQuery(
     errorPrefix?: string;
     limitHydeOnce?: boolean;
     precomputedVector?: number[];
-    /**
-     * When true, this is an interactive (before_agent_start) recall turn.
-     * If `cfg.queryExpansion.skipForInteractiveTurns` is true (the default), HyDE is
-     * skipped to prevent LLM latency spikes on the hot user-facing path (#581).
-     */
-    interactive?: boolean;
     policy?: InteractiveRecallPolicy;
   },
 ): Promise<SearchResult[]> {

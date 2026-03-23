@@ -262,7 +262,6 @@ async function runRecall(
       hydeLabel: "HyDE",
       errorPrefix: "auto-recall-",
       precomputedVector: promptEmbedding ?? undefined,
-      interactive: true,
       policy: interactivePolicy,
     });
 
@@ -292,7 +291,6 @@ async function runRecall(
                 hydeLabel: "HyDE",
                 errorPrefix: `ambient-${q.type}-`,
                 limitHydeOnce: true,
-                interactive: true,
                 policy: interactivePolicy,
               });
               extraResultSets.push(qResults);
@@ -408,7 +406,6 @@ async function runRecall(
               hydeLabel: "HyDE",
               errorPrefix: "directive-",
               limitHydeOnce: true,
-              interactive: true,
               policy: interactivePolicy,
             });
             directiveCalls += 1;
@@ -423,7 +420,6 @@ async function runRecall(
               hydeLabel: "HyDE",
               errorPrefix: "directive-",
               limitHydeOnce: true,
-              interactive: true,
               policy: interactivePolicy,
             });
             directiveCalls += 1;
@@ -437,7 +433,6 @@ async function runRecall(
             hydeLabel: "HyDE",
             errorPrefix: "directive-",
             limitHydeOnce: true,
-            interactive: true,
             policy: interactivePolicy,
           });
           directiveCalls += 1;
@@ -450,7 +445,6 @@ async function runRecall(
               hydeLabel: "HyDE",
               errorPrefix: "directive-",
               limitHydeOnce: true,
-              interactive: true,
               policy: interactivePolicy,
             });
             directiveCalls += 1;
