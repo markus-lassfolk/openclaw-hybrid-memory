@@ -72,10 +72,13 @@ const filesEntries = new Set(pkg.files || []);
 
 // 3. Ensure every imported root is covered by a files entry prefix
 const uncovered = importedRoots.filter((r) => {
+  const isTopLevel = !r.includes("/");
+  if (isTopLevel) {
+    return !filesEntries.has(`${r}.ts`);
+  }
   const firstSeg = r.split("/")[0];
   return (
     !filesEntries.has(`${r}.ts`) &&
-    !filesEntries.has(`${firstSeg}.ts`) &&
     !filesEntries.has(r) &&
     !filesEntries.has(firstSeg)
   );
