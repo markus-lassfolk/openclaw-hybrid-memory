@@ -1085,11 +1085,11 @@ describe("transcript chunking behavior", () => {
 
 describe("isIdentityFact", () => {
   it("detects 'the agent's email is ...'", () => {
-    expect(isIdentityFact("The agent's email is doristheagent@gmail.com")).toBe(true);
+    expect(isIdentityFact("The agent's email is agent@example.com")).toBe(true);
   });
 
   it("detects 'your email is ...'", () => {
-    expect(isIdentityFact("Your email is doristheagent@gmail.com")).toBe(true);
+    expect(isIdentityFact("Your email is agent@example.com")).toBe(true);
   });
 
   it("detects 'my email is ...'", () => {
@@ -1097,7 +1097,7 @@ describe("isIdentityFact", () => {
   });
 
   it("detects 'the assistant's name'", () => {
-    expect(isIdentityFact("The assistant's name is Doris")).toBe(true);
+    expect(isIdentityFact("The assistant's name is TestBot")).toBe(true);
   });
 
   it("detects 'the bot's role'", () => {
@@ -1105,11 +1105,11 @@ describe("isIdentityFact", () => {
   });
 
   it("detects 'email is ...' standalone", () => {
-    expect(isIdentityFact("Email is doris@example.com")).toBe(true);
+    expect(isIdentityFact("Email is agent@example.com")).toBe(true);
   });
 
   it("detects 'account is ...'", () => {
-    expect(isIdentityFact("Account is doris-agent")).toBe(true);
+    expect(isIdentityFact("Account is test-agent")).toBe(true);
   });
 
   it("detects 'role is ...'", () => {
@@ -1129,16 +1129,16 @@ describe("isIdentityFact", () => {
   });
 
   it("detects agent name-specific pattern when agentName is provided", () => {
-    expect(isIdentityFact("Doris's email is doris@gmail.com", "Doris")).toBe(true);
+    expect(isIdentityFact("TestBot's email is agent@example.com", "TestBot")).toBe(true);
   });
 
   it("detects agent name without apostrophe when agentName is provided", () => {
-    expect(isIdentityFact("Doris email is doris@gmail.com", "Doris")).toBe(true);
+    expect(isIdentityFact("TestBot email is agent@example.com", "TestBot")).toBe(true);
   });
 
   it("is case-insensitive", () => {
-    expect(isIdentityFact("YOUR EMAIL IS DORIS@EXAMPLE.COM")).toBe(true);
-    expect(isIdentityFact("the ASSISTANT's name is doris", "doris")).toBe(true);
+    expect(isIdentityFact("YOUR EMAIL IS TESTBOT@EXAMPLE.COM")).toBe(true);
+    expect(isIdentityFact("the ASSISTANT's name is TESTBOT", "testbot")).toBe(true);
   });
 
   it("does NOT flag 'The user's email is ...'", () => {
@@ -1208,13 +1208,13 @@ describe("runPassiveObserver identity fact promotion", () => {
 
   it("stores identity fact with scope=global, decayClass=permanent", async () => {
     const sessionContent =
-      JSON.stringify({ message: { role: "user", content: "Your email is doristheagent@gmail.com" } }) + "\n";
+      JSON.stringify({ message: { role: "user", content: "Your email is agent@example.com" } }) + "\n";
     writeFileSync(join(sessionsDir, "identity-sess.jsonl"), sessionContent);
 
     const chatSpy = vi
       .spyOn(chat, "chatCompleteWithRetry")
       .mockResolvedValue(
-        JSON.stringify([{ text: "The agent's email is doristheagent@gmail.com", category: "fact", importance: 0.8 }]),
+        JSON.stringify([{ text: "The agent's email is agent@example.com", category: "fact", importance: 0.8 }]),
       );
 
     const factsDb = makeFactsDb();
@@ -1279,15 +1279,15 @@ describe("runPassiveObserver identity fact promotion", () => {
     chatSpy.mockRestore();
   });
 
-  it("promotes fact with explicit agentName='Doris'", async () => {
+  it("promotes fact with explicit agentName='TestBot'", async () => {
     const sessionContent =
-      JSON.stringify({ message: { role: "user", content: "Doris email is doris@gmail.com" } }) + "\n";
+      JSON.stringify({ message: { role: "user", content: "TestBot email is agent@example.com" } }) + "\n";
     writeFileSync(join(sessionsDir, "doris-sess.jsonl"), sessionContent);
 
     const chatSpy = vi
       .spyOn(chat, "chatCompleteWithRetry")
       .mockResolvedValue(
-        JSON.stringify([{ text: "Doris email is doris@gmail.com", category: "fact", importance: 0.75 }]),
+        JSON.stringify([{ text: "TestBot email is agent@example.com", category: "fact", importance: 0.75 }]),
       );
 
     const factsDb = makeFactsDb();
@@ -1300,7 +1300,7 @@ describe("runPassiveObserver identity fact promotion", () => {
       {} as never,
       cfg,
       ["fact"],
-      { model: "test-model", dbDir: tmpDir, agentName: "Doris" },
+      { model: "test-model", dbDir: tmpDir, agentName: "TestBot" },
       makeLogger(),
     );
 

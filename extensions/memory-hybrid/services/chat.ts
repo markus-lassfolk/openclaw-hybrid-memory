@@ -328,12 +328,20 @@ export async function chatComplete(opts: {
       body.temperature = temperature;
     }
     const doCreate = () =>
-      opts.openai.chat.completions.create(body as Parameters<OpenAI["chat"]["completions"]["create"]>[0], {
+      opts.openai.chat.completions.create(body as unknown as Parameters<OpenAI["chat"]["completions"]["create"]>[0], {
         signal: controller.signal,
       });
     // If feature is provided, wrap in withCostFeature so the proxy attributes the call correctly.
     // Cost recording itself is done by the OpenAI proxy in setup/init-databases.ts.
-    const resp = await (feature ? withCostFeature(feature, doCreate) : doCreate());
+    const resp = (await (feature ? withCostFeature(feature, doCreate) : doCreate())) as {
+      choices: Array<{
+        message?: {
+          content?: string | null;
+          reasoning_content?: string | null;
+          reasoning?: string | null;
+        };
+      }>;
+    };
     clearTimeout(timeoutId);
     if (signal) signal.removeEventListener("abort", onAbort);
     const msg = resp.choices[0]?.message;

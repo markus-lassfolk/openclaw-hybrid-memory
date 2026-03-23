@@ -17,6 +17,7 @@ export type { EmbeddingProvider, EmbeddingConfig } from "./types.js";
 
 export {
   GOOGLE_EMBED_DEFAULT_DIMENSIONS,
+  GOOGLE_EMBED_DEFAULT_MODEL,
   OPENAI_ONLY_EMBED_MODELS,
   isOllamaCircuitBreakerOpen,
   shouldSuppressEmbeddingError,

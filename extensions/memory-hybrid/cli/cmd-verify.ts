@@ -30,6 +30,7 @@ import {
   createEmbeddingProvider,
   type EmbeddingConfig,
   GOOGLE_EMBED_DEFAULT_DIMENSIONS,
+  GOOGLE_EMBED_DEFAULT_MODEL,
   OPENAI_ONLY_EMBED_MODELS,
 } from "../services/embeddings.js";
 import { relativeTime } from "./shared.js";
@@ -282,7 +283,7 @@ export async function runVerifyForCli(
             ? "nomic-embed-text"
             : "all-MiniLM-L6-v2");
     const effectiveGoogleModel =
-      p === "google" && embModel && OPENAI_ONLY_EMBED_MODELS.has(embModel) ? "gemini-embedding-001" : embModel;
+      p === "google" && embModel && OPENAI_ONLY_EMBED_MODELS.has(embModel) ? GOOGLE_EMBED_DEFAULT_MODEL : embModel;
     const label =
       p === "openai"
         ? `OpenAI/${embModel}`
@@ -298,10 +299,10 @@ export async function runVerifyForCli(
     }
     if (opts.testLlm) {
       try {
-        // For Google with an OpenAI-only model name, use gemini-embedding-001 and 768 dims (same as factory)
+        // For Google with an OpenAI-only model name, use text-embedding-005 and 768 dims (same as factory)
         const modelForTest =
           p === "google" && embModel && OPENAI_ONLY_EMBED_MODELS.has(embModel)
-            ? "gemini-embedding-001"
+            ? GOOGLE_EMBED_DEFAULT_MODEL
             : cfg.embedding.model ||
               (p === "openai"
                 ? "text-embedding-3-small"
@@ -591,13 +592,18 @@ export async function runVerifyForCli(
       }
       if (hasApi) {
         // Responses API–only models use responses.create(...), not chat.completions; skip direct test to avoid 400/404.
+        // Azure Foundry: some deployments (e.g. gpt-5.4-pro) return 400 "The requested operation is unsupported" on chat.completions.
         const isResponsesOnlyModel =
           provider === "azure-foundry-responses" ||
+          (provider === "azure-foundry" && bareModel === "gpt-5.4-pro") ||
           (provider === "openai" && (bareModel === "gpt-5-codex" || bareModel === "codex"));
         if (isResponsesOnlyModel) {
           apiResult = undefined;
           apiError = undefined;
-          apiSkippedReason = "N/A (Responses API)";
+          apiSkippedReason =
+            provider === "azure-foundry" && bareModel === "gpt-5.4-pro"
+              ? "N/A (unsupported on chat completions)"
+              : "N/A (Responses API)";
         } else {
           const directClient = getDirectClient(provider);
           if (!directClient) {

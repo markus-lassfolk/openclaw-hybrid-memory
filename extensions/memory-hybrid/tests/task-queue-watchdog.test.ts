@@ -6,6 +6,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdtemp, rm, writeFile, mkdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { acquireDispatchLease, getDispatchLease } from "../services/task-queue-leases.js";
 import {
   isPidAlive,
   isRuntimeExceeded,
@@ -192,6 +193,33 @@ describe("runTaskQueueWatchdog", () => {
     expect(result.action).toBe("cleared");
     expect(result.reason).toContain("PID 999999999 is no longer alive");
     expect(noopLogger.info).toHaveBeenCalledWith(expect.stringContaining("cleared"));
+  });
+
+  it("marks matching dispatch lease as lease-expired when stale entry is cleared", async () => {
+    const leased = await acquireDispatchLease({
+      stateDir,
+      issue: 202,
+      branch: "feat/issue-202",
+    });
+    expect(leased.acquired).toBe(true);
+    expect(leased.lease).toBeDefined();
+
+    const recentStart = new Date(Date.now() - 30 * 60 * 1000).toISOString();
+    await writeCurrentJson({
+      issue: 202,
+      branch: "feat/issue-202",
+      dispatchToken: leased.lease?.token,
+      pid: 999999999, // dead -> stale
+      started: recentStart,
+      status: "running",
+    });
+
+    const result = await runTaskQueueWatchdog(makeConfig(), noopLogger);
+    expect(result.action).toBe("cleared");
+
+    const lease = await getDispatchLease(stateDir, 202);
+    expect(lease?.state).toBe("lease-expired");
+    expect(lease?.reason).toContain("PID 999999999");
   });
 
   it("moves current.json to history on dead PID", async () => {
