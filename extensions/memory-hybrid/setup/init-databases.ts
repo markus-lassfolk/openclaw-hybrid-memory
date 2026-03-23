@@ -835,6 +835,8 @@ export interface DatabaseContext {
   health: HealthStatus;
   initialized: Promise<void>;
   apitapStore: ApitapStore;
+  identityReflectionStore: import("../backends/identity-reflection-store.js").IdentityReflectionStore | null;
+  personaStateStore: import("../backends/persona-state-store.js").PersonaStateStore | null;
 }
 
 /**
