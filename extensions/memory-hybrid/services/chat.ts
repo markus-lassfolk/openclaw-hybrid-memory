@@ -4,7 +4,6 @@
  */
 
 import type OpenAI from "openai";
-import type { ChatCompletionCreateParamsNonStreaming } from "openai/resources/chat/completions";
 import { capturePluginError } from "./error-reporter.js";
 import { withCostFeature } from "./cost-context.js";
 import { pluginLogger } from "../utils/logger.js";
@@ -40,6 +39,8 @@ export type PendingLLMWarnings = {
   add: (message: string) => void;
   drain: () => string[];
 };
+
+type ChatCompletionCreateParams = Parameters<OpenAI["chat"]["completions"]["create"]>[0];
 
 /** Create a per-instance pending LLM warning queue. */
 export function createPendingLLMWarnings(): PendingLLMWarnings {
@@ -320,7 +321,7 @@ export async function chatComplete(opts: {
   try {
     // Newer models (GPT-5+, o-series) require max_completion_tokens and reject max_tokens; reasoning models also reject temperature/top_p.
     const useMaxCompletionTokens = requiresMaxCompletionTokens(model);
-    const body: ChatCompletionCreateParamsNonStreaming = {
+    const body: ChatCompletionCreateParams = {
       model,
       stream: false,
       messages: [{ role: "user", content }],
