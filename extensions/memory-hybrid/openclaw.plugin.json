@@ -313,6 +313,22 @@
       "label": "Min session evidence",
       "help": "Minimum number of session references required (default: 10)"
     },
+    "identityReflection.enabled": {
+      "label": "Identity Reflection",
+      "help": "Synthesize persona-level insights from reflection outputs into a dedicated store (default: disabled)"
+    },
+    "identityReflection.defaultWindow": {
+      "label": "Identity reflection window",
+      "help": "Days of recent patterns, rules, and meta-patterns to analyze (default: 30)"
+    },
+    "identityReflection.minInsights": {
+      "label": "Identity min insights",
+      "help": "Minimum reflection insights required before identity reflection runs (default: 3)"
+    },
+    "identityReflection.maxInsightsPerRun": {
+      "label": "Identity max insights",
+      "help": "Maximum identity insights stored per run (default: 8)"
+    },
     "graph.enabled": {
       "label": "Graph memory",
       "help": "Enable graph-based spreading activation for zero-LLM recall"
@@ -964,6 +980,50 @@
           }
         },
         "description": "Opt-in persona proposals: agent self-evolution with human approval gate (disabled by default)"
+      },
+      "identityReflection": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "description": "Enable identity reflection synthesis and storage (default: false)"
+          },
+          "model": {
+            "type": "string",
+            "description": "Optional model override for identity reflection"
+          },
+          "defaultWindow": {
+            "type": "number",
+            "description": "Days of recent reflection outputs to analyze (default: 30)"
+          },
+          "minInsights": {
+            "type": "number",
+            "description": "Minimum number of pattern/rule/meta insights required before running (default: 3)"
+          },
+          "maxInsightsPerRun": {
+            "type": "number",
+            "description": "Maximum identity insights stored per run (default: 8)"
+          },
+          "questions": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "key": {
+                  "type": "string"
+                },
+                "prompt": {
+                  "type": "string"
+                }
+              },
+              "required": ["key", "prompt"]
+            },
+            "description": "Recurring identity reflection questions"
+          }
+        },
+        "description": "Identity reflection layer — synthesize persona-level insights from reflection outputs"
       },
       "graph": {
         "type": "object",

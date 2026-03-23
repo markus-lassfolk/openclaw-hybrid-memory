@@ -107,6 +107,12 @@ export type ManageContext = {
     model: string;
     verbose?: boolean;
   }) => Promise<{ metaExtracted: number; metaStored: number }>;
+  runReflectIdentity?: (opts: {
+    dryRun: boolean;
+    model?: string;
+    verbose?: boolean;
+    window?: number;
+  }) => Promise<{ insightsExtracted: number; insightsStored: number; questionsAsked: number }>;
   reflectionConfig: { enabled: boolean; defaultWindow: number; minObservations: number; model: string };
   runClassify: (opts: { dryRun: boolean; limit: number; model?: string }) => Promise<{
     reclassified: number;
@@ -265,6 +271,7 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
     runReflection,
     runReflectionRules,
     runReflectionMeta,
+    runReflectIdentity,
     reflectionConfig,
     runClassify,
     autoClassifyConfig,
@@ -458,6 +465,22 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
               log(`Reflect-meta: ${r.metaStored} meta-patterns stored.`);
             },
           },
+          ...(runReflectIdentity
+            ? [
+                {
+                  name: "reflect-identity",
+                  run: async () => {
+                    const r = await runReflectIdentity({
+                      dryRun: false,
+                      model: reflectionConfig.model,
+                      verbose,
+                      window: reflectionConfig.defaultWindow,
+                    });
+                    log(`Reflect-identity: ${r.insightsStored} insights stored.`);
+                  },
+                },
+              ]
+            : []),
           ...(runGenerateProposals
             ? [
                 {
@@ -1712,6 +1735,28 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
         );
       }),
     );
+
+  if (runReflectIdentity) {
+    mem
+      .command("reflect-identity")
+      .description("Run identity reflection: synthesize persona-level insights from reflection outputs")
+      .option("--window <n>", "Days to look back (default from config)", reflectionConfig.defaultWindow.toString())
+      .option("--dry-run", "Show what would be stored without storing")
+      .option("--model <m>", "LLM model (default from config)", reflectionConfig.model)
+      .option("--verbose", "Log each identity insight as it is stored")
+      .action(
+        withExit(async (opts?: { window?: string; dryRun?: boolean; model?: string; verbose?: boolean }) => {
+          const window = opts?.window ? Number.parseInt(opts.window, 10) : reflectionConfig.defaultWindow;
+          const dryRun = !!opts?.dryRun;
+          const model = opts?.model ?? reflectionConfig.model;
+          const verbose = !!opts?.verbose;
+          const res = await runReflectIdentity({ dryRun, model, verbose, window });
+          console.log(
+            `Identity reflection complete: extracted ${res.insightsExtracted} insights, stored ${res.insightsStored} ${dryRun ? "(dry-run)" : ""}`,
+          );
+        }),
+      );
+  }
 
   if (runDreamCycle) {
     mem
