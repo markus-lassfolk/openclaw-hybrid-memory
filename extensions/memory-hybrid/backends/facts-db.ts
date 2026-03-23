@@ -4044,6 +4044,9 @@ export class FactsDB {
       if (!entity) continue;
       const lowerEntity = entity.toLowerCase();
 
+      // Fast gate: skip if entity is not even a substring
+      if (!lowerText.includes(lowerEntity)) continue;
+
       // Exact whole-word match
       const escapedForRegex = lowerEntity.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
       const wordBoundaryRe = new RegExp(`\\b${escapedForRegex}\\b`);
@@ -4054,10 +4057,8 @@ export class FactsDB {
       }
 
       // Substring match (no word boundary required)
-      if (lowerText.includes(lowerEntity)) {
-        const current = seen.get(entity) ?? 0;
-        if (current < 0.7) seen.set(entity, 0.7);
-      }
+      const current = seen.get(entity) ?? 0;
+      if (current < 0.7) seen.set(entity, 0.7);
     }
 
     // IPv4 NER

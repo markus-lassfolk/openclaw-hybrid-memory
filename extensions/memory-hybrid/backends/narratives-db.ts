@@ -71,8 +71,6 @@ export class NarrativesDB {
   store(input: StoreNarrativeInput): NarrativeEntry {
     const id = randomUUID();
     const createdAt = Date.now();
-    const safeNarrativeText = input.narrativeText.replace(/</g, "&lt;").replace(/>/g, "&gt;");
-    this.db.exec("PRAGMA journal_mode = WAL");
     this.db
       .prepare(
         `INSERT INTO narratives (id, session_id, period_start, period_end, tag, narrative_text, created_at)
@@ -83,7 +81,7 @@ export class NarrativesDB {
            narrative_text = excluded.narrative_text,
            created_at = excluded.created_at`,
       )
-      .run(id, input.sessionId, input.periodStart, input.periodEnd, input.tag, safeNarrativeText, createdAt);
+      .run(id, input.sessionId, input.periodStart, input.periodEnd, input.tag, input.narrativeText, createdAt);
 
     const row = this.db
       .prepare("SELECT * FROM narratives WHERE session_id = ? AND tag = ? LIMIT 1")
