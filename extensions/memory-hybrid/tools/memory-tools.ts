@@ -312,22 +312,39 @@ export function registerMemoryTools(
         ),
         sessionId: Type.Optional(
           Type.String({
-            description: "Optional session id to fetch a specific session narrative or event timeline.",
+            description: "Optional session id to fetch a specific session narrative or event timeline. In multi-tenant environments, only pass a sessionId derived from the authenticated context; never accept arbitrary end-user input here, to avoid cross-session data exposure.",
           }),
         ),
         days: Type.Optional(
           Type.Number({
             description: "Look back window in days when sessionId is omitted (default: 7).",
+            minimum: 1,
+            maximum: 365,
           }),
         ),
-        limit: Type.Optional(Type.Number({ description: "Max summaries to return (default: 3)." })),
+        limit: Type.Optional(
+          Type.Number({
+            description: "Max summaries to return (default: 3).",
+            minimum: 1,
+            maximum: 50,
+          }),
+        ),
       }),
       async execute(_toolCallId: string, params: Record<string, unknown>) {
+        const MAX_DAYS_LOOKBACK = 365;
+        const MIN_DAYS_LOOKBACK = 1;
+        const MAX_SUMMARY_LIMIT = 50;
+        const MIN_SUMMARY_LIMIT = 1;
+
         const query = typeof params.query === "string" && params.query.trim().length > 0 ? params.query.trim() : null;
         const sessionId =
           typeof params.sessionId === "string" && params.sessionId.trim().length > 0 ? params.sessionId.trim() : null;
-        const days = typeof params.days === "number" && params.days > 0 ? Math.floor(params.days) : 7;
-        const limit = typeof params.limit === "number" && params.limit > 0 ? Math.floor(params.limit) : 3;
+
+        let days = typeof params.days === "number" && params.days > 0 ? Math.floor(params.days) : 7;
+        days = Math.min(MAX_DAYS_LOOKBACK, Math.max(MIN_DAYS_LOOKBACK, days));
+
+        let limit = typeof params.limit === "number" && params.limit > 0 ? Math.floor(params.limit) : 3;
+        limit = Math.min(MAX_SUMMARY_LIMIT, Math.max(MIN_SUMMARY_LIMIT, limit));
         const nowSec = Math.floor(Date.now() / 1000);
         const summaries = recallNarrativeSummaries({
           narrativesDb: narrativesDb ?? null,

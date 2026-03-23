@@ -157,12 +157,36 @@ function collectEventMatches(
   } else {
     const fromIso = new Date((options.sinceSec ?? options.nowSec - DEFAULT_LOOKBACK_DAYS * 86_400) * 1000).toISOString();
     const toIso = new Date(options.nowSec * 1000).toISOString();
+    const maxSessions = Math.max(1, options.limit);
+    const maxEventsPerSession = Math.max(1, options.maxEventsPerSession);
+    const maxEventsGlobal = maxSessions * maxEventsPerSession;
+    let totalEvents = 0;
+
     for (const event of eventLog.getByTimeRange(fromIso, toIso)) {
-      const bucket = sessionEvents.get(event.sessionId);
-      if (bucket) {
-        bucket.push(event);
-      } else {
-        sessionEvents.set(event.sessionId, [event]);
+      // If we've already collected the maximum number of sessions, avoid
+      // tracking new sessions; only accept events for sessions we know about.
+      let bucket = sessionEvents.get(event.sessionId);
+      if (!bucket) {
+        if (sessionEvents.size >= maxSessions) {
+          continue;
+        }
+        bucket = [];
+        sessionEvents.set(event.sessionId, bucket);
+      }
+
+      // Enforce per-session and global caps on the number of events collected.
+      if (bucket.length >= maxEventsPerSession) {
+        continue;
+      }
+      if (totalEvents >= maxEventsGlobal) {
+        break;
+      }
+
+      bucket.push(event);
+      totalEvents += 1;
+
+      if (totalEvents >= maxEventsGlobal && sessionEvents.size >= maxSessions) {
+        break;
       }
     }
   }
