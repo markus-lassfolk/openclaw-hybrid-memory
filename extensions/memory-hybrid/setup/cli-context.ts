@@ -229,7 +229,7 @@ export interface CliContextServices {
   }) => Promise<{ metaExtracted: number; metaStored: number }>;
   runReflectIdentity: (opts: {
     dryRun: boolean;
-    model: string;
+    model?: string;
     verbose?: boolean;
     window?: number;
   }) => Promise<{ insightsExtracted: number; insightsStored: number; questionsAsked: number }>;
