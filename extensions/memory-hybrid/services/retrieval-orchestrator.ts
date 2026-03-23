@@ -997,15 +997,21 @@ export async function runRetrievalPipeline(
   let currentQueryVector = queryVector;
   let lastRun: { result: OrchestratorResult; shouldRewrite: boolean; fromCache: boolean } | null = null;
   let bestResult: OrchestratorResult | null = null;
+  let bestResultWasIrrelevant = false;
 
   for (let iteration = 0; iteration <= MAX_REWRITE_ITERATIONS; iteration++) {
     const run = await executePipelineQuery(currentQuery, currentQueryVector);
     lastRun = run;
-    
-    if (!bestResult || run.result.fused.length > bestResult.fused.length) {
+
+    if (
+      !bestResult ||
+      (!run.shouldRewrite && bestResultWasIrrelevant) ||
+      (!run.shouldRewrite && !bestResultWasIrrelevant && run.result.fused.length > bestResult.fused.length)
+    ) {
       bestResult = run.result;
+      bestResultWasIrrelevant = run.shouldRewrite;
     }
-    
+
     if (!run.shouldRewrite || !activeDocumentGrader) {
       if (
         !run.fromCache &&
