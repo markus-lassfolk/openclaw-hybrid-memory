@@ -177,10 +177,10 @@ export class CostTracker {
     const params: (number | string)[] = [cutoff];
 
     if (options.feature) {
-      query += ` AND feature = ?`;
+      query += " AND feature = ?";
       params.push(options.feature);
     }
-    query += ` GROUP BY feature ORDER BY estimatedCostUsd DESC`;
+    query += " GROUP BY feature ORDER BY estimatedCostUsd DESC";
 
     const rows = this.db.prepare(query).all(...params) as Array<{
       feature: string;
