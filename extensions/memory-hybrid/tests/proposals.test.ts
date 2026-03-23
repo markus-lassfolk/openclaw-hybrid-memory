@@ -118,7 +118,7 @@ describe("applyApprovedProposal (non-git workspace — issue #90)", () => {
     if (originalWorkspace !== undefined) {
       process.env.OPENCLAW_WORKSPACE = originalWorkspace;
     } else {
-      process.env.OPENCLAW_WORKSPACE = undefined;
+      delete process.env.OPENCLAW_WORKSPACE;
     }
     rmSync(tmpDir, { recursive: true, force: true });
   });

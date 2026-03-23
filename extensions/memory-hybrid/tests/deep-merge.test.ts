@@ -25,9 +25,9 @@ const { deepMerge } = _testing;
 describe("deepMerge - Prototype Pollution Prevention", () => {
   beforeEach(() => {
     // Ensure Object.prototype is clean before each test
-    (Object.prototype as Record<string, unknown>).polluted = undefined;
-    (Object.prototype as Record<string, unknown>).isAdmin = undefined;
-    (Object.prototype as Record<string, unknown>).evilProperty = undefined;
+    delete (Object.prototype as Record<string, unknown>).polluted;
+    delete (Object.prototype as Record<string, unknown>).isAdmin;
+    delete (Object.prototype as Record<string, unknown>).evilProperty;
   });
 
   it("blocks __proto__ key from polluting Object.prototype", () => {

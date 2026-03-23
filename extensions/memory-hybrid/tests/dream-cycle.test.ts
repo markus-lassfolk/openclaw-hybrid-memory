@@ -549,7 +549,7 @@ describe("runDreamCycle", () => {
       expect(readFileSync(indexPath, "utf-8")).toContain("## Recent Decisions");
     } finally {
       if (originalWorkspace !== undefined) process.env.OPENCLAW_WORKSPACE = originalWorkspace;
-      else process.env.OPENCLAW_WORKSPACE = undefined;
+      else delete process.env.OPENCLAW_WORKSPACE;
     }
   });
 

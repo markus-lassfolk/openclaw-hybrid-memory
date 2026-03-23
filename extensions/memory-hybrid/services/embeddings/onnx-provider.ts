@@ -442,9 +442,9 @@ export class OnnxEmbeddingProvider implements EmbeddingProvider {
     const allResults: number[][] = [];
     for (let i = 0; i < texts.length; i += this.batchSize) {
       const batch = texts.slice(i, i + this.batchSize);
-      const encoded = batch.map((t) => this.tokenizer?.encode(t, this.maxSeqLength));
+      const encoded = batch.map((t) => this.tokenizer!.encode(t, this.maxSeqLength));
       const maxLen = Math.min(this.maxSeqLength, Math.max(...encoded.map((e) => e.inputIds.length)));
-      const padId = this.tokenizer?.getPadTokenId();
+      const padId = this.tokenizer!.getPadTokenId();
       for (const e of encoded) {
         while (e.inputIds.length < maxLen) {
           e.inputIds.push(padId);

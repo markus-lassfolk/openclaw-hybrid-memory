@@ -127,7 +127,7 @@ export async function migrateEmbeddings(opts: MigrateEmbeddingsOptions): Promise
           }
         ).getBatch(offset, batchSize, { includeSuperseded: false })
       : facts?.slice(offset, offset + batchSize);
-    if (batch.length === 0) break;
+    if (!batch || batch.length === 0) break;
     const texts = batch.map((f) => f.text);
 
     // Attempt batch embed first; fall back to per-fact embeds on failure
@@ -207,11 +207,11 @@ export async function migrateEmbeddings(opts: MigrateEmbeddingsOptions): Promise
       }
     }
 
-    offset += batch.length;
+    offset += batch?.length ?? 0;
     onProgress?.(offset, total);
 
     // Periodic progress log for large datasets
-    if (total >= 100 && offset % 100 < batch.length) {
+    if (total >= 100 && offset % 100 < (batch?.length ?? 0)) {
       log.info(
         `memory-hybrid: embedding-migration: ${offset}/${total} processed ` +
           `(${migrated} migrated, ${errors.length} errors)`,

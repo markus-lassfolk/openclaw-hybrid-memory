@@ -271,7 +271,7 @@ import { ToolProposer } from "./services/tool-proposer.js";
 
 /** Wrappers for extracted helper functions that need access to per-instance config via runtimeRef. */
 function shouldCapture(text: string): boolean {
-  return shouldCaptureUtil(text, runtimeRef.value?.cfg.captureMaxChars, getMemoryTriggers());
+  return shouldCaptureUtil(text, runtimeRef.value?.cfg.captureMaxChars ?? 5000, getMemoryTriggers());
 }
 
 function detectCategory(text: string): MemoryCategory {
@@ -455,6 +455,7 @@ const memoryHybridPlugin = {
       credentialsDb: dbContext.credentialsDb,
       wal: dbContext.wal,
       proposalsDb: dbContext.proposalsDb,
+      identityReflectionStore: dbContext.identityReflectionStore,
       eventLog: dbContext.eventLog,
       narrativesDb: dbContext.narrativesDb,
       aliasDb: dbContext.aliasDb,
@@ -488,6 +489,7 @@ const memoryHybridPlugin = {
         vectorDb: old.vectorDb,
         credentialsDb: old.credentialsDb,
         proposalsDb: old.proposalsDb,
+        identityReflectionStore: old.identityReflectionStore,
         eventLog: old.eventLog,
         narrativesDb: old.narrativesDb,
         aliasDb: old.aliasDb,
@@ -572,6 +574,7 @@ const memoryHybridPlugin = {
         aliasDb: runtime.aliasDb,
         wal: runtime.wal,
         proposalsDb: runtime.proposalsDb,
+        identityReflectionStore: runtime.identityReflectionStore,
         eventLog: runtime.eventLog,
         verificationStore: runtime.verificationStore,
         provenanceService: runtime.provenanceService,
