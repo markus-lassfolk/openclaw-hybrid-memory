@@ -18,8 +18,9 @@ import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
 import type { WriteAheadLog } from "../backends/wal.js";
 import type { CredentialsDB } from "../backends/credentials-db.js";
-import type { ProposalsDB } from "../backends/proposals-db.js";
 import type { IdentityReflectionStore } from "../backends/identity-reflection-store.js";
+import type { ProposalsDB } from "../backends/proposals-db.js";
+import type { PersonaStateStore } from "../backends/persona-state-store.js";
 import type { EventLog } from "../backends/event-log.js";
 import type { NarrativesDB } from "../backends/narratives-db.js";
 import type { AliasDB } from "../services/retrieval-aliases.js";
@@ -59,6 +60,7 @@ export interface PluginRuntime {
   wal: WriteAheadLog | null;
   proposalsDb: ProposalsDB | null;
   identityReflectionStore: IdentityReflectionStore | null;
+  personaStateStore: PersonaStateStore | null;
   eventLog: EventLog | null;
   narrativesDb: NarrativesDB | null;
   aliasDb: AliasDB | null;

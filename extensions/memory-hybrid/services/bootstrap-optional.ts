@@ -6,6 +6,7 @@ import { CrystallizationStore } from "../backends/crystallization-store.js";
 import { EventLog } from "../backends/event-log.js";
 import { IdentityReflectionStore } from "../backends/identity-reflection-store.js";
 import { IssueStore } from "../backends/issue-store.js";
+import { PersonaStateStore } from "../backends/persona-state-store.js";
 import { ProposalsDB } from "../backends/proposals-db.js";
 import { ToolProposalStore } from "../backends/tool-proposal-store.js";
 import { WorkflowStore } from "../backends/workflow-store.js";
@@ -28,6 +29,7 @@ export interface OptionalBootstrapServices {
   wal: WriteAheadLog | null;
   proposalsDb: ProposalsDB | null;
   identityReflectionStore: IdentityReflectionStore | null;
+  personaStateStore: PersonaStateStore | null;
   eventLog: EventLog | null;
   aliasDb: AliasDB | null;
   issueStore: IssueStore;
@@ -77,10 +79,17 @@ export const optionalBootstrapInstaller: OptionalBootstrapInstaller = {
     }
 
     let identityReflectionStore: IdentityReflectionStore | null = null;
-    if (cfg.identityReflection.enabled || cfg.personaProposals.enabled) {
-      const identityReflectionPath = join(baseDir, "identity-reflection.db");
-      identityReflectionStore = new IdentityReflectionStore(identityReflectionPath);
-      api.logger.info(`memory-hybrid: identity reflection store initialized (${identityReflectionPath})`);
+    if (cfg.identityReflection.enabled || cfg.personaProposals.enabled || cfg.identityPromotion.enabled) {
+      const identityReflectionsPath = join(baseDir, "identity-reflections.db");
+      identityReflectionStore = new IdentityReflectionStore(identityReflectionsPath);
+      api.logger.info(`memory-hybrid: identity reflections enabled (${identityReflectionsPath})`);
+    }
+
+    let personaStateStore: PersonaStateStore | null = null;
+    if (cfg.identityPromotion.enabled || cfg.personaProposals.enabled) {
+      const personaStatePath = join(baseDir, "persona-state.db");
+      personaStateStore = new PersonaStateStore(personaStatePath);
+      api.logger.info(`memory-hybrid: persona state store enabled (${personaStatePath})`);
     }
 
     let eventLog: EventLog | null = null;
@@ -140,6 +149,7 @@ export const optionalBootstrapInstaller: OptionalBootstrapInstaller = {
       wal,
       proposalsDb,
       identityReflectionStore,
+      personaStateStore,
       eventLog,
       aliasDb,
       issueStore,

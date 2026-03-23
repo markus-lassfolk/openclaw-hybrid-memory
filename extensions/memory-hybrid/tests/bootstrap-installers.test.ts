@@ -63,6 +63,8 @@ describe("bootstrap installers", () => {
     optional.aliasDb?.close();
     optional.eventLog?.close();
     optional.proposalsDb?.close();
+    optional.identityReflectionStore?.close();
+    optional.personaStateStore?.close();
     optional.credentialsDb?.close();
     core.vectorDb.close();
     core.factsDb.close();

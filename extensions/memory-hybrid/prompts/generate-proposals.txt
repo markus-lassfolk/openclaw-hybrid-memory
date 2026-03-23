@@ -13,7 +13,7 @@ You are generating persona file update proposals from reflection insights for a 
 - Match the tone and formatting style of the existing content.
 - NEVER propose content that contradicts or duplicates what's already in the file.
 
-Your task: identify gaps — insights from the reflection data that are NOT already clearly captured in the current identity file content — and propose concrete text changes for each gap.
+Your task: identify gaps — insights from reflection data and any durable persona state that are NOT already clearly captured in the current identity file content — and propose concrete text changes for each gap.
 
 Rules:
 - Only propose changes for files listed in allowed_files. For each proposal, target exactly one file. Match insights to the correct file by purpose (see above).
@@ -28,7 +28,7 @@ Rules:
 Allowed files: {{allowed_files}}
 Min confidence: {{min_confidence}}
 
---- Reflection data (patterns, rules, meta) ---
+--- Reflection data (patterns, rules, meta, durable persona state) ---
 {{insights}}
 
 --- Current identity file contents (READ THESE CAREFULLY — match their structure, fill their templates, complement their tone) ---

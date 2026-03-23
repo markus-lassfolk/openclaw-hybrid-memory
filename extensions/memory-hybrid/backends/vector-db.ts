@@ -294,27 +294,29 @@ export class VectorDB {
           `memory-hybrid: ⚠️  LanceDB dimension mismatch — table has dim=${actual}, configured embedding model expects dim=${this.vectorDim}. Vector search will return empty results until resolved (issue #128). Set vector.autoRepair=true in plugin config to automatically rebuild the index.`,
         );
         if (this.autoRepair && typeof actualDim === "number" && actualDim !== this.vectorDim) {
+          if (!this.db) return;
           // schemaValid stays true — it will be valid again after repair
           this.logWarn(
             `memory-hybrid: vector.autoRepair=true — dropping '${LANCE_TABLE}' and recreating with dim=${this.vectorDim} (was ${actual}). Existing vectors are lost; facts will be re-embedded from SQLite automatically.`,
           );
-          await this.db?.dropTable(LANCE_TABLE);
+          await this.db.dropTable(LANCE_TABLE);
           tableDropped = true;
-          this.table =
-            (await this.db?.createTable(LANCE_TABLE, [
-              {
-                id: "__schema__",
-                text: "",
-                vector: new Array(this.vectorDim).fill(0),
-                importance: 0,
-                category: "other",
-                createdAt: 0,
-              },
-            ])) ?? null;
-          try {
-            await this.table?.delete('id = "__schema__"');
-          } catch (deleteErr) {
-            this.logWarn(`memory-hybrid: failed to delete schema seed row (non-fatal): ${deleteErr}`);
+          this.table = await this.db.createTable(LANCE_TABLE, [
+            {
+              id: "__schema__",
+              text: "",
+              vector: new Array(this.vectorDim).fill(0),
+              importance: 0,
+              category: "other",
+              createdAt: 0,
+            },
+          ]);
+          if (this.table) {
+            try {
+              await this.table.delete('id = "__schema__"');
+            } catch (deleteErr) {
+              this.logWarn(`memory-hybrid: failed to delete schema seed row (non-fatal): ${deleteErr}`);
+            }
           }
           this.wasRepaired = true;
         } else {

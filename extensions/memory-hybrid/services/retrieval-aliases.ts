@@ -91,7 +91,8 @@ class AliasVectorIndex {
   private async validateSchema(): Promise<void> {
     try {
       const schema = await this.table?.schema();
-      const vectorField = schema?.fields.find(
+      if (!schema) return;
+      const vectorField = schema.fields.find(
         (f: { type?: { typeId?: number; listSize?: number } }) =>
           typeof f.type?.typeId === "number" && f.type.typeId === 16,
       );

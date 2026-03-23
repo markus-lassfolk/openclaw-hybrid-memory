@@ -116,18 +116,19 @@ export async function migrateEmbeddings(opts: MigrateEmbeddingsOptions): Promise
       break;
     }
 
-    const batch = useBatched
-      ? (
-          factsDb as {
-            getBatch: (
-              offset: number,
-              limit: number,
-              opts: { includeSuperseded: boolean },
-            ) => Array<{ id: string; text: string; importance?: number; category: string }>;
-          }
-        ).getBatch(offset, batchSize, { includeSuperseded: false })
-      : facts?.slice(offset, offset + batchSize);
-    if (!batch || batch.length === 0) break;
+    const batch =
+      (useBatched
+        ? (
+            factsDb as {
+              getBatch: (
+                offset: number,
+                limit: number,
+                opts: { includeSuperseded: boolean },
+              ) => Array<{ id: string; text: string; importance?: number; category: string }>;
+            }
+          ).getBatch(offset, batchSize, { includeSuperseded: false })
+        : facts?.slice(offset, offset + batchSize)) ?? [];
+    if (batch.length === 0) break;
     const texts = batch.map((f) => f.text);
 
     // Attempt batch embed first; fall back to per-fact embeds on failure
@@ -168,6 +169,7 @@ export async function migrateEmbeddings(opts: MigrateEmbeddingsOptions): Promise
     for (let j = 0; j < batch.length; j++) {
       const fact = batch[j];
       const vec = vectors[j];
+      if (!fact) continue;
 
       if (vec === null || !vec || vec.length === 0) {
         skipped++;
@@ -207,11 +209,11 @@ export async function migrateEmbeddings(opts: MigrateEmbeddingsOptions): Promise
       }
     }
 
-    offset += batch?.length ?? 0;
+    offset += batch.length;
     onProgress?.(offset, total);
 
     // Periodic progress log for large datasets
-    if (total >= 100 && offset % 100 < (batch?.length ?? 0)) {
+    if (total >= 100 && offset % 100 < batch.length) {
       log.info(
         `memory-hybrid: embedding-migration: ${offset}/${total} processed ` +
           `(${migrated} migrated, ${errors.length} errors)`,

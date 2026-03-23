@@ -306,6 +306,8 @@ describe("Init-databases e2e", () => {
         vectorDb: ctx.vectorDb,
         credentialsDb: ctx.credentialsDb,
         proposalsDb: ctx.proposalsDb,
+        identityReflectionStore: ctx.identityReflectionStore,
+        personaStateStore: ctx.personaStateStore,
         eventLog: ctx.eventLog,
         aliasDb: ctx.aliasDb,
         issueStore: ctx.issueStore,

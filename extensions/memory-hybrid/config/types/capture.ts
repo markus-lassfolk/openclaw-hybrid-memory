@@ -34,6 +34,16 @@ export type IdentityReflectionConfig = {
   questions: Array<{ key: string; prompt: string }>; // Recurring identity questions
 };
 
+/** Promotion pipeline from repeated durable identity reflections into stable persona state. */
+export type IdentityPromotionConfig = {
+  enabled: boolean;
+  lookbackDays: number; // Time window in days when scanning durable identity reflections (default: 90)
+  minDurableReflections: number; // Minimum repeated durable reflections before promotion (default: 2)
+  minConfidence: number; // Minimum average confidence required for promotion (default: 0.72)
+  similarityThreshold: number; // Insight similarity threshold 0-1 used to cluster paraphrases (default: 0.72)
+  maxPromotionsPerRun: number; // Max persona-state promotions/upserts per run (default: 8)
+};
+
 /** Two-tier LLM pre-filter configuration for bulk session triage (Issue #290). */
 export type ExtractionPreFilterConfig = {
   /** Enable local LLM pre-filtering (default: false). When true, each session is triaged by a local Ollama model before cloud LLM analysis. */

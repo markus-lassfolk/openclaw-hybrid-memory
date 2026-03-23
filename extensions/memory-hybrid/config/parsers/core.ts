@@ -52,6 +52,12 @@ export const OPENAI_MODELS = new Set([
 
 const MAX_ENV_RESOLVE_LENGTH = 10000;
 
+export function normalizeResolvedSecretValue(value: string | undefined): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  return trimmed && trimmed !== "undefined" ? trimmed : undefined;
+}
+
 export function resolveEnvVars(value: string): string {
   if (value.length > MAX_ENV_RESOLVE_LENGTH) {
     throw new Error(`Config value too long for environment variable resolution (max ${MAX_ENV_RESOLVE_LENGTH} chars).`);
@@ -60,7 +66,7 @@ export function resolveEnvVars(value: string): string {
   return value.replace(/\$\{([^}]+)\}/g, (_, envVar) => {
     const name = String(envVar).trim();
     if (!name) throw new Error("Environment variable name is empty");
-    const envValue = process.env[name];
+    const envValue = normalizeResolvedSecretValue(process.env[name]);
     if (!envValue) throw new Error(`Environment variable ${name} is not set`);
     return envValue;
   });
@@ -401,8 +407,7 @@ export function resolveSecretRef(value: string): string | undefined {
   if (v.startsWith("env:")) {
     const varName = v.slice(4).trim();
     if (!varName) return undefined;
-    const resolved = process.env[varName];
-    return resolved?.trim() ? resolved.trim() : undefined;
+    return normalizeResolvedSecretValue(process.env[varName]);
   }
   if (v.startsWith("file:")) {
     const filePath = v.slice(5).trim();
