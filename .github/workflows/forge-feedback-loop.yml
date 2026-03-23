@@ -1,0 +1,268 @@
+name: Forge Feedback Loop
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+  pull_request:
+    types: [opened, reopened, synchronize, ready_for_review]
+  pull_request_review:
+    types: [submitted, edited, dismissed]
+  pull_request_review_comment:
+    types: [created, edited]
+  issue_comment:
+    types: [created, edited]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: Pull request number to inspect
+        required: true
+        type: number
+
+concurrency:
+  group: forge-feedback-loop-${{ github.event.pull_request.number || github.event.workflow_run.id || github.event.issue.number || github.event.inputs.pr_number || github.run_id }}
+  cancel-in-progress: true
+
+permissions:
+  actions: read
+  checks: read
+  contents: write
+  issues: write
+  pull-requests: write
+
+jobs:
+  inspect-and-dispatch:
+    name: Inspect PR blockers and dispatch Forge
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Resolve target PR
+        id: target
+        uses: actions/github-script@v8
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            function unique(values) {
+              return [...new Set(values.filter(Boolean).map((value) => Number(value)).filter((value) => Number.isInteger(value) && value > 0))];
+            }
+
+            let prNumbers = [];
+            if (context.eventName === 'workflow_dispatch') {
+              prNumbers = unique([context.payload.inputs?.pr_number]);
+            } else if (context.eventName === 'workflow_run') {
+              prNumbers = unique((context.payload.workflow_run?.pull_requests ?? []).map((pr) => pr.number));
+            } else if (context.eventName === 'issue_comment') {
+              if (context.payload.comment?.user?.type === 'Bot') {
+                core.setOutput('should_skip', 'true');
+                core.setOutput('skip_reason', 'Ignoring bot-authored issue comment event to avoid feedback loops.');
+                return;
+              }
+              if (!context.payload.issue?.pull_request) {
+                core.setOutput('should_skip', 'true');
+                core.setOutput('skip_reason', 'Issue comment is not attached to a pull request.');
+                return;
+              }
+              prNumbers = unique([context.payload.issue.number]);
+            } else {
+              prNumbers = unique([context.payload.pull_request?.number]);
+            }
+
+            if (prNumbers.length !== 1) {
+              core.setOutput('should_skip', 'true');
+              core.setOutput('skip_reason', prNumbers.length === 0 ? 'No pull request found for this event.' : 'Multiple pull requests found for this event.');
+              return;
+            }
+
+            core.setOutput('pr_number', String(prNumbers[0]));
+            core.setOutput('should_skip', 'false');
+
+      - name: Stop when no target PR exists
+        if: steps.target.outputs.should_skip == 'true'
+        run: echo "${{ steps.target.outputs.skip_reason }}"
+
+      - name: Gather PR context
+        if: steps.target.outputs.should_skip != 'true'
+        id: gather
+        uses: actions/github-script@v8
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const { writeFileSync, mkdirSync } = require('node:fs');
+            const { join } = require('node:path');
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const prNumber = Number('${{ steps.target.outputs.pr_number }}');
+
+            const { data: pr } = await github.rest.pulls.get({ owner, repo, pull_number: prNumber });
+            if (pr.state !== 'open') {
+              core.setOutput('should_skip', 'true');
+              core.setOutput('skip_reason', `PR #${prNumber} is not open.`);
+              return;
+            }
+            // Reject fork PRs to prevent untrusted code from triggering write operations.
+            if (pr.head?.repo?.full_name !== pr.base?.repo?.full_name) {
+              core.setOutput('should_skip', 'true');
+              core.setOutput('skip_reason', `PR #${prNumber} is from a fork — skipping untrusted PR.`);
+              return;
+            }
+
+            const { data: headCommit } = await github.rest.repos.getCommit({ owner, repo, ref: pr.head.sha });
+            const checkRuns = await github.paginate(github.rest.checks.listForRef, {
+              owner,
+              repo,
+              ref: pr.head.sha,
+              per_page: 100,
+            }, (response) => response.data.check_runs);
+            const issueComments = await github.paginate(github.rest.issues.listComments, {
+              owner,
+              repo,
+              issue_number: prNumber,
+              per_page: 100,
+            });
+            const reviews = await github.paginate(github.rest.pulls.listReviews, {
+              owner,
+              repo,
+              pull_number: prNumber,
+              per_page: 100,
+            });
+
+            const reviewThreads = [];
+            let cursor = null;
+            while (true) {
+              const result = await github.graphql(`
+                query($owner: String!, $repo: String!, $number: Int!, $cursor: String) {
+                  repository(owner: $owner, name: $repo) {
+                    pullRequest(number: $number) {
+                      reviewThreads(first: 100, after: $cursor) {
+                        pageInfo { hasNextPage endCursor }
+                        nodes {
+                          id
+                          isResolved
+                          isOutdated
+                          path
+                          line
+                          comments(first: 20) {
+                            nodes {
+                              body
+                              createdAt
+                              updatedAt
+                              url
+                              author {
+                                __typename
+                                login
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              `, { owner, repo, number: prNumber, cursor });
+              const threads = result.repository.pullRequest.reviewThreads;
+              reviewThreads.push(...threads.nodes);
+              if (!threads.pageInfo.hasNextPage) break;
+              cursor = threads.pageInfo.endCursor;
+            }
+
+            const payload = {
+              repo: { owner, repo, fullName: `${owner}/${repo}` },
+              pullRequest: {
+                number: pr.number,
+                title: pr.title,
+                url: pr.html_url,
+                baseRef: pr.base.ref,
+                headRef: pr.head.ref,
+                headSha: pr.head.sha,
+                author: pr.user?.login ?? '',
+              },
+              headCommit: {
+                committedAt: headCommit.commit.committer?.date ?? headCommit.commit.author?.date ?? null,
+              },
+              checkRuns,
+              issueComments,
+              reviews,
+              reviewThreads,
+            };
+
+            mkdirSync('.github/.tmp', { recursive: true });
+            writeFileSync(join('.github', '.tmp', 'forge-feedback-context.json'), JSON.stringify(payload, null, 2));
+            core.setOutput('should_skip', 'false');
+
+      - name: Stop when PR inspection is skipped
+        if: steps.gather.outputs.should_skip == 'true'
+        run: echo "${{ steps.gather.outputs.skip_reason }}"
+
+      - name: Build Forge work item
+        if: steps.target.outputs.should_skip != 'true' && steps.gather.outputs.should_skip != 'true'
+        run: node .github/scripts/forge-feedback-loop.mjs build --input .github/.tmp/forge-feedback-context.json --output .github/.tmp/forge-feedback-work-item.json
+
+      - name: Dispatch Forge and update status comment
+        if: steps.target.outputs.should_skip != 'true' && steps.gather.outputs.should_skip != 'true'
+        uses: actions/github-script@v8
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const { readFileSync } = require('node:fs');
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const workItem = JSON.parse(readFileSync('.github/.tmp/forge-feedback-work-item.json', 'utf8'));
+            const prNumber = workItem.pullRequest.number;
+            const marker = '<!-- forge-feedback-loop -->';
+            const fingerprintMarker = `<!-- forge-feedback-fingerprint:${workItem.fingerprint} -->`;
+
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner,
+              repo,
+              issue_number: prNumber,
+              per_page: 100,
+            });
+            const botComment = comments.find((comment) => comment.user?.type === 'Bot' && comment.body?.includes(marker));
+            const alreadyDispatched = botComment?.body?.includes(fingerprintMarker);
+
+            const summary = workItem.summary;
+            const reasons = summary.reasons.length > 0 ? summary.reasons.join(', ') : 'none';
+            const lines = [
+              marker,
+              fingerprintMarker,
+              '## Forge Feedback Loop',
+              '',
+              `- PR: #${workItem.pullRequest.number}`,
+              `- Branch: \`${workItem.pullRequest.headRef}\``,
+              `- Head SHA: \`${workItem.pullRequest.headSha}\``,
+              `- Failed checks: ${summary.failedChecks}`,
+              `- New PR comments since latest push: ${summary.newIssueComments}`,
+              `- New review summaries since latest push: ${summary.newReviewSummaries}`,
+              `- Unresolved review threads: ${summary.unresolvedThreads}`,
+              `- Status: ${summary.shouldDispatch ? 'dispatching Forge' : 'ready for auto-merge checks'}`,
+              `- Reasons: ${reasons}`,
+            ];
+            if (summary.shouldDispatch) {
+              if (alreadyDispatched) {
+                lines.push('- Dispatch: skipped because this fingerprint was already queued.');
+              } else {
+                await github.rest.repos.createDispatchEvent({
+                  owner,
+                  repo,
+                  event_type: 'forge-pr-remediation.requested',
+                  client_payload: {
+                    pr_number: workItem.pullRequest.number,
+                    head_sha: workItem.pullRequest.headSha,
+                    fingerprint: workItem.fingerprint,
+                    repo: workItem.repo,
+                    pullRequest: workItem.pullRequest,
+                  },
+                });
+                lines.push('- Dispatch: queued `forge-pr-remediation.requested` for Forge/Codex `gpt-5.4-pro`.');
+              }
+            } else {
+              lines.push('- Dispatch: skipped because CI is green and no open human feedback remains.');
+            }
+
+            const body = lines.join('\n');
+            if (botComment) {
+              await github.rest.issues.updateComment({ owner, repo, comment_id: botComment.id, body });
+            } else {
+              await github.rest.issues.createComment({ owner, repo, issue_number: prNumber, body });
+            }
