@@ -22,7 +22,7 @@ Questions:
 Patterns:
 {{patterns}}
 
-Rules:
+Reflection Rules:
 {{rules}}
 
 Meta-patterns:

@@ -9,6 +9,7 @@ import type {
   ExtractionConfig,
   ExtractionPreFilterConfig,
 } from "../types/capture.js";
+import { DEFAULT_IDENTITY_REFLECTION_QUESTIONS } from "../../services/identity-reflection.js";
 
 export function parsePassiveObserverConfig(cfg: Record<string, unknown>): PassiveObserverConfig {
   const observerRaw = cfg.passiveObserver as Record<string, unknown> | undefined;
@@ -59,14 +60,6 @@ export function parseReflectionConfig(cfg: Record<string, unknown>): ReflectionC
   };
 }
 
-const DEFAULT_IDENTITY_REFLECTION_QUESTIONS = [
-  { key: "protect", prompt: "What do I reliably protect?" },
-  { key: "speak_silence", prompt: "When should I speak, and when should I stay silent?" },
-  { key: "partnership", prompt: "What patterns define good partnership with the user?" },
-  { key: "tradeoffs", prompt: "What kinds of tradeoffs do I keep making?" },
-  { key: "durability", prompt: "Which insights feel temporary vs durable?" },
-] as const;
-
 export function parseIdentityReflectionConfig(cfg: Record<string, unknown>): IdentityReflectionConfig {
   const raw = cfg.identityReflection as Record<string, unknown> | undefined;
   const parsedQuestions = Array.isArray(raw?.questions)
@@ -90,10 +83,7 @@ export function parseIdentityReflectionConfig(cfg: Record<string, unknown>): Ide
       typeof raw?.maxInsightsPerRun === "number" && raw.maxInsightsPerRun >= 1
         ? Math.min(20, Math.floor(raw.maxInsightsPerRun))
         : 8,
-    questions:
-      parsedQuestions.length > 0
-        ? parsedQuestions
-        : DEFAULT_IDENTITY_REFLECTION_QUESTIONS.map((q) => ({ key: q.key, prompt: q.prompt })),
+    questions: parsedQuestions.length > 0 ? parsedQuestions : DEFAULT_IDENTITY_REFLECTION_QUESTIONS,
   };
 }
 
