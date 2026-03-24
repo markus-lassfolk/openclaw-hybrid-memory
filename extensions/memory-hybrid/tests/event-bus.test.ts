@@ -380,9 +380,8 @@ describe("EventBus lifecycle", () => {
     expect(() => bus.close()).not.toThrow();
   });
 
-  it("auto-reconnects after close", () => {
+  it("throws when used after close", () => {
     bus.close();
-    expect(() => bus.appendEvent("sensor.test", "test", {})).not.toThrow();
-    expect(bus.isOpen()).toBe(true);
+    expect(() => bus.appendEvent("sensor.test", "test", {})).toThrow("EventBus is closed");
   });
 });

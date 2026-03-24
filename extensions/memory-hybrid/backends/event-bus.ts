@@ -68,6 +68,19 @@ export class EventBus extends BaseSqliteStore {
     return "event-bus";
   }
 
+  protected get liveDb(): DatabaseSync {
+    if (this.closed) {
+      throw new Error("EventBus is closed");
+    }
+    if (!this._dbOpen) {
+      this.db.open();
+      this._dbOpen = true;
+      this.closed = false;
+      this.applyPragmas();
+    }
+    return this.db;
+  }
+
   private migrate(): void {
     this.liveDb.exec(`
       CREATE TABLE IF NOT EXISTS memory_events (

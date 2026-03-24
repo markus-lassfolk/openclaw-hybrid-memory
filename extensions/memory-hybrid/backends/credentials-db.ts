@@ -96,7 +96,7 @@ export class CredentialsDB extends BaseSqliteStore {
       )
     `);
 
-    this.db.exec(`
+    this.liveDb.exec(`
       CREATE TABLE IF NOT EXISTS credentials (
         service TEXT NOT NULL,
         type TEXT NOT NULL DEFAULT 'other',
@@ -109,7 +109,7 @@ export class CredentialsDB extends BaseSqliteStore {
         PRIMARY KEY (service, type)
       )
     `);
-    this.db.exec(`
+    this.liveDb.exec(`
       CREATE INDEX IF NOT EXISTS idx_credentials_service ON credentials(service)
     `);
 
