@@ -18,11 +18,11 @@ jobs:
     name: Size Label
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
       - name: Add size label
-        uses: actions/github-script@v8
+        uses: actions/github-script@v7
         with:
           script: |
             const files = await github.paginate(github.rest.pulls.listFiles, {
@@ -107,7 +107,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Validate PR title
-        uses: amannn/action-semantic-pull-request@v6
+        uses: amannn/action-semantic-pull-request@v5
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
@@ -128,11 +128,11 @@ jobs:
     name: Changed Files Summary
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
       - name: Post changed files comment
-        uses: actions/github-script@v8
+        uses: actions/github-script@v7
         with:
           script: |
             const files = await github.paginate(github.rest.pulls.listFiles, {

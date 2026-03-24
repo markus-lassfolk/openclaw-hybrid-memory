@@ -35,11 +35,11 @@ jobs:
     name: Inspect PR blockers and dispatch Forge
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v4
 
       - name: Resolve target PR
         id: target
-        uses: actions/github-script@v8
+        uses: actions/github-script@v7
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
@@ -84,7 +84,7 @@ jobs:
       - name: Gather PR context
         if: steps.target.outputs.should_skip != 'true'
         id: gather
-        uses: actions/github-script@v8
+        uses: actions/github-script@v7
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
@@ -200,7 +200,7 @@ jobs:
 
       - name: Dispatch Forge and update status comment
         if: steps.target.outputs.should_skip != 'true' && steps.gather.outputs.should_skip != 'true'
-        uses: actions/github-script@v8
+        uses: actions/github-script@v7
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
