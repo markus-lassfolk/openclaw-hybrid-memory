@@ -410,6 +410,7 @@ export async function chatComplete(opts: {
       msg.includes("timed out") ||
       msg.includes("llm request timeout") || // #339: our own timeout message uses "timeout" not "timed out"
       msg.includes("econnrefused") ||
+      isConnectionErrorLike(err) || // #703: OpenAI SDK APIConnectionError / "Connection error." is transient
       is429Like(err) || // #397: rate limit is transient
       /^\d+\s*internal\s*error$/i.test(msg.trim()) ||
       /^5\d{2}\s/.test(msg.trim()) ||
