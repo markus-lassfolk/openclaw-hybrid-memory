@@ -99,6 +99,24 @@ Routes are only registered when `health.enabled` is `true` (the default). OpenCl
 }
 ```
 
+## Lifecycle & Shutdown
+
+The plugin registers `SIGUSR1` / `SIGUSR2` signal handlers to close all database connections cleanly on process shutdown:
+
+```typescript
+import { closeAllDatabases } from "./backends/base-sqlite-store";
+
+// Called automatically on SIGUSR1/SIGUSR2, or invoke manually:
+await closeAllDatabases();
+```
+
+All stores (`FactsDB`, `CredentialsDB`, `EventBus`, etc.) implement a `close()` method that:
+- Flushes pending writes
+- Closes the SQLite connection
+- Prevents further operations (throws `"<StoreName> is closed"` if accessed afterward)
+
+The `EventBus` additionally enters a terminal `closed` state after `close()` is called — any subsequent `appendEvent()` call throws `"EventBus is closed"`.
+
 ## Dependencies
 
 - Built-in `node:sqlite` (ships with supported Node.js versions)

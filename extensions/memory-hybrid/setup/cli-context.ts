@@ -35,6 +35,7 @@ import { capturePluginError } from "../services/error-reporter.js";
 import { applyApprovedProposal } from "../cli/proposals.js";
 import { runBackup as runBackupFn, runBackupVerify as runBackupVerifyFn } from "../cli/backup.js";
 import { pluginLogger } from "../utils/logger.js";
+import { runPreConsolidationFlush } from "../services/pre-consolidation-flush.js";
 
 /** Help text shown after hybrid-mem commands list */
 export const HYBRID_MEM_HELP_GROUPED = `
@@ -293,16 +294,18 @@ function buildCliContextServices(ctx: HybridMemCliRegistrationContext, api: Claw
     aliasDb,
     verificationStore,
     provenanceService,
+    wal,
   } = ctx;
   const discoveredPath = join(dirname(resolvedSqlitePath), ".discovered-categories.json");
   const logSink = { info: (m: string) => pluginLogger.info(m), warn: (m: string) => pluginLogger.warn(m) };
   return {
     runFindDuplicates: (opts) => runFindDuplicates(factsDb, vectorDb, embeddings, opts, api.logger),
-    runConsolidate: (opts) => {
+    runConsolidate: async (opts) => {
       // Skip if OpenAI provider is configured but API key is missing
       if (cfg.embedding?.provider === "openai" && !cfg.embedding?.apiKey) {
-        return Promise.resolve({ clustersFound: 0, merged: 0, deleted: 0 });
+        return { clustersFound: 0, merged: 0, deleted: 0 };
       }
+      await runPreConsolidationFlush({ wal, factsDb, vectorDb, embeddings }, api.logger, "cli_consolidation");
       return runConsolidate(factsDb, vectorDb, embeddings, openai, opts, api.logger, aliasDb, provenanceService);
     },
     runReflection: async (opts) => {
@@ -407,9 +410,10 @@ function buildCliContextServices(ctx: HybridMemCliRegistrationContext, api: Claw
           schemaVersion: versionInfo.schemaVersion,
         }),
       ),
-    runDreamCycle: () => {
+    runDreamCycle: async () => {
       const { defaultModel, fallbackModels } = resolveReflectionModelAndFallbacks(cfg, "default");
       const dreamModel = cfg.nightlyCycle.model ?? defaultModel;
+      await runPreConsolidationFlush({ wal, factsDb, vectorDb, embeddings }, api.logger, "dream_cycle_consolidation");
       return runDreamCycle(
         factsDb,
         vectorDb,

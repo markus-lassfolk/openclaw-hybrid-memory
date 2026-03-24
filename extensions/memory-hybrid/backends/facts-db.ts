@@ -12,6 +12,7 @@ import { TTL_DEFAULTS } from "../config.js";
 import type { MemoryEntry, ProcedureEntry, SearchResult, MemoryTier, ScopeFilter } from "../types/memory.js";
 import { normalizedHash, serializeTags, parseTags } from "../utils/tags.js";
 import { calculateExpiry, classifyDecay } from "../utils/decay.js";
+import { applyConsolidationRetrievalControls } from "../utils/consolidation-controls.js";
 import { computeDynamicSalience } from "../utils/salience.js";
 import { estimateTokensForDisplay } from "../utils/text.js";
 import { capturePluginError } from "../services/error-reporter.js";
@@ -19,6 +20,7 @@ import { getLanguageKeywordsFilePath } from "../utils/language-keywords.js";
 import { createTransaction } from "../utils/sqlite-transaction.js";
 import { runFactsMigrations } from "./migrations/facts-migrations.js";
 import { searchFts } from "../services/fts-search.js";
+import { BaseSqliteStore } from "./base-sqlite-store.js";
 import {
   batchGetReinforcementEvents as batchGetReinforcementEventsHelper,
   boostConfidence as boostConfidenceHelper,
@@ -60,13 +62,11 @@ export interface ContradictionRecord {
   oldFactOriginalConfidence?: number;
 }
 
-export class FactsDB {
+export class FactsDB extends BaseSqliteStore {
   // Responsibility note:
   // - This class is the stable API boundary.
   // - Extracted implementation modules under backends/facts-db/ own links/reinforcement/scan-cursor logic.
-  private db: DatabaseSync;
   private readonly dbPath: string;
-  private _dbOpen = true;
   private readonly fuzzyDedupe: boolean;
   private supersededTextsCache: Set<string> | null = null;
   private supersededTextsCacheTime = 0;
@@ -89,24 +89,26 @@ export class FactsDB {
   }
 
   constructor(dbPath: string, options?: { fuzzyDedupe?: boolean }) {
-    this.dbPath = dbPath;
-    this.fuzzyDedupe = options?.fuzzyDedupe ?? false;
     mkdirSync(dirname(dbPath), { recursive: true });
-    this.db = new DatabaseSync(dbPath);
-    this._dbOpen = true;
+    const db = new DatabaseSync(dbPath);
 
     try {
-      this.applyPragmas();
-      FactsDB.verifyFts5Support(this.db);
+      FactsDB.verifyFts5Support(db);
     } catch (err) {
-      this._dbOpen = false;
       try {
-        this.db.close();
+        db.close();
       } catch {
         // Ignore close errors during failure cleanup
       }
       throw err;
     }
+
+    super(db, {
+      foreignKeys: true,
+      customPragmas: ["PRAGMA synchronous = NORMAL", "PRAGMA wal_autocheckpoint = 1000"],
+    });
+    this.dbPath = dbPath;
+    this.fuzzyDedupe = options?.fuzzyDedupe ?? false;
 
     // Create main table
     this.liveDb.exec(`
@@ -1188,12 +1190,8 @@ export class FactsDB {
   }
 
   /** Re-apply connection pragmas (used on initial open and auto-reopen). */
-  private applyPragmas(): void {
-    this.db.exec("PRAGMA journal_mode = WAL");
-    this.db.exec("PRAGMA busy_timeout = 5000");
-    this.db.exec("PRAGMA synchronous = NORMAL");
-    this.db.exec("PRAGMA wal_autocheckpoint = 1000");
-    this.db.exec("PRAGMA foreign_keys = ON"); // Required for memory_links ON DELETE CASCADE
+  protected getSubsystemName(): string {
+    return "facts-db";
   }
 
   private migrateDecayColumns(): void {
@@ -1406,6 +1404,10 @@ export class FactsDB {
       successCount,
       lastValidated: lastValidated ?? undefined,
       sourceSessions: sourceSessionsRaw ?? undefined,
+      provenanceSession,
+      sourceTurn,
+      extractionMethod,
+      extractionConfidence,
       // normalize to null (not undefined) to match rowToEntry() behaviour
       decayFreezeUntil: decayFreezeUntil,
       // #237: access tracking columns start at zero for new facts
@@ -1724,10 +1726,11 @@ export class FactsDB {
       const entry = this.rowToEntry(row);
       // Apply dynamic salience (access boost + time decay)
       const salienceScore = computeDynamicSalience(composite, entry);
+      const controlledScore = applyConsolidationRetrievalControls(salienceScore, entry);
 
       return {
         entry,
-        score: salienceScore,
+        score: controlledScore,
         backend: "sqlite" as const,
       };
     });
@@ -1793,9 +1796,10 @@ export class FactsDB {
       const baseScore = (row.confidence as number) || 1.0;
       // Apply dynamic salience (access boost + time decay)
       const salienceScore = computeDynamicSalience(baseScore, entry);
+      const controlledScore = applyConsolidationRetrievalControls(salienceScore, entry);
       return {
         entry,
-        score: salienceScore,
+        score: controlledScore,
         backend: "sqlite" as const,
       };
     });
@@ -1986,6 +1990,10 @@ export class FactsDB {
       lastValidated: (row.last_validated as number) ?? undefined,
       sourceSessions: (row.source_sessions as string) ?? undefined,
       embeddingModel: (row.embedding_model as string) ?? null,
+      provenanceSession: (row.provenance_session as string) ?? null,
+      sourceTurn: (row.source_turn as number) ?? null,
+      extractionMethod: (row.extraction_method as string) ?? null,
+      extractionConfidence: (row.extraction_confidence as number) ?? null,
       reinforcedCount: (row.reinforced_count as number) ?? 0,
       lastReinforcedAt: (row.last_reinforced_at as number) ?? null,
       reinforcedQuotes: (() => {
@@ -2015,7 +2023,12 @@ export class FactsDB {
     const rows = this.liveDb
       .prepare(
         `SELECT id, text, category, entity, key FROM facts
-         WHERE (expires_at IS NULL OR expires_at > ?) AND superseded_at IS NULL ORDER BY created_at DESC LIMIT ?`,
+         WHERE (expires_at IS NULL OR expires_at > ?)
+           AND superseded_at IS NULL
+           AND lower(COALESCE(source, '')) NOT IN ('consolidation', 'dream-cycle')
+           AND lower(COALESCE(key, '')) != 'consolidated'
+           AND (',' || lower(COALESCE(tags, '')) || ',') NOT LIKE '%,consolidated,%'
+         ORDER BY created_at DESC LIMIT ?`,
       )
       .all(nowSec, limit) as Array<Record<string, unknown>>;
     return rows.map((row) => ({
@@ -2898,15 +2911,6 @@ export class FactsDB {
   }
 
   /** Get the live DB handle, reopening if closed after a SIGUSR1 restart. */
-  private get liveDb(): DatabaseSync {
-    if (!this._dbOpen) {
-      this.db.open();
-      this._dbOpen = true;
-      this.applyPragmas();
-    }
-    return this.db;
-  }
-
   /**
    * Expose the underlying node:sqlite DatabaseSync for services that require direct
    * SQL access (e.g. the FTS5 search service used by the RRF retrieval pipeline).
@@ -4410,19 +4414,5 @@ export class FactsDB {
       | { cluster_id: string }
       | undefined;
     return row?.cluster_id ?? null;
-  }
-
-  close(): void {
-    this._dbOpen = false;
-    try {
-      this.db.close();
-    } catch (err) {
-      capturePluginError(err as Error, {
-        operation: "db-close",
-        severity: "info",
-        subsystem: "facts",
-      });
-      /* already closed */
-    }
   }
 }

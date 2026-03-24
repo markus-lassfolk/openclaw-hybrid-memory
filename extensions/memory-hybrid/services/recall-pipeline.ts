@@ -20,6 +20,7 @@ import type { PendingLLMWarnings } from "../services/chat.js";
 import { shouldSuppressEmbeddingError } from "./embeddings.js";
 import { mergeResults, filterByScope } from "../services/merge-results.js";
 import { computeDynamicSalience } from "../utils/salience.js";
+import { applyConsolidationRetrievalControls } from "../utils/consolidation-controls.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { DEFAULT_INTERACTIVE_RECALL_POLICY, type InteractiveRecallPolicy } from "./retrieval-mode-policy.js";
 import { expandQueryWithHyde } from "./hyde-helper.js";
@@ -157,7 +158,11 @@ export async function runRecallPipelineQuery(
         results = filterByScope(results, (id, o) => factsDb.getById(id, o), recallOpts.scopeFilter);
         results = results.map((r) => {
           const fullEntry = factsDb.getById(r.entry.id);
-          if (fullEntry) return { ...r, entry: fullEntry, score: computeDynamicSalience(r.score, fullEntry) };
+          if (fullEntry) {
+            const salienceScore = computeDynamicSalience(r.score, fullEntry);
+            const controlledScore = applyConsolidationRetrievalControls(salienceScore, fullEntry);
+            return { ...r, entry: fullEntry, score: controlledScore };
+          }
           return r;
         });
         return results;

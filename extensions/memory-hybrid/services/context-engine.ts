@@ -21,7 +21,7 @@ import type { WriteAheadLog } from "../backends/wal.js";
 import type { HybridMemoryConfig } from "../config.js";
 import type { EmbeddingProvider } from "./embeddings.js";
 import { capturePluginError } from "./error-reporter.js";
-import { replayWalEntries } from "../utils/wal-replay.js";
+import { runPreConsolidationFlush } from "./pre-consolidation-flush.js";
 
 // ---------------------------------------------------------------------------
 // Types (local stubs if SDK types are unavailable)
@@ -119,22 +119,11 @@ export class HybridMemoryContextEngine implements MinimalContextEngine {
     const { logger, wal, factsDb, vectorDb, embeddings } = this.opts;
     try {
       // 1. Replay pending WAL entries — commit any writes that didn't complete before crash/compaction
-      let walCommitted = 0;
-      let walSkipped = 0;
-      if (wal) {
-        try {
-          const result = await replayWalEntries(wal, factsDb, vectorDb, embeddings);
-          walCommitted = result.committed;
-          walSkipped = result.skipped;
-          if (walCommitted > 0 || walSkipped > 0) {
-            logger.info?.(
-              `memory-hybrid: context-engine compact — WAL replay complete: ${walCommitted} committed, ${walSkipped} skipped (already present)`,
-            );
-          }
-        } catch {
-          // Non-fatal — WAL replay failure should not block compaction
-        }
-      }
+      const { committed: walCommitted, skipped: walSkipped } = await runPreConsolidationFlush(
+        { wal, factsDb, vectorDb, embeddings },
+        logger,
+        "context-engine compact",
+      );
 
       // 2. Count total facts and build a brief post-compaction memory summary.
       //

@@ -16,7 +16,7 @@ import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 
-import { SQLITE_BUSY_TIMEOUT_MS } from "../utils/constants.js";
+import { BaseSqliteStore } from "./base-sqlite-store.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import type {
   LearningEntry,
@@ -54,17 +54,13 @@ interface LearningRow {
   updated_at: string;
 }
 
-export class LearningsDB {
-  private db: DatabaseSync;
-  private closed = false;
-
+export class LearningsDB extends BaseSqliteStore {
   constructor(dbPath: string) {
     mkdirSync(dirname(dbPath), { recursive: true });
-    this.db = new DatabaseSync(dbPath);
-    this.db.exec("PRAGMA journal_mode = WAL");
-    this.db.exec(`PRAGMA busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
+    const db = new DatabaseSync(dbPath);
+    super(db);
 
-    this.db.exec(`
+    this.liveDb.exec(`
       CREATE TABLE IF NOT EXISTS learnings (
         id          TEXT PRIMARY KEY,
         slug        TEXT NOT NULL UNIQUE,
@@ -85,6 +81,10 @@ export class LearningsDB {
     `);
   }
 
+  protected getSubsystemName(): string {
+    return "learnings-db";
+  }
+
   // ---------------------------------------------------------------------------
   // Write
   // ---------------------------------------------------------------------------
@@ -93,23 +93,23 @@ export class LearningsDB {
     const id = randomUUID();
     const now = new Date().toISOString();
 
-    this.db.exec("BEGIN IMMEDIATE");
+    this.liveDb.exec("BEGIN IMMEDIATE");
     try {
       const seq = this.nextSeq(input.type);
       const slug = `${TYPE_PREFIX[input.type]}-${String(seq).padStart(3, "0")}`;
 
-      this.db
+      this.liveDb
         .prepare(
           `INSERT INTO learnings (id, slug, type, status, area, content, recurrence, tags, created_at, updated_at)
            VALUES (?, ?, ?, 'open', ?, ?, 1, ?, ?, ?)`,
         )
         .run(id, slug, input.type, input.area, input.content, JSON.stringify(input.tags ?? []), now, now);
 
-      this.db.exec("COMMIT");
+      this.liveDb.exec("COMMIT");
       // biome-ignore lint/style/noNonNullAssertion: Known to exist
       return this.get(id)!;
     } catch (err) {
-      this.db.exec("ROLLBACK");
+      this.liveDb.exec("ROLLBACK");
       throw err;
     }
   }
@@ -120,7 +120,7 @@ export class LearningsDB {
     if (!existing) throw new Error(`LearningEntry not found: ${id}`);
 
     const now = new Date().toISOString();
-    this.db.prepare("UPDATE learnings SET recurrence = recurrence + 1, updated_at = ? WHERE id = ?").run(now, id);
+    this.liveDb.prepare("UPDATE learnings SET recurrence = recurrence + 1, updated_at = ? WHERE id = ?").run(now, id);
 
     // biome-ignore lint/style/noNonNullAssertion: Known to exist
     return this.get(id)!;
@@ -151,7 +151,7 @@ export class LearningsDB {
     }
 
     params.push(id);
-    this.db.prepare(`UPDATE learnings SET ${sets.join(", ")} WHERE id = ?`).run(...params);
+    this.liveDb.prepare(`UPDATE learnings SET ${sets.join(", ")} WHERE id = ?`).run(...params);
 
     // biome-ignore lint/style/noNonNullAssertion: Known to exist
     return this.get(id)!;
@@ -162,13 +162,15 @@ export class LearningsDB {
   // ---------------------------------------------------------------------------
 
   get(id: string): LearningEntry | null {
-    const row = this.db.prepare("SELECT * FROM learnings WHERE id = ?").get(id) as unknown as LearningRow | undefined;
+    const row = this.liveDb.prepare("SELECT * FROM learnings WHERE id = ?").get(id) as unknown as
+      | LearningRow
+      | undefined;
     if (!row) return null;
     return this.rowToEntry(row);
   }
 
   getBySlug(slug: string): LearningEntry | null {
-    const row = this.db.prepare("SELECT * FROM learnings WHERE slug = ?").get(slug) as unknown as
+    const row = this.liveDb.prepare("SELECT * FROM learnings WHERE slug = ?").get(slug) as unknown as
       | LearningRow
       | undefined;
     if (!row) return null;
@@ -204,7 +206,7 @@ export class LearningsDB {
       params.push(filter.limit);
     }
 
-    const rows = this.db.prepare(query).all(...params) as unknown as LearningRow[];
+    const rows = this.liveDb.prepare(query).all(...params) as unknown as LearningRow[];
     return rows.map((r) => this.rowToEntry(r));
   }
 
@@ -219,7 +221,7 @@ export class LearningsDB {
       query += " AND status = ?";
       params.push(filter.status);
     }
-    const row = this.db.prepare(query).get(...params) as unknown as { n: number };
+    const row = this.liveDb.prepare(query).get(...params) as unknown as { n: number };
     return row.n;
   }
 
@@ -229,7 +231,7 @@ export class LearningsDB {
     content: string,
     status: LearningEntryStatus,
   ): LearningEntry | null {
-    const row = this.db
+    const row = this.liveDb
       .prepare("SELECT * FROM learnings WHERE type = ? AND area = ? AND content = ? AND status = ?")
       .get(type, area, content, status) as unknown as LearningRow | undefined;
     if (!row) return null;
@@ -243,7 +245,7 @@ export class LearningsDB {
   /** Remove promoted/wont_promote entries older than N days. */
   prune(olderThanDays: number): number {
     const cutoff = new Date(Date.now() - olderThanDays * 24 * 60 * 60 * 1000).toISOString();
-    const result = this.db
+    const result = this.liveDb
       .prepare(`DELETE FROM learnings WHERE status IN ('promoted', 'wont_promote') AND updated_at <= ?`)
       .run(cutoff);
     return Number(result.changes);
@@ -253,24 +255,6 @@ export class LearningsDB {
   // Lifecycle
   // ---------------------------------------------------------------------------
 
-  close(): void {
-    if (this.closed) return;
-    this.closed = true;
-    try {
-      this.db.close();
-    } catch (err) {
-      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-        operation: "db-close",
-        subsystem: "learnings-db",
-        severity: "info",
-      });
-    }
-  }
-
-  isOpen(): boolean {
-    return !this.closed;
-  }
-
   // ---------------------------------------------------------------------------
   // Private helpers
   // ---------------------------------------------------------------------------
@@ -278,7 +262,7 @@ export class LearningsDB {
   /** Return the next sequential number for slugs of a given type. */
   private nextSeq(type: LearningEntryType): number {
     const prefix = TYPE_PREFIX[type];
-    const rows = this.db.prepare("SELECT slug FROM learnings WHERE slug LIKE ?").all(`${prefix}-%`) as unknown as {
+    const rows = this.liveDb.prepare("SELECT slug FROM learnings WHERE slug LIKE ?").all(`${prefix}-%`) as unknown as {
       slug: string;
     }[];
 

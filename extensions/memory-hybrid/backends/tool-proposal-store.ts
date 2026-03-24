@@ -13,8 +13,7 @@ import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 
-import { SQLITE_BUSY_TIMEOUT_MS } from "../utils/constants.js";
-import { capturePluginError } from "../services/error-reporter.js";
+import { BaseSqliteStore } from "./base-sqlite-store.js";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -56,17 +55,13 @@ export interface ToolProposalFilter {
 // ToolProposalStore
 // ---------------------------------------------------------------------------
 
-export class ToolProposalStore {
-  private db: DatabaseSync;
-  private closed = false;
-
+export class ToolProposalStore extends BaseSqliteStore {
   constructor(dbPath: string) {
     mkdirSync(dirname(dbPath), { recursive: true });
-    this.db = new DatabaseSync(dbPath);
-    this.db.exec("PRAGMA journal_mode = WAL");
-    this.db.exec(`PRAGMA busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
+    const db = new DatabaseSync(dbPath);
+    super(db);
 
-    this.db.exec(`
+    this.liveDb.exec(`
       CREATE TABLE IF NOT EXISTS tool_proposals (
         id                   TEXT PRIMARY KEY,
         name                 TEXT NOT NULL,
@@ -85,6 +80,10 @@ export class ToolProposalStore {
     `);
   }
 
+  protected getSubsystemName(): string {
+    return "tool-proposal-store";
+  }
+
   // -------------------------------------------------------------------------
   // create
   // -------------------------------------------------------------------------
@@ -93,7 +92,7 @@ export class ToolProposalStore {
     const id = randomUUID();
     const now = new Date().toISOString();
 
-    this.db
+    this.liveDb
       .prepare(
         `INSERT INTO tool_proposals
            (id, name, description, parameters, rationale, source_patterns, implementation_hint, status, created_at, updated_at)
@@ -120,7 +119,7 @@ export class ToolProposalStore {
   // -------------------------------------------------------------------------
 
   getById(id: string): ToolProposal | null {
-    const row = this.db.prepare("SELECT * FROM tool_proposals WHERE id = ?").get(id) as
+    const row = this.liveDb.prepare("SELECT * FROM tool_proposals WHERE id = ?").get(id) as
       | Record<string, unknown>
       | undefined;
     if (!row) return null;
@@ -151,7 +150,7 @@ export class ToolProposalStore {
       params.push(filter.limit);
     }
 
-    const rows = this.db.prepare(query).all(...params) as Record<string, unknown>[];
+    const rows = this.liveDb.prepare(query).all(...params) as Record<string, unknown>[];
     return rows.map((r) => this.rowToProposal(r));
   }
 
@@ -163,10 +162,10 @@ export class ToolProposalStore {
     const now = new Date().toISOString();
     const result =
       fromStatus !== undefined
-        ? this.db
+        ? this.liveDb
             .prepare("UPDATE tool_proposals SET status = ?, updated_at = ? WHERE id = ? AND status = ?")
             .run(status, now, id, fromStatus)
-        : this.db.prepare("UPDATE tool_proposals SET status = ?, updated_at = ? WHERE id = ?").run(status, now, id);
+        : this.liveDb.prepare("UPDATE tool_proposals SET status = ?, updated_at = ? WHERE id = ?").run(status, now, id);
 
     if (result.changes === 0) return null;
     return this.getById(id);
@@ -178,8 +177,8 @@ export class ToolProposalStore {
 
   count(status?: ToolProposalStatus): number {
     const row = status
-      ? (this.db.prepare("SELECT COUNT(*) as n FROM tool_proposals WHERE status = ?").get(status) as { n: number })
-      : (this.db.prepare("SELECT COUNT(*) as n FROM tool_proposals").get() as { n: number });
+      ? (this.liveDb.prepare("SELECT COUNT(*) as n FROM tool_proposals WHERE status = ?").get(status) as { n: number })
+      : (this.liveDb.prepare("SELECT COUNT(*) as n FROM tool_proposals").get() as { n: number });
     return row.n;
   }
 
@@ -188,7 +187,7 @@ export class ToolProposalStore {
   // -------------------------------------------------------------------------
 
   existsByName(name: string): boolean {
-    const row = this.db
+    const row = this.liveDb
       .prepare("SELECT id FROM tool_proposals WHERE name = ? AND status IN ('proposed', 'approved') LIMIT 1")
       .get(name) as { id: string } | undefined;
     return row !== undefined;
@@ -197,24 +196,6 @@ export class ToolProposalStore {
   // -------------------------------------------------------------------------
   // close / isOpen
   // -------------------------------------------------------------------------
-
-  close(): void {
-    if (this.closed) return;
-    this.closed = true;
-    try {
-      this.db.close();
-    } catch (err) {
-      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-        operation: "db-close",
-        subsystem: "tool-proposal-store",
-        severity: "info",
-      });
-    }
-  }
-
-  isOpen(): boolean {
-    return !this.closed;
-  }
 
   // -------------------------------------------------------------------------
   // Private helpers

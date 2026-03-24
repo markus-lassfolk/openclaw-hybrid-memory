@@ -20,6 +20,7 @@ import { capturePluginError } from "../services/error-reporter.js";
 import { formatNarrativeRange, recallNarrativeSummaries } from "../services/narrative-recall.js";
 import { withTimeout } from "../utils/timeout.js";
 import { estimateTokens } from "../utils/text.js";
+import { isConsolidatedDerivedFact } from "../utils/consolidation-controls.js";
 import type { LifecycleContext, RecallResult, RecallStageResult, SessionState } from "./types.js";
 import { runRecallPipelineQuery, type RecallPipelineDeps } from "../services/recall-pipeline.js";
 import {
@@ -532,7 +533,7 @@ async function runRecall(
     const NINETY_DAYS_SEC = 90 * 24 * 3600;
     const boosted = candidates.map((r) => {
       let s = r.score;
-      if (ctx.cfg.autoRecall.preferLongTerm) {
+      if (ctx.cfg.autoRecall.preferLongTerm && !isConsolidatedDerivedFact(r.entry)) {
         s *= r.entry.decayClass === "permanent" ? 1.2 : r.entry.decayClass === "stable" ? 1.1 : 1;
       }
       if (ctx.cfg.autoRecall.useImportanceRecency) {

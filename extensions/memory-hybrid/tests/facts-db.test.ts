@@ -2671,3 +2671,43 @@ describe("FactsDB new decay classes (#237)", () => {
     expect(entry.expiresAt).toBeNull();
   });
 });
+
+describe("FactsDB.getFactsForConsolidation", () => {
+  it("excludes already consolidated derived facts", () => {
+    db.store({
+      text: "Raw fact",
+      category: "fact",
+      importance: 0.5,
+      entity: null,
+      key: null,
+      value: null,
+      source: "conversation",
+    });
+    db.store({
+      text: "Merged fact",
+      category: "fact",
+      importance: 0.5,
+      entity: null,
+      key: "consolidated",
+      value: null,
+      source: "consolidation",
+      decayClass: "durable",
+      tags: ["consolidated"],
+    });
+    db.store({
+      text: "Dream-cycle rollup",
+      category: "fact",
+      importance: 0.5,
+      entity: null,
+      key: "consolidated",
+      value: null,
+      source: "dream-cycle",
+      decayClass: "durable",
+      tags: ["dream-cycle", "consolidated"],
+    });
+
+    const candidates = db.getFactsForConsolidation(10);
+    expect(candidates).toHaveLength(1);
+    expect(candidates[0]?.text).toBe("Raw fact");
+  });
+});
