@@ -18,18 +18,23 @@ function unitVec(dims = 4): number[] {
 
 describe("AliasDB LanceDB schema mismatch fallback", () => {
   let tmpDir: string;
+  let aliasDb: AliasDB | undefined;
 
   beforeEach(() => {
     tmpDir = mkdtempSync(join(tmpdir(), "alias-schema-test-"));
+    aliasDb = undefined;
     vi.clearAllMocks();
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    aliasDb?.close();
+    // Allow pending LanceDB write transactions to flush before cleanup
+    await new Promise((r) => setTimeout(r, 250));
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
   it("falls back to linear search without reporting GlitchTip on known alias vector schema errors", async () => {
-    const aliasDb = new AliasDB(join(tmpDir, "aliases.db"), join(tmpDir, "aliases.lance"), 4);
+    aliasDb = new AliasDB(join(tmpDir, "aliases.db"), join(tmpDir, "aliases.lance"), 4);
 
     for (let index = 0; index < 1000; index++) {
       aliasDb.store(randomUUID(), `alias-${index}`, unitVec());
@@ -52,6 +57,5 @@ describe("AliasDB LanceDB schema mismatch fallback", () => {
     expect(results).toHaveLength(5);
     expect(results.every((result: { score: number }) => result.score > 0.9)).toBe(true);
     expect(vi.mocked(errorReporter.capturePluginError)).not.toHaveBeenCalled();
-    aliasDb.close();
   });
 });
