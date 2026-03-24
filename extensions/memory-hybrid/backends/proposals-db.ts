@@ -244,10 +244,4 @@ export class ProposalsDB extends BaseSqliteStore {
       targetHash: row.target_hash ?? null,
     };
   }
-
-  /** True if the database is still open. Used by the proposals prune timer to avoid using the DB after stop() has closed it (issue #130). */
-  isOpen(): boolean {
-    return !this.closed && this._dbOpen;
-  }
-
 }

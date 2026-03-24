@@ -209,11 +209,4 @@ export class EventBus extends BaseSqliteStore {
       fingerprint: (row.fingerprint as string | null) ?? null,
     };
   }
-
-  /**
-   * Returns true if the database connection is open and active.
-   */
-  isOpen(): boolean {
-    return !this.closed && this._dbOpen;
-  }
 }
