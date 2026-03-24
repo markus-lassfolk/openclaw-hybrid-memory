@@ -154,7 +154,12 @@ export function maybeLogOutdatedVersionNudge(
   logger: UpdateNudgeLogger,
 ): VersionCheckCacheEntry {
   if (!isPluginOutdated(currentVersion, entry.latestVersion)) return entry;
-  if (!updateNudge.enabled) return entry;
+  if (!updateNudge.enabled) {
+    logger.info?.(
+      `memory-hybrid: telemetry muted for outdated plugin v${currentVersion} (latest published: v${entry.latestVersion}).`,
+    );
+    return entry;
+  }
   if (!shouldEmitUpdateNudge(entry, updateNudge)) {
     logger.info?.(
       `memory-hybrid: telemetry muted for outdated plugin v${currentVersion} (latest published: v${entry.latestVersion}).`,

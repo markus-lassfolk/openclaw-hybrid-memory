@@ -396,14 +396,14 @@ export function parseErrorReportingConfig(cfg: Record<string, unknown>): ErrorRe
     intervalHours:
       updateNudgeRaw?.intervalHours === 0
         ? 0
-        : typeof updateNudgeRaw?.intervalHours === "number" && updateNudgeRaw.intervalHours >= 1
-          ? Math.min(24 * 30, Math.floor(updateNudgeRaw.intervalHours))
+        : typeof updateNudgeRaw?.intervalHours === "number" && updateNudgeRaw.intervalHours > 0
+          ? Math.min(24 * 30, updateNudgeRaw.intervalHours)
           : 24,
     cacheTtlHours:
       updateNudgeRaw?.cacheTtlHours === 0
         ? 0
-        : typeof updateNudgeRaw?.cacheTtlHours === "number" && updateNudgeRaw.cacheTtlHours >= 1
-          ? Math.min(24 * 30, Math.floor(updateNudgeRaw.cacheTtlHours))
+        : typeof updateNudgeRaw?.cacheTtlHours === "number" && updateNudgeRaw.cacheTtlHours > 0
+          ? Math.min(24 * 30, updateNudgeRaw.cacheTtlHours)
           : 24,
   };
 
