@@ -7,13 +7,11 @@ import { randomUUID } from "node:crypto";
 import type { MemoryCategory, DecayClass } from "../config.js";
 import type { SearchResult } from "../types/memory.js";
 import { capturePluginError } from "../services/error-reporter.js";
-import { UUID_REGEX } from "../utils/constants.js";
+import { UUID_REGEX, LANCE_NO_VECTOR_COL_MSG } from "../utils/constants.js";
 import { pluginLogger } from "../utils/logger.js";
 
 const LANCE_TABLE = "memories";
 const SEMANTIC_QUERY_CACHE_TABLE = "semantic_query_cache";
-/** Substring of the LanceDB error thrown on vector-dimension mismatch (issue #366). */
-const LANCE_NO_VECTOR_COL_MSG = "No vector column found";
 
 /**
  * Module-level optimization guard keyed by dbPath.
@@ -43,6 +41,7 @@ export class VectorDB {
   private db: lancedb.Connection | null = null;
   private table: lancedb.Table | null = null;
   private semanticQueryCacheTable: lancedb.Table | null = null;
+  private semanticQueryCacheRepairPromise: Promise<void> | null = null;
   private initPromise: Promise<void> | null = null;
   private closed = false;
   private sessionCount = 0;
@@ -63,6 +62,11 @@ export class VectorDB {
    * the schema issue was already logged at startup (issue #366).
    */
   private schemaValid = true;
+  /**
+   * Tracks whether the semantic query cache table can safely serve vector queries.
+   * When false, cache lookups/stores are skipped until the table is rebuilt.
+   */
+  private semanticQueryCacheSchemaValid = true;
   /**
    * Incremented each time close() is called. Re-embedding loops can capture this value
    * and abort when it changes, preventing them from running on a closed instance.
@@ -146,6 +150,7 @@ export class VectorDB {
   private async doInitialize(): Promise<void> {
     // Reset schema validity on each (re-)init so a fixed table is detected correctly.
     this.schemaValid = true;
+    this.semanticQueryCacheSchemaValid = true;
     this.db = await lancedb.connect(this.dbPath);
     const tables = await this.db.tableNames();
 
@@ -207,6 +212,7 @@ export class VectorDB {
         cachedAt: 0,
       },
     ]);
+    this.semanticQueryCacheSchemaValid = true;
 
     try {
       await this.semanticQueryCacheTable.delete('id = "__schema__"');
@@ -248,14 +254,40 @@ export class VectorDB {
 
     if (!shouldRebuild) return;
 
-    this.logWarn(`memory-hybrid: rebuilding semantic query cache table due to ${reason}`);
-    try {
-      await this.db.dropTable(SEMANTIC_QUERY_CACHE_TABLE);
-    } catch {
-      /* ignore */
+    await this.rebuildSemanticQueryCacheTable(reason);
+  }
+
+  private async rebuildSemanticQueryCacheTable(reason: string): Promise<void> {
+    if (this.semanticQueryCacheRepairPromise) {
+      await this.semanticQueryCacheRepairPromise;
+      return;
     }
-    this.semanticQueryCacheTable = null;
-    await this.recreateSemanticQueryCacheTable();
+
+    const repairPromise = (async () => {
+      if (!this.db) throw new Error("VectorDB connection not initialized.");
+      this.semanticQueryCacheSchemaValid = false;
+      this.logWarn(`memory-hybrid: rebuilding semantic query cache table due to ${reason}`);
+      try {
+        await this.db.dropTable(SEMANTIC_QUERY_CACHE_TABLE);
+      } catch {
+        /* ignore */
+      }
+      this.semanticQueryCacheTable = null;
+      await this.recreateSemanticQueryCacheTable();
+    })();
+
+    this.semanticQueryCacheRepairPromise = repairPromise;
+    try {
+      await repairPromise;
+    } finally {
+      if (this.semanticQueryCacheRepairPromise === repairPromise) {
+        this.semanticQueryCacheRepairPromise = null;
+      }
+    }
+  }
+
+  private isKnownVectorSchemaError(err: unknown): boolean {
+    return err instanceof Error && err.message.includes(LANCE_NO_VECTOR_COL_MSG);
   }
 
   /**
@@ -441,6 +473,7 @@ export class VectorDB {
   ): Promise<SemanticQueryCacheEntry | null> {
     try {
       await this.ensureInitialized();
+      if (!this.semanticQueryCacheSchemaValid) return null;
       const nowSec = Math.floor(Date.now() / 1000);
       const minSimilarity = options.minSimilarity ?? 0.95;
       const ttlSec = Math.max(1, Math.floor((options.ttlMs ?? 5 * 60 * 1000) / 1000));
@@ -493,11 +526,19 @@ export class VectorDB {
 
       return bestMatch;
     } catch (err) {
-      capturePluginError(err as Error, {
-        operation: "semantic-query-cache-lookup",
-        severity: "info",
-        subsystem: "vector",
-      });
+      if (this.isKnownVectorSchemaError(err)) {
+        try {
+          await this.rebuildSemanticQueryCacheTable(`runtime vector query failure: ${String(err)}`);
+        } catch (repairErr) {
+          this.logWarn(`memory-hybrid: semantic query cache repair failed: ${repairErr}`);
+        }
+      } else {
+        capturePluginError(err as Error, {
+          operation: "semantic-query-cache-lookup",
+          severity: "info",
+          subsystem: "vector",
+        });
+      }
       this.logWarn(`memory-hybrid: semantic query cache lookup failed: ${err}`);
       return null;
     }
@@ -512,6 +553,7 @@ export class VectorDB {
   }): Promise<void> {
     try {
       await this.ensureInitialized();
+      if (!this.semanticQueryCacheSchemaValid) return;
       const filterKey = entry.filterKey ?? "default";
       await this.getSemanticQueryCacheTable().add([
         {
@@ -525,11 +567,19 @@ export class VectorDB {
       ]);
       await this.pruneSemanticQueryCache(filterKey);
     } catch (err) {
-      capturePluginError(err as Error, {
-        operation: "semantic-query-cache-store",
-        severity: "info",
-        subsystem: "vector",
-      });
+      if (this.isKnownVectorSchemaError(err)) {
+        try {
+          await this.rebuildSemanticQueryCacheTable(`runtime cache store failure: ${String(err)}`);
+        } catch (repairErr) {
+          this.logWarn(`memory-hybrid: semantic query cache repair failed: ${repairErr}`);
+        }
+      } else {
+        capturePluginError(err as Error, {
+          operation: "semantic-query-cache-store",
+          severity: "info",
+          subsystem: "vector",
+        });
+      }
       this.logWarn(`memory-hybrid: semantic query cache store failed: ${err}`);
     }
   }
