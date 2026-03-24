@@ -177,7 +177,9 @@ export class LearningsDB {
   // ---------------------------------------------------------------------------
 
   get(id: string): LearningEntry | null {
-    const row = this.liveDb.prepare("SELECT * FROM learnings WHERE id = ?").get(id) as unknown as LearningRow | undefined;
+    const row = this.liveDb.prepare("SELECT * FROM learnings WHERE id = ?").get(id) as unknown as
+      | LearningRow
+      | undefined;
     if (!row) return null;
     return this.rowToEntry(row);
   }

@@ -165,7 +165,9 @@ export class ProposalsDB {
   }
 
   get(id: string): ProposalEntry | null {
-    const row = this.liveDb.prepare("SELECT * FROM proposals WHERE id = ?").get(id) as unknown as ProposalRow | undefined;
+    const row = this.liveDb.prepare("SELECT * FROM proposals WHERE id = ?").get(id) as unknown as
+      | ProposalRow
+      | undefined;
     if (!row) return null;
     return this.rowToEntry(row);
   }

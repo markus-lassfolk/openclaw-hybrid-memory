@@ -275,7 +275,9 @@ export class ToolEffectivenessStore {
 
   /** Get score for a specific tool (first context row, or "general"). */
   getByTool(tool: string): ToolMetrics | null {
-    const row = this.liveDb.prepare("SELECT * FROM tool_effectiveness WHERE tool = ? ORDER BY context LIMIT 1").get(tool) as
+    const row = this.liveDb
+      .prepare("SELECT * FROM tool_effectiveness WHERE tool = ? ORDER BY context LIMIT 1")
+      .get(tool) as
       | {
           tool: string;
           context: string;

@@ -133,7 +133,9 @@ export class PersonaStateStore {
   }
 
   count(): number {
-    const row = this.liveDb.prepare(`SELECT COUNT(*) AS count FROM persona_state`).get() as { count?: number } | undefined;
+    const row = this.liveDb.prepare(`SELECT COUNT(*) AS count FROM persona_state`).get() as
+      | { count?: number }
+      | undefined;
     return row?.count ?? 0;
   }
 

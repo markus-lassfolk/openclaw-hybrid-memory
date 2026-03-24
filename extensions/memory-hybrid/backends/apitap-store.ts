@@ -252,7 +252,9 @@ export class ApitapStore {
 
   count(status?: ApitapEndpointStatus): number {
     const row = status
-      ? (this.liveDb.prepare("SELECT COUNT(*) as n FROM apitap_endpoints WHERE status = ?").get(status) as { n: number })
+      ? (this.liveDb.prepare("SELECT COUNT(*) as n FROM apitap_endpoints WHERE status = ?").get(status) as {
+          n: number;
+        })
       : (this.liveDb.prepare("SELECT COUNT(*) as n FROM apitap_endpoints").get() as { n: number });
     return row.n;
   }
@@ -262,7 +264,9 @@ export class ApitapStore {
   // -------------------------------------------------------------------------
 
   countForSession(sessionId: string): number {
-    const row = this.liveDb.prepare("SELECT COUNT(*) as n FROM apitap_endpoints WHERE session_id = ?").get(sessionId) as {
+    const row = this.liveDb
+      .prepare("SELECT COUNT(*) as n FROM apitap_endpoints WHERE session_id = ?")
+      .get(sessionId) as {
       n: number;
     };
     return row.n;
