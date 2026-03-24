@@ -16,14 +16,9 @@ if (process.argv[2] === "fix-config") {
 
 const os = require("os");
 const version = process.argv[2] || "latest";
-const extDir =
-  process.env.OPENCLAW_EXTENSIONS_DIR ||
-  path.join(os.homedir(), ".openclaw", "extensions");
+const extDir = process.env.OPENCLAW_EXTENSIONS_DIR || path.join(os.homedir(), ".openclaw", "extensions");
 const pluginDir = path.join(extDir, "openclaw-hybrid-memory");
-const tmpDir = path.join(
-  os.tmpdir(),
-  `openclaw-plugin-install-${process.pid}`
-);
+const tmpDir = path.join(os.tmpdir(), `openclaw-plugin-install-${process.pid}`);
 const requiredRuntimeDependencies = ["@lancedb/lancedb"];
 
 function run(cmd, args = [], opts = {}) {
@@ -36,7 +31,7 @@ function run(cmd, args = [], opts = {}) {
     if (!npmExecPath) {
       throw new Error(
         "Unable to locate npm safely on Windows (npm_execpath is not set). " +
-          "Please run this installer via npm or npx so npm_execpath is available."
+          "Please run this installer via npm or npx so npm_execpath is available.",
       );
     }
     // When invoked via npx, npm_execpath may point to npx-cli.js instead of npm-cli.js
@@ -107,9 +102,7 @@ try {
   console.log("Cleaning up...");
   fs.rmSync(tmpDir, { recursive: true, force: true });
 
-  console.log(
-    "\nDone. Restart the gateway: openclaw gateway stop && openclaw gateway start"
-  );
+  console.log("\nDone. Restart the gateway: openclaw gateway stop && openclaw gateway start");
 } catch (err) {
   console.error("Install failed:", err.message);
   process.exit(1);

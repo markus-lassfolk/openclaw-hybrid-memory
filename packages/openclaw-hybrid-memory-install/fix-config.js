@@ -8,9 +8,7 @@ const os = require("os");
 const path = require("path");
 
 const PLUGIN_ID = "openclaw-hybrid-memory";
-const configPath =
-  process.env.OPENCLAW_CONFIG_PATH ||
-  path.join(os.homedir(), ".openclaw", "openclaw.json");
+const configPath = process.env.OPENCLAW_CONFIG_PATH || path.join(os.homedir(), ".openclaw", "openclaw.json");
 
 function main() {
   if (!fs.existsSync(configPath)) {
