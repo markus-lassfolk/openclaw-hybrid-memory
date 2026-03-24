@@ -225,7 +225,13 @@ export function createPluginService(ctx: PluginServiceContext) {
 
           if (shuttingDown) return;
           if (versionCheckCachePath) {
-            writeVersionCheckCache(versionCheckCachePath, cacheEntry);
+            try {
+              writeVersionCheckCache(versionCheckCachePath, cacheEntry);
+            } catch (err) {
+              api.logger.debug?.(
+                `memory-hybrid: failed to write version check cache: ${err instanceof Error ? err.message : String(err)}`,
+              );
+            }
           }
         } catch (err) {
           api.logger.debug?.(
