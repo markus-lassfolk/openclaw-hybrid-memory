@@ -220,6 +220,7 @@ describe("CredentialsDB.close", () => {
     db.close();
 
     expect(captureSpy).not.toHaveBeenCalled();
+    captureSpy.mockRestore();
   });
 
   it("ignores already-closed sqlite handles without reporting", () => {
@@ -230,6 +231,7 @@ describe("CredentialsDB.close", () => {
     db.close();
 
     expect(captureSpy).not.toHaveBeenCalled();
+    captureSpy.mockRestore();
   });
 });
 
