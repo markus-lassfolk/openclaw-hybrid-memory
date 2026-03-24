@@ -189,7 +189,7 @@ export function createPluginService(ctx: PluginServiceContext) {
       }
 
       versionCheckPromise = (async () => {
-        if (!errorReportingActive || !versionCheckCachePath) return;
+        if (!errorReportingActive) return;
         try {
           const latestPublished = await fetchLatestPublishedVersion();
           if (!latestPublished.latestVersion || !latestPublished.source) return;
@@ -216,7 +216,9 @@ export function createPluginService(ctx: PluginServiceContext) {
           }
 
           if (shuttingDown) return;
-          writeVersionCheckCache(versionCheckCachePath, cacheEntry);
+          if (versionCheckCachePath) {
+            writeVersionCheckCache(versionCheckCachePath, cacheEntry);
+          }
         } catch (err) {
           api.logger.debug?.(
             `memory-hybrid: latest-version check failed: ${err instanceof Error ? err.message : String(err)}`,
