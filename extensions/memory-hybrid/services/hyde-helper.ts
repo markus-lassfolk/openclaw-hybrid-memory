@@ -6,7 +6,7 @@
 
 import type OpenAI from "openai";
 import type { PendingLLMWarnings } from "./chat.js";
-import { chatCompleteWithRetry, is500Like, is404Like, isOllamaOOM } from "./chat.js";
+import { chatCompleteWithRetry, is500Like, is404Like, isOllamaOOM, isConnectionErrorLike } from "./chat.js";
 import { capturePluginError } from "./error-reporter.js";
 import { getCronModelConfig, getLLMModelPreference } from "../config.js";
 
@@ -71,7 +71,8 @@ Output only the statement, no preamble.`,
       isOllamaOOM(hydeErr) ||
       is500Like(hydeErr) ||
       is404Like(hydeErr) ||
-      /timed out|llm request timeout|request was aborted|econnrefused/i.test(hydeErr.message);
+      /timed out|llm request timeout|request was aborted/i.test(hydeErr.message) ||
+      isConnectionErrorLike(hydeErr);
     if (!isTransient) {
       capturePluginError(hydeErr, { subsystem: opts.subsystem, operation: opts.operation });
     }
