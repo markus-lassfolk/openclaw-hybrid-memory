@@ -180,7 +180,8 @@ export function shouldDropNoisyError(err: unknown, seen = new Set<unknown>()): b
   const nested = getNestedErrors(err);
   if (nested.length === 0) return false;
 
-  return nested.every((nestedErr) => shouldDropNoisyError(nestedErr, seen));
+  const uniqueNested = Array.from(new Set(nested));
+  return uniqueNested.every((nestedErr) => shouldDropNoisyError(nestedErr, seen));
 }
 
 // --- Pure utility functions ---
