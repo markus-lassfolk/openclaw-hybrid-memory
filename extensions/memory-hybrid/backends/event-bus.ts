@@ -229,8 +229,4 @@ export class EventBus extends BaseSqliteStore {
   isOpen(): boolean {
     return !this.closed && this._dbOpen;
   }
-
-  /**
-   * Closes the database connection cleanly. Idempotent.
-   */
 }
