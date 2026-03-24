@@ -95,6 +95,7 @@ export class FactsDB {
     this.db = new DatabaseSync(dbPath);
     this._dbOpen = true;
     this.applyPragmas();
+    FactsDB.verifyFts5Support(this.db);
 
     // Create main table
     this.liveDb.exec(`
@@ -157,6 +158,34 @@ export class FactsDB {
 
     // Run all schema migrations
     runFactsMigrations(this.liveDb);
+  }
+
+  /**
+   * Hard-startup guard for SQLite FTS5 support.
+   *
+   * Some Node.js/SQLite builds can run without FTS5 enabled, which would cause
+   * hybrid retrieval to silently degrade to vector-only once the FTS strategy
+   * starts failing. Probe FTS5 explicitly and fail fast with an actionable error.
+   */
+  static verifyFts5Support(db: DatabaseSync): void {
+    const probeTable = "temp.memory_hybrid_fts5_probe";
+    try {
+      db.exec(`DROP TABLE IF EXISTS ${probeTable}`);
+      db.exec(`CREATE VIRTUAL TABLE ${probeTable} USING fts5(content)`);
+      db.exec(`DROP TABLE ${probeTable}`);
+    } catch (err) {
+      try {
+        db.exec(`DROP TABLE IF EXISTS ${probeTable}`);
+      } catch {
+        // Best-effort cleanup only.
+      }
+      const reason = err instanceof Error ? err.message : String(err);
+      throw new Error(
+        "memory-hybrid: SQLite FTS5 capability check failed during startup. " +
+          "Hybrid search would silently degrade to vector-only, so plugin initialization is aborted. " +
+          `Use a Node.js/SQLite runtime with FTS5 enabled. Original error: ${reason}`,
+      );
+    }
   }
 
   /** Create reinforcement_log table for per-event context (#259). */
