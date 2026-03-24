@@ -805,6 +805,52 @@ describe("Error Reporter", () => {
       expect(() => addOperationBreadcrumb("test", "operation")).not.toThrow();
     });
   });
+
+  describe("Noisy error filtering", () => {
+    it("drops transient network transport errors", async () => {
+      const { shouldDropNoisyError } = await import("../services/error-reporter.js");
+
+      expect(shouldDropNoisyError(new Error("ECONNREFUSED http://localhost:11434"))).toBe(true);
+      expect(shouldDropNoisyError(new Error("TypeError: fetch failed"))).toBe(true);
+    });
+
+    it("drops external-provider auth errors", async () => {
+      const { shouldDropNoisyError } = await import("../services/error-reporter.js");
+
+      expect(shouldDropNoisyError(Object.assign(new Error("401 Unauthorized"), { status: 401 }))).toBe(true);
+      expect(shouldDropNoisyError(new Error("invalid api key provided"))).toBe(true);
+      expect(shouldDropNoisyError(new Error("Country, region, or territory not supported"))).toBe(true);
+    });
+
+    it("drops Ollama circuit-breaker-open errors", async () => {
+      const { shouldDropNoisyError } = await import("../services/error-reporter.js");
+
+      expect(shouldDropNoisyError(new Error("Ollama circuit breaker open — retrying in 30s"))).toBe(true);
+    });
+
+    it("drops wrapped or aggregate errors only when every cause is noisy", async () => {
+      const { shouldDropNoisyError } = await import("../services/error-reporter.js");
+
+      const wrapped = new Error("retry failed", { cause: new Error("ECONNRESET") });
+      const aggregateAllNoisy = Object.assign(new Error("all providers failed"), {
+        causes: [new Error("ECONNREFUSED"), new Error("Ollama circuit breaker open")],
+      });
+      const aggregateMixed = Object.assign(new Error("all providers failed"), {
+        causes: [new Error("ECONNREFUSED"), new Error("TypeError: cannot read properties of undefined")],
+      });
+
+      expect(shouldDropNoisyError(wrapped)).toBe(true);
+      expect(shouldDropNoisyError(aggregateAllNoisy)).toBe(true);
+      expect(shouldDropNoisyError(aggregateMixed)).toBe(false);
+    });
+
+    it("does not drop unrelated errors or file-permission failures", async () => {
+      const { shouldDropNoisyError } = await import("../services/error-reporter.js");
+
+      expect(shouldDropNoisyError(new TypeError("Cannot read properties of undefined"))).toBe(false);
+      expect(shouldDropNoisyError(new Error("Access denied to file /tmp/test.txt"))).toBe(false);
+    });
+  });
 });
 
 describe("UnconfiguredProviderError suppression", () => {
