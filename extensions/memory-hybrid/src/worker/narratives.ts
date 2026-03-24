@@ -39,6 +39,7 @@ function normalizeNarrative(raw: string): string {
 export async function buildDailyNarrative(params: BuildDailyNarrativeParams): Promise<boolean> {
   const { sessionId, eventLog, workflowStore, narrativesDb, openai, model, logger, fallbackModels } = params;
   if (!eventLog || !narrativesDb) return false;
+  if (!eventLog.isOpen()) return false; // session already disposed
 
   const events = eventLog.getBySession(sessionId, MAX_EVENTS_FOR_PROMPT);
   if (events.length < 2) return false;
