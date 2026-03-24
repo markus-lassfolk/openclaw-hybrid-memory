@@ -17,7 +17,7 @@ import { DatabaseSync } from "node:sqlite";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { capturePluginError } from "./error-reporter.js";
-import { SQLITE_BUSY_TIMEOUT_MS } from "../utils/constants.js";
+import { BaseSqliteStore } from "../backends/base-sqlite-store.js";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { ToolEffectivenessConfig } from "../config/types/features.js";
 
@@ -78,30 +78,16 @@ CREATE TABLE IF NOT EXISTS tool_effectiveness (
 // ToolEffectivenessStore
 // ---------------------------------------------------------------------------
 
-export class ToolEffectivenessStore {
-  private db: DatabaseSync;
-  private _dbOpen = true;
-
+export class ToolEffectivenessStore extends BaseSqliteStore {
   constructor(dbPath: string) {
     mkdirSync(dirname(dbPath), { recursive: true });
-    this.db = new DatabaseSync(dbPath);
-    this.applyPragmas();
+    const db = new DatabaseSync(dbPath);
+    super(db, { foreignKeys: true });
     this.liveDb.exec(SCHEMA);
   }
 
-  private applyPragmas(): void {
-    this.db.exec("PRAGMA journal_mode = WAL");
-    this.db.exec(`PRAGMA busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
-    this.db.exec("PRAGMA foreign_keys = ON");
-  }
-
-  private get liveDb(): DatabaseSync {
-    if (!this._dbOpen) {
-      this.db.open();
-      this._dbOpen = true;
-      this.applyPragmas();
-    }
-    return this.db;
+  protected getSubsystemName(): string {
+    return "tool-effectiveness-store";
   }
 
   /** Upsert a tool score row. */
@@ -315,15 +301,6 @@ export class ToolEffectivenessStore {
     return row.n;
   }
 
-  close(): void {
-    if (!this._dbOpen) return;
-    this._dbOpen = false;
-    try {
-      this.db.close();
-    } catch {
-      // ignore
-    }
-  }
 }
 
 // ---------------------------------------------------------------------------

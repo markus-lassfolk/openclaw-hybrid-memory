@@ -9,6 +9,7 @@ import { DatabaseSync } from "node:sqlite";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { randomUUID } from "node:crypto";
+import { BaseSqliteStore } from "../backends/base-sqlite-store.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -75,30 +76,16 @@ interface FactProvenanceRow {
 // ProvenanceService
 // ---------------------------------------------------------------------------
 
-export class ProvenanceService {
-  private db: DatabaseSync;
-  private _dbOpen = true;
-
+export class ProvenanceService extends BaseSqliteStore {
   constructor(dbPath: string) {
     mkdirSync(dirname(dbPath), { recursive: true });
-    this.db = new DatabaseSync(dbPath);
-    this.applyPragmas();
+    const db = new DatabaseSync(dbPath);
+    super(db, { customPragmas: ["PRAGMA synchronous = NORMAL"] });
     this.initSchema();
   }
 
-  private applyPragmas(): void {
-    this.db.exec("PRAGMA journal_mode = WAL");
-    this.db.exec("PRAGMA busy_timeout = 5000");
-    this.db.exec("PRAGMA synchronous = NORMAL");
-  }
-
-  private get liveDb(): DatabaseSync {
-    if (!this._dbOpen) {
-      this.db.open();
-      this._dbOpen = true;
-      this.applyPragmas();
-    }
-    return this.db;
+  protected getSubsystemName(): string {
+    return "provenance-service";
   }
 
   private initSchema(): void {
@@ -222,17 +209,4 @@ export class ProvenanceService {
     return Number(result.changes);
   }
 
-  // -------------------------------------------------------------------------
-  // close — release SQLite connection
-  // -------------------------------------------------------------------------
-
-  close(): void {
-    if (!this._dbOpen) return;
-    this._dbOpen = false;
-    try {
-      this.db.close();
-    } catch {
-      // Avoid crashing during shutdown if the database fails to close.
-    }
-  }
 }
