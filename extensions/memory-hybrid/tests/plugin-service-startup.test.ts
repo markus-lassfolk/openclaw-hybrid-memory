@@ -204,9 +204,9 @@ describe("createPluginService startup — version check wiring", () => {
     const ctx = buildMinimalCtx(tmpDir, api, timers, {
       errorReporting: { enabled: true, consent: true },
     });
-    await createPluginService(ctx).start();
-    await Promise.resolve();
-    await Promise.resolve();
+    const service = createPluginService(ctx);
+    await service.start();
+    await service._getVersionCheckPromise();
 
     expect(getErrorReporterMuteReason()).toContain("outdated-plugin:2026.3.999");
     expect(capturePluginError(new Error("should stay local"), { operation: "startup-version-check" })).toBeUndefined();

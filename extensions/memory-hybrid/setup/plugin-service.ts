@@ -107,9 +107,11 @@ export function createPluginService(ctx: PluginServiceContext) {
   let watchdogRunPromise: Promise<void> | null = null;
   let shuttingDown = false;
   let dashboardServer: DashboardServer | null = null;
+  let versionCheckPromise: Promise<void> | null = null;
 
   return {
     id: PLUGIN_ID,
+    _getVersionCheckPromise: () => versionCheckPromise,
     start: async () => {
       const sqlCount = factsDb.count();
       const expired = factsDb.countExpired();
@@ -182,7 +184,7 @@ export function createPluginService(ctx: PluginServiceContext) {
         });
       }
 
-      void (async () => {
+      versionCheckPromise = (async () => {
         if (!errorReportingActive || !versionCheckCachePath) return;
         try {
           const latestPublished = await fetchLatestPublishedVersion();
