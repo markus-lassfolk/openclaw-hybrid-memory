@@ -1,5 +1,5 @@
 import type OpenAI from "openai";
-import { chatCompleteWithRetry } from "../../services/chat.js";
+import { chatCompleteWithRetry, shouldSuppressLLMError } from "../../services/chat.js";
 import { loadPrompt, fillPrompt } from "../../utils/prompt-loader.js";
 import { capturePluginError } from "../../services/error-reporter.js";
 import type { EventLog } from "../../backends/event-log.js";
@@ -114,11 +114,14 @@ export async function buildDailyNarrative(params: BuildDailyNarrativeParams): Pr
     logger.info?.(`memory-hybrid: stored session narrative for ${sessionId}`);
     return true;
   } catch (err) {
-    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-      subsystem: "narratives",
-      operation: "build-daily-narrative",
-      sessionId,
-    });
+    const asErr = err instanceof Error ? err : new Error(String(err));
+    if (!shouldSuppressLLMError(asErr)) {
+      capturePluginError(asErr, {
+        subsystem: "narratives",
+        operation: "build-daily-narrative",
+        sessionId,
+      });
+    }
     logger.warn(`memory-hybrid: narrative synthesis failed for ${sessionId}: ${err}`);
     return false;
   }

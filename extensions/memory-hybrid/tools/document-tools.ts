@@ -19,6 +19,7 @@ import type { EmbeddingProvider } from "../services/embeddings.js";
 import type { PythonBridge } from "../services/python-bridge.js";
 import { chunkMarkdown } from "../services/document-chunker.js";
 import { capturePluginError } from "../services/error-reporter.js";
+import { shouldSuppressLLMError } from "../services/chat.js";
 import {
   getCronModelConfig,
   getLLMModelPreference,
@@ -251,11 +252,13 @@ async function describeImageWithVision(opts: {
   }
 
   const finalError = lastError ?? new Error("Vision model failed");
-  capturePluginError(finalError, {
-    subsystem: "documents",
-    operation: "vision-describe",
-    phase: "runtime",
-  });
+  if (!shouldSuppressLLMError(finalError)) {
+    capturePluginError(finalError, {
+      subsystem: "documents",
+      operation: "vision-describe",
+      phase: "runtime",
+    });
+  }
   throw finalError;
 }
 

@@ -9,6 +9,7 @@ import type { ClawdbotPluginApi } from "openclaw/plugin-sdk";
 import { getCronModelConfig, getDefaultCronModel } from "../config.js";
 import { estimateTokens, estimateTokensForDisplay, formatProgressiveIndexLine } from "../utils/text.js";
 import { capturePluginError } from "../services/error-reporter.js";
+import { shouldSuppressLLMError } from "../services/chat.js";
 import { withTimeout } from "../utils/timeout.js";
 import type { LifecycleContext, RecallResult } from "./types.js";
 
@@ -324,10 +325,13 @@ async function runInjection(
         api.logger.info?.(`memory-hybrid: over budget — injected LLM summary (~${usedTokens} tokens)`);
       }
     } catch (err) {
-      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-        operation: "summarize-when-over-budget",
-        subsystem: "auto-recall",
-      });
+      const asErr = err instanceof Error ? err : new Error(String(err));
+      if (!shouldSuppressLLMError(asErr)) {
+        capturePluginError(asErr, {
+          operation: "summarize-when-over-budget",
+          subsystem: "auto-recall",
+        });
+      }
       api.logger.warn(`memory-hybrid: summarize-when-over-budget failed: ${err}`);
     }
   }

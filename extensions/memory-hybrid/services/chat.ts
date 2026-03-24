@@ -315,6 +315,32 @@ export function isOllamaOOM(err: unknown): boolean {
 }
 
 /**
+ * Returns true when an LLM error is expected/operator-actionable rather than a product bug.
+ * Use this in outer catch blocks that wrap direct OpenAI calls or `chatCompleteWithRetry()`
+ * so callers do not re-report errors that the chat layer already classified as suppressible.
+ */
+export function shouldSuppressLLMError(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+
+  const wrappedCause = err instanceof LLMRetryError && err.cause instanceof Error ? err.cause : null;
+  const errorsToCheck = wrappedCause ? [err, wrappedCause] : [err];
+  const isTimeoutLike = (candidate: Error): boolean =>
+    /timed out|llm request timeout|request was aborted|AbortError|ETIMEDOUT|ECONNREFUSED/i.test(candidate.message);
+
+  return (
+    errorsToCheck.some((candidate) => is404Like(candidate)) ||
+    errorsToCheck.some((candidate) => is403Like(candidate)) ||
+    is401OrWrapped(err) ||
+    is429OrWrapped(err) ||
+    errorsToCheck.some((candidate) => is500Like(candidate)) ||
+    errorsToCheck.some((candidate) => isContextLengthError(candidate)) ||
+    errorsToCheck.some((candidate) => isOllamaOOM(candidate)) ||
+    errorsToCheck.some((candidate) => candidate instanceof UnconfiguredProviderError) ||
+    errorsToCheck.some((candidate) => isTimeoutLike(candidate))
+  );
+}
+
+/**
  * Try to parse a Retry-After delay (in ms) from an API error.
  * Returns undefined when the header is absent or unparseable.
  */

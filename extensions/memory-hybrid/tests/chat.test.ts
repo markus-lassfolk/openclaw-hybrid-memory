@@ -13,6 +13,7 @@ import {
   isConnectionErrorLike,
   isOllamaOOM,
   isContextLengthError,
+  shouldSuppressLLMError,
   UnconfiguredProviderError,
 } from "../services/chat.js";
 
@@ -1577,5 +1578,21 @@ describe("chatCompleteWithRetry — connection error (#703)", () => {
     await vi.runAllTimersAsync();
     await expectation;
     expect(errorReporter.capturePluginError).not.toHaveBeenCalled();
+  });
+});
+
+describe("shouldSuppressLLMError", () => {
+  it("suppresses direct 404 config errors", () => {
+    const err = Object.assign(new Error("404 Not Found"), { status: 404 });
+    expect(shouldSuppressLLMError(err)).toBe(true);
+  });
+
+  it("suppresses timeout-like transport failures", () => {
+    expect(shouldSuppressLLMError(new Error("LLM request timeout after 45000ms"))).toBe(true);
+    expect(shouldSuppressLLMError(new Error("ECONNREFUSED"))).toBe(true);
+  });
+
+  it("does not suppress unexpected application errors", () => {
+    expect(shouldSuppressLLMError(new Error("Unexpected JSON parse failure"))).toBe(false);
   });
 });

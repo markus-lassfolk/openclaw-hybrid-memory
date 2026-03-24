@@ -1,7 +1,13 @@
 import { describe, it, expect, vi } from "vitest";
+
+vi.mock("../services/error-reporter.js", () => ({
+  capturePluginError: vi.fn(),
+}));
+
 import { runConsolidate } from "../services/consolidation.js";
 import type { MemoryEntry } from "../types/memory.js";
 import { getCurrentCostFeature } from "../services/cost-context.js";
+import * as errorReporter from "../services/error-reporter.js";
 
 function makeEntry(overrides: Partial<MemoryEntry> = {}): MemoryEntry {
   return {
@@ -150,5 +156,33 @@ describe("runConsolidate", () => {
     );
 
     expect(capturedFeature).toBe("consolidation");
+  });
+
+  it("does not report expected 404 model errors from consolidation LLM", async () => {
+    vi.mocked(errorReporter.capturePluginError).mockClear();
+
+    const entries = [makeEntry({ id: "a", text: "Fact A" }), makeEntry({ id: "b", text: "Fact B" })];
+    const factsDb = makeFactsDb(entries);
+    const vectorDb = { store: vi.fn().mockResolvedValue(undefined) };
+    const embeddings = makeEmbeddings({ "Fact A": [1, 0], "Fact B": [1, 0] });
+    const openai = {
+      chat: {
+        completions: {
+          create: vi.fn().mockRejectedValue(Object.assign(new Error("404 Not Found"), { status: 404 })),
+        },
+      },
+    } as never;
+
+    const result = await runConsolidate(
+      factsDb as never,
+      vectorDb as never,
+      embeddings as never,
+      openai,
+      { threshold: 0.9, includeStructured: true, dryRun: false, limit: 10, model: "missing-model" },
+      { info: () => undefined, warn: () => undefined },
+    );
+
+    expect(result.merged).toBe(0);
+    expect(errorReporter.capturePluginError).not.toHaveBeenCalled();
   });
 });

@@ -19,6 +19,7 @@ import {
 } from "../utils/language-keywords.js";
 import { capturePluginError } from "./error-reporter.js";
 import { KEYWORD_GROUP_INTENTS, STRUCTURAL_TRIGGER_INTENTS, EXTRACTION_INTENTS } from "./intent-template.js";
+import { shouldSuppressLLMError } from "./chat.js";
 
 const LANG_FILE_NAME = ".language-keywords.json";
 const MAX_SAMPLES = 50;
@@ -94,11 +95,14 @@ ${block}`;
       .map((x) => x.toLowerCase().slice(0, 3))
       .filter((x) => x.length >= 2);
   } catch (err) {
-    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-      operation: "parse-language-codes",
-      severity: "info",
-      subsystem: "language-keywords",
-    });
+    const asErr = err instanceof Error ? err : new Error(String(err));
+    if (!shouldSuppressLLMError(asErr)) {
+      capturePluginError(asErr, {
+        operation: "parse-language-codes",
+        severity: "info",
+        subsystem: "language-keywords",
+      });
+    }
     return [];
   }
 }
@@ -294,11 +298,14 @@ export async function generateIntentBasedLanguages(
 
     return { translations, triggerStructures, extraction };
   } catch (err) {
-    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-      operation: "parse-intent-response",
-      severity: "info",
-      subsystem: "language-keywords",
-    });
+    const asErr = err instanceof Error ? err : new Error(String(err));
+    if (!shouldSuppressLLMError(asErr)) {
+      capturePluginError(asErr, {
+        operation: "parse-intent-response",
+        severity: "info",
+        subsystem: "language-keywords",
+      });
+    }
     return { translations: {}, triggerStructures: {}, extraction: {} };
   }
 }
@@ -361,11 +368,14 @@ Each value must be an array of translated strings in the same order as the Engli
     }
     return result;
   } catch (err) {
-    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-      operation: "parse-translation-response",
-      severity: "info",
-      subsystem: "language-keywords",
-    });
+    const asErr = err instanceof Error ? err : new Error(String(err));
+    if (!shouldSuppressLLMError(asErr)) {
+      capturePluginError(asErr, {
+        operation: "parse-translation-response",
+        severity: "info",
+        subsystem: "language-keywords",
+      });
+    }
     return {};
   }
 }

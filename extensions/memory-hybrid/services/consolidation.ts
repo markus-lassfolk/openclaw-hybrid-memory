@@ -20,6 +20,7 @@ import { SENSITIVE_PATTERNS } from "./auto-capture.js";
 import { capturePluginError } from "./error-reporter.js";
 import { withCostFeature } from "./cost-context.js";
 import { normalizeVector, dotProductSimilarity } from "./reflection.js";
+import { shouldSuppressLLMError } from "./chat.js";
 import { randomUUID } from "node:crypto";
 
 export interface ConsolidateOptions {
@@ -221,11 +222,14 @@ export async function runConsolidate(
       mergedText = (resp.choices[0]?.message?.content ?? "").trim().slice(0, CONSOLIDATION_MERGE_MAX_CHARS);
     } catch (err) {
       logger.warn(`memory-hybrid: consolidate LLM failed for cluster: ${err}`);
-      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-        operation: "consolidate-llm",
-        subsystem: "openai",
-        clusterSize: clusterIds.length,
-      });
+      const asErr = err instanceof Error ? err : new Error(String(err));
+      if (!shouldSuppressLLMError(asErr)) {
+        capturePluginError(asErr, {
+          operation: "consolidate-llm",
+          subsystem: "openai",
+          clusterSize: clusterIds.length,
+        });
+      }
       continue;
     }
     if (!mergedText) continue;

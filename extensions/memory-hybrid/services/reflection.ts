@@ -25,7 +25,7 @@ import {
   REFLECTION_META_MAX_CHARS,
 } from "../utils/constants.js";
 import { capturePluginError } from "./error-reporter.js";
-import { chatCompleteWithRetry, LLMRetryError } from "./chat.js";
+import { chatCompleteWithRetry, LLMRetryError, shouldSuppressLLMError } from "./chat.js";
 import { randomUUID } from "node:crypto";
 
 const REFLECTION_PATTERN_MIN_CHARS = 20;
@@ -172,12 +172,15 @@ export async function runReflection(
   } catch (err) {
     logger.warn(`memory-hybrid: reflection LLM failed: ${err}`);
     const retryAttempt = err instanceof LLMRetryError ? err.attemptNumber : 1;
-    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-      operation: "reflection-llm",
-      subsystem: "openai",
-      windowDays,
-      retryAttempt,
-    });
+    const asErr = err instanceof Error ? err : new Error(String(err));
+    if (!shouldSuppressLLMError(asErr)) {
+      capturePluginError(asErr, {
+        operation: "reflection-llm",
+        subsystem: "openai",
+        windowDays,
+        retryAttempt,
+      });
+    }
     return { factsAnalyzed: recentFacts.length, patternsExtracted: 0, patternsStored: 0, window: windowDays };
   }
 
@@ -364,11 +367,14 @@ export async function runReflectionRules(
   } catch (err) {
     logger.warn(`memory-hybrid: reflect-rules LLM failed: ${err}`);
     const retryAttempt = err instanceof LLMRetryError ? err.attemptNumber : 1;
-    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-      operation: "reflection-rules-llm",
-      subsystem: "openai",
-      retryAttempt,
-    });
+    const asErr = err instanceof Error ? err : new Error(String(err));
+    if (!shouldSuppressLLMError(asErr)) {
+      capturePluginError(asErr, {
+        operation: "reflection-rules-llm",
+        subsystem: "openai",
+        retryAttempt,
+      });
+    }
     return { rulesExtracted: 0, rulesStored: 0 };
   }
   const rules: string[] = [];
@@ -552,11 +558,14 @@ export async function runReflectionMeta(
   } catch (err) {
     logger.warn(`memory-hybrid: reflect-meta LLM failed: ${err}`);
     const retryAttempt = err instanceof LLMRetryError ? err.attemptNumber : 1;
-    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-      operation: "reflection-meta-llm",
-      subsystem: "openai",
-      retryAttempt,
-    });
+    const asErr = err instanceof Error ? err : new Error(String(err));
+    if (!shouldSuppressLLMError(asErr)) {
+      capturePluginError(asErr, {
+        operation: "reflection-meta-llm",
+        subsystem: "openai",
+        retryAttempt,
+      });
+    }
     return { metaExtracted: 0, metaStored: 0 };
   }
   const metas: string[] = [];
