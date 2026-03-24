@@ -1567,10 +1567,10 @@ See [ERROR-REPORTING.md](ERROR-REPORTING.md) for full privacy and audit details.
 | `dsn` | *(community DSN)* | Optional override DSN (community) or required DSN (self-hosted) |
 | `environment` | `"production"` | Environment tag |
 | `sampleRate` | `1.0` | Sampling rate (0.0–1.0) |
-| `botId` | *(unset)* | Optional UUID tag for grouping errors by agent (`agent_id` / `bot_id`) |
+| `botId` | *(unset)* | Optional identifier tag (string) for grouping errors by agent (`agent_id` / `bot_id`) |
 | `botName` | *(unset)* | Optional friendly name tag for grouping errors by agent (`agent_name` / `bot_name`) |
 
-The reporter also sets `server_name` and a `node` tag automatically from `OPENCLAW_NODE_NAME` when present, otherwise `os.hostname()`.
+The reporter also sets `server_name` and a `node` tag automatically from `OPENCLAW_NODE_NAME` when present.
 
 ---
 

@@ -1,5 +1,3 @@
-import { hostname as getHostname } from "node:os";
-
 /**
  * Error Reporter Service for GlitchTip Integration
  *
@@ -559,7 +557,7 @@ const errorDedup = new Map<string, number>(); // Rate limiting: fingerprint -> t
 function resolveNodeName(env: NodeJS.ProcessEnv = process.env): string | undefined {
   const candidate = typeof env.OPENCLAW_NODE_NAME === "string" && env.OPENCLAW_NODE_NAME.trim()
     ? env.OPENCLAW_NODE_NAME.trim()
-    : getHostname().trim();
+    : undefined;
 
   if (!candidate) return undefined;
 

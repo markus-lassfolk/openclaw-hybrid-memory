@@ -62,10 +62,10 @@ You can also switch to a **self-hosted** GlitchTip or Sentry instance by setting
 | `dsn` | string | Yes when `mode: "self-hosted"` | — | Your GlitchTip/Sentry Data Source Name. Not needed in community mode. |
 | `environment` | string | No | `"production"` | Environment tag (e.g., "development", "staging"). If omitted, the reporter sets it to `"production"`. |
 | `sampleRate` | number | No | `1.0` | Sample rate (0.0–1.0). 1.0 = report all errors |
-| `botId` | string | No | — | **Optional.** UUID for this bot instance (e.g. `550e8400-e29b-41d4-a716-446655440000`). Sent as `agent_id` / `bot_id` tags so GlitchTip can **group and filter errors by agent**. Omit to not tag by agent. Must be a valid UUID format. If unset, the plugin uses OpenClaw's runtime context (`api.context.agentId`) when available. |
+| `botId` | string | No | — | **Optional.** Stable identifier for this bot instance (for example a UUID like `550e8400-e29b-41d4-a716-446655440000` or a human-readable ID such as `agent-706`). Sent as `agent_id` / `bot_id` tags so GlitchTip can **group and filter errors by agent**. Omit to not tag by agent. If unset, the plugin uses OpenClaw's runtime context (`api.context.agentId`) when available. |
 | `botName` | string | No | — | **Optional.** Friendly name for this bot. Sent as `agent_name` / `bot_name` tags so reports show a readable name in GlitchTip. Max 64 characters. |
 
-At plugin init the reporter applies `server_name` plus `node`, `agent_id`, `agent_name`, `bot_id`, and `bot_name` tags. `server_name` / `node` resolve from `OPENCLAW_NODE_NAME` when set, otherwise `os.hostname()`. Example filters: `node:Maeve`, `agent_name:Doris`.
+At plugin init the reporter applies `server_name` plus `node`, `agent_id`, `agent_name`, `bot_id`, and `bot_name` tags. `server_name` / `node` resolve from `OPENCLAW_NODE_NAME` when set. Example filters: `node:Maeve`, `agent_name:Doris`.
 
 ### Setting via config-set
 
@@ -155,7 +155,7 @@ Omit either or both if you do not need them.
 - **Sanitized stack trace** (only plugin paths, no absolute paths or context lines)
 - **Plugin version** (e.g., `openclaw-hybrid-memory@2026.2.181`)
 - **Environment tag** (e.g., `production`)
-- **Node name** via `server_name` and `node` tag (`OPENCLAW_NODE_NAME` if set, otherwise `os.hostname()`)
+- **Node name** via `server_name` and `node` tag (`OPENCLAW_NODE_NAME` if set)
 - **Operation context** (e.g., `subsystem: "vector-db"`, `operation: "store"`)
 - **Agent ID** (optional): if you set `errorReporting.botId` or OpenClaw provides `api.context.agentId`, it is sent as `agent_id` / `bot_id` tags so you can **group and filter errors by agent** in GlitchTip
 - **Friendly name** (optional): if you set `errorReporting.botName`, it is sent as `agent_name` / `bot_name` tags so reports show a readable name in GlitchTip
