@@ -625,7 +625,12 @@ export async function initErrorReporter(
   // When neither is configured, bot_id is omitted entirely — no hostname fallback to prevent leaks.
   const botUuid =
     config.botId || (typeof runtimeBotId === "string" && runtimeBotId.trim() ? runtimeBotId.trim() : undefined);
-  const nodeName = resolveNodeName();
+  let nodeName: string | undefined;
+  try {
+    nodeName = resolveNodeName();
+  } catch {
+    nodeName = undefined;
+  }
   const botName = config.botName
     ? scrubString(config.botName)
         .slice(0, 64)
