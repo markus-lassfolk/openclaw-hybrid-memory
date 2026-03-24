@@ -32,7 +32,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
       - name: Determine version tag
@@ -87,7 +87,7 @@ jobs:
       run:
         working-directory: extensions/memory-hybrid
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
       - name: Get version from tag
@@ -102,12 +102,12 @@ jobs:
           if [ "$CURRENT" != "$VERSION" ]; then
             npm version --no-git-tag-version "$VERSION"
           fi
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v4
         with:
           node-version: '24'
           registry-url: 'https://registry.npmjs.org'
       - name: Cache node_modules
-        uses: actions/cache@v5
+        uses: actions/cache@v4
         with:
           path: extensions/memory-hybrid/node_modules
           key: ${{ runner.os }}-node-24-${{ hashFiles('extensions/memory-hybrid/package-lock.json') }}
@@ -127,7 +127,7 @@ jobs:
       id-token: write
       contents: read
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v4
       - name: Set package version
         run: |
           TAG="${{ needs.release.outputs.tag }}"
@@ -136,7 +136,7 @@ jobs:
           if [ "$CURRENT" != "$VERSION" ]; then
             cd packages/openclaw-hybrid-memory-install && npm version --no-git-tag-version "$VERSION"
           fi
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v4
         with:
           node-version: '24'
           registry-url: 'https://registry.npmjs.org'
