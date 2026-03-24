@@ -11,7 +11,7 @@ import { getMemoryCategories } from "../config.js";
 import { createLifecycleHooks, type LifecycleContext } from "../lifecycle/hooks.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { sanitizeMessagesForClaude, type MessageLike } from "../utils/sanitize-messages.js";
-import { replayWalEntries } from "../utils/wal-replay.js";
+import { runPreConsolidationFlush } from "../services/pre-consolidation-flush.js";
 
 /** Lifecycle hooks receive the stable plugin API (Phase 3). */
 export type HooksContext = MemoryPluginAPI;
@@ -182,20 +182,11 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
         sessionFile?: string;
       };
 
-      // Flush WAL — replay any pending writes before the compaction LLM call
-      // so the compaction summary can reference the most up-to-date memory state.
-      if (ctx.wal) {
-        try {
-          const result = await replayWalEntries(ctx.wal, ctx.factsDb, ctx.vectorDb, ctx.embeddings);
-          if (result.committed > 0 || result.skipped > 0) {
-            api.logger.info?.(
-              `memory-hybrid: before_compaction — WAL replay: ${result.committed} committed, ${result.skipped} skipped`,
-            );
-          }
-        } catch {
-          // Non-fatal — WAL replay failure should not block compaction
-        }
-      }
+      await runPreConsolidationFlush(
+        { wal: ctx.wal, factsDb: ctx.factsDb, vectorDb: ctx.vectorDb, embeddings: ctx.embeddings },
+        api.logger,
+        "before_compaction",
+      );
 
       // Log pre-compaction snapshot for diagnostics
       const msgCount = ev.messageCount ?? 0;
@@ -211,6 +202,32 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
       operation: "register-before_compaction",
     });
     api.logger.debug?.(`memory-hybrid: before_compaction hook not available (${err})`);
+  }
+
+  try {
+    api.on("before_consolidation", async (event: unknown) => {
+      const ev = event as {
+        candidateCount?: number;
+        source?: string;
+        sessionFile?: string;
+      };
+
+      await runPreConsolidationFlush(
+        { wal: ctx.wal, factsDb: ctx.factsDb, vectorDb: ctx.vectorDb, embeddings: ctx.embeddings },
+        api.logger,
+        "before_consolidation",
+      );
+
+      api.logger.info?.(
+        `memory-hybrid: before_consolidation — candidates=${ev.candidateCount ?? "?"} source=${ev.source ?? "?"}`,
+      );
+    });
+  } catch (err) {
+    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+      subsystem: "lifecycle",
+      operation: "register-before_consolidation",
+    });
+    api.logger.debug?.(`memory-hybrid: before_consolidation hook not available (${err})`);
   }
 
   try {

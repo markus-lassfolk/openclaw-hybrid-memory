@@ -71,6 +71,39 @@ describe("runConsolidate", () => {
     expect(factsDb.store).toHaveBeenCalledWith(expect.objectContaining({ key: "language", value: "Rust" }));
   });
 
+  it("stores consolidated facts with derived-source controls", async () => {
+    const entries = [makeEntry({ id: "a", text: "Fact A" }), makeEntry({ id: "b", text: "Fact B" })];
+    const factsDb = makeFactsDb(entries);
+    const vectorDb = { store: vi.fn().mockResolvedValue(undefined) };
+    const embeddings = makeEmbeddings({
+      "Fact A": [1, 0],
+      "Fact B": [1, 0],
+      "Merged fact": [1, 0],
+    });
+    const openai = {
+      chat: {
+        completions: { create: vi.fn().mockResolvedValue({ choices: [{ message: { content: "Merged fact" } }] }) },
+      },
+    } as never;
+
+    await runConsolidate(
+      factsDb as never,
+      vectorDb as never,
+      embeddings as never,
+      openai,
+      { threshold: 0.9, includeStructured: true, dryRun: false, limit: 10, model: "test-model" },
+      { info: () => undefined, warn: () => undefined },
+    );
+
+    expect(factsDb.store).toHaveBeenCalledWith(
+      expect.objectContaining({
+        source: "consolidation",
+        decayClass: "durable",
+        tags: expect.arrayContaining(["consolidated"]),
+      }),
+    );
+  });
+
   it("treats similarity at the threshold as a merge candidate", async () => {
     const v1 = [1, 0];
     const v2 = [0.9, Math.sqrt(1 - 0.9 ** 2)];

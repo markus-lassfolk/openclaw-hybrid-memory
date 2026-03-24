@@ -295,6 +295,7 @@ describe("runEpisodicConsolidation", () => {
     const allFacts = factsDb.getByCategory("fact");
     const consolidated = allFacts.find((f) => f.source === "dream-cycle");
     expect(consolidated).toBeDefined();
+    expect(consolidated?.decayClass).toBe("durable");
 
     // Check DERIVED_FROM links from consolidated fact
     const links = factsDb.getLinksFrom(consolidated?.id);
