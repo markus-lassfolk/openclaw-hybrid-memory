@@ -29,6 +29,7 @@ describe("UnconfiguredProviderError guard with mocked fetch", () => {
 
   beforeEach(() => {
     mockFetch.mockClear();
+    delete process.env.OPENCLAW_NODE_NAME;
   });
 
   afterAll(() => {
@@ -50,6 +51,40 @@ describe("UnconfiguredProviderError guard with mocked fetch", () => {
       expect.stringContaining("/api/"),
       expect.objectContaining({ method: "POST" }),
     );
+  });
+
+  it("capturePluginError includes runtime node and agent tags for filtering", async () => {
+    const { initErrorReporter, capturePluginError, flushErrorReporter } = await import("../services/error-reporter.js");
+
+    process.env.OPENCLAW_NODE_NAME = "Maeve";
+    await initErrorReporter(
+      {
+        enabled: true,
+        consent: true,
+        mode: "community",
+        dsn: "https://testguardkey@example.com/1",
+        maxBreadcrumbs: 0,
+        sampleRate: 1.0,
+        botName: "Doris",
+      },
+      "guard-test",
+      undefined,
+      "agent-706",
+    );
+
+    capturePluginError(new Error("Node-tag verification failure"), { operation: "test-node-tag" });
+    await flushErrorReporter(500);
+
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    const [, requestInit] = mockFetch.mock.calls[0];
+    const payload = JSON.parse(String(requestInit?.body ?? "{}"));
+
+    expect(payload.server_name).toBe("Maeve");
+    expect(payload.tags?.node).toBe("Maeve");
+    expect(payload.tags?.agent_id).toBe("agent-706");
+    expect(payload.tags?.agent_name).toBe("Doris");
+    expect(payload.tags?.bot_id).toBe("agent-706");
+    expect(payload.tags?.bot_name).toBe("Doris");
   });
 
   it("capturePluginError suppresses UnconfiguredProviderError without calling fetch", async () => {
