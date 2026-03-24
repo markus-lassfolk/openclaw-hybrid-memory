@@ -5,7 +5,7 @@
 import { capturePluginError } from "../error-reporter.js";
 import { is429OrWrapped } from "../chat.js";
 import type { EmbeddingProvider } from "./types.js";
-import { isConfigError, isOllamaCircuitBreakerOpen } from "./shared.js";
+import { isConfigError, isOllamaCircuitBreakerOpen, isOllamaConnectionFailure } from "./shared.js";
 import { pluginLogger } from "../../utils/logger.js";
 
 /**
@@ -82,7 +82,12 @@ export class FallbackEmbeddingProvider implements EmbeddingProvider {
     } catch (err) {
       const asErr = err instanceof Error ? err : new Error(String(err));
       // Skip reporting config errors (404/403/401 — operator issues), 429 (rate limit), and circuit breaker open — not bugs (#329, #394, #385, #397, #458).
-      if (!isConfigError(asErr) && !is429OrWrapped(asErr) && !isOllamaCircuitBreakerOpen(asErr)) {
+      if (
+        !isConfigError(asErr) &&
+        !is429OrWrapped(asErr) &&
+        !isOllamaCircuitBreakerOpen(asErr) &&
+        !isOllamaConnectionFailure(asErr)
+      ) {
         capturePluginError(asErr, {
           subsystem: "embeddings",
           operation: "fallback-retry-primary",
@@ -110,7 +115,12 @@ export class FallbackEmbeddingProvider implements EmbeddingProvider {
     } catch (err) {
       const asErr = err instanceof Error ? err : new Error(String(err));
       // Skip reporting config errors (404/403/401 — operator issues), 429 (rate limit), and circuit breaker open — not bugs (#329, #394, #385, #397, #458).
-      if (!isConfigError(asErr) && !is429OrWrapped(asErr) && !isOllamaCircuitBreakerOpen(asErr)) {
+      if (
+        !isConfigError(asErr) &&
+        !is429OrWrapped(asErr) &&
+        !isOllamaCircuitBreakerOpen(asErr) &&
+        !isOllamaConnectionFailure(asErr)
+      ) {
         capturePluginError(asErr, {
           subsystem: "embeddings",
           operation: "fallback-switch",
@@ -142,7 +152,12 @@ export class FallbackEmbeddingProvider implements EmbeddingProvider {
     } catch (err) {
       const asErr = err instanceof Error ? err : new Error(String(err));
       // Skip reporting config errors (404/403/401 — operator issues), 429 (rate limit), and circuit breaker open — not bugs (#329, #394, #385, #397, #458).
-      if (!isConfigError(asErr) && !is429OrWrapped(asErr) && !isOllamaCircuitBreakerOpen(asErr)) {
+      if (
+        !isConfigError(asErr) &&
+        !is429OrWrapped(asErr) &&
+        !isOllamaCircuitBreakerOpen(asErr) &&
+        !isOllamaConnectionFailure(asErr)
+      ) {
         capturePluginError(asErr, {
           subsystem: "embeddings",
           operation: "fallback-switch",

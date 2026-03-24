@@ -6,7 +6,7 @@ import { capturePluginError } from "../error-reporter.js";
 import { is429OrWrapped } from "../chat.js";
 import type { EmbeddingProvider } from "./types.js";
 import { AllEmbeddingProvidersFailed } from "./types.js";
-import { isConfigError, isOllamaCircuitBreakerOpen } from "./shared.js";
+import { isConfigError, isOllamaCircuitBreakerOpen, isOllamaConnectionFailure } from "./shared.js";
 
 /**
  * Tries a list of embedding providers in order; first success wins (no retry of earlier providers).
@@ -84,7 +84,12 @@ export class ChainEmbeddingProvider implements EmbeddingProvider {
         const isLast = currentIndex + 1 >= this.providers.length;
         if (!isLast) {
           // Skip reporting config errors (404/403/401 — operator issues), 429 (rate limit), and circuit breaker open — not bugs (#329, #394, #385, #397, #458)
-          if (!isConfigError(asErr) && !is429OrWrapped(asErr) && !isOllamaCircuitBreakerOpen(asErr)) {
+          if (
+            !isConfigError(asErr) &&
+            !is429OrWrapped(asErr) &&
+            !isOllamaCircuitBreakerOpen(asErr) &&
+            !isOllamaConnectionFailure(asErr)
+          ) {
             capturePluginError(asErr, {
               subsystem: "embeddings",
               operation: "chain-failover",
