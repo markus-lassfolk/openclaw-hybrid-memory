@@ -43,15 +43,14 @@ interface NarrativeRow {
 
 export class NarrativesDB {
   private readonly db: DatabaseSync;
-  private closed = false;
+  private _dbOpen = true;
 
   constructor(dbPath: string) {
     mkdirSync(dirname(dbPath), { recursive: true });
     this.db = new DatabaseSync(dbPath);
-    this.db.exec("PRAGMA journal_mode = WAL");
-    this.db.exec(`PRAGMA busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
+    this.applyPragmas();
 
-    this.db.exec(`
+    this.liveDb.exec(`
       CREATE TABLE IF NOT EXISTS narratives (
         id TEXT PRIMARY KEY,
         session_id TEXT NOT NULL,
@@ -68,10 +67,24 @@ export class NarrativesDB {
     `);
   }
 
+  private applyPragmas(): void {
+    this.db.exec("PRAGMA journal_mode = WAL");
+    this.db.exec(`PRAGMA busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
+  }
+
+  private get liveDb(): DatabaseSync {
+    if (!this._dbOpen) {
+      this.db.open();
+      this._dbOpen = true;
+      this.applyPragmas();
+    }
+    return this.db;
+  }
+
   store(input: StoreNarrativeInput): NarrativeEntry {
     const id = randomUUID();
     const createdAt = Math.floor(Date.now() / 1000);
-    this.db
+    this.liveDb
       .prepare(
         `INSERT INTO narratives (id, session_id, period_start, period_end, tag, narrative_text, created_at)
          VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -83,14 +96,14 @@ export class NarrativesDB {
       )
       .run(id, input.sessionId, input.periodStart, input.periodEnd, input.tag, input.narrativeText, createdAt);
 
-    const row = this.db
+    const row = this.liveDb
       .prepare("SELECT * FROM narratives WHERE session_id = ? AND tag = ? LIMIT 1")
       .get(input.sessionId, input.tag) as any;
     return this.rowToEntry(row);
   }
 
   getById(id: string): NarrativeEntry | null {
-    const row = this.db.prepare("SELECT * FROM narratives WHERE id = ?").get(id) as NarrativeRow | undefined;
+    const row = this.liveDb.prepare("SELECT * FROM narratives WHERE id = ?").get(id) as NarrativeRow | undefined;
     return row ? this.rowToEntry(row) : null;
   }
 
@@ -101,8 +114,8 @@ export class NarrativesDB {
         : "SELECT * FROM narratives WHERE tag = ? ORDER BY created_at DESC LIMIT ?";
     const rows =
       tag === "all"
-        ? (this.db.prepare(sql).all(limit) as unknown as NarrativeRow[])
-        : (this.db.prepare(sql).all(tag, limit) as unknown as NarrativeRow[]);
+        ? (this.liveDb.prepare(sql).all(limit) as unknown as NarrativeRow[])
+        : (this.liveDb.prepare(sql).all(tag, limit) as unknown as NarrativeRow[]);
     return rows.map((r) => this.rowToEntry(r));
   }
 
@@ -113,22 +126,25 @@ export class NarrativesDB {
         : "SELECT * FROM narratives WHERE session_id = ? AND tag = ? ORDER BY created_at DESC LIMIT ?";
     const rows =
       tag === "all"
-        ? (this.db.prepare(sql).all(sessionId, limit) as unknown as NarrativeRow[])
-        : (this.db.prepare(sql).all(sessionId, tag, limit) as unknown as NarrativeRow[]);
+        ? (this.liveDb.prepare(sql).all(sessionId, limit) as unknown as NarrativeRow[])
+        : (this.liveDb.prepare(sql).all(sessionId, tag, limit) as unknown as NarrativeRow[]);
     return rows.map((r) => this.rowToEntry(r));
   }
 
   pruneOlderThan(days: number): number {
     if (days <= 0) return 0;
     const cutoff = Math.floor(Date.now() / 1000) - days * 24 * 60 * 60;
-    const result = this.db.prepare("DELETE FROM narratives WHERE created_at < ?").run(cutoff);
+    const result = this.liveDb.prepare("DELETE FROM narratives WHERE created_at < ?").run(cutoff);
     return Number(result.changes ?? 0);
   }
 
   close(): void {
-    if (this.closed) return;
-    this.closed = true;
-    this.db.close();
+    this._dbOpen = false;
+    try {
+      this.db.close();
+    } catch {
+      // already closed
+    }
   }
 
   private rowToEntry(row: NarrativeRow): NarrativeEntry {
