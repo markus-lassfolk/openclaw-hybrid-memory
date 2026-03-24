@@ -10,6 +10,7 @@ import {
   is404Like,
   is403Like,
   is500Like,
+  isConnectionErrorLike,
   isOllamaOOM,
   isContextLengthError,
   UnconfiguredProviderError,
@@ -301,6 +302,23 @@ describe("withLLMRetry", () => {
     // Throws the raw 404 error (not an LLMRetryError), called exactly once — exits before retry loop
     await expect(withLLMRetry(fn, { maxRetries: 2 })).rejects.toThrow("404 models");
     expect(fn).toHaveBeenCalledTimes(1);
+    expect(errorReporter.capturePluginError).not.toHaveBeenCalled();
+  });
+
+  it("#703: treats OpenAI SDK APIConnectionError as transient and does not report to GlitchTip", async () => {
+    vi.clearAllMocks();
+    const err = Object.assign(new Error("Connection error."), {
+      name: "APIConnectionError",
+      cause: { code: "ECONNRESET" },
+    });
+    const fn = vi.fn().mockRejectedValue(err);
+
+    const promise = withLLMRetry(fn, { maxRetries: 1 });
+    const expectation = expect(promise).rejects.toThrow("Connection error.");
+    await vi.runAllTimersAsync();
+    await expectation;
+
+    expect(fn).toHaveBeenCalledTimes(2);
     expect(errorReporter.capturePluginError).not.toHaveBeenCalled();
   });
 
@@ -965,6 +983,21 @@ describe("isOllamaOOM (#387)", () => {
   });
 });
 
+describe("isConnectionErrorLike (#703)", () => {
+  it("detects OpenAI SDK APIConnectionError by name and cause", () => {
+    const err = Object.assign(new Error("Connection error."), {
+      name: "APIConnectionError",
+      cause: { code: "ECONNREFUSED" },
+    });
+    expect(isConnectionErrorLike(err)).toBe(true);
+  });
+
+  it("does not match config or model errors", () => {
+    expect(isConnectionErrorLike(Object.assign(new Error("404 Not Found"), { status: 404 }))).toBe(false);
+    expect(isConnectionErrorLike(new Error("Provider 'openai' is not configured"))).toBe(false);
+  });
+});
+
 // ---------------------------------------------------------------------------
 // is500Like — exported (#387)
 // ---------------------------------------------------------------------------
@@ -1477,5 +1510,72 @@ describe("chatCompleteWithRetry — context-length error (#488)", () => {
     const drained = warnings.drain();
     expect(drained).toHaveLength(1);
     expect(drained[0]).toMatch(/context window|input.*long|exceeds/i);
+  });
+});
+
+describe("chatCompleteWithRetry — connection error (#703)", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("#703: falls through to next model when primary returns OpenAI SDK Connection error", async () => {
+    const connectionErr = Object.assign(new Error("Connection error."), {
+      name: "APIConnectionError",
+      cause: { code: "ECONNRESET" },
+    });
+    const mockOpenai = {
+      chat: {
+        completions: {
+          create: vi
+            .fn()
+            .mockRejectedValueOnce(connectionErr)
+            .mockRejectedValueOnce(connectionErr)
+            .mockResolvedValueOnce({ choices: [{ message: { content: "fallback ok" } }] }),
+        },
+      },
+    } as unknown as import("openai").default;
+
+    const promise = chatCompleteWithRetry({
+      model: "openai/gpt-4o",
+      content: "test",
+      openai: mockOpenai,
+      fallbackModels: ["openai/gpt-4o-mini"],
+      label: "test",
+    });
+
+    await vi.runAllTimersAsync();
+    await expect(promise).resolves.toBe("fallback ok");
+    expect(mockOpenai.chat.completions.create).toHaveBeenCalledTimes(3);
+  });
+
+  it("#703: does not report to GlitchTip when all models fail with OpenAI SDK Connection error", async () => {
+    const connectionErr = Object.assign(new Error("Connection error."), {
+      name: "APIConnectionError",
+      cause: { code: "ECONNRESET" },
+    });
+    const mockOpenai = {
+      chat: {
+        completions: {
+          create: vi.fn().mockRejectedValue(connectionErr),
+        },
+      },
+    } as unknown as import("openai").default;
+
+    const promise = chatCompleteWithRetry({
+      model: "openai/gpt-4o",
+      content: "test",
+      openai: mockOpenai,
+      fallbackModels: ["openai/gpt-4o-mini"],
+    });
+
+    const expectation = expect(promise).rejects.toThrow("Connection error.");
+    await vi.runAllTimersAsync();
+    await expectation;
+    expect(errorReporter.capturePluginError).not.toHaveBeenCalled();
   });
 });
