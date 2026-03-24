@@ -173,6 +173,16 @@ export type CredentialsConfig = {
 };
 
 /** Error reporting configuration for GlitchTip/Sentry integration (opt-in, privacy-first) */
+export type UpdateNudgeConfig = {
+  /** Emit upgrade reminders for outdated installs (default: true). */
+  enabled: boolean;
+  /** Minimum hours between repeated upgrade reminders (default: 24). */
+  intervalHours: number;
+  /** How long cached latest-version results stay fresh (default: 24). */
+  cacheTtlHours: number;
+};
+
+/** Error reporting configuration for GlitchTip/Sentry integration (opt-in, privacy-first) */
 export type ErrorReportingConfig = {
   enabled: boolean;
   /** DSN for self-hosted mode. Not required in schema (only at runtime for self-hosted). */
@@ -195,6 +205,8 @@ export type ErrorReportingConfig = {
    * When not configured, behavior is identical to today.
    */
   resolvedIssues?: Record<string, string>;
+  /** Background latest-version check plus user-facing upgrade reminders. */
+  updateNudge: UpdateNudgeConfig;
 };
 
 /** Configuration for a single embedding model in a multi-model setup (Issue #158). */
