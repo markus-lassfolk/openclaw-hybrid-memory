@@ -467,4 +467,45 @@ describe("IssueStore lifecycle", () => {
     store.close();
     expect(() => store.close()).not.toThrow();
   });
+
+  it("list returns empty array after close", () => {
+    store.create({ title: "Closed store list", symptoms: ["s"] });
+
+    store.close();
+
+    expect(store.list()).toEqual([]);
+  });
+
+  it("search returns empty array after close", () => {
+    store.create({ title: "Closed store search", symptoms: ["s"] });
+
+    store.close();
+
+    expect(store.search("Closed")).toEqual([]);
+  });
+
+  it("get returns null after close", () => {
+    const issue = store.create({ title: "Closed store get", symptoms: ["s"] });
+
+    store.close();
+
+    expect(store.get(issue.id)).toBeNull();
+  });
+
+  it("archive returns 0 after close", () => {
+    const issue = store.create({ title: "Closed store archive", symptoms: ["s"] });
+    store.transition(issue.id, "wont-fix");
+
+    store.close();
+
+    expect(store.archive(-1)).toBe(0);
+  });
+
+  it("create throws a clear error after close", () => {
+    store.close();
+
+    expect(() => store.create({ title: "Closed store create", symptoms: ["s"] })).toThrow(
+      "IssueStore.create called after close()",
+    );
+  });
 });

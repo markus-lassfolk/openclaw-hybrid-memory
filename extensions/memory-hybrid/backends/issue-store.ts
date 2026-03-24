@@ -73,6 +73,8 @@ export class IssueStore {
   }
 
   create(input: CreateIssueInput): Issue {
+    this.ensureOpen("create");
+
     const id = randomUUID();
     const now = new Date().toISOString();
 
@@ -97,12 +99,16 @@ export class IssueStore {
   }
 
   get(id: string): Issue | null {
-    const row = this.db.prepare("SELECT * FROM issues WHERE id = ?").get(id) as unknown as IssueRow | undefined;
-    if (!row) return null;
-    return this.rowToIssue(row);
+    return this.withReadFallback("get", null, () => {
+      const row = this.db.prepare("SELECT * FROM issues WHERE id = ?").get(id) as unknown as IssueRow | undefined;
+      if (!row) return null;
+      return this.rowToIssue(row);
+    });
   }
 
   update(id: string, patch: Partial<Omit<Issue, "id" | "createdAt">>): Issue {
+    this.ensureOpen("update");
+
     const existing = this.get(id);
     if (!existing) throw new Error(`Issue not found: ${id}`);
 
@@ -166,6 +172,8 @@ export class IssueStore {
   }
 
   transition(id: string, newStatus: IssueStatus, data?: Partial<Issue>): Issue {
+    this.ensureOpen("transition");
+
     const existing = this.get(id);
     if (!existing) throw new Error(`Issue not found: ${id}`);
 
@@ -193,52 +201,58 @@ export class IssueStore {
   }
 
   list(filter?: { status?: IssueStatus[]; severity?: string[]; tags?: string[]; limit?: number }): Issue[] {
-    let query = "SELECT * FROM issues WHERE 1=1";
-    const params: SQLInputValue[] = [];
+    return this.withReadFallback("list", [], () => {
+      let query = "SELECT * FROM issues WHERE 1=1";
+      const params: SQLInputValue[] = [];
 
-    if (filter?.status && filter.status.length > 0) {
-      query += ` AND status IN (${filter.status.map(() => "?").join(", ")})`;
-      params.push(...filter.status);
-    }
-    if (filter?.severity && filter.severity.length > 0) {
-      query += ` AND severity IN (${filter.severity.map(() => "?").join(", ")})`;
-      params.push(...filter.severity);
-    }
+      if (filter?.status && filter.status.length > 0) {
+        query += ` AND status IN (${filter.status.map(() => "?").join(", ")})`;
+        params.push(...filter.status);
+      }
+      if (filter?.severity && filter.severity.length > 0) {
+        query += ` AND severity IN (${filter.severity.map(() => "?").join(", ")})`;
+        params.push(...filter.severity);
+      }
 
-    query += " ORDER BY created_at DESC";
-    // When no tag filter, push LIMIT into SQL to avoid loading all rows
-    const hasTagFilter = filter?.tags && filter.tags.length > 0;
-    if (!hasTagFilter && filter?.limit && filter.limit > 0) {
-      query += " LIMIT ?";
-      params.push(filter.limit);
-    }
+      query += " ORDER BY created_at DESC";
+      // When no tag filter, push LIMIT into SQL to avoid loading all rows
+      const hasTagFilter = filter?.tags && filter.tags.length > 0;
+      if (!hasTagFilter && filter?.limit && filter.limit > 0) {
+        query += " LIMIT ?";
+        params.push(filter.limit);
+      }
 
-    const rows = this.db.prepare(query).all(...params) as unknown as IssueRow[];
-    let results = rows.map((r) => this.rowToIssue(r));
+      const rows = this.db.prepare(query).all(...params) as unknown as IssueRow[];
+      let results = rows.map((r) => this.rowToIssue(r));
 
-    // Tags filtering (JSON array — done in-memory for simplicity)
-    if (filter?.tags && filter.tags.length > 0) {
-      const filterTags = filter.tags.map((t) => t.toLowerCase());
-      results = results.filter((issue) => filterTags.some((ft) => issue.tags.map((t) => t.toLowerCase()).includes(ft)));
-    }
+      // Tags filtering (JSON array — done in-memory for simplicity)
+      if (filter?.tags && filter.tags.length > 0) {
+        const filterTags = filter.tags.map((t) => t.toLowerCase());
+        results = results.filter((issue) => filterTags.some((ft) => issue.tags.map((t) => t.toLowerCase()).includes(ft)));
+      }
 
-    // Apply limit after all filtering is complete
-    if (filter?.limit && filter.limit > 0) {
-      results = results.slice(0, filter.limit);
-    }
+      // Apply limit after all filtering is complete
+      if (filter?.limit && filter.limit > 0) {
+        results = results.slice(0, filter.limit);
+      }
 
-    return results;
+      return results;
+    });
   }
 
   search(query: string): Issue[] {
-    const term = `%${query}%`;
-    const rows = this.db
-      .prepare("SELECT * FROM issues WHERE title LIKE ? OR symptoms LIKE ? ORDER BY created_at DESC LIMIT 50")
-      .all(term, term) as unknown as IssueRow[];
-    return rows.map((r) => this.rowToIssue(r));
+    return this.withReadFallback("search", [], () => {
+      const term = `%${query}%`;
+      const rows = this.db
+        .prepare("SELECT * FROM issues WHERE title LIKE ? OR symptoms LIKE ? ORDER BY created_at DESC LIMIT 50")
+        .all(term, term) as unknown as IssueRow[];
+      return rows.map((r) => this.rowToIssue(r));
+    });
   }
 
   linkFact(issueId: string, factId: string): void {
+    this.ensureOpen("linkFact");
+
     const issue = this.get(issueId);
     if (!issue) throw new Error(`Issue not found: ${issueId}`);
 
@@ -252,11 +266,13 @@ export class IssueStore {
   }
 
   archive(olderThanDays: number): number {
-    const cutoff = new Date(Date.now() - olderThanDays * 24 * 60 * 60 * 1000).toISOString();
-    const result = this.db
-      .prepare(`DELETE FROM issues WHERE status IN ('verified', 'wont-fix') AND updated_at < ?`)
-      .run(cutoff);
-    return Number(result.changes);
+    return this.withReadFallback("archive", 0, () => {
+      const cutoff = new Date(Date.now() - olderThanDays * 24 * 60 * 60 * 1000).toISOString();
+      const result = this.db
+        .prepare(`DELETE FROM issues WHERE status IN ('verified', 'wont-fix') AND updated_at < ?`)
+        .run(cutoff);
+      return Number(result.changes);
+    });
   }
 
   private rowToIssue(row: IssueRow): Issue {
@@ -310,5 +326,34 @@ export class IssueStore {
 
   isOpen(): boolean {
     return !this.closed;
+  }
+
+  private ensureOpen(operation: string): void {
+    if (!this.closed) return;
+    throw new Error(`IssueStore.${operation} called after close()`);
+  }
+
+  private withReadFallback<T>(operation: string, fallback: T, fn: () => T): T {
+    if (this.closed) return fallback;
+
+    try {
+      return fn();
+    } catch (err) {
+      if (!this.isClosedDatabaseError(err)) {
+        throw err;
+      }
+
+      this.closed = true;
+      capturePluginError(err, {
+        operation: `db-${operation}`,
+        subsystem: "issue-store",
+        severity: "info",
+      });
+      return fallback;
+    }
+  }
+
+  private isClosedDatabaseError(err: unknown): err is Error {
+    return err instanceof Error && err.message.toLowerCase().includes("database is not open");
   }
 }
