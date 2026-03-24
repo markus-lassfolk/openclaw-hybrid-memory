@@ -21,6 +21,7 @@ import type { MemoryCategory } from "../types/memory.js";
 import type { ProvenanceService } from "./provenance.js";
 import { runReflection, runReflectionRules, type ReflectionConfig } from "./reflection.js";
 import { capturePluginError } from "./error-reporter.js";
+import { CONSOLIDATED_FACT_DECAY_CLASS } from "../utils/consolidation-controls.js";
 import { writeMemoryIndex } from "./memory-index.js";
 
 /** Prune modes for the dream cycle. */
@@ -222,8 +223,9 @@ export async function runEpisodicConsolidation(
         key: "consolidated",
         value: null,
         source: "dream-cycle",
-        decayClass: "stable",
+        decayClass: CONSOLIDATED_FACT_DECAY_CLASS,
         tags: ["dream-cycle", "consolidated"],
+        extractionMethod: "consolidation",
       });
     } catch (err) {
       logger.warn(`memory-hybrid: dream-cycle — failed to store consolidated fact for entity "${entity}": ${err}`);

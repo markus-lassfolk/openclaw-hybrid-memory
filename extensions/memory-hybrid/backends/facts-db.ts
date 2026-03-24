@@ -12,6 +12,7 @@ import { TTL_DEFAULTS } from "../config.js";
 import type { MemoryEntry, ProcedureEntry, SearchResult, MemoryTier, ScopeFilter } from "../types/memory.js";
 import { normalizedHash, serializeTags, parseTags } from "../utils/tags.js";
 import { calculateExpiry, classifyDecay } from "../utils/decay.js";
+import { applyConsolidationRetrievalControls } from "../utils/consolidation-controls.js";
 import { computeDynamicSalience } from "../utils/salience.js";
 import { estimateTokensForDisplay } from "../utils/text.js";
 import { capturePluginError } from "../services/error-reporter.js";
@@ -1665,10 +1666,11 @@ export class FactsDB extends BaseSqliteStore {
       const entry = this.rowToEntry(row);
       // Apply dynamic salience (access boost + time decay)
       const salienceScore = computeDynamicSalience(composite, entry);
+      const controlledScore = applyConsolidationRetrievalControls(salienceScore, entry);
 
       return {
         entry,
-        score: salienceScore,
+        score: controlledScore,
         backend: "sqlite" as const,
       };
     });
@@ -1734,9 +1736,10 @@ export class FactsDB extends BaseSqliteStore {
       const baseScore = (row.confidence as number) || 1.0;
       // Apply dynamic salience (access boost + time decay)
       const salienceScore = computeDynamicSalience(baseScore, entry);
+      const controlledScore = applyConsolidationRetrievalControls(salienceScore, entry);
       return {
         entry,
-        score: salienceScore,
+        score: controlledScore,
         backend: "sqlite" as const,
       };
     });
@@ -1960,7 +1963,12 @@ export class FactsDB extends BaseSqliteStore {
     const rows = this.liveDb
       .prepare(
         `SELECT id, text, category, entity, key FROM facts
-         WHERE (expires_at IS NULL OR expires_at > ?) AND superseded_at IS NULL ORDER BY created_at DESC LIMIT ?`,
+         WHERE (expires_at IS NULL OR expires_at > ?)
+           AND superseded_at IS NULL
+           AND lower(COALESCE(source, '')) NOT IN ('consolidation', 'dream-cycle')
+           AND lower(COALESCE(key, '')) != 'consolidated'
+           AND (',' || lower(COALESCE(tags, '')) || ',') NOT LIKE '%,consolidated,%'
+         ORDER BY created_at DESC LIMIT ?`,
       )
       .all(nowSec, limit) as Array<Record<string, unknown>>;
     return rows.map((row) => ({

@@ -15,11 +15,11 @@ import type { MemoryEntry, MemoryCategory } from "../types/memory.js";
 import type { ProvenanceService } from "./provenance.js";
 import { loadPrompt, fillPrompt } from "../utils/prompt-loader.js";
 import { CONSOLIDATION_MERGE_MAX_CHARS, BATCH_STORE_IMPORTANCE } from "../utils/constants.js";
-import { extractTags } from "../utils/tags.js";
 import { SENSITIVE_PATTERNS } from "./auto-capture.js";
 import { capturePluginError } from "./error-reporter.js";
 import { withCostFeature } from "./cost-context.js";
 import { normalizeVector, dotProductSimilarity } from "./reflection.js";
+import { CONSOLIDATED_FACT_DECAY_CLASS } from "../utils/consolidation-controls.js";
 import { randomUUID } from "node:crypto";
 
 export interface ConsolidateOptions {
@@ -237,7 +237,7 @@ export async function runConsolidate(
       (acc, f) => (f.sourceDate != null && (acc == null || f.sourceDate > acc) ? f.sourceDate : acc),
       null as number | null,
     );
-    const mergedTags = [...new Set(clusterFacts.flatMap((f) => f.tags ?? []))];
+    const mergedTags = [...new Set([...clusterFacts.flatMap((f) => f.tags ?? []), "consolidated"])];
     const { key: mergedKey, value: mergedValue } = selectConsolidatedKeyValue(clusterFacts);
 
     if (opts.dryRun) {
@@ -255,7 +255,8 @@ export async function runConsolidate(
       entity: first?.entity ?? null,
       key: mergedKey,
       value: mergedValue,
-      source: "conversation",
+      source: "consolidation",
+      decayClass: CONSOLIDATED_FACT_DECAY_CLASS,
       sourceDate: maxSourceDate,
       tags: mergedTags.length > 0 ? mergedTags : undefined,
       extractionMethod: "consolidation",
