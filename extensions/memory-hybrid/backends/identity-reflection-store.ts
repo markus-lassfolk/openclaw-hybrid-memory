@@ -131,7 +131,9 @@ export class IdentityReflectionStore {
         createdAt,
       );
 
-    return this.get(id)!;
+    const created = this.get(id);
+    if (!created) throw new Error(`Failed to create identity reflection: ${id}`);
+    return created;
   }
 
   get(id: string): IdentityReflectionEntry | null {
