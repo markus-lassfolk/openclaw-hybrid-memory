@@ -21,7 +21,6 @@ import { shouldSuppressEmbeddingError } from "../services/embeddings.js";
 import { mergeResults, filterByScope } from "../services/merge-results.js";
 import { computeDynamicSalience } from "../utils/salience.js";
 import { capturePluginError } from "../services/error-reporter.js";
-import { shouldSuppressEmbeddingError } from "./embeddings.js";
 import { DEFAULT_INTERACTIVE_RECALL_POLICY, type InteractiveRecallPolicy } from "./retrieval-mode-policy.js";
 import { expandQueryWithHyde } from "./hyde-helper.js";
 
