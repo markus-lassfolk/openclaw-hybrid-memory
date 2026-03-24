@@ -337,7 +337,8 @@ export function shouldSuppressLLMError(err: unknown): boolean {
     errorsToCheck.some((candidate) => isContextLengthError(candidate)) ||
     errorsToCheck.some((candidate) => isOllamaOOM(candidate)) ||
     errorsToCheck.some((candidate) => candidate instanceof UnconfiguredProviderError) ||
-    errorsToCheck.some((candidate) => isTimeoutLike(candidate))
+    errorsToCheck.some((candidate) => isTimeoutLike(candidate)) ||
+    isConnectionErrorLike(err)
   );
 }
 
