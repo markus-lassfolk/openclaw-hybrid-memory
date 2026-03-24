@@ -327,6 +327,68 @@ describe("VectorDB issue #366 — capturePluginError suppressed on schema mismat
   });
 });
 
+describe("VectorDB semantic query cache — suppress known schema errors", () => {
+  let tmpDir: string;
+  let lanceDir: string;
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), "vector-cache-schema-test-"));
+    lanceDir = join(tmpDir, "lance");
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("rebuilds the semantic query cache after a known runtime schema failure without reporting GlitchTip", async () => {
+    const db = new VectorDB(lanceDir, CORRECT_DIM);
+
+    await db.storeSemanticQueryCache({
+      queryText: "legacy query",
+      vector: [1, 0, 0],
+      factIds: ["fact-1"],
+      filterKey: "test",
+    });
+
+    const knownSchemaErr = new Error(
+      "Failed to execute query stream: GenericFailure, Invalid input, No vector column found to match with the query vector dimension",
+    );
+
+    (db as any).semanticQueryCacheTable = {
+      vectorSearch: () => {
+        throw knownSchemaErr;
+      },
+    };
+
+    const match = await db.getSemanticQueryCacheMatch([1, 0, 0], {
+      filterKey: "test",
+      minSimilarity: 0.95,
+      ttlMs: 60_000,
+    });
+
+    expect(match).toBeNull();
+    expect(vi.mocked(errorReporter.capturePluginError)).not.toHaveBeenCalled();
+
+    await db.storeSemanticQueryCache({
+      queryText: "fresh query",
+      vector: [0, 1, 0],
+      factIds: ["fact-2"],
+      filterKey: "test",
+    });
+
+    const repairedMatch = await db.getSemanticQueryCacheMatch([0, 1, 0], {
+      filterKey: "test",
+      minSimilarity: 0.95,
+      ttlMs: 60_000,
+    });
+
+    expect(repairedMatch?.factIds).toEqual(["fact-2"]);
+    expect(vi.mocked(errorReporter.capturePluginError)).not.toHaveBeenCalled();
+    await db.close();
+  });
+});
+
 // ---------------------------------------------------------------------------
 // VectorDB issue #599 — search() must not return optimistic placeholder metadata
 // Fields not stored in LanceDB (confidence, source, decayClass, entity, key, value,
