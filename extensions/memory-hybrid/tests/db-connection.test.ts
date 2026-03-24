@@ -428,25 +428,21 @@ describe("VectorDB auto-reconnects after close()", () => {
 
 /**
  * EventBus coverage tests.
- * Primarily validates the encrypted field contract and closed-state behavior
- * that the shared BaseSqliteStore tests cannot exercise for EventBus specifically.
+ * Primarily validates closed-state behavior that the shared BaseSqliteStore
+ * tests cannot exercise for EventBus specifically.
  */
 describe("EventBus coverage", () => {
-  const dbPath = path.join(testDir, "event-bus-coverage.sqlite");
+  let tmpDir: string;
   let bus: EventBus;
 
   beforeEach(() => {
-    bus = new EventBus(dbPath);
+    tmpDir = mkdtempSync(join(tmpdir(), "event-bus-coverage-"));
+    bus = new EventBus(join(tmpDir, "event-bus.sqlite"));
   });
 
   afterEach(() => {
     bus.close();
-  });
-
-  it("encrypted field returns false", () => {
-    // The EventBus base class never stores encrypted data.
-    // This is a compile-time guarantee verified at runtime.
-    expect(bus.encrypted).toBe(false);
+    rmSync(tmpDir, { recursive: true, force: true });
   });
 
   it("closed getter reflects terminal state after close()", () => {

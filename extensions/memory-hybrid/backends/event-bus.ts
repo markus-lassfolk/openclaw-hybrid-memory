@@ -50,8 +50,6 @@ export function computeFingerprint(input: string): string {
  * by the Rumination Engine.
  */
 export class EventBus extends BaseSqliteStore {
-  private readonly _encrypted = false; // Event Bus stores data in plaintext
-
   /** Tracks terminal closed state separately from base class field. */
   private _terminallyClosed = false;
 
@@ -71,14 +69,6 @@ export class EventBus extends BaseSqliteStore {
 
   protected getSubsystemName(): string {
     return "event-bus";
-  }
-
-  /**
-   * Returns false — the Event Bus stores data in plaintext.
-   * Exposed as a getter so subclasses can override it with a lazy-initialized field.
-   */
-  protected get encrypted(): boolean {
-    return this._encrypted;
   }
 
   /**
