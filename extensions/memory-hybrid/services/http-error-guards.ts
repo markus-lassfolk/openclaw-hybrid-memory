@@ -21,7 +21,7 @@ export function is404Like(err: unknown): boolean {
     if (/\berror\s+code:\s*404\b/.test(msg)) return true;
     if (/\b404\s+[a-z]/.test(msg)) return true;
     if (msg.includes("is not found for api version")) return true;
-    
+
     const hasNotFound = msg.includes("not found");
     if (hasNotFound && /\b404\b/.test(msg)) return true;
     if (hasNotFound && msg.includes("model")) return true;
