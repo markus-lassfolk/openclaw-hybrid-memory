@@ -89,19 +89,6 @@ export class EventBus extends BaseSqliteStore {
     `);
   }
 
-  protected get liveDb(): DatabaseSync {
-    if (this.closed) {
-      throw new Error("EventBus is closed");
-    }
-    if (!this._dbOpen) {
-      this.db.open();
-      this._dbOpen = true;
-      this.closed = false;
-      this.applyPragmas();
-    }
-    return this.db;
-  }
-
   /**
    * Append a new event and return its auto-generated id.
    */
