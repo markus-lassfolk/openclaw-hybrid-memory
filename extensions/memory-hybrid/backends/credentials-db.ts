@@ -19,6 +19,17 @@ function toBuffer(val: Uint8Array | Buffer): Buffer {
   return Buffer.isBuffer(val) ? val : Buffer.from(val);
 }
 
+function isDatabaseNotOpenError(err: unknown): boolean {
+  return (
+    typeof err === "object" &&
+    err !== null &&
+    "message" in err &&
+    typeof (err as { message: unknown }).message === "string" &&
+    ((err as { message: string }).message.includes("not open") ||
+      (err as { message: string }).message.includes("already closed"))
+  );
+}
+
 const CRED_IV_LEN = 12;
 const CRED_AUTH_TAG_LEN = 16;
 const CRED_ALGO = "aes-256-gcm";
@@ -430,16 +441,17 @@ export class CredentialsDB {
   }
 
   close(): void {
+    if (!this._dbOpen) return;
     this._dbOpen = false;
     try {
       this.db.close();
-    } catch (err) {
-      capturePluginError(err as Error, {
+    } catch (err: unknown) {
+      if (isDatabaseNotOpenError(err)) return;
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
         operation: "db-close",
         severity: "info",
         subsystem: "credentials",
       });
-      /* already closed */
     }
   }
 }

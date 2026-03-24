@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { _testing } from "../index.js";
+import * as errorReporter from "../services/error-reporter.js";
 import { pluginLogger } from "../utils/logger.js";
 
 const { CredentialsDB, deriveKey, encryptValue, decryptValue } = _testing;
@@ -208,6 +209,27 @@ describe("CredentialsDB.delete", () => {
 
   it("returns false for non-existent", () => {
     expect(db.delete("nonexistent")).toBe(false);
+  });
+});
+
+describe("CredentialsDB.close", () => {
+  it("is idempotent", () => {
+    const captureSpy = vi.spyOn(errorReporter, "capturePluginError").mockImplementation(() => undefined);
+
+    db.close();
+    db.close();
+
+    expect(captureSpy).not.toHaveBeenCalled();
+  });
+
+  it("ignores already-closed sqlite handles without reporting", () => {
+    const captureSpy = vi.spyOn(errorReporter, "capturePluginError").mockImplementation(() => undefined);
+    const internalDb = db as unknown as { db: { close(): void } };
+
+    internalDb.db.close();
+    db.close();
+
+    expect(captureSpy).not.toHaveBeenCalled();
   });
 });
 

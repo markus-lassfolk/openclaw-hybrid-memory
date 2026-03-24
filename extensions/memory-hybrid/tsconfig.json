@@ -16,6 +16,7 @@
   },
   "include": [
     "*.ts",
+    "*.d.ts",
     "backends/**/*.ts",
     "cli/**/*.ts",
     "routes/**/*.ts",
@@ -23,7 +24,8 @@
     "src/**/*.ts",
     "tools/**/*.ts",
     "utils/**/*.ts",
-    "types/**/*.ts"
+    "types/**/*.ts",
+    "types/**/*.d.ts"
   ],
   "exclude": ["dist", "node_modules"]
 }
