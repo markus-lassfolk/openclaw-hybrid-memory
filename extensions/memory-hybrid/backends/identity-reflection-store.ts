@@ -10,8 +10,7 @@ import { DatabaseSync } from "node:sqlite";
 import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import { SQLITE_BUSY_TIMEOUT_MS } from "../utils/constants.js";
-import { capturePluginError } from "../services/error-reporter.js";
+import { BaseSqliteStore } from "./base-sqlite-store.js";
 
 type Durability = "durable" | "temporary";
 
@@ -45,17 +44,13 @@ export interface IdentityReflectionEntry {
   createdAt: number;
 }
 
-export class IdentityReflectionStore {
-  private readonly db: DatabaseSync;
-  private closed = false;
-
+export class IdentityReflectionStore extends BaseSqliteStore {
   constructor(dbPath: string) {
     mkdirSync(dirname(dbPath), { recursive: true });
-    this.db = new DatabaseSync(dbPath);
-    this.db.exec("PRAGMA journal_mode = WAL");
-    this.db.exec(`PRAGMA busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
+    const db = new DatabaseSync(dbPath);
+    super(db);
 
-    this.db.exec(`
+    this.liveDb.exec(`
       CREATE TABLE IF NOT EXISTS identity_reflections (
         id                    TEXT PRIMARY KEY,
         run_id                TEXT NOT NULL,
@@ -79,6 +74,10 @@ export class IdentityReflectionStore {
     `);
   }
 
+  protected getSubsystemName(): string {
+    return "identity-reflection-store";
+  }
+
   create(entry: {
     runId: string;
     questionKey: string;
@@ -94,7 +93,7 @@ export class IdentityReflectionStore {
     const id = randomUUID();
     const createdAt = Math.floor(Date.now() / 1000);
     const evidence = JSON.stringify(entry.evidence ?? []);
-    this.db
+    this.liveDb
       .prepare(
         `INSERT INTO identity_reflections (
            id, run_id, question_key, question_text, insight, durability, confidence, evidence,
@@ -116,11 +115,13 @@ export class IdentityReflectionStore {
         createdAt,
       );
 
-    return this.get(id)!;
+    const created = this.get(id);
+    if (!created) throw new Error(`Failed to create identity reflection: ${id}`);
+    return created;
   }
 
   get(id: string): IdentityReflectionEntry | null {
-    const row = this.db.prepare("SELECT * FROM identity_reflections WHERE id = ?").get(id) as
+    const row = this.liveDb.prepare("SELECT * FROM identity_reflections WHERE id = ?").get(id) as
       | IdentityReflectionRow
       | undefined;
     if (!row) return null;
@@ -128,32 +129,18 @@ export class IdentityReflectionStore {
   }
 
   listRecent(limit = 50): IdentityReflectionEntry[] {
-    const rows = this.db
+    const rows = this.liveDb
       .prepare("SELECT * FROM identity_reflections ORDER BY created_at DESC LIMIT ?")
       .all(limit) as unknown as IdentityReflectionRow[];
     return rows.map((row) => this.rowToEntry(row));
   }
 
   getLatestByQuestion(questionKey: string): IdentityReflectionEntry | null {
-    const row = this.db
+    const row = this.liveDb
       .prepare("SELECT * FROM identity_reflections WHERE question_key = ? ORDER BY created_at DESC LIMIT 1")
       .get(questionKey) as IdentityReflectionRow | undefined;
     if (!row) return null;
     return this.rowToEntry(row);
-  }
-
-  close(): void {
-    if (this.closed) return;
-    this.closed = true;
-    try {
-      this.db.close();
-    } catch (err) {
-      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-        operation: "db-close",
-        severity: "info",
-        subsystem: "identity-reflection-store",
-      });
-    }
   }
 
   private rowToEntry(row: IdentityReflectionRow): IdentityReflectionEntry {

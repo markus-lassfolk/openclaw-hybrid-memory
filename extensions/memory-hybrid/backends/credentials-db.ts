@@ -10,7 +10,7 @@ import { createHash, createCipheriv, createDecipheriv, randomBytes, scryptSync }
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import type { CredentialType } from "../config.js";
-import { SQLITE_BUSY_TIMEOUT_MS } from "../utils/constants.js";
+import { BaseSqliteStore } from "./base-sqlite-store.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { pluginLogger } from "../utils/logger.js";
 
@@ -69,13 +69,11 @@ export type CredentialEntry = {
   expires: number | null;
 };
 
-export class CredentialsDB {
-  private db: DatabaseSync;
+export class CredentialsDB extends BaseSqliteStore {
   private readonly dbPath: string;
-  private _dbOpen = true;
-  private key: Buffer;
-  private kdfVersion: number;
-  private salt: Buffer;
+  private key!: Buffer;
+  private kdfVersion!: number;
+  private salt!: Buffer;
   /** When false, values are stored and read as plaintext (no encryption). */
   private readonly encrypted: boolean;
   // SECURITY NOTE: Raw password is stored only for lazy migration from legacy SHA-256 to scrypt.
@@ -84,20 +82,21 @@ export class CredentialsDB {
   private password: string | null;
 
   constructor(dbPath: string, encryptionKey: string) {
-    this.dbPath = dbPath;
-    this.encrypted = encryptionKey.length >= 16;
+    const encrypted = encryptionKey.length >= 16;
     mkdirSync(dirname(dbPath), { recursive: true });
-    this.db = new DatabaseSync(dbPath);
-    this.applyPragmas();
+    const db = new DatabaseSync(dbPath);
+    super(db);
+    this.dbPath = dbPath;
+    this.encrypted = encrypted;
 
-    this.db.exec(`
+    this.liveDb.exec(`
       CREATE TABLE IF NOT EXISTS vault_meta (
         key TEXT PRIMARY KEY,
         value BLOB NOT NULL
       )
     `);
 
-    this.db.exec(`
+    this.liveDb.exec(`
       CREATE TABLE IF NOT EXISTS credentials (
         service TEXT NOT NULL,
         type TEXT NOT NULL DEFAULT 'other',
@@ -110,18 +109,18 @@ export class CredentialsDB {
         PRIMARY KEY (service, type)
       )
     `);
-    this.db.exec(`
+    this.liveDb.exec(`
       CREATE INDEX IF NOT EXISTS idx_credentials_service ON credentials(service)
     `);
 
-    const versionRow = this.db.prepare("SELECT value FROM vault_meta WHERE key = 'kdf_version'").get() as
+    const versionRow = this.liveDb.prepare("SELECT value FROM vault_meta WHERE key = 'kdf_version'").get() as
       | { value: Uint8Array | Buffer }
       | undefined;
-    const saltRow = this.db.prepare("SELECT value FROM vault_meta WHERE key = 'salt'").get() as
+    const saltRow = this.liveDb.prepare("SELECT value FROM vault_meta WHERE key = 'salt'").get() as
       | { value: Uint8Array | Buffer }
       | undefined;
 
-    if (!this.encrypted) {
+    if (!encrypted) {
       // Plaintext vault: no key derived
       this.kdfVersion = CRED_KDF_PLAINTEXT;
       this.salt = Buffer.alloc(0);
@@ -135,13 +134,13 @@ export class CredentialsDB {
       if (!versionRow) {
         // C1 FIX: Check if vault has encrypted data before marking as plaintext
         const hasCredentials =
-          (this.db.prepare("SELECT COUNT(*) as count FROM credentials").get() as { count: number }).count > 0;
+          (this.liveDb.prepare("SELECT COUNT(*) as count FROM credentials").get() as { count: number }).count > 0;
         if (hasCredentials) {
           throw new Error(
             "Credentials vault contains data but no encryption metadata. This vault may have encrypted credentials. Provide credentials.encryptionKey to open it.",
           );
         }
-        this.db
+        this.liveDb
           .prepare("INSERT OR REPLACE INTO vault_meta (key, value) VALUES ('kdf_version', ?)")
           .run(Buffer.from([CRED_KDF_PLAINTEXT]));
       }
@@ -151,7 +150,7 @@ export class CredentialsDB {
     // Check if vault is plaintext first (before assuming legacy)
     if (versionRow && versionRow.value != null && toBuffer(versionRow.value)[0] === CRED_KDF_PLAINTEXT) {
       // C2 FIX: DB is plaintext, override this.encrypted regardless of key length
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      // biome-ignore lint/suspicious/noExplicitAny: encrypted is readonly and must be reassigned after initial assignment
       (this as any).encrypted = false;
       this.kdfVersion = CRED_KDF_PLAINTEXT;
       this.salt = Buffer.alloc(0);
@@ -168,7 +167,7 @@ export class CredentialsDB {
 
     if (!versionRow || !saltRow) {
       const hasCredentials =
-        (this.db.prepare("SELECT COUNT(*) as count FROM credentials").get() as { count: number }).count > 0;
+        (this.liveDb.prepare("SELECT COUNT(*) as count FROM credentials").get() as { count: number }).count > 0;
 
       if (hasCredentials) {
         this.kdfVersion = 1;
@@ -180,10 +179,10 @@ export class CredentialsDB {
         this.salt = randomBytes(32);
         this.key = deriveKey(encryptionKey, this.salt, this.kdfVersion);
         this.password = null;
-        this.db
+        this.liveDb
           .prepare("INSERT OR REPLACE INTO vault_meta (key, value) VALUES ('kdf_version', ?)")
           .run(Buffer.from([this.kdfVersion]));
-        this.db.prepare("INSERT OR REPLACE INTO vault_meta (key, value) VALUES ('salt', ?)").run(this.salt);
+        this.liveDb.prepare("INSERT OR REPLACE INTO vault_meta (key, value) VALUES ('salt', ?)").run(this.salt);
       }
     } else {
       this.kdfVersion = versionRow.value != null ? toBuffer(versionRow.value)[0] : CRED_KDF_VERSION;
@@ -193,19 +192,8 @@ export class CredentialsDB {
     }
   }
 
-  private applyPragmas(): void {
-    this.db.exec("PRAGMA journal_mode = WAL");
-    this.db.exec(`PRAGMA busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
-  }
-
-  /** Get the live DB handle, reopening if closed after a SIGUSR1 restart. */
-  private get liveDb(): DatabaseSync {
-    if (!this._dbOpen) {
-      this.db.open();
-      this._dbOpen = true;
-      this.applyPragmas();
-    }
-    return this.db;
+  protected getSubsystemName(): string {
+    return "credentials";
   }
 
   store(entry: {
@@ -427,20 +415,6 @@ export class CredentialsDB {
     }
     const r = this.liveDb.prepare("DELETE FROM credentials WHERE service = ?").run(service);
     return r.changes > 0;
-  }
-
-  close(): void {
-    this._dbOpen = false;
-    try {
-      this.db.close();
-    } catch (err) {
-      capturePluginError(err as Error, {
-        operation: "db-close",
-        severity: "info",
-        subsystem: "credentials",
-      });
-      /* already closed */
-    }
   }
 }
 

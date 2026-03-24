@@ -10,7 +10,7 @@ import type { SQLInputValue } from "node:sqlite";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { createHash } from "node:crypto";
-import { SQLITE_BUSY_TIMEOUT_MS } from "../utils/constants.js";
+import { BaseSqliteStore } from "./base-sqlite-store.js";
 import { capturePluginError } from "../services/error-reporter.js";
 
 export type EventStatus = "raw" | "processed" | "surfaced" | "pushed" | "archived";
@@ -49,23 +49,56 @@ export function computeFingerprint(input: string): string {
  * (raw -> processed -> surfaced -> pushed -> archived) as they are consumed
  * by the Rumination Engine.
  */
-export class EventBus {
-  private db: DatabaseSync;
+export class EventBus extends BaseSqliteStore {
+  /** Tracks terminal closed state separately from base class field. */
+  private _terminallyClosed = false;
+
   private readonly dbPath: string;
-  private closed = false;
-  private _dbOpen = true;
 
   /**
    * Initializes the Event Bus database, creating the file and schema if needed.
    * @param dbPath Absolute path to the SQLite database file.
    */
   constructor(dbPath: string) {
-    this.dbPath = dbPath;
     mkdirSync(dirname(dbPath), { recursive: true });
-    this.db = new DatabaseSync(dbPath);
-    this.db.exec("PRAGMA journal_mode = WAL");
-    this.db.exec(`PRAGMA busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
+    const db = new DatabaseSync(dbPath);
+    super(db);
+    this.dbPath = dbPath;
     this.migrate();
+  }
+
+  protected getSubsystemName(): string {
+    return "event-bus";
+  }
+
+  /**
+   * Returns the terminal closed state of this EventBus.
+   * When true, all subsequent operations throw an Error.
+   */
+  public get closed(): boolean {
+    return this._terminallyClosed;
+  }
+
+  protected get liveDb(): DatabaseSync {
+    if (this._terminallyClosed) {
+      throw new Error("EventBus is closed");
+    }
+    if (!this._dbOpen) {
+      this.db.open();
+      this._dbOpen = true;
+      this.applyPragmas();
+    }
+    return this.db;
+  }
+
+  /**
+   * Closes the EventBus and sets the terminal closed state.
+   * After this, all subsequent operations throw an Error.
+   */
+  public close(): void {
+    if (this._terminallyClosed) return;
+    this._terminallyClosed = true;
+    super.close();
   }
 
   private migrate(): void {
@@ -87,19 +120,6 @@ export class EventBus {
       CREATE INDEX IF NOT EXISTS idx_events_created ON memory_events(created_at);
       CREATE INDEX IF NOT EXISTS idx_events_fingerprint ON memory_events(fingerprint);
     `);
-  }
-
-  private get liveDb(): DatabaseSync {
-    if (this.closed) {
-      throw new Error("EventBus is closed");
-    }
-    if (!this._dbOpen) {
-      this.db.open();
-      this._dbOpen = true;
-      this.db.exec("PRAGMA journal_mode = WAL");
-      this.db.exec(`PRAGMA busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
-    }
-    return this.db;
   }
 
   /**
@@ -221,30 +241,5 @@ export class EventBus {
       processed_at: (row.processed_at as string | null) ?? null,
       fingerprint: (row.fingerprint as string | null) ?? null,
     };
-  }
-
-  /**
-   * Returns true if the database connection is open and active.
-   */
-  isOpen(): boolean {
-    return !this.closed && this._dbOpen;
-  }
-
-  /**
-   * Closes the database connection cleanly. Idempotent.
-   */
-  close(): void {
-    if (this.closed) return;
-    this.closed = true;
-    this._dbOpen = false;
-    try {
-      this.db.close();
-    } catch (err) {
-      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-        operation: "db-close",
-        severity: "info",
-        subsystem: "event-bus",
-      });
-    }
   }
 }

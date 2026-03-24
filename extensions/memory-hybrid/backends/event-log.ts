@@ -16,7 +16,7 @@ import { dirname, join } from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { createGzip, createGunzip } from "node:zlib";
-import { SQLITE_BUSY_TIMEOUT_MS } from "../utils/constants.js";
+import { BaseSqliteStore } from "./base-sqlite-store.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { expandTilde } from "../utils/path.js";
 
@@ -55,23 +55,16 @@ export interface EventLogEntry {
   createdAt: string;
 }
 
-export class EventLog {
-  private db: DatabaseSync;
+export class EventLog extends BaseSqliteStore {
   private readonly dbPath: string;
-  private _dbOpen = true;
-
-  private applyPragmas(): void {
-    this.db.exec("PRAGMA journal_mode = WAL");
-    this.db.exec(`PRAGMA busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
-  }
 
   constructor(dbPath: string) {
-    this.dbPath = dbPath;
     mkdirSync(dirname(dbPath), { recursive: true });
-    this.db = new DatabaseSync(dbPath);
-    this.applyPragmas();
+    const db = new DatabaseSync(dbPath);
+    super(db);
+    this.dbPath = dbPath;
 
-    this.db.exec(`
+    this.liveDb.exec(`
       CREATE TABLE IF NOT EXISTS event_log (
         id TEXT PRIMARY KEY,
         session_id TEXT NOT NULL,
@@ -90,13 +83,8 @@ export class EventLog {
     `);
   }
 
-  private get liveDb(): DatabaseSync {
-    if (!this._dbOpen) {
-      this.db.open();
-      this._dbOpen = true;
-      this.applyPragmas();
-    }
-    return this.db;
+  protected getSubsystemName(): string {
+    return "event-log";
   }
 
   /** Append a single event and return its generated id. */
@@ -435,24 +423,5 @@ export class EventLog {
       metadata,
       createdAt: row.created_at as string,
     };
-  }
-
-  /** True if the database connection is still open. */
-  isOpen(): boolean {
-    return this._dbOpen;
-  }
-
-  close(): void {
-    if (!this._dbOpen) return;
-    this._dbOpen = false;
-    try {
-      this.db.close();
-    } catch (err) {
-      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-        operation: "db-close",
-        severity: "info",
-        subsystem: "event-log",
-      });
-    }
   }
 }
