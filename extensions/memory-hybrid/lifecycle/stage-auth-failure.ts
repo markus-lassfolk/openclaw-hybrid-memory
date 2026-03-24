@@ -15,6 +15,7 @@ import {
   type AuthFailurePattern,
 } from "../services/auth-failure-detect.js";
 import { capturePluginError } from "../services/error-reporter.js";
+import { shouldSuppressEmbeddingError } from "../services/embeddings.js";
 import type { LifecycleContext, SessionState } from "./types.js";
 
 export function registerAuthFailureRecall(
@@ -148,10 +149,12 @@ export function registerAuthFailureRecall(
         return { prependContext: `${hint}\n\n` };
       }
     } catch (err) {
-      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-        operation: "auth-failure-recall",
-        subsystem: "auto-recall",
-      });
+      if (!shouldSuppressEmbeddingError(err)) {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+          operation: "auth-failure-recall",
+          subsystem: "auto-recall",
+        });
+      }
       api.logger.warn(`memory-hybrid: auth failure recall failed: ${String(err)}`);
     }
   });
