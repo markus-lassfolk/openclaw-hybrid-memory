@@ -1343,6 +1343,10 @@ export class FactsDB extends BaseSqliteStore {
       successCount,
       lastValidated: lastValidated ?? undefined,
       sourceSessions: sourceSessionsRaw ?? undefined,
+      provenanceSession,
+      sourceTurn,
+      extractionMethod,
+      extractionConfidence,
       // normalize to null (not undefined) to match rowToEntry() behaviour
       decayFreezeUntil: decayFreezeUntil,
       // #237: access tracking columns start at zero for new facts
@@ -1923,6 +1927,10 @@ export class FactsDB extends BaseSqliteStore {
       lastValidated: (row.last_validated as number) ?? undefined,
       sourceSessions: (row.source_sessions as string) ?? undefined,
       embeddingModel: (row.embedding_model as string) ?? null,
+      provenanceSession: (row.provenance_session as string) ?? null,
+      sourceTurn: (row.source_turn as number) ?? null,
+      extractionMethod: (row.extraction_method as string) ?? null,
+      extractionConfidence: (row.extraction_confidence as number) ?? null,
       reinforcedCount: (row.reinforced_count as number) ?? 0,
       lastReinforcedAt: (row.last_reinforced_at as number) ?? null,
       reinforcedQuotes: (() => {
