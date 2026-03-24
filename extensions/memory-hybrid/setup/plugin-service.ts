@@ -128,23 +128,26 @@ export function createPluginService(ctx: PluginServiceContext) {
       if (
         errorReportingActive &&
         cachedVersionCheck &&
-        isVersionCheckCacheFresh(cachedVersionCheck, cfg.errorReporting.updateNudge.cacheTtlHours) &&
         isPluginOutdated(versionInfo.pluginVersion, cachedVersionCheck.latestVersion)
       ) {
         setErrorReporterMuted(true, `outdated-plugin:${cachedVersionCheck.latestVersion}`);
-        const nextCachedVersionCheck = maybeLogOutdatedVersionNudge(
-          versionInfo.pluginVersion,
-          cachedVersionCheck,
-          cfg.errorReporting.updateNudge,
-          api.logger,
-        );
-        if (versionCheckCachePath && nextCachedVersionCheck.lastNudgedAt !== cachedVersionCheck.lastNudgedAt) {
-          try {
-            writeVersionCheckCache(versionCheckCachePath, nextCachedVersionCheck);
-          } catch (err) {
-            api.logger.debug?.(`memory-hybrid: failed to update nudge cache: ${err instanceof Error ? err.message : String(err)}`);
+        if (isVersionCheckCacheFresh(cachedVersionCheck, cfg.errorReporting.updateNudge.cacheTtlHours)) {
+          const nextCachedVersionCheck = maybeLogOutdatedVersionNudge(
+            versionInfo.pluginVersion,
+            cachedVersionCheck,
+            cfg.errorReporting.updateNudge,
+            api.logger,
+          );
+          if (versionCheckCachePath && nextCachedVersionCheck.lastNudgedAt !== cachedVersionCheck.lastNudgedAt) {
+            try {
+              writeVersionCheckCache(versionCheckCachePath, nextCachedVersionCheck);
+            } catch (err) {
+              api.logger.debug?.(
+                `memory-hybrid: failed to update nudge cache: ${err instanceof Error ? err.message : String(err)}`,
+              );
+            }
+            cachedVersionCheck = nextCachedVersionCheck;
           }
-          cachedVersionCheck = nextCachedVersionCheck;
         }
       } else {
         setErrorReporterMuted(false);
@@ -192,7 +195,12 @@ export function createPluginService(ctx: PluginServiceContext) {
         if (!errorReportingActive) return;
         try {
           const latestPublished = await fetchLatestPublishedVersion();
-          if (!latestPublished.latestVersion || !latestPublished.source) return;
+          if (!latestPublished.latestVersion || !latestPublished.source) {
+            if (cachedVersionCheck && isPluginOutdated(versionInfo.pluginVersion, cachedVersionCheck.latestVersion)) {
+              setErrorReporterMuted(true, `outdated-plugin:${cachedVersionCheck.latestVersion}`);
+            }
+            return;
+          }
 
           let cacheEntry: VersionCheckCacheEntry = {
             latestVersion: latestPublished.latestVersion,
@@ -223,6 +231,9 @@ export function createPluginService(ctx: PluginServiceContext) {
           api.logger.debug?.(
             `memory-hybrid: latest-version check failed: ${err instanceof Error ? err.message : String(err)}`,
           );
+          if (cachedVersionCheck && isPluginOutdated(versionInfo.pluginVersion, cachedVersionCheck.latestVersion)) {
+            setErrorReporterMuted(true, `outdated-plugin:${cachedVersionCheck.latestVersion}`);
+          }
         }
       })();
 
