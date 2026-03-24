@@ -61,3 +61,9 @@ export const HOT_TIER_MAX_TOKENS = 2000;
  * Centralised here to avoid drift between vector-db.ts and memory-tools.ts.
  */
 export const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+/**
+ * Substring of the LanceDB error thrown on vector-dimension mismatch.
+ * Used to suppress known schema errors from GlitchTip reporting.
+ */
+export const LANCE_NO_VECTOR_COL_MSG = "No vector column found";
