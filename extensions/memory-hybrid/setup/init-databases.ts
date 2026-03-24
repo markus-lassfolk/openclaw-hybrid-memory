@@ -75,6 +75,18 @@ function extractGatewayConfig(cfg: HybridMemoryConfig): {
   };
 }
 
+function extractGatewayProvidersConfig(
+  apiConfig: Record<string, unknown> | undefined,
+): Record<string, unknown> | undefined {
+  const providers =
+    (apiConfig?.models as Record<string, unknown> | undefined)?.providers ??
+    (apiConfig?.llm as Record<string, unknown> | undefined)?.providers ??
+    (apiConfig?.providers as Record<string, unknown> | undefined);
+  return providers && typeof providers === "object" && !Array.isArray(providers)
+    ? (providers as Record<string, unknown>)
+    : undefined;
+}
+
 /** Known provider OpenAI-compatible base URLs. */
 const GOOGLE_GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/";
 /** Default Ollama server base URL (without /v1 path). */
@@ -390,6 +402,8 @@ function buildMultiProviderOpenAI(
     return resolveSecretRef(key);
   };
   const { gatewayPortRaw, gatewayPort, gatewayAuthResolved, gatewayToken, gatewayBaseUrl } = extractGatewayConfig(cfg);
+  const gatewayProviders = extractGatewayProvidersConfig(api.config as Record<string, unknown> | undefined);
+  const gatewayProviderNames = new Set(Object.keys(gatewayProviders ?? {}).map((name) => name.toLowerCase()));
   // Fail closed: if gateway.auth.token is configured but cannot be resolved, throw rather than
   // silently falling back to OPENCLAW_GATEWAY_TOKEN — a stale env token would mask rollout mistakes.
   if (cfg.gateway?.auth?.token && !gatewayAuthResolved) {
@@ -510,6 +524,15 @@ function buildMultiProviderOpenAI(
     const providerCfg: LLMProviderConfig | undefined = (
       cfg.llm?.providers as Record<string, LLMProviderConfig | undefined> | undefined
     )?.[prefix];
+    const routeViaGatewayProvider = () => ({
+      client: getOrCreate(
+        `gateway:provider:${gatewayBaseUrl}:${prefix}`,
+        () => new OpenAI({ apiKey: gatewayToken!, baseURL: gatewayBaseUrl! }),
+      ),
+      bareModel,
+      useFullModel: true,
+    });
+    const canRouteViaGatewayProvider = gatewayProviderNames.has(prefix) && Boolean(gatewayBaseUrl && gatewayToken);
 
     // OAuth + optional failover: when both OAuth and API key exist, prefer OAuth unless in backoff.
     if (hasOAuthProfiles(authOrder?.[prefix], prefix) && gatewayBaseUrl && gatewayToken) {
@@ -531,7 +554,10 @@ function buildMultiProviderOpenAI(
 
     if (prefix === "google") {
       const { value: apiKey } = resolveProviderApiKey("google", providerCfg, cfg, resolveApiKey);
-      if (!apiKey) throw new UnconfiguredProviderError("google", trimmed);
+      if (!apiKey) {
+        if (canRouteViaGatewayProvider) return routeViaGatewayProvider();
+        throw new UnconfiguredProviderError("google", trimmed);
+      }
       const baseURL = providerCfg?.baseURL ?? GOOGLE_GEMINI_BASE_URL;
       return {
         client: getOrCreate(`google:${baseURL}`, () => new OpenAI({ apiKey, baseURL })),
@@ -560,7 +586,10 @@ function buildMultiProviderOpenAI(
 
     if (prefix === "anthropic") {
       const { value: apiKey } = resolveProviderApiKey("anthropic", providerCfg, cfg, resolveApiKey);
-      if (!apiKey) throw new UnconfiguredProviderError("anthropic", trimmed);
+      if (!apiKey) {
+        if (canRouteViaGatewayProvider) return routeViaGatewayProvider();
+        throw new UnconfiguredProviderError("anthropic", trimmed);
+      }
       const baseURL = providerCfg?.baseURL ?? ANTHROPIC_BASE_URL;
       // Anthropic's OpenAI-compatible endpoints require anthropic-version header
       return {
@@ -600,7 +629,10 @@ function buildMultiProviderOpenAI(
       // Model names are passed as-is after stripping the "openrouter/" prefix
       // (e.g. "openrouter/anthropic/claude-3.5-sonnet" → bareModel "anthropic/claude-3.5-sonnet").
       const { value: apiKey } = resolveProviderApiKey("openrouter", providerCfg, cfg, resolveApiKey);
-      if (!apiKey) throw new UnconfiguredProviderError("openrouter", trimmed);
+      if (!apiKey) {
+        if (canRouteViaGatewayProvider) return routeViaGatewayProvider();
+        throw new UnconfiguredProviderError("openrouter", trimmed);
+      }
       const baseURL = providerCfg?.baseURL ?? OPENROUTER_BASE_URL;
       // Include apiKey prefix in cache key so key rotation takes effect without restart.
       // defaultHeaders follow OpenRouter's recommendations for attribution and rate-limit priority.
@@ -626,7 +658,10 @@ function buildMultiProviderOpenAI(
       // Use the built-in MiniMax API endpoint as default so callers never accidentally
       // fall through to the default OpenAI client (which returns 404 for MiniMax models).
       const { value: apiKey } = resolveProviderApiKey("minimax", providerCfg, cfg, resolveApiKey);
-      if (!apiKey) throw new UnconfiguredProviderError("minimax", trimmed);
+      if (!apiKey) {
+        if (canRouteViaGatewayProvider) return routeViaGatewayProvider();
+        throw new UnconfiguredProviderError("minimax", trimmed);
+      }
       const baseURL = providerCfg?.baseURL ?? MINIMAX_BASE_URL;
       // Canonicalize the bare model name: strip Ollama-style ":tag" suffixes and fix casing
       // so that e.g. "minimax-m2.5:cloud" → "MiniMax-M2.5" (issue #400).
@@ -661,6 +696,8 @@ function buildMultiProviderOpenAI(
         bareModel,
       };
     }
+
+    if (canRouteViaGatewayProvider) return routeViaGatewayProvider();
 
     // Unknown provider with no config — throw so callers can skip to the next model cleanly
     throw new UnconfiguredProviderError(prefix, trimmed);
@@ -870,10 +907,7 @@ export function initializeDatabases(cfg: HybridMemoryConfig, api: ClawdbotPlugin
   // can see all available providers (issue #487 fix).
   // Check three paths: models.providers (standard), llm.providers (legacy), providers (top-level).
   const gwConfig = api.config as Record<string, unknown> | undefined;
-  const gwProviders =
-    (gwConfig?.models as Record<string, unknown> | undefined)?.providers ??
-    (gwConfig?.llm as Record<string, unknown> | undefined)?.providers ??
-    (gwConfig?.providers as Record<string, unknown> | undefined);
+  const gwProviders = extractGatewayProvidersConfig(gwConfig);
   const mergedProviderNames: string[] = [];
   const mergedProviderOriginalNames = new Map<string, string>();
   if (!cfg.llm)
@@ -957,6 +991,7 @@ export function initializeDatabases(cfg: HybridMemoryConfig, api: ClawdbotPlugin
     const pluginProviders = Object.fromEntries(
       Object.entries((cfg.llm?.providers ?? {}) as Record<string, unknown>).map(([k, v]) => [k.toLowerCase(), v]),
     );
+    const gatewayProviderNames = new Set(Object.keys(gwProviders ?? {}).map((name) => name.toLowerCase()));
     // Extract gateway config for OAuth routing check (matches buildMultiProviderOpenAI logic)
     const { gatewayBaseUrl, gatewayToken } = extractGatewayConfig(cfg);
     // Normalize auth.order keys to lowercase so lookups match the lowercased prefix.
@@ -968,6 +1003,7 @@ export function initializeDatabases(cfg: HybridMemoryConfig, api: ClawdbotPlugin
       const prefix = m.trim().split("/")[0].toLowerCase();
       // Check OAuth routing first (matches resolveClient logic at line 378)
       if (hasOAuthProfiles(authOrder?.[prefix], prefix) && gatewayBaseUrl && gatewayToken) return true;
+      if (gatewayProviderNames.has(prefix) && gatewayBaseUrl && gatewayToken) return true;
       if (ROUTABLE_BUILTIN_PROVIDERS.has(prefix) || Object.hasOwn(pluginProviders, prefix)) return true;
       // Read-only env var check: safe even with user-supplied prefix since we only read env vars.
       // Mirrors resolveClient()'s <PREFIX>_API_KEY fallback (see resolveClient in setup/resolve-client.ts).
@@ -981,8 +1017,8 @@ export function initializeDatabases(cfg: HybridMemoryConfig, api: ClawdbotPlugin
         const prefix = m.trim().split("/")[0];
         api.logger.warn?.(
           `memory-hybrid: skipping gateway model "${m}" from agents.defaults.model — ` +
-            `provider "${prefix}" is not a known built-in and is not configured in llm.providers. ` +
-            `To use this model configure llm.providers.${prefix.toLowerCase()} (apiKey and/or baseURL) in plugin config.`,
+            `provider "${prefix}" is not a known built-in, is not configured in llm.providers, and is not advertised by the gateway. ` +
+            `To use this model configure llm.providers.${prefix.toLowerCase()} (apiKey and/or baseURL) in plugin config or add the provider to the OpenClaw gateway.`,
         );
         return false;
       });

@@ -1470,6 +1470,111 @@ describe("gateway model auto-derivation — unknown provider prefix filter", () 
     // Provider "deepseek" is OAuth-routable via gateway → model must be kept
     expect(defaultList).toContain("deepseek/chat");
   });
+
+  it("keeps gateway-advertised custom providers during auto-derivation when the gateway is available", () => {
+    const cfg = getTestConfig(tmpDir);
+    process.env.OPENCLAW_GATEWAY_PORT = "4000";
+    process.env.OPENCLAW_GATEWAY_TOKEN = "test-gateway-token";
+
+    const api = makeMockApi({
+      resolvePath: (p: string) => (p.startsWith("/") ? p : join(tmpDir, p)),
+      config: {
+        models: {
+          providers: {
+            moonshot: { models: ["kimi-k2.5"] },
+          },
+        },
+        agents: {
+          defaults: {
+            model: {
+              primary: "moonshot/kimi-k2.5",
+            },
+          },
+        },
+      },
+    });
+
+    ctx = initializeDatabases(cfg, api as never);
+
+    const defaultList = Array.isArray(cfg.llm?.default) ? cfg.llm.default : [];
+    expect(defaultList).toContain("moonshot/kimi-k2.5");
+  });
+});
+
+describe("gateway-backed custom provider routing", () => {
+  let tmpDir: string;
+  let MockOpenAI: ReturnType<typeof vi.fn>;
+  let ctx: ReturnType<typeof initializeDatabases> | undefined;
+  let origGatewayPort: string | undefined;
+  let origGatewayToken: string | undefined;
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), "provider-routing-gateway-custom-"));
+    MockOpenAI = vi.mocked(OpenAI);
+    MockOpenAI.mockClear();
+    ctx = undefined;
+    origGatewayPort = process.env.OPENCLAW_GATEWAY_PORT;
+    origGatewayToken = process.env.OPENCLAW_GATEWAY_TOKEN;
+    process.env.OPENCLAW_GATEWAY_PORT = "4000";
+    process.env.OPENCLAW_GATEWAY_TOKEN = "test-gateway-token";
+  });
+
+  afterEach(() => {
+    if (ctx) {
+      try {
+        closeOldDatabases(ctx);
+      } catch {
+        /* best effort */
+      }
+    }
+    rmSync(tmpDir, { recursive: true, force: true });
+    restoreEnv("OPENCLAW_GATEWAY_PORT", origGatewayPort);
+    restoreEnv("OPENCLAW_GATEWAY_TOKEN", origGatewayToken);
+  });
+
+  it("routes moonshot/* through the gateway when the provider is advertised there but no direct key is configured", async () => {
+    const cfg = getTestConfig(tmpDir, {
+      llm: {
+        default: ["moonshot/kimi-k2.5"],
+        heavy: ["moonshot/kimi-k2.5"],
+      },
+    });
+    const api = makeMockApi({
+      resolvePath: (p: string) => (p.startsWith("/") ? p : join(tmpDir, p)),
+      config: {
+        models: {
+          providers: {
+            moonshot: { models: ["kimi-k2.5"] },
+          },
+        },
+      },
+    });
+
+    ctx = initializeDatabases(cfg, api as never);
+
+    await ctx.openai.chat.completions.create({
+      model: "moonshot/kimi-k2.5",
+      messages: [{ role: "user", content: "hello" }],
+    });
+
+    const gatewayCall = MockOpenAI.mock.calls.find(
+      ([args]) =>
+        (args as Record<string, unknown>)?.baseURL === "http://127.0.0.1:4000/v1" &&
+        (args as Record<string, unknown>)?.apiKey === "test-gateway-token",
+    );
+    expect(gatewayCall).toBeDefined();
+
+    const gatewayInstance = MockOpenAI.mock.instances.find(
+      (instance) =>
+        (instance as Record<string, unknown>)?._constructArgs &&
+        ((instance as Record<string, unknown>)._constructArgs as Record<string, unknown>).baseURL ===
+          "http://127.0.0.1:4000/v1",
+    ) as { chat?: { completions?: { create?: ReturnType<typeof vi.fn> } } } | undefined;
+    expect(gatewayInstance?.chat?.completions?.create).toHaveBeenCalledWith(
+      expect.objectContaining({ model: "moonshot/kimi-k2.5" }),
+      undefined,
+    );
+  });
 });
 
 // ---------------------------------------------------------------------------
