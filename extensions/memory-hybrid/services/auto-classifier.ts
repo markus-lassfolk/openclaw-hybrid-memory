@@ -12,7 +12,7 @@ import type { FactsDB } from "../backends/facts-db.js";
 import { getMemoryCategories, setMemoryCategories, isValidCategory } from "../config.js";
 import { loadPrompt, fillPrompt } from "../utils/prompt-loader.js";
 import { capturePluginError } from "./error-reporter.js";
-import { is500Like, is404Like, isOllamaOOM } from "./chat.js";
+import { is500Like, is404Like, isOllamaOOM, isConnectionErrorLike } from "./chat.js";
 
 /** Minimum "other" facts before category discovery kicks in. */
 const MIN_OTHER_FOR_DISCOVERY = 15;
@@ -156,7 +156,8 @@ async function discoverCategoriesFromOther(
         isOllamaOOM(discErr) ||
         is500Like(discErr) ||
         is404Like(discErr) ||
-        /timed out|llm request timeout|request was aborted|econnrefused/i.test(discErr.message);
+        /timed out|llm request timeout|request was aborted/i.test(discErr.message) ||
+        isConnectionErrorLike(discErr);
       if (!isTransient) {
         capturePluginError(discErr, {
           subsystem: "auto-classifier",
@@ -268,7 +269,8 @@ Respond with ONLY a JSON array of category strings, one per fact, in order. Exam
       isOllamaOOM(classifyErr) ||
       is500Like(classifyErr) ||
       is404Like(classifyErr) ||
-      /timed out|llm request timeout|request was aborted|econnrefused/i.test(classifyErr.message);
+      /timed out|llm request timeout|request was aborted/i.test(classifyErr.message) ||
+      isConnectionErrorLike(classifyErr);
     if (!isTransient) {
       capturePluginError(classifyErr, {
         operation: "classify-batch",
