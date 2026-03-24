@@ -95,7 +95,11 @@ export class IssueStore {
         now,
       );
 
-    return this.get(id)!;
+    const result = this.get(id);
+    if (!result) {
+      throw new Error(`Failed to retrieve created issue: ${id}`);
+    }
+    return result;
   }
 
   get(id: string): Issue | null {
@@ -168,7 +172,11 @@ export class IssueStore {
     params.push(id);
     this.db.prepare(`UPDATE issues SET ${sets.join(", ")} WHERE id = ?`).run(...params);
 
-    return this.get(id)!;
+    const result = this.get(id);
+    if (!result) {
+      throw new Error(`Failed to retrieve updated issue: ${id}`);
+    }
+    return result;
   }
 
   transition(id: string, newStatus: IssueStatus, data?: Partial<Issue>): Issue {
@@ -228,7 +236,9 @@ export class IssueStore {
       // Tags filtering (JSON array — done in-memory for simplicity)
       if (filter?.tags && filter.tags.length > 0) {
         const filterTags = filter.tags.map((t) => t.toLowerCase());
-        results = results.filter((issue) => filterTags.some((ft) => issue.tags.map((t) => t.toLowerCase()).includes(ft)));
+        results = results.filter((issue) =>
+          filterTags.some((ft) => issue.tags.map((t) => t.toLowerCase()).includes(ft)),
+        );
       }
 
       // Apply limit after all filtering is complete
@@ -266,13 +276,13 @@ export class IssueStore {
   }
 
   archive(olderThanDays: number): number {
-    return this.withReadFallback("archive", 0, () => {
-      const cutoff = new Date(Date.now() - olderThanDays * 24 * 60 * 60 * 1000).toISOString();
-      const result = this.db
-        .prepare(`DELETE FROM issues WHERE status IN ('verified', 'wont-fix') AND updated_at < ?`)
-        .run(cutoff);
-      return Number(result.changes);
-    });
+    this.ensureOpen("archive");
+
+    const cutoff = new Date(Date.now() - olderThanDays * 24 * 60 * 60 * 1000).toISOString();
+    const result = this.db
+      .prepare(`DELETE FROM issues WHERE status IN ('verified', 'wont-fix') AND updated_at < ?`)
+      .run(cutoff);
+    return Number(result.changes);
   }
 
   private rowToIssue(row: IssueRow): Issue {

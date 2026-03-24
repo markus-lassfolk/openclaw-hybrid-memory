@@ -492,13 +492,13 @@ describe("IssueStore lifecycle", () => {
     expect(store.get(issue.id)).toBeNull();
   });
 
-  it("archive returns 0 after close", () => {
+  it("archive throws a clear error after close", () => {
     const issue = store.create({ title: "Closed store archive", symptoms: ["s"] });
     store.transition(issue.id, "wont-fix");
 
     store.close();
 
-    expect(store.archive(-1)).toBe(0);
+    expect(() => store.archive(-1)).toThrow("IssueStore.archive called after close()");
   });
 
   it("create throws a clear error after close", () => {
