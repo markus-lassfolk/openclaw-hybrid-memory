@@ -53,7 +53,7 @@ export class EventBus extends BaseSqliteStore {
   private readonly _encrypted = false; // Event Bus stores data in plaintext
 
   /** Tracks terminal closed state separately from base class field. */
-  private _closed = false;
+  private _terminallyClosed = false;
 
   private readonly dbPath: string;
 
@@ -86,17 +86,16 @@ export class EventBus extends BaseSqliteStore {
    * When true, all subsequent operations throw an Error.
    */
   public get closed(): boolean {
-    return this._closed;
+    return this._terminallyClosed;
   }
 
   protected get liveDb(): DatabaseSync {
-    if (this._closed) {
+    if (this._terminallyClosed) {
       throw new Error("EventBus is closed");
     }
     if (!this._dbOpen) {
       this.db.open();
       this._dbOpen = true;
-      this._closed = false;
       this.applyPragmas();
     }
     return this.db;
@@ -107,8 +106,8 @@ export class EventBus extends BaseSqliteStore {
    * After this, all subsequent operations throw an Error.
    */
   public close(): void {
-    if (this._closed) return;
-    this._closed = true;
+    if (this._terminallyClosed) return;
+    this._terminallyClosed = true;
     super.close();
   }
 

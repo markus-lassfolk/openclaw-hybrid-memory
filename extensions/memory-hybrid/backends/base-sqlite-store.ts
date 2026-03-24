@@ -25,7 +25,7 @@ export interface BaseSqliteStoreOptions {
 export abstract class BaseSqliteStore {
   protected db: DatabaseSync;
   protected _dbOpen = true;
-  protected closed = false;
+  private _closed = false;
   private readonly options: BaseSqliteStoreOptions;
 
   constructor(db: DatabaseSync, options: BaseSqliteStoreOptions = {}) {
@@ -49,23 +49,27 @@ export abstract class BaseSqliteStore {
     }
   }
 
+  protected get closed(): boolean {
+    return this._closed;
+  }
+
   protected get liveDb(): DatabaseSync {
     if (!this._dbOpen) {
       this.db.open();
       this._dbOpen = true;
-      this.closed = false;
+      this._closed = false;
       this.applyPragmas();
     }
     return this.db;
   }
 
   isOpen(): boolean {
-    return !this.closed && this._dbOpen;
+    return !this._closed && this._dbOpen;
   }
 
   close(): void {
-    if (this.closed) return;
-    this.closed = true;
+    if (this._closed) return;
+    this._closed = true;
     this._dbOpen = false;
     try {
       this.db.close();
