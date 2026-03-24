@@ -102,7 +102,11 @@ describe("bootstrap installers", () => {
       logger: { info: vi.fn(), warn: vi.fn(), debug: vi.fn(), error: vi.fn() },
     };
     const verifySpy = vi.spyOn(FactsDB, "verifyFts5Support").mockImplementation(() => {
-      throw new Error("no such module: fts5");
+      throw new Error(
+        "memory-hybrid: SQLite FTS5 capability check failed during startup. " +
+          "Hybrid search would silently degrade to vector-only, so plugin initialization is aborted. " +
+          "Use a Node.js/SQLite runtime with FTS5 enabled. Original error: no such module: fts5",
+      );
     });
 
     try {
@@ -113,9 +117,11 @@ describe("bootstrap installers", () => {
           resolvedSqlitePath: join(tmpDir, "facts.db"),
           resolvedLancePath: join(tmpDir, "lancedb"),
         }),
-      ).toThrow(/FTS5|vector-only|startup/i);
+      ).toThrow(/SQLite FTS5 capability check failed during startup/);
       expect(verifySpy).toHaveBeenCalledOnce();
-      expect(api.logger.error).toHaveBeenCalledWith(expect.stringMatching(/FTS5|vector-only|startup/i));
+      expect(api.logger.error).toHaveBeenCalledWith(
+        expect.stringMatching(/SQLite FTS5 capability check failed during startup/),
+      );
     } finally {
       verifySpy.mockRestore();
       rmSync(tmpDir, { recursive: true, force: true });

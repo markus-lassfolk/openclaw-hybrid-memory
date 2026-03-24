@@ -94,8 +94,19 @@ export class FactsDB {
     mkdirSync(dirname(dbPath), { recursive: true });
     this.db = new DatabaseSync(dbPath);
     this._dbOpen = true;
-    this.applyPragmas();
-    FactsDB.verifyFts5Support(this.db);
+
+    try {
+      this.applyPragmas();
+      FactsDB.verifyFts5Support(this.db);
+    } catch (err) {
+      this._dbOpen = false;
+      try {
+        this.db.close();
+      } catch {
+        // Ignore close errors during failure cleanup
+      }
+      throw err;
+    }
 
     // Create main table
     this.liveDb.exec(`
@@ -168,6 +179,14 @@ export class FactsDB {
    * starts failing. Probe FTS5 explicitly and fail fast with an actionable error.
    */
   static verifyFts5Support(db: DatabaseSync): void {
+    let fts5CompileOption = false;
+    try {
+      const row = db.prepare("SELECT sqlite_compileoption_used('ENABLE_FTS5') as fts5").get() as { fts5: number };
+      fts5CompileOption = row.fts5 === 1;
+    } catch {
+      // Best-effort only
+    }
+
     const probeTable = "temp.memory_hybrid_fts5_probe";
     try {
       db.exec(`DROP TABLE IF EXISTS ${probeTable}`);
@@ -180,11 +199,23 @@ export class FactsDB {
         // Best-effort cleanup only.
       }
       const reason = err instanceof Error ? err.message : String(err);
-      throw new Error(
+      const finalError = new Error(
         "memory-hybrid: SQLite FTS5 capability check failed during startup. " +
           "Hybrid search would silently degrade to vector-only, so plugin initialization is aborted. " +
           `Use a Node.js/SQLite runtime with FTS5 enabled. Original error: ${reason}`,
       );
+
+      capturePluginError(finalError, {
+        operation: "startup-fts5-probe",
+        severity: "error",
+        subsystem: "facts",
+        context: {
+          fts5_compileoption: String(fts5CompileOption),
+          fts5_available: "false",
+        },
+      });
+
+      throw finalError;
     }
   }
 
