@@ -98,7 +98,11 @@ export class NarrativesDB {
 
     const row = this.liveDb
       .prepare("SELECT * FROM narratives WHERE session_id = ? AND tag = ? LIMIT 1")
-      .get(input.sessionId, input.tag) as any;
+      .get(input.sessionId, input.tag) as NarrativeRow | undefined;
+
+    if (!row) {
+      throw new Error("Failed to load narrative after upsert");
+    }
     return this.rowToEntry(row);
   }
 
@@ -142,8 +146,22 @@ export class NarrativesDB {
     this._dbOpen = false;
     try {
       this.db.close();
-    } catch {
-      // already closed
+    } catch (err: unknown) {
+      // Only ignore the specific "already closed"/"not open" condition.
+      const isAlreadyClosedError =
+        typeof err === "object" &&
+        err !== null &&
+        "message" in err &&
+        typeof (err as { message: unknown }).message === "string" &&
+        ((err as { message: string }).message.includes("not open") ||
+          (err as { message: string }).message.includes("already closed"));
+
+      if (!isAlreadyClosedError) {
+        // Log unexpected close failures instead of swallowing them silently.
+        // Close remains non-fatal for callers.
+        // eslint-disable-next-line no-console
+        console.error("NarrativesDB.close() failed:", err);
+      }
     }
   }
 
