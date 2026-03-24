@@ -555,15 +555,18 @@ let logger: any = console; // Default fallback to console
 const errorDedup = new Map<string, number>(); // Rate limiting: fingerprint -> timestamp
 
 function resolveNodeName(env: NodeJS.ProcessEnv = process.env): string | undefined {
-  const candidate = typeof env.OPENCLAW_NODE_NAME === "string" && env.OPENCLAW_NODE_NAME.trim()
-    ? env.OPENCLAW_NODE_NAME.trim()
-    : undefined;
+  const candidate =
+    typeof env.OPENCLAW_NODE_NAME === "string" && env.OPENCLAW_NODE_NAME.trim()
+      ? env.OPENCLAW_NODE_NAME.trim()
+      : undefined;
 
   if (!candidate) return undefined;
 
-  return scrubString(candidate)
-    .slice(0, 128)
-    .replace(/[\x00-\x1f\x7f]/g, "") || undefined;
+  return (
+    scrubString(candidate)
+      .slice(0, 128)
+      .replace(/[\x00-\x1f\x7f]/g, "") || undefined
+  );
 }
 
 /**
