@@ -1,9 +1,16 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi, beforeEach } from "vitest";
 import { buildExplicitSemanticQueryVector, DEFAULT_RETRIEVAL_CONFIG } from "../services/retrieval-orchestrator.js";
+import { AllEmbeddingProvidersFailed } from "../services/embeddings.js";
+import * as errorReporter from "../services/error-reporter.js";
 import {
   resolveExplicitDeepRetrievalPolicy,
   resolveInteractiveRecallPolicy,
 } from "../services/retrieval-mode-policy.js";
+
+beforeEach(() => {
+  vi.restoreAllMocks();
+  vi.spyOn(errorReporter, "capturePluginError").mockImplementation(() => undefined);
+});
 
 function makeMockOpenAI(response: string | Error): object {
   return {
@@ -149,4 +156,55 @@ describe("buildExplicitSemanticQueryVector", () => {
     expect(result.warning).toBeNull();
     expect(result.queryVector).toEqual([20]);
   });
+  it("suppresses expected all-provider embedding failures on the explicit/deep path", async () => {
+    const embeddings = {
+      embed: vi.fn(async () => {
+        throw new AllEmbeddingProvidersFailed([Object.assign(new Error("429 Too Many Requests"), { status: 429 })]);
+      }),
+    };
+    const logger = { warn: vi.fn() };
+
+    const result = await buildExplicitSemanticQueryVector({
+      query: "find related notes",
+      cfg: {
+        llm: undefined,
+        retrieval: DEFAULT_RETRIEVAL_CONFIG,
+        queryExpansion: { enabled: false, mode: "always", maxVariants: 4, cacheSize: 50, timeoutMs: 5000 },
+      },
+      embeddings,
+      openai: makeMockOpenAI("unused") as never,
+      pendingLLMWarnings: { add: vi.fn(), drain: vi.fn(() => []) },
+      logger,
+    });
+
+    expect(result.queryVector).toBeNull();
+    expect(result.warning).toContain("Semantic search unavailable");
+    expect(logger.warn).toHaveBeenCalled();
+    expect(vi.mocked(errorReporter.capturePluginError)).not.toHaveBeenCalled();
+  });
+
+  it("reports transient all-provider embedding failures on the explicit/deep path", async () => {
+    const embeddings = {
+      embed: vi.fn(async () => {
+        throw new AllEmbeddingProvidersFailed([new Error("network timeout")]);
+      }),
+    };
+
+    await buildExplicitSemanticQueryVector({
+      query: "find related notes",
+      cfg: {
+        llm: undefined,
+        retrieval: DEFAULT_RETRIEVAL_CONFIG,
+        queryExpansion: { enabled: false, mode: "always", maxVariants: 4, cacheSize: 50, timeoutMs: 5000 },
+      },
+      embeddings,
+      openai: makeMockOpenAI("unused") as never,
+      pendingLLMWarnings: { add: vi.fn(), drain: vi.fn(() => []) },
+      logger: { warn: vi.fn() },
+    });
+
+    await vi.dynamicImportSettled();
+    expect(vi.mocked(errorReporter.capturePluginError)).toHaveBeenCalledOnce();
+  });
+
 });

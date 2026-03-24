@@ -39,6 +39,7 @@ import {
 import { expandQueryWithHyde } from "./hyde-helper.js";
 import { capturePluginError } from "./error-reporter.js";
 import { validateQueryForMemoryLookup, type QueryValidationResult } from "./query-validator.js";
+import { shouldSuppressEmbeddingError } from "./embeddings.js";
 import { DocumentGrader } from "./document-grader.js";
 import { stableStringify } from "../utils/stable-stringify.js";
 
@@ -113,7 +114,7 @@ export async function buildExplicitSemanticQueryVector({
 
     return { queryVector: await embeddings.embed(textToEmbed), warning: null };
   } catch (err) {
-    if (err && (err as any).name !== "AllEmbeddingProvidersFailed") {
+    if (!shouldSuppressEmbeddingError(err)) {
       import("./error-reporter.js").then(({ capturePluginError }) =>
         capturePluginError(err instanceof Error ? err : new Error(String(err)), {
           subsystem: "retrieval",

@@ -17,6 +17,8 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { AllEmbeddingProvidersFailed } from "../services/embeddings.js";
+import { capturePluginError } from "../services/error-reporter.js";
 import { runRecallPipelineQuery, type RecallPipelineDeps } from "../services/recall-pipeline.js";
 import { DEFAULT_INTERACTIVE_RECALL_POLICY } from "../services/retrieval-mode-policy.js";
 import type { SearchResult, MemoryEntry } from "../types/memory.js";
@@ -24,9 +26,17 @@ import { createPendingLLMWarnings } from "../services/chat.js";
 import * as chatModule from "../services/chat.js";
 import { RETRIEVAL_MODE } from "../services/retrieval-mode-policy.js";
 
+vi.mock("../services/error-reporter.js", () => ({
+  capturePluginError: vi.fn(),
+}));
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+beforeEach(() => {
+  vi.mocked(capturePluginError).mockClear();
+});
 
 function makeEntry(id: string, overrides: Partial<MemoryEntry> = {}): MemoryEntry {
   return {
@@ -226,6 +236,62 @@ describe("runRecallPipelineQuery — semantic mode", () => {
     expect(deps.embeddings.embed).not.toHaveBeenCalled();
     expect(deps.vectorDb.search).toHaveBeenCalledWith(precomputed, expect.any(Number), expect.any(Number));
   });
+  it("falls back to FTS-only without reporting expected all-provider failures", async () => {
+    const ftsResult = makeSearchResult("fts-1", 0.6);
+    const deps = makeDeps({
+      cfg: {
+        queryExpansion: {
+          enabled: false,
+          maxVariants: 4,
+          cacheSize: 100,
+          timeoutMs: 15_000,
+          skipForInteractiveTurns: true,
+        },
+        retrievalStrategies: ["semantic", "fts5"],
+        memoryTieringEnabled: false,
+        rawCfg: { llm: undefined } as unknown as RecallPipelineDeps["cfg"]["rawCfg"],
+      },
+    });
+
+    (deps.factsDb.search as ReturnType<typeof vi.fn>).mockReturnValue([ftsResult]);
+    (deps.embeddings.embed as ReturnType<typeof vi.fn>).mockRejectedValue(
+      new AllEmbeddingProvidersFailed([Object.assign(new Error("429 Too Many Requests"), { status: 429 })]),
+    );
+
+    const result = await runRecallPipelineQuery("vector query", 10, deps, { value: false });
+
+    expect(result.map((entry) => entry.entry.id)).toEqual(["fts-1"]);
+    expect(vi.mocked(capturePluginError)).not.toHaveBeenCalled();
+    expect(deps.logger.warn).toHaveBeenCalledWith(
+      expect.stringContaining("vector recall failed"),
+    );
+  });
+
+  it("still reports transient all-provider failures during recall", async () => {
+    const deps = makeDeps({
+      cfg: {
+        queryExpansion: {
+          enabled: false,
+          maxVariants: 4,
+          cacheSize: 100,
+          timeoutMs: 15_000,
+          skipForInteractiveTurns: true,
+        },
+        retrievalStrategies: ["semantic", "fts5"],
+        memoryTieringEnabled: false,
+        rawCfg: { llm: undefined } as unknown as RecallPipelineDeps["cfg"]["rawCfg"],
+      },
+    });
+
+    (deps.embeddings.embed as ReturnType<typeof vi.fn>).mockRejectedValue(
+      new AllEmbeddingProvidersFailed([new Error("network timeout")]),
+    );
+
+    await runRecallPipelineQuery("vector query", 10, deps, { value: false });
+
+    expect(vi.mocked(capturePluginError)).toHaveBeenCalled();
+  });
+
 });
 
 // ---------------------------------------------------------------------------
