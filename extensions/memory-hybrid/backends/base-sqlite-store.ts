@@ -50,10 +50,9 @@ export abstract class BaseSqliteStore {
   }
 
   protected get liveDb(): DatabaseSync {
-    if (!this._dbOpen) {
+    if (!this._dbOpen && !this.closed) {
       this.db.open();
       this._dbOpen = true;
-      this.closed = false;
       this.applyPragmas();
     }
     return this.db;

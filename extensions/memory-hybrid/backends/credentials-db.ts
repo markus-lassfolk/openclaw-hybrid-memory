@@ -75,11 +75,11 @@ export class CredentialsDB extends BaseSqliteStore {
   private kdfVersion!: number;
   private salt!: Buffer;
   /** When false, values are stored and read as plaintext (no encryption). */
-  private readonly encrypted: boolean = false;
+  private readonly encrypted: boolean;
   // SECURITY NOTE: Raw password is stored only for lazy migration from legacy SHA-256 to scrypt.
   // Migration is triggered on first successful get() to verify the password is correct before re-encrypting.
   // After migration completes, this field is cleared to minimize exposure in memory.
-  private password: string | null = null;
+  private password: string | null;
 
   constructor(dbPath: string, encryptionKey: string) {
     const encrypted = encryptionKey.length >= 16;
@@ -87,8 +87,7 @@ export class CredentialsDB extends BaseSqliteStore {
     const db = new DatabaseSync(dbPath);
     super(db);
     this.dbPath = dbPath;
-    // biome-ignore lint/suspicious/noExplicitAny: encrypted is readonly and must be set in constructor
-    (this as any).encrypted = encrypted;
+    this.encrypted = encrypted;
 
     this.liveDb.exec(`
       CREATE TABLE IF NOT EXISTS vault_meta (
@@ -151,7 +150,7 @@ export class CredentialsDB extends BaseSqliteStore {
     // Check if vault is plaintext first (before assuming legacy)
     if (versionRow && versionRow.value != null && toBuffer(versionRow.value)[0] === CRED_KDF_PLAINTEXT) {
       // C2 FIX: DB is plaintext, override this.encrypted regardless of key length
-      // biome-ignore lint/suspicious/noExplicitAny: encrypted is readonly and must be set in constructor
+      // biome-ignore lint/suspicious/noExplicitAny: encrypted is readonly and must be reassigned after initial assignment
       (this as any).encrypted = false;
       this.kdfVersion = CRED_KDF_PLAINTEXT;
       this.salt = Buffer.alloc(0);
@@ -417,7 +416,6 @@ export class CredentialsDB extends BaseSqliteStore {
     const r = this.liveDb.prepare("DELETE FROM credentials WHERE service = ?").run(service);
     return r.changes > 0;
   }
-
 }
 
 // Export encryption primitives for testing

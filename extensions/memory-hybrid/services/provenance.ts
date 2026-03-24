@@ -208,5 +208,4 @@ export class ProvenanceService extends BaseSqliteStore {
     const result = this.liveDb.prepare("DELETE FROM provenance_edges WHERE created_at < ?").run(cutoff);
     return Number(result.changes);
   }
-
 }

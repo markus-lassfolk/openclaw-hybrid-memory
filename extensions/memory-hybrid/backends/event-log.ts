@@ -424,5 +424,4 @@ export class EventLog extends BaseSqliteStore {
       createdAt: row.created_at as string,
     };
   }
-
 }
