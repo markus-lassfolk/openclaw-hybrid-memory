@@ -692,6 +692,16 @@ export function createPluginService(ctx: PluginServiceContext) {
           api.logger.warn("memory-hybrid: task-queue-watchdog shutdown timed out; continuing shutdown anyway");
         }
       }
+      if (versionCheckPromise) {
+        const timeoutMs = 5000;
+        const completed = await Promise.race([
+          versionCheckPromise.then(() => true).catch(() => true),
+          new Promise<boolean>((resolve) => setTimeout(() => resolve(false), timeoutMs)),
+        ]);
+        if (!completed) {
+          api.logger.warn("memory-hybrid: version-check shutdown timed out; continuing shutdown anyway");
+        }
+      }
       if (ctx.pythonBridge) {
         await ctx.pythonBridge.shutdown();
       }
