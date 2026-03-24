@@ -130,7 +130,7 @@ function getNestedErrors(err: unknown): unknown[] {
   if (!err || typeof err !== "object") return [];
   const nested: unknown[] = [];
   const cause = (err as ErrorLike).cause;
-  if (cause !== undefined) nested.push(cause);
+  if (cause != null) nested.push(cause);
 
   const causes = (err as ErrorLike).causes;
   if (Array.isArray(causes)) nested.push(...causes);
