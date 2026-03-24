@@ -11,7 +11,7 @@
 
 import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
-import type { EmbeddingProvider } from "../services/embeddings.js";
+import type { EmbeddingProvider } from "./embeddings.js";
 import type OpenAI from "openai";
 import type { SearchResult, ScopeFilter } from "../types/memory.js";
 import type { QueryExpansionConfig } from "../config.js";

@@ -262,9 +262,7 @@ describe("runRecallPipelineQuery — semantic mode", () => {
 
     expect(result.map((entry) => entry.entry.id)).toEqual(["fts-1"]);
     expect(vi.mocked(capturePluginError)).not.toHaveBeenCalled();
-    expect(deps.logger.warn).toHaveBeenCalledWith(
-      expect.stringContaining("vector recall failed"),
-    );
+    expect(deps.logger.warn).toHaveBeenCalledWith(expect.stringContaining("vector recall failed"));
   });
 
   it("still reports transient all-provider failures during recall", async () => {
@@ -291,7 +289,6 @@ describe("runRecallPipelineQuery — semantic mode", () => {
 
     expect(vi.mocked(capturePluginError)).toHaveBeenCalled();
   });
-
 });
 
 // ---------------------------------------------------------------------------

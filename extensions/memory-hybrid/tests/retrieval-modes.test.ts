@@ -206,5 +206,4 @@ describe("buildExplicitSemanticQueryVector", () => {
     await vi.dynamicImportSettled();
     expect(vi.mocked(errorReporter.capturePluginError)).toHaveBeenCalledOnce();
   });
-
 });
