@@ -15,12 +15,16 @@ export function is404Like(err: unknown): boolean {
     if (status === 404 || status === "404") return true;
   }
   if (err instanceof Error) {
-    return (
-      /\bHTTP\s+404\b|\b404\b.*not\s+found|model.*not\s+found|not\s+found.*model/i.test(err.message) ||
-      /^\b404\b/.test(err.message.trim()) ||
-      /\bError\s+code:\s*404\b|\b404\s+[A-Za-z]/.test(err.message) ||
-      /is not found for api version/i.test(err.message)
-    );
+    const msg = err.message.toLowerCase();
+    if (/\bhttp\s+404\b/.test(msg)) return true;
+    if (/^\b404\b/.test(msg.trim())) return true;
+    if (/\berror\s+code:\s*404\b/.test(msg)) return true;
+    if (/\b404\s+[a-z]/.test(msg)) return true;
+    if (msg.includes("is not found for api version")) return true;
+    
+    const hasNotFound = msg.includes("not found");
+    if (hasNotFound && /\b404\b/.test(msg)) return true;
+    if (hasNotFound && msg.includes("model")) return true;
   }
   return false;
 }

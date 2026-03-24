@@ -646,9 +646,10 @@ export function capturePluginError(
   // Suppress here to protect all current and future call sites centrally.
   if (error.name === "UnconfiguredProviderError") return undefined;
 
-  // HTTP-like 404s are usually provider/operator config issues (missing model,
-  // wrong endpoint, unavailable API version), not plugin bugs. Suppress them
-  // centrally so missed call-site guards do not create GlitchTip noise.
+  // 404-like "not found/unavailable" errors (real HTTP 404/status=404 or
+  // message-only patterns like "Model not found", wrong endpoint, or unavailable
+  // API version) are usually provider/operator config issues, not plugin bugs.
+  // Suppress them centrally so missed call-site guards do not create GlitchTip noise.
   if (is404Like(error)) return undefined;
 
   if (!initialized || !reporter) {
