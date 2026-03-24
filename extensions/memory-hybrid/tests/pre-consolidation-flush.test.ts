@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const replayWalEntries = vi.fn();
+const { replayWalEntries } = vi.hoisted(() => ({ replayWalEntries: vi.fn() }));
+
 vi.mock("../utils/wal-replay.js", () => ({ replayWalEntries }));
 
 import { runPreConsolidationFlush } from "../services/pre-consolidation-flush.js";

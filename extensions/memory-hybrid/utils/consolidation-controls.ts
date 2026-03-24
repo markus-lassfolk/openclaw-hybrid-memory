@@ -22,4 +22,3 @@ export function isConsolidatedDerivedFact(entry: ConsolidatedFactLike): boolean 
 export function applyConsolidationRetrievalControls(score: number, entry: ConsolidatedFactLike): number {
   return isConsolidatedDerivedFact(entry) ? score * CONSOLIDATED_RETRIEVAL_SCORE_MULTIPLIER : score;
 }
-

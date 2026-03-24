@@ -1,8 +1,5 @@
 import { describe, it, expect } from "vitest";
-import {
-  applyConsolidationRetrievalControls,
-  isConsolidatedDerivedFact,
-} from "../utils/consolidation-controls.js";
+import { applyConsolidationRetrievalControls, isConsolidatedDerivedFact } from "../utils/consolidation-controls.js";
 
 describe("consolidation controls", () => {
   it("recognizes derived consolidation facts by source, key, or tag", () => {

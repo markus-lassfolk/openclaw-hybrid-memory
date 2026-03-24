@@ -2672,7 +2672,6 @@ describe("FactsDB new decay classes (#237)", () => {
   });
 });
 
-
 describe("FactsDB.getFactsForConsolidation", () => {
   it("excludes already consolidated derived facts", () => {
     db.store({
