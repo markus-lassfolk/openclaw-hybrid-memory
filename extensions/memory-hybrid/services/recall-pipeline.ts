@@ -17,6 +17,7 @@ import type { SearchResult, ScopeFilter } from "../types/memory.js";
 import type { QueryExpansionConfig } from "../config.js";
 import type { getCronModelConfig } from "../config.js";
 import type { PendingLLMWarnings } from "../services/chat.js";
+import { shouldSuppressEmbeddingError } from "../services/embeddings.js";
 import { mergeResults, filterByScope } from "../services/merge-results.js";
 import { computeDynamicSalience } from "../utils/salience.js";
 import { capturePluginError } from "../services/error-reporter.js";

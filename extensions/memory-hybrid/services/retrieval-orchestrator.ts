@@ -115,12 +115,10 @@ export async function buildExplicitSemanticQueryVector({
     return { queryVector: await embeddings.embed(textToEmbed), warning: null };
   } catch (err) {
     if (!shouldSuppressEmbeddingError(err)) {
-      import("./error-reporter.js").then(({ capturePluginError }) =>
-        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-          subsystem: "retrieval",
-          operation: "explicit-vector-embed",
-        }),
-      );
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        subsystem: "retrieval",
+        operation: "explicit-vector-embed",
+      });
     }
     logger.warn(`memory-hybrid: embedding generation failed: ${err}`);
     return {
