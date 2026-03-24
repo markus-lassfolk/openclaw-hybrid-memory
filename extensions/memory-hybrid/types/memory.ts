@@ -54,6 +54,14 @@ export type MemoryEntry = {
   sourceSessions?: string | null;
   /** Embedding model used to generate this fact's vector (if stored). */
   embeddingModel?: string | null;
+  /** Provenance: session id associated with extraction or store. */
+  provenanceSession?: string | null;
+  /** Provenance: conversation turn number within the source session, when known. */
+  sourceTurn?: number | null;
+  /** Provenance: extraction path used to create the fact. */
+  extractionMethod?: string | null;
+  /** Provenance: confidence score for the extraction path (0-1). */
+  extractionConfidence?: number | null;
   /** Reinforcement tracking — number of times this fact was reinforced by user praise. */
   reinforcedCount?: number;
   /** When this fact was last reinforced (epoch seconds). */

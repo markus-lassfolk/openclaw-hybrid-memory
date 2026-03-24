@@ -15,6 +15,11 @@ import { truncateForStorage } from "../utils/text.js";
 import { extractTags } from "../utils/tags.js";
 import { extractStructuredFields } from "../services/fact-extraction.js";
 import { detectCredentialPatterns } from "../services/auto-capture.js";
+import {
+  getAutoCaptureExtractionConfidence,
+  getAutoCaptureExtractionMethod,
+  resolveCaptureProvenance,
+} from "../services/capture-provenance.js";
 import { classifyMemoryOperation } from "../services/classification.js";
 import { extractCredentialsFromToolCalls } from "../services/credential-scanner.js";
 import { capturePluginError } from "../services/error-reporter.js";
@@ -175,15 +180,23 @@ async function runCapture(
   // 6. Auto-capture from conversation messages
   if (ctx.cfg.autoCapture && ev.success && messages.length > 0) {
     try {
-      const texts: string[] = [];
-      for (const msg of messages as unknown[]) {
+      const captureProvenance = resolveCaptureProvenance(event, api, sessionKey);
+      if (!captureProvenance.shouldAutoCapture) {
+        api.logger.debug?.(
+          `memory-hybrid: skipped auto-capture for ${captureProvenance.origin} session (${captureProvenance.reason ?? "provenance blocked"})`,
+        );
+      }
+
+      const candidates: Array<{ role: "user" | "assistant"; text: string; sourceTurn: number }> = [];
+      for (let turnIndex = 0; turnIndex < (messages as unknown[]).length; turnIndex++) {
+        const msg = (messages as unknown[])[turnIndex];
         if (!msg || typeof msg !== "object") continue;
         const msgObj = msg as Record<string, unknown>;
         const role = msgObj.role;
         if (role !== "user" && role !== "assistant") continue;
         const content = msgObj.content;
         if (typeof content === "string") {
-          texts.push(content);
+          candidates.push({ role, text: content, sourceTurn: turnIndex + 1 });
           continue;
         }
         if (Array.isArray(content)) {
@@ -196,16 +209,22 @@ async function runCapture(
               "text" in block &&
               typeof (block as Record<string, unknown>).text === "string"
             ) {
-              texts.push((block as Record<string, unknown>).text as string);
+              candidates.push({
+                role,
+                text: (block as Record<string, unknown>).text as string,
+                sourceTurn: turnIndex + 1,
+              });
             }
           }
         }
       }
-      const toCapture = texts.filter((t) => t && ctx.shouldCapture(t));
+      const toCapture = captureProvenance.shouldAutoCapture
+        ? candidates.filter((candidate) => candidate.text && ctx.shouldCapture(candidate.text))
+        : [];
       if (toCapture.length > 0) {
         let stored = 0;
-        for (const text of toCapture.slice(0, 3)) {
-          let textToStore = text;
+        for (const candidate of toCapture.slice(0, 3)) {
+          let textToStore = candidate.text;
           textToStore = truncateForStorage(textToStore, ctx.cfg.captureMaxChars);
           const category: MemoryCategory = ctx.detectCategory(textToStore);
           const extracted = extractStructuredFields(textToStore, category);
@@ -270,6 +289,10 @@ async function runCapture(
                         decayClass: oldFact.decayClass,
                         summary,
                         tags: extractTags(textToStore, extracted.entity),
+                        provenanceSession: captureProvenance.sessionId,
+                        sourceTurn: candidate.sourceTurn,
+                        extractionMethod: getAutoCaptureExtractionMethod(candidate.role, captureProvenance),
+                        extractionConfidence: getAutoCaptureExtractionConfidence(candidate.role),
                         vector,
                       },
                       api.logger,
@@ -288,6 +311,10 @@ async function runCapture(
                       tags: extractTags(textToStore, extracted.entity),
                       validFrom: nowSec,
                       supersedesId: classification.targetId,
+                      provenanceSession: captureProvenance.sessionId,
+                      sourceTurn: candidate.sourceTurn,
+                      extractionMethod: getAutoCaptureExtractionMethod(candidate.role, captureProvenance),
+                      extractionConfidence: getAutoCaptureExtractionConfidence(candidate.role),
                     });
                     ctx.factsDb.supersede(classification.targetId, newEntry.id);
                     ctx.aliasDb?.deleteByFactId(classification.targetId);
@@ -340,6 +367,10 @@ async function runCapture(
               source: "auto-capture",
               summary,
               tags: extractTags(textToStore, extracted.entity),
+              provenanceSession: captureProvenance.sessionId,
+              sourceTurn: candidate.sourceTurn,
+              extractionMethod: getAutoCaptureExtractionMethod(candidate.role, captureProvenance),
+              extractionConfidence: getAutoCaptureExtractionConfidence(candidate.role),
               vector,
             },
             api.logger,
@@ -354,6 +385,10 @@ async function runCapture(
             source: "auto-capture",
             summary,
             tags: extractTags(textToStore, extracted.entity),
+            provenanceSession: captureProvenance.sessionId,
+            sourceTurn: candidate.sourceTurn,
+            extractionMethod: getAutoCaptureExtractionMethod(candidate.role, captureProvenance),
+            extractionConfidence: getAutoCaptureExtractionConfidence(candidate.role),
           });
           try {
             if (vector) {
