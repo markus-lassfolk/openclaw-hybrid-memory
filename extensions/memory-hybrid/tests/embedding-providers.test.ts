@@ -1512,7 +1512,9 @@ describe("#486: shouldSuppressEmbeddingError — suppression helper", () => {
 
   it("suppresses wrapped Ollama connection failures", () => {
     expect(
-      shouldSuppressEmbeddingError(new Error("Ollama connection failed (http://localhost:11434): TypeError: fetch failed")),
+      shouldSuppressEmbeddingError(
+        new Error("Ollama connection failed (http://localhost:11434): TypeError: fetch failed"),
+      ),
     ).toBe(true);
   });
 
