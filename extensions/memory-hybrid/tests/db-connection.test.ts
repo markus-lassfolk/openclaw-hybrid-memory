@@ -1,8 +1,8 @@
 /**
- * Verifies that FactsDB, CredentialsDB, and VectorDB auto-reconnect after their
+ * Verifies that FactsDB, CredentialsDB, EventLog, and VectorDB auto-reconnect after their
  * underlying connection is closed (e.g. by stop()/SIGUSR1 graceful restart).
  *
- * FactsDB/CredentialsDB use the liveDb getter to reopen SQLite connections.
+ * FactsDB/CredentialsDB/EventLog use the liveDb getter to reopen SQLite connections.
  * VectorDB uses auto-reconnect logic in ensureInitialized() to reopen LanceDB.
  *
  * Without this, callers would get "The database connection is not open" (SQLite)
@@ -15,7 +15,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { _testing } from "../index.js";
 
-const { FactsDB, CredentialsDB, VectorDB } = _testing;
+const { FactsDB, CredentialsDB, EventLog, VectorDB } = _testing;
 
 const TEST_ENCRYPTION_KEY = "test-encryption-key-for-unit-tests-32chars";
 
@@ -171,6 +171,42 @@ describe("CredentialsDB uses live connection (no stale this.db)", () => {
     closeInternalConnection(db);
     expect(db.delete("test", "api_key")).toBe(true);
     expect(db.get("test", "api_key")).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// EventLog: must auto-reconnect after close() (e.g., stop()/SIGUSR1 restart)
+// ---------------------------------------------------------------------------
+
+describe("EventLog auto-reconnects after close()", () => {
+  let tmpDir: string;
+  let log: InstanceType<typeof EventLog>;
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), "event-log-reconnect-test-"));
+    log = new EventLog(join(tmpDir, "event-log.db"));
+  });
+
+  afterEach(() => {
+    log.close();
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("append succeeds after close()", () => {
+    log.close();
+
+    const id = log.append({
+      sessionId: "session-1",
+      timestamp: "2026-03-24T00:00:00.000Z",
+      eventType: "fact_learned",
+      content: { text: "stored after reconnect" },
+    });
+
+    expect(typeof id).toBe("string");
+    const entries = log.getBySession("session-1");
+    expect(entries).toHaveLength(1);
+    expect(entries[0].id).toBe(id);
+    expect(entries[0].content).toEqual({ text: "stored after reconnect" });
   });
 });
 

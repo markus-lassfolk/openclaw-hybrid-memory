@@ -11,13 +11,13 @@
 
 import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
-import type { EmbeddingProvider } from "../services/embeddings.js";
+import type { EmbeddingProvider } from "./embeddings.js";
 import type OpenAI from "openai";
 import type { SearchResult, ScopeFilter } from "../types/memory.js";
 import type { QueryExpansionConfig } from "../config.js";
 import type { getCronModelConfig } from "../config.js";
 import type { PendingLLMWarnings } from "../services/chat.js";
-import { shouldSuppressEmbeddingError } from "../services/embeddings.js";
+import { shouldSuppressEmbeddingError } from "./embeddings.js";
 import { mergeResults, filterByScope } from "../services/merge-results.js";
 import { computeDynamicSalience } from "../utils/salience.js";
 import { capturePluginError } from "../services/error-reporter.js";
