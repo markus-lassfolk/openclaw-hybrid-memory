@@ -80,20 +80,34 @@ CREATE TABLE IF NOT EXISTS tool_effectiveness (
 
 export class ToolEffectivenessStore {
   private db: DatabaseSync;
+  private _dbOpen = true;
 
   constructor(dbPath: string) {
     mkdirSync(dirname(dbPath), { recursive: true });
     this.db = new DatabaseSync(dbPath);
+    this.applyPragmas();
+    this.liveDb.exec(SCHEMA);
+  }
+
+  private applyPragmas(): void {
     this.db.exec("PRAGMA journal_mode = WAL");
     this.db.exec(`PRAGMA busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
     this.db.exec("PRAGMA foreign_keys = ON");
-    this.db.exec(SCHEMA);
+  }
+
+  private get liveDb(): DatabaseSync {
+    if (!this._dbOpen) {
+      this.db.open();
+      this._dbOpen = true;
+      this.applyPragmas();
+    }
+    return this.db;
   }
 
   /** Upsert a tool score row. */
   upsert(metrics: ToolMetrics): void {
     const context = metrics.context ?? "general";
-    this.db
+    this.liveDb
       .prepare(
         `INSERT INTO tool_effectiveness
          (tool, context, total_calls, success_calls, failure_calls, unknown_calls, avg_duration_ms, avg_calls_per_session, composite_score, last_updated)
@@ -142,7 +156,7 @@ export class ToolEffectivenessStore {
     durationMs = 0,
   ): void {
     const now = Math.floor(Date.now() / 1000);
-    this.db
+    this.liveDb
       .prepare(
         `INSERT INTO tool_effectiveness
          (tool, context, total_calls, success_calls, failure_calls, unknown_calls, avg_duration_ms, avg_calls_per_session, composite_score, last_updated)
@@ -200,11 +214,11 @@ export class ToolEffectivenessStore {
 
     let rows: Row[];
     if (context !== undefined) {
-      rows = this.db
+      rows = this.liveDb
         .prepare("SELECT * FROM tool_effectiveness WHERE tool = ? AND context = ?")
         .all(tool, context) as Row[];
     } else {
-      rows = this.db.prepare("SELECT * FROM tool_effectiveness WHERE tool = ? ORDER BY context").all(tool) as Row[];
+      rows = this.liveDb.prepare("SELECT * FROM tool_effectiveness WHERE tool = ? ORDER BY context").all(tool) as Row[];
     }
 
     return rows.map((r) => ({
@@ -225,12 +239,12 @@ export class ToolEffectivenessStore {
 
   /** Apply decay to all scores. */
   applyDecay(factor: number): void {
-    this.db.prepare("UPDATE tool_effectiveness SET composite_score = composite_score * ?").run(factor);
+    this.liveDb.prepare("UPDATE tool_effectiveness SET composite_score = composite_score * ?").run(factor);
   }
 
   /** Get all scores ordered by composite_score DESC. */
   getAll(): ToolMetrics[] {
-    const rows = this.db.prepare("SELECT * FROM tool_effectiveness ORDER BY composite_score DESC").all() as Array<{
+    const rows = this.liveDb.prepare("SELECT * FROM tool_effectiveness ORDER BY composite_score DESC").all() as Array<{
       tool: string;
       context: string;
       total_calls: number;
@@ -261,7 +275,7 @@ export class ToolEffectivenessStore {
 
   /** Get score for a specific tool (first context row, or "general"). */
   getByTool(tool: string): ToolMetrics | null {
-    const row = this.db.prepare("SELECT * FROM tool_effectiveness WHERE tool = ? ORDER BY context LIMIT 1").get(tool) as
+    const row = this.liveDb.prepare("SELECT * FROM tool_effectiveness WHERE tool = ? ORDER BY context LIMIT 1").get(tool) as
       | {
           tool: string;
           context: string;
@@ -295,11 +309,13 @@ export class ToolEffectivenessStore {
 
   /** Count of scored tools. */
   count(): number {
-    const row = this.db.prepare("SELECT COUNT(*) as n FROM tool_effectiveness").get() as { n: number };
+    const row = this.liveDb.prepare("SELECT COUNT(*) as n FROM tool_effectiveness").get() as { n: number };
     return row.n;
   }
 
   close(): void {
+    if (!this._dbOpen) return;
+    this._dbOpen = false;
     try {
       this.db.close();
     } catch {

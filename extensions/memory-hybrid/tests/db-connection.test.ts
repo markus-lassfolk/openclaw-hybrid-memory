@@ -14,8 +14,10 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { _testing } from "../index.js";
+import { ApitapStore } from "../backends/apitap-store.js";
+import { ToolEffectivenessStore } from "../services/tool-effectiveness.js";
 
-const { FactsDB, CredentialsDB, EventLog, VectorDB } = _testing;
+const { FactsDB, CredentialsDB, EventLog, VectorDB, LearningsDB, ProposalsDB, WorkflowStore } = _testing;
 
 const TEST_ENCRYPTION_KEY = "test-encryption-key-for-unit-tests-32chars";
 
@@ -171,6 +173,139 @@ describe("CredentialsDB uses live connection (no stale this.db)", () => {
     closeInternalConnection(db);
     expect(db.delete("test", "api_key")).toBe(true);
     expect(db.get("test", "api_key")).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Additional SQLite stores: public close() must not leave a stale connection
+// ---------------------------------------------------------------------------
+
+describe("LearningsDB auto-reconnects after close()", () => {
+  let tmpDir: string;
+  let db: InstanceType<typeof LearningsDB>;
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), "learnings-db-reconnect-test-"));
+    db = new LearningsDB(join(tmpDir, "learnings.db"));
+  });
+
+  afterEach(() => {
+    db.close();
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("count succeeds after close()", () => {
+    db.create({ type: "error", area: "forge", content: "stale DB guard" });
+
+    db.close();
+
+    expect(db.count()).toBe(1);
+  });
+});
+
+describe("ProposalsDB auto-reconnects after close()", () => {
+  let tmpDir: string;
+  let db: InstanceType<typeof ProposalsDB>;
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), "proposals-db-reconnect-test-"));
+    db = new ProposalsDB(join(tmpDir, "proposals.db"));
+  });
+
+  afterEach(() => {
+    db.close();
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("get succeeds after close()", () => {
+    const proposal = db.create({
+      targetFile: "src/example.ts",
+      title: "Guard reopen",
+      observation: "DB may be closed",
+      suggestedChange: "Use liveDb getter",
+      confidence: 0.8,
+      evidenceSessions: ["session-1"],
+    });
+
+    db.close();
+
+    expect(db.get(proposal.id)?.title).toBe("Guard reopen");
+  });
+});
+
+describe("WorkflowStore auto-reconnects after close()", () => {
+  let tmpDir: string;
+  let store: InstanceType<typeof WorkflowStore>;
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), "workflow-store-reconnect-test-"));
+    store = new WorkflowStore(join(tmpDir, "workflow.db"));
+  });
+
+  afterEach(() => {
+    store.close();
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("getById succeeds after close()", () => {
+    const trace = store.record({ goal: "reconnect test", toolSequence: ["read", "exec"] });
+
+    store.close();
+
+    expect(store.getById(trace.id)?.goal).toBe("reconnect test");
+  });
+});
+
+describe("ApitapStore auto-reconnects after close()", () => {
+  let tmpDir: string;
+  let store: ApitapStore;
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), "apitap-store-reconnect-test-"));
+    store = new ApitapStore(join(tmpDir, "apitap.db"));
+  });
+
+  afterEach(() => {
+    store.close();
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("list succeeds after close()", () => {
+    store.create({
+      siteUrl: "https://example.com",
+      endpoint: "/api/users",
+      method: "GET",
+      parameters: { page: 1 },
+      sampleResponse: { users: [] },
+      sessionId: "session-1",
+    });
+
+    store.close();
+
+    expect(store.list()).toHaveLength(1);
+  });
+});
+
+describe("ToolEffectivenessStore auto-reconnects after close()", () => {
+  let tmpDir: string;
+  let store: ToolEffectivenessStore;
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), "tool-effectiveness-reconnect-test-"));
+    store = new ToolEffectivenessStore(join(tmpDir, "tool-effectiveness.db"));
+  });
+
+  afterEach(() => {
+    store.close();
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("getByTool succeeds after close()", () => {
+    store.recordToolOutcome("exec", "success", "general", 25);
+
+    store.close();
+
+    expect(store.getByTool("exec")?.totalCalls).toBe(1);
   });
 });
 

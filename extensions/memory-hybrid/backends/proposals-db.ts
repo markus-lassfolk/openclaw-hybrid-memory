@@ -56,15 +56,15 @@ export class ProposalsDB {
   private db: DatabaseSync;
   private readonly dbPath: string;
   private closed = false;
+  private _dbOpen = true;
 
   constructor(dbPath: string) {
     this.dbPath = dbPath;
     mkdirSync(dirname(dbPath), { recursive: true });
     this.db = new DatabaseSync(dbPath);
-    this.db.exec("PRAGMA journal_mode = WAL");
-    this.db.exec(`PRAGMA busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
+    this.applyPragmas();
 
-    this.db.exec(`
+    this.liveDb.exec(`
       CREATE TABLE IF NOT EXISTS proposals (
         id TEXT PRIMARY KEY,
         target_file TEXT NOT NULL,
@@ -85,7 +85,7 @@ export class ProposalsDB {
       )
     `);
 
-    this.db.exec(`
+    this.liveDb.exec(`
       CREATE INDEX IF NOT EXISTS idx_proposals_status ON proposals(status);
       CREATE INDEX IF NOT EXISTS idx_proposals_created ON proposals(created_at);
       CREATE INDEX IF NOT EXISTS idx_proposals_expires ON proposals(expires_at);
@@ -95,19 +95,34 @@ export class ProposalsDB {
     this.migrateTargetSnapshotColumns();
   }
 
+  private applyPragmas(): void {
+    this.db.exec("PRAGMA journal_mode = WAL");
+    this.db.exec(`PRAGMA busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
+  }
+
+  private get liveDb(): DatabaseSync {
+    if (!this._dbOpen) {
+      this.db.open();
+      this._dbOpen = true;
+      this.closed = false;
+      this.applyPragmas();
+    }
+    return this.db;
+  }
+
   private migrateRejectionReasonColumn(): void {
-    const cols = this.db.prepare("PRAGMA table_info(proposals)").all() as Array<{ name: string }>;
+    const cols = this.liveDb.prepare("PRAGMA table_info(proposals)").all() as Array<{ name: string }>;
     if (cols.some((c) => c.name === "rejection_reason")) return;
-    this.db.exec("ALTER TABLE proposals ADD COLUMN rejection_reason TEXT");
+    this.liveDb.exec("ALTER TABLE proposals ADD COLUMN rejection_reason TEXT");
   }
 
   private migrateTargetSnapshotColumns(): void {
-    const cols = this.db.prepare("PRAGMA table_info(proposals)").all() as Array<{ name: string }>;
+    const cols = this.liveDb.prepare("PRAGMA table_info(proposals)").all() as Array<{ name: string }>;
     if (!cols.some((c) => c.name === "target_mtime_ms")) {
-      this.db.exec("ALTER TABLE proposals ADD COLUMN target_mtime_ms REAL");
+      this.liveDb.exec("ALTER TABLE proposals ADD COLUMN target_mtime_ms REAL");
     }
     if (!cols.some((c) => c.name === "target_hash")) {
-      this.db.exec("ALTER TABLE proposals ADD COLUMN target_hash TEXT");
+      this.liveDb.exec("ALTER TABLE proposals ADD COLUMN target_hash TEXT");
     }
   }
 
@@ -126,7 +141,7 @@ export class ProposalsDB {
     const now = Math.floor(Date.now() / 1000);
     const evidenceJson = JSON.stringify(entry.evidenceSessions);
 
-    this.db
+    this.liveDb
       .prepare(
         `INSERT INTO proposals (id, target_file, title, observation, suggested_change, confidence, evidence_sessions, status, created_at, expires_at, target_mtime_ms, target_hash)
          VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)`,
@@ -150,7 +165,7 @@ export class ProposalsDB {
   }
 
   get(id: string): ProposalEntry | null {
-    const row = this.db.prepare("SELECT * FROM proposals WHERE id = ?").get(id) as unknown as ProposalRow | undefined;
+    const row = this.liveDb.prepare("SELECT * FROM proposals WHERE id = ?").get(id) as unknown as ProposalRow | undefined;
     if (!row) return null;
     return this.rowToEntry(row);
   }
@@ -170,13 +185,13 @@ export class ProposalsDB {
 
     query += " ORDER BY created_at DESC";
 
-    const rows = this.db.prepare(query).all(...params) as unknown as ProposalRow[];
+    const rows = this.liveDb.prepare(query).all(...params) as unknown as ProposalRow[];
     return rows.map((r) => this.rowToEntry(r));
   }
 
   updateStatus(id: string, status: string, reviewedBy?: string, rejectionReason?: string): ProposalEntry | null {
     const now = Math.floor(Date.now() / 1000);
-    this.db
+    this.liveDb
       .prepare("UPDATE proposals SET status = ?, reviewed_at = ?, reviewed_by = ?, rejection_reason = ? WHERE id = ?")
       .run(status, now, reviewedBy ?? null, rejectionReason ?? null, id);
     return this.get(id);
@@ -184,13 +199,13 @@ export class ProposalsDB {
 
   markApplied(id: string): ProposalEntry | null {
     const now = Math.floor(Date.now() / 1000);
-    this.db.prepare("UPDATE proposals SET status = 'applied', applied_at = ? WHERE id = ?").run(now, id);
+    this.liveDb.prepare("UPDATE proposals SET status = 'applied', applied_at = ? WHERE id = ?").run(now, id);
     return this.get(id);
   }
 
   countRecentProposals(daysBack: number): number {
     const cutoff = Math.floor(Date.now() / 1000) - daysBack * 24 * 3600;
-    const row = this.db
+    const row = this.liveDb
       .prepare("SELECT COUNT(*) as count FROM proposals WHERE created_at >= ?")
       .get(cutoff) as unknown as CountRow | undefined;
     return row?.count ?? 0;
@@ -198,7 +213,7 @@ export class ProposalsDB {
 
   pruneExpired(): number {
     const now = Math.floor(Date.now() / 1000);
-    const result = this.db
+    const result = this.liveDb
       .prepare("DELETE FROM proposals WHERE expires_at IS NOT NULL AND expires_at < ? AND status = 'pending'")
       .run(now);
     return Number(result.changes);
@@ -244,12 +259,13 @@ export class ProposalsDB {
 
   /** True if the database is still open. Used by the proposals prune timer to avoid using the DB after stop() has closed it (issue #130). */
   isOpen(): boolean {
-    return !this.closed;
+    return !this.closed && this._dbOpen;
   }
 
   close(): void {
     if (this.closed) return;
     this.closed = true;
+    this._dbOpen = false;
     try {
       this.db.close();
     } catch (err) {

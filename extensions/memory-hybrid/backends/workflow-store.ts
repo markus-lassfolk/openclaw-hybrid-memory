@@ -162,14 +162,14 @@ export function hashToolSequence(toolSequence: string[]): string {
 export class WorkflowStore {
   private db: DatabaseSync;
   private closed = false;
+  private _dbOpen = true;
 
   constructor(dbPath: string) {
     mkdirSync(dirname(dbPath), { recursive: true });
     this.db = new DatabaseSync(dbPath);
-    this.db.exec("PRAGMA journal_mode = WAL");
-    this.db.exec(`PRAGMA busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
+    this.applyPragmas();
 
-    this.db.exec(`
+    this.liveDb.exec(`
       CREATE TABLE IF NOT EXISTS workflow_traces (
         id           TEXT PRIMARY KEY,
         goal         TEXT NOT NULL,
@@ -190,6 +190,21 @@ export class WorkflowStore {
     `);
   }
 
+  private applyPragmas(): void {
+    this.db.exec("PRAGMA journal_mode = WAL");
+    this.db.exec(`PRAGMA busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
+  }
+
+  private get liveDb(): DatabaseSync {
+    if (!this._dbOpen) {
+      this.db.open();
+      this._dbOpen = true;
+      this.closed = false;
+      this.applyPragmas();
+    }
+    return this.db;
+  }
+
   // -------------------------------------------------------------------------
   // record — insert a new workflow trace
   // -------------------------------------------------------------------------
@@ -207,7 +222,7 @@ export class WorkflowStore {
     const durationMs = Math.round(input.durationMs ?? 0);
     const sessionId = input.sessionId ?? "";
 
-    this.db
+    this.liveDb
       .prepare(
         `INSERT INTO workflow_traces
            (id, goal, goal_keywords, tool_sequence, args_hash, outcome, tool_count, duration_ms, session_id, created_at)
@@ -235,7 +250,7 @@ export class WorkflowStore {
   // -------------------------------------------------------------------------
 
   getById(id: string): WorkflowTrace | null {
-    const row = this.db.prepare("SELECT * FROM workflow_traces WHERE id = ?").get(id) as
+    const row = this.liveDb.prepare("SELECT * FROM workflow_traces WHERE id = ?").get(id) as
       | Record<string, unknown>
       | undefined;
     if (!row) return null;
@@ -274,7 +289,7 @@ export class WorkflowStore {
       params.push(filter.limit);
     }
 
-    const rows = this.db.prepare(query).all(...params) as Record<string, unknown>[];
+    const rows = this.liveDb.prepare(query).all(...params) as Record<string, unknown>[];
     let results = rows.map((r) => this.rowToTrace(r));
 
     // Keyword filter (in-memory, JSON blob)
@@ -299,7 +314,7 @@ export class WorkflowStore {
   getByGoal(keywords: string[], limit = 20): WorkflowTrace[] {
     if (keywords.length === 0) return [];
     // Retrieve candidates via LIKE search on the JSON blob and filter in JS
-    const candidates = this.db
+    const candidates = this.liveDb
       .prepare("SELECT * FROM workflow_traces ORDER BY created_at DESC LIMIT 500")
       .all() as Record<string, unknown>[];
 
@@ -314,7 +329,7 @@ export class WorkflowStore {
   // -------------------------------------------------------------------------
 
   getSuccessRate(toolSequence: string[], similarityThreshold = 0.8): number {
-    const allRows = this.db.prepare("SELECT tool_sequence, outcome FROM workflow_traces").all() as {
+    const allRows = this.liveDb.prepare("SELECT tool_sequence, outcome FROM workflow_traces").all() as {
       tool_sequence: string;
       outcome: string;
     }[];
@@ -344,7 +359,7 @@ export class WorkflowStore {
 
   getPatterns(options?: { minSuccessRate?: number; similarityThreshold?: number; limit?: number }): WorkflowPattern[] {
     const threshold = options?.similarityThreshold ?? 0.8;
-    const allRows = this.db
+    const allRows = this.liveDb
       .prepare("SELECT goal, tool_sequence, outcome, duration_ms FROM workflow_traces ORDER BY created_at DESC")
       .all() as { goal: string; tool_sequence: string; outcome: string; duration_ms: number }[];
 
@@ -422,7 +437,7 @@ export class WorkflowStore {
 
   prune(olderThanDays: number): number {
     const cutoff = new Date(Date.now() - olderThanDays * 24 * 60 * 60 * 1000).toISOString();
-    const result = this.db.prepare("DELETE FROM workflow_traces WHERE created_at < ?").run(cutoff);
+    const result = this.liveDb.prepare("DELETE FROM workflow_traces WHERE created_at < ?").run(cutoff);
     return Number(result.changes);
   }
 
@@ -431,7 +446,7 @@ export class WorkflowStore {
   // -------------------------------------------------------------------------
 
   count(): number {
-    const row = this.db.prepare("SELECT COUNT(*) as n FROM workflow_traces").get() as { n: number };
+    const row = this.liveDb.prepare("SELECT COUNT(*) as n FROM workflow_traces").get() as { n: number };
     return row.n;
   }
 
@@ -442,6 +457,7 @@ export class WorkflowStore {
   close(): void {
     if (this.closed) return;
     this.closed = true;
+    this._dbOpen = false;
     try {
       this.db.close();
     } catch (err) {
@@ -454,7 +470,7 @@ export class WorkflowStore {
   }
 
   isOpen(): boolean {
-    return !this.closed;
+    return !this.closed && this._dbOpen;
   }
 
   // -------------------------------------------------------------------------

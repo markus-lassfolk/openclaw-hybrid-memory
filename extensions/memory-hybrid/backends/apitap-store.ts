@@ -79,14 +79,14 @@ export interface ApitapEndpointFilter {
 export class ApitapStore {
   private db: DatabaseSync;
   private closed = false;
+  private _dbOpen = true;
 
   constructor(dbPath: string) {
     mkdirSync(dirname(dbPath), { recursive: true });
     this.db = new DatabaseSync(dbPath);
-    this.db.exec("PRAGMA journal_mode = WAL");
-    this.db.exec(`PRAGMA busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
+    this.applyPragmas();
 
-    this.db.exec(`
+    this.liveDb.exec(`
       CREATE TABLE IF NOT EXISTS apitap_endpoints (
         id              TEXT PRIMARY KEY,
         site_url        TEXT NOT NULL,
@@ -110,6 +110,21 @@ export class ApitapStore {
     `);
   }
 
+  private applyPragmas(): void {
+    this.db.exec("PRAGMA journal_mode = WAL");
+    this.db.exec(`PRAGMA busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
+  }
+
+  private get liveDb(): DatabaseSync {
+    if (!this._dbOpen) {
+      this.db.open();
+      this._dbOpen = true;
+      this.closed = false;
+      this.applyPragmas();
+    }
+    return this.db;
+  }
+
   // -------------------------------------------------------------------------
   // create
   // -------------------------------------------------------------------------
@@ -130,7 +145,7 @@ export class ApitapStore {
       expiresAt = new Date(Date.now() + input.endpointTtlDays * 24 * 60 * 60_000).toISOString();
     }
 
-    this.db
+    this.liveDb
       .prepare(
         `INSERT INTO apitap_endpoints
            (id, site_url, endpoint, method, parameters, sample_response, content_type,
@@ -161,7 +176,7 @@ export class ApitapStore {
   // -------------------------------------------------------------------------
 
   getById(id: string): ApitapEndpoint | null {
-    const row = this.db.prepare("SELECT * FROM apitap_endpoints WHERE id = ?").get(id) as
+    const row = this.liveDb.prepare("SELECT * FROM apitap_endpoints WHERE id = ?").get(id) as
       | Record<string, unknown>
       | undefined;
     if (!row) return null;
@@ -200,7 +215,7 @@ export class ApitapStore {
       params.push(filter.limit);
     }
 
-    const rows = this.db.prepare(query).all(...params) as Record<string, unknown>[];
+    const rows = this.liveDb.prepare(query).all(...params) as Record<string, unknown>[];
     return rows.map((r) => this.rowToEndpoint(r));
   }
 
@@ -210,7 +225,7 @@ export class ApitapStore {
 
   updateStatus(id: string, status: ApitapEndpointStatus): ApitapEndpoint | null {
     const now = new Date().toISOString();
-    const result = this.db
+    const result = this.liveDb
       .prepare("UPDATE apitap_endpoints SET status = ?, updated_at = ? WHERE id = ?")
       .run(status, now, id);
 
@@ -223,7 +238,7 @@ export class ApitapStore {
   // -------------------------------------------------------------------------
 
   deleteExpired(): number {
-    const result = this.db
+    const result = this.liveDb
       .prepare(
         "DELETE FROM apitap_endpoints WHERE expires_at IS NOT NULL AND expires_at <= strftime('%Y-%m-%dT%H:%M:%fZ', 'now')",
       )
@@ -237,8 +252,8 @@ export class ApitapStore {
 
   count(status?: ApitapEndpointStatus): number {
     const row = status
-      ? (this.db.prepare("SELECT COUNT(*) as n FROM apitap_endpoints WHERE status = ?").get(status) as { n: number })
-      : (this.db.prepare("SELECT COUNT(*) as n FROM apitap_endpoints").get() as { n: number });
+      ? (this.liveDb.prepare("SELECT COUNT(*) as n FROM apitap_endpoints WHERE status = ?").get(status) as { n: number })
+      : (this.liveDb.prepare("SELECT COUNT(*) as n FROM apitap_endpoints").get() as { n: number });
     return row.n;
   }
 
@@ -247,7 +262,7 @@ export class ApitapStore {
   // -------------------------------------------------------------------------
 
   countForSession(sessionId: string): number {
-    const row = this.db.prepare("SELECT COUNT(*) as n FROM apitap_endpoints WHERE session_id = ?").get(sessionId) as {
+    const row = this.liveDb.prepare("SELECT COUNT(*) as n FROM apitap_endpoints WHERE session_id = ?").get(sessionId) as {
       n: number;
     };
     return row.n;
@@ -260,6 +275,7 @@ export class ApitapStore {
   close(): void {
     if (this.closed) return;
     this.closed = true;
+    this._dbOpen = false;
     try {
       this.db.close();
     } catch (err) {
@@ -272,7 +288,7 @@ export class ApitapStore {
   }
 
   isOpen(): boolean {
-    return !this.closed;
+    return !this.closed && this._dbOpen;
   }
 
   // -------------------------------------------------------------------------

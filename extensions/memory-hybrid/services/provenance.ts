@@ -77,6 +77,7 @@ interface FactProvenanceRow {
 
 export class ProvenanceService {
   private db: DatabaseSync;
+  private _dbOpen = true;
 
   constructor(dbPath: string) {
     mkdirSync(dirname(dbPath), { recursive: true });
@@ -91,8 +92,17 @@ export class ProvenanceService {
     this.db.exec("PRAGMA synchronous = NORMAL");
   }
 
+  private get liveDb(): DatabaseSync {
+    if (!this._dbOpen) {
+      this.db.open();
+      this._dbOpen = true;
+      this.applyPragmas();
+    }
+    return this.db;
+  }
+
   private initSchema(): void {
-    this.db.exec(`
+    this.liveDb.exec(`
       CREATE TABLE IF NOT EXISTS provenance_edges (
         id TEXT PRIMARY KEY,
         fact_id TEXT NOT NULL,
@@ -115,7 +125,7 @@ export class ProvenanceService {
   addEdge(factId: string, edge: ProvenanceEdge): string {
     const id = randomUUID();
     const now = new Date().toISOString();
-    this.db
+    this.liveDb
       .prepare(
         `INSERT INTO provenance_edges (id, fact_id, edge_type, source_type, source_id, source_text, created_at)
          VALUES (?, ?, ?, ?, ?, ?, ?)`,
@@ -129,7 +139,7 @@ export class ProvenanceService {
   // -------------------------------------------------------------------------
 
   getEdges(factId: string): ProvenanceEdgeRecord[] {
-    const rows = this.db
+    const rows = this.liveDb
       .prepare("SELECT * FROM provenance_edges WHERE fact_id = ? ORDER BY created_at ASC")
       .all(factId) as unknown as ProvenanceEdgeRow[];
     return rows.map((r) => ({
@@ -196,7 +206,7 @@ export class ProvenanceService {
   // -------------------------------------------------------------------------
 
   getFactsFromSource(sourceId: string): string[] {
-    const rows = this.db
+    const rows = this.liveDb
       .prepare("SELECT DISTINCT fact_id FROM provenance_edges WHERE source_id = ?")
       .all(sourceId) as Array<{ fact_id: string }>;
     return rows.map((r) => r.fact_id);
@@ -208,7 +218,7 @@ export class ProvenanceService {
 
   prune(retentionDays: number): number {
     const cutoff = new Date(Date.now() - retentionDays * 24 * 3600 * 1000).toISOString();
-    const result = this.db.prepare("DELETE FROM provenance_edges WHERE created_at < ?").run(cutoff);
+    const result = this.liveDb.prepare("DELETE FROM provenance_edges WHERE created_at < ?").run(cutoff);
     return Number(result.changes);
   }
 
@@ -217,6 +227,8 @@ export class ProvenanceService {
   // -------------------------------------------------------------------------
 
   close(): void {
+    if (!this._dbOpen) return;
+    this._dbOpen = false;
     this.db.close();
   }
 }

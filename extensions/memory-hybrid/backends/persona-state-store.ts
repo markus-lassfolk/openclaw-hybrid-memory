@@ -70,14 +70,14 @@ export type UpsertPersonaStateResult = {
 export class PersonaStateStore {
   private readonly db: DatabaseSync;
   private closed = false;
+  private _dbOpen = true;
 
   constructor(dbPath: string) {
     mkdirSync(dirname(dbPath), { recursive: true });
     this.db = new DatabaseSync(dbPath);
-    this.db.exec("PRAGMA journal_mode = WAL");
-    this.db.exec(`PRAGMA busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
+    this.applyPragmas();
 
-    this.db.exec(`
+    this.liveDb.exec(`
       CREATE TABLE IF NOT EXISTS persona_state (
         id                   TEXT PRIMARY KEY,
         state_key            TEXT NOT NULL UNIQUE,
@@ -103,22 +103,37 @@ export class PersonaStateStore {
     `);
   }
 
+  private applyPragmas(): void {
+    this.db.exec("PRAGMA journal_mode = WAL");
+    this.db.exec(`PRAGMA busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
+  }
+
+  private get liveDb(): DatabaseSync {
+    if (!this._dbOpen) {
+      this.db.open();
+      this._dbOpen = true;
+      this.closed = false;
+      this.applyPragmas();
+    }
+    return this.db;
+  }
+
   getByStateKey(stateKey: string): PersonaStateEntry | null {
-    const row = this.db.prepare(`SELECT * FROM persona_state WHERE state_key = ?`).get(stateKey) as
+    const row = this.liveDb.prepare(`SELECT * FROM persona_state WHERE state_key = ?`).get(stateKey) as
       | PersonaStateRow
       | undefined;
     return row ? this.rowToEntry(row) : null;
   }
 
   listRecent(limit = 50): PersonaStateEntry[] {
-    const rows = this.db
+    const rows = this.liveDb
       .prepare(`SELECT * FROM persona_state ORDER BY updated_at DESC LIMIT ?`)
       .all(limit) as unknown as PersonaStateRow[];
     return rows.map((row) => this.rowToEntry(row));
   }
 
   count(): number {
-    const row = this.db.prepare(`SELECT COUNT(*) AS count FROM persona_state`).get() as { count?: number } | undefined;
+    const row = this.liveDb.prepare(`SELECT COUNT(*) AS count FROM persona_state`).get() as { count?: number } | undefined;
     return row?.count ?? 0;
   }
 
@@ -130,7 +145,7 @@ export class PersonaStateStore {
 
     if (!existing) {
       const id = randomUUID();
-      this.db
+      this.liveDb
         .prepare(
           `INSERT INTO persona_state (
              id, state_key, question_key, target_file, insight, normalized_insight,
@@ -177,7 +192,7 @@ export class PersonaStateStore {
       return { action: "unchanged", entry: existing };
     }
 
-    this.db
+    this.liveDb
       .prepare(
         `UPDATE persona_state
          SET target_file = ?,
@@ -212,6 +227,7 @@ export class PersonaStateStore {
   close(): void {
     if (this.closed) return;
     this.closed = true;
+    this._dbOpen = false;
     try {
       this.db.close();
     } catch (err) {

@@ -56,14 +56,14 @@ export interface ProposalFilter {
 export class CrystallizationStore {
   private db: DatabaseSync;
   private closed = false;
+  private _dbOpen = true;
 
   constructor(dbPath: string) {
     mkdirSync(dirname(dbPath), { recursive: true });
     this.db = new DatabaseSync(dbPath);
-    this.db.exec("PRAGMA journal_mode = WAL");
-    this.db.exec(`PRAGMA busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
+    this.applyPragmas();
 
-    this.db.exec(`
+    this.liveDb.exec(`
       CREATE TABLE IF NOT EXISTS crystallization_proposals (
         id               TEXT PRIMARY KEY,
         pattern_id       TEXT NOT NULL,
@@ -83,6 +83,21 @@ export class CrystallizationStore {
     `);
   }
 
+  private applyPragmas(): void {
+    this.db.exec("PRAGMA journal_mode = WAL");
+    this.db.exec(`PRAGMA busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
+  }
+
+  private get liveDb(): DatabaseSync {
+    if (!this._dbOpen) {
+      this.db.open();
+      this._dbOpen = true;
+      this.closed = false;
+      this.applyPragmas();
+    }
+    return this.db;
+  }
+
   // -------------------------------------------------------------------------
   // create
   // -------------------------------------------------------------------------
@@ -91,7 +106,7 @@ export class CrystallizationStore {
     const id = randomUUID();
     const now = new Date().toISOString();
 
-    this.db
+    this.liveDb
       .prepare(
         `INSERT INTO crystallization_proposals
            (id, pattern_id, skill_name, skill_content, status, pattern_snapshot, created_at, updated_at)
@@ -108,7 +123,7 @@ export class CrystallizationStore {
   // -------------------------------------------------------------------------
 
   getById(id: string): CrystallizationProposal | null {
-    const row = this.db.prepare("SELECT * FROM crystallization_proposals WHERE id = ?").get(id) as
+    const row = this.liveDb.prepare("SELECT * FROM crystallization_proposals WHERE id = ?").get(id) as
       | Record<string, unknown>
       | undefined;
     if (!row) return null;
@@ -120,7 +135,7 @@ export class CrystallizationStore {
   // -------------------------------------------------------------------------
 
   getByPatternId(patternId: string): CrystallizationProposal | null {
-    const row = this.db
+    const row = this.liveDb
       .prepare("SELECT * FROM crystallization_proposals WHERE pattern_id = ? ORDER BY created_at DESC LIMIT 1")
       .get(patternId) as Record<string, unknown> | undefined;
     if (!row) return null;
@@ -151,7 +166,7 @@ export class CrystallizationStore {
       params.push(filter.limit);
     }
 
-    const rows = this.db.prepare(query).all(...params) as Record<string, unknown>[];
+    const rows = this.liveDb.prepare(query).all(...params) as Record<string, unknown>[];
     return rows.map((r) => this.rowToProposal(r));
   }
 
@@ -161,7 +176,7 @@ export class CrystallizationStore {
 
   approve(id: string, outputPath: string): CrystallizationProposal | null {
     const now = new Date().toISOString();
-    const result = this.db
+    const result = this.liveDb
       .prepare(
         `UPDATE crystallization_proposals
          SET status = 'approved', output_path = ?, updated_at = ?
@@ -179,7 +194,7 @@ export class CrystallizationStore {
 
   reject(id: string, reason?: string): CrystallizationProposal | null {
     const now = new Date().toISOString();
-    const result = this.db
+    const result = this.liveDb
       .prepare(
         `UPDATE crystallization_proposals
          SET status = 'rejected', rejection_reason = ?, updated_at = ?
@@ -197,12 +212,12 @@ export class CrystallizationStore {
 
   count(status?: CrystallizationStatus): number {
     if (status) {
-      const row = this.db
+      const row = this.liveDb
         .prepare("SELECT COUNT(*) as n FROM crystallization_proposals WHERE status = ?")
         .get(status) as { n: number };
       return row.n;
     }
-    const row = this.db.prepare("SELECT COUNT(*) as n FROM crystallization_proposals").get() as { n: number };
+    const row = this.liveDb.prepare("SELECT COUNT(*) as n FROM crystallization_proposals").get() as { n: number };
     return row.n;
   }
 
@@ -211,7 +226,7 @@ export class CrystallizationStore {
   // -------------------------------------------------------------------------
 
   hasPendingOrApprovedForPattern(patternId: string): boolean {
-    const row = this.db
+    const row = this.liveDb
       .prepare(
         "SELECT COUNT(*) as n FROM crystallization_proposals WHERE pattern_id = ? AND status IN ('pending', 'approved')",
       )
@@ -226,6 +241,7 @@ export class CrystallizationStore {
   close(): void {
     if (this.closed) return;
     this.closed = true;
+    this._dbOpen = false;
     try {
       this.db.close();
     } catch (err) {
@@ -238,7 +254,7 @@ export class CrystallizationStore {
   }
 
   isOpen(): boolean {
-    return !this.closed;
+    return !this.closed && this._dbOpen;
   }
 
   // -------------------------------------------------------------------------

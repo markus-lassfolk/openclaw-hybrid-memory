@@ -48,14 +48,14 @@ export interface IdentityReflectionEntry {
 export class IdentityReflectionStore {
   private readonly db: DatabaseSync;
   private closed = false;
+  private _dbOpen = true;
 
   constructor(dbPath: string) {
     mkdirSync(dirname(dbPath), { recursive: true });
     this.db = new DatabaseSync(dbPath);
-    this.db.exec("PRAGMA journal_mode = WAL");
-    this.db.exec(`PRAGMA busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
+    this.applyPragmas();
 
-    this.db.exec(`
+    this.liveDb.exec(`
       CREATE TABLE IF NOT EXISTS identity_reflections (
         id                    TEXT PRIMARY KEY,
         run_id                TEXT NOT NULL,
@@ -79,6 +79,21 @@ export class IdentityReflectionStore {
     `);
   }
 
+  private applyPragmas(): void {
+    this.db.exec("PRAGMA journal_mode = WAL");
+    this.db.exec(`PRAGMA busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
+  }
+
+  private get liveDb(): DatabaseSync {
+    if (!this._dbOpen) {
+      this.db.open();
+      this._dbOpen = true;
+      this.closed = false;
+      this.applyPragmas();
+    }
+    return this.db;
+  }
+
   create(entry: {
     runId: string;
     questionKey: string;
@@ -94,7 +109,7 @@ export class IdentityReflectionStore {
     const id = randomUUID();
     const createdAt = Math.floor(Date.now() / 1000);
     const evidence = JSON.stringify(entry.evidence ?? []);
-    this.db
+    this.liveDb
       .prepare(
         `INSERT INTO identity_reflections (
            id, run_id, question_key, question_text, insight, durability, confidence, evidence,
@@ -120,7 +135,7 @@ export class IdentityReflectionStore {
   }
 
   get(id: string): IdentityReflectionEntry | null {
-    const row = this.db.prepare("SELECT * FROM identity_reflections WHERE id = ?").get(id) as
+    const row = this.liveDb.prepare("SELECT * FROM identity_reflections WHERE id = ?").get(id) as
       | IdentityReflectionRow
       | undefined;
     if (!row) return null;
@@ -128,14 +143,14 @@ export class IdentityReflectionStore {
   }
 
   listRecent(limit = 50): IdentityReflectionEntry[] {
-    const rows = this.db
+    const rows = this.liveDb
       .prepare("SELECT * FROM identity_reflections ORDER BY created_at DESC LIMIT ?")
       .all(limit) as unknown as IdentityReflectionRow[];
     return rows.map((row) => this.rowToEntry(row));
   }
 
   getLatestByQuestion(questionKey: string): IdentityReflectionEntry | null {
-    const row = this.db
+    const row = this.liveDb
       .prepare("SELECT * FROM identity_reflections WHERE question_key = ? ORDER BY created_at DESC LIMIT 1")
       .get(questionKey) as IdentityReflectionRow | undefined;
     if (!row) return null;
@@ -145,6 +160,7 @@ export class IdentityReflectionStore {
   close(): void {
     if (this.closed) return;
     this.closed = true;
+    this._dbOpen = false;
     try {
       this.db.close();
     } catch (err) {

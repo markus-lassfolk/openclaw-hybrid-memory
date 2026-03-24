@@ -40,14 +40,14 @@ interface IssueRow {
 export class IssueStore {
   private db: DatabaseSync;
   private closed = false;
+  private _dbOpen = true;
 
   constructor(dbPath: string) {
     mkdirSync(dirname(dbPath), { recursive: true });
     this.db = new DatabaseSync(dbPath);
-    this.db.exec("PRAGMA journal_mode = WAL");
-    this.db.exec(`PRAGMA busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
+    this.applyPragmas();
 
-    this.db.exec(`
+    this.liveDb.exec(`
       CREATE TABLE IF NOT EXISTS issues (
         id TEXT PRIMARY KEY,
         title TEXT NOT NULL,
@@ -72,11 +72,26 @@ export class IssueStore {
     `);
   }
 
+  private applyPragmas(): void {
+    this.db.exec("PRAGMA journal_mode = WAL");
+    this.db.exec(`PRAGMA busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
+  }
+
+  private get liveDb(): DatabaseSync {
+    if (!this._dbOpen) {
+      this.db.open();
+      this._dbOpen = true;
+      this.closed = false;
+      this.applyPragmas();
+    }
+    return this.db;
+  }
+
   create(input: CreateIssueInput): Issue {
     const id = randomUUID();
     const now = new Date().toISOString();
 
-    this.db
+    this.liveDb
       .prepare(
         `INSERT INTO issues (id, title, status, severity, symptoms, related_facts, detected_at, tags, metadata, created_at, updated_at)
          VALUES (?, ?, 'open', ?, ?, '[]', ?, ?, ?, ?, ?)`,
@@ -97,7 +112,7 @@ export class IssueStore {
   }
 
   get(id: string): Issue | null {
-    const row = this.db.prepare("SELECT * FROM issues WHERE id = ?").get(id) as unknown as IssueRow | undefined;
+    const row = this.liveDb.prepare("SELECT * FROM issues WHERE id = ?").get(id) as unknown as IssueRow | undefined;
     if (!row) return null;
     return this.rowToIssue(row);
   }
@@ -160,7 +175,7 @@ export class IssueStore {
     }
 
     params.push(id);
-    this.db.prepare(`UPDATE issues SET ${sets.join(", ")} WHERE id = ?`).run(...params);
+    this.liveDb.prepare(`UPDATE issues SET ${sets.join(", ")} WHERE id = ?`).run(...params);
 
     return this.get(id)!;
   }
@@ -213,7 +228,7 @@ export class IssueStore {
       params.push(filter.limit);
     }
 
-    const rows = this.db.prepare(query).all(...params) as unknown as IssueRow[];
+    const rows = this.liveDb.prepare(query).all(...params) as unknown as IssueRow[];
     let results = rows.map((r) => this.rowToIssue(r));
 
     // Tags filtering (JSON array — done in-memory for simplicity)
@@ -232,7 +247,7 @@ export class IssueStore {
 
   search(query: string): Issue[] {
     const term = `%${query}%`;
-    const rows = this.db
+    const rows = this.liveDb
       .prepare("SELECT * FROM issues WHERE title LIKE ? OR symptoms LIKE ? ORDER BY created_at DESC LIMIT 50")
       .all(term, term) as unknown as IssueRow[];
     return rows.map((r) => this.rowToIssue(r));
@@ -245,7 +260,7 @@ export class IssueStore {
     const related = issue.relatedFacts;
     if (!related.includes(factId)) {
       related.push(factId);
-      this.db
+      this.liveDb
         .prepare("UPDATE issues SET related_facts = ?, updated_at = ? WHERE id = ?")
         .run(JSON.stringify(related), new Date().toISOString(), issueId);
     }
@@ -253,7 +268,7 @@ export class IssueStore {
 
   archive(olderThanDays: number): number {
     const cutoff = new Date(Date.now() - olderThanDays * 24 * 60 * 60 * 1000).toISOString();
-    const result = this.db
+    const result = this.liveDb
       .prepare(`DELETE FROM issues WHERE status IN ('verified', 'wont-fix') AND updated_at < ?`)
       .run(cutoff);
     return Number(result.changes);
@@ -297,6 +312,7 @@ export class IssueStore {
   close(): void {
     if (this.closed) return;
     this.closed = true;
+    this._dbOpen = false;
     try {
       this.db.close();
     } catch (err) {
@@ -309,6 +325,6 @@ export class IssueStore {
   }
 
   isOpen(): boolean {
-    return !this.closed;
+    return !this.closed && this._dbOpen;
   }
 }
