@@ -1,3 +1,5 @@
+import { is404Like } from "./http-error-guards.js";
+
 /**
  * Error Reporter Service for GlitchTip Integration
  *
@@ -643,6 +645,11 @@ export function capturePluginError(
   // UnconfiguredProviderError is a config issue (missing API key), not a code bug.
   // Suppress here to protect all current and future call sites centrally.
   if (error.name === "UnconfiguredProviderError") return undefined;
+
+  // HTTP-like 404s are usually provider/operator config issues (missing model,
+  // wrong endpoint, unavailable API version), not plugin bugs. Suppress them
+  // centrally so missed call-site guards do not create GlitchTip noise.
+  if (is404Like(error)) return undefined;
 
   if (!initialized || !reporter) {
     return undefined;

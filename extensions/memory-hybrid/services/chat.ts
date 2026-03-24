@@ -7,6 +7,8 @@ import type { OpenAI } from "openai";
 import { capturePluginError } from "./error-reporter.js";
 import { withCostFeature } from "./cost-context.js";
 import { pluginLogger } from "../utils/logger.js";
+import { is404Like } from "./http-error-guards.js";
+export { is404Like } from "./http-error-guards.js";
 import {
   getDistillBatchTokenLimit as getDistillBatchTokenLimitFromCatalog,
   getDistillMaxOutputTokens as getDistillMaxOutputTokensFromCatalog,
@@ -58,37 +60,6 @@ export function createPendingLLMWarnings(): PendingLLMWarnings {
 
 /** Default timeout for chat completion (prevents indefinite hang if gateway/LLM never responds). */
 const DEFAULT_CHAT_TIMEOUT_MS = 45_000;
-
-/**
- * Unified 404 detection helper.
- * Checks the HTTP status code property first (reliable), then falls back to
- * targeted message pattern matching. Only matches "model not found" scenarios,
- * NOT generic "file not found" or "module not found" errors.
- *
- * Exported so embeddings.ts can suppress capturePluginError for 404 errors.
- */
-export function is404Like(err: unknown): boolean {
-  if (err && typeof err === "object") {
-    // OpenAI SDK sets .status directly (number); also tolerate string "404" for robustness
-    const status = (err as { status?: unknown }).status;
-    if (status === 404 || status === "404") return true;
-  }
-  if (err instanceof Error) {
-    // Match HTTP 404 patterns specifically — avoid false positives from
-    // "file not found" or "module not found" strings in non-HTTP errors.
-    return (
-      /\bHTTP\s+404\b|\b404\b.*not\s+found|model.*not\s+found|not\s+found.*model/i.test(err.message) ||
-      // Also match bare numeric 404 in error messages (e.g. "404 Not Found" from HTTP responses)
-      /^\b404\b/.test(err.message.trim()) ||
-      // OpenAI SDK formats: "404 Model not found" or "Error code: 404"
-      /\bError\s+code:\s*404\b|\b404\s+[A-Za-z]/.test(err.message) ||
-      // Google Generative Language API: "models/<name> is not found for API version <v>"
-      // Occurs when a model is unavailable through a specific API version endpoint (e.g. v1beta/openai/).
-      /is not found for api version/i.test(err.message)
-    );
-  }
-  return false;
-}
 
 /**
  * 403 Forbidden / access-denied detection helper.

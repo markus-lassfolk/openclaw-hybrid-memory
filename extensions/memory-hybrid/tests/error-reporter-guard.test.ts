@@ -68,4 +68,32 @@ describe("UnconfiguredProviderError guard with mocked fetch", () => {
     // Verify that fetch was NOT called (guard suppressed it)
     expect(mockFetch).not.toHaveBeenCalled();
   });
+
+  it("capturePluginError suppresses HTTP-like 404 errors without calling fetch", async () => {
+    const { capturePluginError, flushErrorReporter } = await import("../services/error-reporter.js");
+
+    const err = Object.assign(new Error("404 Not Found"), { status: 404 });
+
+    const result = capturePluginError(err, { operation: "test-404-suppression" });
+
+    await flushErrorReporter(500);
+
+    expect(result).toBeUndefined();
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it("capturePluginError still reports non-HTTP file-not-found errors", async () => {
+    const { capturePluginError, flushErrorReporter } = await import("../services/error-reporter.js");
+
+    const err = new Error("file not found: /tmp/missing.txt");
+    capturePluginError(err, { operation: "test-file-not-found" });
+
+    await flushErrorReporter(500);
+
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    expect(mockFetch).toHaveBeenCalledWith(
+      expect.stringContaining("/api/"),
+      expect.objectContaining({ method: "POST" }),
+    );
+  });
 });
