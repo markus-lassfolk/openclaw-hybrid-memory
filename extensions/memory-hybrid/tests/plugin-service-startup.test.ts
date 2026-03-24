@@ -191,10 +191,10 @@ describe("createPluginService startup — version check wiring", () => {
     const api = makeMockApi(MIN_OPENCLAW_VERSION);
     const fetchMock = vi.fn(async (input: string | URL) => {
       const url = String(input);
-      if (new URL(url).hostname === "registry.npmjs.org") {
+      if (url.startsWith("https://registry.npmjs.org/")) {
         return new Response(JSON.stringify({ version: "2026.3.999" }), { status: 200 });
       }
-      if (new URL(url).hostname === "api.github.com") {
+      if (url.startsWith("https://api.github.com/")) {
         return new Response(JSON.stringify({ tag_name: "v2026.3.999" }), { status: 200 });
       }
       return new Response("", { status: 200 });

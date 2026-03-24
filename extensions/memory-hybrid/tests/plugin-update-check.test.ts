@@ -71,7 +71,7 @@ describe("plugin update check utilities", () => {
   it("prefers the newest published version across npm and GitHub", async () => {
     const fetchMock = vi.fn(async (input: string | URL) => {
       const url = String(input);
-      if (new URL(url).hostname === "registry.npmjs.org") {
+      if (url.startsWith("https://registry.npmjs.org/")) {
         return new Response(JSON.stringify({ version: "2026.3.180" }), { status: 200 });
       }
       return new Response(JSON.stringify({ tag_name: "v2026.3.190" }), { status: 200 });
@@ -86,7 +86,7 @@ describe("plugin update check utilities", () => {
   it("falls back cleanly when one upstream is unavailable", async () => {
     const fetchMock = vi.fn(async (input: string | URL) => {
       const url = String(input);
-      if (new URL(url).hostname === "registry.npmjs.org") {
+      if (url.startsWith("https://registry.npmjs.org/")) {
         throw new Error("network down");
       }
       return new Response(JSON.stringify({ tag_name: "v2026.3.188" }), { status: 200 });
