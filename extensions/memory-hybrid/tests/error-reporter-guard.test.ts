@@ -82,6 +82,19 @@ describe("UnconfiguredProviderError guard with mocked fetch", () => {
     expect(mockFetch).not.toHaveBeenCalled();
   });
 
+  it("capturePluginError suppresses transient network errors without calling fetch", async () => {
+    const { capturePluginError, flushErrorReporter } = await import("../services/error-reporter.js");
+
+    const result = capturePluginError(new Error("ECONNREFUSED http://localhost:11434"), {
+      operation: "test-network-suppression",
+    });
+
+    await flushErrorReporter(500);
+
+    expect(result).toBeUndefined();
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
   it("capturePluginError still reports non-HTTP file-not-found errors", async () => {
     const { capturePluginError, flushErrorReporter } = await import("../services/error-reporter.js");
 
@@ -95,5 +108,31 @@ describe("UnconfiguredProviderError guard with mocked fetch", () => {
       expect.stringContaining("/api/"),
       expect.objectContaining({ method: "POST" }),
     );
+  });
+
+  it("capturePluginError suppresses auth errors without calling fetch", async () => {
+    const { capturePluginError, flushErrorReporter } = await import("../services/error-reporter.js");
+
+    const result = capturePluginError(Object.assign(new Error("401 Unauthorized"), { status: 401 }), {
+      operation: "test-auth-suppression",
+    });
+
+    await flushErrorReporter(500);
+
+    expect(result).toBeUndefined();
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it("capturePluginError suppresses circuit-breaker-open errors without calling fetch", async () => {
+    const { capturePluginError, flushErrorReporter } = await import("../services/error-reporter.js");
+
+    const result = capturePluginError(new Error("Ollama circuit breaker open — retrying in 30s"), {
+      operation: "test-circuit-breaker-suppression",
+    });
+
+    await flushErrorReporter(500);
+
+    expect(result).toBeUndefined();
+    expect(mockFetch).not.toHaveBeenCalled();
   });
 });
