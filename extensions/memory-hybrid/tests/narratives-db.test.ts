@@ -82,6 +82,22 @@ describe("NarrativesDB", () => {
     expect(rows.map((r) => r.sessionId)).toEqual(["new-session"]);
   });
 
+  it("reopens after close so listRecent still works", () => {
+    db.store({
+      sessionId: "s1",
+      periodStart: 1000,
+      periodEnd: 2000,
+      tag: "session",
+      narrativeText: "Stored before close",
+    });
+
+    db.close();
+
+    const rows = db.listRecent(5, "session");
+    expect(rows).toHaveLength(1);
+    expect(rows[0].narrativeText).toBe("Stored before close");
+  });
+
   it("lists narratives for one session across tags", () => {
     db.store({
       sessionId: "focus-session",
