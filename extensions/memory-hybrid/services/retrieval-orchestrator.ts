@@ -38,6 +38,7 @@ import {
 } from "./retrieval-mode-policy.js";
 import { expandQueryWithHyde } from "./hyde-helper.js";
 import { capturePluginError } from "./error-reporter.js";
+import { shouldSuppressEmbeddingError } from "./embeddings.js";
 import { validateQueryForMemoryLookup, type QueryValidationResult } from "./query-validator.js";
 import { DocumentGrader } from "./document-grader.js";
 import { stableStringify } from "../utils/stable-stringify.js";
@@ -113,13 +114,11 @@ export async function buildExplicitSemanticQueryVector({
 
     return { queryVector: await embeddings.embed(textToEmbed), warning: null };
   } catch (err) {
-    if (err && (err as any).name !== "AllEmbeddingProvidersFailed") {
-      import("./error-reporter.js").then(({ capturePluginError }) =>
-        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-          subsystem: "retrieval",
-          operation: "explicit-vector-embed",
-        }),
-      );
+    if (!shouldSuppressEmbeddingError(err)) {
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        subsystem: "retrieval",
+        operation: "explicit-vector-embed",
+      });
     }
     logger.warn(`memory-hybrid: embedding generation failed: ${err}`);
     return {

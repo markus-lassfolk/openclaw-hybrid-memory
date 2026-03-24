@@ -15,7 +15,7 @@
 import OpenAI from "openai";
 import { createReadStream } from "node:fs";
 import { createInterface } from "node:readline";
-import { chatComplete, isContextLengthError } from "./chat.js";
+import { chatComplete, isConnectionErrorLike, isContextLengthError } from "./chat.js";
 import { capturePluginError } from "./error-reporter.js";
 
 /** Configuration for local LLM pre-filtering. */
@@ -200,6 +200,7 @@ async function classifySession(sample: string, config: PreFilterConfig, ollamaCl
  * or server error) — all of which indicate Ollama cannot serve the request.
  */
 function isConnectionError(err: unknown): boolean {
+  if (isConnectionErrorLike(err)) return true;
   const msg = err instanceof Error ? err.message : String(err);
   if (
     /ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND|EHOSTUNREACH|connect\s+ETIMEDOUT|socket hang up|LLM request timeout/i.test(

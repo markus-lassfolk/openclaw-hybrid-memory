@@ -32,9 +32,9 @@
   },
   "keywords": ["openclaw", "plugin", "memory", "sqlite", "lancedb", "embeddings"],
   "peerDependencies": {
-    "openclaw": ">=2026.3.8",
+    "@sinclair/typebox": "^0.34.48",
     "openai": "^6.16.0",
-    "@sinclair/typebox": "^0.34.48"
+    "openclaw": ">=2026.3.8"
   },
   "dependencies": {
     "@lancedb/lancedb": "^0.27.1",
@@ -59,7 +59,7 @@
     "release:publish": "npm run verify:publish && npm publish --otp=$OTP"
   },
   "devDependencies": {
-    "@biomejs/biome": "^1.9.0",
+    "@biomejs/biome": "^1.9.4",
     "@vitest/coverage-v8": "^4.0.18",
     "knip": "^5.0.0",
     "typescript": "^5.9.3",

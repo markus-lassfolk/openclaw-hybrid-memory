@@ -208,6 +208,51 @@ export function is500Like(err: unknown): boolean {
 }
 
 /**
+ * Detect transient SDK/network connection failures.
+ *
+ * OpenAI-compatible SDKs may surface connectivity problems as a bare
+ * "Connection error." message (e.g. APIConnectionError) without exposing the
+ * underlying socket code on the top-level Error object. These are transient
+ * transport failures, not plugin logic bugs, so callers should treat them like
+ * timeouts/ECONNREFUSED for retry, fallback, and GlitchTip suppression.
+ */
+export function isConnectionErrorLike(err: unknown): boolean {
+  if (err instanceof LLMRetryError) return isConnectionErrorLike(err.cause);
+
+  const candidates: unknown[] = [err];
+  if (err && typeof err === "object" && "cause" in err) {
+    candidates.push((err as { cause?: unknown }).cause);
+  }
+
+  for (const candidate of candidates) {
+    if (!candidate || typeof candidate !== "object") continue;
+
+    const code = (candidate as { code?: unknown }).code;
+    if (
+      typeof code === "string" &&
+      /ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND|EHOSTUNREACH|UND_ERR_CONNECT_TIMEOUT/i.test(code)
+    ) {
+      return true;
+    }
+
+    const name = (candidate as { name?: unknown }).name;
+    if (typeof name === "string" && /APIConnectionError/i.test(name)) {
+      return true;
+    }
+  }
+
+  if (!(err instanceof Error)) return false;
+
+  return (
+    /\bconnection error\b/i.test(err.message) ||
+    /\bnetwork error\b/i.test(err.message) ||
+    /ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND|EHOSTUNREACH|connect\s+ETIMEDOUT|socket hang up|fetch failed/i.test(
+      err.message,
+    )
+  );
+}
+
+/**
  * Detect 400 errors caused by exceeding the model's context length.
  * These are unrecoverable without truncating the input — retrying is wasteful (#442).
  * Pattern matches OpenAI's error: "400 Invalid 'input': maximum context length is 8192 tokens."
@@ -365,6 +410,7 @@ export async function chatComplete(opts: {
       msg.includes("timed out") ||
       msg.includes("llm request timeout") || // #339: our own timeout message uses "timeout" not "timed out"
       msg.includes("econnrefused") ||
+      isConnectionErrorLike(err) || // #703: OpenAI SDK APIConnectionError / "Connection error." is transient
       is429Like(err) || // #397: rate limit is transient
       /^\d+\s*internal\s*error$/i.test(msg.trim()) ||
       /^5\d{2}\s/.test(msg.trim()) ||
@@ -459,11 +505,11 @@ export async function withLLMRetry<T>(
       const is429 = is429Like(lastError);
       // Timeouts: only retry once (attempt 0 → attempt 1), then throw so chatCompleteWithRetry can try next model.
       // (attempt is 0-based: attempt >= 1 means we've already retried once.)
-      const isTimeout =
-        /timed out|llm request timeout|request was aborted|Request was aborted|ETIMEDOUT|ECONNREFUSED/i.test(
-          lastError.message,
-        ); // #339: include our own "LLM request timeout" pattern
-      if (isTimeout && attempt >= 1) {
+      const isTimeout = /timed out|llm request timeout|request was aborted|Request was aborted/i.test(
+        lastError.message,
+      ); // #339: include our own "LLM request timeout" pattern
+      const isConnectionError = isConnectionErrorLike(lastError);
+      if ((isTimeout || isConnectionError) && attempt >= 1) {
         throw lastError;
       }
       // Ollama OOM: never retry — model requires more memory than available, won't be fixed by retrying.
@@ -504,12 +550,11 @@ export async function withLLMRetry<T>(
           fullMsg.includes("timed out") ||
           causeMsg.includes("llm request timeout") || // #339: our own timeout message uses "timeout" not "timed out"
           fullMsg.includes("llm request timeout") ||
+          isConnectionErrorLike(lastError) ||
           /^\d+\s*internal\s*error$/i.test(causeMsg.trim()) ||
           /^5\d{2}\s/.test(causeMsg.trim()) ||
           /\b405\s+method\s+not\s+allowed/i.test(causeMsg) ||
-          /\b405\s+method\s+not\s+allowed/i.test(fullMsg) ||
-          causeMsg.includes("econnrefused") ||
-          fullMsg.includes("econnrefused");
+          /\b405\s+method\s+not\s+allowed/i.test(fullMsg);
         if (!isTransient) {
           capturePluginError(retryError, {
             subsystem: "chat",
@@ -629,10 +674,10 @@ export async function chatCompleteWithRetry(opts: {
         lastError instanceof UnconfiguredProviderError ||
         (lastError instanceof LLMRetryError && lastError.cause instanceof UnconfiguredProviderError);
       const is429 = is429OrWrapped(lastError);
-      const isTimeout =
-        /timed out|llm request timeout|request was aborted|Request was aborted|ETIMEDOUT|ECONNREFUSED/i.test(
-          lastError.message,
-        ); // #339: include our own "LLM request timeout" pattern
+      const isTimeout = /timed out|llm request timeout|request was aborted|Request was aborted/i.test(
+        lastError.message,
+      ); // #339: include our own "LLM request timeout" pattern
+      const isConnectionError = isConnectionErrorLike(lastError);
       const is404 = is404Like(lastError);
       const is403 = is403Like(lastError);
       const is401 = is401Like(lastError);
@@ -645,17 +690,19 @@ export async function chatCompleteWithRetry(opts: {
             ? "rate limited (429)"
             : isTimeout
               ? "timed out"
-              : is404
-                ? "model not found (404)"
-                : is403
-                  ? "access denied (403)"
-                  : is401
-                    ? "unauthorized (401)"
-                    : is500
-                      ? "server error (500)" // #302
-                      : isContextLength
-                        ? "input too long" // #488
-                        : "failed after retries";
+              : isConnectionError
+                ? "connection failed"
+                : is404
+                  ? "model not found (404)"
+                  : is403
+                    ? "access denied (403)"
+                    : is401
+                      ? "unauthorized (401)"
+                      : is500
+                        ? "server error (500)" // #302
+                        : isContextLength
+                          ? "input too long" // #488
+                          : "failed after retries";
           pluginLogger.warn(
             `${label}: model ${currentModel} ${reason}, trying fallback model ${modelsToTry[i + 1]}...`,
           );
@@ -672,10 +719,10 @@ export async function chatCompleteWithRetry(opts: {
   const finalIsOOM = isOllamaOOM(finalError); // #387: OOM is expected when model too large for RAM
   const finalIs429 = is429OrWrapped(finalError); // #397
   const finalIsContextLength = isContextLengthError(finalError); // #488: input too long for model context window
-  const finalIsTimeout =
-    /timed out|llm request timeout|request was aborted|Request was aborted|ETIMEDOUT|ECONNREFUSED/i.test(
-      finalError.message,
-    );
+  const finalIsTimeout = /timed out|llm request timeout|request was aborted|Request was aborted/i.test(
+    finalError.message,
+  );
+  const finalIsConnectionError = isConnectionErrorLike(finalError);
 
   // When every model failed because provider keys are missing, queue a user-visible chat warning
   // and skip Sentry (this is a config issue, not a bug).
@@ -702,6 +749,7 @@ export async function chatCompleteWithRetry(opts: {
       !finalIsContextLength && // #488: context window exceeded = config issue, not a bug
       !finalIsUnconfigured &&
       !finalIsTimeout &&
+      !finalIsConnectionError &&
       !finalIs403 &&
       !finalIs401 &&
       !finalIs429
@@ -750,6 +798,8 @@ export async function chatCompleteWithRetry(opts: {
     );
   } else if (finalIsTimeout) {
     // #339: timeout errors are transient — don't report to GlitchTip
+  } else if (finalIsConnectionError) {
+    // #703: OpenAI SDK "Connection error." / APIConnectionError is transient — don't report to GlitchTip
   } else if (finalIs429) {
     // #397: rate limit / usage limit — transient provider error, don't report to GlitchTip
     pendingWarnings?.add(
