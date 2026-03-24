@@ -37,12 +37,14 @@ export interface AliasSearchResult {
 }
 
 const ALIAS_LANCE_TABLE = "fact_aliases";
+const LANCE_NO_VECTOR_COL_MSG = "No vector column found";
 
 class AliasVectorIndex {
   private db: lancedb.Connection | null = null;
   private table: lancedb.Table | null = null;
   private initPromise: Promise<void> | null = null;
   private closed = false;
+  private schemaValid = true;
 
   constructor(
     private readonly dbPath: string,
@@ -64,6 +66,7 @@ class AliasVectorIndex {
   }
 
   private async doInitialize(): Promise<void> {
+    this.schemaValid = true;
     this.db = await lancedb.connect(this.dbPath);
     const tables = await this.db.tableNames();
     if (tables.includes(ALIAS_LANCE_TABLE)) {
@@ -97,6 +100,7 @@ class AliasVectorIndex {
           typeof f.type?.typeId === "number" && f.type.typeId === 16,
       );
       if (!vectorField) {
+        this.schemaValid = false;
         pluginLogger.warn(
           `memory-hybrid: ⚠️  Alias LanceDB table '${ALIAS_LANCE_TABLE}' has no vector column — alias search will fall back to linear scan.`,
         );
@@ -104,6 +108,7 @@ class AliasVectorIndex {
       }
       const actualDim = (vectorField.type as { listSize?: number }).listSize;
       if (typeof actualDim !== "number" || actualDim !== this.vectorDim) {
+        this.schemaValid = false;
         const actual = typeof actualDim === "number" ? actualDim : "unknown";
         pluginLogger.warn(
           `memory-hybrid: ⚠️  Alias LanceDB dimension mismatch — table has dim=${actual}, configured embedding model expects dim=${this.vectorDim}. Alias search will fall back to linear scan until resolved.`,
@@ -112,6 +117,10 @@ class AliasVectorIndex {
     } catch (err) {
       pluginLogger.warn(`memory-hybrid: alias LanceDB schema validation failed (non-fatal): ${err}`);
     }
+  }
+
+  isSchemaValid(): boolean {
+    return this.schemaValid;
   }
 
   private getTable(): lancedb.Table {
@@ -145,6 +154,7 @@ class AliasVectorIndex {
   async search(vector: number[], limit: number, minScore: number): Promise<AliasSearchResult[]> {
     try {
       await this.ensureInitialized();
+      if (!this.schemaValid) return [];
       const searchLimit = Math.max(limit * 6, 50);
       const results = await this.getTable().vectorSearch(vector).limit(searchLimit).toArray();
       const bestByFact = new Map<string, number>();
@@ -163,11 +173,15 @@ class AliasVectorIndex {
         .sort((a, b) => b.score - a.score)
         .slice(0, limit);
     } catch (err) {
-      capturePluginError(err as Error, {
-        operation: "alias-vector-search",
-        severity: "info",
-        subsystem: "aliases",
-      });
+      if (err instanceof Error && err.message.includes(LANCE_NO_VECTOR_COL_MSG)) {
+        this.schemaValid = false;
+      } else {
+        capturePluginError(err as Error, {
+          operation: "alias-vector-search",
+          severity: "info",
+          subsystem: "aliases",
+        });
+      }
       pluginLogger.warn(`memory-hybrid: alias LanceDB search failed (non-fatal): ${err}`);
       return [];
     }
@@ -289,7 +303,8 @@ export class AliasDB {
     if (aliasCount >= 1000) {
       // Prefer LanceDB vector search for larger datasets; fallback to linear scan on errors.
       try {
-        return await this.aliasIndex.search(queryVector, limit, minScore);
+        const results = await this.aliasIndex.search(queryVector, limit, minScore);
+        return this.aliasIndex.isSchemaValid() ? results : this.linearSearch(queryVector, limit, minScore);
       } catch {
         return this.linearSearch(queryVector, limit, minScore);
       }
