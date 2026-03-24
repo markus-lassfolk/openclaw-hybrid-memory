@@ -350,7 +350,7 @@ describe("runRecallPipelineQuery — hydeUsedRef mutation", () => {
           enabled: true,
           maxVariants: 4,
           cacheSize: 100,
-          timeoutMs: 500,
+          timeoutMs: -1,
           skipForInteractiveTurns: true,
         },
         retrievalStrategies: ["semantic"],
