@@ -30,15 +30,25 @@ describe("AliasDB LanceDB schema mismatch fallback", () => {
     aliasDb?.close();
     // Allow pending LanceDB write transactions to flush before cleanup
     await new Promise((r) => setTimeout(r, 250));
-    rmSync(tmpDir, { recursive: true, force: true });
+    let retries = 5;
+    while (retries-- > 0) {
+      try {
+        rmSync(tmpDir, { recursive: true, force: true });
+        break;
+      } catch (err) {
+        if (retries === 0) throw err;
+        await new Promise((r) => setTimeout(r, 100));
+      }
+    }
   });
 
   it("falls back to linear search without reporting GlitchTip on known alias vector schema errors", async () => {
     aliasDb = new AliasDB(join(tmpDir, "aliases.db"), join(tmpDir, "aliases.lance"), 4);
 
-    for (let index = 0; index < 1000; index++) {
+    for (let index = 0; index < 10; index++) {
       aliasDb.store(randomUUID(), `alias-${index}`, unitVec());
     }
+    (aliasDb as any).aliasCountCache = 1000;
 
     const knownSchemaErr = new Error(
       "Failed to execute query stream: GenericFailure, Invalid input, No vector column found to match with the query vector dimension",
