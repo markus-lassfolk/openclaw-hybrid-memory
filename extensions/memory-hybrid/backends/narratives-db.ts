@@ -143,9 +143,9 @@ export class NarrativesDB {
   }
 
   close(): void {
-    this._dbOpen = false;
     try {
       this.db.close();
+      this._dbOpen = false;
     } catch (err: unknown) {
       // Only ignore the specific "already closed"/"not open" condition.
       const isAlreadyClosedError =
@@ -156,7 +156,9 @@ export class NarrativesDB {
         ((err as { message: string }).message.includes("not open") ||
           (err as { message: string }).message.includes("already closed"));
 
-      if (!isAlreadyClosedError) {
+      if (isAlreadyClosedError) {
+        this._dbOpen = false;
+      } else {
         // Log unexpected close failures instead of swallowing them silently.
         // Close remains non-fatal for callers.
         // biome-ignore lint/suspicious/noConsole: Close remains non-fatal
