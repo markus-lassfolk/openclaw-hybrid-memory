@@ -17,7 +17,7 @@ import { _testing } from "../index.js";
 import { ApitapStore } from "../backends/apitap-store.js";
 import { ToolEffectivenessStore } from "../services/tool-effectiveness.js";
 
-const { FactsDB, CredentialsDB, EventLog, VectorDB, LearningsDB, ProposalsDB, WorkflowStore } = _testing;
+const { FactsDB, CredentialsDB, EventLog, EventBus, VectorDB, LearningsDB, ProposalsDB, WorkflowStore } = _testing;
 
 const TEST_ENCRYPTION_KEY = "test-encryption-key-for-unit-tests-32chars";
 
@@ -423,5 +423,41 @@ describe("VectorDB auto-reconnects after close()", () => {
     // At minimum the "initial fact" stored in beforeEach must be present.
     expect(results.length).toBeGreaterThan(0);
     expect(results[0].entry.text).toBe("initial fact");
+  });
+});
+
+/**
+ * EventBus coverage tests.
+ * Primarily validates the encrypted field contract and closed-state behavior
+ * that the shared BaseSqliteStore tests cannot exercise for EventBus specifically.
+ */
+describe("EventBus coverage", () => {
+  const dbPath = path.join(testDir, "event-bus-coverage.sqlite");
+  let bus: EventBus;
+
+  beforeEach(() => {
+    bus = new EventBus(dbPath);
+  });
+
+  afterEach(() => {
+    bus.close();
+  });
+
+  it("encrypted field returns false", () => {
+    // The EventBus base class never stores encrypted data.
+    // This is a compile-time guarantee verified at runtime.
+    expect(bus.encrypted).toBe(false);
+  });
+
+  it("closed getter reflects terminal state after close()", () => {
+    expect(bus.closed).toBe(false);
+    bus.close();
+    expect(bus.closed).toBe(true);
+  });
+
+  it("liveDb throws when accessed after close()", () => {
+    bus.close();
+    // Attempting to use the EventBus after close() must throw.
+    expect(() => bus.appendEvent("test", "coverage", {})).toThrow("EventBus is closed");
   });
 });

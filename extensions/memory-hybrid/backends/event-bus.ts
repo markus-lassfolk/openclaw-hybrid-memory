@@ -50,6 +50,11 @@ export function computeFingerprint(input: string): string {
  * by the Rumination Engine.
  */
 export class EventBus extends BaseSqliteStore {
+  private readonly _encrypted = false; // Event Bus stores data in plaintext
+
+  /** Tracks terminal closed state separately from base class field. */
+  private _closed = false;
+
   private readonly dbPath: string;
 
   /**
@@ -68,17 +73,43 @@ export class EventBus extends BaseSqliteStore {
     return "event-bus";
   }
 
+  /**
+   * Returns false — the Event Bus stores data in plaintext.
+   * Exposed as a getter so subclasses can override it with a lazy-initialized field.
+   */
+  protected get encrypted(): boolean {
+    return this._encrypted;
+  }
+
+  /**
+   * Returns the terminal closed state of this EventBus.
+   * When true, all subsequent operations throw an Error.
+   */
+  public get closed(): boolean {
+    return this._closed;
+  }
+
   protected get liveDb(): DatabaseSync {
-    if (this.closed) {
+    if (this._closed) {
       throw new Error("EventBus is closed");
     }
     if (!this._dbOpen) {
       this.db.open();
       this._dbOpen = true;
-      this.closed = false;
+      this._closed = false;
       this.applyPragmas();
     }
     return this.db;
+  }
+
+  /**
+   * Closes the EventBus and sets the terminal closed state.
+   * After this, all subsequent operations throw an Error.
+   */
+  public close(): void {
+    if (this._closed) return;
+    this._closed = true;
+    super.close();
   }
 
   private migrate(): void {
