@@ -4353,6 +4353,7 @@ export class FactsDB {
   }
 
   close(): void {
+    if (!this._dbOpen) return;
     this._dbOpen = false;
     try {
       this.db.close();

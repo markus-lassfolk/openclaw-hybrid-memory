@@ -1,8 +1,9 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { _testing } from "../index.js";
+import * as errorReporter from "../services/error-reporter.js";
 
 const { FactsDB } = _testing;
 
@@ -15,8 +16,32 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.restoreAllMocks();
   db.close();
   rmSync(tmpDir, { recursive: true, force: true });
+});
+
+describe("FactsDB.close", () => {
+  it("is idempotent and does not capture an already-closed error", () => {
+    const captureSpy = vi.spyOn(errorReporter, "capturePluginError").mockImplementation(() => undefined);
+
+    db.close();
+    db.close();
+
+    expect(captureSpy).not.toHaveBeenCalled();
+
+    const entry = db.store({
+      text: "Fact after repeated close",
+      category: "fact",
+      importance: 0.7,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+    });
+
+    expect(entry.text).toBe("Fact after repeated close");
+  });
 });
 
 // ---------------------------------------------------------------------------
