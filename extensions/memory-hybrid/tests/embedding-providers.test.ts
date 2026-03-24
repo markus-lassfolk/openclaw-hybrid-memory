@@ -577,6 +577,24 @@ describe("FallbackEmbeddingProvider", () => {
     expect(onSwitch).toHaveBeenCalledOnce();
   });
 
+  it("does not capturePluginError when Ollama connection failure triggers fallback", async () => {
+    vi.stubGlobal("fetch", mockOllamaFetchFail("TypeError: fetch failed"));
+    const primary = new OllamaEmbeddingProvider({ model: "nomic-embed-text", dimensions: 2 });
+    const fallback = {
+      embed: vi.fn().mockResolvedValue([0.5, 0.6]),
+      embedBatch: vi.fn(),
+      dimensions: 2,
+      modelName: "fallback",
+    };
+    const wrapper = new FallbackEmbeddingProvider(
+      primary,
+      fallback as unknown as import("../services/embeddings.js").EmbeddingProvider,
+    );
+
+    await expect(wrapper.embed("test")).resolves.toEqual([0.5, 0.6]);
+    expect(vi.mocked(capturePluginError)).not.toHaveBeenCalled();
+  });
+
   it("stays on fallback after switching (no more attempts on primary)", async () => {
     vi.stubGlobal("fetch", mockOllamaFetchFail("ECONNREFUSED"));
     const primary = new OllamaEmbeddingProvider({ model: "nomic-embed-text", dimensions: 2 });
@@ -1374,6 +1392,25 @@ describe("#385: ChainEmbeddingProvider does not report 404/401 config errors", (
     expect(vi.mocked(capturePluginError)).not.toHaveBeenCalled();
   });
 
+  it("does not capturePluginError for Ollama connection failure from non-last provider", async () => {
+    const ollamaConnErr = new Error("Ollama connection failed (http://localhost:11434): TypeError: fetch failed");
+    const vec = [0.5, 0.6];
+    const p1 = {
+      embed: vi.fn().mockRejectedValue(ollamaConnErr),
+      embedBatch: vi.fn(),
+      dimensions: 2,
+      modelName: "ollama",
+    };
+    const p2 = { embed: vi.fn().mockResolvedValue(vec), embedBatch: vi.fn(), dimensions: 2, modelName: "openai" };
+    const chain = new ChainEmbeddingProvider(
+      [p1, p2] as unknown as import("../services/embeddings.js").EmbeddingProvider[],
+      ["ollama", "openai"],
+    );
+
+    await expect(chain.embed("test")).resolves.toEqual(vec);
+    expect(vi.mocked(capturePluginError)).not.toHaveBeenCalled();
+  });
+
   it("does not capturePluginError for 401 message-based (Ollama HTTP 401 Unauthorized)", async () => {
     const ollamaAuthErr = new Error("Ollama embed failed: HTTP 401 Unauthorized");
     const vec = [0.7, 0.8];
@@ -1473,6 +1510,14 @@ describe("#486: shouldSuppressEmbeddingError — suppression helper", () => {
     expect(shouldSuppressEmbeddingError(new Error("Ollama circuit breaker open — skipping embed"))).toBe(true);
   });
 
+  it("suppresses wrapped Ollama connection failures", () => {
+    expect(
+      shouldSuppressEmbeddingError(
+        new Error("Ollama connection failed (http://localhost:11434): TypeError: fetch failed"),
+      ),
+    ).toBe(true);
+  });
+
   it("does NOT suppress generic transient errors", () => {
     expect(shouldSuppressEmbeddingError(new Error("ECONNREFUSED"))).toBe(false);
     expect(shouldSuppressEmbeddingError(new Error("network timeout"))).toBe(false);
@@ -1507,7 +1552,8 @@ describe("#486: shouldSuppressEmbeddingError — suppression helper", () => {
     const configErr = Object.assign(new Error("401 Unauthorized"), { status: 401 });
     const rateLimitErr = Object.assign(new Error("429 Too Many Requests"), { status: 429 });
     const cbErr = new Error("Ollama circuit breaker open");
-    const err = new AllEmbeddingProvidersFailed([configErr, rateLimitErr, cbErr]);
+    const connErr = new Error("Ollama connection failed (http://localhost:11434): TypeError: fetch failed");
+    const err = new AllEmbeddingProvidersFailed([configErr, rateLimitErr, cbErr, connErr]);
     expect(shouldSuppressEmbeddingError(err)).toBe(true);
   });
 

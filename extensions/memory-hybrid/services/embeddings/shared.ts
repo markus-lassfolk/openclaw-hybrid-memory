@@ -99,6 +99,14 @@ export function isOllamaCircuitBreakerOpen(err: Error): boolean {
   return err.message.startsWith("Ollama circuit breaker open");
 }
 
+/** Returns true when the error is a local Ollama connectivity failure.
+ * Ollama is an optional local dependency, so connection-refused / fetch-failed errors from the
+ * provider should degrade gracefully to a fallback without reporting GlitchTip noise.
+ */
+export function isOllamaConnectionFailure(err: Error): boolean {
+  return err.message.startsWith("Ollama connection failed (");
+}
+
 /**
  * Returns true when an embedding error should be suppressed from error monitoring.
  * Covers config errors (401/403/404), rate limits (429), circuit-breaker-open, and
@@ -108,10 +116,14 @@ export function isOllamaCircuitBreakerOpen(err: Error): boolean {
  */
 export function shouldSuppressEmbeddingError(err: unknown): boolean {
   if (!(err instanceof Error)) return false;
-  if (isConfigError(err) || is429OrWrapped(err) || isOllamaCircuitBreakerOpen(err)) return true;
+  if (isConfigError(err) || is429OrWrapped(err) || isOllamaCircuitBreakerOpen(err) || isOllamaConnectionFailure(err)) {
+    return true;
+  }
   if (err instanceof AllEmbeddingProvidersFailed) {
     if (err.causes.length === 0) return false; // unknown state — report
-    return err.causes.every((c) => isConfigError(c) || is429OrWrapped(c) || isOllamaCircuitBreakerOpen(c));
+    return err.causes.every(
+      (c) => isConfigError(c) || is429OrWrapped(c) || isOllamaCircuitBreakerOpen(c) || isOllamaConnectionFailure(c),
+    );
   }
   return false;
 }
