@@ -228,9 +228,9 @@ export class ProvenanceService {
 
   close(): void {
     if (!this._dbOpen) return;
+    this._dbOpen = false;
     try {
       this.db.close();
-      this._dbOpen = false;
     } catch (err) {
       // Avoid crashing during shutdown if the database fails to close.
       console.error("ProvenanceService.close: failed to close SQLite database", err);
