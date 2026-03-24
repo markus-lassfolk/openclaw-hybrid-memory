@@ -139,7 +139,11 @@ export function createPluginService(ctx: PluginServiceContext) {
           api.logger,
         );
         if (versionCheckCachePath && nextCachedVersionCheck.lastNudgedAt !== cachedVersionCheck.lastNudgedAt) {
-          writeVersionCheckCache(versionCheckCachePath, nextCachedVersionCheck);
+          try {
+            writeVersionCheckCache(versionCheckCachePath, nextCachedVersionCheck);
+          } catch (err) {
+            api.logger.debug?.(`memory-hybrid: failed to update nudge cache: ${err instanceof Error ? err.message : String(err)}`);
+          }
           cachedVersionCheck = nextCachedVersionCheck;
         }
       } else {
@@ -197,6 +201,8 @@ export function createPluginService(ctx: PluginServiceContext) {
             lastNudgedAt: cachedVersionCheck?.lastNudgedAt,
           };
 
+          if (shuttingDown) return;
+
           if (isPluginOutdated(versionInfo.pluginVersion, latestPublished.latestVersion)) {
             setErrorReporterMuted(true, `outdated-plugin:${latestPublished.latestVersion}`);
             cacheEntry = maybeLogOutdatedVersionNudge(
@@ -209,6 +215,7 @@ export function createPluginService(ctx: PluginServiceContext) {
             setErrorReporterMuted(false);
           }
 
+          if (shuttingDown) return;
           writeVersionCheckCache(versionCheckCachePath, cacheEntry);
         } catch (err) {
           api.logger.debug?.(
