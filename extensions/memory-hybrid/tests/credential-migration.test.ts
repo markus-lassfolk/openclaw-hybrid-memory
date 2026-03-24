@@ -491,6 +491,7 @@ describe("migrateCredentialsToVault", () => {
       expect(vectorDb.hasDuplicate).not.toHaveBeenCalled();
       expect(vectorDb.store).not.toHaveBeenCalled();
       expect(captureSpy).not.toHaveBeenCalled();
+      captureSpy.mockRestore();
     });
 
     it("adds vector error and still counts migration when vectorDb.store rejects", async () => {

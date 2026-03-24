@@ -177,5 +177,6 @@ describe("buildExplicitSemanticQueryVector", () => {
     expect(result.warning).toContain("Semantic search unavailable");
     expect(logger.warn).toHaveBeenCalled();
     expect(captureSpy).not.toHaveBeenCalled();
+    captureSpy.mockRestore();
   });
 });

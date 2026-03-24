@@ -256,6 +256,7 @@ describe("runRecallPipelineQuery — semantic mode", () => {
     expect(result).toEqual([]);
     expect(deps.logger.warn).toHaveBeenCalled();
     expect(captureSpy).not.toHaveBeenCalled();
+    captureSpy.mockRestore();
   });
 });
 
