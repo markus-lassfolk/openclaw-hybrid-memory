@@ -25,7 +25,16 @@ export interface UpdateNudgeLogger {
   debug?: (msg: string) => void;
 }
 
-async function fetchWithTimeout(url: string, timeoutMs: number, fetchImpl: typeof fetch): Promise<Response> {
+async function fetchWithTimeout(
+  url: string,
+  expectedHostname: string,
+  timeoutMs: number,
+  fetchImpl: typeof fetch,
+): Promise<Response> {
+  const parsed = new URL(url);
+  if (parsed.hostname !== expectedHostname) {
+    throw new Error(`Unexpected hostname: ${parsed.hostname}`);
+  }
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
@@ -46,7 +55,7 @@ export async function fetchLatestPublishedVersion(
   const candidates: Array<{ version: string; source: "npm" | "github" }> = [];
 
   try {
-    const response = await fetchWithTimeout(NPM_LATEST_URL, timeoutMs, fetchImpl);
+    const response = await fetchWithTimeout(NPM_LATEST_URL, "registry.npmjs.org", timeoutMs, fetchImpl);
     if (response.ok) {
       const payload = (await response.json()) as { version?: unknown };
       const version = asVersionString(payload.version);
@@ -57,7 +66,7 @@ export async function fetchLatestPublishedVersion(
   }
 
   try {
-    const response = await fetchWithTimeout(GITHUB_LATEST_URL, timeoutMs, fetchImpl);
+    const response = await fetchWithTimeout(GITHUB_LATEST_URL, "api.github.com", timeoutMs, fetchImpl);
     if (response.ok) {
       const payload = (await response.json()) as { tag_name?: unknown };
       const version = asVersionString(payload.tag_name);
@@ -108,13 +117,21 @@ export function writeVersionCheckCache(cacheFilePath: string, entry: VersionChec
   writeFileSync(cacheFilePath, JSON.stringify(entry, null, 2), "utf-8");
 }
 
-export function isVersionCheckCacheFresh(entry: VersionCheckCacheEntry, cacheTtlHours: number, nowMs = Date.now()): boolean {
+export function isVersionCheckCacheFresh(
+  entry: VersionCheckCacheEntry,
+  cacheTtlHours: number,
+  nowMs = Date.now(),
+): boolean {
   const checkedAtMs = Date.parse(entry.checkedAt);
   if (!Number.isFinite(checkedAtMs)) return false;
   return nowMs - checkedAtMs <= cacheTtlHours * 3600_000;
 }
 
-export function shouldEmitUpdateNudge(entry: VersionCheckCacheEntry, updateNudge: UpdateNudgeConfig, nowMs = Date.now()): boolean {
+export function shouldEmitUpdateNudge(
+  entry: VersionCheckCacheEntry,
+  updateNudge: UpdateNudgeConfig,
+  nowMs = Date.now(),
+): boolean {
   if (!updateNudge.enabled) return false;
   if (!entry.lastNudgedAt) return true;
   const lastNudgedMs = Date.parse(entry.lastNudgedAt);
@@ -122,7 +139,10 @@ export function shouldEmitUpdateNudge(entry: VersionCheckCacheEntry, updateNudge
   return nowMs - lastNudgedMs >= updateNudge.intervalHours * 3600_000;
 }
 
-export function markUpdateNudged(entry: VersionCheckCacheEntry, nowIso = new Date().toISOString()): VersionCheckCacheEntry {
+export function markUpdateNudged(
+  entry: VersionCheckCacheEntry,
+  nowIso = new Date().toISOString(),
+): VersionCheckCacheEntry {
   return { ...entry, lastNudgedAt: nowIso };
 }
 
@@ -133,6 +153,7 @@ export function maybeLogOutdatedVersionNudge(
   logger: UpdateNudgeLogger,
 ): VersionCheckCacheEntry {
   if (!isPluginOutdated(currentVersion, entry.latestVersion)) return entry;
+  if (!updateNudge.enabled) return entry;
   if (!shouldEmitUpdateNudge(entry, updateNudge)) {
     logger.info?.(
       `memory-hybrid: telemetry muted for outdated plugin v${currentVersion} (latest published: v${entry.latestVersion}).`,
@@ -146,4 +167,3 @@ export function maybeLogOutdatedVersionNudge(
   );
   return markUpdateNudged(entry);
 }
-

@@ -810,13 +810,13 @@
               },
               "intervalHours": {
                 "type": "number",
-                "minimum": 1,
+                "minimum": 0,
                 "default": 24,
-                "description": "Minimum hours between repeated upgrade reminders on outdated installs."
+                "description": "Hours between repeated upgrade reminders on outdated installs. 0 disables nudges (keeps muting active)."
               },
               "cacheTtlHours": {
                 "type": "number",
-                "minimum": 1,
+                "minimum": 0,
                 "default": 24,
                 "description": "How long cached latest-version results stay fresh before startup trusts a new background check instead."
               }

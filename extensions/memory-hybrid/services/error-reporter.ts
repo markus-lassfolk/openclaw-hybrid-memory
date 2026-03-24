@@ -527,7 +527,7 @@ const errorDedup = new Map<string, number>(); // Rate limiting: fingerprint -> t
 let telemetryMuteReason: string | null = null;
 
 export function setErrorReporterMuted(muted: boolean, reason?: string): void {
-  telemetryMuteReason = muted ? reason ?? "muted" : null;
+  telemetryMuteReason = muted ? (reason ?? "muted") : null;
 }
 
 export function getErrorReporterMuteReason(): string | null {

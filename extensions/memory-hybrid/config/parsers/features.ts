@@ -394,13 +394,17 @@ export function parseErrorReportingConfig(cfg: Record<string, unknown>): ErrorRe
   const updateNudge = {
     enabled: updateNudgeRaw?.enabled !== false,
     intervalHours:
-      typeof updateNudgeRaw?.intervalHours === "number" && updateNudgeRaw.intervalHours >= 1
-        ? Math.min(24 * 30, Math.floor(updateNudgeRaw.intervalHours))
-        : 24,
+      updateNudgeRaw?.intervalHours === 0
+        ? 0
+        : typeof updateNudgeRaw?.intervalHours === "number" && updateNudgeRaw.intervalHours >= 1
+          ? Math.min(24 * 30, Math.floor(updateNudgeRaw.intervalHours))
+          : 24,
     cacheTtlHours:
-      typeof updateNudgeRaw?.cacheTtlHours === "number" && updateNudgeRaw.cacheTtlHours >= 1
-        ? Math.min(24 * 30, Math.floor(updateNudgeRaw.cacheTtlHours))
-        : 24,
+      updateNudgeRaw?.cacheTtlHours === 0
+        ? 0
+        : typeof updateNudgeRaw?.cacheTtlHours === "number" && updateNudgeRaw.cacheTtlHours >= 1
+          ? Math.min(24 * 30, Math.floor(updateNudgeRaw.cacheTtlHours))
+          : 24,
   };
 
   // Optional resolvedIssues map for version-aware filtering

@@ -28,6 +28,7 @@ import { runAutoClassify } from "../services/auto-classifier.js";
 import { runBuildLanguageKeywords } from "../services/language-keywords-build.js";
 import { getLanguageKeywordsFilePath } from "../utils/language-keywords.js";
 import {
+  type VersionCheckCacheEntry,
   fetchLatestPublishedVersion,
   isPluginOutdated,
   isVersionCheckCacheFresh,
@@ -112,8 +113,10 @@ export function createPluginService(ctx: PluginServiceContext) {
     start: async () => {
       const sqlCount = factsDb.count();
       const expired = factsDb.countExpired();
-      const versionCheckCachePath = join(dirname(resolvedSqlitePath), ".latest-plugin-version.json");
-      let cachedVersionCheck = readVersionCheckCache(versionCheckCachePath);
+      const versionCheckCachePath =
+        resolvedSqlitePath === ":memory:" ? null : join(dirname(resolvedSqlitePath), ".latest-plugin-version.json");
+      const errorReportingActive = cfg.errorReporting.enabled && cfg.errorReporting.consent;
+      let cachedVersionCheck = versionCheckCachePath ? readVersionCheckCache(versionCheckCachePath) : null;
       api.logger.info(
         `memory-hybrid: initialized v${versionInfo.pluginVersion} (sqlite: ${sqlCount} facts, lance: ${resolvedLancePath}, model: ${cfg.embedding.model})`,
       );
@@ -121,6 +124,7 @@ export function createPluginService(ctx: PluginServiceContext) {
       checkOpenClawVersion(api.version, api.logger);
 
       if (
+        errorReportingActive &&
         cachedVersionCheck &&
         isVersionCheckCacheFresh(cachedVersionCheck, cfg.errorReporting.updateNudge.cacheTtlHours) &&
         isPluginOutdated(versionInfo.pluginVersion, cachedVersionCheck.latestVersion)
@@ -132,7 +136,7 @@ export function createPluginService(ctx: PluginServiceContext) {
           cfg.errorReporting.updateNudge,
           api.logger,
         );
-        if (nextCachedVersionCheck.lastNudgedAt !== cachedVersionCheck.lastNudgedAt) {
+        if (versionCheckCachePath && nextCachedVersionCheck.lastNudgedAt !== cachedVersionCheck.lastNudgedAt) {
           writeVersionCheckCache(versionCheckCachePath, nextCachedVersionCheck);
           cachedVersionCheck = nextCachedVersionCheck;
         }
@@ -179,11 +183,12 @@ export function createPluginService(ctx: PluginServiceContext) {
       }
 
       void (async () => {
+        if (!errorReportingActive || !versionCheckCachePath) return;
         try {
           const latestPublished = await fetchLatestPublishedVersion();
           if (!latestPublished.latestVersion || !latestPublished.source) return;
 
-          let cacheEntry = {
+          let cacheEntry: VersionCheckCacheEntry = {
             latestVersion: latestPublished.latestVersion,
             source: latestPublished.source,
             checkedAt: new Date().toISOString(),
