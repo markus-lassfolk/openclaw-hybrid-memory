@@ -98,7 +98,9 @@ describe("version command utilities", () => {
       (global.fetch as any).mockImplementation(
         (_url: string, { signal }: { signal: AbortSignal }) =>
           new Promise((_, reject) => {
-            abortHandler = () => reject(new Error("aborted"));
+            const err = new Error("aborted");
+            err.name = "AbortError";
+            abortHandler = () => reject(err);
             signal.addEventListener("abort", abortHandler);
           }),
       );
@@ -108,13 +110,14 @@ describe("version command utilities", () => {
       await vi.advanceTimersByTimeAsync(3001);
 
       const result = await promise;
+      expect(abortHandler).toBeTypeOf("function");
       expect(result).toBeNull();
     });
 
-    it("returns null when fetch fails with network error", async () => {
+    it("throws when fetch fails with network error", async () => {
       (global.fetch as any).mockRejectedValue(new Error("Network failure"));
 
-      await expect(fetchWithTimeout("https://example.com", 3000)).resolves.toBeNull();
+      await expect(fetchWithTimeout("https://example.com", 3000)).rejects.toThrow("Network failure");
     });
   });
 
