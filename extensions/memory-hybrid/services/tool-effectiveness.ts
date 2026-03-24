@@ -18,6 +18,7 @@ import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { capturePluginError } from "./error-reporter.js";
 import { BaseSqliteStore } from "../backends/base-sqlite-store.js";
+import { SQLITE_BUSY_TIMEOUT_MS } from "../utils/constants.js";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { ToolEffectivenessConfig } from "../config/types/features.js";
 
@@ -300,7 +301,6 @@ export class ToolEffectivenessStore extends BaseSqliteStore {
     const row = this.liveDb.prepare("SELECT COUNT(*) as n FROM tool_effectiveness").get() as { n: number };
     return row.n;
   }
-
 }
 
 // ---------------------------------------------------------------------------
