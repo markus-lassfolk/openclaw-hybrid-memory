@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { fetchWithTimeout } from "../utils/fetch-with-timeout.js";
 
 describe("version command utilities", () => {
   describe("version comparison", () => {
@@ -81,19 +82,6 @@ describe("version command utilities", () => {
       const mockResponse = new Response("test", { status: 200 });
       (global.fetch as any).mockResolvedValue(mockResponse);
 
-      const fetchWithTimeout = async (url: string, timeoutMs: number): Promise<Response> => {
-        const c = new AbortController();
-        const t = setTimeout(() => c.abort(), timeoutMs);
-        try {
-          const res = await fetch(url, { signal: c.signal });
-          clearTimeout(t);
-          return res;
-        } catch {
-          clearTimeout(t);
-          throw new Error("timeout or network error");
-        }
-      };
-
       const promise = fetchWithTimeout("https://example.com", 3000);
       await vi.advanceTimersByTimeAsync(100);
       const result = await promise;
@@ -105,55 +93,28 @@ describe("version command utilities", () => {
       );
     });
 
-    it("throws timeout error when fetch takes too long", async () => {
+    it("returns null when fetch takes too long", async () => {
       let abortHandler: (() => void) | null = null;
       (global.fetch as any).mockImplementation(
-        ({ signal }: { signal: AbortSignal }) =>
+        (_url: string, { signal }: { signal: AbortSignal }) =>
           new Promise((_, reject) => {
             abortHandler = () => reject(new Error("aborted"));
             signal.addEventListener("abort", abortHandler);
           }),
       );
 
-      const fetchWithTimeout = async (url: string, timeoutMs: number): Promise<Response> => {
-        const c = new AbortController();
-        const t = setTimeout(() => c.abort(), timeoutMs);
-        try {
-          const res = await fetch(url, { signal: c.signal });
-          clearTimeout(t);
-          return res;
-        } catch {
-          clearTimeout(t);
-          throw new Error("timeout or network error");
-        }
-      };
-
-      const promise = fetchWithTimeout("https://example.com", 3000).catch((err) => err);
+      const promise = fetchWithTimeout("https://example.com", 3000);
 
       await vi.advanceTimersByTimeAsync(3001);
 
       const result = await promise;
-      expect(result).toBeInstanceOf(Error);
-      expect(result.message).toBe("timeout or network error");
+      expect(result).toBeNull();
     });
 
-    it("throws error when fetch fails with network error", async () => {
+    it("returns null when fetch fails with network error", async () => {
       (global.fetch as any).mockRejectedValue(new Error("Network failure"));
 
-      const fetchWithTimeout = async (url: string, timeoutMs: number): Promise<Response> => {
-        const c = new AbortController();
-        const t = setTimeout(() => c.abort(), timeoutMs);
-        try {
-          const res = await fetch(url, { signal: c.signal });
-          clearTimeout(t);
-          return res;
-        } catch {
-          clearTimeout(t);
-          throw new Error("timeout or network error");
-        }
-      };
-
-      await expect(fetchWithTimeout("https://example.com", 3000)).rejects.toThrow("timeout or network error");
+      await expect(fetchWithTimeout("https://example.com", 3000)).resolves.toBeNull();
     });
   });
 
