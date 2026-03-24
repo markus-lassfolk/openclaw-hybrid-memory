@@ -10,7 +10,7 @@ import type { SQLInputValue } from "node:sqlite";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { createHash } from "node:crypto";
-import { SQLITE_BUSY_TIMEOUT_MS } from "../utils/constants.js";
+import { BaseSqliteStore } from "./base-sqlite-store.js";
 import { capturePluginError } from "../services/error-reporter.js";
 
 export type EventStatus = "raw" | "processed" | "surfaced" | "pushed" | "archived";
@@ -49,23 +49,23 @@ export function computeFingerprint(input: string): string {
  * (raw -> processed -> surfaced -> pushed -> archived) as they are consumed
  * by the Rumination Engine.
  */
-export class EventBus {
-  private db: DatabaseSync;
+export class EventBus extends BaseSqliteStore {
   private readonly dbPath: string;
-  private closed = false;
-  private _dbOpen = true;
 
   /**
    * Initializes the Event Bus database, creating the file and schema if needed.
    * @param dbPath Absolute path to the SQLite database file.
    */
   constructor(dbPath: string) {
-    this.dbPath = dbPath;
     mkdirSync(dirname(dbPath), { recursive: true });
-    this.db = new DatabaseSync(dbPath);
-    this.db.exec("PRAGMA journal_mode = WAL");
-    this.db.exec(`PRAGMA busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
+    const db = new DatabaseSync(dbPath);
+    super(db);
+    this.dbPath = dbPath;
     this.migrate();
+  }
+
+  protected getSubsystemName(): string {
+    return "event-bus";
   }
 
   private migrate(): void {
@@ -89,15 +89,15 @@ export class EventBus {
     `);
   }
 
-  private get liveDb(): DatabaseSync {
+  protected get liveDb(): DatabaseSync {
     if (this.closed) {
       throw new Error("EventBus is closed");
     }
     if (!this._dbOpen) {
       this.db.open();
       this._dbOpen = true;
-      this.db.exec("PRAGMA journal_mode = WAL");
-      this.db.exec(`PRAGMA busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
+      this.closed = false;
+      this.applyPragmas();
     }
     return this.db;
   }
@@ -233,18 +233,4 @@ export class EventBus {
   /**
    * Closes the database connection cleanly. Idempotent.
    */
-  close(): void {
-    if (this.closed) return;
-    this.closed = true;
-    this._dbOpen = false;
-    try {
-      this.db.close();
-    } catch (err) {
-      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-        operation: "db-close",
-        severity: "info",
-        subsystem: "event-bus",
-      });
-    }
-  }
 }

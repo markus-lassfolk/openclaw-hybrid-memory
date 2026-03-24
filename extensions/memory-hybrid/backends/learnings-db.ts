@@ -16,7 +16,7 @@ import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 
-import { SQLITE_BUSY_TIMEOUT_MS } from "../utils/constants.js";
+import { BaseSqliteStore } from "./base-sqlite-store.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import type {
   LearningEntry,
@@ -54,15 +54,11 @@ interface LearningRow {
   updated_at: string;
 }
 
-export class LearningsDB {
-  private db: DatabaseSync;
-  private closed = false;
-  private _dbOpen = true;
-
+export class LearningsDB extends BaseSqliteStore {
   constructor(dbPath: string) {
     mkdirSync(dirname(dbPath), { recursive: true });
-    this.db = new DatabaseSync(dbPath);
-    this.applyPragmas();
+    const db = new DatabaseSync(dbPath);
+    super(db);
 
     this.liveDb.exec(`
       CREATE TABLE IF NOT EXISTS learnings (
@@ -85,19 +81,8 @@ export class LearningsDB {
     `);
   }
 
-  private applyPragmas(): void {
-    this.db.exec("PRAGMA journal_mode = WAL");
-    this.db.exec(`PRAGMA busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
-  }
-
-  private get liveDb(): DatabaseSync {
-    if (!this._dbOpen) {
-      this.db.open();
-      this._dbOpen = true;
-      this.closed = false;
-      this.applyPragmas();
-    }
-    return this.db;
+  protected getSubsystemName(): string {
+    return "learnings-db";
   }
 
   // ---------------------------------------------------------------------------
@@ -269,25 +254,6 @@ export class LearningsDB {
   // ---------------------------------------------------------------------------
   // Lifecycle
   // ---------------------------------------------------------------------------
-
-  close(): void {
-    if (this.closed) return;
-    this.closed = true;
-    this._dbOpen = false;
-    try {
-      this.db.close();
-    } catch (err) {
-      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-        operation: "db-close",
-        subsystem: "learnings-db",
-        severity: "info",
-      });
-    }
-  }
-
-  isOpen(): boolean {
-    return !this.closed && this._dbOpen;
-  }
 
   // ---------------------------------------------------------------------------
   // Private helpers

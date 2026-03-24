@@ -7,7 +7,7 @@ import { DatabaseSync } from "node:sqlite";
 import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import { SQLITE_BUSY_TIMEOUT_MS } from "../utils/constants.js";
+import { BaseSqliteStore } from "./base-sqlite-store.js";
 import { capturePluginError } from "../services/error-reporter.js";
 
 interface ProposalRow {
@@ -52,17 +52,14 @@ export type ProposalEntry = {
   targetHash: string | null;
 };
 
-export class ProposalsDB {
-  private db: DatabaseSync;
+export class ProposalsDB extends BaseSqliteStore {
   private readonly dbPath: string;
-  private closed = false;
-  private _dbOpen = true;
 
   constructor(dbPath: string) {
-    this.dbPath = dbPath;
     mkdirSync(dirname(dbPath), { recursive: true });
-    this.db = new DatabaseSync(dbPath);
-    this.applyPragmas();
+    const db = new DatabaseSync(dbPath);
+    super(db);
+    this.dbPath = dbPath;
 
     this.liveDb.exec(`
       CREATE TABLE IF NOT EXISTS proposals (
@@ -95,19 +92,8 @@ export class ProposalsDB {
     this.migrateTargetSnapshotColumns();
   }
 
-  private applyPragmas(): void {
-    this.db.exec("PRAGMA journal_mode = WAL");
-    this.db.exec(`PRAGMA busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
-  }
-
-  private get liveDb(): DatabaseSync {
-    if (!this._dbOpen) {
-      this.db.open();
-      this._dbOpen = true;
-      this.closed = false;
-      this.applyPragmas();
-    }
-    return this.db;
+  protected getSubsystemName(): string {
+    return "proposals-db";
   }
 
   private migrateRejectionReasonColumn(): void {
@@ -264,19 +250,4 @@ export class ProposalsDB {
     return !this.closed && this._dbOpen;
   }
 
-  close(): void {
-    if (this.closed) return;
-    this.closed = true;
-    this._dbOpen = false;
-    try {
-      this.db.close();
-    } catch (err) {
-      capturePluginError(err as Error, {
-        operation: "db-close",
-        severity: "info",
-        subsystem: "proposals",
-      });
-      /* already closed */
-    }
-  }
 }

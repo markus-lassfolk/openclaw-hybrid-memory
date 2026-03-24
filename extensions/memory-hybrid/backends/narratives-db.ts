@@ -11,7 +11,7 @@ import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 
-import { SQLITE_BUSY_TIMEOUT_MS } from "../utils/constants.js";
+import { BaseSqliteStore } from "./base-sqlite-store.js";
 
 export interface NarrativeEntry {
   id: string;
@@ -41,14 +41,11 @@ interface NarrativeRow {
   created_at: number;
 }
 
-export class NarrativesDB {
-  private readonly db: DatabaseSync;
-  private _dbOpen = true;
-
+export class NarrativesDB extends BaseSqliteStore {
   constructor(dbPath: string) {
     mkdirSync(dirname(dbPath), { recursive: true });
-    this.db = new DatabaseSync(dbPath);
-    this.applyPragmas();
+    const db = new DatabaseSync(dbPath);
+    super(db);
 
     this.liveDb.exec(`
       CREATE TABLE IF NOT EXISTS narratives (
@@ -67,18 +64,8 @@ export class NarrativesDB {
     `);
   }
 
-  private applyPragmas(): void {
-    this.db.exec("PRAGMA journal_mode = WAL");
-    this.db.exec(`PRAGMA busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
-  }
-
-  private get liveDb(): DatabaseSync {
-    if (!this._dbOpen) {
-      this.db.open();
-      this._dbOpen = true;
-      this.applyPragmas();
-    }
-    return this.db;
+  protected getSubsystemName(): string {
+    return "narratives-db";
   }
 
   store(input: StoreNarrativeInput): NarrativeEntry {
@@ -140,29 +127,6 @@ export class NarrativesDB {
     const cutoff = Math.floor(Date.now() / 1000) - days * 24 * 60 * 60;
     const result = this.liveDb.prepare("DELETE FROM narratives WHERE created_at < ?").run(cutoff);
     return Number(result.changes ?? 0);
-  }
-
-  close(): void {
-    this._dbOpen = false;
-    try {
-      this.db.close();
-    } catch (err: unknown) {
-      // Only ignore the specific "already closed"/"not open" condition.
-      const isAlreadyClosedError =
-        typeof err === "object" &&
-        err !== null &&
-        "message" in err &&
-        typeof (err as { message: unknown }).message === "string" &&
-        ((err as { message: string }).message.includes("not open") ||
-          (err as { message: string }).message.includes("already closed"));
-
-      if (!isAlreadyClosedError) {
-        // Log unexpected close failures instead of swallowing them silently.
-        // Close remains non-fatal for callers.
-        // biome-ignore lint/suspicious/noConsole: Close remains non-fatal
-        console.error("NarrativesDB.close() failed:", err);
-      }
-    }
   }
 
   private rowToEntry(row: NarrativeRow): NarrativeEntry {
