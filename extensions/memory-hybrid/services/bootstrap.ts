@@ -41,9 +41,15 @@ export const coreBootstrapInstaller: CoreBootstrapInstaller = {
   id: "memoryCore",
   bootstrapPhase: "core",
   install({ cfg, api, resolvedSqlitePath, resolvedLancePath }) {
-    const factsDb = new FactsDB(resolvedSqlitePath, {
-      fuzzyDedupe: cfg.store.fuzzyDedupe,
-    });
+    let factsDb: FactsDB;
+    try {
+      factsDb = new FactsDB(resolvedSqlitePath, {
+        fuzzyDedupe: cfg.store.fuzzyDedupe,
+      });
+    } catch (err) {
+      api.logger.error(`memory-hybrid: core bootstrap failed: ${err instanceof Error ? err.message : String(err)}`);
+      throw err;
+    }
     const vectorDb = new VectorDB(resolvedLancePath, cfg.embedding.dimensions, cfg.vector.autoRepair);
     vectorDb.setLogger(api.logger);
 

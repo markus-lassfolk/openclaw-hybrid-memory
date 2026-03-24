@@ -1,0 +1,801 @@
+diff --git a/extensions/memory-hybrid/MEMORY_INDEX.md b/extensions/memory-hybrid/MEMORY_INDEX.md
+--- a/extensions/memory-hybrid/MEMORY_INDEX.md
++++ b/extensions/memory-hybrid/MEMORY_INDEX.md
+@@ -1,6 +1,6 @@
+ # MEMORY_INDEX
+ 
+-Auto-generated awareness layer. Updated 2026-03-23T21:56:13.257Z.
++Auto-generated awareness layer. Updated 2026-03-24T06:45:53.980Z.
+ 
+ ## Active Clusters
+ - none
+
+diff --git a/extensions/memory-hybrid/README.md b/extensions/memory-hybrid/README.md
+--- a/extensions/memory-hybrid/README.md
++++ b/extensions/memory-hybrid/README.md
+@@ -37,6 +37,8 @@
+ 
+ Then restart the gateway. The upgrade command removes the current install, fetches the latest from npm, rebuilds native deps, and tells you to restart.
+ 
++Outdated installs now check the latest published plugin version in the background. If your local version falls behind, the plugin mutes GlitchTip telemetry for that client and logs an upgrade reminder. You can tune reminder behavior with `errorReporting.updateNudge.enabled`, `errorReporting.updateNudge.intervalHours`, and `errorReporting.updateNudge.cacheTtlHours`.
++
+ Or with npm directly: `npm i openclaw-hybrid-memory` in your OpenClaw extensions folder if you manage it yourself.
+ 
+ **2. Configure.** Set your OpenAI API key and enable the plugin. Easiest: run `openclaw hybrid-mem install` to merge full defaults (memory slot, compaction prompts, nightly session-distillation job) into `~/.openclaw/openclaw.json`, then set `plugins.entries["openclaw-hybrid-memory"].config.embedding.apiKey` to your key.
+
+diff --git a/extensions/memory-hybrid/config/parsers/features.ts b/extensions/memory-hybrid/config/parsers/features.ts
+--- a/extensions/memory-hybrid/config/parsers/features.ts
++++ b/extensions/memory-hybrid/config/parsers/features.ts
+@@ -339,6 +339,11 @@
+       consent: true,
+       mode: "community",
+       sampleRate: 1.0,
++      updateNudge: {
++        enabled: true,
++        intervalHours: 24,
++        cacheTtlHours: 24,
++      },
+     };
+   }
+ 
+@@ -382,6 +387,26 @@
+   const botNameRaw = typeof errorReportingRaw.botName === "string" ? errorReportingRaw.botName.trim() : "";
+   const botName = botNameRaw.length > 0 ? botNameRaw.slice(0, 64) : undefined;
+ 
++  const updateNudgeRaw =
++    errorReportingRaw.updateNudge && typeof errorReportingRaw.updateNudge === "object"
++      ? (errorReportingRaw.updateNudge as Record<string, unknown>)
++      : undefined;
++  const updateNudge = {
++    enabled: updateNudgeRaw?.enabled !== false,
++    intervalHours:
++      updateNudgeRaw?.intervalHours === 0
++        ? 0
++        : typeof updateNudgeRaw?.intervalHours === "number" && updateNudgeRaw.intervalHours > 0
++          ? Math.min(24 * 30, updateNudgeRaw.intervalHours)
++          : 24,
++    cacheTtlHours:
++      updateNudgeRaw?.cacheTtlHours === 0
++        ? 0
++        : typeof updateNudgeRaw?.cacheTtlHours === "number" && updateNudgeRaw.cacheTtlHours > 0
++          ? Math.min(24 * 30, updateNudgeRaw.cacheTtlHours)
++          : 24,
++  };
++
+   // Optional resolvedIssues map for version-aware filtering
+   const validVersionPattern = /^\d+\.\d+\.\d+/;
+   const resolvedIssues =
+@@ -417,6 +442,7 @@
+     botId,
+     botName,
+     resolvedIssues,
++    updateNudge,
+   };
+ }
+ 
+
+diff --git a/extensions/memory-hybrid/config/types/index.ts b/extensions/memory-hybrid/config/types/index.ts
+--- a/extensions/memory-hybrid/config/types/index.ts
++++ b/extensions/memory-hybrid/config/types/index.ts
+@@ -173,6 +173,16 @@
+ };
+ 
+ /** Error reporting configuration for GlitchTip/Sentry integration (opt-in, privacy-first) */
++export type UpdateNudgeConfig = {
++  /** Emit upgrade reminders for outdated installs (default: true). */
++  enabled: boolean;
++  /** Minimum hours between repeated upgrade reminders (default: 24). */
++  intervalHours: number;
++  /** How long cached latest-version results stay fresh (default: 24). */
++  cacheTtlHours: number;
++};
++
++/** Error reporting configuration for GlitchTip/Sentry integration (opt-in, privacy-first) */
+ export type ErrorReportingConfig = {
+   enabled: boolean;
+   /** DSN for self-hosted mode. Not required in schema (only at runtime for self-hosted). */
+@@ -195,6 +205,8 @@
+    * When not configured, behavior is identical to today.
+    */
+   resolvedIssues?: Record<string, string>;
++  /** Background latest-version check plus user-facing upgrade reminders. */
++  updateNudge: UpdateNudgeConfig;
+ };
+ 
+ /** Configuration for a single embedding model in a multi-model setup (Issue #158). */
+
+diff --git a/extensions/memory-hybrid/openclaw.plugin.json b/extensions/memory-hybrid/openclaw.plugin.json
+--- a/extensions/memory-hybrid/openclaw.plugin.json
++++ b/extensions/memory-hybrid/openclaw.plugin.json
+@@ -271,6 +271,18 @@
+       "placeholder": "MyBot",
+       "help": "Friendly name for this bot; shown in GlitchTip reports. Use config-set errorReporting.botName \"MyBot\"."
+     },
++    "errorReporting.updateNudge.enabled": {
++      "label": "Update nudges enabled",
++      "help": "Warn when this install falls behind the latest published plugin version (default: true)"
++    },
++    "errorReporting.updateNudge.intervalHours": {
++      "label": "Update nudge interval (hours)",
++      "help": "Minimum hours between repeated upgrade reminders on outdated installs (default: 24)"
++    },
++    "errorReporting.updateNudge.cacheTtlHours": {
++      "label": "Version check cache TTL (hours)",
++      "help": "How long the cached latest-version result stays fresh before startup relies on a new background check (default: 24)"
++    },
+     "wal.enabled": {
+       "label": "Write-Ahead Log",
+       "help": "Enable WAL for crash resilience - logs memory operations before committing (default: enabled)"
+@@ -786,6 +798,30 @@
+           "botName": {
+             "type": "string",
+             "description": "Optional friendly name for this bot; sent as tag for readable reports."
++          },
++          "updateNudge": {
++            "type": "object",
++            "additionalProperties": false,
++            "properties": {
++              "enabled": {
++                "type": "boolean",
++                "default": true,
++                "description": "Warn when this install falls behind the latest published plugin version."
++              },
++              "intervalHours": {
++                "type": "number",
++                "minimum": 0,
++                "default": 24,
++                "description": "Hours between repeated upgrade reminders on outdated installs. 0 disables nudges (keeps muting active)."
++              },
++              "cacheTtlHours": {
++                "type": "number",
++                "minimum": 0,
++                "default": 24,
++                "description": "How long cached latest-version results stay fresh before startup trusts a new background check instead."
++              }
++            },
++            "description": "Controls user-facing upgrade reminders for the version-aware telemetry mute flow."
+           }
+         },
+         "required": ["enabled", "consent"],
+
+diff --git a/extensions/memory-hybrid/services/error-reporter.ts b/extensions/memory-hybrid/services/error-reporter.ts
+--- a/extensions/memory-hybrid/services/error-reporter.ts
++++ b/extensions/memory-hybrid/services/error-reporter.ts
+@@ -1,3 +1,7 @@
++import { compareVersions } from "../utils/version-check.js";
++
++export { compareVersions };
++
+ /**
+  * Error Reporter Service for GlitchTip Integration
+  *
+@@ -121,28 +125,6 @@
+  *    0 if a === b
+  *    1 if a > b
+  */
+-export function compareVersions(a: string, b: string): number {
+-  const parseVersion = (version: string): [number, number, number] | null => {
+-    const match = version.trim().match(/^v?(\d+)\.(\d+)\.(\d+)/);
+-    if (!match) return null;
+-    return [Number(match[1]), Number(match[2]), Number(match[3])];
+-  };
+-
+-  const versionA = parseVersion(a);
+-  const versionB = parseVersion(b);
+-
+-  if (!versionA || !versionB) {
+-    return 0; // Safe default for unparseable versions
+-  }
+-
+-  for (let i = 0; i < 3; i++) {
+-    if (versionA[i] < versionB[i]) return -1;
+-    if (versionA[i] > versionB[i]) return 1;
+-  }
+-
+-  return 0; // Equal
+-}
+-
+ /**
+  * Check whether an event should be dropped because it matches a known-fixed issue
+  * and the event's release version is older than the fix.
+@@ -542,7 +524,16 @@
+ let initialized = false;
+ let logger: any = console; // Default fallback to console
+ const errorDedup = new Map<string, number>(); // Rate limiting: fingerprint -> timestamp
++let telemetryMuteReason: string | null = null;
+ 
++export function setErrorReporterMuted(muted: boolean, reason?: string): void {
++  telemetryMuteReason = muted ? (reason ?? "muted") : null;
++}
++
++export function getErrorReporterMuteReason(): string | null {
++  return telemetryMuteReason;
++}
++
+ /**
+  * Initialize error reporter with STRICT privacy settings.
+  * Optionally pass runtimeBotId from OpenClaw plugin context (e.g. api.context?.agentId) to use as bot UUID when config.botId is not set.
+@@ -643,6 +634,7 @@
+   // UnconfiguredProviderError is a config issue (missing API key), not a code bug.
+   // Suppress here to protect all current and future call sites centrally.
+   if (error.name === "UnconfiguredProviderError") return undefined;
++  if (telemetryMuteReason) return undefined;
+ 
+   if (!initialized || !reporter) {
+     return undefined;
+@@ -718,6 +710,9 @@
+  * Capture a test error to verify reporting works
+  */
+ export function captureTestError(): string | null {
++  if (telemetryMuteReason) {
++    return null;
++  }
+   if (!initialized || !reporter) {
+     return null;
+   }
+
+diff --git a/extensions/memory-hybrid/setup/plugin-service.ts b/extensions/memory-hybrid/setup/plugin-service.ts
+--- a/extensions/memory-hybrid/setup/plugin-service.ts
++++ b/extensions/memory-hybrid/setup/plugin-service.ts
+@@ -17,6 +17,7 @@
+   isErrorReporterActive,
+   flushErrorReporter,
+   capturePluginError,
++  setErrorReporterMuted,
+ } from "../services/error-reporter.js";
+ import { walRemove } from "../services/wal-helpers.js";
+ import { syncCronLastRunFromGuards } from "../services/cron-guard.js";
+@@ -26,6 +27,15 @@
+ import { runAutoClassify } from "../services/auto-classifier.js";
+ import { runBuildLanguageKeywords } from "../services/language-keywords-build.js";
+ import { getLanguageKeywordsFilePath } from "../utils/language-keywords.js";
++import {
++  type VersionCheckCacheEntry,
++  fetchLatestPublishedVersion,
++  isPluginOutdated,
++  isVersionCheckCacheFresh,
++  maybeLogOutdatedVersionNudge,
++  readVersionCheckCache,
++  writeVersionCheckCache,
++} from "../utils/plugin-update-check.js";
+ import { versionInfo } from "../versionInfo.js";
+ import { checkOpenClawVersion } from "../utils/version-check.js";
+ import { runTaskQueueWatchdog } from "../services/task-queue-watchdog.js";
+@@ -97,18 +107,45 @@
+   let watchdogRunPromise: Promise<void> | null = null;
+   let shuttingDown = false;
+   let dashboardServer: DashboardServer | null = null;
++  let versionCheckPromise: Promise<void> | null = null;
+ 
+   return {
+     id: PLUGIN_ID,
++    _getVersionCheckPromise: () => versionCheckPromise,
+     start: async () => {
+       const sqlCount = factsDb.count();
+       const expired = factsDb.countExpired();
++      const versionCheckCachePath =
++        resolvedSqlitePath === ":memory:" ? null : join(dirname(resolvedSqlitePath), ".latest-plugin-version.json");
++      const errorReportingActive = cfg.errorReporting.enabled && cfg.errorReporting.consent;
++      let cachedVersionCheck = versionCheckCachePath ? readVersionCheckCache(versionCheckCachePath) : null;
+       api.logger.info(
+         `memory-hybrid: initialized v${versionInfo.pluginVersion} (sqlite: ${sqlCount} facts, lance: ${resolvedLancePath}, model: ${cfg.embedding.model})`,
+       );
+ 
+       checkOpenClawVersion(api.version, api.logger);
+ 
++      if (
++        errorReportingActive &&
++        cachedVersionCheck &&
++        isVersionCheckCacheFresh(cachedVersionCheck, cfg.errorReporting.updateNudge.cacheTtlHours) &&
++        isPluginOutdated(versionInfo.pluginVersion, cachedVersionCheck.latestVersion)
++      ) {
++        setErrorReporterMuted(true, `outdated-plugin:${cachedVersionCheck.latestVersion}`);
++        const nextCachedVersionCheck = maybeLogOutdatedVersionNudge(
++          versionInfo.pluginVersion,
++          cachedVersionCheck,
++          cfg.errorReporting.updateNudge,
++          api.logger,
++        );
++        if (versionCheckCachePath && nextCachedVersionCheck.lastNudgedAt !== cachedVersionCheck.lastNudgedAt) {
++          writeVersionCheckCache(versionCheckCachePath, nextCachedVersionCheck);
++          cachedVersionCheck = nextCachedVersionCheck;
++        }
++      } else {
++        setErrorReporterMuted(false);
++      }
++
+       // ========================================================================
+       // Startup Task Sequencing (to avoid race conditions):
+       // 1. Error reporter init (async)
+@@ -147,6 +184,39 @@
+         });
+       }
+ 
++      versionCheckPromise = (async () => {
++        if (!errorReportingActive || !versionCheckCachePath) return;
++        try {
++          const latestPublished = await fetchLatestPublishedVersion();
++          if (!latestPublished.latestVersion || !latestPublished.source) return;
++
++          let cacheEntry: VersionCheckCacheEntry = {
++            latestVersion: latestPublished.latestVersion,
++            source: latestPublished.source,
++            checkedAt: new Date().toISOString(),
++            lastNudgedAt: cachedVersionCheck?.lastNudgedAt,
++          };
++
++          if (isPluginOutdated(versionInfo.pluginVersion, latestPublished.latestVersion)) {
++            setErrorReporterMuted(true, `outdated-plugin:${latestPublished.latestVersion}`);
++            cacheEntry = maybeLogOutdatedVersionNudge(
++              versionInfo.pluginVersion,
++              cacheEntry,
++              cfg.errorReporting.updateNudge,
++              api.logger,
++            );
++          } else {
++            setErrorReporterMuted(false);
++          }
++
++          writeVersionCheckCache(versionCheckCachePath, cacheEntry);
++        } catch (err) {
++          api.logger.debug?.(
++            `memory-hybrid: latest-version check failed: ${err instanceof Error ? err.message : String(err)}`,
++          );
++        }
++      })();
++
+       if (expired > 0) {
+         const pruned = factsDb.pruneExpired();
+         api.logger.info(`memory-hybrid: startup prune removed ${pruned} expired facts`);
+@@ -622,6 +692,16 @@
+           api.logger.warn("memory-hybrid: task-queue-watchdog shutdown timed out; continuing shutdown anyway");
+         }
+       }
++      if (versionCheckPromise) {
++        const timeoutMs = 5000;
++        const completed = await Promise.race([
++          versionCheckPromise.then(() => true).catch(() => true),
++          new Promise<boolean>((resolve) => setTimeout(() => resolve(false), timeoutMs)),
++        ]);
++        if (!completed) {
++          api.logger.warn("memory-hybrid: version-check shutdown timed out; continuing shutdown anyway");
++        }
++      }
+       if (ctx.pythonBridge) {
+         await ctx.pythonBridge.shutdown();
+       }
+
+diff --git a/extensions/memory-hybrid/tests/plugin-service-startup.test.ts b/extensions/memory-hybrid/tests/plugin-service-startup.test.ts
+--- a/extensions/memory-hybrid/tests/plugin-service-startup.test.ts
++++ b/extensions/memory-hybrid/tests/plugin-service-startup.test.ts
+@@ -14,6 +14,7 @@
+ import { MIN_OPENCLAW_VERSION } from "../utils/version-check.js";
+ import { _testing } from "../index.js";
+ import { hybridConfigSchema } from "../config.js";
++import { capturePluginError, getErrorReporterMuteReason, setErrorReporterMuted } from "../services/error-reporter.js";
+ 
+ const { FactsDB, VectorDB } = _testing;
+ 
+@@ -88,6 +89,7 @@
+   tmpDir: string,
+   api: ReturnType<typeof makeMockApi>,
+   timers: ReturnType<typeof makeTimers>,
++  configOverrides: Record<string, unknown> = {},
+ ): PluginServiceContext {
+   const sqlitePath = join(tmpDir, "facts.db");
+   const lancePath = join(tmpDir, "lancedb");
+@@ -99,6 +101,7 @@
+     autoClassify: { enabled: false },
+     languageKeywords: { autoBuild: false, weeklyIntervalDays: 7 },
+     passiveObserver: { enabled: false },
++    ...configOverrides,
+   });
+   const factsDb = new FactsDB(sqlitePath, { fuzzyDedupe: false });
+   const vectorDb = new VectorDB(lancePath, EMBEDDING_DIM, false);
+@@ -139,6 +142,8 @@
+   });
+ 
+   afterEach(() => {
++    setErrorReporterMuted(false);
++    vi.unstubAllGlobals();
+     clearTimers(timers);
+     rmSync(tmpDir, { recursive: true, force: true });
+   });
+@@ -181,4 +186,35 @@
+     (ctx.factsDb as InstanceType<typeof FactsDB>).close();
+     (ctx.vectorDb as InstanceType<typeof VectorDB>).close();
+   });
++
++  it("mutes telemetry and warns when the published plugin version is newer", async () => {
++    const api = makeMockApi(MIN_OPENCLAW_VERSION);
++    const fetchMock = vi.fn(async (input: string | URL) => {
++      const url = String(input);
++      if (new URL(url).hostname === "registry.npmjs.org") {
++        return new Response(JSON.stringify({ version: "2026.3.999" }), { status: 200 });
++      }
++      if (new URL(url).hostname === "api.github.com") {
++        return new Response(JSON.stringify({ tag_name: "v2026.3.999" }), { status: 200 });
++      }
++      return new Response("", { status: 200 });
++    });
++    vi.stubGlobal("fetch", fetchMock);
++
++    const ctx = buildMinimalCtx(tmpDir, api, timers, {
++      errorReporting: { enabled: true, consent: true },
++    });
++    const service = createPluginService(ctx);
++    await service.start();
++    await service._getVersionCheckPromise();
++
++    expect(getErrorReporterMuteReason()).toContain("outdated-plugin:2026.3.999");
++    expect(capturePluginError(new Error("should stay local"), { operation: "startup-version-check" })).toBeUndefined();
++
++    const warnCalls = api.logger.warn.mock.calls.map((c: unknown[]) => c[0] as string);
++    expect(warnCalls.some((msg) => msg.includes("update available") && msg.includes("2026.3.999"))).toBe(true);
++
++    (ctx.factsDb as InstanceType<typeof FactsDB>).close();
++    (ctx.vectorDb as InstanceType<typeof VectorDB>).close();
++  });
+ });
+
+diff --git a/extensions/memory-hybrid/tests/plugin-update-check.test.ts b/extensions/memory-hybrid/tests/plugin-update-check.test.ts
+new file mode 100644
+--- /dev/null
++++ b/extensions/memory-hybrid/tests/plugin-update-check.test.ts
+@@ -1,0 +1,149 @@
++import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
++import { mkdtempSync, rmSync } from "node:fs";
++import { join } from "node:path";
++import { tmpdir } from "node:os";
++import { hybridConfigSchema } from "../config.js";
++import {
++  fetchLatestPublishedVersion,
++  isPluginOutdated,
++  isVersionCheckCacheFresh,
++  markUpdateNudged,
++  maybeLogOutdatedVersionNudge,
++  readVersionCheckCache,
++  shouldEmitUpdateNudge,
++  writeVersionCheckCache,
++  type VersionCheckCacheEntry,
++} from "../utils/plugin-update-check.js";
++
++describe("plugin update check config", () => {
++  const baseConfig = {
++    embedding: {
++      provider: "openai" as const,
++      model: "text-embedding-3-small",
++      apiKey: "sk-test-key-that-is-long-enough",
++    },
++    lanceDbPath: "/tmp/test-lance",
++    sqlitePath: "/tmp/test.db",
++  };
++
++  it("defaults updateNudge to enabled with 24h interval and cache TTL", () => {
++    const cfg = hybridConfigSchema.parse(baseConfig);
++    expect(cfg.errorReporting.updateNudge).toEqual({
++      enabled: true,
++      intervalHours: 24,
++      cacheTtlHours: 24,
++    });
++  });
++
++  it("accepts custom updateNudge overrides", () => {
++    const cfg = hybridConfigSchema.parse({
++      ...baseConfig,
++      errorReporting: {
++        enabled: true,
++        consent: true,
++        updateNudge: {
++          enabled: false,
++          intervalHours: 6,
++          cacheTtlHours: 12,
++        },
++      },
++    });
++    expect(cfg.errorReporting.updateNudge).toEqual({
++      enabled: false,
++      intervalHours: 6,
++      cacheTtlHours: 12,
++    });
++  });
++});
++
++describe("plugin update check utilities", () => {
++  let tempDir: string;
++
++  beforeEach(() => {
++    tempDir = mkdtempSync(join(tmpdir(), "plugin-update-check-"));
++  });
++
++  afterEach(() => {
++    rmSync(tempDir, { recursive: true, force: true });
++    vi.restoreAllMocks();
++  });
++
++  it("prefers the newest published version across npm and GitHub", async () => {
++    const fetchMock = vi.fn(async (input: string | URL) => {
++      const url = String(input);
++      if (new URL(url).hostname === "registry.npmjs.org") {
++        return new Response(JSON.stringify({ version: "2026.3.180" }), { status: 200 });
++      }
++      return new Response(JSON.stringify({ tag_name: "v2026.3.190" }), { status: 200 });
++    });
++
++    await expect(fetchLatestPublishedVersion(fetchMock as typeof fetch)).resolves.toEqual({
++      latestVersion: "2026.3.190",
++      source: "github",
++    });
++  });
++
++  it("falls back cleanly when one upstream is unavailable", async () => {
++    const fetchMock = vi.fn(async (input: string | URL) => {
++      const url = String(input);
++      if (new URL(url).hostname === "registry.npmjs.org") {
++        throw new Error("network down");
++      }
++      return new Response(JSON.stringify({ tag_name: "v2026.3.188" }), { status: 200 });
++    });
++
++    await expect(fetchLatestPublishedVersion(fetchMock as typeof fetch)).resolves.toEqual({
++      latestVersion: "2026.3.188",
++      source: "github",
++    });
++  });
++
++  it("reads and writes version-check cache entries", () => {
++    const cachePath = join(tempDir, ".latest-plugin-version.json");
++    const entry: VersionCheckCacheEntry = {
++      latestVersion: "2026.3.190",
++      source: "npm",
++      checkedAt: "2026-03-24T10:00:00.000Z",
++      lastNudgedAt: "2026-03-24T10:00:00.000Z",
++    };
++
++    writeVersionCheckCache(cachePath, entry);
++    expect(readVersionCheckCache(cachePath)).toEqual(entry);
++  });
++
++  it("respects staleness and nudge intervals", () => {
++    const entry: VersionCheckCacheEntry = {
++      latestVersion: "2026.3.190",
++      source: "npm",
++      checkedAt: "2026-03-24T00:00:00.000Z",
++      lastNudgedAt: "2026-03-24T00:00:00.000Z",
++    };
++    const nudge = { enabled: true, intervalHours: 24, cacheTtlHours: 24 };
++    const nowMs = Date.parse("2026-03-24T12:00:00.000Z");
++
++    expect(isVersionCheckCacheFresh(entry, nudge.cacheTtlHours, nowMs)).toBe(true);
++    expect(shouldEmitUpdateNudge(entry, nudge, nowMs)).toBe(false);
++    expect(isPluginOutdated("2026.3.181", entry.latestVersion)).toBe(true);
++  });
++
++  it("logs a warning and stamps lastNudgedAt when an outdated install is due for a nudge", () => {
++    const logger = { info: vi.fn(), warn: vi.fn() };
++    const entry: VersionCheckCacheEntry = {
++      latestVersion: "2026.3.190",
++      source: "npm",
++      checkedAt: "2026-03-24T00:00:00.000Z",
++    };
++
++    const updated = maybeLogOutdatedVersionNudge(
++      "2026.3.181",
++      entry,
++      { enabled: true, intervalHours: 24, cacheTtlHours: 24 },
++      logger,
++    );
++
++    expect(logger.warn).toHaveBeenCalledOnce();
++    expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining("Telemetry is muted on outdated clients"));
++    expect(updated.lastNudgedAt).toBeDefined();
++    expect(markUpdateNudged(entry, "2026-03-24T11:00:00.000Z").lastNudgedAt).toBe("2026-03-24T11:00:00.000Z");
++  });
++});
+
+diff --git a/extensions/memory-hybrid/utils/plugin-update-check.ts b/extensions/memory-hybrid/utils/plugin-update-check.ts
+new file mode 100644
+--- /dev/null
++++ b/extensions/memory-hybrid/utils/plugin-update-check.ts
+@@ -1,0 +1,175 @@
++import { dirname } from "node:path";
++import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
++import type { UpdateNudgeConfig } from "../config.js";
++import { compareVersions } from "./version-check.js";
++
++const DEFAULT_TIMEOUT_MS = 3000;
++const NPM_LATEST_URL = "https://registry.npmjs.org/openclaw-hybrid-memory/latest";
++const GITHUB_LATEST_URL = "https://api.github.com/repos/markus-lassfolk/openclaw-hybrid-memory/releases/latest";
++
++export interface LatestPublishedVersion {
++  latestVersion: string | null;
++  source: "npm" | "github" | null;
++}
++
++export interface VersionCheckCacheEntry {
++  latestVersion: string;
++  source: "npm" | "github";
++  checkedAt: string;
++  lastNudgedAt?: string;
++}
++
++export interface UpdateNudgeLogger {
++  info?: (msg: string) => void;
++  warn?: (msg: string) => void;
++  debug?: (msg: string) => void;
++}
++
++async function fetchWithTimeout(
++  url: string,
++  expectedHostname: string,
++  timeoutMs: number,
++  fetchImpl: typeof fetch,
++): Promise<Response> {
++  const parsed = new URL(url);
++  if (parsed.hostname !== expectedHostname) {
++    throw new Error(`Unexpected hostname: ${parsed.hostname}`);
++  }
++  const controller = new AbortController();
++  const timeout = setTimeout(() => controller.abort(), timeoutMs);
++  try {
++    return await fetchImpl(url, { signal: controller.signal });
++  } finally {
++    clearTimeout(timeout);
++  }
++}
++
++function asVersionString(value: unknown): string | null {
++  return typeof value === "string" && /^v?\d+\.\d+\.\d+/.test(value.trim()) ? value.trim().replace(/^v/, "") : null;
++}
++
++export async function fetchLatestPublishedVersion(
++  fetchImpl: typeof fetch = fetch,
++  timeoutMs = DEFAULT_TIMEOUT_MS,
++): Promise<LatestPublishedVersion> {
++  const candidates: Array<{ version: string; source: "npm" | "github" }> = [];
++
++  try {
++    const response = await fetchWithTimeout(NPM_LATEST_URL, "registry.npmjs.org", timeoutMs, fetchImpl);
++    if (response.ok) {
++      const payload = (await response.json()) as { version?: unknown };
++      const version = asVersionString(payload.version);
++      if (version) candidates.push({ version, source: "npm" });
++    }
++  } catch {
++    /* non-fatal */
++  }
++
++  try {
++    const response = await fetchWithTimeout(GITHUB_LATEST_URL, "api.github.com", timeoutMs, fetchImpl);
++    if (response.ok) {
++      const payload = (await response.json()) as { tag_name?: unknown };
++      const version = asVersionString(payload.tag_name);
++      if (version) candidates.push({ version, source: "github" });
++    }
++  } catch {
++    /* non-fatal */
++  }
++
++  const newest = candidates.reduce<{ version: string; source: "npm" | "github" } | null>((latest, candidate) => {
++    if (!latest) return candidate;
++    return compareVersions(candidate.version, latest.version) > 0 ? candidate : latest;
++  }, null);
++
++  return {
++    latestVersion: newest?.version ?? null,
++    source: newest?.source ?? null,
++  };
++}
++
++export function isPluginOutdated(currentVersion: string, latestVersion: string | null): boolean {
++  return latestVersion != null && compareVersions(currentVersion, latestVersion) < 0;
++}
++
++export function readVersionCheckCache(cacheFilePath: string): VersionCheckCacheEntry | null {
++  try {
++    const raw = JSON.parse(readFileSync(cacheFilePath, "utf-8")) as Partial<VersionCheckCacheEntry>;
++    if (
++      typeof raw.latestVersion !== "string" ||
++      (raw.source !== "npm" && raw.source !== "github") ||
++      typeof raw.checkedAt !== "string"
++    ) {
++      return null;
++    }
++    return {
++      latestVersion: raw.latestVersion,
++      source: raw.source,
++      checkedAt: raw.checkedAt,
++      lastNudgedAt: typeof raw.lastNudgedAt === "string" ? raw.lastNudgedAt : undefined,
++    };
++  } catch {
++    return null;
++  }
++}
++
++export function writeVersionCheckCache(cacheFilePath: string, entry: VersionCheckCacheEntry): void {
++  mkdirSync(dirname(cacheFilePath), { recursive: true });
++  writeFileSync(cacheFilePath, JSON.stringify(entry, null, 2), "utf-8");
++}
++
++export function isVersionCheckCacheFresh(
++  entry: VersionCheckCacheEntry,
++  cacheTtlHours: number,
++  nowMs = Date.now(),
++): boolean {
++  const checkedAtMs = Date.parse(entry.checkedAt);
++  if (!Number.isFinite(checkedAtMs)) return false;
++  return nowMs - checkedAtMs <= cacheTtlHours * 3600_000;
++}
++
++export function shouldEmitUpdateNudge(
++  entry: VersionCheckCacheEntry,
++  updateNudge: UpdateNudgeConfig,
++  nowMs = Date.now(),
++): boolean {
++  if (!updateNudge.enabled) return false;
++  if (updateNudge.intervalHours === 0) return false;
++  if (!entry.lastNudgedAt) return true;
++  const lastNudgedMs = Date.parse(entry.lastNudgedAt);
++  if (!Number.isFinite(lastNudgedMs)) return true;
++  return nowMs - lastNudgedMs >= updateNudge.intervalHours * 3600_000;
++}
++
++export function markUpdateNudged(
++  entry: VersionCheckCacheEntry,
++  nowIso = new Date().toISOString(),
++): VersionCheckCacheEntry {
++  return { ...entry, lastNudgedAt: nowIso };
++}
++
++export function maybeLogOutdatedVersionNudge(
++  currentVersion: string,
++  entry: VersionCheckCacheEntry,
++  updateNudge: UpdateNudgeConfig,
++  logger: UpdateNudgeLogger,
++): VersionCheckCacheEntry {
++  if (!isPluginOutdated(currentVersion, entry.latestVersion)) return entry;
++  if (!updateNudge.enabled) {
++    logger.info?.(
++      `memory-hybrid: telemetry muted for outdated plugin v${currentVersion} (latest published: v${entry.latestVersion}).`,
++    );
++    return entry;
++  }
++  if (!shouldEmitUpdateNudge(entry, updateNudge)) {
++    logger.info?.(
++      `memory-hybrid: telemetry muted for outdated plugin v${currentVersion} (latest published: v${entry.latestVersion}).`,
++    );
++    return entry;
++  }
++
++  logger.warn?.(
++    `memory-hybrid: update available — installed v${currentVersion}, latest published is v${entry.latestVersion}. ` +
++      "Telemetry is muted on outdated clients to keep GlitchTip clean. Upgrade with: openclaw hybrid-mem upgrade",
++  );
++  return markUpdateNudged(entry);
++}
+
+diff --git a/extensions/memory-hybrid/utils/version-check.ts b/extensions/memory-hybrid/utils/version-check.ts
+--- a/extensions/memory-hybrid/utils/version-check.ts
++++ b/extensions/memory-hybrid/utils/version-check.ts
+@@ -36,6 +36,23 @@
+ }
+ 
+ /**
++ * Compare two version strings numerically.
++ * Returns -1 when `a < b`, 1 when `a > b`, and 0 when equal or unparseable.
++ */
++export function compareVersions(a: string, b: string): number {
++  const versionA = parseVersion(a);
++  const versionB = parseVersion(b);
++  if (!versionA || !versionB) return 0;
++
++  for (let i = 0; i < 3; i++) {
++    if (versionA[i] < versionB[i]) return -1;
++    if (versionA[i] > versionB[i]) return 1;
++  }
++
++  return 0;
++}
++
++/**
+... diff truncated: showing 800 of 803 lines
