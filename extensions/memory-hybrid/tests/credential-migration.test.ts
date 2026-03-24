@@ -6,6 +6,8 @@
 import { describe, it, expect, vi } from "vitest";
 import { migrateCredentialsToVault, type MigrateCredentialsOptions } from "../services/credential-migration.js";
 import { VAULT_POINTER_PREFIX } from "../services/auto-capture.js";
+import { AllEmbeddingProvidersFailed } from "../services/embeddings.js";
+import * as errorReporter from "../services/error-reporter.js";
 
 // ---------------------------------------------------------------------------
 // Mock helpers
@@ -468,6 +470,28 @@ describe("migrateCredentialsToVault", () => {
       expect(result.errors).toHaveLength(1);
       expect(result.errors[0]).toContain("embedding service down");
       expect(result.migrated).toBe(1);
+    });
+
+    it("suppresses AllEmbeddingProvidersFailed when the pointer embedding fails for expected reasons", async () => {
+      const captureSpy = vi.spyOn(errorReporter, "capturePluginError").mockImplementation(() => undefined);
+      const fact = makeCredentialFact();
+      const factsDb = makeFactsDB({ lookup: vi.fn().mockReturnValue([fact]) });
+      const credentialsDb = makeCredentialsDB();
+      const vectorDb = makeVectorDB();
+      const rateLimitErr = Object.assign(new Error("429 Too Many Requests"), { status: 429 });
+      const embeddings = makeEmbeddings({
+        embed: vi.fn().mockRejectedValue(new AllEmbeddingProvidersFailed([rateLimitErr])),
+      });
+
+      const result = await migrateCredentialsToVault(makeOpts({ factsDb, credentialsDb, vectorDb, embeddings }));
+
+      expect(result.errors).toHaveLength(1);
+      expect(result.errors[0]).toContain("embedding pointer for github");
+      expect(result.migrated).toBe(1);
+      expect(vectorDb.hasDuplicate).not.toHaveBeenCalled();
+      expect(vectorDb.store).not.toHaveBeenCalled();
+      expect(captureSpy).not.toHaveBeenCalled();
+      captureSpy.mockRestore();
     });
 
     it("adds vector error and still counts migration when vectorDb.store rejects", async () => {

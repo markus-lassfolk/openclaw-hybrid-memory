@@ -18,10 +18,12 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { runRecallPipelineQuery, type RecallPipelineDeps } from "../services/recall-pipeline.js";
+import { AllEmbeddingProvidersFailed } from "../services/embeddings.js";
 import { DEFAULT_INTERACTIVE_RECALL_POLICY } from "../services/retrieval-mode-policy.js";
 import type { SearchResult, MemoryEntry } from "../types/memory.js";
 import { createPendingLLMWarnings } from "../services/chat.js";
 import * as chatModule from "../services/chat.js";
+import * as errorReporter from "../services/error-reporter.js";
 import { RETRIEVAL_MODE } from "../services/retrieval-mode-policy.js";
 
 // ---------------------------------------------------------------------------
@@ -226,6 +228,36 @@ describe("runRecallPipelineQuery — semantic mode", () => {
     expect(deps.embeddings.embed).not.toHaveBeenCalled();
     expect(deps.vectorDb.search).toHaveBeenCalledWith(precomputed, expect.any(Number), expect.any(Number));
   });
+
+  it("suppresses AllEmbeddingProvidersFailed when every cause is expected", async () => {
+    const captureSpy = vi.spyOn(errorReporter, "capturePluginError").mockImplementation(() => undefined);
+    const rateLimitErr = Object.assign(new Error("429 Too Many Requests"), { status: 429 });
+    const deps = makeDeps({
+      cfg: {
+        queryExpansion: {
+          enabled: false,
+          maxVariants: 4,
+          cacheSize: 100,
+          timeoutMs: 15_000,
+          skipForInteractiveTurns: true,
+        },
+        retrievalStrategies: ["semantic", "fts5"],
+        memoryTieringEnabled: false,
+        rawCfg: { llm: undefined } as unknown as RecallPipelineDeps["cfg"]["rawCfg"],
+      },
+    });
+    (deps.embeddings.embed as ReturnType<typeof vi.fn>).mockRejectedValue(
+      new AllEmbeddingProvidersFailed([rateLimitErr]),
+    );
+
+    const result = await runRecallPipelineQuery("vector query", 10, deps, { value: false });
+    await Promise.resolve();
+
+    expect(result).toEqual([]);
+    expect(deps.logger.warn).toHaveBeenCalled();
+    expect(captureSpy).not.toHaveBeenCalled();
+    captureSpy.mockRestore();
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -350,7 +382,7 @@ describe("runRecallPipelineQuery — hydeUsedRef mutation", () => {
           enabled: true,
           maxVariants: 4,
           cacheSize: 100,
-          timeoutMs: 500,
+          timeoutMs: -1,
           skipForInteractiveTurns: true,
         },
         retrievalStrategies: ["semantic"],

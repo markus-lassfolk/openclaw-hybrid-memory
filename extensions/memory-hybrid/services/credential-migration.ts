@@ -10,6 +10,7 @@ import type { CredentialsDB } from "../backends/credentials-db.js";
 import type { EmbeddingProvider } from "./embeddings.js";
 import type { MemoryCategory } from "../types/memory.js";
 import { tryParseCredentialForVault, VAULT_POINTER_PREFIX } from "./auto-capture.js";
+import { shouldSuppressEmbeddingError } from "./embeddings.js";
 import { extractTags } from "../utils/tags.js";
 import { BATCH_STORE_IMPORTANCE } from "../utils/constants.js";
 import { capturePluginError } from "./error-reporter.js";
@@ -105,26 +106,40 @@ export async function migrateCredentialsToVault(opts: MigrateCredentialsOptions)
         decayClass: "permanent",
         tags: ["auth", ...extractTags(pointerText, "Credentials")],
       });
+      let vector: number[] | null = null;
       try {
-        const vector = await embeddings.embed(pointerText);
-        factsDb.setEmbeddingModel(pointerEntry.id, embeddings.modelName);
-        if (!(await vectorDb.hasDuplicate(vector))) {
-          await vectorDb.store({
-            text: pointerText,
-            vector,
-            importance: BATCH_STORE_IMPORTANCE,
-            category: "technical",
-            id: pointerEntry.id,
+        vector = await embeddings.embed(pointerText);
+      } catch (e) {
+        if (!shouldSuppressEmbeddingError(e)) {
+          capturePluginError(e instanceof Error ? e : new Error(String(e)), {
+            subsystem: "embeddings",
+            operation: "embed-migration-pointer",
+            phase: "initialization",
           });
         }
-      } catch (e) {
-        capturePluginError(e instanceof Error ? e : new Error(String(e)), {
-          subsystem: "vector",
-          operation: "store-migration-pointer",
-          phase: "initialization",
-          backend: "lancedb",
-        });
-        errors.push(`vector store for ${parsed.service}: ${String(e)}`);
+        errors.push(`embedding pointer for ${parsed.service}: ${String(e)}`);
+      }
+      if (vector !== null) {
+        try {
+          factsDb.setEmbeddingModel(pointerEntry.id, embeddings.modelName);
+          if (!(await vectorDb.hasDuplicate(vector))) {
+            await vectorDb.store({
+              text: pointerText,
+              vector,
+              importance: BATCH_STORE_IMPORTANCE,
+              category: "technical",
+              id: pointerEntry.id,
+            });
+          }
+        } catch (e) {
+          capturePluginError(e instanceof Error ? e : new Error(String(e)), {
+            subsystem: "vector",
+            operation: "store-migration-pointer",
+            phase: "initialization",
+            backend: "lancedb",
+          });
+          errors.push(`vector store for ${parsed.service}: ${String(e)}`);
+        }
       }
       migrated++;
     } catch (e) {
