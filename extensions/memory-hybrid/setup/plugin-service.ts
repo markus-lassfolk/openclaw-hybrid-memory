@@ -17,6 +17,7 @@ import {
   isErrorReporterActive,
   flushErrorReporter,
   capturePluginError,
+  setErrorReporterMuted,
 } from "../services/error-reporter.js";
 import { walRemove } from "../services/wal-helpers.js";
 import { syncCronLastRunFromGuards } from "../services/cron-guard.js";
@@ -26,6 +27,14 @@ import { runPassiveObserver } from "../services/passive-observer.js";
 import { runAutoClassify } from "../services/auto-classifier.js";
 import { runBuildLanguageKeywords } from "../services/language-keywords-build.js";
 import { getLanguageKeywordsFilePath } from "../utils/language-keywords.js";
+import {
+  fetchLatestPublishedVersion,
+  isPluginOutdated,
+  isVersionCheckCacheFresh,
+  maybeLogOutdatedVersionNudge,
+  readVersionCheckCache,
+  writeVersionCheckCache,
+} from "../utils/plugin-update-check.js";
 import { versionInfo } from "../versionInfo.js";
 import { checkOpenClawVersion } from "../utils/version-check.js";
 import { runTaskQueueWatchdog } from "../services/task-queue-watchdog.js";
@@ -103,11 +112,33 @@ export function createPluginService(ctx: PluginServiceContext) {
     start: async () => {
       const sqlCount = factsDb.count();
       const expired = factsDb.countExpired();
+      const versionCheckCachePath = join(dirname(resolvedSqlitePath), ".latest-plugin-version.json");
+      let cachedVersionCheck = readVersionCheckCache(versionCheckCachePath);
       api.logger.info(
         `memory-hybrid: initialized v${versionInfo.pluginVersion} (sqlite: ${sqlCount} facts, lance: ${resolvedLancePath}, model: ${cfg.embedding.model})`,
       );
 
       checkOpenClawVersion(api.version, api.logger);
+
+      if (
+        cachedVersionCheck &&
+        isVersionCheckCacheFresh(cachedVersionCheck, cfg.errorReporting.updateNudge.cacheTtlHours) &&
+        isPluginOutdated(versionInfo.pluginVersion, cachedVersionCheck.latestVersion)
+      ) {
+        setErrorReporterMuted(true, `outdated-plugin:${cachedVersionCheck.latestVersion}`);
+        const nextCachedVersionCheck = maybeLogOutdatedVersionNudge(
+          versionInfo.pluginVersion,
+          cachedVersionCheck,
+          cfg.errorReporting.updateNudge,
+          api.logger,
+        );
+        if (nextCachedVersionCheck.lastNudgedAt !== cachedVersionCheck.lastNudgedAt) {
+          writeVersionCheckCache(versionCheckCachePath, nextCachedVersionCheck);
+          cachedVersionCheck = nextCachedVersionCheck;
+        }
+      } else {
+        setErrorReporterMuted(false);
+      }
 
       // ========================================================================
       // Startup Task Sequencing (to avoid race conditions):
@@ -146,6 +177,38 @@ export function createPluginService(ctx: PluginServiceContext) {
           operation: "init-error-reporter",
         });
       }
+
+      void (async () => {
+        try {
+          const latestPublished = await fetchLatestPublishedVersion();
+          if (!latestPublished.latestVersion || !latestPublished.source) return;
+
+          let cacheEntry = {
+            latestVersion: latestPublished.latestVersion,
+            source: latestPublished.source,
+            checkedAt: new Date().toISOString(),
+            lastNudgedAt: cachedVersionCheck?.lastNudgedAt,
+          };
+
+          if (isPluginOutdated(versionInfo.pluginVersion, latestPublished.latestVersion)) {
+            setErrorReporterMuted(true, `outdated-plugin:${latestPublished.latestVersion}`);
+            cacheEntry = maybeLogOutdatedVersionNudge(
+              versionInfo.pluginVersion,
+              cacheEntry,
+              cfg.errorReporting.updateNudge,
+              api.logger,
+            );
+          } else {
+            setErrorReporterMuted(false);
+          }
+
+          writeVersionCheckCache(versionCheckCachePath, cacheEntry);
+        } catch (err) {
+          api.logger.debug?.(
+            `memory-hybrid: latest-version check failed: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
+      })();
 
       if (expired > 0) {
         const pruned = factsDb.pruneExpired();

@@ -1,3 +1,7 @@
+import { compareVersions } from "../utils/version-check.js";
+
+export { compareVersions };
+
 /**
  * Error Reporter Service for GlitchTip Integration
  *
@@ -121,28 +125,6 @@ export function extractVersion(release: string): string | null {
  *    0 if a === b
  *    1 if a > b
  */
-export function compareVersions(a: string, b: string): number {
-  const parseVersion = (version: string): [number, number, number] | null => {
-    const match = version.trim().match(/^v?(\d+)\.(\d+)\.(\d+)/);
-    if (!match) return null;
-    return [Number(match[1]), Number(match[2]), Number(match[3])];
-  };
-
-  const versionA = parseVersion(a);
-  const versionB = parseVersion(b);
-
-  if (!versionA || !versionB) {
-    return 0; // Safe default for unparseable versions
-  }
-
-  for (let i = 0; i < 3; i++) {
-    if (versionA[i] < versionB[i]) return -1;
-    if (versionA[i] > versionB[i]) return 1;
-  }
-
-  return 0; // Equal
-}
-
 /**
  * Check whether an event should be dropped because it matches a known-fixed issue
  * and the event's release version is older than the fix.
@@ -542,6 +524,15 @@ let reporter: GlitchTipReporter | null = null;
 let initialized = false;
 let logger: any = console; // Default fallback to console
 const errorDedup = new Map<string, number>(); // Rate limiting: fingerprint -> timestamp
+let telemetryMuteReason: string | null = null;
+
+export function setErrorReporterMuted(muted: boolean, reason?: string): void {
+  telemetryMuteReason = muted ? reason ?? "muted" : null;
+}
+
+export function getErrorReporterMuteReason(): string | null {
+  return telemetryMuteReason;
+}
 
 /**
  * Initialize error reporter with STRICT privacy settings.
@@ -643,6 +634,7 @@ export function capturePluginError(
   // UnconfiguredProviderError is a config issue (missing API key), not a code bug.
   // Suppress here to protect all current and future call sites centrally.
   if (error.name === "UnconfiguredProviderError") return undefined;
+  if (telemetryMuteReason) return undefined;
 
   if (!initialized || !reporter) {
     return undefined;
@@ -718,6 +710,9 @@ export function testErrorReporter(): { ok: boolean; error?: string } {
  * Capture a test error to verify reporting works
  */
 export function captureTestError(): string | null {
+  if (telemetryMuteReason) {
+    return null;
+  }
   if (!initialized || !reporter) {
     return null;
   }

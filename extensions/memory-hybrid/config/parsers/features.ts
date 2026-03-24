@@ -339,6 +339,11 @@ export function parseErrorReportingConfig(cfg: Record<string, unknown>): ErrorRe
       consent: true,
       mode: "community",
       sampleRate: 1.0,
+      updateNudge: {
+        enabled: true,
+        intervalHours: 24,
+        cacheTtlHours: 24,
+      },
     };
   }
 
@@ -382,6 +387,22 @@ export function parseErrorReportingConfig(cfg: Record<string, unknown>): ErrorRe
   const botNameRaw = typeof errorReportingRaw.botName === "string" ? errorReportingRaw.botName.trim() : "";
   const botName = botNameRaw.length > 0 ? botNameRaw.slice(0, 64) : undefined;
 
+  const updateNudgeRaw =
+    errorReportingRaw.updateNudge && typeof errorReportingRaw.updateNudge === "object"
+      ? (errorReportingRaw.updateNudge as Record<string, unknown>)
+      : undefined;
+  const updateNudge = {
+    enabled: updateNudgeRaw?.enabled !== false,
+    intervalHours:
+      typeof updateNudgeRaw?.intervalHours === "number" && updateNudgeRaw.intervalHours >= 1
+        ? Math.min(24 * 30, Math.floor(updateNudgeRaw.intervalHours))
+        : 24,
+    cacheTtlHours:
+      typeof updateNudgeRaw?.cacheTtlHours === "number" && updateNudgeRaw.cacheTtlHours >= 1
+        ? Math.min(24 * 30, Math.floor(updateNudgeRaw.cacheTtlHours))
+        : 24,
+  };
+
   // Optional resolvedIssues map for version-aware filtering
   const validVersionPattern = /^\d+\.\d+\.\d+/;
   const resolvedIssues =
@@ -417,6 +438,7 @@ export function parseErrorReportingConfig(cfg: Record<string, unknown>): ErrorRe
     botId,
     botName,
     resolvedIssues,
+    updateNudge,
   };
 }
 

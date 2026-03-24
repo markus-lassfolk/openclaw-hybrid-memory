@@ -14,6 +14,7 @@ import { createPluginService, type PluginServiceContext } from "../setup/plugin-
 import { MIN_OPENCLAW_VERSION } from "../utils/version-check.js";
 import { _testing } from "../index.js";
 import { hybridConfigSchema } from "../config.js";
+import { capturePluginError, getErrorReporterMuteReason, setErrorReporterMuted } from "../services/error-reporter.js";
 
 const { FactsDB, VectorDB } = _testing;
 
@@ -88,6 +89,7 @@ function buildMinimalCtx(
   tmpDir: string,
   api: ReturnType<typeof makeMockApi>,
   timers: ReturnType<typeof makeTimers>,
+  configOverrides: Record<string, unknown> = {},
 ): PluginServiceContext {
   const sqlitePath = join(tmpDir, "facts.db");
   const lancePath = join(tmpDir, "lancedb");
@@ -99,6 +101,7 @@ function buildMinimalCtx(
     autoClassify: { enabled: false },
     languageKeywords: { autoBuild: false, weeklyIntervalDays: 7 },
     passiveObserver: { enabled: false },
+    ...configOverrides,
   });
   const factsDb = new FactsDB(sqlitePath, { fuzzyDedupe: false });
   const vectorDb = new VectorDB(lancePath, EMBEDDING_DIM, false);
@@ -139,6 +142,8 @@ describe("createPluginService startup — version check wiring", () => {
   });
 
   afterEach(() => {
+    setErrorReporterMuted(false);
+    vi.unstubAllGlobals();
     clearTimers(timers);
     rmSync(tmpDir, { recursive: true, force: true });
   });
@@ -178,6 +183,37 @@ describe("createPluginService startup — version check wiring", () => {
     const warnCalls = api.logger.warn.mock.calls.map((c: unknown[]) => c[0] as string);
     const versionWarn = warnCalls.find((msg) => msg.includes(MIN_OPENCLAW_VERSION) && msg.includes("WARNING"));
     expect(versionWarn).toBeUndefined();
+    (ctx.factsDb as InstanceType<typeof FactsDB>).close();
+    (ctx.vectorDb as InstanceType<typeof VectorDB>).close();
+  });
+
+  it("mutes telemetry and warns when the published plugin version is newer", async () => {
+    const api = makeMockApi(MIN_OPENCLAW_VERSION);
+    const fetchMock = vi.fn(async (input: string | URL) => {
+      const url = String(input);
+      if (url.includes("registry.npmjs.org")) {
+        return new Response(JSON.stringify({ version: "2026.3.999" }), { status: 200 });
+      }
+      if (url.includes("api.github.com")) {
+        return new Response(JSON.stringify({ tag_name: "v2026.3.999" }), { status: 200 });
+      }
+      return new Response("", { status: 200 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const ctx = buildMinimalCtx(tmpDir, api, timers, {
+      errorReporting: { enabled: true, consent: true },
+    });
+    await createPluginService(ctx).start();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(getErrorReporterMuteReason()).toContain("outdated-plugin:2026.3.999");
+    expect(capturePluginError(new Error("should stay local"), { operation: "startup-version-check" })).toBeUndefined();
+
+    const warnCalls = api.logger.warn.mock.calls.map((c: unknown[]) => c[0] as string);
+    expect(warnCalls.some((msg) => msg.includes("update available") && msg.includes("2026.3.999"))).toBe(true);
+
     (ctx.factsDb as InstanceType<typeof FactsDB>).close();
     (ctx.vectorDb as InstanceType<typeof VectorDB>).close();
   });

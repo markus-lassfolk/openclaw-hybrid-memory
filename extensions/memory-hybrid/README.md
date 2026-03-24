@@ -37,6 +37,8 @@ openclaw hybrid-mem upgrade
 
 Then restart the gateway. The upgrade command removes the current install, fetches the latest from npm, rebuilds native deps, and tells you to restart.
 
+Outdated installs now check the latest published plugin version in the background. If your local version falls behind, the plugin mutes GlitchTip telemetry for that client and logs an upgrade reminder. You can tune reminder behavior with `errorReporting.updateNudge.enabled`, `errorReporting.updateNudge.intervalHours`, and `errorReporting.updateNudge.cacheTtlHours`.
+
 Or with npm directly: `npm i openclaw-hybrid-memory` in your OpenClaw extensions folder if you manage it yourself.
 
 **2. Configure.** Set your OpenAI API key and enable the plugin. Easiest: run `openclaw hybrid-mem install` to merge full defaults (memory slot, compaction prompts, nightly session-distillation job) into `~/.openclaw/openclaw.json`, then set `plugins.entries["openclaw-hybrid-memory"].config.embedding.apiKey` to your key.
