@@ -93,6 +93,7 @@ export interface GlitchTipEvent {
   level?: string;
   release?: string;
   environment?: string;
+  server_name?: string;
   fingerprint?: string[];
   exception?: { values?: ReportExceptionValue[] };
   tags?: Record<string, string | undefined>;
@@ -325,6 +326,7 @@ export function sanitizeEvent(event: GlitchTipEvent): GlitchTipEvent | null {
     level: event.level,
     release: event.release,
     environment: event.environment,
+    server_name: event.server_name ? scrubString(String(event.server_name).slice(0, 128)) : undefined,
     fingerprint: event.fingerprint,
     // Only keep exception type and sanitized message
     exception: event.exception
@@ -352,6 +354,9 @@ export function sanitizeEvent(event: GlitchTipEvent): GlitchTipEvent | null {
       operation: event.tags?.operation ? scrubString(String(event.tags.operation)) : undefined,
       phase: event.tags?.phase ? scrubString(String(event.tags.phase)) : undefined,
       backend: event.tags?.backend ? scrubString(String(event.tags.backend)) : undefined,
+      node: event.tags?.node ? scrubString(String(event.tags.node).slice(0, 128)) : undefined,
+      agent_id: event.tags?.agent_id ? scrubString(String(event.tags.agent_id)) : undefined,
+      agent_name: event.tags?.agent_name ? scrubString(String(event.tags.agent_name).slice(0, 64)) : undefined,
       bot_id: event.tags?.bot_id ? scrubString(String(event.tags.bot_id)) : undefined,
       bot_name: event.tags?.bot_name ? scrubString(String(event.tags.bot_name).slice(0, 64)) : undefined,
       retryAttempt: event.tags?.retryAttempt ? scrubString(String(event.tags.retryAttempt)) : undefined,
@@ -419,6 +424,7 @@ class GlitchTipReporter {
   private readonly environment: string;
   private readonly sampleRate: number;
   private readonly resolvedIssues: Record<string, string>;
+  private serverName?: string;
 
   private globalTags: Record<string, string> = {};
   private breadcrumbs: ReportBreadcrumb[] = [];
@@ -452,6 +458,10 @@ class GlitchTipReporter {
 
   setTag(key: string, value: string): void {
     this.globalTags[key] = value;
+  }
+
+  setServerName(value: string): void {
+    this.serverName = value;
   }
 
   addBreadcrumb(breadcrumb: { category?: string; level?: string; type?: string }): void {
@@ -506,6 +516,7 @@ class GlitchTipReporter {
       level: "error",
       release: this.release,
       environment: this.environment,
+      server_name: this.serverName,
       exception: {
         values: [
           {
@@ -624,6 +635,21 @@ export function getErrorReporterMuteReason(): string | null {
   return telemetryMuteReason;
 }
 
+function resolveNodeName(env: NodeJS.ProcessEnv = process.env): string | undefined {
+  const candidate =
+    typeof env.OPENCLAW_NODE_NAME === "string" && env.OPENCLAW_NODE_NAME.trim()
+      ? env.OPENCLAW_NODE_NAME.trim()
+      : undefined;
+
+  if (!candidate) return undefined;
+
+  return (
+    scrubString(candidate)
+      .slice(0, 128)
+      .replace(/[\x00-\x1f\x7f]/g, "") || undefined
+  );
+}
+
 /**
  * Initialize error reporter with STRICT privacy settings.
  * Optionally pass runtimeBotId from OpenClaw plugin context (e.g. api.context?.agentId) to use as bot UUID when config.botId is not set.
@@ -681,15 +707,27 @@ export async function initErrorReporter(
   // When neither is configured, bot_id is omitted entirely — no hostname fallback to prevent leaks.
   const botUuid =
     config.botId || (typeof runtimeBotId === "string" && runtimeBotId.trim() ? runtimeBotId.trim() : undefined);
+  let nodeName: string | undefined;
+  try {
+    nodeName = resolveNodeName();
+  } catch {
+    nodeName = undefined;
+  }
   const botName = config.botName
     ? scrubString(config.botName)
         .slice(0, 64)
         .replace(/[\x00-\x1f\x7f]/g, "")
     : undefined;
+  if (nodeName) {
+    reporter.setServerName(nodeName);
+    reporter.setTag("node", nodeName);
+  }
   if (botUuid) {
+    reporter.setTag("agent_id", botUuid);
     reporter.setTag("bot_id", botUuid);
   }
   if (botName) {
+    reporter.setTag("agent_name", botName);
     reporter.setTag("bot_name", botName);
     logger.debug?.("[ErrorReporter] Bot name set (opt-in)");
   } else {

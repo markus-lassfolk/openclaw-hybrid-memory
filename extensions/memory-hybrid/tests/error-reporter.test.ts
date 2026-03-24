@@ -329,6 +329,9 @@ describe("Error Reporter", () => {
           operation: "store-fact",
           phase: "runtime",
           backend: "sqlite",
+          node: "Maeve",
+          agent_id: "agent-42",
+          agent_name: "Doris",
         },
         contexts: {
           config_shape: {
@@ -359,6 +362,9 @@ describe("Error Reporter", () => {
       expect(sanitized?.tags?.operation).toBe("store-fact");
       expect(sanitized?.tags?.phase).toBe("runtime");
       expect(sanitized?.tags?.backend).toBe("sqlite");
+      expect(sanitized?.tags?.node).toBe("Maeve");
+      expect(sanitized?.tags?.agent_id).toBe("agent-42");
+      expect(sanitized?.tags?.agent_name).toBe("Doris");
       expect(sanitized?.contexts?.config_shape?.apiKey).toBe("[REDACTED]");
       expect(sanitized?.contexts?.runtime).toEqual({
         name: "node",
@@ -745,9 +751,20 @@ describe("Error Reporter", () => {
       const event: any = {
         event_id: "e1",
         level: "error",
-        tags: { bot_name: "TestBot", bot_id: "uuid-1234" },
+        server_name: "Maeve",
+        tags: {
+          node: "Maeve",
+          agent_name: "Doris",
+          agent_id: "agent-99",
+          bot_name: "TestBot",
+          bot_id: "uuid-1234",
+        },
       };
       const sanitized = sanitizeEvent(event);
+      expect(sanitized?.server_name).toBe("Maeve");
+      expect(sanitized?.tags?.node).toBe("Maeve");
+      expect(sanitized?.tags?.agent_name).toBe("Doris");
+      expect(sanitized?.tags?.agent_id).toBe("agent-99");
       expect(sanitized?.tags?.bot_name).toBe("TestBot");
       expect(sanitized?.tags?.bot_id).toBe("uuid-1234");
     });
@@ -761,6 +778,10 @@ describe("Error Reporter", () => {
         tags: { subsystem: "sqlite" },
       };
       const sanitized = sanitizeEvent(event);
+      expect(sanitized?.server_name).toBeUndefined();
+      expect(sanitized?.tags?.node).toBeUndefined();
+      expect(sanitized?.tags?.agent_name).toBeUndefined();
+      expect(sanitized?.tags?.agent_id).toBeUndefined();
       expect(sanitized?.tags?.bot_name).toBeUndefined();
       expect(sanitized?.tags?.bot_id).toBeUndefined();
     });
