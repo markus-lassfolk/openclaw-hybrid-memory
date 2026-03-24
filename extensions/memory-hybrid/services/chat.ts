@@ -504,7 +504,9 @@ export async function withLLMRetry<T>(
       const is429 = is429Like(lastError);
       // Timeouts: only retry once (attempt 0 → attempt 1), then throw so chatCompleteWithRetry can try next model.
       // (attempt is 0-based: attempt >= 1 means we've already retried once.)
-      const isTimeout = /timed out|llm request timeout|request was aborted|Request was aborted/i.test(lastError.message); // #339: include our own "LLM request timeout" pattern
+      const isTimeout = /timed out|llm request timeout|request was aborted|Request was aborted/i.test(
+        lastError.message,
+      ); // #339: include our own "LLM request timeout" pattern
       const isConnectionError = isConnectionErrorLike(lastError);
       if ((isTimeout || isConnectionError) && attempt >= 1) {
         throw lastError;
@@ -671,7 +673,9 @@ export async function chatCompleteWithRetry(opts: {
         lastError instanceof UnconfiguredProviderError ||
         (lastError instanceof LLMRetryError && lastError.cause instanceof UnconfiguredProviderError);
       const is429 = is429OrWrapped(lastError);
-      const isTimeout = /timed out|llm request timeout|request was aborted|Request was aborted/i.test(lastError.message); // #339: include our own "LLM request timeout" pattern
+      const isTimeout = /timed out|llm request timeout|request was aborted|Request was aborted/i.test(
+        lastError.message,
+      ); // #339: include our own "LLM request timeout" pattern
       const isConnectionError = isConnectionErrorLike(lastError);
       const is404 = is404Like(lastError);
       const is403 = is403Like(lastError);
@@ -689,15 +693,15 @@ export async function chatCompleteWithRetry(opts: {
                 ? "connection failed"
                 : is404
                   ? "model not found (404)"
-                : is403
-                  ? "access denied (403)"
-                  : is401
-                    ? "unauthorized (401)"
-                    : is500
-                      ? "server error (500)" // #302
-                      : isContextLength
-                        ? "input too long" // #488
-                        : "failed after retries";
+                  : is403
+                    ? "access denied (403)"
+                    : is401
+                      ? "unauthorized (401)"
+                      : is500
+                        ? "server error (500)" // #302
+                        : isContextLength
+                          ? "input too long" // #488
+                          : "failed after retries";
           pluginLogger.warn(
             `${label}: model ${currentModel} ${reason}, trying fallback model ${modelsToTry[i + 1]}...`,
           );
@@ -714,7 +718,9 @@ export async function chatCompleteWithRetry(opts: {
   const finalIsOOM = isOllamaOOM(finalError); // #387: OOM is expected when model too large for RAM
   const finalIs429 = is429OrWrapped(finalError); // #397
   const finalIsContextLength = isContextLengthError(finalError); // #488: input too long for model context window
-  const finalIsTimeout = /timed out|llm request timeout|request was aborted|Request was aborted/i.test(finalError.message);
+  const finalIsTimeout = /timed out|llm request timeout|request was aborted|Request was aborted/i.test(
+    finalError.message,
+  );
   const finalIsConnectionError = isConnectionErrorLike(finalError);
 
   // When every model failed because provider keys are missing, queue a user-visible chat warning
