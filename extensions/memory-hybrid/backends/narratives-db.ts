@@ -159,7 +159,7 @@ export class NarrativesDB {
       if (!isAlreadyClosedError) {
         // Log unexpected close failures instead of swallowing them silently.
         // Close remains non-fatal for callers.
-        // eslint-disable-next-line no-console
+        // biome-ignore lint/suspicious/noConsole: Close remains non-fatal
         console.error("NarrativesDB.close() failed:", err);
       }
     }
