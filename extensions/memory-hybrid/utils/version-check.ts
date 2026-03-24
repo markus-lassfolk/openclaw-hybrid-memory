@@ -36,6 +36,23 @@ export function isVersionAtLeast(current: string, minimum: string): boolean {
 }
 
 /**
+ * Compare two version strings numerically.
+ * Returns -1 when `a < b`, 1 when `a > b`, and 0 when equal or unparseable.
+ */
+export function compareVersions(a: string, b: string): number {
+  const versionA = parseVersion(a);
+  const versionB = parseVersion(b);
+  if (!versionA || !versionB) return 0;
+
+  for (let i = 0; i < 3; i++) {
+    if (versionA[i] < versionB[i]) return -1;
+    if (versionA[i] > versionB[i]) return 1;
+  }
+
+  return 0;
+}
+
+/**
  * Checks the running OpenClaw gateway version against the minimum requirement.
  * Logs a clear warning if the version is below the minimum — does not hard-fail.
  *

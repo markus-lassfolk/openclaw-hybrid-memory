@@ -17,6 +17,7 @@ import {
   isErrorReporterActive,
   flushErrorReporter,
   capturePluginError,
+  setErrorReporterMuted,
 } from "../services/error-reporter.js";
 import { walRemove } from "../services/wal-helpers.js";
 import { syncCronLastRunFromGuards } from "../services/cron-guard.js";
@@ -26,6 +27,15 @@ import { runPassiveObserver } from "../services/passive-observer.js";
 import { runAutoClassify } from "../services/auto-classifier.js";
 import { runBuildLanguageKeywords } from "../services/language-keywords-build.js";
 import { getLanguageKeywordsFilePath } from "../utils/language-keywords.js";
+import {
+  type VersionCheckCacheEntry,
+  fetchLatestPublishedVersion,
+  isPluginOutdated,
+  isVersionCheckCacheFresh,
+  maybeLogOutdatedVersionNudge,
+  readVersionCheckCache,
+  writeVersionCheckCache,
+} from "../utils/plugin-update-check.js";
 import { versionInfo } from "../versionInfo.js";
 import { checkOpenClawVersion } from "../utils/version-check.js";
 import { runTaskQueueWatchdog } from "../services/task-queue-watchdog.js";
@@ -97,17 +107,50 @@ export function createPluginService(ctx: PluginServiceContext) {
   let watchdogRunPromise: Promise<void> | null = null;
   let shuttingDown = false;
   let dashboardServer: DashboardServer | null = null;
+  let versionCheckPromise: Promise<void> | null = null;
 
   return {
     id: PLUGIN_ID,
+    _getVersionCheckPromise: () => versionCheckPromise,
     start: async () => {
       const sqlCount = factsDb.count();
       const expired = factsDb.countExpired();
+      const versionCheckCachePath =
+        resolvedSqlitePath === ":memory:" ? null : join(dirname(resolvedSqlitePath), ".latest-plugin-version.json");
+      const errorReportingActive = cfg.errorReporting.enabled && cfg.errorReporting.consent;
+      let cachedVersionCheck = versionCheckCachePath ? readVersionCheckCache(versionCheckCachePath) : null;
       api.logger.info(
         `memory-hybrid: initialized v${versionInfo.pluginVersion} (sqlite: ${sqlCount} facts, lance: ${resolvedLancePath}, model: ${cfg.embedding.model})`,
       );
 
       checkOpenClawVersion(api.version, api.logger);
+
+      if (
+        errorReportingActive &&
+        cachedVersionCheck &&
+        isPluginOutdated(versionInfo.pluginVersion, cachedVersionCheck.latestVersion) &&
+        isVersionCheckCacheFresh(cachedVersionCheck, cfg.errorReporting.updateNudge.cacheTtlHours)
+      ) {
+        setErrorReporterMuted(true, `outdated-plugin:${cachedVersionCheck.latestVersion}`);
+        const nextCachedVersionCheck = maybeLogOutdatedVersionNudge(
+          versionInfo.pluginVersion,
+          cachedVersionCheck,
+          cfg.errorReporting.updateNudge,
+          api.logger,
+        );
+        if (versionCheckCachePath && nextCachedVersionCheck.lastNudgedAt !== cachedVersionCheck.lastNudgedAt) {
+          try {
+            writeVersionCheckCache(versionCheckCachePath, nextCachedVersionCheck);
+          } catch (err) {
+            api.logger.debug?.(
+              `memory-hybrid: failed to update nudge cache: ${err instanceof Error ? err.message : String(err)}`,
+            );
+          }
+          cachedVersionCheck = nextCachedVersionCheck;
+        }
+      } else {
+        setErrorReporterMuted(false);
+      }
 
       // ========================================================================
       // Startup Task Sequencing (to avoid race conditions):
@@ -146,6 +189,66 @@ export function createPluginService(ctx: PluginServiceContext) {
           operation: "init-error-reporter",
         });
       }
+
+      versionCheckPromise = (async () => {
+        if (!errorReportingActive) return;
+        try {
+          const latestPublished = await fetchLatestPublishedVersion();
+          if (!latestPublished.latestVersion || !latestPublished.source) {
+            if (
+              cachedVersionCheck &&
+              isPluginOutdated(versionInfo.pluginVersion, cachedVersionCheck.latestVersion) &&
+              isVersionCheckCacheFresh(cachedVersionCheck, cfg.errorReporting.updateNudge.cacheTtlHours)
+            ) {
+              setErrorReporterMuted(true, `outdated-plugin:${cachedVersionCheck.latestVersion}`);
+            }
+            return;
+          }
+
+          let cacheEntry: VersionCheckCacheEntry = {
+            latestVersion: latestPublished.latestVersion,
+            source: latestPublished.source,
+            checkedAt: new Date().toISOString(),
+            lastNudgedAt: cachedVersionCheck?.lastNudgedAt,
+          };
+
+          if (shuttingDown) return;
+
+          if (isPluginOutdated(versionInfo.pluginVersion, latestPublished.latestVersion)) {
+            setErrorReporterMuted(true, `outdated-plugin:${latestPublished.latestVersion}`);
+            cacheEntry = maybeLogOutdatedVersionNudge(
+              versionInfo.pluginVersion,
+              cacheEntry,
+              cfg.errorReporting.updateNudge,
+              api.logger,
+            );
+          } else {
+            setErrorReporterMuted(false);
+          }
+
+          if (shuttingDown) return;
+          if (versionCheckCachePath) {
+            try {
+              writeVersionCheckCache(versionCheckCachePath, cacheEntry);
+            } catch (err) {
+              api.logger.debug?.(
+                `memory-hybrid: failed to write version check cache: ${err instanceof Error ? err.message : String(err)}`,
+              );
+            }
+          }
+        } catch (err) {
+          api.logger.debug?.(
+            `memory-hybrid: latest-version check failed: ${err instanceof Error ? err.message : String(err)}`,
+          );
+          if (
+            cachedVersionCheck &&
+            isPluginOutdated(versionInfo.pluginVersion, cachedVersionCheck.latestVersion) &&
+            isVersionCheckCacheFresh(cachedVersionCheck, cfg.errorReporting.updateNudge.cacheTtlHours)
+          ) {
+            setErrorReporterMuted(true, `outdated-plugin:${cachedVersionCheck.latestVersion}`);
+          }
+        }
+      })();
 
       if (expired > 0) {
         const pruned = factsDb.pruneExpired();
@@ -620,6 +723,16 @@ export function createPluginService(ctx: PluginServiceContext) {
         ]);
         if (!completed) {
           api.logger.warn("memory-hybrid: task-queue-watchdog shutdown timed out; continuing shutdown anyway");
+        }
+      }
+      if (versionCheckPromise) {
+        const timeoutMs = 5000;
+        const completed = await Promise.race([
+          versionCheckPromise.then(() => true).catch(() => true),
+          new Promise<boolean>((resolve) => setTimeout(() => resolve(false), timeoutMs)),
+        ]);
+        if (!completed) {
+          api.logger.warn("memory-hybrid: version-check shutdown timed out; continuing shutdown anyway");
         }
       }
       if (ctx.pythonBridge) {
