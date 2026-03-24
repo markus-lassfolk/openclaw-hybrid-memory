@@ -16,7 +16,7 @@ import { shouldSuppressEmbeddingError } from "./embeddings.js";
 import { chatComplete } from "./chat.js";
 import { capturePluginError } from "./error-reporter.js";
 import type { AliasesConfig } from "../config.js";
-import { UUID_REGEX } from "../utils/constants.js";
+import { UUID_REGEX, LANCE_NO_VECTOR_COL_MSG } from "../utils/constants.js";
 import { pluginLogger } from "../utils/logger.js";
 
 // ---------------------------------------------------------------------------
@@ -37,7 +37,6 @@ export interface AliasSearchResult {
 }
 
 const ALIAS_LANCE_TABLE = "fact_aliases";
-const LANCE_NO_VECTOR_COL_MSG = "No vector column found";
 
 class AliasVectorIndex {
   private db: lancedb.Connection | null = null;

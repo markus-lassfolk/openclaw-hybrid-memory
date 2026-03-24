@@ -7,13 +7,11 @@ import { randomUUID } from "node:crypto";
 import type { MemoryCategory, DecayClass } from "../config.js";
 import type { SearchResult } from "../types/memory.js";
 import { capturePluginError } from "../services/error-reporter.js";
-import { UUID_REGEX } from "../utils/constants.js";
+import { UUID_REGEX, LANCE_NO_VECTOR_COL_MSG } from "../utils/constants.js";
 import { pluginLogger } from "../utils/logger.js";
 
 const LANCE_TABLE = "memories";
 const SEMANTIC_QUERY_CACHE_TABLE = "semantic_query_cache";
-/** Substring of the LanceDB error thrown on vector-dimension mismatch (issue #366). */
-const LANCE_NO_VECTOR_COL_MSG = "No vector column found";
 
 /**
  * Module-level optimization guard keyed by dbPath.
