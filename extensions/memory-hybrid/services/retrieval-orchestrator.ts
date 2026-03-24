@@ -38,8 +38,8 @@ import {
 } from "./retrieval-mode-policy.js";
 import { expandQueryWithHyde } from "./hyde-helper.js";
 import { capturePluginError } from "./error-reporter.js";
-import { shouldSuppressEmbeddingError } from "./embeddings.js";
 import { validateQueryForMemoryLookup, type QueryValidationResult } from "./query-validator.js";
+import { shouldSuppressEmbeddingError } from "./embeddings.js";
 import { DocumentGrader } from "./document-grader.js";
 import { stableStringify } from "../utils/stable-stringify.js";
 
