@@ -133,6 +133,7 @@ export function shouldEmitUpdateNudge(
   nowMs = Date.now(),
 ): boolean {
   if (!updateNudge.enabled) return false;
+  if (updateNudge.intervalHours === 0) return false;
   if (!entry.lastNudgedAt) return true;
   const lastNudgedMs = Date.parse(entry.lastNudgedAt);
   if (!Number.isFinite(lastNudgedMs)) return true;
