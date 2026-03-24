@@ -1,9 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 import { buildExplicitSemanticQueryVector, DEFAULT_RETRIEVAL_CONFIG } from "../services/retrieval-orchestrator.js";
+import { AllEmbeddingProvidersFailed } from "../services/embeddings.js";
 import {
   resolveExplicitDeepRetrievalPolicy,
   resolveInteractiveRecallPolicy,
 } from "../services/retrieval-mode-policy.js";
+import * as errorReporter from "../services/error-reporter.js";
 
 function makeMockOpenAI(response: string | Error): object {
   return {
@@ -148,5 +150,32 @@ describe("buildExplicitSemanticQueryVector", () => {
     expect(logger.warn).toHaveBeenCalled();
     expect(result.warning).toBeNull();
     expect(result.queryVector).toEqual([20]);
+  });
+
+  it("suppresses AllEmbeddingProvidersFailed when every cause is expected", async () => {
+    const captureSpy = vi.spyOn(errorReporter, "capturePluginError").mockImplementation(() => undefined);
+    const rateLimitErr = Object.assign(new Error("429 Too Many Requests"), { status: 429 });
+    const embeddings = {
+      embed: vi.fn().mockRejectedValue(new AllEmbeddingProvidersFailed([rateLimitErr])),
+    };
+    const logger = { warn: vi.fn() };
+
+    const result = await buildExplicitSemanticQueryVector({
+      query: "where is the api key",
+      cfg: {
+        llm: undefined,
+        retrieval: DEFAULT_RETRIEVAL_CONFIG,
+        queryExpansion: { enabled: false, mode: "always", maxVariants: 4, cacheSize: 50, timeoutMs: 5000 },
+      },
+      embeddings,
+      openai: makeMockOpenAI("unused") as never,
+      pendingLLMWarnings: { add: vi.fn(), drain: vi.fn(() => []) },
+      logger,
+    });
+
+    expect(result.queryVector).toBeNull();
+    expect(result.warning).toContain("Semantic search unavailable");
+    expect(logger.warn).toHaveBeenCalled();
+    expect(captureSpy).not.toHaveBeenCalled();
   });
 });

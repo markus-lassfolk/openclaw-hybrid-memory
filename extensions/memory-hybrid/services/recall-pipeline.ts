@@ -17,6 +17,7 @@ import type { SearchResult, ScopeFilter } from "../types/memory.js";
 import type { QueryExpansionConfig } from "../config.js";
 import type { getCronModelConfig } from "../config.js";
 import type { PendingLLMWarnings } from "../services/chat.js";
+import { shouldSuppressEmbeddingError } from "../services/embeddings.js";
 import { mergeResults, filterByScope } from "../services/merge-results.js";
 import { computeDynamicSalience } from "../utils/salience.js";
 import { capturePluginError } from "../services/error-reporter.js";
@@ -175,7 +176,7 @@ export async function runRecallPipelineQuery(
       } finally {
         if (timeoutId !== undefined) clearTimeout(timeoutId);
         vectorStepPromise.catch((err) => {
-          if (!directiveAbort.signal.aborted) {
+          if (!directiveAbort.signal.aborted && !shouldSuppressEmbeddingError(err)) {
             capturePluginError(err instanceof Error ? err : new Error(String(err)), {
               operation: `${opts?.errorPrefix ?? ""}vector-recall-post-timeout`,
               subsystem: "auto-recall",
@@ -187,11 +188,13 @@ export async function runRecallPipelineQuery(
       const isTimeout = err instanceof Error && err.message.includes("timed out");
       if (isTimeout) logger.warn(`memory-hybrid: ${err.message}, using FTS-only recall`);
       else {
-        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-          operation: `${opts?.errorPrefix ?? ""}vector-recall`,
-          subsystem: "auto-recall",
-          backend: "lancedb",
-        });
+        if (!shouldSuppressEmbeddingError(err)) {
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+            operation: `${opts?.errorPrefix ?? ""}vector-recall`,
+            subsystem: "auto-recall",
+            backend: "lancedb",
+          });
+        }
         logger.warn(`memory-hybrid: ${opts?.errorPrefix ?? ""}vector recall failed: ${err}`);
       }
     }
