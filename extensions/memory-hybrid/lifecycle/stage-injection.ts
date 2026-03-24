@@ -9,7 +9,7 @@ import type { ClawdbotPluginApi } from "openclaw/plugin-sdk";
 import { getCronModelConfig, getDefaultCronModel } from "../config.js";
 import { estimateTokens, estimateTokensForDisplay, formatProgressiveIndexLine } from "../utils/text.js";
 import { capturePluginError } from "../services/error-reporter.js";
-import { shouldSuppressLLMError } from "../services/chat.js";
+import { shouldSuppressLLMError, withLLMRetry } from "../services/chat.js";
 import { withTimeout } from "../utils/timeout.js";
 import type { LifecycleContext, RecallResult } from "./types.js";
 
@@ -302,7 +302,6 @@ async function runInjection(
       })
       .join("\n");
     try {
-      const { withLLMRetry } = await import("../services/chat.js");
       const resp = await withLLMRetry(
         () =>
           ctx.openai.chat.completions.create({

@@ -325,7 +325,8 @@ export function shouldSuppressLLMError(err: unknown): boolean {
   const wrappedCause = err instanceof LLMRetryError && err.cause instanceof Error ? err.cause : null;
   const errorsToCheck = wrappedCause ? [err, wrappedCause] : [err];
   const isTimeoutLike = (candidate: Error): boolean =>
-    /timed out|llm request timeout|request was aborted|AbortError|ETIMEDOUT|ECONNREFUSED/i.test(candidate.message);
+    candidate.name === "AbortError" ||
+    /timed out|llm request timeout|request was aborted|aborted|AbortError|ETIMEDOUT|ECONNREFUSED/i.test(candidate.message);
 
   return (
     errorsToCheck.some((candidate) => is404Like(candidate)) ||
