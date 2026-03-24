@@ -121,7 +121,7 @@ function getErrorStatus(err: unknown): number | string | undefined {
 function getErrorMessage(err: unknown): string {
   if (err instanceof Error) return err.message;
   if (err && typeof err === "object" && typeof (err as ErrorLike).message === "string") {
-    return (err as ErrorLike).message;
+    return (err as ErrorLike).message as string;
   }
   return "";
 }
