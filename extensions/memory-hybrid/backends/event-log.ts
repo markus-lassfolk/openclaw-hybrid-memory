@@ -58,15 +58,18 @@ export interface EventLogEntry {
 export class EventLog {
   private db: DatabaseSync;
   private readonly dbPath: string;
-  private closed = false;
   private _dbOpen = true;
+
+  private applyPragmas(): void {
+    this.db.exec("PRAGMA journal_mode = WAL");
+    this.db.exec(`PRAGMA busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
+  }
 
   constructor(dbPath: string) {
     this.dbPath = dbPath;
     mkdirSync(dirname(dbPath), { recursive: true });
     this.db = new DatabaseSync(dbPath);
-    this.db.exec("PRAGMA journal_mode = WAL");
-    this.db.exec(`PRAGMA busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
+    this.applyPragmas();
 
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS event_log (
@@ -88,14 +91,10 @@ export class EventLog {
   }
 
   private get liveDb(): DatabaseSync {
-    if (this.closed) {
-      throw new Error("EventLog is closed");
-    }
     if (!this._dbOpen) {
       this.db.open();
       this._dbOpen = true;
-      this.db.exec("PRAGMA journal_mode = WAL");
-      this.db.exec(`PRAGMA busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
+      this.applyPragmas();
     }
     return this.db;
   }
@@ -440,12 +439,11 @@ export class EventLog {
 
   /** True if the database connection is still open. */
   isOpen(): boolean {
-    return !this.closed && this._dbOpen;
+    return this._dbOpen;
   }
 
   close(): void {
-    if (this.closed) return;
-    this.closed = true;
+    if (!this._dbOpen) return;
     this._dbOpen = false;
     try {
       this.db.close();
