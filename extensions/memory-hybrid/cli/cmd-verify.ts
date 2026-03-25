@@ -272,7 +272,7 @@ export async function runVerifyForCli(
                 : credentialSource(rawLlmProviderApiKey("google"))) || "plugin"
             : "—"
           : "local";
-    // For Google with an OpenAI-only model name, show the effective model we use (text-embedding-005)
+    // For Google with an OpenAI-only model name, show the effective model we use (gemini-embedding-001)
     const embModel =
       cfg.embedding.model ||
       (p === "openai"
@@ -299,7 +299,7 @@ export async function runVerifyForCli(
     }
     if (opts.testLlm) {
       try {
-        // For Google with an OpenAI-only model name, use text-embedding-005 and 768 dims (same as factory)
+        // For Google with an OpenAI-only model name, use gemini-embedding-001 and 768 dims (same as factory)
         const modelForTest =
           p === "google" && embModel && OPENAI_ONLY_EMBED_MODELS.has(embModel)
             ? GOOGLE_EMBED_DEFAULT_MODEL
