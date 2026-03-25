@@ -690,6 +690,11 @@ export class VectorDB {
       // Return empty results immediately without a GlitchTip report — the issue was
       // already logged once during init (issue #366).
       if (!this.schemaValid) return [];
+      // Dimension pre-check: silently skip query if the vector dim doesn't match the
+      // table dim. This prevents a LanceDB error when the embedding fallback chain
+      // (e.g. Google/768 dims) produces a vector incompatible with the stored
+      // 3072-dim table built with text-embedding-3-large.
+      if (vector.length !== this.vectorDim) return [];
       const results = await this.getTable().vectorSearch(vector).limit(limit).toArray();
       return results
         .map((row) => {
@@ -743,6 +748,11 @@ export class VectorDB {
       await this.ensureInitialized();
       // Same early-exit as search(): schema was already reported invalid at startup.
       if (!this.schemaValid) return false;
+      // Dimension pre-check: silently return false (no duplicate) if the query vector
+      // dim doesn't match the table dim. Prevents LanceDB "No vector column found to
+      // match with the query vector dimension" errors when the embedding fallback chain
+      // produces a different-dimension vector (e.g. Google/768 vs stored 3072).
+      if (vector.length !== this.vectorDim) return false;
       const results = await this.getTable().vectorSearch(vector).limit(1).toArray();
       if (results.length === 0) return false;
       const score = 1 / (1 + (results[0]._distance ?? 0));
