@@ -1453,7 +1453,7 @@ describe("#385: ChainEmbeddingProvider does not report 404/401 config errors", (
   });
 });
 
-describe("#385: createEmbeddingProvider uses text-embedding-005 as default Google model", () => {
+describe("#385: createEmbeddingProvider uses gemini-embedding-001 as default Google model", () => {
   it("direct Google provider uses gemini-embedding-001 when no model specified", () => {
     const cfg: EmbeddingConfig = {
       provider: "google",
