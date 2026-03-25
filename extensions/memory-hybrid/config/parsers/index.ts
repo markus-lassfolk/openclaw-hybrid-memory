@@ -492,8 +492,8 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
     }
     resolvedDimensions = vectorDimsForModel(model);
   } else if (embeddingProvider === "google") {
-    // Google text-embedding-005 default is 768d; set embedding.dimensions to override (#385).
-    // WARNING: If you previously used text-embedding-004, changing the model to text-embedding-005
+    // Google gemini-embedding-001 default is 768d; set embedding.dimensions to override (#385).
+    // WARNING: If you previously used text-embedding-004, changing the model to gemini-embedding-001
     // produces different vector representations. Existing LanceDB tables indexed with 004 will have
     // degraded retrieval quality until you re-index. Run the hybrid-mem re-index command after upgrading.
     resolvedDimensions = 768;

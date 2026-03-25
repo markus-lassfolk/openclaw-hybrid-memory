@@ -98,7 +98,7 @@ This release includes a **security override** for the Hono node server dependenc
   ```
   The five required positional parameters (`query`, `queryVector`, `db`, `vectorDb`, `factsDb`) are unchanged; everything else moves into the `options` bag. Omitting any option preserves existing default behaviour.
 
-- **Google embedding model default changed: `text-embedding-004` → `text-embedding-005` (#385):** If your deployment previously used `text-embedding-004` (explicitly or as the inferred default), switching to `text-embedding-005` produces different vector representations. **Existing LanceDB tables indexed with `text-embedding-004` will have degraded semantic retrieval quality until re-indexed.** Run `openclaw hybrid-mem re-index` after upgrading to rebuild the vector index with the new model. To keep using `text-embedding-004`, set `embedding.model: "text-embedding-004"` explicitly in your plugin config.
+- **Google embedding model default changed: `text-embedding-004` → `gemini-embedding-001` (#385):** If your deployment previously used `text-embedding-004` (explicitly or as the inferred default), switching to `gemini-embedding-001` produces different vector representations. **Existing LanceDB tables indexed with `text-embedding-004` will have degraded semantic retrieval quality until re-indexed.** Run `openclaw hybrid-mem re-index` after upgrading to rebuild the vector index with the new model. To keep using `text-embedding-004`, set `embedding.model: "text-embedding-004"` explicitly in your plugin config.
 
 ---
 
