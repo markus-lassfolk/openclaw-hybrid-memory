@@ -10,6 +10,62 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.3.250] - 2026-03-24
+
+### Release summary
+
+The largest feature release since the memory-manager 3.0 rewrite. This release ships **Production RAG principles**, **NarrativesDB** for temporal memory summaries, **identity reflection**, an **auto-generated memory mind-map**, a **task-queue watchdog**, and a comprehensive **database reliability overhaul** — alongside five crash-level bug fixes surfaced through real-world telemetry.
+
+### Added
+
+- **Production RAG principles (#656):** Full-featured Retrieval-Augmented Generation pipeline — reranking, semantic cache, document grading with configurable toggle, and best-match tiebreaking by `cachedAt` so higher-similarity results always win.
+- **NarrativesDB — temporal + narrative summaries (#646):** New `NarrativesDB` backend stores per-session narrative snapshots synthesized from event-log events. Session summaries are generated at `agent_end` and surfaced during recall to give the agent temporal context ("what happened in the last session").
+- **Identity reflection layer (#647):** A dedicated reflection pass builds and maintains a durable persona identity store from the agent's own outputs. Reflection outputs are promoted through a pipeline into `persona-state-store`, giving the agent long-term self-awareness across sessions.
+- **Auto-generated memory mind-map / index (#645):** A background job synthesizes all stored facts into a human-readable memory index — a navigable mind-map of what the agent knows. Short entries now use their actual text as labels instead of generic category names.
+- **Task-queue watchdog (#662):** A new watchdog service monitors the autonomous task queue for stale leases, clears expired entries, and emits alerts. Includes lease tracking with proper expiry management and Azure model documentation.
+- **Retrieval modes — interactive vs. deep (#639):** First-class support for two distinct retrieval strategies: `interactive` (low-latency, FTS5-first) and `deep` (higher-recall, multi-strategy). Mode is selected per query based on context signals.
+- **Hard FTS5 capability check (#727):** On startup the plugin verifies the SQLite FTS5 extension is available. If missing, it degrades gracefully with a clear alert rather than silent query failures.
+- **Pre-consolidation flush & decay controls (#729):** New explicit controls for pre-consolidation memory flush and decay scheduling. Operators can now configure flush triggers and decay intervals directly rather than relying on implicit cron timing.
+- **Provenance tagging to prevent cron contamination (#728):** Every fact written by a background cron job is tagged with its provenance source. Prevents cron-written facts from polluting feedback loops and corrupting the interactive memory signal.
+- **Automated CI feedback loop (#664):** CI review comments are now automatically consumed and re-queued as follow-up tasks, closing the loop between review feedback and code changes without manual triage.
+- **Architecture center (#637):** Formal definition of the core runtime boundary vs. adjacent subsystems. Enforced via lint rules to prevent coupling creep between plugin internals and external tooling layers.
+- **`verify --test-llm`:** New `--test-llm` flag for `openclaw hybrid-mem verify` tests every configured LLM endpoint with a real API call, reporting which models are reachable and what dimensions/capabilities they expose.
+- **ANTHROPIC_API_KEY env support in verify:** Verify now resolves the Anthropic key from `ANTHROPIC_API_KEY` env var (in addition to the existing config path), making it easier to run without a hardcoded key.
+- **Agent + node tagging in error reports (#706):** GlitchTip / error reports now include which agent (Maeve, Doris, etc.) and which machine generated the error, enabling per-agent filtering in the telemetry dashboard.
+- **Version-aware telemetry muting (#705):** Outdated plugin versions suppress telemetry noise by default. Configurable update nudges alert operators when a newer version is available.
+
+### Fixed
+
+- **EventLog closed after session dispose (#683, #712):** The `EventLog.liveDb` getter previously threw `"EventLog is closed"` permanently after `close()` was called. Changed from a permanent closed flag (better-sqlite3 pattern) to a reopen path using Node.js `DatabaseSync.open()`. Additionally added an `isOpen()` guard in `buildDailyNarrative` to skip narrative synthesis cleanly when the session is already torn down.
+- **"database is not open" on hot-reload (#682, #711):** Defensive database connection initialization prevents `"database is not open"` errors during gateway hot-reload or SIGUSR1 restart cycles.
+- **All embedding providers failed (#678, #680, #707, #710):** Fixed two separate causes: (1) incorrect provider chain fallback when the primary embedding provider is unreachable; (2) dimension mismatch when switching embedding models that caused the fallback chain to abort unnecessarily.
+- **LanceDB "No vector column found" (#679, #708):** Query stream now handles the case where no vector column exists in the LanceDB table (e.g. on a freshly initialized or migrated store) without throwing.
+- **Ollama connection failure noise (#681, #709):** Ollama `fetch failed` errors are no longer reported to the error tracker when Ollama is not configured; they are swallowed as expected unavailability.
+- **Connection error circuit-breaker noise (#703, #713):** Generic "Connection error" and network errors are filtered from Sentry/GlitchTip SDK config to avoid alert fatigue when the network is temporarily unavailable.
+- **Persona reflection — missing requirements (#647, #674, #675):** Fixed incomplete requirements resolution in the persona reflection pass that caused the pipeline to skip promotion steps silently.
+- **Autonomous queue duplicate dispatch (#634):** Prevented the autonomous task queue from dispatching the same issue twice when a GitHub branch isn't yet visible during fast successive queue runs.
+- **Gateway register parse failure (#661):** Isolated `hybridConfigSchema` to prevent the gateway registration parse from failing when the plugin config has extra top-level keys.
+- **Upgrade missing @lancedb/lancedb (#636, #663):** Upgrade from 2026.3.181 no longer risks missing the native LanceDB bindings; postinstall script now checks for and rebuilds them when needed.
+- **`fix(embedding)`: primary model/dimension alignment (#05b52d44):** Ensured the primary embedding model always resolves to consistent dimensions on backward-compatible stores to prevent re-indexing on restart.
+- **Google embedding — gemini-embedding-001 (#8240914a):** Updated Google embedding to use `gemini-embedding-001` (the current model name after Google renamed `text-embedding-004`/`005`). Dimension chaining and verify output now reflect the corrected model.
+- **CI actions failure on main branch (#733, #734):** Fixed concurrency and branch filter issues that caused CI to fail when running directly against `main`.
+
+### Changed
+
+- **FactsDB refactor (#638, #649):** `backends/facts-db.ts` split by responsibility boundary into focused sub-modules (retrieval, write, consolidation, decay), reducing module size and coupling.
+- **Bootstrap slimmed (#640, #659):** Context-bag and service registration assembly streamlined — removed redundant tool registrations and tightened the wiring between plugin init and feature flags.
+- **Google embedding — migrated to gemini-2.5-flash-lite (#e11c5ec1):** The Google embedding provider now defaults to the `gemini-2.5-flash-lite` model for classification/distill use cases (lower cost, same quality for short texts).
+- **Error reporting filter (#704, #715):** Noisy network errors, auth failures, and circuit-breaker events are now filtered out of the Sentry SDK config. Only actionable plugin-internal errors reach the tracker.
+- **Dependency updates:** `fast-xml-parser` bumped; minor/patch dependency group updated across `extensions/memory-hybrid`.
+
+### Developer / Internal
+
+- **Architecture lint rules (#637):** `lint-arch.sh` now enforces the boundary between the core runtime and adjacent subsystems. Violations fail CI.
+- **PR template (#ae8d8fde):** Strict documentation requirements added to the pull request template — every PR must document user-facing impact and include test evidence.
+- **Test improvements:** Fixed narrative-recall test timestamps (2025 → 2026), lease expiry bug in task-queue tests, and FTS5 degradation test coverage.
+
+---
+
 ## [2026.3.181] - 2026-03-18
 
 ### Fixed
@@ -779,7 +835,8 @@ Major feature release including procedural memory, directive extraction, reinfor
 
 ---
 
-[Unreleased]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.3.181...HEAD
+[Unreleased]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.3.250...HEAD
+[2026.3.250]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.3.181...v2026.3.250
 [2026.3.181]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/releases/tag/v2026.3.181
 [2026.3.180]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/releases/tag/v2026.3.180
 [2026.3.152]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/releases/tag/v2026.3.152
