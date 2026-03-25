@@ -284,9 +284,17 @@ export async function runVerifyForCli(
             : "all-MiniLM-L6-v2");
     const effectiveGoogleModel =
       p === "google" && embModel && OPENAI_ONLY_EMBED_MODELS.has(embModel) ? GOOGLE_EMBED_DEFAULT_MODEL : embModel;
+    // Detect Azure OpenAI endpoint so the label says "Azure" rather than "OpenAI"
+    const embeddingEndpoint =
+      typeof (cfg.embedding as Record<string, unknown>).endpoint === "string"
+        ? ((cfg.embedding as Record<string, unknown>).endpoint as string)
+        : "";
+    const isAzureEndpoint = p === "openai" && /\.azure\.com|\.openai\.azure\.com/i.test(embeddingEndpoint);
     const label =
       p === "openai"
-        ? `OpenAI/${embModel}`
+        ? isAzureEndpoint
+          ? `Azure/${embModel}`
+          : `OpenAI/${embModel}`
         : p === "google"
           ? `Google/${effectiveGoogleModel}`
           : p === "ollama"

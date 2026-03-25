@@ -152,7 +152,11 @@ export class VectorDB {
     this.schemaValid = true;
     this.semanticQueryCacheSchemaValid = true;
     this.db = await lancedb.connect(this.dbPath);
+    // Guard: a concurrent close() may have nulled this.db between the connect() await and here.
+    if (!this.db) throw new Error("VectorDB connection lost during initialization (concurrent close).");
     const tables = await this.db.tableNames();
+    // Guard again after the tableNames() await for the same reason.
+    if (!this.db) throw new Error("VectorDB connection lost during initialization (concurrent close).");
 
     if (tables.includes(LANCE_TABLE)) {
       this.table = await this.db.openTable(LANCE_TABLE);
@@ -796,7 +800,13 @@ export class VectorDB {
       const msg = err instanceof Error ? err.message : String(err);
       // Race: DB may have been closed (e.g. plugin reload) between ensureInitialized() and getTable().
       // Retry once to allow reconnect so verify CLI and other callers get a result instead of 0.
-      if (msg.includes("VectorDB not initialized") || msg.includes("close() was called")) {
+      if (
+        msg.includes("VectorDB not initialized") ||
+        msg.includes("close() was called") ||
+        msg.includes("VectorDB connection lost") ||
+        // TypeError from concurrent close() nulling this.db between await points in doInitialize()
+        (msg.includes("Cannot read properties of null") && msg.includes("openTable"))
+      ) {
         try {
           this.table = null;
           this.closed = true;
