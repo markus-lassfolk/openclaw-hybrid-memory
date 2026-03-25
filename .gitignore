@@ -29,6 +29,7 @@ internal/
 .DS_Store
 Thumbs.db
 .claude/settings.json
+.claude/worktrees/
 extensions/memory-hybrid/dist/
 
 extensions/memory-hybrid/npm-shrinkwrap.json
