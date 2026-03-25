@@ -303,6 +303,24 @@ describe("FactsDB.search", () => {
     expect(db.search("")).toEqual([]);
     expect(db.search("a")).toEqual([]);
   });
+
+  it("sanitizes null bytes in FTS queries", () => {
+    db.store({
+      text: "hello world from sqlite",
+      category: "fact",
+      importance: 0.7,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+    });
+
+    expect(() => db.search("hello\u0000world")).not.toThrow();
+
+    const results = db.search("hello\u0000world");
+    expect(results.length).toBeGreaterThan(0);
+    expect(results[0].entry.text).toContain("hello world");
+  });
 });
 
 // ---------------------------------------------------------------------------

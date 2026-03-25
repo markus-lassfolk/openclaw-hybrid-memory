@@ -636,6 +636,11 @@ describe("buildFts5Query", () => {
     expect(q).not.toContain("'");
     expect(q).not.toContain(";");
   });
+
+  it("replaces null bytes before quoting terms", () => {
+    const q = buildFts5Query("hello\u0000world");
+    expect(q).toBe('"hello" OR "world"');
+  });
 });
 
 // ---------------------------------------------------------------------------
