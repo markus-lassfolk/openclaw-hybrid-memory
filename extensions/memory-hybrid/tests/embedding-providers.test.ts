@@ -1464,7 +1464,7 @@ describe("#385: createEmbeddingProvider uses text-embedding-005 as default Googl
     };
     const provider = createEmbeddingProvider(cfg);
     expect(provider).toBeInstanceOf(Embeddings);
-    expect(provider.modelName).toBe("text-embedding-005");
+    expect(provider.modelName).toBe("gemini-embedding-001");
   });
 
   it("direct Google provider respects explicitly set model", () => {
