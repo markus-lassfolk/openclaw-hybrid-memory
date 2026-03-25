@@ -502,6 +502,11 @@
           "endpoint": {
             "type": "string",
             "description": "Custom endpoint URL. For Ollama: defaults to 'http://localhost:11434'. For OpenAI-compatible APIs."
+          },
+          "preferredProviders": {
+            "type": "array",
+            "items": { "type": "string", "enum": ["openai", "google", "ollama"] },
+            "description": "Explicit ordered list of embedding providers to use. When set, only listed providers are tried (in order); auto-inference from available API keys is skipped. Use [\"openai\"] to pin to Azure/OpenAI only and prevent Google from being auto-added as a fallback when GEMINI_API_KEY is also set. Mixing providers with different vector dimensions is not supported — ensure all listed providers produce the same dimensions as your stored vectors."
           }
         }
       },
