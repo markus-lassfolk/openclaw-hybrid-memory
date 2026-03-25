@@ -33,7 +33,7 @@ Four components work together:
   - **OpenAI** (default): `embedding.provider: "openai"` + `embedding.apiKey`. Default model: `text-embedding-3-small` (1536d).
   - **Ollama** (local): `embedding.provider: "ollama"`. No API key required. Any Ollama model (e.g. `nomic-embed-text`).
   - **ONNX** (local): `embedding.provider: "onnx"`. No API key required. Requires `onnxruntime-node`. Models auto-downloaded from HuggingFace.
-  - **Google** (Gemini API): `embedding.provider: "google"`. Uses `text-embedding-004`. Reuses `llm.providers.google.apiKey`.
+  - **Google** (Gemini API): `embedding.provider: "google"`. Uses `gemini-embedding-001`. Reuses `llm.providers.google.apiKey`.
   - Use `embedding.preferredProviders` for ordered failover (e.g. `["ollama", "openai"]`). See [LLM-AND-PROVIDERS.md](LLM-AND-PROVIDERS.md#embedding-providers).
   - **Embeddings are used for:** vector search (LanceDB), auto-recall, storing new facts, and CLI features (find-duplicates, consolidate).
   - **LLM features:** Auto-classify, query expansion, summarize-when-over-budget, consolidation, distillation, and reflection use **chat** models. You can configure multiple providers and model tiers (`llm.nano`, `llm.default`, `llm.heavy`) with ordered fallback lists. See [LLM-AND-PROVIDERS.md](LLM-AND-PROVIDERS.md) and [CONFIGURATION.md](CONFIGURATION.md).

@@ -33,8 +33,8 @@ This release includes a **security dependency override** and documents **migrati
 
   If you only use the plugin via OpenClaw and the built-in tools/CLI, you don’t need to do anything.
 
-- **Google embedding default: `text-embedding-004` → `text-embedding-005` (#385)**  
-  If you use Google embeddings and had been on `text-embedding-004` (explicitly or as the previous default), the new default is `text-embedding-005`. Vectors from the two models are not compatible:
+- **Google embedding default: `text-embedding-004` → `gemini-embedding-001` (#385)**  
+  If you use Google embeddings and had been on `text-embedding-004` (explicitly or as the previous default), the new default is `gemini-embedding-001`. Vectors from the two models are not compatible:
 
   - **Recommendation:** After upgrading, run `openclaw hybrid-mem re-index` to rebuild your LanceDB index with the new model so semantic search stays accurate.
   - **To stay on 004:** Set `embedding.model: "text-embedding-004"` in your plugin config.

@@ -17,7 +17,7 @@ Get an agent that **remembers you** and **gets better at giving the right contex
   - **OpenAI** (default): set `embedding.apiKey` and `embedding.model` (e.g. `text-embedding-3-small`).
   - **Ollama**: set `embedding.provider: "ollama"` and `embedding.model` (e.g. `nomic-embed-text`). No API key required — Ollama must be running locally.
   - **ONNX**: set `embedding.provider: "onnx"` and `embedding.model` (e.g. `all-MiniLM-L6-v2`). Fully local; install `onnxruntime-node` first.
-  - **Google**: set `embedding.provider: "google"` and `llm.providers.google.apiKey`. Uses `text-embedding-004` via Gemini API.
+  - **Google**: set `embedding.provider: "google"` and `llm.providers.google.apiKey`. Uses `gemini-embedding-001` via Gemini API.
   
   Use `embedding.preferredProviders` for automatic failover between providers (e.g. `["ollama", "openai"]`). See [LLM-AND-PROVIDERS.md](LLM-AND-PROVIDERS.md#embedding-providers) for full details.
 - **Chat/completion** (optional for basic memory): needed for distillation, reflection, auto-classify, etc. Any provider the OpenClaw gateway supports works; optional **`llm`** config sets model preference lists. See [LLM-AND-PROVIDERS.md](LLM-AND-PROVIDERS.md).

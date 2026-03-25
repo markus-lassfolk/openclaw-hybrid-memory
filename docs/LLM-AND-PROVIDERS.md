@@ -397,7 +397,7 @@ Embeddings are required. The plugin supports four providers — choose the one t
 | **OpenAI** | `"openai"` (default) | Yes (`embedding.apiKey`) | `text-embedding-3-small` (1536d) or `text-embedding-3-large` (3072d) |
 | **Ollama** | `"ollama"` | No | Fully local. Any Ollama model (e.g. `nomic-embed-text`, `mxbai-embed-large`). Ollama must be running. |
 | **ONNX** | `"onnx"` | No | Fully local. Models auto-downloaded from HuggingFace. Requires `onnxruntime-node`. |
-| **Google** | `"google"` | Yes (Google API key) | `text-embedding-004` or `text-embedding-005` via Gemini API. Reuses `llm.providers.google.apiKey` or `distill.apiKey`. Not `text-embedding-3-*` (OpenAI). |
+| **Google** | `"google"` | Yes (Google API key) | `text-embedding-004` or `gemini-embedding-001` via Gemini API. Reuses `llm.providers.google.apiKey` or `distill.apiKey`. Not `text-embedding-3-*` (OpenAI). |
 
 **What if I have no provider that supports embeddings?** The plugin **requires** at least one valid embedding configuration to load. If you do not set any embedding provider (or the one you set is invalid — e.g. OpenAI with no key, Ollama not running), the plugin will fail at config parse or startup with a clear error (e.g. missing `embedding.apiKey`, or embedding check failed). You cannot run the plugin with zero embedding access. To avoid paid embedding APIs, use **Ollama** or **ONNX** (local only; no API key).
 
@@ -519,12 +519,12 @@ You can also provide a path to a local `.onnx` file:
 
 ### Google (Gemini API)
 
-Uses Google's `text-embedding-004` model via the Gemini API's OpenAI-compatible endpoint. Reuses the Google API key from `llm.providers.google.apiKey` (or `distill.apiKey` as a fallback).
+Uses Google's `gemini-embedding-001` model via the Gemini API's OpenAI-compatible endpoint. Reuses the Google API key from `llm.providers.google.apiKey` (or `distill.apiKey` as a fallback).
 
 ```json
 "embedding": {
   "provider": "google",
-  "model": "text-embedding-004",
+  "model": "gemini-embedding-001",
   "dimensions": 768
 },
 "llm": {
@@ -534,9 +534,9 @@ Uses Google's `text-embedding-004` model via the Gemini API's OpenAI-compatible 
 }
 ```
 
-Default dimensions for `text-embedding-004`: 768. Set `embedding.dimensions` explicitly to override.
+Default dimensions for `gemini-embedding-001`: 768. Set `embedding.dimensions` explicitly to override.
 
-**Model names:** For `embedding.provider: "google"` only **`text-embedding-004`** and **`text-embedding-005`** are valid. Do not use `text-embedding-3-small` or `text-embedding-3-large` (those are OpenAI models); the plugin will send a Google model instead and verify may still show the config name — if embedding tests fail, set `embedding.model` to `text-embedding-005` or `text-embedding-004`.
+**Model names:** For `embedding.provider: "google"` only **`text-embedding-004`** and **`gemini-embedding-001`** are valid. Do not use `text-embedding-3-small` or `text-embedding-3-large` (those are OpenAI models); the plugin will send a Google model instead and verify may still show the config name — if embedding tests fail, set `embedding.model` to `gemini-embedding-001` or `text-embedding-004`.
 
 ---
 
