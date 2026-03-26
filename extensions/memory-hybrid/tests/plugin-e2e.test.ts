@@ -220,6 +220,44 @@ describe("Store and recall e2e (real FactsDB + VectorDB, mock embeddings)", () =
     expect(recallByIdResult.content?.[0]?.text).toContain(text);
   });
 
+  it("memory_store accepts why and memory_recall returns lineage context", async () => {
+    registerTools(buildE2EContext({ tmpDir, factsDb, vectorDb, cfg, api }) as never, api as never);
+
+    const storeTool = api.getTool("memory_store");
+    const recallTool = api.getTool("memory_recall");
+    const text = "Switch deployment to blue/green rollout";
+    const why = "Previous in-place deploy caused a 12-minute outage during rollback";
+
+    const storeResult = (await storeTool?.execute("call-why-1", {
+      text,
+      why,
+      category: "decision",
+      importance: 0.9,
+    })) as { details?: { id?: string; why?: string } };
+    const factId = storeResult.details?.id;
+    expect(storeResult.details?.why).toBe(why);
+    expect(factId).toBeDefined();
+
+    const recallByIdResult = (await recallTool?.execute("call-why-2", { id: factId })) as {
+      content?: { type: string; text: string }[];
+      details?: { count: number; memories?: { id: string; text: string; why?: string }[] };
+    };
+    expect(recallByIdResult.details?.count).toBe(1);
+    expect(recallByIdResult.details?.memories?.[0]?.why).toBe(why);
+    expect(recallByIdResult.content?.[0]?.text).toContain(`Why: ${why}`);
+
+    const recallByQueryResult = (await recallTool?.execute("call-why-3", {
+      query: "blue green rollout",
+      limit: 5,
+    })) as {
+      content?: { type: string; text: string }[];
+      details?: { memories?: { text: string; why?: string }[] };
+    };
+    const matched = (recallByQueryResult.details?.memories ?? []).find((m) => m.text.includes(text));
+    expect(matched?.why).toBe(why);
+    expect(recallByQueryResult.content?.[0]?.text).toContain(`Why: ${why}`);
+  });
+
   it("memory_recall by query returns the stored fact (semantic path)", async () => {
     registerTools(buildE2EContext({ tmpDir, factsDb, vectorDb, cfg, api }) as never, api as never);
 

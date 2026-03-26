@@ -97,6 +97,23 @@ describe("FactsDB.store", () => {
     });
     expect(entry.sourceDate).toBe(1700000000);
   });
+
+  it("stores and retrieves lineage why context", () => {
+    const entry = db.store({
+      text: "Use Vitest for unit tests",
+      why: "Jest startup overhead was slowing local CI feedback loops",
+      category: "decision",
+      importance: 0.8,
+      entity: "testing",
+      key: "framework",
+      value: "vitest",
+      source: "conversation",
+    });
+
+    expect(entry.why).toBe("Jest startup overhead was slowing local CI feedback loops");
+    const fetched = db.getById(entry.id);
+    expect(fetched?.why).toBe("Jest startup overhead was slowing local CI feedback loops");
+  });
 });
 
 // ---------------------------------------------------------------------------

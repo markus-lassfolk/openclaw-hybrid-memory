@@ -69,6 +69,13 @@ function migrateSummaryColumn(db: DatabaseSync): void {
   db.exec("ALTER TABLE facts ADD COLUMN summary TEXT");
 }
 
+/** Add optional lineage context (`why`) to facts. */
+function migrateWhyColumn(db: DatabaseSync): void {
+  const cols = db.prepare("PRAGMA table_info(facts)").all() as Array<{ name: string }>;
+  if (cols.some((c) => c.name === "why")) return;
+  db.exec("ALTER TABLE facts ADD COLUMN why TEXT");
+}
+
 function migrateNormalizedHash(db: DatabaseSync): void {
   const cols = db.prepare("PRAGMA table_info(facts)").all() as Array<{ name: string }>;
   if (!cols.some((c) => c.name === "normalized_hash")) {
@@ -331,7 +338,7 @@ function migrateProcedureScopeColumns(db: DatabaseSync): void {
 }
 
 /**
- * Migrate the FTS5 virtual table to include the `tags` column (Issue #151).
+ * Migrate the FTS5 virtual table to include the `tags` and `why` columns.
  * FTS5 virtual tables cannot be altered, so we drop and recreate if tags are absent.
  * The entire migration is wrapped in a transaction so a crash mid-migration leaves the
  * DB in a consistent state (either old schema intact, or new schema + backfill complete).
@@ -341,8 +348,8 @@ function migrateFtsTagsSupport(db: DatabaseSync): void {
     | { sql: string }
     | undefined;
 
-  // If the CREATE statement already contains 'tags', nothing to do.
-  if (row?.sql?.includes("tags")) return;
+  // If the CREATE statement already contains both 'tags' and 'why', nothing to do.
+  if (row?.sql?.includes("tags") && row?.sql?.includes("why")) return;
 
   // Wrap the entire migration in a transaction so any failure leaves the DB consistent.
   const migrate = createTransaction(db, () => {
@@ -361,6 +368,7 @@ function migrateFtsTagsSupport(db: DatabaseSync): void {
         category,
         entity,
         tags,
+        why,
         key,
         value,
         content='facts',
@@ -372,27 +380,27 @@ function migrateFtsTagsSupport(db: DatabaseSync): void {
     // Recreate triggers with tags column.
     db.exec(`
       CREATE TRIGGER IF NOT EXISTS facts_ai AFTER INSERT ON facts BEGIN
-        INSERT INTO facts_fts(rowid, text, category, entity, tags, key, value)
-        VALUES (new.rowid, new.text, new.category, new.entity, new.tags, new.key, new.value);
+        INSERT INTO facts_fts(rowid, text, category, entity, tags, why, key, value)
+        VALUES (new.rowid, new.text, new.category, new.entity, new.tags, new.why, new.key, new.value);
       END;
 
       CREATE TRIGGER IF NOT EXISTS facts_ad AFTER DELETE ON facts BEGIN
-        INSERT INTO facts_fts(facts_fts, rowid, text, category, entity, tags, key, value)
-        VALUES ('delete', old.rowid, old.text, old.category, old.entity, old.tags, old.key, old.value);
+        INSERT INTO facts_fts(facts_fts, rowid, text, category, entity, tags, why, key, value)
+        VALUES ('delete', old.rowid, old.text, old.category, old.entity, old.tags, old.why, old.key, old.value);
       END;
 
       CREATE TRIGGER IF NOT EXISTS facts_au AFTER UPDATE ON facts BEGIN
-        INSERT INTO facts_fts(facts_fts, rowid, text, category, entity, tags, key, value)
-        VALUES ('delete', old.rowid, old.text, old.category, old.entity, old.tags, old.key, old.value);
-        INSERT INTO facts_fts(rowid, text, category, entity, tags, key, value)
-        VALUES (new.rowid, new.text, new.category, new.entity, new.tags, new.key, new.value);
+        INSERT INTO facts_fts(facts_fts, rowid, text, category, entity, tags, why, key, value)
+        VALUES ('delete', old.rowid, old.text, old.category, old.entity, old.tags, old.why, old.key, old.value);
+        INSERT INTO facts_fts(rowid, text, category, entity, tags, why, key, value)
+        VALUES (new.rowid, new.text, new.category, new.entity, new.tags, new.why, new.key, new.value);
       END
     `);
 
     // Backfill existing facts into the new FTS index.
     db.exec(`
-      INSERT INTO facts_fts(rowid, text, category, entity, tags, key, value)
-      SELECT rowid, text, category, entity, tags, key, value FROM facts
+      INSERT INTO facts_fts(rowid, text, category, entity, tags, why, key, value)
+      SELECT rowid, text, category, entity, tags, why, key, value FROM facts
     `);
   });
   migrate();
@@ -858,6 +866,7 @@ export function runFactsMigrations(db: DatabaseSync): void {
   migrateDecayColumns(db);
   migrateTimestampUnits(db);
   migrateSummaryColumn(db);
+  migrateWhyColumn(db);
   migrateNormalizedHash(db);
   migrateSourceDateColumn(db);
   migrateTagsColumn(db);
