@@ -126,21 +126,26 @@ export class VectorDB {
    * caller skips the reader slot so it does not get counted in the drain wait
    * (preventing a potential deadlock where optimize waits for readers that will
    * never release because they can't acquire a slot).
+   *
+   * @returns true if the reader slot was acquired (count incremented), false otherwise
    */
-  private acquireReader(): void {
+  private acquireReader(): boolean {
     // Skip reader count if an exclusive optimize is in progress — those readers
     // will see whatever version was current when they started, which is fine.
-    if (VectorDB._optimizeExclusiveLockByPath.get(this.dbPath) === true) return;
+    if (VectorDB._optimizeExclusiveLockByPath.get(this.dbPath) === true) return false;
     const current = (VectorDB._activeReadersByPath.get(this.dbPath) ?? 0) + 1;
     VectorDB._activeReadersByPath.set(this.dbPath, current);
+    return true;
   }
 
   /**
    * Release the shared reader slot acquired by acquireReader().
-   * No-op when the slot was skipped at acquire time (exclusive lock was held).
+   * Only decrements the count if the reader actually acquired a slot (acquired=true).
+   *
+   * @param acquired - The return value from the corresponding acquireReader() call
    */
-  private releaseReader(): void {
-    if (VectorDB._optimizeExclusiveLockByPath.get(this.dbPath) === true) return;
+  private releaseReader(acquired: boolean): void {
+    if (!acquired) return;
     const current = VectorDB._activeReadersByPath.get(this.dbPath) ?? 1;
     VectorDB._activeReadersByPath.set(this.dbPath, Math.max(0, current - 1));
   }
@@ -789,7 +794,7 @@ export class VectorDB {
       // (e.g. Google/768 dims) produces a vector incompatible with the stored
       // 3072-dim table built with text-embedding-3-large.
       if (vector.length !== this.vectorDim) return [];
-      this.acquireReader();
+      const acquired = this.acquireReader();
       try {
         const results = await this.getTable().vectorSearch(vector).limit(limit).toArray();
         return results
@@ -826,7 +831,7 @@ export class VectorDB {
           })
           .filter((r) => r.score >= minScore);
       } finally {
-        this.releaseReader();
+        this.releaseReader(acquired);
       }
     } catch (err) {
       // The dimension pre-check (vector.length !== this.vectorDim) above already prevents
@@ -855,14 +860,14 @@ export class VectorDB {
       // match with the query vector dimension" errors when the embedding fallback chain
       // produces a different-dimension vector (e.g. Google/768 vs stored 3072).
       if (vector.length !== this.vectorDim) return false;
-      this.acquireReader();
+      const acquired = this.acquireReader();
       try {
         const results = await this.getTable().vectorSearch(vector).limit(1).toArray();
         if (results.length === 0) return false;
         const score = 1 / (1 + (results[0]._distance ?? 0));
         return score >= threshold;
       } finally {
-        this.releaseReader();
+        this.releaseReader(acquired);
       }
     } catch (err) {
       // Errors reaching here mean the dimension pre-check passed but LanceDB still
@@ -912,8 +917,8 @@ export class VectorDB {
       const t = this.getTable();
       return await t.countRows();
     };
+    const acquired = this.acquireReader();
     try {
-      this.acquireReader();
       return await tryCount();
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -949,7 +954,7 @@ export class VectorDB {
       this.logWarn(`memory-hybrid: LanceDB count failed: ${err}`);
       return 0;
     } finally {
-      this.releaseReader();
+      this.releaseReader(acquired);
     }
   }
 
