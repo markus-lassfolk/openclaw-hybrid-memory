@@ -7,7 +7,7 @@
 
 import { join, isAbsolute } from "node:path";
 import { homedir } from "node:os";
-import type { ClawdbotPluginApi } from "openclaw/plugin-sdk";
+import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import { getCronModelConfig, getDefaultCronModel } from "../config.js";
 import { runSetupStage } from "./stage-setup.js";
 import { runRecallStage } from "./stage-recall.js";

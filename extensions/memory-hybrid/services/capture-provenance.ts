@@ -1,4 +1,4 @@
-import type { ClawdbotPluginApi } from "openclaw/plugin-sdk";
+import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 
 export type CaptureOrigin = "interactive" | "system" | "cron";
 

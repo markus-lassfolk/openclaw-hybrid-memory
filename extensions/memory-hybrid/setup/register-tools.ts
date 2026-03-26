@@ -5,7 +5,7 @@
  * Extracted from index.ts to reduce main file size.
  */
 
-import type { ClawdbotPluginApi } from "openclaw/plugin-sdk";
+import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import { toolInstallers, type ToolsContext } from "./tool-installers.js";
 
 /** Tool registration receives the stable plugin API (Phase 3). */
