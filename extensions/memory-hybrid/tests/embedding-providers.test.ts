@@ -1518,10 +1518,14 @@ describe("#486: shouldSuppressEmbeddingError — suppression helper", () => {
     ).toBe(true);
   });
 
-  it("does NOT suppress generic transient errors", () => {
+  it("does NOT suppress generic network/connection transient errors", () => {
     expect(shouldSuppressEmbeddingError(new Error("ECONNREFUSED"))).toBe(false);
     expect(shouldSuppressEmbeddingError(new Error("network timeout"))).toBe(false);
-    expect(shouldSuppressEmbeddingError(new Error("500 Internal Server Error"))).toBe(false);
+  });
+
+  it("suppresses 500 server errors", () => {
+    expect(shouldSuppressEmbeddingError(new Error("500 Internal Server Error"))).toBe(true);
+    expect(shouldSuppressEmbeddingError(new Error("500 internal error"))).toBe(true);
   });
 
   it("does NOT suppress non-Error values", () => {

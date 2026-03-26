@@ -4,9 +4,9 @@
 
 import OpenAI from "openai";
 import { capturePluginError } from "../error-reporter.js";
-import { withLLMRetry, is429OrWrapped } from "../chat.js";
+import { withLLMRetry } from "../chat.js";
 import type { EmbeddingProvider } from "./types.js";
-import { EMBEDDING_CACHE_MAX, truncateForEmbedding, makeCacheKey, isConfigError } from "./shared.js";
+import { EMBEDDING_CACHE_MAX, truncateForEmbedding, makeCacheKey, shouldSuppressEmbeddingError } from "./shared.js";
 
 /**
  * OpenAI-based embedding provider.
@@ -114,8 +114,8 @@ export class Embeddings implements EmbeddingProvider {
     // lastErr is always defined here: constructor enforces models.length >= 1, so
     // the loop always runs at least once; either it returns early (success) or
     // sets lastErr on every iteration before reaching this point.
-    // Skip reporting config errors (404 model-not-found, 403 country/region restriction, 401 auth failure) and 429 (rate limit) — operator config issues or transient errors, not bugs (#329, #394, #397, #385).
-    if (!isConfigError(lastErr!) && !is429OrWrapped(lastErr!)) {
+    // Skip reporting config errors (404 model-not-found, 403 country/region restriction, 401 auth failure), 429 (rate limit), and 500 errors — operator config issues or transient errors, not bugs (#329, #394, #397, #385, #739).
+    if (!shouldSuppressEmbeddingError(lastErr!)) {
       capturePluginError(lastErr!, {
         subsystem: "embeddings",
         operation: "embed",
@@ -203,8 +203,8 @@ export class Embeddings implements EmbeddingProvider {
         freshVectors.push(...sorted);
       }
       if (lastErr !== undefined && freshVectors.length === i) {
-        // Skip reporting config errors (404 model-not-found, 403 country/region restriction, 401 auth failure) and 429 (rate limit) — operator config issues or transient errors, not bugs (#329, #394, #397, #385).
-        if (!isConfigError(lastErr) && !is429OrWrapped(lastErr)) {
+        // Skip reporting config errors (404 model-not-found, 403 country/region restriction, 401 auth failure), 429 (rate limit), and 500 errors — operator config issues or transient errors, not bugs (#329, #394, #397, #385, #739).
+        if (!shouldSuppressEmbeddingError(lastErr)) {
           capturePluginError(lastErr, {
             subsystem: "embeddings",
             operation: "embedBatch",
