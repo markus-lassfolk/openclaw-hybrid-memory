@@ -125,6 +125,14 @@ export type ProcedureEntry = {
   scope?: string;
   /** Scope target (userId, agentId, or sessionId). */
   scopeTarget?: string | null;
+  /** Procedure feedback loop (#782): highest version number for this procedure. */
+  version?: number;
+  /** Procedure feedback loop (#782): last known outcome — 'success' | 'failure' | 'unknown'. */
+  lastOutcome?: "success" | "failure" | "unknown";
+  /** Procedure feedback loop (#782): success rate as a fraction [0,1] (total successes / total attempts). */
+  successRate?: number;
+  /** Procedure feedback loop (#782): avoidance notes across all versions. */
+  avoidanceNotes?: string[];
 };
 
 export type SearchResult = {

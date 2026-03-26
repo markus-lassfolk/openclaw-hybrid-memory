@@ -963,7 +963,17 @@ export function registerMemoryTools(
                       )
                       .join(" → ")
                   : p.recipeJson.slice(0, 200);
-                lines.push(`- ${p.taskPattern.slice(0, 80)}…: ${steps} (validated ${p.successCount}x)`);
+                const rate = p.successRate !== undefined ? `, rate ${(p.successRate * 100).toFixed(0)}%` : "";
+                const ver = p.version !== undefined ? `, v${p.version}` : "";
+                const outcome = p.lastOutcome === "failure" ? " ⚠️" : p.lastOutcome === "success" ? " ✅" : "";
+                lines.push(
+                  `- ${p.taskPattern.slice(0, 80)}…: ${steps} (validated ${p.successCount}x${rate}${ver}${outcome})`,
+                );
+                if (p.avoidanceNotes && p.avoidanceNotes.length > 0) {
+                  for (const note of p.avoidanceNotes.slice(0, 2)) {
+                    lines.push(`  ⚠ ${note}`);
+                  }
+                }
               }
             }
             if (negatives.length > 0) {
@@ -987,7 +997,13 @@ export function registerMemoryTools(
                       .filter(Boolean)
                       .join(" → ")
                   : "";
-                lines.push(`- ${p.taskPattern.slice(0, 80)}… ${steps ? `(${steps})` : ""}`);
+                const ver = p.version !== undefined ? ` (v${p.version})` : "";
+                lines.push(`- ${p.taskPattern.slice(0, 80)}… ${steps ? `(${steps})` : ""}${ver}`);
+                if (p.avoidanceNotes && p.avoidanceNotes.length > 0) {
+                  for (const note of p.avoidanceNotes.slice(0, 2)) {
+                    lines.push(`  ⚠ ${note}`);
+                  }
+                }
               }
             }
             if (lines.length === 0) {
@@ -1015,6 +1031,104 @@ export function registerMemoryTools(
         },
       },
       { name: "memory_recall_procedures" },
+    );
+
+    // Procedure feedback loop (#782)
+    api.registerTool(
+      {
+        name: "memory_procedure_feedback",
+        label: "Procedure Feedback",
+        description:
+          "Record the outcome of using a procedure — success or failure. On failure, bumps the procedure version, logs the failure context, and creates an episode record. On success, records the validation. Use this whenever a procedure from memory_recall_procedures is attempted.",
+        parameters: Type.Object({
+          procedureId: Type.String({ description: "ID of the procedure that was used" }),
+          success: Type.Boolean({ description: "true if the procedure succeeded, false if it failed" }),
+          context: Type.Optional(
+            Type.String({
+              description: "What happened — error message, environment notes, or a summary of the outcome.",
+            }),
+          ),
+          failedAtStep: Type.Optional(
+            Type.Number({
+              description: "If failure: which step number failed (1-based).",
+            }),
+          ),
+          duration: Type.Optional(
+            Type.Number({
+              description: "Optional: how long the procedure took in milliseconds.",
+            }),
+          ),
+          tags: Type.Optional(
+            Type.Array(Type.String(), {
+              description: "Optional tags to associate with the episode (e.g. 'production', 'doris').",
+            }),
+          ),
+        }),
+        async execute(_toolCallId: string, params: Record<string, unknown>) {
+          try {
+            const { procedureId, success, context, failedAtStep, duration, tags } = params as {
+              procedureId: string;
+              success: boolean;
+              context?: string;
+              failedAtStep?: number;
+              duration?: number;
+              tags?: string[];
+            };
+
+            const result = factsDb.procedureFeedback({
+              procedureId,
+              success,
+              context,
+              failedAtStep,
+              duration,
+              tags,
+            });
+
+            if (!result) {
+              return {
+                content: [{ type: "text" as const, text: `Procedure not found: ${procedureId}` }],
+                details: { success: false, error: "procedure_not_found" },
+              };
+            }
+
+            const lines: string[] = [];
+            if (success) {
+              lines.push(
+                `✅ Procedure validated (now ${result.successCount} successes, confidence: ${(result.confidence ?? 0).toFixed(2)})`,
+              );
+            } else {
+              lines.push(
+                `❌ Procedure failure recorded (now ${result.failureCount} failures, version ${result.version ?? 1}, confidence: ${(result.confidence ?? 0).toFixed(2)})`,
+              );
+              if (context) lines.push(`  Context: ${context}`);
+              if (result.avoidanceNotes && result.avoidanceNotes.length > 0) {
+                lines.push(`  Avoidance notes: ${result.avoidanceNotes.join("; ")}`);
+              }
+            }
+
+            return {
+              content: [{ type: "text" as const, text: lines.join("\n") }],
+              details: {
+                success: true,
+                procedureId: result.id,
+                version: result.version,
+                outcome: success ? "success" : "failure",
+                successCount: result.successCount,
+                failureCount: result.failureCount,
+                successRate: result.successRate,
+              },
+            };
+          } catch (err) {
+            capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+              subsystem: "memory",
+              operation: "memory-procedure-feedback",
+              phase: "runtime",
+            });
+            throw err;
+          }
+        },
+      },
+      { name: "memory_procedure_feedback" },
     );
   }
 

@@ -2562,6 +2562,104 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
       }),
     );
 
+  // Procedure feedback loop CLI (#782)
+  const procedureCmd = mem
+    .command("procedure")
+    .description("Show procedure details (versions, failures, avoidance notes)");
+  procedureCmd
+    .command("show <id>")
+    .description("Show all versions and failure history for a procedure")
+    .action(
+      withExit(async (opts: { id: string }) => {
+        const proc = factsDb.getProcedureById(opts.id);
+        if (!proc) {
+          console.log(`Procedure not found: ${opts.id}`);
+          return;
+        }
+
+        const versions = factsDb.getProcedureVersions(opts.id);
+        const failures = factsDb.getProcedureFailures(opts.id);
+        const totalSuccess = proc.successCount + versions.reduce((s, v) => s + v.successCount, 0);
+        const totalFailure = proc.failureCount + versions.reduce((s, v) => s + v.failureCount, 0);
+        const total = totalSuccess + totalFailure;
+        const rate = total > 0 ? totalSuccess / total : 0;
+
+        console.log(`Procedure: ${proc.taskPattern}`);
+        console.log(`  ID:         ${proc.id}`);
+        console.log(`  Type:       ${proc.procedureType}`);
+        console.log(`  Confidence: ${proc.confidence?.toFixed(3) ?? "n/a"}`);
+        console.log(
+          `  Success:    ${totalSuccess} (procedure table) + ${versions.reduce((s, v) => s + v.successCount, 0)} (versions) = ${totalSuccess}`,
+        );
+        console.log(
+          `  Failure:   ${totalFailure} (procedure table) + ${versions.reduce((s, v) => s + v.failureCount, 0)} (versions) = ${totalFailure}`,
+        );
+        console.log(`  Rate:      ${(rate * 100).toFixed(1)}%`);
+        console.log(`  Outcome:   ${proc.lastOutcome ?? "unknown"}`);
+        console.log(
+          `  Last Validated: ${proc.lastValidated ? new Date(proc.lastValidated * 1000).toISOString() : "never"}`,
+        );
+        console.log(`  Last Failed:   ${proc.lastFailed ? new Date(proc.lastFailed * 1000).toISOString() : "never"}`);
+
+        if (proc.avoidanceNotes && proc.avoidanceNotes.length > 0) {
+          console.log(`\n  Avoidance notes (all versions):`);
+          for (const note of proc.avoidanceNotes) {
+            console.log(`    - ${note}`);
+          }
+        }
+
+        if (versions.length > 0) {
+          console.log(`\n  Versions (${versions.length}):`);
+          for (const v of versions) {
+            const pct =
+              v.successCount + v.failureCount > 0
+                ? ` (${((v.successCount / (v.successCount + v.failureCount)) * 100).toFixed(0)}% success)`
+                : "";
+            console.log(`    v${v.versionNumber}: ${v.successCount} OK, ${v.failureCount} failed${pct}`);
+            if (v.avoidanceNotes && v.avoidanceNotes.length > 0) {
+              for (const note of v.avoidanceNotes.slice(0, 3)) {
+                console.log(`      ⚠ ${note}`);
+              }
+            }
+          }
+        }
+
+        if (failures.length > 0) {
+          console.log(`\n  Recent failures (${failures.length} total):`);
+          for (const f of failures.slice(0, 10)) {
+            const when = new Date(f.timestamp * 1000).toISOString();
+            const step = f.failedAtStep !== null ? ` step ${f.failedAtStep}` : "";
+            console.log(`    [${when}] v${f.versionNumber}${step}: ${f.context ?? "(no context)"}`);
+          }
+        } else {
+          console.log(`\n  No failures recorded.`);
+        }
+      }),
+    );
+
+  procedureCmd
+    .command("list")
+    .description("List all procedures (optionally filtered by type)")
+    .option("--type <type>", "Filter by type: positive, negative, or all (default: all)")
+    .option("--limit <n>", "Maximum number to show (default: 20)")
+    .action(
+      withExit(async (opts: { type?: string; limit?: number }) => {
+        const limit = opts.limit ?? 20;
+        const procs = factsDb.listProcedures(limit * 3); // over-fetch then filter
+        const filtered = opts.type && opts.type !== "all" ? procs.filter((p) => p.procedureType === opts.type) : procs;
+        const shown = filtered.slice(0, limit);
+
+        console.log(`Procedures (showing ${shown.length} of ${filtered.length}):`);
+        for (const p of shown) {
+          const rate = p.successRate !== undefined ? ` ${(p.successRate * 100).toFixed(0)}%` : "";
+          const ver = p.version !== undefined ? ` v${p.version}` : "";
+          console.log(
+            `  [${p.id.slice(0, 8)}] ${p.procedureType.padEnd(8)} ${rate.padEnd(6)} ${ver} "${p.taskPattern.slice(0, 60)}"`,
+          );
+        }
+      }),
+    );
+
   mem
     .command("version")
     .description("Show installed version and latest available on GitHub and npm")
