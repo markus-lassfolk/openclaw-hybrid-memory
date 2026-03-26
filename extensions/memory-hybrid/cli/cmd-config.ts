@@ -122,7 +122,7 @@ export function runConfigViewForCli(ctx: HandlerContext, sink: VerifyCliSink): v
       const out = getPluginConfigFromFile(configPath);
       if ("config" in out) rawCfg = out.config;
     }
-  } catch (_e) {}
+  } catch {}
 
   // Helper to get raw enabled flag if set, otherwise fallback to parsed config
   const rawEnabled = (key: string, parsedVal: boolean) => {
@@ -165,7 +165,9 @@ export function runConfigViewForCli(ctx: HandlerContext, sink: VerifyCliSink): v
   log(`  Tool effectiveness: ${on(rawEnabled("toolEffectiveness", cfg.toolEffectiveness.enabled))}`);
   log(`  Documents (MarkItDown): ${on(rawEnabled("documents", cfg.documents.enabled))}`);
   log(`  Provenance: ${on(rawEnabled("provenance", cfg.provenance.enabled))}`);
-  log(`  Error reporting: ${on(rawEnabled("errorReporting", cfg.errorReporting?.enabled ?? false))}`);
+  const errorReportingEffective =
+    (cfg.errorReporting?.enabled ?? false) && (cfg.errorReporting?.consent ?? false);
+  log(`  Error reporting: ${on(rawEnabled("errorReporting", errorReportingEffective))} (consent: ${on(cfg.errorReporting?.consent ?? false)})`);
   log(`  Cost tracking: ${on(rawEnabled("costTracking", cfg.costTracking?.enabled ?? false))}`);
   log("");
 

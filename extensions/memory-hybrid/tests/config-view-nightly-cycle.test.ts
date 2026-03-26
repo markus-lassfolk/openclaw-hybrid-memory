@@ -1,4 +1,7 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi, afterEach } from "vitest";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+import { writeFileSync, rmSync } from "node:fs";
 
 import type { HandlerContext } from "../cli/handlers.js";
 import { runConfigViewForCli } from "../cli/cmd-config.js";
@@ -62,12 +65,21 @@ describe("runConfigViewForCli nightlyCycle output", () => {
   });
 });
 
+const testConfigPath = join(tmpdir(), "test-openclaw-nightly-cycle.json");
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+  try {
+    rmSync(testConfigPath, { force: true });
+  } catch {}
+});
+
 it("shows on when raw config has nightlyCycle.enabled = true even if cfg is false", () => {
   const logs: string[] = [];
   // Mock getPluginConfigFromFile by setting env var
-  process.env.OPENCLAW_CONFIG = "/tmp/test-openclaw.json";
-  require("node:fs").writeFileSync(
-    "/tmp/test-openclaw.json",
+  vi.stubEnv("OPENCLAW_CONFIG", testConfigPath);
+  writeFileSync(
+    testConfigPath,
     JSON.stringify({
       plugins: {
         entries: {
