@@ -38,7 +38,7 @@ jobs:
   typecheck:
     name: Type Check (Node ${{ matrix.node-version }})
     needs: changes
-    if: needs.changes.outputs.code == 'true'
+    if: needs.changes.outputs.code == 'true' || github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -63,7 +63,7 @@ jobs:
   lint:
     name: Lint (Node ${{ matrix.node-version }})
     needs: changes
-    if: needs.changes.outputs.code == 'true'
+    if: needs.changes.outputs.code == 'true' || github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -88,7 +88,7 @@ jobs:
   test:
     name: Test (Node ${{ matrix.node-version }})
     needs: changes
-    if: needs.changes.outputs.code == 'true'
+    if: needs.changes.outputs.code == 'true' || github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -113,7 +113,7 @@ jobs:
   test-coverage:
     name: Test Coverage
     needs: changes
-    if: needs.changes.outputs.code == 'true'
+    if: needs.changes.outputs.code == 'true' || github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -141,7 +141,7 @@ jobs:
   dead-code:
     name: Dead Code Analysis (knip)
     needs: changes
-    if: needs.changes.outputs.code == 'true'
+    if: needs.changes.outputs.code == 'true' || github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     continue-on-error: true
     steps:
@@ -164,7 +164,7 @@ jobs:
   format-check:
     name: Format Check (Biome)
     needs: changes
-    if: needs.changes.outputs.code == 'true'
+    if: needs.changes.outputs.code == 'true' || github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -181,7 +181,7 @@ jobs:
   strict-typecheck:
     name: Strict TypeScript Check
     needs: changes
-    if: needs.changes.outputs.code == 'true'
+    if: needs.changes.outputs.code == 'true' || github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     continue-on-error: true
     steps:
@@ -204,7 +204,7 @@ jobs:
   install-smoke:
     name: Install Smoke Test
     needs: changes
-    if: needs.changes.outputs.code == 'true'
+    if: needs.changes.outputs.code == 'true' || github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     continue-on-error: true
     steps:
@@ -235,7 +235,7 @@ jobs:
   lint-arch:
     name: Architectural Lint
     needs: changes
-    if: needs.changes.outputs.code == 'true'
+    if: needs.changes.outputs.code == 'true' || github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     continue-on-error: true
     steps:
@@ -248,7 +248,7 @@ jobs:
   typecheck-pass-22:
     name: Type Check (Node 22)
     needs: changes
-    if: needs.changes.outputs.code != 'true'
+    if: needs.changes.outputs.code != 'true' && github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - run: echo "No code changes detected — required check satisfied"
@@ -256,7 +256,7 @@ jobs:
   typecheck-pass-24:
     name: Type Check (Node 24)
     needs: changes
-    if: needs.changes.outputs.code != 'true'
+    if: needs.changes.outputs.code != 'true' && github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - run: echo "No code changes detected — required check satisfied"
@@ -264,7 +264,7 @@ jobs:
   lint-pass-22:
     name: Lint (Node 22)
     needs: changes
-    if: needs.changes.outputs.code != 'true'
+    if: needs.changes.outputs.code != 'true' && github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - run: echo "No code changes detected — required check satisfied"
@@ -272,7 +272,7 @@ jobs:
   lint-pass-24:
     name: Lint (Node 24)
     needs: changes
-    if: needs.changes.outputs.code != 'true'
+    if: needs.changes.outputs.code != 'true' && github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - run: echo "No code changes detected — required check satisfied"
@@ -280,7 +280,7 @@ jobs:
   test-pass-22:
     name: Test (Node 22)
     needs: changes
-    if: needs.changes.outputs.code != 'true'
+    if: needs.changes.outputs.code != 'true' && github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - run: echo "No code changes detected — required check satisfied"
@@ -288,7 +288,7 @@ jobs:
   test-pass-24:
     name: Test (Node 24)
     needs: changes
-    if: needs.changes.outputs.code != 'true'
+    if: needs.changes.outputs.code != 'true' && github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - run: echo "No code changes detected — required check satisfied"
