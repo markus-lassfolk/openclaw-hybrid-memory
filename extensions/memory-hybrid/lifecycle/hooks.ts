@@ -107,7 +107,7 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
 
           // Get session start time from sessionLastActivity (set during before_agent_start)
           const sessionStartTime = sessionState.sessionLastActivity.get(sessionId);
-          
+
           // Push each tool call onto the tracker buffer with the actual session start time
           for (const msg of messages) {
             if (!msg || typeof msg !== "object") continue;

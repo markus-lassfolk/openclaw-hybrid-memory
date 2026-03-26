@@ -111,7 +111,7 @@ describe("WorkflowTracker.push", () => {
 
     // Simulate session start time 5 seconds ago
     const sessionStartTime = currentTime.getTime() - 5000;
-    
+
     tracker.push("sess", "exec", sessionStartTime);
     tracker.push("sess", "read");
     tracker.flush("sess", "test goal", "success");
