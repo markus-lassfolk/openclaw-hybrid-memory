@@ -51,6 +51,7 @@ function makeCtx(enabled: boolean): HandlerContext {
 
 describe("runConfigViewForCli nightlyCycle output", () => {
   it("shows on when nightlyCycle.enabled is true", () => {
+    vi.stubEnv("OPENCLAW_CONFIG", "/nonexistent/path/openclaw.json");
     const logs: string[] = [];
     runConfigViewForCli(makeCtx(true), { log: (line) => logs.push(line) });
 
@@ -58,6 +59,7 @@ describe("runConfigViewForCli nightlyCycle output", () => {
   });
 
   it("shows off when nightlyCycle.enabled is false", () => {
+    vi.stubEnv("OPENCLAW_CONFIG", "/nonexistent/path/openclaw.json");
     const logs: string[] = [];
     runConfigViewForCli(makeCtx(false), { log: (line) => logs.push(line) });
 
