@@ -641,6 +641,23 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
 
   // Parse optional distill config (Gemini for session distillation)
   const distillRaw = cfg.distill as Record<string, unknown> | undefined;
+
+  // Issue #754: top-level extractReinforcement takes precedence over distill.extractReinforcement
+  const topLevelExtractReinforcement =
+    typeof cfg.extractReinforcement === "boolean" ? cfg.extractReinforcement : undefined;
+  if (topLevelExtractReinforcement !== undefined && distillRaw?.extractReinforcement !== undefined) {
+    pluginLogger.warn(
+      "memory-hybrid: both `extractReinforcement` (top-level) and `distill.extractReinforcement` are set; " +
+        "using top-level `extractReinforcement`. The nested key is deprecated — move it to the top level.",
+    );
+  }
+
+  // Issue #754: top-level trajectoryLLMAnalysis and feedToSelfCorrection aliases
+  const topLevelTrajectoryLLMAnalysis =
+    typeof cfg.trajectoryLLMAnalysis === "boolean" ? cfg.trajectoryLLMAnalysis : undefined;
+  const topLevelFeedToSelfCorrection =
+    typeof cfg.feedToSelfCorrection === "boolean" ? cfg.feedToSelfCorrection : undefined;
+
   const distill =
     distillRaw && typeof distillRaw === "object"
       ? {
@@ -651,7 +668,11 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
               ? (distillRaw.fallbackModels as string[])
               : undefined,
           extractDirectives: distillRaw.extractDirectives !== false,
-          extractReinforcement: distillRaw.extractReinforcement !== false,
+          // Issue #754: top-level takes precedence; fall back to nested
+          extractReinforcement:
+            topLevelExtractReinforcement !== undefined
+              ? topLevelExtractReinforcement
+              : distillRaw.extractReinforcement !== false,
           reinforcementBoost:
             typeof distillRaw.reinforcementBoost === "number" &&
             distillRaw.reinforcementBoost >= 0 &&
@@ -756,6 +777,22 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
     sensorSweep: parseSensorSweepConfig(cfg),
     apiTap: parseApiTapConfig(cfg),
     humanizer: parseHumanizerConfig(cfg),
+    // Issue #754: top-level extractReinforcement (top-level wins, else distill.extractReinforcement)
+    extractReinforcement:
+      topLevelExtractReinforcement !== undefined ? topLevelExtractReinforcement : distill?.extractReinforcement ?? true,
+    // Issue #754: top-level trajectoryLLMAnalysis and feedToSelfCorrection aliases
+    trajectoryLLMAnalysis:
+      topLevelTrajectoryLLMAnalysis !== undefined
+        ? topLevelTrajectoryLLMAnalysis
+        : cfg.implicitFeedback && typeof cfg.implicitFeedback === "object"
+          ? (cfg.implicitFeedback as Record<string, unknown>).trajectoryLLMAnalysis === true
+          : false,
+    feedToSelfCorrection:
+      topLevelFeedToSelfCorrection !== undefined
+        ? topLevelFeedToSelfCorrection
+        : cfg.implicitFeedback && typeof cfg.implicitFeedback === "object"
+          ? (cfg.implicitFeedback as Record<string, unknown>).feedToSelfCorrection !== false
+          : true,
     verbosity: parseVerbosityLevel(cfg),
     mode: hasPresetOverrides ? "custom" : appliedMode,
     gateway: parseGatewayConfig(cfg),

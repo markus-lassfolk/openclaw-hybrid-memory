@@ -446,6 +446,7 @@ export function registerMemoryTools(
               id: summary.id,
               source: summary.source,
               sessionId: summary.sessionId,
+              sessionKey: summary.sessionId,
               sessionLogPath: `~/.openclaw/agents/${currentAgentIdRef.value || "main"}/sessions/${summary.sessionId}.jsonl`,
               periodStart: new Date(summary.periodStart * 1000).toISOString(),
               periodEnd: new Date(summary.periodEnd * 1000).toISOString(),

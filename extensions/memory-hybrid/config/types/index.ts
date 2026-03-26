@@ -267,6 +267,7 @@ export type ActiveTaskConfig = {
 
 /** Self-correction pipeline: semantic dedup, TOOLS.md sectioning, auto-rewrite vs approve */
 export type SelfCorrectionConfig = {
+  /** Enable self-correction pipeline (default: true). */
   enabled?: boolean;
   /** Use embedding similarity to skip near-duplicate facts before MEMORY_STORE (default: true). */
   semanticDedup: boolean;
@@ -533,6 +534,24 @@ export type HybridMemoryConfig = {
   crystallization: CrystallizationConfig;
   /** Plugin self-extension: generate tool proposals from usage-pattern gaps (Issue #210, default: disabled). */
   selfExtension: SelfExtensionConfig;
+  /**
+   * Top-level alias for implicitFeedback.trajectoryLLMAnalysis (Issue #754).
+   * When set, takes precedence over implicitFeedback.trajectoryLLMAnalysis.
+   * The nested key is still supported with a deprecation warning.
+   */
+  trajectoryLLMAnalysis?: boolean;
+  /**
+   * Top-level alias for implicitFeedback.feedToSelfCorrection (Issue #754).
+   * When set, takes precedence over implicitFeedback.feedToSelfCorrection.
+   * The nested key is still supported with a deprecation warning.
+   */
+  feedToSelfCorrection?: boolean;
+  /**
+   * Top-level alias for distill.extractReinforcement (Issue #754).
+   * When set, takes precedence over distill.extractReinforcement.
+   * The nested key is still supported with a deprecation warning.
+   */
+  extractReinforcement?: boolean;
   /** Implicit feedback detection from behavioral conversation signals (Issue #262, default: enabled). */
   implicitFeedback: ImplicitFeedbackConfig;
   /** Closed-loop rule effectiveness measurement (Issue #262, default: enabled). */
