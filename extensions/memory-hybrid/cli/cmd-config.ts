@@ -155,7 +155,9 @@ export function runConfigViewForCli(ctx: HandlerContext, sink: VerifyCliSink): v
   log(`  Persona proposals: ${on(rawEnabled("personaProposals", cfg.personaProposals.enabled))}`);
   log(`  Self-correction: ${on(rawEnabled("selfCorrection", !!cfg.selfCorrection))}`);
   log(`  Self-extension (tool proposals): ${on(rawEnabled("selfExtension", cfg.selfExtension?.enabled ?? false))}`);
-  log(`  Crystallization (skill proposals): ${on(rawEnabled("crystallization", cfg.crystallization?.enabled ?? false))}`);
+  log(
+    `  Crystallization (skill proposals): ${on(rawEnabled("crystallization", cfg.crystallization?.enabled ?? false))}`,
+  );
   log(`  Extraction (multi-pass): ${on(rawEnabled("extraction", !!cfg.extraction?.extractionPasses))}`);
   log(`  Active task (ACTIVE-TASK.md): ${on(rawEnabled("activeTask", cfg.activeTask.enabled))}`);
   log(`  Frustration detection: ${on(rawEnabled("frustrationDetection", cfg.frustrationDetection.enabled))}`);

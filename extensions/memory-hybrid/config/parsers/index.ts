@@ -652,12 +652,6 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
     );
   }
 
-  // Issue #754: top-level trajectoryLLMAnalysis and feedToSelfCorrection aliases
-  const topLevelTrajectoryLLMAnalysis =
-    typeof cfg.trajectoryLLMAnalysis === "boolean" ? cfg.trajectoryLLMAnalysis : undefined;
-  const topLevelFeedToSelfCorrection =
-    typeof cfg.feedToSelfCorrection === "boolean" ? cfg.feedToSelfCorrection : undefined;
-
   const distill =
     distillRaw && typeof distillRaw === "object"
       ? {
@@ -785,13 +779,9 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
       topLevelExtractReinforcement !== undefined
         ? topLevelExtractReinforcement
         : (distill?.extractReinforcement ?? true),
-    // Issue #754: top-level trajectoryLLMAnalysis and feedToSelfCorrection aliases (top-level wins, else implicitFeedback values)
-    trajectoryLLMAnalysis:
-      topLevelTrajectoryLLMAnalysis !== undefined
-        ? topLevelTrajectoryLLMAnalysis
-        : implicitFeedback.trajectoryLLMAnalysis,
-    feedToSelfCorrection:
-      topLevelFeedToSelfCorrection !== undefined ? topLevelFeedToSelfCorrection : implicitFeedback.feedToSelfCorrection,
+    // Issue #754: top-level trajectoryLLMAnalysis and feedToSelfCorrection aliases (already applied in parseImplicitFeedbackConfig)
+    trajectoryLLMAnalysis: implicitFeedback.trajectoryLLMAnalysis,
+    feedToSelfCorrection: implicitFeedback.feedToSelfCorrection,
     verbosity: parseVerbosityLevel(cfg),
     mode: hasPresetOverrides ? "custom" : appliedMode,
     gateway: parseGatewayConfig(cfg),
