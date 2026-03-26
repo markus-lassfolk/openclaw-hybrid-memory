@@ -453,6 +453,18 @@
       "label": "Default Store Scope",
       "placeholder": "global",
       "help": "Default scope for new facts: 'global' (all agents, backward compatible), 'agent' (specialists auto-scope), or 'auto' (orchestrator→global, specialists→agent). Default: 'global'."
+    },
+    "trajectoryLLMAnalysis": {
+      "label": "Trajectory LLM Analysis",
+      "help": "Use LLM-based trajectory analysis instead of heuristic lesson extraction. Top-level alias for implicitFeedback.trajectoryLLMAnalysis."
+    },
+    "feedToSelfCorrection": {
+      "label": "Feed to Self-Correction",
+      "help": "Feed negative implicit signals into the self-correction pipeline. Top-level alias for implicitFeedback.feedToSelfCorrection."
+    },
+    "extractReinforcement": {
+      "label": "Extract Reinforcement",
+      "help": "Enable reinforcement extraction from sessions. Top-level alias for distill.extractReinforcement."
     }
   },
   "configSchema": {
@@ -1378,6 +1390,18 @@
           "terseResponseRatio": { "type": "number" }
         },
         "description": "Implicit feedback detection and routing"
+      },
+      "trajectoryLLMAnalysis": {
+        "type": "boolean",
+        "description": "Top-level alias for implicitFeedback.trajectoryLLMAnalysis. Use LLM-based trajectory analysis instead of heuristic lesson extraction (default: false). The nested key is deprecated."
+      },
+      "feedToSelfCorrection": {
+        "type": "boolean",
+        "description": "Top-level alias for implicitFeedback.feedToSelfCorrection. Feed negative implicit signals into the self-correction pipeline (default: true). The nested key is deprecated."
+      },
+      "extractReinforcement": {
+        "type": "boolean",
+        "description": "Top-level alias for distill.extractReinforcement. Enable reinforcement extraction from sessions (default: true). The nested key is deprecated."
       }
     },
     "required": ["embedding"]
