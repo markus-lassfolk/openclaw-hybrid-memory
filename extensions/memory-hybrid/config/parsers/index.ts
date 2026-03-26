@@ -652,6 +652,12 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
     );
   }
 
+  // Issue #754: top-level trajectoryLLMAnalysis and feedToSelfCorrection aliases
+  const topLevelTrajectoryLLMAnalysis =
+    typeof cfg.trajectoryLLMAnalysis === "boolean" ? cfg.trajectoryLLMAnalysis : undefined;
+  const topLevelFeedToSelfCorrection =
+    typeof cfg.feedToSelfCorrection === "boolean" ? cfg.feedToSelfCorrection : undefined;
+
   const distill =
     distillRaw && typeof distillRaw === "object"
       ? {
@@ -774,6 +780,19 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
     // Issue #754: top-level extractReinforcement (top-level wins, else distill.extractReinforcement)
     extractReinforcement:
       topLevelExtractReinforcement !== undefined ? topLevelExtractReinforcement : distill?.extractReinforcement ?? true,
+    // Issue #754: top-level trajectoryLLMAnalysis and feedToSelfCorrection aliases
+    trajectoryLLMAnalysis:
+      topLevelTrajectoryLLMAnalysis !== undefined
+        ? topLevelTrajectoryLLMAnalysis
+        : cfg.implicitFeedback && typeof cfg.implicitFeedback === "object"
+          ? (cfg.implicitFeedback as Record<string, unknown>).trajectoryLLMAnalysis === true
+          : false,
+    feedToSelfCorrection:
+      topLevelFeedToSelfCorrection !== undefined
+        ? topLevelFeedToSelfCorrection
+        : cfg.implicitFeedback && typeof cfg.implicitFeedback === "object"
+          ? (cfg.implicitFeedback as Record<string, unknown>).feedToSelfCorrection !== false
+          : true,
     verbosity: parseVerbosityLevel(cfg),
     mode: hasPresetOverrides ? "custom" : appliedMode,
     gateway: parseGatewayConfig(cfg),
