@@ -10,8 +10,9 @@ export function truncateText(text: string, maxLen: number, suffix = "…"): stri
   return text.slice(0, maxLen - suffix.length).trim() + suffix;
 }
 
-/** Truncate for storage (config-driven); appends " [truncated]" when truncated. */
-export function truncateForStorage(text: string, maxChars: number): string {
+/** Truncate for storage (config-driven); appends " [truncated]" when truncated. Handles null/undefined gracefully. */
+export function truncateForStorage(text: string | null | undefined, maxChars: number): string {
+  if (text == null) return "";
   if (text.length <= maxChars) return text.trim();
   return `${text.slice(0, maxChars).trim()} [truncated]`;
 }
