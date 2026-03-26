@@ -194,6 +194,49 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
       api.logger.info?.(
         `memory-hybrid: before_compaction — messages=${msgCount} tokens≈${tokenCount} compacting=${ev.compactingCount ?? "?"}`,
       );
+
+      let injectedContext = "";
+
+      try {
+        const fs = await import("node:fs");
+        if (typeof api.resolvePath === "function") {
+          const agentsMdPath = api.resolvePath("AGENTS.md");
+          if (fs.existsSync(agentsMdPath)) {
+            const content = fs.readFileSync(agentsMdPath, "utf-8");
+            injectedContext += `\n<!-- Workspace Agent Rules (AGENTS.md) -->\n${content}\n`;
+          }
+        }
+      } catch (err) {
+        api.logger.debug?.(`memory-hybrid: failed to read AGENTS.md for pre-compaction: ${err}`);
+      }
+
+      try {
+        const scopeFilter = {
+          sessionId: api.context?.sessionId,
+          agentId: api.context?.agentId,
+          userId: api.context?.userId,
+        };
+        const hotFacts = ctx.factsDb.getHotFacts(4000, scopeFilter);
+        const pinnedRecallThreshold = ctx.cfg.autoRecall?.progressivePinnedRecallCount ?? 3;
+
+        const pinnedFacts = hotFacts.filter(
+          (x) => x.entry.decayClass === "permanent" || (x.entry.recallCount ?? 0) >= pinnedRecallThreshold,
+        );
+
+        if (pinnedFacts.length > 0) {
+          injectedContext += `\n<!-- Pinned Session Constraints / Memories -->\n`;
+          injectedContext += pinnedFacts.map((f) => `- ${f.entry.summary || f.entry.text}`).join("\n") + "\n";
+        }
+      } catch (err) {
+        api.logger.debug?.(`memory-hybrid: failed to fetch pinned facts for pre-compaction: ${err}`);
+      }
+
+      if (injectedContext.trim().length > 0) {
+        return {
+          prependContext: `\n=== CRITICAL CONSTRAINTS (DO NOT SUMMARISE AWAY) ===\nThe following rules and pinned memories must be preserved and remain active in your ongoing context:\n${injectedContext}====================================================\n`,
+        };
+      }
+      return undefined;
     });
   } catch (err) {
     // Older runtimes may throw on unknown hook names
