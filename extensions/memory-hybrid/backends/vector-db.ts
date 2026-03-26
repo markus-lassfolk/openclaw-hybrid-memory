@@ -994,10 +994,14 @@ export class VectorDB {
   async count(): Promise<number> {
     const tryCount = async (): Promise<number> => {
       await this.ensureInitialized();
-      const t = this.getTable();
-      return await t.countRows();
+      const acquired = this.acquireReader();
+      try {
+        const t = this.getTable();
+        return await t.countRows();
+      } finally {
+        this.releaseReader(acquired);
+      }
     };
-    const acquired = this.acquireReader();
     try {
       return await tryCount();
     } catch (err) {
@@ -1033,8 +1037,6 @@ export class VectorDB {
       });
       this.logWarn(`memory-hybrid: LanceDB count failed: ${err}`);
       return 0;
-    } finally {
-      this.releaseReader(acquired);
     }
   }
 
