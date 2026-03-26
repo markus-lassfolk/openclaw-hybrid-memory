@@ -487,6 +487,9 @@ export class VectorDB {
       const filterKey = options.filterKey ?? "default";
       const candidateLimit = options.candidateLimit ?? 25;
 
+      // Dimension pre-check: prevent LanceDB "No vector column found" errors on fallback query mismatch
+      if (vector.length !== this.vectorDim) return null;
+
       const candidates = await this.getSemanticQueryCacheTable().vectorSearch(vector).limit(candidateLimit).toArray();
 
       let bestMatch: SemanticQueryCacheEntry | null = null;
