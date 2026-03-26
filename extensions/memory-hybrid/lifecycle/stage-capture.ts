@@ -501,12 +501,9 @@ async function runCapture(
         const match = pattern.regex.exec(text);
         if (match) {
           const eventText = pattern.label ? `Agent reported: ${pattern.label}` : match[0];
-          const existing = ctx.factsDb.searchEpisodes({
-            query: eventText,
-            since: Math.floor(Date.now() / 1000) - 300, // within last 5 min
-            limit: 1,
-          });
-          if (existing.length === 0) {
+          const sinceTimestamp = Math.floor(Date.now() / 1000) - 300; // within last 5 min
+          const hasDuplicate = ctx.factsDb.hasRecentEpisodeWithEvent(eventText, sinceTimestamp);
+          if (!hasDuplicate) {
             try {
               const episode = ctx.factsDb.recordEpisode({
                 event: eventText,
@@ -539,12 +536,9 @@ async function runCapture(
           const match = pattern.regex.exec(text);
           if (match) {
             const eventText = pattern.label ? `Agent reported: ${pattern.label}` : match[0];
-            const existing = ctx.factsDb.searchEpisodes({
-              query: eventText,
-              since: Math.floor(Date.now() / 1000) - 300,
-              limit: 1,
-            });
-            if (existing.length === 0) {
+            const sinceTimestamp = Math.floor(Date.now() / 1000) - 300;
+            const hasDuplicate = ctx.factsDb.hasRecentEpisodeWithEvent(eventText, sinceTimestamp);
+            if (!hasDuplicate) {
               try {
                 const episode = ctx.factsDb.recordEpisode({
                   event: eventText,

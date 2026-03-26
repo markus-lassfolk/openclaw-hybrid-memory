@@ -4637,6 +4637,17 @@ export class FactsDB extends BaseSqliteStore {
   }
 
   /**
+   * Check if an episode with exact event text exists within a time window.
+   * Used for deduplication in auto-capture to avoid false positives from OR-based FTS.
+   */
+  hasRecentEpisodeWithEvent(event: string, sinceTimestamp: number): boolean {
+    const row = this.liveDb
+      .prepare("SELECT 1 FROM episodes WHERE event = ? AND timestamp >= ? LIMIT 1")
+      .get(event, sinceTimestamp) as { 1: number } | undefined;
+    return row !== undefined;
+  }
+
+  /**
    * Get a single episode by id.
    */
   getEpisode(id: string): Episode | null {
