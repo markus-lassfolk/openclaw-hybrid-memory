@@ -165,9 +165,10 @@ export function runConfigViewForCli(ctx: HandlerContext, sink: VerifyCliSink): v
   log(`  Tool effectiveness: ${on(rawEnabled("toolEffectiveness", cfg.toolEffectiveness.enabled))}`);
   log(`  Documents (MarkItDown): ${on(rawEnabled("documents", cfg.documents.enabled))}`);
   log(`  Provenance: ${on(rawEnabled("provenance", cfg.provenance.enabled))}`);
-  const errorReportingEffective =
-    (cfg.errorReporting?.enabled ?? false) && (cfg.errorReporting?.consent ?? false);
-  log(`  Error reporting: ${on(rawEnabled("errorReporting", errorReportingEffective))} (consent: ${on(cfg.errorReporting?.consent ?? false)})`);
+  const errorReportingEffective = (cfg.errorReporting?.enabled ?? false) && (cfg.errorReporting?.consent ?? false);
+  log(
+    `  Error reporting: ${on(rawEnabled("errorReporting", errorReportingEffective))} (consent: ${on(cfg.errorReporting?.consent ?? false)})`,
+  );
   log(`  Cost tracking: ${on(rawEnabled("costTracking", cfg.costTracking?.enabled ?? false))}`);
   log("");
 
