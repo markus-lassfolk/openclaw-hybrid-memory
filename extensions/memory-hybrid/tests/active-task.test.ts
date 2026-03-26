@@ -23,6 +23,9 @@ import {
   writeTaskSignal,
   readPendingSignals,
   deleteSignal,
+  createOctaveTaskHandoffArtifact,
+  validateOctaveTaskHandoffArtifact,
+  OCTAVE_TASK_HANDOFF_SCHEMA,
   readActiveTaskFileWithMtime,
   writeActiveTaskFileGuarded,
   writeActiveTaskFileOptimistic,
@@ -113,6 +116,27 @@ describe("parseActiveTaskFile", () => {
     expect(task.updated).toBe("2026-02-24T15:00:00.000Z");
   });
 
+  it("parses structured handoff metadata when present", () => {
+    const md = `## Active Tasks
+
+### [handoff-task]: Task with handoff metadata
+- **Status:** In progress
+- **Handoff:** {"agent":"agent-1","artifactId":"artifact-1","checksum":"abc123","schema":"octave/task-handoff@v1","signal":"update","timestamp":"2026-02-24T12:00:00.000Z"}
+- **Started:** 2026-02-24T10:00:00.000Z
+- **Updated:** 2026-02-24T12:00:00.000Z
+`;
+    const result = parseActiveTaskFile(md);
+    expect(result.active).toHaveLength(1);
+    expect(result.active[0].handoff).toEqual({
+      schema: "octave/task-handoff@v1",
+      artifactId: "artifact-1",
+      signal: "update",
+      agent: "agent-1",
+      timestamp: "2026-02-24T12:00:00.000Z",
+      checksum: "abc123",
+    });
+  });
+
   it("parses second task with partial fields", () => {
     const result = parseActiveTaskFile(SAMPLE_ACTIVE_TASK_MD);
     const task = result.active[1];
@@ -175,6 +199,14 @@ describe("serializeTaskEntry", () => {
       stashCommit: "forge-99-wip",
       subagent: "session-abc",
       next: "Write tests",
+      handoff: {
+        schema: "octave/task-handoff@v1",
+        artifactId: "artifact-xyz",
+        signal: "update",
+        agent: "session-abc",
+        timestamp: "2026-02-24T14:59:00.000Z",
+        checksum: "deadbeef",
+      },
       started: "2026-02-24T10:00:00.000Z",
       updated: "2026-02-24T15:00:00.000Z",
     };
@@ -185,6 +217,9 @@ describe("serializeTaskEntry", () => {
     expect(result).toContain("**Stash/Commit:** forge-99-wip");
     expect(result).toContain("**Subagent:** session-abc");
     expect(result).toContain("**Next:** Write tests");
+    expect(result).toContain(
+      '**Handoff:** {"agent":"session-abc","artifactId":"artifact-xyz","checksum":"deadbeef","schema":"octave/task-handoff@v1","signal":"update","timestamp":"2026-02-24T14:59:00.000Z"}',
+    );
     expect(result).toContain("**Started:** 2026-02-24T10:00:00.000Z");
     expect(result).toContain("**Updated:** 2026-02-24T15:00:00.000Z");
   });
@@ -196,6 +231,7 @@ describe("serializeTaskEntry", () => {
     expect(result).not.toContain("**Stash/Commit:**");
     expect(result).not.toContain("**Subagent:**");
     expect(result).not.toContain("**Next:**");
+    expect(result).not.toContain("**Handoff:**");
   });
 
   it("produces parseable output (round-trip)", () => {
@@ -206,6 +242,14 @@ describe("serializeTaskEntry", () => {
       status: "Waiting",
       subagent: "forge-session-xyz",
       next: "Verify something",
+      handoff: {
+        schema: "octave/task-handoff@v1",
+        artifactId: "artifact-roundtrip",
+        signal: "update",
+        agent: "forge-session-xyz",
+        timestamp: "2026-02-24T14:55:00.000Z",
+        checksum: "feedface",
+      },
       started: "2026-02-24T10:00:00.000Z",
       updated: "2026-02-24T15:00:00.000Z",
     };
@@ -219,6 +263,7 @@ describe("serializeTaskEntry", () => {
     expect(parsed.active[0].status).toBe("Waiting");
     expect(parsed.active[0].subagent).toBe("forge-session-xyz");
     expect(parsed.active[0].next).toBe("Verify something");
+    expect(parsed.active[0].handoff?.artifactId).toBe("artifact-roundtrip");
   });
 });
 
@@ -1005,8 +1050,12 @@ describe("writeTaskSignal / readPendingSignals / deleteSignal", () => {
     expect(filePath).toMatch(/my-label-\d+-[a-f0-9]{8}\.json$/);
     const raw = await readFile(filePath, "utf-8");
     const parsed = JSON.parse(raw);
-    expect(parsed.agent).toBe("test-agent");
-    expect(parsed.signal).toBe("completed");
+    expect(parsed.schema).toBe(OCTAVE_TASK_HANDOFF_SCHEMA);
+    expect(parsed.artifactType).toBe("task_handoff");
+    expect(parsed.version).toBe(1);
+    expect(parsed.payload.agent).toBe("test-agent");
+    expect(parsed.payload.signal).toBe("completed");
+    expect(Array.isArray(parsed.auditTrail)).toBe(true);
   });
 
   it("sanitises label to be filesystem-safe", async () => {
@@ -1032,6 +1081,27 @@ describe("writeTaskSignal / readPendingSignals / deleteSignal", () => {
     expect(signals).toHaveLength(2);
     const agents = signals.map((s) => s.agent).sort();
     expect(agents).toEqual(["agent-1", "agent-2"]);
+  });
+
+  it("reads legacy flat signal files for backward compatibility", async () => {
+    const { writeFile: fsWrite, mkdir: fsMkdir } = await import("node:fs/promises");
+    const signalsDir = join(tmpDir, "task-signals");
+    await fsMkdir(signalsDir, { recursive: true });
+    await fsWrite(
+      join(signalsDir, "legacy.json"),
+      JSON.stringify({
+        agent: "legacy-agent",
+        taskRef: "legacy-task",
+        timestamp: "2026-02-25T07:48:00.000Z",
+        signal: "update",
+        summary: "legacy summary",
+      }),
+      "utf-8",
+    );
+    const signals = await readPendingSignals(tmpDir);
+    expect(signals).toHaveLength(1);
+    expect(signals[0].agent).toBe("legacy-agent");
+    expect(signals[0]._handoff).toBeUndefined();
   });
 
   it("includes _filePath on each pending signal", async () => {
@@ -1089,6 +1159,24 @@ describe("writeTaskSignal / readPendingSignals / deleteSignal", () => {
     const signals = await readPendingSignals(tmpDir);
     expect(signals[0].statusChange).toEqual({ from: "in-progress", to: "blocked" });
     expect(signals[0].findings).toEqual(["finding 1", "finding 2"]);
+    expect(signals[0]._handoff?.schema).toBe(OCTAVE_TASK_HANDOFF_SCHEMA);
+  });
+
+  it("creates and validates OCTAVE handoff artifacts", () => {
+    const artifact = createOctaveTaskHandoffArtifact(makeSignal({ signal: "update" }));
+    const validated = validateOctaveTaskHandoffArtifact(artifact);
+    expect(validated.valid).toBe(true);
+    if (validated.valid) {
+      expect(validated.artifact.schema).toBe(OCTAVE_TASK_HANDOFF_SCHEMA);
+      expect(validated.artifact.checksum).toMatch(/^[a-f0-9]{64}$/);
+    }
+  });
+
+  it("rejects tampered OCTAVE handoff artifacts", () => {
+    const artifact = createOctaveTaskHandoffArtifact(makeSignal({ signal: "update" }));
+    const tampered = { ...artifact, checksum: "bad-checksum" };
+    const validated = validateOctaveTaskHandoffArtifact(tampered);
+    expect(validated.valid).toBe(false);
   });
 });
 

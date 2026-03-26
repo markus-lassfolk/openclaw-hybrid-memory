@@ -23,9 +23,10 @@
 import { existsSync } from "node:fs";
 import { readFile, writeFile, mkdir, readdir, unlink, stat, realpath } from "node:fs/promises";
 import { dirname, join, resolve, relative, isAbsolute } from "node:path";
-import { randomUUID } from "node:crypto";
+import { randomUUID, createHash } from "node:crypto";
 import { formatDuration } from "../utils/duration.js";
 import { pluginLogger } from "../utils/logger.js";
+import { stableStringify } from "../utils/stable-stringify.js";
 
 /** Valid task statuses */
 export const ACTIVE_TASK_STATUSES = ["In progress", "Waiting", "Stalled", "Failed", "Done"] as const;
@@ -56,6 +57,24 @@ export interface ActiveTaskEntry {
   updated: string;
   /** Whether task is flagged as stale (not updated within staleThreshold) */
   stale?: boolean;
+  /** Structured handoff metadata from latest sub-agent signal */
+  handoff?: ActiveTaskHandoffRef;
+}
+
+/** Structured handoff reference persisted in ACTIVE-TASK.md */
+export interface ActiveTaskHandoffRef {
+  /** OCTAVE schema identifier */
+  schema: string;
+  /** Unique artifact id */
+  artifactId: string;
+  /** Signal type represented by the artifact */
+  signal: TaskSignalType;
+  /** Agent that emitted the signal */
+  agent: string;
+  /** ISO-8601 timestamp of the handoff */
+  timestamp: string;
+  /** SHA-256 checksum of the artifact canonical payload */
+  checksum: string;
 }
 
 /** Result of parsing ACTIVE-TASK.md */
@@ -126,10 +145,37 @@ function parseTaskBlock(header: string, lines: string[]): ActiveTaskEntry | null
       case "updated":
         entry.updated = value || new Date().toISOString();
         break;
+      case "handoff":
+        entry.handoff = parseHandoffRef(value) ?? undefined;
+        break;
     }
   }
 
   return entry as ActiveTaskEntry;
+}
+
+function parseHandoffRef(value: string): ActiveTaskHandoffRef | null {
+  if (!value) return null;
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (!isHandoffRef(parsed)) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function isHandoffRef(value: unknown): value is ActiveTaskHandoffRef {
+  if (!value || typeof value !== "object") return false;
+  const v = value as Partial<ActiveTaskHandoffRef>;
+  return (
+    typeof v.schema === "string" &&
+    typeof v.artifactId === "string" &&
+    typeof v.signal === "string" &&
+    typeof v.agent === "string" &&
+    typeof v.timestamp === "string" &&
+    typeof v.checksum === "string"
+  );
 }
 
 /** Parse a full ACTIVE-TASK.md file content */
@@ -210,6 +256,7 @@ export function serializeTaskEntry(entry: ActiveTaskEntry): string {
   if (entry.stashCommit) lines.push(`- **Stash/Commit:** ${entry.stashCommit}`);
   if (entry.subagent) lines.push(`- **Subagent:** ${entry.subagent}`);
   if (entry.next) lines.push(`- **Next:** ${entry.next}`);
+  if (entry.handoff) lines.push(`- **Handoff:** ${stableStringify(entry.handoff)}`);
   lines.push(`- **Started:** ${entry.started}`);
   lines.push(`- **Updated:** ${entry.updated}`);
   return lines.join("\n");
@@ -492,6 +539,7 @@ export async function flushCompletedTaskToMemory(task: ActiveTaskEntry, memoryDi
     `- **Completed:** ${task.updated}`,
     ...(task.branch ? [`- **Branch:** ${task.branch}`] : []),
     ...(task.subagent ? [`- **Subagent:** ${task.subagent}`] : []),
+    ...(task.handoff ? [`- **Handoff:** ${stableStringify(task.handoff)}`] : []),
     "",
   ].join("\n");
 
@@ -547,6 +595,34 @@ export interface TaskSignal {
   findings?: string[];
 }
 
+/** OCTAVE-style artifact schema identifier for task handoff files. */
+export const OCTAVE_TASK_HANDOFF_SCHEMA = "octave/task-handoff@v1";
+
+/** Typed OCTAVE-style handoff artifact persisted to disk. */
+export interface OctaveTaskHandoffArtifact {
+  /** Schema identifier */
+  schema: typeof OCTAVE_TASK_HANDOFF_SCHEMA;
+  /** Artifact type */
+  artifactType: "task_handoff";
+  /** Schema version */
+  version: 1;
+  /** Unique artifact id */
+  artifactId: string;
+  /** Deterministic canonical JSON of payload used for checksum and diffing */
+  canonical: string;
+  /** SHA-256 checksum of canonical payload */
+  checksum: string;
+  /** Structured payload */
+  payload: TaskSignal;
+  /** Append-only audit trail for artifact lifecycle */
+  auditTrail: Array<{
+    at: string;
+    by: string;
+    action: "created" | "validated";
+    note?: string;
+  }>;
+}
+
 /**
  * A TaskSignal enriched with the path of the file it was read from,
  * so the orchestrator can delete/archive it after processing.
@@ -554,6 +630,86 @@ export interface TaskSignal {
 export interface PendingTaskSignal extends TaskSignal {
   /** Absolute path of the signal file on disk */
   _filePath: string;
+  /** Structured OCTAVE handoff metadata if source file used the new schema */
+  _handoff?: ActiveTaskHandoffRef;
+}
+
+function isTaskSignal(signal: unknown): signal is TaskSignal {
+  if (!signal || typeof signal !== "object") return false;
+  const s = signal as Partial<TaskSignal>;
+  return (
+    typeof s.agent === "string" &&
+    typeof s.taskRef === "string" &&
+    typeof s.timestamp === "string" &&
+    typeof s.signal === "string" &&
+    typeof s.summary === "string"
+  );
+}
+
+function buildCanonicalPayload(signal: TaskSignal): string {
+  return stableStringify(signal);
+}
+
+function buildChecksum(canonical: string): string {
+  return createHash("sha256").update(canonical).digest("hex");
+}
+
+function toHandoffRefFromArtifact(artifact: OctaveTaskHandoffArtifact): ActiveTaskHandoffRef {
+  return {
+    schema: artifact.schema,
+    artifactId: artifact.artifactId,
+    signal: artifact.payload.signal,
+    agent: artifact.payload.agent,
+    timestamp: artifact.payload.timestamp,
+    checksum: artifact.checksum,
+  };
+}
+
+export function createOctaveTaskHandoffArtifact(signal: TaskSignal): OctaveTaskHandoffArtifact {
+  const canonical = buildCanonicalPayload(signal);
+  const checksum = buildChecksum(canonical);
+  return {
+    schema: OCTAVE_TASK_HANDOFF_SCHEMA,
+    artifactType: "task_handoff",
+    version: 1,
+    artifactId: randomUUID(),
+    canonical,
+    checksum,
+    payload: signal,
+    auditTrail: [
+      {
+        at: new Date().toISOString(),
+        by: signal.agent,
+        action: "created",
+      },
+    ],
+  };
+}
+
+export function validateOctaveTaskHandoffArtifact(
+  value: unknown,
+): { valid: true; artifact: OctaveTaskHandoffArtifact } | { valid: false; reason: string } {
+  if (!value || typeof value !== "object") return { valid: false, reason: "artifact is not an object" };
+  const artifact = value as Partial<OctaveTaskHandoffArtifact>;
+  if (artifact.schema !== OCTAVE_TASK_HANDOFF_SCHEMA) return { valid: false, reason: "schema mismatch" };
+  if (artifact.artifactType !== "task_handoff") return { valid: false, reason: "artifact type mismatch" };
+  if (artifact.version !== 1) return { valid: false, reason: "unsupported artifact version" };
+  if (typeof artifact.artifactId !== "string" || artifact.artifactId.length === 0) {
+    return { valid: false, reason: "missing artifact id" };
+  }
+  if (typeof artifact.canonical !== "string" || artifact.canonical.length === 0) {
+    return { valid: false, reason: "missing canonical payload" };
+  }
+  if (typeof artifact.checksum !== "string" || artifact.checksum.length === 0) {
+    return { valid: false, reason: "missing checksum" };
+  }
+  if (!Array.isArray(artifact.auditTrail)) return { valid: false, reason: "missing audit trail" };
+  if (!isTaskSignal(artifact.payload)) return { valid: false, reason: "invalid payload" };
+  const expectedCanonical = buildCanonicalPayload(artifact.payload);
+  if (artifact.canonical !== expectedCanonical) return { valid: false, reason: "canonical mismatch" };
+  const expectedChecksum = buildChecksum(artifact.canonical);
+  if (artifact.checksum !== expectedChecksum) return { valid: false, reason: "checksum mismatch" };
+  return { valid: true, artifact: artifact as OctaveTaskHandoffArtifact };
 }
 
 /**
@@ -574,7 +730,8 @@ export async function writeTaskSignal(label: string, signal: TaskSignal, memoryD
   const timestamp = Date.now();
   const suffix = randomUUID().replace(/-/g, "").slice(0, 8);
   const filePath = join(signalsDir, `${safeLabel}-${timestamp}-${suffix}.json`);
-  await writeFile(filePath, JSON.stringify(signal, null, 2), "utf-8");
+  const artifact = createOctaveTaskHandoffArtifact(signal);
+  await writeFile(filePath, JSON.stringify(artifact, null, 2), "utf-8");
   return filePath;
 }
 
@@ -614,18 +771,23 @@ export async function readPendingSignals(memoryDir: string): Promise<PendingTask
     }
     try {
       const raw = await readFile(resolvedFilePath, "utf-8");
-      const parsed = JSON.parse(raw) as TaskSignal;
-      // Validate required fields to avoid noisy downstream errors
-      if (
-        typeof parsed.agent !== "string" ||
-        typeof parsed.taskRef !== "string" ||
-        typeof parsed.timestamp !== "string" ||
-        typeof parsed.signal !== "string" ||
-        typeof parsed.summary !== "string"
-      ) {
-        continue; // Skip signals with missing required fields
+      const parsed = JSON.parse(raw) as unknown;
+      const validatedArtifact = validateOctaveTaskHandoffArtifact(parsed);
+      if (validatedArtifact.valid) {
+        const handoff = toHandoffRefFromArtifact(validatedArtifact.artifact);
+        signals.push({
+          ...validatedArtifact.artifact.payload,
+          _filePath: resolvedFilePath,
+          _handoff: handoff,
+        });
+        continue;
       }
-      signals.push({ ...parsed, _filePath: resolvedFilePath });
+      // Backward compatibility: legacy signal format without OCTAVE envelope.
+      if (!isTaskSignal(parsed)) continue;
+      signals.push({
+        ...parsed,
+        _filePath: resolvedFilePath,
+      });
     } catch {}
   }
 
