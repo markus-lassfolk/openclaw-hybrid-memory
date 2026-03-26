@@ -204,7 +204,7 @@ export type ImplicitSignalType =
 /** Implicit feedback detection from behavioral conversation signals (Issue #262). */
 export type ImplicitFeedbackConfig = {
   /** Enable implicit feedback detection (default: true). */
-  enabled: boolean;
+  enabled?: boolean;
   /** Minimum confidence to include a signal (default: 0.5). */
   minConfidence: number;
   /** Signal types to detect; defaults to all types. */
