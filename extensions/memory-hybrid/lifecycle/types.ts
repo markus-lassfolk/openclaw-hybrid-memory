@@ -12,6 +12,7 @@ import type { CredentialsDB } from "../backends/credentials-db.js";
 import type { EventLog } from "../backends/event-log.js";
 import type { NarrativesDB } from "../backends/narratives-db.js";
 import type { WorkflowStore } from "../backends/workflow-store.js";
+import type { WorkflowTracker } from "../services/workflow-tracker.js";
 import type OpenAI from "openai";
 import type { HybridMemoryConfig, MemoryCategory } from "../config.js";
 import type { MemoryEntry, ScopeFilter, SearchResult } from "../types/memory.js";
@@ -32,6 +33,7 @@ export interface LifecycleContext {
   eventLog: EventLog | null;
   narrativesDb: NarrativesDB | null;
   workflowStore: WorkflowStore | null;
+  workflowTracker?: WorkflowTracker;
   currentAgentIdRef: { value: string | null };
   lastProgressiveIndexIds: string[];
   restartPendingClearedRef: { value: boolean };
