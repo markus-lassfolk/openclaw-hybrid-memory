@@ -652,12 +652,6 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
     );
   }
 
-  // Issue #754: top-level trajectoryLLMAnalysis and feedToSelfCorrection aliases
-  const topLevelTrajectoryLLMAnalysis =
-    typeof cfg.trajectoryLLMAnalysis === "boolean" ? cfg.trajectoryLLMAnalysis : undefined;
-  const topLevelFeedToSelfCorrection =
-    typeof cfg.feedToSelfCorrection === "boolean" ? cfg.feedToSelfCorrection : undefined;
-
   const distill =
     distillRaw && typeof distillRaw === "object"
       ? {
@@ -699,6 +693,9 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
           })(),
         }
       : undefined;
+
+  // Issue #754: parse implicitFeedback early to access resolved values for top-level aliases
+  const implicitFeedback = parseImplicitFeedbackConfig(cfg);
 
   return {
     embedding: {
@@ -761,7 +758,7 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
     workflowTracking: parseWorkflowTrackingConfig(cfg),
     crystallization: parseCrystallizationConfig(cfg),
     selfExtension: parseSelfExtensionConfig(cfg),
-    implicitFeedback: parseImplicitFeedbackConfig(cfg),
+    implicitFeedback,
     closedLoop: parseClosedLoopConfig(cfg),
     frustrationDetection: parseFrustrationDetectionConfig(cfg),
     crossAgentLearning: parseCrossAgentLearningConfig(cfg),
@@ -779,20 +776,12 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
     humanizer: parseHumanizerConfig(cfg),
     // Issue #754: top-level extractReinforcement (top-level wins, else distill.extractReinforcement)
     extractReinforcement:
-      topLevelExtractReinforcement !== undefined ? topLevelExtractReinforcement : distill?.extractReinforcement ?? true,
-    // Issue #754: top-level trajectoryLLMAnalysis and feedToSelfCorrection aliases
-    trajectoryLLMAnalysis:
-      topLevelTrajectoryLLMAnalysis !== undefined
-        ? topLevelTrajectoryLLMAnalysis
-        : cfg.implicitFeedback && typeof cfg.implicitFeedback === "object"
-          ? (cfg.implicitFeedback as Record<string, unknown>).trajectoryLLMAnalysis === true
-          : false,
-    feedToSelfCorrection:
-      topLevelFeedToSelfCorrection !== undefined
-        ? topLevelFeedToSelfCorrection
-        : cfg.implicitFeedback && typeof cfg.implicitFeedback === "object"
-          ? (cfg.implicitFeedback as Record<string, unknown>).feedToSelfCorrection !== false
-          : true,
+      topLevelExtractReinforcement !== undefined
+        ? topLevelExtractReinforcement
+        : (distill?.extractReinforcement ?? true),
+    // Issue #754: top-level trajectoryLLMAnalysis and feedToSelfCorrection aliases (already applied in parseImplicitFeedbackConfig)
+    trajectoryLLMAnalysis: implicitFeedback.trajectoryLLMAnalysis,
+    feedToSelfCorrection: implicitFeedback.feedToSelfCorrection,
     verbosity: parseVerbosityLevel(cfg),
     mode: hasPresetOverrides ? "custom" : appliedMode,
     gateway: parseGatewayConfig(cfg),

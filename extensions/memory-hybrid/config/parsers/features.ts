@@ -515,8 +515,10 @@ export function parseImplicitFeedbackConfig(cfg: Record<string, unknown>): Impli
     : ALL_IMPLICIT_SIGNAL_TYPES;
 
   // Issue #754: top-level aliases take precedence over nested keys
-  const topLevelTrajectoryLLMAnalysis = typeof cfg.trajectoryLLMAnalysis === "boolean" ? cfg.trajectoryLLMAnalysis : undefined;
-  const topLevelFeedToSelfCorrection = typeof cfg.feedToSelfCorrection === "boolean" ? cfg.feedToSelfCorrection : undefined;
+  const topLevelTrajectoryLLMAnalysis =
+    typeof cfg.trajectoryLLMAnalysis === "boolean" ? cfg.trajectoryLLMAnalysis : undefined;
+  const topLevelFeedToSelfCorrection =
+    typeof cfg.feedToSelfCorrection === "boolean" ? cfg.feedToSelfCorrection : undefined;
 
   // Deprecation warnings for old nested keys when top-level is also set
   if (topLevelTrajectoryLLMAnalysis !== undefined && raw?.trajectoryLLMAnalysis !== undefined) {

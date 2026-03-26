@@ -241,6 +241,7 @@ export function parseActiveTaskConfig(cfg: Record<string, unknown>): ActiveTaskC
 export function parseSelfCorrectionConfig(cfg: Record<string, unknown>): SelfCorrectionConfig | undefined {
   const scRaw = cfg.selfCorrection as Record<string, unknown> | undefined;
   if (!scRaw || typeof scRaw !== "object") return undefined;
+  if (scRaw.enabled === false) return undefined;
   return {
     semanticDedup: scRaw.semanticDedup !== false,
     semanticDedupThreshold:
