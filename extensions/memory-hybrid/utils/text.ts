@@ -13,6 +13,7 @@ export function truncateText(text: string, maxLen: number, suffix = "…"): stri
 /** Truncate for storage (config-driven); appends " [truncated]" when truncated. Handles null/undefined gracefully. */
 export function truncateForStorage(text: string | null | undefined, maxChars: number): string {
   if (text == null) return "";
+  if (maxChars <= 0) return "";
   if (text.length <= maxChars) return text.trim();
   return `${text.slice(0, maxChars).trim()} [truncated]`;
 }

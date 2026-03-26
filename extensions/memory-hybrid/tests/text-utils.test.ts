@@ -3,11 +3,11 @@ import { truncateForStorage } from "../utils/text.js";
 
 describe("truncateForStorage", () => {
   it("returns empty string for null", () => {
-    expect(truncateForStorage(null as any, 100)).toBe("");
+    expect(truncateForStorage(null, 100)).toBe("");
   });
 
   it("returns empty string for undefined", () => {
-    expect(truncateForStorage(undefined as any, 100)).toBe("");
+    expect(truncateForStorage(undefined, 100)).toBe("");
   });
 
   it("returns trimmed text under maxChars", () => {
