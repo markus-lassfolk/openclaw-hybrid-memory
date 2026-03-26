@@ -83,7 +83,7 @@
     },
     "autoRecall.minScore": {
       "label": "Auto-Recall min score",
-      "help": "Vector search minimum score 0–1 (default 0.3)"
+      "help": "Vector search minimum score 0\u20131 (default 0.3)"
     },
     "autoRecall.preferLongTerm": {
       "label": "Auto-Recall prefer long-term",
@@ -197,7 +197,7 @@
     },
     "autoClassify.suggestCategories": {
       "label": "Suggest categories",
-      "help": "Let LLM suggest new categories from 'other' facts; labels with ≥ minFactsForNewCategory become real categories"
+      "help": "Let LLM suggest new categories from 'other' facts; labels with \u2265 minFactsForNewCategory become real categories"
     },
     "autoClassify.minFactsForNewCategory": {
       "label": "Min facts for new category",
@@ -259,7 +259,7 @@
     },
     "errorReporting.sampleRate": {
       "label": "Error reporting sample rate",
-      "help": "Fraction of errors to report 0–1 (default: 1.0)"
+      "help": "Fraction of errors to report 0\u20131 (default: 1.0)"
     },
     "errorReporting.botId": {
       "label": "Error reporting bot ID (UUID)",
@@ -405,7 +405,7 @@
     },
     "languageKeywords.weeklyIntervalDays": {
       "label": "Language keywords interval (days)",
-      "help": "Days between auto-builds (1–30, default 7)"
+      "help": "Days between auto-builds (1\u201330, default 7)"
     },
     "reflection.enabled": {
       "label": "Reflection layer",
@@ -426,7 +426,7 @@
     },
     "nightlyCycle.enabled": {
       "label": "Nightly dream cycle",
-      "help": "Run automated prune → consolidate → reflect pipeline (cron job nightly-dream-cycle). Default: false."
+      "help": "Run automated prune \u2192 consolidate \u2192 reflect pipeline (cron job nightly-dream-cycle). Default: false."
     },
     "passiveObserver.enabled": {
       "label": "Passive observer",
@@ -452,7 +452,7 @@
     "multiAgent.defaultStoreScope": {
       "label": "Default Store Scope",
       "placeholder": "global",
-      "help": "Default scope for new facts: 'global' (all agents, backward compatible), 'agent' (specialists auto-scope), or 'auto' (orchestrator→global, specialists→agent). Default: 'global'."
+      "help": "Default scope for new facts: 'global' (all agents, backward compatible), 'agent' (specialists auto-scope), or 'auto' (orchestrator\u2192global, specialists\u2192agent). Default: 'global'."
     }
   },
   "configSchema": {
@@ -461,7 +461,16 @@
     "properties": {
       "mode": {
         "type": "string",
-        "enum": ["essential", "normal", "expert", "full", "local", "minimal", "enhanced", "complete"],
+        "enum": [
+          "essential",
+          "normal",
+          "expert",
+          "full",
+          "local",
+          "minimal",
+          "enhanced",
+          "complete"
+        ],
         "description": "Configuration preset: local | minimal | enhanced | complete. Legacy values (essential, normal, expert, full) are accepted and mapped to local. See docs/CONFIGURATION-MODES.md."
       },
       "embedding": {
@@ -471,7 +480,12 @@
         "properties": {
           "provider": {
             "type": "string",
-            "enum": ["openai", "ollama", "onnx", "google"],
+            "enum": [
+              "openai",
+              "ollama",
+              "onnx",
+              "google"
+            ],
             "default": "openai",
             "description": "Embedding provider. 'openai'/'google' require apiKey. 'ollama' and 'onnx' run locally without an API key."
           },
@@ -485,11 +499,11 @@
           },
           "ollamaModel": {
             "type": "string",
-            "description": "Ollama model name — alias for 'model' when provider='ollama'. E.g. 'nomic-embed-text' (768-dim), 'mxbai-embed-large' (1024-dim), 'all-minilm' (384-dim)."
+            "description": "Ollama model name \u2014 alias for 'model' when provider='ollama'. E.g. 'nomic-embed-text' (768-dim), 'mxbai-embed-large' (1024-dim), 'all-minilm' (384-dim)."
           },
           "onnxModelPath": {
             "type": "string",
-            "description": "ONNX model path or identifier — alias for 'model' when provider='onnx'. E.g. 'all-MiniLM-L6-v2' (384-dim), 'bge-small-en-v1.5' (384-dim)."
+            "description": "ONNX model path or identifier \u2014 alias for 'model' when provider='onnx'. E.g. 'all-MiniLM-L6-v2' (384-dim), 'bge-small-en-v1.5' (384-dim)."
           },
           "onnxTokenizerPath": {
             "type": "string",
@@ -505,8 +519,15 @@
           },
           "preferredProviders": {
             "type": "array",
-            "items": { "type": "string", "enum": ["openai", "google", "ollama"] },
-            "description": "Explicit ordered list of embedding providers to use. When set, only listed providers are tried (in order); auto-inference from available API keys is skipped. Use [\"openai\"] to pin to Azure/OpenAI only and prevent Google from being auto-added as a fallback when GEMINI_API_KEY is also set. Mixing providers with different vector dimensions is not supported — ensure all listed providers produce the same dimensions as your stored vectors."
+            "items": {
+              "type": "string",
+              "enum": [
+                "openai",
+                "google",
+                "ollama"
+              ]
+            },
+            "description": "Explicit ordered list of embedding providers to use. When set, only listed providers are tried (in order); auto-inference from available API keys is skipped. Use [\"openai\"] to pin to Azure/OpenAI only and prevent Google from being auto-added as a fallback when GEMINI_API_KEY is also set. Mixing providers with different vector dimensions is not supported \u2014 ensure all listed providers produce the same dimensions as your stored vectors."
           }
         }
       },
@@ -539,7 +560,13 @@
               },
               "injectionFormat": {
                 "type": "string",
-                "enum": ["full", "short", "minimal", "progressive", "progressive_hybrid"]
+                "enum": [
+                  "full",
+                  "short",
+                  "minimal",
+                  "progressive",
+                  "progressive_hybrid"
+                ]
               },
               "progressiveMaxCandidates": {
                 "type": "number"
@@ -724,7 +751,9 @@
           },
           "store": {
             "type": "string",
-            "enum": ["sqlite"]
+            "enum": [
+              "sqlite"
+            ]
           },
           "encryptionKey": {
             "type": "string",
@@ -776,7 +805,10 @@
           },
           "mode": {
             "type": "string",
-            "enum": ["community", "self-hosted"],
+            "enum": [
+              "community",
+              "self-hosted"
+            ],
             "default": "community",
             "description": "community: anonymous telemetry to developers. self-hosted: your own Sentry/GlitchTip instance."
           },
@@ -794,7 +826,7 @@
             "minimum": 0,
             "maximum": 1,
             "default": 1,
-            "description": "Sample rate 0–1 (default: 1.0)"
+            "description": "Sample rate 0\u20131 (default: 1.0)"
           },
           "botId": {
             "type": "string",
@@ -829,7 +861,10 @@
             "description": "Controls user-facing upgrade reminders for the version-aware telemetry mute flow."
           }
         },
-        "required": ["enabled", "consent"],
+        "required": [
+          "enabled",
+          "consent"
+        ],
         "description": "Opt-out error reporting to GlitchTip/Sentry (enabled by default, community DSN). Set enabled: false or consent: false to disable. See docs/ERROR-REPORTING.md."
       },
       "distill": {
@@ -867,7 +902,11 @@
           },
           "extractionModelTier": {
             "type": "string",
-            "enum": ["nano", "default", "heavy"],
+            "enum": [
+              "nano",
+              "default",
+              "heavy"
+            ],
             "description": "Model tier for extraction pipeline (extract-reinforcement LLM). 'nano' or 'default' saves cost and avoids locking the main model; unset = heavy. Expert/Full presets use 'default'."
           }
         }
@@ -997,7 +1036,11 @@
             "type": "array",
             "items": {
               "type": "string",
-              "enum": ["SOUL.md", "IDENTITY.md", "USER.md"]
+              "enum": [
+                "SOUL.md",
+                "IDENTITY.md",
+                "USER.md"
+              ]
             },
             "description": "Identity files that can be modified via proposals"
           },
@@ -1059,12 +1102,15 @@
                   "type": "string"
                 }
               },
-              "required": ["key", "prompt"]
+              "required": [
+                "key",
+                "prompt"
+              ]
             },
             "description": "Recurring identity reflection questions"
           }
         },
-        "description": "Identity reflection layer — synthesize persona-level insights from reflection outputs"
+        "description": "Identity reflection layer \u2014 synthesize persona-level insights from reflection outputs"
       },
       "graph": {
         "type": "object",
@@ -1138,6 +1184,10 @@
         "type": "object",
         "additionalProperties": false,
         "properties": {
+          "enabled": {
+            "type": "boolean",
+            "description": "Enable self-correction (default: false)"
+          },
           "semanticDedup": {
             "type": "boolean",
             "description": "Skip storing facts that are semantically similar to existing ones (default: true)"
@@ -1201,8 +1251,12 @@
           },
           "defaultStoreScope": {
             "type": "string",
-            "enum": ["global", "agent", "auto"],
-            "description": "Default scope for new facts: 'global' (all agents, backward compatible), 'agent' (specialists auto-scope), or 'auto' (orchestrator→global, specialists→agent). Default: 'global'."
+            "enum": [
+              "global",
+              "agent",
+              "auto"
+            ],
+            "description": "Default scope for new facts: 'global' (all agents, backward compatible), 'agent' (specialists auto-scope), or 'auto' (orchestrator\u2192global, specialists\u2192agent). Default: 'global'."
           }
         },
         "description": "Multi-agent memory scoping: dynamic agent detection and scope defaults"
@@ -1275,15 +1329,38 @@
         "type": "object",
         "additionalProperties": false,
         "properties": {
-          "enabled": { "type": "boolean" },
-          "schedule": { "type": "string" },
-          "reflectWindowDays": { "type": "number" },
-          "pruneMode": { "type": "string", "enum": ["expired", "decay", "both"] },
-          "model": { "type": "string" },
-          "consolidateAfterDays": { "type": "number" },
-          "eventLogArchivalDays": { "type": "number" },
-          "eventLogArchivePath": { "type": "string" },
-          "maxUnconsolidatedAgeDays": { "type": "number" }
+          "enabled": {
+            "type": "boolean"
+          },
+          "schedule": {
+            "type": "string"
+          },
+          "reflectWindowDays": {
+            "type": "number"
+          },
+          "pruneMode": {
+            "type": "string",
+            "enum": [
+              "expired",
+              "decay",
+              "both"
+            ]
+          },
+          "model": {
+            "type": "string"
+          },
+          "consolidateAfterDays": {
+            "type": "number"
+          },
+          "eventLogArchivalDays": {
+            "type": "number"
+          },
+          "eventLogArchivePath": {
+            "type": "string"
+          },
+          "maxUnconsolidatedAgeDays": {
+            "type": "number"
+          }
         },
         "description": "Nightly dream cycle: prune, consolidate, reflect"
       },
@@ -1291,13 +1368,27 @@
         "type": "object",
         "additionalProperties": false,
         "properties": {
-          "enabled": { "type": "boolean" },
-          "intervalMinutes": { "type": "number" },
-          "model": { "type": "string" },
-          "maxCharsPerChunk": { "type": "number" },
-          "minImportance": { "type": "number" },
-          "deduplicationThreshold": { "type": "number" },
-          "sessionsDir": { "type": "string" }
+          "enabled": {
+            "type": "boolean"
+          },
+          "intervalMinutes": {
+            "type": "number"
+          },
+          "model": {
+            "type": "string"
+          },
+          "maxCharsPerChunk": {
+            "type": "number"
+          },
+          "minImportance": {
+            "type": "number"
+          },
+          "deduplicationThreshold": {
+            "type": "number"
+          },
+          "sessionsDir": {
+            "type": "string"
+          }
         },
         "description": "Background fact extraction from session transcripts"
       },
@@ -1305,20 +1396,45 @@
         "type": "object",
         "additionalProperties": false,
         "properties": {
-          "extractionPasses": { "type": "boolean" },
-          "verificationPass": { "type": "boolean" },
-          "extractionModel": { "type": "string" },
-          "implicitModel": { "type": "string" },
-          "verificationModel": { "type": "string" },
-          "extractionModelTier": { "type": "string", "enum": ["nano", "default", "heavy"] },
+          "extractionPasses": {
+            "type": "boolean"
+          },
+          "verificationPass": {
+            "type": "boolean"
+          },
+          "extractionModel": {
+            "type": "string"
+          },
+          "implicitModel": {
+            "type": "string"
+          },
+          "verificationModel": {
+            "type": "string"
+          },
+          "extractionModelTier": {
+            "type": "string",
+            "enum": [
+              "nano",
+              "default",
+              "heavy"
+            ]
+          },
           "preFilter": {
             "type": "object",
             "additionalProperties": false,
             "properties": {
-              "enabled": { "type": "boolean" },
-              "model": { "type": "string" },
-              "endpoint": { "type": "string" },
-              "maxCharsPerSession": { "type": "number" }
+              "enabled": {
+                "type": "boolean"
+              },
+              "model": {
+                "type": "string"
+              },
+              "endpoint": {
+                "type": "string"
+              },
+              "maxCharsPerSession": {
+                "type": "number"
+              }
             }
           }
         },
@@ -1328,10 +1444,18 @@
         "type": "object",
         "additionalProperties": false,
         "properties": {
-          "enabled": { "type": "boolean" },
-          "minGapFrequency": { "type": "number" },
-          "minToolSavings": { "type": "number" },
-          "maxProposals": { "type": "number" }
+          "enabled": {
+            "type": "boolean"
+          },
+          "minGapFrequency": {
+            "type": "number"
+          },
+          "minToolSavings": {
+            "type": "number"
+          },
+          "maxProposals": {
+            "type": "number"
+          }
         },
         "description": "Tool proposals from usage-pattern gaps"
       },
@@ -1339,13 +1463,27 @@
         "type": "object",
         "additionalProperties": false,
         "properties": {
-          "enabled": { "type": "boolean" },
-          "minUsageCount": { "type": "number" },
-          "minSuccessRate": { "type": "number" },
-          "autoApprove": { "type": "boolean" },
-          "outputDir": { "type": "string" },
-          "maxCrystallized": { "type": "number" },
-          "pruneUnusedDays": { "type": "number" }
+          "enabled": {
+            "type": "boolean"
+          },
+          "minUsageCount": {
+            "type": "number"
+          },
+          "minSuccessRate": {
+            "type": "number"
+          },
+          "autoApprove": {
+            "type": "boolean"
+          },
+          "outputDir": {
+            "type": "string"
+          },
+          "maxCrystallized": {
+            "type": "number"
+          },
+          "pruneUnusedDays": {
+            "type": "number"
+          }
         },
         "description": "Auto-generate SKILL.md from repeated patterns"
       },
@@ -1353,13 +1491,36 @@
         "type": "object",
         "additionalProperties": false,
         "properties": {
-          "default": { "type": "array", "items": { "type": "string" } },
-          "heavy": { "type": "array", "items": { "type": "string" } },
-          "nano": { "type": "array", "items": { "type": "string" } },
-          "fallbackToDefault": { "type": "boolean" },
-          "fallbackModel": { "type": "string" },
-          "providers": { "type": "object" },
-          "localAutoStart": { "type": "boolean" }
+          "default": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "heavy": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "nano": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "fallbackToDefault": {
+            "type": "boolean"
+          },
+          "fallbackModel": {
+            "type": "string"
+          },
+          "providers": {
+            "type": "object"
+          },
+          "localAutoStart": {
+            "type": "boolean"
+          }
         },
         "description": "LLM model preference lists per tier (default, heavy, nano)"
       },
@@ -1367,19 +1528,42 @@
         "type": "object",
         "additionalProperties": false,
         "properties": {
-          "enabled": { "type": "boolean" },
-          "trajectoryLLMAnalysis": { "type": "boolean" },
-          "feedToSelfCorrection": { "type": "boolean" },
-          "feedToReinforcement": { "type": "boolean" },
-          "minConfidence": { "type": "number" },
-          "signalTypes": { "type": "array", "items": { "type": "string" } },
-          "rephraseThreshold": { "type": "number" },
-          "topicChangeThreshold": { "type": "number" },
-          "terseResponseRatio": { "type": "number" }
+          "enabled": {
+            "type": "boolean"
+          },
+          "trajectoryLLMAnalysis": {
+            "type": "boolean"
+          },
+          "feedToSelfCorrection": {
+            "type": "boolean"
+          },
+          "feedToReinforcement": {
+            "type": "boolean"
+          },
+          "minConfidence": {
+            "type": "number"
+          },
+          "signalTypes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "rephraseThreshold": {
+            "type": "number"
+          },
+          "topicChangeThreshold": {
+            "type": "number"
+          },
+          "terseResponseRatio": {
+            "type": "number"
+          }
         },
         "description": "Implicit feedback detection and routing"
       }
     },
-    "required": ["embedding"]
+    "required": [
+      "embedding"
+    ]
   }
 }
