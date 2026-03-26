@@ -7,7 +7,7 @@
 
 import { Type } from "@sinclair/typebox";
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk";
-import { stringEnum } from "openclaw/plugin-sdk";
+import { stringEnum } from "../utils/typebox.js";
 
 import type { FactsDB, MemoryLinkType } from "../backends/facts-db.js";
 import { MEMORY_LINK_TYPES } from "../backends/facts-db.js";

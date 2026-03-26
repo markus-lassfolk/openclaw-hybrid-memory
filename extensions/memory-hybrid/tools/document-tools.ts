@@ -27,7 +27,7 @@ import {
   type MemoryCategory,
 } from "../config.js";
 import { extractTags } from "../utils/tags.js";
-import { stringEnum } from "openclaw/plugin-sdk";
+import { stringEnum } from "../utils/typebox.js";
 import type { ProvenanceService } from "../services/provenance.js";
 
 export interface DocumentToolsContext {
