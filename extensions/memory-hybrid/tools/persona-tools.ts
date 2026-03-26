@@ -5,7 +5,7 @@
 
 import { Type } from "@sinclair/typebox";
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk";
-import { stringEnum } from "openclaw/plugin-sdk";
+import { stringEnum } from "../utils/typebox.js";
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { getFileSnapshot } from "../utils/file-snapshot.js";
