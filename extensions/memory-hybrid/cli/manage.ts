@@ -2570,10 +2570,10 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
     .command("show <id>")
     .description("Show all versions and failure history for a procedure")
     .action(
-      withExit(async (opts: { id: string }) => {
-        const proc = factsDb.getProcedureById(opts.id);
+      withExit(async (id: string) => {
+        const proc = factsDb.getProcedureById(id);
         if (!proc) {
-          console.log(`Procedure not found: ${opts.id}`);
+          console.log(`Procedure not found: ${id}`);
           return;
         }
 

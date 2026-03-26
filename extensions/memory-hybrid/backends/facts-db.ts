@@ -2985,8 +2985,8 @@ export class FactsDB extends BaseSqliteStore {
         )
         .get(base.id) as { total_succ: number; total_fail: number };
 
-      const totalSuccess = base.successCount + versionCounts.total_succ;
-      const totalFailure = base.failureCount + versionCounts.total_fail;
+      const totalSuccess = base.successCount;
+      const totalFailure = base.failureCount;
       const total = totalSuccess + totalFailure;
       const successRate = total > 0 ? totalSuccess / total : 0;
 
@@ -3202,16 +3202,16 @@ export class FactsDB extends BaseSqliteStore {
           event: eventText,
           outcome: "failure",
           duration: input.duration,
-          context: input.context,
-          procedureId: input.procedureId,
-          tags: input.tags,
-          importance: 0.8,
-          scope: input.scope ?? "global",
-          scopeTarget: (input.scope ?? "global" === "global") ? null : (input.scopeTarget ?? null),
-          agentId: input.agentId,
-          userId: input.userId,
-          sessionId: input.sessionId,
-        });
+        context: input.context,
+        procedureId: input.procedureId,
+        tags: input.tags,
+        importance: 0.8,
+        scope: input.scope ?? "global",
+        scopeTarget: ((input.scope ?? "global") === "global") ? null : (input.scopeTarget ?? null),
+        agentId: input.agentId,
+        userId: input.userId,
+        sessionId: input.sessionId,
+      });
       } catch (err) {
         capturePluginError(err as Error, {
           operation: "record-episode-on-failure",
