@@ -735,7 +735,8 @@ export class VectorDB {
         })
         .filter((r) => r.score >= minScore);
     } catch (err) {
-      const isKnownSchemaErr = err instanceof Error && err.message.includes(LANCE_NO_VECTOR_COL_MSG);
+      const isKnownSchemaErr =
+        !this.schemaValid && err instanceof Error && err.message.includes(LANCE_NO_VECTOR_COL_MSG);
       if (!isKnownSchemaErr) {
         capturePluginError(err as Error, {
           operation: "vector-search",
@@ -763,7 +764,8 @@ export class VectorDB {
       const score = 1 / (1 + (results[0]._distance ?? 0));
       return score >= threshold;
     } catch (err) {
-      const isKnownSchemaErr = err instanceof Error && err.message.includes(LANCE_NO_VECTOR_COL_MSG);
+      const isKnownSchemaErr =
+        !this.schemaValid && err instanceof Error && err.message.includes(LANCE_NO_VECTOR_COL_MSG);
       if (!isKnownSchemaErr) {
         capturePluginError(err as Error, {
           operation: "vector-duplicate-check",
