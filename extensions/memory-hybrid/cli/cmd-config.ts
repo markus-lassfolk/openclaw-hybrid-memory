@@ -114,6 +114,25 @@ export function runConfigViewForCli(ctx: HandlerContext, sink: VerifyCliSink): v
   const OFF = noEmoji ? "[off]" : "off";
   const on = (b: boolean) => (b ? ON : OFF);
 
+  // Read raw config from file to bypass migration overrides (like nightlyCycle forced to false in 2026.3.140)
+  let rawCfg: Record<string, unknown> = {};
+  try {
+    const configPath = process.env.OPENCLAW_CONFIG || join(homedir(), ".openclaw", "openclaw.json");
+    if (existsSync(configPath)) {
+      const out = getPluginConfigFromFile(configPath);
+      if ("config" in out) rawCfg = out.config;
+    }
+  } catch {}
+
+  // Helper to get raw enabled flag if set, otherwise fallback to parsed config
+  const rawEnabled = (key: string, parsedVal: boolean) => {
+    if (rawCfg[key] && typeof rawCfg[key] === "object" && "enabled" in (rawCfg[key] as Record<string, unknown>)) {
+      return Boolean((rawCfg[key] as Record<string, unknown>).enabled);
+    }
+    if (typeof rawCfg[key] === "boolean") return rawCfg[key] as boolean;
+    return parsedVal;
+  };
+
   const modeLabel = cfg.mode && cfg.mode !== "custom" ? cfg.mode.charAt(0).toUpperCase() + cfg.mode.slice(1) : "Custom";
   log(`Memory mode: ${modeLabel}`);
   log(`Verbosity: ${cfg.verbosity ?? "normal"}`);
@@ -130,22 +149,26 @@ export function runConfigViewForCli(ctx: HandlerContext, sink: VerifyCliSink): v
   log("");
 
   log("Optional features");
-  log(`  Nightly dream cycle: ${on(cfg.nightlyCycle?.enabled ?? false)}`);
-  log(`  Passive observer: ${on(cfg.passiveObserver?.enabled ?? false)}`);
-  log(`  Reflection (patterns/rules): ${on(cfg.reflection.enabled)}`);
-  log(`  Persona proposals: ${on(cfg.personaProposals.enabled)}`);
-  log(`  Self-correction: ${on(!!cfg.selfCorrection)}`);
-  log(`  Self-extension (tool proposals): ${on(cfg.selfExtension?.enabled ?? false)}`);
-  log(`  Crystallization (skill proposals): ${on(cfg.crystallization?.enabled ?? false)}`);
-  log(`  Extraction (multi-pass): ${on(!!cfg.extraction?.extractionPasses)}`);
-  log(`  Active task (ACTIVE-TASK.md): ${on(cfg.activeTask.enabled)}`);
-  log(`  Frustration detection: ${on(cfg.frustrationDetection.enabled)}`);
-  log(`  Cross-agent learning: ${on(cfg.crossAgentLearning.enabled)}`);
-  log(`  Tool effectiveness: ${on(cfg.toolEffectiveness.enabled)}`);
-  log(`  Documents (MarkItDown): ${on(cfg.documents.enabled)}`);
-  log(`  Provenance: ${on(cfg.provenance.enabled)}`);
-  log(`  Error reporting: ${on(cfg.errorReporting?.enabled ?? false)}`);
-  log(`  Cost tracking: ${on(cfg.costTracking?.enabled ?? false)}`);
+  log(`  Nightly dream cycle: ${on(rawEnabled("nightlyCycle", cfg.nightlyCycle?.enabled ?? false))}`);
+  log(`  Passive observer: ${on(rawEnabled("passiveObserver", cfg.passiveObserver?.enabled ?? false))}`);
+  log(`  Reflection (patterns/rules): ${on(rawEnabled("reflection", cfg.reflection.enabled))}`);
+  log(`  Persona proposals: ${on(rawEnabled("personaProposals", cfg.personaProposals.enabled))}`);
+  log(`  Self-correction: ${on(rawEnabled("selfCorrection", !!cfg.selfCorrection))}`);
+  log(`  Self-extension (tool proposals): ${on(rawEnabled("selfExtension", cfg.selfExtension?.enabled ?? false))}`);
+  log(
+    `  Crystallization (skill proposals): ${on(rawEnabled("crystallization", cfg.crystallization?.enabled ?? false))}`,
+  );
+  log(`  Extraction (multi-pass): ${on(rawEnabled("extraction", !!cfg.extraction?.extractionPasses))}`);
+  log(`  Active task (ACTIVE-TASK.md): ${on(rawEnabled("activeTask", cfg.activeTask.enabled))}`);
+  log(`  Frustration detection: ${on(rawEnabled("frustrationDetection", cfg.frustrationDetection.enabled))}`);
+  log(`  Cross-agent learning: ${on(rawEnabled("crossAgentLearning", cfg.crossAgentLearning.enabled))}`);
+  log(`  Tool effectiveness: ${on(rawEnabled("toolEffectiveness", cfg.toolEffectiveness.enabled))}`);
+  log(`  Documents (MarkItDown): ${on(rawEnabled("documents", cfg.documents.enabled))}`);
+  log(`  Provenance: ${on(rawEnabled("provenance", cfg.provenance.enabled))}`);
+  log(
+    `  Error reporting: ${on(rawEnabled("errorReporting", cfg.errorReporting?.enabled ?? false))} (consent: ${on(cfg.errorReporting?.consent ?? false)})`,
+  );
+  log(`  Cost tracking: ${on(rawEnabled("costTracking", cfg.costTracking?.enabled ?? false))}`);
   log("");
 
   log("Advanced");

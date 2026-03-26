@@ -1,4 +1,7 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi, afterEach } from "vitest";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+import { writeFileSync, rmSync } from "node:fs";
 
 import type { HandlerContext } from "../cli/handlers.js";
 import { runConfigViewForCli } from "../cli/cmd-config.js";
@@ -48,6 +51,7 @@ function makeCtx(enabled: boolean): HandlerContext {
 
 describe("runConfigViewForCli nightlyCycle output", () => {
   it("shows on when nightlyCycle.enabled is true", () => {
+    vi.stubEnv("OPENCLAW_CONFIG", "/nonexistent/path/openclaw.json");
     const logs: string[] = [];
     runConfigViewForCli(makeCtx(true), { log: (line) => logs.push(line) });
 
@@ -55,9 +59,41 @@ describe("runConfigViewForCli nightlyCycle output", () => {
   });
 
   it("shows off when nightlyCycle.enabled is false", () => {
+    vi.stubEnv("OPENCLAW_CONFIG", "/nonexistent/path/openclaw.json");
     const logs: string[] = [];
     runConfigViewForCli(makeCtx(false), { log: (line) => logs.push(line) });
 
     expect(logs.some((l) => l.includes("Nightly dream cycle: off"))).toBe(true);
   });
+});
+
+const testConfigPath = join(tmpdir(), "test-openclaw-nightly-cycle.json");
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+  try {
+    rmSync(testConfigPath, { force: true });
+  } catch {}
+});
+
+it("shows on when raw config has nightlyCycle.enabled = true even if cfg is false", () => {
+  const logs: string[] = [];
+  // Mock getPluginConfigFromFile by setting env var
+  vi.stubEnv("OPENCLAW_CONFIG", testConfigPath);
+  writeFileSync(
+    testConfigPath,
+    JSON.stringify({
+      plugins: {
+        entries: {
+          "openclaw-hybrid-memory": {
+            config: {
+              nightlyCycle: { enabled: true },
+            },
+          },
+        },
+      },
+    }),
+  );
+  runConfigViewForCli(makeCtx(false), { log: (line) => logs.push(line) });
+  expect(logs.some((l) => l.includes("Nightly dream cycle: on"))).toBe(true);
 });
