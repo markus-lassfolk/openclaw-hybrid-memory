@@ -116,6 +116,7 @@ export class FactsDB extends BaseSqliteStore {
       CREATE TABLE IF NOT EXISTS facts (
         id TEXT PRIMARY KEY,
         text TEXT NOT NULL,
+        why TEXT,
         category TEXT NOT NULL DEFAULT 'other',
         importance REAL NOT NULL DEFAULT 0.5,
         entity TEXT,
@@ -1304,6 +1305,7 @@ export class FactsDB extends BaseSqliteStore {
     const decayClass = entry.decayClass || classifyDecay(entry.entity, entry.key, entry.value, entry.text);
     const expiresAt = entry.expiresAt !== undefined ? entry.expiresAt : calculateExpiry(decayClass, nowSec);
     const importance = entry.importance ?? 0.5;
+    const why = entry.why ?? null;
     const confidence = entry.confidence ?? 1.0;
     const summary = entry.summary ?? null;
     const embeddingModel = entry.embeddingModel ?? null;
@@ -1344,12 +1346,13 @@ export class FactsDB extends BaseSqliteStore {
       decayFreezeUntil !== null && expiresAt !== null && expiresAt < decayFreezeUntil ? decayFreezeUntil : expiresAt;
     this.liveDb
       .prepare(
-        `INSERT INTO facts (id, text, category, importance, entity, key, value, source, created_at, decay_class, expires_at, last_confirmed_at, confidence, summary, embedding_model, normalized_hash, source_date, tags, valid_from, valid_until, supersedes_id, tier, scope, scope_target, procedure_type, success_count, last_validated, source_sessions, decay_freeze_until, provenance_session, source_turn, extraction_method, extraction_confidence)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO facts (id, text, why, category, importance, entity, key, value, source, created_at, decay_class, expires_at, last_confirmed_at, confidence, summary, embedding_model, normalized_hash, source_date, tags, valid_from, valid_until, supersedes_id, tier, scope, scope_target, procedure_type, success_count, last_validated, source_sessions, decay_freeze_until, provenance_session, source_turn, extraction_method, extraction_confidence)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         id,
         entry.text,
+        why,
         entry.category,
         importance,
         entry.entity,
@@ -1960,6 +1963,7 @@ export class FactsDB extends BaseSqliteStore {
     return {
       id: row.id as string,
       text: row.text as string,
+      why: (row.why as string) ?? null,
       category: row.category as MemoryCategory,
       importance: row.importance as number,
       entity: (row.entity as string) || null,
