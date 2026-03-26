@@ -61,3 +61,22 @@ describe("runConfigViewForCli nightlyCycle output", () => {
     expect(logs.some((l) => l.includes("Nightly dream cycle: off"))).toBe(true);
   });
 });
+
+  it("shows on when raw config has nightlyCycle.enabled = true even if cfg is false", () => {
+    const logs: string[] = [];
+    // Mock getPluginConfigFromFile by setting env var
+    process.env.OPENCLAW_CONFIG = "/tmp/test-openclaw.json";
+    require("fs").writeFileSync("/tmp/test-openclaw.json", JSON.stringify({
+      plugins: {
+        entries: {
+        "openclaw-hybrid-memory": {
+          config: {
+            nightlyCycle: { enabled: true }
+          }
+        }
+      }
+      }
+    }));
+    runConfigViewForCli(makeCtx(false), { log: (line) => logs.push(line) });
+    expect(logs.some((l) => l.includes("Nightly dream cycle: on"))).toBe(true);
+  });
