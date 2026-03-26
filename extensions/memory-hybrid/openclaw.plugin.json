@@ -473,16 +473,7 @@
     "properties": {
       "mode": {
         "type": "string",
-        "enum": [
-          "essential",
-          "normal",
-          "expert",
-          "full",
-          "local",
-          "minimal",
-          "enhanced",
-          "complete"
-        ],
+        "enum": ["essential", "normal", "expert", "full", "local", "minimal", "enhanced", "complete"],
         "description": "Configuration preset: local | minimal | enhanced | complete. Legacy values (essential, normal, expert, full) are accepted and mapped to local. See docs/CONFIGURATION-MODES.md."
       },
       "embedding": {
@@ -492,12 +483,7 @@
         "properties": {
           "provider": {
             "type": "string",
-            "enum": [
-              "openai",
-              "ollama",
-              "onnx",
-              "google"
-            ],
+            "enum": ["openai", "ollama", "onnx", "google"],
             "default": "openai",
             "description": "Embedding provider. 'openai'/'google' require apiKey. 'ollama' and 'onnx' run locally without an API key."
           },
@@ -533,11 +519,7 @@
             "type": "array",
             "items": {
               "type": "string",
-              "enum": [
-                "openai",
-                "google",
-                "ollama"
-              ]
+              "enum": ["openai", "google", "ollama"]
             },
             "description": "Explicit ordered list of embedding providers to use. When set, only listed providers are tried (in order); auto-inference from available API keys is skipped. Use [\"openai\"] to pin to Azure/OpenAI only and prevent Google from being auto-added as a fallback when GEMINI_API_KEY is also set. Mixing providers with different vector dimensions is not supported \u2014 ensure all listed providers produce the same dimensions as your stored vectors."
           }
@@ -572,13 +554,7 @@
               },
               "injectionFormat": {
                 "type": "string",
-                "enum": [
-                  "full",
-                  "short",
-                  "minimal",
-                  "progressive",
-                  "progressive_hybrid"
-                ]
+                "enum": ["full", "short", "minimal", "progressive", "progressive_hybrid"]
               },
               "progressiveMaxCandidates": {
                 "type": "number"
@@ -763,9 +739,7 @@
           },
           "store": {
             "type": "string",
-            "enum": [
-              "sqlite"
-            ]
+            "enum": ["sqlite"]
           },
           "encryptionKey": {
             "type": "string",
@@ -817,10 +791,7 @@
           },
           "mode": {
             "type": "string",
-            "enum": [
-              "community",
-              "self-hosted"
-            ],
+            "enum": ["community", "self-hosted"],
             "default": "community",
             "description": "community: anonymous telemetry to developers. self-hosted: your own Sentry/GlitchTip instance."
           },
@@ -873,10 +844,7 @@
             "description": "Controls user-facing upgrade reminders for the version-aware telemetry mute flow."
           }
         },
-        "required": [
-          "enabled",
-          "consent"
-        ],
+        "required": ["enabled", "consent"],
         "description": "Opt-out error reporting to GlitchTip/Sentry (enabled by default, community DSN). Set enabled: false or consent: false to disable. See docs/ERROR-REPORTING.md."
       },
       "distill": {
@@ -914,11 +882,7 @@
           },
           "extractionModelTier": {
             "type": "string",
-            "enum": [
-              "nano",
-              "default",
-              "heavy"
-            ],
+            "enum": ["nano", "default", "heavy"],
             "description": "Model tier for extraction pipeline (extract-reinforcement LLM). 'nano' or 'default' saves cost and avoids locking the main model; unset = heavy. Expert/Full presets use 'default'."
           }
         }
@@ -1048,11 +1012,7 @@
             "type": "array",
             "items": {
               "type": "string",
-              "enum": [
-                "SOUL.md",
-                "IDENTITY.md",
-                "USER.md"
-              ]
+              "enum": ["SOUL.md", "IDENTITY.md", "USER.md"]
             },
             "description": "Identity files that can be modified via proposals"
           },
@@ -1114,10 +1074,7 @@
                   "type": "string"
                 }
               },
-              "required": [
-                "key",
-                "prompt"
-              ]
+              "required": ["key", "prompt"]
             },
             "description": "Recurring identity reflection questions"
           }
@@ -1263,11 +1220,7 @@
           },
           "defaultStoreScope": {
             "type": "string",
-            "enum": [
-              "global",
-              "agent",
-              "auto"
-            ],
+            "enum": ["global", "agent", "auto"],
             "description": "Default scope for new facts: 'global' (all agents, backward compatible), 'agent' (specialists auto-scope), or 'auto' (orchestrator\u2192global, specialists\u2192agent). Default: 'global'."
           }
         },
@@ -1352,11 +1305,7 @@
           },
           "pruneMode": {
             "type": "string",
-            "enum": [
-              "expired",
-              "decay",
-              "both"
-            ]
+            "enum": ["expired", "decay", "both"]
           },
           "model": {
             "type": "string"
@@ -1425,11 +1374,7 @@
           },
           "extractionModelTier": {
             "type": "string",
-            "enum": [
-              "nano",
-              "default",
-              "heavy"
-            ]
+            "enum": ["nano", "default", "heavy"]
           },
           "preFilter": {
             "type": "object",
@@ -1586,8 +1531,6 @@
         "description": "Top-level alias for distill.extractReinforcement. Enable reinforcement extraction from sessions (default: true). The nested key is deprecated."
       }
     },
-    "required": [
-      "embedding"
-    ]
+    "required": ["embedding"]
   }
 }
