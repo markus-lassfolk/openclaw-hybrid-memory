@@ -160,8 +160,7 @@ export class VectorDB {
     if (this.closed) throw new Error("VectorDB initialization aborted: closed during connect (concurrent re-registration).");
     const tables = await this.db.tableNames();
     // Guard again after the tableNames() await for the same reason.
-    if (!this.db) throw new Error("VectorDB connection lost during initialization (concurrent close).");
-    if (this.closed) throw new Error("VectorDB initialization aborted: closed during tableNames (concurrent re-registration).");
+    if (!this.db || this.closed) throw new Error("VectorDB initialization aborted: closed during tableNames (concurrent re-registration).");
 
     if (tables.includes(LANCE_TABLE)) {
       this.table = await this.db.openTable(LANCE_TABLE);
