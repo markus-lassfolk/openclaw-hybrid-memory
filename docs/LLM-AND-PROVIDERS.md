@@ -536,7 +536,7 @@ Uses Google's `gemini-embedding-001` model via the Gemini API's OpenAI-compatibl
 
 Default dimensions for `gemini-embedding-001`: 768. Set `embedding.dimensions` explicitly to override.
 
-**Model names:** For `embedding.provider: "google"` only **`text-embedding-004`** and **`gemini-embedding-001`** are valid. Do not use `text-embedding-3-small` or `text-embedding-3-large` (those are OpenAI models); the plugin will send a Google model instead and verify may still show the config name — if embedding tests fail, set `embedding.model` to `gemini-embedding-001` or `text-embedding-004`.
+**Model names:** For `embedding.provider: "google"` the **recommended** models are **`text-embedding-004`** and **`gemini-embedding-001`**. The implementation also recognizes additional Gemini embedding models (including pre-release IDs such as `gemini-embedding-2-preview`) and some legacy/alias names for backward compatibility. Do not configure OpenAI model IDs like `text-embedding-3-small` or `text-embedding-3-large` under the Google provider; the plugin will map these to a Google model and verification may still show the config name — if embedding tests fail, set `embedding.model` explicitly to `gemini-embedding-001` or `text-embedding-004`.
 
 ---
 
