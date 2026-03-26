@@ -157,16 +157,22 @@ export class VectorDB {
     // Guard: a concurrent close() may have nulled this.db between the connect() await and here.
     if (!this.db) throw new Error("VectorDB connection lost during initialization (concurrent close).");
     // Guard: plugin re-registration (hot-reload/SIGUSR1) may have called close() concurrently.
-    if (this.closed) throw new Error("VectorDB initialization aborted: closed during connect (concurrent re-registration).");
+    if (this.closed)
+      throw new Error("VectorDB initialization aborted: closed during connect (concurrent re-registration).");
     const tables = await this.db.tableNames();
     // Guard again after the tableNames() await for the same reason.
-    if (!this.db || this.closed) throw new Error("VectorDB initialization aborted: closed during tableNames (concurrent re-registration).");
+    if (!this.db || this.closed)
+      throw new Error("VectorDB initialization aborted: closed during tableNames (concurrent re-registration).");
 
     if (tables.includes(LANCE_TABLE)) {
       this.table = await this.db.openTable(LANCE_TABLE);
-      if (!this.db || this.closed) throw new Error("VectorDB initialization aborted: closed during openTable (concurrent re-registration).");
+      if (!this.db || this.closed)
+        throw new Error("VectorDB initialization aborted: closed during openTable (concurrent re-registration).");
       await this.validateOrRepairSchema();
-      if (!this.db || this.closed) throw new Error("VectorDB initialization aborted: closed during validateOrRepairSchema (concurrent re-registration).");
+      if (!this.db || this.closed)
+        throw new Error(
+          "VectorDB initialization aborted: closed during validateOrRepairSchema (concurrent re-registration).",
+        );
     } else {
       this.table = await this.db.createTable(LANCE_TABLE, [
         {
@@ -193,13 +199,19 @@ export class VectorDB {
     if (!this.db) throw new Error("VectorDB connection not initialized.");
     const tables = await this.db.tableNames();
     // Guard after tableNames() await: concurrent close() may have nulled this.db.
-    if (!this.db || this.closed) throw new Error("VectorDB initialization aborted: closed during semantic cache tableNames (concurrent re-registration).");
+    if (!this.db || this.closed)
+      throw new Error(
+        "VectorDB initialization aborted: closed during semantic cache tableNames (concurrent re-registration).",
+      );
 
     if (tables.includes(SEMANTIC_QUERY_CACHE_TABLE)) {
       try {
         this.semanticQueryCacheTable = await this.db.openTable(SEMANTIC_QUERY_CACHE_TABLE);
         // Guard after openTable() await.
-        if (!this.db || this.closed) throw new Error("VectorDB initialization aborted: closed during semantic cache openTable (concurrent re-registration).");
+        if (!this.db || this.closed)
+          throw new Error(
+            "VectorDB initialization aborted: closed during semantic cache openTable (concurrent re-registration).",
+          );
         await this.validateOrRepairSemanticQueryCacheTable();
         return;
       } catch (err) {
@@ -228,7 +240,10 @@ export class VectorDB {
       },
     ]);
     // Guard after createTable() await: concurrent close() may have nulled this.db.
-    if (!this.db || this.closed) throw new Error("VectorDB initialization aborted: closed during semantic cache createTable (concurrent re-registration).");
+    if (!this.db || this.closed)
+      throw new Error(
+        "VectorDB initialization aborted: closed during semantic cache createTable (concurrent re-registration).",
+      );
     this.semanticQueryCacheSchemaValid = true;
 
     try {
@@ -413,7 +428,9 @@ export class VectorDB {
         lastErr = err;
         const msg = err instanceof Error ? err.message : String(err);
         if (msg.includes("initialization aborted") || msg.includes("concurrent re-registration")) {
-          this.logWarn(`memory-hybrid: VectorDB init aborted (concurrent re-registration), retrying (${attempt + 1}/${MAX_RETRIES})...`);
+          this.logWarn(
+            `memory-hybrid: VectorDB init aborted (concurrent re-registration), retrying (${attempt + 1}/${MAX_RETRIES})...`,
+          );
           continue;
         }
         throw err;
