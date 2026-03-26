@@ -243,7 +243,6 @@ export function parseSelfCorrectionConfig(cfg: Record<string, unknown>): SelfCor
   if (!scRaw || typeof scRaw !== "object") return undefined;
   if (scRaw.enabled === false) return undefined;
   return {
-    enabled: scRaw.enabled !== false,
     semanticDedup: scRaw.semanticDedup !== false,
     semanticDedupThreshold:
       typeof scRaw.semanticDedupThreshold === "number" &&
