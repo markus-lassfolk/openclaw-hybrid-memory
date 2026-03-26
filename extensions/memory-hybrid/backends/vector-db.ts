@@ -537,8 +537,14 @@ export class VectorDB {
     this.table = null;
     this.semanticQueryCacheTable = null;
 
-    const memoriesDir = join(this.dbPath, `${LANCE_TABLE}.lance`);
-    const cacheDir = join(this.dbPath, `${SEMANTIC_QUERY_CACHE_TABLE}.lance`);
+    // Use the same path resolution as doInitialize() to ensure filesystem operations
+    // target the same directory where LanceDB stored the data (issue #768).
+    const resolvedPath = isAbsolute(this.dbPath)
+      ? this.dbPath
+      : pathResolve(this.dbPath);
+
+    const memoriesDir = join(resolvedPath, `${LANCE_TABLE}.lance`);
+    const cacheDir = join(resolvedPath, `${SEMANTIC_QUERY_CACHE_TABLE}.lance`);
     if (existsSync(memoriesDir)) {
       try {
         rmSync(memoriesDir, { recursive: true, force: true });
