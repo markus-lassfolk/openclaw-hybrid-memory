@@ -31,14 +31,14 @@ A focused stability and usability release building on the large 2026.3.250 featu
 - **VectorDB schema error suppression tightened (#740, #753):** The `LANCE_NO_VECTOR_COL_MSG` error suppression was previously applied unconditionally, masking genuine schema errors. Guard now requires `!this.schemaValid` before suppressing, so real schema problems surface correctly.
 - **Vector dimension mismatch in LanceDB fallback queries (#764):** When the active embedding model returns a different dimension than what the LanceDB table was created with, fallback queries no longer crash — they skip the vector leg and return FTS-only results.
 - **SQLite FTS5 throws "unterminated string" on null bytes (#737, #738):** FTS5 queries containing null bytes (e.g. from binary clipboard content) caused an unhandled SQLite error. Input is now sanitized before FTS5 query construction.
-- **LanceDB concurrent-close null guard:** Concurrent close calls on the LanceDB connection could dereference a null handle. Added null guard in the close path.
+- **LanceDB concurrent-close null guard (#771):** Concurrent close calls on the LanceDB connection could dereference a null handle. Added null guard in the close path.
 - **`truncateForStorage` crashes on undefined/null input (#755, #756):** Two separate callers could pass `undefined` or `null` to `truncateForStorage`. Both paths now coerce to empty string before truncation.
 - **selfCorrection and implicitFeedback JSON schema missing `enabled` field (#765, #767):** The `enabled` toggle was accepted at runtime but omitted from the JSON schema, causing validation warnings. Both schemas now declare `enabled` explicitly.
 - **CLI config display: nightlyCycle enabled state always shown as false (#760):** The `hybrid-mem config` CLI output hardcoded `false` for the `nightlyCycle.enabled` field regardless of actual config. Now reads the live value correctly.
 - **`stringEnum` removed — replaced with inline implementation (#762):** A utility that was removed in a dependency update was still being imported. Replaced with a minimal inline implementation to restore correct schema validation.
 - **Suppress transient HTTP 500 errors from OpenAI to GlitchTip (#739, #759):** Transient 500 responses from OpenAI (server-side errors outside plugin control) are no longer reported as plugin errors in GlitchTip, reducing alert noise.
-- **Distill description referenced removed GOOGLE_API_KEY:** The distillation step description mentioned `GOOGLE_API_KEY` which was removed in favour of `llm.heavy` tier config. Updated to reflect current setup.
-- **Google embedding model name:** Default Google embedding updated from `text-embedding-005` (404) to `gemini-embedding-001` (current name).
+- **Distill description referenced removed GOOGLE_API_KEY (#776):** The distillation step description mentioned `GOOGLE_API_KEY` which was removed in favour of `llm.heavy` tier config. Updated to reflect current setup.
+- **Google embedding model name (#743):** Default Google embedding updated from `text-embedding-005` (404) to `gemini-embedding-001` (current name).
 - **Azure embedding label in verify output:** The verify `--test-llm` table now correctly labels the Azure embedding provider row.
 - **CI: Biome format, lint error, and npm audit vulnerability (f240d914):** Three CI issues fixed on main: `vector-db.ts` Biome format (ternary line-length), `cmd-config.ts` unused `catch (e)` binding, `config-view-nightly-cycle.test.ts` missing `node:` import prefix, and `smol-toml` bumped to ≥1.6.1 (GHSA-v3rj-xjv7-4jmq, moderate DoS).
 
@@ -57,6 +57,7 @@ A focused stability and usability release building on the large 2026.3.250 featu
 
 - `yaml` bumped from 2.8.2 → 2.8.3 in `extensions/memory-hybrid`
 - `picomatch` bumped in both `extensions/memory-hybrid` and root workspace
+- Root workspace dependencies updated to latest patch versions
 - `smol-toml` bumped to ≥1.6.1 (security: GHSA-v3rj-xjv7-4jmq)
 
 ---

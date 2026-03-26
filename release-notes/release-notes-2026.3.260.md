@@ -93,14 +93,6 @@ The session timeline now renders direct links from each summary entry to the und
 | Distill description references removed `GOOGLE_API_KEY` | Updated to reference `llm.heavy` tier config |
 | Azure embedding row mislabelled in `verify --test-llm` output | Label corrected |
 
-### CI / Build
-
-| Issue | Fix |
-|---|---|
-| Biome format failure on `vector-db.ts` | Two ternary expressions collapsed to single lines as required by formatter |
-| Lint error: `catch (e) {}` unused binding in `cmd-config.ts` | Changed to bare `catch {}` |
-| Lint error: bare `fs` import in test file | Changed to `node:fs` (`useNodejsImportProtocol`) |
-| `smol-toml <1.6.1` moderate DoS vulnerability (GHSA-v3rj-xjv7-4jmq) | Bumped to ≥1.6.1 via `npm audit fix` |
 
 ---
 
