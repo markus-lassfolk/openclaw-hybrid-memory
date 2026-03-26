@@ -5,6 +5,8 @@
 import * as lancedb from "@lancedb/lancedb";
 import { isAbsolute, resolve as pathResolve } from "node:path";
 import { randomUUID } from "node:crypto";
+import { rmSync, existsSync } from "node:fs";
+import { join } from "node:path";
 import type { MemoryCategory, DecayClass } from "../config.js";
 import type { SearchResult } from "../types/memory.js";
 import { capturePluginError } from "../services/error-reporter.js";
@@ -234,13 +236,23 @@ export class VectorDB {
     this.db = await lancedb.connect(resolvedPath);
     // Guard: a concurrent close() may have nulled this.db between the connect() await and here.
     if (!this.db) throw new Error("VectorDB connection lost during initialization (concurrent close).");
+    // Guard: plugin re-registration (hot-reload/SIGUSR1) may have called close() concurrently.
+    if (this.closed)
+      throw new Error("VectorDB initialization aborted: closed during connect (concurrent re-registration).");
     const tables = await this.db.tableNames();
     // Guard again after the tableNames() await for the same reason.
-    if (!this.db) throw new Error("VectorDB connection lost during initialization (concurrent close).");
+    if (!this.db || this.closed)
+      throw new Error("VectorDB initialization aborted: closed during tableNames (concurrent re-registration).");
 
     if (tables.includes(LANCE_TABLE)) {
       this.table = await this.db.openTable(LANCE_TABLE);
+      if (!this.db || this.closed)
+        throw new Error("VectorDB initialization aborted: closed during openTable (concurrent re-registration).");
       await this.validateOrRepairSchema();
+      if (!this.db || this.closed)
+        throw new Error(
+          "VectorDB initialization aborted: closed during validateOrRepairSchema (concurrent re-registration).",
+        );
     } else {
       this.table = await this.db.createTable(LANCE_TABLE, [
         {
@@ -266,13 +278,28 @@ export class VectorDB {
   private async ensureSemanticQueryCacheTable(): Promise<void> {
     if (!this.db) throw new Error("VectorDB connection not initialized.");
     const tables = await this.db.tableNames();
+    // Guard after tableNames() await: concurrent close() may have nulled this.db.
+    if (!this.db || this.closed)
+      throw new Error(
+        "VectorDB initialization aborted: closed during semantic cache tableNames (concurrent re-registration).",
+      );
 
     if (tables.includes(SEMANTIC_QUERY_CACHE_TABLE)) {
       try {
         this.semanticQueryCacheTable = await this.db.openTable(SEMANTIC_QUERY_CACHE_TABLE);
+        // Guard after openTable() await.
+        if (!this.db || this.closed)
+          throw new Error(
+            "VectorDB initialization aborted: closed during semantic cache openTable (concurrent re-registration).",
+          );
         await this.validateOrRepairSemanticQueryCacheTable();
         return;
       } catch (err) {
+        // Re-throw "initialization aborted" errors so resetTableForReindex()'s retry loop can catch them.
+        const msg = err instanceof Error ? err.message : String(err);
+        if (msg.includes("initialization aborted") || msg.includes("concurrent re-registration")) {
+          throw err;
+        }
         this.logWarn(`memory-hybrid: failed to open semantic query cache table, rebuilding: ${err}`);
         try {
           await this.db.dropTable(SEMANTIC_QUERY_CACHE_TABLE);
@@ -297,6 +324,11 @@ export class VectorDB {
         cachedAt: 0,
       },
     ]);
+    // Guard after createTable() await: concurrent close() may have nulled this.db.
+    if (!this.db || this.closed)
+      throw new Error(
+        "VectorDB initialization aborted: closed during semantic cache createTable (concurrent re-registration).",
+      );
     this.semanticQueryCacheSchemaValid = true;
 
     try {
@@ -456,31 +488,76 @@ export class VectorDB {
   /**
    * Drop the vector table and recreate it empty with the current dimension.
    * Use before re-embedding all facts (e.g. after switching to a new embedding model).
-   * Call ensureInitialized() first so the connection exists.
+   *
+   * Retries initialization when the connection is closed mid-flight by a concurrent
+   * plugin re-registration (hot-reload/SIGUSR1), up to 10 attempts with a brief delay.
+   *
+   * Uses filesystem removal instead of db.dropTable() because LanceDB 0.27.x dropTable()
+   * calls rmdir() which fails with ENOTEMPTY on non-empty table directories (issue #770).
    */
   async resetTableForReindex(): Promise<void> {
-    await this.ensureInitialized();
-    if (!this.db) throw new Error("VectorDB connection not initialized.");
-    const tables = await this.db.tableNames();
-    if (tables.includes(LANCE_TABLE)) {
-      await this.db.dropTable(LANCE_TABLE);
+    // Retry loop: OpenClaw calls register() multiple times during startup, each time closing
+    // the previous VectorDB. After all registrations settle, the final VectorDB initializes
+    // successfully. Retrying with a brief delay lets us wait out the startup churn (issue #769).
+    const MAX_RETRIES = 10;
+    const RETRY_DELAY_MS = 500;
+    let lastErr: unknown;
+    for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+      if (attempt > 0) {
+        await new Promise<void>((resolve) => setTimeout(resolve, RETRY_DELAY_MS));
+      }
+      try {
+        await this.ensureInitialized();
+        break;
+      } catch (err) {
+        lastErr = err;
+        const msg = err instanceof Error ? err.message : String(err);
+        if (msg.includes("initialization aborted") || msg.includes("concurrent re-registration")) {
+          this.logWarn(
+            `memory-hybrid: VectorDB init aborted (concurrent re-registration), retrying (${attempt + 1}/${MAX_RETRIES})...`,
+          );
+          continue;
+        }
+        throw err;
+      }
     }
-    this.table = await this.db.createTable(LANCE_TABLE, [
-      {
-        id: "__schema__",
-        text: "",
-        why: "",
-        vector: new Array(this.vectorDim).fill(0),
-        importance: 0,
-        category: "other",
-        createdAt: 0,
-      },
-    ]);
+    if (this.closed || !this.db) {
+      throw lastErr ?? new Error("VectorDB failed to initialize after retries (concurrent re-registration).");
+    }
+
+    // Close the active connection before removing the table directory.
+    // LanceDB 0.27.x dropTable() fails with ENOTEMPTY on non-empty directories,
+    // so we close the connection, delete the directory manually, then reconnect (issue #770).
     try {
-      await this.table.delete('id = "__schema__"');
-    } catch (deleteErr) {
-      this.logWarn(`memory-hybrid: failed to delete schema seed row after reset (non-fatal): ${deleteErr}`);
+      this.db.close();
+    } catch {
+      // ignore
     }
+    this.db = null;
+    this.table = null;
+    this.semanticQueryCacheTable = null;
+
+    const memoriesDir = join(this.dbPath, `${LANCE_TABLE}.lance`);
+    const cacheDir = join(this.dbPath, `${SEMANTIC_QUERY_CACHE_TABLE}.lance`);
+    if (existsSync(memoriesDir)) {
+      try {
+        rmSync(memoriesDir, { recursive: true, force: true });
+      } catch (rmErr) {
+        throw new Error(`Failed to remove LanceDB table directory for re-index: ${rmErr}`);
+      }
+    }
+    if (existsSync(cacheDir)) {
+      try {
+        rmSync(cacheDir, { recursive: true, force: true });
+      } catch {
+        // non-fatal: semantic cache will be recreated on next init
+      }
+    }
+
+    // Reconnect — doInitialize() will create fresh empty tables with the current schema.
+    this.closed = false;
+    this.initPromise = null;
+    await this.ensureInitialized();
   }
 
   /** Get initialized table or throw descriptive error. */
