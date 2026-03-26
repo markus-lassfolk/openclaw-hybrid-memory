@@ -167,7 +167,7 @@ export function runConfigViewForCli(ctx: HandlerContext, sink: VerifyCliSink): v
   log(`  Provenance: ${on(rawEnabled("provenance", cfg.provenance.enabled))}`);
   const errorReportingEffective = (cfg.errorReporting?.enabled ?? false) && (cfg.errorReporting?.consent ?? false);
   log(
-    `  Error reporting: ${on(rawEnabled("errorReporting", errorReportingEffective))} (consent: ${on(cfg.errorReporting?.consent ?? false)})`,
+    `  Error reporting: ${on(rawEnabled("errorReporting", cfg.errorReporting?.enabled ?? false))} (consent: ${on(cfg.errorReporting?.consent ?? false)})`,
   );
   log(`  Cost tracking: ${on(rawEnabled("costTracking", cfg.costTracking?.enabled ?? false))}`);
   log("");
