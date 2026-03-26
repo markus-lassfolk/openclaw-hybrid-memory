@@ -327,6 +327,72 @@ describe("VectorDB issue #366 — capturePluginError suppressed on schema mismat
   });
 });
 
+describe("VectorDB hasDuplicate() transient stream read race handling (issue #768)", () => {
+  let tmpDir: string;
+  let lanceDir: string;
+
+  beforeEach(async () => {
+    tmpDir = mkdtempSync(join(tmpdir(), "vector-768-test-"));
+    lanceDir = join(tmpDir, "lance");
+    await seedTable(lanceDir, CORRECT_DIM);
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("retries once and returns true when the second attempt succeeds", async () => {
+    const db = new VectorDB(lanceDir, CORRECT_DIM);
+    await db.count(); // initialize tables
+
+    let calls = 0;
+    const transientErr = new Error(
+      "Failed to get next batch from stream: lance error: Not found: /tmp/lancedb/memories.lance/data/missing-file.lance",
+    );
+    (db as any).table = {
+      vectorSearch: () => ({
+        limit: () => ({
+          toArray: async () => {
+            calls++;
+            if (calls === 1) throw transientErr;
+            return [{ _distance: 0 }];
+          },
+        }),
+      }),
+    };
+
+    const result = await db.hasDuplicate(new Array(CORRECT_DIM).fill(0.1), 0.95);
+    expect(result).toBe(true);
+    expect(calls).toBe(2);
+    expect(vi.mocked(errorReporter.capturePluginError)).not.toHaveBeenCalled();
+    await db.close();
+  });
+
+  it("returns false without GlitchTip when transient error persists after retry", async () => {
+    const db = new VectorDB(lanceDir, CORRECT_DIM);
+    await db.count(); // initialize tables
+
+    const transientErr = new Error(
+      "Failed to get next batch from stream: lance error: Not found: /tmp/lancedb/memories.lance/data/missing-file.lance",
+    );
+    const toArray = vi.fn().mockRejectedValue(transientErr);
+    (db as any).table = {
+      vectorSearch: () => ({
+        limit: () => ({
+          toArray,
+        }),
+      }),
+    };
+
+    const result = await db.hasDuplicate(new Array(CORRECT_DIM).fill(0.1), 0.95);
+    expect(result).toBe(false);
+    expect(toArray).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(errorReporter.capturePluginError)).not.toHaveBeenCalled();
+    await db.close();
+  });
+});
+
 describe("VectorDB semantic query cache — suppress known schema errors", () => {
   let tmpDir: string;
   let lanceDir: string;

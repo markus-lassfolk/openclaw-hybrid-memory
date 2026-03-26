@@ -27,6 +27,7 @@ const _optimizingByPath = new Map<string, boolean>();
 const _optimizeFailuresByPath = new Map<string, number>();
 const _OPTIMIZE_FAILURE_WARN_THRESHOLD = 3;
 const SEMANTIC_QUERY_CACHE_MAX_ROWS_PER_FILTER_KEY = 100;
+const TRANSIENT_VECTOR_QUERY_RETRY_DELAY_MS = 50;
 
 export type VectorDBLogger = { warn: (msg: string) => void };
 
@@ -325,6 +326,23 @@ export class VectorDB {
 
   private isKnownVectorSchemaError(err: unknown): boolean {
     return err instanceof Error && err.message.includes(LANCE_NO_VECTOR_COL_MSG);
+  }
+
+  /**
+   * Detect a transient LanceDB read race where compaction/prune removes old data
+   * files while a query stream is reading a batch.
+   *
+   * Example:
+   * "Failed to get next batch from stream: lance error: Not found: .../memories.lance/data/<file>.lance"
+   */
+  private isTransientMissingDataFileError(err: unknown): boolean {
+    if (!(err instanceof Error)) return false;
+    const msg = err.message;
+    return (
+      msg.includes("Failed to get next batch from stream") &&
+      msg.includes("lance error: Not found:") &&
+      msg.includes(".lance/data/")
+    );
   }
 
   /**
@@ -832,7 +850,7 @@ export class VectorDB {
   }
 
   async hasDuplicate(vector: number[], threshold = 0.95): Promise<boolean> {
-    try {
+    const runDuplicateQuery = async (): Promise<boolean> => {
       await this.ensureInitialized();
       // Same early-exit as search(): schema was already reported invalid at startup.
       if (!this.schemaValid) return false;
@@ -845,7 +863,31 @@ export class VectorDB {
       if (results.length === 0) return false;
       const score = 1 / (1 + (results[0]._distance ?? 0));
       return score >= threshold;
+    };
+
+    try {
+      return await runDuplicateQuery();
     } catch (err) {
+      // Transient race with optimize/compaction: LanceDB can report missing fragment
+      // files while streaming query batches. Retry once after a short delay.
+      if (this.isTransientMissingDataFileError(err)) {
+        this.logWarn(`memory-hybrid: LanceDB hasDuplicate transient stream read race; retrying once: ${err}`);
+        try {
+          await new Promise<void>((resolve) => setTimeout(resolve, TRANSIENT_VECTOR_QUERY_RETRY_DELAY_MS));
+          return await runDuplicateQuery();
+        } catch (retryErr) {
+          if (!this.isKnownVectorSchemaError(retryErr) && !this.isTransientMissingDataFileError(retryErr)) {
+            capturePluginError(retryErr as Error, {
+              operation: "vector-duplicate-check",
+              severity: "info",
+              subsystem: "vector",
+            });
+          }
+          this.logWarn(`memory-hybrid: LanceDB hasDuplicate failed after transient retry: ${retryErr}`);
+          return false;
+        }
+      }
+
       // Errors reaching here mean the dimension pre-check passed but LanceDB still
       // threw — we suppress "No vector column found" since it is an acceptable
       // transient error in this path. All other errors are reported normally.
