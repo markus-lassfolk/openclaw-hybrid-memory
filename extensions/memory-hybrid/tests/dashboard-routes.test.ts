@@ -25,7 +25,7 @@ import {
   type HttpRequestHandler,
 } from "../tools/dashboard-routes.js";
 import { parseHealthConfig } from "../config/parsers/maintenance.js";
-import type { ClawdbotPluginApi } from "openclaw/plugin-sdk";
+import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 
 // ---------------------------------------------------------------------------
 // Helpers

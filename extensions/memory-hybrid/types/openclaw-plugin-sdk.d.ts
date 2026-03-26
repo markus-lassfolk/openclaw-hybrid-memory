@@ -1,39 +1,17 @@
 /**
- * Type declarations for openclaw/plugin-sdk.
+ * Type declarations for openclaw/plugin-sdk scoped subpaths.
  * The actual implementation is provided by the OpenClaw runtime at runtime.
  */
+declare module "openclaw/plugin-sdk/core" {
+  import type { OpenClawPluginApi as _OpenClawPluginApi } from "../plugins/types.js";
+
+  // ClawdbotPluginApi is the local plugin API type — a named alias for the SDK's OpenClawPluginApi.
+  // This preserves the plugin's existing type name while using the scoped subpath import.
+  export type ClawdbotPluginApi = _OpenClawPluginApi;
+}
+
+// Also keep the barrel augmentation for backwards-compat (e.g. dynamic imports via import("openclaw/plugin-sdk"))
 declare module "openclaw/plugin-sdk" {
-  import type { TSchema } from "@sinclair/typebox";
-
-  type CliProgram = {
-    command: (name: string) => CliProgram;
-    description: (d: string) => CliProgram;
-    option: (flags: string, desc: string, defaultValue?: string) => CliProgram;
-    requiredOption: (flags: string, desc: string, defaultValue?: string) => CliProgram;
-    argument: (name: string, desc?: string, defaultValue?: string) => CliProgram;
-    action: (fn: (...args: any[]) => any) => CliProgram;
-  };
-
-  export type ClawdbotPluginApi = {
-    resolvePath: (path: string) => string;
-    /** OpenClaw gateway version string (e.g. "2026.3.8"). Available since OpenClaw ≥2026.3.8. */
-    version?: string;
-    logger: {
-      info: (msg: string) => void;
-      warn: (msg: string) => void;
-      error: (msg: string) => void;
-      debug?: (msg: string) => void;
-    };
-    registerService: (opts: { id: string; start: () => void; stop?: () => void }) => void;
-    registerTool: (opts: Record<string, unknown>, options?: Record<string, unknown>) => void;
-    registerCli: (fn: (opts: { program: CliProgram }) => void, options?: { commands?: string[] }) => void;
-    on: (
-      event: string,
-      handler: (
-        ev: unknown,
-      ) => void | Promise<void> | Promise<unknown> | { prependContext?: string } | Promise<{ prependContext?: string }>,
-    ) => void;
-    context?: { agentId?: string; sessionId?: string; userId?: string; sessionKey?: string; messageChannel?: string };
-    [key: string]: unknown;
-  };
+  import type { OpenClawPluginApi as _OpenClawPluginApi } from "../plugins/types.js";
+  export type ClawdbotPluginApi = _OpenClawPluginApi;
 }

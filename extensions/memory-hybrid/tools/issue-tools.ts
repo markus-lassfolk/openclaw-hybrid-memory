@@ -7,7 +7,7 @@
 
 import { Type } from "@sinclair/typebox";
 import { stringEnum } from "../utils/typebox.js";
-import type { ClawdbotPluginApi } from "openclaw/plugin-sdk";
+import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 
 import type { IssueStore } from "../backends/issue-store.js";
 import type { IssueStatus, IssueSeverity } from "../types/issue-types.js";

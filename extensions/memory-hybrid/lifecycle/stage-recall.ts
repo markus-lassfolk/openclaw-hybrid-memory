@@ -6,7 +6,7 @@
  * Config: autoRecall.enabled. Timeout: 35s.
  */
 
-import type { ClawdbotPluginApi } from "openclaw/plugin-sdk";
+import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import type { ScopeFilter } from "../types/memory.js";
 import type { SearchResult } from "../types/memory.js";
 import {

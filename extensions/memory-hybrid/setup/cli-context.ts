@@ -8,7 +8,8 @@ import { dirname, isAbsolute, join } from "node:path";
 import { homedir } from "node:os";
 import type { ActiveTaskContext } from "../cli/active-tasks.js";
 import { parseDuration } from "../utils/duration.js";
-import type { ClawdbotPluginApi } from "openclaw/plugin-sdk";
+import type { Command } from "commander";
+import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import { registerHybridMemCli, type HybridMemCliContext } from "../cli/register.js";
 import type { HandlerContext } from "../cli/handlers.js";
 import * as handlers from "../cli/handlers.js";
@@ -467,7 +468,7 @@ export function registerHybridMemCliWithApi(api: ClawdbotPluginApi, ctx: HybridM
   };
   const services = buildCliContextServices(ctx, api);
   api.registerCli(
-    ({ program }) => {
+    ({ program }: { program: Command }) => {
       try {
         const cliCtx = createHybridMemCliContext(handlerCtx, api, services);
         registerCliWithHelp(program, cliCtx);

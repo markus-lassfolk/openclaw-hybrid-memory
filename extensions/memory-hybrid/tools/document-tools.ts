@@ -10,7 +10,7 @@ import { Type } from "@sinclair/typebox";
 import { createHash } from "node:crypto";
 import { readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { basename, extname, isAbsolute, relative, resolve } from "node:path";
-import type { ClawdbotPluginApi } from "openclaw/plugin-sdk";
+import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import type OpenAI from "openai";
 
 import type { FactsDB } from "../backends/facts-db.js";

@@ -12,7 +12,7 @@
  */
 
 import { Type } from "@sinclair/typebox";
-import type { ClawdbotPluginApi } from "openclaw/plugin-sdk";
+import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import type { ApitapStore } from "../backends/apitap-store.js";
 import type { HybridMemoryConfig } from "../config.js";
 import { ApitapService, isEndpointBlocked, validateUrl } from "../services/apitap-service.js";

@@ -27,7 +27,7 @@ import { mkdir, readFile, writeFile, unlink, access } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
-import type { ClawdbotPluginApi } from "openclaw/plugin-sdk";
+import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 
 import {
   DEFAULT_MEMORY_CATEGORIES,
