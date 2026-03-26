@@ -425,9 +425,12 @@ export function registerMemoryTools(
         }
 
         const lines = summaries.map(
-          (summary, index) =>
-            `${index + 1}. [${summary.source}] ${formatNarrativeRange(summary.periodStart, summary.periodEnd)} ` +
-            `(session: ${summary.sessionId})\n${summary.text}`,
+          (summary, index) => {
+            const agentDir = currentAgentIdRef.value || "main";
+            const logPath = `~/.openclaw/agents/${agentDir}/sessions/${summary.sessionId}.jsonl`;
+            return `${index + 1}. [${summary.source}] ${formatNarrativeRange(summary.periodStart, summary.periodEnd)} ` +
+              `(sessionKey: ${summary.sessionId}, sessionLogPath: ${logPath})\n${summary.text}`;
+          }
         );
 
         return {
@@ -443,6 +446,8 @@ export function registerMemoryTools(
               id: summary.id,
               source: summary.source,
               sessionId: summary.sessionId,
+              sessionKey: summary.sessionId,
+              sessionLogPath: `~/.openclaw/agents/${currentAgentIdRef.value || "main"}/sessions/${summary.sessionId}.jsonl`,
               periodStart: new Date(summary.periodStart * 1000).toISOString(),
               periodEnd: new Date(summary.periodEnd * 1000).toISOString(),
               tag: summary.tag,
