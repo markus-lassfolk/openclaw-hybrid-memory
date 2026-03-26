@@ -4542,7 +4542,7 @@ export class FactsDB extends BaseSqliteStore {
       timestamp: row.timestamp as number,
       duration: (row.duration as number) ?? undefined,
       context: (row.context as string) ?? undefined,
-      relatedFactIds: relatedFactIdsRaw ? (JSON.parse(relatedFactIdsRaw) as string[]) : undefined,
+      relatedFactIds: relatedFactIdsRaw ? (JSON.parse(relatedFactIdsRaw) as string[]) : [],
       procedureId: (row.procedure_id as string) ?? undefined,
       scope: (row.scope as "global" | "user" | "agent" | "session") ?? "global",
       scopeTarget: (row.scope_target as string) ?? undefined,
@@ -4662,6 +4662,7 @@ export class FactsDB extends BaseSqliteStore {
    * Delete an episode by id.
    */
   deleteEpisode(id: string): boolean {
+    this.liveDb.prepare("DELETE FROM episode_relations WHERE episode_id = ?").run(id);
     const result = this.liveDb.prepare("DELETE FROM episodes WHERE id = ?").run(id);
     return result.changes > 0;
   }
