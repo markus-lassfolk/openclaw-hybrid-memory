@@ -105,7 +105,10 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
             }
           }
 
-          // Push each tool call onto the tracker buffer
+          // Get session start time from sessionLastActivity (set during before_agent_start)
+          const sessionStartTime = sessionState.sessionLastActivity.get(sessionId);
+          
+          // Push each tool call onto the tracker buffer with the actual session start time
           for (const msg of messages) {
             if (!msg || typeof msg !== "object") continue;
             const msgObj = msg as Record<string, unknown>;
@@ -116,7 +119,7 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
               if (!tc || typeof tc !== "object") continue;
               const fn = (tc as Record<string, unknown>).function as Record<string, unknown> | undefined;
               if (fn && typeof fn.name === "string") {
-                ctx.workflowTracker!.push(sessionId, fn.name);
+                ctx.workflowTracker!.push(sessionId, fn.name, sessionStartTime);
               }
             }
           }
