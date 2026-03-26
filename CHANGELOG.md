@@ -40,6 +40,7 @@ A focused stability and usability release building on the large 2026.3.250 featu
 - **Distill description referenced removed GOOGLE_API_KEY (#776):** The distillation step description mentioned `GOOGLE_API_KEY` which was removed in favour of `llm.heavy` tier config. Updated to reflect current setup.
 - **Google embedding model name (#743):** Default Google embedding updated from `text-embedding-005` (404) to `gemini-embedding-001` (current name).
 - **Azure embedding label in verify output:** The verify `--test-llm` table now correctly labels the Azure embedding provider row.
+- **CI: Biome format, lint error, and npm audit vulnerability (f240d914):** Three CI issues fixed on main: `vector-db.ts` Biome format (ternary line-length), `cmd-config.ts` unused `catch (e)` binding, `config-view-nightly-cycle.test.ts` missing `node:` import prefix, and `smol-toml` bumped to ≥1.6.1 (GHSA-v3rj-xjv7-4jmq, moderate DoS).
 
 ### Changed
 
@@ -47,16 +48,17 @@ A focused stability and usability release building on the large 2026.3.250 featu
   - `implicitFeedback.trajectoryLLMAnalysis` → `trajectoryLLMAnalysis`
   - `implicitFeedback.feedToSelfCorrection` → `feedToSelfCorrection`
   - `distill.extractReinforcement` → `extractReinforcement`
-  
+
   Old nested keys continue to work during a migration period (deprecation warning logged when both are set). Top-level keys take precedence. Update your `openclaw.plugin.json` or agent config to use the new flat paths.
 
-- **VectorDB error handler precision:** Schema-error suppression is now conditioned on `!this.schemaValid`, making error handling more surgical and preventing silent masking of genuine issues.
+- **VectorDB error handler precision:** Schema-error suppression now conditioned on `!this.schemaValid`, making error handling more surgical and preventing silent masking of genuine issues.
 
 ### Dependencies
 
 - `yaml` bumped from 2.8.2 → 2.8.3 in `extensions/memory-hybrid`
 - `picomatch` bumped in both `extensions/memory-hybrid` and root workspace
 - Root workspace dependencies updated to latest patch versions
+- `smol-toml` bumped to ≥1.6.1 (security: GHSA-v3rj-xjv7-4jmq)
 
 ---
 

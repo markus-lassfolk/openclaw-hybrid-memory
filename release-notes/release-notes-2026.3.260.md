@@ -10,7 +10,7 @@
 
 A focused stability and usability release following the large 2026.3.250 feature drop. This version resolves every known LanceDB crash path introduced or exposed by 2026.3.250–251, ships **Lineage Tracking** so every memory knows why it was stored, and introduces a **flattened config schema** that makes the plugin configuration easier to read and maintain.
 
-If you were seeing `ENOTEMPTY`, `data file not found`, or `dimension mismatch` errors in your LanceDB logs — this release fixes all of them.
+If you were seeing `ENOTEMPTY`, `data file not found`, dimension mismatch errors, or zero crystallization proposals in your logs — this release fixes all of them.
 
 ---
 
@@ -62,36 +62,37 @@ The session timeline now renders direct links from each summary entry to the und
 
 | Issue | Fix |
 |---|---|
-| `ENOTEMPTY` on re-index (LanceDB 0.27.x) | Atomic rename + lock guard prevents concurrent re-index from leaving partial `_tmp` directories |
-| `data file not found` in `hasDuplicate()` | Returns `false` gracefully on fresh stores before first write |
-| Vector dimension mismatch crashes fallback queries | Falls back to FTS-only results instead of crashing when embedding dimensions don't match the stored table |
+| `ENOTEMPTY` on re-index (LanceDB 0.27.x, #771) | Atomic rename + lock guard prevents concurrent re-index from leaving partial `_tmp` directories |
+| `data file not found` in `hasDuplicate()` (#768, #774) | Returns `false` gracefully on fresh stores before first write |
+| Vector dimension mismatch crashes fallback queries (#764) | Falls back to FTS-only results instead of crashing when embedding dimensions don't match the stored table |
 | Concurrent-close null dereference | Null guard added in the LanceDB close path |
 
 ### Memory & Storage
 
 | Issue | Fix |
 |---|---|
-| `truncateForStorage` crashes on `undefined`/`null` input | Coerces to empty string before truncation (two separate call sites fixed) |
-| SQLite FTS5 "unterminated string" on null bytes (#737) | Input sanitized before FTS5 query construction |
-| Crystallization pipeline produces zero proposals (#742) | Logic inversion in candidate scoring fixed; pipeline now produces ranked proposals consistently |
+| `truncateForStorage` crashes on `undefined`/`null` input (#755, #756) | Coerces to empty string before truncation (two separate call sites fixed) |
+| SQLite FTS5 "unterminated string" on null bytes (#737, #738) | Input sanitized before FTS5 query construction |
+| Crystallization pipeline produces zero proposals (#742, #773) | Logic inversion in candidate scoring fixed; pipeline now produces ranked proposals consistently |
 
 ### Config & Schema
 
 | Issue | Fix |
 |---|---|
-| `selfCorrection` and `implicitFeedback` missing `enabled` in JSON schema | Both schemas now declare `enabled` explicitly, ending spurious validation warnings |
-| `nightlyCycle.enabled` always shown as `false` in CLI config display | Now reads the live config value correctly |
-| `stringEnum` import crash after dependency removal | Replaced with minimal inline implementation |
-| VectorDB schema error suppression too broad (#740) | Suppression now requires `!this.schemaValid`; genuine schema errors surface correctly |
+| `selfCorrection` and `implicitFeedback` missing `enabled` in JSON schema (#765, #767) | Both schemas now declare `enabled` explicitly, ending spurious validation warnings |
+| `nightlyCycle.enabled` always shown as `false` in CLI config display (#760) | Now reads the live config value correctly |
+| `stringEnum` import crash after dependency removal (#762) | Replaced with minimal inline implementation |
+| VectorDB schema error suppression too broad (#740, #753) | Suppression now requires `!this.schemaValid`; genuine schema errors surface correctly |
 
 ### Providers & Telemetry
 
 | Issue | Fix |
 |---|---|
-| Transient HTTP 500 from OpenAI reported to GlitchTip (#739) | Server-side 500s filtered from error tracker — no plugin control over these |
+| Transient HTTP 500 from OpenAI reported to GlitchTip (#739, #759) | Server-side 500s filtered from error tracker — no plugin control over these |
 | Google embedding `text-embedding-005` returns 404 | Default updated to `gemini-embedding-001` (current model name) |
 | Distill description references removed `GOOGLE_API_KEY` | Updated to reference `llm.heavy` tier config |
 | Azure embedding row mislabelled in `verify --test-llm` output | Label corrected |
+
 
 ---
 
