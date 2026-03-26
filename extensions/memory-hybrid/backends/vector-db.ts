@@ -215,6 +215,11 @@ export class VectorDB {
         await this.validateOrRepairSemanticQueryCacheTable();
         return;
       } catch (err) {
+        // Re-throw "initialization aborted" errors so resetTableForReindex()'s retry loop can catch them.
+        const msg = err instanceof Error ? err.message : String(err);
+        if (msg.includes("initialization aborted") || msg.includes("concurrent re-registration")) {
+          throw err;
+        }
         this.logWarn(`memory-hybrid: failed to open semantic query cache table, rebuilding: ${err}`);
         try {
           await this.db.dropTable(SEMANTIC_QUERY_CACHE_TABLE);
