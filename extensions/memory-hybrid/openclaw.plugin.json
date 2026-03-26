@@ -850,7 +850,7 @@
       "distill": {
         "type": "object",
         "additionalProperties": false,
-        "description": "Gemini for session distillation (1M context). Optional; use env GOOGLE_API_KEY if not set.",
+        "description": "Session distillation via llm.heavy tier (default: azure-foundry/gpt-5.4-pro). No separate API key required.",
         "properties": {
           "apiKey": {
             "type": "string",
@@ -858,7 +858,7 @@
           },
           "defaultModel": {
             "type": "string",
-            "description": "Default model for distill (recommended: gemini-3.1-pro-preview)"
+            "description": "Model override for distill (default: azure-foundry/gpt-5.4-pro or llm.heavy tier)"
           },
           "extractDirectives": {
             "type": "boolean",
