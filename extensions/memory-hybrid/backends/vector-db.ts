@@ -192,10 +192,14 @@ export class VectorDB {
   private async ensureSemanticQueryCacheTable(): Promise<void> {
     if (!this.db) throw new Error("VectorDB connection not initialized.");
     const tables = await this.db.tableNames();
+    // Guard after tableNames() await: concurrent close() may have nulled this.db.
+    if (!this.db || this.closed) throw new Error("VectorDB initialization aborted: closed during semantic cache tableNames (concurrent re-registration).");
 
     if (tables.includes(SEMANTIC_QUERY_CACHE_TABLE)) {
       try {
         this.semanticQueryCacheTable = await this.db.openTable(SEMANTIC_QUERY_CACHE_TABLE);
+        // Guard after openTable() await.
+        if (!this.db || this.closed) throw new Error("VectorDB initialization aborted: closed during semantic cache openTable (concurrent re-registration).");
         await this.validateOrRepairSemanticQueryCacheTable();
         return;
       } catch (err) {
@@ -223,6 +227,8 @@ export class VectorDB {
         cachedAt: 0,
       },
     ]);
+    // Guard after createTable() await: concurrent close() may have nulled this.db.
+    if (!this.db || this.closed) throw new Error("VectorDB initialization aborted: closed during semantic cache createTable (concurrent re-registration).");
     this.semanticQueryCacheSchemaValid = true;
 
     try {
