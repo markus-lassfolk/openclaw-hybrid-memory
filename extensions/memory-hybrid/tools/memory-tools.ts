@@ -2149,6 +2149,15 @@ export function registerMemoryTools(
       async execute(_toolCallId: string, params: Record<string, unknown>) {
         try {
           const scopeFilter = buildToolScopeFilter({}, currentAgentIdRef.value, cfg);
+          const scope = params.scope as "global" | "user" | "agent" | "session" | undefined;
+          let scopeTarget: string | null = null;
+          if (scope === "session") {
+            scopeTarget = scopeFilter?.sessionId ?? null;
+          } else if (scope === "user") {
+            scopeTarget = scopeFilter?.userId ?? null;
+          } else if (scope === "agent") {
+            scopeTarget = scopeFilter?.agentId ?? null;
+          }
           const episode = ctx.factsDb.recordEpisode({
             event: params.event as string,
             outcome: params.outcome as EpisodeOutcome,
@@ -2160,8 +2169,8 @@ export function registerMemoryTools(
             importance: params.importance as number | undefined,
             tags: params.tags as string[] | undefined,
             decayClass: "normal",
-            scope: params.scope as "global" | "user" | "agent" | "session" | undefined,
-            scopeTarget: scopeFilter?.sessionId ?? scopeFilter?.userId ?? scopeFilter?.agentId ?? null,
+            scope,
+            scopeTarget,
             agentId: (params.agentId as string | undefined) ?? scopeFilter?.agentId ?? undefined,
             userId: (params.userId as string | undefined) ?? scopeFilter?.userId ?? undefined,
             sessionId: (params.sessionId as string | undefined) ?? scopeFilter?.sessionId ?? undefined,

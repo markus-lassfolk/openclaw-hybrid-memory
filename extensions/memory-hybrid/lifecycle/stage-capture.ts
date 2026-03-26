@@ -60,7 +60,6 @@ const FAILURE_PATTERNS: OutcomePattern[] = [
   // Explicit failure
   { regex: /\bfailed\b/i, label: "failed" },
   { regex: /\bfailure\b/i, label: "failure" },
-  { regex: /\bFAILED\b/i, label: "failed" },
   // Error
   { regex: /\berror\b/i, label: "error" },
   { regex: /\bcrashed\b/i, label: "crashed" },
@@ -496,6 +495,7 @@ async function runCapture(
     }
 
     for (const { text } of sessionTexts) {
+      let episodeCreated = false;
       // Scan for success indicators
       for (const pattern of SUCCESS_PATTERNS) {
         const match = pattern.regex.exec(text);
@@ -520,6 +520,7 @@ async function runCapture(
                 tags: pattern.label ? [pattern.label] : [],
               });
               api.logger.debug?.(`memory-hybrid: auto-captured success episode: ${episode.id}`);
+              episodeCreated = true;
             } catch (err) {
               capturePluginError(err instanceof Error ? err : new Error(String(err)), {
                 operation: "episode-auto-capture-success",
@@ -532,40 +533,42 @@ async function runCapture(
         }
       }
 
-      // Scan for failure indicators
-      for (const pattern of FAILURE_PATTERNS) {
-        const match = pattern.regex.exec(text);
-        if (match) {
-          const eventText = pattern.label ? `Agent reported: ${pattern.label}` : match[0];
-          const existing = ctx.factsDb.searchEpisodes({
-            query: eventText,
-            since: Math.floor(Date.now() / 1000) - 300,
-            limit: 1,
-          });
-          if (existing.length === 0) {
-            try {
-              const episode = ctx.factsDb.recordEpisode({
-                event: eventText,
-                outcome: "failure",
-                timestamp: Math.floor(Date.now() / 1000),
-                context: text.slice(0, 500),
-                sessionId,
-                agentId,
-                scope: "session",
-                scopeTarget: sessionId,
-                tags: pattern.label ? [pattern.label] : [],
-                // failures get importance >= 0.8 automatically via recordEpisode
-              });
-              api.logger.debug?.(`memory-hybrid: auto-captured failure episode: ${episode.id}`);
-            } catch (err) {
-              capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-                operation: "episode-auto-capture-failure",
-                subsystem: "episodes",
-                severity: "info",
-              });
+      // Scan for failure indicators (skip if success episode was already created)
+      if (!episodeCreated) {
+        for (const pattern of FAILURE_PATTERNS) {
+          const match = pattern.regex.exec(text);
+          if (match) {
+            const eventText = pattern.label ? `Agent reported: ${pattern.label}` : match[0];
+            const existing = ctx.factsDb.searchEpisodes({
+              query: eventText,
+              since: Math.floor(Date.now() / 1000) - 300,
+              limit: 1,
+            });
+            if (existing.length === 0) {
+              try {
+                const episode = ctx.factsDb.recordEpisode({
+                  event: eventText,
+                  outcome: "failure",
+                  timestamp: Math.floor(Date.now() / 1000),
+                  context: text.slice(0, 500),
+                  sessionId,
+                  agentId,
+                  scope: "session",
+                  scopeTarget: sessionId,
+                  tags: pattern.label ? [pattern.label] : [],
+                  // failures get importance >= 0.8 automatically via recordEpisode
+                });
+                api.logger.debug?.(`memory-hybrid: auto-captured failure episode: ${episode.id}`);
+              } catch (err) {
+                capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+                  operation: "episode-auto-capture-failure",
+                  subsystem: "episodes",
+                  severity: "info",
+                });
+              }
             }
+            break;
           }
-          break;
         }
       }
     }

@@ -4623,7 +4623,7 @@ export class FactsDB extends BaseSqliteStore {
     // Scope filter
     const scopeClause = this.scopeFilterClausePositional(scopeFilter);
     if (scopeClause.clause) {
-      conditions.push(scopeClause.clause.replace(/^AND /, ""));
+      conditions.push(scopeClause.clause.replace(/^ AND /, ""));
       params.push(...scopeClause.params);
     }
 
