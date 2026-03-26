@@ -248,7 +248,7 @@ jobs:
   typecheck-pass-22:
     name: Type Check (Node 22)
     needs: changes
-    if: needs.changes.outputs.code != 'true'
+    if: needs.changes.outputs.code != 'true' && github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - run: echo "No code changes detected — required check satisfied"
@@ -256,7 +256,7 @@ jobs:
   typecheck-pass-24:
     name: Type Check (Node 24)
     needs: changes
-    if: needs.changes.outputs.code != 'true'
+    if: needs.changes.outputs.code != 'true' && github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - run: echo "No code changes detected — required check satisfied"
@@ -264,7 +264,7 @@ jobs:
   lint-pass-22:
     name: Lint (Node 22)
     needs: changes
-    if: needs.changes.outputs.code != 'true'
+    if: needs.changes.outputs.code != 'true' && github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - run: echo "No code changes detected — required check satisfied"
@@ -272,7 +272,7 @@ jobs:
   lint-pass-24:
     name: Lint (Node 24)
     needs: changes
-    if: needs.changes.outputs.code != 'true'
+    if: needs.changes.outputs.code != 'true' && github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - run: echo "No code changes detected — required check satisfied"
@@ -280,7 +280,7 @@ jobs:
   test-pass-22:
     name: Test (Node 22)
     needs: changes
-    if: needs.changes.outputs.code != 'true'
+    if: needs.changes.outputs.code != 'true' && github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - run: echo "No code changes detected — required check satisfied"
@@ -288,7 +288,7 @@ jobs:
   test-pass-24:
     name: Test (Node 24)
     needs: changes
-    if: needs.changes.outputs.code != 'true'
+    if: needs.changes.outputs.code != 'true' && github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - run: echo "No code changes detected — required check satisfied"
