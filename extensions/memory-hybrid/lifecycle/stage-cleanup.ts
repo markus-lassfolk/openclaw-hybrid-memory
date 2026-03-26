@@ -63,7 +63,7 @@ export async function consumePendingTaskSignals(
     return at === bt ? a._filePath.localeCompare(b._filePath) : at - bt;
   });
 
-  let taskFile;
+  let taskFile: Awaited<ReturnType<typeof readActiveTaskFileWithMtime>> | undefined;
   try {
     taskFile = await readActiveTaskFileWithMtime(activeTaskPath, staleMinutes);
   } catch (err) {

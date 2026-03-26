@@ -867,7 +867,7 @@ describe("runActiveTaskComplete", () => {
     expect(result.ok).toBe(true);
     const ok = result as { ok: true; label: string; flushedTo?: string };
     expect(ok.flushedTo).toBeDefined();
-    const content = await readFile(ok.flushedTo!, "utf-8");
+    const content = await readFile(ok.flushedTo as string, "utf-8");
     expect(content).toContain("[flush-task]");
   });
 

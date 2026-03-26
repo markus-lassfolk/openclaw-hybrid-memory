@@ -875,6 +875,7 @@ export async function writeActiveTaskFileOptimistic(
 ): Promise<boolean> {
   let currentActive = active;
   let currentCompleted = completed;
+  let knownMtimeMutable = knownMtime;
 
   for (let attempt = 0; attempt < maxRetries; attempt++) {
     // Check current mtime before writing
@@ -891,7 +892,7 @@ export async function writeActiveTaskFileOptimistic(
       throw err;
     }
 
-    if (currentMtime !== knownMtime) {
+    if (currentMtime !== knownMtimeMutable) {
       // File was modified since we last read it — re-read and merge
       const fresh = await readActiveTaskFileWithMtime(filePath, staleMinutes);
       if (!fresh) {
@@ -903,7 +904,7 @@ export async function writeActiveTaskFileOptimistic(
       if (merged === null) return false; // Caller decided to abort
       [currentActive, currentCompleted] = merged;
       // Update knownMtime to fresh state for next iteration
-      knownMtime = fresh.mtime;
+      knownMtimeMutable = fresh.mtime;
       // Continue to next iteration to check for conflicts again
       continue;
     }
