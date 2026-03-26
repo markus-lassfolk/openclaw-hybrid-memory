@@ -267,6 +267,7 @@ export type ActiveTaskConfig = {
 
 /** Self-correction pipeline: semantic dedup, TOOLS.md sectioning, auto-rewrite vs approve */
 export type SelfCorrectionConfig = {
+  enabled?: boolean;
   /** Use embedding similarity to skip near-duplicate facts before MEMORY_STORE (default: true). */
   semanticDedup: boolean;
   /** Similarity threshold for semantic dedup, 0–1 (default: 0.92). */
