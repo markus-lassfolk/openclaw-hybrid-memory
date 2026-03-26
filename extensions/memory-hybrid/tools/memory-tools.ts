@@ -424,14 +424,14 @@ export function registerMemoryTools(
           };
         }
 
-        const lines = summaries.map(
-          (summary, index) => {
-            const agentDir = currentAgentIdRef.value || "main";
-            const logPath = `~/.openclaw/agents/${agentDir}/sessions/${summary.sessionId}.jsonl`;
-            return `${index + 1}. [${summary.source}] ${formatNarrativeRange(summary.periodStart, summary.periodEnd)} ` +
-              `(sessionKey: ${summary.sessionId}, sessionLogPath: ${logPath})\n${summary.text}`;
-          }
-        );
+        const lines = summaries.map((summary, index) => {
+          const agentDir = currentAgentIdRef.value || "main";
+          const logPath = `~/.openclaw/agents/${agentDir}/sessions/${summary.sessionId}.jsonl`;
+          return (
+            `${index + 1}. [${summary.source}] ${formatNarrativeRange(summary.periodStart, summary.periodEnd)} ` +
+            `(sessionKey: ${summary.sessionId}, sessionLogPath: ${logPath})\n${summary.text}`
+          );
+        });
 
         return {
           content: [

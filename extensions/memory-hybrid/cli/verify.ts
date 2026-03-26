@@ -59,7 +59,7 @@ export function registerVerifyCommands(mem: Chainable, ctx: VerifyContext): void
     .option("--dry-run", "Print what would be merged without writing")
     .action(
       withExit(async (opts: { dryRun?: boolean }) => {
-        let result;
+        let result: InstallCliResult;
         try {
           result = await runInstall({ dryRun: !!opts.dryRun });
         } catch (err) {

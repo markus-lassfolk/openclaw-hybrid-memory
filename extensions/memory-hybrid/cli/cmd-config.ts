@@ -122,7 +122,7 @@ export function runConfigViewForCli(ctx: HandlerContext, sink: VerifyCliSink): v
       const out = getPluginConfigFromFile(configPath);
       if ("config" in out) rawCfg = out.config;
     }
-  } catch (e) {}
+  } catch {}
 
   // Helper to get raw enabled flag if set, otherwise fallback to parsed config
   const rawEnabled = (key: string, parsedVal: boolean) => {
@@ -155,7 +155,9 @@ export function runConfigViewForCli(ctx: HandlerContext, sink: VerifyCliSink): v
   log(`  Persona proposals: ${on(rawEnabled("personaProposals", cfg.personaProposals.enabled))}`);
   log(`  Self-correction: ${on(rawEnabled("selfCorrection", !!cfg.selfCorrection))}`);
   log(`  Self-extension (tool proposals): ${on(rawEnabled("selfExtension", cfg.selfExtension?.enabled ?? false))}`);
-  log(`  Crystallization (skill proposals): ${on(rawEnabled("crystallization", cfg.crystallization?.enabled ?? false))}`);
+  log(
+    `  Crystallization (skill proposals): ${on(rawEnabled("crystallization", cfg.crystallization?.enabled ?? false))}`,
+  );
   log(`  Extraction (multi-pass): ${on(rawEnabled("extraction", !!cfg.extraction?.extractionPasses))}`);
   log(`  Active task (ACTIVE-TASK.md): ${on(rawEnabled("activeTask", cfg.activeTask.enabled))}`);
   log(`  Frustration detection: ${on(rawEnabled("frustrationDetection", cfg.frustrationDetection.enabled))}`);
@@ -163,7 +165,9 @@ export function runConfigViewForCli(ctx: HandlerContext, sink: VerifyCliSink): v
   log(`  Tool effectiveness: ${on(rawEnabled("toolEffectiveness", cfg.toolEffectiveness.enabled))}`);
   log(`  Documents (MarkItDown): ${on(rawEnabled("documents", cfg.documents.enabled))}`);
   log(`  Provenance: ${on(rawEnabled("provenance", cfg.provenance.enabled))}`);
-  log(`  Error reporting: ${on(rawEnabled("errorReporting", cfg.errorReporting?.enabled ?? false))}`);
+  log(
+    `  Error reporting: ${on(rawEnabled("errorReporting", cfg.errorReporting?.enabled ?? false))} (consent: ${on(cfg.errorReporting?.consent ?? false)})`,
+  );
   log(`  Cost tracking: ${on(rawEnabled("costTracking", cfg.costTracking?.enabled ?? false))}`);
   log("");
 
