@@ -666,7 +666,8 @@ function toHandoffRefFromArtifact(artifact: OctaveTaskHandoffArtifact): ActiveTa
 }
 
 export function createOctaveTaskHandoffArtifact(signal: TaskSignal): OctaveTaskHandoffArtifact {
-  const canonical = buildCanonicalPayload(signal);
+  const normalizedSignal = JSON.parse(JSON.stringify(signal)) as TaskSignal;
+  const canonical = buildCanonicalPayload(normalizedSignal);
   const checksum = buildChecksum(canonical);
   return {
     schema: OCTAVE_TASK_HANDOFF_SCHEMA,
@@ -675,7 +676,7 @@ export function createOctaveTaskHandoffArtifact(signal: TaskSignal): OctaveTaskH
     artifactId: randomUUID(),
     canonical,
     checksum,
-    payload: signal,
+    payload: normalizedSignal,
     auditTrail: [
       {
         at: new Date().toISOString(),

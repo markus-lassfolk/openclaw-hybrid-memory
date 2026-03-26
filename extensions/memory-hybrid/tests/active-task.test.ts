@@ -1178,6 +1178,25 @@ describe("writeTaskSignal / readPendingSignals / deleteSignal", () => {
     const validated = validateOctaveTaskHandoffArtifact(tampered);
     expect(validated.valid).toBe(false);
   });
+
+  it("handles signals with explicit undefined values correctly after JSON roundtrip", async () => {
+    const signal: TaskSignal = {
+      agent: "test-agent",
+      taskRef: "test-task",
+      timestamp: "2026-02-25T07:48:00.000Z",
+      signal: "update",
+      summary: "Task update",
+      statusChange: undefined,
+      findings: undefined,
+    };
+    await writeTaskSignal("undefined-fields", signal, tmpDir);
+    const signals = await readPendingSignals(tmpDir);
+    expect(signals).toHaveLength(1);
+    expect(signals[0].agent).toBe("test-agent");
+    expect(signals[0].signal).toBe("update");
+    expect(signals[0]._handoff).toBeDefined();
+    expect(signals[0]._handoff?.schema).toBe(OCTAVE_TASK_HANDOFF_SCHEMA);
+  });
 });
 
 // ---------------------------------------------------------------------------
