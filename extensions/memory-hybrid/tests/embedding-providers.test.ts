@@ -1453,7 +1453,7 @@ describe("#385: ChainEmbeddingProvider does not report 404/401 config errors", (
   });
 });
 
-describe("#385: createEmbeddingProvider uses text-embedding-005 as default Google model", () => {
+describe("#385: createEmbeddingProvider uses gemini-embedding-001 as default Google model", () => {
   it("direct Google provider uses gemini-embedding-001 when no model specified", () => {
     const cfg: EmbeddingConfig = {
       provider: "google",
@@ -1464,7 +1464,7 @@ describe("#385: createEmbeddingProvider uses text-embedding-005 as default Googl
     };
     const provider = createEmbeddingProvider(cfg);
     expect(provider).toBeInstanceOf(Embeddings);
-    expect(provider.modelName).toBe("text-embedding-005");
+    expect(provider.modelName).toBe("gemini-embedding-001");
   });
 
   it("direct Google provider respects explicitly set model", () => {
@@ -1480,7 +1480,7 @@ describe("#385: createEmbeddingProvider uses text-embedding-005 as default Googl
     expect(provider.modelName).toBe("gemini-embedding-001");
   });
 
-  it("chain with Google uses text-embedding-005 by default", () => {
+  it("chain with Google uses gemini-embedding-001 by default", () => {
     const cfg: EmbeddingConfig = {
       provider: "openai",
       model: "text-embedding-3-small",

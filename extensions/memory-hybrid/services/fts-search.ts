@@ -42,6 +42,7 @@ const FTS_COLUMNS = ["text", "category", "entity", "tags", "key", "value"] as co
  */
 function escapeForFts5(raw: string): string {
   return raw
+    .replace(/\u0000/g, " ") // SQLite FTS5 terminates strings at NUL bytes
     .replace(/['"*();]/g, " ") // FTS5 special chars + semicolons
     .replace(/--/g, " ") // SQL line-comment marker
     .replace(/\b(AND|OR|NOT)\b/g, " ")

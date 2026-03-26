@@ -19,7 +19,7 @@ Quick answers to common questions. For **why** you’d want this plugin and what
 | **OpenAI** | `"openai"` | Default. `text-embedding-3-small` (1536d) or `text-embedding-3-large` (3072d). Requires `embedding.apiKey`. |
 | **Ollama** | `"ollama"` | Fully local, no API key needed. Any model supported by Ollama (e.g. `nomic-embed-text`, `mxbai-embed-large`). |
 | **ONNX** | `"onnx"` | Fully local, no API key needed. Requires `onnxruntime-node` (`npm i onnxruntime-node`). Models auto-downloaded from HuggingFace. |
-| **Google** | `"google"` | Uses Gemini API (`text-embedding-004`). Requires `llm.providers.google.apiKey` or `distill.apiKey`. |
+| **Google** | `"google"` | Uses Gemini API (`gemini-embedding-001`). Requires `llm.providers.google.apiKey` or `distill.apiKey`. |
 
 Set `embedding.provider` to select a provider. Use `embedding.preferredProviders` (ordered list) to enable automatic failover, e.g. `["ollama", "openai"]` tries Ollama first and falls back to OpenAI if Ollama is unavailable. See [LLM-AND-PROVIDERS.md](LLM-AND-PROVIDERS.md#embedding-providers) for full config examples.
 

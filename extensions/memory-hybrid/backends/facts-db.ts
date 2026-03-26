@@ -79,10 +79,11 @@ export class FactsDB extends BaseSqliteStore {
 
   /**
    * Sanitize query for FTS5 MATCH operator: strip FTS5 special characters and operators.
-   * Removes: NOT, AND, OR, NEAR (case-insensitive), *, :, {, }, (, ), and quotes.
+   * Removes: NOT, AND, OR, NEAR (case-insensitive), null bytes, *, :, {, }, (, ), and quotes.
    */
   private sanitizeFTS5Query(query: string): string {
     return query
+      .replace(/\u0000/g, " ")
       .replace(/['"*(){}:]/g, "")
       .replace(/\b(NOT|AND|OR|NEAR)\b/gi, "")
       .trim();
