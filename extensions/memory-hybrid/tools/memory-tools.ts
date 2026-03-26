@@ -539,11 +539,12 @@ export function registerMemoryTools(
           factsDb.refreshAccessedFacts([entry.id]);
           logRecall(true);
           const text = `[${entry.category}] ${entry.text}`;
+          const whyLine = entry.why ? `\nWhy: ${entry.why}` : "";
           return {
             content: [
               {
                 type: "text",
-                text: `Memory (id: ${entry.id}):\n\n${text}`,
+                text: `Memory (id: ${entry.id}):\n\n${text}${whyLine}`,
               },
             ],
             details: {
@@ -552,6 +553,7 @@ export function registerMemoryTools(
                 {
                   id: entry.id,
                   text: entry.text,
+                  why: entry.why ?? undefined,
                   category: entry.category,
                   entity: entry.entity,
                   importance: entry.importance,
@@ -827,7 +829,8 @@ export function registerMemoryTools(
           meta && meta.expansionSource === "graph"
             ? ` [graph+${meta.hopCount}hop${meta.linkPath ? `: ${meta.linkPath}` : ""}]`
             : "";
-        return `${i + 1}. [${r.backend}/${r.entry.category}] ${contradictedPrefix}${tamperedPrefix}${r.entry.text} (${(r.score * 100).toFixed(0)}%)${expansionSuffix}`;
+        const whySuffix = r.entry.why ? `\n   Why: ${r.entry.why}` : "";
+        return `${i + 1}. [${r.backend}/${r.entry.category}] ${contradictedPrefix}${tamperedPrefix}${r.entry.text} (${(r.score * 100).toFixed(0)}%)${expansionSuffix}${whySuffix}`;
       })
       .join("\n");
 
@@ -836,6 +839,7 @@ export function registerMemoryTools(
       return {
         id: r.entry.id,
         text: r.entry.text,
+        why: r.entry.why ?? undefined,
         category: r.entry.category,
         entity: r.entry.entity,
         importance: r.entry.importance,
@@ -1017,6 +1021,12 @@ export function registerMemoryTools(
         "Save important information in long-term memory. Stores to both structured (SQLite) and semantic (LanceDB) backends.",
       parameters: Type.Object({
         text: Type.String({ description: "Information to remember" }),
+        why: Type.Optional(
+          Type.String({
+            description:
+              "Optional lineage context: why this memory matters (decision rationale, file impact, blocker context, etc.).",
+          }),
+        ),
         importance: Type.Optional(
           Type.Number({
             description:
@@ -1080,6 +1090,7 @@ export function registerMemoryTools(
         try {
           const {
             text,
+            why,
             importance = 0.5,
             category = "other",
             entity: paramEntity,
@@ -1094,6 +1105,7 @@ export function registerMemoryTools(
             decayFreezeUntil: paramDecayFreezeUntil,
           } = params as {
             text: string;
+            why?: string;
             importance?: number;
             category?: MemoryCategory;
             entity?: string;
@@ -1214,6 +1226,7 @@ export function registerMemoryTools(
               const pointerValue = `${VAULT_POINTER_PREFIX}${parsed.service}:${parsed.type}`;
               const pointerEntry = factsDb.store({
                 text: pointerText,
+                why,
                 category: "technical" as MemoryCategory,
                 importance,
                 entity: "Credentials",
@@ -1234,6 +1247,7 @@ export function registerMemoryTools(
                 if (!(await vectorDb.hasDuplicate(vector))) {
                   await vectorDb.store({
                     text: pointerText,
+                    why,
                     vector,
                     importance,
                     category: "technical",
@@ -1363,6 +1377,7 @@ export function registerMemoryTools(
                     "update",
                     {
                       text: textToStore,
+                      why,
                       category,
                       importance: Math.max(importance, oldFact.importance),
                       entity: entity || oldFact.entity,
@@ -1380,6 +1395,7 @@ export function registerMemoryTools(
                   const nowSec = Math.floor(Date.now() / 1000);
                   const newEntry = factsDb.store({
                     text: textToStore,
+                    why,
                     category: category as MemoryCategory,
                     importance: Math.max(importance, oldFact.importance),
                     entity: entity || oldFact.entity,
@@ -1417,6 +1433,7 @@ export function registerMemoryTools(
                       if (!(await vectorDb.hasDuplicate(vector))) {
                         await vectorDb.store({
                           text: textToStore,
+                          why,
                           vector,
                           importance: finalImportance,
                           category,
@@ -1464,6 +1481,7 @@ export function registerMemoryTools(
                     details: {
                       action: "updated",
                       id: newEntry.id,
+                      why: why ?? undefined,
                       superseded: classification.targetId,
                       reason: classification.reason,
                       backend: "both",
@@ -1480,6 +1498,7 @@ export function registerMemoryTools(
             "store",
             {
               text: textToStore,
+              why,
               category,
               importance,
               entity,
@@ -1565,6 +1584,7 @@ export function registerMemoryTools(
           const storeSessionId = api.context?.sessionId ?? null;
           const entry = factsDb.store({
             text: textToStore,
+            why,
             category: category as MemoryCategory,
             importance,
             entity,
@@ -1596,6 +1616,7 @@ export function registerMemoryTools(
               if (!(await vectorDb.hasDuplicate(vector))) {
                 await vectorDb.store({
                   text: textToStore,
+                  why,
                   vector,
                   importance,
                   category,
@@ -1774,6 +1795,7 @@ export function registerMemoryTools(
             details: {
               action: supersedes?.trim() ? "updated" : "created",
               id: entry.id,
+              why: why ?? undefined,
               backend: "both",
               decayClass: entry.decayClass,
               ...(supersedes?.trim() ? { superseded: supersedes.trim() } : {}),

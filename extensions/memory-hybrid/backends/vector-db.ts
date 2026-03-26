@@ -166,6 +166,7 @@ export class VectorDB {
         {
           id: "__schema__",
           text: "",
+          why: "",
           vector: new Array(this.vectorDim).fill(0),
           importance: 0,
           category: "other",
@@ -341,6 +342,7 @@ export class VectorDB {
             {
               id: "__schema__",
               text: "",
+              why: "",
               vector: new Array(this.vectorDim).fill(0),
               importance: 0,
               category: "other",
@@ -387,6 +389,7 @@ export class VectorDB {
       {
         id: "__schema__",
         text: "",
+        why: "",
         vector: new Array(this.vectorDim).fill(0),
         importance: 0,
         category: "other",
@@ -591,6 +594,7 @@ export class VectorDB {
   /** Store a vector row. If id is provided (e.g. fact id from SQLite), it is used so search returns fact ids for classification. */
   async store(entry: {
     text: string;
+    why?: string | null;
     vector: number[];
     importance: number;
     category: string;
@@ -704,6 +708,7 @@ export class VectorDB {
             entry: {
               id: row.id as string,
               text: row.text as string,
+              why: ((row.why as string | null | undefined) ?? null) || null,
               category: row.category as MemoryCategory,
               importance: row.importance as number,
               // Fields NOT stored in LanceDB — partial/unknown placeholders.

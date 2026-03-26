@@ -34,7 +34,7 @@ export interface FtsSearchResult {
 // ---------------------------------------------------------------------------
 
 /** Indexed columns in facts_fts (in order). Used for snippet() column index. */
-const FTS_COLUMNS = ["text", "category", "entity", "tags", "key", "value"] as const;
+const FTS_COLUMNS = ["text", "category", "entity", "tags", "why", "key", "value"] as const;
 
 /**
  * Escape a raw user string so it can be used as a quoted FTS5 phrase.
@@ -131,7 +131,7 @@ export function searchFts(
     tagFilter?: string;
     /**
      * Restrict the FTS match to specific columns.
-     * Valid values: "text" | "category" | "entity" | "tags" | "key" | "value"
+     * Valid values: "text" | "category" | "entity" | "tags" | "why" | "key" | "value"
      * When omitted, all columns are searched.
      */
     columns?: Array<(typeof FTS_COLUMNS)[number]>;
@@ -194,12 +194,13 @@ export function searchFts(
            fts.rank,
            snippet(facts_fts, 0, '[', ']', '...', 16) AS snippet,
            (
-             CASE WHEN bm25(facts_fts, 1, 0, 0, 0, 0, 0) < 0 THEN 'text ' ELSE '' END ||
-             CASE WHEN bm25(facts_fts, 0, 1, 0, 0, 0, 0) < 0 THEN 'category ' ELSE '' END ||
-             CASE WHEN bm25(facts_fts, 0, 0, 1, 0, 0, 0) < 0 THEN 'entity ' ELSE '' END ||
-             CASE WHEN bm25(facts_fts, 0, 0, 0, 1, 0, 0) < 0 THEN 'tags ' ELSE '' END ||
-             CASE WHEN bm25(facts_fts, 0, 0, 0, 0, 1, 0) < 0 THEN 'key ' ELSE '' END ||
-             CASE WHEN bm25(facts_fts, 0, 0, 0, 0, 0, 1) < 0 THEN 'value' ELSE '' END
+             CASE WHEN bm25(facts_fts, 1, 0, 0, 0, 0, 0, 0) < 0 THEN 'text ' ELSE '' END ||
+             CASE WHEN bm25(facts_fts, 0, 1, 0, 0, 0, 0, 0) < 0 THEN 'category ' ELSE '' END ||
+             CASE WHEN bm25(facts_fts, 0, 0, 1, 0, 0, 0, 0) < 0 THEN 'entity ' ELSE '' END ||
+             CASE WHEN bm25(facts_fts, 0, 0, 0, 1, 0, 0, 0) < 0 THEN 'tags ' ELSE '' END ||
+             CASE WHEN bm25(facts_fts, 0, 0, 0, 0, 1, 0, 0) < 0 THEN 'why ' ELSE '' END ||
+             CASE WHEN bm25(facts_fts, 0, 0, 0, 0, 0, 1, 0) < 0 THEN 'key ' ELSE '' END ||
+             CASE WHEN bm25(facts_fts, 0, 0, 0, 0, 0, 0, 1) < 0 THEN 'value' ELSE '' END
            ) AS matchInfo
          FROM facts_fts fts
          JOIN facts f ON f.rowid = fts.rowid
@@ -246,8 +247,8 @@ export function rebuildFtsIndex(db: DatabaseSync): number {
 
   // Re-insert all facts.
   db.exec(`
-    INSERT INTO facts_fts(rowid, text, category, entity, tags, key, value)
-    SELECT rowid, text, category, entity, tags, key, value FROM facts
+    INSERT INTO facts_fts(rowid, text, category, entity, tags, why, key, value)
+    SELECT rowid, text, category, entity, tags, why, key, value FROM facts
   `);
 
   const row = db.prepare("SELECT COUNT(*) AS cnt FROM facts").get() as { cnt: number };
