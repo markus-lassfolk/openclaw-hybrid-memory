@@ -13,6 +13,8 @@ export type MemoryTier = "hot" | "warm" | "cold";
 export type MemoryEntry = {
   id: string;
   text: string;
+  /** Optional lineage context describing why this fact/decision was stored. */
+  why?: string | null;
   category: MemoryCategory;
   importance: number;
   entity: string | null;

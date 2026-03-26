@@ -73,6 +73,13 @@ describe("schema", () => {
     expect(row?.sql).toContain("tags");
   });
 
+  it("facts_fts schema includes why column", () => {
+    const row = rawDb(db).prepare(`SELECT sql FROM sqlite_master WHERE type='table' AND name='facts_fts'`).get() as
+      | { sql: string }
+      | undefined;
+    expect(row?.sql).toContain("why");
+  });
+
   it("insert trigger exists", () => {
     const row = rawDb(db).prepare(`SELECT name FROM sqlite_master WHERE type='trigger' AND name='facts_ai'`).get() as
       | { name: string }
@@ -185,6 +192,23 @@ describe("keyword search", () => {
       value: null,
       source: "conversation",
     });
+  });
+
+  it("searches lineage context in why column", () => {
+    db.store({
+      text: "Use transactional outbox pattern for event publishing",
+      why: "Direct publish in request path lost events during DB failover",
+      category: "decision",
+      importance: 0.9,
+      entity: "architecture",
+      key: null,
+      value: null,
+      source: "conversation",
+    });
+
+    const results = searchFts(rawDb(db), "lost events failover");
+    expect(results.length).toBeGreaterThan(0);
+    expect(results[0].text).toContain("transactional outbox pattern");
   });
 
   it("simple keyword returns matching fact", () => {

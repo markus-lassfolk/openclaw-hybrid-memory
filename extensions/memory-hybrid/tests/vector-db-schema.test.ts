@@ -409,6 +409,7 @@ describe("VectorDB issue #599 — search() returns partial metadata with conserv
     db = new VectorDB(lanceDir, DIM);
     await db.store({
       text: "user prefers TypeScript",
+      why: "Project build tooling and lint pipeline are already TypeScript-first",
       vector: [0.1, 0.2, 0.3],
       importance: 0.8,
       category: "preference",
@@ -431,6 +432,12 @@ describe("VectorDB issue #599 — search() returns partial metadata with conserv
     expect(entry.importance).toBe(0.8);
     expect(typeof entry.createdAt).toBe("number");
     expect(entry.createdAt).toBeGreaterThan(0);
+  });
+
+  it("search result includes persisted why lineage context", async () => {
+    const results = await db.search([0.1, 0.2, 0.3], 5, 0);
+    expect(results).toHaveLength(1);
+    expect(results[0].entry.why).toBe("Project build tooling and lint pipeline are already TypeScript-first");
   });
 
   it("search result confidence is 0 (conservative), not 1.0 (optimistic placeholder)", async () => {
