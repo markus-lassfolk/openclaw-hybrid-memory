@@ -733,9 +733,7 @@ export class VectorDB {
       // the common "No vector column found" case. Errors reaching here are genuinely
       // unexpected — we suppress them as KNOWN_SCHEMA_ERR to avoid spamming GlitchTip
       // when the LanceDB error message is unstable across versions.
-      const isKnownSchemaErr =
-        err instanceof Error && err.message.includes(LANCE_NO_VECTOR_COL_MSG);
-      if (!isKnownSchemaErr) {
+      if (!this.isKnownVectorSchemaError(err)) {
         capturePluginError(err as Error, {
           operation: "vector-search",
           severity: "info",
@@ -765,9 +763,7 @@ export class VectorDB {
       // Errors reaching here mean the dimension pre-check passed but LanceDB still
       // threw — we suppress "No vector column found" since it is an acceptable
       // transient error in this path. All other errors are reported normally.
-      const isKnownSchemaErr =
-        err instanceof Error && err.message.includes(LANCE_NO_VECTOR_COL_MSG);
-      if (!isKnownSchemaErr) {
+      if (!this.isKnownVectorSchemaError(err)) {
         capturePluginError(err as Error, {
           operation: "vector-duplicate-check",
           severity: "info",
