@@ -154,6 +154,9 @@ class AliasVectorIndex {
     try {
       await this.ensureInitialized();
       if (!this.schemaValid) return [];
+      // Dimension pre-check: prevent LanceDB "No vector column found" errors on fallback query mismatch
+      if (vector.length !== this.vectorDim) return [];
+
       const searchLimit = Math.max(limit * 6, 50);
       const results = await this.getTable().vectorSearch(vector).limit(searchLimit).toArray();
       const bestByFact = new Map<string, number>();
