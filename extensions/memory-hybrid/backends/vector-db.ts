@@ -608,7 +608,8 @@ export class VectorDB {
         await this.optimizePromise;
       }
       const id = entry.id ?? randomUUID();
-      await this.getTable().add([{ ...entry, id, createdAt: Math.floor(Date.now() / 1000) }]);
+      const why = entry.why ?? "";
+      await this.getTable().add([{ ...entry, id, why, createdAt: Math.floor(Date.now() / 1000) }]);
       this.storeCount++;
       if (!_optimizingByPath.get(this.dbPath) && this.storeCount >= VectorDB.AUTO_OPTIMIZE_INTERVAL) {
         this.storeCount = 0;
