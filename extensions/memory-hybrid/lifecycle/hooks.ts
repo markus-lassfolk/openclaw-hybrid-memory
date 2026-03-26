@@ -85,6 +85,61 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
 
   const onAgentEnd = (api: ClawdbotPluginApi) => {
     api.on("agent_end", async (event: unknown) => {
+      // Issue #742: extract tool names from messages and record via WorkflowTracker
+      // so crystallization can detect patterns from the traces table.
+      if (ctx.workflowTracker && ctx.cfg.workflowTracking?.enabled) {
+        try {
+          const ev = event as { messages?: unknown[]; success?: boolean };
+          const messages = ev?.messages ?? [];
+          const sessionId = sessionState.resolveSessionKey(event, api) ?? ctx.currentAgentIdRef.value ?? "default";
+
+          // Extract goal from first user message (used as trace label)
+          let goal = "unknown";
+          for (const msg of messages) {
+            if (msg && typeof msg === "object" && (msg as { role?: string }).role === "user") {
+              const content = (msg as { content?: unknown }).content;
+              if (typeof content === "string" && content.trim()) {
+                goal = content.trim().slice(0, 200);
+                break;
+              }
+            }
+          }
+
+          // Get session start time from sessionLastActivity (set during before_agent_start)
+          const sessionStartTime = sessionState.sessionLastActivity.get(sessionId);
+
+          // Push each tool call onto the tracker buffer with the actual session start time
+          for (const msg of messages) {
+            if (!msg || typeof msg !== "object") continue;
+            const msgObj = msg as Record<string, unknown>;
+            if (msgObj.role !== "assistant") continue;
+            const toolCalls = msgObj.tool_calls;
+            if (!Array.isArray(toolCalls)) continue;
+            for (const tc of toolCalls) {
+              if (!tc || typeof tc !== "object") continue;
+              const fn = (tc as Record<string, unknown>).function as Record<string, unknown> | undefined;
+              if (fn && typeof fn.name === "string") {
+                ctx.workflowTracker!.push(sessionId, fn.name, sessionStartTime);
+              }
+            }
+          }
+
+          // Flush buffer to workflow-traces.db
+          const outcome = ev?.success === true ? "success" : ev?.success === false ? "failure" : "unknown";
+          const traceId = ctx.workflowTracker!.flush(sessionId, goal, outcome);
+          if (traceId) {
+            api.logger.debug?.(`memory-hybrid: workflow trace recorded id=${traceId} session=${sessionId}`);
+          }
+        } catch (err) {
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+            subsystem: "workflow-tracking",
+            operation: "agent-end-track-workflow",
+            sessionId: sessionState.resolveSessionKey(event, api) ?? ctx.currentAgentIdRef.value ?? "default",
+          });
+          api.logger.warn(`memory-hybrid: workflow tracking failed: ${String(err)}`);
+        }
+      }
+
       await runCaptureStage(event, api, ctx, sessionState);
       const sessionId = sessionState.resolveSessionKey(event, api) ?? ctx.currentAgentIdRef.value ?? "default";
       try {

@@ -56,12 +56,15 @@ export class WorkflowTracker {
   /**
    * Push a tool name onto the given session's buffer.
    * No-op when tracking is disabled.
+   * @param sessionId - The session identifier
+   * @param toolName - The tool name to record
+   * @param startTime - Optional start time in milliseconds; if provided on first push, used as startedAt
    */
-  push(sessionId: string, toolName: string): void {
+  push(sessionId: string, toolName: string, startTime?: number): void {
     if (!this.cfg.enabled) return;
     let buf = this.sessions.get(sessionId);
     if (!buf) {
-      buf = { sessionId, toolCalls: [], startedAt: this.clock().getTime() };
+      buf = { sessionId, toolCalls: [], startedAt: startTime ?? this.clock().getTime() };
       this.sessions.set(sessionId, buf);
     }
     buf.toolCalls.push(toolName);

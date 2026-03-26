@@ -103,6 +103,37 @@ describe("WorkflowTracker.push", () => {
     tracker.push("sess", "exec");
     expect(tracker.getBuffer("sess")).toEqual([]);
   });
+
+  it("uses provided startTime for duration calculation", () => {
+    const store = makeMockStore();
+    const currentTime = new Date("2025-06-15T12:00:00Z");
+    const tracker = new WorkflowTracker(store, ENABLED_CFG, () => currentTime);
+
+    // Simulate session start time 5 seconds ago
+    const sessionStartTime = currentTime.getTime() - 5000;
+
+    tracker.push("sess", "exec", sessionStartTime);
+    tracker.push("sess", "read");
+    tracker.flush("sess", "test goal", "success");
+
+    expect(store.record).toHaveBeenCalledOnce();
+    const call = (store.record as ReturnType<typeof vi.fn>).mock.calls[0][0] as CreateWorkflowTraceInput;
+    expect(call.durationMs).toBe(5000);
+  });
+
+  it("uses current time when startTime is not provided", () => {
+    const store = makeMockStore();
+    const currentTime = new Date("2025-06-15T12:00:00Z");
+    const tracker = new WorkflowTracker(store, ENABLED_CFG, () => currentTime);
+
+    tracker.push("sess", "exec");
+    tracker.push("sess", "read");
+    tracker.flush("sess", "test goal", "success");
+
+    expect(store.record).toHaveBeenCalledOnce();
+    const call = (store.record as ReturnType<typeof vi.fn>).mock.calls[0][0] as CreateWorkflowTraceInput;
+    expect(call.durationMs).toBe(0);
+  });
 });
 
 // ---------------------------------------------------------------------------
