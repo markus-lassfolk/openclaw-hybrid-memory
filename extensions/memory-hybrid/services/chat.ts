@@ -202,8 +202,17 @@ export function is500Like(err: unknown): boolean {
   }
   if (err instanceof Error) {
     // Only match HTTP 5xx patterns — not generic "internal error" from JS
-    return /\bHTTP\s+5\d{2}\b|\b5\d{2}\s+(error|status)|status\s+5\d{2}|internal\s+server\s+error/i.test(err.message);
+    return /\bHTTP\s+5\d{2}\b|\b5\d{2}\s+(internal\s+)?(error|status)|status\s+5\d{2}|internal\s+server\s+error/i.test(
+      err.message,
+    );
   }
+  return false;
+}
+
+/** Returns true when the error is a 5xx server error — either directly or wrapped in LLMRetryError. */
+export function is500OrWrapped(err: Error): boolean {
+  if (is500Like(err)) return true;
+  if (err instanceof LLMRetryError && is500Like(err.cause)) return true;
   return false;
 }
 

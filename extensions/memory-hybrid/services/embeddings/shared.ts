@@ -4,7 +4,7 @@
 
 import { createHash } from "node:crypto";
 import { capturePluginError } from "../error-reporter.js";
-import { is404Like, is403Like, is401OrWrapped, is429OrWrapped, LLMRetryError } from "../chat.js";
+import { is404Like, is403Like, is401OrWrapped, is429OrWrapped, is500OrWrapped, LLMRetryError } from "../chat.js";
 import type { EmbeddingProvider } from "./types.js";
 import { AllEmbeddingProvidersFailed } from "./types.js";
 
@@ -118,13 +118,24 @@ export function isOllamaConnectionFailure(err: Error): boolean {
  */
 export function shouldSuppressEmbeddingError(err: unknown): boolean {
   if (!(err instanceof Error)) return false;
-  if (isConfigError(err) || is429OrWrapped(err) || isOllamaCircuitBreakerOpen(err) || isOllamaConnectionFailure(err)) {
+  if (
+    isConfigError(err) ||
+    is429OrWrapped(err) ||
+    is500OrWrapped(err) ||
+    isOllamaCircuitBreakerOpen(err) ||
+    isOllamaConnectionFailure(err)
+  ) {
     return true;
   }
   if (err instanceof AllEmbeddingProvidersFailed) {
     if (err.causes.length === 0) return false; // unknown state — report
     return err.causes.every(
-      (c) => isConfigError(c) || is429OrWrapped(c) || isOllamaCircuitBreakerOpen(c) || isOllamaConnectionFailure(c),
+      (c) =>
+        isConfigError(c) ||
+        is429OrWrapped(c) ||
+        is500OrWrapped(c) ||
+        isOllamaCircuitBreakerOpen(c) ||
+        isOllamaConnectionFailure(c),
     );
   }
   return false;
