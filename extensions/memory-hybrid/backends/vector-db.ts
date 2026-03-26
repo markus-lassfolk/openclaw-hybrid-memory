@@ -735,9 +735,11 @@ export class VectorDB {
         })
         .filter((r) => r.score >= minScore);
     } catch (err) {
-      const isKnownSchemaErr =
-        !this.schemaValid && err instanceof Error && err.message.includes(LANCE_NO_VECTOR_COL_MSG);
-      if (!isKnownSchemaErr) {
+      // The dimension pre-check (vector.length !== this.vectorDim) above already prevents
+      // the common "No vector column found" case. Errors reaching here are genuinely
+      // unexpected — we suppress them as KNOWN_SCHEMA_ERR to avoid spamming GlitchTip
+      // when the LanceDB error message is unstable across versions.
+      if (!this.isKnownVectorSchemaError(err)) {
         capturePluginError(err as Error, {
           operation: "vector-search",
           severity: "info",
@@ -764,9 +766,10 @@ export class VectorDB {
       const score = 1 / (1 + (results[0]._distance ?? 0));
       return score >= threshold;
     } catch (err) {
-      const isKnownSchemaErr =
-        !this.schemaValid && err instanceof Error && err.message.includes(LANCE_NO_VECTOR_COL_MSG);
-      if (!isKnownSchemaErr) {
+      // Errors reaching here mean the dimension pre-check passed but LanceDB still
+      // threw — we suppress "No vector column found" since it is an acceptable
+      // transient error in this path. All other errors are reported normally.
+      if (!this.isKnownVectorSchemaError(err)) {
         capturePluginError(err as Error, {
           operation: "vector-duplicate-check",
           severity: "info",
