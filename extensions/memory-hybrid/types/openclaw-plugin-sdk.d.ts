@@ -3,10 +3,6 @@
  * The actual implementation is provided by the OpenClaw runtime at runtime.
  */
 declare module "openclaw/plugin-sdk" {
-  import type { TSchema } from "@sinclair/typebox";
-
-  export function stringEnum<T extends readonly string[]>(values: T): TSchema;
-
   type CliProgram = {
     command: (name: string) => CliProgram;
     description: (d: string) => CliProgram;

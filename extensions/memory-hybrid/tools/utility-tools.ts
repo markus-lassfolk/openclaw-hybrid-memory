@@ -1,6 +1,6 @@
 import { Type } from "@sinclair/typebox";
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk";
-import { stringEnum } from "openclaw/plugin-sdk";
+import { stringEnum } from "../utils/string-enum.js";
 import type OpenAI from "openai";
 
 import type { FactsDB } from "../backends/facts-db.js";

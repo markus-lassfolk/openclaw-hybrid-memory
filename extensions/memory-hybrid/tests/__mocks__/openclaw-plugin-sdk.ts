@@ -1,13 +1,7 @@
-import { Type } from "@sinclair/typebox";
-
 /**
  * Mock for openclaw/plugin-sdk — provides just the exports
  * that index.ts actually uses so tests can import the module.
  */
-
-export function stringEnum<T extends readonly string[]>(values: T) {
-  return Type.Union(values.map((v) => Type.Literal(v)));
-}
 
 /** CLI program type for registerCli — use any for action callback to accept Commander-style handlers. */
 type CliProgram = {
