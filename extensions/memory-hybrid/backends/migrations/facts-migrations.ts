@@ -856,7 +856,9 @@ function migratePreserveColumns(db: DatabaseSync): void {
   const colNames = new Set(cols.map((c) => c.name));
   if (!colNames.has("preserve_until")) {
     db.exec("ALTER TABLE facts ADD COLUMN preserve_until INTEGER");
-    db.exec("CREATE INDEX IF NOT EXISTS idx_facts_preserve_until ON facts(preserve_until) WHERE preserve_until IS NOT NULL");
+    db.exec(
+      "CREATE INDEX IF NOT EXISTS idx_facts_preserve_until ON facts(preserve_until) WHERE preserve_until IS NOT NULL",
+    );
   }
   if (!colNames.has("preserve_tags")) {
     db.exec("ALTER TABLE facts ADD COLUMN preserve_tags TEXT");
@@ -880,6 +882,50 @@ function migrateTrimMetricsTable(db: DatabaseSync): void {
   `);
   db.exec("CREATE INDEX IF NOT EXISTS idx_trim_metrics_trimmed_at ON trim_metrics(trimmed_at)");
   db.exec("CREATE INDEX IF NOT EXISTS idx_trim_metrics_fact_id ON trim_metrics(fact_id)");
+}
+
+function migrateEpisodesTable(db: DatabaseSync): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS episodes (
+      id TEXT PRIMARY KEY,
+      event TEXT NOT NULL,
+      outcome TEXT NOT NULL CHECK(outcome IN ('success', 'failure', 'partial', 'unknown')),
+      timestamp INTEGER NOT NULL,
+      duration INTEGER,
+      context TEXT,
+      related_fact_ids TEXT,
+      procedure_id TEXT,
+      importance REAL NOT NULL DEFAULT 0.5,
+      decay_class TEXT NOT NULL DEFAULT 'normal',
+      scope TEXT NOT NULL DEFAULT 'global',
+      agent_id TEXT,
+      user_id TEXT,
+      session_id TEXT,
+      tags TEXT,
+      created_at INTEGER NOT NULL,
+      verified_at INTEGER
+    )
+  `);
+  db.exec("CREATE INDEX IF NOT EXISTS idx_episodes_outcome ON episodes(outcome)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_episodes_timestamp ON episodes(timestamp DESC)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_episodes_procedure ON episodes(procedure_id)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_episodes_session ON episodes(session_id)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_episodes_outcome_timestamp ON episodes(outcome, timestamp DESC)");
+
+  db.exec(`
+    CREATE VIRTUAL TABLE IF NOT EXISTS episodes_fts USING fts5(
+      event,
+      context,
+      tokenize='porter unicode61'
+    )
+  `);
+  db.exec(`
+    CREATE TRIGGER IF NOT EXISTS episodes_fts_ai AFTER INSERT ON episodes BEGIN
+      INSERT INTO episodes_fts(rowid, event, context) VALUES (new.rowid, new.event, new.context);
+    END;
+
+
+  `);
 }
 
 // ---------------------------------------------------------------------------
@@ -961,4 +1007,7 @@ export function runFactsMigrations(db: DatabaseSync): void {
   // Token-budget tiered trimming (Issue #792)
   migratePreserveColumns(db);
   migrateTrimMetricsTable(db);
+
+  // Episodic memory (Issue #781)
+  migrateEpisodesTable(db);
 }

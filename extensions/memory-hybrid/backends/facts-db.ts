@@ -9,7 +9,15 @@ import { randomUUID } from "node:crypto";
 
 import type { MemoryCategory, DecayClass } from "../config.js";
 import { TTL_DEFAULTS } from "../config.js";
-import type { MemoryEntry, ProcedureEntry, SearchResult, MemoryTier, ScopeFilter, EpisodeEntry, EpisodeOutcome } from "../types/memory.js";
+import type {
+  MemoryEntry,
+  ProcedureEntry,
+  SearchResult,
+  MemoryTier,
+  ScopeFilter,
+  EpisodeEntry,
+  EpisodeOutcome,
+} from "../types/memory.js";
 import { normalizedHash, serializeTags, parseTags } from "../utils/tags.js";
 import { calculateExpiry, classifyDecay } from "../utils/decay.js";
 import { applyConsolidationRetrievalControls } from "../utils/consolidation-controls.js";
@@ -638,55 +646,6 @@ export class FactsDB extends BaseSqliteStore {
     `);
     this.liveDb.exec("CREATE INDEX IF NOT EXISTS idx_recall_log_time ON recall_log(occurred_at)");
     this.liveDb.exec("CREATE INDEX IF NOT EXISTS idx_recall_log_hit ON recall_log(hit)");
-  }
-
-  /** Create episodes table for structured episodic memory (#781). */
-  private migrateEpisodesTable(): void {
-    this.liveDb.exec(`
-      CREATE TABLE IF NOT EXISTS episodes (
-        id TEXT PRIMARY KEY,
-        event TEXT NOT NULL,
-        outcome TEXT NOT NULL CHECK(outcome IN ('success', 'failure', 'partial', 'unknown')),
-        timestamp INTEGER NOT NULL,
-        duration INTEGER,
-        context TEXT,
-        related_fact_ids TEXT,
-        procedure_id TEXT,
-        importance REAL NOT NULL DEFAULT 0.5,
-        decay_class TEXT NOT NULL DEFAULT 'normal',
-        scope TEXT NOT NULL DEFAULT 'global',
-        agent_id TEXT,
-        user_id TEXT,
-        session_id TEXT,
-        tags TEXT,
-        created_at INTEGER NOT NULL,
-        verified_at INTEGER
-      )
-    `);
-    // Indexed columns for fast outcome filtering + time-range queries
-    this.liveDb.exec("CREATE INDEX IF NOT EXISTS idx_episodes_outcome ON episodes(outcome)");
-    this.liveDb.exec("CREATE INDEX IF NOT EXISTS idx_episodes_timestamp ON episodes(timestamp DESC)");
-    this.liveDb.exec("CREATE INDEX IF NOT EXISTS idx_episodes_procedure ON episodes(procedure_id)");
-    this.liveDb.exec("CREATE INDEX IF NOT EXISTS idx_episodes_session ON episodes(session_id)");
-    this.liveDb.exec(
-      "CREATE INDEX IF NOT EXISTS idx_episodes_outcome_timestamp ON episodes(outcome, timestamp DESC)",
-    );
-
-    // FTS5 virtual table for semantic search over event + context
-    this.liveDb.exec(`
-      CREATE VIRTUAL TABLE IF NOT EXISTS episodes_fts USING fts5(
-        event,
-        context,
-        tokenize='porter unicode61'
-      )
-    `);
-    this.liveDb.exec(`
-      CREATE TRIGGER IF NOT EXISTS episodes_fts_ai AFTER INSERT ON episodes BEGIN
-        INSERT INTO episodes_fts(rowid, event, context) VALUES (new.rowid, new.event, new.context);
-      END;
-
-
-    `);
   }
 
   /** Add embedding_model column to facts for tracking vector provenance (Issue #153). */
@@ -1693,7 +1652,10 @@ export class FactsDB extends BaseSqliteStore {
    *
    * Returns a summary of what would be / was trimmed.
    */
-  trimToBudget(tokenBudget: number, simulate = false): {
+  trimToBudget(
+    tokenBudget: number,
+    simulate = false,
+  ): {
     simulate: boolean;
     budget: number;
     beforeTokens: number;
@@ -1719,16 +1681,16 @@ export class FactsDB extends BaseSqliteStore {
            AND (f.expires_at IS NULL OR f.expires_at > ?)`,
       )
       .all(nowSec) as Array<{
-        id: string;
-        text: string;
-        importance: number;
-        created_at: number;
-        preserve_until: number | null;
-        preserve_tags: string | null;
-        confidence: number;
-        tags: string | null;
-        is_verified: number;
-      }>;
+      id: string;
+      text: string;
+      importance: number;
+      created_at: number;
+      preserve_until: number | null;
+      preserve_tags: string | null;
+      confidence: number;
+      tags: string | null;
+      is_verified: number;
+    }>;
 
     const parsePreserveTags = (raw: string | null): string[] => {
       if (!raw) return [];
@@ -1778,17 +1740,15 @@ export class FactsDB extends BaseSqliteStore {
     // Sort P3 and P2 by importance ASC (trim least-important first)
     p3.sort((a, b) => a.importance - b.importance);
     p2.sort((a, b) => a.importance - b.importance);
-    // P1 sorted by importance DESC (trim least-important first within P1)
-    p1.sort((a, b) => b.importance - a.importance);
+    // P1 sorted by importance ASC (trim least-important first within P1)
+    p1.sort((a, b) => a.importance - b.importance);
 
     // Calculate current token count (P0 + P1 + P2 + P3)
-    const currentTokens = [...p0, ...p1, ...p2, ...p3].reduce(
-      (sum, f) => sum + tokenEstimate(f.text),
-      0,
-    );
+    const currentTokens = [...p0, ...p1, ...p2, ...p3].reduce((sum, f) => sum + tokenEstimate(f.text), 0);
 
-    if (currentTokens <= tokenBudget || simulate) {
-      const trimmed: Array<{ id: string; textPreview: string; tier: string; importance: number; tokenCost: number }> = [];
+    if (currentTokens <= tokenBudget) {
+      const trimmed: Array<{ id: string; textPreview: string; tier: string; importance: number; tokenCost: number }> =
+        [];
       return {
         simulate,
         budget: tokenBudget,
@@ -1812,17 +1772,31 @@ export class FactsDB extends BaseSqliteStore {
       const cost = tokenEstimate(fact.text);
       remainingTokens -= cost;
       const preview = fact.text.length > 80 ? fact.text.slice(0, 80) + "…" : fact.text;
-      trimmed.push({ id: fact.id, textPreview: preview, tier: fact.tier, importance: fact.importance, tokenCost: cost });
+      trimmed.push({
+        id: fact.id,
+        textPreview: preview,
+        tier: fact.tier,
+        importance: fact.importance,
+        tokenCost: cost,
+      });
       if (!simulate) {
-        this.liveDb
-          .prepare(`UPDATE facts SET superseded_at = ? WHERE id = ?`)
-          .run(nowSec, fact.id);
+        this.liveDb.prepare(`UPDATE facts SET superseded_at = ? WHERE id = ?`).run(nowSec, fact.id);
         this.liveDb
           .prepare(
             `INSERT INTO trim_metrics (trimmed_at, fact_id, fact_text_preview, tier, importance, preserve_until, token_cost, budget_before, budget_after)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           )
-          .run(nowSec, fact.id, fact.text.slice(0, 200), fact.tier, fact.importance, null, cost, currentTokens, tokenBudget);
+          .run(
+            nowSec,
+            fact.id,
+            fact.text.slice(0, 200),
+            fact.tier,
+            fact.importance,
+            null,
+            cost,
+            currentTokens,
+            tokenBudget,
+          );
       }
     }
 
@@ -1907,16 +1881,16 @@ export class FactsDB extends BaseSqliteStore {
            AND (f.expires_at IS NULL OR f.expires_at > ?)`,
       )
       .all(nowSec) as Array<{
-        id: string;
-        text: string;
-        importance: number;
-        created_at: number;
-        preserve_until: number | null;
-        preserve_tags: string | null;
-        confidence: number;
-        tags: string | null;
-        is_verified: number;
-      }>;
+      id: string;
+      text: string;
+      importance: number;
+      created_at: number;
+      preserve_until: number | null;
+      preserve_tags: string | null;
+      confidence: number;
+      tags: string | null;
+      is_verified: number;
+    }>;
 
     const parsePreserveTags = (raw: string | null): string[] => {
       if (!raw) return [];
@@ -1963,7 +1937,6 @@ export class FactsDB extends BaseSqliteStore {
     const totalTokens = byTier.p0 + byTier.p1 + byTier.p2 + byTier.p3;
     return { totalTokens, budget, overflow: Math.max(0, totalTokens - budget), byTier, factCount };
   }
-
 
   search(
     query: string,
@@ -2374,7 +2347,7 @@ export class FactsDB extends BaseSqliteStore {
         if (!raw) return null;
         try {
           const parsed = JSON.parse(raw);
-          return Array.isArray(parsed) ? parsed.filter((q): q is string => typeof q === 'string') : null;
+          return Array.isArray(parsed) ? parsed.filter((q): q is string => typeof q === "string") : null;
         } catch {
           return null;
         }
@@ -4917,14 +4890,16 @@ export class FactsDB extends BaseSqliteStore {
    * Search episodes with optional outcome filter and time-range filter.
    * Returns episodes ordered by timestamp DESC (most recent first).
    */
-  searchEpisodes(opts: {
-    outcome?: EpisodeOutcome[];
-    since?: number;
-    until?: number;
-    procedureId?: string;
-    query?: string;
-    limit?: number;
-  } = {}): EpisodeEntry[] {
+  searchEpisodes(
+    opts: {
+      outcome?: EpisodeOutcome[];
+      since?: number;
+      until?: number;
+      procedureId?: string;
+      query?: string;
+      limit?: number;
+    } = {},
+  ): EpisodeEntry[] {
     const { outcome, since, until, procedureId, query, limit = 50 } = opts;
     const parts: string[] = [];
     const params: (string | number)[] = [];
@@ -4961,7 +4936,7 @@ export class FactsDB extends BaseSqliteStore {
         .join(" OR ");
       if (words) {
         // Use a subquery to get matching episode ids via FTS, then filter + join
-        parts.push(`id IN (SELECT episodes.rowid FROM episodes_fts WHERE episodes_fts MATCH '${words}')`);
+        parts.push(`rowid IN (SELECT rowid FROM episodes_fts WHERE episodes_fts MATCH '${words}')`);
       }
     }
 
@@ -4975,9 +4950,7 @@ export class FactsDB extends BaseSqliteStore {
    * Count episodes by outcome for statistics.
    */
   episodesCount(): { total: number; success: number; failure: number; partial: number; unknown: number } {
-    const total = (
-      this.liveDb.prepare("SELECT COUNT(*) as cnt FROM episodes").get() as { cnt: number }
-    )?.cnt ?? 0;
+    const total = (this.liveDb.prepare("SELECT COUNT(*) as cnt FROM episodes").get() as { cnt: number })?.cnt ?? 0;
     const byOutcome = this.liveDb
       .prepare("SELECT outcome, COUNT(*) as cnt FROM episodes GROUP BY outcome")
       .all() as Array<{ outcome: string; cnt: number }>;
