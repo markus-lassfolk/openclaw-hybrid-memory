@@ -160,9 +160,7 @@ export async function testAccuracy(
   const offLog = new EventLog(join(fixture.tmpDir, "off.db"));
   const offEvents = searchEventsByContent(offLog, [randomUUID()], "preference summaries", 5);
   const featureOff =
-    offEvents.length > 0
-      ? `Found ${offEvents.length} episodes`
-      : "No relevant episodes found (episodes disabled).";
+    offEvents.length > 0 ? `Found ${offEvents.length} episodes` : "No relevant episodes found (episodes disabled).";
   offLog.close();
   rmSync(fixture.tmpDir, { recursive: true, force: true });
 

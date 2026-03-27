@@ -281,12 +281,7 @@ export class HybridMemoryContextEngine implements MinimalContextEngine {
       //    and creates episode records for significant events.
       let episodesCreated = 0;
       try {
-        episodesCreated = await autoCaptureEpisodes(
-          factsDb,
-          _params.sessionFile,
-          _params.sessionId,
-          logger,
-        );
+        episodesCreated = await autoCaptureEpisodes(factsDb, _params.sessionFile, _params.sessionId, logger);
         if (episodesCreated > 0) {
           logger.info?.(`memory-hybrid: auto-captured ${episodesCreated} episode(s) from session compaction`);
         }
@@ -329,7 +324,9 @@ export class HybridMemoryContextEngine implements MinimalContextEngine {
         // Non-fatal
       }
 
-      logger.debug?.(`memory-hybrid: context-engine compact — pre-compaction flush done, sessionFacts≈${sessionFacts}, episodes≈${episodesCreated}`);
+      logger.debug?.(
+        `memory-hybrid: context-engine compact — pre-compaction flush done, sessionFacts≈${sessionFacts}, episodes≈${episodesCreated}`,
+      );
       return {
         ok: true,
         compacted: false,

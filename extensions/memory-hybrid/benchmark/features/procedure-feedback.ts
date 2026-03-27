@@ -65,9 +65,7 @@ function createFixture(): ProcFixture {
     },
     {
       taskPattern: "check nibe system status",
-      recipeJson: JSON.stringify([
-        { tool: "exec", args: { command: "nibe-cli status" }, summary: "use CLI" },
-      ]),
+      recipeJson: JSON.stringify([{ tool: "exec", args: { command: "nibe-cli status" }, summary: "use CLI" }]),
       procedureType: "positive" as const,
       successCount: 12,
       failureCount: 2,
@@ -122,9 +120,7 @@ function recallBestProcedureVersioned(
 ): { taskPattern: string; recipe: unknown[]; confidence: number; successCount: number } | null {
   // Filter to positive procedures matching query
   const matches = procedures.filter(
-    (p) =>
-      p.procedureType === "positive" &&
-      p.taskPattern.toLowerCase().includes(query.toLowerCase()),
+    (p) => p.procedureType === "positive" && p.taskPattern.toLowerCase().includes(query.toLowerCase()),
   );
   if (matches.length === 0) return null;
 
@@ -152,9 +148,7 @@ function recallBestProcedureFlat(
   query: string,
 ): { taskPattern: string; recipe: unknown[]; confidence: number } | null {
   const match = procedures.find(
-    (p) =>
-      p.procedureType === "positive" &&
-      p.taskPattern.toLowerCase().includes(query.toLowerCase()),
+    (p) => p.procedureType === "positive" && p.taskPattern.toLowerCase().includes(query.toLowerCase()),
   );
   if (!match) return null;
   return {

@@ -47,7 +47,15 @@ function createFixture(): FreqFixture {
   ];
 
   for (const e of entities) {
-    db.store({ text: e.text, category: "entity", importance: 0.8, entity: e.entity, key: e.key, value: e.value, source: "benchmark-seed" });
+    db.store({
+      text: e.text,
+      category: "entity",
+      importance: 0.8,
+      entity: e.entity,
+      key: e.key,
+      value: e.value,
+      source: "benchmark-seed",
+    });
   }
 
   const knownEntities = db.getKnownEntities();
@@ -135,10 +143,7 @@ export async function testAccuracy(
   const prompt = "User mentions Nibe, TypeScript, and Markus in conversation. Which entities were mentioned?";
 
   // Feature ON: track entity mentions
-  const onMentions = fixture.db.extractEntitiesFromText(
-    fixture.sampleTexts.join(" "),
-    fixture.knownEntities,
-  );
+  const onMentions = fixture.db.extractEntitiesFromText(fixture.sampleTexts.join(" "), fixture.knownEntities);
   const featureOn = `Found ${onMentions.length} entity mentions: ${onMentions.map((m) => m.entity).join(", ")}`;
 
   // Feature OFF: no entity tracking (just split words)

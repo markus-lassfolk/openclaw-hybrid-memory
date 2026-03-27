@@ -15,7 +15,7 @@ import type {
   SearchResult,
   MemoryTier,
   ScopeFilter,
-  EpisodeEntry,
+  Episode,
   EpisodeOutcome,
 } from "../types/memory.js";
 import { normalizedHash, serializeTags, parseTags } from "../utils/tags.js";
@@ -3262,8 +3262,86 @@ export class FactsDB extends BaseSqliteStore {
 
   // ---------- Procedural memory: procedures table CRUD ----------
 
+  /**
+   * Load version-level feedback data for a procedure and merge into ProcedureEntry.
+   * Called after the base row is mapped so we keep procedureRowToEntry pure.
+   */
+  private enrichProcedureWithFeedback(base: ProcedureEntry): ProcedureEntry {
+    try {
+      // Always compute lastOutcome from procedure's own timestamps (available even without version records)
+      let lastOutcome: "success" | "failure" | "unknown" = "unknown";
+      if (base.lastFailed !== null && base.lastValidated !== null) {
+        lastOutcome = base.lastFailed > base.lastValidated ? "failure" : "success";
+      } else if (base.lastFailed !== null) {
+        lastOutcome = "failure";
+      } else if (base.lastValidated !== null) {
+        lastOutcome = "success";
+      }
+
+      const versionRow = this.liveDb
+        .prepare(
+          `SELECT pv.version_number, pv.success_count, pv.failure_count, pv.avoidance_notes
+           FROM procedure_versions pv
+           WHERE pv.procedure_id = ?
+           ORDER BY pv.version_number DESC
+           LIMIT 1`,
+        )
+        .get(base.id) as
+        | {
+            version_number: number;
+            success_count: number;
+            failure_count: number;
+            avoidance_notes: string | null;
+          }
+        | undefined;
+
+      if (!versionRow) {
+        // No version records yet — return base with lastOutcome computed from procedure timestamps
+        return { ...base, lastOutcome };
+      }
+
+      // Aggregate all successes and failures across ALL version records to compute overall successRate.
+      // procedure_versions tracks per-version outcomes; procedure table tracks what was
+      // validated/failed before version tracking started.
+      const versionCounts = this.liveDb
+        .prepare(
+          `SELECT COALESCE(SUM(success_count), 0) as total_succ,
+                  COALESCE(SUM(failure_count), 0) as total_fail
+             FROM procedure_versions
+             WHERE procedure_id = ?`,
+        )
+        .get(base.id) as { total_succ: number; total_fail: number };
+
+      const totalSuccess = base.successCount + versionCounts.total_succ;
+      const totalFailure = base.failureCount + versionCounts.total_fail;
+      const total = totalSuccess + totalFailure;
+      const successRate = total > 0 ? totalSuccess / total : 0;
+
+      // Merge avoidance notes across all versions
+      const allNotes = new Set<string>(base.avoidanceNotes ?? []);
+      if (versionRow.avoidance_notes) {
+        try {
+          const notes = JSON.parse(versionRow.avoidance_notes) as string[];
+          notes.forEach((n) => allNotes.add(n));
+        } catch {
+          // ignore parse errors
+        }
+      }
+
+      return {
+        ...base,
+        version: versionRow.version_number,
+        successRate,
+        avoidanceNotes: allNotes.size > 0 ? Array.from(allNotes) : undefined,
+        lastOutcome,
+      };
+    } catch {
+      return base;
+    }
+  }
+
   private procedureRowToEntry(row: Record<string, unknown>): ProcedureEntry {
-    return {
+    const base: ProcedureEntry = {
       id: row.id as string,
       taskPattern: row.task_pattern as string,
       recipeJson: row.recipe_json as string,
@@ -3300,6 +3378,244 @@ export class FactsDB extends BaseSqliteStore {
       scope: (row.scope as string) ?? "global",
       scopeTarget: (row.scope_target as string) ?? null,
     };
+    return this.enrichProcedureWithFeedback(base);
+  }
+
+  // ---------- Procedure feedback loop (#782) ----------
+
+  /**
+   * Record feedback (success or failure) for a procedure.
+   *
+   * On failure:
+   *   - Inserts a failure record in `procedure_failures`.
+   *   - Upserts a new or existing row in `procedure_versions` (increments version).
+   *   - Creates an episode record via `recordEpisode()`.
+   *   - Updates `last_failed` on the procedure.
+   *
+   * On success:
+   *   - Upserts a new or existing row in `procedure_versions` (increments success count).
+   *   - Updates `last_validated` on the procedure.
+   *   - Updates procedure_type to 'positive'.
+   *
+   * Returns the procedure entry with enriched feedback fields, or null if the procedure
+   * does not exist.
+   */
+  procedureFeedback(input: {
+    procedureId: string;
+    success: boolean;
+    context?: string;
+    failedAtStep?: number;
+    tags?: string[];
+    duration?: number;
+    scope?: "global" | "user" | "agent" | "session";
+    scopeTarget?: string | null;
+    agentId?: string;
+    userId?: string;
+    sessionId?: string;
+  }): ProcedureEntry | null {
+    const nowSec = Math.floor(Date.now() / 1000);
+    const proc = this.getProcedureById(input.procedureId);
+    if (!proc) return null;
+
+    if (input.success) {
+      // Upsert version record with +1 success
+      const existingVer = this.liveDb
+        .prepare(
+          "SELECT id, success_count FROM procedure_versions WHERE procedure_id = ? ORDER BY version_number DESC LIMIT 1",
+        )
+        .get(input.procedureId) as { id: string; success_count: number } | undefined;
+
+      if (existingVer) {
+        this.liveDb
+          .prepare("UPDATE procedure_versions SET success_count = success_count + 1 WHERE id = ?")
+          .run(existingVer.id);
+      } else {
+        // First version: create version 1 with 1 success
+        this.liveDb
+          .prepare(
+            `INSERT INTO procedure_versions (id, procedure_id, version_number, success_count, failure_count, avoidance_notes, created_at)
+             VALUES (?, ?, 1, 1, 0, NULL, ?)`,
+          )
+          .run(randomUUID(), input.procedureId, nowSec);
+      }
+
+      // Update procedure record
+      const newSuccessCount = proc.successCount + 1;
+      const newConfidence = Math.max(0.1, Math.min(0.95, 0.5 + 0.1 * (newSuccessCount - proc.failureCount)));
+      this.liveDb
+        .prepare(
+          `UPDATE procedures SET success_count = ?, last_validated = ?, confidence = ?, procedure_type = 'positive', updated_at = ? WHERE id = ?`,
+        )
+        .run(newSuccessCount, nowSec, newConfidence, nowSec, input.procedureId);
+    } else {
+      // Failure: insert new version record (one version per failure event) and failure record
+      const latestVer = this.liveDb
+        .prepare(
+          "SELECT version_number FROM procedure_versions WHERE procedure_id = ? ORDER BY version_number DESC LIMIT 1",
+        )
+        .get(input.procedureId) as { version_number: number } | undefined;
+
+      const newVersionNumber = (latestVer?.version_number ?? 0) + 1;
+
+      // Build avoidance note from context
+      const avoidanceNotes: string[] = [];
+      if (input.context) {
+        const note =
+          input.failedAtStep !== undefined
+            ? `v${newVersionNumber} step ${input.failedAtStep}: ${input.context}`
+            : `v${newVersionNumber}: ${input.context}`;
+        avoidanceNotes.push(note);
+      }
+
+      // Merge with existing avoidance notes from previous versions
+      const prevNotes = this.liveDb
+        .prepare("SELECT avoidance_notes FROM procedure_versions WHERE procedure_id = ?")
+        .all(input.procedureId) as Array<{ avoidance_notes: string | null }>;
+      for (const row of prevNotes) {
+        if (row.avoidance_notes) {
+          try {
+            const existing = JSON.parse(row.avoidance_notes) as string[];
+            avoidanceNotes.push(...existing);
+          } catch {
+            // ignore
+          }
+        }
+      }
+
+      const notesJson = avoidanceNotes.length > 0 ? JSON.stringify(avoidanceNotes) : null;
+
+      // One version record per failure event
+      this.liveDb
+        .prepare(
+          `INSERT INTO procedure_versions (id, procedure_id, version_number, success_count, failure_count, avoidance_notes, created_at)
+           VALUES (?, ?, ?, 0, 1, ?, ?)`,
+        )
+        .run(randomUUID(), input.procedureId, newVersionNumber, notesJson, nowSec);
+
+      // Insert individual failure record
+      this.liveDb
+        .prepare(
+          `INSERT INTO procedure_failures (id, procedure_id, version_number, timestamp, context, failed_at_step)
+           VALUES (?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          randomUUID(),
+          input.procedureId,
+          newVersionNumber,
+          nowSec,
+          input.context ?? null,
+          input.failedAtStep ?? null,
+        );
+
+      // Update procedure record
+      const newFailureCount = proc.failureCount + 1;
+      const newConfidence = Math.max(0.1, Math.min(0.95, 0.5 + 0.1 * (proc.successCount - newFailureCount)));
+      this.liveDb
+        .prepare(
+          `UPDATE procedures SET failure_count = ?, last_failed = ?, confidence = ?, procedure_type = 'negative', updated_at = ? WHERE id = ?`,
+        )
+        .run(newFailureCount, nowSec, newConfidence, nowSec, input.procedureId);
+
+      // Create an episode record for this failure
+      const eventText =
+        input.context && input.failedAtStep !== undefined
+          ? `Procedure "${proc.taskPattern}" failed at step ${input.failedAtStep}: ${input.context}`
+          : input.context
+            ? `Procedure "${proc.taskPattern}" failed: ${input.context}`
+            : `Procedure "${proc.taskPattern}" failed (version ${newVersionNumber})`;
+
+      try {
+        this.recordEpisode({
+          event: eventText,
+          outcome: "failure",
+          duration: input.duration,
+          context: input.context,
+          procedureId: input.procedureId,
+          tags: input.tags,
+          importance: 0.8,
+          scope: input.scope ?? "global",
+          scopeTarget: (input.scope ?? "global" === "global") ? null : (input.scopeTarget ?? null),
+          agentId: input.agentId,
+          userId: input.userId,
+          sessionId: input.sessionId,
+        });
+      } catch (err) {
+        capturePluginError(err as Error, {
+          operation: "record-episode-on-failure",
+          severity: "warn",
+          subsystem: "facts",
+        });
+      }
+    }
+
+    return this.getProcedureById(input.procedureId);
+  }
+
+  /**
+   * Get all versions for a procedure, ordered newest first.
+   */
+  getProcedureVersions(procedureId: string): Array<{
+    id: string;
+    versionNumber: number;
+    successCount: number;
+    failureCount: number;
+    avoidanceNotes: string[] | null;
+    createdAt: number;
+  }> {
+    const rows = this.liveDb
+      .prepare(
+        `SELECT id, version_number, success_count, failure_count, avoidance_notes, created_at
+         FROM procedure_versions
+         WHERE procedure_id = ?
+         ORDER BY version_number DESC`,
+      )
+      .all(procedureId) as Array<Record<string, unknown>>;
+
+    return rows.map((r) => ({
+      id: r.id as string,
+      versionNumber: r.version_number as number,
+      successCount: r.success_count as number,
+      failureCount: r.failure_count as number,
+      avoidanceNotes: (() => {
+        const raw = r.avoidance_notes as string | null;
+        if (!raw) return null;
+        try {
+          const parsed = JSON.parse(raw);
+          return Array.isArray(parsed) ? parsed.filter((n: unknown) => typeof n === "string") : null;
+        } catch {
+          return null;
+        }
+      })(),
+      createdAt: r.created_at as number,
+    }));
+  }
+
+  /**
+   * Get all failure records for a procedure, ordered newest first.
+   */
+  getProcedureFailures(procedureId: string): Array<{
+    id: string;
+    versionNumber: number;
+    timestamp: number;
+    context: string | null;
+    failedAtStep: number | null;
+  }> {
+    const rows = this.liveDb
+      .prepare(
+        `SELECT id, version_number, timestamp, context, failed_at_step
+         FROM procedure_failures
+         WHERE procedure_id = ?
+         ORDER BY timestamp DESC`,
+      )
+      .all(procedureId) as Array<Record<string, unknown>>;
+
+    return rows.map((r) => ({
+      id: r.id as string,
+      versionNumber: r.version_number as number,
+      timestamp: r.timestamp as number,
+      context: (r.context as string) ?? null,
+      failedAtStep: (r.failed_at_step as number) ?? null,
+    }));
   }
 
   /** Insert or replace a procedure. Returns the procedure id. */
@@ -4756,45 +5072,17 @@ export class FactsDB extends BaseSqliteStore {
     return row?.cluster_id ?? null;
   }
 
-  // ---------------------------------------------------------------------------
-  // Episodic memory: episodes table CRUD (#781)
-  // ---------------------------------------------------------------------------
+  // ============================================================================
+  // Episodic Memory (#781)
+  // ============================================================================
 
   /**
-   * Convert a raw SQLite episodes row to an EpisodeEntry.
-   */
-  private rowToEpisodeEntry(row: Record<string, unknown>): EpisodeEntry {
-    const relatedRaw = row.related_fact_ids as string | null;
-    return {
-      id: row.id as string,
-      category: "episode",
-      event: row.event as string,
-      outcome: row.outcome as EpisodeOutcome,
-      timestamp: row.timestamp as number,
-      duration: (row.duration as number | null) ?? undefined,
-      context: (row.context as string | null) ?? undefined,
-      relatedFactIds: relatedRaw ? JSON.parse(relatedRaw) : undefined,
-      procedureId: (row.procedure_id as string | null) ?? undefined,
-      importance: row.importance as number,
-      decayClass: (row.decay_class as DecayClass) || "normal",
-      scope: (row.scope as "global" | "user" | "agent" | "session") ?? "global",
-      agentId: (row.agent_id as string | null) ?? undefined,
-      userId: (row.user_id as string | null) ?? undefined,
-      sessionId: (row.session_id as string | null) ?? undefined,
-      tags: parseTags(row.tags as string | null),
-      createdAt: row.created_at as number,
-      verifiedAt: (row.verified_at as number | null) ?? undefined,
-    };
-  }
-
-  /**
-   * Insert an episode record.
-   * - outcome="failure" → importance auto-boosted to ≥ 0.8
-   * - outcome="success" → default importance (caller-provided, min 0.5)
+   * Store an episodic memory record (#781).
    *
-   * Returns the inserted EpisodeEntry (with generated id + createdAt).
+   * Episodes with outcome="failure" are auto-boosted to importance >= 0.8.
+   * Related facts are linked via memory_links if relatedFactIds is provided.
    */
-  storeEpisode(entry: {
+  recordEpisode(input: {
     event: string;
     outcome: EpisodeOutcome;
     timestamp?: number;
@@ -4803,79 +5091,203 @@ export class FactsDB extends BaseSqliteStore {
     relatedFactIds?: string[];
     procedureId?: string;
     importance?: number;
+    tags?: string[];
     decayClass?: DecayClass;
     scope?: "global" | "user" | "agent" | "session";
+    scopeTarget?: string | null;
     agentId?: string;
     userId?: string;
     sessionId?: string;
-    tags?: string[];
-  }): EpisodeEntry {
+  }): Episode {
     const id = randomUUID();
     const nowSec = Math.floor(Date.now() / 1000);
-    const timestamp = entry.timestamp ?? nowSec;
+    const timestamp = input.timestamp ?? nowSec;
+
     // Auto-boost failures to importance >= 0.8
-    let importance = entry.importance ?? 0.5;
-    if (entry.outcome === "failure") {
-      importance = Math.max(importance, 0.8);
+    let importance = input.importance ?? 0.5;
+    if (input.outcome === "failure" && importance < 0.8) {
+      importance = 0.8;
     }
-    const decayClass = entry.decayClass ?? "normal";
-    const scope = entry.scope ?? "global";
-    const tagsStr = entry.tags ? serializeTags(entry.tags) : null;
-    const relatedFactIdsStr = entry.relatedFactIds ? JSON.stringify(entry.relatedFactIds) : null;
+
+    const decayClass = input.decayClass ?? "normal";
+    const scope = input.scope ?? "global";
+    const scopeTarget = scope === "global" ? null : (input.scopeTarget ?? null);
+    const tags = input.tags ?? [];
+    const relatedFactIds = input.relatedFactIds ?? [];
 
     this.liveDb
       .prepare(
-        `INSERT INTO episodes (id, event, outcome, timestamp, duration, context, related_fact_ids, procedure_id, importance, decay_class, scope, agent_id, user_id, session_id, tags, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO episodes (id, event, outcome, timestamp, duration, context, related_fact_ids, procedure_id, scope, scope_target, agent_id, user_id, session_id, importance, tags, decay_class, created_at, verified_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         id,
-        entry.event,
-        entry.outcome,
+        input.event,
+        input.outcome,
         timestamp,
-        entry.duration ?? null,
-        entry.context ?? null,
-        relatedFactIdsStr,
-        entry.procedureId ?? null,
-        importance,
-        decayClass,
+        input.duration ?? null,
+        input.context ?? null,
+        relatedFactIds.length > 0 ? JSON.stringify(relatedFactIds) : null,
+        input.procedureId ?? null,
         scope,
-        entry.agentId ?? null,
-        entry.userId ?? null,
-        entry.sessionId ?? null,
-        tagsStr,
+        scopeTarget,
+        input.agentId ?? null,
+        input.userId ?? null,
+        input.sessionId ?? null,
+        importance,
+        serializeTags(tags),
+        decayClass,
         nowSec,
+        null,
       );
+
+    // Link related facts via episode_relations table (not memory_links — episodes are not facts)
+    for (const factId of relatedFactIds) {
+      this.liveDb
+        .prepare(
+          `INSERT INTO episode_relations (id, episode_id, target_id, relation_type, strength, created_at) VALUES (?, ?, ?, ?, ?, ?)`,
+        )
+        .run(randomUUID(), id, factId, "PART_OF", 0.8, nowSec);
+    }
 
     return {
       id,
       category: "episode",
-      event: entry.event,
-      outcome: entry.outcome,
+      event: input.event,
+      outcome: input.outcome,
       timestamp,
-      duration: entry.duration,
-      context: entry.context,
-      relatedFactIds: entry.relatedFactIds,
-      procedureId: entry.procedureId,
-      importance,
-      decayClass,
+      duration: input.duration,
+      context: input.context,
+      relatedFactIds,
+      procedureId: input.procedureId,
       scope,
-      agentId: entry.agentId,
-      userId: entry.userId,
-      sessionId: entry.sessionId,
-      tags: entry.tags ?? [],
+      scopeTarget: scopeTarget ?? undefined,
+      agentId: input.agentId,
+      userId: input.userId,
+      sessionId: input.sessionId,
+      importance,
+      tags,
+      decayClass,
       createdAt: nowSec,
     };
   }
 
   /**
+   * Convert a raw SQLite episodes row to an Episode object.
+   */
+  private rowToEpisode(row: Record<string, unknown>): Episode {
+    const relatedFactIdsRaw = row.related_fact_ids as string | null;
+    return {
+      id: row.id as string,
+      category: "episode",
+      event: row.event as string,
+      outcome: row.outcome as EpisodeOutcome,
+      timestamp: row.timestamp as number,
+      duration: (row.duration as number) ?? undefined,
+      context: (row.context as string) ?? undefined,
+      relatedFactIds: relatedFactIdsRaw ? (JSON.parse(relatedFactIdsRaw) as string[]) : undefined,
+      procedureId: (row.procedure_id as string) ?? undefined,
+      scope: (row.scope as "global" | "user" | "agent" | "session") ?? "global",
+      scopeTarget: (row.scope_target as string) ?? undefined,
+      agentId: (row.agent_id as string) ?? undefined,
+      userId: (row.user_id as string) ?? undefined,
+      sessionId: (row.session_id as string) ?? undefined,
+      importance: row.importance as number,
+      tags: parseTags(row.tags as string | null),
+      decayClass: (row.decay_class as DecayClass) ?? "normal",
+      createdAt: row.created_at as number,
+      verifiedAt: (row.verified_at as number) ?? undefined,
+    };
+  }
+
+  /**
+   * Search episodic memories (#781).
+   *
+   * Returns episodes ordered by timestamp DESC. Supports:
+   * - FTS full-text search on event + context (when query is provided)
+   * - Outcome filter
+   * - Time range filter (since / until as Unix epoch seconds)
+   * - Procedure ID filter
+   * - Limit and scope filtering
+   */
+  searchEpisodes(
+    options: {
+      query?: string;
+      outcome?: EpisodeOutcome[];
+      since?: number;
+      until?: number;
+      procedureId?: string;
+      limit?: number;
+      scopeFilter?: ScopeFilter | null;
+    } = {},
+  ): Episode[] {
+    const { query, outcome, since, until, procedureId, limit = 50, scopeFilter } = options;
+    const params: unknown[] = [];
+    const conditions: string[] = [];
+
+    // FTS text search on event + context
+    if (query && query.trim()) {
+      const sanitized = this.sanitizeFTS5Query(query.trim());
+      const words = sanitized
+        .split(/\s+/)
+        .filter((w) => w.length > 1)
+        .slice(0, 8)
+        .map((w) => `"${w}"`)
+        .join(" OR ");
+      if (words) {
+        conditions.push(`e.rowid IN (SELECT rowid FROM episodes_fts WHERE episodes_fts MATCH ?)`);
+        params.push(words);
+      }
+    }
+
+    // Outcome filter
+    if (outcome && outcome.length > 0) {
+      const placeholders = outcome.map(() => "?").join(",");
+      conditions.push(`e.outcome IN (${placeholders})`);
+      params.push(...outcome);
+    }
+
+    // Time range filter
+    if (since !== undefined) {
+      conditions.push("e.timestamp >= ?");
+      params.push(since);
+    }
+    if (until !== undefined) {
+      conditions.push("e.timestamp <= ?");
+      params.push(until);
+    }
+
+    // Procedure ID filter
+    if (procedureId) {
+      conditions.push("e.procedure_id = ?");
+      params.push(procedureId);
+    }
+
+    // Scope filter
+    const scopeClause = this.scopeFilterClausePositional(scopeFilter);
+    if (scopeClause.clause) {
+      conditions.push(scopeClause.clause.replace(/^AND /, ""));
+      params.push(...scopeClause.params);
+    }
+
+    const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+    const limitClause = `ORDER BY e.timestamp DESC LIMIT ?`;
+    params.push(limit);
+
+    const sql = `SELECT e.* FROM episodes e ${where} ${limitClause}`;
+    const rows = this.liveDb.prepare(sql).all(...(params as SQLInputValue[])) as Array<Record<string, unknown>>;
+    return rows.map((r) => this.rowToEpisode(r));
+  }
+
+  /**
    * Get a single episode by id.
    */
-  getEpisode(id: string): EpisodeEntry | null {
+  getEpisode(id: string): Episode | null {
     const row = this.liveDb.prepare("SELECT * FROM episodes WHERE id = ?").get(id) as
       | Record<string, unknown>
       | undefined;
-    return row ? this.rowToEpisodeEntry(row) : null;
+    if (!row) return null;
+    return this.rowToEpisode(row);
   }
 
   /**
@@ -4887,77 +5299,14 @@ export class FactsDB extends BaseSqliteStore {
   }
 
   /**
-   * Search episodes with optional outcome filter and time-range filter.
-   * Returns episodes ordered by timestamp DESC (most recent first).
+   * Count of episodes (for stats).
    */
-  searchEpisodes(
-    opts: {
-      outcome?: EpisodeOutcome[];
-      since?: number;
-      until?: number;
-      procedureId?: string;
-      query?: string;
-      limit?: number;
-    } = {},
-  ): EpisodeEntry[] {
-    const { outcome, since, until, procedureId, query, limit = 50 } = opts;
-    const parts: string[] = [];
-    const params: (string | number)[] = [];
-
-    if (outcome && outcome.length > 0) {
-      const placeholders = outcome.map(() => "?").join(",");
-      parts.push(`outcome IN (${placeholders})`);
-      params.push(...outcome);
+  episodesCount(): number {
+    try {
+      const row = this.liveDb.prepare("SELECT COUNT(*) as cnt FROM episodes").get() as { cnt: number };
+      return row?.cnt ?? 0;
+    } catch {
+      return 0;
     }
-    if (since != null) {
-      parts.push("timestamp >= ?");
-      params.push(since);
-    }
-    if (until != null) {
-      parts.push("timestamp <= ?");
-      params.push(until);
-    }
-    if (procedureId) {
-      parts.push("procedure_id = ?");
-      params.push(procedureId);
-    }
-
-    // FTS text search on event + context
-    if (query?.trim()) {
-      const sanitized = query
-        .replace(/['"*(){}:]/g, "")
-        .replace(/\b(NOT|AND|OR|NEAR)\b/gi, "")
-        .trim();
-      const words = sanitized
-        .split(/\s+/)
-        .filter((w) => w.length > 1)
-        .slice(0, 8)
-        .map((w) => `"${w}"`)
-        .join(" OR ");
-      if (words) {
-        // Use a subquery to get matching episode ids via FTS, then filter + join
-        parts.push(`rowid IN (SELECT rowid FROM episodes_fts WHERE episodes_fts MATCH '${words}')`);
-      }
-    }
-
-    const where = parts.length > 0 ? `WHERE ${parts.join(" AND ")}` : "";
-    const sql = `SELECT * FROM episodes ${where} ORDER BY timestamp DESC LIMIT ?`;
-    const rows = this.liveDb.prepare(sql).all(...params, limit) as Array<Record<string, unknown>>;
-    return rows.map((row) => this.rowToEpisodeEntry(row));
-  }
-
-  /**
-   * Count episodes by outcome for statistics.
-   */
-  episodesCount(): { total: number; success: number; failure: number; partial: number; unknown: number } {
-    const total = (this.liveDb.prepare("SELECT COUNT(*) as cnt FROM episodes").get() as { cnt: number })?.cnt ?? 0;
-    const byOutcome = this.liveDb
-      .prepare("SELECT outcome, COUNT(*) as cnt FROM episodes GROUP BY outcome")
-      .all() as Array<{ outcome: string; cnt: number }>;
-    const success = byOutcome.find((r) => r.outcome === "success")?.cnt ?? 0;
-    const failure = byOutcome.find((r) => r.outcome === "failure")?.cnt ?? 0;
-    const partial = byOutcome.find((r) => r.outcome === "partial")?.cnt ?? 0;
-    const unknown = byOutcome.find((r) => r.outcome === "unknown")?.cnt ?? 0;
-    return { total, success, failure, partial, unknown };
   }
 }

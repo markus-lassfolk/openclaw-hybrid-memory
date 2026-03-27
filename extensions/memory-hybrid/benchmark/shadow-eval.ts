@@ -31,17 +31,17 @@ import { tmpdir } from "node:os";
 // ---------------------------------------------------------------------------
 
 export interface LatencyStats {
-  p50: number;   // ms
+  p50: number; // ms
   p95: number;
   p99: number;
   samples: number;
 }
 
 export interface AccuracyResult {
-  score: number;        // 0–1
+  score: number; // 0–1
   llmCalls: number;
   tokensUsed: number;
-  judgement: string;    // human-readable explanation
+  judgement: string; // human-readable explanation
 }
 
 export interface BenchmarkResult {
@@ -76,11 +76,7 @@ function percentile(values: number[], p: number): number {
  * @param iterations Number of iterations (default 100)
  * @param warmup     Number of warmup runs (default 3)
  */
-export function measureLatency<R>(
-  fn: () => R,
-  iterations = 100,
-  warmup = 3,
-): LatencyStats & { values: number[] } {
+export function measureLatency<R>(fn: () => R, iterations = 100, warmup = 3): LatencyStats & { values: number[] } {
   // Warm up
   for (let i = 0; i < warmup; i++) fn();
 
@@ -157,11 +153,11 @@ export function readTokensFromLog(
        FROM llm_cost_log ${where}`,
     )
     .get(...params) as {
-      input_tokens: number;
-      output_tokens: number;
-      calls: number;
-      estimated_cost_usd: number;
-    };
+    input_tokens: number;
+    output_tokens: number;
+    calls: number;
+    estimated_cost_usd: number;
+  };
 
   return {
     inputTokens: Number(row.input_tokens),
@@ -190,7 +186,7 @@ export type AccuracyTestFn = () => Promise<{
  */
 export async function scoreAccuracy(
   testCase: AccuracyTestFn,
-  judgeModel: string = "openai/gpt-4.1-nano",
+  judgeModel = "openai/gpt-4.1-nano",
 ): Promise<AccuracyResult> {
   const { featureOn, featureOff, prompt } = await testCase();
 
@@ -221,11 +217,8 @@ Respond with a JSON object and nothing else:
 
   try {
     // Dynamically import OpenAI to avoid a hard dependency here
-    const { default: OpenAI } = await import("openai") as { default: typeof import("openai").default };
-    const apiKey =
-      process.env.OPENAI_API_KEY ??
-      process.env.GOOGLE_API_KEY ??
-      undefined;
+    const { default: OpenAI } = (await import("openai")) as { default: typeof import("openai").default };
+    const apiKey = process.env.OPENAI_API_KEY ?? process.env.GOOGLE_API_KEY ?? undefined;
     if (!apiKey) {
       judgement = "No API key available (set OPENAI_API_KEY or GOOGLE_API_KEY)";
       return { score: 0.5, llmCalls, tokensUsed, judgement };
@@ -264,7 +257,12 @@ Respond with a JSON object and nothing else:
         scoreB: number;
         reasoning: string;
       };
-      const score = parsed.winner === "A" ? parsed.scoreA : parsed.winner === "B" ? parsed.scoreB : (parsed.scoreA + parsed.scoreB) / 2;
+      const score =
+        parsed.winner === "A"
+          ? parsed.scoreA
+          : parsed.winner === "B"
+            ? parsed.scoreB
+            : (parsed.scoreA + parsed.scoreB) / 2;
       judgement = `[${parsed.winner}] ${parsed.reasoning}`;
       return { score, llmCalls, tokensUsed, judgement };
     } else {
@@ -312,7 +310,9 @@ export async function runBenchmark(
   // Lazy-load the per-feature benchmark
   const featureModule = await import(`./features/${feature}.js`).catch(() => null);
   if (!featureModule) {
-    throw new Error(`Unknown feature benchmark: ${feature}. Available: episodes, frequency-autosave, procedure-feedback`);
+    throw new Error(
+      `Unknown feature benchmark: ${feature}. Available: episodes, frequency-autosave, procedure-feedback`,
+    );
   }
 
   const { benchmark, testAccuracy } = featureModule as {
@@ -342,7 +342,13 @@ export async function runBenchmark(
         costTrackedUsd: tokens.estimatedCostUsd,
       };
     }
-    return { feature, latency, accuracy: accuracyResult, tokensTracked: tokens.inputTokens + tokens.outputTokens, costTrackedUsd: tokens.estimatedCostUsd };
+    return {
+      feature,
+      latency,
+      accuracy: accuracyResult,
+      tokensTracked: tokens.inputTokens + tokens.outputTokens,
+      costTrackedUsd: tokens.estimatedCostUsd,
+    };
   } finally {
     db.close();
   }
@@ -366,7 +372,12 @@ export async function runAllBenchmarks(
       results.push({
         feature,
         latency: { p50: -1, p95: -1, p99: -1, samples: 0 },
-        accuracy: { score: 0, llmCalls: 0, tokensUsed: 0, judgement: `Error: ${err instanceof Error ? err.message : String(err)}` },
+        accuracy: {
+          score: 0,
+          llmCalls: 0,
+          tokensUsed: 0,
+          judgement: `Error: ${err instanceof Error ? err.message : String(err)}`,
+        },
       });
     }
   }
@@ -381,7 +392,9 @@ export async function runAllBenchmarks(
 export function formatBenchmarkResult(result: BenchmarkResult): string {
   const lines: string[] = [];
   lines.push(`\n📊 ${result.feature}`);
-  lines.push(`   Latency  p50=${result.latency.p50.toFixed(2)}ms  p95=${result.latency.p95.toFixed(2)}ms  p99=${result.latency.p99.toFixed(2)}ms  (n=${result.latency.samples})`);
+  lines.push(
+    `   Latency  p50=${result.latency.p50.toFixed(2)}ms  p95=${result.latency.p95.toFixed(2)}ms  p99=${result.latency.p99.toFixed(2)}ms  (n=${result.latency.samples})`,
+  );
 
   if (result.latencyDeltaMs !== undefined) {
     const sign = result.latencyDeltaMs >= 0 ? "+" : "";
@@ -390,11 +403,15 @@ export function formatBenchmarkResult(result: BenchmarkResult): string {
 
   if (result.accuracy) {
     const pct = (result.accuracy.score * 100).toFixed(0);
-    lines.push(`   Accuracy: ${pct}%  (${result.accuracy.llmCalls} LLM call(s), ${result.accuracy.tokensUsed} tokens) — ${result.accuracy.judgement}`);
+    lines.push(
+      `   Accuracy: ${pct}%  (${result.accuracy.llmCalls} LLM call(s), ${result.accuracy.tokensUsed} tokens) — ${result.accuracy.judgement}`,
+    );
   }
 
   if (result.tokensTracked !== undefined) {
-    lines.push(`   Tokens tracked: ${result.tokensTracked.toLocaleString()}  (≈$${(result.costTrackedUsd ?? 0).toFixed(6)})`);
+    lines.push(
+      `   Tokens tracked: ${result.tokensTracked.toLocaleString()}  (≈$${(result.costTrackedUsd ?? 0).toFixed(6)})`,
+    );
   }
 
   return lines.join("\n");
