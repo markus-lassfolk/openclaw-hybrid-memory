@@ -4,6 +4,7 @@
  */
 
 import type { FactsDB } from "../backends/facts-db.js";
+import type { EdictStore } from "../backends/edict-store.js";
 import type { VectorDB } from "../backends/vector-db.js";
 import type { EmbeddingProvider } from "../services/embeddings.js";
 import type { EmbeddingRegistry } from "../services/embedding-registry.js";
@@ -22,6 +23,7 @@ import type { FrustrationConversationTurn } from "../services/frustration-detect
 
 export interface LifecycleContext {
   factsDb: FactsDB;
+  edictStore: EdictStore;
   vectorDb: VectorDB;
   embeddings: EmbeddingProvider;
   embeddingRegistry: EmbeddingRegistry | null;
