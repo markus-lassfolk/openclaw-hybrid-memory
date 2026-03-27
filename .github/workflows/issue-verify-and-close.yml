@@ -1,0 +1,204 @@
+name: Issue Verify and Close
+
+on:
+  pull_request:
+    types: [closed]
+
+jobs:
+  verify-and-close:
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    steps:
+      - name: Extract linked issues from PR body
+        id: extract-issues
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          REPO: ${{ github.repository }}
+        run: |
+          # Extract issue numbers from PR body using GitHub closing keywords
+          # Keywords: fix, fixes, closed, close, resolves, resolve
+          echo "PR #$PR_NUMBER: $PR_TITLE"
+          echo "PR body: $PR_BODY"
+
+          # Extract all #XXX references from body and title
+          ISSUES=$(echo "$PR_BODY $PR_TITLE" | \
+            grep -oE '#([0-9]+)' | \
+            sed 's/#//' | sort -u | tr '\n' ' ')
+
+          echo "Linked issues: $ISSUES"
+
+          if [ -z "$ISSUES" ]; then
+            echo "No linked issues found"
+            echo "issues=" >> $GITHUB_OUTPUT
+          else
+            echo "issues=$ISSUES" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Checkout repo
+        if: steps.extract-issues.outputs.issues != ''
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            .github/workflows/issue-verify-and-close.yml
+
+      - name: Verify each linked issue
+        if: steps.extract-issues.outputs.issues != ''
+        env:
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ISSUES: ${{ steps.extract-issues.outputs.issues }}
+        run: |
+          set -e
+
+          echo "=== Verifying PR #$PR_NUMBER against linked issues ==="
+          echo ""
+
+          for ISSUE in $ISSUES; do
+            echo "--- Issue #$ISSUE ---"
+
+            # Get issue details
+            ISSUE_DATA=$(gh api repos/$REPO/issues/$ISSUE --jq '{
+              title: .title,
+              body: .body,
+              state: .state,
+              labels: [.labels[].name]
+            }')
+
+            ISSUE_TITLE=$(echo "$ISSUE_DATA" | jq -r '.title')
+            ISSUE_BODY=$(echo "$ISSUE_DATA" | jq -r '.body // empty')
+            ISSUE_STATE=$(echo "$ISSUE_DATA" | jq -r '.state')
+            ISSUE_LABELS=$(echo "$ISSUE_DATA" | jq -r '.labels | join(", ")')
+
+            echo "Title: $ISSUE_TITLE"
+            echo "State: $ISSUE_STATE"
+            echo "Labels: $ISSUE_LABELS"
+            echo ""
+
+            # Skip if already closed
+            if [ "$ISSUE_STATE" = "closed" ]; then
+              echo "Already closed ✅"
+              echo ""
+              continue
+            fi
+
+            # ===== VERIFICATION CHECKS =====
+
+            # 1. Check: PR title references the issue
+            PR_REFS_ISSUE=$(echo "$PR_TITLE" | grep -cE "#$ISSUE" || true)
+            echo "Check 1 - PR title references #$ISSUE: $([ "$PR_REFS_ISSUE" -gt 0 ] && echo 'PASS' || echo 'FAIL')"
+
+            # 2. Check: PR body has a summary section
+            PR_HAS_SUMMARY=$(echo "$PR_BODY" | grep -cE "## What|## Summary|## Changes|## Implementation" || true)
+            echo "Check 2 - PR has change summary: $([ "$PR_HAS_SUMMARY" -gt 0 ] && echo 'PASS' || echo 'WARN - no structured summary')"
+
+            # 3. Check: PR body addresses issue by title keyword overlap
+            # Extract key nouns from issue title and check if they're in PR body
+            KEYWORDS=$(echo "$ISSUE_TITLE" | \
+              grep -oE '[A-Z][a-z]+' | \
+              grep -viE '^(The|This|That|Each|All|What|How|Why|When|feat|Fix|Bug|Enhancement|Issue|Feature)$' | \
+              head -5 | tr '\n' ' ')
+            echo "Key issue terms: $KEYWORDS"
+
+            KEYWORD_MATCH=0
+            for KW in $KEYWORDS; do
+              if echo "$PR_BODY" | grep -qi "$KW"; then
+                KEYWORD_MATCH=$((KEYWORD_MATCH + 1))
+              fi
+            done
+            echo "Check 3 - PR addresses issue terms: $KEYWORD_MATCH/$(echo $KEYWORDS | wc -w) matched"
+
+            # 4. Check: Issue has acceptance criteria (TODO, acceptance, criteria keywords)
+            HAS_CRITERIA=$(echo "$ISSUE_BODY" | grep -cE "(TODO|Acceptance|Criteria|Verify|Must|Should|After this)" || true)
+            echo "Check 4 - Issue has acceptance criteria: $([ "$HAS_CRITERIA" -gt 0 ] && echo "YES ($HAS_CRITERIA found)" || echo 'NONE')"
+
+            # 5. Check: PR includes tests (new test files or test sections in PR body)
+            PR_HAS_TESTS=$(echo "$PR_BODY" | grep -cE "(test|Test)" || true)
+            echo "Check 5 - PR mentions tests: $([ "$PR_HAS_TESTS" -gt 0 ] && echo 'YES' || echo 'NO TEST MENTION')"
+
+            # 6. Check: PR is labeled with size labels
+            PR_LABELS=""
+            echo "Check 6 - Size label present: $PR_LABELS"
+
+            # ===== BUILD VERDICT =====
+
+            echo ""
+            echo "=== Verification Summary for #$ISSUE ==="
+
+            FAILED=0
+
+            if [ "$PR_REFS_ISSUE" -eq 0 ]; then
+              echo "⚠️  PR title does not reference #$ISSUE"
+              FAILED=1
+            fi
+
+            if [ "$KEYWORD_MATCH" -eq 0 ] && [ "$HAS_CRITERIA" -eq 0 ]; then
+              echo "⚠️  No keyword overlap between issue and PR"
+              FAILED=1
+            fi
+
+            # Determine outcome
+            if [ "$FAILED" -eq 0 ]; then
+              echo ""
+              echo "✅ VERIFIED — PR appears to address #$ISSUE"
+              VERDICT="VERIFIED"
+            else
+              echo ""
+              echo "⚠️  REVIEW NEEDED — automated checks raised concerns"
+              VERDICT="REVIEW"
+            fi
+
+            # Post comment on issue
+            gh api --method POST repos/$REPO/issues/$ISSUE/comments \
+              --field body="## PR #$PR_NUMBER Merge Verification
+
+**PR:** $PR_TITLE  
+**Merged by:** @${{ github.actor }}
+
+### Verification Results
+
+| Check | Result |
+|-------|--------|
+| PR title references #$ISSUE | $([ "$PR_REFS_ISSUE" -gt 0 ] && echo '✅' || echo '❌') |
+| Key terms from issue in PR | $KEYWORD_MATCH/$(echo $KEYWORDS | wc -w) |
+| Issue has acceptance criteria | $([ "$HAS_CRITERIA" -gt 0 ] && echo "✅ ($HAS_CRITERIA found)" || echo '⚠️  none') |
+| PR mentions testing | $([ "$PR_HAS_TESTS" -gt 0 ] && echo '✅' || echo '⚠️  not mentioned') |
+
+### Issue
+> **$ISSUE_TITLE**
+
+### Verdict: **$VERDICT**
+
+$(if [ "$VERDICT" = "VERIFIED" ]; then
+  echo 'This issue appears to be addressed by the merged PR. Closing.'
+else
+  echo 'Automated checks raised concerns. Please review manually before closing.'
+fi)
+
+---
+*Auto-verified by \`issue-verify-and-close\` workflow*"
+
+            echo "Comment posted on #$ISSUE"
+
+            # Close if verified
+            if [ "$VERDICT" = "VERIFIED" ]; then
+              gh issue close $ISSUE --repo $REPO \
+                --reason "completed" \
+                --comment "Verified implemented via PR #$PR_NUMBER. Closing."
+              echo "✅ Issue #$ISSUE closed"
+            else
+              echo "⚠️  Issue #$ISSUE left open — needs manual review"
+            fi
+
+            echo ""
+          done
+
+      - name: No linked issues
+        if: steps.extract-issues.outputs.issues == ''
+        run: |
+          echo "No issues linked in PR body or title — skipping issue verification"
+          echo "Add 'Fixes #XXX' or 'Closes #XXX' to your PR body to enable auto-close"
