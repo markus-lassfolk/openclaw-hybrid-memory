@@ -8,6 +8,7 @@ export const DEFAULT_MEMORY_CATEGORIES = [
   "entity",
   "pattern",
   "rule",
+  "edict",
   "other",
 ] as const;
 

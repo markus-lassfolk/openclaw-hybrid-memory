@@ -50,6 +50,20 @@ export async function runInjectionStage(
   return withTimeout(INJECTION_STAGE_TIMEOUT_MS, () => runInjection(recallResult, api, ctx), undefined);
 }
 
+/** Get the edict block for forced prompt injection (always preserved, never trimmed). */
+function buildEdictBlock(ctx: LifecycleContext): string {
+  try {
+    const { renderForPrompt } = ctx.edictStore.getEdicts({ format: "prompt" });
+    return renderForPrompt;
+  } catch (err) {
+    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+      subsystem: "stage-injection",
+      operation: "get-edicts",
+    });
+    return "";
+  }
+}
+
 async function runInjection(
   r: RecallResult,
   api: ClawdbotPluginApi,
@@ -88,7 +102,8 @@ async function runInjection(
     ambientCfg,
     ambientSeenFacts,
   } = r;
-  const baseContext = issueBlock + narrativeBlock + hotBlock;
+  const edictBlock = buildEdictBlock(ctx);
+  const baseContext = edictBlock + issueBlock + narrativeBlock + hotBlock;
 
   function buildProgressiveIndex(
     list: typeof candidates,

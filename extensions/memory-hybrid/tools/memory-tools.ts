@@ -12,6 +12,7 @@ import { stringEnum } from "../utils/typebox.js";
 
 import type { BuildToolScopeFilterFn, FindSimilarByEmbeddingFn } from "../api/memory-plugin-api.js";
 import type { FactsDB } from "../backends/facts-db.js";
+import type { EdictStore } from "../backends/edict-store.js";
 import type { VectorDB } from "../backends/vector-db.js";
 import type { CredentialsDB } from "../backends/credentials-db.js";
 import type { EventLog } from "../backends/event-log.js";
@@ -66,6 +67,7 @@ export type BoundWalRemoveFn = (id: string, logger: { warn: (msg: string) => voi
 
 export interface MemoryToolsContext {
   factsDb: FactsDB;
+  edictStore: EdictStore;
   vectorDb: VectorDB;
   cfg: HybridMemoryConfig;
   aliasDb?: AliasDB | null;
@@ -239,6 +241,7 @@ export function registerMemoryTools(
 
   const {
     factsDb,
+    edictStore,
     vectorDb,
     cfg,
     embeddings,
@@ -2363,5 +2366,323 @@ export function registerMemoryTools(
       },
     },
     { name: "memory.search_episodes" },
+  );
+
+  // ---------------------------------------------------------------------------
+  // Edict tools — verified ground-truth facts with forced prompt injection (#791)
+  // ---------------------------------------------------------------------------
+
+  /** memory.add_edict — create a verified ground-truth fact (human-only; agents propose via GitHub). */
+  api.registerTool(
+    {
+      name: "memory.add_edict",
+      label: "Add Edict",
+      description:
+        "Add a verified ground-truth fact (edict) to memory. Edicts are always injected verbatim into system prompts — the agent does NOT reason about them.\n\n" +
+        'NOTE: Agents should NOT create edicts directly. To propose an edict, add a GitHub comment: [EDICT CANDIDATE] text="..." reason="..." tags=[...]. ' +
+        "Only Markus (the human) should use this tool directly.",
+      parameters: Type.Object({
+        text: Type.String({ description: "The verified statement of fact to store" }),
+        source: Type.Optional(
+          Type.String({
+            description: "Who or what verified this edict (e.g. 'human:markus', 'ops:runbook')",
+          }),
+        ),
+        tags: Type.Optional(
+          Type.Array(Type.String(), { description: "Labels for filtering (e.g. ['operations', 'ssh'])" }),
+        ),
+        ttl: Type.Optional(
+          Type.String({
+            description: "TTL mode: 'never' (permanent), 'event' (use expiresAt date), or seconds as number",
+          }),
+        ),
+        expiresAt: Type.Optional(
+          Type.String({
+            description: "ISO 8601 date when this edict expires (for ttl='event')",
+          }),
+        ),
+      }),
+      async execute(_toolCallId: string, params: Record<string, unknown>) {
+        try {
+          const { text, source, tags, ttl, expiresAt } = params as {
+            text: string;
+            source?: string;
+            tags?: string[];
+            ttl?: string;
+            expiresAt?: string;
+          };
+
+          if (!text || text.trim().length === 0) {
+            return {
+              content: [{ type: "text", text: "Provide the 'text' parameter: the verified statement to store." }],
+              details: { error: "missing_text" },
+            };
+          }
+
+          let ttlValue: "never" | "event" | number = "never";
+          if (ttl === "event") {
+            ttlValue = "event";
+          } else if (ttl !== undefined && !isNaN(Number(ttl))) {
+            ttlValue = Number(ttl);
+          }
+
+          const edict = edictStore.add({
+            text: text.trim(),
+            source,
+            tags,
+            ttl: ttlValue,
+            expiresAt,
+          });
+
+          return {
+            content: [
+              {
+                type: "text",
+                text: `Edict added: \"${edict.text.slice(0, 80)}${edict.text.length > 80 ? "..." : ""}\" (id: ${edict.id})`,
+              },
+            ],
+            details: { edict },
+          };
+        } catch (err) {
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+            subsystem: "memory",
+            operation: "add_edict",
+            phase: "runtime",
+          });
+          throw err;
+        }
+      },
+    },
+    { name: "memory.add_edict" },
+  );
+
+  /** memory.list_edicts — list edicts, optionally filtered by tags. */
+  api.registerTool(
+    {
+      name: "memory.list_edicts",
+      label: "List Edicts",
+      description: "List all non-expired edicts, optionally filtered by tags.",
+      parameters: Type.Object({
+        tags: Type.Optional(Type.Array(Type.String(), { description: "Filter to edicts with any of these tags" })),
+        limit: Type.Optional(Type.Number({ description: "Max results (default 100)" })),
+      }),
+      async execute(_toolCallId: string, params: Record<string, unknown>) {
+        try {
+          const { tags, limit } = params as { tags?: string[]; limit?: number };
+          const edicts = edictStore.list({ tags, limit });
+          if (edicts.length === 0) {
+            return {
+              content: [{ type: "text", text: "No edicts found." }],
+              details: { count: 0, edicts: [] },
+            };
+          }
+          const lines = edicts.map((e) => {
+            const tagStr = e.tags.length > 0 ? `[${e.tags[0]}] ` : "";
+            return `- ${tagStr}${e.text}${e.expiresAt ? ` (expires: ${e.expiresAt})` : ""} (id: ${e.id})`;
+          });
+          return {
+            content: [
+              {
+                type: "text",
+                text: `Edicts (${edicts.length}):\n${lines.join("\n")}`,
+              },
+            ],
+            details: { count: edicts.length, edicts },
+          };
+        } catch (err) {
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+            subsystem: "memory",
+            operation: "list_edicts",
+            phase: "runtime",
+          });
+          throw err;
+        }
+      },
+    },
+    { name: "memory.list_edicts" },
+  );
+
+  /** memory.get_edicts — get edicts formatted for system prompt injection. */
+  api.registerTool(
+    {
+      name: "memory.get_edicts",
+      label: "Get Edicts for Prompt",
+      description:
+        "Get all non-expired edicts as a pre-formatted Markdown block for system prompt injection. " +
+        "This is called automatically during context compaction — prefer using this tool when you need edicts explicitly.",
+      parameters: Type.Object({
+        tags: Type.Optional(Type.Array(Type.String(), { description: "Filter to edicts with any of these tags" })),
+        format: Type.Optional(
+          Type.String({ description: "Output format: 'prompt' (Markdown block, default) or 'full' (structured)" }),
+        ),
+        limit: Type.Optional(Type.Number({ description: "Max results (default 100)" })),
+      }),
+      async execute(_toolCallId: string, params: Record<string, unknown>) {
+        try {
+          const { tags, format, limit } = params as { tags?: string[]; format?: string; limit?: number };
+          const result = edictStore.getEdicts({ tags, format: format as "prompt" | "full", limit });
+          if (result.edicts.length === 0) {
+            return {
+              content: [{ type: "text", text: "No edicts found." }],
+              details: { count: 0, edicts: [], renderForPrompt: "" },
+            };
+          }
+          return {
+            content: [{ type: "text", text: result.renderForPrompt || JSON.stringify(result.edicts, null, 2) }],
+            details: { count: result.edicts.length, edicts: result.edicts, renderForPrompt: result.renderForPrompt },
+          };
+        } catch (err) {
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+            subsystem: "memory",
+            operation: "get_edicts",
+            phase: "runtime",
+          });
+          throw err;
+        }
+      },
+    },
+    { name: "memory.get_edicts" },
+  );
+
+  /** memory.update_edict — update an existing edict's text, tags, source, or expiry. */
+  api.registerTool(
+    {
+      name: "memory.update_edict",
+      label: "Update Edict",
+      description: "Update the text, tags, source, or expiry of an existing edict.",
+      parameters: Type.Object({
+        id: Type.String({ description: "The edict id to update" }),
+        text: Type.Optional(Type.String({ description: "New verified statement text" })),
+        source: Type.Optional(Type.String({ description: "New or updated source" })),
+        tags: Type.Optional(Type.Array(Type.String(), { description: "Replacement tags array" })),
+        ttl: Type.Optional(Type.String({ description: "New TTL mode: 'never', 'event', or seconds as number" })),
+        expiresAt: Type.Optional(Type.String({ description: "ISO 8601 expiry date for ttl='event'" })),
+      }),
+      async execute(_toolCallId: string, params: Record<string, unknown>) {
+        try {
+          const { id, text, source, tags, ttl, expiresAt } = params as {
+            id: string;
+            text?: string;
+            source?: string;
+            tags?: string[];
+            ttl?: string;
+            expiresAt?: string;
+          };
+
+          let ttlValue: "never" | "event" | number | undefined;
+          if (ttl !== undefined) {
+            if (ttl === "event") ttlValue = "event";
+            else if (!isNaN(Number(ttl))) ttlValue = Number(ttl);
+            else ttlValue = "never";
+          }
+
+          const updated = edictStore.update({
+            id,
+            text,
+            source,
+            tags,
+            ttl: ttlValue,
+            expiresAt,
+          });
+
+          if (!updated) {
+            return {
+              content: [{ type: "text", text: `Edict not found: ${id}` }],
+              details: { error: "not_found" },
+            };
+          }
+
+          return {
+            content: [
+              {
+                type: "text",
+                text: `Edict updated: \"${updated.text.slice(0, 80)}${updated.text.length > 80 ? "..." : ""}\" (id: ${updated.id})`,
+              },
+            ],
+            details: { edict: updated },
+          };
+        } catch (err) {
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+            subsystem: "memory",
+            operation: "update_edict",
+            phase: "runtime",
+          });
+          throw err;
+        }
+      },
+    },
+    { name: "memory.update_edict" },
+  );
+
+  /** memory.remove_edict — delete an edict by id. */
+  api.registerTool(
+    {
+      name: "memory.remove_edict",
+      label: "Remove Edict",
+      description: "Delete an edict from memory by its id.",
+      parameters: Type.Object({
+        id: Type.String({ description: "The edict id to delete" }),
+      }),
+      async execute(_toolCallId: string, params: Record<string, unknown>) {
+        try {
+          const { id } = params as { id: string };
+          const removed = edictStore.remove(id);
+          return {
+            content: [
+              {
+                type: "text",
+                text: removed ? `Edict removed: ${id}` : `Edict not found: ${id}`,
+              },
+            ],
+            details: { removed },
+          };
+        } catch (err) {
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+            subsystem: "memory",
+            operation: "remove_edict",
+            phase: "runtime",
+          });
+          throw err;
+        }
+      },
+    },
+    { name: "memory.remove_edict" },
+  );
+
+  /** memory.edict_stats — get statistics about the edict store. */
+  api.registerTool(
+    {
+      name: "memory.edict_stats",
+      label: "Edict Stats",
+      description: "Get statistics about the edict store: total, by-tag counts, expired, and expiring soon.",
+      parameters: Type.Object({}),
+      async execute(_toolCallId: string) {
+        try {
+          const stats = edictStore.stats();
+          const lines = [
+            `Total edicts: ${stats.total}`,
+            `Expired: ${stats.expired}`,
+            `Expiring in 7 days: ${stats.expiringIn7Days}`,
+            `By tag: ${
+              Object.entries(stats.byTag)
+                .map(([k, v]) => `${k}=${v}`)
+                .join(", ") || "none"
+            }`,
+          ];
+          return {
+            content: [{ type: "text", text: lines.join("\n") }],
+            details: stats,
+          };
+        } catch (err) {
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+            subsystem: "memory",
+            operation: "edict_stats",
+            phase: "runtime",
+          });
+          throw err;
+        }
+      },
+    },
+    { name: "memory.edict_stats" },
   );
 }

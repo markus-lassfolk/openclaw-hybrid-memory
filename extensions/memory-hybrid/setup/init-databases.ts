@@ -6,6 +6,7 @@ import OpenAI from "openai";
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk";
 import { resolveSecretRef, normalizeResolvedSecretValue } from "../config/parsers/core.js";
 import type { FactsDB } from "../backends/facts-db.js";
+import type { EdictStore } from "../backends/edict-store.js";
 import type { VectorDB } from "../backends/vector-db.js";
 import type { CredentialsDB } from "../backends/credentials-db.js";
 import type { ProposalsDB } from "../backends/proposals-db.js";
@@ -814,6 +815,7 @@ export interface HealthStatus {
 
 export interface DatabaseContext {
   factsDb: FactsDB;
+  edictStore: EdictStore;
   vectorDb: VectorDB;
   embeddings: EmbeddingProvider;
   embeddingRegistry: EmbeddingRegistry;
@@ -859,7 +861,7 @@ export function initializeDatabases(cfg: HybridMemoryConfig, api: ClawdbotPlugin
   const resolvedSqlitePath = api.resolvePath(cfg.sqlitePath);
   setKeywordsPath(dirname(resolvedSqlitePath));
 
-  const { factsDb, vectorDb, embeddings, embeddingRegistry } = installCoreBootstrapServices({
+  const { factsDb, edictStore, vectorDb, embeddings, embeddingRegistry } = installCoreBootstrapServices({
     cfg,
     api,
     resolvedSqlitePath,
@@ -1586,6 +1588,7 @@ export function initializeDatabases(cfg: HybridMemoryConfig, api: ClawdbotPlugin
 
   return {
     factsDb,
+    edictStore,
     vectorDb,
     embeddings,
     embeddingRegistry,
@@ -1619,6 +1622,7 @@ export function initializeDatabases(cfg: HybridMemoryConfig, api: ClawdbotPlugin
  */
 export function closeOldDatabases(context: {
   factsDb?: FactsDB | null;
+  edictStore?: EdictStore | null;
   narrativesDb?: NarrativesDB | null;
   vectorDb?: VectorDB | null;
   credentialsDb?: CredentialsDB | null;
@@ -1639,6 +1643,7 @@ export function closeOldDatabases(context: {
 }): void {
   const {
     factsDb,
+    edictStore,
     narrativesDb,
     vectorDb,
     credentialsDb,
@@ -1667,6 +1672,16 @@ export function closeOldDatabases(context: {
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
         operation: "close-databases",
         subsystem: "factsDb",
+      });
+    }
+  }
+  if (typeof edictStore?.close === "function") {
+    try {
+      edictStore.close();
+    } catch (err) {
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        operation: "close-databases",
+        subsystem: "edictStore",
       });
     }
   }

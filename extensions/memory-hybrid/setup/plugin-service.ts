@@ -3,6 +3,7 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk";
 import type { FactsDB } from "../backends/facts-db.js";
+import type { EdictStore } from "../backends/edict-store.js";
 import type { VectorDB } from "../backends/vector-db.js";
 import type { CredentialsDB } from "../backends/credentials-db.js";
 import type { ProposalsDB } from "../backends/proposals-db.js";
@@ -43,6 +44,7 @@ import { runTaskQueueWatchdog } from "../services/task-queue-watchdog.js";
 export interface PluginServiceContext {
   PLUGIN_ID: string;
   factsDb: FactsDB;
+  edictStore: EdictStore;
   vectorDb: VectorDB;
   embeddings: import("../services/embeddings.js").EmbeddingProvider;
   embeddingRegistry: EmbeddingRegistry;
@@ -85,6 +87,7 @@ export function createPluginService(ctx: PluginServiceContext) {
   const {
     PLUGIN_ID,
     factsDb,
+    edictStore,
     vectorDb,
     embeddings,
     credentialsDb,
@@ -389,8 +392,11 @@ export function createPluginService(ctx: PluginServiceContext) {
         try {
           const hardPruned = factsDb.pruneExpired();
           const softPruned = factsDb.decayConfidence();
-          if (hardPruned > 0 || softPruned > 0) {
-            api.logger.info(`memory-hybrid: periodic prune — ${hardPruned} expired, ${softPruned} decayed`);
+          const edictsPruned = edictStore.pruneExpired();
+          if (hardPruned > 0 || softPruned > 0 || edictsPruned > 0) {
+            api.logger.info(
+              `memory-hybrid: periodic prune — ${hardPruned} expired, ${softPruned} decayed, ${edictsPruned} edicts pruned`,
+            );
           }
         } catch (err) {
           api.logger.warn(`memory-hybrid: periodic prune failed: ${err}`);

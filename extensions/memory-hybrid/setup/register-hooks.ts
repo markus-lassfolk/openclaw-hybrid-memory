@@ -33,6 +33,7 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
   try {
     lifecycleContext = {
       factsDb: ctx.factsDb,
+      edictStore: ctx.edictStore,
       vectorDb: ctx.vectorDb,
       embeddings: ctx.embeddings,
       embeddingRegistry: ctx.embeddingRegistry ?? null,
