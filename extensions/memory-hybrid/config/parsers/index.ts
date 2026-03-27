@@ -76,6 +76,7 @@ import {
   parseDashboardConfig,
   parseApiTapConfig,
   parseHumanizerConfig,
+  parseFrequencyCaptureConfig,
 } from "./features.js";
 
 /** Deep-merge: base + overrides (overrides win). Used to apply preset then user config. */
@@ -774,6 +775,7 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
     sensorSweep: parseSensorSweepConfig(cfg),
     apiTap: parseApiTapConfig(cfg),
     humanizer: parseHumanizerConfig(cfg),
+    frequencyCapture: parseFrequencyCaptureConfig(cfg),
     // Issue #754: top-level extractReinforcement (top-level wins, else distill.extractReinforcement)
     extractReinforcement:
       topLevelExtractReinforcement !== undefined

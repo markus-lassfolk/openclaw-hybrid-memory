@@ -24,6 +24,7 @@ import type {
   DashboardConfig,
   ApiTapConfig,
   HumanizerConfig,
+  FrequencyCaptureConfig,
 } from "../types/features.js";
 import type { PersonaProposalsConfig } from "../types/agents.js";
 import { IDENTITY_FILE_TYPES, type IdentityFileType } from "../types/agents.js";
@@ -734,5 +735,22 @@ export function parseHumanizerConfig(cfg: Record<string, unknown>): HumanizerCon
     maxTextLength,
     modelTag: typeof raw?.modelTag === "string" && raw.modelTag.trim().length > 0 ? raw.modelTag.trim() : undefined,
     skillTag: typeof raw?.skillTag === "string" && raw.skillTag.trim().length > 0 ? raw.skillTag.trim() : undefined,
+  };
+}
+
+export function parseFrequencyCaptureConfig(cfg: Record<string, unknown>): FrequencyCaptureConfig {
+  const raw = cfg.frequencyCapture as Record<string, unknown> | undefined;
+  return {
+    enabled: raw?.enabled === true,
+    mentionThreshold:
+      typeof raw?.mentionThreshold === "number" && raw.mentionThreshold >= 1 ? Math.floor(raw.mentionThreshold) : 3,
+    lookbackSessions:
+      typeof raw?.lookbackSessions === "number" && raw.lookbackSessions >= 1 ? Math.floor(raw.lookbackSessions) : 5,
+    defaultImportance:
+      typeof raw?.defaultImportance === "number" && raw.defaultImportance >= 0 && raw.defaultImportance <= 1
+        ? raw.defaultImportance
+        : 0.6,
+    captureCredentials: raw?.captureCredentials !== false,
+    ttlDays: typeof raw?.ttlDays === "number" && raw.ttlDays >= 1 ? Math.floor(raw.ttlDays) : 30,
   };
 }

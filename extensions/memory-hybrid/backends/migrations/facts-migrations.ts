@@ -1,4 +1,162 @@
 /**
+ * Procedure feedback loop — version tracking and failure logging (#782).
+ * procedure_versions: per-version success/failure counts and avoidance notes.
+ * procedure_failures: individual failure events with context and step info.
+ */
+
+/** Create procedure_versions table for version-level outcome tracking (#782). */
+function migrateProcedureVersionsTable(db: DatabaseSync): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS procedure_versions (
+      id TEXT PRIMARY KEY,
+      procedure_id TEXT NOT NULL,
+      version_number INTEGER NOT NULL DEFAULT 1,
+      success_count INTEGER NOT NULL DEFAULT 0,
+      failure_count INTEGER NOT NULL DEFAULT 0,
+      avoidance_notes TEXT,
+      created_at INTEGER NOT NULL,
+      UNIQUE(procedure_id, version_number)
+    )
+  `);
+  db.exec("CREATE INDEX IF NOT EXISTS idx_proc_ver_procedure ON procedure_versions(procedure_id)");
+  db.exec(
+    "CREATE INDEX IF NOT EXISTS idx_proc_ver_num ON procedure_versions(procedure_id, version_number) WHERE version_number IS NOT NULL",
+  );
+}
+
+/** Create procedure_failures table for individual failure event logging (#782). */
+function migrateProcedureFailuresTable(db: DatabaseSync): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS procedure_failures (
+      id TEXT PRIMARY KEY,
+      procedure_id TEXT NOT NULL,
+      version_number INTEGER NOT NULL,
+      timestamp INTEGER NOT NULL,
+      context TEXT,
+      failed_at_step INTEGER
+    )
+  `);
+  db.exec("CREATE INDEX IF NOT EXISTS idx_proc_fail_procedure ON procedure_failures(procedure_id)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_proc_fail_version ON procedure_failures(procedure_id, version_number)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_proc_fail_ts ON procedure_failures(timestamp DESC)");
+}
+
+/** Create episodes table for episodic memory (#781). */
+function migrateEpisodesTable(db: DatabaseSync): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS episodes (
+      id TEXT PRIMARY KEY,
+      event TEXT NOT NULL,
+      outcome TEXT NOT NULL CHECK(outcome IN ('success', 'failure', 'partial', 'unknown')),
+      timestamp INTEGER NOT NULL,
+      duration INTEGER,
+      context TEXT,
+      related_fact_ids TEXT,
+      procedure_id TEXT,
+      scope TEXT NOT NULL DEFAULT 'global',
+      scope_target TEXT,
+      agent_id TEXT,
+      user_id TEXT,
+      session_id TEXT,
+      importance REAL NOT NULL DEFAULT 0.5,
+      tags TEXT,
+      decay_class TEXT NOT NULL DEFAULT 'normal',
+      created_at INTEGER NOT NULL,
+      verified_at INTEGER
+    )
+  `);
+
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_episodes_timestamp ON episodes(timestamp DESC)
+  `);
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_episodes_outcome ON episodes(outcome)
+  `);
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_episodes_procedure_id ON episodes(procedure_id) WHERE procedure_id IS NOT NULL
+  `);
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_episodes_session_id ON episodes(session_id) WHERE session_id IS NOT NULL
+  `);
+
+  // Episode relations: links episodes to other entities (facts, procedures) without FK constraints to avoid
+  // the episodes→facts FK problem. Each row represents a typed relationship (PART_OF, CAUSED_BY, etc.).
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS episode_relations (
+      id TEXT PRIMARY KEY,
+      episode_id TEXT NOT NULL,
+      target_id TEXT NOT NULL,
+      relation_type TEXT NOT NULL DEFAULT 'PART_OF',
+      strength REAL NOT NULL DEFAULT 1.0,
+      created_at INTEGER NOT NULL
+    )
+  `);
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_episode_relations_episode ON episode_relations(episode_id) WHERE episode_id IS NOT NULL
+  `);
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_episode_relations_target ON episode_relations(target_id) WHERE target_id IS NOT NULL
+  `);
+
+  // FTS5 virtual table for full-text search on episodes (event + context)
+  db.exec(`
+    CREATE VIRTUAL TABLE IF NOT EXISTS episodes_fts USING fts5(
+      event,
+      context,
+      content='episodes',
+      content_rowid='rowid',
+      tokenize='porter unicode61'
+    )
+  `);
+
+  // Idempotent: check if triggers already exist before creating
+  const triggerRows = db
+    .prepare("SELECT name FROM sqlite_master WHERE type='trigger' AND name LIKE 'episodes_fts_%'")
+    .all() as Array<{ name: string }>;
+  const existingTriggers = new Set(triggerRows.map((r) => r.name));
+
+  if (!existingTriggers.has("episodes_fts_ai")) {
+    db.exec(`
+      CREATE TRIGGER episodes_fts_ai AFTER INSERT ON episodes BEGIN
+        INSERT INTO episodes_fts(rowid, event, context)
+        VALUES (new.rowid, new.event, new.context);
+      END
+    `);
+  }
+  if (!existingTriggers.has("episodes_fts_ad")) {
+    // FIX #781 bug: the original DELETE trigger used the FTS5 shadow-table column names
+    // directly in the INSERT VALUES list, which fails because those columns don't exist
+    // on an FTS5 content= table. The correct form passes the FTS table name + rowid token
+    // ('delete') and omits the content columns — FTS5 queries the content= table automatically.
+    db.exec(`
+      CREATE TRIGGER episodes_fts_ad AFTER DELETE ON episodes BEGIN
+        INSERT INTO episodes_fts(episodes_fts, rowid, event, context)
+        VALUES ('delete', old.rowid, old.event, old.context);
+      END
+    `);
+  }
+  if (!existingTriggers.has("episodes_fts_au")) {
+    db.exec(`
+      CREATE TRIGGER episodes_fts_au AFTER UPDATE ON episodes BEGIN
+        INSERT INTO episodes_fts(episodes_fts, rowid, event, context)
+        VALUES ('delete', old.rowid, old.event, old.context);
+        INSERT INTO episodes_fts(rowid, event, context)
+        VALUES (new.rowid, new.event, new.context);
+      END
+    `);
+  }
+
+  // Backfill FTS index with existing episodes
+  const countRow = db.prepare("SELECT COUNT(*) as cnt FROM episodes_fts").get() as { cnt: number } | undefined;
+  if (countRow && countRow.cnt === 0) {
+    db.exec(`
+      INSERT INTO episodes_fts(rowid, event, context)
+      SELECT rowid, event, context FROM episodes
+    `);
+  }
+}
+
+/**
  * FactsDB schema migrations.
  *
  * Each function is idempotent (safe to run on an already-migrated database).
@@ -925,4 +1083,11 @@ export function runFactsMigrations(db: DatabaseSync): void {
   // Scan cursors and access salience
   migrateScanCursorsTable(db);
   migrateAccessCountAndLastAccessedAt(db);
+
+  // Procedural feedback loop (#782)
+  migrateProcedureVersionsTable(db);
+  migrateProcedureFailuresTable(db);
+
+  // Episodic memory (#781)
+  migrateEpisodesTable(db);
 }

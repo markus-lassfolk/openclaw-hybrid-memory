@@ -66,6 +66,7 @@ import type {
   DashboardConfig,
   ApiTapConfig,
   HumanizerConfig,
+  FrequencyCaptureConfig,
 } from "./features.js";
 
 import type { MultiAgentConfig, PersonaProposalsConfig } from "./agents.js";
@@ -584,6 +585,8 @@ export type HybridMemoryConfig = {
   apiTap: ApiTapConfig;
   /** Humanizer style scoring — quality-loop metric for detecting AI-writing patterns (Issue #616, default: disabled). */
   humanizer: HumanizerConfig;
+  /** Frequency-based auto-save: capture repeated references including credentials to vault (Issue #784, default: disabled). */
+  frequencyCapture: FrequencyCaptureConfig;
   /**
    * Output verbosity level for CLI commands and tool responses (Issue #282).
    * quiet: counts/totals only. normal: balanced default. verbose: full detail.
