@@ -14,6 +14,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - **Episodic memory (#781):** New `category: "episode"` first-class memory type for structured event records with explicit outcomes (`success`, `failure`, `partial`, `unknown`) and timestamps. Episodes are stored in a dedicated `episodes` SQLite table with indexed `timestamp` and `outcome` columns, searchable via FTS5. New `memory.record_episode()` tool creates episode records; `memory.search_episodes()` searches with outcome, time-range, and procedure filters. Failures are auto-boosted to importance ≥ 0.8. Session-end auto-capture scans for outcome-indicating phrases (✅, ❌, merged, FAILED, fixed, etc.) and creates episode records automatically.
 
+- **Frequency-based auto-save (#784):** New `recent_mentions` SQLite table tracks entity and credential mentions across sessions for frequency-based auto-capture. When a non-credential entity is mentioned `mentionThreshold`+ times, it's auto-saved as a memory. When a credential is mentioned, it's stored in the vault. Key design: SHA-256 hash of mention text for deduplication (never stores raw credential values); supersession key = `host+username+scope` for multi-credential per host support; configurable TTL purge for stale mention records. New `FrequencyCaptureConfig` with `enabled`, `mentionThreshold`, `lookbackSessions`, `defaultImportance`, `captureCredentials`, and `ttlDays` options. Credential pattern detection supports GitHub PATs, OpenAI keys, JWTs, SSH keys, and more.
+
 ---
 
 ## [2026.3.250] - 2026-03-24
