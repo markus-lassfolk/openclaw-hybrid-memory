@@ -8,6 +8,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- **Episodic memory (#781):** New `category: "episode"` first-class memory type for structured event records with explicit outcomes (`success`, `failure`, `partial`, `unknown`) and timestamps. Episodes are stored in a dedicated `episodes` SQLite table with indexed `timestamp` and `outcome` columns, searchable via FTS5. New `memory.record_episode()` tool creates episode records; `memory.search_episodes()` searches with outcome, time-range, and procedure filters. Failures are auto-boosted to importance ≥ 0.8. Session-end auto-capture scans for outcome-indicating phrases (✅, ❌, merged, FAILED, fixed, etc.) and creates episode records automatically.
+
 ---
 
 ## [2026.3.260] - 2026-03-26

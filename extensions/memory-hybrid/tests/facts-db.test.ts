@@ -2746,3 +2746,202 @@ describe("FactsDB.getFactsForConsolidation", () => {
     expect(candidates[0]?.text).toBe("Raw fact");
   });
 });
+
+// ---------------------------------------------------------------------------
+// Episodic Memory (#781)
+// ---------------------------------------------------------------------------
+
+describe("FactsDB Episodes", () => {
+  describe("recordEpisode", () => {
+    it("stores an episode and assigns an id", () => {
+      const episode = db.recordEpisode({
+        event: "deployed openclaw to production",
+        outcome: "success",
+        timestamp: 1711500000,
+        context: "New version with bug fixes",
+        tags: ["deployment"],
+      });
+      expect(episode.id).toBeDefined();
+      expect(episode.id.length).toBeGreaterThan(0);
+      expect(episode.category).toBe("episode");
+      expect(episode.event).toBe("deployed openclaw to production");
+      expect(episode.outcome).toBe("success");
+      expect(episode.timestamp).toBe(1711500000);
+      expect(episode.context).toBe("New version with bug fixes");
+      expect(episode.tags).toEqual(["deployment"]);
+      expect(episode.createdAt).toBeGreaterThan(0);
+      expect(episode.scope).toBe("global");
+    });
+
+    it("auto-boosts failures to importance >= 0.8", () => {
+      const lowImportanceFailure = db.recordEpisode({
+        event: "deployment failed",
+        outcome: "failure",
+        importance: 0.3,
+      });
+      expect(lowImportanceFailure.importance).toBeGreaterThanOrEqual(0.8);
+      expect(lowImportanceFailure.importance).toBe(0.8);
+
+      const explicitFailure = db.recordEpisode({
+        event: "deployment failed with high importance",
+        outcome: "failure",
+        importance: 0.95,
+      });
+      expect(explicitFailure.importance).toBe(0.95);
+    });
+
+    it("respects explicit importance for non-failure outcomes", () => {
+      const partial = db.recordEpisode({
+        event: "deployment partially succeeded",
+        outcome: "partial",
+        importance: 0.6,
+      });
+      expect(partial.importance).toBe(0.6);
+    });
+
+    it("defaults timestamp to now", () => {
+      const before = Math.floor(Date.now() / 1000);
+      const episode = db.recordEpisode({ event: "test event", outcome: "success" });
+      const after = Math.floor(Date.now() / 1000);
+      expect(episode.timestamp).toBeGreaterThanOrEqual(before);
+      expect(episode.timestamp).toBeLessThanOrEqual(after);
+    });
+
+    it("stores scope and related fact IDs", () => {
+      const relatedId = db.store({
+        text: "test fact",
+        category: "fact",
+        importance: 0.5,
+        entity: null,
+        key: null,
+        value: null,
+        source: "test",
+      });
+      const episode = db.recordEpisode({
+        event: "test event",
+        outcome: "success",
+        relatedFactIds: [relatedId.id],
+        scope: "agent",
+        scopeTarget: "test-agent",
+        agentId: "test-agent",
+      });
+      expect(episode.scope).toBe("agent");
+      expect(episode.scopeTarget).toBe("test-agent");
+      expect(episode.agentId).toBe("test-agent");
+      expect(episode.relatedFactIds).toEqual([relatedId.id]);
+
+      // Verify the relation was stored in episode_relations
+      const relRows = (db as unknown as { liveDb: { prepare: (sql: string) => { all: () => unknown[] } } }).liveDb
+        .prepare("SELECT * FROM episode_relations WHERE episode_id = ?")
+        .all(episode.id) as Array<{ episode_id: string; target_id: string; relation_type: string }>;
+      expect(relRows.some((r) => r.target_id === relatedId.id && r.relation_type === "PART_OF")).toBe(true);
+    });
+  });
+
+  describe("searchEpisodes", () => {
+    beforeEach(() => {
+      const now = Math.floor(Date.now() / 1000);
+      db.recordEpisode({ event: "deployed to prod", outcome: "success", timestamp: now - 86400, tags: ["deploy"] });
+      db.recordEpisode({
+        event: "Doris upgrade failed",
+        outcome: "failure",
+        timestamp: now - 7200,
+        tags: ["upgrade", "doris"],
+      });
+      db.recordEpisode({
+        event: "Doris upgrade succeeded",
+        outcome: "success",
+        timestamp: now - 3600,
+        tags: ["upgrade", "doris"],
+      });
+      db.recordEpisode({ event: "partial migration", outcome: "partial", timestamp: now - 1800, tags: ["migration"] });
+      db.recordEpisode({ event: "unknown state", outcome: "unknown", timestamp: now - 900, tags: [] });
+    });
+
+    it("returns all episodes ordered by timestamp desc by default", () => {
+      const results = db.searchEpisodes({});
+      expect(results.length).toBeGreaterThanOrEqual(5);
+      for (let i = 1; i < results.length; i++) {
+        expect(results[i - 1].timestamp).toBeGreaterThanOrEqual(results[i].timestamp);
+      }
+    });
+
+    it("filters by outcome", () => {
+      const failures = db.searchEpisodes({ outcome: ["failure"] });
+      expect(failures.every((e) => e.outcome === "failure")).toBe(true);
+
+      const successesAndFailures = db.searchEpisodes({ outcome: ["success", "failure"] });
+      expect(successesAndFailures.every((e) => e.outcome === "success" || e.outcome === "failure")).toBe(true);
+    });
+
+    it("filters by time range (since / until)", () => {
+      const now = Math.floor(Date.now() / 1000);
+      const since = now - 7200; // last 2 hours
+      const recent = db.searchEpisodes({ since });
+      expect(recent.every((e) => e.timestamp >= since)).toBe(true);
+
+      const until = now - 3600; // before last hour
+      const older = db.searchEpisodes({ until });
+      expect(older.every((e) => e.timestamp <= until)).toBe(true);
+
+      const window = db.searchEpisodes({ since: now - 7200, until: now - 1800 });
+      expect(window.every((e) => e.timestamp >= now - 7200 && e.timestamp <= now - 1800)).toBe(true);
+    });
+
+    it("filters by procedureId", () => {
+      const procId = "test-procedure-123";
+      db.recordEpisode({ event: "proc event 1", outcome: "success", procedureId: procId });
+      db.recordEpisode({ event: "proc event 2", outcome: "failure", procedureId: procId });
+      db.recordEpisode({ event: "no proc event", outcome: "success" });
+
+      const withProc = db.searchEpisodes({ procedureId: procId });
+      expect(withProc.every((e) => e.procedureId === procId)).toBe(true);
+    });
+
+    it("respects limit", () => {
+      const limited = db.searchEpisodes({ limit: 2 });
+      expect(limited.length).toBeLessThanOrEqual(2);
+    });
+
+    it("returns empty array when no matches", () => {
+      const none = db.searchEpisodes({ outcome: ["success"], since: 99999999999 });
+      expect(none).toEqual([]);
+    });
+  });
+
+  describe("getEpisode / deleteEpisode", () => {
+    it("getEpisode returns stored episode", () => {
+      const episode = db.recordEpisode({ event: "get test", outcome: "success" });
+      const retrieved = db.getEpisode(episode.id);
+      expect(retrieved).not.toBeNull();
+      expect(retrieved!.event).toBe("get test");
+    });
+
+    it("getEpisode returns null for unknown id", () => {
+      const result = db.getEpisode("00000000-0000-0000-0000-000000000000");
+      expect(result).toBeNull();
+    });
+
+    it("deleteEpisode removes the episode", () => {
+      const episode = db.recordEpisode({ event: "delete test", outcome: "success" });
+      const deleted = db.deleteEpisode(episode.id);
+      expect(deleted).toBe(true);
+      expect(db.getEpisode(episode.id)).toBeNull();
+    });
+
+    it("deleteEpisode returns false for unknown id", () => {
+      const deleted = db.deleteEpisode("00000000-0000-0000-0000-000000000000");
+      expect(deleted).toBe(false);
+    });
+  });
+
+  describe("episodesCount", () => {
+    it("returns the number of stored episodes", () => {
+      const before = db.episodesCount();
+      db.recordEpisode({ event: "count test 1", outcome: "success" });
+      db.recordEpisode({ event: "count test 2", outcome: "failure" });
+      const after = db.episodesCount();
+      expect(after).toBeGreaterThanOrEqual(before + 2);
+    });
+  });
+});

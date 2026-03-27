@@ -9,7 +9,15 @@ import { randomUUID } from "node:crypto";
 
 import type { MemoryCategory, DecayClass } from "../config.js";
 import { TTL_DEFAULTS } from "../config.js";
-import type { MemoryEntry, ProcedureEntry, SearchResult, MemoryTier, ScopeFilter } from "../types/memory.js";
+import type {
+  MemoryEntry,
+  ProcedureEntry,
+  SearchResult,
+  MemoryTier,
+  ScopeFilter,
+  Episode,
+  EpisodeOutcome,
+} from "../types/memory.js";
 import { normalizedHash, serializeTags, parseTags } from "../utils/tags.js";
 import { calculateExpiry, classifyDecay } from "../utils/decay.js";
 import { applyConsolidationRetrievalControls } from "../utils/consolidation-controls.js";
@@ -4419,5 +4427,255 @@ export class FactsDB extends BaseSqliteStore {
       | { cluster_id: string }
       | undefined;
     return row?.cluster_id ?? null;
+  }
+
+  // ============================================================================
+  // Episodic Memory (#781)
+  // ============================================================================
+
+  /**
+   * Store an episodic memory record (#781).
+   *
+   * Episodes with outcome="failure" are auto-boosted to importance >= 0.8.
+   * Related facts are linked via memory_links if relatedFactIds is provided.
+   */
+  recordEpisode(input: {
+    event: string;
+    outcome: EpisodeOutcome;
+    timestamp?: number;
+    duration?: number;
+    context?: string;
+    relatedFactIds?: string[];
+    procedureId?: string;
+    importance?: number;
+    tags?: string[];
+    decayClass?: DecayClass;
+    scope?: "global" | "user" | "agent" | "session";
+    scopeTarget?: string | null;
+    agentId?: string;
+    userId?: string;
+    sessionId?: string;
+  }): Episode {
+    const id = randomUUID();
+    const nowSec = Math.floor(Date.now() / 1000);
+    const timestamp = input.timestamp ?? nowSec;
+
+    // Auto-boost failures to importance >= 0.8
+    let importance = input.importance ?? 0.5;
+    if (input.outcome === "failure" && importance < 0.8) {
+      importance = 0.8;
+    }
+
+    const decayClass = input.decayClass ?? "normal";
+    const scope = input.scope ?? "global";
+    const scopeTarget = scope === "global" ? null : (input.scopeTarget ?? null);
+    const tags = input.tags ?? [];
+    const relatedFactIds = input.relatedFactIds ?? [];
+
+    this.liveDb
+      .prepare(
+        `INSERT INTO episodes (id, event, outcome, timestamp, duration, context, related_fact_ids, procedure_id, scope, scope_target, agent_id, user_id, session_id, importance, tags, decay_class, created_at, verified_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        id,
+        input.event,
+        input.outcome,
+        timestamp,
+        input.duration ?? null,
+        input.context ?? null,
+        relatedFactIds.length > 0 ? JSON.stringify(relatedFactIds) : null,
+        input.procedureId ?? null,
+        scope,
+        scopeTarget,
+        input.agentId ?? null,
+        input.userId ?? null,
+        input.sessionId ?? null,
+        importance,
+        serializeTags(tags),
+        decayClass,
+        nowSec,
+        null,
+      );
+
+    // Link related facts via episode_relations table (not memory_links — episodes are not facts)
+    for (const factId of relatedFactIds) {
+      this.liveDb
+        .prepare(
+          `INSERT INTO episode_relations (id, episode_id, target_id, relation_type, strength, created_at) VALUES (?, ?, ?, ?, ?, ?)`,
+        )
+        .run(randomUUID(), id, factId, "PART_OF", 0.8, nowSec);
+    }
+
+    return {
+      id,
+      category: "episode",
+      event: input.event,
+      outcome: input.outcome,
+      timestamp,
+      duration: input.duration,
+      context: input.context,
+      relatedFactIds,
+      procedureId: input.procedureId,
+      scope,
+      scopeTarget: scopeTarget ?? undefined,
+      agentId: input.agentId,
+      userId: input.userId,
+      sessionId: input.sessionId,
+      importance,
+      tags,
+      decayClass,
+      createdAt: nowSec,
+    };
+  }
+
+  /**
+   * Convert a raw SQLite episodes row to an Episode object.
+   */
+  private rowToEpisode(row: Record<string, unknown>): Episode {
+    const relatedFactIdsRaw = row.related_fact_ids as string | null;
+    return {
+      id: row.id as string,
+      category: "episode",
+      event: row.event as string,
+      outcome: row.outcome as EpisodeOutcome,
+      timestamp: row.timestamp as number,
+      duration: (row.duration as number) ?? undefined,
+      context: (row.context as string) ?? undefined,
+      relatedFactIds: relatedFactIdsRaw ? (JSON.parse(relatedFactIdsRaw) as string[]) : [],
+      procedureId: (row.procedure_id as string) ?? undefined,
+      scope: (row.scope as "global" | "user" | "agent" | "session") ?? "global",
+      scopeTarget: (row.scope_target as string) ?? undefined,
+      agentId: (row.agent_id as string) ?? undefined,
+      userId: (row.user_id as string) ?? undefined,
+      sessionId: (row.session_id as string) ?? undefined,
+      importance: row.importance as number,
+      tags: parseTags(row.tags as string | null),
+      decayClass: (row.decay_class as DecayClass) ?? "normal",
+      createdAt: row.created_at as number,
+      verifiedAt: (row.verified_at as number) ?? undefined,
+    };
+  }
+
+  /**
+   * Search episodic memories (#781).
+   *
+   * Returns episodes ordered by timestamp DESC. Supports:
+   * - FTS full-text search on event + context (when query is provided)
+   * - Outcome filter
+   * - Time range filter (since / until as Unix epoch seconds)
+   * - Procedure ID filter
+   * - Limit and scope filtering
+   */
+  searchEpisodes(
+    options: {
+      query?: string;
+      outcome?: EpisodeOutcome[];
+      since?: number;
+      until?: number;
+      procedureId?: string;
+      limit?: number;
+      scopeFilter?: ScopeFilter | null;
+    } = {},
+  ): Episode[] {
+    const { query, outcome, since, until, procedureId, limit = 50, scopeFilter } = options;
+    const params: unknown[] = [];
+    const conditions: string[] = [];
+
+    // FTS text search on event + context
+    if (query && query.trim()) {
+      const sanitized = this.sanitizeFTS5Query(query.trim());
+      const words = sanitized
+        .split(/\s+/)
+        .filter((w) => w.length > 1)
+        .slice(0, 8)
+        .map((w) => `"${w}"`)
+        .join(" OR ");
+      if (words) {
+        conditions.push(`e.rowid IN (SELECT rowid FROM episodes_fts WHERE episodes_fts MATCH ?)`);
+        params.push(words);
+      }
+    }
+
+    // Outcome filter
+    if (outcome && outcome.length > 0) {
+      const placeholders = outcome.map(() => "?").join(",");
+      conditions.push(`e.outcome IN (${placeholders})`);
+      params.push(...outcome);
+    }
+
+    // Time range filter
+    if (since !== undefined) {
+      conditions.push("e.timestamp >= ?");
+      params.push(since);
+    }
+    if (until !== undefined) {
+      conditions.push("e.timestamp <= ?");
+      params.push(until);
+    }
+
+    // Procedure ID filter
+    if (procedureId) {
+      conditions.push("e.procedure_id = ?");
+      params.push(procedureId);
+    }
+
+    // Scope filter
+    const scopeClause = this.scopeFilterClausePositional(scopeFilter);
+    if (scopeClause.clause) {
+      conditions.push(scopeClause.clause.replace(/^ AND /, ""));
+      params.push(...scopeClause.params);
+    }
+
+    const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+    const limitClause = `ORDER BY e.timestamp DESC LIMIT ?`;
+    params.push(limit);
+
+    const sql = `SELECT e.* FROM episodes e ${where} ${limitClause}`;
+    const rows = this.liveDb.prepare(sql).all(...(params as SQLInputValue[])) as Array<Record<string, unknown>>;
+    return rows.map((r) => this.rowToEpisode(r));
+  }
+
+  /**
+   * Check if an episode with exact event text exists within a time window.
+   * Used for deduplication in auto-capture to avoid false positives from OR-based FTS.
+   */
+  hasRecentEpisodeWithEvent(event: string, sinceTimestamp: number): boolean {
+    const row = this.liveDb
+      .prepare("SELECT 1 FROM episodes WHERE event = ? AND timestamp >= ? LIMIT 1")
+      .get(event, sinceTimestamp) as { 1: number } | undefined;
+    return row !== undefined;
+  }
+
+  /**
+   * Get a single episode by id.
+   */
+  getEpisode(id: string): Episode | null {
+    const row = this.liveDb.prepare("SELECT * FROM episodes WHERE id = ?").get(id) as
+      | Record<string, unknown>
+      | undefined;
+    if (!row) return null;
+    return this.rowToEpisode(row);
+  }
+
+  /**
+   * Delete an episode by id.
+   */
+  deleteEpisode(id: string): boolean {
+    this.liveDb.prepare("DELETE FROM episode_relations WHERE episode_id = ?").run(id);
+    const result = this.liveDb.prepare("DELETE FROM episodes WHERE id = ?").run(id);
+    return result.changes > 0;
+  }
+
+  /**
+   * Count of episodes (for stats).
+   */
+  episodesCount(): number {
+    try {
+      const row = this.liveDb.prepare("SELECT COUNT(*) as cnt FROM episodes").get() as { cnt: number };
+      return row?.cnt ?? 0;
+    } catch {
+      return 0;
+    }
   }
 }
