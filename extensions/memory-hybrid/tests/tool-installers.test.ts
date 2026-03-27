@@ -35,7 +35,8 @@ describe("tool installers", () => {
 
     const selected = memoryCoreInstaller?.selectContext(
       {
-        factsDb: { kind: "facts" }, edictStore: null as any, edictStore: null as any,
+        factsDb: { kind: "facts" },
+        edictStore: null as any,
         vectorDb: { kind: "vectors" },
         cfg: { kind: "cfg" },
         embeddings: { kind: "embeddings" },

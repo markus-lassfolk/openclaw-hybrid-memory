@@ -114,7 +114,8 @@ function makeOpts(
   } = {},
 ): MigrateCredentialsOptions {
   return {
-    factsDb: (overrides.factsDb ?? makeFactsDB()) as unknown as MigrateCredentialsOptions["factsDb"], edictStore: null as any,
+    factsDb: (overrides.factsDb ?? makeFactsDB()) as unknown as MigrateCredentialsOptions["factsDb"],
+    edictStore: null as any,
     vectorDb: (overrides.vectorDb ?? makeVectorDB()) as unknown as MigrateCredentialsOptions["vectorDb"],
     embeddings: (overrides.embeddings ?? makeEmbeddings()) as unknown as MigrateCredentialsOptions["embeddings"],
     credentialsDb: (overrides.credentialsDb ??

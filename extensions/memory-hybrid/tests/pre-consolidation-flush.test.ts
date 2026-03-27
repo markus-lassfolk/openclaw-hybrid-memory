@@ -28,7 +28,13 @@ describe("runPreConsolidationFlush", () => {
     const logger = { info: vi.fn(), warn: vi.fn() };
 
     const result = await runPreConsolidationFlush(
-      { wal: {} as never, factsDb: {} as never, edictStore: null as any, vectorDb: {} as never, embeddings: {} as never },
+      {
+        wal: {} as never,
+        factsDb: {} as never,
+        edictStore: null as any,
+        vectorDb: {} as never,
+        embeddings: {} as never,
+      },
       logger,
       "test-phase",
     );

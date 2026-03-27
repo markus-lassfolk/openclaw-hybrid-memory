@@ -1030,7 +1030,7 @@ function migrateEpisodesTable(db: DatabaseSync): void {
         verified_at TEXT
       )
     `).run();
-    db.prepare(`CREATE INDEX idx_episodes_timestamp ON episodes (timestamp DESC)`).run();
+    db.prepare("CREATE INDEX idx_episodes_timestamp ON episodes (timestamp DESC)").run();
     db.prepare(`
       CREATE VIRTUAL TABLE episodes_fts USING fts5(
         event, context, outcome, tags,
@@ -1053,6 +1053,6 @@ function migrateEpisodeRelationsTable(db: DatabaseSync): void {
         created_at TEXT NOT NULL
       )
     `).run();
-    db.prepare(`CREATE INDEX idx_episode_relations_episode_id ON episode_relations (episode_id)`).run();
+    db.prepare("CREATE INDEX idx_episode_relations_episode_id ON episode_relations (episode_id)").run();
   }
 }

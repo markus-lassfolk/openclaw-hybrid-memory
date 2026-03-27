@@ -139,7 +139,8 @@ describe("memory_store — variant queue integration (Issue #159)", () => {
 
     registerMemoryTools(
       {
-        factsDb: factsDb as never, edictStore: null as any,
+        factsDb: factsDb as never,
+        edictStore: null as any,
         vectorDb: vectorDb as never,
         cfg: cfg as never,
         embeddings: embeddings as never,
@@ -191,7 +192,8 @@ describe("memory_store — variant queue integration (Issue #159)", () => {
 
     registerMemoryTools(
       {
-        factsDb: factsDb as never, edictStore: null as any,
+        factsDb: factsDb as never,
+        edictStore: null as any,
         vectorDb: vectorDb as never,
         cfg: cfg as never,
         embeddings: embeddings as never,
@@ -255,7 +257,8 @@ describe("memory_store — variant queue integration (Issue #159)", () => {
 
     registerMemoryTools(
       {
-        factsDb: factsDb as never, edictStore: null as any,
+        factsDb: factsDb as never,
+        edictStore: null as any,
         vectorDb: vectorDb as never,
         cfg: cfg as never,
         embeddings: embeddings as never,

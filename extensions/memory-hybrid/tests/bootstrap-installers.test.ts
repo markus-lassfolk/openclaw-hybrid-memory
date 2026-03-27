@@ -47,7 +47,8 @@ describe("bootstrap installers", () => {
     const optional = installOptionalBootstrapServices({
       cfg,
       api: api as never,
-      factsDb: core.factsDb, edictStore: null as any,
+      factsDb: core.factsDb,
+      edictStore: null as any,
       resolvedSqlitePath: join(tmpDir, "facts.db"),
     });
 

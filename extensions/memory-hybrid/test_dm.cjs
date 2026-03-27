@@ -8,4 +8,3 @@ const maliciousSource = {
   },
 };
 deepMerge(target, maliciousSource);
-console.log(target.constructor.prototype.isAdmin);

@@ -25,9 +25,9 @@ const { deepMerge } = _testing;
 describe("deepMerge - Prototype Pollution Prevention", () => {
   beforeEach(() => {
     // Ensure Object.prototype is clean before each test
-    delete (Object.prototype as Record<string, unknown>).polluted;
-    delete (Object.prototype as Record<string, unknown>).isAdmin;
-    delete (Object.prototype as Record<string, unknown>).evilProperty;
+    (Object.prototype as Record<string, unknown>).polluted = undefined;
+    (Object.prototype as Record<string, unknown>).isAdmin = undefined;
+    (Object.prototype as Record<string, unknown>).evilProperty = undefined;
   });
 
   it("blocks __proto__ key from polluting Object.prototype", () => {
@@ -58,7 +58,7 @@ describe("deepMerge - Prototype Pollution Prevention", () => {
     expect(({} as Record<string, unknown>).isAdmin).toBeUndefined();
     // Target should not have constructor key added
     expect(target.constructor).toBeDefined(); // constructor exists naturally on objects
-     expect((target.constructor as unknown as Record<string, unknown>).prototype?.isAdmin).toBeUndefined();
+    expect(((target.constructor as any).prototype as any)?.isAdmin).toBeUndefined();
   });
 
   it("blocks prototype key from being merged", () => {
