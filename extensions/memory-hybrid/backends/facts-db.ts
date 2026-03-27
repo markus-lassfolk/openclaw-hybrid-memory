@@ -3147,8 +3147,6 @@ export class FactsDB extends BaseSqliteStore {
         avoidanceNotes.push(note);
       }
 
-
-
       const notesJson = avoidanceNotes.length > 0 ? JSON.stringify(avoidanceNotes) : null;
 
       // One version record per failure event
@@ -3177,14 +3175,12 @@ export class FactsDB extends BaseSqliteStore {
       // Update procedure record
       const newFailureCount = proc.failureCount + 1;
       const newConfidence = Math.max(0.1, Math.min(0.95, 0.5 + 0.1 * (proc.successCount - newFailureCount)));
-      const totalEvents = proc.successCount + newFailureCount;
-      const successRate = totalEvents > 0 ? proc.successCount / totalEvents : 0.0;
-      const procedureType = successRate >= 0.5 ? "positive" : "negative";
+      // Always mark as negative on failure (matching original behavior)
       this.liveDb
         .prepare(
-          `UPDATE procedures SET failure_count = ?, last_failed = ?, confidence = ?, procedure_type = ?, updated_at = ? WHERE id = ?`,
+          `UPDATE procedures SET failure_count = ?, last_failed = ?, confidence = ?, procedure_type = 'negative', updated_at = ? WHERE id = ?`,
         )
-        .run(newFailureCount, nowSec, newConfidence, procedureType, nowSec, input.procedureId);
+        .run(newFailureCount, nowSec, newConfidence, nowSec, input.procedureId);
 
       // Create an episode record for this failure
       const eventText =
