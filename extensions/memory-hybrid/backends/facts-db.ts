@@ -2985,8 +2985,8 @@ export class FactsDB extends BaseSqliteStore {
         )
         .get(base.id) as { total_succ: number; total_fail: number };
 
-      const totalSuccess = base.successCount + versionCounts.total_succ;
-      const totalFailure = base.failureCount + versionCounts.total_fail;
+      const totalSuccess = versionCounts.total_succ;
+      const totalFailure = versionCounts.total_fail;
       const total = totalSuccess + totalFailure;
       const successRate = total > 0 ? totalSuccess / total : 0;
 
@@ -3112,14 +3112,12 @@ export class FactsDB extends BaseSqliteStore {
           .run(randomUUID(), input.procedureId, nowSec);
       }
 
-      // Update procedure record
-      const newSuccessCount = proc.successCount + 1;
-      const newConfidence = Math.max(0.1, Math.min(0.95, 0.5 + 0.1 * (newSuccessCount - proc.failureCount)));
+      // Update procedure record (do NOT bump success_count — version table is the source of truth for counts)
       this.liveDb
         .prepare(
-          `UPDATE procedures SET success_count = ?, last_validated = ?, confidence = ?, procedure_type = 'positive', updated_at = ? WHERE id = ?`,
+          `UPDATE procedures SET last_validated = ?, confidence = ?, procedure_type = 'positive', updated_at = ? WHERE id = ?`,
         )
-        .run(newSuccessCount, nowSec, newConfidence, nowSec, input.procedureId);
+        .run(nowSec, Math.max(0.1, Math.min(0.95, 0.5 + 0.1 * (proc.successCount + 1 - proc.failureCount))), nowSec, input.procedureId);
     } else {
       // Failure: insert new version record (one version per failure event) and failure record
       const latestVer = this.liveDb
@@ -3180,14 +3178,12 @@ export class FactsDB extends BaseSqliteStore {
           input.failedAtStep ?? null,
         );
 
-      // Update procedure record
-      const newFailureCount = proc.failureCount + 1;
-      const newConfidence = Math.max(0.1, Math.min(0.95, 0.5 + 0.1 * (proc.successCount - newFailureCount)));
+      // Update procedure record (do NOT bump failure_count — version table is the source of truth for counts)
       this.liveDb
         .prepare(
-          `UPDATE procedures SET failure_count = ?, last_failed = ?, confidence = ?, procedure_type = 'negative', updated_at = ? WHERE id = ?`,
+          `UPDATE procedures SET last_failed = ?, confidence = ?, procedure_type = 'negative', updated_at = ? WHERE id = ?`,
         )
-        .run(newFailureCount, nowSec, newConfidence, nowSec, input.procedureId);
+        .run(nowSec, Math.max(0.1, Math.min(0.95, 0.5 + 0.1 * (proc.successCount - (proc.failureCount + 1)))), nowSec, input.procedureId);
 
       // Create an episode record for this failure
       const eventText =
@@ -3207,7 +3203,7 @@ export class FactsDB extends BaseSqliteStore {
           tags: input.tags,
           importance: 0.8,
           scope: input.scope ?? "global",
-          scopeTarget: (input.scope ?? "global" === "global") ? null : (input.scopeTarget ?? null),
+          scopeTarget: (input.scope ?? "global") === "global" ? null : (input.scopeTarget ?? null),
           agentId: input.agentId,
           userId: input.userId,
           sessionId: input.sessionId,
