@@ -49,7 +49,7 @@ function makeCtx(enabled: boolean): HandlerContext {
 
 describe("runConfigViewForCli nightlyCycle output", () => {
   afterEach(() => {
-    process.env.OPENCLAW_CONFIG = undefined;
+    delete process.env.OPENCLAW_CONFIG;
     try {
       fs.unlinkSync("/tmp/test-openclaw.json");
     } catch {

@@ -37,7 +37,7 @@ describe("resolveSecretRef", () => {
   });
 
   it("returns undefined when env var is not set", () => {
-    process.env.TEST_GW_TOKEN_UNSET_278 = undefined;
+    delete process.env.TEST_GW_TOKEN_UNSET_278;
     expect(resolveSecretRef("env:TEST_GW_TOKEN_UNSET_278")).toBeUndefined();
   });
 
@@ -91,7 +91,7 @@ describe("resolveSecretRef", () => {
   });
 
   it("returns undefined when ${VAR} template references unset env var", () => {
-    process.env.TEST_VAR_UNSET = undefined;
+    delete process.env.TEST_VAR_UNSET;
     expect(resolveSecretRef("${TEST_VAR_UNSET}")).toBeUndefined();
   });
 
@@ -161,7 +161,7 @@ describe("parseGatewayConfig", () => {
   });
 
   it("sets _resolvedToken to undefined when SecretRef cannot be resolved", () => {
-    process.env.UNSET_GW_TOKEN_278 = undefined;
+    delete process.env.UNSET_GW_TOKEN_278;
     const result = parseGatewayConfig({ gateway: { auth: { token: "env:UNSET_GW_TOKEN_278" } } });
     // The config is still returned (SecretRef string is valid), but resolved value is undefined
     expect(result?.auth?.token).toBe("env:UNSET_GW_TOKEN_278");
