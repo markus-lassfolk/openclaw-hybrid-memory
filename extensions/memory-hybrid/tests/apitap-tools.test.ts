@@ -2,14 +2,14 @@
  * Tests for apitap tool registrations (Issue #614).
  */
 
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
-import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { registerApitapTools } from "../tools/apitap-tools.js";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApitapStore } from "../backends/apitap-store.js";
-import { ApitapService } from "../services/apitap-service.js";
 import type { HybridMemoryConfig } from "../config.js";
+import { ApitapService } from "../services/apitap-service.js";
+import { registerApitapTools } from "../tools/apitap-tools.js";
 
 // ---------------------------------------------------------------------------
 // Minimal mock API

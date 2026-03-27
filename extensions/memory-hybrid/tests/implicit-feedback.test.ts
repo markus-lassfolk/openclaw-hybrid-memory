@@ -2,24 +2,24 @@
  * Tests for implicit feedback extraction (Issue #262 — Phase 1).
  */
 
-import { describe, it, expect } from "vitest";
-import {
-  computeSimpleSimilarity,
-  extractImplicitSignals,
-  detectRephrase,
-  detectImmediateAction,
-  detectTopicChange,
-  detectGratefulClose,
-  detectTerseResponse,
-  detectExtendedEngagement,
-  detectCorrectionCascade,
-  detectCopyPaste,
-  detectSelfService,
-  detectEscalation,
-  detectSilenceAfterAction,
-  type ConversationTurn,
-} from "../services/implicit-feedback-extract.js";
+import { describe, expect, it } from "vitest";
 import type { ImplicitFeedbackConfig } from "../config/types/features.js";
+import {
+  type ConversationTurn,
+  computeSimpleSimilarity,
+  detectCopyPaste,
+  detectCorrectionCascade,
+  detectEscalation,
+  detectExtendedEngagement,
+  detectGratefulClose,
+  detectImmediateAction,
+  detectRephrase,
+  detectSelfService,
+  detectSilenceAfterAction,
+  detectTerseResponse,
+  detectTopicChange,
+  extractImplicitSignals,
+} from "../services/implicit-feedback-extract.js";
 
 const DEFAULT_CONFIG: ImplicitFeedbackConfig = {
   enabled: true,

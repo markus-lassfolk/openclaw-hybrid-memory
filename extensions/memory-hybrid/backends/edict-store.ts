@@ -11,12 +11,12 @@
  * management and to ensure they are never pruned by normal memory decay.
  */
 
-import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import { serializeTags, parseTags } from "../utils/tags.js";
+import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import { capturePluginError } from "../services/error-reporter.js";
+import { parseTags, serializeTags } from "../utils/tags.js";
 
 /** TTL modes for edicts */
 export type EdictTtl = "never" | "event" | number;
@@ -92,7 +92,7 @@ export function renderEdictsForPrompt(edicts: EdictEntry[]): string {
   if (edicts.length === 0) return "";
   const header = "## Verified Ground Truth\n";
   const lines = edicts.map((e) => renderEdictLine(e));
-  return header + lines.join("\n") + "\n";
+  return `${header}${lines.join("\n")}\n`;
 }
 
 /** Escape a string for safe use as a SQLite LIKE pattern */
@@ -199,9 +199,7 @@ export class EdictStore {
 
   /** Find an edict by normalized text (for duplicate detection) */
   private findByNormalizedText(normalized: string): EdictEntry | null {
-    const rows = this.db
-      .prepare("SELECT * FROM edicts")
-      .all() as Array<Record<string, unknown>>;
+    const rows = this.db.prepare("SELECT * FROM edicts").all() as Array<Record<string, unknown>>;
     for (const row of rows) {
       const storedText = (row.text as string).trim().replace(/\s+/g, " ").toLowerCase();
       if (storedText === normalized) {
@@ -271,7 +269,7 @@ export class EdictStore {
     const tagsStr = tags.length > 0 ? serializeTags(tags) : null;
 
     this.db
-      .prepare(`UPDATE edicts SET text = ?, source = ?, expires_at = ?, ttl = ?, tags = ?, updated_at = ? WHERE id = ?`)
+      .prepare("UPDATE edicts SET text = ?, source = ?, expires_at = ?, ttl = ?, tags = ?, updated_at = ? WHERE id = ?")
       .run(text, source ?? null, expiresAt ?? null, ttlStr, tagsStr, nowSec, input.id);
 
     return {

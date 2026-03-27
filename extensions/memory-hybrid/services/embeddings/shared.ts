@@ -3,8 +3,8 @@
  */
 
 import { createHash } from "node:crypto";
+import { LLMRetryError, is401OrWrapped, is403Like, is404Like, is429OrWrapped, is500OrWrapped } from "../chat.js";
 import { capturePluginError } from "../error-reporter.js";
-import { is404Like, is403Like, is401OrWrapped, is429OrWrapped, is500OrWrapped, LLMRetryError } from "../chat.js";
 import type { EmbeddingProvider } from "./types.js";
 import { AllEmbeddingProvidersFailed } from "./types.js";
 

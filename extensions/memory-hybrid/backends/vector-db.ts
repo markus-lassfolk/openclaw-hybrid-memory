@@ -2,15 +2,15 @@
  * LanceDB vector backend for semantic search.
  */
 
-import * as lancedb from "@lancedb/lancedb";
-import { isAbsolute, resolve as pathResolve } from "node:path";
 import { randomUUID } from "node:crypto";
-import { rmSync, existsSync } from "node:fs";
+import { existsSync, rmSync } from "node:fs";
+import { isAbsolute, resolve as pathResolve } from "node:path";
 import { join } from "node:path";
-import type { MemoryCategory, DecayClass } from "../config.js";
-import type { SearchResult } from "../types/memory.js";
+import * as lancedb from "@lancedb/lancedb";
+import type { DecayClass, MemoryCategory } from "../config.js";
 import { capturePluginError } from "../services/error-reporter.js";
-import { UUID_REGEX, LANCE_NO_VECTOR_COL_MSG } from "../utils/constants.js";
+import type { SearchResult } from "../types/memory.js";
+import { LANCE_NO_VECTOR_COL_MSG, UUID_REGEX } from "../utils/constants.js";
 import { pluginLogger } from "../utils/logger.js";
 
 const LANCE_TABLE = "memories";
@@ -229,9 +229,7 @@ export class VectorDB {
     // absolute path. If dbPath somehow ends up relative (e.g. due to a config serialization
     // edge case or WSL path mapping), resolve it relative to process.cwd() so the binding
     // can still locate the data directory.
-    const resolvedPath = isAbsolute(this.dbPath)
-      ? this.dbPath
-      : pathResolve(this.dbPath);
+    const resolvedPath = isAbsolute(this.dbPath) ? this.dbPath : pathResolve(this.dbPath);
 
     this.db = await lancedb.connect(resolvedPath);
     // Guard: a concurrent close() may have nulled this.db between the connect() await and here.
@@ -539,9 +537,7 @@ export class VectorDB {
 
     // Use the same path resolution as doInitialize() to ensure filesystem operations
     // target the same directory where LanceDB stored the data (issue #768).
-    const resolvedPath = isAbsolute(this.dbPath)
-      ? this.dbPath
-      : pathResolve(this.dbPath);
+    const resolvedPath = isAbsolute(this.dbPath) ? this.dbPath : pathResolve(this.dbPath);
 
     const memoriesDir = join(resolvedPath, `${LANCE_TABLE}.lance`);
     const cacheDir = join(resolvedPath, `${SEMANTIC_QUERY_CACHE_TABLE}.lance`);

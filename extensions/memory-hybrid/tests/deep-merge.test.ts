@@ -17,7 +17,7 @@
  * - Does not overwrite existing properties in target
  * - Handles arrays correctly (treats them as values, not objects to merge)
  */
-import { describe, it, expect, beforeEach } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import { _testing } from "../index.js";
 
 const { deepMerge } = _testing;

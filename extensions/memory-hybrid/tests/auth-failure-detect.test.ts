@@ -2,13 +2,13 @@
  * Tests for auth failure detection service
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
 import {
+  DEFAULT_AUTH_FAILURE_PATTERNS,
+  buildCredentialQuery,
   detectAuthFailure,
   extractTarget,
-  buildCredentialQuery,
   formatCredentialHint,
-  DEFAULT_AUTH_FAILURE_PATTERNS,
 } from "../services/auth-failure-detect.js";
 
 describe("auth-failure-detect", () => {

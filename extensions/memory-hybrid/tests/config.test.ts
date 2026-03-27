@@ -1,25 +1,25 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { pluginLogger } from "../utils/logger.js";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
-  DECAY_CLASSES,
-  TTL_DEFAULTS,
-  DEFAULT_MEMORY_CATEGORIES,
-  getMemoryCategories,
-  setMemoryCategories,
-  isValidCategory,
-  vectorDimsForModel,
-  hybridConfigSchema,
   CREDENTIAL_TYPES,
-  getDefaultCronModel,
-  getCronModelConfig,
-  getLLMModelPreference,
-  getLLMModelPreferenceUnfiltered,
-  getProvidersWithKeys,
-  resolveReflectionModelAndFallbacks,
+  DECAY_CLASSES,
+  DEFAULT_MEMORY_CATEGORIES,
   type DecayClass,
   type HybridMemoryConfig,
+  TTL_DEFAULTS,
+  getCronModelConfig,
+  getDefaultCronModel,
+  getLLMModelPreference,
+  getLLMModelPreferenceUnfiltered,
+  getMemoryCategories,
+  getProvidersWithKeys,
+  hybridConfigSchema,
+  isValidCategory,
+  resolveReflectionModelAndFallbacks,
+  setMemoryCategories,
+  vectorDimsForModel,
 } from "../config.js";
 import type { ConfigMode } from "../config.js";
+import { pluginLogger } from "../utils/logger.js";
 
 // ---------------------------------------------------------------------------
 // Decay classes & TTL defaults

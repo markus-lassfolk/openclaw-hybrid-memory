@@ -1,6 +1,7 @@
 {
   "$schema": "https://biomejs.dev/schemas/1.9.4/schema.json",
   "files": {
+    "ignoreUnknown": true,
     "ignore": ["dist/**", "node_modules/**", "scripts/**", "coverage/**", "tsconfig*.json"]
   },
   "formatter": {
@@ -32,12 +33,10 @@
         "noGlobalIsNan": "error"
       },
       "correctness": {
-        "noUnusedVariables": "warn",
-        "noUnnecessaryContinue": "warn"
+        "noUnusedVariables": "warn"
       },
       "style": {
         "useConst": "warn",
-        "noVar": "error",
         "noNonNullAssertion": "warn",
         "noParameterAssign": "warn",
         "noUnusedTemplateLiteral": "warn",
@@ -56,9 +55,6 @@
         "noDelete": "warn"
       }
     }
-  },
-  "organizeImports": {
-    "enabled": false
   },
   "overrides": [
     {

@@ -5,11 +5,11 @@
  * and columns are created on a fresh database.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { DatabaseSync } from "node:sqlite";
 import { mkdtempSync, rmSync } from "node:fs";
-import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { runFactsMigrations } from "../backends/migrations/facts-migrations.js";
 
 let tmpDir: string;

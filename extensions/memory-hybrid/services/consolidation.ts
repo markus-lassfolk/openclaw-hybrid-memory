@@ -6,21 +6,21 @@
  * Merged fact is stored in both SQLite and Lance.
  */
 
+import { randomUUID } from "node:crypto";
+import type OpenAI from "openai";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
+import type { MemoryCategory, MemoryEntry } from "../types/memory.js";
+import { CONSOLIDATED_FACT_DECAY_CLASS } from "../utils/consolidation-controls.js";
+import { BATCH_STORE_IMPORTANCE, CONSOLIDATION_MERGE_MAX_CHARS } from "../utils/constants.js";
+import { fillPrompt, loadPrompt } from "../utils/prompt-loader.js";
+import { SENSITIVE_PATTERNS } from "./auto-capture.js";
+import { withCostFeature } from "./cost-context.js";
 import type { EmbeddingProvider } from "./embeddings.js";
 import { shouldSuppressEmbeddingError } from "./embeddings.js";
-import type OpenAI from "openai";
-import type { MemoryEntry, MemoryCategory } from "../types/memory.js";
-import type { ProvenanceService } from "./provenance.js";
-import { loadPrompt, fillPrompt } from "../utils/prompt-loader.js";
-import { CONSOLIDATION_MERGE_MAX_CHARS, BATCH_STORE_IMPORTANCE } from "../utils/constants.js";
-import { SENSITIVE_PATTERNS } from "./auto-capture.js";
 import { capturePluginError } from "./error-reporter.js";
-import { withCostFeature } from "./cost-context.js";
-import { normalizeVector, dotProductSimilarity } from "./reflection.js";
-import { CONSOLIDATED_FACT_DECAY_CLASS } from "../utils/consolidation-controls.js";
-import { randomUUID } from "node:crypto";
+import type { ProvenanceService } from "./provenance.js";
+import { dotProductSimilarity, normalizeVector } from "./reflection.js";
 
 export interface ConsolidateOptions {
   threshold: number;

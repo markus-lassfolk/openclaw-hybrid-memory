@@ -14,9 +14,9 @@
  */
 
 import type OpenAI from "openai";
+import type { ContextualVariantsConfig } from "../config.js";
 import { chatComplete } from "./chat.js";
 import { capturePluginError } from "./error-reporter.js";
-import type { ContextualVariantsConfig } from "../config.js";
 import { extractJsonArray } from "./json-array-parser.js";
 
 // ---------------------------------------------------------------------------

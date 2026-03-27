@@ -5,8 +5,8 @@
  * formatDuration(minutes) → string
  */
 
-import { describe, it, expect } from "vitest";
-import { parseDuration, formatDuration } from "../utils/duration.js";
+import { describe, expect, it } from "vitest";
+import { formatDuration, parseDuration } from "../utils/duration.js";
 
 // ---------------------------------------------------------------------------
 // parseDuration — valid inputs

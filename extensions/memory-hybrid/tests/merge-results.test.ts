@@ -22,8 +22,8 @@
  * - scopeFilter with workspaceId property passed through to getById.
  */
 
-import { describe, it, expect } from "vitest";
-import { mergeResults, filterByScope, RRF_K_DEFAULT } from "../services/merge-results.js";
+import { describe, expect, it } from "vitest";
+import { RRF_K_DEFAULT, filterByScope, mergeResults } from "../services/merge-results.js";
 import type { SearchResult } from "../types/memory.js";
 
 // ---------------------------------------------------------------------------

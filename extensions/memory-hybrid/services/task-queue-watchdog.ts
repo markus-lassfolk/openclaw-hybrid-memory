@@ -13,15 +13,15 @@
  * Addresses Product Goal 4: Autonomous Maintenance
  */
 
-import { existsSync } from "node:fs";
-import { writeFile, readdir, mkdir, unlink } from "node:fs/promises";
-import { join, dirname } from "node:path";
-import { homedir } from "node:os";
 import { execFile as execFileCb } from "node:child_process";
+import { existsSync } from "node:fs";
+import { mkdir, readdir, unlink, writeFile } from "node:fs/promises";
+import { homedir } from "node:os";
+import { dirname, join } from "node:path";
 import { promisify } from "node:util";
+import { readJsonFile } from "../utils/fs.js";
 import { capturePluginError } from "./error-reporter.js";
 import { expireDispatchLeases, transitionDispatchLease } from "./task-queue-leases.js";
-import { readJsonFile } from "../utils/fs.js";
 
 const execFile = promisify(execFileCb);
 

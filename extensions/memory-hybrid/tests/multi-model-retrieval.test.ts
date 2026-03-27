@@ -5,15 +5,15 @@
  * search in the fact_embeddings table. No actual Ollama/OpenAI instances required.
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
-import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FactsDB } from "../backends/facts-db.js";
-import { EmbeddingRegistry } from "../services/embedding-registry.js";
-import { runRetrievalPipeline, type FactsDbWithEmbeddings } from "../services/retrieval-orchestrator.js";
-import type { EmbeddingProvider } from "../services/embeddings.js";
 import type { VectorDB } from "../backends/vector-db.js";
+import { EmbeddingRegistry } from "../services/embedding-registry.js";
+import type { EmbeddingProvider } from "../services/embeddings.js";
+import { type FactsDbWithEmbeddings, runRetrievalPipeline } from "../services/retrieval-orchestrator.js";
 
 // ---------------------------------------------------------------------------
 // Minimal mock factories

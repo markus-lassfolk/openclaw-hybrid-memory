@@ -10,63 +10,63 @@ export * from "./sensors.js";
 // Re-export all types from domain files and define HybridMemoryConfig and other shared types
 
 import type {
-  AutoRecallConfig,
   AutoClassifyConfig,
-  SearchConfig,
-  RetrievalConfig,
-  QueryExpansionConfig,
-  RerankingConfig,
+  AutoRecallConfig,
   ContextualVariantsConfig,
   DocumentGradingConfig,
+  QueryExpansionConfig,
+  RerankingConfig,
+  RetrievalConfig,
+  SearchConfig,
 } from "./retrieval.js";
 
-import type { StoreConfig, WALConfig, EventLogConfig, PathConfig } from "./core.js";
+import type { EventLogConfig, PathConfig, StoreConfig, WALConfig } from "./core.js";
 
 import type {
-  PassiveObserverConfig,
-  ReflectionConfig,
-  IdentityReflectionConfig,
-  IdentityPromotionConfig,
-  ProceduresConfig,
   ExtractionConfig,
+  IdentityPromotionConfig,
+  IdentityReflectionConfig,
+  PassiveObserverConfig,
+  ProceduresConfig,
+  ReflectionConfig,
 } from "./capture.js";
 
 import type {
-  VerificationConfig,
-  ProvenanceConfig,
-  NightlyCycleConfig,
-  HealthConfig,
-  MaintenanceConfig,
   CouncilConfig,
   CouncilProvenanceMode,
   CronReliabilityConfig,
+  HealthConfig,
+  MaintenanceConfig,
+  NightlyCycleConfig,
+  ProvenanceConfig,
+  VerificationConfig,
 } from "./maintenance.js";
 
 import type {
+  AliasesConfig,
+  AmbientConfig,
+  ApiTapConfig,
+  ClosedLoopConfig,
+  ClustersConfig,
+  CostTrackingConfig,
+  CrossAgentLearningConfig,
+  CrystallizationConfig,
+  DashboardConfig,
+  DocumentsConfig,
+  FrequencyCaptureConfig,
+  FrustrationDetectionConfig,
+  FutureDateProtectionConfig,
+  GapsConfig,
   GraphConfig,
   GraphRetrievalConfig,
-  ClustersConfig,
-  GapsConfig,
-  AliasesConfig,
+  HumanizerConfig,
+  ImplicitFeedbackConfig,
   IngestConfig,
   MemoryTieringConfig,
-  AmbientConfig,
   ReinforcementConfig,
-  FutureDateProtectionConfig,
-  DocumentsConfig,
-  WorkflowTrackingConfig,
-  CrystallizationConfig,
   SelfExtensionConfig,
-  ImplicitFeedbackConfig,
-  ClosedLoopConfig,
-  FrustrationDetectionConfig,
-  CrossAgentLearningConfig,
   ToolEffectivenessConfig,
-  CostTrackingConfig,
-  DashboardConfig,
-  ApiTapConfig,
-  HumanizerConfig,
-  FrequencyCaptureConfig,
+  WorkflowTrackingConfig,
 } from "./features.js";
 
 import type { MultiAgentConfig, PersonaProposalsConfig } from "./agents.js";

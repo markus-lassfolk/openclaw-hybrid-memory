@@ -1,9 +1,10 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
-import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { hybridConfigSchema } from "../config.js";
 import {
+  type VersionCheckCacheEntry,
   fetchLatestPublishedVersion,
   isPluginOutdated,
   isVersionCheckCacheFresh,
@@ -12,7 +13,6 @@ import {
   readVersionCheckCache,
   shouldEmitUpdateNudge,
   writeVersionCheckCache,
-  type VersionCheckCacheEntry,
 } from "../utils/plugin-update-check.js";
 
 describe("plugin update check config", () => {

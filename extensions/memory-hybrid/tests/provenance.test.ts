@@ -1,9 +1,9 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
-import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { _testing } from "../index.js";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { hybridConfigSchema } from "../config.js";
+import { _testing } from "../index.js";
 
 const { ProvenanceService } = _testing;
 

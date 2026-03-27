@@ -1,7 +1,7 @@
-import { describe, expect, it, beforeAll } from "vitest";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { beforeAll, describe, expect, it } from "vitest";
 import { ARCHITECTURE_CENTER, allArchitectureOwnershipPaths } from "../src/architecture-center.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));

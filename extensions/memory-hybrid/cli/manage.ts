@@ -3,48 +3,48 @@
  * Extracted from cli/register.ts lines 290-1552.
  */
 
+import { execSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { execSync } from "node:child_process";
-import { generateTraceId, buildCouncilSessionKey, buildProvenanceMetadata } from "../utils/provenance.js";
-import { relativeTime } from "./shared.js";
-import { buildAppliedContent, buildUnifiedDiff } from "./proposals.js";
-import type {
-  FindDuplicatesResult,
-  StoreCliOpts,
-  StoreCliResult,
-  BackfillCliResult,
-  BackfillCliSink,
-  IngestFilesResult,
-  IngestFilesSink,
-  SelfCorrectionExtractResult,
-  SelfCorrectionRunResult,
-  AnalyzeFeedbackPhrasesResult,
-  MigrateToVaultResult,
-  CredentialsAuditResult,
-  CredentialsPruneResult,
-  UpgradeCliResult,
-  UninstallCliResult,
-  ConfigCliResult,
-} from "./types.js";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
-import type { EmbeddingProvider } from "../services/embeddings.js";
-import type { SearchResult } from "../types/memory.js";
-// biome-ignore lint/style/useImportType: mergeResults kept as value import so typeof mergeResults resolves at the type level without confusion
-import { mergeResults, filterByScope } from "../services/merge-results.js";
-import type { ScopeFilter } from "../types/memory.js";
 import type { HybridMemoryConfig } from "../config.js";
 import { getCronModelConfig, getDefaultCronModel } from "../config.js";
-import { parseSourceDate } from "../utils/dates.js";
-import { capturePluginError } from "../services/error-reporter.js";
-import { withExit, type Chainable } from "./shared.js";
-import { getLanguageKeywordsFilePath } from "../utils/language-keywords.js";
-import { runMemoryDiagnostics } from "../services/memory-diagnostics.js";
 import { runContextAudit } from "../services/context-audit.js";
-import { runClosedLoopAnalysis, getEffectivenessReport } from "../services/feedback-effectiveness.js";
 import { migrateEmbeddings } from "../services/embedding-migration.js";
+import type { EmbeddingProvider } from "../services/embeddings.js";
+import { capturePluginError } from "../services/error-reporter.js";
+import { getEffectivenessReport, runClosedLoopAnalysis } from "../services/feedback-effectiveness.js";
+import { runMemoryDiagnostics } from "../services/memory-diagnostics.js";
+// biome-ignore lint/style/useImportType: mergeResults kept as value import so typeof mergeResults resolves at the type level without confusion
+import { filterByScope, mergeResults } from "../services/merge-results.js";
+import type { SearchResult } from "../types/memory.js";
+import type { ScopeFilter } from "../types/memory.js";
+import { parseSourceDate } from "../utils/dates.js";
+import { getLanguageKeywordsFilePath } from "../utils/language-keywords.js";
+import { buildCouncilSessionKey, buildProvenanceMetadata, generateTraceId } from "../utils/provenance.js";
+import { buildAppliedContent, buildUnifiedDiff } from "./proposals.js";
+import { relativeTime } from "./shared.js";
+import { type Chainable, withExit } from "./shared.js";
+import type {
+  AnalyzeFeedbackPhrasesResult,
+  BackfillCliResult,
+  BackfillCliSink,
+  ConfigCliResult,
+  CredentialsAuditResult,
+  CredentialsPruneResult,
+  FindDuplicatesResult,
+  IngestFilesResult,
+  IngestFilesSink,
+  MigrateToVaultResult,
+  SelfCorrectionExtractResult,
+  SelfCorrectionRunResult,
+  StoreCliOpts,
+  StoreCliResult,
+  UninstallCliResult,
+  UpgradeCliResult,
+} from "./types.js";
 
 export type ManageContext = {
   factsDb: FactsDB;
@@ -2588,12 +2588,8 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
         console.log(`  ID:         ${proc.id}`);
         console.log(`  Type:       ${proc.procedureType}`);
         console.log(`  Confidence: ${proc.confidence?.toFixed(3) ?? "n/a"}`);
-        console.log(
-          `  Success:    ${totalSuccess} (from versions)`,
-        );
-        console.log(
-          `  Failure:   ${totalFailure} (from versions)`,
-        );
+        console.log(`  Success:    ${totalSuccess} (from versions)`);
+        console.log(`  Failure:   ${totalFailure} (from versions)`);
         console.log(`  Rate:      ${(rate * 100).toFixed(1)}%`);
         console.log(`  Outcome:   ${proc.lastOutcome ?? "unknown"}`);
         console.log(

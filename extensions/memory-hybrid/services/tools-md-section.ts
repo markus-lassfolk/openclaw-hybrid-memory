@@ -3,7 +3,7 @@
  * named section instead of appending at end. Dedup by normalized line.
  */
 
-import { readFileSync, writeFileSync, existsSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 
 function normalizeRuleLine(line: string): string {
   return line.trim().replace(/\s+/g, " ").toLowerCase();

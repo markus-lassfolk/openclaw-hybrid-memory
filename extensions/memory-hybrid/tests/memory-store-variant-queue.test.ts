@@ -7,14 +7,14 @@
  * - When variantQueue is null (disabled), no variants are generated
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
-import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { registerMemoryTools } from "../tools/memory-tools.js";
-import { ContextualVariantGenerator, VariantGenerationQueue } from "../services/contextual-variants.js";
 import { _testing } from "../index.js";
+import { ContextualVariantGenerator, VariantGenerationQueue } from "../services/contextual-variants.js";
+import { registerMemoryTools } from "../tools/memory-tools.js";
 
 const { FactsDB } = _testing;
 

@@ -6,14 +6,14 @@
  */
 
 import { Type } from "@sinclair/typebox";
-import { stringEnum } from "../utils/typebox.js";
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk";
+import { stringEnum } from "../utils/typebox.js";
 
 import type { IssueStore } from "../backends/issue-store.js";
-import type { IssueStatus, IssueSeverity } from "../types/issue-types.js";
 import type { HybridMemoryConfig } from "../config.js";
 import { isCompactVerbosity } from "../config.js";
 import { capturePluginError } from "../services/error-reporter.js";
+import type { IssueSeverity, IssueStatus } from "../types/issue-types.js";
 
 const ISSUE_STATUSES = ["open", "diagnosed", "fix-attempted", "resolved", "verified", "wont-fix"] as const;
 

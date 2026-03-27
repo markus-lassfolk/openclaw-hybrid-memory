@@ -4,10 +4,10 @@
  * Extracted from index.ts - functions for determining if content should be auto-captured
  */
 
-import { getMemoryTriggerRegexes } from "../utils/language-keywords.js";
 import { CREDENTIAL_NOTES_MAX_CHARS } from "../utils/constants.js";
+import { getMemoryTriggerRegexes } from "../utils/language-keywords.js";
 import { truncateText } from "../utils/text.js";
-import { validateCredentialValue, validateAndNormalizeServiceName } from "./credential-validation.js";
+import { validateAndNormalizeServiceName, validateCredentialValue } from "./credential-validation.js";
 
 /** Memory triggers: English + dynamic languages from .language-keywords.json (see build-languages command). */
 export function getMemoryTriggers(): RegExp[] {

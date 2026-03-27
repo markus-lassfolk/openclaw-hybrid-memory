@@ -23,14 +23,14 @@
  *   - createDashboardServer: close() shuts down the server
  */
 
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
 import { request } from "node:http";
-import { collectStatus, createDashboardServer } from "../routes/dashboard-server.js";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { parseDashboardConfig } from "../config/parsers/features.js";
 import { _testing } from "../index.js";
+import { collectStatus, createDashboardServer } from "../routes/dashboard-server.js";
 
 const { FactsDB, VectorDB } = _testing;
 

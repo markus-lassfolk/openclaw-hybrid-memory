@@ -6,15 +6,15 @@
  * while the unit tests in version-check.test.ts stay green.
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
-import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { createPluginService, type PluginServiceContext } from "../setup/plugin-service.js";
-import { MIN_OPENCLAW_VERSION } from "../utils/version-check.js";
-import { _testing } from "../index.js";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { hybridConfigSchema } from "../config.js";
+import { _testing } from "../index.js";
 import { capturePluginError, getErrorReporterMuteReason, setErrorReporterMuted } from "../services/error-reporter.js";
+import { type PluginServiceContext, createPluginService } from "../setup/plugin-service.js";
+import { MIN_OPENCLAW_VERSION } from "../utils/version-check.js";
 
 const { FactsDB, VectorDB } = _testing;
 

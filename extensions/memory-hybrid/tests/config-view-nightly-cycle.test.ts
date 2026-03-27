@@ -1,8 +1,8 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
 import * as fs from "node:fs";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
-import type { HandlerContext } from "../cli/handlers.js";
 import { runConfigViewForCli } from "../cli/cmd-config.js";
+import type { HandlerContext } from "../cli/handlers.js";
 
 function makeCtx(enabled: boolean): HandlerContext {
   const cfg = {
@@ -49,7 +49,7 @@ function makeCtx(enabled: boolean): HandlerContext {
 
 describe("runConfigViewForCli nightlyCycle output", () => {
   afterEach(() => {
-    delete process.env.OPENCLAW_CONFIG;
+    process.env.OPENCLAW_CONFIG = undefined;
     try {
       fs.unlinkSync("/tmp/test-openclaw.json");
     } catch {
@@ -75,7 +75,7 @@ describe("runConfigViewForCli nightlyCycle output", () => {
     const logs: string[] = [];
     // Mock getPluginConfigFromFile by setting env var
     process.env.OPENCLAW_CONFIG = "/tmp/test-openclaw.json";
-    require("fs").writeFileSync(
+    require("node:fs").writeFileSync(
       "/tmp/test-openclaw.json",
       JSON.stringify({
         plugins: {

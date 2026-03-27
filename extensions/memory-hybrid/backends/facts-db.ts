@@ -2,42 +2,32 @@
  * SQLite + FTS5 backend for structured facts.
  */
 
-import { DatabaseSync, type SQLInputValue } from "node:sqlite";
-import { mkdirSync, readFileSync, existsSync } from "node:fs";
-import { dirname } from "node:path";
 import { randomUUID } from "node:crypto";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { dirname } from "node:path";
+import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 
-import type { MemoryCategory, DecayClass } from "../config.js";
+import type { DecayClass, MemoryCategory } from "../config.js";
 import { TTL_DEFAULTS } from "../config.js";
+import { capturePluginError } from "../services/error-reporter.js";
+import { searchFts } from "../services/fts-search.js";
 import type {
-  MemoryEntry,
-  ProcedureEntry,
-  SearchResult,
-  MemoryTier,
-  ScopeFilter,
   Episode,
   EpisodeOutcome,
+  MemoryEntry,
+  MemoryTier,
+  ProcedureEntry,
+  ScopeFilter,
+  SearchResult,
 } from "../types/memory.js";
-import { normalizedHash, serializeTags, parseTags } from "../utils/tags.js";
-import { calculateExpiry, classifyDecay } from "../utils/decay.js";
 import { applyConsolidationRetrievalControls } from "../utils/consolidation-controls.js";
-import { computeDynamicSalience } from "../utils/salience.js";
-import { estimateTokensForDisplay } from "../utils/text.js";
-import { capturePluginError } from "../services/error-reporter.js";
+import { calculateExpiry, classifyDecay } from "../utils/decay.js";
 import { getLanguageKeywordsFilePath } from "../utils/language-keywords.js";
+import { computeDynamicSalience } from "../utils/salience.js";
 import { createTransaction } from "../utils/sqlite-transaction.js";
-import { runFactsMigrations } from "./migrations/facts-migrations.js";
-import { searchFts } from "../services/fts-search.js";
+import { normalizedHash, parseTags, serializeTags } from "../utils/tags.js";
+import { estimateTokensForDisplay } from "../utils/text.js";
 import { BaseSqliteStore } from "./base-sqlite-store.js";
-import {
-  batchGetReinforcementEvents as batchGetReinforcementEventsHelper,
-  boostConfidence as boostConfidenceHelper,
-  calculateDiversityScore as calculateDiversityScoreHelper,
-  getReinforcementEvents as getReinforcementEventsHelper,
-  reinforceFact as reinforceFactHelper,
-  reinforceProcedure as reinforceProcedureHelper,
-  computeDiversityFromEvents as computeDiversityFromEventsHelper,
-} from "./facts-db/reinforcement.js";
 import {
   createLink as createLinkHelper,
   createOrStrengthenRelatedLink as createOrStrengthenRelatedLinkHelper,
@@ -47,10 +37,20 @@ import {
   strengthenRelatedLinksBatch as strengthenRelatedLinksBatchHelper,
 } from "./facts-db/links.js";
 import {
+  batchGetReinforcementEvents as batchGetReinforcementEventsHelper,
+  boostConfidence as boostConfidenceHelper,
+  calculateDiversityScore as calculateDiversityScoreHelper,
+  computeDiversityFromEvents as computeDiversityFromEventsHelper,
+  getReinforcementEvents as getReinforcementEventsHelper,
+  reinforceFact as reinforceFactHelper,
+  reinforceProcedure as reinforceProcedureHelper,
+} from "./facts-db/reinforcement.js";
+import {
   getScanCursor as getScanCursorHelper,
   migrateScanCursorsTable as migrateScanCursorsTableHelper,
   updateScanCursor as updateScanCursorHelper,
 } from "./facts-db/scan-cursors.js";
+import { runFactsMigrations } from "./migrations/facts-migrations.js";
 export {
   MEMORY_LINK_TYPES,
   type MemoryLinkType,
@@ -3211,7 +3211,7 @@ export class FactsDB extends BaseSqliteStore {
           tags: input.tags,
           importance: 0.8,
           scope: input.scope ?? "global",
-          scopeTarget: ((input.scope ?? "global") === "global") ? null : (input.scopeTarget ?? null),
+          scopeTarget: (input.scope ?? "global") === "global" ? null : (input.scopeTarget ?? null),
           agentId: input.agentId,
           userId: input.userId,
           sessionId: input.sessionId,

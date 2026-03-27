@@ -17,8 +17,8 @@
  * - silent mode: agent_end credential auto-detect does not register in silent mode
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { rmSync } from "node:fs";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { hybridConfigSchema, parseVerbosityLevel } from "../config.js";
 import type { VerbosityLevel } from "../config.js";
 import { createLifecycleHooks } from "../lifecycle/hooks.js";

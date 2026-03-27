@@ -7,10 +7,10 @@
 
 import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
+import { pluginLogger } from "../utils/logger.js";
 import type { EmbeddingProvider } from "./embeddings.js";
 import { shouldSuppressEmbeddingError } from "./embeddings.js";
 import { capturePluginError } from "./error-reporter.js";
-import { pluginLogger } from "../utils/logger.js";
 
 // ---------------------------------------------------------------------------
 // Public types

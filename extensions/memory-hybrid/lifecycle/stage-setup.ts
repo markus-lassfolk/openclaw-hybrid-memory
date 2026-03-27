@@ -6,11 +6,11 @@
 
 import { existsSync, unlinkSync } from "node:fs";
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk";
-import { getRestartPendingPath } from "../utils/constants.js";
 import { capturePluginError } from "../services/error-reporter.js";
+import { getRestartPendingPath } from "../utils/constants.js";
+import { pluginLogger } from "../utils/logger.js";
 import { withTimeout } from "../utils/timeout.js";
 import type { LifecycleContext, SessionState } from "./types.js";
-import { pluginLogger } from "../utils/logger.js";
 
 const SETUP_TIMEOUT_MS = 5000;
 

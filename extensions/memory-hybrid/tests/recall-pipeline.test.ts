@@ -16,15 +16,15 @@
  *   - hydeUsedRef state is mutated correctly across multiple calls
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { AllEmbeddingProvidersFailed } from "../services/embeddings.js";
-import { capturePluginError } from "../services/error-reporter.js";
-import { runRecallPipelineQuery, type RecallPipelineDeps } from "../services/recall-pipeline.js";
-import { DEFAULT_INTERACTIVE_RECALL_POLICY } from "../services/retrieval-mode-policy.js";
-import type { SearchResult, MemoryEntry } from "../types/memory.js";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createPendingLLMWarnings } from "../services/chat.js";
 import * as chatModule from "../services/chat.js";
+import { AllEmbeddingProvidersFailed } from "../services/embeddings.js";
+import { capturePluginError } from "../services/error-reporter.js";
+import { type RecallPipelineDeps, runRecallPipelineQuery } from "../services/recall-pipeline.js";
+import { DEFAULT_INTERACTIVE_RECALL_POLICY } from "../services/retrieval-mode-policy.js";
 import { RETRIEVAL_MODE } from "../services/retrieval-mode-policy.js";
+import type { MemoryEntry, SearchResult } from "../types/memory.js";
 
 vi.mock("../services/error-reporter.js", () => ({
   capturePluginError: vi.fn(),

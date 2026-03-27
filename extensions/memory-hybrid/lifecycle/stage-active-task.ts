@@ -4,9 +4,9 @@
  */
 
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk";
+import { buildActiveTaskInjection, buildStaleWarningInjection, readActiveTaskFile } from "../services/active-task.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { parseDuration } from "../utils/duration.js";
-import { readActiveTaskFile, buildActiveTaskInjection, buildStaleWarningInjection } from "../services/active-task.js";
 import type { LifecycleContext } from "./types.js";
 
 export function registerActiveTaskInjection(

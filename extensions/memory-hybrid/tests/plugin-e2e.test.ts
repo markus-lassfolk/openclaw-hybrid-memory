@@ -7,17 +7,17 @@
  * - No surprises: expected response shapes and persistence across tool calls
  */
 
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
-import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import memoryHybridPlugin from "../index.js";
-import { registerTools } from "../setup/register-tools.js";
-import { initializeDatabases, closeOldDatabases } from "../setup/init-databases.js";
-import { hybridConfigSchema } from "../config.js";
-import { _testing } from "../index.js";
 import { IssueStore } from "../backends/issue-store.js";
+import { hybridConfigSchema } from "../config.js";
+import memoryHybridPlugin from "../index.js";
+import { _testing } from "../index.js";
+import { closeOldDatabases, initializeDatabases } from "../setup/init-databases.js";
+import { registerTools } from "../setup/register-tools.js";
 
 const { FactsDB, VectorDB, findSimilarByEmbedding, VerificationStore } = _testing;
 

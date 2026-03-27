@@ -6,29 +6,29 @@
  * Python bridge, chunks the result, and stores each chunk as a fact.
  */
 
-import { Type } from "@sinclair/typebox";
 import { createHash } from "node:crypto";
-import { readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { readFileSync, readdirSync, realpathSync, statSync } from "node:fs";
 import { basename, extname, isAbsolute, relative, resolve } from "node:path";
-import type { ClawdbotPluginApi } from "openclaw/plugin-sdk";
+import { Type } from "@sinclair/typebox";
 import type OpenAI from "openai";
+import type { ClawdbotPluginApi } from "openclaw/plugin-sdk";
 
 import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
-import type { EmbeddingProvider } from "../services/embeddings.js";
-import type { PythonBridge } from "../services/python-bridge.js";
-import { chunkMarkdown } from "../services/document-chunker.js";
-import { capturePluginError } from "../services/error-reporter.js";
 import {
+  type HybridMemoryConfig,
+  type MemoryCategory,
   getCronModelConfig,
   getLLMModelPreference,
   getMemoryCategories,
-  type HybridMemoryConfig,
-  type MemoryCategory,
 } from "../config.js";
+import { chunkMarkdown } from "../services/document-chunker.js";
+import type { EmbeddingProvider } from "../services/embeddings.js";
+import { capturePluginError } from "../services/error-reporter.js";
+import type { ProvenanceService } from "../services/provenance.js";
+import type { PythonBridge } from "../services/python-bridge.js";
 import { extractTags } from "../utils/tags.js";
 import { stringEnum } from "../utils/typebox.js";
-import type { ProvenanceService } from "../services/provenance.js";
 
 export interface DocumentToolsContext {
   factsDb: FactsDB;

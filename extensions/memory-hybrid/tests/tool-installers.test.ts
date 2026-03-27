@@ -67,6 +67,7 @@ describe("tool installers", () => {
       "cfg",
       "credentialsDb",
       "currentAgentIdRef",
+      "edictStore",
       "embeddingRegistry",
       "embeddings",
       "eventLog",

@@ -12,10 +12,10 @@
  * - TTL purge for stale mention records (30 days by default)
  */
 
-import type { DatabaseSync } from "node:sqlite";
 import { createHash } from "node:crypto";
-import { BaseSqliteStore } from "./base-sqlite-store.js";
+import type { DatabaseSync } from "node:sqlite";
 import { pluginLogger } from "../utils/logger.js";
+import { BaseSqliteStore } from "./base-sqlite-store.js";
 
 export interface MentionRecord {
   entityText: string;

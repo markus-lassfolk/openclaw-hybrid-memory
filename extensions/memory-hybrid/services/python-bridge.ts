@@ -10,10 +10,10 @@
  *   - Gracefully shut down via shutdown()
  */
 
-import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { type ChildProcessWithoutNullStreams, spawn, spawnSync } from "node:child_process";
+import { dirname, join } from "node:path";
 import { createInterface } from "node:readline";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { dirname, join } from "node:path";
 import { capturePluginError } from "./error-reporter.js";
 
 const MAX_RETRIES = 3;

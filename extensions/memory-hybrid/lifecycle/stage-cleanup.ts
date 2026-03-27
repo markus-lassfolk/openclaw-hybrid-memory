@@ -6,21 +6,21 @@
 
 import { join } from "node:path";
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk";
-import { capturePluginError } from "../services/error-reporter.js";
-import { parseDuration } from "../utils/duration.js";
 import {
-  readActiveTaskFile,
-  writeActiveTaskFileGuarded,
-  readActiveTaskFileWithMtime,
-  writeActiveTaskFileOptimistic,
-  upsertTask,
-  completeTask,
-  flushCompletedTaskToMemory,
-  readPendingSignals,
-  deleteSignal,
   type ActiveTaskEntry,
   type PendingTaskSignal,
+  completeTask,
+  deleteSignal,
+  flushCompletedTaskToMemory,
+  readActiveTaskFile,
+  readActiveTaskFileWithMtime,
+  readPendingSignals,
+  upsertTask,
+  writeActiveTaskFileGuarded,
+  writeActiveTaskFileOptimistic,
 } from "../services/active-task.js";
+import { capturePluginError } from "../services/error-reporter.js";
+import { parseDuration } from "../utils/duration.js";
 import type { LifecycleContext, SessionState } from "./types.js";
 
 const STALE_SESSION_TTL_MS = 30 * 60 * 1000; // 30 minutes

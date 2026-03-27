@@ -7,8 +7,8 @@
 
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk";
 import { getCronModelConfig, getDefaultCronModel } from "../config.js";
-import { estimateTokens, estimateTokensForDisplay, formatProgressiveIndexLine } from "../utils/text.js";
 import { capturePluginError } from "../services/error-reporter.js";
+import { estimateTokens, estimateTokensForDisplay, formatProgressiveIndexLine } from "../utils/text.js";
 import { withTimeout } from "../utils/timeout.js";
 import type { LifecycleContext, RecallResult } from "./types.js";
 

@@ -2,10 +2,10 @@
  * FallbackEmbeddingProvider: tries primary provider, permanently switches to fallback on first failure.
  */
 
-import { capturePluginError } from "../error-reporter.js";
-import type { EmbeddingProvider } from "./types.js";
-import { shouldSuppressEmbeddingError } from "./shared.js";
 import { pluginLogger } from "../../utils/logger.js";
+import { capturePluginError } from "../error-reporter.js";
+import { shouldSuppressEmbeddingError } from "./shared.js";
+import type { EmbeddingProvider } from "./types.js";
 
 /**
  * Wrapper that tries a primary provider and switches permanently to a fallback on first failure.

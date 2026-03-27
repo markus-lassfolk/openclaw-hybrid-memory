@@ -1,4 +1,4 @@
-import type { AutoRecallConfig, RetrievalConfig, HybridMemoryConfig } from "../config.js";
+import type { AutoRecallConfig, HybridMemoryConfig, RetrievalConfig } from "../config.js";
 
 export type RetrievalMode = "interactive-recall" | "explicit-deep";
 

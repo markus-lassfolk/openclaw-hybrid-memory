@@ -3,51 +3,51 @@
  * Thin orchestrator that delegates to specialized command modules.
  */
 
+import type { EventBus } from "../backends/event-bus.js";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
+import type { HybridMemoryConfig } from "../config.js";
 import type { EmbeddingProvider } from "../services/embeddings.js";
+import { capturePluginError } from "../services/error-reporter.js";
+// biome-ignore lint/style/useImportType: mergeResults kept as value import so typeof mergeResults resolves at the type level without confusion
+import { filterByScope, mergeResults } from "../services/merge-results.js";
 import type { AliasDB } from "../services/retrieval-aliases.js";
 import type { SearchResult } from "../types/memory.js";
-// biome-ignore lint/style/useImportType: mergeResults kept as value import so typeof mergeResults resolves at the type level without confusion
-import { mergeResults, filterByScope } from "../services/merge-results.js";
 import type { ScopeFilter } from "../types/memory.js";
 import { parseSourceDate } from "../utils/dates.js";
-import { registerVerifyCommands, type VerifyContext } from "./verify.js";
-import { registerDistillCommands, type DistillContext } from "./distill.js";
-import { registerManageCommands, type ManageContext } from "./manage.js";
-import { registerActiveTaskCommands, type ActiveTaskContext } from "./active-tasks.js";
-import { registerSensorSweepCommands, type SensorSweepContext } from "./sensor-sweep.js";
-import type { EventBus } from "../backends/event-bus.js";
-import { capturePluginError } from "../services/error-reporter.js";
-import type { HybridMemoryConfig } from "../config.js";
+import { type ActiveTaskContext, registerActiveTaskCommands } from "./active-tasks.js";
+import { type DistillContext, registerDistillCommands } from "./distill.js";
+import { type ManageContext, registerManageCommands } from "./manage.js";
+import { type SensorSweepContext, registerSensorSweepCommands } from "./sensor-sweep.js";
 import type {
-  FindDuplicatesResult,
-  StoreCliOpts,
-  StoreCliResult,
-  InstallCliResult,
-  VerifyCliSink,
+  AnalyzeFeedbackPhrasesResult,
+  BackfillCliResult,
+  BackfillCliSink,
+  ConfigCliResult,
+  CredentialsAuditResult,
+  CredentialsPruneResult,
+  DistillCliResult,
+  DistillCliSink,
   DistillWindowResult,
-  RecordDistillResult,
   ExtractDailyResult,
   ExtractDailySink,
   ExtractProceduresResult,
+  FindDuplicatesResult,
   GenerateAutoSkillsResult,
-  BackfillCliResult,
-  BackfillCliSink,
   IngestFilesResult,
   IngestFilesSink,
-  DistillCliResult,
-  DistillCliSink,
+  InstallCliResult,
+  MigrateToVaultResult,
+  RecordDistillResult,
   SelfCorrectionExtractResult,
   SelfCorrectionRunResult,
-  AnalyzeFeedbackPhrasesResult,
-  MigrateToVaultResult,
-  CredentialsAuditResult,
-  CredentialsPruneResult,
-  UpgradeCliResult,
+  StoreCliOpts,
+  StoreCliResult,
   UninstallCliResult,
-  ConfigCliResult,
+  UpgradeCliResult,
+  VerifyCliSink,
 } from "./types.js";
+import { type VerifyContext, registerVerifyCommands } from "./verify.js";
 
 export type {
   FindDuplicatesResult,

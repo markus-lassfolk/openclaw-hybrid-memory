@@ -13,14 +13,14 @@
  * Low scorers can be flagged in CLI output.
  */
 
-import { DatabaseSync } from "node:sqlite";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import { capturePluginError } from "./error-reporter.js";
+import { DatabaseSync } from "node:sqlite";
 import { BaseSqliteStore } from "../backends/base-sqlite-store.js";
-import { SQLITE_BUSY_TIMEOUT_MS } from "../utils/constants.js";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { ToolEffectivenessConfig } from "../config/types/features.js";
+import { SQLITE_BUSY_TIMEOUT_MS } from "../utils/constants.js";
+import { capturePluginError } from "./error-reporter.js";
 
 // ---------------------------------------------------------------------------
 // Public types

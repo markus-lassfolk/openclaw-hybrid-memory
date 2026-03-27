@@ -5,8 +5,8 @@
  * markitdown to be installed in the test environment.
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { EventEmitter } from "node:events";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { PythonBridge } from "../services/python-bridge.js";
 
 // ---------------------------------------------------------------------------

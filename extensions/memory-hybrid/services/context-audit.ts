@@ -1,11 +1,11 @@
 import { existsSync, readFileSync } from "node:fs";
-import { join, isAbsolute } from "node:path";
 import { homedir } from "node:os";
-import type { HybridMemoryConfig } from "../config.js";
+import { isAbsolute, join } from "node:path";
 import type { FactsDB } from "../backends/facts-db.js";
-import { estimateTokens } from "../utils/text.js";
+import type { HybridMemoryConfig } from "../config.js";
 import { parseDuration } from "../utils/duration.js";
-import { readActiveTaskFile, buildActiveTaskInjection, buildStaleWarningInjection } from "./active-task.js";
+import { estimateTokens } from "../utils/text.js";
+import { buildActiveTaskInjection, buildStaleWarningInjection, readActiveTaskFile } from "./active-task.js";
 import { capturePluginError } from "./error-reporter.js";
 
 export type ContextAuditResult = {

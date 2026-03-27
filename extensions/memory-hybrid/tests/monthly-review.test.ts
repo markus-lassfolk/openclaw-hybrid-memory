@@ -12,15 +12,15 @@
  *   - Graceful LLM failure (recommendations empty)
  */
 
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { mkdtempSync, rmSync } from "node:fs";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { hybridConfigSchema } from "../config.js";
 import { _testing } from "../index.js";
 import { MonthlyReviewService, runMonthlyReview } from "../services/monthly-review.js";
-import { hybridConfigSchema } from "../config.js";
 
 const { FactsDB } = _testing;
 

@@ -4,7 +4,7 @@
  * are sent or suppressed without making real HTTP calls.
  */
 
-import { describe, it, expect, vi, beforeAll, beforeEach, afterAll } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 // Stub fetch globally before any imports so the reporter never makes real HTTP calls
 const mockFetch = vi.fn().mockResolvedValue({ ok: true, status: 200, text: async () => "" });

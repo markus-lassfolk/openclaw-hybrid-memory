@@ -40,19 +40,19 @@
  *     - ON DELETE CASCADE removes variants when fact is deleted
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, rmSync } from "node:fs";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { FactsDB } from "../backends/facts-db.js";
+import type { ContextualVariantsConfig } from "../config.js";
 import {
   ContextualVariantGenerator,
   VariantGenerationQueue,
   parseVariantsFromResponse,
 } from "../services/contextual-variants.js";
-import { FactsDB } from "../backends/facts-db.js";
-import type { ContextualVariantsConfig } from "../config.js";
 
 // ---------------------------------------------------------------------------
 // Test fixtures

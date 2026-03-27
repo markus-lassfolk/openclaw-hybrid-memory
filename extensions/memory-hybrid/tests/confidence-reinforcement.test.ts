@@ -8,14 +8,14 @@
  * - Decay + reinforcement interaction
  */
 
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { _testing } from "../index.js";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { hybridConfigSchema } from "../config.js";
-import { runPassiveObserver, type PassiveObserverConfig } from "../services/passive-observer.js";
 import type { ReinforcementConfig } from "../config.js";
+import { _testing } from "../index.js";
+import { type PassiveObserverConfig, runPassiveObserver } from "../services/passive-observer.js";
 
 const { FactsDB } = _testing;
 

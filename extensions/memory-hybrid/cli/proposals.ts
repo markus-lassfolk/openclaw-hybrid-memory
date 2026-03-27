@@ -2,16 +2,16 @@
  * CLI commands for managing persona proposals (human-only operations)
  */
 
-import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { writeFile, mkdir } from "node:fs/promises";
-import { dirname, join, relative } from "node:path";
-import { homedir, tmpdir } from "node:os";
 import { spawnSync } from "node:child_process";
-import type { Chainable } from "./shared.js";
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { mkdir, writeFile } from "node:fs/promises";
+import { homedir, tmpdir } from "node:os";
+import { dirname, join, relative } from "node:path";
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk";
 import type { ProposalsDB } from "../backends/proposals-db.js";
 import type { HybridMemoryConfig, IdentityFileType } from "../config.js";
 import { capturePluginError } from "../services/error-reporter.js";
+import type { Chainable } from "./shared.js";
 
 /** Resolve a proposal target file (e.g. SOUL.md) against the workspace directory. */
 function resolveProposalTarget(targetFile: string): string {

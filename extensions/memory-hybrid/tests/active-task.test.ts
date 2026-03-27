@@ -2,40 +2,40 @@
  * Tests for ACTIVE-TASK.md working memory service and CLI commands.
  */
 
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { mkdtemp, rm, readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
-  parseActiveTaskFile,
-  serializeTaskEntry,
-  serializeActiveTaskFile,
-  detectStaleTasks,
-  buildActiveTaskInjection,
-  buildStaleWarningInjection,
-  upsertTask,
-  completeTask,
-  flushCompletedTaskToMemory,
-  readActiveTaskFile,
-  writeActiveTaskFile,
+  type ActiveTaskContext,
+  runActiveTaskAdd,
+  runActiveTaskComplete,
+  runActiveTaskList,
+  runActiveTaskStale,
+} from "../cli/active-tasks.js";
+import {
   ACTIVE_TASK_STATUSES,
-  isSubagentSession,
-  writeTaskSignal,
-  readPendingSignals,
-  deleteSignal,
-  readActiveTaskFileWithMtime,
-  writeActiveTaskFileGuarded,
-  writeActiveTaskFileOptimistic,
   type ActiveTaskEntry,
   type TaskSignal,
+  buildActiveTaskInjection,
+  buildStaleWarningInjection,
+  completeTask,
+  deleteSignal,
+  detectStaleTasks,
+  flushCompletedTaskToMemory,
+  isSubagentSession,
+  parseActiveTaskFile,
+  readActiveTaskFile,
+  readActiveTaskFileWithMtime,
+  readPendingSignals,
+  serializeActiveTaskFile,
+  serializeTaskEntry,
+  upsertTask,
+  writeActiveTaskFile,
+  writeActiveTaskFileGuarded,
+  writeActiveTaskFileOptimistic,
+  writeTaskSignal,
 } from "../services/active-task.js";
-import {
-  runActiveTaskList,
-  runActiveTaskComplete,
-  runActiveTaskStale,
-  runActiveTaskAdd,
-  type ActiveTaskContext,
-} from "../cli/active-tasks.js";
 
 // ---------------------------------------------------------------------------
 // Fixtures

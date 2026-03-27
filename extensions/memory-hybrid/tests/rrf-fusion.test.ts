@@ -5,7 +5,7 @@
  * token budget packing, deduplication, edge cases, and large result sets.
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
 import { _testing } from "../index.js";
 
 const {

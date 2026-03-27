@@ -5,14 +5,14 @@
  * and protection against silent decay or corruption.
  */
 
-import { DatabaseSync } from "node:sqlite";
-import { createTransaction } from "../utils/sqlite-transaction.js";
-import { mkdirSync, appendFileSync } from "node:fs";
+import { createHash, randomUUID } from "node:crypto";
+import { appendFileSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import { randomUUID, createHash } from "node:crypto";
-import { capturePluginError } from "./error-reporter.js";
+import { DatabaseSync } from "node:sqlite";
 import { expandTilde } from "../utils/path.js";
+import { createTransaction } from "../utils/sqlite-transaction.js";
 import { VAULT_POINTER_PREFIX } from "./auto-capture.js";
+import { capturePluginError } from "./error-reporter.js";
 
 // ---------------------------------------------------------------------------
 // Types

@@ -2,17 +2,17 @@
  * Unit tests for credential value and service name validation (Issue #98).
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
 import { tryParseCredentialForVault } from "../services/auto-capture.js";
 import {
-  validateCredentialValue,
-  validateAndNormalizeServiceName,
+  CREDENTIAL_SERVICE_MAX_LENGTH,
+  MAX_SERVICE_NAME_LENGTH,
+  MIN_CREDENTIAL_VALUE_LENGTH,
   auditCredentialValue,
   auditServiceName,
   normalizeServiceForDedup,
-  CREDENTIAL_SERVICE_MAX_LENGTH,
-  MIN_CREDENTIAL_VALUE_LENGTH,
-  MAX_SERVICE_NAME_LENGTH,
+  validateAndNormalizeServiceName,
+  validateCredentialValue,
 } from "../services/credential-validation.js";
 
 describe("exported constants", () => {
