@@ -145,7 +145,7 @@ export class EdictStore extends BaseSqliteStore {
     `);
 
     // Ensure the id column is present (backward compat for edicts created before id was added)
-    const tableInfo = this.liveDb.prepare("PRAGMA table_info(edicts)").all() as Array<{ name: string }>;
+    let tableInfo = this.liveDb.prepare("PRAGMA table_info(edicts)").all() as Array<{ name: string }>;
     if (!tableInfo.some((c) => c.name === "id")) {
       // SQLite doesn't support adding PRIMARY KEY via ALTER TABLE, so we need to recreate the table
       this.liveDb.exec(`
@@ -204,6 +204,9 @@ export class EdictStore extends BaseSqliteStore {
         CREATE INDEX IF NOT EXISTS idx_edicts_normalized_hash ON edicts(normalized_hash)
           WHERE normalized_hash IS NOT NULL
       `);
+
+      // Refresh tableInfo after table recreation
+      tableInfo = this.liveDb.prepare("PRAGMA table_info(edicts)").all() as Array<{ name: string }>;
     }
 
     // Add normalized_hash column if missing (for existing databases)
@@ -359,10 +362,11 @@ export class EdictStore extends BaseSqliteStore {
     const expiresAt = input.expiresAt !== undefined ? input.expiresAt : existing.expiresAt;
     const ttlStr = typeof ttl === "number" ? String(ttl) : ttl;
     const tagsStr = tags.length > 0 ? serializeTags(tags) : null;
+    const hash = normalizedHash(text);
 
     this.liveDb
-      .prepare("UPDATE edicts SET text = ?, source = ?, expires_at = ?, ttl = ?, tags = ?, updated_at = ? WHERE id = ?")
-      .run(text, source ?? null, expiresAt ?? null, ttlStr, tagsStr, nowSec, input.id);
+      .prepare("UPDATE edicts SET text = ?, source = ?, expires_at = ?, ttl = ?, tags = ?, updated_at = ?, normalized_hash = ? WHERE id = ?")
+      .run(text, source ?? null, expiresAt ?? null, ttlStr, tagsStr, nowSec, hash, input.id);
 
     return {
       ...existing,
