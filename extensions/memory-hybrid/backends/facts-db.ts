@@ -2935,8 +2935,86 @@ export class FactsDB extends BaseSqliteStore {
 
   // ---------- Procedural memory: procedures table CRUD ----------
 
+  /**
+   * Load version-level feedback data for a procedure and merge into ProcedureEntry.
+   * Called after the base row is mapped so we keep procedureRowToEntry pure.
+   */
+  private enrichProcedureWithFeedback(base: ProcedureEntry): ProcedureEntry {
+    try {
+      // Always compute lastOutcome from procedure's own timestamps (available even without version records)
+      let lastOutcome: "success" | "failure" | "unknown" = "unknown";
+      if (base.lastFailed !== null && base.lastValidated !== null) {
+        lastOutcome = base.lastFailed > base.lastValidated ? "failure" : "success";
+      } else if (base.lastFailed !== null) {
+        lastOutcome = "failure";
+      } else if (base.lastValidated !== null) {
+        lastOutcome = "success";
+      }
+
+      const versionRow = this.liveDb
+        .prepare(
+          `SELECT pv.version_number, pv.success_count, pv.failure_count, pv.avoidance_notes
+           FROM procedure_versions pv
+           WHERE pv.procedure_id = ?
+           ORDER BY pv.version_number DESC
+           LIMIT 1`,
+        )
+        .get(base.id) as
+        | {
+            version_number: number;
+            success_count: number;
+            failure_count: number;
+            avoidance_notes: string | null;
+          }
+        | undefined;
+
+      if (!versionRow) {
+        // No version records yet — return base with lastOutcome computed from procedure timestamps
+        return { ...base, lastOutcome };
+      }
+
+      // Aggregate all successes and failures across ALL version records to compute overall successRate.
+      // procedure_versions tracks per-version outcomes; procedure table tracks what was
+      // validated/failed before version tracking started.
+      const versionCounts = this.liveDb
+        .prepare(
+          `SELECT COALESCE(SUM(success_count), 0) as total_succ,
+                  COALESCE(SUM(failure_count), 0) as total_fail
+             FROM procedure_versions
+             WHERE procedure_id = ?`,
+        )
+        .get(base.id) as { total_succ: number; total_fail: number };
+
+      const totalSuccess = base.successCount + versionCounts.total_succ;
+      const totalFailure = base.failureCount + versionCounts.total_fail;
+      const total = totalSuccess + totalFailure;
+      const successRate = total > 0 ? totalSuccess / total : 0;
+
+      // Merge avoidance notes across all versions
+      const allNotes = new Set<string>(base.avoidanceNotes ?? []);
+      if (versionRow.avoidance_notes) {
+        try {
+          const notes = JSON.parse(versionRow.avoidance_notes) as string[];
+          notes.forEach((n) => allNotes.add(n));
+        } catch {
+          // ignore parse errors
+        }
+      }
+
+      return {
+        ...base,
+        version: versionRow.version_number,
+        successRate,
+        avoidanceNotes: allNotes.size > 0 ? Array.from(allNotes) : undefined,
+        lastOutcome,
+      };
+    } catch {
+      return base;
+    }
+  }
+
   private procedureRowToEntry(row: Record<string, unknown>): ProcedureEntry {
-    return {
+    const base: ProcedureEntry = {
       id: row.id as string,
       taskPattern: row.task_pattern as string,
       recipeJson: row.recipe_json as string,
@@ -2973,6 +3051,244 @@ export class FactsDB extends BaseSqliteStore {
       scope: (row.scope as string) ?? "global",
       scopeTarget: (row.scope_target as string) ?? null,
     };
+    return this.enrichProcedureWithFeedback(base);
+  }
+
+  // ---------- Procedure feedback loop (#782) ----------
+
+  /**
+   * Record feedback (success or failure) for a procedure.
+   *
+   * On failure:
+   *   - Inserts a failure record in `procedure_failures`.
+   *   - Upserts a new or existing row in `procedure_versions` (increments version).
+   *   - Creates an episode record via `recordEpisode()`.
+   *   - Updates `last_failed` on the procedure.
+   *
+   * On success:
+   *   - Upserts a new or existing row in `procedure_versions` (increments success count).
+   *   - Updates `last_validated` on the procedure.
+   *   - Updates procedure_type to 'positive'.
+   *
+   * Returns the procedure entry with enriched feedback fields, or null if the procedure
+   * does not exist.
+   */
+  procedureFeedback(input: {
+    procedureId: string;
+    success: boolean;
+    context?: string;
+    failedAtStep?: number;
+    tags?: string[];
+    duration?: number;
+    scope?: "global" | "user" | "agent" | "session";
+    scopeTarget?: string | null;
+    agentId?: string;
+    userId?: string;
+    sessionId?: string;
+  }): ProcedureEntry | null {
+    const nowSec = Math.floor(Date.now() / 1000);
+    const proc = this.getProcedureById(input.procedureId);
+    if (!proc) return null;
+
+    if (input.success) {
+      // Upsert version record with +1 success
+      const existingVer = this.liveDb
+        .prepare(
+          "SELECT id, success_count FROM procedure_versions WHERE procedure_id = ? ORDER BY version_number DESC LIMIT 1",
+        )
+        .get(input.procedureId) as { id: string; success_count: number } | undefined;
+
+      if (existingVer) {
+        this.liveDb
+          .prepare("UPDATE procedure_versions SET success_count = success_count + 1 WHERE id = ?")
+          .run(existingVer.id);
+      } else {
+        // First version: create version 1 with 1 success
+        this.liveDb
+          .prepare(
+            `INSERT INTO procedure_versions (id, procedure_id, version_number, success_count, failure_count, avoidance_notes, created_at)
+             VALUES (?, ?, 1, 1, 0, NULL, ?)`,
+          )
+          .run(randomUUID(), input.procedureId, nowSec);
+      }
+
+      // Update procedure record
+      const newSuccessCount = proc.successCount + 1;
+      const newConfidence = Math.max(0.1, Math.min(0.95, 0.5 + 0.1 * (newSuccessCount - proc.failureCount)));
+      this.liveDb
+        .prepare(
+          `UPDATE procedures SET success_count = ?, last_validated = ?, confidence = ?, procedure_type = 'positive', updated_at = ? WHERE id = ?`,
+        )
+        .run(newSuccessCount, nowSec, newConfidence, nowSec, input.procedureId);
+    } else {
+      // Failure: insert new version record (one version per failure event) and failure record
+      const latestVer = this.liveDb
+        .prepare(
+          "SELECT version_number FROM procedure_versions WHERE procedure_id = ? ORDER BY version_number DESC LIMIT 1",
+        )
+        .get(input.procedureId) as { version_number: number } | undefined;
+
+      const newVersionNumber = (latestVer?.version_number ?? 0) + 1;
+
+      // Build avoidance note from context
+      const avoidanceNotes: string[] = [];
+      if (input.context) {
+        const note =
+          input.failedAtStep !== undefined
+            ? `v${newVersionNumber} step ${input.failedAtStep}: ${input.context}`
+            : `v${newVersionNumber}: ${input.context}`;
+        avoidanceNotes.push(note);
+      }
+
+      // Merge with existing avoidance notes from previous versions
+      const prevNotes = this.liveDb
+        .prepare(
+          "SELECT avoidance_notes FROM procedure_versions WHERE procedure_id = ? ORDER BY version_number DESC LIMIT 1",
+        )
+        .get(input.procedureId) as { avoidance_notes: string | null } | undefined;
+      if (prevNotes?.avoidance_notes) {
+        try {
+          const existing = JSON.parse(prevNotes.avoidance_notes) as string[];
+          avoidanceNotes.push(...existing);
+        } catch {
+          // ignore
+        }
+      }
+
+      const notesJson = avoidanceNotes.length > 0 ? JSON.stringify(avoidanceNotes) : null;
+
+      // One version record per failure event
+      this.liveDb
+        .prepare(
+          `INSERT INTO procedure_versions (id, procedure_id, version_number, success_count, failure_count, avoidance_notes, created_at)
+           VALUES (?, ?, ?, 0, 1, ?, ?)`,
+        )
+        .run(randomUUID(), input.procedureId, newVersionNumber, notesJson, nowSec);
+
+      // Insert individual failure record
+      this.liveDb
+        .prepare(
+          `INSERT INTO procedure_failures (id, procedure_id, version_number, timestamp, context, failed_at_step)
+           VALUES (?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          randomUUID(),
+          input.procedureId,
+          newVersionNumber,
+          nowSec,
+          input.context ?? null,
+          input.failedAtStep ?? null,
+        );
+
+      // Update procedure record
+      const newFailureCount = proc.failureCount + 1;
+      const newConfidence = Math.max(0.1, Math.min(0.95, 0.5 + 0.1 * (proc.successCount - newFailureCount)));
+      this.liveDb
+        .prepare(
+          `UPDATE procedures SET failure_count = ?, last_failed = ?, confidence = ?, procedure_type = 'negative', updated_at = ? WHERE id = ?`,
+        )
+        .run(newFailureCount, nowSec, newConfidence, nowSec, input.procedureId);
+
+      // Create an episode record for this failure
+      const eventText =
+        input.context && input.failedAtStep !== undefined
+          ? `Procedure "${proc.taskPattern}" failed at step ${input.failedAtStep}: ${input.context}`
+          : input.context
+            ? `Procedure "${proc.taskPattern}" failed: ${input.context}`
+            : `Procedure "${proc.taskPattern}" failed (version ${newVersionNumber})`;
+
+      try {
+        this.recordEpisode({
+          event: eventText,
+          outcome: "failure",
+          duration: input.duration,
+          context: input.context,
+          procedureId: input.procedureId,
+          tags: input.tags,
+          importance: 0.8,
+          scope: input.scope ?? "global",
+          scopeTarget: (input.scope ?? "global") === "global" ? null : (input.scopeTarget ?? null),
+          agentId: input.agentId,
+          userId: input.userId,
+          sessionId: input.sessionId,
+        });
+      } catch (err) {
+        capturePluginError(err as Error, {
+          operation: "record-episode-on-failure",
+          severity: "warn",
+          subsystem: "facts",
+        });
+      }
+    }
+
+    return this.getProcedureById(input.procedureId);
+  }
+
+  /**
+   * Get all versions for a procedure, ordered newest first.
+   */
+  getProcedureVersions(procedureId: string): Array<{
+    id: string;
+    versionNumber: number;
+    successCount: number;
+    failureCount: number;
+    avoidanceNotes: string[] | null;
+    createdAt: number;
+  }> {
+    const rows = this.liveDb
+      .prepare(
+        `SELECT id, version_number, success_count, failure_count, avoidance_notes, created_at
+         FROM procedure_versions
+         WHERE procedure_id = ?
+         ORDER BY version_number DESC`,
+      )
+      .all(procedureId) as Array<Record<string, unknown>>;
+
+    return rows.map((r) => ({
+      id: r.id as string,
+      versionNumber: r.version_number as number,
+      successCount: r.success_count as number,
+      failureCount: r.failure_count as number,
+      avoidanceNotes: (() => {
+        const raw = r.avoidance_notes as string | null;
+        if (!raw) return null;
+        try {
+          const parsed = JSON.parse(raw);
+          return Array.isArray(parsed) ? parsed.filter((n: unknown) => typeof n === "string") : null;
+        } catch {
+          return null;
+        }
+      })(),
+      createdAt: r.created_at as number,
+    }));
+  }
+
+  /**
+   * Get all failure records for a procedure, ordered newest first.
+   */
+  getProcedureFailures(procedureId: string): Array<{
+    id: string;
+    versionNumber: number;
+    timestamp: number;
+    context: string | null;
+    failedAtStep: number | null;
+  }> {
+    const rows = this.liveDb
+      .prepare(
+        `SELECT id, version_number, timestamp, context, failed_at_step
+         FROM procedure_failures
+         WHERE procedure_id = ?
+         ORDER BY timestamp DESC`,
+      )
+      .all(procedureId) as Array<Record<string, unknown>>;
+
+    return rows.map((r) => ({
+      id: r.id as string,
+      versionNumber: r.version_number as number,
+      timestamp: r.timestamp as number,
+      context: (r.context as string) ?? null,
+      failedAtStep: (r.failed_at_step as number) ?? null,
+    }));
   }
 
   /** Insert or replace a procedure. Returns the procedure id. */
