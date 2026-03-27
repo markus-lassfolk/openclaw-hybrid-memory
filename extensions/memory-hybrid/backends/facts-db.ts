@@ -3207,7 +3207,7 @@ export class FactsDB extends BaseSqliteStore {
           tags: input.tags,
           importance: 0.8,
           scope: input.scope ?? "global",
-          scopeTarget: (input.scope ?? "global" === "global") ? null : (input.scopeTarget ?? null),
+          scopeTarget: ((input.scope ?? "global") === "global") ? null : (input.scopeTarget ?? null),
           agentId: input.agentId,
           userId: input.userId,
           sessionId: input.sessionId,

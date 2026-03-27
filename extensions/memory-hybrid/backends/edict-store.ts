@@ -220,7 +220,7 @@ export class EdictStore {
 
     if (!includeExpired) {
       parts.push(
-        `(ttl = 'never') OR (ttl = 'event' AND (expires_at IS NULL OR expires_at > datetime(?))) OR (CAST(ttl AS INTEGER) > 0 AND created_at + CAST(ttl AS INTEGER) > ?)`,
+        `((ttl = 'never') OR (ttl = 'event' AND (expires_at IS NULL OR expires_at > datetime(?))) OR (CAST(ttl AS INTEGER) > 0 AND created_at + CAST(ttl AS INTEGER) > ?))`,
       );
       params.push(new Date().toISOString(), nowSec);
     }
