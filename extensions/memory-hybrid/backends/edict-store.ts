@@ -365,7 +365,9 @@ export class EdictStore extends BaseSqliteStore {
     const hash = normalizedHash(text);
 
     this.liveDb
-      .prepare("UPDATE edicts SET text = ?, source = ?, expires_at = ?, ttl = ?, tags = ?, updated_at = ?, normalized_hash = ? WHERE id = ?")
+      .prepare(
+        "UPDATE edicts SET text = ?, source = ?, expires_at = ?, ttl = ?, tags = ?, updated_at = ?, normalized_hash = ? WHERE id = ?",
+      )
       .run(text, source ?? null, expiresAt ?? null, ttlStr, tagsStr, nowSec, hash, input.id);
 
     return {
