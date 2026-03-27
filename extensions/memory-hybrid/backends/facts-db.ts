@@ -1295,6 +1295,10 @@ export class FactsDB extends BaseSqliteStore {
       extractionMethod?: string | null;
       /** Provenance: extraction confidence (0-1). */
       extractionConfidence?: number | null;
+      /** Force-preservation: epoch seconds until which this fact MUST NOT be trimmed. */
+      preserveUntil?: number | null;
+      /** Force-preservation tags that block trimming regardless of importance tier. */
+      preserveTags?: string[] | null;
     },
   ): MemoryEntry {
     if (this.fuzzyDedupe) {
@@ -1341,6 +1345,9 @@ export class FactsDB extends BaseSqliteStore {
     const sourceTurn = entry.sourceTurn ?? null;
     const extractionMethod = entry.extractionMethod ?? null;
     const extractionConfidence = entry.extractionConfidence !== undefined ? entry.extractionConfidence : null;
+    const preserveUntil = entry.preserveUntil ?? null;
+    const preserveTags = entry.preserveTags ?? null;
+    const preserveTagsStr = preserveTags ? JSON.stringify(preserveTags) : null;
 
     const tier: MemoryTier = (entry as { tier?: MemoryTier }).tier ?? "warm";
     // Fix #2: guard against NaN/non-finite values passed in from external callers
@@ -1352,8 +1359,8 @@ export class FactsDB extends BaseSqliteStore {
       decayFreezeUntil !== null && expiresAt !== null && expiresAt < decayFreezeUntil ? decayFreezeUntil : expiresAt;
     this.liveDb
       .prepare(
-        `INSERT INTO facts (id, text, why, category, importance, entity, key, value, source, created_at, decay_class, expires_at, last_confirmed_at, confidence, summary, embedding_model, normalized_hash, source_date, tags, valid_from, valid_until, supersedes_id, tier, scope, scope_target, procedure_type, success_count, last_validated, source_sessions, decay_freeze_until, provenance_session, source_turn, extraction_method, extraction_confidence)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO facts (id, text, why, category, importance, entity, key, value, source, created_at, decay_class, expires_at, last_confirmed_at, confidence, summary, embedding_model, normalized_hash, source_date, tags, valid_from, valid_until, supersedes_id, tier, scope, scope_target, procedure_type, success_count, last_validated, source_sessions, decay_freeze_until, provenance_session, source_turn, extraction_method, extraction_confidence, preserve_until, preserve_tags)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         id,
@@ -1390,6 +1397,8 @@ export class FactsDB extends BaseSqliteStore {
         sourceTurn,
         extractionMethod,
         extractionConfidence,
+        preserveUntil,
+        preserveTagsStr,
       );
 
     return {
@@ -1418,6 +1427,8 @@ export class FactsDB extends BaseSqliteStore {
       sourceTurn,
       extractionMethod,
       extractionConfidence,
+      preserveUntil: preserveUntil ?? undefined,
+      preserveTags: preserveTags ?? undefined,
       // normalize to null (not undefined) to match rowToEntry() behaviour
       decayFreezeUntil: decayFreezeUntil,
       // #237: access tracking columns start at zero for new facts
@@ -1618,6 +1629,311 @@ export class FactsDB extends BaseSqliteStore {
     }
 
     return counts;
+  }
+
+  /**
+   * Token-budget tiered trimming for context compaction (Issue #792).
+   *
+   * Retention tiers (never trimmed = P0):
+   *  - Edict-tagged facts (tag 'edict')
+   *  - Verified facts (present in verified_facts table)
+   *  - Facts with active preserveUntil (epoch seconds in future)
+   *  - Facts with non-empty preserveTags
+   *
+   * Remaining facts sorted by trim priority:
+   *  - P1: importance > 0.8 AND created within the last hour
+   *  - P2: importance 0.5 – 0.8
+   *  - P3: importance < 0.5
+   *
+   * Trimming proceeds P3 → P2 → P1 until within budget.
+   * Token estimate: Math.ceil(chars / 3.8)
+   *
+   * Returns a summary of what would be / was trimmed.
+   */
+  trimToBudget(
+    tokenBudget: number,
+    simulate = false,
+  ): {
+    simulate: boolean;
+    budget: number;
+    beforeTokens: number;
+    afterTokens: number;
+    trimmed: Array<{ id: string; textPreview: string; tier: string; importance: number; tokenCost: number }>;
+    preserved: Array<{ id: string; reason: string }>;
+    error?: string;
+  } {
+    const nowSec = Math.floor(Date.now() / 1000);
+    const HOUR_SEC = 3600;
+    const p1Cutoff = nowSec - HOUR_SEC;
+    const tokenEstimate = (text: string): number => Math.ceil(text.length / 3.8);
+
+    // Fetch all non-superseded, non-expired facts with their verified status.
+    const rows = this.liveDb
+      .prepare(
+        `SELECT f.id, f.text, f.importance, f.created_at, f.preserve_until, f.preserve_tags,
+                f.confidence, f.tags,
+                vf.fact_id IS NOT NULL AS is_verified
+         FROM facts f
+         LEFT JOIN verified_facts vf ON vf.fact_id = f.id
+         WHERE f.superseded_at IS NULL
+           AND (f.expires_at IS NULL OR f.expires_at > ?)`,
+      )
+      .all(nowSec) as Array<{
+      id: string;
+      text: string;
+      importance: number;
+      created_at: number;
+      preserve_until: number | null;
+      preserve_tags: string | null;
+      confidence: number;
+      tags: string | null;
+      is_verified: number;
+    }>;
+
+    const parsePreserveTags = (raw: string | null): string[] => {
+      if (!raw) return [];
+      try {
+        const parsed = JSON.parse(raw);
+        return Array.isArray(parsed) ? parsed.filter((q): q is string => typeof q === "string") : [];
+      } catch {
+        return [];
+      }
+    };
+
+    const hasTag = (tagsStr: string | null, tag: string): boolean => {
+      return parseTags(tagsStr).includes(tag.toLowerCase().trim());
+    };
+
+    const p0: Array<{ id: string; text: string }> = [];
+    const p1: Array<{ id: string; text: string; importance: number }> = [];
+    const p2: Array<{ id: string; text: string; importance: number }> = [];
+    const p3: Array<{ id: string; text: string; importance: number }> = [];
+    const preserved: Array<{ id: string; reason: string }> = [];
+
+    for (const row of rows) {
+      const preserveTags = parsePreserveTags(row.preserve_tags);
+      const tagsStr = row.tags;
+      const isEdict = hasTag(tagsStr, "edict");
+      const isVerified = row.is_verified === 1;
+      const hasPreserveUntil = row.preserve_until != null && row.preserve_until > nowSec;
+      const hasPreserveTags = preserveTags.length > 0;
+
+      if (isEdict || isVerified || hasPreserveUntil || hasPreserveTags) {
+        p0.push({ id: row.id, text: row.text });
+        const reasons: string[] = [];
+        if (isEdict) reasons.push("edict");
+        if (isVerified) reasons.push("verified");
+        if (hasPreserveUntil) reasons.push(`preserveUntil=${row.preserve_until}`);
+        if (hasPreserveTags) reasons.push(`preserveTags=${preserveTags.join(",")}`);
+        preserved.push({ id: row.id, reason: reasons.join("|") });
+      } else if (row.importance > 0.8 && row.created_at >= p1Cutoff) {
+        p1.push({ id: row.id, text: row.text, importance: row.importance });
+      } else if (row.importance >= 0.5) {
+        p2.push({ id: row.id, text: row.text, importance: row.importance });
+      } else {
+        p3.push({ id: row.id, text: row.text, importance: row.importance });
+      }
+    }
+
+    // Sort P3 and P2 by importance ASC (trim least-important first)
+    p3.sort((a, b) => a.importance - b.importance);
+    p2.sort((a, b) => a.importance - b.importance);
+    // P1 sorted by importance ASC (trim least-important first within P1)
+    p1.sort((a, b) => a.importance - b.importance);
+
+    // Calculate current token count (P0 + P1 + P2 + P3)
+    const currentTokens = [...p0, ...p1, ...p2, ...p3].reduce((sum, f) => sum + tokenEstimate(f.text), 0);
+
+    if (currentTokens <= tokenBudget) {
+      const trimmed: Array<{ id: string; textPreview: string; tier: string; importance: number; tokenCost: number }> =
+        [];
+      return {
+        simulate,
+        budget: tokenBudget,
+        beforeTokens: currentTokens,
+        afterTokens: simulate ? currentTokens : currentTokens,
+        trimmed,
+        preserved,
+      };
+    }
+
+    // Trim from P3 → P2 → P1 until within budget
+    let remainingTokens = currentTokens;
+    const toTrim: Array<{ id: string; text: string; tier: string; importance: number }> = [];
+    for (const f of p3) toTrim.push({ ...f, tier: "P3" });
+    for (const f of p2) toTrim.push({ ...f, tier: "P2" });
+    for (const f of p1) toTrim.push({ ...f, tier: "P1" });
+
+    const trimmed: Array<{ id: string; textPreview: string; tier: string; importance: number; tokenCost: number }> = [];
+    for (const fact of toTrim) {
+      if (remainingTokens <= tokenBudget) break;
+      const cost = tokenEstimate(fact.text);
+      remainingTokens -= cost;
+      const preview = fact.text.length > 80 ? fact.text.slice(0, 80) + "…" : fact.text;
+      trimmed.push({
+        id: fact.id,
+        textPreview: preview,
+        tier: fact.tier,
+        importance: fact.importance,
+        tokenCost: cost,
+      });
+      if (!simulate) {
+        this.liveDb.prepare(`UPDATE facts SET superseded_at = ? WHERE id = ?`).run(nowSec, fact.id);
+        this.liveDb
+          .prepare(
+            `INSERT INTO trim_metrics (trimmed_at, fact_id, fact_text_preview, tier, importance, preserve_until, token_cost, budget_before, budget_after)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          )
+          .run(
+            nowSec,
+            fact.id,
+            fact.text.slice(0, 200),
+            fact.tier,
+            fact.importance,
+            null,
+            cost,
+            currentTokens,
+            tokenBudget,
+          );
+      }
+    }
+
+    return {
+      simulate,
+      budget: tokenBudget,
+      beforeTokens: currentTokens,
+      afterTokens: remainingTokens,
+      trimmed,
+      preserved,
+    };
+  }
+
+  /**
+   * Set or clear preserve_until on a fact.
+   * If untilSec is null, clears any existing preserve_until.
+   * Returns the updated MemoryEntry or null if not found.
+   */
+  setPreserveUntil(id: string, untilSec: number | null): MemoryEntry | null {
+    const nowSec = Math.floor(Date.now() / 1000);
+    if (untilSec !== null && untilSec <= nowSec) {
+      throw new Error(`preserve_until must be in the future or null. Got: ${untilSec}`);
+    }
+    this.liveDb.prepare(`UPDATE facts SET preserve_until = ? WHERE id = ?`).run(untilSec, id);
+    return this.getById(id);
+  }
+
+  /**
+   * Add or remove preserve_tags on a fact.
+   * mode 'set': replaces all tags with the given array.
+   * mode 'add': adds the given tags (deduped).
+   * mode 'remove': removes the given tags.
+   * Returns the updated MemoryEntry or null if not found.
+   */
+  setPreserveTags(id: string, tags: string[], mode: "set" | "add" | "remove"): MemoryEntry | null {
+    const fact = this.getById(id);
+    if (!fact) return null;
+    const existing = fact.preserveTags ?? [];
+    let next: string[];
+    if (mode === "set") {
+      next = [...new Set(tags.map((t) => t.toLowerCase().trim()))];
+    } else if (mode === "add") {
+      const s = new Set(existing);
+      for (const t of tags) s.add(t.toLowerCase().trim());
+      next = [...s];
+    } else {
+      const s = new Set(existing);
+      for (const t of tags) s.delete(t.toLowerCase().trim());
+      next = [...s];
+    }
+    const preserveTagsStr = next.length > 0 ? JSON.stringify(next) : null;
+    this.liveDb.prepare(`UPDATE facts SET preserve_tags = ? WHERE id = ?`).run(preserveTagsStr, id);
+    return this.getById(id);
+  }
+
+  /**
+   * Compute current token estimate for all non-superseded, non-expired facts.
+   * Returns { totalTokens, byTier: { p0, p1, p2, p3 }, factCount: { p0, p1, p2, p3 } }.
+   */
+  getTokenBudgetStatus(): {
+    totalTokens: number;
+    budget: number;
+    overflow: number;
+    byTier: { p0: number; p1: number; p2: number; p3: number };
+    factCount: { p0: number; p1: number; p2: number; p3: number };
+  } {
+    const nowSec = Math.floor(Date.now() / 1000);
+    const HOUR_SEC = 3600;
+    const p1Cutoff = nowSec - HOUR_SEC;
+    const tokenEstimate = (text: string): number => Math.ceil(text.length / 3.8);
+    const DEFAULT_BUDGET = Math.ceil((32_000 * 0.8) / 3.8);
+    const budget = DEFAULT_BUDGET;
+
+    const rows = this.liveDb
+      .prepare(
+        `SELECT f.id, f.text, f.importance, f.created_at, f.preserve_until, f.preserve_tags,
+                f.confidence, f.tags,
+                vf.fact_id IS NOT NULL AS is_verified
+         FROM facts f
+         LEFT JOIN verified_facts vf ON vf.fact_id = f.id
+         WHERE f.superseded_at IS NULL
+           AND (f.expires_at IS NULL OR f.expires_at > ?)`,
+      )
+      .all(nowSec) as Array<{
+      id: string;
+      text: string;
+      importance: number;
+      created_at: number;
+      preserve_until: number | null;
+      preserve_tags: string | null;
+      confidence: number;
+      tags: string | null;
+      is_verified: number;
+    }>;
+
+    const parsePreserveTags = (raw: string | null): string[] => {
+      if (!raw) return [];
+      try {
+        const parsed = JSON.parse(raw);
+        return Array.isArray(parsed) ? parsed.filter((q): q is string => typeof q === "string") : [];
+      } catch {
+        return [];
+      }
+    };
+
+    const hasTag = (tagsStr: string | null, tag: string): boolean => {
+      return parseTags(tagsStr).includes(tag.toLowerCase().trim());
+    };
+
+    const byTier = { p0: 0, p1: 0, p2: 0, p3: 0 };
+    const factCount = { p0: 0, p1: 0, p2: 0, p3: 0 };
+
+    for (const row of rows) {
+      const preserveTags = parsePreserveTags(row.preserve_tags);
+      const tagsStr = row.tags;
+      const isEdict = hasTag(tagsStr, "edict");
+      const isVerified = row.is_verified === 1;
+      const hasPreserveUntil = row.preserve_until != null && row.preserve_until > nowSec;
+      const hasPreserveTags = preserveTags.length > 0;
+
+      const tokens = tokenEstimate(row.text);
+
+      if (isEdict || isVerified || hasPreserveUntil || hasPreserveTags) {
+        byTier.p0 += tokens;
+        factCount.p0++;
+      } else if (row.importance > 0.8 && row.created_at >= p1Cutoff) {
+        byTier.p1 += tokens;
+        factCount.p1++;
+      } else if (row.importance >= 0.5) {
+        byTier.p2 += tokens;
+        factCount.p2++;
+      } else {
+        byTier.p3 += tokens;
+        factCount.p3++;
+      }
+    }
+
+    const totalTokens = byTier.p0 + byTier.p1 + byTier.p2 + byTier.p3;
+    return { totalTokens, budget, overflow: Math.max(0, totalTokens - budget), byTier, factCount };
   }
 
   search(
@@ -2023,6 +2339,17 @@ export class FactsDB extends BaseSqliteStore {
         }
       })(),
       decayFreezeUntil: (row.decay_freeze_until as number) ?? null,
+      preserveUntil: (row.preserve_until as number) ?? null,
+      preserveTags: (() => {
+        const raw = row.preserve_tags as string | null;
+        if (!raw) return null;
+        try {
+          const parsed = JSON.parse(raw);
+          return Array.isArray(parsed) ? parsed.filter((q): q is string => typeof q === "string") : null;
+        } catch {
+          return null;
+        }
+      })(),
     };
   }
 

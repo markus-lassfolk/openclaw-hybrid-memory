@@ -76,6 +76,18 @@ export type MemoryEntry = {
    * Null = no freeze (normal decay applies).
    */
   decayFreezeUntil?: number | null;
+  /**
+   * Force-preservation: epoch seconds until which this fact MUST NOT be trimmed.
+   * Null = no forced preservation (normal tier-based retention applies).
+   * Implemented by trimToBudget().
+   */
+  preserveUntil?: number | null;
+  /**
+   * Force-preservation tags: if any of these tags are present, the fact is
+   * protected from trimming regardless of importance tier.
+   * Set via `memory preserve <id> --tag <tag>`.
+   */
+  preserveTags?: string[] | null;
 };
 
 /** Memory scoping — global (all), user (per-user), agent (per-agent), session (ephemeral). */

@@ -10,6 +10,31 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
+- **Episodic Memory (#781):** New first-class `category: "episode"` memory type with structured fields: `event`, `outcome` (`success|failure|partial|unknown`), `timestamp`, `duration`, `context`, `relatedFactIds`, `procedureId`, scope, agent/user/session IDs, importance, tags, and decay class. Episodes are stored in a dedicated `episodes` SQLite table with indexed `outcome` and `timestamp` columns, and mirrored as vectors in LanceDB (same table as facts, filtered by `category="episode"`). Episodes with `outcome="failure"` are auto-boosted to `importance ≥ 0.8` at store time.
+
+- **`memory.record_episode()` tool:** Records an episodic event with structured outcome. Wraps `factsDb.storeEpisode()`. Auto-boosts failures to importance ≥ 0.8.
+
+- **`memory.search_episodes()` tool:** Queries episodes with optional outcome filter, time-range (`since`/`until`), `procedureId` filter, and semantic text search over `event + context`. Returns structured `Episode[]` ordered by timestamp DESC.
+
+- **Auto-capture in session compaction (#781):** During session-end compaction (`context-engine compact`), the session JSONL is scanned for outcome-indicating phrases (`✅ merged`, `❌ failed`, `🔧 fixed`, `⚠️ partial`, `FAILED`, `ERROR`, etc.) and episode records are auto-created for significant events.
+
+- **`FactsDB.episodesCount()` method:** Returns `{ total, success, failure, partial, unknown }` counts for episode statistics.
+
+- **`FactsDB.searchEpisodes()` method:** Supports outcome filter, time range, procedureId, FTS text search, and limit.
+
+- **`FactsDB.storeEpisode()` method:** Inserts episodes with outcome CHECK constraint, indexed columns, and auto-boost for failures.
+
+- **`FactsDB.getEpisode()` / `deleteEpisode()` methods:** Episode CRUD operations.
+
+- **`episodes_fts` FTS5 virtual table:** Semantic search over `event + context` for episodes.
+
+- **`episodes.test.ts` tests:** Full test suite covering episode CRUD, outcome filter, time-range filter, procedureId filter, limit, `episodesCount()`, and importance auto-boost.
+
+### Changed
+
+- **`DEFAULT_MEMORY_CATEGORIES`:** Added `"episode"` as a first-class category alongside `fact`, `preference`, `decision`, etc.
+
+- **`EpisodeEntry` type** added to `types/memory.ts` with full discriminated union for `outcome`.
 - **Edict memory type (#791):** New `category: "edict"` for verified ground-truth facts. Separate SQLite `edicts` table with TTL support (never/event/seconds). Six new tools: `memory.add_edict`, `memory.list_edicts`, `memory.get_edicts`, `memory.update_edict`, `memory.remove_edict`, `memory.edict_stats`. Edicts are forced-injected into system prompts before issue/narrative/hot blocks and are **never trimmed** by token budget pressure. Edict creation is **propose-only** — agents suggest via `[EDICT CANDIDATE]` GitHub comment; Markus (human) reviews and creates.
 
 - **Procedure feedback loop (#782):** New `procedure_versions` and `procedure_failures` SQLite tables track per-version outcomes and individual failure events. New `procedureFeedback()` method on FactsDB handles success and failure feedback — failures bump the version number, create an avoidance note, and automatically create an episode record via `recordEpisode()`. New `memory.procedure_feedback()` tool lets agents record procedure outcomes in context. `memory_recall_procedures` output now includes `lastOutcome`, `successRate`, and `avoidanceNotes` inline so the agent sees historical context before attempting a procedure. New `memory procedure show <id>` CLI command shows all versions, failure history, and avoidance notes for a procedure. `memory procedure list` lists all procedures with version/outcome summary. Procedure entries (`ProcedureEntry` type) now carry `version`, `lastOutcome`, `successRate`, and `avoidanceNotes` fields enriched from the version tracking system.

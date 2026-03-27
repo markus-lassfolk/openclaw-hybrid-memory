@@ -22,6 +22,157 @@ import type { HybridMemoryConfig } from "../config.js";
 import type { EmbeddingProvider } from "./embeddings.js";
 import { capturePluginError } from "./error-reporter.js";
 import { runPreConsolidationFlush } from "./pre-consolidation-flush.js";
+import { readFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
+
+// ---------------------------------------------------------------------------
+// Auto-capture: outcome phrase patterns for episodic memory (#781)
+// ---------------------------------------------------------------------------
+
+/**
+ * Outcome phrase → EpisodeOutcome mapping.
+ * Scanned in session JSONL during compaction to auto-create episode records.
+ * Order matters: more specific patterns should come before generic ones.
+ */
+const OUTCOME_PATTERNS: Array<{
+  pattern: RegExp;
+  outcome: "success" | "failure" | "partial" | "unknown";
+  eventTemplate: (phrase: string, context: string) => string;
+}> = [
+  // Success patterns
+  {
+    pattern: /✅?\s*merged\b/i,
+    outcome: "success",
+    eventTemplate: (_p, ctx) => `PR/branch merged: ${ctx.slice(0, 120).trim()}`,
+  },
+  {
+    pattern: /✅?\s*(?:successfully\s+)?(?:deployed|deploy\b)/i,
+    outcome: "success",
+    eventTemplate: (_p, ctx) => `Deployment succeeded: ${ctx.slice(0, 120).trim()}`,
+  },
+  {
+    pattern: /✅?\s*(?:passed|tests?\s+passed|test\s+pass)/i,
+    outcome: "success",
+    eventTemplate: (_p, ctx) => `Tests passed: ${ctx.slice(0, 120).trim()}`,
+  },
+  {
+    pattern: /🔧\s*fixed\b/i,
+    outcome: "success",
+    eventTemplate: (_p, ctx) => `Issue fixed: ${ctx.slice(0, 120).trim()}`,
+  },
+  {
+    pattern: /\b(?:successfully\s+)?completed\b/i,
+    outcome: "success",
+    eventTemplate: (_p, ctx) => `Task completed: ${ctx.slice(0, 120).trim()}`,
+  },
+  {
+    pattern: /✅?\s*(?:resolved|fix(?:ed)?)\b/i,
+    outcome: "success",
+    eventTemplate: (_p, ctx) => `Resolved: ${ctx.slice(0, 120).trim()}`,
+  },
+  // Failure patterns
+  {
+    pattern: /❌\s*(?:failed|failure|error\b)/i,
+    outcome: "failure",
+    eventTemplate: (_p, ctx) => `Failed: ${ctx.slice(0, 120).trim()}`,
+  },
+  {
+    pattern: /\b(?:FAILED|FAILURE|CRASH(?:ed)?)\b/i,
+    outcome: "failure",
+    eventTemplate: (_p, ctx) => `Failed: ${ctx.slice(0, 120).trim()}`,
+  },
+  {
+    pattern: /\b(?:\berror\b|\bfailed\b).*(?:during|when|in|while)\b/i,
+    outcome: "failure",
+    eventTemplate: (_p, ctx) => `Error encountered: ${ctx.slice(0, 120).trim()}`,
+  },
+  // Partial patterns
+  {
+    pattern: /⚠️?\s*partial(?:ly)?\b/i,
+    outcome: "partial",
+    eventTemplate: (_p, ctx) => `Partial result: ${ctx.slice(0, 120).trim()}`,
+  },
+  {
+    pattern: /\b(?:partial(?:ly)?|incomplete)\b/i,
+    outcome: "partial",
+    eventTemplate: (_p, ctx) => `Partial result: ${ctx.slice(0, 120).trim()}`,
+  },
+];
+
+/**
+ * Extract readable text from a session JSONL file for episode scanning.
+ */
+async function extractTextFromSessionFile(sessionFile: string): Promise<string> {
+  if (!existsSync(sessionFile)) return "";
+  try {
+    const content = await readFile(sessionFile, "utf-8");
+    const lines = content.split("\n").filter((l) => l.trim());
+    const parts: string[] = [];
+    for (const line of lines) {
+      let obj: unknown;
+      try {
+        obj = JSON.parse(line);
+      } catch {
+        continue;
+      }
+      if (!obj || typeof obj !== "object") continue;
+      const msg = (obj as Record<string, unknown>).message as Record<string, unknown> | undefined;
+      if (!msg || typeof msg !== "object") continue;
+      const text = (msg.content as string) || (msg.text as string) || "";
+      if (text) parts.push(text);
+    }
+    return parts.join(" ");
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * Scan session text for outcome-indicating phrases and create episode records.
+ * Called during session compaction to auto-capture significant events.
+ * Returns the number of episodes created.
+ */
+async function autoCaptureEpisodes(
+  factsDb: FactsDB,
+  sessionFile: string,
+  sessionId: string,
+  logger: { debug?: (msg: string) => void; warn?: (msg: string) => void },
+): Promise<number> {
+  const text = await extractTextFromSessionFile(sessionFile);
+  if (!text) return 0;
+
+  // Track which patterns have already fired to avoid duplicate episodes for the same phrase
+  const seen = new Set<string>();
+  let created = 0;
+
+  for (const { pattern, outcome, eventTemplate } of OUTCOME_PATTERNS) {
+    const match = text.match(pattern);
+    if (!match) continue;
+    const phrase = match[0];
+    const contextKey = phrase.toLowerCase().slice(0, 50);
+    if (seen.has(contextKey)) continue;
+    seen.add(contextKey);
+
+    try {
+      const contextSnippet = text.slice(Math.max(0, text.indexOf(phrase) - 20), text.indexOf(phrase) + 100);
+      const event = eventTemplate(phrase, contextSnippet);
+      // Deduplicate: don't create the same episode event within this session
+      factsDb.storeEpisode({
+        event,
+        outcome,
+        context: contextSnippet.slice(0, 500),
+        sessionId,
+        tags: ["auto-captured"],
+      });
+      created++;
+      logger.debug?.(`memory-hybrid: auto-captured episode [${outcome}]: ${event.slice(0, 80)}`);
+    } catch (err) {
+      logger.warn?.(`memory-hybrid: auto-capture episode failed: ${err}`);
+    }
+  }
+
+  return created;
+}
 
 // ---------------------------------------------------------------------------
 // Types (local stubs if SDK types are unavailable)
@@ -125,7 +276,20 @@ export class HybridMemoryContextEngine implements MinimalContextEngine {
         "context-engine compact",
       );
 
-      // 2. Count total facts and build a brief post-compaction memory summary.
+      // 2. Auto-capture episodic events from session log (#781)
+      //    Scans the session JSONL for outcome-indicating phrases (✅ merged, ❌ failed, etc.)
+      //    and creates episode records for significant events.
+      let episodesCreated = 0;
+      try {
+        episodesCreated = await autoCaptureEpisodes(factsDb, _params.sessionFile, _params.sessionId, logger);
+        if (episodesCreated > 0) {
+          logger.info?.(`memory-hybrid: auto-captured ${episodesCreated} episode(s) from session compaction`);
+        }
+      } catch (err) {
+        logger.warn?.(`memory-hybrid: episode auto-capture failed (non-fatal): ${err}`);
+      }
+
+      // 3. Count total facts and build a brief post-compaction memory summary.
       //
       //    The summary is returned in the `result` field so that SDK versions which
       //    consume it can inject the top facts into the post-compaction context.
@@ -160,13 +324,17 @@ export class HybridMemoryContextEngine implements MinimalContextEngine {
         // Non-fatal
       }
 
-      logger.debug?.(`memory-hybrid: context-engine compact — pre-compaction flush done, sessionFacts≈${sessionFacts}`);
+      logger.debug?.(
+        `memory-hybrid: context-engine compact — pre-compaction flush done, sessionFacts≈${sessionFacts}, episodes≈${episodesCreated}`,
+      );
       return {
         ok: true,
         compacted: false,
-        reason: `flushed pending state (wal: ${walCommitted} committed)`,
+        reason: `flushed pending state (wal: ${walCommitted} committed, ${episodesCreated} episodes auto-captured)`,
         // Extended result field: SDK ≥ 2026.3.8 may inject memorySummary into context.
-        result: memorySummary ? { topFacts, factCount: sessionFacts, memorySummary } : { factCount: sessionFacts },
+        result: memorySummary
+          ? { topFacts, factCount: sessionFacts, memorySummary, episodesCreated }
+          : { factCount: sessionFacts, episodesCreated },
       };
     } catch (err) {
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
