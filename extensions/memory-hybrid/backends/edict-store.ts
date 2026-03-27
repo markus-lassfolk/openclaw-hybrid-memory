@@ -141,7 +141,56 @@ export class EdictStore extends BaseSqliteStore {
     // Ensure the id column is present (backward compat for edicts created before id was added)
     const tableInfo = this.liveDb.prepare("PRAGMA table_info(edicts)").all() as Array<{ name: string }>;
     if (!tableInfo.some((c) => c.name === "id")) {
-      this.liveDb.exec("ALTER TABLE edicts ADD COLUMN id TEXT PRIMARY KEY");
+      // SQLite doesn't support adding PRIMARY KEY via ALTER TABLE, so we need to recreate the table
+      this.liveDb.exec(`
+        CREATE TABLE edicts_new (
+          id TEXT PRIMARY KEY,
+          text TEXT NOT NULL,
+          source TEXT,
+          verified_at INTEGER,
+          expires_at TEXT,
+          ttl TEXT NOT NULL DEFAULT 'never',
+          tags TEXT,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL
+        )
+      `);
+      
+      // Copy existing data, generating IDs for rows that don't have them
+      const oldRows = this.liveDb.prepare("SELECT * FROM edicts").all() as Array<Record<string, unknown>>;
+      const insertStmt = this.liveDb.prepare(
+        `INSERT INTO edicts_new (id, text, source, verified_at, expires_at, ttl, tags, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      );
+      
+      for (const row of oldRows) {
+        const id = `e_${randomUUID().replace(/-/g, "").slice(0, 12)}`;
+        insertStmt.run(
+          id,
+          row.text,
+          row.source,
+          row.verified_at,
+          row.expires_at,
+          row.ttl,
+          row.tags,
+          row.created_at,
+          row.updated_at
+        );
+      }
+      
+      // Replace old table with new table
+      this.liveDb.exec("DROP TABLE edicts");
+      this.liveDb.exec("ALTER TABLE edicts_new RENAME TO edicts");
+      
+      // Recreate indexes after table recreation
+      this.liveDb.exec(`
+        CREATE INDEX IF NOT EXISTS idx_edicts_tags ON edicts(tags)
+          WHERE tags IS NOT NULL AND tags != ''
+      `);
+      this.liveDb.exec(`
+        CREATE INDEX IF NOT EXISTS idx_edicts_expires ON edicts(expires_at)
+          WHERE expires_at IS NOT NULL
+      `);
     }
   }
 
