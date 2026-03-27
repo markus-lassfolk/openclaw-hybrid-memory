@@ -217,8 +217,20 @@ export class EdictStore extends BaseSqliteStore {
     // Serialize ttl
     const ttlStr = typeof ttl === "number" ? String(ttl) : ttl;
 
-    // For ttl="event", expiresAt is required
-    const expiresAt = input.expiresAt ?? (ttl === "event" ? null : null);
+    // For ttl="event", expiresAt is required and must be a valid date
+    let expiresAt: string | null;
+    if (ttl === "event") {
+      if (!input.expiresAt) {
+        throw new Error("expiresAt is required when ttl is 'event'");
+      }
+      const parsed = new Date(input.expiresAt);
+      if (Number.isNaN(parsed.getTime())) {
+        throw new Error("expiresAt must be a valid ISO 8601 date when ttl is 'event'");
+      }
+      expiresAt = parsed.toISOString();
+    } else {
+      expiresAt = null;
+    }
 
     // Check for duplicate text (case-insensitive, normalized whitespace)
     const normalizedText = input.text.trim().replace(/\s+/g, " ").toLowerCase();
@@ -274,9 +286,9 @@ export class EdictStore extends BaseSqliteStore {
 
     if (!includeExpired) {
       parts.push(
-        `((ttl = 'never') OR (ttl = 'event' AND (expires_at IS NULL OR expires_at > datetime(?))) OR (CAST(ttl AS INTEGER) > 0 AND created_at + CAST(ttl AS INTEGER) > ?))`,
+        `((ttl = 'never') OR (ttl = 'event' AND (expires_at IS NULL OR datetime(expires_at) > datetime(?, 'unixepoch'))) OR (CAST(ttl AS INTEGER) > 0 AND created_at + CAST(ttl AS INTEGER) > ?))`,
       );
-      params.push(new Date().toISOString(), nowSec);
+      params.push(nowSec, nowSec);
     }
 
     if (tags && tags.length > 0) {
@@ -354,19 +366,19 @@ export class EdictStore extends BaseSqliteStore {
     const expiredRow = this.liveDb
       .prepare(
         `SELECT COUNT(*) as cnt FROM edicts WHERE
-         (ttl = 'event' AND expires_at IS NOT NULL AND expires_at <= datetime(?))
+         (ttl = 'event' AND expires_at IS NOT NULL AND datetime(expires_at) <= datetime(?, 'unixepoch'))
          OR (CAST(ttl AS INTEGER) > 0 AND created_at + CAST(ttl AS INTEGER) <= ?)`,
       )
-      .get(new Date().toISOString(), nowSec) as { cnt: number };
+      .get(nowSec, nowSec) as { cnt: number };
     const expired = expiredRow.cnt;
 
     // Count expiring in next 7 days (only ttl="event")
-    const sevenDaysFromNow = new Date(Date.now() + 7 * 24 * 3600 * 1000).toISOString();
+    const sevenDaysFromNowSec = nowSec + 7 * 24 * 3600;
     const expiringRow = this.liveDb
       .prepare(
-        `SELECT COUNT(*) as cnt FROM edicts WHERE ttl = 'event' AND expires_at IS NOT NULL AND expires_at > datetime(?) AND expires_at <= ?`,
+        `SELECT COUNT(*) as cnt FROM edicts WHERE ttl = 'event' AND expires_at IS NOT NULL AND datetime(expires_at) > datetime(?, 'unixepoch') AND datetime(expires_at) <= datetime(?, 'unixepoch')`,
       )
-      .get(new Date().toISOString(), sevenDaysFromNow) as { cnt: number };
+      .get(nowSec, sevenDaysFromNowSec) as { cnt: number };
     const expiringIn7Days = expiringRow.cnt;
 
     // Count by tag
@@ -389,10 +401,10 @@ export class EdictStore extends BaseSqliteStore {
     const result = this.liveDb
       .prepare(
         `DELETE FROM edicts WHERE
-         (ttl = 'event' AND expires_at IS NOT NULL AND expires_at <= datetime(?))
+         (ttl = 'event' AND expires_at IS NOT NULL AND datetime(expires_at) <= datetime(?, 'unixepoch'))
          OR (CAST(ttl AS INTEGER) > 0 AND created_at + CAST(ttl AS INTEGER) <= ?)`,
       )
-      .run(new Date().toISOString(), nowSec);
+      .run(nowSec, nowSec);
     return Number(result.changes ?? 0);
   }
 

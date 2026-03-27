@@ -49,7 +49,7 @@ import { resolveExplicitDeepRetrievalPolicy } from "../services/retrieval-mode-p
 import { buildExplicitSemanticQueryVector, runExplicitDeepRetrieval } from "../services/retrieval-orchestrator.js";
 import type { VerificationStore } from "../services/verification-store.js";
 import { shouldAutoVerify } from "../services/verification-store.js";
-import type { Episode, EpisodeOutcome, MemoryEntry, ScopeFilter, SearchResult } from "../types/memory.js";
+import type {EpisodeOutcome, MemoryEntry, ScopeFilter, SearchResult } from "../types/memory.js";
 import { MEMORY_SCOPES } from "../types/memory.js";
 import { UUID_REGEX } from "../utils/constants.js";
 import { detectFutureDate } from "../utils/date-detector.js";
@@ -2513,7 +2513,9 @@ export function registerMemoryTools(
       parameters: Type.Object({
         tags: Type.Optional(Type.Array(Type.String(), { description: "Filter to edicts with any of these tags" })),
         format: Type.Optional(
-          Type.String({ description: "Output format: 'prompt' (Markdown block, default) or 'full' (structured)" }),
+          stringEnum(["prompt", "full"], {
+            description: "Output format: 'prompt' (Markdown block, default) or 'full' (structured)",
+          }),
         ),
         limit: Type.Optional(Type.Number({ description: "Max results (default 100)" })),
       }),

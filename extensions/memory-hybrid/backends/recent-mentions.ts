@@ -149,6 +149,7 @@ export class RecentMentionsDB extends BaseSqliteStore {
     credentialType?: string,
   ): boolean {
     const nowSec = Math.floor(Date.now() / 1000);
+    const storedText = isCredential ? (credentialKey ?? "[REDACTED CREDENTIAL]") : entityText;
     const mentionHash = RecentMentionsDB.sha256(entityText);
 
     const existing = this.liveDb
