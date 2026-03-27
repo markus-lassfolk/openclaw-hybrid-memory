@@ -359,7 +359,20 @@ export class EdictStore extends BaseSqliteStore {
     const source = input.source !== undefined ? input.source : existing.source;
     const tags = input.tags !== undefined ? input.tags : existing.tags;
     const ttl = input.ttl !== undefined ? input.ttl : existing.ttl;
-    const expiresAt = input.expiresAt !== undefined ? input.expiresAt : existing.expiresAt;
+    let expiresAt = input.expiresAt !== undefined ? input.expiresAt : existing.expiresAt;
+
+    // For ttl="event", expiresAt is required and must be a valid date
+    if (ttl === "event") {
+      if (!expiresAt) {
+        throw new Error("expiresAt is required when ttl is 'event'");
+      }
+      const parsed = new Date(expiresAt);
+      if (Number.isNaN(parsed.getTime())) {
+        throw new Error("expiresAt must be a valid ISO 8601 date when ttl is 'event'");
+      }
+      expiresAt = parsed.toISOString();
+    }
+
     const ttlStr = typeof ttl === "number" ? String(ttl) : ttl;
     const tagsStr = tags.length > 0 ? serializeTags(tags) : null;
     const hash = normalizedHash(text);

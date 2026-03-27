@@ -307,9 +307,6 @@ export const ENTITY_EXTRACTION_PATTERNS = {
   /** Error class names */
   errorClasses:
     /\b(?:Error|TypeError|ReferenceError|SyntaxError|RangeError|URIError|EvalError|fetch error|request failed|connection refused|timeout)[^\s]*\b/gi,
-
-  /** Quoted strings (potential project/tool names) */
-  quotedStrings: /"(?<quote>[^"]{2,50})"|'(?<quote>[^']{2,50})'/g,
 };
 
 /** Credential patterns for auto-detection.
