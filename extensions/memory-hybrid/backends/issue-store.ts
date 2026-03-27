@@ -93,7 +93,7 @@ export class IssueStore extends BaseSqliteStore {
         now,
       );
 
-    return this.get(id)!;
+    return this.get(id) as Issue;
   }
 
   get(id: string): Issue | null {
@@ -162,7 +162,7 @@ export class IssueStore extends BaseSqliteStore {
     params.push(id);
     this.liveDb.prepare(`UPDATE issues SET ${sets.join(", ")} WHERE id = ?`).run(...params);
 
-    return this.get(id)!;
+    return this.get(id) as Issue;
   }
 
   transition(id: string, newStatus: IssueStatus, data?: Partial<Issue>): Issue {
