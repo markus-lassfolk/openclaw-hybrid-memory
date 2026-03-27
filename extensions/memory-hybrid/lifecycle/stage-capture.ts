@@ -60,7 +60,6 @@ const FAILURE_PATTERNS: OutcomePattern[] = [
   // Explicit failure
   { regex: /\bfailed\b/i, label: "failed" },
   { regex: /\bfailure\b/i, label: "failure" },
-  { regex: /\bFAILED\b/i, label: "failed" },
   // Error
   { regex: /\berror\b/i, label: "error" },
   { regex: /\bcrashed\b/i, label: "crashed" },

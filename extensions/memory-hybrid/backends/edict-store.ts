@@ -15,6 +15,7 @@ import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
+import { BaseSqliteStore } from "./base-sqlite-store.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { parseTags, serializeTags } from "../utils/tags.js";
 
@@ -100,20 +101,20 @@ function escapeLikePattern(s: string): string {
   return s.replace(/[%_\\]/g, "\\$&");
 }
 
-export class EdictStore {
+export class EdictStore extends BaseSqliteStore {
   private readonly dbPath: string;
-  private readonly db: DatabaseSync;
 
   constructor(dbPath: string) {
     mkdirSync(dirname(dbPath), { recursive: true });
+    const db = new DatabaseSync(dbPath);
+    super(db);
     this.dbPath = dbPath;
-    this.db = new DatabaseSync(dbPath);
     this.runMigrations();
   }
 
   /** Run all schema migrations. Idempotent — safe to call on existing databases. */
   private runMigrations(): void {
-    this.db.exec(`
+    this.liveDb.exec(`
       CREATE TABLE IF NOT EXISTS edicts (
         id TEXT PRIMARY KEY,
         text TEXT NOT NULL,
@@ -127,20 +128,20 @@ export class EdictStore {
       )
     `);
 
-    this.db.exec(`
+    this.liveDb.exec(`
       CREATE INDEX IF NOT EXISTS idx_edicts_tags ON edicts(tags)
         WHERE tags IS NOT NULL AND tags != ''
     `);
 
-    this.db.exec(`
+    this.liveDb.exec(`
       CREATE INDEX IF NOT EXISTS idx_edicts_expires ON edicts(expires_at)
         WHERE expires_at IS NOT NULL
     `);
 
     // Ensure the id column is present (backward compat for edicts created before id was added)
-    const tableInfo = this.db.prepare("PRAGMA table_info(edicts)").all() as Array<{ name: string }>;
+    const tableInfo = this.liveDb.prepare("PRAGMA table_info(edicts)").all() as Array<{ name: string }>;
     if (!tableInfo.some((c) => c.name === "id")) {
-      this.db.exec("ALTER TABLE edicts ADD COLUMN id TEXT PRIMARY KEY");
+      this.liveDb.exec("ALTER TABLE edicts ADD COLUMN id TEXT PRIMARY KEY");
     }
   }
 
@@ -177,7 +178,7 @@ export class EdictStore {
       throw new Error(`Edict with similar text already exists: ${existing.id}`);
     }
 
-    this.db
+    this.liveDb
       .prepare(
         `INSERT INTO edicts (id, text, source, verified_at, expires_at, ttl, tags, created_at, updated_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -199,7 +200,7 @@ export class EdictStore {
 
   /** Find an edict by normalized text (for duplicate detection) */
   private findByNormalizedText(normalized: string): EdictEntry | null {
-    const rows = this.db.prepare("SELECT * FROM edicts").all() as Array<Record<string, unknown>>;
+    const rows = this.liveDb.prepare("SELECT * FROM edicts").all() as Array<Record<string, unknown>>;
     for (const row of rows) {
       const storedText = (row.text as string).trim().replace(/\s+/g, " ").toLowerCase();
       if (storedText === normalized) {
@@ -211,7 +212,7 @@ export class EdictStore {
 
   /** Get a single edict by id */
   getById(id: string): EdictEntry | null {
-    const row = this.db.prepare("SELECT * FROM edicts WHERE id = ?").get(id) as Record<string, unknown> | undefined;
+    const row = this.liveDb.prepare("SELECT * FROM edicts WHERE id = ?").get(id) as Record<string, unknown> | undefined;
     return row ? this.rowToEntry(row) : null;
   }
 
@@ -239,7 +240,7 @@ export class EdictStore {
     const where = parts.length > 0 ? `WHERE ${parts.join(" AND ")}` : "";
     params.push(limit);
 
-    const rows = this.db
+    const rows = this.liveDb
       .prepare(`SELECT * FROM edicts ${where} ORDER BY created_at DESC LIMIT ?`)
       .all(...params) as Array<Record<string, unknown>>;
 
@@ -268,7 +269,7 @@ export class EdictStore {
     const ttlStr = typeof ttl === "number" ? String(ttl) : ttl;
     const tagsStr = tags.length > 0 ? serializeTags(tags) : null;
 
-    this.db
+    this.liveDb
       .prepare("UPDATE edicts SET text = ?, source = ?, expires_at = ?, ttl = ?, tags = ?, updated_at = ? WHERE id = ?")
       .run(text, source ?? null, expiresAt ?? null, ttlStr, tagsStr, nowSec, input.id);
 
@@ -285,13 +286,13 @@ export class EdictStore {
 
   /** Remove an edict by id */
   remove(id: string): boolean {
-    const result = this.db.prepare("DELETE FROM edicts WHERE id = ?").run(id);
+    const result = this.liveDb.prepare("DELETE FROM edicts WHERE id = ?").run(id);
     return result.changes > 0;
   }
 
   /** Count total edicts */
   count(): number {
-    const row = this.db.prepare("SELECT COUNT(*) as cnt FROM edicts").get() as { cnt: number };
+    const row = this.liveDb.prepare("SELECT COUNT(*) as cnt FROM edicts").get() as { cnt: number };
     return row.cnt;
   }
 
@@ -301,7 +302,7 @@ export class EdictStore {
     const total = this.count();
 
     // Count expired (ttl="event" with expires_at in the past, or numeric TTL that's elapsed)
-    const expiredRow = this.db
+    const expiredRow = this.liveDb
       .prepare(
         `SELECT COUNT(*) as cnt FROM edicts WHERE
          (ttl = 'event' AND expires_at IS NOT NULL AND expires_at <= datetime(?))
@@ -312,7 +313,7 @@ export class EdictStore {
 
     // Count expiring in next 7 days (only ttl="event")
     const sevenDaysFromNow = new Date(Date.now() + 7 * 24 * 3600 * 1000).toISOString();
-    const expiringRow = this.db
+    const expiringRow = this.liveDb
       .prepare(
         `SELECT COUNT(*) as cnt FROM edicts WHERE ttl = 'event' AND expires_at IS NOT NULL AND expires_at > datetime(?) AND expires_at <= ?`,
       )
@@ -320,7 +321,7 @@ export class EdictStore {
     const expiringIn7Days = expiringRow.cnt;
 
     // Count by tag
-    const allRows = this.db.prepare("SELECT tags FROM edicts").all() as Array<{ tags: string | null }>;
+    const allRows = this.liveDb.prepare("SELECT tags FROM edicts").all() as Array<{ tags: string | null }>;
     const byTag: Record<string, number> = {};
     for (const row of allRows) {
       if (!row.tags) continue;
@@ -336,7 +337,7 @@ export class EdictStore {
   /** Prune all expired edicts. Returns count of deleted rows. */
   pruneExpired(): number {
     const nowSec = Math.floor(Date.now() / 1000);
-    const result = this.db
+    const result = this.liveDb
       .prepare(
         `DELETE FROM edicts WHERE
          (ttl = 'event' AND expires_at IS NOT NULL AND expires_at <= datetime(?))
@@ -362,10 +363,5 @@ export class EdictStore {
       createdAt: row.created_at as number,
       updatedAt: row.updated_at as number,
     };
-  }
-
-  /** Close the database connection */
-  close(): void {
-    this.db.close();
   }
 }

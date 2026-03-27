@@ -745,6 +745,7 @@ export function createPluginService(ctx: PluginServiceContext) {
         await ctx.pythonBridge.shutdown();
       }
       factsDb.close();
+      edictStore.close();
       vectorDb.close();
       if (credentialsDb) {
         credentialsDb.close();
