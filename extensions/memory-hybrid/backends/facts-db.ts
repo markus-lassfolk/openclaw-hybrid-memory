@@ -2991,9 +2991,14 @@ export class FactsDB extends BaseSqliteStore {
 
       // Merge avoidance notes across all versions
       const allNotes = new Set<string>(base.avoidanceNotes ?? []);
-      if (versionRow.avoidance_notes) {
+      const allVersionRows = this.liveDb
+        .prepare(
+          `SELECT avoidance_notes FROM procedure_versions WHERE procedure_id = ? AND avoidance_notes IS NOT NULL`,
+        )
+        .all(base.id) as Array<{ avoidance_notes: string }>;
+      for (const row of allVersionRows) {
         try {
-          const notes = JSON.parse(versionRow.avoidance_notes) as string[];
+          const notes = JSON.parse(row.avoidance_notes) as string[];
           notes.forEach((n) => allNotes.add(n));
         } catch {
           // ignore parse errors

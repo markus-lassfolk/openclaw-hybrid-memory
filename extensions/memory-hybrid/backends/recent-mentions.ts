@@ -161,8 +161,7 @@ export class RecentMentionsDB extends BaseSqliteStore {
         .prepare(
           `UPDATE recent_mentions
              SET mention_count = mention_count + 1,
-                 last_seen = ?,
-                 auto_stored = 0
+                 last_seen = ?
              WHERE id = ?`,
         )
         .run(nowSec, existing.id as number);
