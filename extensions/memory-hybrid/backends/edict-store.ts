@@ -109,7 +109,7 @@ export class EdictStore {
     this.dbPath = dbPath;
     this.db = new DatabaseSync(dbPath);
     this.db.open();
-    
+
     this.runMigrations();
   }
 
