@@ -108,7 +108,6 @@ export class EdictStore {
     mkdirSync(dirname(dbPath), { recursive: true });
     this.dbPath = dbPath;
     this.db = new DatabaseSync(dbPath);
-    this.db.open();
 
     this.runMigrations();
   }

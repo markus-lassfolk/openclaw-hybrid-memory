@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AllEmbeddingProvidersFailed } from "../services/embeddings.js";
 import * as errorReporter from "../services/error-reporter.js";

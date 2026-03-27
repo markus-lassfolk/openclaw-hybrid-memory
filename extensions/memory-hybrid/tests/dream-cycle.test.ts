@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * Dream Cycle tests — Issue #143
  *

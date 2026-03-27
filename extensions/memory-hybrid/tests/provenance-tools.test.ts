@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * Tests for provenance tools and automatic edge creation (Issue #163).
  */

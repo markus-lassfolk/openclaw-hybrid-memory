@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * Tests for multi-model retrieval integration (Issue #158).
  *

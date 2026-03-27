@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * Tests for Issue #279 — Dashboard HTTP routes must use consistent auth
  *

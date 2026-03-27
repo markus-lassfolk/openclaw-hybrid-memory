@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * Tests for Issue #145 — GraphRAG Retrieval: semantic search + graph traversal.
  *

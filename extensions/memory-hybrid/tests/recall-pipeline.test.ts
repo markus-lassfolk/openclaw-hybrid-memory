@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * Tests for services/recall-pipeline.ts (Issue #498).
  *

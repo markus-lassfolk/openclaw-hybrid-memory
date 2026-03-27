@@ -340,7 +340,7 @@ describe("Init-databases e2e", () => {
 
     expect(() =>
       closeOldDatabases({
-        factsDb: ctx.factsDb,
+        factsDb: ctx.factsDb, edictStore: null as any,
         vectorDb: ctx.vectorDb,
         credentialsDb: ctx.credentialsDb,
         proposalsDb: ctx.proposalsDb,

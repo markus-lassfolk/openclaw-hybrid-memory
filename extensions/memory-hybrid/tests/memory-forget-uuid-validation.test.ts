@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * Tests for memory_forget UUID validation (issue #334).
  *

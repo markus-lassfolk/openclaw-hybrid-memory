@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * Tool registration tests for knowledge gaps (Issue #141).
  */

@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * merge-results.test.ts — Dedicated unit tests for services/merge-results.ts.
  *

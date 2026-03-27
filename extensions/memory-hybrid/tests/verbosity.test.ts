@@ -287,7 +287,7 @@ describe("runConfigSetForCli — verbosity", () => {
     const cfg = hybridConfigSchema.parse({ ...BASE_CONFIG });
     const ctx = {
       cfg,
-      factsDb: {},
+      factsDb: {}, edictStore: null as any,
       vectorDb: {},
       embeddings: {},
       credentialsDb: null,
@@ -609,7 +609,7 @@ describe("runCostReportForCli — compact=true when verbosity=quiet", () => {
     // Build a minimal HandlerContext — costTracker is null so we test the "disabled" branch
     const ctx = {
       cfg,
-      factsDb: {},
+      factsDb: {}, edictStore: null as any,
       vectorDb: {},
       embeddings: {},
       credentialsDb: null,
@@ -639,7 +639,7 @@ describe("runCostReportForCli — compact=true when verbosity=quiet", () => {
 
     const ctx = {
       cfg,
-      factsDb: {},
+      factsDb: {}, edictStore: null as any,
       vectorDb: {},
       embeddings: {},
       credentialsDb: null,
@@ -723,7 +723,7 @@ function makeMinimalLifecycleContext(verbosity: VerbosityLevel): LifecycleContex
     embeddingRegistry: null,
     resolvedSqlitePath: "/tmp/test.sqlite",
     vectorDb: { open: vi.fn(), close: vi.fn() } as unknown as LifecycleContext["vectorDb"],
-    factsDb: {} as unknown as LifecycleContext["factsDb"],
+    factsDb: {} as unknown as LifecycleContext["factsDb"], edictStore: null as any,
     embeddings: {} as unknown as LifecycleContext["embeddings"],
     openai: {} as unknown as LifecycleContext["openai"],
     issueStore: null,

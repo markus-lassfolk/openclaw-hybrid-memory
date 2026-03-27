@@ -54,7 +54,7 @@ function makeCtx(
   } as unknown as HybridMemoryConfig;
 
   return {
-    factsDb: db,
+    factsDb: db, edictStore: null as any,
     cfg,
     logger: {},
   } as unknown as HandlerContext;

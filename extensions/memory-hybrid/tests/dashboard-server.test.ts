@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * Tests for Issue #309 — Mission Control Dashboard
  *

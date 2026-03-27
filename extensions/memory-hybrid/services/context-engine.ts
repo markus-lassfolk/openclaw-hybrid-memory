@@ -157,7 +157,7 @@ async function autoCaptureEpisodes(
       const contextSnippet = text.slice(Math.max(0, text.indexOf(phrase) - 20), text.indexOf(phrase) + 100);
       const event = eventTemplate(phrase, contextSnippet);
       // Deduplicate: don't create the same episode event within this session
-      factsDb.storeEpisode({
+      factsDb.recordEpisode({
         event,
         outcome,
         context: contextSnippet.slice(0, 500),

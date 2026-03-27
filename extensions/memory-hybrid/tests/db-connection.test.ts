@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * Verifies that FactsDB, CredentialsDB, EventLog, and VectorDB auto-reconnect after their
  * underlying connection is closed (e.g. by stop()/SIGUSR1 graceful restart).

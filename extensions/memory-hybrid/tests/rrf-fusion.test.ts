@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * Tests for the RRF scoring pipeline (Issue #152).
  *

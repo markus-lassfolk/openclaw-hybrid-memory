@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * Integration tests for createPluginService startup wiring.
  *

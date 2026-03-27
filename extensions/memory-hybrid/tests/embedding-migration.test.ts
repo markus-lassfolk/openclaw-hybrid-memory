@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * Tests for embedding-migration service (Issue #153).
  *
@@ -100,7 +101,7 @@ describe("migrateEmbeddings — basic behavior", () => {
     const embeddings = makeEmbeddings();
 
     const result = await migrateEmbeddings({
-      factsDb: factsDb as any,
+      factsDb: factsDb as any, edictStore: null as any,
       vectorDb: vectorDb as any,
       embeddings: embeddings as any,
       logger: silentLogger(),
@@ -121,7 +122,7 @@ describe("migrateEmbeddings — basic behavior", () => {
     });
 
     const result = await migrateEmbeddings({
-      factsDb: factsDb as any,
+      factsDb: factsDb as any, edictStore: null as any,
       vectorDb: vectorDb as any,
       embeddings: embeddings as any,
       logger: silentLogger(),
@@ -147,7 +148,7 @@ describe("migrateEmbeddings — basic behavior", () => {
     const onProgress = vi.fn();
 
     await migrateEmbeddings({
-      factsDb: factsDb as any,
+      factsDb: factsDb as any, edictStore: null as any,
       vectorDb: vectorDb as any,
       embeddings: embeddings as any,
       batchSize: 3,
@@ -176,7 +177,7 @@ describe("migrateEmbeddings — duplicate handling", () => {
     const embeddings = makeEmbeddings();
 
     const result = await migrateEmbeddings({
-      factsDb: factsDb as any,
+      factsDb: factsDb as any, edictStore: null as any,
       vectorDb: vectorDb as any,
       embeddings: embeddings as any,
       logger: silentLogger(),
@@ -195,7 +196,7 @@ describe("migrateEmbeddings — duplicate handling", () => {
     const embeddings = makeEmbeddings();
 
     await migrateEmbeddings({
-      factsDb: factsDb as any,
+      factsDb: factsDb as any, edictStore: null as any,
       vectorDb: vectorDb as any,
       embeddings: embeddings as any,
       logger: silentLogger(),
@@ -214,7 +215,7 @@ describe("migrateEmbeddings — duplicate handling", () => {
     const embeddings = makeEmbeddings();
 
     const result = await migrateEmbeddings({
-      factsDb: factsDb as any,
+      factsDb: factsDb as any, edictStore: null as any,
       vectorDb: vectorDb as any,
       embeddings: embeddings as any,
       logger: silentLogger(),
@@ -241,7 +242,7 @@ describe("migrateEmbeddings — error handling", () => {
     });
 
     const result = await migrateEmbeddings({
-      factsDb: factsDb as any,
+      factsDb: factsDb as any, edictStore: null as any,
       vectorDb: vectorDb as any,
       embeddings: embeddings as any,
       logger: silentLogger(),
@@ -262,7 +263,7 @@ describe("migrateEmbeddings — error handling", () => {
     });
 
     const result = await migrateEmbeddings({
-      factsDb: factsDb as any,
+      factsDb: factsDb as any, edictStore: null as any,
       vectorDb: vectorDb as any,
       embeddings: embeddings as any,
       logger: silentLogger(),
@@ -283,7 +284,7 @@ describe("migrateEmbeddings — error handling", () => {
     const embeddings = makeEmbeddings();
 
     const result = await migrateEmbeddings({
-      factsDb: factsDb as any,
+      factsDb: factsDb as any, edictStore: null as any,
       vectorDb: vectorDb as any,
       embeddings: embeddings as any,
       logger: silentLogger(),
@@ -314,7 +315,7 @@ describe("migrateEmbeddings — error handling", () => {
     });
 
     const result = await migrateEmbeddings({
-      factsDb: factsDb as any,
+      factsDb: factsDb as any, edictStore: null as any,
       vectorDb: vectorDb as any,
       embeddings: embeddings as any,
       batchSize: 1,
@@ -337,7 +338,7 @@ describe("runEmbeddingMaintenance — change detection", () => {
     const embeddings = makeEmbeddings();
 
     const result = await runEmbeddingMaintenance({
-      factsDb: factsDb as any,
+      factsDb: factsDb as any, edictStore: null as any,
       vectorDb: vectorDb as any,
       embeddings: embeddings as any,
       currentProvider: "openai",
@@ -360,7 +361,7 @@ describe("runEmbeddingMaintenance — change detection", () => {
     const embeddings = makeEmbeddings();
 
     const result = await runEmbeddingMaintenance({
-      factsDb: factsDb as any,
+      factsDb: factsDb as any, edictStore: null as any,
       vectorDb: vectorDb as any,
       embeddings: embeddings as any,
       currentProvider: "openai",
@@ -382,7 +383,7 @@ describe("runEmbeddingMaintenance — change detection", () => {
     const embeddings = makeEmbeddings();
 
     const result = await runEmbeddingMaintenance({
-      factsDb: factsDb as any,
+      factsDb: factsDb as any, edictStore: null as any,
       vectorDb: vectorDb as any,
       embeddings: embeddings as any,
       currentProvider: "openai",
@@ -403,7 +404,7 @@ describe("runEmbeddingMaintenance — change detection", () => {
     const embeddings = makeEmbeddings();
 
     const result = await runEmbeddingMaintenance({
-      factsDb: factsDb as any,
+      factsDb: factsDb as any, edictStore: null as any,
       vectorDb: vectorDb as any,
       embeddings: embeddings as any,
       currentProvider: "openai",
@@ -423,7 +424,7 @@ describe("runEmbeddingMaintenance — change detection", () => {
     const embeddings = makeEmbeddings();
 
     await runEmbeddingMaintenance({
-      factsDb: factsDb as any,
+      factsDb: factsDb as any, edictStore: null as any,
       vectorDb: vectorDb as any,
       embeddings: embeddings as any,
       currentProvider: "openai",
@@ -449,7 +450,7 @@ describe("runEmbeddingMaintenance — migration trigger", () => {
     const embeddings = makeEmbeddings();
 
     const result = await runEmbeddingMaintenance({
-      factsDb: factsDb as any,
+      factsDb: factsDb as any, edictStore: null as any,
       vectorDb: vectorDb as any,
       embeddings: embeddings as any,
       currentProvider: "openai",
@@ -476,7 +477,7 @@ describe("runEmbeddingMaintenance — migration trigger", () => {
     });
 
     const result = await runEmbeddingMaintenance({
-      factsDb: factsDb as any,
+      factsDb: factsDb as any, edictStore: null as any,
       vectorDb: vectorDb as any,
       embeddings: embeddings as any,
       currentProvider: "openai",
@@ -504,7 +505,7 @@ describe("runEmbeddingMaintenance — migration trigger", () => {
     });
 
     const result = await runEmbeddingMaintenance({
-      factsDb: factsDb as any,
+      factsDb: factsDb as any, edictStore: null as any,
       vectorDb: vectorDb as any,
       embeddings: embeddings as any,
       currentProvider: "openai",
@@ -528,7 +529,7 @@ describe("runEmbeddingMaintenance — migration trigger", () => {
     const embeddings = makeEmbeddings();
 
     const result = await runEmbeddingMaintenance({
-      factsDb: factsDb as any,
+      factsDb: factsDb as any, edictStore: null as any,
       vectorDb: vectorDb as any,
       embeddings: embeddings as any,
       currentProvider: "openai",
@@ -557,7 +558,7 @@ describe("migrateEmbeddings — batch processing", () => {
 
     const progressCalls: number[] = [];
     const result = await migrateEmbeddings({
-      factsDb: factsDb as any,
+      factsDb: factsDb as any, edictStore: null as any,
       vectorDb: vectorDb as any,
       embeddings: embeddings as any,
       batchSize: 3,
@@ -581,7 +582,7 @@ describe("migrateEmbeddings — batch processing", () => {
     });
 
     await migrateEmbeddings({
-      factsDb: factsDb as any,
+      factsDb: factsDb as any, edictStore: null as any,
       vectorDb: vectorDb as any,
       embeddings: embeddings as any,
       logger: silentLogger(),

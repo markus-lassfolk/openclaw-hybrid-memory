@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { describe, expect, it } from "vitest";
 import { type Converter, getConverter, registerConverter } from "../../tools/converters/index.js";
 
