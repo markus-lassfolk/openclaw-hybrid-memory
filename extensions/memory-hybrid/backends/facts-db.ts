@@ -3017,7 +3017,116 @@ export class FactsDB extends BaseSqliteStore {
     }
   }
 
-  private procedureRowToEntry(row: Record<string, unknown>): ProcedureEntry {
+  /**
+   * Batch-enrich multiple procedures with version feedback data in a single query.
+   * Avoids N+3 query amplification by fetching all version data at once.
+   */
+  private batchEnrichProceduresWithFeedback(bases: ProcedureEntry[]): ProcedureEntry[] {
+    if (bases.length === 0) return bases;
+
+    try {
+      const procedureIds = bases.map((p) => p.id);
+      const placeholders = procedureIds.map(() => "?").join(",");
+
+      // Fetch all version data in one query
+      const allVersionData = this.liveDb
+        .prepare(
+          `SELECT 
+            procedure_id,
+            version_number,
+            success_count,
+            failure_count,
+            avoidance_notes
+           FROM procedure_versions
+           WHERE procedure_id IN (${placeholders})
+           ORDER BY procedure_id, version_number DESC`,
+        )
+        .all(...procedureIds) as Array<{
+        procedure_id: string;
+        version_number: number;
+        success_count: number;
+        failure_count: number;
+        avoidance_notes: string | null;
+      }>;
+
+      // Group version data by procedure_id
+      const versionsByProcedure = new Map<
+        string,
+        Array<{
+          version_number: number;
+          success_count: number;
+          failure_count: number;
+          avoidance_notes: string | null;
+        }>
+      >();
+
+      for (const row of allVersionData) {
+        if (!versionsByProcedure.has(row.procedure_id)) {
+          versionsByProcedure.set(row.procedure_id, []);
+        }
+        versionsByProcedure.get(row.procedure_id)!.push({
+          version_number: row.version_number,
+          success_count: row.success_count,
+          failure_count: row.failure_count,
+          avoidance_notes: row.avoidance_notes,
+        });
+      }
+
+      // Enrich each procedure with its version data
+      return bases.map((base) => {
+        // Compute lastOutcome from procedure's own timestamps
+        let lastOutcome: "success" | "failure" | "unknown" = "unknown";
+        if (base.lastFailed !== null && base.lastValidated !== null) {
+          lastOutcome = base.lastFailed > base.lastValidated ? "failure" : "success";
+        } else if (base.lastFailed !== null) {
+          lastOutcome = "failure";
+        } else if (base.lastValidated !== null) {
+          lastOutcome = "success";
+        }
+
+        const versions = versionsByProcedure.get(base.id);
+        if (!versions || versions.length === 0) {
+          return { ...base, lastOutcome };
+        }
+
+        const latestVersion = versions[0];
+
+        // Aggregate all successes and failures across all versions
+        let totalSuccess = 0;
+        let totalFailure = 0;
+        const allNotes = new Set<string>(base.avoidanceNotes ?? []);
+
+        for (const ver of versions) {
+          totalSuccess += ver.success_count;
+          totalFailure += ver.failure_count;
+
+          if (ver.avoidance_notes) {
+            try {
+              const notes = JSON.parse(ver.avoidance_notes) as string[];
+              notes.forEach((n) => allNotes.add(n));
+            } catch {
+              // ignore parse errors
+            }
+          }
+        }
+
+        const total = totalSuccess + totalFailure;
+        const successRate = total > 0 ? totalSuccess / total : 0;
+
+        return {
+          ...base,
+          version: latestVersion.version_number,
+          successRate,
+          avoidanceNotes: allNotes.size > 0 ? Array.from(allNotes) : undefined,
+          lastOutcome,
+        };
+      });
+    } catch {
+      return bases;
+    }
+  }
+
+  private procedureRowToEntry(row: Record<string, unknown>, skipEnrichment = false): ProcedureEntry {
     const base: ProcedureEntry = {
       id: row.id as string,
       taskPattern: row.task_pattern as string,
@@ -3055,7 +3164,7 @@ export class FactsDB extends BaseSqliteStore {
       scope: (row.scope as string) ?? "global",
       scopeTarget: (row.scope_target as string) ?? null,
     };
-    return this.enrichProcedureWithFeedback(base);
+    return skipEnrichment ? base : this.enrichProcedureWithFeedback(base);
   }
 
   // ---------- Procedure feedback loop (#782) ----------
@@ -3365,7 +3474,8 @@ export class FactsDB extends BaseSqliteStore {
       const rows = this.liveDb
         .prepare("SELECT * FROM procedures ORDER BY updated_at DESC, created_at DESC LIMIT ?")
         .all(limit) as Array<Record<string, unknown>>;
-      return rows.map((r) => this.procedureRowToEntry(r));
+      const bases = rows.map((r) => this.procedureRowToEntry(r, true));
+      return this.batchEnrichProceduresWithFeedback(bases);
     } catch (err) {
       capturePluginError(err as Error, {
         operation: "list-procedures",
@@ -3387,7 +3497,8 @@ export class FactsDB extends BaseSqliteStore {
           `SELECT * FROM procedures WHERE procedure_type = 'positive' AND updated_at >= ? AND promoted_to_skill = 0 ORDER BY updated_at DESC, created_at DESC LIMIT ?`,
         )
         .all(cutoff, limit) as Array<Record<string, unknown>>;
-      return rows.map((r) => this.procedureRowToEntry(r));
+      const bases = rows.map((r) => this.procedureRowToEntry(r, true));
+      return this.batchEnrichProceduresWithFeedback(bases);
     } catch (err) {
       capturePluginError(err as Error, {
         operation: "list-procedures-recent",
@@ -3422,7 +3533,8 @@ export class FactsDB extends BaseSqliteStore {
           "SELECT p.* FROM procedures p JOIN procedures_fts fts ON p.rowid = fts.rowid WHERE procedures_fts MATCH ? ORDER BY rank LIMIT ?",
         )
         .all(safeQuery, limit) as Array<Record<string, unknown>>;
-      return rows.map((r) => this.procedureRowToEntry(r));
+      const bases = rows.map((r) => this.procedureRowToEntry(r, true));
+      return this.batchEnrichProceduresWithFeedback(bases);
     } catch (err) {
       capturePluginError(err as Error, {
         operation: "fts-query",
@@ -3490,7 +3602,8 @@ export class FactsDB extends BaseSqliteStore {
         return lastValB - lastValA;
       });
 
-      return scored.slice(0, limit).map((r) => this.procedureRowToEntry(r));
+      const bases = scored.slice(0, limit).map((r) => this.procedureRowToEntry(r, true));
+      return this.batchEnrichProceduresWithFeedback(bases);
     } catch (err) {
       capturePluginError(err as Error, {
         operation: "fts-query",
@@ -3553,9 +3666,12 @@ export class FactsDB extends BaseSqliteStore {
       const maxFtsScore = Math.max(...rows.map((r) => r.fts_score as number));
       const ftsRange = maxFtsScore - minFtsScore || 1;
 
+      // First, map rows to base entries without enrichment for scoring
+      const bases = rows.map((r) => this.procedureRowToEntry(r, true));
+
       type ScoredRow = ProcedureEntry & { relevanceScore: number };
-      const scored: ScoredRow[] = rows.map((r) => {
-        const proc = this.procedureRowToEntry(r);
+      const scored: ScoredRow[] = bases.map((proc, idx) => {
+        const r = rows[idx];
         const confidence = proc.confidence;
 
         // FTS relevance (inverted because bm25 returns negative scores)
@@ -3617,7 +3733,10 @@ export class FactsDB extends BaseSqliteStore {
         return lastValB - lastValA;
       });
 
-      return scored.slice(0, limit);
+      // Batch enrich only the top results
+      const topScored = scored.slice(0, limit);
+      const enriched = this.batchEnrichProceduresWithFeedback(topScored);
+      return enriched.map((proc, idx) => ({ ...proc, relevanceScore: topScored[idx].relevanceScore }));
     } catch (err) {
       capturePluginError(err as Error, {
         operation: "fts-query",
@@ -3741,7 +3860,8 @@ export class FactsDB extends BaseSqliteStore {
         `SELECT * FROM procedures WHERE procedure_type = 'positive' AND success_count >= ? AND promoted_to_skill = 0 ORDER BY success_count DESC, last_validated DESC LIMIT ?`,
       )
       .all(validationThreshold, limit) as Array<Record<string, unknown>>;
-    return rows.map((r) => this.procedureRowToEntry(r));
+    const bases = rows.map((r) => this.procedureRowToEntry(r, true));
+    return this.batchEnrichProceduresWithFeedback(bases);
   }
 
   /** Mark procedure as promoted to skill (skill_path set). */
@@ -3760,7 +3880,8 @@ export class FactsDB extends BaseSqliteStore {
         "SELECT * FROM procedures WHERE last_validated < ? OR (last_validated IS NULL AND created_at < ?) ORDER BY last_validated DESC NULLS LAST LIMIT ?",
       )
       .all(cutoff, cutoff, limit) as Array<Record<string, unknown>>;
-    return rows.map((r) => this.procedureRowToEntry(r));
+    const bases = rows.map((r) => this.procedureRowToEntry(r, true));
+    return this.batchEnrichProceduresWithFeedback(bases);
   }
 
   /** Alias for pruneExpired() for backward compatibility */
