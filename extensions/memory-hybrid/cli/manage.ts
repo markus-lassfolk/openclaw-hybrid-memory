@@ -2577,8 +2577,8 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
           return;
         }
 
-        const versions = factsDb.getProcedureVersions(opts.id);
-        const failures = factsDb.getProcedureFailures(opts.id);
+        const versions = factsDb.getProcedureVersions(id);
+        const failures = factsDb.getProcedureFailures(id);
         const totalSuccess = proc.successCount + versions.reduce((s, v) => s + v.successCount, 0);
         const totalFailure = proc.failureCount + versions.reduce((s, v) => s + v.failureCount, 0);
         const total = totalSuccess + totalFailure;

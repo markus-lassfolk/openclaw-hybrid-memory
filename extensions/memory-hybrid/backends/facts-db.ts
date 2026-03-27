@@ -3142,7 +3142,9 @@ export class FactsDB extends BaseSqliteStore {
 
       // Merge with existing avoidance notes from previous versions
       const prevNotes = this.liveDb
-        .prepare("SELECT avoidance_notes FROM procedure_versions WHERE procedure_id = ? ORDER BY version_number DESC LIMIT 1")
+        .prepare(
+          "SELECT avoidance_notes FROM procedure_versions WHERE procedure_id = ? ORDER BY version_number DESC LIMIT 1",
+        )
         .get(input.procedureId) as { avoidance_notes: string | null } | undefined;
       if (prevNotes?.avoidance_notes) {
         try {
