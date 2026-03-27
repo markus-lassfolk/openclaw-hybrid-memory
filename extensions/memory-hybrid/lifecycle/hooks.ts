@@ -119,14 +119,14 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
               if (!tc || typeof tc !== "object") continue;
               const fn = (tc as Record<string, unknown>).function as Record<string, unknown> | undefined;
               if (fn && typeof fn.name === "string") {
-                ctx.workflowTracker!.push(sessionId, fn.name, sessionStartTime);
+                ctx.workflowTracker?.push(sessionId, fn.name, sessionStartTime);
               }
             }
           }
 
           // Flush buffer to workflow-traces.db
           const outcome = ev?.success === true ? "success" : ev?.success === false ? "failure" : "unknown";
-          const traceId = ctx.workflowTracker!.flush(sessionId, goal, outcome);
+          const traceId = ctx.workflowTracker?.flush(sessionId, goal, outcome);
           if (traceId) {
             api.logger.debug?.(`memory-hybrid: workflow trace recorded id=${traceId} session=${sessionId}`);
           }

@@ -2914,7 +2914,7 @@ describe("FactsDB Episodes", () => {
       const episode = db.recordEpisode({ event: "get test", outcome: "success" });
       const retrieved = db.getEpisode(episode.id);
       expect(retrieved).not.toBeNull();
-      expect(retrieved!.event).toBe("get test");
+      expect(retrieved?.event).toBe("get test");
     });
 
     it("getEpisode returns null for unknown id", () => {

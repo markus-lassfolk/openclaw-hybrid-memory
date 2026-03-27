@@ -2422,7 +2422,7 @@ export function registerMemoryTools(
           let ttlValue: "never" | "event" | number = "never";
           if (ttl === "event") {
             ttlValue = "event";
-          } else if (ttl !== undefined && !isNaN(Number(ttl))) {
+          } else if (ttl !== undefined && !Number.isNaN(Number(ttl))) {
             ttlValue = Number(ttl);
           }
 
@@ -2572,7 +2572,7 @@ export function registerMemoryTools(
           let ttlValue: "never" | "event" | number | undefined;
           if (ttl !== undefined) {
             if (ttl === "event") ttlValue = "event";
-            else if (!isNaN(Number(ttl))) ttlValue = Number(ttl);
+            else if (!Number.isNaN(Number(ttl))) ttlValue = Number(ttl);
             else ttlValue = "never";
           }
 

@@ -97,7 +97,7 @@ function searchEventsByContent(log: EventLog, sessions: string[], query: string,
 // benchmark()
 // ---------------------------------------------------------------------------
 
-export function benchmark(ctx: BenchmarkContext, iterations: number): LatencyStats {
+export function benchmark(_ctx: BenchmarkContext, iterations: number): LatencyStats {
   const fixture = createFixture();
 
   // Warm up
@@ -117,7 +117,7 @@ export function benchmark(ctx: BenchmarkContext, iterations: number): LatencySta
 // ---------------------------------------------------------------------------
 
 export function shadowBenchmark(
-  ctx: BenchmarkContext,
+  _ctx: BenchmarkContext,
   iterations: number,
 ): { baselineStats: LatencyStats; shadowStats: LatencyStats; deltaMs: number } {
   // Shadow: with episodes stored
@@ -142,7 +142,7 @@ export function shadowBenchmark(
 // ---------------------------------------------------------------------------
 
 export async function testAccuracy(
-  ctx: BenchmarkContext,
+  _ctx: BenchmarkContext,
 ): Promise<{ featureOn: string; featureOff: string; prompt: string }> {
   const fixture = createFixture();
 
@@ -160,9 +160,7 @@ export async function testAccuracy(
   const offLog = new EventLog(join(fixture.tmpDir, "off.db"));
   const offEvents = searchEventsByContent(offLog, [randomUUID()], "preference summaries", 5);
   const featureOff =
-    offEvents.length > 0
-      ? `Found ${offEvents.length} episodes`
-      : "No relevant episodes found (episodes disabled).";
+    offEvents.length > 0 ? `Found ${offEvents.length} episodes` : "No relevant episodes found (episodes disabled).";
   offLog.close();
   rmSync(fixture.tmpDir, { recursive: true, force: true });
 

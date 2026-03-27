@@ -47,7 +47,15 @@ function createFixture(): FreqFixture {
   ];
 
   for (const e of entities) {
-    db.store({ text: e.text, category: "entity", importance: 0.8, entity: e.entity, key: e.key, value: e.value, source: "benchmark-seed" });
+    db.store({
+      text: e.text,
+      category: "entity",
+      importance: 0.8,
+      entity: e.entity,
+      key: e.key,
+      value: e.value,
+      source: "benchmark-seed",
+    });
   }
 
   const knownEntities = db.getKnownEntities();
@@ -68,7 +76,7 @@ function createFixture(): FreqFixture {
 // benchmark()
 // ---------------------------------------------------------------------------
 
-export function benchmark(ctx: BenchmarkContext, iterations: number): LatencyStats {
+export function benchmark(_ctx: BenchmarkContext, iterations: number): LatencyStats {
   const fixture = createFixture();
 
   const trackFn = () => {
@@ -92,7 +100,7 @@ export function benchmark(ctx: BenchmarkContext, iterations: number): LatencySta
 // ---------------------------------------------------------------------------
 
 export function shadowBenchmark(
-  ctx: BenchmarkContext,
+  _ctx: BenchmarkContext,
   iterations: number,
 ): { baselineStats: LatencyStats; shadowStats: LatencyStats; deltaMs: number } {
   const fixture = createFixture();
@@ -128,17 +136,14 @@ export function shadowBenchmark(
 // ---------------------------------------------------------------------------
 
 export async function testAccuracy(
-  ctx: BenchmarkContext,
+  _ctx: BenchmarkContext,
 ): Promise<{ featureOn: string; featureOff: string; prompt: string }> {
   const fixture = createFixture();
 
   const prompt = "User mentions Nibe, TypeScript, and Markus in conversation. Which entities were mentioned?";
 
   // Feature ON: track entity mentions
-  const onMentions = fixture.db.extractEntitiesFromText(
-    fixture.sampleTexts.join(" "),
-    fixture.knownEntities,
-  );
+  const onMentions = fixture.db.extractEntitiesFromText(fixture.sampleTexts.join(" "), fixture.knownEntities);
   const featureOn = `Found ${onMentions.length} entity mentions: ${onMentions.map((m) => m.entity).join(", ")}`;
 
   // Feature OFF: no entity tracking (just split words)

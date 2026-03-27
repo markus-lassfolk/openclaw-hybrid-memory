@@ -232,8 +232,8 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
         );
 
         if (pinnedFacts.length > 0) {
-          injectedContext += `\n<!-- Pinned Session Constraints / Memories -->\n`;
-          injectedContext += pinnedFacts.map((f) => `- ${f.entry.summary || f.entry.text}`).join("\n") + "\n";
+          injectedContext += "\n<!-- Pinned Session Constraints / Memories -->\n";
+          injectedContext += `${pinnedFacts.map((f) => `- ${f.entry.summary || f.entry.text}`).join("\n")}\n`;
         }
       } catch (err) {
         api.logger.debug?.(`memory-hybrid: failed to fetch pinned facts for pre-compaction: ${err}`);

@@ -212,9 +212,7 @@ export class FactsDB extends BaseSqliteStore {
       }
       const reason = err instanceof Error ? err.message : String(err);
       const finalError = new Error(
-        "memory-hybrid: SQLite FTS5 capability check failed during startup. " +
-          "Hybrid search would silently degrade to vector-only, so plugin initialization is aborted. " +
-          `Use a Node.js/SQLite runtime with FTS5 enabled. Original error: ${reason}`,
+        `memory-hybrid: SQLite FTS5 capability check failed during startup. Hybrid search would silently degrade to vector-only, so plugin initialization is aborted. Use a Node.js/SQLite runtime with FTS5 enabled. Original error: ${reason}`,
       );
 
       capturePluginError(finalError, {
@@ -2985,8 +2983,8 @@ export class FactsDB extends BaseSqliteStore {
         )
         .get(base.id) as { total_succ: number; total_fail: number };
 
-      const totalSuccess = base.successCount + versionCounts.total_succ;
-      const totalFailure = base.failureCount + versionCounts.total_fail;
+      const totalSuccess = versionCounts.total_succ;
+      const totalFailure = versionCounts.total_fail;
       const total = totalSuccess + totalFailure;
       const successRate = total > 0 ? totalSuccess / total : 0;
 
@@ -3112,14 +3110,27 @@ export class FactsDB extends BaseSqliteStore {
           .run(randomUUID(), input.procedureId, nowSec);
       }
 
-      // Update procedure record
-      const newSuccessCount = proc.successCount + 1;
-      const newConfidence = Math.max(0.1, Math.min(0.95, 0.5 + 0.1 * (newSuccessCount - proc.failureCount)));
+      // Get aggregated counts from version table (source of truth)
+      const versionCounts = this.liveDb
+        .prepare(
+          `SELECT COALESCE(SUM(success_count), 0) as total_succ,
+                  COALESCE(SUM(failure_count), 0) as total_fail
+             FROM procedure_versions
+             WHERE procedure_id = ?`,
+        )
+        .get(input.procedureId) as { total_succ: number; total_fail: number };
+
+      // Update procedure record (do NOT bump success_count — version table is the source of truth for counts)
       this.liveDb
         .prepare(
-          `UPDATE procedures SET success_count = ?, last_validated = ?, confidence = ?, procedure_type = 'positive', updated_at = ? WHERE id = ?`,
+          `UPDATE procedures SET last_validated = ?, confidence = ?, procedure_type = 'positive', updated_at = ? WHERE id = ?`,
         )
-        .run(newSuccessCount, nowSec, newConfidence, nowSec, input.procedureId);
+        .run(
+          nowSec,
+          Math.max(0.1, Math.min(0.95, 0.5 + 0.1 * (versionCounts.total_succ - versionCounts.total_fail))),
+          nowSec,
+          input.procedureId,
+        );
     } else {
       // Failure: insert new version record (one version per failure event) and failure record
       const latestVer = this.liveDb
@@ -3180,14 +3191,27 @@ export class FactsDB extends BaseSqliteStore {
           input.failedAtStep ?? null,
         );
 
-      // Update procedure record
-      const newFailureCount = proc.failureCount + 1;
-      const newConfidence = Math.max(0.1, Math.min(0.95, 0.5 + 0.1 * (proc.successCount - newFailureCount)));
+      // Get aggregated counts from version table (source of truth)
+      const versionCounts = this.liveDb
+        .prepare(
+          `SELECT COALESCE(SUM(success_count), 0) as total_succ,
+                  COALESCE(SUM(failure_count), 0) as total_fail
+             FROM procedure_versions
+             WHERE procedure_id = ?`,
+        )
+        .get(input.procedureId) as { total_succ: number; total_fail: number };
+
+      // Update procedure record (do NOT bump failure_count — version table is the source of truth for counts)
       this.liveDb
         .prepare(
-          `UPDATE procedures SET failure_count = ?, last_failed = ?, confidence = ?, procedure_type = 'negative', updated_at = ? WHERE id = ?`,
+          `UPDATE procedures SET last_failed = ?, confidence = ?, procedure_type = 'negative', updated_at = ? WHERE id = ?`,
         )
-        .run(newFailureCount, nowSec, newConfidence, nowSec, input.procedureId);
+        .run(
+          nowSec,
+          Math.max(0.1, Math.min(0.95, 0.5 + 0.1 * (versionCounts.total_succ - versionCounts.total_fail))),
+          nowSec,
+          input.procedureId,
+        );
 
       // Create an episode record for this failure
       const eventText =
@@ -3207,7 +3231,7 @@ export class FactsDB extends BaseSqliteStore {
           tags: input.tags,
           importance: 0.8,
           scope: input.scope ?? "global",
-          scopeTarget: (input.scope ?? "global" === "global") ? null : (input.scopeTarget ?? null),
+          scopeTarget: (input.scope ?? "global") === "global" ? null : (input.scopeTarget ?? null),
           agentId: input.agentId,
           userId: input.userId,
           sessionId: input.sessionId,
@@ -4818,7 +4842,7 @@ export class FactsDB extends BaseSqliteStore {
     for (const factId of relatedFactIds) {
       this.liveDb
         .prepare(
-          `INSERT INTO episode_relations (id, episode_id, target_id, relation_type, strength, created_at) VALUES (?, ?, ?, ?, ?, ?)`,
+          "INSERT INTO episode_relations (id, episode_id, target_id, relation_type, strength, created_at) VALUES (?, ?, ?, ?, ?, ?)",
         )
         .run(randomUUID(), id, factId, "PART_OF", 0.8, nowSec);
     }
@@ -4899,7 +4923,7 @@ export class FactsDB extends BaseSqliteStore {
     const conditions: string[] = [];
 
     // FTS text search on event + context
-    if (query && query.trim()) {
+    if (query?.trim()) {
       const sanitized = this.sanitizeFTS5Query(query.trim());
       const words = sanitized
         .split(/\s+/)
@@ -4908,7 +4932,7 @@ export class FactsDB extends BaseSqliteStore {
         .map((w) => `"${w}"`)
         .join(" OR ");
       if (words) {
-        conditions.push(`e.rowid IN (SELECT rowid FROM episodes_fts WHERE episodes_fts MATCH ?)`);
+        conditions.push("e.rowid IN (SELECT rowid FROM episodes_fts WHERE episodes_fts MATCH ?)");
         params.push(words);
       }
     }
@@ -4944,7 +4968,7 @@ export class FactsDB extends BaseSqliteStore {
     }
 
     const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
-    const limitClause = `ORDER BY e.timestamp DESC LIMIT ?`;
+    const limitClause = "ORDER BY e.timestamp DESC LIMIT ?";
     params.push(limit);
 
     const sql = `SELECT e.* FROM episodes e ${where} ${limitClause}`;

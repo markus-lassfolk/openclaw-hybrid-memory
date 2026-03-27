@@ -2602,7 +2602,7 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
         console.log(`  Last Failed:   ${proc.lastFailed ? new Date(proc.lastFailed * 1000).toISOString() : "never"}`);
 
         if (proc.avoidanceNotes && proc.avoidanceNotes.length > 0) {
-          console.log(`\n  Avoidance notes (all versions):`);
+          console.log("\n  Avoidance notes (all versions):");
           for (const note of proc.avoidanceNotes) {
             console.log(`    - ${note}`);
           }
@@ -2632,7 +2632,7 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
             console.log(`    [${when}] v${f.versionNumber}${step}: ${f.context ?? "(no context)"}`);
           }
         } else {
-          console.log(`\n  No failures recorded.`);
+          console.log("\n  No failures recorded.");
         }
       }),
     );
