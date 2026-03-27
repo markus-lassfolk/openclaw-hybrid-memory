@@ -122,7 +122,7 @@ export function runConfigViewForCli(ctx: HandlerContext, sink: VerifyCliSink): v
       const out = getPluginConfigFromFile(configPath);
       if ("config" in out) rawCfg = out.config;
     }
-  } catch (e) {}
+  } catch (_e) { /* ignore */ }
 
   // Helper to get raw enabled flag if set, otherwise fallback to parsed config
   const rawEnabled = (key: string, parsedVal: boolean) => {
