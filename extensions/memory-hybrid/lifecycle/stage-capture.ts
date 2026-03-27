@@ -7,7 +7,7 @@
 
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import type { ClawdbotPluginApi } from "openclaw/plugin-sdk";
+import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import type { MemoryCategory } from "../config.js";
 import { getCronModelConfig, getDefaultCronModel } from "../config.js";
 import { CLI_STORE_IMPORTANCE } from "../utils/constants.js";

@@ -1,7 +1,7 @@
 import { dirname, join } from "node:path";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import type { ClawdbotPluginApi } from "openclaw/plugin-sdk";
+import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
 import type { CredentialsDB } from "../backends/credentials-db.js";

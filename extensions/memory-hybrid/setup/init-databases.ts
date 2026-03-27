@@ -3,7 +3,7 @@ import { dirname, join } from "node:path";
 import { existsSync, readFileSync, constants } from "node:fs";
 import { open } from "node:fs/promises";
 import OpenAI from "openai";
-import type { ClawdbotPluginApi } from "openclaw/plugin-sdk";
+import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import { resolveSecretRef, normalizeResolvedSecretValue } from "../config/parsers/core.js";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";

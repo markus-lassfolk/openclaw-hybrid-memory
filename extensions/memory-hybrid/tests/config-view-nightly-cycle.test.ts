@@ -75,7 +75,7 @@ describe("runConfigViewForCli nightlyCycle output", () => {
     const logs: string[] = [];
     // Mock getPluginConfigFromFile by setting env var
     process.env.OPENCLAW_CONFIG = "/tmp/test-openclaw.json";
-    require("fs").writeFileSync(
+    require("node:fs").writeFileSync(
       "/tmp/test-openclaw.json",
       JSON.stringify({
         plugins: {

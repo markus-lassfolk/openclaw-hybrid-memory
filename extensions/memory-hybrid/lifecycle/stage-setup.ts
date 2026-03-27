@@ -5,7 +5,7 @@
  */
 
 import { existsSync, unlinkSync } from "node:fs";
-import type { ClawdbotPluginApi } from "openclaw/plugin-sdk";
+import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import { getRestartPendingPath } from "../utils/constants.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { withTimeout } from "../utils/timeout.js";

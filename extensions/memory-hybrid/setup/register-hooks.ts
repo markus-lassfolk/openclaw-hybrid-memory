@@ -5,7 +5,7 @@
  * Extracted from index.ts to reduce main file size.
  */
 
-import type { ClawdbotPluginApi } from "openclaw/plugin-sdk";
+import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import type { MemoryPluginAPI } from "../api/memory-plugin-api.js";
 import { getMemoryCategories } from "../config.js";
 import { createLifecycleHooks, type LifecycleContext } from "../lifecycle/hooks.js";

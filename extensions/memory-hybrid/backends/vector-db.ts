@@ -229,9 +229,7 @@ export class VectorDB {
     // absolute path. If dbPath somehow ends up relative (e.g. due to a config serialization
     // edge case or WSL path mapping), resolve it relative to process.cwd() so the binding
     // can still locate the data directory.
-    const resolvedPath = isAbsolute(this.dbPath)
-      ? this.dbPath
-      : pathResolve(this.dbPath);
+    const resolvedPath = isAbsolute(this.dbPath) ? this.dbPath : pathResolve(this.dbPath);
 
     this.db = await lancedb.connect(resolvedPath);
     // Guard: a concurrent close() may have nulled this.db between the connect() await and here.
@@ -539,9 +537,7 @@ export class VectorDB {
 
     // Use the same path resolution as doInitialize() to ensure filesystem operations
     // target the same directory where LanceDB stored the data (issue #768).
-    const resolvedPath = isAbsolute(this.dbPath)
-      ? this.dbPath
-      : pathResolve(this.dbPath);
+    const resolvedPath = isAbsolute(this.dbPath) ? this.dbPath : pathResolve(this.dbPath);
 
     const memoriesDir = join(resolvedPath, `${LANCE_TABLE}.lance`);
     const cacheDir = join(resolvedPath, `${SEMANTIC_QUERY_CACHE_TABLE}.lance`);

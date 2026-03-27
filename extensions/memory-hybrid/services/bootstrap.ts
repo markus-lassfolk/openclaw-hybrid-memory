@@ -1,4 +1,4 @@
-import type { ClawdbotPluginApi } from "openclaw/plugin-sdk";
+import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import { FactsDB } from "../backends/facts-db.js";
 import { VectorDB } from "../backends/vector-db.js";
 import type { BootstrapPhaseConfig, EmbeddingModelConfig, HybridMemoryConfig } from "../config.js";
