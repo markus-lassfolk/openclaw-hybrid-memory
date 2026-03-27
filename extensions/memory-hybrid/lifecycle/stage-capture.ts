@@ -541,7 +541,8 @@ async function runCapture(
             const contextStart = Math.max(0, matchIndex - 50);
             const contextEnd = Math.min(text.length, matchIndex + match[0].length + 50);
             const context = text.slice(contextStart, contextEnd);
-            const negationPattern = /\b(?:not|no|never|didn't|doesn't|don't|hasn't|haven't|isn't|aren't|wasn't|weren't|failed to|unable to|couldn't|can't|won't)\b/i;
+            const negationPattern =
+              /\b(?:not|no|never|didn't|doesn't|don't|hasn't|haven't|isn't|aren't|wasn't|weren't|failed to|unable to|couldn't|can't|won't)\b/i;
             if (negationPattern.test(context)) {
               continue; // Skip this success pattern if negation is detected nearby
             }
