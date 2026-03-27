@@ -1002,7 +1002,10 @@ export class FactsDB extends BaseSqliteStore {
    * (attacker can pass userId: "alice" to access alice's private memories). Use autoRecall.scopeFilter from config
    * (set by integration layer) rather than user-supplied parameters. See docs/MEMORY-SCOPING.md.
    */
-  private scopeFilterClause(filter: ScopeFilter | null | undefined, prefix: string = ""): {
+  private scopeFilterClause(
+    filter: ScopeFilter | null | undefined,
+    prefix: string = "",
+  ): {
     clause: string;
     params: Record<string, unknown>;
   } {
@@ -1032,7 +1035,10 @@ export class FactsDB extends BaseSqliteStore {
    * Build SQL fragment for scope filtering with positional params (for lookup/getAll).
    * Same security constraints as scopeFilterClause — derive from trusted identity only.
    */
-  private scopeFilterClausePositional(filter: ScopeFilter | null | undefined, prefix: string = ""): {
+  private scopeFilterClausePositional(
+    filter: ScopeFilter | null | undefined,
+    prefix: string = "",
+  ): {
     clause: string;
     params: SQLInputValue[];
   } {
