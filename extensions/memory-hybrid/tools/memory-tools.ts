@@ -44,7 +44,7 @@ import {
   getLLMModelPreference,
   isCompactVerbosity,
 } from "../config.js";
-import type { MemoryEntry, SearchResult, ScopeFilter, Episode, EpisodeOutcome } from "../types/memory.js";
+import type { MemoryEntry, SearchResult, ScopeFilter } from "../types/memory.js";
 import { MEMORY_SCOPES } from "../types/memory.js";
 import { truncateForStorage } from "../utils/text.js";
 import { extractTags } from "../utils/tags.js";
@@ -963,17 +963,7 @@ export function registerMemoryTools(
                       )
                       .join(" → ")
                   : p.recipeJson.slice(0, 200);
-                const rate = p.successRate !== undefined ? `, rate ${(p.successRate * 100).toFixed(0)}%` : "";
-                const ver = p.version !== undefined ? `, v${p.version}` : "";
-                const outcome = p.lastOutcome === "failure" ? " ⚠️" : p.lastOutcome === "success" ? " ✅" : "";
-                lines.push(
-                  `- ${p.taskPattern.slice(0, 80)}…: ${steps} (validated ${p.successCount}x${rate}${ver}${outcome})`,
-                );
-                if (p.avoidanceNotes && p.avoidanceNotes.length > 0) {
-                  for (const note of p.avoidanceNotes.slice(0, 2)) {
-                    lines.push(`  ⚠ ${note}`);
-                  }
-                }
+                lines.push(`- ${p.taskPattern.slice(0, 80)}…: ${steps} (validated ${p.successCount}x)`);
               }
             }
             if (negatives.length > 0) {
@@ -997,13 +987,7 @@ export function registerMemoryTools(
                       .filter(Boolean)
                       .join(" → ")
                   : "";
-                const ver = p.version !== undefined ? ` (v${p.version})` : "";
-                lines.push(`- ${p.taskPattern.slice(0, 80)}… ${steps ? `(${steps})` : ""}${ver}`);
-                if (p.avoidanceNotes && p.avoidanceNotes.length > 0) {
-                  for (const note of p.avoidanceNotes.slice(0, 2)) {
-                    lines.push(`  ⚠ ${note}`);
-                  }
-                }
+                lines.push(`- ${p.taskPattern.slice(0, 80)}… ${steps ? `(${steps})` : ""}`);
               }
             }
             if (lines.length === 0) {
@@ -1031,104 +1015,6 @@ export function registerMemoryTools(
         },
       },
       { name: "memory_recall_procedures" },
-    );
-
-    // Procedure feedback loop (#782)
-    api.registerTool(
-      {
-        name: "memory_procedure_feedback",
-        label: "Procedure Feedback",
-        description:
-          "Record the outcome of using a procedure — success or failure. On failure, bumps the procedure version, logs the failure context, and creates an episode record. On success, records the validation. Use this whenever a procedure from memory_recall_procedures is attempted.",
-        parameters: Type.Object({
-          procedureId: Type.String({ description: "ID of the procedure that was used" }),
-          success: Type.Boolean({ description: "true if the procedure succeeded, false if it failed" }),
-          context: Type.Optional(
-            Type.String({
-              description: "What happened — error message, environment notes, or a summary of the outcome.",
-            }),
-          ),
-          failedAtStep: Type.Optional(
-            Type.Number({
-              description: "If failure: which step number failed (1-based).",
-            }),
-          ),
-          duration: Type.Optional(
-            Type.Number({
-              description: "Optional: how long the procedure took in milliseconds.",
-            }),
-          ),
-          tags: Type.Optional(
-            Type.Array(Type.String(), {
-              description: "Optional tags to associate with the episode (e.g. 'production', 'doris').",
-            }),
-          ),
-        }),
-        async execute(_toolCallId: string, params: Record<string, unknown>) {
-          try {
-            const { procedureId, success, context, failedAtStep, duration, tags } = params as {
-              procedureId: string;
-              success: boolean;
-              context?: string;
-              failedAtStep?: number;
-              duration?: number;
-              tags?: string[];
-            };
-
-            const result = factsDb.procedureFeedback({
-              procedureId,
-              success,
-              context,
-              failedAtStep,
-              duration,
-              tags,
-            });
-
-            if (!result) {
-              return {
-                content: [{ type: "text" as const, text: `Procedure not found: ${procedureId}` }],
-                details: { success: false, error: "procedure_not_found" },
-              };
-            }
-
-            const lines: string[] = [];
-            if (success) {
-              lines.push(
-                `✅ Procedure validated (now ${result.successCount} successes, confidence: ${(result.confidence ?? 0).toFixed(2)})`,
-              );
-            } else {
-              lines.push(
-                `❌ Procedure failure recorded (now ${result.failureCount} failures, version ${result.version ?? 1}, confidence: ${(result.confidence ?? 0).toFixed(2)})`,
-              );
-              if (context) lines.push(`  Context: ${context}`);
-              if (result.avoidanceNotes && result.avoidanceNotes.length > 0) {
-                lines.push(`  Avoidance notes: ${result.avoidanceNotes.join("; ")}`);
-              }
-            }
-
-            return {
-              content: [{ type: "text" as const, text: lines.join("\n") }],
-              details: {
-                success: true,
-                procedureId: result.id,
-                version: result.version,
-                outcome: success ? "success" : "failure",
-                successCount: result.successCount,
-                failureCount: result.failureCount,
-                successRate: result.successRate,
-              },
-            };
-          } catch (err) {
-            capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-              subsystem: "memory",
-              operation: "memory-procedure-feedback",
-              phase: "runtime",
-            });
-            throw err;
-          }
-        },
-      },
-      { name: "memory_procedure_feedback" },
     );
   }
 
@@ -2217,163 +2103,5 @@ export function registerMemoryTools(
       },
     },
     { name: "memory_forget" },
-  );
-
-  // ---------------------------------------------------------------------------
-  // Episodic Memory tools (#781)
-  // ---------------------------------------------------------------------------
-
-  /** memory.record_episode — store a structured event with explicit outcome. */
-  api.registerTool(
-    {
-      name: "memory.record_episode",
-      description:
-        "Record a structured episodic memory: a significant event with an explicit outcome (success/failure/partial/unknown), timestamp, and optional context. Use after deployments, migrations, incidents, or other notable events to build a queryable history of what happened and how it turned out.",
-      parameters: Type.Object({
-        event: Type.String({ description: "What happened (e.g. 'deployed openclaw to production')." }),
-        outcome: stringEnum(["success", "failure", "partial", "unknown"] as const, {
-          description: "Outcome of the event.",
-        }),
-        timestamp: Type.Optional(
-          Type.Number({ description: "Unix epoch seconds when the event occurred. Defaults to now." }),
-        ),
-        duration: Type.Optional(
-          Type.Number({ description: "Duration in milliseconds (e.g. how long a deployment took)." }),
-        ),
-        context: Type.Optional(Type.String({ description: "Context: environment state, what led up to it, etc." })),
-        relatedFactIds: Type.Optional(
-          Type.Array(Type.String(), { description: "IDs of related memory facts to link to this episode." }),
-        ),
-        procedureId: Type.Optional(
-          Type.String({ description: "ID of the procedure that triggered this episode, if any." }),
-        ),
-        importance: Type.Optional(
-          Type.Number({ description: "Importance 0–1 (default 0.5). Failures are auto-boosted to ≥0.8." }),
-        ),
-        tags: Type.Optional(Type.Array(Type.String(), { description: "Topic tags for filtering." })),
-        scope: Type.Optional(
-          stringEnum(["global", "user", "agent", "session"] as const, {
-            description: "Memory scope. Default: global.",
-          }),
-        ),
-        agentId: Type.Optional(Type.String()),
-        userId: Type.Optional(Type.String()),
-        sessionId: Type.Optional(Type.String()),
-      }),
-      async execute(_toolCallId: string, params: Record<string, unknown>) {
-        try {
-          const userId = params.userId as string | undefined;
-          const agentId = params.agentId as string | undefined;
-          const sessionId = params.sessionId as string | undefined;
-          const scopeFilter = buildToolScopeFilter({ userId, agentId, sessionId }, currentAgentIdRef.value, cfg);
-          const scope = params.scope as "global" | "user" | "agent" | "session" | undefined;
-          let scopeTarget: string | null = null;
-          if (scope === "session") {
-            scopeTarget = scopeFilter?.sessionId ?? null;
-          } else if (scope === "user") {
-            scopeTarget = scopeFilter?.userId ?? null;
-          } else if (scope === "agent") {
-            scopeTarget = scopeFilter?.agentId ?? null;
-          }
-          const episode = ctx.factsDb.recordEpisode({
-            event: params.event as string,
-            outcome: params.outcome as EpisodeOutcome,
-            timestamp: params.timestamp as number | undefined,
-            duration: params.duration as number | undefined,
-            context: params.context as string | undefined,
-            relatedFactIds: params.relatedFactIds as string[] | undefined,
-            procedureId: params.procedureId as string | undefined,
-            importance: params.importance as number | undefined,
-            tags: params.tags as string[] | undefined,
-            decayClass: "normal",
-            scope,
-            scopeTarget,
-            agentId: (params.agentId as string | undefined) ?? scopeFilter?.agentId ?? undefined,
-            userId: (params.userId as string | undefined) ?? scopeFilter?.userId ?? undefined,
-            sessionId: (params.sessionId as string | undefined) ?? scopeFilter?.sessionId ?? undefined,
-          });
-
-          return {
-            content: [
-              {
-                type: "text",
-                text: `Episode recorded: [${episode.outcome}] "${episode.event}" at ${new Date(episode.timestamp * 1000).toISOString()} (id: ${episode.id})`,
-              },
-            ],
-            details: { episode },
-          };
-        } catch (err) {
-          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-            subsystem: "memory",
-            operation: "record_episode",
-            phase: "runtime",
-          });
-          throw err;
-        }
-      },
-    },
-    { name: "memory.record_episode" },
-  );
-
-  /** memory.search_episodes — search structured episodic memories with filters. */
-  api.registerTool(
-    {
-      name: "memory.search_episodes",
-      description:
-        "Search episodic memories — structured records of events with outcomes and timestamps. Filter by outcome (success/failure/partial/unknown), time range, or procedure. Returns events ordered by most recent first.",
-      parameters: Type.Object({
-        query: Type.Optional(Type.String({ description: "Full-text search over event and context fields." })),
-        outcome: Type.Optional(Type.Array(stringEnum(["success", "failure", "partial", "unknown"] as const))),
-        since: Type.Optional(Type.Number({ description: "Unix epoch seconds — only events after this time." })),
-        until: Type.Optional(Type.Number({ description: "Unix epoch seconds — only events before this time." })),
-        procedureId: Type.Optional(Type.String({ description: "Filter to episodes linked to a specific procedure." })),
-        limit: Type.Optional(Type.Number({ description: "Max results to return (default 50, max 200)." })),
-      }),
-      async execute(_toolCallId: string, params: Record<string, unknown>) {
-        try {
-          const scopeFilter = buildToolScopeFilter({}, currentAgentIdRef.value, cfg);
-          const episodes = ctx.factsDb.searchEpisodes({
-            query: params.query as string | undefined,
-            outcome: params.outcome as EpisodeOutcome[] | undefined,
-            since: params.since as number | undefined,
-            until: params.until as number | undefined,
-            procedureId: params.procedureId as string | undefined,
-            limit: Math.min((params.limit as number | undefined) ?? 50, 200),
-            scopeFilter,
-          });
-
-          if (episodes.length === 0) {
-            return {
-              content: [{ type: "text", text: "No episodes found matching the criteria." }],
-              details: { found: 0, episodes: [] },
-            };
-          }
-
-          const lines = episodes.map((e) => {
-            const ts = new Date(e.timestamp * 1000).toLocaleString();
-            const tagStr = e.tags.length > 0 ? ` #${e.tags.join(" #")}` : "";
-            return `- [${e.outcome}] ${ts}: ${e.event}${tagStr} (id: ${e.id})`;
-          });
-
-          return {
-            content: [
-              {
-                type: "text",
-                text: `Found ${episodes.length} episode(s):\n${lines.join("\n")}`,
-              },
-            ],
-            details: { found: episodes.length, episodes },
-          };
-        } catch (err) {
-          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-            subsystem: "memory",
-            operation: "search_episodes",
-            phase: "runtime",
-          });
-          throw err;
-        }
-      },
-    },
-    { name: "memory.search_episodes" },
   );
 }

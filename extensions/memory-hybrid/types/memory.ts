@@ -125,58 +125,10 @@ export type ProcedureEntry = {
   scope?: string;
   /** Scope target (userId, agentId, or sessionId). */
   scopeTarget?: string | null;
-  /** Procedure feedback loop (#782): highest version number for this procedure. */
-  version?: number;
-  /** Procedure feedback loop (#782): last known outcome — 'success' | 'failure' | 'unknown'. */
-  lastOutcome?: "success" | "failure" | "unknown";
-  /** Procedure feedback loop (#782): success rate as a fraction [0,1] (total successes / total attempts). */
-  successRate?: number;
-  /** Procedure feedback loop (#782): avoidance notes across all versions. */
-  avoidanceNotes?: string[];
 };
 
 export type SearchResult = {
   entry: MemoryEntry;
   score: number;
   backend: "sqlite" | "lancedb";
-};
-
-/** Valid outcome values for an episodic memory record (#781). */
-export type EpisodeOutcome = "success" | "failure" | "partial" | "unknown";
-
-/**
- * Episodic memory record — a structured event with an explicit outcome and timestamp (#781).
- * Episodes are stored in the separate `episodes` SQLite table (not in `facts`).
- * They are indexed in LanceDB with category="episode" for semantic search.
- */
-export type Episode = {
-  id: string;
-  /** Discriminated literal — always "episode". */
-  category: "episode";
-  /** What happened (e.g. "deployed openclaw to production"). */
-  event: string;
-  /** Outcome of the event. Failures are auto-boosted to importance >= 0.8. */
-  outcome: EpisodeOutcome;
-  /** Unix epoch seconds — when the event occurred. Defaults to now. */
-  timestamp: number;
-  /** Optional duration in milliseconds. */
-  duration?: number;
-  /** Context: environment state, what led up to it, etc. */
-  context?: string;
-  /** IDs of related facts (linked via memory_links). */
-  relatedFactIds?: string[];
-  /** ID of the procedure that triggered this episode, if any. */
-  procedureId?: string;
-  /** Memory scope — global, user, agent, or session. */
-  scope: "global" | "user" | "agent" | "session";
-  /** Scope target (userId, agentId, or sessionId). Null for global scope. */
-  scopeTarget?: string | null;
-  agentId?: string;
-  userId?: string;
-  sessionId?: string;
-  importance: number;
-  tags: string[];
-  decayClass: DecayClass;
-  createdAt: number;
-  verifiedAt?: number;
 };
