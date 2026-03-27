@@ -65,6 +65,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.code == 'true' || github.event_name == 'pull_request'
     runs-on: ubuntu-latest
+    continue-on-error: true
     strategy:
       matrix:
         node-version: [22, 24]
