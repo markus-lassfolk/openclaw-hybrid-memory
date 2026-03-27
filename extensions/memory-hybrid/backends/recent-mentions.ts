@@ -176,7 +176,7 @@ export class RecentMentionsDB extends BaseSqliteStore {
              VALUES (?, ?, 1, ?, ?, 0, ?, ?, ?, ?)`,
       )
       .run(
-        entityText,
+        storedText,
         mentionHash,
         nowSec,
         nowSec,

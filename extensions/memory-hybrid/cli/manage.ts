@@ -2579,8 +2579,8 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
 
         const versions = factsDb.getProcedureVersions(id);
         const failures = factsDb.getProcedureFailures(id);
-        const totalSuccess = proc.successCount + versions.reduce((s, v) => s + v.successCount, 0);
-        const totalFailure = proc.failureCount + versions.reduce((s, v) => s + v.failureCount, 0);
+        const totalSuccess = versions.reduce((s, v) => s + v.successCount, 0);
+        const totalFailure = versions.reduce((s, v) => s + v.failureCount, 0);
         const total = totalSuccess + totalFailure;
         const rate = total > 0 ? totalSuccess / total : 0;
 
@@ -2588,8 +2588,8 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
         console.log(`  ID:         ${proc.id}`);
         console.log(`  Type:       ${proc.procedureType}`);
         console.log(`  Confidence: ${proc.confidence?.toFixed(3) ?? "n/a"}`);
-        console.log(`  Success:    ${proc.successCount} (procedure table) + ${versions.reduce((s, v) => s + v.successCount, 0)} (versions) = ${totalSuccess}`);
-        console.log(`  Failure:    ${proc.failureCount} (procedure table) + ${versions.reduce((s, v) => s + v.failureCount, 0)} (versions) = ${totalFailure}`);
+        console.log(`  Success:    ${totalSuccess} (from versions)`);
+        console.log(`  Failure:    ${totalFailure} (from versions)`);
         console.log(`  Rate:      ${(rate * 100).toFixed(1)}%`);
         console.log(`  Outcome:   ${proc.lastOutcome ?? "unknown"}`);
         console.log(
