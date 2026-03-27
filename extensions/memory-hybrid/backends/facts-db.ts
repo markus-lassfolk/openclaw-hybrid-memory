@@ -1002,7 +1002,7 @@ export class FactsDB extends BaseSqliteStore {
    * (attacker can pass userId: "alice" to access alice's private memories). Use autoRecall.scopeFilter from config
    * (set by integration layer) rather than user-supplied parameters. See docs/MEMORY-SCOPING.md.
    */
-  private scopeFilterClause(filter: ScopeFilter | null | undefined): {
+  private scopeFilterClause(filter: ScopeFilter | null | undefined, prefix: string = ""): {
     clause: string;
     params: Record<string, unknown>;
   } {
@@ -1013,15 +1013,15 @@ export class FactsDB extends BaseSqliteStore {
     parts.push(`${prefix}scope = 'global'`);
     const params: Record<string, unknown> = {};
     if (filter.userId) {
-      parts.push("OR (scope = 'user' AND scope_target = @scopeUserId)");
+      parts.push(`OR (${prefix}scope = 'user' AND ${prefix}scope_target = @scopeUserId)`);
       params["@scopeUserId"] = filter.userId;
     }
     if (filter.agentId) {
-      parts.push("OR (scope = 'agent' AND scope_target = @scopeAgentId)");
+      parts.push(`OR (${prefix}scope = 'agent' AND ${prefix}scope_target = @scopeAgentId)`);
       params["@scopeAgentId"] = filter.agentId;
     }
     if (filter.sessionId) {
-      parts.push("OR (scope = 'session' AND scope_target = @scopeSessionId)");
+      parts.push(`OR (${prefix}scope = 'session' AND ${prefix}scope_target = @scopeSessionId)`);
       params["@scopeSessionId"] = filter.sessionId;
     }
     parts.push(")");
