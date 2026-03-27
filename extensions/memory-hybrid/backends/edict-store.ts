@@ -200,9 +200,15 @@ export class EdictStore {
   /** Find an edict by normalized text (for duplicate detection) */
   private findByNormalizedText(normalized: string): EdictEntry | null {
     const rows = this.db
-      .prepare("SELECT * FROM edicts WHERE LOWER(REPLACE(text, ' ', ' ')) = ?")
-      .all(normalized.replace(/\s+/g, " ")) as Array<Record<string, unknown>>;
-    return rows.length > 0 ? this.rowToEntry(rows[0]) : null;
+      .prepare("SELECT * FROM edicts")
+      .all() as Array<Record<string, unknown>>;
+    for (const row of rows) {
+      const storedText = (row.text as string).trim().replace(/\s+/g, " ").toLowerCase();
+      if (storedText === normalized) {
+        return this.rowToEntry(row);
+      }
+    }
+    return null;
   }
 
   /** Get a single edict by id */

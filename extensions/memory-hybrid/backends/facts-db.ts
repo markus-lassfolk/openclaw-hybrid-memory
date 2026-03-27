@@ -2974,8 +2974,7 @@ export class FactsDB extends BaseSqliteStore {
       }
 
       // Aggregate all successes and failures across ALL version records to compute overall successRate.
-      // procedure_versions tracks per-version outcomes; procedure table tracks what was
-      // validated/failed before version tracking started.
+      // Version records are the source of truth for all feedback events.
       const versionCounts = this.liveDb
         .prepare(
           `SELECT COALESCE(SUM(success_count), 0) as total_succ,
@@ -2985,8 +2984,8 @@ export class FactsDB extends BaseSqliteStore {
         )
         .get(base.id) as { total_succ: number; total_fail: number };
 
-      const totalSuccess = base.successCount + versionCounts.total_succ;
-      const totalFailure = base.failureCount + versionCounts.total_fail;
+      const totalSuccess = versionCounts.total_succ;
+      const totalFailure = versionCounts.total_fail;
       const total = totalSuccess + totalFailure;
       const successRate = total > 0 ? totalSuccess / total : 0;
 
