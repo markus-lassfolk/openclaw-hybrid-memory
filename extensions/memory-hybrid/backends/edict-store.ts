@@ -18,6 +18,7 @@ import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import { BaseSqliteStore } from "./base-sqlite-store.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { parseTags, serializeTags, normalizedHash } from "../utils/tags.js";
+import { createTransaction } from "../utils/sqlite-transaction.js";
 
 /** TTL modes for edicts */
 export type EdictTtl = "never" | "event" | number;
@@ -148,62 +149,66 @@ export class EdictStore extends BaseSqliteStore {
     let tableInfo = this.liveDb.prepare("PRAGMA table_info(edicts)").all() as Array<{ name: string }>;
     if (!tableInfo.some((c) => c.name === "id")) {
       // SQLite doesn't support adding PRIMARY KEY via ALTER TABLE, so we need to recreate the table
-      this.liveDb.exec(`
-        CREATE TABLE edicts_new (
-          id TEXT PRIMARY KEY,
-          text TEXT NOT NULL,
-          source TEXT,
-          verified_at INTEGER,
-          expires_at TEXT,
-          ttl TEXT NOT NULL DEFAULT 'never',
-          tags TEXT,
-          created_at INTEGER NOT NULL,
-          updated_at INTEGER NOT NULL,
-          normalized_hash TEXT
-        )
-      `);
+      // Wrap in transaction to prevent data loss if process crashes between DROP and RENAME
+      const migrate = createTransaction(this.liveDb, () => {
+        this.liveDb.exec(`
+          CREATE TABLE edicts_new (
+            id TEXT PRIMARY KEY,
+            text TEXT NOT NULL,
+            source TEXT,
+            verified_at INTEGER,
+            expires_at TEXT,
+            ttl TEXT NOT NULL DEFAULT 'never',
+            tags TEXT,
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL,
+            normalized_hash TEXT
+          )
+        `);
 
-      // Copy existing data, generating IDs for rows that don't have them
-      const oldRows = this.liveDb.prepare("SELECT * FROM edicts").all() as Array<Record<string, unknown>>;
-      const insertStmt = this.liveDb.prepare(
-        `INSERT INTO edicts_new (id, text, source, verified_at, expires_at, ttl, tags, created_at, updated_at, normalized_hash)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      );
-
-      for (const row of oldRows) {
-        const id = `e_${randomUUID().replace(/-/g, "").slice(0, 12)}`;
-        const text = row.text as string;
-        insertStmt.run(
-          id,
-          text,
-          row.source as SQLInputValue,
-          row.verified_at as SQLInputValue,
-          row.expires_at as SQLInputValue,
-          row.ttl as SQLInputValue,
-          row.tags as SQLInputValue,
-          row.created_at as SQLInputValue,
-          row.updated_at as SQLInputValue,
-          normalizedHash(text),
+        // Copy existing data, generating IDs for rows that don't have them
+        const oldRows = this.liveDb.prepare("SELECT * FROM edicts").all() as Array<Record<string, unknown>>;
+        const insertStmt = this.liveDb.prepare(
+          `INSERT INTO edicts_new (id, text, source, verified_at, expires_at, ttl, tags, created_at, updated_at, normalized_hash)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         );
-      }
 
-      // Replace old table with new table
-      this.liveDb.exec("DROP TABLE edicts");
-      this.liveDb.exec("ALTER TABLE edicts_new RENAME TO edicts");
+        for (const row of oldRows) {
+          const id = `e_${randomUUID().replace(/-/g, "").slice(0, 12)}`;
+          const text = row.text as string;
+          insertStmt.run(
+            id,
+            text,
+            row.source as SQLInputValue,
+            row.verified_at as SQLInputValue,
+            row.expires_at as SQLInputValue,
+            row.ttl as SQLInputValue,
+            row.tags as SQLInputValue,
+            row.created_at as SQLInputValue,
+            row.updated_at as SQLInputValue,
+            normalizedHash(text),
+          );
+        }
 
-      // Recreate indexes after table recreation
-      this.liveDb.exec(`
-        CREATE INDEX IF NOT EXISTS idx_edicts_tags ON edicts(tags)
-          WHERE tags IS NOT NULL AND tags != ''
-      `);
-      this.liveDb.exec(`
-        CREATE INDEX IF NOT EXISTS idx_edicts_expires ON edicts(expires_at)
-          WHERE expires_at IS NOT NULL
-      `);
-      this.liveDb.exec(`
-        CREATE INDEX IF NOT EXISTS idx_edicts_normalized_hash ON edicts(normalized_hash)
-          WHERE normalized_hash IS NOT NULL
-      `);
+        // Replace old table with new table
+        this.liveDb.exec("DROP TABLE edicts");
+        this.liveDb.exec("ALTER TABLE edicts_new RENAME TO edicts");
+
+        // Recreate indexes after table recreation
+        this.liveDb.exec(`
+          CREATE INDEX IF NOT EXISTS idx_edicts_tags ON edicts(tags)
+            WHERE tags IS NOT NULL AND tags != ''
+        `);
+        this.liveDb.exec(`
+          CREATE INDEX IF NOT EXISTS idx_edicts_expires ON edicts(expires_at)
+            WHERE expires_at IS NOT NULL
+        `);
+        this.liveDb.exec(`
+          CREATE INDEX IF NOT EXISTS idx_edicts_normalized_hash ON edicts(normalized_hash)
+            WHERE normalized_hash IS NOT NULL
+        `);
+      });
+      migrate();
 
       // Refresh tableInfo after table recreation
       tableInfo = this.liveDb.prepare("PRAGMA table_info(edicts)").all() as Array<{ name: string }>;
@@ -376,6 +381,14 @@ export class EdictStore extends BaseSqliteStore {
     const ttlStr = typeof ttl === "number" ? String(ttl) : ttl;
     const tagsStr = tags.length > 0 ? serializeTags(tags) : null;
     const hash = normalizedHash(text);
+
+    // Check for duplicate text using normalized hash (excluding current edict)
+    const duplicate = this.liveDb
+      .prepare("SELECT * FROM edicts WHERE normalized_hash = ? AND id != ? LIMIT 1")
+      .get(hash, input.id) as Record<string, unknown> | undefined;
+    if (duplicate) {
+      throw new Error(`Edict with similar text already exists: ${duplicate.id}`);
+    }
 
     this.liveDb
       .prepare(
