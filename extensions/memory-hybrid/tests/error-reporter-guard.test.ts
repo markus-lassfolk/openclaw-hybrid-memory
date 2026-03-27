@@ -29,7 +29,7 @@ describe("UnconfiguredProviderError guard with mocked fetch", () => {
 
   beforeEach(() => {
     mockFetch.mockClear();
-    delete process.env.OPENCLAW_NODE_NAME;
+    process.env.OPENCLAW_NODE_NAME = undefined;
   });
 
   afterAll(() => {

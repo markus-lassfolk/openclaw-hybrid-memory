@@ -1769,7 +1769,7 @@ export class FactsDB extends BaseSqliteStore {
       if (remainingTokens <= tokenBudget) break;
       const cost = tokenEstimate(fact.text);
       remainingTokens -= cost;
-      const preview = fact.text.length > 80 ? fact.text.slice(0, 80) + "…" : fact.text;
+      const preview = fact.text.length > 80 ? `${fact.text.slice(0, 80)}…` : fact.text;
       trimmed.push({
         id: fact.id,
         textPreview: preview,
@@ -1778,7 +1778,7 @@ export class FactsDB extends BaseSqliteStore {
         tokenCost: cost,
       });
       if (!simulate) {
-        this.liveDb.prepare(`UPDATE facts SET superseded_at = ? WHERE id = ?`).run(nowSec, fact.id);
+        this.liveDb.prepare("UPDATE facts SET superseded_at = ? WHERE id = ?").run(nowSec, fact.id);
         this.liveDb
           .prepare(
             `INSERT INTO trim_metrics (trimmed_at, fact_id, fact_text_preview, tier, importance, preserve_until, token_cost, budget_before, budget_after)
@@ -1818,7 +1818,7 @@ export class FactsDB extends BaseSqliteStore {
     if (untilSec !== null && untilSec <= nowSec) {
       throw new Error(`preserve_until must be in the future or null. Got: ${untilSec}`);
     }
-    this.liveDb.prepare(`UPDATE facts SET preserve_until = ? WHERE id = ?`).run(untilSec, id);
+    this.liveDb.prepare("UPDATE facts SET preserve_until = ? WHERE id = ?").run(untilSec, id);
     return this.getById(id);
   }
 
@@ -1846,7 +1846,7 @@ export class FactsDB extends BaseSqliteStore {
       next = [...s];
     }
     const preserveTagsStr = next.length > 0 ? JSON.stringify(next) : null;
-    this.liveDb.prepare(`UPDATE facts SET preserve_tags = ? WHERE id = ?`).run(preserveTagsStr, id);
+    this.liveDb.prepare("UPDATE facts SET preserve_tags = ? WHERE id = ?").run(preserveTagsStr, id);
     return this.getById(id);
   }
 

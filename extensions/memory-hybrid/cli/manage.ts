@@ -1102,7 +1102,7 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
         try {
           const status = factsDb.getTokenBudgetStatus();
           const fmt = (n: number) => n.toLocaleString();
-          console.log(`Token Budget Report`);
+          console.log("Token Budget Report");
           console.log(
             `  Budget:  ${fmt(status.budget)} tokens (approx ${fmt(Math.round(status.budget * 3.8))} chars @ 3.8 chars/token)`,
           );
@@ -1157,7 +1157,7 @@ By Tier:`);
           console.log(`  After:  ${fmt(result.afterTokens)} tokens`);
           console.log(`  Would trim ${result.trimmed.length} fact(s):`);
           if (result.trimmed.length === 0) {
-            console.log(`    (nothing to trim — within budget)`);
+            console.log("    (nothing to trim — within budget)");
           } else {
             for (const t of result.trimmed) {
               console.log(
@@ -1168,7 +1168,7 @@ By Tier:`);
           console.log(`
 Preserved (P0 — never trimmed, ${result.preserved.length} fact(s)):`);
           if (result.preserved.length === 0) {
-            console.log(`    (none)`);
+            console.log("    (none)");
           } else {
             for (const p of result.preserved.slice(0, 20)) {
               console.log(`  ${p.id} — ${p.reason}`);
@@ -1210,13 +1210,13 @@ Preserved (P0 — never trimmed, ${result.preserved.length} fact(s)):`);
             const shorthandMatch = untilRaw.match(/^(\d+)([yYmMdD])$/);
             if (shorthandMatch) {
               const val = Number.parseInt(shorthandMatch[1]!, 10);
-              const unit = shorthandMatch[2]!.toLowerCase();
+              const unit = shorthandMatch[2]?.toLowerCase();
               if (unit === "y") untilSec = nowSec + val * YEAR_SEC;
               else if (unit === "d") untilSec = nowSec + val * 86400;
               else if (unit === "m") untilSec = nowSec + val * 30 * 86400;
             } else {
               const parsed = Number.parseInt(untilRaw, 10);
-              if (isNaN(parsed) || parsed <= nowSec) {
+              if (Number.isNaN(parsed) || parsed <= nowSec) {
                 console.error(
                   `error: --until must be epoch seconds in the future, 'never', or shorthand like '1y'. Got: ${untilRaw}`,
                 );
@@ -1246,7 +1246,7 @@ Preserved (P0 — never trimmed, ${result.preserved.length} fact(s)):`);
             factsDb.setPreserveTags(id, addedTags, "add");
           }
           const final = factsDb.getById(id);
-          const preview = fact.text.length > 80 ? fact.text.slice(0, 80) + "…" : fact.text;
+          const preview = fact.text.length > 80 ? `${fact.text.slice(0, 80)}…` : fact.text;
           console.log(`Preserved: "${preview}"`);
           const untilStr = final?.preserveUntil != null ? new Date(final.preserveUntil! * 1000).toISOString() : "null";
           console.log(`  preserveUntil: ${untilStr}`);
