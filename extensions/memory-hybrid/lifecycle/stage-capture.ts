@@ -21,7 +21,6 @@ import {
   resolveCaptureProvenance,
 } from "../services/capture-provenance.js";
 import { classifyMemoryOperation } from "../services/classification.js";
-import type { EpisodeOutcome } from "../types/memory.js";
 import { extractCredentialsFromToolCalls } from "../services/credential-scanner.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { isOllamaCircuitBreakerOpen } from "../services/embeddings.js";
