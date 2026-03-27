@@ -1010,7 +1010,7 @@ export class FactsDB extends BaseSqliteStore {
       return { clause: "", params: {} };
     }
     const parts: string[] = ["("];
-    parts.push("scope = 'global'");
+    parts.push(`${prefix}scope = 'global'`);
     const params: Record<string, unknown> = {};
     if (filter.userId) {
       parts.push("OR (scope = 'user' AND scope_target = @scopeUserId)");
@@ -1032,7 +1032,7 @@ export class FactsDB extends BaseSqliteStore {
    * Build SQL fragment for scope filtering with positional params (for lookup/getAll).
    * Same security constraints as scopeFilterClause — derive from trusted identity only.
    */
-  private scopeFilterClausePositional(filter: ScopeFilter | null | undefined): {
+  private scopeFilterClausePositional(filter: ScopeFilter | null | undefined, prefix: string = ""): {
     clause: string;
     params: SQLInputValue[];
   } {
@@ -1040,18 +1040,18 @@ export class FactsDB extends BaseSqliteStore {
       return { clause: "", params: [] };
     }
     const parts: string[] = ["("];
-    parts.push("scope = 'global'");
+    parts.push(`${prefix}scope = 'global'`);
     const params: SQLInputValue[] = [];
     if (filter.userId) {
-      parts.push("OR (scope = 'user' AND scope_target = ?)");
+      parts.push(`OR (${prefix}scope = 'user' AND ${prefix}scope_target = ?)`);
       params.push(filter.userId);
     }
     if (filter.agentId) {
-      parts.push("OR (scope = 'agent' AND scope_target = ?)");
+      parts.push(`OR (${prefix}scope = 'agent' AND ${prefix}scope_target = ?)`);
       params.push(filter.agentId);
     }
     if (filter.sessionId) {
-      parts.push("OR (scope = 'session' AND scope_target = ?)");
+      parts.push(`OR (${prefix}scope = 'session' AND ${prefix}scope_target = ?)`);
       params.push(filter.sessionId);
     }
     parts.push(")");
@@ -5051,7 +5051,7 @@ export class FactsDB extends BaseSqliteStore {
     }
 
     // Scope filter
-    const scopeClause = this.scopeFilterClausePositional(scopeFilter);
+    const scopeClause = this.scopeFilterClausePositional(scopeFilter, "e.");
     if (scopeClause.clause) {
       conditions.push(scopeClause.clause.replace(/^\s*AND\s*/, ""));
       params.push(...scopeClause.params);

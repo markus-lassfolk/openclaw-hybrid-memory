@@ -316,7 +316,7 @@ export const CREDENTIAL_EXTRACTION_PATTERNS: Array<{ regex: RegExp; scope: strin
   { regex: /ghp_[A-Za-z0-9]{36}/, scope: "github-pat", type: "api_key" },
   { regex: /gho_[A-Za-z0-9]{36}/, scope: "github-oauth", type: "token" },
   { regex: /github_pat_[A-Za-z0-9_]{72}/, scope: "github-pat", type: "token" },
-  { regex: /sk-[A-Za-z0-9]{20,}/, scope: "openai-key", type: "api_key" },
+  { regex: /sk-(?!proj-|ant-)[A-Za-z0-9]{20,}/, scope: "openai-key", type: "api_key" },
   { regex: /sk-proj-[A-Za-z0-9_-]{48,}/, scope: "openai-proj", type: "api_key" },
   { regex: /sk-ant-[A-Za-z0-9_-]{48,}/, scope: "anthropic-key", type: "api_key" },
   {
