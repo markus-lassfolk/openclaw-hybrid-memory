@@ -1092,6 +1092,150 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
       }),
     );
 
+  // ---- Token-budget tiered trimming (Issue #792) ----
+  const budget = mem.command("budget").description("Token budget status and tiered trimming simulation");
+  budget
+    .command("show")
+    .description("Show current token budget status and overflow")
+    .action(
+      withExit(async () => {
+        try {
+          const status = factsDb.getTokenBudgetStatus();
+          const fmt = (n: number) => n.toLocaleString();
+          console.log(`Token Budget Report`);
+          console.log(`  Budget:  ${fmt(status.budget)} tokens (approx ${fmt(Math.round(status.budget * 3.8))} chars @ 3.8 chars/token)`);
+          console.log(`  Used:    ${fmt(status.totalTokens)} tokens (approx ${fmt(Math.round(status.totalTokens * 3.8))} chars)`);
+          console.log(`  Overflow: ${fmt(status.overflow)} tokens`);
+          console.log(`
+By Tier:`);
+          console.log(`  P0 (never trim):  ${fmt(status.byTier.p0)} tokens  (${status.factCount.p0} facts) — edicts, verified, preserveUntil, preserveTags`);
+          console.log(`  P1 (trim last):   ${fmt(status.byTier.p1)} tokens  (${status.factCount.p1} facts) — importance >0.8, recent <1h`);
+          console.log(`  P2 (trim middle): ${fmt(status.byTier.p2)} tokens  (${status.factCount.p2} facts) — importance 0.5-0.8`);
+          console.log(`  P3 (trim first):  ${fmt(status.byTier.p3)} tokens  (${status.factCount.p3} facts) — importance <0.5`);
+          if (status.overflow > 0) {
+            console.log(`
+⚠️  Budget exceeded by ${fmt(status.overflow)} tokens. Run 'memory budget simulate' to see what would be trimmed.`);
+          }
+        } catch (err) {
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), { subsystem: "cli", operation: "budget-show" });
+          throw err;
+        }
+      }),
+    );
+  budget
+    .command("simulate")
+    .description("Simulate tiered trimming to stay within budget")
+    .option("--budget <n>", "Token budget override (default: 80% of 32k context)", String(Math.ceil((32_000 * 0.8) / 3.8)))
+    .action(
+      withExit(async (opts?: { budget?: string }) => {
+        try {
+          const DEFAULT_BUDGET = Math.ceil((32_000 * 0.8) / 3.8);
+          const budgetVal = parseInt(opts?.budget ?? String(DEFAULT_BUDGET), 10);
+          const result = factsDb.trimToBudget(budgetVal, true);
+          const fmt = (n: number) => n.toLocaleString();
+          console.log(`Budget Simulation (budget=${fmt(budgetVal)} tokens)`);
+          console.log(`  Before: ${fmt(result.beforeTokens)} tokens`);
+          console.log(`  After:  ${fmt(result.afterTokens)} tokens`);
+          console.log(`  Would trim ${result.trimmed.length} fact(s):`);
+          if (result.trimmed.length === 0) {
+            console.log(`    (nothing to trim — within budget)`);
+          } else {
+            for (const t of result.trimmed) {
+              console.log(`  [${t.tier}] importance=${t.importance.toFixed(2)} tokens=${fmt(t.tokenCost)} — "${t.textPreview}"`);
+            }
+          }
+          console.log(`
+Preserved (P0 — never trimmed, ${result.preserved.length} fact(s)):`);
+          if (result.preserved.length === 0) {
+            console.log(`    (none)`);
+          } else {
+            for (const p of result.preserved.slice(0, 20)) {
+              console.log(`  ${p.id} — ${p.reason}`);
+            }
+            if (result.preserved.length > 20) {
+              console.log(`  ... and ${result.preserved.length - 20} more`);
+            }
+          }
+        } catch (err) {
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), { subsystem: "cli", operation: "budget-simulate" });
+          throw err;
+        }
+      }),
+    );
+
+  mem
+    .command("preserve")
+    .description("Force-preserve a fact from tiered trimming. Run without options to show current preserve status.")
+    .option("--until <epoch>", "Preserve until epoch seconds, 'never' to clear, or shorthand like '1y' (default: 1y)")
+    .option("-t, --tag <tag>", "Add a preserve tag (can be repeated)")
+    .action(
+      withExit(async (id: string, opts?: { until?: string; tag?: string | null }) => {
+        try {
+          const fact = factsDb.get(id);
+          if (!fact) {
+            console.log(`Fact not found: ${id}`);
+            process.exitCode = 1;
+            return;
+          }
+          const nowSec = Math.floor(Date.now() / 1000);
+          const YEAR_SEC = 365 * 24 * 3600;
+
+          let untilSec: number | null = null;
+          const untilRaw = opts?.until;
+          if (untilRaw && untilRaw !== "never") {
+            const shorthandMatch = untilRaw.match(/^(\d+)([yYmMdD])$/);
+            if (shorthandMatch) {
+              const val = parseInt(shorthandMatch[1]!, 10);
+              const unit = shorthandMatch[2]!.toLowerCase();
+              if (unit === "y") untilSec = nowSec + val * YEAR_SEC;
+              else if (unit === "d") untilSec = nowSec + val * 86400;
+              else if (unit === "m") untilSec = nowSec + val * 30 * 86400;
+            } else {
+              const parsed = parseInt(untilRaw, 10);
+              if (isNaN(parsed) || parsed <= nowSec) {
+                console.error(`error: --until must be epoch seconds in the future, 'never', or shorthand like '1y'. Got: ${untilRaw}`);
+                process.exitCode = 1;
+                return;
+              }
+              untilSec = parsed;
+            }
+          } else if (untilRaw === "never") {
+            untilSec = null;
+          } else {
+            untilSec = nowSec + YEAR_SEC;
+          }
+
+          const addedTags: string[] = [];
+          if (opts?.tag) {
+            const tagVal = opts.tag;
+            if (Array.isArray(tagVal)) {
+              addedTags.push(...tagVal.map(String));
+            } else {
+              addedTags.push(String(tagVal));
+            }
+          }
+
+          factsDb.setPreserveUntil(id, untilSec);
+          if (addedTags.length > 0) {
+            factsDb.setPreserveTags(id, addedTags, "add");
+          }
+          const final = factsDb.getById(id);
+          const preview = fact.text.length > 80 ? fact.text.slice(0, 80) + "…" : fact.text;
+          console.log(`Preserved: "${preview}"`);
+          const untilStr = final?.preserveUntil != null ? new Date(final.preserveUntil! * 1000).toISOString() : "null";
+          console.log(`  preserveUntil: ${untilStr}`);
+          console.log(`  preserveTags:  ${(final?.preserveTags ?? []).join(", ") || "(none)"}`);
+          const tags = (fact.tags ?? []).map(String);
+          if (tags.includes("edict")) {
+            console.log(`  note: fact already has 'edict' tag — already P0 (never trimmed)`);
+          }
+        } catch (err) {
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), { subsystem: "cli", operation: "preserve" });
+          throw err;
+        }
+      }),
+    );
+
   const proposals = mem.command("proposals").description("Manage persona-driven proposals");
   const proposalStatusValues = ["pending", "approved", "rejected", "applied"] as const;
   proposals

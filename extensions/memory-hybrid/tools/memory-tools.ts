@@ -2104,4 +2104,211 @@ export function registerMemoryTools(
     },
     { name: "memory_forget" },
   );
+
+  // ---------------------------------------------------------------------------
+  // Episodic memory tools (#781)
+  // ---------------------------------------------------------------------------
+
+  api.registerTool(
+    {
+      name: "memory.record_episode",
+      label: "Record Episode",
+      description:
+        "Record an episodic event with structured outcome (success/failure/partial/unknown). " +
+        "Use after significant events like deployments, migrations, incident resolutions, or task completions. " +
+        "Episodes with outcome='failure' are auto-boosted to importance >= 0.8.",
+      parameters: Type.Object({
+        event: Type.String({ description: "What happened (e.g. 'deployed openclaw to Doris', 'upgraded Doris')." }),
+        outcome: Type.Union(
+          [
+            Type.Literal("success", { description: "The event completed successfully." }),
+            Type.Literal("failure", { description: "The event failed." }),
+            Type.Literal("partial", { description: "The event partially succeeded." }),
+            Type.Literal("unknown", { description: "Outcome is unclear or not determined." }),
+          ],
+          { description: "Outcome of the event." },
+        ),
+        timestamp: Type.Optional(
+          Type.Number({ description: "Unix epoch seconds when the event occurred. Defaults to now." }),
+        ),
+        duration: Type.Optional(
+          Type.Number({ description: "How long the event took in milliseconds." }),
+        ),
+        context: Type.Optional(
+          Type.String({ description: "Context: what led up to it, environment state, etc." }),
+        ),
+        relatedFactIds: Type.Optional(
+          Type.Array(Type.String(), { description: "IDs of facts related to this episode." }),
+        ),
+        procedureId: Type.Optional(Type.String({ description: "Procedure ID that triggered this episode." })),
+        importance: Type.Optional(
+          Type.Number({ description: "Importance 0-1 (default: 0.5). Failures auto-boosted to ≥ 0.8.", minimum: 0, maximum: 1 }),
+        ),
+        decayClass: Type.Optional(
+          Type.String({ description: `Decay class: ${DECAY_CLASSES.join(", ")}. Default: normal.` }),
+        ),
+        scope: Type.Optional(
+          Type.Union([Type.Literal("global"), Type.Literal("user"), Type.Literal("agent"), Type.Literal("session")], {
+            description: "Memory scope. Default: global.",
+          }),
+        ),
+        agentId: Type.Optional(Type.String({ description: "Agent that performed the event." })),
+        userId: Type.Optional(Type.String({ description: "User associated with the event." })),
+        sessionId: Type.Optional(Type.String({ description: "Session in which the event occurred." })),
+        tags: Type.Optional(Type.Array(Type.String(), { description: "Topic tags." })),
+      }),
+      async execute(_toolCallId: string, params: Record<string, unknown>) {
+        try {
+          const p = params as {
+            event: string;
+            outcome: "success" | "failure" | "partial" | "unknown";
+            timestamp?: number;
+            duration?: number;
+            context?: string;
+            relatedFactIds?: string[];
+            procedureId?: string;
+            importance?: number;
+            decayClass?: string;
+            scope?: "global" | "user" | "agent" | "session";
+            agentId?: string;
+            userId?: string;
+            sessionId?: string;
+            tags?: string[];
+          };
+
+          const episode = factsDb.storeEpisode({
+            event: p.event,
+            outcome: p.outcome,
+            timestamp: p.timestamp,
+            duration: p.duration,
+            context: p.context,
+            relatedFactIds: p.relatedFactIds,
+            procedureId: p.procedureId,
+            importance: p.importance,
+            decayClass: p.decayClass as "permanent" | "durable" | "normal" | "short" | "ephemeral" | "stable" | "active" | "session" | "checkpoint" | undefined,
+            scope: p.scope,
+            agentId: p.agentId,
+            userId: p.userId,
+            sessionId: p.sessionId,
+            tags: p.tags,
+          });
+
+          return {
+            content: [
+              {
+                type: "text",
+                text: `Episode recorded: ${episode.id}\n` +
+                  `Event: ${episode.event}\n` +
+                  `Outcome: ${episode.outcome}\n` +
+                  `Importance: ${episode.importance}${episode.outcome === "failure" ? " (auto-boosted)" : ""}\n` +
+                  `Timestamp: ${new Date(episode.timestamp * 1000).toISOString()}`,
+              },
+            ],
+            details: { episode },
+          };
+        } catch (err) {
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+            subsystem: "memory",
+            operation: "record-episode",
+            phase: "runtime",
+          });
+          throw err;
+        }
+      },
+    },
+    { name: "record_episode" },
+  );
+
+  api.registerTool(
+    {
+      name: "memory.search_episodes",
+      label: "Search Episodes",
+      description:
+        "Search episodic memories with outcome and time-range filters. " +
+        "Returns structured Episode records ordered by timestamp (most recent first). " +
+        "Use to answer: 'When was the last deployment?', 'What failed recently?', " +
+        "'Show all resolved incidents in the last 30 days'.",
+      parameters: Type.Object({
+        outcome: Type.Optional(
+          Type.Array(
+            Type.Union([
+              Type.Literal("success"),
+              Type.Literal("failure"),
+              Type.Literal("partial"),
+              Type.Literal("unknown"),
+            ]),
+            { description: "Filter by outcome(s)." },
+          ),
+        ),
+        since: Type.Optional(
+          Type.Number({ description: "Unix epoch seconds — only episodes at or after this time." }),
+        ),
+        until: Type.Optional(
+          Type.Number({ description: "Unix epoch seconds — only episodes at or before this time." }),
+        ),
+        procedureId: Type.Optional(
+          Type.String({ description: "Episodes linked to a specific procedure." }),
+        ),
+        query: Type.Optional(
+          Type.String({ description: "Semantic search over event + context text." }),
+        ),
+        limit: Type.Optional(
+          Type.Number({ description: "Max results to return (default: 50, max: 100).", minimum: 1, maximum: 100 }),
+        ),
+      }),
+      async execute(_toolCallId: string, params: Record<string, unknown>) {
+        try {
+          const p = params as {
+            outcome?: ("success" | "failure" | "partial" | "unknown")[];
+            since?: number;
+            until?: number;
+            procedureId?: string;
+            query?: string;
+            limit?: number;
+          };
+
+          const episodes = factsDb.searchEpisodes({
+            outcome: p.outcome,
+            since: p.since,
+            until: p.until,
+            procedureId: p.procedureId,
+            query: p.query,
+            limit: p.limit ?? 50,
+          });
+
+          if (episodes.length === 0) {
+            return {
+              content: [{ type: "text", text: "No episodes found matching the criteria." }],
+              details: { episodes: [], count: 0 },
+            };
+          }
+
+          const lines = episodes.map((e) => {
+            const ts = new Date(e.timestamp * 1000).toISOString();
+            const dur = e.duration ? ` (${e.duration}ms)` : "";
+            const tags = e.tags.length > 0 ? ` [${e.tags.join(", ")}]` : "";
+            return `[${e.outcome}] ${ts}${dur} — ${e.event}${tags}`;
+          });
+
+          return {
+            content: [
+              {
+                type: "text",
+                text: `${episodes.length} episode(s):\n${lines.join("\n")}`,
+              },
+            ],
+            details: { episodes, count: episodes.length },
+          };
+        } catch (err) {
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+            subsystem: "memory",
+            operation: "search-episodes",
+            phase: "runtime",
+          });
+          throw err;
+        }
+      },
+    },
+    { name: "search_episodes" },
+  );
 }

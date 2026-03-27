@@ -9,7 +9,7 @@ import { randomUUID } from "node:crypto";
 
 import type { MemoryCategory, DecayClass } from "../config.js";
 import { TTL_DEFAULTS } from "../config.js";
-import type { MemoryEntry, ProcedureEntry, SearchResult, MemoryTier, ScopeFilter } from "../types/memory.js";
+import type { MemoryEntry, ProcedureEntry, SearchResult, MemoryTier, ScopeFilter, EpisodeEntry, EpisodeOutcome } from "../types/memory.js";
 import { normalizedHash, serializeTags, parseTags } from "../utils/tags.js";
 import { calculateExpiry, classifyDecay } from "../utils/decay.js";
 import { applyConsolidationRetrievalControls } from "../utils/consolidation-controls.js";
@@ -638,6 +638,55 @@ export class FactsDB extends BaseSqliteStore {
     `);
     this.liveDb.exec("CREATE INDEX IF NOT EXISTS idx_recall_log_time ON recall_log(occurred_at)");
     this.liveDb.exec("CREATE INDEX IF NOT EXISTS idx_recall_log_hit ON recall_log(hit)");
+  }
+
+  /** Create episodes table for structured episodic memory (#781). */
+  private migrateEpisodesTable(): void {
+    this.liveDb.exec(`
+      CREATE TABLE IF NOT EXISTS episodes (
+        id TEXT PRIMARY KEY,
+        event TEXT NOT NULL,
+        outcome TEXT NOT NULL CHECK(outcome IN ('success', 'failure', 'partial', 'unknown')),
+        timestamp INTEGER NOT NULL,
+        duration INTEGER,
+        context TEXT,
+        related_fact_ids TEXT,
+        procedure_id TEXT,
+        importance REAL NOT NULL DEFAULT 0.5,
+        decay_class TEXT NOT NULL DEFAULT 'normal',
+        scope TEXT NOT NULL DEFAULT 'global',
+        agent_id TEXT,
+        user_id TEXT,
+        session_id TEXT,
+        tags TEXT,
+        created_at INTEGER NOT NULL,
+        verified_at INTEGER
+      )
+    `);
+    // Indexed columns for fast outcome filtering + time-range queries
+    this.liveDb.exec("CREATE INDEX IF NOT EXISTS idx_episodes_outcome ON episodes(outcome)");
+    this.liveDb.exec("CREATE INDEX IF NOT EXISTS idx_episodes_timestamp ON episodes(timestamp DESC)");
+    this.liveDb.exec("CREATE INDEX IF NOT EXISTS idx_episodes_procedure ON episodes(procedure_id)");
+    this.liveDb.exec("CREATE INDEX IF NOT EXISTS idx_episodes_session ON episodes(session_id)");
+    this.liveDb.exec(
+      "CREATE INDEX IF NOT EXISTS idx_episodes_outcome_timestamp ON episodes(outcome, timestamp DESC)",
+    );
+
+    // FTS5 virtual table for semantic search over event + context
+    this.liveDb.exec(`
+      CREATE VIRTUAL TABLE IF NOT EXISTS episodes_fts USING fts5(
+        event,
+        context,
+        tokenize='porter unicode61'
+      )
+    `);
+    this.liveDb.exec(`
+      CREATE TRIGGER IF NOT EXISTS episodes_fts_ai AFTER INSERT ON episodes BEGIN
+        INSERT INTO episodes_fts(rowid, event, context) VALUES (new.rowid, new.event, new.context);
+      END;
+
+
+    `);
   }
 
   /** Add embedding_model column to facts for tracking vector provenance (Issue #153). */
@@ -1289,6 +1338,10 @@ export class FactsDB extends BaseSqliteStore {
       extractionMethod?: string | null;
       /** Provenance: extraction confidence (0-1). */
       extractionConfidence?: number | null;
+      /** Force-preservation: epoch seconds until which this fact MUST NOT be trimmed. */
+      preserveUntil?: number | null;
+      /** Force-preservation tags that block trimming regardless of importance tier. */
+      preserveTags?: string[] | null;
     },
   ): MemoryEntry {
     if (this.fuzzyDedupe) {
@@ -1335,6 +1388,9 @@ export class FactsDB extends BaseSqliteStore {
     const sourceTurn = entry.sourceTurn ?? null;
     const extractionMethod = entry.extractionMethod ?? null;
     const extractionConfidence = entry.extractionConfidence !== undefined ? entry.extractionConfidence : null;
+    const preserveUntil = entry.preserveUntil ?? null;
+    const preserveTags = entry.preserveTags ?? null;
+    const preserveTagsStr = preserveTags ? JSON.stringify(preserveTags) : null;
 
     const tier: MemoryTier = (entry as { tier?: MemoryTier }).tier ?? "warm";
     // Fix #2: guard against NaN/non-finite values passed in from external callers
@@ -1346,8 +1402,8 @@ export class FactsDB extends BaseSqliteStore {
       decayFreezeUntil !== null && expiresAt !== null && expiresAt < decayFreezeUntil ? decayFreezeUntil : expiresAt;
     this.liveDb
       .prepare(
-        `INSERT INTO facts (id, text, why, category, importance, entity, key, value, source, created_at, decay_class, expires_at, last_confirmed_at, confidence, summary, embedding_model, normalized_hash, source_date, tags, valid_from, valid_until, supersedes_id, tier, scope, scope_target, procedure_type, success_count, last_validated, source_sessions, decay_freeze_until, provenance_session, source_turn, extraction_method, extraction_confidence)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO facts (id, text, why, category, importance, entity, key, value, source, created_at, decay_class, expires_at, last_confirmed_at, confidence, summary, embedding_model, normalized_hash, source_date, tags, valid_from, valid_until, supersedes_id, tier, scope, scope_target, procedure_type, success_count, last_validated, source_sessions, decay_freeze_until, provenance_session, source_turn, extraction_method, extraction_confidence, preserve_until, preserve_tags)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         id,
@@ -1384,6 +1440,8 @@ export class FactsDB extends BaseSqliteStore {
         sourceTurn,
         extractionMethod,
         extractionConfidence,
+        preserveUntil,
+        preserveTagsStr,
       );
 
     return {
@@ -1412,6 +1470,8 @@ export class FactsDB extends BaseSqliteStore {
       sourceTurn,
       extractionMethod,
       extractionConfidence,
+      preserveUntil: preserveUntil ?? undefined,
+      preserveTags: preserveTags ?? undefined,
       // normalize to null (not undefined) to match rowToEntry() behaviour
       decayFreezeUntil: decayFreezeUntil,
       // #237: access tracking columns start at zero for new facts
@@ -1613,6 +1673,297 @@ export class FactsDB extends BaseSqliteStore {
 
     return counts;
   }
+
+  /**
+   * Token-budget tiered trimming for context compaction (Issue #792).
+   *
+   * Retention tiers (never trimmed = P0):
+   *  - Edict-tagged facts (tag 'edict')
+   *  - Verified facts (present in verified_facts table)
+   *  - Facts with active preserveUntil (epoch seconds in future)
+   *  - Facts with non-empty preserveTags
+   *
+   * Remaining facts sorted by trim priority:
+   *  - P1: importance > 0.8 AND created within the last hour
+   *  - P2: importance 0.5 – 0.8
+   *  - P3: importance < 0.5
+   *
+   * Trimming proceeds P3 → P2 → P1 until within budget.
+   * Token estimate: Math.ceil(chars / 3.8)
+   *
+   * Returns a summary of what would be / was trimmed.
+   */
+  trimToBudget(tokenBudget: number, simulate = false): {
+    simulate: boolean;
+    budget: number;
+    beforeTokens: number;
+    afterTokens: number;
+    trimmed: Array<{ id: string; textPreview: string; tier: string; importance: number; tokenCost: number }>;
+    preserved: Array<{ id: string; reason: string }>;
+    error?: string;
+  } {
+    const nowSec = Math.floor(Date.now() / 1000);
+    const HOUR_SEC = 3600;
+    const p1Cutoff = nowSec - HOUR_SEC;
+    const tokenEstimate = (text: string): number => Math.ceil(text.length / 3.8);
+
+    // Fetch all non-superseded, non-expired facts with their verified status.
+    const rows = this.liveDb
+      .prepare(
+        `SELECT f.id, f.text, f.importance, f.created_at, f.preserve_until, f.preserve_tags,
+                f.confidence, f.tags,
+                vf.fact_id IS NOT NULL AS is_verified
+         FROM facts f
+         LEFT JOIN verified_facts vf ON vf.fact_id = f.id
+         WHERE f.superseded_at IS NULL
+           AND (f.expires_at IS NULL OR f.expires_at > ?)`,
+      )
+      .all(nowSec) as Array<{
+        id: string;
+        text: string;
+        importance: number;
+        created_at: number;
+        preserve_until: number | null;
+        preserve_tags: string | null;
+        confidence: number;
+        tags: string | null;
+        is_verified: number;
+      }>;
+
+    const parsePreserveTags = (raw: string | null): string[] => {
+      if (!raw) return [];
+      try {
+        const parsed = JSON.parse(raw);
+        return Array.isArray(parsed) ? parsed.filter((q): q is string => typeof q === "string") : [];
+      } catch {
+        return [];
+      }
+    };
+
+    const hasTag = (tagsStr: string | null, tag: string): boolean => {
+      return parseTags(tagsStr).includes(tag.toLowerCase().trim());
+    };
+
+    const p0: Array<{ id: string; text: string }> = [];
+    const p1: Array<{ id: string; text: string; importance: number }> = [];
+    const p2: Array<{ id: string; text: string; importance: number }> = [];
+    const p3: Array<{ id: string; text: string; importance: number }> = [];
+    const preserved: Array<{ id: string; reason: string }> = [];
+
+    for (const row of rows) {
+      const preserveTags = parsePreserveTags(row.preserve_tags);
+      const tagsStr = row.tags;
+      const isEdict = hasTag(tagsStr, "edict");
+      const isVerified = row.is_verified === 1;
+      const hasPreserveUntil = row.preserve_until != null && row.preserve_until > nowSec;
+      const hasPreserveTags = preserveTags.length > 0;
+
+      if (isEdict || isVerified || hasPreserveUntil || hasPreserveTags) {
+        p0.push({ id: row.id, text: row.text });
+        const reasons: string[] = [];
+        if (isEdict) reasons.push("edict");
+        if (isVerified) reasons.push("verified");
+        if (hasPreserveUntil) reasons.push(`preserveUntil=${row.preserve_until}`);
+        if (hasPreserveTags) reasons.push(`preserveTags=${preserveTags.join(",")}`);
+        preserved.push({ id: row.id, reason: reasons.join("|") });
+      } else if (row.importance > 0.8 && row.created_at >= p1Cutoff) {
+        p1.push({ id: row.id, text: row.text, importance: row.importance });
+      } else if (row.importance >= 0.5) {
+        p2.push({ id: row.id, text: row.text, importance: row.importance });
+      } else {
+        p3.push({ id: row.id, text: row.text, importance: row.importance });
+      }
+    }
+
+    // Sort P3 and P2 by importance ASC (trim least-important first)
+    p3.sort((a, b) => a.importance - b.importance);
+    p2.sort((a, b) => a.importance - b.importance);
+    // P1 sorted by importance DESC (trim least-important first within P1)
+    p1.sort((a, b) => b.importance - a.importance);
+
+    // Calculate current token count (P0 + P1 + P2 + P3)
+    const currentTokens = [...p0, ...p1, ...p2, ...p3].reduce(
+      (sum, f) => sum + tokenEstimate(f.text),
+      0,
+    );
+
+    if (currentTokens <= tokenBudget || simulate) {
+      const trimmed: Array<{ id: string; textPreview: string; tier: string; importance: number; tokenCost: number }> = [];
+      return {
+        simulate,
+        budget: tokenBudget,
+        beforeTokens: currentTokens,
+        afterTokens: simulate ? currentTokens : currentTokens,
+        trimmed,
+        preserved,
+      };
+    }
+
+    // Trim from P3 → P2 → P1 until within budget
+    let remainingTokens = currentTokens;
+    const toTrim: Array<{ id: string; text: string; tier: string; importance: number }> = [];
+    for (const f of p3) toTrim.push({ ...f, tier: "P3" });
+    for (const f of p2) toTrim.push({ ...f, tier: "P2" });
+    for (const f of p1) toTrim.push({ ...f, tier: "P1" });
+
+    const trimmed: Array<{ id: string; textPreview: string; tier: string; importance: number; tokenCost: number }> = [];
+    for (const fact of toTrim) {
+      if (remainingTokens <= tokenBudget) break;
+      const cost = tokenEstimate(fact.text);
+      remainingTokens -= cost;
+      const preview = fact.text.length > 80 ? fact.text.slice(0, 80) + "…" : fact.text;
+      trimmed.push({ id: fact.id, textPreview: preview, tier: fact.tier, importance: fact.importance, tokenCost: cost });
+      if (!simulate) {
+        this.liveDb
+          .prepare(`UPDATE facts SET superseded_at = ? WHERE id = ?`)
+          .run(nowSec, fact.id);
+        this.liveDb
+          .prepare(
+            `INSERT INTO trim_metrics (trimmed_at, fact_id, fact_text_preview, tier, importance, preserve_until, token_cost, budget_before, budget_after)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          )
+          .run(nowSec, fact.id, fact.text.slice(0, 200), fact.tier, fact.importance, null, cost, currentTokens, tokenBudget);
+      }
+    }
+
+    return {
+      simulate,
+      budget: tokenBudget,
+      beforeTokens: currentTokens,
+      afterTokens: remainingTokens,
+      trimmed,
+      preserved,
+    };
+  }
+
+  /**
+   * Set or clear preserve_until on a fact.
+   * If untilSec is null, clears any existing preserve_until.
+   * Returns the updated MemoryEntry or null if not found.
+   */
+  setPreserveUntil(id: string, untilSec: number | null): MemoryEntry | null {
+    const nowSec = Math.floor(Date.now() / 1000);
+    if (untilSec !== null && untilSec <= nowSec) {
+      throw new Error(`preserve_until must be in the future or null. Got: ${untilSec}`);
+    }
+    this.liveDb.prepare(`UPDATE facts SET preserve_until = ? WHERE id = ?`).run(untilSec, id);
+    return this.getById(id);
+  }
+
+  /**
+   * Add or remove preserve_tags on a fact.
+   * mode 'set': replaces all tags with the given array.
+   * mode 'add': adds the given tags (deduped).
+   * mode 'remove': removes the given tags.
+   * Returns the updated MemoryEntry or null if not found.
+   */
+  setPreserveTags(id: string, tags: string[], mode: "set" | "add" | "remove"): MemoryEntry | null {
+    const fact = this.getById(id);
+    if (!fact) return null;
+    const existing = fact.preserveTags ?? [];
+    let next: string[];
+    if (mode === "set") {
+      next = [...new Set(tags.map((t) => t.toLowerCase().trim()))];
+    } else if (mode === "add") {
+      const s = new Set(existing);
+      for (const t of tags) s.add(t.toLowerCase().trim());
+      next = [...s];
+    } else {
+      const s = new Set(existing);
+      for (const t of tags) s.delete(t.toLowerCase().trim());
+      next = [...s];
+    }
+    const preserveTagsStr = next.length > 0 ? JSON.stringify(next) : null;
+    this.liveDb.prepare(`UPDATE facts SET preserve_tags = ? WHERE id = ?`).run(preserveTagsStr, id);
+    return this.getById(id);
+  }
+
+  /**
+   * Compute current token estimate for all non-superseded, non-expired facts.
+   * Returns { totalTokens, byTier: { p0, p1, p2, p3 }, factCount: { p0, p1, p2, p3 } }.
+   */
+  getTokenBudgetStatus(): {
+    totalTokens: number;
+    budget: number;
+    overflow: number;
+    byTier: { p0: number; p1: number; p2: number; p3: number };
+    factCount: { p0: number; p1: number; p2: number; p3: number };
+  } {
+    const nowSec = Math.floor(Date.now() / 1000);
+    const HOUR_SEC = 3600;
+    const p1Cutoff = nowSec - HOUR_SEC;
+    const tokenEstimate = (text: string): number => Math.ceil(text.length / 3.8);
+    const DEFAULT_BUDGET = Math.ceil((32_000 * 0.8) / 3.8);
+    const budget = DEFAULT_BUDGET;
+
+    const rows = this.liveDb
+      .prepare(
+        `SELECT f.id, f.text, f.importance, f.created_at, f.preserve_until, f.preserve_tags,
+                f.confidence, f.tags,
+                vf.fact_id IS NOT NULL AS is_verified
+         FROM facts f
+         LEFT JOIN verified_facts vf ON vf.fact_id = f.id
+         WHERE f.superseded_at IS NULL
+           AND (f.expires_at IS NULL OR f.expires_at > ?)`,
+      )
+      .all(nowSec) as Array<{
+        id: string;
+        text: string;
+        importance: number;
+        created_at: number;
+        preserve_until: number | null;
+        preserve_tags: string | null;
+        confidence: number;
+        tags: string | null;
+        is_verified: number;
+      }>;
+
+    const parsePreserveTags = (raw: string | null): string[] => {
+      if (!raw) return [];
+      try {
+        const parsed = JSON.parse(raw);
+        return Array.isArray(parsed) ? parsed.filter((q): q is string => typeof q === "string") : [];
+      } catch {
+        return [];
+      }
+    };
+
+    const hasTag = (tagsStr: string | null, tag: string): boolean => {
+      return parseTags(tagsStr).includes(tag.toLowerCase().trim());
+    };
+
+    const byTier = { p0: 0, p1: 0, p2: 0, p3: 0 };
+    const factCount = { p0: 0, p1: 0, p2: 0, p3: 0 };
+
+    for (const row of rows) {
+      const preserveTags = parsePreserveTags(row.preserve_tags);
+      const tagsStr = row.tags;
+      const isEdict = hasTag(tagsStr, "edict");
+      const isVerified = row.is_verified === 1;
+      const hasPreserveUntil = row.preserve_until != null && row.preserve_until > nowSec;
+      const hasPreserveTags = preserveTags.length > 0;
+
+      const tokens = tokenEstimate(row.text);
+
+      if (isEdict || isVerified || hasPreserveUntil || hasPreserveTags) {
+        byTier.p0 += tokens;
+        factCount.p0++;
+      } else if (row.importance > 0.8 && row.created_at >= p1Cutoff) {
+        byTier.p1 += tokens;
+        factCount.p1++;
+      } else if (row.importance >= 0.5) {
+        byTier.p2 += tokens;
+        factCount.p2++;
+      } else {
+        byTier.p3 += tokens;
+        factCount.p3++;
+      }
+    }
+
+    const totalTokens = byTier.p0 + byTier.p1 + byTier.p2 + byTier.p3;
+    return { totalTokens, budget, overflow: Math.max(0, totalTokens - budget), byTier, factCount };
+  }
+
 
   search(
     query: string,
@@ -2017,6 +2368,17 @@ export class FactsDB extends BaseSqliteStore {
         }
       })(),
       decayFreezeUntil: (row.decay_freeze_until as number) ?? null,
+      preserveUntil: (row.preserve_until as number) ?? null,
+      preserveTags: (() => {
+        const raw = row.preserve_tags as string | null;
+        if (!raw) return null;
+        try {
+          const parsed = JSON.parse(raw);
+          return Array.isArray(parsed) ? parsed.filter((q): q is string => typeof q === 'string') : null;
+        } catch {
+          return null;
+        }
+      })(),
     };
   }
 
@@ -4419,5 +4781,210 @@ export class FactsDB extends BaseSqliteStore {
       | { cluster_id: string }
       | undefined;
     return row?.cluster_id ?? null;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Episodic memory: episodes table CRUD (#781)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Convert a raw SQLite episodes row to an EpisodeEntry.
+   */
+  private rowToEpisodeEntry(row: Record<string, unknown>): EpisodeEntry {
+    const relatedRaw = row.related_fact_ids as string | null;
+    return {
+      id: row.id as string,
+      category: "episode",
+      event: row.event as string,
+      outcome: row.outcome as EpisodeOutcome,
+      timestamp: row.timestamp as number,
+      duration: (row.duration as number | null) ?? undefined,
+      context: (row.context as string | null) ?? undefined,
+      relatedFactIds: relatedRaw ? JSON.parse(relatedRaw) : undefined,
+      procedureId: (row.procedure_id as string | null) ?? undefined,
+      importance: row.importance as number,
+      decayClass: (row.decay_class as DecayClass) || "normal",
+      scope: (row.scope as "global" | "user" | "agent" | "session") ?? "global",
+      agentId: (row.agent_id as string | null) ?? undefined,
+      userId: (row.user_id as string | null) ?? undefined,
+      sessionId: (row.session_id as string | null) ?? undefined,
+      tags: parseTags(row.tags as string | null),
+      createdAt: row.created_at as number,
+      verifiedAt: (row.verified_at as number | null) ?? undefined,
+    };
+  }
+
+  /**
+   * Insert an episode record.
+   * - outcome="failure" → importance auto-boosted to ≥ 0.8
+   * - outcome="success" → default importance (caller-provided, min 0.5)
+   *
+   * Returns the inserted EpisodeEntry (with generated id + createdAt).
+   */
+  storeEpisode(entry: {
+    event: string;
+    outcome: EpisodeOutcome;
+    timestamp?: number;
+    duration?: number;
+    context?: string;
+    relatedFactIds?: string[];
+    procedureId?: string;
+    importance?: number;
+    decayClass?: DecayClass;
+    scope?: "global" | "user" | "agent" | "session";
+    agentId?: string;
+    userId?: string;
+    sessionId?: string;
+    tags?: string[];
+  }): EpisodeEntry {
+    const id = randomUUID();
+    const nowSec = Math.floor(Date.now() / 1000);
+    const timestamp = entry.timestamp ?? nowSec;
+    // Auto-boost failures to importance >= 0.8
+    let importance = entry.importance ?? 0.5;
+    if (entry.outcome === "failure") {
+      importance = Math.max(importance, 0.8);
+    }
+    const decayClass = entry.decayClass ?? "normal";
+    const scope = entry.scope ?? "global";
+    const tagsStr = entry.tags ? serializeTags(entry.tags) : null;
+    const relatedFactIdsStr = entry.relatedFactIds ? JSON.stringify(entry.relatedFactIds) : null;
+
+    this.liveDb
+      .prepare(
+        `INSERT INTO episodes (id, event, outcome, timestamp, duration, context, related_fact_ids, procedure_id, importance, decay_class, scope, agent_id, user_id, session_id, tags, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        id,
+        entry.event,
+        entry.outcome,
+        timestamp,
+        entry.duration ?? null,
+        entry.context ?? null,
+        relatedFactIdsStr,
+        entry.procedureId ?? null,
+        importance,
+        decayClass,
+        scope,
+        entry.agentId ?? null,
+        entry.userId ?? null,
+        entry.sessionId ?? null,
+        tagsStr,
+        nowSec,
+      );
+
+    return {
+      id,
+      category: "episode",
+      event: entry.event,
+      outcome: entry.outcome,
+      timestamp,
+      duration: entry.duration,
+      context: entry.context,
+      relatedFactIds: entry.relatedFactIds,
+      procedureId: entry.procedureId,
+      importance,
+      decayClass,
+      scope,
+      agentId: entry.agentId,
+      userId: entry.userId,
+      sessionId: entry.sessionId,
+      tags: entry.tags ?? [],
+      createdAt: nowSec,
+    };
+  }
+
+  /**
+   * Get a single episode by id.
+   */
+  getEpisode(id: string): EpisodeEntry | null {
+    const row = this.liveDb.prepare("SELECT * FROM episodes WHERE id = ?").get(id) as
+      | Record<string, unknown>
+      | undefined;
+    return row ? this.rowToEpisodeEntry(row) : null;
+  }
+
+  /**
+   * Delete an episode by id.
+   */
+  deleteEpisode(id: string): boolean {
+    const result = this.liveDb.prepare("DELETE FROM episodes WHERE id = ?").run(id);
+    return result.changes > 0;
+  }
+
+  /**
+   * Search episodes with optional outcome filter and time-range filter.
+   * Returns episodes ordered by timestamp DESC (most recent first).
+   */
+  searchEpisodes(opts: {
+    outcome?: EpisodeOutcome[];
+    since?: number;
+    until?: number;
+    procedureId?: string;
+    query?: string;
+    limit?: number;
+  } = {}): EpisodeEntry[] {
+    const { outcome, since, until, procedureId, query, limit = 50 } = opts;
+    const parts: string[] = [];
+    const params: (string | number)[] = [];
+
+    if (outcome && outcome.length > 0) {
+      const placeholders = outcome.map(() => "?").join(",");
+      parts.push(`outcome IN (${placeholders})`);
+      params.push(...outcome);
+    }
+    if (since != null) {
+      parts.push("timestamp >= ?");
+      params.push(since);
+    }
+    if (until != null) {
+      parts.push("timestamp <= ?");
+      params.push(until);
+    }
+    if (procedureId) {
+      parts.push("procedure_id = ?");
+      params.push(procedureId);
+    }
+
+    // FTS text search on event + context
+    if (query?.trim()) {
+      const sanitized = query
+        .replace(/['"*(){}:]/g, "")
+        .replace(/\b(NOT|AND|OR|NEAR)\b/gi, "")
+        .trim();
+      const words = sanitized
+        .split(/\s+/)
+        .filter((w) => w.length > 1)
+        .slice(0, 8)
+        .map((w) => `"${w}"`)
+        .join(" OR ");
+      if (words) {
+        // Use a subquery to get matching episode ids via FTS, then filter + join
+        parts.push(`id IN (SELECT episodes.rowid FROM episodes_fts WHERE episodes_fts MATCH '${words}')`);
+      }
+    }
+
+    const where = parts.length > 0 ? `WHERE ${parts.join(" AND ")}` : "";
+    const sql = `SELECT * FROM episodes ${where} ORDER BY timestamp DESC LIMIT ?`;
+    const rows = this.liveDb.prepare(sql).all(...params, limit) as Array<Record<string, unknown>>;
+    return rows.map((row) => this.rowToEpisodeEntry(row));
+  }
+
+  /**
+   * Count episodes by outcome for statistics.
+   */
+  episodesCount(): { total: number; success: number; failure: number; partial: number; unknown: number } {
+    const total = (
+      this.liveDb.prepare("SELECT COUNT(*) as cnt FROM episodes").get() as { cnt: number }
+    )?.cnt ?? 0;
+    const byOutcome = this.liveDb
+      .prepare("SELECT outcome, COUNT(*) as cnt FROM episodes GROUP BY outcome")
+      .all() as Array<{ outcome: string; cnt: number }>;
+    const success = byOutcome.find((r) => r.outcome === "success")?.cnt ?? 0;
+    const failure = byOutcome.find((r) => r.outcome === "failure")?.cnt ?? 0;
+    const partial = byOutcome.find((r) => r.outcome === "partial")?.cnt ?? 0;
+    const unknown = byOutcome.find((r) => r.outcome === "unknown")?.cnt ?? 0;
+    return { total, success, failure, partial, unknown };
   }
 }

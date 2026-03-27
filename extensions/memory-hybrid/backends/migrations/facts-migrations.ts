@@ -850,6 +850,38 @@ function migrateAccessCountAndLastAccessedAt(db: DatabaseSync): void {
   }
 }
 
+// Token-budget tiered trimming (Issue #792)
+function migratePreserveColumns(db: DatabaseSync): void {
+  const cols = db.prepare("PRAGMA table_info(facts)").all() as Array<{ name: string }>;
+  const colNames = new Set(cols.map((c) => c.name));
+  if (!colNames.has("preserve_until")) {
+    db.exec("ALTER TABLE facts ADD COLUMN preserve_until INTEGER");
+    db.exec("CREATE INDEX IF NOT EXISTS idx_facts_preserve_until ON facts(preserve_until) WHERE preserve_until IS NOT NULL");
+  }
+  if (!colNames.has("preserve_tags")) {
+    db.exec("ALTER TABLE facts ADD COLUMN preserve_tags TEXT");
+  }
+}
+
+function migrateTrimMetricsTable(db: DatabaseSync): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS trim_metrics (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      trimmed_at INTEGER NOT NULL,
+      fact_id TEXT NOT NULL,
+      fact_text_preview TEXT NOT NULL,
+      tier TEXT NOT NULL,
+      importance REAL NOT NULL,
+      preserve_until INTEGER,
+      token_cost INTEGER NOT NULL,
+      budget_before INTEGER NOT NULL,
+      budget_after INTEGER NOT NULL
+    )
+  `);
+  db.exec("CREATE INDEX IF NOT EXISTS idx_trim_metrics_trimmed_at ON trim_metrics(trimmed_at)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_trim_metrics_fact_id ON trim_metrics(fact_id)");
+}
+
 // ---------------------------------------------------------------------------
 // Migration runner
 // ---------------------------------------------------------------------------
@@ -925,4 +957,8 @@ export function runFactsMigrations(db: DatabaseSync): void {
   // Scan cursors and access salience
   migrateScanCursorsTable(db);
   migrateAccessCountAndLastAccessedAt(db);
+
+  // Token-budget tiered trimming (Issue #792)
+  migratePreserveColumns(db);
+  migrateTrimMetricsTable(db);
 }

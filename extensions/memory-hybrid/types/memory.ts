@@ -76,6 +76,18 @@ export type MemoryEntry = {
    * Null = no freeze (normal decay applies).
    */
   decayFreezeUntil?: number | null;
+  /**
+   * Force-preservation: epoch seconds until which this fact MUST NOT be trimmed.
+   * Null = no forced preservation (normal tier-based retention applies).
+   * Implemented by trimToBudget().
+   */
+  preserveUntil?: number | null;
+  /**
+   * Force-preservation tags: if any of these tags are present, the fact is
+   * protected from trimming regardless of importance tier.
+   * Set via `memory preserve <id> --tag <tag>`.
+   */
+  preserveTags?: string[] | null;
 };
 
 /** Memory scoping — global (all), user (per-user), agent (per-agent), session (ephemeral). */
@@ -131,4 +143,43 @@ export type SearchResult = {
   entry: MemoryEntry;
   score: number;
   backend: "sqlite" | "lancedb";
+};
+
+/** Outcome of an episodic event — discriminated literal for type-safe filtering. */
+export type EpisodeOutcome = "success" | "failure" | "partial" | "unknown";
+
+/**
+ * Episodic memory entry — structured event/outcome storage with timestamps (#781).
+ * Episodes are stored in the episodes table (with indexed outcome+timestamp columns)
+ * and mirrored as vectors in LanceDB (same table as facts, filtered by category="episode").
+ *
+ * Episodes with outcome="failure" are auto-boosted to importance >= 0.8 at store time.
+ */
+export type EpisodeEntry = {
+  id: string;
+  category: "episode";
+  /** What happened (e.g. "deployed openclaw to Doris", "upgraded Doris"). */
+  event: string;
+  /** Discriminated outcome — used as first-class filter column in SQLite. */
+  outcome: EpisodeOutcome;
+  /** Unix epoch (seconds) — when the event occurred. */
+  timestamp: number;
+  /** Optional: how long the event took in milliseconds. */
+  duration?: number;
+  /** Context: what led up to it, environment state, etc. */
+  context?: string;
+  /** Related fact IDs for graph traversal. */
+  relatedFactIds?: string[];
+  /** Procedure that triggered this episode (if applicable). */
+  procedureId?: string;
+  /** Standard memory fields */
+  importance: number;
+  decayClass: DecayClass;
+  scope: MemoryScope;
+  agentId?: string;
+  userId?: string;
+  sessionId?: string;
+  tags: string[];
+  createdAt: number;
+  verifiedAt?: number;
 };
