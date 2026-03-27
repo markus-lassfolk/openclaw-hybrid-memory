@@ -155,33 +155,33 @@ export class EdictStore extends BaseSqliteStore {
           updated_at INTEGER NOT NULL
         )
       `);
-      
+
       // Copy existing data, generating IDs for rows that don't have them
       const oldRows = this.liveDb.prepare("SELECT * FROM edicts").all() as Array<Record<string, unknown>>;
       const insertStmt = this.liveDb.prepare(
         `INSERT INTO edicts_new (id, text, source, verified_at, expires_at, ttl, tags, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       );
-      
+
       for (const row of oldRows) {
         const id = `e_${randomUUID().replace(/-/g, "").slice(0, 12)}`;
         insertStmt.run(
           id,
-          row.text,
-          row.source,
-          row.verified_at,
-          row.expires_at,
-          row.ttl,
-          row.tags,
-          row.created_at,
-          row.updated_at
+          row.text as SQLInputValue,
+          row.source as SQLInputValue,
+          row.verified_at as SQLInputValue,
+          row.expires_at as SQLInputValue,
+          row.ttl as SQLInputValue,
+          row.tags as SQLInputValue,
+          row.created_at as SQLInputValue,
+          row.updated_at as SQLInputValue,
         );
       }
-      
+
       // Replace old table with new table
       this.liveDb.exec("DROP TABLE edicts");
       this.liveDb.exec("ALTER TABLE edicts_new RENAME TO edicts");
-      
+
       // Recreate indexes after table recreation
       this.liveDb.exec(`
         CREATE INDEX IF NOT EXISTS idx_edicts_tags ON edicts(tags)

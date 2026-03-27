@@ -46,7 +46,10 @@ const SUCCESS_PATTERNS: OutcomePattern[] = [
   { regex: /✅/i, label: "success" },
   // Explicit success language with context
   { regex: /\b(?:task|build|test|deployment|operation|request|action)\s+succeeded\b/i, label: "succeeded" },
-  { regex: /\b(?:successfully\s+)?completed\s+(?:the\s+)?(?:task|build|test|deployment|operation|request|action)\b/i, label: "completed" },
+  {
+    regex: /\b(?:successfully\s+)?completed\s+(?:the\s+)?(?:task|build|test|deployment|operation|request|action)\b/i,
+    label: "completed",
+  },
   { regex: /\b(?:successfully\s+)?fixed\s+(?:the\s+)?(?:issue|bug|problem|error)\b/i, label: "fixed" },
   { regex: /\b(?:all\s+)?tests?\s+passed\b/i, label: "passed" },
   { regex: /\b(?:successfully\s+)?deployed\s+(?:to|the)\b/i, label: "deployed" },
