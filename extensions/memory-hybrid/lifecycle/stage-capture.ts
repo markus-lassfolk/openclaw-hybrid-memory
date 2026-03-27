@@ -500,6 +500,16 @@ async function runCapture(
       for (const pattern of FAILURE_PATTERNS) {
         const match = pattern.regex.exec(text);
         if (match) {
+          // Check for positive resolution context around the match
+          const matchIndex = match.index;
+          const contextStart = Math.max(0, matchIndex - 50);
+          const contextEnd = Math.min(text.length, matchIndex + match[0].length + 50);
+          const context = text.slice(contextStart, contextEnd);
+          const positivePattern =
+            /\b(?:fixed|resolved|solved|corrected|patched|repaired|handled|addressed|cleared|eliminated|prevented|avoided|mitigated)\b/i;
+          if (positivePattern.test(context)) {
+            continue; // Skip this failure pattern if positive resolution is detected nearby
+          }
           failureDetected = true;
           const eventText = pattern.label ? `Agent reported: ${pattern.label}` : match[0];
           const sinceTimestamp = Math.floor(Date.now() / 1000) - 300;
