@@ -248,7 +248,7 @@ export class RecentMentionsDB extends BaseSqliteStore {
     const nowSec = Math.floor(Date.now() / 1000);
     const cutoff = nowSec - this.ttlDays * 24 * 3600;
     const result = this.liveDb
-      .prepare("DELETE FROM recent_mentions WHERE last_seen < ? AND auto_stored = 1")
+      .prepare("DELETE FROM recent_mentions WHERE last_seen < ?")
       .run(cutoff);
     const changes = typeof result.changes === "bigint" ? Number(result.changes) : result.changes;
     if (changes > 0) {

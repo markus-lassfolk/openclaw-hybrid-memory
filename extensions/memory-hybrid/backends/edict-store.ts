@@ -12,12 +12,12 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import { BaseSqliteStore } from "./base-sqlite-store.js";
 import { capturePluginError } from "../services/error-reporter.js";
-import { parseTags, serializeTags } from "../utils/tags.js";
+import { parseTags, serializeTags, normalizedHash } from "../utils/tags.js";
 
 /** TTL modes for edicts */
 export type EdictTtl = "never" | "event" | number;
@@ -124,7 +124,8 @@ export class EdictStore extends BaseSqliteStore {
         ttl TEXT NOT NULL DEFAULT 'never',
         tags TEXT,
         created_at INTEGER NOT NULL,
-        updated_at INTEGER NOT NULL
+        updated_at INTEGER NOT NULL,
+        normalized_hash TEXT
       )
     `);
 
@@ -136,6 +137,11 @@ export class EdictStore extends BaseSqliteStore {
     this.liveDb.exec(`
       CREATE INDEX IF NOT EXISTS idx_edicts_expires ON edicts(expires_at)
         WHERE expires_at IS NOT NULL
+    `);
+
+    this.liveDb.exec(`
+      CREATE INDEX IF NOT EXISTS idx_edicts_normalized_hash ON edicts(normalized_hash)
+        WHERE normalized_hash IS NOT NULL
     `);
 
     // Ensure the id column is present (backward compat for edicts created before id was added)
@@ -152,22 +158,24 @@ export class EdictStore extends BaseSqliteStore {
           ttl TEXT NOT NULL DEFAULT 'never',
           tags TEXT,
           created_at INTEGER NOT NULL,
-          updated_at INTEGER NOT NULL
+          updated_at INTEGER NOT NULL,
+          normalized_hash TEXT
         )
       `);
 
       // Copy existing data, generating IDs for rows that don't have them
       const oldRows = this.liveDb.prepare("SELECT * FROM edicts").all() as Array<Record<string, unknown>>;
       const insertStmt = this.liveDb.prepare(
-        `INSERT INTO edicts_new (id, text, source, verified_at, expires_at, ttl, tags, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO edicts_new (id, text, source, verified_at, expires_at, ttl, tags, created_at, updated_at, normalized_hash)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       );
 
       for (const row of oldRows) {
         const id = `e_${randomUUID().replace(/-/g, "").slice(0, 12)}`;
+        const text = row.text as string;
         insertStmt.run(
           id,
-          row.text as SQLInputValue,
+          text,
           row.source as SQLInputValue,
           row.verified_at as SQLInputValue,
           row.expires_at as SQLInputValue,
@@ -175,6 +183,7 @@ export class EdictStore extends BaseSqliteStore {
           row.tags as SQLInputValue,
           row.created_at as SQLInputValue,
           row.updated_at as SQLInputValue,
+          normalizedHash(text),
         );
       }
 
@@ -191,6 +200,30 @@ export class EdictStore extends BaseSqliteStore {
         CREATE INDEX IF NOT EXISTS idx_edicts_expires ON edicts(expires_at)
           WHERE expires_at IS NOT NULL
       `);
+      this.liveDb.exec(`
+        CREATE INDEX IF NOT EXISTS idx_edicts_normalized_hash ON edicts(normalized_hash)
+          WHERE normalized_hash IS NOT NULL
+      `);
+    }
+
+    // Add normalized_hash column if missing (for existing databases)
+    if (!tableInfo.some((c) => c.name === "normalized_hash")) {
+      this.liveDb.exec("ALTER TABLE edicts ADD COLUMN normalized_hash TEXT");
+      this.liveDb.exec(`
+        CREATE INDEX IF NOT EXISTS idx_edicts_normalized_hash ON edicts(normalized_hash)
+          WHERE normalized_hash IS NOT NULL
+      `);
+      // Backfill normalized_hash for existing rows
+      const rows = this.liveDb.prepare("SELECT id, text FROM edicts WHERE normalized_hash IS NULL").all() as Array<{
+        id: string;
+        text: string;
+      }>;
+      if (rows.length > 0) {
+        const stmt = this.liveDb.prepare("UPDATE edicts SET normalized_hash = ? WHERE id = ?");
+        for (const row of rows) {
+          stmt.run(normalizedHash(row.text), row.id);
+        }
+      }
     }
   }
 
@@ -232,23 +265,24 @@ export class EdictStore extends BaseSqliteStore {
       expiresAt = null;
     }
 
-    // Check for duplicate text (case-insensitive, normalized whitespace)
-    const normalizedText = input.text.trim().replace(/\s+/g, " ").toLowerCase();
-    const existing = this.findByNormalizedText(normalizedText);
+    // Check for duplicate text using normalized hash
+    const textTrimmed = input.text.trim();
+    const hash = normalizedHash(textTrimmed);
+    const existing = this.findByNormalizedHash(hash);
     if (existing) {
       throw new Error(`Edict with similar text already exists: ${existing.id}`);
     }
 
     this.liveDb
       .prepare(
-        `INSERT INTO edicts (id, text, source, verified_at, expires_at, ttl, tags, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO edicts (id, text, source, verified_at, expires_at, ttl, tags, created_at, updated_at, normalized_hash)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
-      .run(id, input.text.trim(), source, nowSec, expiresAt, ttlStr, tagsStr, nowSec, nowSec);
+      .run(id, textTrimmed, source, nowSec, expiresAt, ttlStr, tagsStr, nowSec, nowSec, hash);
 
     return {
       id,
-      text: input.text.trim(),
+      text: textTrimmed,
       source,
       verifiedAt: nowSec,
       expiresAt,
@@ -259,16 +293,12 @@ export class EdictStore extends BaseSqliteStore {
     };
   }
 
-  /** Find an edict by normalized text (for duplicate detection) */
-  private findByNormalizedText(normalized: string): EdictEntry | null {
-    const rows = this.liveDb.prepare("SELECT * FROM edicts").all() as Array<Record<string, unknown>>;
-    for (const row of rows) {
-      const storedText = (row.text as string).trim().replace(/\s+/g, " ").toLowerCase();
-      if (storedText === normalized) {
-        return this.rowToEntry(row);
-      }
-    }
-    return null;
+  /** Find an edict by normalized hash (for duplicate detection) */
+  private findByNormalizedHash(hash: string): EdictEntry | null {
+    const row = this.liveDb.prepare("SELECT * FROM edicts WHERE normalized_hash = ? LIMIT 1").get(hash) as
+      | Record<string, unknown>
+      | undefined;
+    return row ? this.rowToEntry(row) : null;
   }
 
   /** Get a single edict by id */
