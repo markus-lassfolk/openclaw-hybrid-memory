@@ -40,8 +40,8 @@ interface OutcomePattern {
 /** Patterns that indicate a successful outcome. */
 const SUCCESS_PATTERNS: OutcomePattern[] = [
   // Git merge / PR merge
-  { regex: /✅\s*(?:merged|Merge)/i, label: "merged" },
-  { regex: /\b(?:successfully\s+)?(?:merged|Merge)\b/i, label: "merged" },
+  { regex: /✅\s*merged/i, label: "merged" },
+  { regex: /\b(?:successfully\s+)?merged\b/i, label: "merged" },
   // Checkmark / success
   { regex: /✅/i, label: "success" },
   // Explicit success language
@@ -496,18 +496,18 @@ async function runCapture(
 
     for (const { text } of sessionTexts) {
       let episodeCreated = false;
-      // Scan for success indicators
-      for (const pattern of SUCCESS_PATTERNS) {
+      // Scan for failure indicators first (they are more specific)
+      for (const pattern of FAILURE_PATTERNS) {
         const match = pattern.regex.exec(text);
         if (match) {
           const eventText = pattern.label ? `Agent reported: ${pattern.label}` : match[0];
-          const sinceTimestamp = Math.floor(Date.now() / 1000) - 300; // within last 5 min
+          const sinceTimestamp = Math.floor(Date.now() / 1000) - 300;
           const hasDuplicate = ctx.factsDb.hasRecentEpisodeWithEvent(eventText, sinceTimestamp);
           if (!hasDuplicate) {
             try {
               const episode = ctx.factsDb.recordEpisode({
                 event: eventText,
-                outcome: "success",
+                outcome: "failure",
                 timestamp: Math.floor(Date.now() / 1000),
                 context: text.slice(0, 500),
                 sessionId,
@@ -515,34 +515,44 @@ async function runCapture(
                 scope: "session",
                 scopeTarget: sessionId,
                 tags: pattern.label ? [pattern.label] : [],
+                // failures get importance >= 0.8 automatically via recordEpisode
               });
-              api.logger.debug?.(`memory-hybrid: auto-captured success episode: ${episode.id}`);
+              api.logger.debug?.(`memory-hybrid: auto-captured failure episode: ${episode.id}`);
               episodeCreated = true;
             } catch (err) {
               capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-                operation: "episode-auto-capture-success",
+                operation: "episode-auto-capture-failure",
                 subsystem: "episodes",
                 severity: "info",
               });
             }
           }
-          break; // only one episode per message
+          break;
         }
       }
 
-      // Scan for failure indicators (skip if success episode was already created)
+      // Scan for success indicators (skip if failure episode was already created)
       if (!episodeCreated) {
-        for (const pattern of FAILURE_PATTERNS) {
+        for (const pattern of SUCCESS_PATTERNS) {
           const match = pattern.regex.exec(text);
           if (match) {
+            // Check for negation context around the match
+            const matchIndex = match.index;
+            const contextStart = Math.max(0, matchIndex - 50);
+            const contextEnd = Math.min(text.length, matchIndex + match[0].length + 50);
+            const context = text.slice(contextStart, contextEnd);
+            const negationPattern = /\b(?:not|no|never|didn't|doesn't|don't|hasn't|haven't|isn't|aren't|wasn't|weren't|failed to|unable to|couldn't|can't|won't)\b/i;
+            if (negationPattern.test(context)) {
+              continue; // Skip this success pattern if negation is detected nearby
+            }
             const eventText = pattern.label ? `Agent reported: ${pattern.label}` : match[0];
-            const sinceTimestamp = Math.floor(Date.now() / 1000) - 300;
+            const sinceTimestamp = Math.floor(Date.now() / 1000) - 300; // within last 5 min
             const hasDuplicate = ctx.factsDb.hasRecentEpisodeWithEvent(eventText, sinceTimestamp);
             if (!hasDuplicate) {
               try {
                 const episode = ctx.factsDb.recordEpisode({
                   event: eventText,
-                  outcome: "failure",
+                  outcome: "success",
                   timestamp: Math.floor(Date.now() / 1000),
                   context: text.slice(0, 500),
                   sessionId,
@@ -550,18 +560,17 @@ async function runCapture(
                   scope: "session",
                   scopeTarget: sessionId,
                   tags: pattern.label ? [pattern.label] : [],
-                  // failures get importance >= 0.8 automatically via recordEpisode
                 });
-                api.logger.debug?.(`memory-hybrid: auto-captured failure episode: ${episode.id}`);
+                api.logger.debug?.(`memory-hybrid: auto-captured success episode: ${episode.id}`);
               } catch (err) {
                 capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-                  operation: "episode-auto-capture-failure",
+                  operation: "episode-auto-capture-success",
                   subsystem: "episodes",
                   severity: "info",
                 });
               }
             }
-            break;
+            break; // only one episode per message
           }
         }
       }
