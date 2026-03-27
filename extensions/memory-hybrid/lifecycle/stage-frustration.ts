@@ -2,7 +2,7 @@
  * Lifecycle: frustration detection and tool-hint injection (Phase 2.3).
  */
 
-import type { ClawdbotPluginApi } from "openclaw/plugin-sdk";
+import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import { capturePluginError } from "../services/error-reporter.js";
 import { buildFrustrationHint, detectFrustration, exportAsImplicitSignals } from "../services/frustration-detector.js";
 import { ToolEffectivenessStore, generateToolHint } from "../services/tool-effectiveness.js";

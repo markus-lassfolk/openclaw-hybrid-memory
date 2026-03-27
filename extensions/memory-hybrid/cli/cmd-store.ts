@@ -103,6 +103,7 @@ export async function runStoreForCli(
       } catch (err) {
         // Compensating delete: vault write succeeded but pointer write failed
         try {
+          // biome-ignore lint/suspicious/noExplicitAny: credential type from parsed input
           credentialsDb.delete(parsed.service, parsed.type as any);
         } catch (cleanupErr) {
           log.warn(`memory-hybrid: Failed to clean up orphaned credential for ${parsed.service}: ${cleanupErr}`);

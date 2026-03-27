@@ -42,135 +42,6 @@ function migrateProcedureFailuresTable(db: DatabaseSync): void {
 }
 
 /** Create episodes table for episodic memory (#781). */
-function migrateEpisodesTable(db: DatabaseSync): void {
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS episodes (
-      id TEXT PRIMARY KEY,
-      event TEXT NOT NULL,
-      outcome TEXT NOT NULL CHECK(outcome IN ('success', 'failure', 'partial', 'unknown')),
-      timestamp INTEGER NOT NULL,
-      duration INTEGER,
-      context TEXT,
-      related_fact_ids TEXT,
-      procedure_id TEXT,
-      scope TEXT NOT NULL DEFAULT 'global',
-      scope_target TEXT,
-      agent_id TEXT,
-      user_id TEXT,
-      session_id TEXT,
-      importance REAL NOT NULL DEFAULT 0.5,
-      tags TEXT,
-      decay_class TEXT NOT NULL DEFAULT 'normal',
-      created_at INTEGER NOT NULL,
-      verified_at INTEGER
-    )
-  `);
-
-  db.exec(`
-    CREATE INDEX IF NOT EXISTS idx_episodes_timestamp ON episodes(timestamp DESC)
-  `);
-  db.exec(`
-    CREATE INDEX IF NOT EXISTS idx_episodes_outcome ON episodes(outcome)
-  `);
-  db.exec(`
-    CREATE INDEX IF NOT EXISTS idx_episodes_procedure_id ON episodes(procedure_id) WHERE procedure_id IS NOT NULL
-  `);
-  db.exec(`
-    CREATE INDEX IF NOT EXISTS idx_episodes_session_id ON episodes(session_id) WHERE session_id IS NOT NULL
-  `);
-
-  // Episode relations: links episodes to other entities (facts, procedures) without FK constraints to avoid
-  // the episodes→facts FK problem. Each row represents a typed relationship (PART_OF, CAUSED_BY, etc.).
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS episode_relations (
-      id TEXT PRIMARY KEY,
-      episode_id TEXT NOT NULL,
-      target_id TEXT NOT NULL,
-      relation_type TEXT NOT NULL DEFAULT 'PART_OF',
-      strength REAL NOT NULL DEFAULT 1.0,
-      created_at INTEGER NOT NULL
-    )
-  `);
-  db.exec(`
-    CREATE INDEX IF NOT EXISTS idx_episode_relations_episode ON episode_relations(episode_id) WHERE episode_id IS NOT NULL
-  `);
-  db.exec(`
-    CREATE INDEX IF NOT EXISTS idx_episode_relations_target ON episode_relations(target_id) WHERE target_id IS NOT NULL
-  `);
-
-  // FTS5 virtual table for full-text search on episodes (event + context)
-  db.exec(`
-    CREATE VIRTUAL TABLE IF NOT EXISTS episodes_fts USING fts5(
-      event,
-      context,
-      content='episodes',
-      content_rowid='rowid',
-      tokenize='porter unicode61'
-    )
-  `);
-
-  // Idempotent: check if triggers already exist before creating
-  const triggerRows = db
-    .prepare("SELECT name FROM sqlite_master WHERE type='trigger' AND name LIKE 'episodes_fts_%'")
-    .all() as Array<{ name: string }>;
-  const existingTriggers = new Set(triggerRows.map((r) => r.name));
-
-  if (!existingTriggers.has("episodes_fts_ai")) {
-    db.exec(`
-      CREATE TRIGGER episodes_fts_ai AFTER INSERT ON episodes BEGIN
-        INSERT INTO episodes_fts(rowid, event, context)
-        VALUES (new.rowid, new.event, new.context);
-      END
-    `);
-  }
-  if (!existingTriggers.has("episodes_fts_ad")) {
-    // FIX #781 bug: the original DELETE trigger used the FTS5 shadow-table column names
-    // directly in the INSERT VALUES list, which fails because those columns don't exist
-    // on an FTS5 content= table. The correct form passes the FTS table name + rowid token
-    // ('delete') and omits the content columns — FTS5 queries the content= table automatically.
-    db.exec(`
-      CREATE TRIGGER episodes_fts_ad AFTER DELETE ON episodes BEGIN
-        INSERT INTO episodes_fts(episodes_fts, rowid, event, context)
-        VALUES ('delete', old.rowid, old.event, old.context);
-      END
-    `);
-  }
-  if (!existingTriggers.has("episodes_fts_au")) {
-    db.exec(`
-      CREATE TRIGGER episodes_fts_au AFTER UPDATE ON episodes BEGIN
-        INSERT INTO episodes_fts(episodes_fts, rowid, event, context)
-        VALUES ('delete', old.rowid, old.event, old.context);
-        INSERT INTO episodes_fts(rowid, event, context)
-        VALUES (new.rowid, new.event, new.context);
-      END
-    `);
-  }
-
-  // Backfill FTS index with existing episodes
-  const countRow = db.prepare("SELECT COUNT(*) as cnt FROM episodes_fts").get() as { cnt: number } | undefined;
-  if (countRow && countRow.cnt === 0) {
-    db.exec(`
-      INSERT INTO episodes_fts(rowid, event, context)
-      SELECT rowid, event, context FROM episodes
-    `);
-  }
-}
-
-/**
- * FactsDB schema migrations.
- *
- * Each function is idempotent (safe to run on an already-migrated database).
- * `runFactsMigrations` runs them in the canonical order required for correctness.
- */
-
-import type { DatabaseSync } from "node:sqlite";
-import { createTransaction } from "../../utils/sqlite-transaction.js";
-import { normalizedHash } from "../../utils/tags.js";
-
-// ---------------------------------------------------------------------------
-// Individual migration functions
-// ---------------------------------------------------------------------------
-
 function migrateDecayColumns(db: DatabaseSync): void {
   const cols = db.prepare("PRAGMA table_info(facts)").all() as Array<{ name: string }>;
   const colNames = new Set(cols.map((c) => c.name));
@@ -1008,6 +879,40 @@ function migrateAccessCountAndLastAccessedAt(db: DatabaseSync): void {
   }
 }
 
+// Token-budget tiered trimming (Issue #792)
+function migratePreserveColumns(db: DatabaseSync): void {
+  const cols = db.prepare("PRAGMA table_info(facts)").all() as Array<{ name: string }>;
+  const colNames = new Set(cols.map((c) => c.name));
+  if (!colNames.has("preserve_until")) {
+    db.exec("ALTER TABLE facts ADD COLUMN preserve_until INTEGER");
+    db.exec(
+      "CREATE INDEX IF NOT EXISTS idx_facts_preserve_until ON facts(preserve_until) WHERE preserve_until IS NOT NULL",
+    );
+  }
+  if (!colNames.has("preserve_tags")) {
+    db.exec("ALTER TABLE facts ADD COLUMN preserve_tags TEXT");
+  }
+}
+
+function migrateTrimMetricsTable(db: DatabaseSync): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS trim_metrics (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      trimmed_at INTEGER NOT NULL,
+      fact_id TEXT NOT NULL,
+      fact_text_preview TEXT NOT NULL,
+      tier TEXT NOT NULL,
+      importance REAL NOT NULL,
+      preserve_until INTEGER,
+      token_cost INTEGER NOT NULL,
+      budget_before INTEGER NOT NULL,
+      budget_after INTEGER NOT NULL
+    )
+  `);
+  db.exec("CREATE INDEX IF NOT EXISTS idx_trim_metrics_trimmed_at ON trim_metrics(trimmed_at)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_trim_metrics_fact_id ON trim_metrics(fact_id)");
+}
+
 // ---------------------------------------------------------------------------
 // Migration runner
 // ---------------------------------------------------------------------------
@@ -1084,6 +989,11 @@ export function runFactsMigrations(db: DatabaseSync): void {
   migrateScanCursorsTable(db);
   migrateAccessCountAndLastAccessedAt(db);
 
+  // Token-budget tiered trimming (Issue #792)
+  migratePreserveColumns(db);
+  migrateTrimMetricsTable(db);
+
+  // Episodic memory (Issue #781)
   // Procedural feedback loop (#782)
   migrateProcedureVersionsTable(db);
   migrateProcedureFailuresTable(db);

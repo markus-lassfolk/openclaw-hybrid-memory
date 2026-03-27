@@ -1,36 +1,36 @@
-import { DEFAULT_GLITCHTIP_DSN } from "../../services/error-reporter.js";
-import { pluginLogger } from "../../utils/logger.js";
-import type { PersonaProposalsConfig } from "../types/agents.js";
-import { IDENTITY_FILE_TYPES, type IdentityFileType } from "../types/agents.js";
 import type {
-  AliasesConfig,
-  AmbientConfig,
-  ApiTapConfig,
-  ClosedLoopConfig,
-  ClustersConfig,
-  CostTrackingConfig,
-  CrossAgentLearningConfig,
-  CrystallizationConfig,
-  DashboardConfig,
-  DocumentsConfig,
-  FrequencyCaptureConfig,
-  FrustrationDetectionConfig,
-  FrustrationSignalWeights,
-  FutureDateProtectionConfig,
-  GapsConfig,
   GraphConfig,
   GraphRetrievalConfig,
-  HumanizerConfig,
-  ImplicitFeedbackConfig,
-  ImplicitSignalType,
+  ClustersConfig,
+  GapsConfig,
+  AliasesConfig,
   IngestConfig,
   MemoryTieringConfig,
+  AmbientConfig,
   ReinforcementConfig,
-  SelfExtensionConfig,
-  ToolEffectivenessConfig,
+  FutureDateProtectionConfig,
+  DocumentsConfig,
   WorkflowTrackingConfig,
+  CrystallizationConfig,
+  SelfExtensionConfig,
+  ImplicitFeedbackConfig,
+  ImplicitSignalType,
+  ClosedLoopConfig,
+  FrustrationDetectionConfig,
+  FrustrationSignalWeights,
+  CrossAgentLearningConfig,
+  ToolEffectivenessConfig,
+  CostTrackingConfig,
+  DashboardConfig,
+  ApiTapConfig,
+  HumanizerConfig,
+  FrequencyCaptureConfig,
 } from "../types/features.js";
+import type { PersonaProposalsConfig } from "../types/agents.js";
+import { IDENTITY_FILE_TYPES, type IdentityFileType } from "../types/agents.js";
 import type { ErrorReportingConfig, MultiAgentConfig } from "../types/index.js";
+import { DEFAULT_GLITCHTIP_DSN } from "../../services/error-reporter.js";
+import { pluginLogger } from "../../utils/logger.js";
 
 export function parseGraphConfig(cfg: Record<string, unknown>): GraphConfig {
   const graphRaw = cfg.graph as Record<string, unknown> | undefined;

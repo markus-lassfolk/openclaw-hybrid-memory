@@ -1,7 +1,7 @@
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { tmpdir } from "node:os";
 import { _testing } from "../index.js";
 
 const { FactsDB } = _testing;
@@ -2914,7 +2914,7 @@ describe("FactsDB Episodes", () => {
       const episode = db.recordEpisode({ event: "get test", outcome: "success" });
       const retrieved = db.getEpisode(episode.id);
       expect(retrieved).not.toBeNull();
-      expect(retrieved!.event).toBe("get test");
+      expect(retrieved?.event).toBe("get test");
     });
 
     it("getEpisode returns null for unknown id", () => {

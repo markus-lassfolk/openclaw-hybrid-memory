@@ -14,7 +14,7 @@
  *   GET /plugins/memory-dashboard/api/health — JSON health report
  */
 
-import type { ClawdbotPluginApi } from "openclaw/plugin-sdk";
+import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import type { HealthConfig } from "../config/types/maintenance.js";
 
 /** Minimal type for the registerHttpRoute API available in OpenClaw v2026.3.8+. */

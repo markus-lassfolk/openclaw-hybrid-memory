@@ -1,47 +1,47 @@
-import { constants, existsSync, readFileSync } from "node:fs";
-import { open } from "node:fs/promises";
 /** @module init-databases — Provider routing, cost instrumentation, and database bootstrap. */
 import { dirname, join } from "node:path";
+import { existsSync, readFileSync, constants } from "node:fs";
+import { open } from "node:fs/promises";
 import OpenAI from "openai";
-import type { ClawdbotPluginApi } from "openclaw/plugin-sdk";
-import type { ApitapStore } from "../backends/apitap-store.js";
-import { CostTracker } from "../backends/cost-tracker.js";
-import type { CredentialsDB } from "../backends/credentials-db.js";
-import type { CrystallizationStore } from "../backends/crystallization-store.js";
-import type { EdictStore } from "../backends/edict-store.js";
-import type { EventLog } from "../backends/event-log.js";
+import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
+import { resolveSecretRef, normalizeResolvedSecretValue } from "../config/parsers/core.js";
 import type { FactsDB } from "../backends/facts-db.js";
-import type { IssueStore } from "../backends/issue-store.js";
-import { NarrativesDB } from "../backends/narratives-db.js";
-import type { ProposalsDB } from "../backends/proposals-db.js";
-import type { ToolProposalStore } from "../backends/tool-proposal-store.js";
+import type { EdictStore } from "../backends/edict-store.js";
 import type { VectorDB } from "../backends/vector-db.js";
+import type { CredentialsDB } from "../backends/credentials-db.js";
+import type { ProposalsDB } from "../backends/proposals-db.js";
+import type { EventLog } from "../backends/event-log.js";
+import { NarrativesDB } from "../backends/narratives-db.js";
 import type { WriteAheadLog } from "../backends/wal.js";
-import type { WorkflowStore } from "../backends/workflow-store.js";
-import type { CredentialType, HybridMemoryConfig, LLMProviderConfig, ResolvedGatewayAuthConfig } from "../config.js";
-import { getMemoryCategories, setMemoryCategories } from "../config.js";
-import { normalizeResolvedSecretValue, resolveSecretRef } from "../config/parsers/core.js";
-import { UnconfiguredProviderError } from "../services/chat.js";
-import { getCurrentCostFeature } from "../services/cost-context.js";
-import { CREDENTIAL_REDACTION_MIGRATION_FLAG, migrateCredentialsToVault } from "../services/credential-migration.js";
-import { runEmbeddingMaintenance } from "../services/embedding-migration.js";
-import type { EmbeddingRegistry } from "../services/embedding-registry.js";
 import type { EmbeddingProvider } from "../services/embeddings.js";
-import { capturePluginError } from "../services/error-reporter.js";
-import { installCoreBootstrapServices, installOptionalBootstrapServices } from "../services/index.js";
-import type { ProvenanceService } from "../services/provenance.js";
-import type { AliasDB } from "../services/retrieval-aliases.js";
-import { invalidateClusterCache } from "../services/retrieval-orchestrator.js";
-import type { VerificationStore } from "../services/verification-store.js";
+import type { EmbeddingRegistry } from "../services/embedding-registry.js";
+import type { HybridMemoryConfig, LLMProviderConfig, CredentialType, ResolvedGatewayAuthConfig } from "../config.js";
+import { UnconfiguredProviderError } from "../services/chat.js";
+import { hasOAuthProfiles } from "../utils/auth.js";
 import {
-  DEFAULT_BACKOFF_MINUTES,
-  DEFAULT_RESET_AFTER_HOURS,
   isOAuthInBackoff,
   recordOAuthFailure,
+  DEFAULT_BACKOFF_MINUTES,
+  DEFAULT_RESET_AFTER_HOURS,
 } from "../utils/auth-failover.js";
-import { hasOAuthProfiles } from "../utils/auth.js";
 import { setKeywordsPath } from "../utils/language-keywords.js";
-import { isHeavyModel, isLightModel, isNanoModel } from "../utils/model-tier.js";
+import { setMemoryCategories, getMemoryCategories } from "../config.js";
+import { migrateCredentialsToVault, CREDENTIAL_REDACTION_MIGRATION_FLAG } from "../services/credential-migration.js";
+import { runEmbeddingMaintenance } from "../services/embedding-migration.js";
+import { capturePluginError } from "../services/error-reporter.js";
+import { getCurrentCostFeature } from "../services/cost-context.js";
+import type { AliasDB } from "../services/retrieval-aliases.js";
+import { invalidateClusterCache } from "../services/retrieval-orchestrator.js";
+import type { IssueStore } from "../backends/issue-store.js";
+import type { CrystallizationStore } from "../backends/crystallization-store.js";
+import type { ProvenanceService } from "../services/provenance.js";
+import type { WorkflowStore } from "../backends/workflow-store.js";
+import type { ToolProposalStore } from "../backends/tool-proposal-store.js";
+import type { VerificationStore } from "../services/verification-store.js";
+import { CostTracker } from "../backends/cost-tracker.js";
+import type { ApitapStore } from "../backends/apitap-store.js";
+import { isNanoModel, isHeavyModel, isLightModel } from "../utils/model-tier.js";
+import { installCoreBootstrapServices, installOptionalBootstrapServices } from "../services/index.js";
 
 /**
  * Provider prefixes that resolveClient() handles natively without explicit llm.providers config.

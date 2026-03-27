@@ -184,7 +184,7 @@ describe("sweepSessionHistory", () => {
         expect(Array.isArray(payload.sessions)).toBe(true);
       }
     } finally {
-      delete process.env.OPENCLAW_SESSION_DIR;
+      process.env.OPENCLAW_SESSION_DIR = undefined;
     }
   });
 
@@ -208,7 +208,7 @@ describe("sweepSessionHistory", () => {
       const events = bus.queryEvents({ type: "sensor.session-history" });
       expect(events.length).toBeLessThanOrEqual(1);
     } finally {
-      delete process.env.OPENCLAW_SESSION_DIR;
+      process.env.OPENCLAW_SESSION_DIR = undefined;
     }
   });
 });
@@ -429,7 +429,7 @@ describe("sweepAll", () => {
       expect(sensorNames).toContain("session-history");
       expect(sensorNames).toContain("memory-patterns");
     } finally {
-      delete process.env.OPENCLAW_SESSION_DIR;
+      process.env.OPENCLAW_SESSION_DIR = undefined;
     }
   });
 

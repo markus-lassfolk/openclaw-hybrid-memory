@@ -9,7 +9,7 @@
  */
 
 import { Type } from "@sinclair/typebox";
-import type { ClawdbotPluginApi } from "openclaw/plugin-sdk";
+import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import type { CrystallizationStore } from "../backends/crystallization-store.js";
 import type { WorkflowStore } from "../backends/workflow-store.js";
 import type { HybridMemoryConfig } from "../config.js";

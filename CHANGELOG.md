@@ -10,11 +10,90 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
-- **Procedure feedback loop (#782):** New `procedure_versions` and `procedure_failures` SQLite tables track per-version outcomes and individual failure events. New `procedureFeedback()` method on FactsDB handles success and failure feedback — failures bump the version number, create an avoidance note, and automatically create an episode record via `recordEpisode()`. New `memory_procedure_feedback` tool lets agents record procedure outcomes in context. `memory_recall_procedures` output now includes `lastOutcome`, `successRate`, and `avoidanceNotes` inline so the agent sees historical context before attempting a procedure. New `memory procedure show <id>` CLI command shows all versions, failure history, and avoidance notes for a procedure. `memory procedure list` lists all procedures with version/outcome summary. Procedure entries (`ProcedureEntry` type) now carry `version`, `lastOutcome`, `successRate`, and `avoidanceNotes` fields enriched from the version tracking system.
+- **Episodic Memory (#781):** New first-class `category: "episode"` memory type with structured fields: `event`, `outcome` (`success|failure|partial|unknown`), `timestamp`, `duration`, `context`, `relatedFactIds`, `procedureId`, scope, agent/user/session IDs, importance, tags, and decay class. Episodes are stored in a dedicated `episodes` SQLite table with indexed `outcome` and `timestamp` columns, and mirrored as vectors in LanceDB (same table as facts, filtered by `category="episode"`). Episodes with `outcome="failure"` are auto-boosted to `importance ≥ 0.8` at store time.
+
+- **`memory.record_episode()` tool:** Records an episodic event with structured outcome. Wraps `factsDb.storeEpisode()`. Auto-boosts failures to importance ≥ 0.8.
+
+- **`memory.search_episodes()` tool:** Queries episodes with optional outcome filter, time-range (`since`/`until`), `procedureId` filter, and semantic text search over `event + context`. Returns structured `Episode[]` ordered by timestamp DESC.
+
+- **Auto-capture in session compaction (#781):** During session-end compaction (`context-engine compact`), the session JSONL is scanned for outcome-indicating phrases (`✅ merged`, `❌ failed`, `🔧 fixed`, `⚠️ partial`, `FAILED`, `ERROR`, etc.) and episode records are auto-created for significant events.
+
+- **`FactsDB.episodesCount()` method:** Returns `{ total, success, failure, partial, unknown }` counts for episode statistics.
+
+- **`FactsDB.searchEpisodes()` method:** Supports outcome filter, time range, procedureId, FTS text search, and limit.
+
+- **`FactsDB.storeEpisode()` method:** Inserts episodes with outcome CHECK constraint, indexed columns, and auto-boost for failures.
+
+- **`FactsDB.getEpisode()` / `deleteEpisode()` methods:** Episode CRUD operations.
+
+- **`episodes_fts` FTS5 virtual table:** Semantic search over `event + context` for episodes.
+
+- **`episodes.test.ts` tests:** Full test suite covering episode CRUD, outcome filter, time-range filter, procedureId filter, limit, `episodesCount()`, and importance auto-boost.
+
+### Changed
+
+- **`DEFAULT_MEMORY_CATEGORIES`:** Added `"episode"` as a first-class category alongside `fact`, `preference`, `decision`, etc.
+
+- **`EpisodeEntry` type** added to `types/memory.ts` with full discriminated union for `outcome`.
+- **Edict memory type (#791):** New `category: "edict"` for verified ground-truth facts. Separate SQLite `edicts` table with TTL support (never/event/seconds). Six new tools: `memory.add_edict`, `memory.list_edicts`, `memory.get_edicts`, `memory.update_edict`, `memory.remove_edict`, `memory.edict_stats`. Edicts are forced-injected into system prompts before issue/narrative/hot blocks and are **never trimmed** by token budget pressure. Edict creation is **propose-only** — agents suggest via `[EDICT CANDIDATE]` GitHub comment; Markus (human) reviews and creates.
+
+- **Procedure feedback loop (#782):** New `procedure_versions` and `procedure_failures` SQLite tables track per-version outcomes and individual failure events. New `procedureFeedback()` method on FactsDB handles success and failure feedback — failures bump the version number, create an avoidance note, and automatically create an episode record via `recordEpisode()`. New `memory.procedure_feedback()` tool lets agents record procedure outcomes in context. `memory_recall_procedures` output now includes `lastOutcome`, `successRate`, and `avoidanceNotes` inline so the agent sees historical context before attempting a procedure. New `memory procedure show <id>` CLI command shows all versions, failure history, and avoidance notes for a procedure. `memory procedure list` lists all procedures with version/outcome summary. Procedure entries (`ProcedureEntry` type) now carry `version`, `lastOutcome`, `successRate`, and `avoidanceNotes` fields enriched from the version tracking system.
 
 - **Episodic memory (#781):** New `category: "episode"` first-class memory type for structured event records with explicit outcomes (`success`, `failure`, `partial`, `unknown`) and timestamps. Episodes are stored in a dedicated `episodes` SQLite table with indexed `timestamp` and `outcome` columns, searchable via FTS5. New `memory.record_episode()` tool creates episode records; `memory.search_episodes()` searches with outcome, time-range, and procedure filters. Failures are auto-boosted to importance ≥ 0.8. Session-end auto-capture scans for outcome-indicating phrases (✅, ❌, merged, FAILED, fixed, etc.) and creates episode records automatically.
 
 - **Frequency-based auto-save (#784):** New `recent_mentions` SQLite table tracks entity and credential mentions across sessions for frequency-based auto-capture. When a non-credential entity is mentioned `mentionThreshold`+ times, it's auto-saved as a memory. When a credential is mentioned, it's stored in the vault. Key design: SHA-256 hash of mention text for deduplication (never stores raw credential values); supersession key = `host+username+scope` for multi-credential per host support; configurable TTL purge for stale mention records. New `FrequencyCaptureConfig` with `enabled`, `mentionThreshold`, `lookbackSessions`, `defaultImportance`, `captureCredentials`, and `ttlDays` options. Credential pattern detection supports GitHub PATs, OpenAI keys, JWTs, SSH keys, and more.
+
+---
+
+## [2026.3.260] - 2026-03-26
+
+### Release summary
+
+A focused stability and usability release building on the large 2026.3.250 feature drop. Highlights: **Lineage Tracking** ("why" field on all memories and decisions), **flattened config schema** with backwards-compatible migration, **pinned-constraint auto-injection** before context compaction, and a comprehensive wave of LanceDB reliability fixes. All known LanceDB crash paths from 2026.3.250–251 are now resolved.
+
+### Added
+
+- **Lineage Tracking — "Why" field for files and decisions (#750, #752):** Every memory fact, file reference, and decision stored by the plugin now carries an optional `why` field capturing the reason it was created. The LanceDB schema and FTS5 index are both extended; `memory-tools` and CLI `vector store` commands support the new field. Enables provenance queries ("why was this fact stored?") and richer audit trails.
+- **Auto-inject pinned constraints before context compaction (#758):** Constraints marked as `pinned` in the memory store are now automatically re-injected into the context window immediately before compaction runs. Previously, pinned constraints could be silently dropped during aggressive compaction; they are now guaranteed to survive.
+- **Link timeline summaries to raw session logs (#766):** The session timeline UI now renders direct links from each summary entry to the underlying raw session log file, making it easy to jump from a high-level summary to the exact conversation that produced it.
+- **preferredProviders in embedding schema (#743):** The `openclaw.plugin.json` embedding schema now accepts a `preferredProviders` array, letting operators declare a preferred embedding provider order per-deployment without touching code.
+
+### Fixed
+
+- **LanceDB re-index race condition and ENOTEMPTY on LanceDB 0.27.x (#771):** Concurrent re-index operations on LanceDB 0.27.x could leave a partial `_tmp` directory and throw `ENOTEMPTY`. The re-index path now uses atomic rename semantics and a lock guard to prevent interleaving.
+- **LanceDB data file not found during vector-duplicate-check (#768, #774):** `hasDuplicate()` threw a file-not-found error on freshly initialised stores before the first write. The check now gracefully returns `false` when the underlying data file is absent.
+- **Crystallization pipeline produces zero proposals (#742, #773):** A logic inversion in the candidate scoring step caused the crystallization pipeline to filter out all proposals instead of the weakest ones. Fixed; pipeline now consistently produces ranked proposals.
+- **VectorDB schema error suppression tightened (#740, #753):** The `LANCE_NO_VECTOR_COL_MSG` error suppression was previously applied unconditionally, masking genuine schema errors. Guard now requires `!this.schemaValid` before suppressing, so real schema problems surface correctly.
+- **Vector dimension mismatch in LanceDB fallback queries (#764):** When the active embedding model returns a different dimension than what the LanceDB table was created with, fallback queries no longer crash — they skip the vector leg and return FTS-only results.
+- **SQLite FTS5 throws "unterminated string" on null bytes (#737, #738):** FTS5 queries containing null bytes (e.g. from binary clipboard content) caused an unhandled SQLite error. Input is now sanitized before FTS5 query construction.
+- **LanceDB concurrent-close null guard (#771):** Concurrent close calls on the LanceDB connection could dereference a null handle. Added null guard in the close path.
+- **`truncateForStorage` crashes on undefined/null input (#755, #756):** Two separate callers could pass `undefined` or `null` to `truncateForStorage`. Both paths now coerce to empty string before truncation.
+- **selfCorrection and implicitFeedback JSON schema missing `enabled` field (#765, #767):** The `enabled` toggle was accepted at runtime but omitted from the JSON schema, causing validation warnings. Both schemas now declare `enabled` explicitly.
+- **CLI config display: nightlyCycle enabled state always shown as false (#760):** The `hybrid-mem config` CLI output hardcoded `false` for the `nightlyCycle.enabled` field regardless of actual config. Now reads the live value correctly.
+- **`stringEnum` removed — replaced with inline implementation (#762):** A utility that was removed in a dependency update was still being imported. Replaced with a minimal inline implementation to restore correct schema validation.
+- **Suppress transient HTTP 500 errors from OpenAI to GlitchTip (#739, #759):** Transient 500 responses from OpenAI (server-side errors outside plugin control) are no longer reported as plugin errors in GlitchTip, reducing alert noise.
+- **Distill description referenced removed GOOGLE_API_KEY (#776):** The distillation step description mentioned `GOOGLE_API_KEY` which was removed in favour of `llm.heavy` tier config. Updated to reflect current setup.
+- **Google embedding model name (#743):** Default Google embedding updated from `text-embedding-005` (404) to `gemini-embedding-001` (current name).
+- **Azure embedding label in verify output:** The verify `--test-llm` table now correctly labels the Azure embedding provider row.
+- **CI: Biome format, lint error, and npm audit vulnerability (f240d914):** Three CI issues fixed on main: `vector-db.ts` Biome format (ternary line-length), `cmd-config.ts` unused `catch (e)` binding, `config-view-nightly-cycle.test.ts` missing `node:` import prefix, and `smol-toml` bumped to ≥1.6.1 (GHSA-v3rj-xjv7-4jmq, moderate DoS).
+
+### Changed
+
+- **Flattened config schema (#754, #776):** Three previously nested config keys are promoted to top-level:
+  - `implicitFeedback.trajectoryLLMAnalysis` → `trajectoryLLMAnalysis`
+  - `implicitFeedback.feedToSelfCorrection` → `feedToSelfCorrection`
+  - `distill.extractReinforcement` → `extractReinforcement`
+
+  Old nested keys continue to work during a migration period (deprecation warning logged when both are set). Top-level keys take precedence. Update your `openclaw.plugin.json` or agent config to use the new flat paths.
+
+- **VectorDB error handler precision:** Schema-error suppression now conditioned on `!this.schemaValid`, making error handling more surgical and preventing silent masking of genuine issues.
+
+### Dependencies
+
+- `yaml` bumped from 2.8.2 → 2.8.3 in `extensions/memory-hybrid`
+- `picomatch` bumped in both `extensions/memory-hybrid` and root workspace
+- Root workspace dependencies updated to latest patch versions
+- `smol-toml` bumped to ≥1.6.1 (security: GHSA-v3rj-xjv7-4jmq)
 
 ---
 

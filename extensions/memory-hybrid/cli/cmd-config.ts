@@ -7,16 +7,16 @@
  */
 
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { homedir } from "node:os";
 
-import { type ConfigMode, PRESET_OVERRIDES, hybridConfigSchema } from "../config.js";
+import { hybridConfigSchema, PRESET_OVERRIDES, type ConfigMode } from "../config.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { PLUGIN_ID, getRestartPendingPath } from "../utils/constants.js";
-import { getPluginConfigFromFile } from "./cmd-install.js";
 import type { HandlerContext } from "./handlers.js";
 import type { ConfigCliResult, VerifyCliSink } from "./types.js";
+import { getPluginConfigFromFile } from "./cmd-install.js";
 
 const MAX_DESC_LEN = 280;
 
@@ -122,7 +122,7 @@ export function runConfigViewForCli(ctx: HandlerContext, sink: VerifyCliSink): v
       const out = getPluginConfigFromFile(configPath);
       if ("config" in out) rawCfg = out.config;
     }
-  } catch (_e) { /* ignore */ }
+  } catch {}
 
   // Helper to get raw enabled flag if set, otherwise fallback to parsed config
   const rawEnabled = (key: string, parsedVal: boolean) => {

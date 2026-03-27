@@ -11,14 +11,12 @@
  * management and to ensure they are never pruned by normal memory decay.
  */
 
-import { randomUUID } from "node:crypto";
-import { mkdirSync } from "node:fs";
-import { dirname } from "node:path";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
-import { BaseSqliteStore } from "./base-sqlite-store.js";
+import { randomUUID } from "node:crypto";
+import { existsSync, mkdirSync } from "node:fs";
+import { dirname } from "node:path";
+import { serializeTags, parseTags } from "../utils/tags.js";
 import { capturePluginError } from "../services/error-reporter.js";
-import { parseTags, serializeTags, normalizedHash } from "../utils/tags.js";
-import { createTransaction } from "../utils/sqlite-transaction.js";
 
 /** TTL modes for edicts */
 export type EdictTtl = "never" | "event" | number;
@@ -94,7 +92,7 @@ export function renderEdictsForPrompt(edicts: EdictEntry[]): string {
   if (edicts.length === 0) return "";
   const header = "## Verified Ground Truth\n";
   const lines = edicts.map((e) => renderEdictLine(e));
-  return `${header}${lines.join("\n")}\n`;
+  return `${header + lines.join("\n")}\n`;
 }
 
 /** Escape a string for safe use as a SQLite LIKE pattern */
@@ -102,20 +100,22 @@ function escapeLikePattern(s: string): string {
   return s.replace(/[%_\\]/g, "\\$&");
 }
 
-export class EdictStore extends BaseSqliteStore {
+export class EdictStore {
   private readonly dbPath: string;
+  private readonly db: DatabaseSync;
 
   constructor(dbPath: string) {
     mkdirSync(dirname(dbPath), { recursive: true });
-    const db = new DatabaseSync(dbPath);
-    super(db);
     this.dbPath = dbPath;
+    this.db = new DatabaseSync(dbPath);
+    this.db.open();
+    
     this.runMigrations();
   }
 
   /** Run all schema migrations. Idempotent — safe to call on existing databases. */
   private runMigrations(): void {
-    this.liveDb.exec(`
+    this.db.exec(`
       CREATE TABLE IF NOT EXISTS edicts (
         id TEXT PRIMARY KEY,
         text TEXT NOT NULL,
@@ -125,113 +125,24 @@ export class EdictStore extends BaseSqliteStore {
         ttl TEXT NOT NULL DEFAULT 'never',
         tags TEXT,
         created_at INTEGER NOT NULL,
-        updated_at INTEGER NOT NULL,
-        normalized_hash TEXT
+        updated_at INTEGER NOT NULL
       )
     `);
 
-    this.liveDb.exec(`
+    this.db.exec(`
       CREATE INDEX IF NOT EXISTS idx_edicts_tags ON edicts(tags)
         WHERE tags IS NOT NULL AND tags != ''
     `);
 
-    this.liveDb.exec(`
+    this.db.exec(`
       CREATE INDEX IF NOT EXISTS idx_edicts_expires ON edicts(expires_at)
         WHERE expires_at IS NOT NULL
     `);
 
-    this.liveDb.exec(`
-      CREATE INDEX IF NOT EXISTS idx_edicts_normalized_hash ON edicts(normalized_hash)
-        WHERE normalized_hash IS NOT NULL
-    `);
-
     // Ensure the id column is present (backward compat for edicts created before id was added)
-    let tableInfo = this.liveDb.prepare("PRAGMA table_info(edicts)").all() as Array<{ name: string }>;
+    const tableInfo = this.db.prepare("PRAGMA table_info(edicts)").all() as Array<{ name: string }>;
     if (!tableInfo.some((c) => c.name === "id")) {
-      // SQLite doesn't support adding PRIMARY KEY via ALTER TABLE, so we need to recreate the table
-      // Wrap in transaction to prevent data loss if process crashes between DROP and RENAME
-      const migrate = createTransaction(this.liveDb, () => {
-        this.liveDb.exec(`
-          CREATE TABLE edicts_new (
-            id TEXT PRIMARY KEY,
-            text TEXT NOT NULL,
-            source TEXT,
-            verified_at INTEGER,
-            expires_at TEXT,
-            ttl TEXT NOT NULL DEFAULT 'never',
-            tags TEXT,
-            created_at INTEGER NOT NULL,
-            updated_at INTEGER NOT NULL,
-            normalized_hash TEXT
-          )
-        `);
-
-        // Copy existing data, generating IDs for rows that don't have them
-        const oldRows = this.liveDb.prepare("SELECT * FROM edicts").all() as Array<Record<string, unknown>>;
-        const insertStmt = this.liveDb.prepare(
-          `INSERT INTO edicts_new (id, text, source, verified_at, expires_at, ttl, tags, created_at, updated_at, normalized_hash)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        );
-
-        for (const row of oldRows) {
-          const id = `e_${randomUUID().replace(/-/g, "").slice(0, 12)}`;
-          const text = row.text as string;
-          insertStmt.run(
-            id,
-            text,
-            row.source as SQLInputValue,
-            row.verified_at as SQLInputValue,
-            row.expires_at as SQLInputValue,
-            row.ttl as SQLInputValue,
-            row.tags as SQLInputValue,
-            row.created_at as SQLInputValue,
-            row.updated_at as SQLInputValue,
-            normalizedHash(text),
-          );
-        }
-
-        // Replace old table with new table
-        this.liveDb.exec("DROP TABLE edicts");
-        this.liveDb.exec("ALTER TABLE edicts_new RENAME TO edicts");
-
-        // Recreate indexes after table recreation
-        this.liveDb.exec(`
-          CREATE INDEX IF NOT EXISTS idx_edicts_tags ON edicts(tags)
-            WHERE tags IS NOT NULL AND tags != ''
-        `);
-        this.liveDb.exec(`
-          CREATE INDEX IF NOT EXISTS idx_edicts_expires ON edicts(expires_at)
-            WHERE expires_at IS NOT NULL
-        `);
-        this.liveDb.exec(`
-          CREATE INDEX IF NOT EXISTS idx_edicts_normalized_hash ON edicts(normalized_hash)
-            WHERE normalized_hash IS NOT NULL
-        `);
-      });
-      migrate();
-
-      // Refresh tableInfo after table recreation
-      tableInfo = this.liveDb.prepare("PRAGMA table_info(edicts)").all() as Array<{ name: string }>;
-    }
-
-    // Add normalized_hash column if missing (for existing databases)
-    if (!tableInfo.some((c) => c.name === "normalized_hash")) {
-      this.liveDb.exec("ALTER TABLE edicts ADD COLUMN normalized_hash TEXT");
-      this.liveDb.exec(`
-        CREATE INDEX IF NOT EXISTS idx_edicts_normalized_hash ON edicts(normalized_hash)
-          WHERE normalized_hash IS NOT NULL
-      `);
-      // Backfill normalized_hash for existing rows
-      const rows = this.liveDb.prepare("SELECT id, text FROM edicts WHERE normalized_hash IS NULL").all() as Array<{
-        id: string;
-        text: string;
-      }>;
-      if (rows.length > 0) {
-        const stmt = this.liveDb.prepare("UPDATE edicts SET normalized_hash = ? WHERE id = ?");
-        for (const row of rows) {
-          stmt.run(normalizedHash(row.text), row.id);
-        }
-      }
+      this.db.exec("ALTER TABLE edicts ADD COLUMN id TEXT PRIMARY KEY");
     }
   }
 
@@ -258,39 +169,26 @@ export class EdictStore extends BaseSqliteStore {
     // Serialize ttl
     const ttlStr = typeof ttl === "number" ? String(ttl) : ttl;
 
-    // For ttl="event", expiresAt is required and must be a valid date
-    let expiresAt: string | null;
-    if (ttl === "event") {
-      if (!input.expiresAt) {
-        throw new Error("expiresAt is required when ttl is 'event'");
-      }
-      const parsed = new Date(input.expiresAt);
-      if (Number.isNaN(parsed.getTime())) {
-        throw new Error("expiresAt must be a valid ISO 8601 date when ttl is 'event'");
-      }
-      expiresAt = parsed.toISOString();
-    } else {
-      expiresAt = null;
-    }
+    // For ttl="event", expiresAt is required
+    const expiresAt = input.expiresAt ?? (ttl === "event" ? null : null);
 
-    // Check for duplicate text using normalized hash
-    const textTrimmed = input.text.trim();
-    const hash = normalizedHash(textTrimmed);
-    const existing = this.findByNormalizedHash(hash);
+    // Check for duplicate text (case-insensitive, normalized whitespace)
+    const normalizedText = input.text.trim().replace(/\s+/g, " ").toLowerCase();
+    const existing = this.findByNormalizedText(normalizedText);
     if (existing) {
       throw new Error(`Edict with similar text already exists: ${existing.id}`);
     }
 
-    this.liveDb
+    this.db
       .prepare(
-        `INSERT INTO edicts (id, text, source, verified_at, expires_at, ttl, tags, created_at, updated_at, normalized_hash)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO edicts (id, text, source, verified_at, expires_at, ttl, tags, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
-      .run(id, textTrimmed, source, nowSec, expiresAt, ttlStr, tagsStr, nowSec, nowSec, hash);
+      .run(id, input.text.trim(), source, nowSec, expiresAt, ttlStr, tagsStr, nowSec, nowSec);
 
     return {
       id,
-      text: textTrimmed,
+      text: input.text.trim(),
       source,
       verifiedAt: nowSec,
       expiresAt,
@@ -301,17 +199,17 @@ export class EdictStore extends BaseSqliteStore {
     };
   }
 
-  /** Find an edict by normalized hash (for duplicate detection) */
-  private findByNormalizedHash(hash: string): EdictEntry | null {
-    const row = this.liveDb.prepare("SELECT * FROM edicts WHERE normalized_hash = ? LIMIT 1").get(hash) as
-      | Record<string, unknown>
-      | undefined;
-    return row ? this.rowToEntry(row) : null;
+  /** Find an edict by normalized text (for duplicate detection) */
+  private findByNormalizedText(normalized: string): EdictEntry | null {
+    const rows = this.db
+      .prepare("SELECT * FROM edicts WHERE LOWER(REPLACE(text, ' ', ' ')) = ?")
+      .all(normalized.replace(/\s+/g, " ")) as Array<Record<string, unknown>>;
+    return rows.length > 0 ? this.rowToEntry(rows[0]) : null;
   }
 
   /** Get a single edict by id */
   getById(id: string): EdictEntry | null {
-    const row = this.liveDb.prepare("SELECT * FROM edicts WHERE id = ?").get(id) as Record<string, unknown> | undefined;
+    const row = this.db.prepare("SELECT * FROM edicts WHERE id = ?").get(id) as Record<string, unknown> | undefined;
     return row ? this.rowToEntry(row) : null;
   }
 
@@ -324,9 +222,9 @@ export class EdictStore extends BaseSqliteStore {
 
     if (!includeExpired) {
       parts.push(
-        `((ttl = 'never') OR (ttl = 'event' AND (expires_at IS NULL OR datetime(expires_at) > datetime(?, 'unixepoch'))) OR (CAST(ttl AS INTEGER) > 0 AND created_at + CAST(ttl AS INTEGER) > ?))`,
+        `(ttl = 'never') OR (ttl = 'event' AND (expires_at IS NULL OR expires_at > datetime(?))) OR (CAST(ttl AS INTEGER) > 0 AND created_at + CAST(ttl AS INTEGER) > ?)`,
       );
-      params.push(nowSec, nowSec);
+      params.push(new Date().toISOString(), nowSec);
     }
 
     if (tags && tags.length > 0) {
@@ -339,7 +237,7 @@ export class EdictStore extends BaseSqliteStore {
     const where = parts.length > 0 ? `WHERE ${parts.join(" AND ")}` : "";
     params.push(limit);
 
-    const rows = this.liveDb
+    const rows = this.db
       .prepare(`SELECT * FROM edicts ${where} ORDER BY created_at DESC LIMIT ?`)
       .all(...params) as Array<Record<string, unknown>>;
 
@@ -364,37 +262,13 @@ export class EdictStore extends BaseSqliteStore {
     const source = input.source !== undefined ? input.source : existing.source;
     const tags = input.tags !== undefined ? input.tags : existing.tags;
     const ttl = input.ttl !== undefined ? input.ttl : existing.ttl;
-    let expiresAt = input.expiresAt !== undefined ? input.expiresAt : existing.expiresAt;
-
-    // For ttl="event", expiresAt is required and must be a valid date
-    if (ttl === "event") {
-      if (!expiresAt) {
-        throw new Error("expiresAt is required when ttl is 'event'");
-      }
-      const parsed = new Date(expiresAt);
-      if (Number.isNaN(parsed.getTime())) {
-        throw new Error("expiresAt must be a valid ISO 8601 date when ttl is 'event'");
-      }
-      expiresAt = parsed.toISOString();
-    }
-
+    const expiresAt = input.expiresAt !== undefined ? input.expiresAt : existing.expiresAt;
     const ttlStr = typeof ttl === "number" ? String(ttl) : ttl;
     const tagsStr = tags.length > 0 ? serializeTags(tags) : null;
-    const hash = normalizedHash(text);
 
-    // Check for duplicate text using normalized hash (excluding current edict)
-    const duplicate = this.liveDb
-      .prepare("SELECT * FROM edicts WHERE normalized_hash = ? AND id != ? LIMIT 1")
-      .get(hash, input.id) as Record<string, unknown> | undefined;
-    if (duplicate) {
-      throw new Error(`Edict with similar text already exists: ${duplicate.id}`);
-    }
-
-    this.liveDb
-      .prepare(
-        "UPDATE edicts SET text = ?, source = ?, expires_at = ?, ttl = ?, tags = ?, updated_at = ?, normalized_hash = ? WHERE id = ?",
-      )
-      .run(text, source ?? null, expiresAt ?? null, ttlStr, tagsStr, nowSec, hash, input.id);
+    this.db
+      .prepare("UPDATE edicts SET text = ?, source = ?, expires_at = ?, ttl = ?, tags = ?, updated_at = ? WHERE id = ?")
+      .run(text, source ?? null, expiresAt ?? null, ttlStr, tagsStr, nowSec, input.id);
 
     return {
       ...existing,
@@ -409,13 +283,13 @@ export class EdictStore extends BaseSqliteStore {
 
   /** Remove an edict by id */
   remove(id: string): boolean {
-    const result = this.liveDb.prepare("DELETE FROM edicts WHERE id = ?").run(id);
+    const result = this.db.prepare("DELETE FROM edicts WHERE id = ?").run(id);
     return result.changes > 0;
   }
 
   /** Count total edicts */
   count(): number {
-    const row = this.liveDb.prepare("SELECT COUNT(*) as cnt FROM edicts").get() as { cnt: number };
+    const row = this.db.prepare("SELECT COUNT(*) as cnt FROM edicts").get() as { cnt: number };
     return row.cnt;
   }
 
@@ -425,26 +299,26 @@ export class EdictStore extends BaseSqliteStore {
     const total = this.count();
 
     // Count expired (ttl="event" with expires_at in the past, or numeric TTL that's elapsed)
-    const expiredRow = this.liveDb
+    const expiredRow = this.db
       .prepare(
         `SELECT COUNT(*) as cnt FROM edicts WHERE
-         (ttl = 'event' AND expires_at IS NOT NULL AND datetime(expires_at) <= datetime(?, 'unixepoch'))
+         (ttl = 'event' AND expires_at IS NOT NULL AND expires_at <= datetime(?))
          OR (CAST(ttl AS INTEGER) > 0 AND created_at + CAST(ttl AS INTEGER) <= ?)`,
       )
-      .get(nowSec, nowSec) as { cnt: number };
+      .get(new Date().toISOString(), nowSec) as { cnt: number };
     const expired = expiredRow.cnt;
 
     // Count expiring in next 7 days (only ttl="event")
-    const sevenDaysFromNowSec = nowSec + 7 * 24 * 3600;
-    const expiringRow = this.liveDb
+    const sevenDaysFromNow = new Date(Date.now() + 7 * 24 * 3600 * 1000).toISOString();
+    const expiringRow = this.db
       .prepare(
-        `SELECT COUNT(*) as cnt FROM edicts WHERE ttl = 'event' AND expires_at IS NOT NULL AND datetime(expires_at) > datetime(?, 'unixepoch') AND datetime(expires_at) <= datetime(?, 'unixepoch')`,
+        `SELECT COUNT(*) as cnt FROM edicts WHERE ttl = 'event' AND expires_at IS NOT NULL AND expires_at > datetime(?) AND expires_at <= ?`,
       )
-      .get(nowSec, sevenDaysFromNowSec) as { cnt: number };
+      .get(new Date().toISOString(), sevenDaysFromNow) as { cnt: number };
     const expiringIn7Days = expiringRow.cnt;
 
     // Count by tag
-    const allRows = this.liveDb.prepare("SELECT tags FROM edicts").all() as Array<{ tags: string | null }>;
+    const allRows = this.db.prepare("SELECT tags FROM edicts").all() as Array<{ tags: string | null }>;
     const byTag: Record<string, number> = {};
     for (const row of allRows) {
       if (!row.tags) continue;
@@ -460,13 +334,13 @@ export class EdictStore extends BaseSqliteStore {
   /** Prune all expired edicts. Returns count of deleted rows. */
   pruneExpired(): number {
     const nowSec = Math.floor(Date.now() / 1000);
-    const result = this.liveDb
+    const result = this.db
       .prepare(
         `DELETE FROM edicts WHERE
-         (ttl = 'event' AND expires_at IS NOT NULL AND datetime(expires_at) <= datetime(?, 'unixepoch'))
+         (ttl = 'event' AND expires_at IS NOT NULL AND expires_at <= datetime(?))
          OR (CAST(ttl AS INTEGER) > 0 AND created_at + CAST(ttl AS INTEGER) <= ?)`,
       )
-      .run(nowSec, nowSec);
+      .run(new Date().toISOString(), nowSec);
     return Number(result.changes ?? 0);
   }
 
@@ -486,5 +360,10 @@ export class EdictStore extends BaseSqliteStore {
       createdAt: row.created_at as number,
       updatedAt: row.updated_at as number,
     };
+  }
+
+  /** Close the database connection */
+  close(): void {
+    this.db.close();
   }
 }

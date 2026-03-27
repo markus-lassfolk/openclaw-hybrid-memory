@@ -7,9 +7,13 @@
 
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import type { ClawdbotPluginApi } from "openclaw/plugin-sdk";
+import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import type { MemoryCategory } from "../config.js";
 import { getCronModelConfig, getDefaultCronModel } from "../config.js";
+import { CLI_STORE_IMPORTANCE } from "../utils/constants.js";
+import { truncateForStorage } from "../utils/text.js";
+import { extractTags } from "../utils/tags.js";
+import { extractStructuredFields } from "../services/fact-extraction.js";
 import { detectCredentialPatterns } from "../services/auto-capture.js";
 import {
   getAutoCaptureExtractionConfidence,
@@ -17,16 +21,12 @@ import {
   resolveCaptureProvenance,
 } from "../services/capture-provenance.js";
 import { classifyMemoryOperation } from "../services/classification.js";
-import { extractCredentialsFromToolCalls } from "../services/credential-scanner.js";
-import { isOllamaCircuitBreakerOpen } from "../services/embeddings.js";
-import { capturePluginError } from "../services/error-reporter.js";
-import { extractStructuredFields } from "../services/fact-extraction.js";
-import { formatQualityLoopEntry, runHumanizerScore } from "../services/humanizer-score.js";
 import type { EpisodeOutcome } from "../types/memory.js";
-import { CLI_STORE_IMPORTANCE } from "../utils/constants.js";
-import { extractTags } from "../utils/tags.js";
-import { truncateForStorage } from "../utils/text.js";
+import { extractCredentialsFromToolCalls } from "../services/credential-scanner.js";
+import { capturePluginError } from "../services/error-reporter.js";
+import { isOllamaCircuitBreakerOpen } from "../services/embeddings.js";
 import { withTimeout } from "../utils/timeout.js";
+import { runHumanizerScore, formatQualityLoopEntry } from "../services/humanizer-score.js";
 import type { LifecycleContext, SessionState } from "./types.js";
 
 const CAPTURE_STAGE_TIMEOUT_MS = 60_000;
@@ -44,33 +44,32 @@ const SUCCESS_PATTERNS: OutcomePattern[] = [
   { regex: /\b(?:successfully\s+)?(?:merged|Merge)\b/i, label: "merged" },
   // Checkmark / success
   { regex: /✅/i, label: "success" },
-  // Explicit success language with context
-  { regex: /\b(?:task|build|test|deployment|operation|request|action)\s+succeeded\b/i, label: "succeeded" },
-  {
-    regex: /\b(?:successfully\s+)?completed\s+(?:the\s+)?(?:task|build|test|deployment|operation|request|action)\b/i,
-    label: "completed",
-  },
-  { regex: /\b(?:successfully\s+)?fixed\s+(?:the\s+)?(?:issue|bug|problem|error)\b/i, label: "fixed" },
-  { regex: /\b(?:all\s+)?tests?\s+passed\b/i, label: "passed" },
-  { regex: /\b(?:successfully\s+)?deployed\s+(?:to|the)\b/i, label: "deployed" },
-  { regex: /\b(?:successfully\s+)?resolved\s+(?:the\s+)?(?:issue|bug|problem|error)\b/i, label: "resolved" },
+  // Explicit success language
+  { regex: /\bsucceeded\b/i, label: "succeeded" },
+  { regex: /\bcompleted(?:\s+successfully)?\b/i, label: "completed" },
+  { regex: /\bfixed\b/i, label: "fixed" },
+  { regex: /\bpassed\b/i, label: "passed" },
+  { regex: /\bdeployed\b/i, label: "deployed" },
+  { regex: /\bresolved\b/i, label: "resolved" },
 ];
 
 /** Patterns that indicate a failed outcome. */
 const FAILURE_PATTERNS: OutcomePattern[] = [
   // Cross mark
   { regex: /❌/i, label: "failed" },
-  // Explicit failure with context
-  { regex: /\b(?:task|build|test|deployment|operation|request|action)\s+failed\b/i, label: "failed" },
-  { regex: /\b(?:build|test|deployment|operation)\s+failure\b/i, label: "failure" },
-  { regex: /\b(?:encountered|received|threw|got)\s+(?:an?\s+)?error\b/i, label: "error" },
-  { regex: /\b(?:application|server|process|system)\s+crashed\b/i, label: "crashed" },
-  { regex: /\b(?:build|deployment|test|system)\s+broke\b/i, label: "broke" },
-  { regex: /\b(?:found|discovered|encountered|hit)\s+(?:a\s+)?bug\b/i, label: "bug" },
-  { regex: /\b(?:request|operation|action|change)\s+(?:was\s+)?rejected\b/i, label: "rejected" },
-  { regex: /\b(?:access|permission|request)\s+(?:was\s+)?denied\b/i, label: "denied" },
-  { regex: /\b(?:had\s+to\s+)?revert(?:ed)?\s+(?:the\s+)?(?:change|commit|deployment)\b/i, label: "reverted" },
-  { regex: /\b(?:performed|triggered|initiated)\s+(?:a\s+)?rollback\b/i, label: "rollback" },
+  // Explicit failure
+  { regex: /\bfailed\b/i, label: "failed" },
+  { regex: /\bfailure\b/i, label: "failure" },
+  { regex: /\bFAILED\b/i, label: "failed" },
+  // Error
+  { regex: /\berror\b/i, label: "error" },
+  { regex: /\bcrashed\b/i, label: "crashed" },
+  { regex: /\bbroke\b/i, label: "broke" },
+  { regex: /\bbug\b/i, label: "bug" },
+  { regex: /\brejected\b/i, label: "rejected" },
+  { regex: /\bdenied\b/i, label: "denied" },
+  { regex: /\brevert(?:ed)?\b/i, label: "reverted" },
+  { regex: /\brollback\b/i, label: "rollback" },
 ];
 
 /**
@@ -497,8 +496,6 @@ async function runCapture(
     }
 
     for (const { text } of sessionTexts) {
-      let episodeCaptured = false;
-
       // Scan for success indicators
       for (const pattern of SUCCESS_PATTERNS) {
         const match = pattern.regex.exec(text);
@@ -531,47 +528,44 @@ async function runCapture(
               });
             }
           }
-          episodeCaptured = true;
           break; // only one episode per message
         }
       }
 
-      // Scan for failure indicators only if no success was captured
-      if (!episodeCaptured) {
-        for (const pattern of FAILURE_PATTERNS) {
-          const match = pattern.regex.exec(text);
-          if (match) {
-            const eventText = pattern.label ? `Agent reported: ${pattern.label}` : match[0];
-            const existing = ctx.factsDb.searchEpisodes({
-              query: eventText,
-              since: Math.floor(Date.now() / 1000) - 300,
-              limit: 1,
-            });
-            if (existing.length === 0) {
-              try {
-                const episode = ctx.factsDb.recordEpisode({
-                  event: eventText,
-                  outcome: "failure",
-                  timestamp: Math.floor(Date.now() / 1000),
-                  context: text.slice(0, 500),
-                  sessionId,
-                  agentId,
-                  scope: "session",
-                  scopeTarget: sessionId,
-                  tags: pattern.label ? [pattern.label] : [],
-                  // failures get importance >= 0.8 automatically via recordEpisode
-                });
-                api.logger.debug?.(`memory-hybrid: auto-captured failure episode: ${episode.id}`);
-              } catch (err) {
-                capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-                  operation: "episode-auto-capture-failure",
-                  subsystem: "episodes",
-                  severity: "info",
-                });
-              }
+      // Scan for failure indicators
+      for (const pattern of FAILURE_PATTERNS) {
+        const match = pattern.regex.exec(text);
+        if (match) {
+          const eventText = pattern.label ? `Agent reported: ${pattern.label}` : match[0];
+          const existing = ctx.factsDb.searchEpisodes({
+            query: eventText,
+            since: Math.floor(Date.now() / 1000) - 300,
+            limit: 1,
+          });
+          if (existing.length === 0) {
+            try {
+              const episode = ctx.factsDb.recordEpisode({
+                event: eventText,
+                outcome: "failure",
+                timestamp: Math.floor(Date.now() / 1000),
+                context: text.slice(0, 500),
+                sessionId,
+                agentId,
+                scope: "session",
+                scopeTarget: sessionId,
+                tags: pattern.label ? [pattern.label] : [],
+                // failures get importance >= 0.8 automatically via recordEpisode
+              });
+              api.logger.debug?.(`memory-hybrid: auto-captured failure episode: ${episode.id}`);
+            } catch (err) {
+              capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+                operation: "episode-auto-capture-failure",
+                subsystem: "episodes",
+                severity: "info",
+              });
             }
-            break;
           }
+          break;
         }
       }
     }

@@ -42,7 +42,7 @@ export interface HandlerContext {
   /** Category detection for extract-daily and similar; uses language keywords when set */
   detectCategory: (text: string) => MemoryCategory;
   /** OpenClaw plugin API — used for verify to read gateway config (e.g. models.providers for MiniMax etc.) */
-  api?: import("openclaw/plugin-sdk").ClawdbotPluginApi;
+  api?: import("openclaw/plugin-sdk/core").ClawdbotPluginApi;
   /** LLM cost tracker — records per-call token usage (Issue #270). */
   costTracker?: CostTracker | null;
   /** Event Bus for sensor sweep (Issue #236). */

@@ -12,10 +12,10 @@
  * - TTL purge for stale mention records (30 days by default)
  */
 
-import { createHash } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
-import { pluginLogger } from "../utils/logger.js";
+import { createHash } from "node:crypto";
 import { BaseSqliteStore } from "./base-sqlite-store.js";
+import { pluginLogger } from "../utils/logger.js";
 
 export interface MentionRecord {
   entityText: string;
@@ -149,7 +149,6 @@ export class RecentMentionsDB extends BaseSqliteStore {
     credentialType?: string,
   ): boolean {
     const nowSec = Math.floor(Date.now() / 1000);
-    const storedText = isCredential ? (credentialKey ?? "[REDACTED CREDENTIAL]") : entityText;
     const mentionHash = RecentMentionsDB.sha256(entityText);
 
     const existing = this.liveDb
@@ -162,7 +161,8 @@ export class RecentMentionsDB extends BaseSqliteStore {
         .prepare(
           `UPDATE recent_mentions
              SET mention_count = mention_count + 1,
-                 last_seen = ?
+                 last_seen = ?,
+                 auto_stored = 0
              WHERE id = ?`,
         )
         .run(nowSec, existing.id as number);
@@ -176,7 +176,7 @@ export class RecentMentionsDB extends BaseSqliteStore {
              VALUES (?, ?, 1, ?, ?, 0, ?, ?, ?, ?)`,
       )
       .run(
-        storedText,
+        entityText,
         mentionHash,
         nowSec,
         nowSec,
@@ -247,7 +247,9 @@ export class RecentMentionsDB extends BaseSqliteStore {
   purgeStale(): number {
     const nowSec = Math.floor(Date.now() / 1000);
     const cutoff = nowSec - this.ttlDays * 24 * 3600;
-    const result = this.liveDb.prepare("DELETE FROM recent_mentions WHERE last_seen < ?").run(cutoff);
+    const result = this.liveDb
+      .prepare("DELETE FROM recent_mentions WHERE last_seen < ? AND auto_stored = 1")
+      .run(cutoff);
     const changes = typeof result.changes === "bigint" ? Number(result.changes) : result.changes;
     if (changes > 0) {
       pluginLogger.debug(`recent-mentions: purged ${changes} stale entries`);
@@ -307,6 +309,9 @@ export const ENTITY_EXTRACTION_PATTERNS = {
   /** Error class names */
   errorClasses:
     /\b(?:Error|TypeError|ReferenceError|SyntaxError|RangeError|URIError|EvalError|fetch error|request failed|connection refused|timeout)[^\s]*\b/gi,
+
+  /** Quoted strings (potential project/tool names) */
+  quotedStrings: /"(?<quote>[^"]{2,50})"|'(?<quote>[^']{2,50})'/g,
 };
 
 /** Credential patterns for auto-detection.
@@ -316,7 +321,7 @@ export const CREDENTIAL_EXTRACTION_PATTERNS: Array<{ regex: RegExp; scope: strin
   { regex: /ghp_[A-Za-z0-9]{36}/, scope: "github-pat", type: "api_key" },
   { regex: /gho_[A-Za-z0-9]{36}/, scope: "github-oauth", type: "token" },
   { regex: /github_pat_[A-Za-z0-9_]{72}/, scope: "github-pat", type: "token" },
-  { regex: /sk-(?!proj-|ant-)[A-Za-z0-9]{20,}/, scope: "openai-key", type: "api_key" },
+  { regex: /sk-[A-Za-z0-9]{20,}/, scope: "openai-key", type: "api_key" },
   { regex: /sk-proj-[A-Za-z0-9_-]{48,}/, scope: "openai-proj", type: "api_key" },
   { regex: /sk-ant-[A-Za-z0-9_-]{48,}/, scope: "anthropic-key", type: "api_key" },
   {

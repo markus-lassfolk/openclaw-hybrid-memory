@@ -5,7 +5,7 @@
  * Extracted from index.ts to reduce main file size.
  */
 
-import type { ClawdbotPluginApi } from "openclaw/plugin-sdk";
+import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import type { MemoryPluginAPI } from "../api/memory-plugin-api.js";
 import { getMemoryCategories } from "../config.js";
 import { type LifecycleContext, createLifecycleHooks } from "../lifecycle/hooks.js";
@@ -232,8 +232,8 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
         );
 
         if (pinnedFacts.length > 0) {
-          injectedContext += `\n<!-- Pinned Session Constraints / Memories -->\n`;
-          injectedContext += pinnedFacts.map((f) => `- ${f.entry.summary || f.entry.text}`).join("\n") + "\n";
+          injectedContext += "\n<!-- Pinned Session Constraints / Memories -->\n";
+          injectedContext += `${pinnedFacts.map((f) => `- ${f.entry.summary || f.entry.text}`).join("\n")}\n`;
         }
       } catch (err) {
         api.logger.debug?.(`memory-hybrid: failed to fetch pinned facts for pre-compaction: ${err}`);

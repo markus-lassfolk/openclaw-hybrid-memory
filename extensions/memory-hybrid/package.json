@@ -1,6 +1,6 @@
 {
   "name": "openclaw-hybrid-memory",
-  "version": "2026.3.251",
+  "version": "2026.3.260",
   "type": "module",
   "description": "Give your OpenClaw agent lasting memory: structured facts, semantic search, auto-capture & recall, decay, optional credential vault. Part of Hybrid Memory v3.",
   "files": [
@@ -47,10 +47,10 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
-    "lint": "biome lint .",
-    "lint:fix": "biome lint --write .",
-    "format": "biome format --write .",
-    "format:check": "biome format .",
+    "lint": "biome lint --max-diagnostics=none .",
+    "lint:fix": "biome lint --write --unsafe --max-diagnostics=none .",
+    "format": "biome format --write --max-diagnostics=none .",
+    "format:check": "biome format --max-diagnostics=none .",
     "lint:arch": "bash scripts/lint-arch.sh",
     "postinstall": "node scripts/postinstall-rebuild.cjs",
     "prepack": "node scripts/manage-shrinkwrap.cjs create",
@@ -61,6 +61,7 @@
   "devDependencies": {
     "@biomejs/biome": "^1.9.4",
     "@vitest/coverage-v8": "^4.0.18",
+    "commander": "^13.1.0",
     "knip": "^5.0.0",
     "typescript": "^5.9.3",
     "vitest": "^4.0.18"

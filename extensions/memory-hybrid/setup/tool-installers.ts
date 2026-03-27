@@ -1,4 +1,4 @@
-import type { ClawdbotPluginApi } from "openclaw/plugin-sdk";
+import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import type { MemoryPluginAPI } from "../api/memory-plugin-api.js";
 import type { BootstrapPhaseConfig } from "../config.js";
 import { orderByBootstrapPhase } from "../services/bootstrap-priority.js";

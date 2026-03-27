@@ -3,51 +3,49 @@
  * Thin orchestrator that delegates to specialized command modules.
  */
 
-import type { EventBus } from "../backends/event-bus.js";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
-import type { HybridMemoryConfig } from "../config.js";
 import type { EmbeddingProvider } from "../services/embeddings.js";
-import { capturePluginError } from "../services/error-reporter.js";
-// biome-ignore lint/style/useImportType: mergeResults kept as value import so typeof mergeResults resolves at the type level without confusion
-import { filterByScope, mergeResults } from "../services/merge-results.js";
 import type { AliasDB } from "../services/retrieval-aliases.js";
 import type { SearchResult } from "../types/memory.js";
+import { type mergeResults, filterByScope } from "../services/merge-results.js";
 import type { ScopeFilter } from "../types/memory.js";
 import { parseSourceDate } from "../utils/dates.js";
-import { type ActiveTaskContext, registerActiveTaskCommands } from "./active-tasks.js";
-import { type DistillContext, registerDistillCommands } from "./distill.js";
-import { type ManageContext, registerManageCommands } from "./manage.js";
-import { type SensorSweepContext, registerSensorSweepCommands } from "./sensor-sweep.js";
+import { registerVerifyCommands, type VerifyContext } from "./verify.js";
+import { registerDistillCommands, type DistillContext } from "./distill.js";
+import { registerManageCommands, type ManageContext } from "./manage.js";
+import { registerActiveTaskCommands, type ActiveTaskContext } from "./active-tasks.js";
+import { registerBenchmarkCommands } from "./benchmark.js";
+import { capturePluginError } from "../services/error-reporter.js";
+import type { HybridMemoryConfig } from "../config.js";
 import type {
-  AnalyzeFeedbackPhrasesResult,
-  BackfillCliResult,
-  BackfillCliSink,
-  ConfigCliResult,
-  CredentialsAuditResult,
-  CredentialsPruneResult,
-  DistillCliResult,
-  DistillCliSink,
+  FindDuplicatesResult,
+  StoreCliOpts,
+  StoreCliResult,
+  InstallCliResult,
+  VerifyCliSink,
   DistillWindowResult,
+  RecordDistillResult,
   ExtractDailyResult,
   ExtractDailySink,
   ExtractProceduresResult,
-  FindDuplicatesResult,
   GenerateAutoSkillsResult,
+  BackfillCliResult,
+  BackfillCliSink,
   IngestFilesResult,
   IngestFilesSink,
-  InstallCliResult,
-  MigrateToVaultResult,
-  RecordDistillResult,
+  DistillCliResult,
+  DistillCliSink,
   SelfCorrectionExtractResult,
   SelfCorrectionRunResult,
-  StoreCliOpts,
-  StoreCliResult,
-  UninstallCliResult,
+  AnalyzeFeedbackPhrasesResult,
+  MigrateToVaultResult,
+  CredentialsAuditResult,
+  CredentialsPruneResult,
   UpgradeCliResult,
-  VerifyCliSink,
+  UninstallCliResult,
+  ConfigCliResult,
 } from "./types.js";
-import { type VerifyContext, registerVerifyCommands } from "./verify.js";
 
 export type {
   FindDuplicatesResult,
@@ -92,7 +90,6 @@ export type HybridMemCliContext = {
   runStore: (opts: StoreCliOpts) => Promise<StoreCliResult>;
   runInstall: (opts: { dryRun: boolean }) => Promise<InstallCliResult>;
   runVerify: (opts: { fix: boolean; logFile?: string; testLlm?: boolean }, sink: VerifyCliSink) => Promise<void>;
-  runResetAuthBackoff: () => Promise<void>;
   runDistillWindow: (opts: { json: boolean }) => Promise<DistillWindowResult>;
   runRecordDistill: () => Promise<RecordDistillResult>;
   runExtractDaily: (
@@ -107,6 +104,9 @@ export type HybridMemCliContext = {
     full?: boolean;
   }) => Promise<ExtractProceduresResult>;
   runGenerateAutoSkills: (opts: { dryRun: boolean; verbose?: boolean }) => Promise<GenerateAutoSkillsResult>;
+  runSkillsSuggest: (opts: { dryRun?: boolean; apply?: boolean; days?: number; verbose?: boolean }) => Promise<
+    import("../services/memory-to-skills.js").SkillsSuggestResult
+  >;
   runBackfill: (
     opts: { dryRun: boolean; workspace?: string; limit?: number },
     sink: BackfillCliSink,
@@ -131,15 +131,17 @@ export type HybridMemCliContext = {
   ) => Promise<DistillCliResult>;
   runMigrateToVault: () => Promise<MigrateToVaultResult | null>;
   runCredentialsList: () => Array<{ service: string; type: string; url: string | null }>;
-  runCredentialsGet: (opts: {
+  runCredentialsGet: (opts: { service: string; type?: string }) => {
     service: string;
-    type?: string;
-  }) => { service: string; type: string; value: string; url: string | null; notes: string | null } | null;
+    type: string;
+    value: string;
+    url: string | null;
+    notes: string | null;
+  } | null;
   runCredentialsAudit: () => CredentialsAuditResult;
   runCredentialsPrune: (opts: { dryRun: boolean; yes?: boolean; onlyFlags?: string[] }) => CredentialsPruneResult;
   runUninstall: (opts: { cleanAll: boolean; leaveConfig: boolean }) => Promise<UninstallCliResult>;
   runUpgrade: (version?: string) => Promise<UpgradeCliResult>;
-  runConfigView: (sink: VerifyCliSink) => void;
   runConfigMode: (mode: string) => ConfigCliResult | Promise<ConfigCliResult>;
   runConfigSet: (key: string, value: string) => ConfigCliResult | Promise<ConfigCliResult>;
   runConfigSetHelp: (key: string) => ConfigCliResult | Promise<ConfigCliResult>;
@@ -161,16 +163,14 @@ export type HybridMemCliContext = {
     patternsStored: number;
     window: number;
   }>;
-  runReflectionRules: (opts: {
-    dryRun: boolean;
-    model: string;
-    verbose?: boolean;
-  }) => Promise<{ rulesExtracted: number; rulesStored: number }>;
-  runReflectionMeta: (opts: {
-    dryRun: boolean;
-    model: string;
-    verbose?: boolean;
-  }) => Promise<{ metaExtracted: number; metaStored: number }>;
+  runReflectionRules: (opts: { dryRun: boolean; model: string; verbose?: boolean }) => Promise<{
+    rulesExtracted: number;
+    rulesStored: number;
+  }>;
+  runReflectionMeta: (opts: { dryRun: boolean; model: string; verbose?: boolean }) => Promise<{
+    metaExtracted: number;
+    metaStored: number;
+  }>;
   reflectionConfig: { enabled: boolean; defaultWindow: number; minObservations: number; model: string };
   runDreamCycle: () => Promise<import("../services/dream-cycle.js").DreamCycleResult>;
   runContinuousVerification: () => Promise<import("../services/continuous-verifier.js").VerificationCycleResult>;
@@ -185,10 +185,7 @@ export type HybridMemCliContext = {
   }>;
   autoClassifyConfig: { model: string; batchSize: number; suggestCategories?: boolean };
   runCompaction: () => Promise<{ hot: number; warm: number; cold: number }>;
-  runBuildLanguageKeywords: (opts: {
-    model?: string;
-    dryRun?: boolean;
-  }) => Promise<
+  runBuildLanguageKeywords: (opts: { model?: string; dryRun?: boolean }) => Promise<
     { ok: true; path: string; topLanguages: string[]; languagesAdded: number } | { ok: false; error: string }
   >;
   runSelfCorrectionExtract: (opts: { days?: number; outputPath?: string }) => Promise<SelfCorrectionExtractResult>;
@@ -255,12 +252,6 @@ export type HybridMemCliContext = {
     closedLoopReport?: string;
   }>;
   runGenerateProposals?: (opts: { dryRun: boolean; verbose?: boolean }) => Promise<{ created: number }>;
-  runReflectIdentity?: (opts: {
-    dryRun: boolean;
-    verbose?: boolean;
-    model?: string;
-    window?: number;
-  }) => Promise<{ insightsExtracted: number; insightsStored: number; questionsAsked: number }>;
   runExport: (opts: {
     outputPath: string;
     excludeCredentials?: boolean;
@@ -272,14 +263,12 @@ export type HybridMemCliContext = {
     getCredentialsCount: () => number;
     getProposalsPending: () => number;
     getProposalsAvailable: () => boolean;
-    getWalPending: () => Promise<number>;
+    getWalPending: () => number;
     getLastRunTimestamps: () => { distill?: string; reflect?: string; compact?: string };
     getStorageSizes: () => Promise<{ sqliteBytes?: number; lanceBytes?: number }>;
   };
   listCommands?: {
-    listProposals: (opts: {
-      status?: string;
-    }) => Promise<
+    listProposals: (opts: { status?: string }) => Promise<
       Array<{ id: string; title: string; targetFile: string; status: string; confidence: number; createdAt: number }>
     >;
     proposalApprove: (id: string) => Promise<{ ok: boolean; error?: string }>;
@@ -290,8 +279,6 @@ export type HybridMemCliContext = {
   };
   tieringEnabled: boolean;
   resolvedSqlitePath?: string;
-  /** Event Bus for sensor sweep commands (required when sensorSweep.enabled). */
-  eventBus?: EventBus | null;
   resolvePath?: (file: string) => string;
   /** Active task working memory context (required when activeTask.enabled = true) */
   activeTask?: ActiveTaskContext;
@@ -322,7 +309,6 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
   const verifyContext: VerifyContext = {
     runVerify: ctx.runVerify,
     runInstall: ctx.runInstall,
-    runResetAuthBackoff: ctx.runResetAuthBackoff,
   };
   try {
     registerVerifyCommands(mem, verifyContext);
@@ -340,6 +326,7 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
     runExtractDaily: ctx.runExtractDaily,
     runExtractProcedures: ctx.runExtractProcedures,
     runGenerateAutoSkills: ctx.runGenerateAutoSkills,
+    runSkillsSuggest: ctx.runSkillsSuggest,
     runDistill: ctx.runDistill,
     runExtractDirectives: ctx.runExtractDirectives,
     runExtractReinforcement: ctx.runExtractReinforcement,
@@ -378,21 +365,13 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
     }
   }
 
-  if (ctx.eventBus) {
-    const sensorCtx: SensorSweepContext = {
-      factsDb: ctx.factsDb,
-      cfg: ctx.cfg,
-      eventBus: ctx.eventBus,
-      resolvedSqlitePath: ctx.resolvedSqlitePath ?? "",
-    };
-    try {
-      registerSensorSweepCommands(mem, sensorCtx);
-    } catch (err) {
-      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-        subsystem: "registration",
-        operation: "register-cli:sensor-sweep",
-      });
-      throw err;
-    }
+  try {
+    registerBenchmarkCommands(mem, ctx);
+  } catch (err) {
+    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+      subsystem: "registration",
+      operation: "register-cli:benchmark",
+    });
+    throw err;
   }
 }

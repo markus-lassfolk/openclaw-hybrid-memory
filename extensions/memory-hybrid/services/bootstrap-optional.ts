@@ -1,5 +1,5 @@
 import { dirname, join } from "node:path";
-import type { ClawdbotPluginApi } from "openclaw/plugin-sdk";
+import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import { ApitapStore } from "../backends/apitap-store.js";
 import { CredentialsDB } from "../backends/credentials-db.js";
 import { CrystallizationStore } from "../backends/crystallization-store.js";

@@ -3,17 +3,17 @@
  * Tools for proposing and managing changes to identity files (SOUL.md, IDENTITY.md, USER.md)
  */
 
+import { Type } from "@sinclair/typebox";
+import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
+import { stringEnum } from "../utils/typebox.js";
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { Type } from "@sinclair/typebox";
-import type { ClawdbotPluginApi } from "openclaw/plugin-sdk";
-import type { ProposalsDB } from "../backends/proposals-db.js";
-import { applyApprovedProposal } from "../cli/proposals.js";
-import { type HybridMemoryConfig, PROPOSAL_STATUSES, isCompactVerbosity } from "../config.js";
-import { capturePluginError } from "../services/error-reporter.js";
-import { SECONDS_PER_DAY } from "../utils/constants.js";
 import { getFileSnapshot } from "../utils/file-snapshot.js";
-import { stringEnum } from "../utils/typebox.js";
+import { PROPOSAL_STATUSES, type HybridMemoryConfig, isCompactVerbosity } from "../config.js";
+import type { ProposalsDB } from "../backends/proposals-db.js";
+import { SECONDS_PER_DAY } from "../utils/constants.js";
+import { capturePluginError } from "../services/error-reporter.js";
+import { applyApprovedProposal } from "../cli/proposals.js";
 
 export interface PluginContext {
   proposalsDb?: ProposalsDB;

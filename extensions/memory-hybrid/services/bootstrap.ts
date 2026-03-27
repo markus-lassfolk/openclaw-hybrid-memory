@@ -1,11 +1,11 @@
-import { dirname, join } from "node:path";
-import type { ClawdbotPluginApi } from "openclaw/plugin-sdk";
-import { EdictStore } from "../backends/edict-store.js";
+import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import { FactsDB } from "../backends/facts-db.js";
+import { EdictStore } from "../backends/edict-store.js";
 import { VectorDB } from "../backends/vector-db.js";
 import type { BootstrapPhaseConfig, EmbeddingModelConfig, HybridMemoryConfig } from "../config.js";
-import { type EmbeddingRegistry, buildEmbeddingRegistry } from "./embedding-registry.js";
-import { type EmbeddingProvider, createEmbeddingProvider } from "./embeddings.js";
+import { buildEmbeddingRegistry, type EmbeddingRegistry } from "./embedding-registry.js";
+import { createEmbeddingProvider, type EmbeddingProvider } from "./embeddings.js";
+import { join, dirname } from "node:path";
 
 export interface CoreBootstrapContext {
   cfg: HybridMemoryConfig;

@@ -5,23 +5,23 @@
  * All stage logic lives in stage-*.ts and session-state.ts; this file stays <200 lines.
  */
 
+import { join, isAbsolute } from "node:path";
 import { homedir } from "node:os";
-import { isAbsolute, join } from "node:path";
-import type { ClawdbotPluginApi } from "openclaw/plugin-sdk";
+import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import { getCronModelConfig, getDefaultCronModel } from "../config.js";
-import { capturePluginError } from "../services/error-reporter.js";
-import { buildDailyNarrative } from "../src/worker/narratives.js";
-import { createSessionState } from "./session-state.js";
+import { runSetupStage } from "./stage-setup.js";
+import { runRecallStage } from "./stage-recall.js";
+import { runInjectionStage } from "./stage-injection.js";
+import { runCaptureStage } from "./stage-capture.js";
+import { registerCleanupHandlers, createStaleSweepTimer, getDispose } from "./stage-cleanup.js";
 import { registerActiveTaskInjection } from "./stage-active-task.js";
 import { registerAuthFailureRecall } from "./stage-auth-failure.js";
-import { runCaptureStage } from "./stage-capture.js";
-import { createStaleSweepTimer, getDispose, registerCleanupHandlers } from "./stage-cleanup.js";
 import { registerCredentialHint } from "./stage-credential-hint.js";
 import { registerFrustrationHandlers } from "./stage-frustration.js";
-import { runInjectionStage } from "./stage-injection.js";
-import { runRecallStage } from "./stage-recall.js";
-import { runSetupStage } from "./stage-setup.js";
+import { createSessionState } from "./session-state.js";
 import type { LifecycleContext, SessionState } from "./types.js";
+import { capturePluginError } from "../services/error-reporter.js";
+import { buildDailyNarrative } from "../src/worker/narratives.js";
 
 export type { LifecycleContext } from "./types.js";
 
@@ -119,14 +119,14 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
               if (!tc || typeof tc !== "object") continue;
               const fn = (tc as Record<string, unknown>).function as Record<string, unknown> | undefined;
               if (fn && typeof fn.name === "string") {
-                ctx.workflowTracker!.push(sessionId, fn.name, sessionStartTime);
+                ctx.workflowTracker?.push(sessionId, fn.name, sessionStartTime);
               }
             }
           }
 
           // Flush buffer to workflow-traces.db
           const outcome = ev?.success === true ? "success" : ev?.success === false ? "failure" : "unknown";
-          const traceId = ctx.workflowTracker!.flush(sessionId, goal, outcome);
+          const traceId = ctx.workflowTracker?.flush(sessionId, goal, outcome);
           if (traceId) {
             api.logger.debug?.(`memory-hybrid: workflow trace recorded id=${traceId} session=${sessionId}`);
           }

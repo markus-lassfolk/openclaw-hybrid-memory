@@ -3,10 +3,10 @@
  * Registers before_agent_start to inject ACTIVE-TASK.md summary when enabled.
  */
 
-import type { ClawdbotPluginApi } from "openclaw/plugin-sdk";
-import { buildActiveTaskInjection, buildStaleWarningInjection, readActiveTaskFile } from "../services/active-task.js";
+import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import { capturePluginError } from "../services/error-reporter.js";
 import { parseDuration } from "../utils/duration.js";
+import { readActiveTaskFile, buildActiveTaskInjection, buildStaleWarningInjection } from "../services/active-task.js";
 import type { LifecycleContext } from "./types.js";
 
 export function registerActiveTaskInjection(

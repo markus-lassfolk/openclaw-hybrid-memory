@@ -6,7 +6,7 @@
  */
 
 import { Type } from "@sinclair/typebox";
-import type { ClawdbotPluginApi } from "openclaw/plugin-sdk";
+import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import type { WorkflowStore } from "../backends/workflow-store.js";
 import { extractGoalKeywords } from "../backends/workflow-store.js";
 import { capturePluginError } from "../services/error-reporter.js";
