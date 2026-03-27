@@ -2589,10 +2589,10 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
         console.log(`  Type:       ${proc.procedureType}`);
         console.log(`  Confidence: ${proc.confidence?.toFixed(3) ?? "n/a"}`);
         console.log(
-          `  Success:    ${totalSuccess} (procedure table) + ${versions.reduce((s, v) => s + v.successCount, 0)} (versions) = ${totalSuccess}`,
+          `  Success:    ${proc.successCount} (procedure table) + ${versions.reduce((s, v) => s + v.successCount, 0)} (versions) = ${totalSuccess}`,
         );
         console.log(
-          `  Failure:   ${totalFailure} (procedure table) + ${versions.reduce((s, v) => s + v.failureCount, 0)} (versions) = ${totalFailure}`,
+          `  Failure:   ${proc.failureCount} (procedure table) + ${versions.reduce((s, v) => s + v.failureCount, 0)} (versions) = ${totalFailure}`,
         );
         console.log(`  Rate:      ${(rate * 100).toFixed(1)}%`);
         console.log(`  Outcome:   ${proc.lastOutcome ?? "unknown"}`);
