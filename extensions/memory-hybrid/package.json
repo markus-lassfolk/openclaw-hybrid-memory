@@ -38,7 +38,8 @@
   },
   "dependencies": {
     "@lancedb/lancedb": "^0.27.1",
-    "@types/node": "^25.2.3"
+    "@types/node": "^25.2.3",
+    "commander": "^14.0.3"
   },
   "openclaw": {
     "extensions": ["./index.ts"]
