@@ -11,14 +11,14 @@
  *   7. parseAutoClassifyConfig parses discoveryIntervalHours correctly.
  */
 
-import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { mkdirSync, rmSync, writeFileSync, readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { tmpdir } from "node:os";
+import { randomUUID } from "node:crypto";
+import { getLastDiscoveryPath, runAutoClassify } from "../services/auto-classifier.js";
 import { parseAutoClassifyConfig } from "../config/parsers/retrieval.js";
 import { _testing } from "../index.js";
-import { getLastDiscoveryPath, runAutoClassify } from "../services/auto-classifier.js";
 
 const { FactsDB } = _testing;
 
