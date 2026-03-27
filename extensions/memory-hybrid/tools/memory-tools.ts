@@ -2148,7 +2148,10 @@ export function registerMemoryTools(
       }),
       async execute(_toolCallId: string, params: Record<string, unknown>) {
         try {
-          const scopeFilter = buildToolScopeFilter({}, currentAgentIdRef.value, cfg);
+          const userId = params.userId as string | undefined;
+          const agentId = params.agentId as string | undefined;
+          const sessionId = params.sessionId as string | undefined;
+          const scopeFilter = buildToolScopeFilter({ userId, agentId, sessionId }, currentAgentIdRef.value, cfg);
           const scope = params.scope as "global" | "user" | "agent" | "session" | undefined;
           let scopeTarget: string | null = null;
           if (scope === "session") {
