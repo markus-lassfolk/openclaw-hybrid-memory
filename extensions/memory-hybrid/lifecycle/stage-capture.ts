@@ -44,31 +44,30 @@ const SUCCESS_PATTERNS: OutcomePattern[] = [
   { regex: /\b(?:successfully\s+)?(?:merged|Merge)\b/i, label: "merged" },
   // Checkmark / success
   { regex: /✅/i, label: "success" },
-  // Explicit success language
-  { regex: /\bsucceeded\b/i, label: "succeeded" },
-  { regex: /\bcompleted(?:\s+successfully)?\b/i, label: "completed" },
-  { regex: /\bfixed\b/i, label: "fixed" },
-  { regex: /\bpassed\b/i, label: "passed" },
-  { regex: /\bdeployed\b/i, label: "deployed" },
-  { regex: /\bresolved\b/i, label: "resolved" },
+  // Explicit success language with context
+  { regex: /\b(?:task|build|test|deployment|operation|request|action)\s+succeeded\b/i, label: "succeeded" },
+  { regex: /\b(?:successfully\s+)?completed\s+(?:the\s+)?(?:task|build|test|deployment|operation|request|action)\b/i, label: "completed" },
+  { regex: /\b(?:successfully\s+)?fixed\s+(?:the\s+)?(?:issue|bug|problem|error)\b/i, label: "fixed" },
+  { regex: /\b(?:all\s+)?tests?\s+passed\b/i, label: "passed" },
+  { regex: /\b(?:successfully\s+)?deployed\s+(?:to|the)\b/i, label: "deployed" },
+  { regex: /\b(?:successfully\s+)?resolved\s+(?:the\s+)?(?:issue|bug|problem|error)\b/i, label: "resolved" },
 ];
 
 /** Patterns that indicate a failed outcome. */
 const FAILURE_PATTERNS: OutcomePattern[] = [
   // Cross mark
   { regex: /❌/i, label: "failed" },
-  // Explicit failure
-  { regex: /\bfailed\b/i, label: "failed" },
-  { regex: /\bfailure\b/i, label: "failure" },
-  // Error
-  { regex: /\berror\b/i, label: "error" },
-  { regex: /\bcrashed\b/i, label: "crashed" },
-  { regex: /\bbroke\b/i, label: "broke" },
-  { regex: /\bbug\b/i, label: "bug" },
-  { regex: /\brejected\b/i, label: "rejected" },
-  { regex: /\bdenied\b/i, label: "denied" },
-  { regex: /\brevert(?:ed)?\b/i, label: "reverted" },
-  { regex: /\brollback\b/i, label: "rollback" },
+  // Explicit failure with context
+  { regex: /\b(?:task|build|test|deployment|operation|request|action)\s+failed\b/i, label: "failed" },
+  { regex: /\b(?:build|test|deployment|operation)\s+failure\b/i, label: "failure" },
+  { regex: /\b(?:encountered|received|threw|got)\s+(?:an?\s+)?error\b/i, label: "error" },
+  { regex: /\b(?:application|server|process|system)\s+crashed\b/i, label: "crashed" },
+  { regex: /\b(?:build|deployment|test|system)\s+broke\b/i, label: "broke" },
+  { regex: /\b(?:found|discovered|encountered|hit)\s+(?:a\s+)?bug\b/i, label: "bug" },
+  { regex: /\b(?:request|operation|action|change)\s+(?:was\s+)?rejected\b/i, label: "rejected" },
+  { regex: /\b(?:access|permission|request)\s+(?:was\s+)?denied\b/i, label: "denied" },
+  { regex: /\b(?:had\s+to\s+)?revert(?:ed)?\s+(?:the\s+)?(?:change|commit|deployment)\b/i, label: "reverted" },
+  { regex: /\b(?:performed|triggered|initiated)\s+(?:a\s+)?rollback\b/i, label: "rollback" },
 ];
 
 /**
