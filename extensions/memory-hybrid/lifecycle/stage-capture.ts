@@ -495,11 +495,12 @@ async function runCapture(
     }
 
     for (const { text } of sessionTexts) {
-      let episodeCreated = false;
+      let failureDetected = false;
       // Scan for failure indicators first (they are more specific)
       for (const pattern of FAILURE_PATTERNS) {
         const match = pattern.regex.exec(text);
         if (match) {
+          failureDetected = true;
           const eventText = pattern.label ? `Agent reported: ${pattern.label}` : match[0];
           const sinceTimestamp = Math.floor(Date.now() / 1000) - 300;
           const hasDuplicate = ctx.factsDb.hasRecentEpisodeWithEvent(eventText, sinceTimestamp);
@@ -518,7 +519,6 @@ async function runCapture(
                 // failures get importance >= 0.8 automatically via recordEpisode
               });
               api.logger.debug?.(`memory-hybrid: auto-captured failure episode: ${episode.id}`);
-              episodeCreated = true;
             } catch (err) {
               capturePluginError(err instanceof Error ? err : new Error(String(err)), {
                 operation: "episode-auto-capture-failure",
@@ -531,8 +531,8 @@ async function runCapture(
         }
       }
 
-      // Scan for success indicators (skip if failure episode was already created)
-      if (!episodeCreated) {
+      // Scan for success indicators (skip if failure was detected)
+      if (!failureDetected) {
         for (const pattern of SUCCESS_PATTERNS) {
           const match = pattern.regex.exec(text);
           if (match) {
