@@ -92,7 +92,7 @@ export function renderEdictsForPrompt(edicts: EdictEntry[]): string {
   if (edicts.length === 0) return "";
   const header = "## Verified Ground Truth\n";
   const lines = edicts.map((e) => renderEdictLine(e));
-  return header + lines.join("\n") + "\n";
+  return `${header + lines.join("\n")}\n`;
 }
 
 /** Escape a string for safe use as a SQLite LIKE pattern */
@@ -266,7 +266,7 @@ export class EdictStore {
     const tagsStr = tags.length > 0 ? serializeTags(tags) : null;
 
     this.db
-      .prepare(`UPDATE edicts SET text = ?, source = ?, expires_at = ?, ttl = ?, tags = ?, updated_at = ? WHERE id = ?`)
+      .prepare("UPDATE edicts SET text = ?, source = ?, expires_at = ?, ttl = ?, tags = ?, updated_at = ? WHERE id = ?")
       .run(text, source ?? null, expiresAt ?? null, ttlStr, tagsStr, nowSec, input.id);
 
     return {

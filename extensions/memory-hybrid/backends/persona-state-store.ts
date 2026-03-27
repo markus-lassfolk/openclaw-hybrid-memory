@@ -103,7 +103,7 @@ export class PersonaStateStore extends BaseSqliteStore {
   }
 
   getByStateKey(stateKey: string): PersonaStateEntry | null {
-    const row = this.liveDb.prepare(`SELECT * FROM persona_state WHERE state_key = ?`).get(stateKey) as
+    const row = this.liveDb.prepare("SELECT * FROM persona_state WHERE state_key = ?").get(stateKey) as
       | PersonaStateRow
       | undefined;
     return row ? this.rowToEntry(row) : null;
@@ -111,13 +111,13 @@ export class PersonaStateStore extends BaseSqliteStore {
 
   listRecent(limit = 50): PersonaStateEntry[] {
     const rows = this.liveDb
-      .prepare(`SELECT * FROM persona_state ORDER BY updated_at DESC LIMIT ?`)
+      .prepare("SELECT * FROM persona_state ORDER BY updated_at DESC LIMIT ?")
       .all(limit) as unknown as PersonaStateRow[];
     return rows.map((row) => this.rowToEntry(row));
   }
 
   count(): number {
-    const row = this.liveDb.prepare(`SELECT COUNT(*) AS count FROM persona_state`).get() as
+    const row = this.liveDb.prepare("SELECT COUNT(*) AS count FROM persona_state").get() as
       | { count?: number }
       | undefined;
     return row?.count ?? 0;

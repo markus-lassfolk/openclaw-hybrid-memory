@@ -168,8 +168,7 @@ export function maybeLogOutdatedVersionNudge(
   }
 
   logger.warn?.(
-    `memory-hybrid: update available — installed v${currentVersion}, latest published is v${entry.latestVersion}. ` +
-      "Telemetry is muted on outdated clients to keep GlitchTip clean. Upgrade with: openclaw hybrid-mem upgrade",
+    `memory-hybrid: update available — installed v${currentVersion}, latest published is v${entry.latestVersion}. Telemetry is muted on outdated clients to keep GlitchTip clean. Upgrade with: openclaw hybrid-mem upgrade`,
   );
   return markUpdateNudged(entry);
 }
