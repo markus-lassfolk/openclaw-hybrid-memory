@@ -15,6 +15,7 @@
 import type OpenAI from "openai";
 import type { HybridMemoryConfig } from "../config.js";
 import type { FactsDB } from "../backends/facts-db.js";
+import type { EdictStore } from "../backends/edict-store.js";
 import type { VectorDB } from "../backends/vector-db.js";
 import type { WriteAheadLog } from "../backends/wal.js";
 import type { CredentialsDB } from "../backends/credentials-db.js";
@@ -50,6 +51,7 @@ export interface PluginRuntime {
 
   // --- Core backends (always present after init) ---
   factsDb: FactsDB;
+  edictStore: EdictStore;
   vectorDb: VectorDB;
   embeddings: EmbeddingProvider;
   embeddingRegistry: EmbeddingRegistry;

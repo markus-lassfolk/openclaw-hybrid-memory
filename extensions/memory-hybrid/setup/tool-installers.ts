@@ -61,6 +61,7 @@ function defineToolInstaller<TSelectedContext>(
 function selectMemoryCoreToolsContext(ctx: ToolsContext): MemoryToolsContext {
   const {
     factsDb,
+    edictStore,
     vectorDb,
     cfg,
     embeddings,
@@ -85,6 +86,7 @@ function selectMemoryCoreToolsContext(ctx: ToolsContext): MemoryToolsContext {
 
   return {
     factsDb,
+    edictStore,
     vectorDb,
     cfg,
     embeddings,

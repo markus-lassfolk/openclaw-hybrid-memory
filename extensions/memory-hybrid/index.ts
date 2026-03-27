@@ -447,6 +447,7 @@ const memoryHybridPlugin = {
       resolvedLancePath,
       resolvedSqlitePath,
       factsDb: dbContext.factsDb,
+      edictStore: dbContext.edictStore,
       vectorDb: dbContext.vectorDb,
       embeddings: dbContext.embeddings,
       embeddingRegistry: dbContext.embeddingRegistry,
@@ -486,6 +487,7 @@ const memoryHybridPlugin = {
     if (old) {
       closeOldDatabases({
         factsDb: old.factsDb,
+        edictStore: old.edictStore,
         vectorDb: old.vectorDb,
         credentialsDb: old.credentialsDb,
         proposalsDb: old.proposalsDb,
@@ -512,6 +514,7 @@ const memoryHybridPlugin = {
     // Phase 2.6 / Phase 3: Single plugin context satisfying MemoryPluginAPI (stable internal API).
     const pluginContext: MemoryPluginAPI = {
       factsDb: runtime.factsDb,
+      edictStore: runtime.edictStore,
       vectorDb: runtime.vectorDb,
       cfg: runtime.cfg,
       embeddings: runtime.embeddings,
@@ -631,6 +634,7 @@ const memoryHybridPlugin = {
         createPluginService({
           PLUGIN_ID,
           factsDb: runtime.factsDb,
+          edictStore: runtime.edictStore,
           vectorDb: runtime.vectorDb,
           embeddings: runtime.embeddings,
           embeddingRegistry: runtime.embeddingRegistry,
