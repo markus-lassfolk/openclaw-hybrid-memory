@@ -6,6 +6,11 @@
 
 /** Create procedure_versions table for version-level outcome tracking (#782). */
 function migrateProcedureVersionsTable(db: DatabaseSync): void {
+
+import { DatabaseSync } from "node:sqlite";
+import { createTransaction } from "../../utils/sqlite-transaction.js";
+import { normalizedHash } from "../../utils/tags.js";
+
   db.exec(`
     CREATE TABLE IF NOT EXISTS procedure_versions (
       id TEXT PRIMARY KEY,
