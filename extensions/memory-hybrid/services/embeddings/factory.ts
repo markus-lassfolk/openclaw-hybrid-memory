@@ -86,6 +86,11 @@ function openaiEmbeddingClientOpts(
     if (opts.baseURL && isAzureApiManagementGatewayUrl(opts.baseURL)) {
       opts.defaultHeaders = { ...(opts.defaultHeaders ?? {}), "api-key": apiKey };
       opts.fetch = createApimGatewayFetch(apiKey);
+      const openAiV1Compat = /\/openai\/v1(?:\/|$)/i.test(opts.baseURL);
+      // APIM deployment-style paths need api-version (passed through to backend Azure OpenAI)
+      if (!openAiV1Compat) {
+        opts.defaultQuery = { "api-version": AZURE_OPENAI_API_VERSION };
+      }
     }
   }
   return opts;
