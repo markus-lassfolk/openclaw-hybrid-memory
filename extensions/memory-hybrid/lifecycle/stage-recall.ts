@@ -139,9 +139,7 @@ async function runRecall(
           });
           if (recentNarratives.length > 0) {
             const narrative = recentNarratives[0];
-            const agentDir = currentAgentIdRef.value || "main";
-            const logPath = `~/.openclaw/agents/${agentDir}/sessions/${narrative.sessionId}.jsonl`;
-            narrativePart = `<recent-history-narratives>\n- [${narrative.source}/${formatNarrativeRange(narrative.periodStart, narrative.periodEnd)}] (sessionKey: ${narrative.sessionId}, sessionLogPath: ${logPath})\n${clipNarrativeText(narrative.text)}\n</recent-history-narratives>\n\n`;
+            narrativePart = `<recent-history-narratives>\n- [${narrative.source}/${formatNarrativeRange(narrative.periodStart, narrative.periodEnd)}] (sessionKey: ${narrative.sessionId})\n${clipNarrativeText(narrative.text)}\n</recent-history-narratives>\n\n`;
           }
         } catch {
           // Non-fatal.
@@ -387,9 +385,7 @@ async function runRecall(
         });
         if (recentNarratives.length > 0) {
           const lines = recentNarratives.map((n) => {
-            const agentDir = currentAgentIdRef.value || "main";
-            const logPath = `~/.openclaw/agents/${agentDir}/sessions/${n.sessionId}.jsonl`;
-            return `- [${n.source}/${formatNarrativeRange(n.periodStart, n.periodEnd)}] (sessionKey: ${n.sessionId}, sessionLogPath: ${logPath})\n${clipNarrativeText(n.text)}`;
+            return `- [${n.source}/${formatNarrativeRange(n.periodStart, n.periodEnd)}] (sessionKey: ${n.sessionId})\n${clipNarrativeText(n.text)}`;
           });
           narrativeBlock = `<recent-history-narratives>\n${lines.join("\n")}\n</recent-history-narratives>\n\n`;
         }
