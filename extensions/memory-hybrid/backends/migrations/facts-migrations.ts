@@ -1043,26 +1043,29 @@ function migrateEpisodesTable(db: DatabaseSync): void {
   // Old schema used content='episodes' (4-col FTS); new schema is standalone 2-col with triggers.
   const hasOldFtsSchema = ftsInfo?.sql?.includes("content='episodes'") || ftsInfo?.sql?.includes('content="episodes"');
 
-  if (hasOldFtsSchema) {
-    // Drop old content-FTS triggers and table — they reference a column set that no longer matches.
-    db.exec("DROP TRIGGER IF EXISTS episodes_fts_ai");
-    db.exec("DROP TRIGGER IF EXISTS episodes_fts_ad");
-    db.exec("DROP TRIGGER IF EXISTS episodes_fts_au");
-    db.exec("DROP TABLE IF EXISTS episodes_fts");
-  }
+  // Wrap the entire migration in a transaction so any failure leaves the DB consistent.
+  if (hasOldFtsSchema || !ftsExists) {
+    const migrate = createTransaction(db, () => {
+      if (hasOldFtsSchema) {
+        // Drop old content-FTS triggers and table — they reference a column set that no longer matches.
+        db.exec("DROP TRIGGER IF EXISTS episodes_fts_ai");
+        db.exec("DROP TRIGGER IF EXISTS episodes_fts_ad");
+        db.exec("DROP TRIGGER IF EXISTS episodes_fts_au");
+        db.exec("DROP TABLE IF EXISTS episodes_fts");
+      }
 
-  db.exec(`
-    CREATE VIRTUAL TABLE IF NOT EXISTS episodes_fts USING fts5(
-      event,
-      context,
-      tokenize='porter unicode61'
-    )
-  `);
+      db.exec(`
+        CREATE VIRTUAL TABLE IF NOT EXISTS episodes_fts USING fts5(
+          event,
+          context,
+          tokenize='porter unicode61'
+        )
+      `);
 
-  // Backfill FTS when the table was just created (either never existed, or dropped above).
-  // Skipped when the new-schema FTS already exists to avoid duplicate rows.
-  if (!ftsExists || hasOldFtsSchema) {
-    db.exec("INSERT INTO episodes_fts(rowid, event, context) SELECT rowid, event, context FROM episodes");
+      // Backfill FTS when the table was just created (either never existed, or dropped above).
+      db.exec("INSERT INTO episodes_fts(rowid, event, context) SELECT rowid, event, context FROM episodes");
+    });
+    migrate();
   }
 
   // Trigger-based FTS maintenance: INSERT, DELETE, UPDATE all keep episodes_fts in sync.
