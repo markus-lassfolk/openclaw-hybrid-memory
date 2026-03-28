@@ -59,12 +59,14 @@ describe("tool installers", () => {
         walRemove,
         issueStore: { kind: "issues" },
         workflowStore: { kind: "workflow" },
+        auditStore: { kind: "audit" },
       } as never,
       { logger: { warn: vi.fn() } } as never,
     ) as MemoryToolsContext & Record<string, unknown>;
 
     expect(Object.keys(selected).sort()).toEqual([
       "aliasDb",
+      "auditStore",
       "buildToolScopeFilter",
       "cfg",
       "credentialsDb",

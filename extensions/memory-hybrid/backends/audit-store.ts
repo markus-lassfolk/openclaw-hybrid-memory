@@ -50,9 +50,7 @@ function scrubContext(obj: Record<string, unknown>): Record<string, unknown> {
     }
     if (Array.isArray(v)) {
       out[k] = v.map((item) =>
-        item && typeof item === "object" && !Array.isArray(item)
-          ? scrubContext(item as Record<string, unknown>)
-          : item
+        item && typeof item === "object" && !Array.isArray(item) ? scrubContext(item as Record<string, unknown>) : item,
       );
     } else if (v && typeof v === "object") {
       out[k] = scrubContext(v as Record<string, unknown>);
