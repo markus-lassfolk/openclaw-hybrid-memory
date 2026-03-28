@@ -28,8 +28,11 @@ import { formatDuration } from "../utils/duration.js";
 import { pluginLogger } from "../utils/logger.js";
 import { stableStringify } from "../utils/stable-stringify.js";
 
-/** Unparseable or invalid signal files older than this are deleted to prevent unbounded accumulation (issue #812). */
-const STALE_CORRUPT_SIGNAL_MS = 5 * 60 * 1000;
+/**
+ * Unparseable or invalid signal files (and abandoned atomic-write temp files) older than this are
+ * deleted to prevent unbounded accumulation (issue #812). Exported for tests.
+ */
+export const STALE_CORRUPT_SIGNAL_MS = 5 * 60 * 1000;
 
 async function tryDeleteStaleCorruptSignalFile(filePath: string): Promise<void> {
   try {
@@ -745,8 +748,13 @@ export async function writeTaskSignal(label: string, signal: TaskSignal, memoryD
   const filePath = join(signalsDir, `${safeLabel}-${timestamp}-${suffix}.json`);
   const artifact = createOctaveTaskHandoffArtifact(signal);
   const tmpPath = `${filePath}.tmp-${process.pid}-${Date.now()}`;
-  await writeFile(tmpPath, JSON.stringify(artifact, null, 2), "utf-8");
-  await rename(tmpPath, filePath);
+  try {
+    await writeFile(tmpPath, JSON.stringify(artifact, null, 2), "utf-8");
+    await rename(tmpPath, filePath);
+  } catch (err) {
+    await unlink(tmpPath).catch(() => {});
+    throw err;
+  }
   return filePath;
 }
 
@@ -771,6 +779,20 @@ export async function readPendingSignals(memoryDir: string): Promise<PendingTask
 
   const resolvedSignalsDir = await realpath(signalsDir);
   const signals: PendingTaskSignal[] = [];
+
+  // Orphaned atomic-write temps (crash after writeFile, before rename) — same age rule as corrupt JSON.
+  for (const file of files) {
+    if (!file.includes(".json.tmp-")) continue;
+    const tmpFull = join(signalsDir, file);
+    try {
+      const s = await stat(tmpFull);
+      if (Date.now() - s.mtimeMs <= STALE_CORRUPT_SIGNAL_MS) continue;
+      await unlink(tmpFull);
+    } catch {
+      // race / gone
+    }
+  }
+
   for (const file of files) {
     if (!file.endsWith(".json")) continue;
     const filePath = join(signalsDir, file);

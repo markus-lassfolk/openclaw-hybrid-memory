@@ -293,9 +293,10 @@ function detectCategory(text: string): MemoryCategory {
  * after a SIGUSR1 reload, those closures automatically see the new instance through
  * `runtimeRef.value`.
  *
- * Using a ref object (rather than scattered module-level `let`s) means two independent
- * plugin instances can each maintain their own runtime without any shared module-level
- * mutable state — see tests/plugin-runtime.test.ts for isolation proof.
+ * The ref object avoids scattering `let`s for the *runtime* snapshot. Concurrent calls to
+ * `register()` are additionally serialized via `registerRunning` / `pendingRegistrationQueue`
+ * so only one registration runs at a time (multi-agent / rapid reload). That queue is
+ * independent from `runtimeRef` — see tests/plugin-runtime.test.ts for runtime isolation.
  */
 const runtimeRef: { value: PluginRuntime | null } = { value: null };
 
@@ -318,7 +319,16 @@ const memoryHybridPlugin = {
       } finally {
         registerRunning = false;
         const next = pendingRegistrationQueue.shift();
-        if (next) next();
+        if (next) {
+          try {
+            next();
+          } catch (err) {
+            capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+              subsystem: "registration",
+              operation: "plugin-register:queued-runner",
+            });
+          }
+        }
       }
     };
     if (registerRunning) {

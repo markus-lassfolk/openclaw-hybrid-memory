@@ -24,6 +24,7 @@ import {
   writeTaskSignal,
   readPendingSignals,
   deleteSignal,
+  STALE_CORRUPT_SIGNAL_MS,
   createOctaveTaskHandoffArtifact,
   validateOctaveTaskHandoffArtifact,
   OCTAVE_TASK_HANDOFF_SCHEMA,
@@ -1131,13 +1132,25 @@ describe("writeTaskSignal / readPendingSignals / deleteSignal", () => {
     await fsMkdir(signalsDir, { recursive: true });
     const badPath = join(signalsDir, "stale-bad.json");
     await fsWrite(badPath, "not valid json", "utf-8");
-    const old = new Date(Date.now() - 6 * 60 * 1000);
+    const old = new Date(Date.now() - STALE_CORRUPT_SIGNAL_MS - 60_000);
     await utimes(badPath, old, old);
 
     await writeTaskSignal("good-label", makeSignal(), tmpDir);
     const signals = await readPendingSignals(tmpDir);
     expect(signals).toHaveLength(1);
     await expect(readFile(badPath, "utf-8")).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("removes stale abandoned atomic-write temp files under task-signals", async () => {
+    const { writeFile: fsWrite, mkdir: fsMkdir, utimes } = await import("node:fs/promises");
+    const signalsDir = join(tmpDir, "task-signals");
+    await fsMkdir(signalsDir, { recursive: true });
+    const tmpPath = join(signalsDir, "orphan-1-abcdef12.json.tmp-999-111");
+    await fsWrite(tmpPath, "{", "utf-8");
+    const old = new Date(Date.now() - STALE_CORRUPT_SIGNAL_MS - 60_000);
+    await utimes(tmpPath, old, old);
+    await readPendingSignals(tmpDir);
+    await expect(readFile(tmpPath, "utf-8")).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("ignores non-JSON files in signals dir", async () => {
