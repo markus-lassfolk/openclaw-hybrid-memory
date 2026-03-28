@@ -1,4 +1,3 @@
-
 import type { DatabaseSync } from "node:sqlite";
 import { createTransaction } from "../../utils/sqlite-transaction.js";
 import { normalizedHash } from "../../utils/tags.js";
@@ -951,6 +950,7 @@ function migrateEpisodesTable(db: DatabaseSync): void {
   const ftsInfo = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='episodes_fts'").get() as
     | { sql?: string }
     | undefined;
+  const ftsExists = !!ftsInfo;
   const hasOldFtsSchema = ftsInfo?.sql?.includes("content='episodes'") || ftsInfo?.sql?.includes('content="episodes"');
 
   if (hasOldFtsSchema) {
@@ -969,8 +969,8 @@ function migrateEpisodesTable(db: DatabaseSync): void {
     )
   `);
 
-  // Rebuild FTS index if we dropped the old table
-  if (hasOldFtsSchema) {
+  // Rebuild FTS index if we dropped the old table or if it was newly created
+  if (!ftsExists || hasOldFtsSchema) {
     db.exec("INSERT INTO episodes_fts(rowid, event, context) SELECT rowid, event, context FROM episodes");
   }
 

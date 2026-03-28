@@ -688,7 +688,9 @@ function buildMultiProviderOpenAI(
       // Azure OpenAI / Foundry resource hosts: api-key header (SDK still adds Bearer; many endpoints accept both).
       const isAzureResource =
         typeof baseURL === "string" &&
-        /\.openai\.azure\.com\/|\.cognitiveservices\.azure\.com\/|\.services\.ai\.azure\.com\//i.test(baseURL);
+        /\.openai\.azure\.com(?:\/|$)|\.cognitiveservices\.azure\.com(?:\/|$)|\.services\.ai\.azure\.com(?:\/|$)/i.test(
+          baseURL,
+        );
       // Azure API Management (*.azure-api.net): must strip Bearer — use same fetch as embeddings factory.
       const isApim = typeof baseURL === "string" && isAzureApiManagementGatewayUrl(baseURL);
       const clientOpts: {

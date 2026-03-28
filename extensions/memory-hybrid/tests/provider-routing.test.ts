@@ -1255,6 +1255,70 @@ describe("OpenRouter gateway merge — issue #392", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Azure APIM provider routing
+// ---------------------------------------------------------------------------
+
+describe("Azure APIM provider routing", () => {
+  let tmpDir: string;
+  let MockOpenAI: ReturnType<typeof vi.fn>;
+  let ctx: ReturnType<typeof initializeDatabases> | undefined;
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), "openclaw-test-"));
+    // Retrieve the mock constructor to check arguments.
+    MockOpenAI = vi.mocked(OpenAI);
+    MockOpenAI.mockClear();
+  });
+
+  afterEach(() => {
+    if (ctx) closeOldDatabases(ctx);
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("sets up APIM gateway fetch and api-key header for *.azure-api.net base URLs", async () => {
+    const APIM_BASE_URL = "https://my-gateway.azure-api.net/openai";
+    const cfg = getTestConfig(tmpDir, {
+      llm: {
+        providers: {
+          "azure-foundry": {
+            apiKey: "sk-apim-gateway-key",
+            baseURL: APIM_BASE_URL,
+          },
+        },
+        default: ["azure-foundry/gpt-4o"],
+      },
+    });
+
+    const api = makeMockApi({
+      resolvePath: (p: string) => (p.startsWith("/") ? p : join(tmpDir, p)),
+    });
+
+    ctx = initializeDatabases(cfg, api as never);
+
+    await ctx.openai.chat.completions.create({
+      model: "azure-foundry/gpt-4o",
+      messages: [{ role: "user", content: "hello" }],
+    });
+
+    const apimCall = MockOpenAI.mock.calls.find(
+      ([args]) => (args as Record<string, unknown>)?.baseURL === APIM_BASE_URL,
+    );
+    expect(apimCall).toBeDefined();
+
+    const args = apimCall?.[0] as {
+      apiKey: string;
+      baseURL?: string;
+      defaultHeaders?: Record<string, string>;
+      fetch?: typeof globalThis.fetch;
+    };
+    expect(args.baseURL).toBe(APIM_BASE_URL);
+    expect(args.apiKey).toBe("sk-apim-gateway-key");
+    expect(args.defaultHeaders).toEqual({ "api-key": "sk-apim-gateway-key" });
+    expect(args.fetch).toBeInstanceOf(Function);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Gateway model auto-derivation — unknown provider prefix filter (issue #487)
 // ---------------------------------------------------------------------------
 
