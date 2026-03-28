@@ -53,7 +53,7 @@ export function collectGraphPayload(factsDb: FactsDB, days: number, maxNodes: nu
     label: r.text.length > 120 ? `${r.text.slice(0, 120)}…` : r.text,
     category: r.category,
     importance: r.importance,
-    decayClass: r.decay_class ?? "normal",
+    decayClass: r.decay_class ?? "stable",
   }));
   return {
     generatedAt: new Date().toISOString(),
@@ -85,9 +85,6 @@ export function collectGraphRecallPayload(factsDb: FactsDB, query: string): Grap
     }
   }
   const ids = [...expanded].slice(0, 2000);
-  const idSet = new Set(ids);
-  const allEdges = factsDb.getAllEdges(10000);
-  const edges = allEdges.filter((e) => idSet.has(e.source) && idSet.has(e.target)).slice(0, 2000);
   const entryMap = factsDb.getByIds(ids);
   const nodes: MemoryGraphNode[] = [];
   for (const id of ids) {
@@ -98,9 +95,12 @@ export function collectGraphRecallPayload(factsDb: FactsDB, query: string): Grap
       label: f.text.length > 120 ? `${f.text.slice(0, 120)}…` : f.text,
       category: f.category,
       importance: f.importance,
-      decayClass: f.decayClass ?? "normal",
+      decayClass: f.decayClass ?? "stable",
     });
   }
+  const nodeIdSet = new Set(nodes.map((n) => n.id));
+  const allEdges = factsDb.getAllEdges(10000);
+  const edges = allEdges.filter((e) => nodeIdSet.has(e.source) && nodeIdSet.has(e.target)).slice(0, 2000);
   return {
     generatedAt: new Date().toISOString(),
     nodes,
