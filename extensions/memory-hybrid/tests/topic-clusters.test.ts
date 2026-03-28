@@ -32,13 +32,13 @@
  *   - Integration: incremental re-cluster reuses cluster IDs when components unchanged
  */
 
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
-import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { _testing } from "../index.js";
-import type { MemoryEntry } from "../types/memory.js";
 import type { ClusterFactLookup, TopicCluster } from "../services/topic-clusters.js";
+import type { MemoryEntry } from "../types/memory.js";
 
 const { detectClusters, generateClusterLabel, FactsDB } = _testing;
 
@@ -125,10 +125,7 @@ describe("detectClusters: empty/trivial cases", () => {
   });
 
   it("pair of linked facts (size 2) is below default minClusterSize=3 → isolated", () => {
-    const db = buildMockDb(
-      [makeEntry("a"), makeEntry("b")],
-      [{ sourceFactId: "a", targetFactId: "b" }],
-    );
+    const db = buildMockDb([makeEntry("a"), makeEntry("b")], [{ sourceFactId: "a", targetFactId: "b" }]);
     const result = detectClusters(db, { minClusterSize: 3 });
     expect(result.clusters).toHaveLength(0);
     expect(result.isolatedFacts).toBe(2);
@@ -136,10 +133,7 @@ describe("detectClusters: empty/trivial cases", () => {
   });
 
   it("pair of linked facts forms a cluster when minClusterSize=2", () => {
-    const db = buildMockDb(
-      [makeEntry("a"), makeEntry("b")],
-      [{ sourceFactId: "a", targetFactId: "b" }],
-    );
+    const db = buildMockDb([makeEntry("a"), makeEntry("b")], [{ sourceFactId: "a", targetFactId: "b" }]);
     const result = detectClusters(db, { minClusterSize: 2 });
     expect(result.clusters).toHaveLength(1);
     expect(result.clusters[0].factCount).toBe(2);
@@ -291,7 +285,10 @@ describe("detectClusters: cluster properties", () => {
       { sourceFactId: "a", targetFactId: "b" },
       { sourceFactId: "b", targetFactId: "c" },
     ];
-    const db = buildMockDb(["a", "b", "c"].map((id) => makeEntry(id)), edges);
+    const db = buildMockDb(
+      ["a", "b", "c"].map((id) => makeEntry(id)),
+      edges,
+    );
 
     // First run
     const firstResult = detectClusters(db, { minClusterSize: 3 });
@@ -335,11 +332,9 @@ describe("detectClusters: cluster properties", () => {
       { factId: "a", score: 0.5 },
       { factId: "x", score: 0.9 }, // not in cluster
     ];
-    const boosted = searchResults.map((r) =>
-      clusterFactSet.has(r.factId) ? { ...r, score: r.score + 0.1 } : r,
-    );
-    expect(boosted.find((r) => r.factId === "a")!.score).toBeCloseTo(0.6);
-    expect(boosted.find((r) => r.factId === "x")!.score).toBeCloseTo(0.9);
+    const boosted = searchResults.map((r) => (clusterFactSet.has(r.factId) ? { ...r, score: r.score + 0.1 } : r));
+    expect(boosted.find((r) => r.factId === "a")?.score).toBeCloseTo(0.6);
+    expect(boosted.find((r) => r.factId === "x")?.score).toBeCloseTo(0.9);
   });
 });
 
@@ -402,9 +397,7 @@ describe("generateClusterLabel", () => {
   });
 
   it("entity wins over tag when both are present", () => {
-    const entries = [
-      makeEntry("a", { entity: "serverX", tags: ["tagA", "tagA", "tagA"] }),
-    ];
+    const entries = [makeEntry("a", { entity: "serverX", tags: ["tagA", "tagA", "tagA"] })];
     // entity should take priority
     const label = generateClusterLabel(entries);
     expect(label).toContain("serverx");
@@ -488,7 +481,14 @@ describe("Integration: FactsDB cluster methods", () => {
   it("saveClusters persists and getClusters retrieves", () => {
     const now = Math.floor(Date.now() / 1000);
     const clusters = [
-      { id: "cluster-1", label: "test cluster", factIds: ["f1", "f2", "f3"], factCount: 3, createdAt: now, updatedAt: now },
+      {
+        id: "cluster-1",
+        label: "test cluster",
+        factIds: ["f1", "f2", "f3"],
+        factCount: 3,
+        createdAt: now,
+        updatedAt: now,
+      },
     ];
     db.saveClusters(clusters);
 

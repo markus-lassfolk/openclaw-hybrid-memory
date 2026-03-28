@@ -17,7 +17,7 @@ Four components work together:
 | Component | What it handles | Agent action | Technology |
 |-----------|------------------|--------------|------------|
 | **1a. Structured facts** | "What's X's Y?" — precise lookups | None (auto); or `lookup` / tools | memory-hybrid: **SQLite + FTS5** |
-| **1b. Vector recall** | "What was that thing?" — fuzzy semantic | None (auto); or `memory_store` / `memory_recall` | memory-hybrid: **LanceDB** + OpenAI embeddings |
+| **1b. Vector recall** | "What was that thing?" — fuzzy semantic | None (auto); or `memory_store` / `memory_recall` | memory-hybrid: **LanceDB** + configurable embeddings (OpenAI, Ollama, ONNX, or Google) |
 | **2. Semantic file search** | "Where did I write about X?" | None (automatic) | **memorySearch**: SQLite + BM25/vector over `memory/**/*.md` |
 | **3. Hierarchical files** | "Where are we on this project?" | Manual read/write | **memory/** directory + **MEMORY.md** index |
 
@@ -29,8 +29,13 @@ Four components work together:
 
 ## Prerequisites (API keys and models)
 
-- **Embedding API key (required).** The memory-hybrid plugin needs an API key for embeddings (e.g. OpenAI). Without it, the plugin throws at config load and does not register.
-  - **Embeddings:** Used for vector search (LanceDB), auto-recall, storing new facts, and CLI features (find-duplicates, consolidate). Default model: `text-embedding-3-small`.
+- **Embedding provider (required).** The memory-hybrid plugin needs an embedding provider configured. Without valid embedding config, the plugin throws at load and does not register. Four providers are supported:
+  - **OpenAI** (default): `embedding.provider: "openai"` + `embedding.apiKey`. Default model: `text-embedding-3-small` (1536d).
+  - **Ollama** (local): `embedding.provider: "ollama"`. No API key required. Any Ollama model (e.g. `nomic-embed-text`).
+  - **ONNX** (local): `embedding.provider: "onnx"`. No API key required. Requires `onnxruntime-node`. Models auto-downloaded from HuggingFace.
+  - **Google** (Gemini API): `embedding.provider: "google"`. Uses `gemini-embedding-001`. Reuses `llm.providers.google.apiKey`.
+  - Use `embedding.preferredProviders` for ordered failover (e.g. `["ollama", "openai"]`). See [LLM-AND-PROVIDERS.md](LLM-AND-PROVIDERS.md#embedding-providers).
+  - **Embeddings are used for:** vector search (LanceDB), auto-recall, storing new facts, and CLI features (find-duplicates, consolidate).
   - **LLM features:** Auto-classify, query expansion, summarize-when-over-budget, consolidation, distillation, and reflection use **chat** models. You can configure multiple providers and model tiers (`llm.nano`, `llm.default`, `llm.heavy`) with ordered fallback lists. See [LLM-AND-PROVIDERS.md](LLM-AND-PROVIDERS.md) and [CONFIGURATION.md](CONFIGURATION.md).
 - **memorySearch** (if enabled) uses the same embedding provider/model as memory-hybrid when configured.
 
@@ -145,6 +150,7 @@ Status emojis: 🟢 active, 🟡 paused, 🔵 completed. Keep the index under ~3
 
 ## Related docs
 
+- [ARCHITECTURE-CENTER.md](ARCHITECTURE-CENTER.md) — Core runtime boundary vs adjacent subsystems
 - [DEEP-DIVE.md](DEEP-DIVE.md) — Storage internals, search algorithms, tags, links, deduplication
 - [HOW-IT-WORKS.md](HOW-IT-WORKS.md) — Runtime flow (auto-recall, auto-capture)
 - [QUICKSTART.md](QUICKSTART.md) — Installation and first run

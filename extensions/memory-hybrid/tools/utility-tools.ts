@@ -1,13 +1,13 @@
 import { Type } from "@sinclair/typebox";
-import type { ClawdbotPluginApi } from "openclaw/plugin-sdk";
-import { stringEnum } from "openclaw/plugin-sdk";
+import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
+import { stringEnum } from "../utils/typebox.js";
 import type OpenAI from "openai";
 
 import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
 import type { EmbeddingProvider } from "../services/embeddings.js";
 import type { HybridMemoryConfig } from "../config.js";
-import { resolveReflectionModelAndFallbacks } from "../config.js";
+import { resolveReflectionModelAndFallbacks, isCompactVerbosity } from "../config.js";
 import type { WriteAheadLog } from "../backends/wal.js";
 import type { ProvenanceService } from "../services/provenance.js";
 import { capturePluginError } from "../services/error-reporter.js";
@@ -34,7 +34,7 @@ export type RunReflectionFn = (
   config: { defaultWindow: number; minObservations: number; enabled?: boolean },
   opts: { window: number; dryRun: boolean; model: string; fallbackModels?: string[] },
   logger: { info: (msg: string) => void; warn: (msg: string) => void },
-  provenanceService?: ProvenanceService | null
+  provenanceService?: ProvenanceService | null,
 ) => Promise<{ factsAnalyzed: number; patternsExtracted: number; patternsStored: number; window: number }>;
 
 export type RunReflectionRulesFn = (
@@ -44,7 +44,7 @@ export type RunReflectionRulesFn = (
   openai: OpenAI,
   opts: { dryRun: boolean; model: string; fallbackModels?: string[] },
   logger: { info: (msg: string) => void; warn: (msg: string) => void },
-  provenanceService?: ProvenanceService | null
+  provenanceService?: ProvenanceService | null,
 ) => Promise<{ rulesExtracted: number; rulesStored: number }>;
 
 export type RunReflectionMetaFn = (
@@ -54,7 +54,7 @@ export type RunReflectionMetaFn = (
   openai: OpenAI,
   opts: { dryRun: boolean; model: string; fallbackModels?: string[] },
   logger: { info: (msg: string) => void; warn: (msg: string) => void },
-  provenanceService?: ProvenanceService | null
+  provenanceService?: ProvenanceService | null,
 ) => Promise<{ metaExtracted: number; metaStored: number }>;
 
 export function registerUtilityTools(
@@ -63,8 +63,8 @@ export function registerUtilityTools(
   runReflection: RunReflectionFn,
   runReflectionRules: RunReflectionRulesFn,
   runReflectionMeta: RunReflectionMetaFn,
-  walWrite: (operation: "store" | "update", data: Record<string, unknown>) => string,
-  walRemove: (id: string) => void,
+  _walWrite: (operation: "store" | "update", data: Record<string, unknown>) => Promise<string>,
+  _walRemove: (id: string) => Promise<void>,
 ): void {
   const { factsDb, vectorDb, embeddings, openai, cfg, provenanceService } = ctx;
 
@@ -73,19 +73,12 @@ export function registerUtilityTools(
     {
       name: "memory_checkpoint",
       label: "Memory Checkpoint",
-      description:
-        "Save or restore pre-flight checkpoints before risky/long operations. Auto-expires after 4 hours.",
+      description: "Save or restore pre-flight checkpoints before risky/long operations. Auto-expires after 4 hours.",
       parameters: Type.Object({
         action: stringEnum(["save", "restore"] as const),
-        intent: Type.Optional(
-          Type.String({ description: "What you're about to do (for save)" }),
-        ),
-        state: Type.Optional(
-          Type.String({ description: "Current state/context (for save)" }),
-        ),
-        expectedOutcome: Type.Optional(
-          Type.String({ description: "What should happen if successful" }),
-        ),
+        intent: Type.Optional(Type.String({ description: "What you're about to do (for save)" })),
+        state: Type.Optional(Type.String({ description: "Current state/context (for save)" })),
+        expectedOutcome: Type.Optional(Type.String({ description: "What should happen if successful" })),
         workingFiles: Type.Optional(
           Type.Array(Type.String(), {
             description: "Files being modified",
@@ -93,14 +86,13 @@ export function registerUtilityTools(
         ),
       }),
       async execute(_toolCallId: string, params: Record<string, unknown>) {
-        const { action, intent, state, expectedOutcome, workingFiles } =
-          params as {
-            action: "save" | "restore";
-            intent?: string;
-            state?: string;
-            expectedOutcome?: string;
-            workingFiles?: string[];
-          };
+        const { action, intent, state, expectedOutcome, workingFiles } = params as {
+          action: "save" | "restore";
+          intent?: string;
+          state?: string;
+          expectedOutcome?: string;
+          workingFiles?: string[];
+        };
 
         if (action === "save") {
           if (!intent || !state) {
@@ -163,18 +155,16 @@ export function registerUtilityTools(
     {
       name: "memory_prune",
       label: "Memory Prune",
-      description:
-        "Prune expired memories and decay confidence of aging facts.",
+      description: "Prune expired memories and decay confidence of aging facts.",
       parameters: Type.Object({
-        mode: Type.Optional(
-          stringEnum(["hard", "soft", "both"] as const),
-        ),
+        mode: Type.Optional(stringEnum(["hard", "soft", "both"] as const)),
       }),
       async execute(_toolCallId: string, params: Record<string, unknown>) {
         const { mode = "both" } = params as { mode?: "hard" | "soft" | "both" };
 
         let hardPruned = 0;
         let softPruned = 0;
+        let linksPruned = 0;
 
         if (mode === "hard" || mode === "both") {
           hardPruned = factsDb.pruneExpired();
@@ -183,25 +173,30 @@ export function registerUtilityTools(
           softPruned = factsDb.decayConfidence();
         }
 
+        // Always prune orphaned links (fast, no-op if none exist)
+        linksPruned = factsDb.pruneOrphanedLinks();
+
         const breakdown = factsDb.statsBreakdown();
         const expired = factsDb.countExpired();
 
         const verbosity = cfg.verbosity ?? "normal";
         let text: string;
-        if (verbosity === "quiet") {
+        if (isCompactVerbosity(verbosity)) {
           // Quiet: compact one-liner — statsBreakdown and countExpired are still computed above
           // and included in the `details` field for programmatic consumers; they're intentionally
           // omitted from the human-readable text to reduce noise in quiet sessions.
-          text = `Pruned: ${hardPruned + softPruned} (${hardPruned} expired, ${softPruned} low-confidence).`;
+          const linksNote = linksPruned > 0 ? ` ${linksPruned} orphaned links.` : "";
+          text = `Pruned: ${hardPruned + softPruned} (${hardPruned} expired, ${softPruned} low-confidence).${linksNote}`;
         } else {
-          const baseText = `Pruned: ${hardPruned} expired + ${softPruned} low-confidence.\nRemaining by class: ${JSON.stringify(breakdown)}\nPending expired: ${expired}`;
+          const linksNote = linksPruned > 0 ? `\nOrphaned links removed: ${linksPruned}` : "";
+          const baseText = `Pruned: ${hardPruned} expired + ${softPruned} low-confidence.${linksNote}\nRemaining by class: ${JSON.stringify(breakdown)}\nPending expired: ${expired}`;
           const verboseExtra = verbosity === "verbose" ? `\nMode: ${mode}` : "";
           text = baseText + verboseExtra;
         }
 
         return {
           content: [{ type: "text", text }],
-          details: { hardPruned, softPruned, breakdown, pendingExpired: expired },
+          details: { hardPruned, softPruned, linksPruned, breakdown, pendingExpired: expired },
         };
       },
     },
@@ -255,7 +250,7 @@ export function registerUtilityTools(
           );
           const verbosity = cfg.verbosity ?? "normal";
           let reflectText: string;
-          if (verbosity === "quiet") {
+          if (isCompactVerbosity(verbosity)) {
             reflectText = `Reflected: ${result.patternsStored} patterns stored.`;
           } else if (verbosity === "verbose") {
             reflectText = `Reflection complete: ${result.factsAnalyzed} facts analyzed, ${result.patternsExtracted} patterns extracted, ${result.patternsStored} stored (window: ${result.window} days, model: ${defaultModel}).`;
@@ -436,9 +431,7 @@ export function registerUtilityTools(
             factsDb.saveClusters(result.clusters);
           }
 
-          const summary = result.clusters
-            .map((c) => `  • ${c.label} (${c.factCount} facts)`)
-            .join("\n");
+          const summary = result.clusters.map((c) => `  • ${c.label} (${c.factCount} facts)`).join("\n");
 
           const text =
             result.clusters.length === 0
@@ -480,10 +473,9 @@ export function registerUtilityTools(
         "Analyze the memory graph to surface knowledge gaps (orphans, weakly linked facts, suggested links).",
       parameters: Type.Object({
         mode: Type.Optional(
-          Type.Union(
-            [Type.Literal("orphans"), Type.Literal("weak"), Type.Literal("all")],
-            { description: "Which gap types to return (default: all)." },
-          ),
+          Type.Union([Type.Literal("orphans"), Type.Literal("weak"), Type.Literal("all")], {
+            description: "Which gap types to return (default: all).",
+          }),
         ),
         limit: Type.Optional(
           Type.Number({
@@ -505,10 +497,7 @@ export function registerUtilityTools(
           };
         }
 
-        const mode =
-          params.mode === "orphans" || params.mode === "weak" || params.mode === "all"
-            ? params.mode
-            : "all";
+        const mode = params.mode === "orphans" || params.mode === "weak" || params.mode === "all" ? params.mode : "all";
         const limit =
           typeof params.limit === "number" && Number.isFinite(params.limit) && params.limit > 0
             ? Math.min(200, Math.floor(params.limit))

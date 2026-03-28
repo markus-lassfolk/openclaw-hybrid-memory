@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
 import { esphomeYamlConverter } from "../../tools/converters/esphome-yaml-converter.js";
 
 describe("esphomeYamlConverter", () => {
@@ -75,9 +75,9 @@ switch:
     expect(result.markdown).toContain("## API");
     expect(result.markdown).toContain("## OTA");
     expect(result.markdown).toContain("## Logger");
-    expect(result.metadata["sensorCount"]).toBe(2);
-    expect(result.metadata["binarySensorCount"]).toBe(1);
-    expect(result.metadata["switchCount"]).toBe(1);
+    expect(result.metadata.sensorCount).toBe(2);
+    expect(result.metadata.binarySensorCount).toBe(1);
+    expect(result.metadata.switchCount).toBe(1);
   });
 
   it("SECURITY: never includes passwords in output", () => {
@@ -125,7 +125,7 @@ wifi:
     // !secret gets replaced with [REDACTED] by our schema
     expect(result.markdown).not.toContain("wifi_password");
     expect(result.markdown).toContain("[REDACTED]");
-    expect(result.metadata["platform"]).toBe("ESP8266");
+    expect(result.metadata.platform).toBe("ESP8266");
   });
 
   it("handles minimal ESPHome config (board only)", () => {
@@ -141,7 +141,7 @@ esp32:
     expect(result.title).toBe("ESPHome Device: minimal_device");
     expect(result.markdown).toContain("## Board");
     expect(result.markdown).toContain("lolin32");
-    expect(result.metadata["sensorCount"]).toBe(0);
+    expect(result.metadata.sensorCount).toBe(0);
   });
 
   it("handles ESP8266 device", () => {
@@ -164,7 +164,7 @@ sensor:
     const result = esphomeYamlConverter.convert(yaml, "/config/wemos.yaml");
     expect(result.markdown).toContain("ESP8266");
     expect(result.markdown).toContain("d1_mini");
-    expect(result.metadata["platform"]).toBe("ESP8266");
+    expect(result.metadata.platform).toBe("ESP8266");
   });
 
   it("includes static IP in WiFi section", () => {
@@ -213,5 +213,51 @@ output:
     const result = esphomeYamlConverter.convert(yaml, "/config/pwm.yaml");
     expect(result.markdown).toContain("## Switches/Outputs");
     expect(result.markdown).toContain("pwm_out_1");
+  });
+
+  it("handles !secret in sequence items", () => {
+    const yaml = `
+esphome:
+  name: test_device
+
+esp32:
+  board: esp32dev
+
+wifi:
+  networks:
+    - ssid: "Network1"
+      password: !secret wifi_pass_1
+    - ssid: "Network2"
+      password: !secret wifi_pass_2
+`.trim();
+
+    const result = esphomeYamlConverter.convert(yaml, "/config/multi-wifi.yaml");
+    expect(result.markdown).toContain("test_device");
+    // Secrets should be redacted
+    expect(result.markdown).not.toContain("wifi_pass_1");
+    expect(result.markdown).not.toContain("wifi_pass_2");
+  });
+
+  it("handles keys with hyphens and dots", () => {
+    const yaml = `
+esphome:
+  name: test_device
+
+esp32:
+  board: esp32dev
+
+api-key: !secret my_api_key
+mqtt.broker: !secret mqtt_host
+ota-password: !secret ota_pass
+device.id: !secret device_id
+`.trim();
+
+    const result = esphomeYamlConverter.convert(yaml, "/config/hyphen-keys.yaml");
+    expect(result.markdown).toContain("test_device");
+    // Secrets should be redacted
+    expect(result.markdown).not.toContain("my_api_key");
+    expect(result.markdown).not.toContain("mqtt_host");
+    expect(result.markdown).not.toContain("ota_pass");
+    expect(result.markdown).not.toContain("device_id");
   });
 });

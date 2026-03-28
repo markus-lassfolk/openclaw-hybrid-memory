@@ -5,16 +5,19 @@
  * their embeddings — so facts can be found from multiple semantic angles.
  */
 
-import Database from "better-sqlite3";
-import * as lancedb from "@lancedb/lancedb";
+import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import { randomUUID } from "node:crypto";
+import { DatabaseSync } from "node:sqlite";
+import * as lancedb from "@lancedb/lancedb";
 import type OpenAI from "openai";
-import type { EmbeddingProvider } from "./embeddings.js";
-import { chatComplete } from "./chat.js";
-import { capturePluginError } from "./error-reporter.js";
 import type { AliasesConfig } from "../config.js";
+import { LANCE_NO_VECTOR_COL_MSG, UUID_REGEX } from "../utils/constants.js";
+import { pluginLogger } from "../utils/logger.js";
+import { chatComplete } from "./chat.js";
+import type { EmbeddingProvider } from "./embeddings.js";
+import { shouldSuppressEmbeddingError } from "./embeddings.js";
+import { capturePluginError } from "./error-reporter.js";
 
 // ---------------------------------------------------------------------------
 // AliasDB
@@ -40,6 +43,7 @@ class AliasVectorIndex {
   private table: lancedb.Table | null = null;
   private initPromise: Promise<void> | null = null;
   private closed = false;
+  private schemaValid = true;
 
   constructor(
     private readonly dbPath: string,
@@ -61,6 +65,7 @@ class AliasVectorIndex {
   }
 
   private async doInitialize(): Promise<void> {
+    this.schemaValid = true;
     this.db = await lancedb.connect(this.dbPath);
     const tables = await this.db.tableNames();
     if (tables.includes(ALIAS_LANCE_TABLE)) {
@@ -81,36 +86,40 @@ class AliasVectorIndex {
       await this.table.delete('id = "__schema__"');
     } catch (deleteErr) {
       // Non-fatal; keep the seed row if delete fails.
-      console.warn(`memory-hybrid: failed to delete alias schema seed row (non-fatal): ${deleteErr}`);
+      pluginLogger.warn(`memory-hybrid: failed to delete alias schema seed row (non-fatal): ${deleteErr}`);
     }
   }
 
   private async validateSchema(): Promise<void> {
     try {
-      const schema = await this.table!.schema();
+      const schema = await this.table?.schema();
+      if (!schema) return;
       const vectorField = schema.fields.find(
         (f: { type?: { typeId?: number; listSize?: number } }) =>
           typeof f.type?.typeId === "number" && f.type.typeId === 16,
       );
       if (!vectorField) {
-        console.warn(
-          `memory-hybrid: ⚠️  Alias LanceDB table '${ALIAS_LANCE_TABLE}' has no vector column — ` +
-            `alias search will fall back to linear scan.`,
+        this.schemaValid = false;
+        pluginLogger.warn(
+          `memory-hybrid: ⚠️  Alias LanceDB table '${ALIAS_LANCE_TABLE}' has no vector column — alias search will fall back to linear scan.`,
         );
         return;
       }
       const actualDim = (vectorField.type as { listSize?: number }).listSize;
       if (typeof actualDim !== "number" || actualDim !== this.vectorDim) {
+        this.schemaValid = false;
         const actual = typeof actualDim === "number" ? actualDim : "unknown";
-        console.warn(
-          `memory-hybrid: ⚠️  Alias LanceDB dimension mismatch — table has dim=${actual}, ` +
-            `configured embedding model expects dim=${this.vectorDim}. ` +
-            `Alias search will fall back to linear scan until resolved.`,
+        pluginLogger.warn(
+          `memory-hybrid: ⚠️  Alias LanceDB dimension mismatch — table has dim=${actual}, configured embedding model expects dim=${this.vectorDim}. Alias search will fall back to linear scan until resolved.`,
         );
       }
     } catch (err) {
-      console.warn(`memory-hybrid: alias LanceDB schema validation failed (non-fatal): ${err}`);
+      pluginLogger.warn(`memory-hybrid: alias LanceDB schema validation failed (non-fatal): ${err}`);
     }
+  }
+
+  isSchemaValid(): boolean {
+    return this.schemaValid;
   }
 
   private getTable(): lancedb.Table {
@@ -137,17 +146,17 @@ class AliasVectorIndex {
         operation: "alias-vector-store",
         subsystem: "aliases",
       });
-      console.warn(`memory-hybrid: alias LanceDB store failed (non-fatal): ${err}`);
+      pluginLogger.warn(`memory-hybrid: alias LanceDB store failed (non-fatal): ${err}`);
     }
   }
 
-  async search(
-    vector: number[],
-    limit: number,
-    minScore: number,
-  ): Promise<AliasSearchResult[]> {
+  async search(vector: number[], limit: number, minScore: number): Promise<AliasSearchResult[]> {
     try {
       await this.ensureInitialized();
+      if (!this.schemaValid) return [];
+      // Dimension pre-check: prevent LanceDB "No vector column found" errors on fallback query mismatch
+      if (vector.length !== this.vectorDim) return [];
+
       const searchLimit = Math.max(limit * 6, 50);
       const results = await this.getTable().vectorSearch(vector).limit(searchLimit).toArray();
       const bestByFact = new Map<string, number>();
@@ -166,12 +175,16 @@ class AliasVectorIndex {
         .sort((a, b) => b.score - a.score)
         .slice(0, limit);
     } catch (err) {
-      capturePluginError(err as Error, {
-        operation: "alias-vector-search",
-        severity: "info",
-        subsystem: "aliases",
-      });
-      console.warn(`memory-hybrid: alias LanceDB search failed (non-fatal): ${err}`);
+      if (err instanceof Error && err.message.includes(LANCE_NO_VECTOR_COL_MSG)) {
+        this.schemaValid = false;
+      } else {
+        capturePluginError(err as Error, {
+          operation: "alias-vector-search",
+          severity: "info",
+          subsystem: "aliases",
+        });
+      }
+      pluginLogger.warn(`memory-hybrid: alias LanceDB search failed (non-fatal): ${err}`);
       return [];
     }
   }
@@ -179,10 +192,8 @@ class AliasVectorIndex {
   async deleteByFactId(factId: string): Promise<void> {
     try {
       await this.ensureInitialized();
-      const uuidRegex =
-        /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-      if (!uuidRegex.test(factId)) {
-        console.warn(`memory-hybrid: skipping alias LanceDB delete for non-UUID factId: ${factId}`);
+      if (!UUID_REGEX.test(factId)) {
+        pluginLogger.warn(`memory-hybrid: skipping alias LanceDB delete for non-UUID factId: ${factId}`);
         return;
       }
       await this.getTable().delete(`factId = '${factId.toLowerCase()}'`);
@@ -191,7 +202,7 @@ class AliasVectorIndex {
         operation: "alias-vector-delete",
         subsystem: "aliases",
       });
-      console.warn(`memory-hybrid: alias LanceDB delete failed (non-fatal): ${err}`);
+      pluginLogger.warn(`memory-hybrid: alias LanceDB delete failed (non-fatal): ${err}`);
     }
   }
 
@@ -216,15 +227,15 @@ class AliasVectorIndex {
  * fast deserialization during linear cosine-similarity search.
  */
 export class AliasDB {
-  private db: Database.Database;
+  private db: DatabaseSync;
   private aliasIndex: AliasVectorIndex;
   /** Cached alias count — invalidated on store/delete to avoid COUNT(*) on every search. */
   private aliasCountCache: number | null = null;
 
   constructor(dbPath: string, aliasLancePath: string, vectorDim: number) {
     mkdirSync(dirname(dbPath), { recursive: true });
-    this.db = new Database(dbPath);
-    this.db.pragma("journal_mode = WAL");
+    this.db = new DatabaseSync(dbPath);
+    this.db.exec("PRAGMA journal_mode = WAL");
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS fact_aliases (
         id TEXT PRIMARY KEY,
@@ -233,9 +244,7 @@ export class AliasDB {
         embedding BLOB NOT NULL
       )
     `);
-    this.db.exec(
-      `CREATE INDEX IF NOT EXISTS idx_fact_aliases_factId ON fact_aliases(factId)`,
-    );
+    this.db.exec("CREATE INDEX IF NOT EXISTS idx_fact_aliases_factId ON fact_aliases(factId)");
     this.aliasIndex = new AliasVectorIndex(aliasLancePath, vectorDim);
   }
 
@@ -248,9 +257,7 @@ export class AliasDB {
     const floatArray = Float32Array.from(embedding);
     const blob = Buffer.from(floatArray.buffer.slice(0));
     this.db
-      .prepare(
-        `INSERT INTO fact_aliases (id, factId, aliasText, embedding) VALUES (?, ?, ?, ?)`,
-      )
+      .prepare("INSERT INTO fact_aliases (id, factId, aliasText, embedding) VALUES (?, ?, ?, ?)")
       .run(id, normalizedFactId, aliasText, blob);
     if (this.aliasCountCache != null) this.aliasCountCache += 1;
     void this.aliasIndex.store({ id, factId: normalizedFactId, aliasText, vector: embedding });
@@ -263,19 +270,17 @@ export class AliasDB {
     // can use the idx_fact_aliases_factId index (COLLATE NOCASE would bypass it).
     const normalizedFactId = factId.toLowerCase();
     return this.db
-      .prepare(
-        `SELECT id, factId, aliasText FROM fact_aliases WHERE factId COLLATE NOCASE = ?`,
-      )
-      .all(normalizedFactId) as AliasRow[];
+      .prepare("SELECT id, factId, aliasText FROM fact_aliases WHERE factId COLLATE NOCASE = ?")
+      .all(normalizedFactId) as unknown as AliasRow[];
   }
 
   /** Delete all aliases for a fact (e.g., when the fact is superseded). */
   deleteByFactId(factId: string): void {
     // Pre-lowercase to match normalized storage; avoids COLLATE NOCASE index bypass.
     const normalizedFactId = factId.toLowerCase();
-    const res = this.db.prepare(`DELETE FROM fact_aliases WHERE factId = ?`).run(normalizedFactId);
+    const res = this.db.prepare("DELETE FROM fact_aliases WHERE factId = ?").run(normalizedFactId);
     if (this.aliasCountCache != null) {
-      this.aliasCountCache = Math.max(0, this.aliasCountCache - (res.changes ?? 0));
+      this.aliasCountCache = Math.max(0, this.aliasCountCache - Number(res.changes ?? 0));
     }
     void this.aliasIndex.deleteByFactId(factId);
   }
@@ -283,9 +288,7 @@ export class AliasDB {
   /** Total alias count (cached to avoid COUNT(*) on every search call). */
   count(): number {
     if (this.aliasCountCache != null) return this.aliasCountCache;
-    const row = this.db
-      .prepare(`SELECT COUNT(*) as n FROM fact_aliases`)
-      .get() as { n: number };
+    const row = this.db.prepare("SELECT COUNT(*) as n FROM fact_aliases").get() as { n: number };
     this.aliasCountCache = row.n;
     return row.n;
   }
@@ -297,16 +300,13 @@ export class AliasDB {
    * deduplicates by factId (keeps best score per fact), and returns up to
    * `limit` results above `minScore`, sorted descending by score.
    */
-  async search(
-    queryVector: number[],
-    limit: number,
-    minScore: number,
-  ): Promise<AliasSearchResult[]> {
+  async search(queryVector: number[], limit: number, minScore: number): Promise<AliasSearchResult[]> {
     const aliasCount = this.count();
     if (aliasCount >= 1000) {
       // Prefer LanceDB vector search for larger datasets; fallback to linear scan on errors.
       try {
-        return await this.aliasIndex.search(queryVector, limit, minScore);
+        const results = await this.aliasIndex.search(queryVector, limit, minScore);
+        return this.aliasIndex.isSchemaValid() ? results : this.linearSearch(queryVector, limit, minScore);
       } catch {
         return this.linearSearch(queryVector, limit, minScore);
       }
@@ -314,24 +314,17 @@ export class AliasDB {
     return this.linearSearch(queryVector, limit, minScore);
   }
 
-  private linearSearch(
-    queryVector: number[],
-    limit: number,
-    minScore: number,
-  ): AliasSearchResult[] {
+  private linearSearch(queryVector: number[], limit: number, minScore: number): AliasSearchResult[] {
     // Track best score per factId to deduplicate across aliases for the same fact
     const bestByFact = new Map<string, number>();
     const queryNormSq = queryVector.reduce((sum, v) => sum + v * v, 0);
     if (queryNormSq === 0) return [];
 
-    const stmt = this.db.prepare(`SELECT factId, embedding FROM fact_aliases`);
+    const stmt = this.db.prepare("SELECT factId, embedding FROM fact_aliases");
     for (const row of stmt.iterate() as Iterable<{ factId: string; embedding: Buffer }>) {
       if (row.embedding.byteLength % 4 !== 0) continue;
       const floats = new Float32Array(
-        row.embedding.buffer.slice(
-          row.embedding.byteOffset,
-          row.embedding.byteOffset + row.embedding.byteLength,
-        ),
+        row.embedding.buffer.slice(row.embedding.byteOffset, row.embedding.byteOffset + row.embedding.byteLength),
       );
       if (floats.length !== queryVector.length) continue;
       let dot = 0;
@@ -380,12 +373,7 @@ export async function generateAliases(
   model: string,
   maxAliases: number,
 ): Promise<string[]> {
-  const prompt =
-    `Generate ${maxAliases} alternative phrasings for the following fact. ` +
-    `The alternatives should differ in wording but preserve the meaning, ` +
-    `to enable retrieval of this fact from different semantic angles. ` +
-    `Return only the alternatives, one per line, no numbering or bullets.\n\n` +
-    `Fact: ${factText}`;
+  const prompt = `Generate ${maxAliases} alternative phrasings for the following fact. The alternatives should differ in wording but preserve the meaning, to enable retrieval of this fact from different semantic angles. Return only the alternatives, one per line, no numbering or bullets.\n\nFact: ${factText}`;
 
   try {
     const response = await chatComplete({
@@ -400,10 +388,10 @@ export async function generateAliases(
       .filter((l) => l.length > 0 && l !== factText);
     return [...new Set(lines)].slice(0, maxAliases);
   } catch (err) {
-    capturePluginError(
-      err instanceof Error ? err : new Error(String(err)),
-      { subsystem: "aliases", operation: "generate-aliases" },
-    );
+    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+      subsystem: "aliases",
+      operation: "generate-aliases",
+    });
     return [];
   }
 }
@@ -442,10 +430,13 @@ export async function storeAliases(
       const vec = await embeddings.embed(alias);
       aliasDb.store(factId, alias, vec);
     } catch (err) {
-      capturePluginError(
-        err instanceof Error ? err : new Error(String(err)),
-        { subsystem: "aliases", operation: "store-alias-embedding" },
-      );
+      // AllEmbeddingProvidersFailed is expected when all providers are unavailable — don't report (#486)
+      if (!shouldSuppressEmbeddingError(err)) {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+          subsystem: "aliases",
+          operation: "store-alias-embedding",
+        });
+      }
       logWarn?.(`memory-hybrid: alias embedding failed: ${err}`);
     }
   }

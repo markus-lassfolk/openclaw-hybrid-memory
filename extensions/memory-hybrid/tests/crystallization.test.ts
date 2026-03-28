@@ -4,10 +4,10 @@
  *         SkillValidator, CrystallizationProposer, config parsing.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, rmSync, existsSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { _testing } from "../index.js";
 
 const {
@@ -232,12 +232,28 @@ describe("computePatternId", () => {
 
 describe("scorePattern", () => {
   it("is totalCount × successRate", () => {
-    const pattern = { totalCount: 10, successRate: 0.8, successCount: 8, failureCount: 2, avgDurationMs: 100, exampleGoals: [], toolSequence: [] };
+    const pattern = {
+      totalCount: 10,
+      successRate: 0.8,
+      successCount: 8,
+      failureCount: 2,
+      avgDurationMs: 100,
+      exampleGoals: [],
+      toolSequence: [],
+    };
     expect(scorePattern(pattern)).toBeCloseTo(8);
   });
 
   it("is 0 for 0 success rate", () => {
-    const pattern = { totalCount: 5, successRate: 0, successCount: 0, failureCount: 5, avgDurationMs: 0, exampleGoals: [], toolSequence: [] };
+    const pattern = {
+      totalCount: 5,
+      successRate: 0,
+      successCount: 0,
+      failureCount: 5,
+      avgDurationMs: 0,
+      exampleGoals: [],
+      toolSequence: [],
+    };
     expect(scorePattern(pattern)).toBe(0);
   });
 });
@@ -423,7 +439,7 @@ describe("SkillCrystallizer.crystallize", () => {
   });
 
   it("expands ~ in outputDir", () => {
-    const homeDir = process.env["HOME"] ?? "/root";
+    const homeDir = process.env.HOME ?? "/root";
     const cfg = { ...DEFAULT_CRYSTALLIZATION_CFG, outputDir: "~/.openclaw/workspace/skills/auto" };
     const crystallizer = new SkillCrystallizer(cfg);
     const pattern = {
@@ -447,10 +463,12 @@ describe("SkillCrystallizer.crystallize", () => {
 
 describe("SkillValidator", () => {
   let validator: any;
-  beforeEach(() => { validator = new SkillValidator(); });
+  beforeEach(() => {
+    validator = new SkillValidator();
+  });
 
   it("passes valid SKILL.md content", () => {
-    const content = `# my-skill\n\nUse when deploying.\n\n## Steps\n\n1. Call exec.\n`;
+    const content = "# my-skill\n\nUse when deploying.\n\n## Steps\n\n1. Call exec.\n";
     expect(validator.validate(content).valid).toBe(true);
   });
 
@@ -665,7 +683,7 @@ describe("parseCrystallizationConfig", () => {
         pruneUnusedDays: 60,
       },
     });
-    expect(cfg.crystallization.enabled).toBe(true);
+    expect(cfg.crystallization.enabled).toBe(false); // 2026.3.140 migration forces core-only baseline
     expect(cfg.crystallization.minUsageCount).toBe(10);
     expect(cfg.crystallization.minSuccessRate).toBe(0.8);
     expect(cfg.crystallization.autoApprove).toBe(false);
@@ -676,7 +694,7 @@ describe("parseCrystallizationConfig", () => {
 
   it("defaults to disabled with sensible values when omitted", async () => {
     const { hybridConfigSchema } = await import("../config.js");
-    const cfg = hybridConfigSchema.parse({ ...BASE_CFG, mode: "normal" });
+    const cfg = hybridConfigSchema.parse({ ...BASE_CFG, mode: "minimal" });
     expect(cfg.crystallization.enabled).toBe(false);
     expect(cfg.crystallization.minUsageCount).toBe(5);
     expect(cfg.crystallization.minSuccessRate).toBe(0.7);

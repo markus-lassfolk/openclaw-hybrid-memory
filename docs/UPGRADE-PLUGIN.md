@@ -51,10 +51,10 @@ npx -y openclaw-hybrid-memory-install 2026.2.181   # specific version
 openclaw gateway stop && openclaw gateway start
 ```
 
-**If the gateway then reports "Could not locate the bindings file" (better_sqlite3)** — the native rebuild may have been interrupted. Run:
+**If the gateway then reports "Could not locate the bindings file" for `@lancedb/lancedb`** — the native rebuild may have been interrupted. Run:
 
 ```bash
-cd ~/.openclaw/extensions/openclaw-hybrid-memory && npm rebuild better-sqlite3 @lancedb/lancedb
+cd ~/.openclaw/extensions/openclaw-hybrid-memory && npm rebuild @lancedb/lancedb
 openclaw gateway stop && openclaw gateway start
 ```
 
@@ -110,6 +110,166 @@ openclaw hybrid-mem verify
 The plugin has a **schema version**. On startup it checks the existing SQLite (and LanceDB) state and applies any needed migrations (new columns, indexes, tables). You do **not** need to run a separate migration command. Just start the gateway with the new plugin; migrations run once automatically.
 
 ### Config and new defaults
+
+**From 2026.3.140 onward:** On first load after upgrading, the plugin applies a **core-only baseline migration**: it **overrides** every listed non-core option to disabled, **including values you had set**, so all users get the same baseline. Only core memory features are enabled. To turn a feature back on, set it explicitly (e.g. `queryExpansion: { enabled: true }`). See [PHASES-ROADMAP.md](PHASES-ROADMAP.md) and CHANGELOG for the list of affected options.
+
+New plugin versions sometimes add **optional** config keys (e.g. new features with defaults). To see what the installer would add without changing your config:
+
+```bash
+openclaw hybrid-mem install --dry-run
+```
+
+To apply the recommended defaults (memory slot, compaction, nightly job, etc.) on top of your existing config:
+
+```bash
+openclaw hybrid-mem install
+```
+
+Review the diff or backup `openclaw.json` first if you've heavily customised it.
+
+### Version metadata
+
+The plugin exposes version info you can use to confirm what's running:
+
+- **Plugin version** — From package.json (e.g. 1.2.3). Bumped on each release.
+- **Memory manager version** — Spec version (e.g. 3.0). Changes only when the overall design/spec changes.
+- **Schema version** — Integer used for DB migrations. Bumped when schema or migrations change.
+
+You can see these in:
+
+- `openclaw hybrid-mem stats` (often printed in the header or footer).
+- Gateway logs at startup (e.g. "memory-hybrid" with version).
+- The plugin's `openclaw.plugin.json` / API if the host exposes them.
+
+### OpenClaw upgrade vs plugin upgrade
+
+- **Upgrading OpenClaw** (e.g. `npm update -g openclaw`) — Can break native deps in **all** extensions. Always run the [post-upgrade step](UPGRADE-OPENCLAW.md) (e.g. `openclaw-upgrade` or `post-upgrade.sh`) and restart. See [UPGRADE-OPENCLAW.md](UPGRADE-OPENCLAW.md).
+- **Upgrading only the hybrid-memory plugin** — Replacing the plugin files and running `npm install` in the extension dir is enough. Restart the gateway. No separate "OpenClaw upgrade" step unless you also upgraded OpenClaw.
+
+### Changelog and release notes
+
+Before or after upgrading, check:
+
+- **CHANGELOG.md** in this repo — List of changes per version.
+- **release-notes/** — Release notes for specific versions (e.g. new features, breaking changes, config changes).
+
+If a release notes file says "run `hybrid-mem install` after upgrade" or "back up before upgrading", follow that.
+
+### Backups
+
+For major upgrades or if you're unsure, back up the memory data first. See [BACKUP.md](BACKUP.md) for what to copy and how to restore.
+
+---
+
+## After upgrading the plugin
+
+1. **Restart** the gateway (required).
+2. Run **`openclaw hybrid-mem verify`** — Confirms config, SQLite, LanceDB, embedding API, and jobs.
+3. Run **`openclaw hybrid-mem stats`** — Confirms fact/vector counts; quick sanity check that data is still there.
+
+If something fails, check [TROUBLESHOOTING.md](TROUBLESHOOTING.md) and the release notes for that version.
+
+---
+
+## Related docs
+
+- [UPGRADE-OPENCLAW.md](UPGRADE-OPENCLAW.md) — What to do when you upgrade **OpenClaw** (not just the plugin)
+- [BACKUP.md](BACKUP.md) — What to back up before an upgrade
+- [OPERATIONS.md](OPERATIONS.md) — Scripts and file locations
+- [CONFIGURATION.md](CONFIGURATION.md) — Config reference
+- [TROUBLESHOOTING.md](TROUBLESHOOTING.md) — Common issues after upgrades
+
+---
+
+## Quick upgrade (NPM)
+
+**Recommended — one command:**
+
+```bash
+openclaw hybrid-mem upgrade
+openclaw gateway stop && openclaw gateway start
+```
+
+To install a **specific version** (e.g. 2026.2.181):
+
+```bash
+openclaw hybrid-mem upgrade 2026.2.181
+openclaw gateway stop && openclaw gateway start
+```
+
+The upgrade command removes the current install, fetches the requested version (or latest) from npm via the standalone installer, rebuilds native deps, and tells you to restart. Then run `openclaw hybrid-mem verify` to confirm.
+
+**Automatic after restart:** On the first gateway start after an upgrade, the plugin runs a one-time *post-upgrade pipeline* (about 20 seconds after start): build-languages (if the language file is missing), self-correction-run, reflection and reflect-rules (if reflection is enabled), extract-procedures, and generate-auto-skills. You do not need to run these manually. The pipeline runs once per plugin version; its version is stored in `~/.openclaw/memory/.last-post-upgrade-version`.
+
+**When you see "plugin already exists"** — OpenClaw’s `plugins install` refuses to overwrite. For **this plugin**, use **`openclaw hybrid-mem upgrade`** (in-place upgrade). A generic **`openclaw plugins upgrade`** for all plugins is requested in [issue #35](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/35) (OpenClaw CLI). Meanwhile use the upgrade command above, or the standalone installer:
+
+```bash
+npx -y openclaw-hybrid-memory-install              # latest
+npx -y openclaw-hybrid-memory-install 2026.2.181   # specific version
+openclaw gateway stop && openclaw gateway start
+```
+
+**If the gateway then reports "Could not locate the bindings file" for `@lancedb/lancedb`** — the native rebuild may have been interrupted. Run:
+
+```bash
+cd ~/.openclaw/extensions/openclaw-hybrid-memory && npm rebuild @lancedb/lancedb
+openclaw gateway stop && openclaw gateway start
+```
+
+Then run `openclaw hybrid-mem verify` to confirm.
+
+**First install or when plugin dir is missing:** `openclaw plugins install openclaw-hybrid-memory@latest` (or `@VERSION`) works. Use **`openclaw hybrid-mem upgrade`** or the standalone installer when the folder already exists.
+
+**Note (issue [#35](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/35)):** A generic `openclaw plugins upgrade [@version]` command for in-place plugin updates would live in the OpenClaw CLI; for the hybrid-memory plugin, **`openclaw hybrid-mem upgrade`** provides that workflow today.
+
+---
+
+## When "plugin not found" blocks install
+
+If you see **"plugin not found: openclaw-hybrid-memory"** and `openclaw plugins install` fails (because OpenClaw validates config before running commands), use one of these **standalone installers** — they bypass OpenClaw entirely:
+
+```bash
+# Option A: npx (recommended)
+npx -y openclaw-hybrid-memory-install
+
+# Option B: curl (no Node required in path for the installer itself)
+curl -sSL https://raw.githubusercontent.com/markus-lassfolk/openclaw-hybrid-memory/main/scripts/install.sh | bash
+```
+
+Then restart: `openclaw gateway stop && openclaw gateway start`
+
+---
+
+## Manual upgrade (copy from repo)
+
+If you install by copying files from this repo:
+
+```bash
+# 1. Copy new extension files over the existing dir
+cp -r extensions/memory-hybrid/* "$(npm root -g)/openclaw/extensions/memory-hybrid/"
+
+# 2. Reinstall deps (in case package.json or native deps changed)
+cd "$(npm root -g)/openclaw/extensions/memory-hybrid"
+npm install
+
+# 3. Restart
+openclaw gateway stop && openclaw gateway start
+
+# 4. Verify
+openclaw hybrid-mem verify
+```
+
+---
+
+## What to think about when upgrading
+
+### Database migrations (automatic)
+
+The plugin has a **schema version**. On startup it checks the existing SQLite (and LanceDB) state and applies any needed migrations (new columns, indexes, tables). You do **not** need to run a separate migration command. Just start the gateway with the new plugin; migrations run once automatically.
+
+### Config and new defaults
+
+**From 2026.3.140 onward:** On first load after upgrading, the plugin applies a **core-only baseline migration**: it **overrides** every listed non-core option to disabled, **including values you had set**, so all users get the same baseline. Only core memory features are enabled. To turn a feature back on, set it explicitly (e.g. `queryExpansion: { enabled: true }`). See [PHASES-ROADMAP.md](PHASES-ROADMAP.md) and CHANGELOG for the list of affected options.
 
 New plugin versions sometimes add **optional** config keys (e.g. new features with defaults). To see what the installer would add without changing your config:
 

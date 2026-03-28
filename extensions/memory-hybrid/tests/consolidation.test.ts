@@ -1,5 +1,6 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { runConsolidate } from "../services/consolidation.js";
+import { getCurrentCostFeature } from "../services/cost-context.js";
 import type { MemoryEntry } from "../types/memory.js";
 
 function makeEntry(overrides: Partial<MemoryEntry> = {}): MemoryEntry {
@@ -53,7 +54,36 @@ describe("runConsolidate", () => {
       "Merged fact": [1, 0],
     });
     const openai = {
-      chat: { completions: { create: vi.fn().mockResolvedValue({ choices: [{ message: { content: "Merged fact" } }] }) } },
+      chat: {
+        completions: { create: vi.fn().mockResolvedValue({ choices: [{ message: { content: "Merged fact" } }] }) },
+      },
+    } as never;
+
+    await runConsolidate(
+      factsDb as never,
+      vectorDb as never,
+      embeddings as never,
+      openai,
+      { threshold: 0.9, includeStructured: true, dryRun: false, limit: 10, model: "test-model" },
+      { info: () => undefined, warn: () => undefined },
+    );
+
+    expect(factsDb.store).toHaveBeenCalledWith(expect.objectContaining({ key: "language", value: "Rust" }));
+  });
+
+  it("stores consolidated facts with derived-source controls", async () => {
+    const entries = [makeEntry({ id: "a", text: "Fact A" }), makeEntry({ id: "b", text: "Fact B" })];
+    const factsDb = makeFactsDb(entries);
+    const vectorDb = { store: vi.fn().mockResolvedValue(undefined) };
+    const embeddings = makeEmbeddings({
+      "Fact A": [1, 0],
+      "Fact B": [1, 0],
+      "Merged fact": [1, 0],
+    });
+    const openai = {
+      chat: {
+        completions: { create: vi.fn().mockResolvedValue({ choices: [{ message: { content: "Merged fact" } }] }) },
+      },
     } as never;
 
     await runConsolidate(
@@ -66,17 +96,18 @@ describe("runConsolidate", () => {
     );
 
     expect(factsDb.store).toHaveBeenCalledWith(
-      expect.objectContaining({ key: "language", value: "Rust" }),
+      expect.objectContaining({
+        source: "consolidation",
+        decayClass: "durable",
+        tags: expect.arrayContaining(["consolidated"]),
+      }),
     );
   });
 
   it("treats similarity at the threshold as a merge candidate", async () => {
     const v1 = [1, 0];
     const v2 = [0.9, Math.sqrt(1 - 0.9 ** 2)];
-    const entries = [
-      makeEntry({ id: "a", text: "Fact A" }),
-      makeEntry({ id: "b", text: "Fact B" }),
-    ];
+    const entries = [makeEntry({ id: "a", text: "Fact A" }), makeEntry({ id: "b", text: "Fact B" })];
     const factsDb = makeFactsDb(entries);
     const vectorDb = { store: vi.fn().mockResolvedValue(undefined) };
     const embeddings = makeEmbeddings({
@@ -85,7 +116,9 @@ describe("runConsolidate", () => {
       "Merged fact": v1,
     });
     const openai = {
-      chat: { completions: { create: vi.fn().mockResolvedValue({ choices: [{ message: { content: "Merged fact" } }] }) } },
+      chat: {
+        completions: { create: vi.fn().mockResolvedValue({ choices: [{ message: { content: "Merged fact" } }] }) },
+      },
     } as never;
 
     const result = await runConsolidate(
@@ -102,10 +135,7 @@ describe("runConsolidate", () => {
   });
 
   it("skips merging when LLM returns empty content", async () => {
-    const entries = [
-      makeEntry({ id: "a", text: "Fact A" }),
-      makeEntry({ id: "b", text: "Fact B" }),
-    ];
+    const entries = [makeEntry({ id: "a", text: "Fact A" }), makeEntry({ id: "b", text: "Fact B" })];
     const factsDb = makeFactsDb(entries);
     const vectorDb = { store: vi.fn().mockResolvedValue(undefined) };
     const embeddings = makeEmbeddings({ "Fact A": [1, 0], "Fact B": [1, 0] });
@@ -124,5 +154,34 @@ describe("runConsolidate", () => {
 
     expect(result.merged).toBe(0);
     expect(factsDb.store).not.toHaveBeenCalled();
+  });
+
+  it("LLM call is attributed to 'consolidation' feature", async () => {
+    let capturedFeature: string | undefined;
+    const entries = [makeEntry({ id: "a", text: "Fact A" }), makeEntry({ id: "b", text: "Fact B" })];
+    const factsDb = makeFactsDb(entries);
+    const vectorDb = { store: vi.fn().mockResolvedValue(undefined) };
+    const embeddings = makeEmbeddings({ "Fact A": [1, 0], "Fact B": [1, 0] });
+    const openai = {
+      chat: {
+        completions: {
+          create: vi.fn().mockImplementation(async () => {
+            capturedFeature = getCurrentCostFeature();
+            return { choices: [{ message: { content: "Merged fact" } }] };
+          }),
+        },
+      },
+    } as never;
+
+    await runConsolidate(
+      factsDb as never,
+      vectorDb as never,
+      embeddings as never,
+      openai,
+      { threshold: 0.9, includeStructured: true, dryRun: false, limit: 10, model: "test-model" },
+      { info: () => undefined, warn: () => undefined },
+    );
+
+    expect(capturedFeature).toBe("consolidation");
   });
 });

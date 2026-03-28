@@ -29,3 +29,11 @@ internal/
 .DS_Store
 Thumbs.db
 .claude/settings.json
+.claude/worktrees/
+extensions/memory-hybrid/dist/
+
+extensions/memory-hybrid/npm-shrinkwrap.json
+
+# Auto-generated memory index (created at runtime in workspace root)
+MEMORY_INDEX.md
+extensions/memory-hybrid/MEMORY_INDEX.md

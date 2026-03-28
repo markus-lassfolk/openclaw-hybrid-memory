@@ -1,5 +1,5 @@
-import { describe, it, expect } from "vitest";
-import { sanitizeMessagesForClaude, type MessageLike } from "../utils/sanitize-messages.js";
+import { describe, expect, it } from "vitest";
+import { type MessageLike, sanitizeMessagesForClaude } from "../utils/sanitize-messages.js";
 
 describe("sanitizeMessagesForClaude", () => {
   it("returns same array when no assistant message has tool_use", () => {
@@ -48,10 +48,10 @@ describe("sanitizeMessagesForClaude", () => {
     expect(out[2].role).toBe("tool");
     const content = out[2].content as Array<{ type?: string; tool_use_id?: string; content?: string }>;
     expect(Array.isArray(content)).toBe(true);
-    expect(content!.length).toBe(2);
-    const ids = content!.map((b) => b.tool_use_id).sort();
+    expect(content?.length).toBe(2);
+    const ids = content?.map((b) => b.tool_use_id).sort();
     expect(ids).toEqual(["process1771772163946288", "subagents1771772163961289"]);
-    content!.forEach((b) => {
+    content?.forEach((b) => {
       expect(b.type).toBe("tool_result");
       expect(b.content).toBe("[Output omitted or truncated.]");
     });

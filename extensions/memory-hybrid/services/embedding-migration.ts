@@ -7,7 +7,9 @@
 
 import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
+import { pluginLogger } from "../utils/logger.js";
 import type { EmbeddingProvider } from "./embeddings.js";
+import { shouldSuppressEmbeddingError } from "./embeddings.js";
 import { capturePluginError } from "./error-reporter.js";
 
 // ---------------------------------------------------------------------------
@@ -81,12 +83,10 @@ export interface EmbeddingMaintenanceResult {
  * Aborts early with a warning if the VectorDB is closed mid-run (hot-reload / shutdown).
  * Progress is emitted after every batch via `onProgress` and logged via `logger`.
  */
-export async function migrateEmbeddings(
-  opts: MigrateEmbeddingsOptions,
-): Promise<MigrateEmbeddingsResult> {
+export async function migrateEmbeddings(opts: MigrateEmbeddingsOptions): Promise<MigrateEmbeddingsResult> {
   const { factsDb, vectorDb, embeddings, batchSize = 50, onProgress, logger } = opts;
 
-  const log = logger ?? { info: console.info, warn: console.warn };
+  const log = logger ?? { info: (m: string) => pluginLogger.info(m), warn: (m: string) => pluginLogger.warn(m) };
 
   const useBatched =
     typeof (factsDb as { getCount?: unknown }).getCount === "function" &&
@@ -116,9 +116,18 @@ export async function migrateEmbeddings(
       break;
     }
 
-    const batch = useBatched
-      ? (factsDb as { getBatch: (offset: number, limit: number, opts: { includeSuperseded: boolean }) => Array<{ id: string; text: string; importance?: number; category: string }> }).getBatch(offset, batchSize, { includeSuperseded: false })
-      : facts!.slice(offset, offset + batchSize);
+    const batch =
+      (useBatched
+        ? (
+            factsDb as {
+              getBatch: (
+                offset: number,
+                limit: number,
+                opts: { includeSuperseded: boolean },
+              ) => Array<{ id: string; text: string; importance?: number; category: string }>;
+            }
+          ).getBatch(offset, batchSize, { includeSuperseded: false })
+        : facts?.slice(offset, offset + batchSize)) ?? [];
     if (batch.length === 0) break;
     const texts = batch.map((f) => f.text);
 
@@ -128,10 +137,13 @@ export async function migrateEmbeddings(
       const batchResult = await embeddings.embedBatch(texts);
       vectors = batchResult;
     } catch (batchErr) {
-      capturePluginError(batchErr instanceof Error ? batchErr : new Error(String(batchErr)), {
-        subsystem: "embeddings",
-        operation: "migration-embed-batch",
-      });
+      // AllEmbeddingProvidersFailed is expected when all providers are unavailable — don't report (#486)
+      if (!shouldSuppressEmbeddingError(batchErr)) {
+        capturePluginError(batchErr instanceof Error ? batchErr : new Error(String(batchErr)), {
+          subsystem: "embeddings",
+          operation: "migration-embed-batch",
+        });
+      }
       log.warn(
         `memory-hybrid: embedding-migration: batch embed failed at offset ${offset} — falling back to per-fact embeds: ${batchErr}`,
       );
@@ -140,10 +152,13 @@ export async function migrateEmbeddings(
           try {
             return await embeddings.embed(fact.text);
           } catch (err) {
-            capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-              subsystem: "embeddings",
-              operation: "migration-embed-single",
-            });
+            // AllEmbeddingProvidersFailed is expected when all providers are unavailable — don't report (#486)
+            if (!shouldSuppressEmbeddingError(err)) {
+              capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+                subsystem: "embeddings",
+                operation: "migration-embed-single",
+              });
+            }
             errors.push(`fact ${fact.id}: embed failed — ${String(err)}`);
             return null;
           }
@@ -154,6 +169,7 @@ export async function migrateEmbeddings(
     for (let j = 0; j < batch.length; j++) {
       const fact = batch[j];
       const vec = vectors[j];
+      if (!fact) continue;
 
       if (vec === null || !vec || vec.length === 0) {
         skipped++;
@@ -206,8 +222,7 @@ export async function migrateEmbeddings(
   }
 
   log.info(
-    `memory-hybrid: embedding-migration: complete — ` +
-      `${migrated} migrated, ${skipped} skipped, ${errors.length} errors (total ${total})`,
+    `memory-hybrid: embedding-migration: complete — ${migrated} migrated, ${skipped} skipped, ${errors.length} errors (total ${total})`,
   );
 
   return { total, migrated, skipped, errors };
@@ -230,11 +245,9 @@ export async function migrateEmbeddings(
  *          `migrated` — whether re-embedding was actually performed.
  *          `result`   — migration stats when `migrated` is `true`.
  */
-export async function runEmbeddingMaintenance(
-  opts: EmbeddingMaintenanceOptions,
-): Promise<EmbeddingMaintenanceResult> {
+export async function runEmbeddingMaintenance(opts: EmbeddingMaintenanceOptions): Promise<EmbeddingMaintenanceResult> {
   const { factsDb, currentProvider, currentModel, autoMigrate, logger } = opts;
-  const log = logger ?? { info: console.info, warn: console.warn };
+  const log = logger ?? { info: (m: string) => pluginLogger.info(m), warn: (m: string) => pluginLogger.warn(m) };
 
   let changed = false;
   let previousMeta;
@@ -243,18 +256,14 @@ export async function runEmbeddingMaintenance(
     previousMeta = factsDb.getEmbeddingMeta();
 
     if (previousMeta) {
-      changed =
-        previousMeta.provider !== currentProvider ||
-        previousMeta.model !== currentModel;
+      changed = previousMeta.provider !== currentProvider || previousMeta.model !== currentModel;
     } else {
       // First run — record initial state and return early
       factsDb.setEmbeddingMeta(currentProvider, currentModel);
       return { changed: false, migrated: false };
     }
   } catch (err) {
-    log.warn(
-      `memory-hybrid: embedding-migration: failed to read/write embedding metadata (non-fatal): ${err}`,
-    );
+    log.warn(`memory-hybrid: embedding-migration: failed to read/write embedding metadata (non-fatal): ${err}`);
     // Cannot determine whether change happened — skip migration to be safe
     return { changed: false, migrated: false };
   }
@@ -263,24 +272,19 @@ export async function runEmbeddingMaintenance(
     return { changed: false, migrated: false };
   }
 
-  log.info(
-    `memory-hybrid: embedding config changed — ` +
-      `now using provider=${currentProvider}, model=${currentModel}`,
-  );
+  log.info(`memory-hybrid: embedding config changed — now using provider=${currentProvider}, model=${currentModel}`);
 
   if (!autoMigrate) {
     log.warn(
-      `memory-hybrid: embedding.autoMigrate=false — skipping automatic re-embedding. ` +
-        `Set embedding.autoMigrate=true in plugin config to automatically re-generate ` +
-        `embeddings when the model changes, or run the maintenance command manually.`,
+      "memory-hybrid: embedding.autoMigrate=false — skipping automatic re-embedding. " +
+        "Set embedding.autoMigrate=true in plugin config to automatically re-generate " +
+        "embeddings when the model changes, or run the maintenance command manually.",
     );
     factsDb.setEmbeddingMeta(currentProvider, currentModel);
     return { changed: true, migrated: false };
   }
 
-  log.info(
-    `memory-hybrid: embedding.autoMigrate=true — starting re-embedding of existing facts...`,
-  );
+  log.info("memory-hybrid: embedding.autoMigrate=true — starting re-embedding of existing facts...");
 
   try {
     const result = await migrateEmbeddings(opts);

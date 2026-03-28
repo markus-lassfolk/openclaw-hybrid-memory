@@ -1,9 +1,9 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
-import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { _testing } from "../index.js";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { hybridConfigSchema } from "../config.js";
+import { _testing } from "../index.js";
 
 const { ProvenanceService } = _testing;
 
@@ -378,7 +378,7 @@ describe("ProvenanceService.prune", () => {
     });
 
     // Backdate the old edge via internal DB access
-    const db = (service as unknown as { db: import("better-sqlite3").Database }).db;
+    const db = (service as unknown as { db: import("node:sqlite").DatabaseSync }).db;
     db.prepare(`UPDATE provenance_edges SET created_at = '2020-01-01T00:00:00.000Z' WHERE fact_id = 'old-fact'`).run();
 
     const pruned = service.prune(365); // Remove edges older than 365 days
@@ -395,7 +395,7 @@ describe("ProvenanceService.prune", () => {
         sourceId: `event-${i}`,
       });
     }
-    const db = (service as unknown as { db: import("better-sqlite3").Database }).db;
+    const db = (service as unknown as { db: import("node:sqlite").DatabaseSync }).db;
     // Backdate all edges
     db.prepare(`UPDATE provenance_edges SET created_at = '2019-01-01T00:00:00.000Z'`).run();
 
@@ -409,12 +409,11 @@ describe("ProvenanceService.prune", () => {
 // ---------------------------------------------------------------------------
 
 describe("ProvenanceConfig defaults in config parsing", () => {
-  it("defaults provenance.enabled to true (expert preset)", () => {
+  it("2026.3.140 baseline forces provenance.enabled to false", () => {
     const cfg = hybridConfigSchema.parse({
       embedding: { provider: "ollama", model: "nomic-embed-text", dimensions: 768 },
     });
-    // Expert preset enables provenance by default
-    expect(cfg.provenance.enabled).toBe(true);
+    expect(cfg.provenance.enabled).toBe(false);
   });
 
   it("defaults provenance.retentionDays to 365", () => {
@@ -424,12 +423,12 @@ describe("ProvenanceConfig defaults in config parsing", () => {
     expect(cfg.provenance.retentionDays).toBe(365);
   });
 
-  it("parses provenance.enabled=true from config", () => {
+  it("2026.3.140 baseline overrides provenance.enabled to false", () => {
     const cfg = hybridConfigSchema.parse({
       embedding: { provider: "ollama", model: "nomic-embed-text", dimensions: 768 },
       provenance: { enabled: true },
     });
-    expect(cfg.provenance.enabled).toBe(true);
+    expect(cfg.provenance.enabled).toBe(false);
   });
 
   it("parses custom retentionDays from config", () => {

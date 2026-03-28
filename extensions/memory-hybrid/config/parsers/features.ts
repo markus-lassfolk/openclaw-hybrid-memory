@@ -21,31 +21,43 @@ import type {
   CrossAgentLearningConfig,
   ToolEffectivenessConfig,
   CostTrackingConfig,
+  DashboardConfig,
+  ApiTapConfig,
+  HumanizerConfig,
+  FrequencyCaptureConfig,
 } from "../types/features.js";
-import type { PersonaProposalsConfig, MemoryToSkillsConfig } from "../types/agents.js";
+import type { PersonaProposalsConfig } from "../types/agents.js";
 import { IDENTITY_FILE_TYPES, type IdentityFileType } from "../types/agents.js";
 import type { ErrorReportingConfig, MultiAgentConfig } from "../types/index.js";
 import { DEFAULT_GLITCHTIP_DSN } from "../../services/error-reporter.js";
+import { pluginLogger } from "../../utils/logger.js";
 
 export function parseGraphConfig(cfg: Record<string, unknown>): GraphConfig {
   const graphRaw = cfg.graph as Record<string, unknown> | undefined;
   return {
     enabled: graphRaw?.enabled !== false,
     autoLink: graphRaw?.autoLink === true,
-    autoLinkMinScore: typeof graphRaw?.autoLinkMinScore === "number" && graphRaw.autoLinkMinScore >= 0 && graphRaw.autoLinkMinScore <= 1
-      ? graphRaw.autoLinkMinScore
-      : 0.7,
-    autoLinkLimit: typeof graphRaw?.autoLinkLimit === "number" && graphRaw.autoLinkLimit > 0
-      ? Math.floor(graphRaw.autoLinkLimit)
-      : 3,
-    maxTraversalDepth: typeof graphRaw?.maxTraversalDepth === "number" && graphRaw.maxTraversalDepth > 0
-      ? Math.floor(graphRaw.maxTraversalDepth)
-      : 2,
+    autoLinkMinScore:
+      typeof graphRaw?.autoLinkMinScore === "number" && graphRaw.autoLinkMinScore >= 0 && graphRaw.autoLinkMinScore <= 1
+        ? graphRaw.autoLinkMinScore
+        : 0.7,
+    autoLinkLimit:
+      typeof graphRaw?.autoLinkLimit === "number" && graphRaw.autoLinkLimit > 0
+        ? Math.floor(graphRaw.autoLinkLimit)
+        : 3,
+    maxTraversalDepth:
+      typeof graphRaw?.maxTraversalDepth === "number" && graphRaw.maxTraversalDepth > 0
+        ? Math.floor(graphRaw.maxTraversalDepth)
+        : 2,
     useInRecall: graphRaw?.useInRecall !== false,
-    coOccurrenceWeight: typeof graphRaw?.coOccurrenceWeight === "number" && graphRaw.coOccurrenceWeight >= 0 && graphRaw.coOccurrenceWeight <= 1
-      ? graphRaw.coOccurrenceWeight
-      : 0.3,
+    coOccurrenceWeight:
+      typeof graphRaw?.coOccurrenceWeight === "number" &&
+      graphRaw.coOccurrenceWeight >= 0 &&
+      graphRaw.coOccurrenceWeight <= 1
+        ? graphRaw.coOccurrenceWeight
+        : 0.3,
     autoSupersede: graphRaw?.autoSupersede !== false,
+    strengthenOnRecall: graphRaw?.strengthenOnRecall === true,
   };
 }
 
@@ -114,12 +126,9 @@ export function parseIngestConfig(cfg: Record<string, unknown>): IngestConfig | 
   if (!ingestRaw || !Array.isArray(ingestRaw.paths) || ingestRaw.paths.length === 0) return undefined;
   return {
     paths: (ingestRaw.paths as string[]).filter((p) => typeof p === "string" && p.length > 0),
-    chunkSize: typeof ingestRaw.chunkSize === "number" && ingestRaw.chunkSize > 0
-      ? Math.floor(ingestRaw.chunkSize)
-      : 800,
-    overlap: typeof ingestRaw.overlap === "number" && ingestRaw.overlap >= 0
-      ? Math.floor(ingestRaw.overlap)
-      : 100,
+    chunkSize:
+      typeof ingestRaw.chunkSize === "number" && ingestRaw.chunkSize > 0 ? Math.floor(ingestRaw.chunkSize) : 800,
+    overlap: typeof ingestRaw.overlap === "number" && ingestRaw.overlap >= 0 ? Math.floor(ingestRaw.overlap) : 100,
   };
 }
 
@@ -127,16 +136,15 @@ export function parseMemoryTieringConfig(cfg: Record<string, unknown>): MemoryTi
   const tierRaw = cfg.memoryTiering as Record<string, unknown> | undefined;
   return {
     enabled: tierRaw?.enabled !== false,
-    hotMaxTokens: typeof tierRaw?.hotMaxTokens === "number" && tierRaw.hotMaxTokens > 0
-      ? Math.floor(tierRaw.hotMaxTokens)
-      : 2000,
+    hotMaxTokens:
+      typeof tierRaw?.hotMaxTokens === "number" && tierRaw.hotMaxTokens > 0 ? Math.floor(tierRaw.hotMaxTokens) : 2000,
     compactionOnSessionEnd: tierRaw?.compactionOnSessionEnd !== false,
-    inactivePreferenceDays: typeof tierRaw?.inactivePreferenceDays === "number" && tierRaw.inactivePreferenceDays >= 0
-      ? Math.floor(tierRaw.inactivePreferenceDays)
-      : 7,
-    hotMaxFacts: typeof tierRaw?.hotMaxFacts === "number" && tierRaw.hotMaxFacts > 0
-      ? Math.floor(tierRaw.hotMaxFacts)
-      : 50,
+    inactivePreferenceDays:
+      typeof tierRaw?.inactivePreferenceDays === "number" && tierRaw.inactivePreferenceDays >= 0
+        ? Math.floor(tierRaw.inactivePreferenceDays)
+        : 7,
+    hotMaxFacts:
+      typeof tierRaw?.hotMaxFacts === "number" && tierRaw.hotMaxFacts > 0 ? Math.floor(tierRaw.hotMaxFacts) : 50,
   };
 }
 
@@ -152,8 +160,7 @@ export function parseAmbientConfig(cfg: Record<string, unknown>): AmbientConfig 
         ? ambientRaw.topicShiftThreshold
         : 0.4,
     maxQueriesPerTrigger:
-      typeof ambientRaw?.maxQueriesPerTrigger === "number" &&
-      ambientRaw.maxQueriesPerTrigger >= 1
+      typeof ambientRaw?.maxQueriesPerTrigger === "number" && ambientRaw.maxQueriesPerTrigger >= 1
         ? Math.min(4, Math.floor(ambientRaw.maxQueriesPerTrigger))
         : 4,
     budgetTokens:
@@ -168,19 +175,27 @@ export function parseReinforcementConfig(cfg: Record<string, unknown>): Reinforc
   return {
     enabled: reinforcementRaw?.enabled !== false,
     passiveBoost:
-      typeof reinforcementRaw?.passiveBoost === "number" && reinforcementRaw.passiveBoost >= 0 && reinforcementRaw.passiveBoost <= 1
+      typeof reinforcementRaw?.passiveBoost === "number" &&
+      reinforcementRaw.passiveBoost >= 0 &&
+      reinforcementRaw.passiveBoost <= 1
         ? reinforcementRaw.passiveBoost
         : 0.1,
     activeBoost:
-      typeof reinforcementRaw?.activeBoost === "number" && reinforcementRaw.activeBoost >= 0 && reinforcementRaw.activeBoost <= 1
+      typeof reinforcementRaw?.activeBoost === "number" &&
+      reinforcementRaw.activeBoost >= 0 &&
+      reinforcementRaw.activeBoost <= 1
         ? reinforcementRaw.activeBoost
         : 0.05,
     maxConfidence:
-      typeof reinforcementRaw?.maxConfidence === "number" && reinforcementRaw.maxConfidence > 0 && reinforcementRaw.maxConfidence <= 1
+      typeof reinforcementRaw?.maxConfidence === "number" &&
+      reinforcementRaw.maxConfidence > 0 &&
+      reinforcementRaw.maxConfidence <= 1
         ? reinforcementRaw.maxConfidence
         : 1.0,
     similarityThreshold:
-      typeof reinforcementRaw?.similarityThreshold === "number" && reinforcementRaw.similarityThreshold > 0 && reinforcementRaw.similarityThreshold <= 1
+      typeof reinforcementRaw?.similarityThreshold === "number" &&
+      reinforcementRaw.similarityThreshold > 0 &&
+      reinforcementRaw.similarityThreshold <= 1
         ? reinforcementRaw.similarityThreshold
         : 0.85,
     maxEventsPerFact:
@@ -205,9 +220,7 @@ export function parseFutureDateProtectionConfig(cfg: Record<string, unknown>): F
     enabled: fdpRaw?.enabled !== false, // default: true
     // Fix #5: 0 means "no limit"; only fall back to 365 when value is absent/negative/non-number
     maxFreezeDays:
-      typeof fdpRaw?.maxFreezeDays === "number" && fdpRaw.maxFreezeDays >= 0
-        ? Math.floor(fdpRaw.maxFreezeDays)
-        : 365,
+      typeof fdpRaw?.maxFreezeDays === "number" && fdpRaw.maxFreezeDays >= 0 ? Math.floor(fdpRaw.maxFreezeDays) : 365,
   };
 }
 
@@ -240,7 +253,9 @@ export function parseDocumentsConfig(cfg: Record<string, unknown>): DocumentsCon
         ? documentsRaw.visionModel.trim()
         : undefined,
     allowedPaths: Array.isArray(documentsRaw?.allowedPaths)
-      ? (documentsRaw.allowedPaths as string[]).filter((p) => typeof p === "string" && p.trim().length > 0).map((p) => p.trim())
+      ? (documentsRaw.allowedPaths as string[])
+          .filter((p) => typeof p === "string" && p.trim().length > 0)
+          .map((p) => p.trim())
       : undefined,
   };
 }
@@ -255,49 +270,29 @@ export function parsePersonaProposalsConfig(cfg: Record<string, unknown>): Perso
         return [...IDENTITY_FILE_TYPES];
       }
       const filtered = (proposalsRaw.allowedFiles as string[]).filter((f) =>
-        IDENTITY_FILE_TYPES.includes(f as IdentityFileType)
+        IDENTITY_FILE_TYPES.includes(f as IdentityFileType),
       ) as IdentityFileType[];
       // Fallback to defaults if filter produces empty array
       return filtered.length > 0 ? filtered : [...IDENTITY_FILE_TYPES];
     })(),
-    maxProposalsPerWeek: typeof proposalsRaw?.maxProposalsPerWeek === "number" && proposalsRaw.maxProposalsPerWeek > 0
-      ? Math.floor(proposalsRaw.maxProposalsPerWeek)
-      : 5,
-    minConfidence: typeof proposalsRaw?.minConfidence === "number" && proposalsRaw.minConfidence >= 0 && proposalsRaw.minConfidence <= 1
-      ? proposalsRaw.minConfidence
-      : 0.7,
-    proposalTTLDays: typeof proposalsRaw?.proposalTTLDays === "number" && proposalsRaw.proposalTTLDays >= 0
-      ? Math.floor(proposalsRaw.proposalTTLDays)
-      : 30,
-    minSessionEvidence: typeof proposalsRaw?.minSessionEvidence === "number" && proposalsRaw.minSessionEvidence > 0
-      ? Math.floor(proposalsRaw.minSessionEvidence)
-      : 10,
-  };
-}
-
-export function parseMemoryToSkillsConfig(cfg: Record<string, unknown>): MemoryToSkillsConfig {
-  const memoryToSkillsRaw = cfg.memoryToSkills as Record<string, unknown> | undefined;
-  return {
-    enabled: memoryToSkillsRaw?.enabled === true,
-    schedule: typeof memoryToSkillsRaw?.schedule === "string" && memoryToSkillsRaw.schedule.trim().length > 0
-      ? memoryToSkillsRaw.schedule.trim()
-      : "15 2 * * *",
-    windowDays: typeof memoryToSkillsRaw?.windowDays === "number" && memoryToSkillsRaw.windowDays >= 1
-      ? Math.min(365, Math.floor(memoryToSkillsRaw.windowDays))
-      : 30,
-    minInstances: typeof memoryToSkillsRaw?.minInstances === "number" && memoryToSkillsRaw.minInstances >= 1
-      ? Math.floor(memoryToSkillsRaw.minInstances)
-      : 3,
-    consistencyThreshold: typeof memoryToSkillsRaw?.consistencyThreshold === "number" && memoryToSkillsRaw.consistencyThreshold >= 0 && memoryToSkillsRaw.consistencyThreshold <= 1
-      ? memoryToSkillsRaw.consistencyThreshold
-      : 0.7,
-    outputDir: typeof memoryToSkillsRaw?.outputDir === "string" && memoryToSkillsRaw.outputDir.length > 0
-      ? memoryToSkillsRaw.outputDir
-      : "skills/auto-generated",
-    notify: memoryToSkillsRaw?.notify !== false,
-    autoPublish: memoryToSkillsRaw?.autoPublish === true,
-    validateScript: typeof memoryToSkillsRaw?.validateScript === "string" && memoryToSkillsRaw.validateScript.trim().length > 0 ? memoryToSkillsRaw.validateScript.trim() : undefined,
-    writeByDefault: memoryToSkillsRaw?.writeByDefault === true,
+    maxProposalsPerWeek:
+      typeof proposalsRaw?.maxProposalsPerWeek === "number" && proposalsRaw.maxProposalsPerWeek > 0
+        ? Math.floor(proposalsRaw.maxProposalsPerWeek)
+        : 5,
+    minConfidence:
+      typeof proposalsRaw?.minConfidence === "number" &&
+      proposalsRaw.minConfidence >= 0 &&
+      proposalsRaw.minConfidence <= 1
+        ? proposalsRaw.minConfidence
+        : 0.7,
+    proposalTTLDays:
+      typeof proposalsRaw?.proposalTTLDays === "number" && proposalsRaw.proposalTTLDays >= 0
+        ? Math.floor(proposalsRaw.proposalTTLDays)
+        : 30,
+    minSessionEvidence:
+      typeof proposalsRaw?.minSessionEvidence === "number" && proposalsRaw.minSessionEvidence > 0
+        ? Math.floor(proposalsRaw.minSessionEvidence)
+        : 10,
   };
 }
 
@@ -318,22 +313,43 @@ export function parseMultiAgentConfig(cfg: Record<string, unknown>): MultiAgentC
   };
 }
 
+/**
+ * Parse error reporting config. Error reporting and telemetry default to **opt-out** (enabled = true)
+ * during the active development phase of this tool. This is a deliberate product decision:
+ *
+ * - During early development, crash reports and error telemetry are essential for quickly identifying
+ *   and fixing issues across diverse user environments.
+ * - The community DSN reports to a shared GlitchTip instance operated by the project maintainer.
+ * - Users can opt out at any time by setting `errorReporting.enabled: false` or `errorReporting.consent: false`
+ *   in their config.
+ *
+ * DESIGN DECISION: Opt-out (not opt-in) is intentional for the development phase.
+ * This default SHOULD be revisited and switched to opt-in before a stable/production release.
+ * Track this at: https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/600
+ *
+ * Do not change this default without an explicit product decision and changelog entry.
+ */
 export function parseErrorReportingConfig(cfg: Record<string, unknown>): ErrorReportingConfig {
   const errorReportingRaw = cfg.errorReporting as Record<string, unknown> | undefined;
 
-  // When errorReporting is not specified, use opt-out defaults (enabled + consent are true)
+  // When errorReporting is not specified: opt-out defaults (enabled + consent true, community DSN)
   if (!errorReportingRaw || typeof errorReportingRaw !== "object") {
     return {
-      enabled: true,
+      enabled: true, // opt-out during dev phase — see JSDoc above
       dsn: DEFAULT_GLITCHTIP_DSN,
       consent: true,
       mode: "community",
       sampleRate: 1.0,
+      updateNudge: {
+        enabled: true,
+        intervalHours: 24,
+        cacheTtlHours: 24,
+      },
     };
   }
 
   // enabled defaults to true — user must explicitly set enabled: false to opt out
-  let enabled = errorReportingRaw.enabled !== false;
+  let enabled = errorReportingRaw.enabled !== false; // opt-out: true unless user explicitly disables
   // consent defaults to true — user must explicitly set consent: false to opt out
   const consent = errorReportingRaw.consent !== false;
   const dsnRaw = typeof errorReportingRaw.dsn === "string" ? errorReportingRaw.dsn.trim() : "";
@@ -341,7 +357,7 @@ export function parseErrorReportingConfig(cfg: Record<string, unknown>): ErrorRe
   const mode: "community" | "self-hosted" = modeRaw === "self-hosted" ? "self-hosted" : "community";
 
   if (enabled && !consent) {
-    console.warn("memory-hybrid: errorReporting.enabled=true but consent is false; disabling error reporting.");
+    pluginLogger.warn("memory-hybrid: errorReporting.enabled=true but consent is false; disabling error reporting.");
     enabled = false;
   }
 
@@ -350,15 +366,15 @@ export function parseErrorReportingConfig(cfg: Record<string, unknown>): ErrorRe
     if (!dsnRaw) {
       throw new Error(
         'errorReporting mode is "self-hosted" but dsn is empty or missing. ' +
-        'Provide a valid DSN or switch to mode: "community".'
+          'Provide a valid DSN or switch to mode: "community".',
       );
     }
     // Reject placeholders
     const placeholderPatterns = /<key>|<host>|<project-id>|YOUR_DSN|PLACEHOLDER/i;
     if (placeholderPatterns.test(dsnRaw)) {
       throw new Error(
-        'errorReporting.dsn contains placeholder values. ' +
-        'Replace <key>, <host>, <project-id> with actual values, or use mode: "community".'
+        "errorReporting.dsn contains placeholder values. " +
+          'Replace <key>, <host>, <project-id> with actual values, or use mode: "community".',
       );
     }
   }
@@ -368,21 +384,66 @@ export function parseErrorReportingConfig(cfg: Record<string, unknown>): ErrorRe
   const uuidLike = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
   const botId = botIdRaw.length > 0 && uuidLike.test(botIdRaw) ? botIdRaw : undefined;
 
-  // Optional friendly name (e.g. Maeve, Doris) for readable GlitchTip reports
+  // Optional friendly name for readable GlitchTip reports
   const botNameRaw = typeof errorReportingRaw.botName === "string" ? errorReportingRaw.botName.trim() : "";
   const botName = botNameRaw.length > 0 ? botNameRaw.slice(0, 64) : undefined;
+
+  const updateNudgeRaw =
+    errorReportingRaw.updateNudge && typeof errorReportingRaw.updateNudge === "object"
+      ? (errorReportingRaw.updateNudge as Record<string, unknown>)
+      : undefined;
+  const updateNudge = {
+    enabled: updateNudgeRaw?.enabled !== false,
+    intervalHours:
+      updateNudgeRaw?.intervalHours === 0
+        ? 0
+        : typeof updateNudgeRaw?.intervalHours === "number" && updateNudgeRaw.intervalHours > 0
+          ? Math.min(24 * 30, updateNudgeRaw.intervalHours)
+          : 24,
+    cacheTtlHours:
+      updateNudgeRaw?.cacheTtlHours === 0
+        ? 0
+        : typeof updateNudgeRaw?.cacheTtlHours === "number" && updateNudgeRaw.cacheTtlHours > 0
+          ? Math.min(24 * 30, updateNudgeRaw.cacheTtlHours)
+          : 24,
+  };
+
+  // Optional resolvedIssues map for version-aware filtering
+  const validVersionPattern = /^\d+\.\d+\.\d+/;
+  const resolvedIssues =
+    errorReportingRaw.resolvedIssues &&
+    typeof errorReportingRaw.resolvedIssues === "object" &&
+    !Array.isArray(errorReportingRaw.resolvedIssues)
+      ? Object.fromEntries(
+          Object.entries(errorReportingRaw.resolvedIssues).filter((entry): entry is [string, string] => {
+            if (typeof entry[1] !== "string") return false;
+            if (!validVersionPattern.test(entry[1])) {
+              pluginLogger.warn(
+                `memory-hybrid: errorReporting.resolvedIssues["${entry[0]}"] has invalid version "${entry[1]}" — skipped.`,
+              );
+              return false;
+            }
+            return true;
+          }),
+        )
+      : undefined;
 
   return {
     enabled,
     consent,
     mode,
-    dsn: mode === "community" ? (dsnRaw || DEFAULT_GLITCHTIP_DSN) : (dsnRaw || undefined),
+    dsn: mode === "community" ? dsnRaw || DEFAULT_GLITCHTIP_DSN : dsnRaw || undefined,
     environment: typeof errorReportingRaw.environment === "string" ? errorReportingRaw.environment : undefined,
-    sampleRate: typeof errorReportingRaw.sampleRate === "number" && errorReportingRaw.sampleRate >= 0 && errorReportingRaw.sampleRate <= 1
-      ? errorReportingRaw.sampleRate
-      : 1.0,
+    sampleRate:
+      typeof errorReportingRaw.sampleRate === "number" &&
+      errorReportingRaw.sampleRate >= 0 &&
+      errorReportingRaw.sampleRate <= 1
+        ? errorReportingRaw.sampleRate
+        : 1.0,
     botId,
     botName,
+    resolvedIssues,
+    updateNudge,
   };
 }
 
@@ -391,13 +452,8 @@ export function parseWorkflowTrackingConfig(cfg: Record<string, unknown>): Workf
   return {
     enabled: raw?.enabled === true,
     maxTracesPerDay:
-      typeof raw?.maxTracesPerDay === "number" && raw.maxTracesPerDay > 0
-        ? Math.floor(raw.maxTracesPerDay)
-        : 100,
-    retentionDays:
-      typeof raw?.retentionDays === "number" && raw.retentionDays > 0
-        ? Math.floor(raw.retentionDays)
-        : 90,
+      typeof raw?.maxTracesPerDay === "number" && raw.maxTracesPerDay > 0 ? Math.floor(raw.maxTracesPerDay) : 100,
+    retentionDays: typeof raw?.retentionDays === "number" && raw.retentionDays > 0 ? Math.floor(raw.retentionDays) : 90,
     goalExtractionModel:
       typeof raw?.goalExtractionModel === "string" && raw.goalExtractionModel.trim().length > 0
         ? raw.goalExtractionModel.trim()
@@ -409,10 +465,7 @@ export function parseCrystallizationConfig(cfg: Record<string, unknown>): Crysta
   const raw = cfg.crystallization as Record<string, unknown> | undefined;
   return {
     enabled: raw?.enabled === true,
-    minUsageCount:
-      typeof raw?.minUsageCount === "number" && raw.minUsageCount > 0
-        ? Math.floor(raw.minUsageCount)
-        : 5,
+    minUsageCount: typeof raw?.minUsageCount === "number" && raw.minUsageCount > 0 ? Math.floor(raw.minUsageCount) : 5,
     minSuccessRate:
       typeof raw?.minSuccessRate === "number" && raw.minSuccessRate >= 0 && raw.minSuccessRate <= 1
         ? raw.minSuccessRate
@@ -423,13 +476,9 @@ export function parseCrystallizationConfig(cfg: Record<string, unknown>): Crysta
         ? raw.outputDir.trim()
         : "~/.openclaw/workspace/skills/auto",
     maxCrystallized:
-      typeof raw?.maxCrystallized === "number" && raw.maxCrystallized > 0
-        ? Math.floor(raw.maxCrystallized)
-        : 50,
+      typeof raw?.maxCrystallized === "number" && raw.maxCrystallized > 0 ? Math.floor(raw.maxCrystallized) : 50,
     pruneUnusedDays:
-      typeof raw?.pruneUnusedDays === "number" && raw.pruneUnusedDays >= 0
-        ? Math.floor(raw.pruneUnusedDays)
-        : 30,
+      typeof raw?.pruneUnusedDays === "number" && raw.pruneUnusedDays >= 0 ? Math.floor(raw.pruneUnusedDays) : 30,
   };
 }
 
@@ -438,17 +487,10 @@ export function parseSelfExtensionConfig(cfg: Record<string, unknown>): SelfExte
   return {
     enabled: raw?.enabled === true,
     minGapFrequency:
-      typeof raw?.minGapFrequency === "number" && raw.minGapFrequency > 0
-        ? Math.floor(raw.minGapFrequency)
-        : 3,
+      typeof raw?.minGapFrequency === "number" && raw.minGapFrequency > 0 ? Math.floor(raw.minGapFrequency) : 3,
     minToolSavings:
-      typeof raw?.minToolSavings === "number" && raw.minToolSavings > 0
-        ? Math.floor(raw.minToolSavings)
-        : 2,
-    maxProposals:
-      typeof raw?.maxProposals === "number" && raw.maxProposals > 0
-        ? Math.floor(raw.maxProposals)
-        : 20,
+      typeof raw?.minToolSavings === "number" && raw.minToolSavings > 0 ? Math.floor(raw.minToolSavings) : 2,
+    maxProposals: typeof raw?.maxProposals === "number" && raw.maxProposals > 0 ? Math.floor(raw.maxProposals) : 20,
   };
 }
 
@@ -472,6 +514,27 @@ export function parseImplicitFeedbackConfig(cfg: Record<string, unknown>): Impli
   const signalTypes: ImplicitSignalType[] = Array.isArray(raw?.signalTypes)
     ? (raw.signalTypes as unknown[]).filter((t): t is ImplicitSignalType => typeof t === "string" && validTypes.has(t))
     : ALL_IMPLICIT_SIGNAL_TYPES;
+
+  // Issue #754: top-level aliases take precedence over nested keys
+  const topLevelTrajectoryLLMAnalysis =
+    typeof cfg.trajectoryLLMAnalysis === "boolean" ? cfg.trajectoryLLMAnalysis : undefined;
+  const topLevelFeedToSelfCorrection =
+    typeof cfg.feedToSelfCorrection === "boolean" ? cfg.feedToSelfCorrection : undefined;
+
+  // Deprecation warnings for old nested keys when top-level is also set
+  if (topLevelTrajectoryLLMAnalysis !== undefined && raw?.trajectoryLLMAnalysis !== undefined) {
+    pluginLogger.warn(
+      "memory-hybrid: both `trajectoryLLMAnalysis` (top-level) and `implicitFeedback.trajectoryLLMAnalysis` are set; " +
+        "using top-level `trajectoryLLMAnalysis`. The nested key is deprecated — move it to the top level.",
+    );
+  }
+  if (topLevelFeedToSelfCorrection !== undefined && raw?.feedToSelfCorrection !== undefined) {
+    pluginLogger.warn(
+      "memory-hybrid: both `feedToSelfCorrection` (top-level) and `implicitFeedback.feedToSelfCorrection` are set; " +
+        "using top-level `feedToSelfCorrection`. The nested key is deprecated — move it to the top level.",
+    );
+  }
+
   return {
     enabled: raw?.enabled !== false,
     minConfidence:
@@ -492,8 +555,11 @@ export function parseImplicitFeedbackConfig(cfg: Record<string, unknown>): Impli
         ? raw.terseResponseRatio
         : 0.4,
     feedToReinforcement: raw?.feedToReinforcement !== false,
-    feedToSelfCorrection: raw?.feedToSelfCorrection !== false,
-    trajectoryLLMAnalysis: raw?.trajectoryLLMAnalysis === true,
+    // Issue #754: top-level takes precedence; fall back to nested with deprecation warning
+    feedToSelfCorrection:
+      topLevelFeedToSelfCorrection !== undefined ? topLevelFeedToSelfCorrection : raw?.feedToSelfCorrection !== false,
+    trajectoryLLMAnalysis:
+      topLevelTrajectoryLLMAnalysis !== undefined ? topLevelTrajectoryLLMAnalysis : raw?.trajectoryLLMAnalysis === true,
   };
 }
 
@@ -505,18 +571,11 @@ export function parseClosedLoopConfig(cfg: Record<string, unknown>): ClosedLoopC
       typeof raw?.measurementWindowDays === "number" && raw.measurementWindowDays > 0
         ? Math.floor(raw.measurementWindowDays)
         : 7,
-    minSampleSize:
-      typeof raw?.minSampleSize === "number" && raw.minSampleSize > 0
-        ? Math.floor(raw.minSampleSize)
-        : 5,
+    minSampleSize: typeof raw?.minSampleSize === "number" && raw.minSampleSize > 0 ? Math.floor(raw.minSampleSize) : 5,
     autoDeprecateThreshold:
-      typeof raw?.autoDeprecateThreshold === "number"
-        ? Math.max(-1, Math.min(0, raw.autoDeprecateThreshold))
-        : -0.3,
+      typeof raw?.autoDeprecateThreshold === "number" ? Math.max(-1, Math.min(0, raw.autoDeprecateThreshold)) : -0.3,
     autoBoostThreshold:
-      typeof raw?.autoBoostThreshold === "number"
-        ? Math.max(0, Math.min(1, raw.autoBoostThreshold))
-        : 0.5,
+      typeof raw?.autoBoostThreshold === "number" ? Math.max(0, Math.min(1, raw.autoBoostThreshold)) : 0.5,
     runInNightlyCycle: raw?.runInNightlyCycle !== false,
   };
 }
@@ -529,9 +588,15 @@ export function parseFrustrationDetectionConfig(cfg: Record<string, unknown>): F
   let signalWeights: FrustrationSignalWeights | undefined;
   if (weightsRaw && typeof weightsRaw === "object") {
     const validSignals = [
-      "short_reply", "imperative_tone", "repeated_instruction", "caps_or_emphasis",
-      "explicit_frustration", "correction_frequency", "question_to_command",
-      "reduced_context", "emoji_shift",
+      "short_reply",
+      "imperative_tone",
+      "repeated_instruction",
+      "caps_or_emphasis",
+      "explicit_frustration",
+      "correction_frequency",
+      "question_to_command",
+      "reduced_context",
+      "emoji_shift",
     ];
     const parsed: FrustrationSignalWeights = {};
     for (const sig of validSignals) {
@@ -545,15 +610,12 @@ export function parseFrustrationDetectionConfig(cfg: Record<string, unknown>): F
   const thresholdsRaw = raw?.adaptationThresholds as Record<string, unknown> | undefined;
 
   return {
-    enabled: raw?.enabled !== false,
+    enabled: raw?.enabled === true,
     windowSize:
       typeof raw?.windowSize === "number" && raw.windowSize >= 2 && raw.windowSize <= 50
         ? Math.floor(raw.windowSize)
         : 8,
-    decayRate:
-      typeof raw?.decayRate === "number" && raw.decayRate > 0 && raw.decayRate <= 1
-        ? raw.decayRate
-        : 0.85,
+    decayRate: typeof raw?.decayRate === "number" && raw.decayRate > 0 && raw.decayRate <= 1 ? raw.decayRate : 0.85,
     signalWeights,
     injectionThreshold:
       typeof raw?.injectionThreshold === "number" && raw.injectionThreshold >= 0 && raw.injectionThreshold <= 1
@@ -582,20 +644,12 @@ export function parseCrossAgentLearningConfig(cfg: Record<string, unknown>): Cro
   return {
     enabled: raw?.enabled === true,
     windowDays:
-      typeof raw?.windowDays === "number" && raw.windowDays >= 1
-        ? Math.min(90, Math.floor(raw.windowDays))
-        : 14,
-    model:
-      typeof raw?.model === "string" && raw.model.trim().length > 0
-        ? raw.model.trim()
-        : undefined,
+      typeof raw?.windowDays === "number" && raw.windowDays >= 1 ? Math.min(90, Math.floor(raw.windowDays)) : 14,
+    model: typeof raw?.model === "string" && raw.model.trim().length > 0 ? raw.model.trim() : undefined,
     fallbackModels: Array.isArray(raw?.fallbackModels)
       ? (raw.fallbackModels as string[]).filter((m) => typeof m === "string" && m.trim().length > 0)
       : undefined,
-    batchSize:
-      typeof raw?.batchSize === "number" && raw.batchSize >= 5
-        ? Math.min(100, Math.floor(raw.batchSize))
-        : 20,
+    batchSize: typeof raw?.batchSize === "number" && raw.batchSize >= 5 ? Math.min(100, Math.floor(raw.batchSize)) : 20,
     minSourceConfidence:
       typeof raw?.minSourceConfidence === "number" && raw.minSourceConfidence >= 0 && raw.minSourceConfidence <= 1
         ? raw.minSourceConfidence
@@ -608,22 +662,14 @@ export function parseToolEffectivenessConfig(cfg: Record<string, unknown>): Tool
   const raw = cfg.toolEffectiveness as Record<string, unknown> | undefined;
   return {
     enabled: raw?.enabled !== false,
-    minCalls:
-      typeof raw?.minCalls === "number" && raw.minCalls >= 1
-        ? Math.floor(raw.minCalls)
-        : 3,
-    topN:
-      typeof raw?.topN === "number" && raw.topN >= 1
-        ? Math.min(50, Math.floor(raw.topN))
-        : 10,
+    minCalls: typeof raw?.minCalls === "number" && raw.minCalls >= 1 ? Math.floor(raw.minCalls) : 3,
+    topN: typeof raw?.topN === "number" && raw.topN >= 1 ? Math.min(50, Math.floor(raw.topN)) : 10,
     lowScoreThreshold:
       typeof raw?.lowScoreThreshold === "number" && raw.lowScoreThreshold >= 0 && raw.lowScoreThreshold <= 1
         ? raw.lowScoreThreshold
         : 0.3,
     decayFactor:
-      typeof raw?.decayFactor === "number" && raw.decayFactor > 0 && raw.decayFactor <= 1
-        ? raw.decayFactor
-        : 0.95,
+      typeof raw?.decayFactor === "number" && raw.decayFactor > 0 && raw.decayFactor <= 1 ? raw.decayFactor : 0.95,
     runInNightlyCycle: raw?.runInNightlyCycle !== false,
     injectHints: raw?.injectHints !== false,
   };
@@ -633,10 +679,78 @@ export function parseCostTrackingConfig(cfg: Record<string, unknown>): CostTrack
   const raw = cfg.costTracking as Record<string, unknown> | undefined;
   return {
     enabled: raw?.enabled !== false,
-    retainDays:
-      typeof raw?.retainDays === "number" && raw.retainDays >= 1
-        ? Math.floor(raw.retainDays)
-        : 90,
+    retainDays: typeof raw?.retainDays === "number" && raw.retainDays >= 1 ? Math.floor(raw.retainDays) : 90,
     pruneInNightlyCycle: raw?.pruneInNightlyCycle !== false,
+  };
+}
+
+export function parseDashboardConfig(cfg: Record<string, unknown>): DashboardConfig {
+  const raw = cfg.dashboard as Record<string, unknown> | undefined;
+  return {
+    enabled: raw?.enabled !== false,
+    port: typeof raw?.port === "number" && raw.port >= 1024 && raw.port <= 65535 ? Math.floor(raw.port) : 7700,
+    gitRepo: typeof raw?.gitRepo === "string" ? raw.gitRepo : undefined,
+  };
+}
+
+export function parseApiTapConfig(cfg: Record<string, unknown>): ApiTapConfig {
+  const raw = cfg.apiTap as Record<string, unknown> | undefined;
+  return {
+    enabled: raw?.enabled === true,
+    captureTimeoutSeconds:
+      typeof raw?.captureTimeoutSeconds === "number" && raw.captureTimeoutSeconds >= 5
+        ? Math.min(300, Math.floor(raw.captureTimeoutSeconds))
+        : 60,
+    endpointTtlDays:
+      typeof raw?.endpointTtlDays === "number" && raw.endpointTtlDays >= 1
+        ? Math.min(365, Math.floor(raw.endpointTtlDays))
+        : 30,
+    maxEndpointsPerSession:
+      typeof raw?.maxEndpointsPerSession === "number" && raw.maxEndpointsPerSession >= 1
+        ? Math.min(500, Math.floor(raw.maxEndpointsPerSession))
+        : 50,
+    allowedPatterns: Array.isArray(raw?.allowedPatterns)
+      ? (raw.allowedPatterns as unknown[]).filter((p): p is string => typeof p === "string" && p.trim().length > 0)
+      : [],
+    blockedPatterns: Array.isArray(raw?.blockedPatterns)
+      ? (raw.blockedPatterns as unknown[]).filter((p): p is string => typeof p === "string" && p.trim().length > 0)
+      : ["**/*oauth*/**", "**/*auth*/**", "**/*login*/**", "**/*signin*/**", "**/*token*/**", "**/*password*/**"],
+  };
+}
+
+export function parseHumanizerConfig(cfg: Record<string, unknown>): HumanizerConfig {
+  const raw = cfg.humanizer as Record<string, unknown> | undefined;
+  const maxTextLength =
+    typeof raw?.maxTextLength === "number" && raw.maxTextLength >= 1
+      ? Math.min(20_000, Math.floor(raw.maxTextLength))
+      : 4000;
+  const minTextLength =
+    typeof raw?.minTextLength === "number" && raw.minTextLength >= 0
+      ? Math.min(maxTextLength, Math.floor(raw.minTextLength))
+      : 100;
+  return {
+    enabled: raw?.enabled === true,
+    bin: typeof raw?.bin === "string" && raw.bin.trim().length > 0 ? raw.bin.trim() : "humanizer",
+    minTextLength,
+    maxTextLength,
+    modelTag: typeof raw?.modelTag === "string" && raw.modelTag.trim().length > 0 ? raw.modelTag.trim() : undefined,
+    skillTag: typeof raw?.skillTag === "string" && raw.skillTag.trim().length > 0 ? raw.skillTag.trim() : undefined,
+  };
+}
+
+export function parseFrequencyCaptureConfig(cfg: Record<string, unknown>): FrequencyCaptureConfig {
+  const raw = cfg.frequencyCapture as Record<string, unknown> | undefined;
+  return {
+    enabled: raw?.enabled === true,
+    mentionThreshold:
+      typeof raw?.mentionThreshold === "number" && raw.mentionThreshold >= 1 ? Math.floor(raw.mentionThreshold) : 3,
+    lookbackSessions:
+      typeof raw?.lookbackSessions === "number" && raw.lookbackSessions >= 1 ? Math.floor(raw.lookbackSessions) : 5,
+    defaultImportance:
+      typeof raw?.defaultImportance === "number" && raw.defaultImportance >= 0 && raw.defaultImportance <= 1
+        ? raw.defaultImportance
+        : 0.6,
+    captureCredentials: raw?.captureCredentials !== false,
+    ttlDays: typeof raw?.ttlDays === "number" && raw.ttlDays >= 1 ? Math.floor(raw.ttlDays) : 30,
   };
 }

@@ -44,19 +44,38 @@ export type NightlyCycleConfig = {
   eventLogArchivePath?: string;
   /** Legacy: max age for unconsolidated event log entries before deletion (default: 90). */
   maxUnconsolidatedAgeDays: number;
+  /**
+   * Retention window in days for log tables (recall_log, reinforcement_log, feedback_trajectories).
+   * Rows older than this are deleted during the dream cycle. Set to 0 to disable log pruning.
+   * Default: 30.
+   */
+  logRetentionDays: number;
+  /**
+   * When true, run PRAGMA wal_checkpoint(TRUNCATE) + VACUUM after each nightly cycle
+   * to reclaim disk space freed by pruning. Slightly slower but keeps facts.db lean.
+   * Default: true.
+   */
+  vacuumOnCycle: boolean;
 };
 
 /** Memory health dashboard configuration (Issue #148). */
 export type HealthConfig = {
   /** Enable memory_health tool (default: true). */
   enabled: boolean;
+  /**
+   * Require authentication for all dashboard HTTP routes (Issue #279).
+   * Must be the same value for every route under /plugins/memory-dashboard/
+   * to satisfy the OpenClaw v2026.3.8 consistent-auth requirement.
+   * Default: true.
+   */
+  authenticated: boolean;
 };
 
 /** Monthly knowledge quality review (Issue #165). */
 export type MonthlyReviewConfig = {
-  enabled: boolean;           // default: false
-  model?: string;             // LLM model for recommendations, default: plugin default
-  dayOfMonth: number;         // default: 1
+  enabled: boolean; // default: false
+  model?: string; // LLM model for recommendations, default: plugin default
+  dayOfMonth: number; // default: 1
 };
 
 /** Maintenance configuration group. */

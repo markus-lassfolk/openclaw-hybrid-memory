@@ -1,9 +1,5 @@
-import { describe, it, expect } from "vitest";
-import {
-  parseSessionJsonl,
-  minimalRecipe,
-  type ParsedSession,
-} from "../services/procedure-extractor.js";
+import { describe, expect, it } from "vitest";
+import { type ParsedSession, minimalRecipe, parseSessionJsonl } from "../services/procedure-extractor.js";
 import type { ProcedureStep } from "../types/memory.js";
 
 describe("procedure-extractor", () => {
@@ -29,9 +25,7 @@ describe("procedure-extractor", () => {
           type: "message",
           message: {
             role: "assistant",
-            content: [
-              { type: "tool_use", id: "t1", name: "web_fetch", input: { url: "https://example.com" } },
-            ],
+            content: [{ type: "tool_use", id: "t1", name: "web_fetch", input: { url: "https://example.com" } }],
           },
         }),
       ];
@@ -60,12 +54,12 @@ describe("procedure-extractor", () => {
       ];
       const result = parseSessionJsonl(lines.join("\n"), "session-1") as ParsedSession | null;
       expect(result).not.toBeNull();
-      expect(result!.taskIntent).toBe("Check Moltbook notifications");
-      expect(result!.steps).toHaveLength(2);
-      expect(result!.steps[0].tool).toBe("web_fetch");
-      expect(result!.steps[1].tool).toBe("message");
-      expect(result!.success).toBe(true);
-      expect(result!.sessionId).toBe("session-1");
+      expect(result?.taskIntent).toBe("Check Moltbook notifications");
+      expect(result?.steps).toHaveLength(2);
+      expect(result?.steps[0].tool).toBe("web_fetch");
+      expect(result?.steps[1].tool).toBe("message");
+      expect(result?.success).toBe(true);
+      expect(result?.sessionId).toBe("session-1");
     });
 
     it("marks success false when tool result contains error", () => {
@@ -97,8 +91,8 @@ describe("procedure-extractor", () => {
       ];
       const result = parseSessionJsonl(lines.join("\n"), "s2") as ParsedSession | null;
       expect(result).not.toBeNull();
-      expect(result!.success).toBe(false);
-      expect(result!.errorMessage).toContain("404");
+      expect(result?.success).toBe(false);
+      expect(result?.errorMessage).toContain("404");
     });
 
     it("truncates task intent to 300 chars", () => {
@@ -121,7 +115,7 @@ describe("procedure-extractor", () => {
       ];
       const result = parseSessionJsonl(lines.join("\n"), "s3") as ParsedSession | null;
       expect(result).not.toBeNull();
-      expect(result!.taskIntent).toHaveLength(300);
+      expect(result?.taskIntent).toHaveLength(300);
     });
   });
 
@@ -138,19 +132,15 @@ describe("procedure-extractor", () => {
     });
 
     it("truncates long string args to 200 chars", () => {
-      const longUrl = "https://example.com/" + "x".repeat(300);
-      const steps: ProcedureStep[] = [
-        { tool: "web_fetch", args: { url: longUrl } },
-      ];
+      const longUrl = `https://example.com/${"x".repeat(300)}`;
+      const steps: ProcedureStep[] = [{ tool: "web_fetch", args: { url: longUrl } }];
       const out = minimalRecipe(steps);
       expect((out[0].args as Record<string, string>)?.url?.length).toBe(201);
       expect((out[0].args as Record<string, string>)?.url?.endsWith("…")).toBe(true);
     });
 
     it("preserves short args and tool name", () => {
-      const steps: ProcedureStep[] = [
-        { tool: "memory_recall", args: { query: "test", limit: 5 }, summary: "recall" },
-      ];
+      const steps: ProcedureStep[] = [{ tool: "memory_recall", args: { query: "test", limit: 5 }, summary: "recall" }];
       const out = minimalRecipe(steps);
       expect(out[0].tool).toBe("memory_recall");
       expect(out[0].args).toEqual({ query: "test", limit: 5 });

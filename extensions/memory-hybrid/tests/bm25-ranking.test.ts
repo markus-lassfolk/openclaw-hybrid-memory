@@ -12,11 +12,11 @@
  * They use the same FTS5 virtual table infrastructure as the production search path.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, rmSync } from "node:fs";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { _testing } from "../index.js";
 
 const { FactsDB, searchFts, buildFts5Query } = _testing;
@@ -28,8 +28,7 @@ const { FactsDB, searchFts, buildFts5Query } = _testing;
 type DB = InstanceType<typeof FactsDB>;
 
 function rawDb(db: DB) {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  return (db as any).liveDb as import("better-sqlite3").Database;
+  return db.getRawDb();
 }
 
 function insertFact(db: DB, text: string, entity?: string, tags?: string) {
@@ -151,9 +150,7 @@ describe("Multi-keyword queries", () => {
       (r) => r.text.toLowerCase().includes("machine") && r.text.toLowerCase().includes("learning"),
     );
     const partialMatchIdx = results.findIndex(
-      (r) =>
-        r.text.toLowerCase().includes("machine") &&
-        !r.text.toLowerCase().includes("learning"),
+      (r) => r.text.toLowerCase().includes("machine") && !r.text.toLowerCase().includes("learning"),
     );
 
     if (fullMatchIdx !== -1 && partialMatchIdx !== -1) {
@@ -303,9 +300,7 @@ describe("BM25 column weighting", () => {
 
     const results = searchFts(rawDb(db), "emacs", { limit: 5 });
     // Should find at least the emacs entity even if "emacs" isn't in text
-    const found = results.some(
-      (r) => (r.entity ?? null) === "emacs-editor" || r.text.toLowerCase().includes("emacs"),
-    );
+    const found = results.some((r) => (r.entity ?? null) === "emacs-editor" || r.text.toLowerCase().includes("emacs"));
     expect(found).toBe(true);
   });
 });

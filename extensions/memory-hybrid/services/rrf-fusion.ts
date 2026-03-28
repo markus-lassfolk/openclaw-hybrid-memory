@@ -73,10 +73,7 @@ export const RRF_K_DEFAULT = 60;
  * @returns Fused results sorted by rrfScore descending. finalScore equals rrfScore
  *   until applyPostRrfAdjustments() is called.
  */
-export function fuseResults(
-  strategyResults: Map<string, RankedResult[]>,
-  k: number = RRF_K_DEFAULT,
-): FusedResult[] {
+export function fuseResults(strategyResults: Map<string, RankedResult[]>, k: number = RRF_K_DEFAULT): FusedResult[] {
   if (!Number.isFinite(k) || k <= 0) {
     throw new Error(`RRF k must be a positive finite number (got ${k})`);
   }
@@ -150,21 +147,18 @@ export function applyPostRrfAdjustments(
 
     // Recency adjustment
     const lastAccessedRaw = fact?.lastAccessed;
-    const lastAccessedSec = Number.isFinite(lastAccessedRaw ?? NaN) ? (lastAccessedRaw as number) : null;
-    const daysSince =
-      lastAccessedSec != null
-        ? Math.max(0, (nowSec - lastAccessedSec) / SECONDS_PER_DAY)
-        : 0; // no access record → treat as fresh (neutral)
+    const lastAccessedSec = Number.isFinite(lastAccessedRaw ?? Number.NaN) ? (lastAccessedRaw as number) : null;
+    const daysSince = lastAccessedSec != null ? Math.max(0, (nowSec - lastAccessedSec) / SECONDS_PER_DAY) : 0; // no access record → treat as fresh (neutral)
     score *= 1 + Math.log(daysSince + 1) * -0.01;
 
     // Confidence adjustment
     const confidenceRaw = fact?.confidence;
-    const confidence = Number.isFinite(confidenceRaw ?? NaN) ? (confidenceRaw as number) : 1.0;
+    const confidence = Number.isFinite(confidenceRaw ?? Number.NaN) ? (confidenceRaw as number) : 1.0;
     score *= Math.max(0, Math.min(1, confidence));
 
     // Access frequency adjustment
     const rawRecall = fact?.recallCount;
-    const recallCount = Number.isFinite(rawRecall ?? NaN) ? Math.max(0, rawRecall as number) : 0;
+    const recallCount = Number.isFinite(rawRecall ?? Number.NaN) ? Math.max(0, rawRecall as number) : 0;
     score *= 1 + Math.min(recallCount * 0.02, 0.2);
 
     result.finalScore = score;

@@ -6,13 +6,16 @@
  * cross-user memory access in multi-tenant setups. Set multiAgent.trustToolScopeParams=true to enable.
  */
 
-import type { ScopeFilter } from "../types/memory.js";
 import { addOperationBreadcrumb } from "../services/error-reporter.js";
+import type { ScopeFilter } from "../types/memory.js";
 
 export function buildToolScopeFilter(
   params: { userId?: string | null; agentId?: string | null; sessionId?: string | null },
   currentAgent: string | null,
-  config: { multiAgent: { orchestratorId: string; trustToolScopeParams?: boolean }; autoRecall: { scopeFilter?: ScopeFilter } }
+  config: {
+    multiAgent: { orchestratorId: string; trustToolScopeParams?: boolean };
+    autoRecall: { scopeFilter?: ScopeFilter };
+  },
 ): ScopeFilter | undefined {
   const { userId, agentId, sessionId } = params;
 
@@ -20,7 +23,8 @@ export function buildToolScopeFilter(
   const trustParams = config.multiAgent.trustToolScopeParams === true;
   if ((userId || agentId || sessionId) && trustParams) {
     return { userId: userId ?? null, agentId: agentId ?? null, sessionId: sessionId ?? null };
-  } else if ((userId || agentId || sessionId) && !trustParams) {
+  }
+  if ((userId || agentId || sessionId) && !trustParams) {
     // Debug: Log when explicit scope params are ignored for security
     addOperationBreadcrumb("scope-filter", "params-ignored-security");
   }
@@ -29,9 +33,8 @@ export function buildToolScopeFilter(
     return {
       userId: config.autoRecall.scopeFilter?.userId ?? null,
       agentId: currentAgent,
-      sessionId: config.autoRecall.scopeFilter?.sessionId ?? null
+      sessionId: config.autoRecall.scopeFilter?.sessionId ?? null,
     };
-  } else {
-    return undefined;
   }
+  return undefined;
 }

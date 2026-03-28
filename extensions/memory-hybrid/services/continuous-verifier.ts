@@ -8,10 +8,10 @@
  */
 
 import type OpenAI from "openai";
+import type { FactsDB } from "../backends/facts-db.js";
 import { chatComplete } from "./chat.js";
 import { capturePluginError } from "./error-reporter.js";
 import type { VerificationStore, VerifiedFact } from "./verification-store.js";
-import type { FactsDB } from "../backends/facts-db.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -44,26 +44,11 @@ export interface ContinuousVerifierOptions {
  * Build the LLM prompt for re-verifying a single fact.
  * Public for testing.
  */
-export function buildVerificationPrompt(
-  factText: string,
-  entity: string,
-  recentFacts: string[],
-): string {
+export function buildVerificationPrompt(factText: string, entity: string, recentFacts: string[]): string {
   const recentSection =
-    recentFacts.length > 0
-      ? recentFacts.map((f, i) => `${i + 1}. ${f}`).join("\n")
-      : "(no recent facts available)";
+    recentFacts.length > 0 ? recentFacts.map((f, i) => `${i + 1}. ${f}`).join("\n") : "(no recent facts available)";
 
-  return (
-    `You are a fact-verification assistant. Determine whether the following verified fact is still accurate based on recent knowledge.\n\n` +
-    `Verified fact: ${factText}\n\n` +
-    `Recent knowledge about "${entity}":\n${recentSection}\n\n` +
-    `Is this still accurate based on recent knowledge?\n` +
-    `Answer with exactly one of: CONFIRMED, STALE, or UNCERTAIN, followed by a brief reason.\n` +
-    `Example: "CONFIRMED – the IP address is still in use"\n` +
-    `Example: "STALE – the server was decommissioned last month"\n` +
-    `Example: "UNCERTAIN – no recent information available"`
-  );
+  return `You are a fact-verification assistant. Determine whether the following verified fact is still accurate based on recent knowledge.\n\nVerified fact: ${factText}\n\nRecent knowledge about "${entity}":\n${recentSection}\n\nIs this still accurate based on recent knowledge?\nAnswer with exactly one of: CONFIRMED, STALE, or UNCERTAIN, followed by a brief reason.\nExample: "CONFIRMED – the IP address is still in use"\nExample: "STALE – the server was decommissioned last month"\nExample: "UNCERTAIN – no recent information available"`;
 }
 
 // ---------------------------------------------------------------------------
@@ -78,11 +63,7 @@ export function buildVerificationPrompt(
  */
 export function parseVerificationOutcome(response: string): VerificationOutcome {
   const trimmed = response.trim();
-  if (
-    /\bCONFIRMED\b/i.test(trimmed) &&
-    !/\bNOT\s+CONFIRMED\b/i.test(trimmed) &&
-    !/\bUNCONFIRMED\b/i.test(trimmed)
-  ) {
+  if (/\bCONFIRMED\b/i.test(trimmed) && !/\bNOT\s+CONFIRMED\b/i.test(trimmed) && !/\bUNCONFIRMED\b/i.test(trimmed)) {
     return "CONFIRMED";
   }
   if (/\bSTALE\b/i.test(trimmed)) return "STALE";
@@ -111,12 +92,7 @@ export class ContinuousVerifier {
   private readonly cycleDays: number | undefined;
   private lastRunDate: number | null = null;
 
-  constructor(
-    store: VerificationStore,
-    factsDb: FactsDB,
-    openai: OpenAI,
-    options?: ContinuousVerifierOptions,
-  ) {
+  constructor(store: VerificationStore, factsDb: FactsDB, openai: OpenAI, options?: ContinuousVerifierOptions) {
     this.store = store;
     this.factsDb = factsDb;
     this.openai = openai;
@@ -129,11 +105,7 @@ export class ContinuousVerifier {
    * Internal: call the LLM and return the parsed outcome. Can throw on LLM failure.
    * Use verifyFact() for the public, error-safe interface.
    */
-  private async _callLLM(
-    factText: string,
-    entity: string,
-    recentFacts: string[],
-  ): Promise<VerificationOutcome> {
+  private async _callLLM(factText: string, entity: string, recentFacts: string[]): Promise<VerificationOutcome> {
     const prompt = buildVerificationPrompt(factText, entity, recentFacts);
     const response = await chatComplete({
       model: this.model,
@@ -150,10 +122,7 @@ export class ContinuousVerifier {
    * Verify a single fact against recent knowledge.
    * Returns the outcome or UNCERTAIN on any timeout/error.
    */
-  async verifyFact(
-    verifiedFact: VerifiedFact,
-    recentFacts: string[],
-  ): Promise<VerificationOutcome> {
+  async verifyFact(verifiedFact: VerifiedFact, recentFacts: string[]): Promise<VerificationOutcome> {
     // Determine entity label: prefer the entity from FactsDB, fall back to factId.
     const underlying = this.factsDb.getById(verifiedFact.factId);
     const entity = underlying?.entity ?? verifiedFact.factId;
@@ -206,7 +175,7 @@ export class ContinuousVerifier {
     for (const e of recentEntries) {
       const entity = e.entity?.toLowerCase() ?? "";
       if (!recentByEntity.has(entity)) recentByEntity.set(entity, []);
-      recentByEntity.get(entity)!.push(e.text);
+      recentByEntity.get(entity)?.push(e.text);
     }
 
     for (const fact of due) {
@@ -219,11 +188,7 @@ export class ContinuousVerifier {
 
         let outcome: VerificationOutcome;
         try {
-          outcome = await this._callLLM(
-            fact.canonicalText,
-            entity ?? fact.factId,
-            recentFacts,
-          );
+          outcome = await this._callLLM(fact.canonicalText, entity ?? fact.factId, recentFacts);
         } catch (err) {
           capturePluginError(err instanceof Error ? err : new Error(String(err)), {
             subsystem: "continuous-verifier",

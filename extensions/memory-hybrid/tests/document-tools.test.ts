@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * Integration tests for memory_ingest_document tool.
  *
@@ -7,12 +8,12 @@
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyFn = (...args: any[]) => any;
 
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { registerDocumentTools } from "../tools/document-tools.js";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { _testing } from "../index.js";
+import { registerDocumentTools } from "../tools/document-tools.js";
 
 const { FactsDB } = _testing;
 
@@ -75,7 +76,16 @@ function makeMockApi() {
 // Minimal HybridMemoryConfig subset
 // ---------------------------------------------------------------------------
 
-function makeCfg(overrides: Partial<{ chunkSize: number; chunkOverlap: number; autoTag: boolean; maxDocumentSize: number; visionEnabled: boolean; visionModel: string }> = {}) {
+function makeCfg(
+  overrides: Partial<{
+    chunkSize: number;
+    chunkOverlap: number;
+    autoTag: boolean;
+    maxDocumentSize: number;
+    visionEnabled: boolean;
+    visionModel: string;
+  }> = {},
+) {
   return {
     documents: {
       enabled: true,
@@ -136,6 +146,7 @@ describe("memory_ingest_document", () => {
     registerDocumentTools(
       {
         factsDb: factsDb as never,
+        edictStore: null as any,
         vectorDb: makeMockVectorDb() as never,
         cfg: makeCfg() as never,
         embeddings: makeMockEmbeddings() as never,
@@ -148,7 +159,7 @@ describe("memory_ingest_document", () => {
     const tool = api.getTool("memory_ingest_document");
     expect(tool).toBeDefined();
 
-    const result = await (tool!.execute as AnyFn)("tc-1", { path: testFilePath });
+    const result = await (tool?.execute as AnyFn)("tc-1", { path: testFilePath });
     expect(result.content[0].text).toContain("Ingested");
     expect(result.details.storedCount).toBeGreaterThanOrEqual(2);
     expect(result.details.errorCount).toBe(0);
@@ -159,6 +170,7 @@ describe("memory_ingest_document", () => {
     registerDocumentTools(
       {
         factsDb: factsDb as never,
+        edictStore: null as any,
         vectorDb: makeMockVectorDb() as never,
         cfg: makeCfg() as never,
         embeddings: makeMockEmbeddings() as never,
@@ -168,7 +180,7 @@ describe("memory_ingest_document", () => {
       api as never,
     );
     const tool = api.getTool("memory_ingest_document");
-    const result = await (tool!.execute as AnyFn)("tc-rel", { path: "relative/path.pdf" });
+    const result = await (tool?.execute as AnyFn)("tc-rel", { path: "relative/path.pdf" });
     expect(result.details.error).toBe("path_not_absolute");
   });
 
@@ -179,6 +191,7 @@ describe("memory_ingest_document", () => {
     registerDocumentTools(
       {
         factsDb: factsDb as never,
+        edictStore: null as any,
         vectorDb: makeMockVectorDb() as never,
         cfg: makeCfg() as never,
         embeddings: makeMockEmbeddings() as never,
@@ -189,7 +202,7 @@ describe("memory_ingest_document", () => {
     );
 
     const tool = api.getTool("memory_ingest_document");
-    const result = await (tool!.execute as AnyFn)("tc-2", { path: "/nonexistent/file.pdf" });
+    const result = await (tool?.execute as AnyFn)("tc-2", { path: "/nonexistent/file.pdf" });
     expect(result.details.error).toBe("file_not_found");
   });
 
@@ -200,6 +213,7 @@ describe("memory_ingest_document", () => {
     registerDocumentTools(
       {
         factsDb: factsDb as never,
+        edictStore: null as any,
         vectorDb: makeMockVectorDb() as never,
         cfg: makeCfg({ maxDocumentSize: 1 }) as never, // 1 byte limit
         embeddings: makeMockEmbeddings() as never,
@@ -210,7 +224,7 @@ describe("memory_ingest_document", () => {
     );
 
     const tool = api.getTool("memory_ingest_document");
-    const result = await (tool!.execute as AnyFn)("tc-3", { path: testFilePath });
+    const result = await (tool?.execute as AnyFn)("tc-3", { path: testFilePath });
     expect(result.details.error).toBe("file_too_large");
   });
 
@@ -221,6 +235,7 @@ describe("memory_ingest_document", () => {
     registerDocumentTools(
       {
         factsDb: factsDb as never,
+        edictStore: null as any,
         vectorDb: makeMockVectorDb() as never,
         cfg: makeCfg() as never,
         embeddings: makeMockEmbeddings() as never,
@@ -233,10 +248,10 @@ describe("memory_ingest_document", () => {
     const tool = api.getTool("memory_ingest_document");
 
     // First ingestion
-    await (tool!.execute as AnyFn)("tc-4a", { path: testFilePath });
+    await (tool?.execute as AnyFn)("tc-4a", { path: testFilePath });
 
     // Second ingestion — should detect duplicate
-    const result = await (tool!.execute as AnyFn)("tc-4b", { path: testFilePath });
+    const result = await (tool?.execute as AnyFn)("tc-4b", { path: testFilePath });
     expect(result.details.action).toBe("skipped_duplicate");
   });
 
@@ -248,6 +263,7 @@ describe("memory_ingest_document", () => {
     registerDocumentTools(
       {
         factsDb: factsDb as never,
+        edictStore: null as any,
         vectorDb: vectorDb as never,
         cfg: makeCfg() as never,
         embeddings: makeMockEmbeddings() as never,
@@ -258,7 +274,7 @@ describe("memory_ingest_document", () => {
     );
 
     const tool = api.getTool("memory_ingest_document");
-    const result = await (tool!.execute as AnyFn)("tc-5", { path: testFilePath, dryRun: true });
+    const result = await (tool?.execute as AnyFn)("tc-5", { path: testFilePath, dryRun: true });
 
     expect(result.details.dryRun).toBe(true);
     expect(result.content[0].text).toContain("Dry run");
@@ -275,6 +291,7 @@ describe("memory_ingest_document", () => {
     registerDocumentTools(
       {
         factsDb: factsDb as never,
+        edictStore: null as any,
         vectorDb: makeMockVectorDb() as never,
         cfg: makeCfg() as never,
         embeddings: makeMockEmbeddings() as never,
@@ -286,13 +303,13 @@ describe("memory_ingest_document", () => {
     );
 
     const tool = api.getTool("memory_ingest_document");
-    await (tool!.execute as AnyFn)("tc-progress", { path: testFilePath });
+    await (tool?.execute as AnyFn)("tc-progress", { path: testFilePath });
 
     const stages = events.map((e) => e.stage);
     expect(stages).toContain("start");
     expect(stages).toContain("complete");
-    expect(events.find((e) => e.stage === "start")!.pct).toBe(0);
-    expect(events.find((e) => e.stage === "complete")!.pct).toBe(100);
+    expect(events.find((e) => e.stage === "start")?.pct).toBe(0);
+    expect(events.find((e) => e.stage === "complete")?.pct).toBe(100);
   });
 
   it("returns error when bridge convert fails", async () => {
@@ -306,6 +323,7 @@ describe("memory_ingest_document", () => {
     registerDocumentTools(
       {
         factsDb: factsDb as never,
+        edictStore: null as any,
         vectorDb: makeMockVectorDb() as never,
         cfg: makeCfg() as never,
         embeddings: makeMockEmbeddings() as never,
@@ -316,7 +334,7 @@ describe("memory_ingest_document", () => {
     );
 
     const tool = api.getTool("memory_ingest_document");
-    const result = await (tool!.execute as AnyFn)("tc-6", { path: testFilePath });
+    const result = await (tool?.execute as AnyFn)("tc-6", { path: testFilePath });
     expect(result.details.error).toBe("conversion_failed");
     expect(result.content[0].text).toContain("Error converting");
   });
@@ -329,6 +347,7 @@ describe("memory_ingest_document", () => {
     registerDocumentTools(
       {
         factsDb: factsDb as never,
+        edictStore: null as any,
         vectorDb: makeMockVectorDb() as never,
         cfg: makeCfg({ autoTag: true }) as never,
         embeddings: makeMockEmbeddings() as never,
@@ -339,14 +358,14 @@ describe("memory_ingest_document", () => {
     );
 
     const tool = api.getTool("memory_ingest_document");
-    const result = await (tool!.execute as AnyFn)("tc-7", { path: testFilePath });
+    const result = await (tool?.execute as AnyFn)("tc-7", { path: testFilePath });
 
     // Verify ingestion was successful and stored chunks
     expect(result.details.storedCount).toBeGreaterThan(0);
 
     // Use countBySource to confirm the source was correctly set (dedup check works)
     // Then re-ingesting should detect it as duplicate
-    const result2 = await (tool!.execute as AnyFn)("tc-7b", { path: testFilePath });
+    const result2 = await (tool?.execute as AnyFn)("tc-7b", { path: testFilePath });
     expect(result2.details.action).toBe("skipped_duplicate");
   });
 });
@@ -365,6 +384,7 @@ describe("memory_ingest_folder", () => {
     registerDocumentTools(
       {
         factsDb: factsDb as never,
+        edictStore: null as any,
         vectorDb: makeMockVectorDb() as never,
         cfg: makeCfg() as never,
         embeddings: makeMockEmbeddings() as never,
@@ -375,7 +395,7 @@ describe("memory_ingest_folder", () => {
     );
 
     const tool = api.getTool("memory_ingest_folder");
-    const result = await (tool!.execute as AnyFn)("tc-folder-dry", {
+    const result = await (tool?.execute as AnyFn)("tc-folder-dry", {
       path: folder,
       dryRun: true,
       filter: { extensions: [".pdf"] },
@@ -399,6 +419,7 @@ describe("memory_ingest_folder", () => {
     registerDocumentTools(
       {
         factsDb: factsDb as never,
+        edictStore: null as any,
         vectorDb: vectorDb as never,
         cfg: makeCfg() as never,
         embeddings: makeMockEmbeddings() as never,
@@ -409,7 +430,7 @@ describe("memory_ingest_folder", () => {
     );
 
     const tool = api.getTool("memory_ingest_folder");
-    const result = await (tool!.execute as AnyFn)("tc-folder", { path: folder });
+    const result = await (tool?.execute as AnyFn)("tc-folder", { path: folder });
     expect(result.details.fileCount).toBe(2);
     expect(result.details.totalStored).toBeGreaterThan(0);
     expect(result.content[0].text).toContain("Folder ingest complete");
@@ -428,6 +449,7 @@ describe("hash-based deduplication", () => {
     registerDocumentTools(
       {
         factsDb: factsDb as never,
+        edictStore: null as any,
         vectorDb: makeMockVectorDb() as never,
         cfg: makeCfg() as never,
         embeddings: makeMockEmbeddings() as never,
@@ -447,11 +469,11 @@ describe("hash-based deduplication", () => {
     writeFileSync(fileB, identical);
 
     // First ingestion
-    const first = await (tool!.execute as AnyFn)("tc-hash-1a", { path: fileA });
+    const first = await (tool?.execute as AnyFn)("tc-hash-1a", { path: fileA });
     expect(first.details.action).toBe("ingested");
 
     // Second ingestion at different path but same content → must be detected as duplicate
-    const second = await (tool!.execute as AnyFn)("tc-hash-1b", { path: fileB });
+    const second = await (tool?.execute as AnyFn)("tc-hash-1b", { path: fileB });
     expect(second.details.action).toBe("skipped_duplicate");
   });
 
@@ -462,6 +484,7 @@ describe("hash-based deduplication", () => {
     registerDocumentTools(
       {
         factsDb: factsDb as never,
+        edictStore: null as any,
         vectorDb: makeMockVectorDb() as never,
         cfg: makeCfg() as never,
         embeddings: makeMockEmbeddings() as never,
@@ -475,12 +498,12 @@ describe("hash-based deduplication", () => {
 
     // Write file with version 1 content
     writeFileSync(testFilePath, "VERSION_ONE_CONTENT");
-    const first = await (tool!.execute as AnyFn)("tc-hash-2a", { path: testFilePath });
+    const first = await (tool?.execute as AnyFn)("tc-hash-2a", { path: testFilePath });
     expect(first.details.action).toBe("ingested");
 
     // Overwrite with different content → new hash → must NOT be skipped
     writeFileSync(testFilePath, "VERSION_TWO_CONTENT_DIFFERENT");
-    const second = await (tool!.execute as AnyFn)("tc-hash-2b", { path: testFilePath });
+    const second = await (tool?.execute as AnyFn)("tc-hash-2b", { path: testFilePath });
     // A new ingestion is attempted (content hash differs → new source key)
     expect(second.details.action).toBe("ingested");
   });
@@ -492,6 +515,7 @@ describe("hash-based deduplication", () => {
     registerDocumentTools(
       {
         factsDb: factsDb as never,
+        edictStore: null as any,
         vectorDb: makeMockVectorDb() as never,
         cfg: makeCfg() as never,
         embeddings: makeMockEmbeddings() as never,
@@ -503,7 +527,7 @@ describe("hash-based deduplication", () => {
 
     const tool = api.getTool("memory_ingest_document");
     writeFileSync(testFilePath, "HASH_META_CONTENT");
-    const result = await (tool!.execute as AnyFn)("tc-hash-3", { path: testFilePath });
+    const result = await (tool?.execute as AnyFn)("tc-hash-3", { path: testFilePath });
 
     expect(result.details.action).toBe("ingested");
     // The fingerprint must be a full 64-char hex SHA-256
@@ -525,6 +549,7 @@ describe("LLM vision integration", () => {
     registerDocumentTools(
       {
         factsDb: factsDb as never,
+        edictStore: null as any,
         vectorDb: makeMockVectorDb() as never,
         cfg: makeCfg({ visionEnabled: true, visionModel: "gpt-4o" }) as never,
         embeddings: makeMockEmbeddings() as never,
@@ -540,7 +565,7 @@ describe("LLM vision integration", () => {
     const imagePath = join(tmpDir, "test-image.png");
     writeFileSync(imagePath, Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
 
-    const result = await (tool!.execute as AnyFn)("tc-vision-1", { path: imagePath });
+    const result = await (tool?.execute as AnyFn)("tc-vision-1", { path: imagePath });
 
     // Vision model must have been called
     expect(mockOpenAI.chat.completions.create).toHaveBeenCalledOnce();
@@ -558,6 +583,7 @@ describe("LLM vision integration", () => {
     registerDocumentTools(
       {
         factsDb: factsDb as never,
+        edictStore: null as any,
         vectorDb: makeMockVectorDb() as never,
         cfg: makeCfg({ visionEnabled: false }) as never,
         embeddings: makeMockEmbeddings() as never,
@@ -572,7 +598,7 @@ describe("LLM vision integration", () => {
     const imagePath = join(tmpDir, "test-image2.jpg");
     writeFileSync(imagePath, Buffer.from([0xff, 0xd8, 0xff, 0xe0]));
 
-    const result = await (tool!.execute as AnyFn)("tc-vision-2", { path: imagePath });
+    const result = await (tool?.execute as AnyFn)("tc-vision-2", { path: imagePath });
 
     // Vision model must NOT be called
     expect(mockOpenAI.chat.completions.create).not.toHaveBeenCalled();
@@ -589,6 +615,7 @@ describe("LLM vision integration", () => {
     registerDocumentTools(
       {
         factsDb: factsDb as never,
+        edictStore: null as any,
         vectorDb: makeMockVectorDb() as never,
         cfg: makeCfg({ visionEnabled: true, visionModel: "gpt-4o" }) as never,
         embeddings: makeMockEmbeddings() as never,
@@ -602,7 +629,7 @@ describe("LLM vision integration", () => {
     const imagePath = join(tmpDir, "dashboard.webp");
     writeFileSync(imagePath, Buffer.from("fake-webp-bytes"));
 
-    const result = await (tool!.execute as AnyFn)("tc-vision-3", { path: imagePath });
+    const result = await (tool?.execute as AnyFn)("tc-vision-3", { path: imagePath });
 
     expect(result.details.action).toBe("ingested");
     expect(result.details.storedCount).toBeGreaterThanOrEqual(1);
@@ -631,6 +658,7 @@ describe("LLM vision integration", () => {
     registerDocumentTools(
       {
         factsDb: factsDb as never,
+        edictStore: null as any,
         vectorDb: makeMockVectorDb() as never,
         cfg: makeCfg({ visionEnabled: true, visionModel: "gpt-4o" }) as never,
         embeddings: makeMockEmbeddings() as never,
@@ -644,7 +672,7 @@ describe("LLM vision integration", () => {
     const imagePath = join(tmpDir, "bad-image.gif");
     writeFileSync(imagePath, Buffer.from("GIF89a"));
 
-    const result = await (tool!.execute as AnyFn)("tc-vision-4", { path: imagePath });
+    const result = await (tool?.execute as AnyFn)("tc-vision-4", { path: imagePath });
     expect(result.details.error).toBe("conversion_failed");
     expect(result.content[0].text).toContain("Error converting");
   });

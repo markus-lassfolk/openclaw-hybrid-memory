@@ -4,12 +4,12 @@
  */
 
 import { Type } from "@sinclair/typebox";
-import type { ClawdbotPluginApi } from "openclaw/plugin-sdk";
-import { stringEnum } from "openclaw/plugin-sdk";
+import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
+import { stringEnum } from "../utils/typebox.js";
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { getFileSnapshot } from "../utils/file-snapshot.js";
-import { PROPOSAL_STATUSES, type HybridMemoryConfig } from "../config.js";
+import { PROPOSAL_STATUSES, type HybridMemoryConfig, isCompactVerbosity } from "../config.js";
 import type { ProposalsDB } from "../backends/proposals-db.js";
 import { SECONDS_PER_DAY } from "../utils/constants.js";
 import { capturePluginError } from "../services/error-reporter.js";
@@ -38,7 +38,7 @@ export function registerPersonaTools(ctx: PluginContext, api: ClawdbotPluginApi)
     action: string,
     proposalId: string,
     details?: any,
-    logger?: { warn?: (msg: string) => void; error?: (msg: string) => void }
+    logger?: { warn?: (msg: string) => void; error?: (msg: string) => void },
   ) => {
     const auditDir = join(dirname(resolvedSqlitePath), "decisions");
     await mkdir(auditDir, { recursive: true });
@@ -51,12 +51,12 @@ export function registerPersonaTools(ctx: PluginContext, api: ClawdbotPluginApi)
     };
     const auditPath = join(auditDir, `proposal-${proposalId}.jsonl`);
     try {
-      await writeFile(auditPath, JSON.stringify(entry) + "\n", { flag: "a" });
+      await writeFile(auditPath, `${JSON.stringify(entry)}\n`, { flag: "a" });
     } catch (err) {
       const msg = `Audit log write failed: ${err}`;
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-        operation: 'persona-proposal-audit',
-        subsystem: 'proposals',
+        operation: "persona-proposal-audit",
+        subsystem: "proposals",
         proposalId,
       });
       if (logger?.warn) {
@@ -70,7 +70,7 @@ export function registerPersonaTools(ctx: PluginContext, api: ClawdbotPluginApi)
   // Helper: rate limiting check
   const checkRateLimit = (): { allowed: boolean; count: number; limit: number } => {
     const weekInDays = 7;
-    const count = proposalsDb!.countRecentProposals(weekInDays);
+    const count = proposalsDb?.countRecentProposals(weekInDays);
     const limit = cfg.personaProposals.maxProposalsPerWeek;
     return { allowed: count < limit, count, limit };
   };
@@ -87,7 +87,8 @@ export function registerPersonaTools(ctx: PluginContext, api: ClawdbotPluginApi)
           description: "Short title for the proposal (e.g., 'Add tone-matching guidance')",
         }),
         observation: Type.String({
-          description: "What pattern or behavior you observed (e.g., 'Over ~50 interactions, user responds better to bullet points')",
+          description:
+            "What pattern or behavior you observed (e.g., 'Over ~50 interactions, user responds better to bullet points')",
         }),
         suggestedChange: Type.String({
           description: "The specific change to make to the file (be precise about location and wording)",
@@ -102,14 +103,7 @@ export function registerPersonaTools(ctx: PluginContext, api: ClawdbotPluginApi)
         }),
       }),
       async execute(_toolCallId: string, params: Record<string, unknown>) {
-        const {
-          targetFile,
-          title,
-          observation,
-          suggestedChange,
-          confidence,
-          evidenceSessions,
-        } = params as {
+        const { targetFile, title, observation, suggestedChange, confidence, evidenceSessions } = params as {
           targetFile: string;
           title: string;
           observation: string;
@@ -155,7 +149,11 @@ export function registerPersonaTools(ctx: PluginContext, api: ClawdbotPluginApi)
                 text: `Suggested change too long: ${suggestedChange.length} chars (max: ${MAX_SUGGESTED_CHANGE_LENGTH})`,
               },
             ],
-            details: { error: "suggested_change_too_long", length: suggestedChange.length, max: MAX_SUGGESTED_CHANGE_LENGTH },
+            details: {
+              error: "suggested_change_too_long",
+              length: suggestedChange.length,
+              max: MAX_SUGGESTED_CHANGE_LENGTH,
+            },
           };
         }
 
@@ -195,12 +193,16 @@ export function registerPersonaTools(ctx: PluginContext, api: ClawdbotPluginApi)
                 text: `Need at least ${cfg.personaProposals.minSessionEvidence} session evidence (provided: ${evidenceSessions.length})`,
               },
             ],
-            details: { error: "insufficient_evidence", provided: evidenceSessions.length, minRequired: cfg.personaProposals.minSessionEvidence },
+            details: {
+              error: "insufficient_evidence",
+              provided: evidenceSessions.length,
+              minRequired: cfg.personaProposals.minSessionEvidence,
+            },
           };
         }
 
         // Validate evidence session content (non-empty, unique)
-        const invalidSessions = evidenceSessions.filter(s => typeof s !== "string" || s.trim().length === 0);
+        const invalidSessions = evidenceSessions.filter((s) => typeof s !== "string" || s.trim().length === 0);
         if (invalidSessions.length > 0) {
           return {
             content: [
@@ -223,18 +225,22 @@ export function registerPersonaTools(ctx: PluginContext, api: ClawdbotPluginApi)
                 text: `Evidence sessions must be unique. Found ${evidenceSessions.length - uniqueSessions.size} duplicate(s).`,
               },
             ],
-            details: { error: "duplicate_evidence_sessions", duplicateCount: evidenceSessions.length - uniqueSessions.size },
+            details: {
+              error: "duplicate_evidence_sessions",
+              duplicateCount: evidenceSessions.length - uniqueSessions.size,
+            },
           };
         }
 
         // Calculate expiry
-        const expiresAt = cfg.personaProposals.proposalTTLDays > 0
-          ? Math.floor(Date.now() / 1000) + cfg.personaProposals.proposalTTLDays * 24 * 3600
-          : null;
+        const expiresAt =
+          cfg.personaProposals.proposalTTLDays > 0
+            ? Math.floor(Date.now() / 1000) + cfg.personaProposals.proposalTTLDays * 24 * 3600
+            : null;
 
         // Create proposal
         const snapshot = getFileSnapshot(api.resolvePath(targetFile));
-        const proposal = proposalsDb!.create({
+        const proposal = proposalsDb?.create({
           targetFile,
           title,
           observation,
@@ -246,23 +252,33 @@ export function registerPersonaTools(ctx: PluginContext, api: ClawdbotPluginApi)
           targetHash: snapshot?.hash ?? null,
         });
 
-        await auditProposal("created", proposal.id, {
-          targetFile,
-          title,
-          confidence,
-          evidenceCount: evidenceSessions.length,
-        }, api.logger);
+        await auditProposal(
+          "created",
+          proposal.id,
+          {
+            targetFile,
+            title,
+            confidence,
+            evidenceCount: evidenceSessions.length,
+          },
+          api.logger,
+        );
 
         api.logger.info(`memory-hybrid: persona proposal created — ${proposal.id} (${title})`);
 
         if (cfg.personaProposals.autoApply) {
-          proposalsDb!.updateStatus(proposal.id, "approved", "auto");
-          await auditProposal("approved", proposal.id, {
-            reviewedBy: "auto",
-            previousStatus: "pending",
-            newStatus: "approved",
-            reason: "autoApply",
-          }, api.logger);
+          proposalsDb?.updateStatus(proposal.id, "approved", "auto");
+          await auditProposal(
+            "approved",
+            proposal.id,
+            {
+              reviewedBy: "auto",
+              previousStatus: "pending",
+              newStatus: "approved",
+              reason: "autoApply",
+            },
+            api.logger,
+          );
           const applyCtx = {
             proposalsDb: proposalsDb!,
             cfg,
@@ -272,8 +288,10 @@ export function registerPersonaTools(ctx: PluginContext, api: ClawdbotPluginApi)
           const applyResult = await applyApprovedProposal(applyCtx, proposal.id);
           const applyVerbosity = cfg.verbosity ?? "normal";
           if (applyResult.ok) {
-            api.logger.info(`memory-hybrid: persona proposal auto-applied — ${proposal.id} → ${applyResult.targetFile}`);
-            if (applyVerbosity === "quiet") {
+            api.logger.info(
+              `memory-hybrid: persona proposal auto-applied — ${proposal.id} → ${applyResult.targetFile}`,
+            );
+            if (isCompactVerbosity(applyVerbosity)) {
               // Quiet: only emit ID + file, suppress change preview
               return {
                 content: [
@@ -282,12 +300,18 @@ export function registerPersonaTools(ctx: PluginContext, api: ClawdbotPluginApi)
                     text: `Applied: ${proposal.id} → ${applyResult.targetFile}.`,
                   },
                 ],
-                details: { proposalId: proposal.id, status: "applied", targetFile: applyResult.targetFile, backupPath: applyResult.backupPath },
+                details: {
+                  proposalId: proposal.id,
+                  status: "applied",
+                  targetFile: applyResult.targetFile,
+                  backupPath: applyResult.backupPath,
+                },
               };
             }
-            const changePreview = applyResult.suggestedChange.length > 500
-              ? applyResult.suggestedChange.slice(0, 500) + "…"
-              : applyResult.suggestedChange;
+            const changePreview =
+              applyResult.suggestedChange.length > 500
+                ? `${applyResult.suggestedChange.slice(0, 500)}…`
+                : applyResult.suggestedChange;
             return {
               content: [
                 {
@@ -295,14 +319,19 @@ export function registerPersonaTools(ctx: PluginContext, api: ClawdbotPluginApi)
                   text: `Proposal ${proposal.id} created and automatically applied to ${applyResult.targetFile}.\nTitle: ${title}\nBackup: ${applyResult.backupPath}\n\nChange applied (truncated to 500 chars):\n${changePreview}`,
                 },
               ],
-              details: { proposalId: proposal.id, status: "applied", targetFile: applyResult.targetFile, backupPath: applyResult.backupPath },
+              details: {
+                proposalId: proposal.id,
+                status: "applied",
+                targetFile: applyResult.targetFile,
+                backupPath: applyResult.backupPath,
+              },
             };
           }
           return {
             content: [
               {
                 type: "text",
-                text: applyVerbosity === "quiet"
+                text: isCompactVerbosity(applyVerbosity)
                   ? `Proposal ${proposal.id}: apply failed — ${applyResult.error}`
                   : `Proposal ${proposal.id} was approved automatically but applying to the file failed: ${applyResult.error}\n\nYou can run \`openclaw proposals apply ${proposal.id}\` after fixing the issue.`,
               },
@@ -312,7 +341,7 @@ export function registerPersonaTools(ctx: PluginContext, api: ClawdbotPluginApi)
         }
 
         const verbosity = cfg.verbosity ?? "normal";
-        if (verbosity === "quiet") {
+        if (isCompactVerbosity(verbosity)) {
           // Quiet: ID and status only — no verbose details
           return {
             content: [
@@ -352,16 +381,14 @@ export function registerPersonaTools(ctx: PluginContext, api: ClawdbotPluginApi)
         const { status, targetFile } = params as { status?: string; targetFile?: string };
         const verbosity = cfg.verbosity ?? "normal";
 
-        let proposals = proposalsDb!.list({ status, targetFile });
+        let proposals = proposalsDb?.list({ status, targetFile });
 
         // Quiet mode: suppress freshly-created pending proposals (< 24h old) to reduce noise,
         // but keep all non-pending proposals (approved/rejected/applied/wont-fix) visible.
         // Only apply quiet filter when no explicit status was provided by the user
-        if (verbosity === "quiet" && !status) {
+        if (isCompactVerbosity(verbosity) && !status) {
           const oneDayAgo = Math.floor(Date.now() / 1000) - SECONDS_PER_DAY;
-          proposals = proposals.filter(
-            (p) => p.status !== "pending" || p.createdAt < oneDayAgo,
-          );
+          proposals = proposals.filter((p) => p.status !== "pending" || p.createdAt < oneDayAgo);
         }
 
         if (proposals.length === 0) {
@@ -369,7 +396,7 @@ export function registerPersonaTools(ctx: PluginContext, api: ClawdbotPluginApi)
             content: [
               {
                 type: "text",
-                text: verbosity === "quiet"
+                text: isCompactVerbosity(verbosity)
                   ? "No pending proposals awaiting review."
                   : "No proposals found matching filters.",
               },
@@ -381,19 +408,19 @@ export function registerPersonaTools(ctx: PluginContext, api: ClawdbotPluginApi)
         const lines = proposals.map((p) => {
           const age = Math.floor((Date.now() / 1000 - p.createdAt) / SECONDS_PER_DAY);
           const expires = p.expiresAt ? Math.floor((p.expiresAt - Date.now() / 1000) / SECONDS_PER_DAY) : null;
-          if (verbosity === "quiet") {
+          if (isCompactVerbosity(verbosity)) {
             // Compact: one line per proposal with just the actionable info
             const expireStr = expires !== null ? ` (expires ${expires}d)` : "";
             return `[${p.status.toUpperCase()}] ${p.id} — ${p.title}${expireStr}`;
           }
-          return `[${p.status.toUpperCase()}] ${p.id}\n  Title: ${p.title}\n  Target: ${p.targetFile}\n  Confidence: ${p.confidence}\n  Evidence: ${p.evidenceSessions.length} sessions\n  Age: ${age}d${expires !== null ? `, expires in ${expires}d` : ""}\n  Observation: ${p.observation.length > 120 ? p.observation.slice(0, 120) + "..." : p.observation}`;
+          return `[${p.status.toUpperCase()}] ${p.id}\n  Title: ${p.title}\n  Target: ${p.targetFile}\n  Confidence: ${p.confidence}\n  Evidence: ${p.evidenceSessions.length} sessions\n  Age: ${age}d${expires !== null ? `, expires in ${expires}d` : ""}\n  Observation: ${p.observation.length > 120 ? `${p.observation.slice(0, 120)}...` : p.observation}`;
         });
 
-        const pendingCount = proposals.filter(p => p.status === "pending").length;
-        const summaryText = verbosity === "quiet"
-          ? (pendingCount > 0
-              ? `${proposals.length} proposal(s) (${pendingCount} awaiting review):\n${lines.join("\n")}`
-              : `${proposals.length} proposal(s):\n${lines.join("\n")}`)
+        const pendingCount = proposals.filter((p) => p.status === "pending").length;
+        const summaryText = isCompactVerbosity(verbosity)
+          ? pendingCount > 0
+            ? `${proposals.length} proposal(s) (${pendingCount} awaiting review):\n${lines.join("\n")}`
+            : `${proposals.length} proposal(s):\n${lines.join("\n")}`
           : `Found ${proposals.length} proposal(s):\n\n${lines.join("\n\n")}`;
 
         return {
@@ -403,7 +430,10 @@ export function registerPersonaTools(ctx: PluginContext, api: ClawdbotPluginApi)
               text: summaryText,
             },
           ],
-          details: { count: proposals.length, proposals: proposals.map(p => ({ id: p.id, status: p.status, title: p.title, targetFile: p.targetFile })) },
+          details: {
+            count: proposals.length,
+            proposals: proposals.map((p) => ({ id: p.id, status: p.status, title: p.title, targetFile: p.targetFile })),
+          },
         };
       },
     },

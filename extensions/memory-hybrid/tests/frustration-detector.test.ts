@@ -12,13 +12,13 @@
  *   - Config overrides: windowSize, decayRate, signalWeights, injectionThreshold
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
 import {
-  detectFrustration,
-  buildFrustrationHint,
-  exportAsImplicitSignals,
   type FrustrationConversationTurn,
   type FrustrationDetectionConfig,
+  buildFrustrationHint,
+  detectFrustration,
+  exportAsImplicitSignals,
 } from "../services/frustration-detector.js";
 
 // ---------------------------------------------------------------------------
@@ -49,19 +49,13 @@ const defaultCfg: FrustrationDetectionConfig = {
 
 describe("explicit_frustration signal", () => {
   it("detects 'frustrating' keyword", () => {
-    const result = detectFrustration(
-      turns(["This is so frustrating!"]),
-      defaultCfg,
-    );
+    const result = detectFrustration(turns(["This is so frustrating!"]), defaultCfg);
     expect(result.triggers.some((t) => t.type === "explicit_frustration")).toBe(true);
     expect(result.level).toBeGreaterThan(0.3);
   });
 
   it("detects 'i already said' keyword", () => {
-    const result = detectFrustration(
-      turns(["I already said to use the new format"]),
-      defaultCfg,
-    );
+    const result = detectFrustration(turns(["I already said to use the new format"]), defaultCfg);
     expect(result.triggers.some((t) => t.type === "explicit_frustration")).toBe(true);
   });
 
@@ -71,10 +65,7 @@ describe("explicit_frustration signal", () => {
   });
 
   it("does not fire on polite message", () => {
-    const result = detectFrustration(
-      turns(["Please help me write a function"]),
-      defaultCfg,
-    );
+    const result = detectFrustration(turns(["Please help me write a function"]), defaultCfg);
     expect(result.triggers.some((t) => t.type === "explicit_frustration")).toBe(false);
   });
 });
@@ -86,10 +77,7 @@ describe("imperative_tone signal", () => {
   });
 
   it("does NOT fire on polite request", () => {
-    const result = detectFrustration(
-      turns(["Could you please fix the function?"]),
-      defaultCfg,
-    );
+    const result = detectFrustration(turns(["Could you please fix the function?"]), defaultCfg);
     expect(result.triggers.some((t) => t.type === "imperative_tone")).toBe(false);
   });
 
@@ -104,26 +92,17 @@ describe("imperative_tone signal", () => {
 
 describe("caps_or_emphasis signal", () => {
   it("detects ALL CAPS words", () => {
-    const result = detectFrustration(
-      turns(["THIS IS NOT WHAT I WANTED AT ALL"]),
-      defaultCfg,
-    );
+    const result = detectFrustration(turns(["THIS IS NOT WHAT I WANTED AT ALL"]), defaultCfg);
     expect(result.triggers.some((t) => t.type === "caps_or_emphasis")).toBe(true);
   });
 
   it("detects excessive exclamation marks", () => {
-    const result = detectFrustration(
-      turns(["Wrong!!!! Do it again!!!!"],),
-      defaultCfg,
-    );
+    const result = detectFrustration(turns(["Wrong!!!! Do it again!!!!"]), defaultCfg);
     expect(result.triggers.some((t) => t.type === "caps_or_emphasis")).toBe(true);
   });
 
   it("does NOT fire on normal sentence", () => {
-    const result = detectFrustration(
-      turns(["Please check the API key configuration."]),
-      defaultCfg,
-    );
+    const result = detectFrustration(turns(["Please check the API key configuration."]), defaultCfg);
     expect(result.triggers.some((t) => t.type === "caps_or_emphasis")).toBe(false);
   });
 });
@@ -132,9 +111,17 @@ describe("short_reply signal", () => {
   it("fires when current message is much shorter than average", () => {
     // Build a session with long messages then a very short one
     const conversationTurns: FrustrationConversationTurn[] = [
-      { role: "user", content: "Can you please help me understand how the authentication system works and what I should do when I encounter an error? I have been trying to figure this out for a while now." },
+      {
+        role: "user",
+        content:
+          "Can you please help me understand how the authentication system works and what I should do when I encounter an error? I have been trying to figure this out for a while now.",
+      },
       { role: "assistant", content: "Sure, I'd be happy to explain..." },
-      { role: "user", content: "I see, but when I call the API with my token, I get a 401 error. What does that mean and how do I fix it? I've checked the token and it seems valid." },
+      {
+        role: "user",
+        content:
+          "I see, but when I call the API with my token, I get a 401 error. What does that mean and how do I fix it? I've checked the token and it seems valid.",
+      },
       { role: "assistant", content: "A 401 error means..." },
       { role: "user", content: "No" },
     ];
@@ -183,10 +170,7 @@ describe("scoring algorithm", () => {
   });
 
   it("returns 0 level for assistant-only turns", () => {
-    const result = detectFrustration(
-      [{ role: "assistant", content: "Hello, how can I help?" }],
-      defaultCfg,
-    );
+    const result = detectFrustration([{ role: "assistant", content: "Hello, how can I help?" }], defaultCfg);
     expect(result.level).toBe(0);
   });
 
@@ -233,11 +217,7 @@ describe("scoring algorithm", () => {
   });
 
   it("trend is 'stable' for small changes", () => {
-    const result = detectFrustration(
-      turns(["Can you fix this?"]),
-      defaultCfg,
-      0.4,
-    );
+    const result = detectFrustration(turns(["Can you fix this?"]), defaultCfg, 0.4);
     // Should be stable or small change
     expect(["stable", "rising", "falling"]).toContain(result.trend);
   });
@@ -280,11 +260,7 @@ describe("adaptation thresholds", () => {
 
   it("returns 'acknowledge_struggle' when critical threshold exceeded", () => {
     const criticalCfg = { ...defaultCfg, adaptationThresholds: { medium: 0.1, high: 0.2, critical: 0.3 } };
-    const result = detectFrustration(
-      turns(["I ALREADY SAID THIS THIS IS RIDICULOUS FIX IT"]),
-      criticalCfg,
-      0.5,
-    );
+    const result = detectFrustration(turns(["I ALREADY SAID THIS THIS IS RIDICULOUS FIX IT"]), criticalCfg, 0.5);
     // With very low thresholds, should hit critical
     if (result.level >= 0.3) {
       expect(result.suggestedAdaptation.action).toBe("acknowledge_struggle");
@@ -321,10 +297,7 @@ describe("buildFrustrationHint", () => {
 
   it("includes level in hint", () => {
     const highFrustrationCfg = { ...defaultCfg, injectionThreshold: 0.01 };
-    const result = detectFrustration(
-      turns(["This is frustrating! I ALREADY SAID THIS"]),
-      highFrustrationCfg,
-    );
+    const result = detectFrustration(turns(["This is frustrating! I ALREADY SAID THIS"]), highFrustrationCfg);
     const hint = buildFrustrationHint(result, highFrustrationCfg);
     if (hint) {
       expect(hint).toMatch(/\d+\.\d+/); // contains decimal number
@@ -365,10 +338,7 @@ describe("exportAsImplicitSignals", () => {
   });
 
   it("all exported signals have negative polarity", () => {
-    const result = detectFrustration(
-      turns(["This is frustrating! FIX IT NOW!"]),
-      defaultCfg,
-    );
+    const result = detectFrustration(turns(["This is frustrating! FIX IT NOW!"]), defaultCfg);
     const signals = exportAsImplicitSignals(result);
     for (const s of signals) {
       expect(s.polarity).toBe("negative");
@@ -411,7 +381,10 @@ describe("edge cases", () => {
 
   it("handles messages with only whitespace", () => {
     const result = detectFrustration(
-      [{ role: "user", content: "   " }, { role: "assistant", content: "hello" }],
+      [
+        { role: "user", content: "   " },
+        { role: "assistant", content: "hello" },
+      ],
       defaultCfg,
     );
     expect(result.level).toBe(0);

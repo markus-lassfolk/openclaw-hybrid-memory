@@ -3,21 +3,22 @@
  * Uses mocked LLM calls, storage, and file system to test all core logic paths.
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { randomUUID } from "node:crypto";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { mkdirSync, writeFileSync, rmSync } from "node:fs";
-import { randomUUID } from "node:crypto";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as chat from "../services/chat.js";
 import {
-  extractTextFromJsonlChunk,
-  parseObserverResponse,
-  loadCursors,
-  saveCursors,
-  getCursorsPath,
-  runPassiveObserver,
-  type PassiveObserverConfig,
   type ExtractedFact,
+  type PassiveObserverConfig,
+  extractTextFromJsonlChunk,
+  getCursorsPath,
+  isIdentityFact,
+  loadCursors,
+  parseObserverResponse,
+  runPassiveObserver,
+  saveCursors,
 } from "../services/passive-observer.js";
 
 // ---------------------------------------------------------------------------
@@ -86,7 +87,7 @@ describe("extractTextFromJsonlChunk", () => {
   });
 
   it("skips invalid JSON lines without throwing", () => {
-    const chunk = "not-json\n" + JSON.stringify({ message: { role: "user", content: "Valid" } });
+    const chunk = `not-json\n${JSON.stringify({ message: { role: "user", content: "Valid" } })}`;
     expect(() => extractTextFromJsonlChunk(chunk)).not.toThrow();
     expect(extractTextFromJsonlChunk(chunk)).toContain("user: Valid");
   });
@@ -130,18 +131,14 @@ describe("parseObserverResponse", () => {
   });
 
   it("parses JSON wrapped in markdown code fence", () => {
-    const raw = "```json\n" + JSON.stringify([
-      { text: "The team decided to adopt GraphQL", category: "decision", importance: 0.9 },
-    ]) + "\n```";
+    const raw = `\`\`\`json\n${JSON.stringify([{ text: "The team decided to adopt GraphQL", category: "decision", importance: 0.9 }])}\n\`\`\``;
     const facts = parseObserverResponse(raw, categories);
     expect(facts).toHaveLength(1);
     expect(facts[0].category).toBe("decision");
   });
 
   it("parses JSON wrapped in plain code fence", () => {
-    const raw = "```\n" + JSON.stringify([
-      { text: "Maria is the project owner", category: "entity", importance: 0.85 },
-    ]) + "\n```";
+    const raw = `\`\`\`\n${JSON.stringify([{ text: "Maria is the project owner", category: "entity", importance: 0.85 }])}\n\`\`\``;
     const facts = parseObserverResponse(raw, categories);
     expect(facts).toHaveLength(1);
   });
@@ -189,7 +186,8 @@ describe("parseObserverResponse", () => {
   });
 
   it("ignores non-object array items", () => {
-    const raw = "[null, 42, \"string\", {\"text\": \"Valid fact about deployment pipeline\", \"category\": \"fact\", \"importance\": 0.7}]";
+    const raw =
+      '[null, 42, "string", {"text": "Valid fact about deployment pipeline", "category": "fact", "importance": 0.7}]';
     const facts = parseObserverResponse(raw, categories);
     expect(facts).toHaveLength(1);
   });
@@ -231,11 +229,11 @@ describe("cursor management", () => {
 
   it("loadCursors ignores non-numeric cursor values", async () => {
     const path = getCursorsPath(tmpDir);
-    writeFileSync(path, JSON.stringify({ "good": 100, "bad": "string", "negative": -1 }));
+    writeFileSync(path, JSON.stringify({ good: 100, bad: "string", negative: -1 }));
     const cursors = await loadCursors(path);
-    expect(cursors["good"]).toBe(100);
-    expect(cursors["bad"]).toBeUndefined();
-    expect(cursors["negative"]).toBeUndefined(); // -1 fails >= 0 check
+    expect(cursors.good).toBe(100);
+    expect(cursors.bad).toBeUndefined();
+    expect(cursors.negative).toBeUndefined(); // -1 fails >= 0 check
   });
 
   it("loadCursors returns empty object for invalid JSON", async () => {
@@ -248,9 +246,9 @@ describe("cursor management", () => {
   it("saveCursors creates directory if needed", async () => {
     const nestedDir = join(tmpDir, "deep", "nested");
     const path = getCursorsPath(nestedDir);
-    await saveCursors(path, { "s1": 99 });
+    await saveCursors(path, { s1: 99 });
     const loaded = await loadCursors(path);
-    expect(loaded["s1"]).toBe(99);
+    expect(loaded.s1).toBe(99);
   });
 });
 
@@ -282,8 +280,9 @@ describe("runPassiveObserver", () => {
     ...overrides,
   });
 
-  const makeVectorDb = () => ({
+  const makeVectorDb = (searchResults: unknown[] = []) => ({
     store: vi.fn().mockResolvedValue(undefined),
+    search: vi.fn().mockResolvedValue(searchResults),
   });
 
   const makeEmbeddings = (vec = [0.1, 0.2, 0.3]) => ({
@@ -291,7 +290,7 @@ describe("runPassiveObserver", () => {
     embedBatch: vi.fn().mockImplementation((texts: string[]) => Promise.resolve(texts.map(() => vec))),
   });
 
-  const makeOpenAI = () => ({} as unknown as import("openai").default);
+  const makeOpenAI = () => ({}) as unknown as import("openai").default;
 
   beforeEach(() => {
     tmpDir = join(tmpdir(), `observer-run-test-${randomUUID()}`);
@@ -321,7 +320,7 @@ describe("runPassiveObserver", () => {
 
   it("skips sessions where cursor equals file size (nothing new)", async () => {
     const sessionFile = join(sessionsDir, "session-1.jsonl");
-    const content = JSON.stringify({ message: { role: "user", content: "Hello" } }) + "\n";
+    const content = `${JSON.stringify({ message: { role: "user", content: "Hello" } })}\n`;
     writeFileSync(sessionFile, content);
 
     // Pre-set cursor to file size
@@ -357,13 +356,13 @@ describe("runPassiveObserver", () => {
     // Create a mock that intercepts chatCompleteWithRetry
     const { runPassiveObserver: runFn } = await import("../services/passive-observer.js");
 
-    const sessionContent = JSON.stringify({
+    const sessionContent = `${JSON.stringify({
       message: { role: "user", content: "We use React and had lunch" },
-    }) + "\n";
+    })}\n`;
     writeFileSync(join(sessionsDir, "s1.jsonl"), sessionContent);
 
     const storedFacts: ExtractedFact[] = [];
-    const factsDb = {
+    const _factsDb = {
       getRecentFacts: vi.fn().mockReturnValue([]),
       store: vi.fn().mockImplementation((f: unknown) => {
         storedFacts.push(f as ExtractedFact);
@@ -378,29 +377,42 @@ describe("runPassiveObserver", () => {
     expect(filtered[0].text).toBe("The team uses React for all frontend development");
   });
 
-  it("deduplication: skips facts similar to recent stored facts", async () => {
-    // Build two identical normalized vectors — similarity = 1.0 > threshold 0.85
-    const vec = [1, 0, 0]; // unit vector
-    const recentFact = { id: "existing", text: "The team uses React", category: "fact", importance: 0.8 };
+  it("deduplication: skips facts when vectorDb.search returns a match", async () => {
+    const sessionContent = `${JSON.stringify({ message: { role: "user", content: "The team uses React for frontend development." } })}\n`;
+    writeFileSync(join(sessionsDir, "dedup-test.jsonl"), sessionContent);
 
-    const factsDb = makeFactsDb({
-      getRecentFacts: vi.fn().mockReturnValue([recentFact]),
-    });
-    const embeddings = makeEmbeddings(vec);
+    const chatSpy = vi
+      .spyOn(chat, "chatCompleteWithRetry")
+      .mockResolvedValue(
+        JSON.stringify([{ text: "The team uses React for frontend", category: "fact", importance: 0.8 }]),
+      );
 
-    // parseObserverResponse gives us the candidate fact
-    const candidate: ExtractedFact = { text: "The team uses React for frontend", category: "fact", importance: 0.8 };
+    // vectorDb.search returns a match — signals the fact is a duplicate
+    const matchResult = [{ entry: { id: "existing-fact-id" }, score: 0.95 }];
+    const vectorDb = makeVectorDb(matchResult);
+    const factsDb = makeFactsDb({ detectContradictions: vi.fn(), setEmbeddingModel: vi.fn() });
 
-    // Simulate what the observer does: embed candidate, compare with recent fact vector
-    const { normalizeVector, dotProductSimilarity } = await import("../services/reflection.js");
-    const candidateVec = normalizeVector(await embeddings.embed(candidate.text));
-    const existingVec = normalizeVector(await embeddings.embed(recentFact.text));
-    const similarity = dotProductSimilarity(candidateVec, existingVec);
+    const cfg = makeConfig({ sessionsDir });
+    const result = await runPassiveObserver(
+      factsDb as never,
+      vectorDb as never,
+      makeEmbeddings() as never,
+      makeOpenAI(),
+      cfg,
+      ["fact", "decision"],
+      { model: "test-model", dbDir: tmpDir },
+      makeLogger(),
+    );
 
-    // Since both return the same vector [1,0,0], similarity should be 1.0
-    expect(similarity).toBeGreaterThanOrEqual(0.85);
-    // Therefore the fact should be skipped (not stored)
-    // This validates the dedup logic used in runPassiveObserver
+    // Fact was extracted but deduplicated — not stored
+    expect(result.factsExtracted).toBe(1);
+    expect(result.factsStored).toBe(0);
+    expect(factsDb.store).not.toHaveBeenCalled();
+    // vectorDb.search was called once for the candidate fact
+    expect(vectorDb.search).toHaveBeenCalledTimes(1);
+    expect(vectorDb.search).toHaveBeenCalledWith(expect.any(Array), 1, expect.any(Number));
+
+    chatSpy.mockRestore();
   });
 
   it("updates cursor to file size after processing", async () => {
@@ -412,7 +424,7 @@ describe("runPassiveObserver", () => {
 
     // Run with an LLM that returns empty results (no facts to store)
     // We verify cursor update via the saved cursors file
-    const cfg = makeConfig({ sessionsDir, minImportance: 0.99 });
+    const _cfg = makeConfig({ sessionsDir, minImportance: 0.99 });
 
     // Suppress chat call by returning no facts
     // We can't easily mock the module import here, so we test cursor logic directly
@@ -422,13 +434,13 @@ describe("runPassiveObserver", () => {
   });
 
   it("dryRun mode does not call factsDb.store", async () => {
-    const sessionContent = JSON.stringify({
+    const sessionContent = `${JSON.stringify({
       message: { role: "user", content: "The system is built with TypeScript and Node.js" },
-    }) + "\n";
+    })}\n`;
     writeFileSync(join(sessionsDir, "dry-run.jsonl"), sessionContent);
 
     const factsDb = makeFactsDb();
-    const cfg = makeConfig({ sessionsDir });
+    const _cfg = makeConfig({ sessionsDir });
 
     // The dryRun is passed as an opt — verify store is not called
     // We validate parseObserverResponse+filter logic separately above;
@@ -440,16 +452,18 @@ describe("runPassiveObserver", () => {
   });
 
   it("stores extracted facts end-to-end with mocked LLM + DBs", async () => {
-    const sessionContent = JSON.stringify({
+    const sessionContent = `${JSON.stringify({
       message: { role: "user", content: "We decided to use Rust for the CLI tool." },
-    }) + "\n";
+    })}\n`;
     writeFileSync(join(sessionsDir, "e2e.jsonl"), sessionContent);
 
     const chatSpy = vi
       .spyOn(chat, "chatCompleteWithRetry")
-      .mockResolvedValue(JSON.stringify([
-        { text: "The team decided to use Rust for the CLI tool", category: "decision", importance: 0.8 },
-      ]));
+      .mockResolvedValue(
+        JSON.stringify([
+          { text: "The team decided to use Rust for the CLI tool", category: "decision", importance: 0.8 },
+        ]),
+      );
 
     const factsDb = makeFactsDb({
       detectContradictions: vi.fn(),
@@ -480,7 +494,243 @@ describe("runPassiveObserver", () => {
 });
 
 // ---------------------------------------------------------------------------
-// 5. Passive observer writes events to event_log (Issue #150)
+// 5. LanceDB-based dedup (Issue #499)
+// ---------------------------------------------------------------------------
+
+describe("runPassiveObserver — LanceDB dedup (Issue #499)", () => {
+  let tmpDir: string;
+  let sessionsDir: string;
+
+  const makeConfig = (overrides: Partial<PassiveObserverConfig> = {}): PassiveObserverConfig => ({
+    enabled: true,
+    intervalMinutes: 15,
+    maxCharsPerChunk: 8000,
+    minImportance: 0.5,
+    deduplicationThreshold: 0.92,
+    ...overrides,
+  });
+
+  const makeLogger = () => ({ info: vi.fn(), warn: vi.fn() });
+
+  const makeFactsDb = (overrides: Record<string, unknown> = {}) => ({
+    getRecentFacts: vi.fn().mockReturnValue([]),
+    store: vi.fn().mockReturnValue({ id: `fact-${randomUUID()}` }),
+    detectContradictions: vi.fn(),
+    setEmbeddingModel: vi.fn(),
+    boostConfidence: vi.fn().mockReturnValue(false),
+    ...overrides,
+  });
+
+  const makeVectorDb = (searchResults: unknown[] = []) => ({
+    store: vi.fn().mockResolvedValue(undefined),
+    search: vi.fn().mockResolvedValue(searchResults),
+  });
+
+  const makeEmbeddings = (vec = [0.1, 0.2, 0.3]) => ({
+    embed: vi.fn().mockResolvedValue(vec),
+    embedBatch: vi.fn().mockImplementation((texts: string[]) => Promise.resolve(texts.map(() => vec))),
+    modelName: "mock-model",
+  });
+
+  beforeEach(() => {
+    tmpDir = join(tmpdir(), `observer-lancedb-dedup-test-${randomUUID()}`);
+    sessionsDir = join(tmpDir, "sessions");
+    mkdirSync(sessionsDir, { recursive: true });
+  });
+
+  afterEach(() => {
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("calls vectorDb.search once per extracted fact", async () => {
+    const sessionContent = `${JSON.stringify({ message: { role: "user", content: "The team uses TypeScript everywhere." } })}\n`;
+    writeFileSync(join(sessionsDir, "search-call-test.jsonl"), sessionContent);
+
+    const chatSpy = vi.spyOn(chat, "chatCompleteWithRetry").mockResolvedValue(
+      JSON.stringify([
+        { text: "The team uses TypeScript everywhere", category: "fact", importance: 0.8 },
+        { text: "The project targets Node.js 22 LTS", category: "fact", importance: 0.75 },
+      ]),
+    );
+
+    const vectorDb = makeVectorDb(); // search returns [] — no duplicates
+    const cfg = makeConfig({ sessionsDir });
+
+    // Use distinct vectors so intra-batch dedup doesn't catch the second fact
+    const embeddings = makeEmbeddings();
+    embeddings.embed.mockResolvedValueOnce([0.1, 0.2, 0.3]).mockResolvedValueOnce([0.9, 0.1, 0.0]);
+
+    const result = await runPassiveObserver(
+      makeFactsDb() as never,
+      vectorDb as never,
+      embeddings as never,
+      {} as never,
+      cfg,
+      ["fact"],
+      { model: "test-model", dbDir: tmpDir },
+      makeLogger(),
+    );
+
+    expect(result.factsExtracted).toBe(2);
+    expect(result.factsStored).toBe(2);
+    // search called once per extracted fact
+    expect(vectorDb.search).toHaveBeenCalledTimes(2);
+
+    chatSpy.mockRestore();
+  });
+
+  it("uses deduplicationThreshold as minScore for vectorDb.search", async () => {
+    const threshold = 0.88;
+    const sessionContent = `${JSON.stringify({ message: { role: "user", content: "We use PostgreSQL as the main database." } })}\n`;
+    writeFileSync(join(sessionsDir, "threshold-test.jsonl"), sessionContent);
+
+    const chatSpy = vi
+      .spyOn(chat, "chatCompleteWithRetry")
+      .mockResolvedValue(
+        JSON.stringify([
+          { text: "The project uses PostgreSQL as the main database", category: "fact", importance: 0.8 },
+        ]),
+      );
+
+    const vectorDb = makeVectorDb();
+    const cfg = makeConfig({ sessionsDir, deduplicationThreshold: threshold });
+
+    await runPassiveObserver(
+      makeFactsDb() as never,
+      vectorDb as never,
+      makeEmbeddings() as never,
+      {} as never,
+      cfg,
+      ["fact"],
+      { model: "test-model", dbDir: tmpDir },
+      makeLogger(),
+    );
+
+    // The third argument to search is the L2-based similarity threshold.
+    // Production code converts cosine similarity to L2-based score: 1/(1+sqrt(2*(1-cosine)))
+    const expectedL2Threshold = 1 / (1 + Math.sqrt(2 * (1 - threshold)));
+    expect(vectorDb.search).toHaveBeenCalledWith(expect.any(Array), 1, expectedL2Threshold);
+
+    chatSpy.mockRestore();
+  });
+
+  it("reinforcement: boosts matched fact when vectorDb.search finds a near-duplicate", async () => {
+    const sessionContent = `${JSON.stringify({ message: { role: "user", content: "I still use TypeScript for everything." } })}\n`;
+    writeFileSync(join(sessionsDir, "reinforce-test.jsonl"), sessionContent);
+
+    const chatSpy = vi
+      .spyOn(chat, "chatCompleteWithRetry")
+      .mockResolvedValue(
+        JSON.stringify([{ text: "User uses TypeScript for all projects", category: "preference", importance: 0.8 }]),
+      );
+
+    const matchedFactId = "existing-fact-abc";
+    const matchResult = [{ entry: { id: matchedFactId }, score: 0.95, backend: "lancedb" }];
+    const vectorDb = makeVectorDb(matchResult);
+    const factsDb = makeFactsDb({
+      boostConfidence: vi.fn().mockReturnValue(true),
+    });
+    const cfg = makeConfig({ sessionsDir });
+
+    const result = await runPassiveObserver(
+      factsDb as never,
+      vectorDb as never,
+      makeEmbeddings() as never,
+      {} as never,
+      cfg,
+      ["preference"],
+      {
+        model: "test-model",
+        dbDir: tmpDir,
+        reinforcement: {
+          enabled: true,
+          passiveBoost: 0.1,
+          activeBoost: 0.05,
+          maxConfidence: 1.0,
+          similarityThreshold: 0.85,
+        },
+      },
+      makeLogger(),
+    );
+
+    expect(result.factsReinforced).toBe(1);
+    expect(result.factsStored).toBe(0);
+    expect(factsDb.boostConfidence).toHaveBeenCalledWith(matchedFactId, 0.1, 1.0);
+
+    chatSpy.mockRestore();
+  });
+
+  it("search failure does not crash observer — proceeds without dedup", async () => {
+    const sessionContent = `${JSON.stringify({ message: { role: "user", content: "We decided to adopt Kubernetes." } })}\n`;
+    writeFileSync(join(sessionsDir, "search-fail-test.jsonl"), sessionContent);
+
+    const chatSpy = vi
+      .spyOn(chat, "chatCompleteWithRetry")
+      .mockResolvedValue(
+        JSON.stringify([
+          { text: "Team adopted Kubernetes for container orchestration", category: "decision", importance: 0.8 },
+        ]),
+      );
+
+    // search throws — dedup is skipped, fact should still be stored
+    const vectorDb = {
+      store: vi.fn().mockResolvedValue(undefined),
+      search: vi.fn().mockRejectedValue(new Error("LanceDB search error")),
+    };
+    const factsDb = makeFactsDb();
+    const cfg = makeConfig({ sessionsDir });
+
+    const result = await runPassiveObserver(
+      factsDb as never,
+      vectorDb as never,
+      makeEmbeddings() as never,
+      {} as never,
+      cfg,
+      ["decision"],
+      { model: "test-model", dbDir: tmpDir },
+      makeLogger(),
+    );
+
+    // Fact stored despite search failure (graceful fallback)
+    expect(result.factsStored).toBe(1);
+    expect(factsDb.store).toHaveBeenCalledTimes(1);
+
+    chatSpy.mockRestore();
+  });
+
+  it("does not call getRecentFacts — LanceDB is the single source of truth", async () => {
+    const sessionContent = `${JSON.stringify({ message: { role: "user", content: "The service runs on AWS Lambda." } })}\n`;
+    writeFileSync(join(sessionsDir, "no-getrecent-test.jsonl"), sessionContent);
+
+    const chatSpy = vi
+      .spyOn(chat, "chatCompleteWithRetry")
+      .mockResolvedValue(
+        JSON.stringify([{ text: "The service runs on AWS Lambda functions", category: "fact", importance: 0.8 }]),
+      );
+
+    const factsDb = makeFactsDb();
+    const cfg = makeConfig({ sessionsDir });
+
+    await runPassiveObserver(
+      factsDb as never,
+      makeVectorDb() as never,
+      makeEmbeddings() as never,
+      {} as never,
+      cfg,
+      ["fact"],
+      { model: "test-model", dbDir: tmpDir },
+      makeLogger(),
+    );
+
+    // getRecentFacts should NOT be called — Phase 2 was removed
+    expect(factsDb.getRecentFacts).not.toHaveBeenCalled();
+
+    chatSpy.mockRestore();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 6. Passive observer writes events to event_log (Issue #150)
 // ---------------------------------------------------------------------------
 
 describe("runPassiveObserver event_log integration", () => {
@@ -508,6 +758,7 @@ describe("runPassiveObserver event_log integration", () => {
 
   const makeVectorDb = () => ({
     store: vi.fn().mockResolvedValue(undefined),
+    search: vi.fn().mockResolvedValue([]),
     hasDuplicate: vi.fn().mockResolvedValue(false),
   });
 
@@ -531,8 +782,7 @@ describe("runPassiveObserver event_log integration", () => {
     const { EventLog } = await import("../backends/event-log.js");
     const eventLog = new EventLog(join(tmpDir, "event-log.db"));
 
-    const sessionContent =
-      JSON.stringify({ message: { role: "user", content: "The team uses TypeScript everywhere." } }) + "\n";
+    const sessionContent = `${JSON.stringify({ message: { role: "user", content: "The team uses TypeScript everywhere." } })}\n`;
     writeFileSync(join(sessionsDir, "sess-abc.jsonl"), sessionContent);
 
     const chatSpy = vi
@@ -567,15 +817,12 @@ describe("runPassiveObserver event_log integration", () => {
     const { EventLog } = await import("../backends/event-log.js");
     const eventLog = new EventLog(join(tmpDir, "event-log-pref.db"));
 
-    const sessionContent =
-      JSON.stringify({ message: { role: "user", content: "I always prefer dark mode." } }) + "\n";
+    const sessionContent = `${JSON.stringify({ message: { role: "user", content: "I always prefer dark mode." } })}\n`;
     writeFileSync(join(sessionsDir, "sess-pref.jsonl"), sessionContent);
 
     const chatSpy = vi
       .spyOn(chat, "chatCompleteWithRetry")
-      .mockResolvedValue(
-        JSON.stringify([{ text: "User prefers dark mode", category: "preference", importance: 0.8 }]),
-      );
+      .mockResolvedValue(JSON.stringify([{ text: "User prefers dark mode", category: "preference", importance: 0.8 }]));
 
     const cfg = makeConfig({ sessionsDir });
     await runPassiveObserver(
@@ -598,8 +845,7 @@ describe("runPassiveObserver event_log integration", () => {
   });
 
   it("does not write to event_log when eventLog is null", async () => {
-    const sessionContent =
-      JSON.stringify({ message: { role: "user", content: "The team uses Rust for CLI." } }) + "\n";
+    const sessionContent = `${JSON.stringify({ message: { role: "user", content: "The team uses Rust for CLI." } })}\n`;
     writeFileSync(join(sessionsDir, "sess-noelog.jsonl"), sessionContent);
 
     const chatSpy = vi
@@ -624,8 +870,7 @@ describe("runPassiveObserver event_log integration", () => {
   });
 
   it("writes to event_log before factsDb.store (Layer 1 write order)", async () => {
-    const sessionContent =
-      JSON.stringify({ message: { role: "user", content: "We use Postgres as our primary database." } }) + "\n";
+    const sessionContent = `${JSON.stringify({ message: { role: "user", content: "We use Postgres as our primary database." } })}\n`;
     writeFileSync(join(sessionsDir, "sess-order.jsonl"), sessionContent);
 
     const chatSpy = vi
@@ -636,11 +881,17 @@ describe("runPassiveObserver event_log integration", () => {
 
     const callOrder: string[] = [];
     const eventLog = {
-      append: vi.fn().mockImplementation(() => { callOrder.push("eventLog.append"); return "evt-id"; }),
+      append: vi.fn().mockImplementation(() => {
+        callOrder.push("eventLog.append");
+        return "evt-id";
+      }),
     };
     const factsDb = {
       getRecentFacts: vi.fn().mockReturnValue([]),
-      store: vi.fn().mockImplementation(() => { callOrder.push("factsDb.store"); return { id: "fact-1" }; }),
+      store: vi.fn().mockImplementation(() => {
+        callOrder.push("factsDb.store");
+        return { id: "fact-1" };
+      }),
       detectContradictions: vi.fn(),
       setEmbeddingModel: vi.fn(),
     };
@@ -674,7 +925,7 @@ describe("PassiveObserverConfig defaults via hybridConfigSchema", () => {
     const { hybridConfigSchema } = await import("../config.js");
     const cfg = hybridConfigSchema.parse({
       embedding: { apiKey: "sk-test-key-12345678", model: "text-embedding-3-small" },
-      mode: "normal",
+      mode: "minimal",
     });
     expect(cfg.passiveObserver.enabled).toBe(false);
     expect(cfg.passiveObserver.intervalMinutes).toBe(15);
@@ -685,7 +936,7 @@ describe("PassiveObserverConfig defaults via hybridConfigSchema", () => {
     expect(cfg.passiveObserver.sessionsDir).toBeUndefined();
   });
 
-  it("parses enabled passiveObserver config", async () => {
+  it("parses passiveObserver config (2026.3.140 migration forces enabled: false)", async () => {
     const { hybridConfigSchema } = await import("../config.js");
     const cfg = hybridConfigSchema.parse({
       embedding: { apiKey: "sk-test-key-12345678", model: "text-embedding-3-small" },
@@ -699,7 +950,7 @@ describe("PassiveObserverConfig defaults via hybridConfigSchema", () => {
         sessionsDir: "/tmp/sessions",
       },
     });
-    expect(cfg.passiveObserver.enabled).toBe(true);
+    expect(cfg.passiveObserver.enabled).toBe(false);
     expect(cfg.passiveObserver.intervalMinutes).toBe(30);
     expect(cfg.passiveObserver.model).toBe("google/gemini-2.5-flash");
     expect(cfg.passiveObserver.maxCharsPerChunk).toBe(4000);
@@ -744,6 +995,46 @@ describe("PassiveObserverConfig defaults via hybridConfigSchema", () => {
     });
     expect(cfg.passiveObserver.sessionsDir).toBeUndefined();
   });
+
+  it("expands $HOME in passiveObserver.sessionsDir", async () => {
+    const { hybridConfigSchema } = await import("../config.js");
+    const home = process.env.HOME ?? require("node:os").homedir();
+    const cfg = hybridConfigSchema.parse({
+      embedding: { apiKey: "sk-test-key-12345678", model: "text-embedding-3-small" },
+      passiveObserver: { sessionsDir: "$HOME/.openclaw/agents/main/sessions" },
+    });
+    expect(cfg.passiveObserver.sessionsDir).toBe(`${home}/.openclaw/agents/main/sessions`);
+  });
+
+  it("expands ~ in passiveObserver.sessionsDir", async () => {
+    const { hybridConfigSchema } = await import("../config.js");
+    const home = require("node:os").homedir();
+    const cfg = hybridConfigSchema.parse({
+      embedding: { apiKey: "sk-test-key-12345678", model: "text-embedding-3-small" },
+      passiveObserver: { sessionsDir: "~/.openclaw/agents/main/sessions" },
+    });
+    expect(cfg.passiveObserver.sessionsDir).toBe(`${home}/.openclaw/agents/main/sessions`);
+  });
+
+  it("expands $HOME in procedures.sessionsDir", async () => {
+    const { hybridConfigSchema } = await import("../config.js");
+    const home = process.env.HOME ?? require("node:os").homedir();
+    const cfg = hybridConfigSchema.parse({
+      embedding: { apiKey: "sk-test-key-12345678", model: "text-embedding-3-small" },
+      procedures: { sessionsDir: "$HOME/.openclaw/agents/main/sessions" },
+    });
+    expect(cfg.procedures.sessionsDir).toBe(`${home}/.openclaw/agents/main/sessions`);
+  });
+
+  it("expands ~ in procedures.sessionsDir", async () => {
+    const { hybridConfigSchema } = await import("../config.js");
+    const home = require("node:os").homedir();
+    const cfg = hybridConfigSchema.parse({
+      embedding: { apiKey: "sk-test-key-12345678", model: "text-embedding-3-small" },
+      procedures: { sessionsDir: "~/.openclaw/agents/main/sessions" },
+    });
+    expect(cfg.procedures.sessionsDir).toBe(`${home}/.openclaw/agents/main/sessions`);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -768,5 +1059,237 @@ describe("transcript chunking behavior", () => {
     for (const chunk of chunks) {
       expect(chunk.length).toBeLessThanOrEqual(8000);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 7. isIdentityFact — unit tests (Issue #306)
+// ---------------------------------------------------------------------------
+
+describe("isIdentityFact", () => {
+  it("detects 'the agent's email is ...'", () => {
+    expect(isIdentityFact("The agent's email is agent@example.com")).toBe(true);
+  });
+
+  it("detects 'your email is ...'", () => {
+    expect(isIdentityFact("Your email is agent@example.com")).toBe(true);
+  });
+
+  it("detects 'my email is ...'", () => {
+    expect(isIdentityFact("My email is assistant@example.com")).toBe(true);
+  });
+
+  it("detects 'the assistant's name'", () => {
+    expect(isIdentityFact("The assistant's name is TestBot")).toBe(true);
+  });
+
+  it("detects 'the bot's role'", () => {
+    expect(isIdentityFact("The bot's role is infrastructure assistant")).toBe(true);
+  });
+
+  it("detects 'email is ...' standalone", () => {
+    expect(isIdentityFact("Email is agent@example.com")).toBe(true);
+  });
+
+  it("detects 'account is ...'", () => {
+    expect(isIdentityFact("Account is test-agent")).toBe(true);
+  });
+
+  it("detects 'role is ...'", () => {
+    expect(isIdentityFact("Role is senior infrastructure assistant")).toBe(true);
+  });
+
+  it("does NOT flag 'User mentioned they like coffee'", () => {
+    expect(isIdentityFact("User mentioned they like coffee")).toBe(false);
+  });
+
+  it("does NOT flag 'Send email to john@example.com'", () => {
+    expect(isIdentityFact("Send email to john@example.com")).toBe(false);
+  });
+
+  it("does NOT flag generic facts about the user", () => {
+    expect(isIdentityFact("The user prefers TypeScript over JavaScript")).toBe(false);
+  });
+
+  it("detects agent name-specific pattern when agentName is provided", () => {
+    expect(isIdentityFact("TestBot's email is agent@example.com", "TestBot")).toBe(true);
+  });
+
+  it("detects agent name without apostrophe when agentName is provided", () => {
+    expect(isIdentityFact("TestBot email is agent@example.com", "TestBot")).toBe(true);
+  });
+
+  it("is case-insensitive", () => {
+    expect(isIdentityFact("YOUR EMAIL IS TESTBOT@EXAMPLE.COM")).toBe(true);
+    expect(isIdentityFact("the ASSISTANT's name is TESTBOT", "testbot")).toBe(true);
+  });
+
+  it("does NOT flag 'The user's email is ...'", () => {
+    expect(isIdentityFact("The user's email is john@example.com")).toBe(false);
+  });
+
+  it("does NOT flag 'John's role is ...'", () => {
+    expect(isIdentityFact("John's role is team lead")).toBe(false);
+  });
+
+  it("does NOT flag 'The customer's address is ...'", () => {
+    expect(isIdentityFact("The customer's address is 123 Main St")).toBe(false);
+  });
+
+  it("does NOT flag 'Their account is ...'", () => {
+    expect(isIdentityFact("Their account is premium-user-123")).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 8. Identity fact promotion end-to-end (Issue #306)
+// ---------------------------------------------------------------------------
+
+describe("runPassiveObserver identity fact promotion", () => {
+  let tmpDir: string;
+  let sessionsDir: string;
+
+  const makeConfig = (overrides: Partial<PassiveObserverConfig> = {}): PassiveObserverConfig => ({
+    enabled: true,
+    intervalMinutes: 15,
+    maxCharsPerChunk: 8000,
+    minImportance: 0.5,
+    deduplicationThreshold: 0.92,
+    ...overrides,
+  });
+
+  const makeLogger = () => ({ info: vi.fn(), warn: vi.fn() });
+
+  const makeFactsDb = (overrides: Record<string, unknown> = {}) => ({
+    getRecentFacts: vi.fn().mockReturnValue([]),
+    store: vi.fn().mockReturnValue({ id: `fact-${randomUUID()}` }),
+    detectContradictions: vi.fn(),
+    setEmbeddingModel: vi.fn(),
+    ...overrides,
+  });
+
+  const makeVectorDb = () => ({
+    store: vi.fn().mockResolvedValue(undefined),
+    search: vi.fn().mockResolvedValue([]),
+  });
+
+  const makeEmbeddings = (vec = [0.1, 0.2, 0.3]) => ({
+    embed: vi.fn().mockResolvedValue(vec),
+    embedBatch: vi.fn().mockImplementation((texts: string[]) => Promise.resolve(texts.map(() => vec))),
+    modelName: "mock-model",
+  });
+
+  beforeEach(() => {
+    tmpDir = join(tmpdir(), `observer-identity-test-${randomUUID()}`);
+    sessionsDir = join(tmpDir, "sessions");
+    mkdirSync(sessionsDir, { recursive: true });
+  });
+
+  afterEach(() => {
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("stores identity fact with scope=global, decayClass=permanent", async () => {
+    const sessionContent = `${JSON.stringify({ message: { role: "user", content: "Your email is agent@example.com" } })}\n`;
+    writeFileSync(join(sessionsDir, "identity-sess.jsonl"), sessionContent);
+
+    const chatSpy = vi
+      .spyOn(chat, "chatCompleteWithRetry")
+      .mockResolvedValue(
+        JSON.stringify([{ text: "The agent's email is agent@example.com", category: "fact", importance: 0.8 }]),
+      );
+
+    const factsDb = makeFactsDb();
+    const cfg = makeConfig({ sessionsDir });
+    const logger = makeLogger();
+
+    await runPassiveObserver(
+      factsDb as never,
+      makeVectorDb() as never,
+      makeEmbeddings() as never,
+      {} as never,
+      cfg,
+      ["fact", "preference"],
+      { model: "test-model", dbDir: tmpDir },
+      logger,
+    );
+
+    expect(factsDb.store).toHaveBeenCalledTimes(1);
+    const stored = factsDb.store.mock.calls[0][0] as Record<string, unknown>;
+    expect(stored.scope).toBe("global");
+    expect(stored.decayClass).toBe("permanent");
+    expect(stored.importance).toBeGreaterThanOrEqual(0.9);
+    expect(stored.scopeTarget).toBeUndefined();
+
+    // Logger should mention the promotion
+    const infoMessages = logger.info.mock.calls.map((c: unknown[]) => String(c[0]));
+    expect(infoMessages.some((m) => m.includes("promoting identity fact"))).toBe(true);
+
+    chatSpy.mockRestore();
+  });
+
+  it("stores non-identity fact with scope=session (default unchanged)", async () => {
+    const sessionContent = `${JSON.stringify({ message: { role: "user", content: "The team uses TypeScript." } })}\n`;
+    writeFileSync(join(sessionsDir, "regular-sess.jsonl"), sessionContent);
+
+    const chatSpy = vi
+      .spyOn(chat, "chatCompleteWithRetry")
+      .mockResolvedValue(
+        JSON.stringify([{ text: "User mentioned they like coffee a lot", category: "fact", importance: 0.7 }]),
+      );
+
+    const factsDb = makeFactsDb();
+    const cfg = makeConfig({ sessionsDir });
+
+    await runPassiveObserver(
+      factsDb as never,
+      makeVectorDb() as never,
+      makeEmbeddings() as never,
+      {} as never,
+      cfg,
+      ["fact"],
+      { model: "test-model", dbDir: tmpDir },
+      makeLogger(),
+    );
+
+    expect(factsDb.store).toHaveBeenCalledTimes(1);
+    const stored = factsDb.store.mock.calls[0][0] as Record<string, unknown>;
+    expect(stored.scope).toBe("session");
+    expect(stored.decayClass).toBe("session");
+    expect(stored.scopeTarget).toBeDefined();
+
+    chatSpy.mockRestore();
+  });
+
+  it("promotes fact with explicit agentName='TestBot'", async () => {
+    const sessionContent = `${JSON.stringify({ message: { role: "user", content: "TestBot email is agent@example.com" } })}\n`;
+    writeFileSync(join(sessionsDir, "doris-sess.jsonl"), sessionContent);
+
+    const chatSpy = vi
+      .spyOn(chat, "chatCompleteWithRetry")
+      .mockResolvedValue(
+        JSON.stringify([{ text: "TestBot email is agent@example.com", category: "fact", importance: 0.75 }]),
+      );
+
+    const factsDb = makeFactsDb();
+    const cfg = makeConfig({ sessionsDir });
+
+    await runPassiveObserver(
+      factsDb as never,
+      makeVectorDb() as never,
+      makeEmbeddings() as never,
+      {} as never,
+      cfg,
+      ["fact"],
+      { model: "test-model", dbDir: tmpDir, agentName: "TestBot" },
+      makeLogger(),
+    );
+
+    expect(factsDb.store).toHaveBeenCalledTimes(1);
+    const stored = factsDb.store.mock.calls[0][0] as Record<string, unknown>;
+    expect(stored.scope).toBe("global");
+    expect(stored.decayClass).toBe("permanent");
+
+    chatSpy.mockRestore();
   });
 });

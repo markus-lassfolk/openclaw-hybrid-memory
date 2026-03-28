@@ -1,7 +1,7 @@
 {
   "id": "openclaw-hybrid-memory",
   "kind": "memory",
-  "version": "2026.3.91",
+  "version": "2026.3.260",
   "uiHints": {
     "embedding.provider": {
       "label": "Embedding Provider",
@@ -44,8 +44,8 @@
     },
     "mode": {
       "label": "Configuration preset",
-      "placeholder": "normal",
-      "help": "essential | normal | expert | full. See CONFIGURATION-MODES.md."
+      "placeholder": "local",
+      "help": "local | minimal | enhanced | complete (or legacy: essential | normal | expert | full, mapped to local). See CONFIGURATION-MODES.md."
     },
     "lanceDbPath": {
       "label": "LanceDB Path",
@@ -83,7 +83,7 @@
     },
     "autoRecall.minScore": {
       "label": "Auto-Recall min score",
-      "help": "Vector search minimum score 0–1 (default 0.3)"
+      "help": "Vector search minimum score 0\u20131 (default 0.3)"
     },
     "autoRecall.preferLongTerm": {
       "label": "Auto-Recall prefer long-term",
@@ -197,7 +197,7 @@
     },
     "autoClassify.suggestCategories": {
       "label": "Suggest categories",
-      "help": "Let LLM suggest new categories from 'other' facts; labels with ≥ minFactsForNewCategory become real categories"
+      "help": "Let LLM suggest new categories from 'other' facts; labels with \u2265 minFactsForNewCategory become real categories"
     },
     "autoClassify.minFactsForNewCategory": {
       "label": "Min facts for new category",
@@ -259,7 +259,7 @@
     },
     "errorReporting.sampleRate": {
       "label": "Error reporting sample rate",
-      "help": "Fraction of errors to report 0–1 (default: 1.0)"
+      "help": "Fraction of errors to report 0\u20131 (default: 1.0)"
     },
     "errorReporting.botId": {
       "label": "Error reporting bot ID (UUID)",
@@ -268,8 +268,20 @@
     },
     "errorReporting.botName": {
       "label": "Error reporting friendly name",
-      "placeholder": "Maeve",
-      "help": "Friendly name for this bot (e.g. Maeve, Doris); shown in GlitchTip reports. Use config-set errorReporting.botName \"Doris\"."
+      "placeholder": "MyBot",
+      "help": "Friendly name for this bot; shown in GlitchTip reports. Use config-set errorReporting.botName \"MyBot\"."
+    },
+    "errorReporting.updateNudge.enabled": {
+      "label": "Update nudges enabled",
+      "help": "Warn when this install falls behind the latest published plugin version (default: true)"
+    },
+    "errorReporting.updateNudge.intervalHours": {
+      "label": "Update nudge interval (hours)",
+      "help": "Minimum hours between repeated upgrade reminders on outdated installs (default: 24)"
+    },
+    "errorReporting.updateNudge.cacheTtlHours": {
+      "label": "Version check cache TTL (hours)",
+      "help": "How long the cached latest-version result stays fresh before startup relies on a new background check (default: 24)"
     },
     "wal.enabled": {
       "label": "Write-Ahead Log",
@@ -312,6 +324,22 @@
     "personaProposals.minSessionEvidence": {
       "label": "Min session evidence",
       "help": "Minimum number of session references required (default: 10)"
+    },
+    "identityReflection.enabled": {
+      "label": "Identity Reflection",
+      "help": "Synthesize persona-level insights from reflection outputs into a dedicated store (default: disabled)"
+    },
+    "identityReflection.defaultWindow": {
+      "label": "Identity reflection window",
+      "help": "Days of recent patterns, rules, and meta-patterns to analyze (default: 30)"
+    },
+    "identityReflection.minInsights": {
+      "label": "Identity min insights",
+      "help": "Minimum reflection insights required before identity reflection runs (default: 3)"
+    },
+    "identityReflection.maxInsightsPerRun": {
+      "label": "Identity max insights",
+      "help": "Maximum identity insights stored per run (default: 8)"
     },
     "graph.enabled": {
       "label": "Graph memory",
@@ -377,7 +405,7 @@
     },
     "languageKeywords.weeklyIntervalDays": {
       "label": "Language keywords interval (days)",
-      "help": "Days between auto-builds (1–30, default 7)"
+      "help": "Days between auto-builds (1\u201330, default 7)"
     },
     "reflection.enabled": {
       "label": "Reflection layer",
@@ -396,25 +424,9 @@
       "label": "Reflection min observations",
       "help": "Min observations to support a pattern (default 2)"
     },
-    "memoryToSkills": {
-      "label": "Memory-to-skills (enable/disable)",
-      "help": "Enable or disable memory-to-skills pipeline (true/false). Run: openclaw hybrid-mem skills-suggest. Use memoryToSkills.enabled for the same."
-    },
-    "memoryToSkills.enabled": {
-      "label": "Memory-to-skills",
-      "help": "Cluster procedures and draft skills to skills/auto-generated/ (nightly or skills-suggest). Run: openclaw hybrid-mem skills-suggest [--dry-run] [--days N]"
-    },
-    "memoryToSkills.schedule": {
-      "label": "Memory-to-skills schedule",
-      "help": "Cron for nightly run (default 15 2 * * *)"
-    },
-    "memoryToSkills.windowDays": {
-      "label": "Memory-to-skills window (days)",
-      "help": "Procedures updated in last N days (default 30)"
-    },
     "nightlyCycle.enabled": {
       "label": "Nightly dream cycle",
-      "help": "Run automated prune → consolidate → reflect pipeline (cron job nightly-dream-cycle). Default: false."
+      "help": "Run automated prune \u2192 consolidate \u2192 reflect pipeline (cron job nightly-dream-cycle). Default: false."
     },
     "passiveObserver.enabled": {
       "label": "Passive observer",
@@ -441,6 +453,18 @@
       "label": "Default Store Scope",
       "placeholder": "global",
       "help": "Default scope for new facts: 'global' (all agents, backward compatible), 'agent' (specialists auto-scope), or 'auto' (orchestrator→global, specialists→agent). Default: 'global'."
+    },
+    "trajectoryLLMAnalysis": {
+      "label": "Trajectory LLM Analysis",
+      "help": "Use LLM-based trajectory analysis instead of heuristic lesson extraction. Top-level alias for implicitFeedback.trajectoryLLMAnalysis."
+    },
+    "feedToSelfCorrection": {
+      "label": "Feed to Self-Correction",
+      "help": "Feed negative implicit signals into the self-correction pipeline. Top-level alias for implicitFeedback.feedToSelfCorrection."
+    },
+    "extractReinforcement": {
+      "label": "Extract Reinforcement",
+      "help": "Enable reinforcement extraction from sessions. Top-level alias for distill.extractReinforcement."
     }
   },
   "configSchema": {
@@ -449,8 +473,8 @@
     "properties": {
       "mode": {
         "type": "string",
-        "enum": ["essential", "normal", "expert", "full"],
-        "description": "Configuration preset. See docs/CONFIGURATION-MODES.md."
+        "enum": ["essential", "normal", "expert", "full", "local", "minimal", "enhanced", "complete"],
+        "description": "Configuration preset: local | minimal | enhanced | complete. Legacy values (essential, normal, expert, full) are accepted and mapped to local. See docs/CONFIGURATION-MODES.md."
       },
       "embedding": {
         "type": "object",
@@ -473,11 +497,11 @@
           },
           "ollamaModel": {
             "type": "string",
-            "description": "Ollama model name — alias for 'model' when provider='ollama'. E.g. 'nomic-embed-text' (768-dim), 'mxbai-embed-large' (1024-dim), 'all-minilm' (384-dim)."
+            "description": "Ollama model name \u2014 alias for 'model' when provider='ollama'. E.g. 'nomic-embed-text' (768-dim), 'mxbai-embed-large' (1024-dim), 'all-minilm' (384-dim)."
           },
           "onnxModelPath": {
             "type": "string",
-            "description": "ONNX model path or identifier — alias for 'model' when provider='onnx'. E.g. 'all-MiniLM-L6-v2' (384-dim), 'bge-small-en-v1.5' (384-dim)."
+            "description": "ONNX model path or identifier \u2014 alias for 'model' when provider='onnx'. E.g. 'all-MiniLM-L6-v2' (384-dim), 'bge-small-en-v1.5' (384-dim)."
           },
           "onnxTokenizerPath": {
             "type": "string",
@@ -490,6 +514,18 @@
           "endpoint": {
             "type": "string",
             "description": "Custom endpoint URL. For Ollama: defaults to 'http://localhost:11434'. For OpenAI-compatible APIs."
+          },
+          "deployment": {
+            "type": "string",
+            "description": "Azure OpenAI / API Management: deployment name sent as the API model id when it differs from catalog model (e.g. text-embedding-3-large). Optional when deployment name matches model."
+          },
+          "preferredProviders": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": ["openai", "google", "ollama"]
+            },
+            "description": "Explicit ordered list of embedding providers to use. When set, only listed providers are tried (in order); auto-inference from available API keys is skipped. Use [\"openai\"] to pin to Azure/OpenAI only and prevent Google from being auto-added as a fallback when GEMINI_API_KEY is also set. Mixing providers with different vector dimensions is not supported \u2014 ensure all listed providers produce the same dimensions as your stored vectors."
           }
         }
       },
@@ -749,13 +785,13 @@
         "properties": {
           "enabled": {
             "type": "boolean",
-            "default": false,
-            "description": "Enable error reporting (default: false, opt-in)"
+            "default": true,
+            "description": "Enable error reporting (default: true, opt-out). Set false to disable."
           },
           "consent": {
             "type": "boolean",
-            "default": false,
-            "description": "Explicit user consent required (default: false)"
+            "default": true,
+            "description": "User consent for reporting (default: true, opt-out). Set false to disable."
           },
           "mode": {
             "type": "string",
@@ -777,7 +813,7 @@
             "minimum": 0,
             "maximum": 1,
             "default": 1,
-            "description": "Sample rate 0–1 (default: 1.0)"
+            "description": "Sample rate 0\u20131 (default: 1.0)"
           },
           "botId": {
             "type": "string",
@@ -785,16 +821,40 @@
           },
           "botName": {
             "type": "string",
-            "description": "Optional friendly name for this bot (e.g. Maeve, Doris); sent as tag for readable reports."
+            "description": "Optional friendly name for this bot; sent as tag for readable reports."
+          },
+          "updateNudge": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "enabled": {
+                "type": "boolean",
+                "default": true,
+                "description": "Warn when this install falls behind the latest published plugin version."
+              },
+              "intervalHours": {
+                "type": "number",
+                "minimum": 0,
+                "default": 24,
+                "description": "Hours between repeated upgrade reminders on outdated installs. 0 disables nudges (keeps muting active)."
+              },
+              "cacheTtlHours": {
+                "type": "number",
+                "minimum": 0,
+                "default": 24,
+                "description": "How long cached latest-version results stay fresh before startup trusts a new background check instead."
+              }
+            },
+            "description": "Controls user-facing upgrade reminders for the version-aware telemetry mute flow."
           }
         },
         "required": ["enabled", "consent"],
-        "description": "Opt-in error reporting to GlitchTip/Sentry. See docs/ERROR-REPORTING.md."
+        "description": "Opt-out error reporting to GlitchTip/Sentry (enabled by default, community DSN). Set enabled: false or consent: false to disable. See docs/ERROR-REPORTING.md."
       },
       "distill": {
         "type": "object",
         "additionalProperties": false,
-        "description": "Gemini for session distillation (1M context). Optional; use env GOOGLE_API_KEY if not set.",
+        "description": "Session distillation via llm.heavy tier (default: azure-foundry/gpt-5.4-pro). No separate API key required.",
         "properties": {
           "apiKey": {
             "type": "string",
@@ -802,7 +862,7 @@
           },
           "defaultModel": {
             "type": "string",
-            "description": "Default model for distill (recommended: gemini-3.1-pro-preview)"
+            "description": "Model override for distill (default: azure-foundry/gpt-5.4-pro or llm.heavy tier)"
           },
           "extractDirectives": {
             "type": "boolean",
@@ -868,6 +928,41 @@
           "minObservations": {
             "type": "number",
             "description": "Min observations to support a pattern (default: 2)"
+          }
+        }
+      },
+      "identityPromotion": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "Promote repeated durable identity reflections into separate durable persona state.",
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "description": "Enable durable persona-state promotion pipeline (default: true)"
+          },
+          "lookbackDays": {
+            "type": "number",
+            "description": "Days of identity reflections considered for promotion (default: 90)"
+          },
+          "minDurableReflections": {
+            "type": "number",
+            "description": "Repeated durable reflections required before promotion (default: 2)"
+          },
+          "minConfidence": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "description": "Minimum average confidence for promotion (default: 0.72)"
+          },
+          "similarityThreshold": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "description": "Similarity threshold for grouping paraphrased reflections (default: 0.72)"
+          },
+          "maxPromotionsPerRun": {
+            "type": "number",
+            "description": "Max persona-state promotions or upserts per run (default: 8)"
           }
         }
       },
@@ -946,6 +1041,50 @@
         },
         "description": "Opt-in persona proposals: agent self-evolution with human approval gate (disabled by default)"
       },
+      "identityReflection": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "description": "Enable identity reflection synthesis and storage (default: false)"
+          },
+          "model": {
+            "type": "string",
+            "description": "Optional model override for identity reflection"
+          },
+          "defaultWindow": {
+            "type": "number",
+            "description": "Days of recent reflection outputs to analyze (default: 30)"
+          },
+          "minInsights": {
+            "type": "number",
+            "description": "Minimum number of pattern/rule/meta insights required before running (default: 3)"
+          },
+          "maxInsightsPerRun": {
+            "type": "number",
+            "description": "Maximum identity insights stored per run (default: 8)"
+          },
+          "questions": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "key": {
+                  "type": "string"
+                },
+                "prompt": {
+                  "type": "string"
+                }
+              },
+              "required": ["key", "prompt"]
+            },
+            "description": "Recurring identity reflection questions"
+          }
+        },
+        "description": "Identity reflection layer \u2014 synthesize persona-level insights from reflection outputs"
+      },
       "graph": {
         "type": "object",
         "additionalProperties": false,
@@ -1014,55 +1153,14 @@
         },
         "description": "Procedural memory: auto-generated skills from learned patterns"
       },
-      "memoryToSkills": {
+      "selfCorrection": {
         "type": "object",
         "additionalProperties": false,
         "properties": {
           "enabled": {
             "type": "boolean",
-            "description": "Enable memory-to-skills pipeline (default: false)"
+            "description": "Enable self-correction (default: false)"
           },
-          "schedule": {
-            "type": "string",
-            "description": "Cron schedule for nightly run (default: 15 2 * * *)"
-          },
-          "windowDays": {
-            "type": "number",
-            "description": "Procedures updated in last N days (default: 30)"
-          },
-          "minInstances": {
-            "type": "number",
-            "description": "Minimum procedure instances per cluster (default: 3)"
-          },
-          "consistencyThreshold": {
-            "type": "number",
-            "minimum": 0,
-            "maximum": 1,
-            "description": "Step consistency threshold 0-1 (default: 0.7)"
-          },
-          "outputDir": {
-            "type": "string",
-            "description": "Output directory relative to workspace (default: skills/auto-generated)"
-          },
-          "notify": {
-            "type": "boolean",
-            "description": "Cron message asks agent to notify on new drafts (default: true)"
-          },
-          "autoPublish": {
-            "type": "boolean",
-            "description": "Always require human review; no auto-promote (default: false)"
-          },
-          "validateScript": {
-            "type": "string",
-            "description": "Optional path to post-generation validation script (e.g. quick_validate.py). Not invoked by plugin."
-          }
-        },
-        "description": "Memory-to-skills: cluster procedures, synthesize SKILL.md drafts (issue #114)"
-      },
-      "selfCorrection": {
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
           "semanticDedup": {
             "type": "boolean",
             "description": "Skip storing facts that are semantically similar to existing ones (default: true)"
@@ -1127,7 +1225,7 @@
           "defaultStoreScope": {
             "type": "string",
             "enum": ["global", "agent", "auto"],
-            "description": "Default scope for new facts: 'global' (all agents, backward compatible), 'agent' (specialists auto-scope), or 'auto' (orchestrator→global, specialists→agent). Default: 'global'."
+            "description": "Default scope for new facts: 'global' (all agents, backward compatible), 'agent' (specialists auto-scope), or 'auto' (orchestrator\u2192global, specialists\u2192agent). Default: 'global'."
           }
         },
         "description": "Multi-agent memory scoping: dynamic agent detection and scope defaults"
@@ -1195,6 +1293,246 @@
           }
         },
         "description": "Search tweaks: HyDE query expansion"
+      },
+      "nightlyCycle": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "schedule": {
+            "type": "string"
+          },
+          "reflectWindowDays": {
+            "type": "number"
+          },
+          "pruneMode": {
+            "type": "string",
+            "enum": ["expired", "decay", "both"]
+          },
+          "model": {
+            "type": "string"
+          },
+          "consolidateAfterDays": {
+            "type": "number"
+          },
+          "eventLogArchivalDays": {
+            "type": "number"
+          },
+          "eventLogArchivePath": {
+            "type": "string"
+          },
+          "maxUnconsolidatedAgeDays": {
+            "type": "number"
+          }
+        },
+        "description": "Nightly dream cycle: prune, consolidate, reflect"
+      },
+      "passiveObserver": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "intervalMinutes": {
+            "type": "number"
+          },
+          "model": {
+            "type": "string"
+          },
+          "maxCharsPerChunk": {
+            "type": "number"
+          },
+          "minImportance": {
+            "type": "number"
+          },
+          "deduplicationThreshold": {
+            "type": "number"
+          },
+          "sessionsDir": {
+            "type": "string"
+          }
+        },
+        "description": "Background fact extraction from session transcripts"
+      },
+      "extraction": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "extractionPasses": {
+            "type": "boolean"
+          },
+          "verificationPass": {
+            "type": "boolean"
+          },
+          "extractionModel": {
+            "type": "string"
+          },
+          "implicitModel": {
+            "type": "string"
+          },
+          "verificationModel": {
+            "type": "string"
+          },
+          "extractionModelTier": {
+            "type": "string",
+            "enum": ["nano", "default", "heavy"]
+          },
+          "preFilter": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "enabled": {
+                "type": "boolean"
+              },
+              "model": {
+                "type": "string"
+              },
+              "endpoint": {
+                "type": "string"
+              },
+              "maxCharsPerSession": {
+                "type": "number"
+              }
+            }
+          }
+        },
+        "description": "Multi-pass extraction with LLM verification"
+      },
+      "selfExtension": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "minGapFrequency": {
+            "type": "number"
+          },
+          "minToolSavings": {
+            "type": "number"
+          },
+          "maxProposals": {
+            "type": "number"
+          }
+        },
+        "description": "Tool proposals from usage-pattern gaps"
+      },
+      "crystallization": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "minUsageCount": {
+            "type": "number"
+          },
+          "minSuccessRate": {
+            "type": "number"
+          },
+          "autoApprove": {
+            "type": "boolean"
+          },
+          "outputDir": {
+            "type": "string"
+          },
+          "maxCrystallized": {
+            "type": "number"
+          },
+          "pruneUnusedDays": {
+            "type": "number"
+          }
+        },
+        "description": "Auto-generate SKILL.md from repeated patterns"
+      },
+      "llm": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "default": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "heavy": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "nano": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "fallbackToDefault": {
+            "type": "boolean"
+          },
+          "fallbackModel": {
+            "type": "string"
+          },
+          "providers": {
+            "type": "object"
+          },
+          "localAutoStart": {
+            "type": "boolean"
+          }
+        },
+        "description": "LLM model preference lists per tier (default, heavy, nano)"
+      },
+      "implicitFeedback": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "trajectoryLLMAnalysis": {
+            "type": "boolean"
+          },
+          "feedToSelfCorrection": {
+            "type": "boolean"
+          },
+          "feedToReinforcement": {
+            "type": "boolean"
+          },
+          "minConfidence": {
+            "type": "number"
+          },
+          "signalTypes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "rephraseThreshold": {
+            "type": "number"
+          },
+          "topicChangeThreshold": {
+            "type": "number"
+          },
+          "terseResponseRatio": {
+            "type": "number"
+          }
+        },
+        "description": "Implicit feedback detection and routing"
+      },
+      "trajectoryLLMAnalysis": {
+        "type": "boolean",
+        "description": "Top-level alias for implicitFeedback.trajectoryLLMAnalysis. Use LLM-based trajectory analysis instead of heuristic lesson extraction (default: false). The nested key is deprecated."
+      },
+      "feedToSelfCorrection": {
+        "type": "boolean",
+        "description": "Top-level alias for implicitFeedback.feedToSelfCorrection. Feed negative implicit signals into the self-correction pipeline (default: true). The nested key is deprecated."
+      },
+      "extractReinforcement": {
+        "type": "boolean",
+        "description": "Top-level alias for distill.extractReinforcement. Enable reinforcement extraction from sessions (default: true). The nested key is deprecated."
       }
     },
     "required": ["embedding"]

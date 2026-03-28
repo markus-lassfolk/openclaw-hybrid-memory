@@ -132,10 +132,41 @@ function detectImperativeTone(text: string): boolean {
   if (/\b(please|thanks|thank you|could you|would you|can you)\b/i.test(lower)) return false;
   // Common English imperative starters (verbs)
   const imperativeStarters = [
-    "show", "get", "tell", "give", "make", "do", "fix", "list", "find", "run",
-    "stop", "change", "update", "delete", "remove", "add", "create", "set",
-    "explain", "use", "try", "check", "look", "put", "send", "write", "read",
-    "open", "close", "go", "restart", "reset", "rebuild", "rewrite", "rerun",
+    "show",
+    "get",
+    "tell",
+    "give",
+    "make",
+    "do",
+    "fix",
+    "list",
+    "find",
+    "run",
+    "stop",
+    "change",
+    "update",
+    "delete",
+    "remove",
+    "add",
+    "create",
+    "set",
+    "explain",
+    "use",
+    "try",
+    "check",
+    "look",
+    "put",
+    "send",
+    "write",
+    "read",
+    "open",
+    "close",
+    "go",
+    "restart",
+    "reset",
+    "rebuild",
+    "rewrite",
+    "rerun",
   ];
   const firstWord = words[0]?.toLowerCase().replace(/[^a-z]/g, "") ?? "";
   return imperativeStarters.includes(firstWord);
@@ -149,7 +180,7 @@ function simpleWordOverlap(a: string, b: string): number {
         .toLowerCase()
         .replace(/[^\w\s]/g, " ")
         .split(/\s+/)
-        .filter((w) => w.length > 2)
+        .filter((w) => w.length > 2),
     );
   const setA = tokenize(a);
   const setB = tokenize(b);
@@ -175,7 +206,8 @@ function detectRepeatedInstruction(
 }
 
 /** Detect correction frequency: >2 correction signals in last 5 turns. */
-const CORRECTION_PATTERNS = /\b(no,?\s|not quite|wrong|incorrect|that'?s not|that is not|you missed|again,?\s|still wrong|still not|please fix|try again|that's wrong|nope|not what i)\b/i;
+const CORRECTION_PATTERNS =
+  /\b(no,?\s|not quite|wrong|incorrect|that'?s not|that is not|you missed|again,?\s|still wrong|still not|please fix|try again|that's wrong|nope|not what i)\b/i;
 
 function detectCorrectionFrequency(recentUserMsgs: string[]): boolean {
   let count = 0;
@@ -276,7 +308,7 @@ export function detectFrustration(
   const avgUserLen = allUserContents.reduce((s, c) => s + c.length, 0) / Math.max(1, allUserContents.length);
 
   // Previous user messages for context (up to last 5)
-  const previousUserMsgs = allUserContents.slice(0, -1).reverse(); // reverse so index 0 = most recent previous
+  const _previousUserMsgs = allUserContents.slice(0, -1).reverse(); // reverse so index 0 = most recent previous
 
   const triggers: FrustrationTrigger[] = [];
 
@@ -284,7 +316,7 @@ export function detectFrustration(
   for (let i = 0; i < userTurns.length; i++) {
     const turn = userTurns[i]!;
     const turnsAgo = userTurns.length - 1 - i; // 0 = most recent
-    const recency = Math.pow(decayRate, turnsAgo);
+    const recency = decayRate ** turnsAgo;
 
     // Find the actual index of this turn in allUserTurns
     const turnIndexInAll = allUserTurns.indexOf(turn);
@@ -347,20 +379,16 @@ export function detectFrustration(
   const rawScore = triggers.reduce((s, t) => s + t.weight, 0) / normalizer;
 
   // Clamp to [0, 1] and apply turn-based decay if no triggers
-  const lastTriggerTurn = triggers.length > 0
-    ? Math.max(...triggers.map((t) => t.turn))
-    : -1;
-  const turnsSinceLastReset = lastTriggerTurn >= 0
-    ? userTurns.length - 1 - lastTriggerTurn
-    : userTurns.length;
+  const lastTriggerTurn = triggers.length > 0 ? Math.max(...triggers.map((t) => t.turn)) : -1;
+  const turnsSinceLastReset = lastTriggerTurn >= 0 ? userTurns.length - 1 - lastTriggerTurn : userTurns.length;
 
   // Apply decay to previous level if no fresh signals
   let level: number;
   if (triggers.length === 0) {
-    level = prevLevel * Math.pow(decayRate, turnsSinceLastReset);
+    level = prevLevel * decayRate ** turnsSinceLastReset;
   } else {
     // Blend new score with decayed previous (max of the two, with decay dampening)
-    const decayed = prevLevel * Math.pow(decayRate, 1);
+    const decayed = prevLevel * decayRate ** 1;
     level = Math.max(rawScore, decayed * 0.5 + rawScore * 0.5);
   }
   level = Math.min(1, Math.max(0, level));
@@ -380,9 +408,7 @@ function buildState(
   const criticalThreshold = cfg?.adaptationThresholds?.critical ?? 0.7;
 
   const trend: "rising" | "falling" | "stable" =
-    level > prevLevel + 0.05 ? "rising"
-    : level < prevLevel - 0.05 ? "falling"
-    : "stable";
+    level > prevLevel + 0.05 ? "rising" : level < prevLevel - 0.05 ? "falling" : "stable";
 
   const adaptation = resolveAdaptation(level, mediumThreshold, highThreshold, criticalThreshold, triggers);
 
@@ -439,10 +465,7 @@ function resolveAdaptation(
  * Generate a one-line hint string for injection into system context.
  * Returns undefined when level is below the injection threshold.
  */
-export function buildFrustrationHint(
-  state: FrustrationState,
-  cfg?: FrustrationDetectionConfig,
-): string | undefined {
+export function buildFrustrationHint(state: FrustrationState, cfg?: FrustrationDetectionConfig): string | undefined {
   const threshold = cfg?.injectionThreshold ?? 0.3;
   if (state.level < threshold) return undefined;
 

@@ -12,7 +12,7 @@
  *    text-transform tool
  */
 
-import type { WorkflowStore, WorkflowPattern } from "../backends/workflow-store.js";
+import type { WorkflowPattern, WorkflowStore } from "../backends/workflow-store.js";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -98,10 +98,7 @@ export function deriveToolNameFromSequence(toolSequence: string[]): string {
 import { createHash } from "node:crypto";
 
 export function computeGapId(toolSequence: string[]): string {
-  return createHash("sha256")
-    .update(JSON.stringify(toolSequence))
-    .digest("hex")
-    .slice(0, 16);
+  return createHash("sha256").update(JSON.stringify(toolSequence)).digest("hex").slice(0, 16);
 }
 
 // ---------------------------------------------------------------------------

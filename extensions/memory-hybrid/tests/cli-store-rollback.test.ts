@@ -3,15 +3,15 @@
  * Verifies compensating delete when vault write succeeds but pointer write fails.
  */
 
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
-import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { runStoreForCli } from "../cli/handlers.js";
-import { FactsDB } from "../backends/facts-db.js";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CredentialsDB } from "../backends/credentials-db.js";
-import type { StoreCliOpts, StoreCliResult } from "../cli/types.js";
+import { FactsDB } from "../backends/facts-db.js";
+import { runStoreForCli } from "../cli/handlers.js";
 import type { HandlerContext } from "../cli/handlers.js";
+import type { StoreCliOpts, StoreCliResult } from "../cli/types.js";
 
 const TEST_ENCRYPTION_KEY = "test-encryption-key-for-unit-tests-32chars";
 
@@ -74,13 +74,13 @@ describe("runStoreForCli credential happy path", () => {
       // Verify vault entry exists
       const vaultEntry = credentialsDb.get("openai", "api_key");
       expect(vaultEntry).not.toBeNull();
-      expect(vaultEntry!.value).toBe("sk-testAbCdEfGh1234IjKlMnOpQrSt");
+      expect(vaultEntry?.value).toBe("sk-testAbCdEfGh1234IjKlMnOpQrSt");
 
       // Verify pointer entry exists with correct format
       const pointerEntry = factsDb.getById(result.id);
       expect(pointerEntry).not.toBeNull();
-      expect(pointerEntry!.value).toBe("vault:openai:api_key");
-      expect(pointerEntry!.entity).toBe("Credentials");
+      expect(pointerEntry?.value).toBe("vault:openai:api_key");
+      expect(pointerEntry?.entity).toBe("Credentials");
     }
   });
 });
@@ -173,9 +173,7 @@ describe("runStoreForCli pointer write failure with compensating delete", () => 
     expect(result.outcome).toBe("credential_db_error");
 
     // Verify warning was logged for compensating delete failure
-    expect(warnSpy).toHaveBeenCalledWith(
-      expect.stringContaining("Failed to clean up orphaned credential")
-    );
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("Failed to clean up orphaned credential"));
 
     // Restore
     factsDb.store = originalFactsStore;
@@ -238,11 +236,11 @@ describe("runStoreForCli credential parse failure", () => {
     // This text matches isCredentialLike but tryParseCredentialForVault returns null
     // because the secret value is too short or doesn't match patterns
     const opts: StoreCliOpts = {
-      text: "API Key: xyz",  // Too short to be a valid credential
+      text: "API Key: xyz", // Too short to be a valid credential
       category: "technical",
       entity: "TestService",
       key: "api_key",
-      value: "xyz",  // Too short
+      value: "xyz", // Too short
     };
 
     const result: StoreCliResult = await runStoreForCli(mockCtx, opts, { warn: vi.fn() });

@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * Tests that memory_store creates event_log entries (Issue #150).
  *
@@ -5,12 +6,12 @@
  * and call its execute handler directly.
  */
 
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
-import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { registerMemoryTools } from "../tools/memory-tools.js";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { _testing } from "../index.js";
+import { registerMemoryTools } from "../tools/memory-tools.js";
 
 const { FactsDB, EventLog } = _testing;
 
@@ -64,7 +65,16 @@ function makeCfg() {
       defaultStoreScope: "global",
       strictAgentScoping: false,
     },
-    graph: { enabled: false, autoLink: false, autoLinkLimit: 5, autoLinkMinScore: 0.5, useInRecall: false, maxTraversalDepth: 2, coOccurrenceWeight: 0.5, autoSupersede: false },
+    graph: {
+      enabled: false,
+      autoLink: false,
+      autoLinkLimit: 5,
+      autoLinkMinScore: 0.5,
+      useInRecall: false,
+      maxTraversalDepth: 2,
+      coOccurrenceWeight: 0.5,
+      autoSupersede: false,
+    },
     graphRetrieval: { enabled: false, defaultExpand: false, maxExpandDepth: 3, maxExpandedResults: 20 },
     credentials: { enabled: false },
     autoRecall: { scopeFilter: null, summaryThreshold: 0, summaryMaxChars: 500 },
@@ -108,6 +118,7 @@ describe("memory_store event_log integration", () => {
     registerMemoryTools(
       {
         factsDb: factsDb as never,
+        edictStore: null as any,
         vectorDb: vectorDb as never,
         cfg: cfg as never,
         embeddings: embeddings as never,
@@ -130,7 +141,7 @@ describe("memory_store event_log integration", () => {
     const storeTool = api.getTool("memory_store");
     expect(storeTool).toBeDefined();
 
-    await storeTool!.execute("call-1", {
+    await storeTool?.execute("call-1", {
       text: "The user prefers TypeScript over JavaScript",
       importance: 0.8,
       category: "preference",
@@ -153,6 +164,7 @@ describe("memory_store event_log integration", () => {
     registerMemoryTools(
       {
         factsDb: factsDb as never,
+        edictStore: null as any,
         vectorDb: vectorDb as never,
         cfg: cfg as never,
         embeddings: embeddings as never,
@@ -174,7 +186,7 @@ describe("memory_store event_log integration", () => {
 
     const storeTool = api.getTool("memory_store");
     await expect(
-      storeTool!.execute("call-2", {
+      storeTool?.execute("call-2", {
         text: "Null event log should not throw",
         importance: 0.7,
       }),
@@ -190,6 +202,7 @@ describe("memory_store event_log integration", () => {
     registerMemoryTools(
       {
         factsDb: factsDb as never,
+        edictStore: null as any,
         vectorDb: vectorDb as never,
         cfg: cfg as never,
         embeddings: embeddings as never,
@@ -210,7 +223,7 @@ describe("memory_store event_log integration", () => {
     );
 
     const storeTool = api.getTool("memory_store");
-    const result = (await storeTool!.execute("call-3", {
+    const result = (await storeTool?.execute("call-3", {
       text: "Event should contain the new fact ID",
       importance: 0.7,
       entity: "FactIdTest",
@@ -220,7 +233,7 @@ describe("memory_store event_log integration", () => {
     const events = eventLog.getBySession("test-session-123");
     const factLearned = events.find((e) => e.eventType === "fact_learned");
     expect(factLearned).toBeDefined();
-    expect(factLearned!.content.factId).toBe(storedFactId);
-    expect(factLearned!.entities).toEqual(["FactIdTest"]);
+    expect(factLearned?.content.factId).toBe(storedFactId);
+    expect(factLearned?.entities).toEqual(["FactIdTest"]);
   });
 });

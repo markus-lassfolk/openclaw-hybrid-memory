@@ -196,10 +196,10 @@ export function resolveInput(db: ShortestPathLookup, input: string): string | nu
  */
 export function formatPath(steps: PathStep[]): string {
   if (steps.length === 0) return "(same fact)";
-  const parts: string[] = [steps[0].fromFactId.slice(0, 8) + "\u2026"];
+  const parts: string[] = [`${steps[0].fromFactId.slice(0, 8)}\u2026`];
   for (const step of steps) {
     parts.push(`\u2014[${step.linkType}]\u2192`);
-    parts.push(step.toFactId.slice(0, 8) + "\u2026");
+    parts.push(`${step.toFactId.slice(0, 8)}\u2026`);
   }
   return parts.join(" ");
 }

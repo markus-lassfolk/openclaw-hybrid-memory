@@ -32,17 +32,15 @@ export function parseDuration(input: string): number {
 
   if (!trimmed) {
     throw new Error(
-      "parseDuration: empty input. Expected a duration like \"1d12h30m\", \"2h\", \"45m\", or a plain number (minutes).",
+      'parseDuration: empty input. Expected a duration like "1d12h30m", "2h", "45m", or a plain number (minutes).',
     );
   }
 
   // Plain integer: treat as minutes (backward compat for staleHours migration)
   if (/^\d+$/.test(trimmed)) {
-    const minutes = parseInt(trimmed, 10);
+    const minutes = Number.parseInt(trimmed, 10);
     if (minutes <= 0) {
-      throw new Error(
-        `parseDuration: duration must be > 0 minutes (got "${input}").`,
-      );
+      throw new Error(`parseDuration: duration must be > 0 minutes (got "${input}").`);
     }
     return minutes;
   }
@@ -54,9 +52,7 @@ export function parseDuration(input: string): number {
 
   if (!match) {
     throw new Error(
-      `parseDuration: unrecognised duration "${input}". ` +
-      `Expected format like "1d12h30m", "2h", "45m", "1d", or a plain number (minutes). ` +
-      `Components must appear in d→h→m order.`,
+      `parseDuration: unrecognised duration "${input}". Expected format like "1d12h30m", "2h", "45m", "1d", or a plain number (minutes). Components must appear in d→h→m order.`,
     );
   }
 
@@ -65,20 +61,17 @@ export function parseDuration(input: string): number {
   // The regex matches the empty string too — reject that case explicitly.
   if (!daysStr && !hoursStr && !minutesStr) {
     throw new Error(
-      `parseDuration: unrecognised duration "${input}". ` +
-      `Expected at least one component: d (days), h (hours), or m (minutes).`,
+      `parseDuration: unrecognised duration "${input}". Expected at least one component: d (days), h (hours), or m (minutes).`,
     );
   }
 
   const totalMinutes =
-    (daysStr ? parseInt(daysStr, 10) * 1440 : 0) +
-    (hoursStr ? parseInt(hoursStr, 10) * 60 : 0) +
-    (minutesStr ? parseInt(minutesStr, 10) : 0);
+    (daysStr ? Number.parseInt(daysStr, 10) * 1440 : 0) +
+    (hoursStr ? Number.parseInt(hoursStr, 10) * 60 : 0) +
+    (minutesStr ? Number.parseInt(minutesStr, 10) : 0);
 
   if (totalMinutes <= 0) {
-    throw new Error(
-      `parseDuration: duration must be > 0 minutes (got "${input}").`,
-    );
+    throw new Error(`parseDuration: duration must be > 0 minutes (got "${input}").`);
   }
 
   return totalMinutes;

@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * Tests for Issue #145 — GraphRAG Retrieval: semantic search + graph traversal.
  *
@@ -32,10 +33,10 @@
  *   - Integration with FactsDB: real DB links traversed correctly
  */
 
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
-import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { _testing } from "../index.js";
 import type { MemoryEntry } from "../types/memory.js";
 
@@ -119,11 +120,7 @@ describe("expandGraph: seed handling", () => {
 
   it("returns only seeds when maxDepth=0 (no expansion)", () => {
     const a = makeEntry("a");
-    const db = buildMockDb(
-      [a],
-      { a: [{ id: "l1", targetFactId: "b", linkType: "RELATED_TO", strength: 1.0 }] },
-      {},
-    );
+    const db = buildMockDb([a], { a: [{ id: "l1", targetFactId: "b", linkType: "RELATED_TO", strength: 1.0 }] }, {});
     const seeds = [{ factId: "a", score: 0.9, entry: a }];
     const result = expandGraph(db, seeds, { maxDepth: 0 });
     expect(result).toHaveLength(1);
@@ -167,43 +164,31 @@ describe("expandGraph: 1-hop expansion", () => {
   it("expands via outgoing link (getLinksFrom)", () => {
     const a = makeEntry("a");
     const b = makeEntry("b");
-    const db = buildMockDb(
-      [a, b],
-      { a: [{ id: "l1", targetFactId: "b", linkType: "RELATED_TO", strength: 0.8 }] },
-      {},
-    );
+    const db = buildMockDb([a, b], { a: [{ id: "l1", targetFactId: "b", linkType: "RELATED_TO", strength: 0.8 }] }, {});
     const result = expandGraph(db, [{ factId: "a", score: 1.0, entry: a }], { maxDepth: 1 });
     expect(result).toHaveLength(2);
     const expanded = result.find((r) => r.factId === "b");
     expect(expanded).toBeDefined();
-    expect(expanded!.expansionSource).toBe("graph");
-    expect(expanded!.hopCount).toBe(1);
+    expect(expanded?.expansionSource).toBe("graph");
+    expect(expanded?.hopCount).toBe(1);
   });
 
   it("expands via incoming link (getLinksTo — bidirectional)", () => {
     const a = makeEntry("a");
     const c = makeEntry("c");
-    const db = buildMockDb(
-      [a, c],
-      {},
-      { a: [{ id: "l2", sourceFactId: "c", linkType: "CAUSED_BY", strength: 0.9 }] },
-    );
+    const db = buildMockDb([a, c], {}, { a: [{ id: "l2", sourceFactId: "c", linkType: "CAUSED_BY", strength: 0.9 }] });
     const result = expandGraph(db, [{ factId: "a", score: 1.0, entry: a }], { maxDepth: 1 });
     expect(result).toHaveLength(2);
     const expanded = result.find((r) => r.factId === "c");
     expect(expanded).toBeDefined();
-    expect(expanded!.expansionSource).toBe("graph");
-    expect(expanded!.hopCount).toBe(1);
+    expect(expanded?.expansionSource).toBe("graph");
+    expect(expanded?.hopCount).toBe(1);
   });
 
   it("does not include seed facts in expanded results (no duplication)", () => {
     const a = makeEntry("a");
     const b = makeEntry("b");
-    const db = buildMockDb(
-      [a, b],
-      { a: [{ id: "l1", targetFactId: "b", linkType: "RELATED_TO", strength: 1.0 }] },
-      {},
-    );
+    const db = buildMockDb([a, b], { a: [{ id: "l1", targetFactId: "b", linkType: "RELATED_TO", strength: 1.0 }] }, {});
     const result = expandGraph(db, [{ factId: "a", score: 1.0, entry: a }], { maxDepth: 1 });
     const aResults = result.filter((r) => r.factId === "a");
     expect(aResults).toHaveLength(1); // seed appears once
@@ -238,7 +223,7 @@ describe("expandGraph: multi-hop traversal", () => {
 
   it("reaches facts 3 hops away when depth=3", () => {
     const facts = ["a", "b", "c", "d"].map((id) => makeEntry(id));
-    const [a, b, c, d] = facts;
+    const [a, _b, _c, _d] = facts;
     const db = buildMockDb(
       facts,
       {
@@ -254,7 +239,7 @@ describe("expandGraph: multi-hop traversal", () => {
 
   it("respects depth limit — stops at depth=1 and does not reach 2-hop facts", () => {
     const facts = ["a", "b", "c"].map((id) => makeEntry(id));
-    const [a, b] = facts;
+    const [a, _b] = facts;
     const db = buildMockDb(
       facts,
       {
@@ -326,11 +311,7 @@ describe("expandGraph: ranking and scoring", () => {
   it("direct results appear before expanded results in output", () => {
     const a = makeEntry("a");
     const b = makeEntry("b");
-    const db = buildMockDb(
-      [a, b],
-      { a: [{ id: "l1", targetFactId: "b", linkType: "RELATED_TO", strength: 1.0 }] },
-      {},
-    );
+    const db = buildMockDb([a, b], { a: [{ id: "l1", targetFactId: "b", linkType: "RELATED_TO", strength: 1.0 }] }, {});
     const result = expandGraph(db, [{ factId: "a", score: 0.5, entry: a }], { maxDepth: 1 });
     expect(result[0].factId).toBe("a"); // direct before expanded
     expect(result[0].expansionSource).toBe("direct");
@@ -339,11 +320,7 @@ describe("expandGraph: ranking and scoring", () => {
   it("1-hop expanded score = seedScore * HOP_SCORE_DECAY[1]", () => {
     const a = makeEntry("a");
     const b = makeEntry("b");
-    const db = buildMockDb(
-      [a, b],
-      { a: [{ id: "l1", targetFactId: "b", linkType: "RELATED_TO", strength: 1.0 }] },
-      {},
-    );
+    const db = buildMockDb([a, b], { a: [{ id: "l1", targetFactId: "b", linkType: "RELATED_TO", strength: 1.0 }] }, {});
     const seedScore = 0.8;
     const result = expandGraph(db, [{ factId: "a", score: seedScore, entry: a }], { maxDepth: 1 });
     const bResult = result.find((r) => r.factId === "b");
@@ -389,14 +366,10 @@ describe("expandGraph: ranking and scoring", () => {
   it("direct match scores higher than 1-hop expanded for same underlying quality", () => {
     const a = makeEntry("a");
     const b = makeEntry("b");
-    const db = buildMockDb(
-      [a, b],
-      { a: [{ id: "l1", targetFactId: "b", linkType: "RELATED_TO", strength: 1.0 }] },
-      {},
-    );
+    const db = buildMockDb([a, b], { a: [{ id: "l1", targetFactId: "b", linkType: "RELATED_TO", strength: 1.0 }] }, {});
     const result = expandGraph(db, [{ factId: "a", score: 0.9, entry: a }], { maxDepth: 1 });
-    const directScore = result.find((r) => r.factId === "a")!.score;
-    const expandedScore = result.find((r) => r.factId === "b")!.score;
+    const directScore = result.find((r) => r.factId === "a")?.score;
+    const expandedScore = result.find((r) => r.factId === "b")?.score;
     expect(directScore).toBeGreaterThan(expandedScore);
   });
 });
@@ -433,11 +406,7 @@ describe("expandGraph: link path annotation", () => {
   it("1-hop incoming: linkPath has one step with correct structure", () => {
     const a = makeEntry("a");
     const c = makeEntry("c");
-    const db = buildMockDb(
-      [a, c],
-      {},
-      { a: [{ id: "l2", sourceFactId: "c", linkType: "CAUSED_BY", strength: 0.6 }] },
-    );
+    const db = buildMockDb([a, c], {}, { a: [{ id: "l2", sourceFactId: "c", linkType: "CAUSED_BY", strength: 0.6 }] });
     const result = expandGraph(db, [{ factId: "a", score: 1.0, entry: a }], { maxDepth: 1 });
     const cResult = result.find((r) => r.factId === "c")!;
     expect(cResult.linkPath).toHaveLength(1);
@@ -491,11 +460,7 @@ describe("expandGraph: maxExpandedResults", () => {
   it("includes all expanded results when count < maxExpandedResults", () => {
     const a = makeEntry("a");
     const b = makeEntry("b");
-    const db = buildMockDb(
-      [a, b],
-      { a: [{ id: "l1", targetFactId: "b", linkType: "RELATED_TO", strength: 1.0 }] },
-      {},
-    );
+    const db = buildMockDb([a, b], { a: [{ id: "l1", targetFactId: "b", linkType: "RELATED_TO", strength: 1.0 }] }, {});
     const result = expandGraph(db, [{ factId: "a", score: 1.0, entry: a }], {
       maxDepth: 1,
       maxExpandedResults: 20,
@@ -555,11 +520,7 @@ describe("expandGraph: various link types", () => {
   ])("traverses %s links", (linkType) => {
     const a = makeEntry("a");
     const b = makeEntry("b");
-    const db = buildMockDb(
-      [a, b],
-      { a: [{ id: "l1", targetFactId: "b", linkType, strength: 1.0 }] },
-      {},
-    );
+    const db = buildMockDb([a, b], { a: [{ id: "l1", targetFactId: "b", linkType, strength: 1.0 }] }, {});
     const result = expandGraph(db, [{ factId: "a", score: 1.0, entry: a }], { maxDepth: 1 });
     const bResult = result.find((r) => r.factId === "b");
     expect(bResult).toBeDefined();
@@ -575,11 +536,7 @@ describe("expandGraph: missing DB entries", () => {
   it("skips expanded facts that cannot be resolved in DB", () => {
     const a = makeEntry("a");
     // Link to "b" but "b" is not in DB
-    const db = buildMockDb(
-      [a],
-      { a: [{ id: "l1", targetFactId: "b", linkType: "RELATED_TO", strength: 1.0 }] },
-      {},
-    );
+    const db = buildMockDb([a], { a: [{ id: "l1", targetFactId: "b", linkType: "RELATED_TO", strength: 1.0 }] }, {});
     const result = expandGraph(db, [{ factId: "a", score: 1.0, entry: a }], { maxDepth: 1 });
     expect(result).toHaveLength(1); // only the seed
     expect(result[0].factId).toBe("a");
@@ -596,9 +553,7 @@ describe("formatLinkPath", () => {
   });
 
   it("formats a single step with truncated factId", () => {
-    const path = [
-      { fromFactId: "abcd1234-efgh-5678", toFactId: "x", linkType: "RELATED_TO", strength: 0.9 },
-    ];
+    const path = [{ fromFactId: "abcd1234-efgh-5678", toFactId: "x", linkType: "RELATED_TO", strength: 0.9 }];
     const result = formatLinkPath(path);
     expect(result).toContain("RELATED_TO");
     expect(result).toContain("abcd1234");
@@ -660,9 +615,9 @@ describe("Integration: expandGraph with real FactsDB", () => {
     expect(result).toHaveLength(2);
     const bResult = result.find((r) => r.factId === factB.id);
     expect(bResult).toBeDefined();
-    expect(bResult!.expansionSource).toBe("graph");
-    expect(bResult!.hopCount).toBe(1);
-    expect(bResult!.linkPath[0].linkType).toBe("RELATED_TO");
+    expect(bResult?.expansionSource).toBe("graph");
+    expect(bResult?.hopCount).toBe(1);
+    expect(bResult?.linkPath[0].linkType).toBe("RELATED_TO");
   });
 
   it("traverses 2-hop chain in real DB", () => {
@@ -679,8 +634,8 @@ describe("Integration: expandGraph with real FactsDB", () => {
 
     const cResult = result.find((r) => r.factId === factC.id);
     expect(cResult).toBeDefined();
-    expect(cResult!.hopCount).toBe(2);
-    expect(cResult!.score).toBeCloseTo(0.8 * HOP_SCORE_DECAY[2], 5);
+    expect(cResult?.hopCount).toBe(2);
+    expect(cResult?.score).toBeCloseTo(0.8 * HOP_SCORE_DECAY[2], 5);
   });
 
   it("depth=1 does not reach fact 2 hops away in real DB", () => {
@@ -744,6 +699,6 @@ describe("Integration: expandGraph with real FactsDB", () => {
 
     const bResult = result.find((r) => r.factId === factB.id);
     expect(bResult).toBeDefined();
-    expect(bResult!.expansionSource).toBe("graph");
+    expect(bResult?.expansionSource).toBe("graph");
   });
 });

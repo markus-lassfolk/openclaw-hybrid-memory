@@ -1,8 +1,8 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { mkdtempSync, rmSync, existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
 import { createHash } from "node:crypto";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { _testing } from "../index.js";
 
 const { VerificationStore, shouldAutoVerify, VerificationError } = _testing;
@@ -56,28 +56,28 @@ describe("VerificationStore.verify", () => {
     store.verify("fact-2", "Admin password reset", "user");
     const vf = store.getVerified("fact-2");
     expect(vf).not.toBeNull();
-    expect(vf!.factId).toBe("fact-2");
-    expect(vf!.canonicalText).toBe("Admin password reset");
-    expect(vf!.verifiedBy).toBe("user");
+    expect(vf?.factId).toBe("fact-2");
+    expect(vf?.canonicalText).toBe("Admin password reset");
+    expect(vf?.verifiedBy).toBe("user");
   });
 
   it("computes and stores the correct SHA-256 checksum", async () => {
     const text = "Critical infrastructure fact";
     store.verify("fact-3", text, "system");
     const vf = store.getVerified("fact-3");
-    expect(vf!.checksum).toBe(sha256(text));
+    expect(vf?.checksum).toBe(sha256(text));
   });
 
   it("sets version to 1 for initial entry", async () => {
     store.verify("fact-4", "Some fact", "agent");
     const vf = store.getVerified("fact-4");
-    expect(vf!.version).toBe(1);
+    expect(vf?.version).toBe(1);
   });
 
   it("sets previousVersionId to null for initial entry", async () => {
     store.verify("fact-5", "Another fact", "agent");
     const vf = store.getVerified("fact-5");
-    expect(vf!.previousVersionId).toBeNull();
+    expect(vf?.previousVersionId).toBeNull();
   });
 
   it("sets nextVerification to approximately 30 days from now", async () => {
@@ -86,7 +86,7 @@ describe("VerificationStore.verify", () => {
     const after = new Date();
 
     const vf = store.getVerified("fact-6");
-    const next = new Date(vf!.nextVerification!);
+    const next = new Date(vf?.nextVerification!);
     const expectedMin = new Date(before.getTime() + 29 * 24 * 3600 * 1000);
     const expectedMax = new Date(after.getTime() + 31 * 24 * 3600 * 1000);
     expect(next >= expectedMin).toBe(true);
@@ -97,7 +97,7 @@ describe("VerificationStore.verify", () => {
     store.verify("fact-dup", "First", "agent");
     expect(() => store.verify("fact-dup", "Second", "agent")).toThrow(VerificationError);
     const vf = store.getVerified("fact-dup");
-    expect(vf!.canonicalText).toBe("First");
+    expect(vf?.canonicalText).toBe("First");
   });
 
   it("accepts all three verifiedBy values", async () => {
@@ -109,9 +109,9 @@ describe("VerificationStore.verify", () => {
     const b = store.getVerified("fact-b");
     const c = store.getVerified("fact-c");
 
-    expect(a!.verifiedBy).toBe("agent");
-    expect(b!.verifiedBy).toBe("user");
-    expect(c!.verifiedBy).toBe("system");
+    expect(a?.verifiedBy).toBe("agent");
+    expect(b?.verifiedBy).toBe("user");
+    expect(c?.verifiedBy).toBe("system");
   });
 });
 
@@ -129,10 +129,8 @@ describe("VerificationStore.getVerified", () => {
     store.verify("fact-corrupted", "Original text", "agent");
 
     // Directly corrupt the stored text in the DB
-    const db = (store as unknown as { db: import("better-sqlite3").Database }).db;
-    db.prepare(
-      `UPDATE verified_facts SET canonical_text = 'Tampered text' WHERE fact_id = ?`
-    ).run("fact-corrupted");
+    const db = (store as unknown as { db: import("node:sqlite").DatabaseSync }).db;
+    db.prepare(`UPDATE verified_facts SET canonical_text = 'Tampered text' WHERE fact_id = ?`).run("fact-corrupted");
 
     expect(() => store.getVerified("fact-corrupted")).toThrow(VerificationError);
     expect(logger.error).toHaveBeenCalled();
@@ -140,10 +138,8 @@ describe("VerificationStore.getVerified", () => {
 
   it("throws VerificationError whose message mentions the fact", async () => {
     store.verify("important-fact", "Important data", "user");
-    const db = (store as unknown as { db: import("better-sqlite3").Database }).db;
-    db.prepare(
-      `UPDATE verified_facts SET canonical_text = 'Changed' WHERE fact_id = ?`
-    ).run("important-fact");
+    const db = (store as unknown as { db: import("node:sqlite").DatabaseSync }).db;
+    db.prepare(`UPDATE verified_facts SET canonical_text = 'Changed' WHERE fact_id = ?`).run("important-fact");
 
     expect(() => store.getVerified("important-fact")).toThrow(/important-fact/);
     expect(logger.error).toHaveBeenCalled();
@@ -172,10 +168,8 @@ describe("VerificationStore.checkIntegrity", () => {
 
   it("returns valid=false and lists corrupted ids when text is tampered", async () => {
     const id = store.verify("f-tamper", "Original", "agent");
-    const db = (store as unknown as { db: import("better-sqlite3").Database }).db;
-    db.prepare(
-      `UPDATE verified_facts SET canonical_text = 'Tampered' WHERE id = ?`
-    ).run(id);
+    const db = (store as unknown as { db: import("node:sqlite").DatabaseSync }).db;
+    db.prepare(`UPDATE verified_facts SET canonical_text = 'Tampered' WHERE id = ?`).run(id);
 
     const report = store.checkIntegrity();
     expect(report.valid).toBe(false);
@@ -187,10 +181,8 @@ describe("VerificationStore.checkIntegrity", () => {
     store.verify("fact-ok", "Good text", "agent");
     const id2 = store.verify("fact-bad", "Also good", "agent");
 
-    const db = (store as unknown as { db: import("better-sqlite3").Database }).db;
-    db.prepare(
-      `UPDATE verified_facts SET canonical_text = 'Tampered' WHERE id = ?`
-    ).run(id2);
+    const db = (store as unknown as { db: import("node:sqlite").DatabaseSync }).db;
+    db.prepare(`UPDATE verified_facts SET canonical_text = 'Tampered' WHERE id = ?`).run(id2);
 
     // Scoped to fact-ok — should be clean
     const reportOk = store.checkIntegrity("fact-ok");
@@ -213,16 +205,18 @@ describe("VerificationStore.update", () => {
 
     expect(newId).not.toBe(id);
     const vf = store.getVerified("fact-v");
-    expect(vf!.version).toBe(2);
-    expect(vf!.canonicalText).toBe("Version 2");
+    expect(vf?.version).toBe(2);
+    expect(vf?.canonicalText).toBe("Version 2");
   });
 
   it("links new version to the previous version via previousVersionId", async () => {
     const id = store.verify("fact-link", "V1", "agent");
     const newId = store.update(id, "V2", "user");
 
-    const db = (store as unknown as { db: import("better-sqlite3").Database }).db;
-    const row = db.prepare(`SELECT * FROM verified_facts WHERE id = ?`).get(newId) as { previous_version_id: string | null };
+    const db = (store as unknown as { db: import("node:sqlite").DatabaseSync }).db;
+    const row = db.prepare("SELECT * FROM verified_facts WHERE id = ?").get(newId) as {
+      previous_version_id: string | null;
+    };
     expect(row.previous_version_id).toBe(id);
   });
 
@@ -230,8 +224,8 @@ describe("VerificationStore.update", () => {
     const id = store.verify("fact-old", "Old text", "agent");
     store.update(id, "New text", "user");
 
-    const db = (store as unknown as { db: import("better-sqlite3").Database }).db;
-    const oldRow = db.prepare(`SELECT * FROM verified_facts WHERE id = ?`).get(id) as { canonical_text: string };
+    const db = (store as unknown as { db: import("node:sqlite").DatabaseSync }).db;
+    const oldRow = db.prepare("SELECT * FROM verified_facts WHERE id = ?").get(id) as { canonical_text: string };
     expect(oldRow.canonical_text).toBe("Old text");
   });
 
@@ -239,8 +233,10 @@ describe("VerificationStore.update", () => {
     const id = store.verify("fact-super", "Original", "agent");
     store.update(id, "Updated", "user");
 
-    const db = (store as unknown as { db: import("better-sqlite3").Database }).db;
-    const oldRow = db.prepare(`SELECT next_verification FROM verified_facts WHERE id = ?`).get(id) as { next_verification: string | null };
+    const db = (store as unknown as { db: import("node:sqlite").DatabaseSync }).db;
+    const oldRow = db.prepare("SELECT next_verification FROM verified_facts WHERE id = ?").get(id) as {
+      next_verification: string | null;
+    };
     expect(oldRow.next_verification).toBeNull();
   });
 
@@ -253,8 +249,8 @@ describe("VerificationStore.update", () => {
     const id2 = store.update(id1, "V2", "user");
     expect(() => store.update(id1, "V2-alt", "user")).toThrow(VerificationError);
     const vf = store.getVerified("fact-chain");
-    expect(vf!.canonicalText).toBe("V2");
-    expect(vf!.id).toBe(id2);
+    expect(vf?.canonicalText).toBe("V2");
+    expect(vf?.id).toBe(id2);
   });
 
   it("update computes correct checksum for new text", async () => {
@@ -262,7 +258,7 @@ describe("VerificationStore.update", () => {
     store.update(id, "Updated text", "system");
 
     const vf = store.getVerified("fact-cs");
-    expect(vf!.checksum).toBe(sha256("Updated text"));
+    expect(vf?.checksum).toBe(sha256("Updated text"));
   });
 });
 
@@ -280,10 +276,8 @@ describe("VerificationStore.listDueForReverification", () => {
   it("returns entries whose next_verification is in the past", async () => {
     // Store a fact then manually backdate its next_verification
     const id = store.verify("fact-overdue", "Old fact", "agent");
-    const db = (store as unknown as { db: import("better-sqlite3").Database }).db;
-    db.prepare(
-      `UPDATE verified_facts SET next_verification = '2020-01-01T00:00:00.000Z' WHERE id = ?`
-    ).run(id);
+    const db = (store as unknown as { db: import("node:sqlite").DatabaseSync }).db;
+    db.prepare(`UPDATE verified_facts SET next_verification = '2020-01-01T00:00:00.000Z' WHERE id = ?`).run(id);
 
     const due = store.listDueForReverification();
     expect(due.length).toBeGreaterThan(0);
@@ -299,10 +293,8 @@ describe("VerificationStore.listDueForReverification", () => {
 
   it("returns entries whose verified_at is older than reverificationDays", async () => {
     const id = store.verify("fact-stale", "Stale fact", "agent");
-    const db = (store as unknown as { db: import("better-sqlite3").Database }).db;
-    db.prepare(
-      `UPDATE verified_facts SET verified_at = '2020-01-01T00:00:00.000Z' WHERE id = ?`
-    ).run(id);
+    const db = (store as unknown as { db: import("node:sqlite").DatabaseSync }).db;
+    db.prepare(`UPDATE verified_facts SET verified_at = '2020-01-01T00:00:00.000Z' WHERE id = ?`).run(id);
 
     const due = store.listDueForReverification();
     expect(due.map((d) => d.id)).toContain(id);
@@ -311,13 +303,9 @@ describe("VerificationStore.listDueForReverification", () => {
   it("does not return superseded versions even if they are stale", async () => {
     const id = store.verify("fact-latest", "Original", "agent");
     const newId = store.update(id, "Updated", "system");
-    const db = (store as unknown as { db: import("better-sqlite3").Database }).db;
-    db.prepare(
-      `UPDATE verified_facts SET verified_at = '2020-01-01T00:00:00.000Z' WHERE id = ?`
-    ).run(id);
-    db.prepare(
-      `UPDATE verified_facts SET next_verification = '2020-01-01T00:00:00.000Z' WHERE id = ?`
-    ).run(newId);
+    const db = (store as unknown as { db: import("node:sqlite").DatabaseSync }).db;
+    db.prepare(`UPDATE verified_facts SET verified_at = '2020-01-01T00:00:00.000Z' WHERE id = ?`).run(id);
+    db.prepare(`UPDATE verified_facts SET next_verification = '2020-01-01T00:00:00.000Z' WHERE id = ?`).run(newId);
 
     const due = store.listDueForReverification();
     const ids = due.map((d) => d.id);
@@ -332,9 +320,7 @@ describe("VerificationStore.listDueForReverification", () => {
 
 describe("shouldAutoVerify", () => {
   it("returns true for a fact containing an IP address", () => {
-    expect(
-      shouldAutoVerify({ text: "Server at 192.168.1.1", category: "fact", tags: [] })
-    ).toBe(true);
+    expect(shouldAutoVerify({ text: "Server at 192.168.1.1", category: "fact", tags: [] })).toBe(true);
   });
 
   it("returns true for various valid IPv4 addresses", () => {
@@ -349,7 +335,7 @@ describe("shouldAutoVerify", () => {
         text: "Load balancer config",
         category: "technical",
         tags: ["infrastructure"],
-      })
+      }),
     ).toBe(true);
   });
 
@@ -360,7 +346,7 @@ describe("shouldAutoVerify", () => {
         category: "other",
         tags: [],
         entity: "api.example.com",
-      })
+      }),
     ).toBe(true);
   });
 
@@ -372,7 +358,7 @@ describe("shouldAutoVerify", () => {
         tags: [],
         entity: "Credentials",
         value: "vault:api.example.com:token",
-      })
+      }),
     ).toBe(true);
   });
 
@@ -383,7 +369,7 @@ describe("shouldAutoVerify", () => {
         category: "other",
         tags: [],
         verificationTier: "critical",
-      })
+      }),
     ).toBe(true);
   });
 
@@ -393,7 +379,7 @@ describe("shouldAutoVerify", () => {
         text: "User prefers dark mode",
         category: "preference",
         tags: [],
-      })
+      }),
     ).toBe(false);
   });
 
@@ -403,7 +389,7 @@ describe("shouldAutoVerify", () => {
         text: "Load balancer",
         category: "fact",
         tags: ["infrastructure"],
-      })
+      }),
     ).toBe(false);
   });
 
@@ -413,7 +399,7 @@ describe("shouldAutoVerify", () => {
         text: "Algorithm uses O(n log n)",
         category: "technical",
         tags: ["algorithm"],
-      })
+      }),
     ).toBe(false);
   });
 });
@@ -473,7 +459,7 @@ describe("VerificationConfig defaults", () => {
       s.verify("fact-cfg", "Config test", "agent");
       const vf = s.getVerified("fact-cfg");
       const now = Date.now();
-      const next = new Date(vf!.nextVerification!).getTime();
+      const next = new Date(vf?.nextVerification!).getTime();
       const diffDays = (next - now) / (24 * 3600 * 1000);
       expect(diffDays).toBeGreaterThan(28);
       expect(diffDays).toBeLessThan(32);
@@ -490,7 +476,7 @@ describe("VerificationConfig defaults", () => {
 
     custom.verify("fact-7d", "7-day reverification", "agent");
     const vf = custom.getVerified("fact-7d");
-    const next = new Date(vf!.nextVerification!).getTime();
+    const next = new Date(vf?.nextVerification!).getTime();
     const diffDays = (next - Date.now()) / (24 * 3600 * 1000);
     expect(diffDays).toBeGreaterThan(5);
     expect(diffDays).toBeLessThan(9);

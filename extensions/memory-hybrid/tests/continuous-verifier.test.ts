@@ -32,19 +32,19 @@
  *     - parses custom values correctly
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
-import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { hybridConfigSchema } from "../config.js";
+import { _testing } from "../index.js";
 import {
   ContinuousVerifier,
-  runVerificationCycle,
   buildVerificationPrompt,
   parseVerificationOutcome,
+  runVerificationCycle,
 } from "../services/continuous-verifier.js";
-import { _testing } from "../index.js";
-import { hybridConfigSchema } from "../config.js";
 
 const { VerificationStore, FactsDB } = _testing;
 
@@ -175,7 +175,7 @@ describe("ContinuousVerifier.verifyFact", () => {
     const mockOpenAI = makeMockOpenAI("CONFIRMED – still accurate");
     const verifier = new ContinuousVerifier(store, factsDb, mockOpenAI as never);
 
-    const id = await store.verify("fact-1", "Server IP is 10.0.0.1", "agent");
+    const _id = await store.verify("fact-1", "Server IP is 10.0.0.1", "agent");
     const vf = await store.getVerified("fact-1");
     const outcome = await verifier.verifyFact(vf!, ["The server is still running at 10.0.0.1"]);
     expect(outcome).toBe("CONFIRMED");
@@ -250,7 +250,7 @@ describe("ContinuousVerifier.runCycle — CONFIRMED", () => {
 
     const id = await store.verify("fact-c", "Critical infrastructure IP", "agent");
     // Backdate next_verification so it is due
-    const db = (store as unknown as { db: import("better-sqlite3").Database }).db;
+    const db = (store as unknown as { db: import("node:sqlite").DatabaseSync }).db;
     db.prepare(`UPDATE verified_facts SET next_verification = '2020-01-01T00:00:00.000Z' WHERE id = ?`).run(id);
 
     const result = await verifier.runCycle();
@@ -287,7 +287,7 @@ describe("ContinuousVerifier.runCycle — STALE", () => {
     const storeId = await store.verify(factId, "Server IP is 10.0.0.1", "agent");
 
     // Backdate next_verification
-    const db = (store as unknown as { db: import("better-sqlite3").Database }).db;
+    const db = (store as unknown as { db: import("node:sqlite").DatabaseSync }).db;
     db.prepare(`UPDATE verified_facts SET next_verification = '2020-01-01T00:00:00.000Z' WHERE id = ?`).run(storeId);
 
     const result = await verifier.runCycle();
@@ -297,8 +297,8 @@ describe("ContinuousVerifier.runCycle — STALE", () => {
 
     const updated = factsDb.getById(factId);
     expect(updated).not.toBeNull();
-    expect(updated!.confidence).toBe(0.2);
-    expect(updated!.tags).toContain("needs-verification");
+    expect(updated?.confidence).toBe(0.2);
+    expect(updated?.tags).toContain("needs-verification");
   });
 
   it("increments stale counter", async () => {
@@ -306,7 +306,7 @@ describe("ContinuousVerifier.runCycle — STALE", () => {
     const verifier = new ContinuousVerifier(store, factsDb, mockOpenAI as never);
 
     const storeId = await store.verify("fact-stale-count", "Some fact", "agent");
-    const db = (store as unknown as { db: import("better-sqlite3").Database }).db;
+    const db = (store as unknown as { db: import("node:sqlite").DatabaseSync }).db;
     db.prepare(`UPDATE verified_facts SET next_verification = '2020-01-01T00:00:00.000Z' WHERE id = ?`).run(storeId);
 
     const result = await verifier.runCycle();
@@ -333,10 +333,10 @@ describe("ContinuousVerifier.runCycle — UNCERTAIN", () => {
       source: "test",
     });
     const factId = adminEntry.id;
-    const originalConfidence = factsDb.getById(factId)!.confidence;
+    const originalConfidence = factsDb.getById(factId)?.confidence;
 
     const storeId = await store.verify(factId, "Admin endpoint URL", "agent");
-    const db = (store as unknown as { db: import("better-sqlite3").Database }).db;
+    const db = (store as unknown as { db: import("node:sqlite").DatabaseSync }).db;
     db.prepare(`UPDATE verified_facts SET next_verification = '2020-01-01T00:00:00.000Z' WHERE id = ?`).run(storeId);
 
     const result = await verifier.runCycle();
@@ -345,8 +345,8 @@ describe("ContinuousVerifier.runCycle — UNCERTAIN", () => {
     expect(result.stale).toBe(0);
 
     const updated = factsDb.getById(factId);
-    expect(updated!.confidence).toBe(originalConfidence);
-    expect(updated!.tags).toContain("review-needed");
+    expect(updated?.confidence).toBe(originalConfidence);
+    expect(updated?.tags).toContain("review-needed");
   });
 });
 
@@ -373,8 +373,11 @@ describe("ContinuousVerifier.runCycle — error handling", () => {
 
     const id1 = await store.verify("fact-err1", "Fact one", "agent");
     const id2 = await store.verify("fact-err2", "Fact two", "agent");
-    const db = (store as unknown as { db: import("better-sqlite3").Database }).db;
-    db.prepare(`UPDATE verified_facts SET next_verification = '2020-01-01T00:00:00.000Z' WHERE id IN (?, ?)`).run(id1, id2);
+    const db = (store as unknown as { db: import("node:sqlite").DatabaseSync }).db;
+    db.prepare(`UPDATE verified_facts SET next_verification = '2020-01-01T00:00:00.000Z' WHERE id IN (?, ?)`).run(
+      id1,
+      id2,
+    );
 
     const result = await verifier.runCycle();
     expect(result.checked).toBe(2);
@@ -388,7 +391,7 @@ describe("ContinuousVerifier.runCycle — error handling", () => {
 
     // Verify a factId that doesn't exist in FactsDB
     const storeId = await store.verify("nonexistent-fact-id", "Some fact", "agent");
-    const db = (store as unknown as { db: import("better-sqlite3").Database }).db;
+    const db = (store as unknown as { db: import("node:sqlite").DatabaseSync }).db;
     db.prepare(`UPDATE verified_facts SET next_verification = '2020-01-01T00:00:00.000Z' WHERE id = ?`).run(storeId);
 
     const result = await verifier.runCycle();
@@ -401,7 +404,7 @@ describe("ContinuousVerifier.runCycle — error handling", () => {
     const verifier = new ContinuousVerifier(store, factsDb, mockOpenAI as never);
 
     const storeId = await store.verify("nonexistent-fact-id-2", "Some fact", "agent");
-    const db = (store as unknown as { db: import("better-sqlite3").Database }).db;
+    const db = (store as unknown as { db: import("node:sqlite").DatabaseSync }).db;
     db.prepare(`UPDATE verified_facts SET next_verification = '2020-01-01T00:00:00.000Z' WHERE id = ?`).run(storeId);
 
     const result = await verifier.runCycle();
@@ -437,7 +440,7 @@ describe("ContinuousVerifier.runCycle — multiple facts", () => {
       await store.verify("f-multi-2", "Fact two", "agent"),
       await store.verify("f-multi-3", "Fact three", "agent"),
     ];
-    const db = (store as unknown as { db: import("better-sqlite3").Database }).db;
+    const db = (store as unknown as { db: import("node:sqlite").DatabaseSync }).db;
     for (const id of ids) {
       db.prepare(`UPDATE verified_facts SET next_verification = '2020-01-01T00:00:00.000Z' WHERE id = ?`).run(id);
     }
@@ -465,7 +468,7 @@ describe("runVerificationCycle", () => {
   it("passes verificationModel option to the verifier", async () => {
     const mockOpenAI = makeMockOpenAI("CONFIRMED – valid");
     const storeId = await store.verify("fact-model", "Some fact", "agent");
-    const db = (store as unknown as { db: import("better-sqlite3").Database }).db;
+    const db = (store as unknown as { db: import("node:sqlite").DatabaseSync }).db;
     db.prepare(`UPDATE verified_facts SET next_verification = '2020-01-01T00:00:00.000Z' WHERE id = ?`).run(storeId);
 
     const result = await runVerificationCycle(store, factsDb, mockOpenAI as never, {

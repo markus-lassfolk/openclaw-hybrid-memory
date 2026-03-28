@@ -10,26 +10,38 @@
  *   - graph: Graph-walk spreading activation (GraphRAG expansion)
  */
 
-import type Database from "better-sqlite3";
+import type { DatabaseSync } from "node:sqlite";
 import type { VectorDB } from "../backends/vector-db.js";
+import type { ClustersConfig, RerankingConfig, RetrievalConfig } from "../config.js";
 import type { MemoryEntry, SearchResult } from "../types/memory.js";
+import { stableStringify } from "../utils/stable-stringify.js";
+import { DocumentGrader } from "./document-grader.js";
+import type { EmbeddingRegistry } from "./embedding-registry.js";
+import { shouldSuppressEmbeddingError } from "./embeddings.js";
+import { capturePluginError } from "./error-reporter.js";
 import { searchFts } from "./fts-search.js";
+import { type GraphFactLookup, expandGraph } from "./graph-retrieval.js";
+import { expandQueryWithHyde } from "./hyde-helper.js";
+import type { QueryExpander } from "./query-expander.js";
+import { type QueryValidationResult, validateQueryForMemoryLookup } from "./query-validator.js";
+import { type ScoredFact, rerankResults } from "./reranker.js";
+import { type AliasDB, searchAliasStrategy } from "./retrieval-aliases.js";
 import {
-  fuseResults,
-  applyPostRrfAdjustments,
+  DEFAULT_INTERACTIVE_RECALL_POLICY,
+  type ExplicitDeepRetrievalPolicy,
+  type InteractiveRecallPolicy,
+  resolveExplicitDeepRetrievalPolicy,
+  resolveInteractiveRecallPolicy,
+} from "./retrieval-mode-policy.js";
+import {
+  type FactMetadata,
+  type FusedResult,
   RRF_K_DEFAULT,
   type RankedResult,
-  type FusedResult,
-  type FactMetadata,
+  applyPostRrfAdjustments,
+  fuseResults,
 } from "./rrf-fusion.js";
-import type { RetrievalConfig, ClustersConfig, RerankingConfig } from "../config.js";
-import { rerankResults, type ScoredFact } from "./reranker.js";
-import type { QueryExpander } from "./query-expander.js";
-import { searchAliasStrategy, type AliasDB } from "./retrieval-aliases.js";
-import { detectClusters, type ClusterFactLookup } from "./topic-clusters.js";
-import { expandGraph, type GraphFactLookup } from "./graph-retrieval.js";
-import type { EmbeddingRegistry } from "./embedding-registry.js";
-import { capturePluginError } from "./error-reporter.js";
+import { type ClusterFactLookup, detectClusters } from "./topic-clusters.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -52,6 +64,69 @@ export interface OrchestratorResult {
 // ---------------------------------------------------------------------------
 // Defaults
 // ---------------------------------------------------------------------------
+
+export interface BuildExplicitSemanticQueryVectorDeps {
+  query: string;
+  cfg: Pick<
+    import("../config.js").HybridMemoryConfig,
+    "retrieval" | "queryExpansion" | "llm" | "embedding" | "distill" | "reflection"
+  >;
+  embeddings: import("./embeddings.js").EmbeddingProvider;
+  openai: import("openai").default | null;
+  pendingLLMWarnings: import("./chat.js").PendingLLMWarnings;
+  logger: { info: (msg: string) => void; warn: (msg: string) => void; debug?: (msg: string) => void };
+  policy?: ExplicitDeepRetrievalPolicy;
+}
+
+export async function buildExplicitSemanticQueryVector({
+  query,
+  cfg,
+  embeddings,
+  openai,
+  pendingLLMWarnings,
+  logger,
+  policy = resolveExplicitDeepRetrievalPolicy(cfg.retrieval),
+}: BuildExplicitSemanticQueryVectorDeps): Promise<{ queryVector: number[] | null; warning: string | null }> {
+  if (!cfg.retrieval.strategies.includes("semantic")) {
+    return { queryVector: null, warning: null };
+  }
+
+  try {
+    import("./error-reporter.js").then(({ addOperationBreadcrumb }) =>
+      addOperationBreadcrumb("retrieval", `${policy.mode}-vector-recall`),
+    );
+    let textToEmbed = query;
+
+    if (policy.allowHyde && cfg.queryExpansion.enabled) {
+      textToEmbed = await expandQueryWithHyde({
+        query,
+        rawCfg: cfg as Parameters<typeof import("../config/index.js").getCronModelConfig>[0],
+        model: cfg.queryExpansion.model,
+        timeoutMs: cfg.queryExpansion.timeoutMs,
+        openai: openai as any,
+        label: "HyDE",
+        pendingWarnings: pendingLLMWarnings,
+        logger,
+        subsystem: "retrieval",
+        operation: "explicit-hyde-generation",
+      });
+    }
+
+    return { queryVector: await embeddings.embed(textToEmbed), warning: null };
+  } catch (err) {
+    if (!shouldSuppressEmbeddingError(err)) {
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        subsystem: "retrieval",
+        operation: "explicit-vector-embed",
+      });
+    }
+    logger.warn(`memory-hybrid: embedding generation failed: ${err}`);
+    return {
+      queryVector: null,
+      warning: "Semantic search unavailable due to embedding failure; results may be incomplete.",
+    };
+  }
+}
 
 export const DEFAULT_RETRIEVAL_CONFIG: RetrievalConfig = {
   strategies: ["semantic", "fts5", "graph"],
@@ -148,7 +223,7 @@ export function packIntoBudget(
  * Returns ranked results (best = rank 1).
  */
 function runFts5Strategy(
-  db: Database.Database,
+  db: DatabaseSync,
   query: string,
   limit: number,
   tagFilter?: string,
@@ -167,11 +242,7 @@ function runFts5Strategy(
  * Run semantic (vector) search strategy.
  * Returns ranked results (best = rank 1).
  */
-async function runSemanticStrategy(
-  vectorDb: VectorDB,
-  queryVector: number[],
-  topK: number,
-): Promise<RankedResult[]> {
+async function runSemanticStrategy(vectorDb: VectorDB, queryVector: number[], topK: number): Promise<RankedResult[]> {
   const results: SearchResult[] = await vectorDb.search(queryVector, topK, 0.3);
   return results.map((r, i) => ({
     factId: r.entry.id,
@@ -207,10 +278,10 @@ async function runMultiModelSemanticStrategies(
   const settled = await Promise.allSettled(embedTasks);
   for (const s of settled) {
     if (s.status === "rejected") {
-      capturePluginError(
-        s.reason instanceof Error ? s.reason : new Error(String(s.reason)),
-        { subsystem: "retrieval", operation: "multi-model-embed" },
-      );
+      capturePluginError(s.reason instanceof Error ? s.reason : new Error(String(s.reason)), {
+        subsystem: "retrieval",
+        operation: "multi-model-embed",
+      });
       continue;
     }
     const { name, queryVec } = s.value;
@@ -229,11 +300,14 @@ async function runMultiModelSemanticStrategies(
       .slice(0, topK);
 
     if (scored.length > 0) {
-      result.set(`semantic:${name}`, scored.map((r, i) => ({
-        factId: r.factId,
-        rank: i + 1,
-        source: `semantic:${name}` as const,
-      })));
+      result.set(
+        `semantic:${name}`,
+        scored.map((r, i) => ({
+          factId: r.factId,
+          rank: i + 1,
+          source: `semantic:${name}` as const,
+        })),
+      );
     }
   }
   return result;
@@ -242,7 +316,9 @@ async function runMultiModelSemanticStrategies(
 /** Compute cosine similarity between two Float32Arrays. Returns [-1, 1]. */
 function cosineSimilarity(a: Float32Array, b: Float32Array): number {
   if (a.length === 0 || a.length !== b.length) return 0;
-  let dot = 0, normA = 0, normB = 0;
+  let dot = 0;
+  let normA = 0;
+  let normB = 0;
   for (let i = 0; i < a.length; i++) {
     dot += a[i] * b[i];
     normA += a[i] * a[i];
@@ -334,15 +410,14 @@ class ClusterCache {
     this.ttlMs = ttlMs;
   }
 
-  getClusterMap(
-    factsDb: FactLookup & ClusterFactLookup,
-    minClusterSize?: number,
-  ): Map<string, string> {
+  getClusterMap(factsDb: FactLookup & ClusterFactLookup, minClusterSize?: number): Map<string, string> {
     const now = Date.now();
     const linkCount = typeof factsDb.linksCount === "function" ? factsDb.linksCount() : null;
     if (this.clusterCache && now - this.clusterCache.timestamp < this.ttlMs) {
-      if ((linkCount == null || linkCount === this.clusterCacheLinkCount) &&
-          this.clusterCache.minClusterSize === minClusterSize) {
+      if (
+        (linkCount == null || linkCount === this.clusterCacheLinkCount) &&
+        this.clusterCache.minClusterSize === minClusterSize
+      ) {
         return this.clusterCache.clusters;
       }
     }
@@ -367,9 +442,234 @@ class ClusterCache {
 }
 
 const clusterCache = new ClusterCache();
+const DEFAULT_SEMANTIC_CACHE_TTL_MS = 5 * 60 * 1000;
+const DEFAULT_SEMANTIC_CACHE_MIN_SIMILARITY = 0.95;
+const MAX_REWRITE_ITERATIONS = 2;
 
 export function invalidateClusterCache(): void {
   clusterCache.invalidate();
+}
+
+type SemanticCacheCapableVectorDB = import("../backends/vector-db.js").VectorDB;
+
+function describeEmbeddingRegistry(registry: EmbeddingRegistry | null | undefined): unknown {
+  if (!registry) return null;
+
+  const primaryModel = typeof registry.getPrimaryModel === "function" ? registry.getPrimaryModel() : null;
+  const additionalModels =
+    typeof registry.getModels === "function"
+      ? registry
+          .getModels()
+          .map((model) => ({
+            name: model.name,
+            provider: model.provider,
+            dimensions: model.dimensions,
+            role: model.role ?? null,
+          }))
+          .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
+      : [];
+
+  return {
+    primaryModel,
+    additionalModels,
+    multiModel: typeof registry.isMultiModel === "function" ? registry.isMultiModel() : additionalModels.length > 0,
+  };
+}
+
+function buildSemanticCacheFilterKey(config: RetrievalConfig, options: RetrievalPipelineOptions): string {
+  const expanderMode =
+    options.queryExpander && typeof (options.queryExpander as QueryExpander).getMode === "function"
+      ? options.queryExpander.getMode()
+      : options.queryExpander
+        ? "always"
+        : "off";
+  const expanderThreshold =
+    options.queryExpander && typeof (options.queryExpander as QueryExpander).getThreshold === "function"
+      ? options.queryExpander.getThreshold()
+      : null;
+
+  return stableStringify({
+    strategies: [...config.strategies].sort(),
+    rrfK: config.rrf_k,
+    semanticTopK: config.semanticTopK,
+    fts5TopK: config.fts5TopK,
+    graphWalkDepth: config.graphWalkDepth,
+    tagFilter: options.tagFilter ?? null,
+    includeSuperseded: options.includeSuperseded ?? false,
+    scopeFilter: options.scopeFilter ?? null,
+    asOf: options.asOf ?? null,
+    clustersConfig: options.clustersConfig ?? null,
+    rerankingAvailable: Boolean(options.rerankingConfig?.enabled && options.rerankingOpenai),
+    rerankingConfig: options.rerankingConfig ?? null,
+    documentGradingAvailable: Boolean(
+      options.documentGrader || (options.documentGradingConfig?.enabled && options.adaptiveOpenai),
+    ),
+    documentGradingConfig: options.documentGradingConfig ?? null,
+    documentGraderOverride: options.documentGrader ? (options.documentGrader.constructor?.name ?? "custom") : null,
+    aliasDbEnabled: Boolean(options.aliasDb),
+    queryExpansionMode: expanderMode,
+    queryExpansionThreshold: expanderThreshold,
+    queryExpansionContext: options.queryExpansionContext ?? null,
+    embeddingRegistry: describeEmbeddingRegistry(options.embeddingRegistry),
+    embeddingFactsEnabled: Boolean(options.factsDbForEmbeddings),
+  });
+}
+
+function shouldPreferResult(
+  candidate: { result: OrchestratorResult; shouldRewrite: boolean },
+  incumbent: OrchestratorResult | null,
+  incumbentWasIrrelevant: boolean,
+): boolean {
+  if (!incumbent) return true;
+
+  const candidateHasRelevantDocs = !candidate.shouldRewrite;
+  const incumbentHasRelevantDocs = !incumbentWasIrrelevant;
+  if (candidateHasRelevantDocs !== incumbentHasRelevantDocs) {
+    return candidateHasRelevantDocs;
+  }
+
+  if (candidate.result.fused.length !== incumbent.fused.length) {
+    return candidate.result.fused.length > incumbent.fused.length;
+  }
+
+  return (candidate.result.fused[0]?.finalScore ?? 0) > (incumbent.fused[0]?.finalScore ?? 0);
+}
+
+function collectContradictedIds(
+  factsDb: FactLookup,
+  orderedEntries: Array<{ factId: string; entry: MemoryEntry }>,
+): Set<string> {
+  const contradictedIds = new Set<string>();
+  if (factsDb.getContradictedIds) {
+    const allIds = orderedEntries.map((entry) => entry.factId);
+    const batch = factsDb.getContradictedIds(allIds);
+    for (const id of batch) contradictedIds.add(id);
+    return contradictedIds;
+  }
+
+  if (factsDb.isContradicted) {
+    for (const { factId } of orderedEntries) {
+      if (factsDb.isContradicted(factId)) contradictedIds.add(factId);
+    }
+  }
+
+  return contradictedIds;
+}
+
+function buildOrchestratorResult(
+  factsDb: FactLookup,
+  fused: FusedResult[],
+  orderedEntries: Array<{ factId: string; entry: MemoryEntry }>,
+  budgetTokens: number,
+): OrchestratorResult {
+  const contradictedIds = collectContradictedIds(factsDb, orderedEntries);
+  const { packed, tokensUsed } = packIntoBudget(orderedEntries, budgetTokens, { contradictedIds });
+  const packedFactIds = orderedEntries.slice(0, packed.length).map((entry) => entry.factId);
+  return {
+    fused,
+    packed,
+    packedFactIds,
+    tokensUsed,
+    entries: orderedEntries.map((entry) => entry.entry),
+  };
+}
+
+function buildCachedResult(
+  factsDb: FactLookup,
+  factIds: string[],
+  budgetTokens: number,
+  options: { includeSuperseded?: boolean; scopeFilter?: unknown; asOf?: number; nowSec: number },
+): OrchestratorResult {
+  const getByIdOpts =
+    options.scopeFilter || options.asOf != null ? { scopeFilter: options.scopeFilter, asOf: options.asOf } : undefined;
+  const effectiveNow = options.asOf ?? options.nowSec;
+
+  const orderedEntries: Array<{ factId: string; entry: MemoryEntry }> = [];
+  const fused: FusedResult[] = [];
+  let acceptedCount = 0;
+
+  for (const factId of factIds) {
+    const entry = factsDb.getById(factId, getByIdOpts);
+    if (!entry) continue;
+    if (!options.includeSuperseded) {
+      if (entry.supersededAt != null) continue;
+      if (entry.expiresAt != null && entry.expiresAt <= effectiveNow) continue;
+    }
+
+    orderedEntries.push({ factId, entry });
+    fused.push({
+      factId,
+      sources: [{ strategy: "semantic-cache", rank: acceptedCount + 1 }],
+      finalScore: 1 / (acceptedCount + 1),
+      rrfScore: 1 / (acceptedCount + 1),
+    });
+    acceptedCount++;
+  }
+
+  return buildOrchestratorResult(factsDb, fused, orderedEntries, budgetTokens);
+}
+
+/**
+ * Options bag for `runRetrievalPipeline`.
+ *
+ * All fields are optional. Required inputs (`query`, `queryVector`, `db`,
+ * `vectorDb`, `factsDb`) are kept as positional parameters because they are
+ * always needed; everything else lives here so callers can pass only what they
+ * actually use — without placeholder nulls — and new strategies can be added
+ * without touching every call site.
+ */
+export interface RetrievalPipelineOptions {
+  /** Retrieval mode shortcut. When provided, derives the policy automatically.
+   * 'interactive-recall' -> interactive recall policy (disables graph expansion).
+   * 'explicit-deep' -> explicit deep retrieval policy.
+   * Overridden by an explicit `policy` option. */
+  mode?: import("./retrieval-mode-policy.js").RetrievalMode;
+  /** Explicit/deep retrieval policy. Defaults to resolveExplicitDeepRetrievalPolicy(config). */
+  policy?: ExplicitDeepRetrievalPolicy;
+  /** Retrieval pipeline configuration. Defaults to `DEFAULT_RETRIEVAL_CONFIG`. */
+  config?: RetrievalConfig;
+  /** Token budget for packing. Defaults to `config.explicitBudgetTokens`. */
+  budgetTokens?: number;
+  /** Current time as epoch seconds. Defaults to `Math.floor(Date.now() / 1000)`. */
+  nowSec?: number;
+  /** Optional tag constraint propagated into the FTS5 strategy. */
+  tagFilter?: string;
+  /** When true, superseded/expired facts are included. Default false. */
+  includeSuperseded?: boolean;
+  /** Scope constraints applied when resolving fused fact IDs. */
+  scopeFilter?: unknown;
+  /** Temporal filter applied when resolving fused fact IDs. */
+  asOf?: number;
+  /** Alias DB for alias-search RRF strategy (Issue #149). */
+  aliasDb?: AliasDB | null;
+  /** Cluster sibling-boost configuration (Issue #146). */
+  clustersConfig?: ClustersConfig;
+  /** Multi-model embedding registry (Issue #158). Each registered model adds its own RRF strategy. */
+  embeddingRegistry?: EmbeddingRegistry | null;
+  /** Access to the fact_embeddings table (Issue #158). When `embeddingRegistry` is set but this is omitted/null, multi-model strategies are silently skipped (graceful degradation). */
+  factsDbForEmbeddings?: FactsDbWithEmbeddings | null;
+  /** Query expander for variant-query strategies (Issue #160). */
+  queryExpander?: QueryExpander | null;
+  /** Embed function used to vectorise expanded query variants (Issue #160). */
+  embedFn?: ((text: string) => Promise<number[]>) | null;
+  /** Recent conversation context passed to the LLM query expander. */
+  queryExpansionContext?: string;
+  /** Re-ranking configuration (Issue #161). */
+  rerankingConfig?: RerankingConfig | null;
+  /** OpenAI-compatible client for re-ranking LLM calls (Issue #161). */
+  rerankingOpenai?: import("openai").default | null;
+  /** Optional semantic cache TTL. Defaults to 5 minutes. */
+  semanticCacheTtlMs?: number;
+  /** Optional semantic cache minimum cosine similarity. Defaults to 0.95. */
+  semanticCacheMinSimilarity?: number;
+  /** Optional query validator override. */
+  queryValidator?: ((query: string) => QueryValidationResult | Promise<QueryValidationResult>) | null;
+  /** Optional document grader override. */
+  documentGrader?: DocumentGrader | null;
+  /** OpenAI-compatible client for adaptive grading/rewrite loops. */
+  adaptiveOpenai?: import("openai").default | null;
+  /** Document grading configuration. */
+  documentGradingConfig?: import("../config.js").DocumentGradingConfig | null;
 }
 
 /**
@@ -385,59 +685,160 @@ export function invalidateClusterCache(): void {
  * @param query - Raw search query string.
  * @param queryVector - Pre-computed embedding vector for semantic search.
  *   Pass null to skip semantic strategy.
- * @param db - better-sqlite3 Database instance for FTS5 queries.
+ * @param db - node:sqlite DatabaseSync instance for FTS5 queries.
  * @param vectorDb - LanceDB VectorDB instance for semantic queries.
  * @param factsDb - FactsDB for metadata lookup.
- * @param config - Retrieval pipeline configuration.
- * @param budgetTokens - Token budget for packing (overrides config defaults).
- * @param nowSec - Current time as epoch seconds (default: Date.now()/1000).
- * @param tagFilter - Optional tag constraint to propagate into FTS5 strategy.
- * @param includeSuperseded - Whether to include superseded facts (default false).
- * @param scopeFilter - Scope constraints applied when resolving fused fact IDs.
- * @param asOf - Temporal filter applied when resolving fused fact IDs.
- * @param embeddingRegistry - Optional multi-model registry (Issue #158). When provided and
- *   has additional models registered, each model contributes a separate RRF strategy.
- * @param factsDbForEmbeddings - Optional access to fact_embeddings table (Issue #158).
- * @param queryExpander - Optional query expander instance (Issue #160). When provided and
- *   expansion is enabled, generates variant queries and adds each as a separate RRF strategy.
- * @param embedFn - Optional function to embed text (Issue #160). Required for expansion to work.
- * @param queryExpansionContext - Optional recent conversation context to improve expansion quality.
- * @param rerankingConfig - Optional re-ranking configuration (Issue #161). When provided and
- *   enabled, calls an LLM to re-rank the top candidates by semantic relevance to the query.
- * @param rerankingOpenai - Optional OpenAI-compatible client for re-ranking LLM calls.
+ * @param options - Optional settings; see `RetrievalPipelineOptions`.
  */
-export async function runRetrievalPipeline(
+export async function runExplicitDeepRetrieval(
   query: string,
   queryVector: number[] | null,
-  db: Database.Database,
+  db: DatabaseSync,
   vectorDb: VectorDB,
   factsDb: FactLookup,
-  config: RetrievalConfig = DEFAULT_RETRIEVAL_CONFIG,
-  budgetTokens: number = config.explicitBudgetTokens,
-  nowSec: number = Math.floor(Date.now() / 1000),
-  tagFilter?: string,
-  includeSuperseded?: boolean,
-  scopeFilter?: unknown,
-  asOf?: number,
-  aliasDb?: AliasDB | null,
-  clustersConfig?: ClustersConfig,
-  embeddingRegistry?: EmbeddingRegistry | null,
-  factsDbForEmbeddings?: FactsDbWithEmbeddings | null,
-  queryExpander?: QueryExpander | null,
-  embedFn?: ((text: string) => Promise<number[]>) | null,
-  queryExpansionContext?: string,
-  rerankingConfig?: RerankingConfig | null,
-  rerankingOpenai?: import("openai").default | null,
+  options: RetrievalPipelineOptions = {},
 ): Promise<OrchestratorResult> {
-  const runOnce = async (expansion: { useLlm: boolean; variants: string[] | null; skipReranking?: boolean }): Promise<OrchestratorResult> => {
+  const config = options.config ?? DEFAULT_RETRIEVAL_CONFIG;
+  let resolvedPolicy: ExplicitDeepRetrievalPolicy | InteractiveRecallPolicy;
+  if (options.policy) {
+    resolvedPolicy = options.policy;
+  } else if (options.mode === "interactive-recall") {
+    resolvedPolicy = DEFAULT_INTERACTIVE_RECALL_POLICY;
+  } else {
+    resolvedPolicy = resolveExplicitDeepRetrievalPolicy(config);
+  }
+  const policy = resolvedPolicy;
+  const budgetTokens = options.budgetTokens ?? config.explicitBudgetTokens;
+  const nowSec = options.nowSec ?? Math.floor(Date.now() / 1000);
+  const {
+    tagFilter,
+    includeSuperseded,
+    scopeFilter,
+    asOf,
+    aliasDb,
+    clustersConfig,
+    embeddingRegistry,
+    factsDbForEmbeddings,
+    queryExpander,
+    embedFn,
+    queryExpansionContext,
+    rerankingConfig,
+    rerankingOpenai,
+    semanticCacheTtlMs,
+    semanticCacheMinSimilarity,
+    queryValidator,
+    documentGrader,
+    adaptiveOpenai,
+    documentGradingConfig,
+  } = options;
+
+  const validator = queryValidator ?? validateQueryForMemoryLookup;
+  const vectorDbWithCache = vectorDb as SemanticCacheCapableVectorDB;
+  const semanticCacheFilterKey = buildSemanticCacheFilterKey(config, options);
+  const activeDocumentGrader =
+    documentGrader ??
+    (adaptiveOpenai && documentGradingConfig?.enabled
+      ? new DocumentGrader(adaptiveOpenai, {
+          model: documentGradingConfig.model,
+          timeoutMs: documentGradingConfig.timeoutMs,
+        })
+      : null);
+
+  const applyConditionalReranking = async (
+    queryText: string,
+    initial: OrchestratorResult,
+  ): Promise<OrchestratorResult> => {
+    if (!(policy as ExplicitDeepRetrievalPolicy).allowReranking || !rerankingConfig?.enabled || !rerankingOpenai)
+      return initial;
+
+    try {
+      const rrfScoreMap = new Map(initial.fused.map((result) => [result.factId, result.finalScore]));
+      const fusedEntryMap = new Map<string, MemoryEntry>(
+        initial.fused
+          .map((result, index) => [result.factId, initial.entries[index]] as [string, MemoryEntry])
+          .filter(([, entry]) => entry != null),
+      );
+      const scoredFacts: ScoredFact[] = initial.fused.flatMap((result) => {
+        const entry = fusedEntryMap.get(result.factId);
+        if (!entry) return [];
+        const storedSec = entry.sourceDate ?? entry.createdAt;
+        return [
+          {
+            factId: result.factId,
+            text: entry.text,
+            confidence: entry.confidence,
+            storedDate: new Date(storedSec * 1000).toISOString().slice(0, 10),
+            finalScore: rrfScoreMap.get(result.factId) ?? 0,
+          },
+        ];
+      });
+      const reranked = await rerankResults(queryText, scoredFacts, rerankingConfig, rerankingOpenai);
+      const orderedEntriesReranked = reranked
+        .map((fact) => ({ factId: fact.factId, entry: fusedEntryMap.get(fact.factId)! }))
+        .filter((entry) => entry.entry);
+      const rerankedOrder = new Map(reranked.map((fact, index) => [fact.factId, index]));
+      const fusedReranked = [...initial.fused]
+        .filter((result) => rerankedOrder.has(result.factId))
+        .sort(
+          (a, b) =>
+            (rerankedOrder.get(a.factId) ?? Number.POSITIVE_INFINITY) -
+            (rerankedOrder.get(b.factId) ?? Number.POSITIVE_INFINITY),
+        );
+      return buildOrchestratorResult(factsDb, fusedReranked, orderedEntriesReranked, budgetTokens);
+    } catch (err) {
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        subsystem: "retrieval",
+        operation: "reranking-conditional",
+      });
+      return initial;
+    }
+  };
+
+  const runBasePipeline = async (
+    queryText: string,
+    currentQueryVector: number[] | null,
+    expansion: {
+      useLlm: boolean;
+      variants: string[] | null;
+      skipReranking?: boolean;
+    },
+  ): Promise<{ result: OrchestratorResult; shouldRewrite: boolean; fromCache: boolean }> => {
+    const validation = await Promise.resolve(validator(queryText));
+    if (!validation.requiresLookup) {
+      return {
+        result: { fused: [], packed: [], packedFactIds: [], tokensUsed: 0, entries: [] },
+        shouldRewrite: false,
+        fromCache: false,
+      };
+    }
+
+    if (currentQueryVector && typeof vectorDbWithCache.getSemanticQueryCacheMatch === "function") {
+      const cached = await vectorDbWithCache.getSemanticQueryCacheMatch(currentQueryVector, {
+        ttlMs: semanticCacheTtlMs ?? DEFAULT_SEMANTIC_CACHE_TTL_MS,
+        minSimilarity: semanticCacheMinSimilarity ?? DEFAULT_SEMANTIC_CACHE_MIN_SIMILARITY,
+        filterKey: semanticCacheFilterKey,
+      });
+      if (cached) {
+        const cachedResult = buildCachedResult(factsDb, cached.factIds, budgetTokens, {
+          includeSuperseded,
+          scopeFilter,
+          asOf,
+          nowSec,
+        });
+        if (cachedResult.fused.length > 0) {
+          return {
+            result: cachedResult,
+            shouldRewrite: false,
+            fromCache: true,
+          };
+        }
+      }
+    }
+
     const k = config.rrf_k;
     const { strategies, semanticTopK, fts5TopK } = config;
-
-    // --- Run strategies in parallel ---
     const strategyPromises: Array<Promise<[string, RankedResult[]]>> = [];
 
-    // Helper: wrap each strategy in try/catch so a synchronous throw or rejection
-    // is captured by allSettled rather than aborting the pipeline.
     const safeStrategy = (
       name: string,
       fn: () => RankedResult[] | Promise<RankedResult[]>,
@@ -456,45 +857,40 @@ export async function runRetrievalPipeline(
 
     if (strategies.includes("fts5")) {
       strategyPromises.push(
-        safeStrategy("fts5", () =>
-          runFts5Strategy(db, query, fts5TopK, tagFilter, includeSuperseded, asOf),
-        ),
+        safeStrategy("fts5", () => runFts5Strategy(db, queryText, fts5TopK, tagFilter, includeSuperseded, asOf)),
       );
     }
 
-    if (strategies.includes("semantic") && queryVector) {
+    if (strategies.includes("semantic") && currentQueryVector) {
       strategyPromises.push(
-        safeStrategy("semantic", () =>
-          runSemanticStrategy(vectorDb, queryVector, semanticTopK),
-        ),
+        safeStrategy("semantic", () => runSemanticStrategy(vectorDb, currentQueryVector, semanticTopK)),
       );
     }
 
-    // Issue #149: alias search — participates in RRF fusion as "aliases" strategy
-    if (aliasDb && queryVector) {
+    if ((policy as ExplicitDeepRetrievalPolicy).allowAliasExpansion && aliasDb && currentQueryVector) {
       strategyPromises.push(
-        safeStrategy("aliases", () =>
-          searchAliasStrategy(aliasDb, queryVector, semanticTopK),
-        ),
+        safeStrategy("aliases", () => searchAliasStrategy(aliasDb, currentQueryVector, semanticTopK)),
       );
     }
 
-    // Issue #160: query expansion — generate variant queries, embed each, run semantic search.
-    // Only runs when semantic strategy is active, expander is provided, and embedFn is available.
-    if (strategies.includes("semantic") && queryVector && queryExpander && embedFn) {
+    if (
+      (policy as ExplicitDeepRetrievalPolicy).allowQueryExpansion &&
+      strategies.includes("semantic") &&
+      currentQueryVector &&
+      queryExpander &&
+      embedFn
+    ) {
       try {
         let additionalVariants: string[] = [];
         if (expansion.useLlm) {
-          const variants = await queryExpander.expandQuery(query, queryExpansionContext);
-          // variants[0] is always the original query (already handled above); expand from index 1.
+          const variants = await queryExpander.expandQuery(queryText, queryExpansionContext);
           additionalVariants = variants.slice(1);
         } else if (expansion.variants && expansion.variants.length > 0) {
           additionalVariants = expansion.variants;
         }
 
-        for (let i = 0; i < additionalVariants.length; i++) {
-          const variantQuery = additionalVariants[i];
-          const strategyName = `semantic:qe:${i}`;
+        for (const [index, variantQuery] of additionalVariants.entries()) {
+          const strategyName = `semantic:qe:${index}`;
           strategyPromises.push(
             safeStrategy(strategyName, async () => {
               const variantVector = await embedFn(variantQuery);
@@ -502,12 +898,11 @@ export async function runRetrievalPipeline(
             }),
           );
         }
-      } catch (_err) {
-        // Graceful degradation — expansion failure never blocks retrieval
+      } catch {
+        // Graceful degradation — expansion failure never blocks retrieval.
       }
     }
 
-    // Issue #158: start multi-model semantic strategies in parallel with other strategies.
     let multiModelPromise: Promise<Map<string, RankedResult[]>> | null = null;
     if (
       strategies.includes("semantic") &&
@@ -518,30 +913,24 @@ export async function runRetrievalPipeline(
       multiModelPromise = runMultiModelSemanticStrategies(
         factsDbForEmbeddings,
         embeddingRegistry,
-        query,
+        queryText,
         semanticTopK,
       );
     }
 
     const strategySettledResults = await Promise.allSettled(strategyPromises);
-
-    // Build strategy map — rejected/empty strategies are skipped so the rest can still contribute.
     const strategyMap = new Map<string, RankedResult[]>();
     for (const settled of strategySettledResults) {
       if (settled.status === "rejected") continue;
       const [name, results] = settled.value;
-      if (results.length > 0) {
-        strategyMap.set(name, results);
-      }
+      if (results.length > 0) strategyMap.set(name, results);
     }
 
     if (multiModelPromise) {
       try {
         const multiModelResults = await multiModelPromise;
         for (const [strategyName, results] of multiModelResults) {
-          if (results.length > 0) {
-            strategyMap.set(strategyName, results);
-          }
+          if (results.length > 0) strategyMap.set(strategyName, results);
         }
       } catch (err) {
         capturePluginError(err instanceof Error ? err : new Error(String(err)), {
@@ -551,22 +940,19 @@ export async function runRetrievalPipeline(
       }
     }
 
-    // Graph walk strategy (Issue #152) — expand from semantic/FTS5 seeds
-    if (strategies.includes("graph")) {
+    if ((policy as ExplicitDeepRetrievalPolicy).allowGraphExpansion && strategies.includes("graph")) {
       const seedScores = new Map<string, number>();
       const seedEntries = new Map<string, MemoryEntry>();
-      const getByIdOpts = (scopeFilter || asOf != null)
-        ? { scopeFilter, asOf }
-        : undefined;
+      const getByIdOpts = scopeFilter || asOf != null ? { scopeFilter, asOf } : undefined;
 
       for (const results of strategyMap.values()) {
-        for (const r of results) {
-          const entry = factsDb.getById(r.factId, getByIdOpts);
+        for (const result of results) {
+          const entry = factsDb.getById(result.factId, getByIdOpts);
           if (!entry) continue;
-          const score = 1 / (k + r.rank);
-          const existing = seedScores.get(r.factId) ?? 0;
-          seedScores.set(r.factId, existing + score);
-          if (!seedEntries.has(r.factId)) seedEntries.set(r.factId, entry);
+          const score = 1 / (k + result.rank);
+          const existing = seedScores.get(result.factId) ?? 0;
+          seedScores.set(result.factId, existing + score);
+          if (!seedEntries.has(result.factId)) seedEntries.set(result.factId, entry);
         }
       }
 
@@ -581,66 +967,74 @@ export async function runRetrievalPipeline(
       }
     }
 
-    // --- RRF Fusion ---
-    const fused = fuseResults(strategyMap, k);
+    let fused: import("./rrf-fusion.js").FusedResult[];
+    if ((policy as ExplicitDeepRetrievalPolicy).allowRrfFusion) {
+      fused = fuseResults(strategyMap, k);
+    } else {
+      const allResults = Array.from(strategyMap.values()).flat();
+      const deduped = new Map<string, import("./rrf-fusion.js").FusedResult>();
 
+      for (const res of allResults) {
+        if (!deduped.has(res.factId)) {
+          deduped.set(res.factId, {
+            factId: res.factId,
+            finalScore: 1 / (k + res.rank),
+            rrfScore: 1 / (k + res.rank),
+
+            sources: [{ strategy: (res as any).strategyName || "unknown", rank: res.rank }],
+          });
+        } else {
+          deduped.get(res.factId)?.sources.push({ strategy: (res as any).strategyName || "unknown", rank: res.rank });
+        }
+      }
+
+      fused = Array.from(deduped.values()).sort((a, b) => {
+        if (b.finalScore !== a.finalScore) return b.finalScore - a.finalScore;
+        return a.factId.localeCompare(b.factId);
+      });
+    }
     if (fused.length === 0) {
-      return { fused: [], packed: [], packedFactIds: [], tokensUsed: 0, entries: [] };
+      return {
+        result: { fused: [], packed: [], packedFactIds: [], tokensUsed: 0, entries: [] },
+        shouldRewrite: false,
+        fromCache: false,
+      };
     }
 
-    // --- Build metadata map for post-RRF adjustments ---
-    // Apply scope and asOf filters when resolving fused fact IDs to prevent returning
-    // facts from outside the caller's scope (scope/session/agent boundary enforcement).
-    const getByIdOpts = (scopeFilter || asOf != null)
-      ? { scopeFilter, asOf }
-      : undefined;
-
+    const getByIdOpts = scopeFilter || asOf != null ? { scopeFilter, asOf } : undefined;
     const factMetaMap = new Map<string, FactMetadata>();
-    const orderedEntries: Array<{ factId: string; entry: MemoryEntry }> = [];
-
-    // Effective timestamp for superseded/expired checks: prefer asOf, fall back to nowSec.
+    let orderedEntries: Array<{ factId: string; entry: MemoryEntry }> = [];
     const effectiveNow = asOf ?? nowSec;
 
     for (const result of fused) {
       const entry = factsDb.getById(result.factId, getByIdOpts);
-      if (entry) {
-        // When not including superseded/expired facts, filter them out here so that
-        // semantic results (which lack SQL-level filtering) are held to the same standard
-        // as FTS5 results. This is the single enforcement point for all strategies.
-        if (!includeSuperseded) {
-          if (entry.supersededAt != null) continue;
-          if (entry.expiresAt != null && entry.expiresAt <= effectiveNow) continue;
-        }
-        factMetaMap.set(result.factId, {
-          id: entry.id,
-          confidence: entry.confidence,
-          lastAccessed: entry.lastAccessed ?? null,
-          recallCount: entry.recallCount ?? 0,
-        });
-        orderedEntries.push({ factId: result.factId, entry });
+      if (!entry) continue;
+      if (!includeSuperseded) {
+        if (entry.supersededAt != null) continue;
+        if (entry.expiresAt != null && entry.expiresAt <= effectiveNow) continue;
       }
+      factMetaMap.set(result.factId, {
+        id: entry.id,
+        confidence: entry.confidence,
+        lastAccessed: entry.lastAccessed ?? null,
+        recallCount: entry.recallCount ?? 0,
+      });
+      orderedEntries.push({ factId: result.factId, entry });
     }
 
-    // Filter fused array to remove out-of-scope or superseded/expired facts not resolved above.
-    const scopedFused = fused.filter((result) => factMetaMap.has(result.factId));
-
-    // --- Post-RRF adjustments ---
+    let scopedFused = fused.filter((result) => factMetaMap.has(result.factId));
     applyPostRrfAdjustments(scopedFused, factMetaMap, nowSec);
 
-    // --- Cluster sibling boost (Issue #146) ---
     if (clustersConfig?.enabled && hasClusterLookup(factsDb)) {
       try {
-        const clusterByFact = clusterCache.getClusterMap(
-          factsDb,
-          clustersConfig.minClusterSize,
-        );
+        const clusterByFact = clusterCache.getClusterMap(factsDb, clustersConfig.minClusterSize);
         if (clusterByFact.size > 0) {
           const clusterToIndices = new Map<string, number[]>();
-          for (let i = 0; i < scopedFused.length; i++) {
-            const clusterId = clusterByFact.get(scopedFused[i].factId);
+          for (let index = 0; index < scopedFused.length; index++) {
+            const clusterId = clusterByFact.get(scopedFused[index].factId);
             if (!clusterId) continue;
             const list = clusterToIndices.get(clusterId) ?? [];
-            list.push(i);
+            list.push(index);
             clusterToIndices.set(clusterId, list);
           }
 
@@ -648,14 +1042,14 @@ export async function runRetrievalPipeline(
           for (const indices of clusterToIndices.values()) {
             if (indices.length < 2) continue;
             let bestIndex = indices[0];
-            for (const idx of indices) {
-              if (scopedFused[idx].finalScore > scopedFused[bestIndex].finalScore) {
-                bestIndex = idx;
+            for (const index of indices) {
+              if (scopedFused[index].finalScore > scopedFused[bestIndex].finalScore) {
+                bestIndex = index;
               }
             }
-            for (const idx of indices) {
-              if (idx === bestIndex) continue;
-              scopedFused[idx].finalScore *= BOOST_MULTIPLIER;
+            for (const index of indices) {
+              if (index === bestIndex) continue;
+              scopedFused[index].finalScore *= BOOST_MULTIPLIER;
             }
           }
 
@@ -669,17 +1063,31 @@ export async function runRetrievalPipeline(
       }
     }
 
-    // Re-sort entries to match final order
-    const finalOrder = new Map<string, number>(scopedFused.map((r, i) => [r.factId, i]));
+    const finalOrder = new Map<string, number>(scopedFused.map((result, index) => [result.factId, index]));
     orderedEntries.sort((a, b) => (finalOrder.get(a.factId) ?? 0) - (finalOrder.get(b.factId) ?? 0));
 
-    // --- LLM Re-ranking (Issue #161) ---
-    // After RRF fusion (and cluster boost), optionally re-rank the top candidates via LLM.
-    // On any failure or timeout, falls back to the original RRF order (no behavior change).
-    // Skip re-ranking if explicitly requested (e.g., conditional mode first pass).
+    if (activeDocumentGrader && orderedEntries.length > 0) {
+      const grades = await activeDocumentGrader.gradeDocuments(
+        queryText,
+        orderedEntries.map(({ factId, entry }) => ({ factId, text: entry.text })),
+      );
+      if (grades.length > 0) {
+        if (grades.every((grade) => !grade.relevant)) {
+          return {
+            result: buildOrchestratorResult(factsDb, scopedFused, orderedEntries, budgetTokens),
+            shouldRewrite: true,
+            fromCache: false,
+          };
+        }
+        const relevantFactIds = new Set(grades.filter((grade) => grade.relevant).map((grade) => grade.factId));
+        orderedEntries = orderedEntries.filter(({ factId }) => relevantFactIds.has(factId));
+        scopedFused = scopedFused.filter((result) => relevantFactIds.has(result.factId));
+      }
+    }
+
     if (rerankingConfig?.enabled && rerankingOpenai && !expansion.skipReranking) {
       try {
-        const rrfScoreMap = new Map<string, number>(scopedFused.map((r) => [r.factId, r.finalScore]));
+        const rrfScoreMap = new Map<string, number>(scopedFused.map((result) => [result.factId, result.finalScore]));
         const scoredFacts: ScoredFact[] = orderedEntries.map(({ factId, entry }) => {
           const storedSec = entry.sourceDate ?? entry.createdAt;
           return {
@@ -691,20 +1099,20 @@ export async function runRetrievalPipeline(
           };
         });
 
-        const reranked = await rerankResults(query, scoredFacts, rerankingConfig, rerankingOpenai);
-
-        // Rebuild orderedEntries in the new order.
-        const rerankedOrder = new Map(reranked.map((f, i) => [f.factId, i]));
+        const reranked = await rerankResults(queryText, scoredFacts, rerankingConfig, rerankingOpenai);
+        const rerankedOrder = new Map(reranked.map((fact, index) => [fact.factId, index]));
         orderedEntries.sort(
-          (a, b) => (rerankedOrder.get(a.factId) ?? Infinity) - (rerankedOrder.get(b.factId) ?? Infinity),
+          (a, b) =>
+            (rerankedOrder.get(a.factId) ?? Number.POSITIVE_INFINITY) -
+            (rerankedOrder.get(b.factId) ?? Number.POSITIVE_INFINITY),
         );
-        // Trim to the outputCount returned by the reranker.
         if (orderedEntries.length > reranked.length) {
           orderedEntries.length = reranked.length;
         }
-        // Also reorder scopedFused to stay consistent with orderedEntries.
         scopedFused.sort(
-          (a, b) => (rerankedOrder.get(a.factId) ?? Infinity) - (rerankedOrder.get(b.factId) ?? Infinity),
+          (a, b) =>
+            (rerankedOrder.get(a.factId) ?? Number.POSITIVE_INFINITY) -
+            (rerankedOrder.get(b.factId) ?? Number.POSITIVE_INFINITY),
         );
         if (scopedFused.length > reranked.length) {
           scopedFused.length = reranked.length;
@@ -717,108 +1125,112 @@ export async function runRetrievalPipeline(
       }
     }
 
-    // --- Token budget packing ---
-    // Build contradicted set so contradicted facts are marked with a warning in the packed output.
-    // Prefer the batch method (single query) over per-entry isContradicted calls (N queries).
-    const contradictedIds = new Set<string>();
-    if (factsDb.getContradictedIds) {
-      const allIds = orderedEntries.map((e) => e.factId);
-      const batch = factsDb.getContradictedIds(allIds);
-      for (const id of batch) contradictedIds.add(id);
-    } else if (factsDb.isContradicted) {
-      for (const { factId } of orderedEntries) {
-        if (factsDb.isContradicted(factId)) contradictedIds.add(factId);
-      }
-    }
-    const { packed, tokensUsed } = packIntoBudget(orderedEntries, budgetTokens, { contradictedIds });
-    const packedFactIds = orderedEntries.slice(0, packed.length).map((e) => e.factId);
-
-    // Extract resolved entries in final order for caller (avoids double lookup)
-    const resolvedEntries = orderedEntries.map((e) => e.entry);
-
-    return { fused: scopedFused, packed, packedFactIds, tokensUsed, entries: resolvedEntries };
+    return {
+      result: buildOrchestratorResult(factsDb, scopedFused, orderedEntries, budgetTokens),
+      shouldRewrite: false,
+      fromCache: false,
+    };
   };
 
-  const expanderMode =
-    queryExpander && typeof (queryExpander as QueryExpander).getMode === "function"
-      ? queryExpander.getMode()
-      : (queryExpander ? "always" : "off");
+  const executePipelineQuery = async (
+    queryText: string,
+    currentQueryVector: number[] | null,
+  ): Promise<{ result: OrchestratorResult; shouldRewrite: boolean; fromCache: boolean }> => {
+    const expanderMode =
+      queryExpander && typeof (queryExpander as QueryExpander).getMode === "function"
+        ? queryExpander.getMode()
+        : queryExpander
+          ? "always"
+          : "off";
 
-  if (expanderMode === "conditional") {
-    const alias =
-      queryExpander && typeof (queryExpander as QueryExpander).getRuleBasedAlias === "function"
-        ? queryExpander.getRuleBasedAlias(query)
-        : null;
-    const initial = await runOnce({ useLlm: false, variants: alias ? [alias] : [], skipReranking: true });
-    const threshold =
-      queryExpander && typeof (queryExpander as QueryExpander).getThreshold === "function"
-        ? queryExpander.getThreshold()
-        : 0.03;
-    const topScore = initial.fused[0]?.finalScore ?? 0;
-    if (topScore < threshold) {
-      return runOnce({ useLlm: true, variants: null, skipReranking: false });
+    if (expanderMode === "conditional") {
+      const alias =
+        queryExpander && typeof (queryExpander as QueryExpander).getRuleBasedAlias === "function"
+          ? queryExpander.getRuleBasedAlias(queryText)
+          : null;
+      const initial = await runBasePipeline(queryText, currentQueryVector, {
+        useLlm: false,
+        variants: alias ? [alias] : [],
+        skipReranking: true,
+      });
+      const threshold =
+        queryExpander && typeof (queryExpander as QueryExpander).getThreshold === "function"
+          ? queryExpander.getThreshold()
+          : 0.03;
+      const topScore = initial.result.fused[0]?.finalScore ?? 0;
+      if (initial.shouldRewrite || topScore < threshold) {
+        return runBasePipeline(queryText, currentQueryVector, { useLlm: true, variants: null, skipReranking: false });
+      }
+      return { ...initial, result: await applyConditionalReranking(queryText, initial.result) };
     }
-    // When above threshold we skipped LLM expansion but must still apply reranking if enabled.
-    if (rerankingConfig?.enabled && rerankingOpenai) {
-      try {
-        const rrfScoreMap = new Map(initial.fused.map((r) => [r.factId, r.finalScore]));
-        // Build factId→entry map from fused results (same length/order as entries) to avoid
-        // fragile positional index alignment between initial.entries and initial.fused.
-        const fusedEntryMap = new Map<string, MemoryEntry>(
-          initial.fused.map((r, i) => [r.factId, initial.entries[i]] as [string, MemoryEntry]).filter(([, e]) => e != null),
-        );
-        const scoredFacts: ScoredFact[] = initial.fused.flatMap((r) => {
-          const entry = fusedEntryMap.get(r.factId);
-          if (!entry) return [];
-          const storedSec = entry.sourceDate ?? entry.createdAt;
-          return [{
-            factId: r.factId,
-            text: entry.text,
-            confidence: entry.confidence,
-            storedDate: new Date(storedSec * 1000).toISOString().slice(0, 10),
-            finalScore: rrfScoreMap.get(r.factId) ?? 0,
-          }];
+
+    if (expanderMode === "always") {
+      return runBasePipeline(queryText, currentQueryVector, { useLlm: true, variants: null });
+    }
+
+    return runBasePipeline(queryText, currentQueryVector, { useLlm: false, variants: [] });
+  };
+
+  const attemptedQueries = [query];
+  let currentQuery = query;
+  let currentQueryVector = queryVector;
+  let bestResult: OrchestratorResult | null = null;
+  let bestResultWasIrrelevant = false;
+
+  for (let iteration = 0; iteration <= MAX_REWRITE_ITERATIONS; iteration++) {
+    const run = await executePipelineQuery(currentQuery, currentQueryVector);
+
+    if (shouldPreferResult(run, bestResult, bestResultWasIrrelevant)) {
+      bestResult = run.result;
+      bestResultWasIrrelevant = run.shouldRewrite;
+    }
+
+    if (!run.shouldRewrite || !activeDocumentGrader) {
+      if (
+        !run.fromCache &&
+        currentQueryVector &&
+        run.result.fused.length > 0 &&
+        typeof vectorDbWithCache.storeSemanticQueryCache === "function"
+      ) {
+        await vectorDbWithCache.storeSemanticQueryCache({
+          queryText: currentQuery,
+          vector: currentQueryVector,
+          factIds: run.result.fused.map((result) => result.factId),
+          filterKey: semanticCacheFilterKey,
+          cachedAt: nowSec,
         });
-        const reranked = await rerankResults(query, scoredFacts, rerankingConfig, rerankingOpenai);
-        const rerankedOrder = new Map(reranked.map((f, i) => [f.factId, i]));
-        const orderedEntriesReranked = reranked.map((f) => ({ factId: f.factId, entry: fusedEntryMap.get(f.factId)! })).filter((x) => x.entry);
-        const fusedReranked = orderedEntriesReranked.map(({ factId }) => initial.fused.find((r) => r.factId === factId)!).filter(Boolean);
-        const contradictedIds = new Set<string>();
-        if (factsDb.getContradictedIds) {
-          const allIds = orderedEntriesReranked.map((e) => e.factId);
-          const batch = factsDb.getContradictedIds(allIds);
-          for (const id of batch) contradictedIds.add(id);
-        } else if (factsDb.isContradicted) {
-          for (const { factId } of orderedEntriesReranked) {
-            if (factsDb.isContradicted(factId)) contradictedIds.add(factId);
-          }
-        }
-        const { packed, tokensUsed } = packIntoBudget(
-          orderedEntriesReranked,
-          budgetTokens,
-          { contradictedIds },
-        );
-        const packedFactIdsReranked = orderedEntriesReranked.slice(0, packed.length).map((e) => e.factId);
-        return {
-          fused: fusedReranked,
-          packed,
-          packedFactIds: packedFactIdsReranked,
-          tokensUsed,
-          entries: orderedEntriesReranked.map((e) => e.entry),
-        };
+      }
+      return bestResult ?? run.result;
+    }
+
+    if (iteration === MAX_REWRITE_ITERATIONS) {
+      return bestResult ?? run.result;
+    }
+
+    const rewritten = await activeDocumentGrader.rewriteQuery(query, attemptedQueries);
+    if (!rewritten) {
+      return bestResult ?? run.result;
+    }
+
+    attemptedQueries.push(rewritten);
+    currentQuery = rewritten;
+    if (embedFn) {
+      try {
+        currentQueryVector = await embedFn(rewritten);
       } catch (err) {
         capturePluginError(err instanceof Error ? err : new Error(String(err)), {
           subsystem: "retrieval",
-          operation: "reranking-conditional",
+          operation: "rewrite-embed",
         });
+        currentQueryVector = null;
       }
+    } else {
+      currentQueryVector = null;
     }
-    return initial;
   }
 
-  if (expanderMode === "always") {
-    return runOnce({ useLlm: true, variants: null });
-  }
-
-  return runOnce({ useLlm: false, variants: [] });
+  return bestResult ?? { fused: [], packed: [], packedFactIds: [], tokensUsed: 0, entries: [] };
 }
+
+/** @deprecated Use runExplicitDeepRetrieval instead */
+export const runRetrievalPipeline = runExplicitDeepRetrieval;

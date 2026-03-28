@@ -40,19 +40,15 @@
  *     - retrieval pipeline works without expander (backward compat)
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
-import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import {
-  QueryExpander,
-  parseExpansionsFromResponse,
-  generateRuleBasedAlias,
-} from "../services/query-expander.js";
-import { runRetrievalPipeline, DEFAULT_RETRIEVAL_CONFIG } from "../services/retrieval-orchestrator.js";
-import { _testing } from "../index.js";
 import type { QueryExpansionConfig } from "../config.js";
+import { _testing } from "../index.js";
+import { QueryExpander, generateRuleBasedAlias, parseExpansionsFromResponse } from "../services/query-expander.js";
+import { DEFAULT_RETRIEVAL_CONFIG, runRetrievalPipeline } from "../services/retrieval-orchestrator.js";
 
 const { FactsDB } = _testing;
 
@@ -83,6 +79,7 @@ const ENABLED_CFG: QueryExpansionConfig = {
   maxVariants: 4,
   cacheSize: 100,
   timeoutMs: 5000,
+  skipForInteractiveTurns: true,
 };
 
 const DISABLED_CFG: QueryExpansionConfig = {
@@ -92,6 +89,7 @@ const DISABLED_CFG: QueryExpansionConfig = {
   maxVariants: 4,
   cacheSize: 100,
   timeoutMs: 5000,
+  skipForInteractiveTurns: true,
 };
 
 // ---------------------------------------------------------------------------
@@ -111,7 +109,7 @@ describe("parseExpansionsFromResponse", () => {
   });
 
   it("handles code-fenced JSON", () => {
-    const response = "```json\n[\"phrasing a\", \"phrasing b\"]\n```";
+    const response = '```json\n["phrasing a", "phrasing b"]\n```';
     const result = parseExpansionsFromResponse(response, 5);
     expect(result).toEqual(["phrasing a", "phrasing b"]);
   });
@@ -171,8 +169,7 @@ describe("QueryExpander.expandQuery — disabled", () => {
     const result = await expander.expandQuery("find my API key");
     expect(result).toEqual(["find my API key"]);
     expect(
-      (openai as { chat: { completions: { create: ReturnType<typeof vi.fn> } } })
-        .chat.completions.create,
+      (openai as { chat: { completions: { create: ReturnType<typeof vi.fn> } } }).chat.completions.create,
     ).not.toHaveBeenCalled();
   });
 
@@ -354,6 +351,7 @@ describe("QueryExpansionConfig type", () => {
       maxVariants: 4,
       cacheSize: 100,
       timeoutMs: 5000,
+      skipForInteractiveTurns: true,
     };
     expect(cfg.enabled).toBe(false);
     expect(cfg.maxVariants).toBe(4);
@@ -371,6 +369,7 @@ describe("QueryExpansionConfig type", () => {
       maxVariants: 3,
       cacheSize: 50,
       timeoutMs: 3000,
+      skipForInteractiveTurns: true,
     };
     expect(cfg.model).toBe("openai/gpt-4.1-nano");
   });
@@ -429,15 +428,10 @@ describe("retrieval orchestrator — query expansion integration", () => {
     };
 
     // No queryExpander passed — should behave as before
-    const result = await runRetrievalPipeline(
-      "API key",
-      null,
-      factsDb.getRawDb(),
-      vectorDb,
-      factsDb,
+    const result = await runRetrievalPipeline("API key", null, factsDb.getRawDb(), vectorDb, factsDb, {
       config,
-      2000,
-    );
+      budgetTokens: 2000,
+    });
 
     expect(result).toBeDefined();
     expect(Array.isArray(result.fused)).toBe(true);
@@ -486,26 +480,15 @@ describe("retrieval orchestrator — query expansion integration", () => {
 
     const originalVec = new Array(384).fill(0.2);
 
-    await runRetrievalPipeline(
-      "find API key",
-      originalVec,
-      factsDb.getRawDb(),
-      vectorDb,
-      factsDb,
+    await runRetrievalPipeline("find API key", originalVec, factsDb.getRawDb(), vectorDb, factsDb, {
       config,
-      2000,
-      undefined,   // nowSec
-      undefined,   // tagFilter
-      undefined,   // includeSuperseded
-      undefined,   // scopeFilter
-      undefined,   // asOf
-      null,        // aliasDb
-      undefined,   // clustersConfig
-      null,        // embeddingRegistry
-      null,        // factsDbForEmbeddings
-      expander,    // queryExpander
-      embedFn,     // embedFn
-    );
+      budgetTokens: 2000,
+      aliasDb: null,
+      embeddingRegistry: null,
+      factsDbForEmbeddings: null,
+      queryExpander: expander,
+      embedFn,
+    });
 
     // embedFn should have been called once per variant (2 variants)
     expect(embedCallCount).toBe(2);
@@ -543,26 +526,15 @@ describe("retrieval orchestrator — query expansion integration", () => {
     const originalVec = new Array(384).fill(0.2);
 
     // Pipeline should still succeed without expansion
-    const result = await runRetrievalPipeline(
-      "apple",
-      originalVec,
-      factsDb.getRawDb(),
-      vectorDb,
-      factsDb,
+    const result = await runRetrievalPipeline("apple", originalVec, factsDb.getRawDb(), vectorDb, factsDb, {
       config,
-      2000,
-      undefined,   // nowSec
-      undefined,   // tagFilter
-      undefined,   // includeSuperseded
-      undefined,   // scopeFilter
-      undefined,   // asOf
-      null,        // aliasDb
-      undefined,   // clustersConfig
-      null,        // embeddingRegistry
-      null,        // factsDbForEmbeddings
-      failingExpander, // queryExpander
-      embedFn,     // embedFn
-    );
+      budgetTokens: 2000,
+      aliasDb: null,
+      embeddingRegistry: null,
+      factsDbForEmbeddings: null,
+      queryExpander: failingExpander,
+      embedFn,
+    });
 
     expect(result).toBeDefined();
     expect(Array.isArray(result.fused)).toBe(true);
@@ -599,26 +571,15 @@ describe("retrieval orchestrator — query expansion integration", () => {
     const embedFn = vi.fn().mockResolvedValue(new Array(384).fill(0.1));
     const originalVec = new Array(384).fill(0.2);
 
-    await runRetrievalPipeline(
-      "HA config",
-      originalVec,
-      factsDb.getRawDb(),
-      vectorDb,
-      factsDb,
+    await runRetrievalPipeline("HA config", originalVec, factsDb.getRawDb(), vectorDb, factsDb, {
       config,
-      2000,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      null,
-      undefined,
-      null,
-      null,
-      expander,
+      budgetTokens: 2000,
+      aliasDb: null,
+      embeddingRegistry: null,
+      factsDbForEmbeddings: null,
+      queryExpander: expander,
       embedFn,
-    );
+    });
 
     expect(expander.expandQuery).not.toHaveBeenCalled();
     expect(embedFn).toHaveBeenCalledTimes(1);
@@ -656,26 +617,15 @@ describe("retrieval orchestrator — query expansion integration", () => {
     const embedFn = vi.fn().mockResolvedValue(new Array(384).fill(0.1));
     const originalVec = new Array(384).fill(0.2);
 
-    await runRetrievalPipeline(
-      "api creds",
-      originalVec,
-      factsDb.getRawDb(),
-      vectorDb,
-      factsDb,
+    await runRetrievalPipeline("api creds", originalVec, factsDb.getRawDb(), vectorDb, factsDb, {
       config,
-      2000,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      null,
-      undefined,
-      null,
-      null,
-      expander,
+      budgetTokens: 2000,
+      aliasDb: null,
+      embeddingRegistry: null,
+      factsDbForEmbeddings: null,
+      queryExpander: expander,
       embedFn,
-    );
+    });
 
     expect(expander.expandQuery).toHaveBeenCalledTimes(1);
     expect(embedFn).toHaveBeenCalledTimes(3);
@@ -710,26 +660,15 @@ describe("retrieval orchestrator — query expansion integration", () => {
     const embedFn = vi.fn().mockResolvedValue(new Array(384).fill(0.1));
     const originalVec = new Array(384).fill(0.2);
 
-    await runRetrievalPipeline(
-      "vm settings",
-      originalVec,
-      factsDb.getRawDb(),
-      vectorDb,
-      factsDb,
+    await runRetrievalPipeline("vm settings", originalVec, factsDb.getRawDb(), vectorDb, factsDb, {
       config,
-      2000,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      null,
-      undefined,
-      null,
-      null,
-      expander,
+      budgetTokens: 2000,
+      aliasDb: null,
+      embeddingRegistry: null,
+      factsDbForEmbeddings: null,
+      queryExpander: expander,
       embedFn,
-    );
+    });
 
     expect(expander.expandQuery).not.toHaveBeenCalled();
     expect(embedFn).not.toHaveBeenCalled();

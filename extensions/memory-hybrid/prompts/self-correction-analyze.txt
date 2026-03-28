@@ -29,7 +29,7 @@ For each incident, determine:
 Output ONLY a JSON array of objects. One object per incident. No markdown, no code fences. Each object must have: category, severity, remediationType, remediationContent (object or string as needed), repeated (boolean, optional).
 
 Example:
-{"category":"FORGOT_INFO","severity":"MEDIUM","remediationType":"MEMORY_STORE","remediationContent":{"text":"SSH to Doris uses maeve@192.168.1.198","entity":"Credentials","key":"doris_ssh","tags":["ssh","doris"]},"repeated":false}
+{"category":"FORGOT_INFO","severity":"MEDIUM","remediationType":"MEMORY_STORE","remediationContent":{"text":"SSH to server uses user@192.168.1.198","entity":"Credentials","key":"server_ssh","tags":["ssh","server"]},"repeated":false}
 {"category":"WRONG_APPROACH","severity":"LOW","remediationType":"TOOLS_RULE","remediationContent":"If CLI fails twice, fall back to cURL.","repeated":false}
 
 Incidents (JSON array):

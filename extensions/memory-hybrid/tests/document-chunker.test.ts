@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
 import { chunkMarkdown } from "../services/document-chunker.js";
 
 describe("chunkMarkdown", () => {
@@ -38,7 +38,7 @@ Content B.`;
   });
 
   it("assigns correct chunkIndex and totalChunks", () => {
-    const md = `## A\n\nText A.\n\n## B\n\nText B.\n\n## C\n\nText C.`;
+    const md = "## A\n\nText A.\n\n## B\n\nText B.\n\n## C\n\nText C.";
     const chunks = chunkMarkdown(md);
     expect(chunks.length).toBe(3);
     expect(chunks[0].chunkIndex).toBe(0);
@@ -67,7 +67,7 @@ Content B.`;
   });
 
   it("includes section heading in chunk text", () => {
-    const md = `## My Section\n\nSome content here.`;
+    const md = "## My Section\n\nSome content here.";
     const chunks = chunkMarkdown(md);
     expect(chunks.length).toBe(1);
     expect(chunks[0].text).toContain("My Section");
@@ -75,7 +75,7 @@ Content B.`;
   });
 
   it("handles heading-only sections", () => {
-    const md = `## Title Only\n\n## Another Section\n\nWith content.`;
+    const md = "## Title Only\n\n## Another Section\n\nWith content.";
     const chunks = chunkMarkdown(md);
     expect(chunks.length).toBe(2);
     expect(chunks[0].sectionHeading).toBe("Title Only");
@@ -91,7 +91,7 @@ Content B.`;
   });
 
   it("ignores # (h1) headings — treats as body text", () => {
-    const md = `# Document Title\n\nSome text.\n\n## Section\n\nSection text.`;
+    const md = "# Document Title\n\nSome text.\n\n## Section\n\nSection text.";
     const chunks = chunkMarkdown(md);
     // The # heading is treated as body text, so we expect 1-2 chunks
     expect(chunks.length).toBeGreaterThan(0);
@@ -100,7 +100,7 @@ Content B.`;
   });
 
   it("handles content before first heading", () => {
-    const md = `Some intro content without a heading.\n\n## First Section\n\nSection text.`;
+    const md = "Some intro content without a heading.\n\n## First Section\n\nSection text.";
     const chunks = chunkMarkdown(md);
     // There should be at least the 'First Section' chunk
     expect(chunks.some((c) => c.sectionHeading === "First Section")).toBe(true);

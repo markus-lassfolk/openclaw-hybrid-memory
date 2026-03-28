@@ -5,13 +5,18 @@
  */
 
 import { Type } from "@sinclair/typebox";
-import type { ClawdbotPluginApi } from "openclaw/plugin-sdk";
+import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 
-import type { FactsDB } from "../backends/facts-db.js";
 import type { EventLog } from "../backends/event-log.js";
+import type { FactsDB } from "../backends/facts-db.js";
 import type { HybridMemoryConfig } from "../config.js";
-import type { ProvenanceEdgeRecord, ProvenanceEdgeType, ProvenanceSourceType, ProvenanceService } from "../services/provenance.js";
 import { extractEventText } from "../services/dream-cycle.js";
+import type {
+  ProvenanceEdgeRecord,
+  ProvenanceEdgeType,
+  ProvenanceService,
+  ProvenanceSourceType,
+} from "../services/provenance.js";
 
 export interface PluginContext {
   factsDb: FactsDB;
@@ -42,7 +47,13 @@ type ProvenanceChainOutput = {
 };
 
 function buildDerivedFrom(
-  edges: Array<{ edgeType: ProvenanceEdgeType; sourceType: ProvenanceSourceType; sourceId: string; sourceText?: string; createdAt: string }>,
+  edges: Array<{
+    edgeType: ProvenanceEdgeType;
+    sourceType: ProvenanceSourceType;
+    sourceId: string;
+    sourceText?: string;
+    createdAt: string;
+  }>,
   factsDb: FactsDB,
   eventLog: EventLog | null,
   provenanceService: ProvenanceService,
@@ -121,9 +132,7 @@ function buildProvenanceChain(
 
   const chain = provenanceService.getProvenance(factId, factsDb.getRawDb());
   const factEntry = factsDb.getById(factId);
-  const sourceTimestamp = factEntry
-    ? new Date(factEntry.createdAt * 1000).toISOString()
-    : undefined;
+  const sourceTimestamp = factEntry ? new Date(factEntry.createdAt * 1000).toISOString() : undefined;
 
   const factText = chain.fact.text || fallbackText || "";
 
@@ -155,15 +164,7 @@ function buildProvenanceChain(
       extraction_method: chain.source.extractionMethod,
       extraction_confidence: chain.source.extractionConfidence,
     },
-    derivedFrom: buildDerivedFrom(
-      chain.edges,
-      factsDb,
-      eventLog,
-      provenanceService,
-      visited,
-      depth,
-      maxDepth,
-    ),
+    derivedFrom: buildDerivedFrom(chain.edges, factsDb, eventLog, provenanceService, visited, depth, maxDepth),
     consolidationChain,
   };
 }
@@ -203,13 +204,7 @@ export function registerProvenanceTools(ctx: PluginContext, api: ClawdbotPluginA
           };
         }
 
-        const chain = buildProvenanceChain(
-          factsDb,
-          eventLog,
-          provenanceService,
-          factId,
-          new Set<string>(),
-        );
+        const chain = buildProvenanceChain(factsDb, eventLog, provenanceService, factId, new Set<string>());
 
         return {
           content: [{ type: "text", text: JSON.stringify(chain, null, 2) }],

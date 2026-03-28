@@ -12,19 +12,17 @@
  * Self-contained — does not require an active agent session.
  */
 
-import type { FactsDB } from "../backends/facts-db.js";
-import type { VectorDB } from "../backends/vector-db.js";
-import type { EmbeddingProvider } from "./embeddings.js";
 import type OpenAI from "openai";
 import type { EventLog, EventLogEntry } from "../backends/event-log.js";
+import type { FactsDB } from "../backends/facts-db.js";
+import type { VectorDB } from "../backends/vector-db.js";
 import type { MemoryCategory } from "../types/memory.js";
-import type { ProvenanceService } from "./provenance.js";
-import {
-  runReflection,
-  runReflectionRules,
-  type ReflectionConfig,
-} from "./reflection.js";
+import { CONSOLIDATED_FACT_DECAY_CLASS } from "../utils/consolidation-controls.js";
+import type { EmbeddingProvider } from "./embeddings.js";
 import { capturePluginError } from "./error-reporter.js";
+import { writeMemoryIndex } from "./memory-index.js";
+import type { ProvenanceService } from "./provenance.js";
+import { type ReflectionConfig, runReflection, runReflectionRules } from "./reflection.js";
 
 /** Prune modes for the dream cycle. */
 export type DreamCyclePruneMode = "expired" | "decay" | "both";
@@ -45,6 +43,16 @@ export interface DreamCycleConfig {
   eventLogArchivePath: string;
   /** Delete unconsolidated event log entries older than this many days. */
   maxUnconsolidatedAgeDays: number;
+  /**
+   * Retention window for log tables (recall_log, reinforcement_log, feedback_trajectories).
+   * Rows older than this many days are deleted. 0 = disabled. Default: 30.
+   */
+  logRetentionDays: number;
+  /**
+   * When true, run wal_checkpoint(TRUNCATE) + VACUUM after the cycle to reclaim freed space.
+   * Default: true.
+   */
+  vacuumOnCycle: boolean;
 }
 
 /** Result returned by a single dream cycle run. */
@@ -53,6 +61,8 @@ export interface DreamCycleResult {
   factsPruned: number;
   /** Facts whose confidence was decayed. */
   factsDecayed: number;
+  /** Orphaned memory_links rows removed. */
+  linksPruned: number;
   /** Episodic event log entries successfully consolidated. */
   eventsConsolidated: number;
   /** New consolidated facts created from episodic events. */
@@ -61,6 +71,10 @@ export interface DreamCycleResult {
   patternsFound: number;
   /** New rules stored by runReflectionRules(). */
   rulesGenerated: number;
+  /** Log table rows deleted by pruneLogTables() (Issue #573). */
+  logRowsPruned: number;
+  /** True when VACUUM + checkpoint was executed (Issue #573). */
+  vacuumRan: boolean;
   /** Human-readable summary of the cycle. */
   digestSummary: string;
   /** True when the cycle was skipped because nightlyCycle.enabled = false. */
@@ -101,7 +115,7 @@ export function groupEventsByEntity(events: EventLogEntry[]): Map<string, EventL
   for (const event of events) {
     const primaryEntity = event.entities?.[0] ?? "__default__";
     if (!groups.has(primaryEntity)) groups.set(primaryEntity, []);
-    groups.get(primaryEntity)!.push(event);
+    groups.get(primaryEntity)?.push(event);
   }
   return groups;
 }
@@ -113,21 +127,27 @@ export function groupEventsByEntity(events: EventLogEntry[]): Map<string, EventL
 export function buildDigestSummary(counts: {
   factsPruned: number;
   factsDecayed: number;
+  linksPruned?: number;
   eventsConsolidated: number;
   factsCreated: number;
   patternsFound: number;
   rulesGenerated: number;
+  logRowsPruned?: number;
+  vacuumRan?: boolean;
 }): string {
   const parts: string[] = [];
   if (counts.factsPruned > 0) parts.push(`${counts.factsPruned} facts pruned`);
   if (counts.factsDecayed > 0) parts.push(`${counts.factsDecayed} facts decayed`);
+  if (counts.linksPruned && counts.linksPruned > 0) parts.push(`${counts.linksPruned} orphaned links removed`);
   if (counts.eventsConsolidated > 0) {
     parts.push(`${counts.eventsConsolidated} events consolidated into ${counts.factsCreated} facts`);
   }
   if (counts.patternsFound > 0) parts.push(`${counts.patternsFound} patterns extracted`);
   if (counts.rulesGenerated > 0) parts.push(`${counts.rulesGenerated} rules generated`);
+  if (counts.logRowsPruned && counts.logRowsPruned > 0) parts.push(`${counts.logRowsPruned} log rows pruned`);
+  if (counts.vacuumRan) parts.push("VACUUM ran");
   if (parts.length === 0) return "No changes.";
-  return parts.join(", ") + ".";
+  return `${parts.join(", ")}.`;
 }
 
 // ---------------------------------------------------------------------------
@@ -164,15 +184,16 @@ export async function runEpisodicConsolidation(
     if (groupEvents.length === 0) continue;
 
     // Collect text from all events in this group
-    const eventTexts = groupEvents
-      .map((e) => extractEventText(e))
-      .filter((t) => t.length >= 3);
+    const eventTexts = groupEvents.map((e) => extractEventText(e)).filter((t) => t.length >= 3);
 
     if (eventTexts.length === 0) {
       // Mark events as consolidated with a namespaced skip sentinel to prevent re-processing.
       // 'SKIP:no_text' is clearly not a real fact UUID — no UUID-based query will match it.
       try {
-        eventLog.markConsolidated(groupEvents.map((e) => e.id), "SKIP:no_text");
+        eventLog.markConsolidated(
+          groupEvents.map((e) => e.id),
+          "SKIP:no_text",
+        );
         eventsConsolidated += groupEvents.length;
       } catch (err) {
         logger.warn(`memory-hybrid: dream-cycle — failed to mark no-text events as consolidated: ${err}`);
@@ -202,8 +223,9 @@ export async function runEpisodicConsolidation(
         key: "consolidated",
         value: null,
         source: "dream-cycle",
-        decayClass: "stable",
+        decayClass: CONSOLIDATED_FACT_DECAY_CLASS,
         tags: ["dream-cycle", "consolidated"],
+        extractionMethod: "consolidation",
       });
     } catch (err) {
       logger.warn(`memory-hybrid: dream-cycle — failed to store consolidated fact for entity "${entity}": ${err}`);
@@ -248,7 +270,10 @@ export async function runEpisodicConsolidation(
 
     // Mark all events in the group as consolidated into the new fact
     try {
-      eventLog.markConsolidated(groupEvents.map((e) => e.id), consolidatedFact.id);
+      eventLog.markConsolidated(
+        groupEvents.map((e) => e.id),
+        consolidatedFact.id,
+      );
       factsCreated++;
       eventsConsolidated += groupEvents.length;
     } catch (err) {
@@ -260,15 +285,15 @@ export async function runEpisodicConsolidation(
       try {
         factsDb.delete(consolidatedFact.id);
       } catch (cleanupErr) {
-        logger.warn(`memory-hybrid: dream-cycle — failed to delete consolidated fact after mark failure: ${cleanupErr}`);
+        logger.warn(
+          `memory-hybrid: dream-cycle — failed to delete consolidated fact after mark failure: ${cleanupErr}`,
+        );
       }
       continue;
     }
 
     logger.info(
-      `memory-hybrid: dream-cycle — consolidated ${groupEvents.length} events` +
-        (entityLabel ? ` for entity "${entityLabel}"` : "") +
-        ` → fact ${consolidatedFact.id.slice(0, 8)}`,
+      `memory-hybrid: dream-cycle — consolidated ${groupEvents.length} events${entityLabel ? ` for entity "${entityLabel}"` : ""} → fact ${consolidatedFact.id.slice(0, 8)}`,
     );
   }
 
@@ -303,10 +328,13 @@ export async function runDreamCycle(
     return {
       factsPruned: 0,
       factsDecayed: 0,
+      linksPruned: 0,
       eventsConsolidated: 0,
       factsCreated: 0,
       patternsFound: 0,
       rulesGenerated: 0,
+      logRowsPruned: 0,
+      vacuumRan: false,
       digestSummary: "Dream cycle disabled.",
       skipped: true,
     };
@@ -342,6 +370,21 @@ export async function runDreamCycle(
     }
   }
 
+  // ── Step 1b: Prune orphaned links ────────────────────────────────────────
+  let linksPruned = 0;
+  try {
+    linksPruned = factsDb.pruneOrphanedLinks();
+    if (linksPruned > 0) {
+      logger.info(`memory-hybrid: dream-cycle — pruned ${linksPruned} orphaned link(s)`);
+    }
+  } catch (err) {
+    logger.warn(`memory-hybrid: dream-cycle — pruneOrphanedLinks failed: ${err}`);
+    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+      operation: "dream-cycle-prune-orphaned-links",
+      subsystem: "facts-db",
+    });
+  }
+
   // ── Step 2: Episodic consolidation ───────────────────────────────────────
   let eventsConsolidated = 0;
   let factsCreated = 0;
@@ -367,10 +410,7 @@ export async function runDreamCycle(
   // ── Step 2b: Archive stale event log entries ─────────────────────────────
   if (eventLog && config.eventLogArchivalDays > 0) {
     try {
-      const result = await eventLog.archiveConsolidated(
-        config.eventLogArchivalDays,
-        config.eventLogArchivePath,
-      );
+      const result = await eventLog.archiveConsolidated(config.eventLogArchivalDays, config.eventLogArchivePath);
       if (result.archived > 0) {
         logger.info(
           `memory-hybrid: dream-cycle — archived ${result.archived} consolidated event log entries older than ${config.eventLogArchivalDays} days`,
@@ -460,14 +500,84 @@ export async function runDreamCycle(
     }
   }
 
-  // ── Step 5: Digest summary ───────────────────────────────────────────────
+  // ── Step 4b: Refresh memory awareness index ─────────────────────────────
+  try {
+    await writeMemoryIndex(
+      factsDb,
+      openai,
+      {
+        model: config.model,
+        fallbackModels: config.fallbackModels ?? [],
+        recentWindowDays: config.reflectWindowDays,
+      },
+      logger,
+    );
+  } catch (err) {
+    logger.warn(`memory-hybrid: dream-cycle — memory index update failed: ${err}`);
+    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+      operation: "dream-cycle-memory-index",
+      subsystem: "reflection",
+    });
+  }
+
+  // ── Step 5: Prune log tables ─────────────────────────────────────────────
+  let logRowsPruned = 0;
+  if (config.logRetentionDays > 0) {
+    try {
+      logRowsPruned = factsDb.pruneLogTables(config.logRetentionDays);
+      if (logRowsPruned > 0) {
+        logger.info(
+          `memory-hybrid: dream-cycle — pruned ${logRowsPruned} log rows older than ${config.logRetentionDays} days`,
+        );
+      }
+    } catch (err) {
+      logger.warn(`memory-hybrid: dream-cycle — pruneLogTables failed: ${err}`);
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        operation: "dream-cycle-prune-log-tables",
+        subsystem: "facts-db",
+      });
+    }
+  }
+
+  // ── Step 5b: FTS5 optimize ───────────────────────────────────────────────
+  try {
+    factsDb.optimizeFts();
+    logger.info("memory-hybrid: dream-cycle — FTS5 index optimized");
+  } catch (err) {
+    logger.warn(`memory-hybrid: dream-cycle — optimizeFts failed: ${err}`);
+    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+      operation: "dream-cycle-optimize-fts",
+      subsystem: "facts-db",
+    });
+  }
+
+  // ── Step 5c: VACUUM + WAL checkpoint ────────────────────────────────────
+  let vacuumRan = false;
+  if (config.vacuumOnCycle) {
+    try {
+      factsDb.vacuumAndCheckpoint();
+      vacuumRan = true;
+      logger.info("memory-hybrid: dream-cycle — VACUUM + WAL checkpoint complete");
+    } catch (err) {
+      logger.warn(`memory-hybrid: dream-cycle — vacuumAndCheckpoint failed: ${err}`);
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        operation: "dream-cycle-vacuum",
+        subsystem: "facts-db",
+      });
+    }
+  }
+
+  // ── Step 6: Digest summary ───────────────────────────────────────────────
   const digestSummary = buildDigestSummary({
     factsPruned,
     factsDecayed,
+    linksPruned,
     eventsConsolidated,
     factsCreated,
     patternsFound,
     rulesGenerated,
+    logRowsPruned,
+    vacuumRan,
   });
 
   logger.info(`memory-hybrid: dream-cycle — complete. ${digestSummary}`);
@@ -475,10 +585,13 @@ export async function runDreamCycle(
   return {
     factsPruned,
     factsDecayed,
+    linksPruned,
     eventsConsolidated,
     factsCreated,
     patternsFound,
     rulesGenerated,
+    logRowsPruned,
+    vacuumRan,
     digestSummary,
     skipped: false,
   };

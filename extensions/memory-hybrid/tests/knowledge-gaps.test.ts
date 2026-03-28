@@ -28,12 +28,12 @@
  *   - Integration with FactsDB: real DB stores + links used
  */
 
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
-import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { _testing } from "../index.js";
-import type { GapFactsDB, GapVectorDB, GapEmbeddings, GapFact } from "../index.js";
+import type { GapEmbeddings, GapFact, GapFactsDB, GapVectorDB } from "../index.js";
 import type { MemoryEntry } from "../types/memory.js";
 
 const {
@@ -106,21 +106,17 @@ function buildFactsDb(
   };
 }
 
-function buildVectorDb(
-  results: Record<string, Array<{ entry: { id: string }; score: number }>>,
-): GapVectorDB {
+function buildVectorDb(results: Record<string, Array<{ entry: { id: string }; score: number }>>): GapVectorDB {
   return {
     search: async (_vector, _limit, minScore) => {
       // Return the first entry from results (keyed by "default" for simplicity)
-      const all = results["default"] ?? [];
+      const all = results.default ?? [];
       return all.filter((r) => r.score >= minScore);
     },
   };
 }
 
-function buildSearchVectorDb(
-  factToResults: Map<string, Array<{ entry: { id: string }; score: number }>>,
-): GapVectorDB {
+function buildSearchVectorDb(factToResults: Map<string, Array<{ entry: { id: string }; score: number }>>): GapVectorDB {
   return {
     search: async (_vector, _limit, minScore) => {
       // We can't easily map vector back to factId in a mock, so return all above threshold
@@ -219,10 +215,7 @@ describe("detectOrphans", () => {
   it("excludes facts that have at least one outgoing link", () => {
     const a = makeEntry("a");
     const b = makeEntry("b");
-    const db = buildFactsDb(
-      [a, b],
-      { a: [{ id: "l1", targetFactId: "b", linkType: "RELATED_TO", strength: 1.0 }] },
-    );
+    const db = buildFactsDb([a, b], { a: [{ id: "l1", targetFactId: "b", linkType: "RELATED_TO", strength: 1.0 }] });
     const result = detectOrphans(db, 10, NOW_SEC);
     expect(result.map((g) => g.factId)).not.toContain("a");
   });
@@ -278,10 +271,7 @@ describe("detectWeak", () => {
   it("returns facts with exactly 1 outgoing link", () => {
     const a = makeEntry("a");
     const b = makeEntry("b");
-    const db = buildFactsDb(
-      [a, b],
-      { a: [{ id: "l1", targetFactId: "b", linkType: "RELATED_TO", strength: 1.0 }] },
-    );
+    const db = buildFactsDb([a, b], { a: [{ id: "l1", targetFactId: "b", linkType: "RELATED_TO", strength: 1.0 }] });
     const result = detectWeak(db, 10, NOW_SEC);
     expect(result.map((g) => g.factId)).toContain("a");
   });
@@ -322,13 +312,10 @@ describe("detectWeak", () => {
     const oldFact = makeEntry("old", NOW_SEC - 90 * 86_400); // ageFactor 3
     const recentFact = makeEntry("recent", NOW_SEC); // ageFactor 1
     const target = makeEntry("target");
-    const db = buildFactsDb(
-      [oldFact, recentFact, target],
-      {
-        old: [{ id: "l1", targetFactId: "target", linkType: "RELATED_TO", strength: 1.0 }],
-        recent: [{ id: "l2", targetFactId: "target", linkType: "RELATED_TO", strength: 1.0 }],
-      },
-    );
+    const db = buildFactsDb([oldFact, recentFact, target], {
+      old: [{ id: "l1", targetFactId: "target", linkType: "RELATED_TO", strength: 1.0 }],
+      recent: [{ id: "l2", targetFactId: "target", linkType: "RELATED_TO", strength: 1.0 }],
+    });
     const result = detectWeak(db, 10, NOW_SEC);
     const ids = result.map((g) => g.factId);
     expect(ids.indexOf("old")).toBeLessThan(ids.indexOf("recent"));
@@ -349,10 +336,7 @@ describe("detectWeak", () => {
   it("sets linkCount=1 and isolationScore=0.5 for weak facts", () => {
     const a = makeEntry("a");
     const b = makeEntry("b");
-    const db = buildFactsDb(
-      [a, b],
-      { a: [{ id: "l1", targetFactId: "b", linkType: "RELATED_TO", strength: 1.0 }] },
-    );
+    const db = buildFactsDb([a, b], { a: [{ id: "l1", targetFactId: "b", linkType: "RELATED_TO", strength: 1.0 }] });
     const result = detectWeak(db, 10, NOW_SEC);
     const gapA = result.find((g) => g.factId === "a");
     expect(gapA?.linkCount).toBe(1);
@@ -393,10 +377,7 @@ describe("detectSuggestedLinks", () => {
   it("skips pair when it already has a direct link (outgoing)", async () => {
     const a = makeEntry("a");
     const b = makeEntry("b");
-    const db = buildFactsDb(
-      [a, b],
-      { a: [{ id: "l1", targetFactId: "b", linkType: "RELATED_TO", strength: 1.0 }] },
-    );
+    const db = buildFactsDb([a, b], { a: [{ id: "l1", targetFactId: "b", linkType: "RELATED_TO", strength: 1.0 }] });
     const vectorDb = buildVectorDb({
       default: [{ entry: { id: "b" }, score: 0.95 }],
     });
@@ -435,9 +416,7 @@ describe("detectSuggestedLinks", () => {
     const result = await detectSuggestedLinks(db, vectorDb, embeds, 0.8, 10, NOW_SEC);
     // Only one suggestion for a-b pair, not two
     const pairs = result.filter(
-      (s) =>
-        (s.sourceId === "a" && s.targetId === "b") ||
-        (s.sourceId === "b" && s.targetId === "a"),
+      (s) => (s.sourceId === "a" && s.targetId === "b") || (s.sourceId === "b" && s.targetId === "a"),
     );
     expect(pairs).toHaveLength(1);
   });
@@ -489,7 +468,9 @@ describe("detectSuggestedLinks", () => {
     const db = buildFactsDb([a, b]);
     const vectorDb = buildVectorDb({ default: [{ entry: { id: "b" }, score: 0.9 }] });
     const embeds: GapEmbeddings = {
-      embed: async () => { throw new Error("embed failed"); },
+      embed: async () => {
+        throw new Error("embed failed");
+      },
     };
     // Should not throw, just return empty
     const result = await detectSuggestedLinks(db, vectorDb, embeds, 0.8, 10, NOW_SEC);
@@ -505,13 +486,10 @@ describe("analyzeKnowledgeGaps", () => {
   it('mode="orphans" returns orphans only, no weak/suggested', async () => {
     const a = makeEntry("a");
     const b = makeEntry("b");
-    const db = buildFactsDb(
-      [a, b],
-      { a: [{ id: "l1", targetFactId: "b", linkType: "RELATED_TO", strength: 1.0 }] },
-    );
+    const db = buildFactsDb([a, b], { a: [{ id: "l1", targetFactId: "b", linkType: "RELATED_TO", strength: 1.0 }] });
     const vectorDb = buildVectorDb({ default: [] });
     const embeds = buildEmbeddings();
-    const report = await analyzeKnowledgeGaps(db, vectorDb, embeds, "orphans", 20, 0.8, NOW_SEC);
+    const _report = await analyzeKnowledgeGaps(db, vectorDb, embeds, "orphans", 20, 0.8, NOW_SEC);
     // 'b' has 1 incoming → not an orphan. Neither is 'a' (has outgoing). Actually both have 1 link.
     // Let's test with no-link facts
     const x = makeEntry("x");
@@ -525,10 +503,7 @@ describe("analyzeKnowledgeGaps", () => {
   it('mode="weak" returns weak only, no orphans/suggested', async () => {
     const a = makeEntry("a");
     const b = makeEntry("b");
-    const db = buildFactsDb(
-      [a, b],
-      { a: [{ id: "l1", targetFactId: "b", linkType: "RELATED_TO", strength: 1.0 }] },
-    );
+    const db = buildFactsDb([a, b], { a: [{ id: "l1", targetFactId: "b", linkType: "RELATED_TO", strength: 1.0 }] });
     const vectorDb = buildVectorDb({ default: [] });
     const embeds = buildEmbeddings();
     const report = await analyzeKnowledgeGaps(db, vectorDb, embeds, "weak", 20, 0.8, NOW_SEC);
@@ -541,10 +516,9 @@ describe("analyzeKnowledgeGaps", () => {
     const orphan = makeEntry("orphan");
     const weakA = makeEntry("weakA");
     const weakB = makeEntry("weakB");
-    const db = buildFactsDb(
-      [orphan, weakA, weakB],
-      { weakA: [{ id: "l1", targetFactId: "weakB", linkType: "RELATED_TO", strength: 1.0 }] },
-    );
+    const db = buildFactsDb([orphan, weakA, weakB], {
+      weakA: [{ id: "l1", targetFactId: "weakB", linkType: "RELATED_TO", strength: 1.0 }],
+    });
     const vectorDb: GapVectorDB = {
       search: async (_vector, _limit, minScore) =>
         [{ entry: { id: "weakB" }, score: 0.9 }].filter((r) => r.score >= minScore),
@@ -588,14 +562,38 @@ describe("knowledge gaps — FactsDB integration", () => {
   });
 
   it("detects orphan facts in a real DB (no links)", () => {
-    const f = db.store({ text: "Orphan fact", entity: null, key: null, value: null, category: "fact", importance: 0.7, source: "test" });
+    const f = db.store({
+      text: "Orphan fact",
+      entity: null,
+      key: null,
+      value: null,
+      category: "fact",
+      importance: 0.7,
+      source: "test",
+    });
     const orphans = detectOrphans(db, 20, NOW_SEC);
     expect(orphans.map((g) => g.factId)).toContain(f.id);
   });
 
   it("does not detect linked fact as orphan", () => {
-    const a = db.store({ text: "Fact A", entity: null, key: null, value: null, category: "fact", importance: 0.7, source: "test" });
-    const b = db.store({ text: "Fact B", entity: null, key: null, value: null, category: "fact", importance: 0.7, source: "test" });
+    const a = db.store({
+      text: "Fact A",
+      entity: null,
+      key: null,
+      value: null,
+      category: "fact",
+      importance: 0.7,
+      source: "test",
+    });
+    const b = db.store({
+      text: "Fact B",
+      entity: null,
+      key: null,
+      value: null,
+      category: "fact",
+      importance: 0.7,
+      source: "test",
+    });
     db.createLink(a.id, b.id, "RELATED_TO", 1.0);
     const orphans = detectOrphans(db, 20, NOW_SEC);
     expect(orphans.map((g) => g.factId)).not.toContain(a.id);
@@ -603,8 +601,24 @@ describe("knowledge gaps — FactsDB integration", () => {
   });
 
   it("detects weak fact in a real DB (exactly 1 link)", () => {
-    const a = db.store({ text: "Fact A", entity: null, key: null, value: null, category: "fact", importance: 0.7, source: "test" });
-    const b = db.store({ text: "Fact B", entity: null, key: null, value: null, category: "fact", importance: 0.7, source: "test" });
+    const a = db.store({
+      text: "Fact A",
+      entity: null,
+      key: null,
+      value: null,
+      category: "fact",
+      importance: 0.7,
+      source: "test",
+    });
+    const b = db.store({
+      text: "Fact B",
+      entity: null,
+      key: null,
+      value: null,
+      category: "fact",
+      importance: 0.7,
+      source: "test",
+    });
     db.createLink(a.id, b.id, "RELATED_TO", 1.0);
     const weak = detectWeak(db, 20, NOW_SEC);
     const weakIds = weak.map((g) => g.factId);
@@ -614,9 +628,33 @@ describe("knowledge gaps — FactsDB integration", () => {
   });
 
   it("does not detect well-connected fact (≥2 links) as weak", () => {
-    const a = db.store({ text: "Fact A", entity: null, key: null, value: null, category: "fact", importance: 0.7, source: "test" });
-    const b = db.store({ text: "Fact B", entity: null, key: null, value: null, category: "fact", importance: 0.7, source: "test" });
-    const c = db.store({ text: "Fact C", entity: null, key: null, value: null, category: "fact", importance: 0.7, source: "test" });
+    const a = db.store({
+      text: "Fact A",
+      entity: null,
+      key: null,
+      value: null,
+      category: "fact",
+      importance: 0.7,
+      source: "test",
+    });
+    const b = db.store({
+      text: "Fact B",
+      entity: null,
+      key: null,
+      value: null,
+      category: "fact",
+      importance: 0.7,
+      source: "test",
+    });
+    const c = db.store({
+      text: "Fact C",
+      entity: null,
+      key: null,
+      value: null,
+      category: "fact",
+      importance: 0.7,
+      source: "test",
+    });
     db.createLink(a.id, b.id, "RELATED_TO", 1.0);
     db.createLink(a.id, c.id, "RELATED_TO", 1.0);
     const weak = detectWeak(db, 20, NOW_SEC);

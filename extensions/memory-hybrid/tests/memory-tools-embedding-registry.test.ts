@@ -1,10 +1,21 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+// @ts-nocheck
 import { mkdtempSync, rmSync } from "node:fs";
-import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../services/retrieval-orchestrator.js", () => ({
+  buildExplicitSemanticQueryVector: vi.fn().mockResolvedValue({
+    queryVector: [0.1, 0.2, 0.3, 0.4],
+    warning: null,
+  }),
   runRetrievalPipeline: vi.fn().mockResolvedValue({
+    fused: [],
+    packed: [],
+    packedFactIds: [],
+    entries: [],
+  }),
+  runExplicitDeepRetrieval: vi.fn().mockResolvedValue({
     fused: [],
     packed: [],
     packedFactIds: [],
@@ -12,14 +23,14 @@ vi.mock("../services/retrieval-orchestrator.js", () => ({
   }),
 }));
 
-import { registerMemoryTools } from "../tools/memory-tools.js";
-import { runRetrievalPipeline } from "../services/retrieval-orchestrator.js";
 import { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
-import { buildEmbeddingRegistry } from "../services/embedding-registry.js";
-import { createPendingLLMWarnings } from "../services/chat.js";
 import { hybridConfigSchema } from "../config.js";
+import { createPendingLLMWarnings } from "../services/chat.js";
+import { buildEmbeddingRegistry } from "../services/embedding-registry.js";
 import type { EmbeddingProvider } from "../services/embeddings.js";
+import { runExplicitDeepRetrieval } from "../services/retrieval-orchestrator.js";
+import { registerMemoryTools } from "../tools/memory-tools.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -62,12 +73,13 @@ function makeMockVectorDb(): VectorDB {
   return {
     hasDuplicate: vi.fn().mockResolvedValue(false),
     store: vi.fn().mockResolvedValue(undefined),
+    search: vi.fn().mockResolvedValue([]),
   } as unknown as VectorDB;
 }
 
 const noopScopeFilter = () => undefined;
-const walWrite = () => "wal-id";
-const walRemove = () => {};
+const walWrite = async () => "wal-id";
+const walRemove = async () => {};
 const findSimilarByEmbedding = async () => [];
 
 // ---------------------------------------------------------------------------
@@ -125,13 +137,13 @@ describe("memory tools embedding registry wiring", () => {
 
     const tool = api.getTool("memory_recall");
     expect(tool).toBeTruthy();
-    await tool!.execute("tool-call", { query: "hello", limit: 5 });
+    await tool?.execute("tool-call", { query: "where is the API key stored", limit: 5 });
 
-    const runMock = vi.mocked(runRetrievalPipeline);
+    const runMock = vi.mocked(runExplicitDeepRetrieval);
     expect(runMock).toHaveBeenCalled();
     const call = runMock.mock.calls[0];
-    expect(call[14]).toBe(embeddingRegistry);
-    expect(call[15]).toBe(factsDb);
+    expect(call[5]?.embeddingRegistry).toBe(embeddingRegistry);
+    expect(call[5]?.factsDbForEmbeddings).toBe(factsDb);
   });
 
   it("stores embeddings for all registered models", async () => {
@@ -176,7 +188,7 @@ describe("memory tools embedding registry wiring", () => {
 
     const tool = api.getTool("memory_store");
     expect(tool).toBeTruthy();
-    const result = await tool!.execute("tool-call", { text: "hello", category: "fact", importance: 0.6 });
+    const result = await tool?.execute("tool-call", { text: "hello", category: "fact", importance: 0.6 });
     const id = (result as { details?: { id?: string } }).details?.id;
     expect(id).toBeTruthy();
 

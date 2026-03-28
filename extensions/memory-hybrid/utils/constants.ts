@@ -2,8 +2,8 @@
  * Shared constants to avoid magic numbers across the plugin.
  */
 
-import { join } from "node:path";
 import { homedir } from "node:os";
+import { join } from "node:path";
 
 /** Plugin identifier used across the codebase. */
 export const PLUGIN_ID = "openclaw-hybrid-memory";
@@ -40,6 +40,8 @@ export const REFLECTION_PATTERN_MAX_CHARS = 500;
 export const REFLECTION_META_MAX_CHARS = 300;
 /** Cosine similarity threshold for deduplicating reflection patterns. */
 export const REFLECTION_DEDUPE_THRESHOLD = 0.85;
+/** Cosine similarity threshold for distillation/ingest deduplication. */
+export const DISTILL_DEDUP_THRESHOLD = 0.85;
 /** LLM temperature for reflection/rules prompts. */
 export const REFLECTION_TEMPERATURE = 0.2;
 /** Batch throttle delay (ms) between embedding batches. */
@@ -51,3 +53,17 @@ export const SECONDS_PER_DAY = 86400;
 
 /** Max tokens for HOT tier (always-loaded session context). */
 export const HOT_TIER_MAX_TOKENS = 2000;
+
+/**
+ * UUID v1–v5 validation regex (case-insensitive).
+ * Used as the security boundary before LanceDB string interpolation and
+ * as the user-facing guard in memory_forget.
+ * Centralised here to avoid drift between vector-db.ts and memory-tools.ts.
+ */
+export const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+/**
+ * Substring of the LanceDB error thrown on vector-dimension mismatch.
+ * Used to suppress known schema errors from GlitchTip reporting.
+ */
+export const LANCE_NO_VECTOR_COL_MSG = "No vector column found";

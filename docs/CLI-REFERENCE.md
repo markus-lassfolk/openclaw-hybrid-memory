@@ -8,13 +8,19 @@ nav_order: 1
 
 All commands are available via `openclaw hybrid-mem <command>`.
 
+> **Note:** CLI subcommands require OpenClaw v2026.3.8 or later. The plugin enforces this minimum version at startup to ensure commands and config reloads work.
+
 ---
+
+**Tip: Verbosity level**
+CLI output is controlled by the config `verbosity` setting (`silent`, `quiet`, `normal`, `verbose`). You can change it with `openclaw hybrid-mem config-set verbosity silent`.
+
 
 ## Commands by category
 
 | Category | Commands |
 |----------|----------|
-| **Setup & installation** | `install`, `verify [--fix]` |
+| **Setup & installation** | `install`, `verify [--fix]`, `config` |
 | **Maintenance** | `run-all`, `compact`, `prune`, `checkpoint`, `backfill-decay`, `backfill`, `dream-cycle`, `resolve-contradictions` |
 | **Stats & query** | `stats [--efficiency]`, `test`, `context-audit`, `search <query>`, `lookup <id>`, `forget <id> [--yes]`, `list [--limit, --category, --tier]`, `show <id>`, `categories` |
 | **Proposals & corrections** | `proposals list|show|approve|reject <id>`, `corrections list`, `corrections approve-all`, `review` |
@@ -22,7 +28,7 @@ All commands are available via `openclaw hybrid-mem <command>`.
 | **Reflection & classification** | `reflect`, `reflect-rules`, `reflect-meta`, `classify`, `build-languages` |
 | **Dedup & consolidation** | `find-duplicates`, `consolidate` |
 | **Self-correction** | `self-correction-extract`, `self-correction-run` |
-| **Export & config** | `export`, `config-mode <mode>`, `config-set <key> <value>` |
+| **Export & config** | `export`, `config`, `config-mode <mode>`, `config-set <key> <value>` |
 | **Credentials & scope** | `credentials migrate-to-vault`, `scope list|stats|prune|promote` |
 | **Plugin lifecycle** | `upgrade [version]`, `uninstall` |
 | **Working memory** | `active-tasks`, `active-tasks complete <label>`, `active-tasks stale`, `active-tasks add <label> <desc>` |
@@ -63,12 +69,13 @@ All commands are available via `openclaw hybrid-mem <command>`.
 | `reflect-rules [--dry-run] [--model M] [--force]` | Synthesize patterns into actionable rules. |
 | `reflect-meta [--dry-run] [--model M] [--force]` | Synthesize higher-level meta-patterns. |
 | `install [--dry-run]` | Apply full recommended config, compaction prompts, and **maintenance cron jobs** (nightly distill, weekly reflection, weekly extract-procedures, self-correction). Idempotent. See [Maintenance cron jobs](#maintenance-cron-jobs) below. |
-| `config-mode <preset>` | Set preset: **essential** \| **normal** \| **expert** \| **full**. Writes to openclaw.json. Restart gateway after. Presets set defaults for most enable/disable options (autoCapture, autoRecall, autoClassify, graph, procedures, reflection, memoryTiering, personaProposals, selfCorrection, etc.); see [CONFIGURATION-MODES.md](CONFIGURATION-MODES.md). Alias: **set-mode** (e.g. `set-mode full`). |
+| `config-mode <preset>` | Set preset: **local** \| **minimal** \| **enhanced** \| **complete**. Writes to openclaw.json. Restart gateway after. Presets set defaults for most enable/disable options; Minimal uses nano/flash-tier LLM only. See [CONFIGURATION-MODES.md](CONFIGURATION-MODES.md). Alias: **set-mode** (e.g. `set-mode complete`). |
 | `help config-set <key>` | Show current value and a short description (tweet-length) for a config key. Example: `help config-set autoCapture`. |
-| `config-set <key> [value]` | Set a plugin config key (use **true** / **false** for booleans). **Omit value** to show current value and description (same as `help config-set <key>`). For credentials use `credentials true` or `credentials false`. Writes to openclaw.json. Restart gateway after. **All enable/disable toggles shown in `verify` can be set here** (e.g. `autoRecall.retrievalDirectives.enabled true`, `nightlyCycle.enabled true`, `selfExtension.enabled true`). If you see **credentials: must be object**, run **`npx -y openclaw-hybrid-memory-install fix-config`** or edit `~/.openclaw/openclaw.json`. |
+| `config` | Show current configuration and feature toggles (mode, core and optional features on/off). Use **config-set** to change settings. |
+| `config-set <key> [value]` | Set a plugin config key (use **true** / **false** for booleans). **Omit value** to show current value and description (same as `help config-set <key>`). For credentials use `credentials true` or `credentials false`. Writes to openclaw.json. Restart gateway after. **All enable/disable toggles shown in `config` can be set here** (e.g. `autoRecall.retrievalDirectives.enabled true`, `nightlyCycle.enabled true`, `selfExtension.enabled true`). You can also set **verbosity silent** (or quiet/normal/verbose). If you see **credentials: must be object**, run **`npx -y openclaw-hybrid-memory-install fix-config`** or edit `~/.openclaw/openclaw.json`. |
 | `upgrade [version]` | Upgrade from npm. Removes current install, fetches version (or latest), rebuilds native deps. Restart gateway afterward. Optional version e.g. `2026.2.181`. |
-| `verify [--fix] [--log-file <path>]` | Verify config, DBs, embedding API; suggest fixes. With `--fix`: create missing maintenance cron jobs (with stable `pluginJobId`), re-enable any previously disabled plugin jobs, and fix config placeholders. See [Maintenance cron jobs](#maintenance-cron-jobs) below. |
-| `distill [--all] [--days N] [--since YYYY-MM-DD] [--dry-run] [--model M] [--verbose] [--max-sessions N] [--max-session-tokens N]` | Index session JSONL into memory (LLM extraction, dedup, store). Default: last 3 days. **Progress:** when run in a TTY, shows a progress bar. `--model M` overrides the LLM; otherwise uses `llm.heavy` (first model) or legacy `distill.defaultModel`. All LLM calls go through the OpenClaw gateway. Long-context models use larger batches (500k tokens). See [LLM-AND-PROVIDERS.md](LLM-AND-PROVIDERS.md). |
+| `verify [--fix] [--log-file <path>] [--test-llm]` | Verify infrastructure and functionality: config (embedding key/model), SQLite, LanceDB, embedding API, credentials vault, scheduled jobs. Use **config** to view or change feature toggles. With `--fix`: create missing maintenance cron jobs (with stable `pluginJobId`), re-enable any previously disabled plugin jobs, and fix config placeholders. `--test-llm` tests each configured LLM model. See [Maintenance cron jobs](#maintenance-cron-jobs) below. |
+\| `distill [--all] [--days N] [--since YYYY-MM-DD] [--dry-run] [--model M] [--verbose] [--max-sessions N] [--max-session-tokens N]` | Index session JSONL into memory (LLM extraction, dedup, store). **Uses local Ollama pre-filtering** if `extraction.preFilter.enabled` is true. Default: last 3 days. **Progress:** when run in a TTY, shows a progress bar. `--model M` overrides the LLM; otherwise uses `llm.heavy` (first model) or legacy `distill.defaultModel`. All LLM calls go through the OpenClaw gateway. Long-context models use larger batches (500k tokens). See [LLM-AND-PROVIDERS.md](LLM-AND-PROVIDERS.md). |
 | `ingest-files [--dry-run] [--workspace path] [--paths globs]` | Index workspace markdown (skills, TOOLS.md, etc.) as facts via LLM extraction. Config `ingest.paths` or defaults: `skills/**/*.md`, `TOOLS.md`, `AGENTS.md`. See [SEARCH-RRF-INGEST.md](SEARCH-RRF-INGEST.md). |
 | `export --output <path> [--include-credentials] [--sources X,Y,Z] [--mode replace\|additive]` | Export memory to vanilla OpenClaw–compatible `MEMORY.md` + `memory/` directory layout. Plain markdown, one file per fact. Default: exclude credentials, replace mode. Filter by fact source with `--sources` (e.g. conversation, distillation, cli, ingest, reflection). |
 | `distill-window [--json]` | Print the session distillation window (full or incremental). |
@@ -78,7 +85,6 @@ All commands are available via `openclaw hybrid-mem <command>`.
 | `self-correction-run [--extract-path path] [--workspace path] [--dry-run] [--approve] [--model M] [--no-apply-tools]` | Analyze incidents, auto-remediate (memory + TOOLS section or LLM rewrite). Use `--approve` to apply suggested TOOLS rules; or set `selfCorrection.autoRewriteTools: true` for LLM rewrite. Report: `memory/reports/self-correction-YYYY-MM-DD.md`. See [SELF-CORRECTION-PIPELINE.md](SELF-CORRECTION-PIPELINE.md). |
 | `analyze-feedback-phrases [--days N] [--model M] [--output path] [--learn]` | Analyze session logs to discover *your* praise/frustration phrases. Uses nano-tier for sentiment pre-filter and heavy-tier for phrase extraction (model-agnostic; omit `--days` for auto 30 days first run, then 3 days). Use `--learn` to merge into `.user-feedback-phrases.json`. See [SELF-CORRECTION-PIPELINE.md](SELF-CORRECTION-PIPELINE.md#learning-your-feedback-wording-user-specific-phrases). |
 | `generate-auto-skills [--dry-run]` | Generate `skills/auto/{slug}/SKILL.md` and `recipe.json` for procedures that reached validation threshold. |
-| `skills-suggest [--dry-run] [--days N] [--verbose]` | Memory-to-skills: cluster procedures, synthesize SKILL.md drafts to `skills/auto-generated/`. See [MEMORY-TO-SKILLS.md](MEMORY-TO-SKILLS.md). |
 | `generate-proposals [--dry-run] [--verbose]` | Generate persona proposals from recent reflection (patterns, rules, meta). Requires personaProposals enabled. Cron: weekly-persona-proposals. |
 | `run-all [--dry-run] [--verbose]` | Run all maintenance tasks in optimal order: backfill-decay (once), prune, compact, distill, extract-daily, extract-directives, extract-reinforcement, extract-procedures, generate-auto-skills, reflect, reflect-rules, reflect-meta, generate-proposals, self-correction-run, build-languages. Steps are feature-gated. See [MAINTENANCE-TASKS-MATRIX.md](MAINTENANCE-TASKS-MATRIX.md). |
 | `dream-cycle` | Nightly pipeline: prune expired facts, consolidate event log into facts, reflect, reflect-rules. Requires `nightlyCycle.enabled`. Cron: nightly-dream-cycle. |
@@ -168,6 +174,32 @@ openclaw hybrid-mem store --text <text> [--category <cat>] [--entity <e>] [--key
 - `--scope-target`: Required when scope is `user`, `agent`, or `session` — the userId, agentId, or sessionId.
 - `--supersedes`: Fact id this one supersedes (replaces).
 - When `store.classifyBeforeWrite` is true in config, `store` runs ADD/UPDATE/DELETE/NOOP classification against similar facts before writing.
+
+---
+
+## Sensor Sweep (Event Bus)
+
+The `sensor-sweep` CLI executes cron-based background data collection without relying on the LLM. It queries configured sensors (Tier 1 and Tier 2) and writes structured events to the Event Bus (`event-bus.db`).
+
+```bash
+openclaw hybrid-mem sensor-sweep [--tier 1|2|all] [--source <names>] [--dry-run] [--json]
+```
+
+**Options:**
+- `--tier <n>`: Sensor tier to run (1 for Tier 1 only, 2 for Tier 2, all for both). Defaults to 1.
+- `--source <names>`: Comma-separated list of sensors (e.g. `garmin,github,weather`).
+- `--dry-run`: Preview what would be collected without writing events.
+
+You can inspect the collected events using the `sensor-events` command:
+
+```bash
+openclaw hybrid-mem sensor-events [--type <type>] [--status <status>] [--limit 20] [--json]
+```
+
+**Options:**
+- `--type <type>`: Filter by event type (e.g., `sensor.garmin`).
+- `--status <status>`: Filter by event status (`raw`, `processed`, `surfaced`, `pushed`, `archived`). Defaults to `raw`.
+- `--limit <n>`: Max events to return.
 
 ---
 
@@ -283,12 +315,11 @@ Steps through pending persona proposals and the latest correction report. For ea
 
 ## Maintenance cron jobs
 
-**Install** and **verify --fix** create or repair maintenance cron jobs in `~/.openclaw/cron/jobs.json`. The canonical list is **9 jobs** (tiering, scope promote, persona proposals, memory-to-skills, dream cycle, and others; see table below).
+**Install** and **verify --fix** create or repair maintenance cron jobs in `~/.openclaw/cron/jobs.json`. The canonical list is **8 jobs** (tiering, scope promote, persona proposals, dream cycle, and others; see table below).
 
 | Job (pluginJobId) | Schedule | Purpose |
 |-------------------|----------|---------|
 | `hybrid-mem:nightly-distill` | 02:00 daily | **nightly-memory-sweep:** prune → distill --days 3 → extract-daily → resolve-contradictions. |
-| `hybrid-mem:nightly-memory-to-skills` | 02:15 daily | **nightly-memory-to-skills:** skills-suggest (cluster procedures, draft skills). Exit 0 if memoryToSkills.enabled is false. |
 | `hybrid-mem:self-correction-analysis` | 02:30 daily | **self-correction-analysis:** self-correction-run. Exit 0 if selfCorrection disabled. |
 | `hybrid-mem:nightly-dream-cycle` | 02:45 daily | **nightly-dream-cycle:** dream-cycle (prune → consolidate → reflect). Requires nightlyCycle.enabled. Exit 0 if disabled. |
 | `hybrid-mem:weekly-reflection` | Sun 03:00 | **weekly-reflection:** reflect → reflect-rules → reflect-meta. Requires reflection.enabled. |

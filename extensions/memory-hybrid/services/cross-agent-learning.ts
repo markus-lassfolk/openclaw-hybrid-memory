@@ -12,14 +12,14 @@
  *  6. Return a report.
  */
 
-import type { FactsDB } from "../backends/facts-db.js";
-import type { MemoryEntry } from "../types/memory.js";
-import type { CrossAgentLearningConfig } from "../config/types/features.js";
-import { chatCompleteWithRetry } from "./chat.js";
-import { loadPrompt as loadPromptSync, fillPrompt } from "../utils/prompt-loader.js";
-import { capturePluginError } from "./error-reporter.js";
-import { parseTags, serializeTags } from "../utils/tags.js";
 import type OpenAI from "openai";
+import type { FactsDB } from "../backends/facts-db.js";
+import type { CrossAgentLearningConfig } from "../config/types/features.js";
+import type { MemoryEntry } from "../types/memory.js";
+import { fillPrompt, loadPrompt as loadPromptSync } from "../utils/prompt-loader.js";
+import { parseTags, serializeTags } from "../utils/tags.js";
+import { chatCompleteWithRetry } from "./chat.js";
+import { capturePluginError } from "./error-reporter.js";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -157,9 +157,7 @@ function agentFactAlreadyGeneralised(factsDb: FactsDB, agentFactId: string): boo
 }
 
 /** Build prompt for LLM generalisation. */
-function buildGeneralisePrompt(
-  lessons: AgentLesson[],
-): string {
+function buildGeneralisePrompt(lessons: AgentLesson[]): string {
   let template: string;
   try {
     template = loadPromptSync("cross-agent-generalize");
@@ -213,12 +211,16 @@ async function callLLMForGeneralisation(
     content: prompt,
     maxTokens: 2000,
     timeoutMs: 40000,
+    feature: "cross-agent-learning",
   });
 
   if (!text || text.trim().length === 0) return [];
 
   // Strip markdown fences if present
-  const jsonStr = text.replace(/^```(?:json)?\n?/, "").replace(/\n?```$/, "").trim();
+  const jsonStr = text
+    .replace(/^```(?:json)?\n?/, "")
+    .replace(/\n?```$/, "")
+    .trim();
   try {
     const parsed = JSON.parse(jsonStr);
     if (!Array.isArray(parsed)) return [];
@@ -305,7 +307,7 @@ export async function runCrossAgentLearning(
         for (const lesson of generalised) {
           if (!lesson.text || lesson.text.trim().length < 10) continue;
           if (lesson.text.length > 500) {
-            lesson.text = lesson.text.slice(0, 497) + "...";
+            lesson.text = `${lesson.text.slice(0, 497)}...`;
           }
 
           // Skip if already exists globally
@@ -345,12 +347,7 @@ export async function runCrossAgentLearning(
           // Link new global fact → source agent facts via DERIVED_FROM
           for (const sourceFact of sourceFacts) {
             try {
-              factsDb.createLink(
-                newFact.id,
-                sourceFact.factId,
-                "DERIVED_FROM",
-                0.8,
-              );
+              factsDb.createLink(newFact.id, sourceFact.factId, "DERIVED_FROM", 0.8);
               result.linksCreated++;
             } catch {
               // Non-fatal: link already exists or fact deleted
@@ -359,7 +356,9 @@ export async function runCrossAgentLearning(
         }
       } catch (batchErr) {
         result.errors++;
-        capturePluginError(batchErr instanceof Error ? batchErr : new Error(String(batchErr)), { operation: "cross-agent-learning-batch" });
+        capturePluginError(batchErr instanceof Error ? batchErr : new Error(String(batchErr)), {
+          operation: "cross-agent-learning-batch",
+        });
         logger.warn?.(`cross-agent-learning: batch error: ${batchErr}`);
       }
     }
@@ -422,8 +421,8 @@ export async function getCrossAgentLessons(
   factsDb: FactsDB,
   targetAgent: string,
   context: string,
-  limit: number = 5,
-  minConfidence: number = 0.6,
+  limit = 5,
+  minConfidence = 0.6,
 ): Promise<MemoryEntry[]> {
   const db = factsDb.getRawDb();
   if (!db) return [];
@@ -482,13 +481,13 @@ export async function getCrossAgentLessons(
     );
 
     const scored = candidates.map((row) => {
-      const text = (row.text as string ?? "").toLowerCase();
+      const text = ((row.text as string) ?? "").toLowerCase();
       let overlap = 0;
       for (const word of contextWords) {
         if (text.includes(word)) overlap++;
       }
-      const confidence = row.confidence as number ?? 0;
-      const importance = row.importance as number ?? 0;
+      const confidence = (row.confidence as number) ?? 0;
+      const importance = (row.importance as number) ?? 0;
       const score = overlap * 0.5 + confidence * 0.3 + importance * 0.2;
       return { row, score };
     });
@@ -522,9 +521,7 @@ export function formatBriefInjection(lessons: MemoryEntry[]): string {
   for (const lesson of lessons) {
     const tags = lesson.tags ?? [];
     // sourceAgent is stored as a tag (the agent IDs contributing to this lesson)
-    const agentTags = tags.filter(
-      (t) => t !== CROSS_AGENT_TAG && t !== "*" && !t.startsWith("verified-by:"),
-    );
+    const agentTags = tags.filter((t) => t !== CROSS_AGENT_TAG && t !== "*" && !t.startsWith("verified-by:"));
     const sourceAgent = agentTags[0] ?? "unknown";
     const confidence = lesson.confidence?.toFixed(2) ?? "?";
     lines.push(`- ${lesson.text} (learned by ${sourceAgent}, confidence: ${confidence})`);
@@ -550,14 +547,14 @@ export async function verifyLessonForAgent(
   factsDb: FactsDB,
   lessonId: string,
   verifyingAgent: string,
-  boost: number = 0.1,
+  boost = 0.1,
 ): Promise<void> {
   const db = factsDb.getRawDb();
   if (!db) return;
 
   try {
     const row = db
-      .prepare(`SELECT id, confidence, tags FROM facts WHERE id = ? AND source = ? AND superseded_at IS NULL`)
+      .prepare("SELECT id, confidence, tags FROM facts WHERE id = ? AND source = ? AND superseded_at IS NULL")
       .get(lessonId, CROSS_AGENT_SOURCE) as { id: string; confidence: number; tags: string | null } | undefined;
 
     if (!row) return;
@@ -566,14 +563,12 @@ export async function verifyLessonForAgent(
     const existingTags = parseTags(row.tags);
 
     // Only add tag if not already present
-    const updatedTags = existingTags.includes(verifiedByTag)
-      ? existingTags
-      : [...existingTags, verifiedByTag];
+    const updatedTags = existingTags.includes(verifiedByTag) ? existingTags : [...existingTags, verifiedByTag];
 
     // Boost confidence, cap at 1.0
     const newConfidence = Math.min(1.0, (row.confidence ?? 0.6) + boost);
 
-    db.prepare(`UPDATE facts SET confidence = ?, tags = ? WHERE id = ?`).run(
+    db.prepare("UPDATE facts SET confidence = ?, tags = ? WHERE id = ?").run(
       newConfidence,
       serializeTags(updatedTags),
       lessonId,

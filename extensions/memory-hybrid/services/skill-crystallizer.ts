@@ -37,11 +37,7 @@ export interface CrystallizationResult {
  * Derive a kebab-case skill name from example goals and tool sequence.
  * Prefers the first example goal, falls back to tool sequence hash.
  */
-export function deriveSkillName(
-  exampleGoals: string[],
-  toolSequence: string[],
-  patternId: string,
-): string {
+export function deriveSkillName(exampleGoals: string[], toolSequence: string[], patternId: string): string {
   // Try to extract a short phrase from the first example goal
   const firstGoal = exampleGoals[0];
   if (firstGoal && firstGoal.trim().length > 0) {
@@ -56,7 +52,11 @@ export function deriveSkillName(
   }
 
   // Fall back: use the first two tool names + hash fragment (lowercase for consistency)
-  const toolSlug = toolSequence.slice(0, 2).join("-").toLowerCase().replace(/[^a-z0-9-]/g, "-");
+  const toolSlug = toolSequence
+    .slice(0, 2)
+    .join("-")
+    .toLowerCase()
+    .replace(/[^a-z0-9-]/g, "-");
   return `auto-${toolSlug}-${patternId.slice(0, 6)}`;
 }
 
@@ -71,12 +71,7 @@ export function isExecOnlySequence(toolSequence: string[]): boolean {
 // SKILL.md template builder
 // ---------------------------------------------------------------------------
 
-function buildSkillContent(
-  skillName: string,
-  pattern: WorkflowPattern,
-  patternId: string,
-  createdAt: string,
-): string {
+function buildSkillContent(skillName: string, pattern: WorkflowPattern, patternId: string, createdAt: string): string {
   const toolSequence = pattern.toolSequence;
   const successPct = Math.round(pattern.successRate * 100);
   const exampleGoalsText =
@@ -84,9 +79,7 @@ function buildSkillContent(
       ? pattern.exampleGoals.map((g) => `- ${g.replace(/\n/g, " ")}`).join("\n")
       : "- (no example goals recorded)";
 
-  const stepsText = toolSequence
-    .map((tool, i) => `${i + 1}. Call \`${tool}\` as appropriate for the task.`)
-    .join("\n");
+  const stepsText = toolSequence.map((tool, i) => `${i + 1}. Call \`${tool}\` as appropriate for the task.`).join("\n");
 
   return `# ${skillName}
 
@@ -143,14 +136,12 @@ export class SkillCrystallizer {
     const skillContent = buildSkillContent(skillName, pattern, patternId, createdAt);
 
     // Resolve output directory (expand ~ for home dir)
-    const outputDir = this.cfg.outputDir.replace(/^~/, process.env["HOME"] ?? "~");
+    const outputDir = this.cfg.outputDir.replace(/^~/, process.env.HOME ?? "~");
     const proposedOutputPath = `${outputDir}/${skillName}/SKILL.md`;
 
     // Generate shell script for exec-only sequences
     const hasScript = isExecOnlySequence(pattern.toolSequence);
-    const scriptContent = hasScript
-      ? buildShellScript(skillName, pattern, patternId)
-      : undefined;
+    const scriptContent = hasScript ? buildShellScript(skillName, pattern, patternId) : undefined;
 
     return {
       skillName,
@@ -166,11 +157,7 @@ export class SkillCrystallizer {
 // Shell script builder (exec-only patterns)
 // ---------------------------------------------------------------------------
 
-function buildShellScript(
-  skillName: string,
-  pattern: WorkflowPattern,
-  patternId: string,
-): string {
+function buildShellScript(skillName: string, pattern: WorkflowPattern, patternId: string): string {
   const steps = pattern.toolSequence.map((_, i) => `# Step ${i + 1}: exec call`).join("\n");
   return `#!/usr/bin/env bash
 # Auto-generated shell script for skill: ${skillName}

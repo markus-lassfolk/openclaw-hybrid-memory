@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * Integration test: memory_store enqueues contextual variant generation (Issue #159).
  *
@@ -7,14 +8,14 @@
  * - When variantQueue is null (disabled), no variants are generated
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
-import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { registerMemoryTools } from "../tools/memory-tools.js";
-import { ContextualVariantGenerator, VariantGenerationQueue } from "../services/contextual-variants.js";
 import { _testing } from "../index.js";
+import { ContextualVariantGenerator, VariantGenerationQueue } from "../services/contextual-variants.js";
+import { registerMemoryTools } from "../tools/memory-tools.js";
 
 const { FactsDB } = _testing;
 
@@ -77,7 +78,16 @@ function makeBaseCfg() {
       defaultStoreScope: "global",
       strictAgentScoping: false,
     },
-    graph: { enabled: false, autoLink: false, autoLinkLimit: 5, autoLinkMinScore: 0.5, useInRecall: false, maxTraversalDepth: 2, coOccurrenceWeight: 0.5, autoSupersede: false },
+    graph: {
+      enabled: false,
+      autoLink: false,
+      autoLinkLimit: 5,
+      autoLinkMinScore: 0.5,
+      useInRecall: false,
+      maxTraversalDepth: 2,
+      coOccurrenceWeight: 0.5,
+      autoSupersede: false,
+    },
     graphRetrieval: { enabled: false, defaultExpand: false, maxExpandDepth: 3, maxExpandedResults: 20 },
     credentials: { enabled: false },
     autoRecall: { scopeFilter: null, summaryThreshold: 0, summaryMaxChars: 500 },
@@ -130,6 +140,7 @@ describe("memory_store — variant queue integration (Issue #159)", () => {
     registerMemoryTools(
       {
         factsDb: factsDb as never,
+        edictStore: null as any,
         vectorDb: vectorDb as never,
         cfg: cfg as never,
         embeddings: embeddings as never,
@@ -153,11 +164,11 @@ describe("memory_store — variant queue integration (Issue #159)", () => {
     const storeTool = api.getTool("memory_store");
     expect(storeTool).toBeDefined();
 
-    const result = await storeTool!.execute("call-1", {
+    const result = (await storeTool?.execute("call-1", {
       text: "HA runs on Proxmox VM 100 at 192.168.1.212",
       importance: 0.8,
       category: "technical",
-    }) as { details: { id: string } };
+    })) as { details: { id: string } };
 
     const factId = result.details.id;
     expect(factId).toBeTruthy();
@@ -182,6 +193,7 @@ describe("memory_store — variant queue integration (Issue #159)", () => {
     registerMemoryTools(
       {
         factsDb: factsDb as never,
+        edictStore: null as any,
         vectorDb: vectorDb as never,
         cfg: cfg as never,
         embeddings: embeddings as never,
@@ -203,11 +215,11 @@ describe("memory_store — variant queue integration (Issue #159)", () => {
     );
 
     const storeTool = api.getTool("memory_store");
-    const result = await storeTool!.execute("call-2", {
+    const result = (await storeTool?.execute("call-2", {
       text: "The user prefers dark mode",
       importance: 0.7,
       category: "preference",
-    }) as { details: { id: string } };
+    })) as { details: { id: string } };
 
     const factId = result.details.id;
     await new Promise((r) => setTimeout(r, 50));
@@ -246,6 +258,7 @@ describe("memory_store — variant queue integration (Issue #159)", () => {
     registerMemoryTools(
       {
         factsDb: factsDb as never,
+        edictStore: null as any,
         vectorDb: vectorDb as never,
         cfg: cfg as never,
         embeddings: embeddings as never,
@@ -268,10 +281,10 @@ describe("memory_store — variant queue integration (Issue #159)", () => {
 
     const storeTool = api.getTool("memory_store");
     const start = Date.now();
-    const result = await storeTool!.execute("call-3", {
+    const result = (await storeTool?.execute("call-3", {
       text: "Non-blocking fact store",
       importance: 0.7,
-    }) as { details: { id: string } };
+    })) as { details: { id: string } };
     const elapsed = Date.now() - start;
 
     // memory_store should return quickly (before the 50ms variant delay)

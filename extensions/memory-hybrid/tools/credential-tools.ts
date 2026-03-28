@@ -6,8 +6,8 @@
  */
 
 import { Type } from "@sinclair/typebox";
-import type { ClawdbotPluginApi } from "openclaw/plugin-sdk";
-import { stringEnum } from "openclaw/plugin-sdk";
+import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
+import { stringEnum } from "../utils/typebox.js";
 
 import type { CredentialsDB } from "../backends/credentials-db.js";
 import { CREDENTIAL_TYPES, type CredentialType, type HybridMemoryConfig } from "../config.js";
@@ -81,7 +81,7 @@ export function registerCredentialTools(ctx: PluginContext, api: ClawdbotPluginA
         async execute(_toolCallId: string, params: Record<string, unknown>) {
           const { service, type } = params as { service: string; type?: CredentialType };
           if (!credentialsDb) throw new Error("Credentials store not available");
-          let entry;
+          let entry: any;
           try {
             entry = credentialsDb.get(service, type);
           } catch (err) {
@@ -95,7 +95,12 @@ export function registerCredentialTools(ctx: PluginContext, api: ClawdbotPluginA
           }
           if (!entry) {
             return {
-              content: [{ type: "text", text: `No credential found for service "${service}"${type ? ` (type: ${type})` : ""}.` }],
+              content: [
+                {
+                  type: "text",
+                  text: `No credential found for service "${service}"${type ? ` (type: ${type})` : ""}.`,
+                },
+              ],
               details: { found: false },
             };
           }
@@ -130,11 +135,12 @@ export function registerCredentialTools(ctx: PluginContext, api: ClawdbotPluginA
       {
         name: "credential_list",
         label: "List Credentials",
-        description: "List stored credentials (service/type/url only — no values). Use credential_get to retrieve a specific credential.",
+        description:
+          "List stored credentials (service/type/url only — no values). Use credential_get to retrieve a specific credential.",
         parameters: Type.Object({}),
         async execute() {
           if (!credentialsDb) throw new Error("Credentials store not available");
-          let items;
+          let items: any;
           try {
             items = credentialsDb.list();
           } catch (err) {
@@ -153,7 +159,8 @@ export function registerCredentialTools(ctx: PluginContext, api: ClawdbotPluginA
             };
           }
           const lines = items.map(
-            (i) => `- ${i.service} (${i.type})${i.url ? ` @ ${i.url}` : ""}${i.expires ? ` [expires: ${new Date(i.expires * 1000).toISOString()}]` : ""}`,
+            (i: any) =>
+              `- ${i.service} (${i.type})${i.url ? ` @ ${i.url}` : ""}${i.expires ? ` [expires: ${new Date(i.expires * 1000).toISOString()}]` : ""}`,
           );
           return {
             content: [{ type: "text", text: `Stored credentials:\n${lines.join("\n")}` }],
@@ -168,7 +175,8 @@ export function registerCredentialTools(ctx: PluginContext, api: ClawdbotPluginA
       {
         name: "credential_delete",
         label: "Delete Credential",
-        description: "Delete a stored credential by service name. Optionally specify type to delete only that credential type.",
+        description:
+          "Delete a stored credential by service name. Optionally specify type to delete only that credential type.",
         parameters: Type.Object({
           service: Type.String({ description: "Service name" }),
           type: Type.Optional(stringEnum(CREDENTIAL_TYPES as unknown as readonly string[])),
@@ -176,7 +184,7 @@ export function registerCredentialTools(ctx: PluginContext, api: ClawdbotPluginA
         async execute(_toolCallId: string, params: Record<string, unknown>) {
           const { service, type } = params as { service: string; type?: CredentialType };
           if (!credentialsDb) throw new Error("Credentials store not available");
-          let deleted;
+          let deleted: any;
           try {
             deleted = credentialsDb.delete(service, type);
           } catch (err) {
@@ -190,7 +198,9 @@ export function registerCredentialTools(ctx: PluginContext, api: ClawdbotPluginA
           }
           if (!deleted) {
             return {
-              content: [{ type: "text", text: `No credential found for "${service}"${type ? ` (type: ${type})` : ""}.` }],
+              content: [
+                { type: "text", text: `No credential found for "${service}"${type ? ` (type: ${type})` : ""}.` },
+              ],
               details: { deleted: false },
             };
           }

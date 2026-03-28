@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
 import { haYamlConverter } from "../../tools/converters/ha-yaml-converter.js";
 
 describe("haYamlConverter", () => {
@@ -44,9 +44,9 @@ scene:
     expect(result.markdown).toContain("## Scenes");
     expect(result.markdown).toContain("Evening Chill");
     expect(result.markdown).toContain("## Global Config");
-    expect(result.metadata["automationCount"]).toBe(1);
-    expect(result.metadata["scriptCount"]).toBe(1);
-    expect(result.metadata["sceneCount"]).toBe(1);
+    expect(result.metadata.automationCount).toBe(1);
+    expect(result.metadata.scriptCount).toBe(1);
+    expect(result.metadata.sceneCount).toBe(1);
   });
 
   it("handles a minimal config with just sensors", () => {
@@ -131,7 +131,7 @@ automation:
 `.trim();
 
     const result = haYamlConverter.convert(yaml, "/config/automations.yaml");
-    expect(result.metadata["automationCount"]).toBe(2);
+    expect(result.metadata.automationCount).toBe(2);
     expect(result.markdown).toContain("Morning Routine");
     expect(result.markdown).toContain("Security Alert");
     expect(result.markdown).toContain("time(07:00:00)");
@@ -152,10 +152,10 @@ light:
   });
 
   it("returns correct file path in metadata", () => {
-    const yaml = `sensor:\n  - platform: template\n    name: test\n`;
+    const yaml = "sensor:\n  - platform: template\n    name: test\n";
     const result = haYamlConverter.convert(yaml, "/home/user/ha/sensors.yaml");
-    expect(result.metadata["filePath"]).toBe("/home/user/ha/sensors.yaml");
-    expect(result.metadata["source"]).toBe("ha-yaml-converter");
+    expect(result.metadata.filePath).toBe("/home/user/ha/sensors.yaml");
+    expect(result.metadata.source).toBe("ha-yaml-converter");
   });
 
   it("handles a config with no recognisable HA keys", () => {
@@ -167,5 +167,72 @@ some_unknown_key:
     const result = haYamlConverter.convert(yaml, "/config/unknown.yaml");
     expect(result.markdown).toContain("# Home Assistant Configuration");
     // Should not crash
+  });
+
+  it("handles !include in sequence items (split automation files)", () => {
+    const yaml = `
+automation:
+  - !include automations/lights.yaml
+  - !include automations/motion.yaml
+  - alias: "Inline automation"
+    trigger:
+      - platform: state
+        entity_id: sensor.test
+    action:
+      - service: light.turn_on
+`.trim();
+
+    const result = haYamlConverter.convert(yaml, "/config/configuration.yaml");
+    expect(result.markdown).toContain("## Automations");
+    expect(result.markdown).toContain("## Referenced Files");
+    expect(result.markdown).toContain("automations/lights.yaml");
+    expect(result.markdown).toContain("automations/motion.yaml");
+    expect(result.markdown).toContain("Inline automation");
+    // Should not show *(invalid)* for included files
+    expect(result.markdown).not.toContain("Automation 1: *(invalid)*");
+    expect(result.markdown).not.toContain("Automation 2: *(invalid)*");
+  });
+
+  it("handles !secret in sequence items", () => {
+    const yaml = `
+notify:
+  - name: pushbullet
+    platform: pushbullet
+    api_key: !secret pushbullet_key
+script:
+  test_script:
+    sequence:
+      - service: notify.mobile_app
+        data:
+          message: !secret test_message
+`.trim();
+
+    const result = haYamlConverter.convert(yaml, "/config/configuration.yaml");
+    expect(result.markdown).toContain("## Scripts");
+    expect(result.markdown).toContain("test_script");
+    // Should handle secrets gracefully
+    expect(result.markdown).not.toContain("pushbullet_key");
+    expect(result.markdown).not.toContain("test_message");
+  });
+
+  it("handles keys with hyphens and dots", () => {
+    const yaml = `
+homeassistant:
+  name: "Test Home"
+
+api-key: !secret my_api_key
+sensor.temperature: !secret temp_sensor
+mqtt-broker: !secret mqtt_host
+device.id: !secret device_identifier
+`.trim();
+
+    const result = haYamlConverter.convert(yaml, "/config/configuration.yaml");
+    // Should not crash and should handle the secrets
+    expect(result.markdown).toContain("# Home Assistant Configuration");
+    // Secret references should not appear in output
+    expect(result.markdown).not.toContain("my_api_key");
+    expect(result.markdown).not.toContain("temp_sensor");
+    expect(result.markdown).not.toContain("mqtt_host");
+    expect(result.markdown).not.toContain("device_identifier");
   });
 });

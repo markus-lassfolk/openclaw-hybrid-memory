@@ -1,19 +1,27 @@
 export const DECAY_CLASSES = [
   "permanent",
-  "stable",
-  "active",
-  "session",
-  "checkpoint",
+  "durable", // ~3 months half-life
+  "normal", // ~2 weeks half-life
+  "short", // ~2 days half-life
+  "ephemeral", // ~4 hours half-life
+  "stable", // legacy: 90 days
+  "active", // legacy: 14 days
+  "session", // legacy: 24 hours
+  "checkpoint", // legacy: 4 hours
 ] as const;
 export type DecayClass = (typeof DECAY_CLASSES)[number];
 
 /** TTL defaults in seconds per decay class. null = never expires. */
 export const TTL_DEFAULTS: Record<DecayClass, number | null> = {
   permanent: null,
-  stable: 90 * 24 * 3600, // 90 days
-  active: 14 * 24 * 3600, // 14 days
-  session: 24 * 3600, // 24 hours
-  checkpoint: 4 * 3600, // 4 hours
+  durable: 90 * 24 * 3600, // ~3 months
+  normal: 14 * 24 * 3600, // 2 weeks
+  short: 2 * 24 * 3600, // 2 days
+  ephemeral: 4 * 3600, // 4 hours
+  stable: 90 * 24 * 3600, // legacy: 90 days
+  active: 14 * 24 * 3600, // legacy: 14 days
+  session: 24 * 3600, // legacy: 24 hours
+  checkpoint: 4 * 3600, // legacy: 4 hours
 };
 
 /** Store options: fuzzy dedupe and optional classify-before-write. */

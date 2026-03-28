@@ -10,23 +10,23 @@
  *            per calendar month even if runToolEffectivenessForCli is called twice.
  */
 
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
-import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { _testing } from "../index.js";
 import {
-  detectFrustration,
-  exportAsImplicitSignals,
   type FrustrationConversationTurn,
   type FrustrationDetectionConfig,
+  detectFrustration,
+  exportAsImplicitSignals,
 } from "../services/frustration-detector.js";
 import {
-  generateToolHint,
-  generateMonthlyReport,
   ToolEffectivenessStore,
   type ToolMetrics,
+  generateMonthlyReport,
+  generateToolHint,
 } from "../services/tool-effectiveness.js";
-import { _testing } from "../index.js";
 
 const { FactsDB } = _testing;
 
@@ -87,7 +87,11 @@ describe("Gap 1 — exportAsImplicitSignals wiring into implicit_signals table",
   });
 
   afterEach(() => {
-    try { factsDb.close?.(); } catch { /* ignore */ }
+    try {
+      factsDb.close?.();
+    } catch {
+      /* ignore */
+    }
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
@@ -121,11 +125,7 @@ describe("Gap 1 — exportAsImplicitSignals wiring into implicit_signals table",
   });
 
   it("signals can be stored into implicit_signals table via getRawDb()", () => {
-    const turns = frustrationTurns([
-      "FIX THIS NOW",
-      "Why aren't you listening",
-      "I SAID FIX IT",
-    ]);
+    const turns = frustrationTurns(["FIX THIS NOW", "Why aren't you listening", "I SAID FIX IT"]);
     const state = detectFrustration(turns, defaultCfg, 0);
     const signals = exportAsImplicitSignals(state);
 
@@ -193,7 +193,11 @@ describe("Gap 2 — generateToolHint wiring into agent context preparation", () 
   });
 
   afterEach(() => {
-    try { store.close(); } catch { /* ignore */ }
+    try {
+      store.close();
+    } catch {
+      /* ignore */
+    }
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
@@ -269,8 +273,16 @@ describe("Gap 3 — generateMonthlyReport monthly gating in nightly cycle", () =
   });
 
   afterEach(() => {
-    try { store.close(); } catch { /* ignore */ }
-    try { factsDb.close?.(); } catch { /* ignore */ }
+    try {
+      store.close();
+    } catch {
+      /* ignore */
+    }
+    try {
+      factsDb.close?.();
+    } catch {
+      /* ignore */
+    }
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
@@ -292,7 +304,7 @@ describe("Gap 3 — generateMonthlyReport monthly gating in nightly cycle", () =
 
     // First call
     const existing1 = rawDb
-      .prepare(`SELECT id FROM facts WHERE key = ? AND superseded_at IS NULL LIMIT 1`)
+      .prepare("SELECT id FROM facts WHERE key = ? AND superseded_at IS NULL LIMIT 1")
       .get(monthlyKey);
     if (!existing1) {
       await generateMonthlyReport(store, factsDb);
@@ -300,7 +312,7 @@ describe("Gap 3 — generateMonthlyReport monthly gating in nightly cycle", () =
 
     // Second call (should be skipped by gating logic)
     const existing2 = rawDb
-      .prepare(`SELECT id FROM facts WHERE key = ? AND superseded_at IS NULL LIMIT 1`)
+      .prepare("SELECT id FROM facts WHERE key = ? AND superseded_at IS NULL LIMIT 1")
       .get(monthlyKey);
     if (!existing2) {
       await generateMonthlyReport(store, factsDb);
@@ -321,7 +333,7 @@ describe("Gap 3 — generateMonthlyReport monthly gating in nightly cycle", () =
       .get() as { key: string } | undefined;
 
     expect(row).toBeDefined();
-    expect(row!.key).toBe(`tool-effectiveness-monthly-${month}`);
+    expect(row?.key).toBe(`tool-effectiveness-monthly-${month}`);
   });
 
   it("monthly report fact has source='tool-effectiveness' and category='pattern'", async () => {
@@ -330,9 +342,9 @@ describe("Gap 3 — generateMonthlyReport monthly gating in nightly cycle", () =
     const facts = factsDb.getByCategory("pattern");
     const report = facts.find((f) => f.tags?.includes("monthly-report"));
     expect(report).toBeDefined();
-    expect(report!.source).toBe("tool-effectiveness");
-    expect(report!.importance).toBeCloseTo(0.7, 2);
-    expect(report!.confidence).toBeCloseTo(0.9, 2);
+    expect(report?.source).toBe("tool-effectiveness");
+    expect(report?.importance).toBeCloseTo(0.7, 2);
+    expect(report?.confidence).toBeCloseTo(0.9, 2);
   });
 
   it("spy: generateMonthlyReport is called when no monthly fact exists yet", async () => {
@@ -344,7 +356,7 @@ describe("Gap 3 — generateMonthlyReport monthly gating in nightly cycle", () =
     const monthlyKey = `tool-effectiveness-monthly-${month}`;
     const rawDb = factsDb.getRawDb();
     const existing = rawDb
-      .prepare(`SELECT id FROM facts WHERE key = ? AND superseded_at IS NULL LIMIT 1`)
+      .prepare("SELECT id FROM facts WHERE key = ? AND superseded_at IS NULL LIMIT 1")
       .get(monthlyKey);
 
     if (!existing) {

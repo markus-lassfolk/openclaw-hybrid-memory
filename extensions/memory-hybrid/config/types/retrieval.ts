@@ -3,19 +3,21 @@ export type AutoRecallInjectionFormat = "full" | "short" | "minimal" | "progress
 
 export type AutoClassifyConfig = {
   enabled: boolean;
-  model?: string;      // when unset, runtime uses getDefaultCronModel(cfg, "nano")
-  batchSize: number;   // facts per LLM call (default 20)
+  model?: string; // when unset, runtime uses getDefaultCronModel(cfg, "nano")
+  batchSize: number; // facts per LLM call (default 20)
   /** When true, LLM can suggest new categories from "other" facts; labels with at least minFactsForNewCategory become real categories (default true) */
   suggestCategories?: boolean;
   /** Minimum facts with the same suggested label before we create that category (default 10). Not told to the LLM. */
   minFactsForNewCategory?: number;
+  /** Hours between category discovery LLM runs; 0 = no cooldown (default 72). Prevents O(facts/batch) LLM calls on every cron tick when categories are settled. */
+  discoveryIntervalHours: number;
 };
 
 /** Entity-centric recall: when prompt mentions an entity from the list, merge lookup(entity) facts into candidates */
 export type EntityLookupConfig = {
   enabled: boolean;
-  entities: string[];           // e.g. ["user", "owner", "decision"]; prompt matched case-insensitively
-  maxFactsPerEntity: number;    // max facts to merge per matched entity (default 2)
+  entities: string[]; // e.g. ["user", "owner", "decision"]; prompt matched case-insensitively
+  maxFactsPerEntity: number; // max facts to merge per matched entity (default 2)
 };
 
 /** Auto-recall on authentication failures (reactive memory trigger) */
@@ -59,11 +61,11 @@ export type AutoRecallConfig = {
   entityLookup: EntityLookupConfig;
   /** Targeted recall directives (entity mention, keyword, task type, session start). */
   retrievalDirectives: RetrievalDirectivesConfig;
-  summaryThreshold: number;      // facts longer than this get a summary stored; 0 = disabled (default 300)
-  summaryMaxChars: number;       // summary length when generated (default 80)
-  useSummaryInInjection: boolean;  // inject summary instead of full text when present (default true)
-  summarizeWhenOverBudget: boolean;  // when token cap forces dropping memories, LLM-summarize all into 2-3 sentences (1.4)
-  summarizeModel?: string;       // when unset, runtime uses getDefaultCronModel(cfg, "nano")
+  summaryThreshold: number; // facts longer than this get a summary stored; 0 = disabled (default 300)
+  summaryMaxChars: number; // summary length when generated (default 80)
+  useSummaryInInjection: boolean; // inject summary instead of full text when present (default true)
+  summarizeWhenOverBudget: boolean; // when token cap forces dropping memories, LLM-summarize all into 2-3 sentences (1.4)
+  summarizeModel?: string; // when unset, runtime uses getDefaultCronModel(cfg, "nano")
   /** Max candidates for progressive index (default 15). Only when injectionFormat is progressive or progressive_hybrid. */
   progressiveMaxCandidates?: number;
   /** Max tokens for the index block in progressive mode (default: 300 when injectionFormat is progressive or progressive_hybrid). */
@@ -76,6 +78,10 @@ export type AutoRecallConfig = {
   scopeFilter?: { userId?: string; agentId?: string; sessionId?: string };
   /** Auto-recall on authentication failures (reactive trigger after tool results) */
   authFailure: AuthFailureRecallConfig;
+  /** Phase 2.1: Hard degradation. When main-lane queue depth > this value, use FTS-only + HOT facts and set degraded flag. 0 = disabled. Default 10. */
+  degradationQueueDepth?: number;
+  /** Phase 2.1: Hard degradation. When recall latency (ms) exceeds this value, use FTS-only + HOT and set degraded. 0 = disabled. Default 5000. */
+  degradationMaxLatencyMs?: number;
 };
 
 /** Multi-strategy retrieval pipeline configuration (Issue #152: RRF scoring pipeline). */
@@ -124,8 +130,21 @@ export type QueryExpansionConfig = {
   maxVariants: number;
   /** LRU cache size for memoized expansions (default: 100). */
   cacheSize: number;
-  /** Timeout in ms for the LLM call; on timeout, fall back to original query (default: 5000). */
-  timeoutMs: number;
+  /**
+   * Timeout in ms for the LLM call; on timeout, fall back to original query (default: 15000).
+   * A minimum floor of 10 000 ms is enforced to prevent spurious timeouts on thinking models (#384).
+   * Set to `0` or a negative value in config to bypass the floor (chatComplete uses its own default).
+   * `undefined` here means "no config-level timeout" — chatComplete uses its internal default.
+   */
+  timeoutMs: number | undefined;
+  /**
+   * When true (default), HyDE is skipped during interactive `before_agent_start` turns.
+   * HyDE adds a full LLM round-trip before embedding, which can add 5–15 s of latency on
+   * the hot interactive path. Background/cron recall is unaffected. Set to `false` only if
+   * you explicitly want HyDE expansion on every user-facing turn (Engineering Goal 2: latency).
+   * Defaults to `true` when not explicitly set.
+   */
+  skipForInteractiveTurns: boolean;
 };
 
 /** LLM re-ranking of RRF fusion results (Issue #161). */
@@ -138,8 +157,27 @@ export type RerankingConfig = {
   candidateCount: number;
   /** Number of results to return after re-ranking (default: 20). */
   outputCount: number;
-  /** Timeout in ms for the LLM call; on timeout, fall back to original RRF order (default: 10000). */
-  timeoutMs: number;
+  /**
+   * Timeout in ms for the LLM call; on timeout, fall back to original RRF order (default: 10000).
+   * A minimum floor of 5 000 ms is enforced to prevent spurious timeouts (#384).
+   * Set to `0` or a negative value in config to bypass the floor (chatComplete uses its own default).
+   * `undefined` here means "no config-level timeout" — chatComplete uses its internal default.
+   */
+  timeoutMs: number | undefined;
+};
+
+/** Adaptive document grading and query rewriting for retrieval quality. */
+export type DocumentGradingConfig = {
+  /** Enable LLM-based document grading and adaptive query rewriting (default: false). */
+  enabled: boolean;
+  /** LLM model for grading; when unset, defaults to "openai/gpt-4.1-nano". */
+  model?: string;
+  /**
+   * Timeout in ms for the LLM call; on timeout, skip grading (default: 10000).
+   * Set to `0` or a negative value in config to bypass timeout enforcement.
+   * `undefined` here means "no config-level timeout" — chatComplete uses its internal default.
+   */
+  timeoutMs: number | undefined;
 };
 
 /** Contextual variant generation at index time (Issue #159). */

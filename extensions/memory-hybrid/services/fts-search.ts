@@ -8,7 +8,9 @@
  * can call it as an independent retrieval strategy alongside vector search.
  */
 
-import type Database from "better-sqlite3";
+import type { DatabaseSync } from "node:sqlite";
+import type { SQLInputValue } from "node:sqlite";
+import { pluginLogger } from "../utils/logger.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -32,7 +34,7 @@ export interface FtsSearchResult {
 // ---------------------------------------------------------------------------
 
 /** Indexed columns in facts_fts (in order). Used for snippet() column index. */
-const FTS_COLUMNS = ["text", "category", "entity", "tags", "key", "value"] as const;
+const FTS_COLUMNS = ["text", "category", "entity", "tags", "why", "key", "value"] as const;
 
 /**
  * Escape a raw user string so it can be used as a quoted FTS5 phrase.
@@ -40,8 +42,9 @@ const FTS_COLUMNS = ["text", "category", "entity", "tags", "key", "value"] as co
  */
 function escapeForFts5(raw: string): string {
   return raw
-    .replace(/['"*();]/g, " ")     // FTS5 special chars + semicolons
-    .replace(/--/g, " ")           // SQL line-comment marker
+    .replace(/\u0000/g, " ") // SQLite FTS5 terminates strings at NUL bytes
+    .replace(/['"*();]/g, " ") // FTS5 special chars + semicolons
+    .replace(/--/g, " ") // SQL line-comment marker
     .replace(/\b(AND|OR|NOT)\b/g, " ")
     .replace(/\s+/g, " ")
     .trim();
@@ -64,8 +67,8 @@ export function buildFts5Query(raw: string): string | null {
   // If the user has explicitly used FTS5 operators, attempt to pass through
   // with only dangerous characters stripped.
   const operatorTokens = trimmed.split(/\s+/);
-  const hasOperators = operatorTokens.some((t) => /^(AND|OR|NOT)$/i.test(t))
-    || operatorTokens.some((t) => /^[a-zA-Z0-9_]+\*$/.test(t));
+  const hasOperators =
+    operatorTokens.some((t) => /^(AND|OR|NOT)$/i.test(t)) || operatorTokens.some((t) => /^[a-zA-Z0-9_]+\*$/.test(t));
   if (hasOperators) {
     const sanitizedTokens: string[] = [];
     for (const token of operatorTokens) {
@@ -110,14 +113,14 @@ export function buildFts5Query(raw: string): string | null {
 /**
  * Search the FTS5 index for facts matching `query`.
  *
- * @param db      - A better-sqlite3 `Database` instance.
+ * @param db      - A node:sqlite `DatabaseSync` instance.
  * @param query   - Raw search string. May contain FTS5 operators (AND/OR/NOT/*),
  *                  phrase quotes, or plain keywords.
  * @param options - Optional filters and limits.
  * @returns Ranked list of matching facts (best first).
  */
 export function searchFts(
-  db: Database.Database,
+  db: DatabaseSync,
   query: string,
   options: {
     /** Maximum results to return (default: 20). */
@@ -128,7 +131,7 @@ export function searchFts(
     tagFilter?: string;
     /**
      * Restrict the FTS match to specific columns.
-     * Valid values: "text" | "category" | "entity" | "tags" | "key" | "value"
+     * Valid values: "text" | "category" | "entity" | "tags" | "why" | "key" | "value"
      * When omitted, all columns are searched.
      */
     columns?: Array<(typeof FTS_COLUMNS)[number]>;
@@ -152,28 +155,25 @@ export function searchFts(
 
   const validColumns = columns?.filter((c) => FTS_COLUMNS.includes(c)) ?? [];
   // Prefix query with column filter if requested.
-  const matchExpr =
-    validColumns.length > 0
-      ? `{ ${validColumns.join(" ")} } : ( ${ftsQuery} )`
-      : ftsQuery;
+  const matchExpr = validColumns.length > 0 ? `{ ${validColumns.join(" ")} } : ( ${ftsQuery} )` : ftsQuery;
 
   // Build WHERE clauses for structured filters.
   const extraClauses: string[] = [];
-  const params: Record<string, unknown> = { query: matchExpr, limit };
+  const params: Record<string, SQLInputValue> = { "@query": matchExpr, "@limit": limit };
 
   if (!includeSuperseded) {
     // Use asOf when provided so point-in-time queries filter against the correct timestamp.
     const nowSec = asOf ?? Math.floor(Date.now() / 1000);
     extraClauses.push("AND f.superseded_at IS NULL AND (f.expires_at IS NULL OR f.expires_at > @nowSec)");
-    params.nowSec = nowSec;
+    params["@nowSec"] = nowSec;
   }
-  if (entityFilter && entityFilter.trim()) {
+  if (entityFilter?.trim()) {
     extraClauses.push("AND LOWER(f.entity) = LOWER(@entityFilter)");
-    params.entityFilter = entityFilter.trim();
+    params["@entityFilter"] = entityFilter.trim();
   }
-  if (tagFilter && tagFilter.trim()) {
+  if (tagFilter?.trim()) {
     extraClauses.push("AND (',' || COALESCE(f.tags,'') || ',') LIKE @tagPattern");
-    params.tagPattern = `%,${tagFilter.toLowerCase().trim()},%`;
+    params["@tagPattern"] = `%,${tagFilter.toLowerCase().trim()},%`;
   }
 
   let rows: Array<{
@@ -194,12 +194,13 @@ export function searchFts(
            fts.rank,
            snippet(facts_fts, 0, '[', ']', '...', 16) AS snippet,
            (
-             CASE WHEN bm25(facts_fts, 1, 0, 0, 0, 0, 0) < 0 THEN 'text ' ELSE '' END ||
-             CASE WHEN bm25(facts_fts, 0, 1, 0, 0, 0, 0) < 0 THEN 'category ' ELSE '' END ||
-             CASE WHEN bm25(facts_fts, 0, 0, 1, 0, 0, 0) < 0 THEN 'entity ' ELSE '' END ||
-             CASE WHEN bm25(facts_fts, 0, 0, 0, 1, 0, 0) < 0 THEN 'tags ' ELSE '' END ||
-             CASE WHEN bm25(facts_fts, 0, 0, 0, 0, 1, 0) < 0 THEN 'key ' ELSE '' END ||
-             CASE WHEN bm25(facts_fts, 0, 0, 0, 0, 0, 1) < 0 THEN 'value' ELSE '' END
+             CASE WHEN bm25(facts_fts, 1, 0, 0, 0, 0, 0, 0) < 0 THEN 'text ' ELSE '' END ||
+             CASE WHEN bm25(facts_fts, 0, 1, 0, 0, 0, 0, 0) < 0 THEN 'category ' ELSE '' END ||
+             CASE WHEN bm25(facts_fts, 0, 0, 1, 0, 0, 0, 0) < 0 THEN 'entity ' ELSE '' END ||
+             CASE WHEN bm25(facts_fts, 0, 0, 0, 1, 0, 0, 0) < 0 THEN 'tags ' ELSE '' END ||
+             CASE WHEN bm25(facts_fts, 0, 0, 0, 0, 1, 0, 0) < 0 THEN 'why ' ELSE '' END ||
+             CASE WHEN bm25(facts_fts, 0, 0, 0, 0, 0, 1, 0) < 0 THEN 'key ' ELSE '' END ||
+             CASE WHEN bm25(facts_fts, 0, 0, 0, 0, 0, 0, 1) < 0 THEN 'value' ELSE '' END
            ) AS matchInfo
          FROM facts_fts fts
          JOIN facts f ON f.rowid = fts.rowid
@@ -210,7 +211,7 @@ export function searchFts(
       )
       .all(params) as typeof rows;
   } catch (err) {
-    console.warn("memory-hybrid: FTS query failed");
+    pluginLogger.warn(`memory-hybrid: FTS query failed: ${err instanceof Error ? err.message : String(err)}`);
     return [];
   }
 
@@ -240,16 +241,16 @@ export function searchFts(
  *
  * @returns Number of facts indexed.
  */
-export function rebuildFtsIndex(db: Database.Database): number {
+export function rebuildFtsIndex(db: DatabaseSync): number {
   // Delete whatever is currently in the FTS index.
-  db.exec(`DELETE FROM facts_fts`);
+  db.exec("DELETE FROM facts_fts");
 
   // Re-insert all facts.
   db.exec(`
-    INSERT INTO facts_fts(rowid, text, category, entity, tags, key, value)
-    SELECT rowid, text, category, entity, tags, key, value FROM facts
+    INSERT INTO facts_fts(rowid, text, category, entity, tags, why, key, value)
+    SELECT rowid, text, category, entity, tags, why, key, value FROM facts
   `);
 
-  const row = db.prepare(`SELECT COUNT(*) AS cnt FROM facts`).get() as { cnt: number };
+  const row = db.prepare("SELECT COUNT(*) AS cnt FROM facts").get() as { cnt: number };
   return row.cnt;
 }

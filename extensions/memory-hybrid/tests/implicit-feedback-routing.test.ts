@@ -8,14 +8,14 @@
  *   - CLI command 'extract-implicit' is registered in ManageContext
  */
 
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { _testing } from "../index.js";
-import { runExtractImplicitFeedbackForCli, type HandlerContext } from "../cli/handlers.js";
-import type { HybridMemoryConfig } from "../config.js";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { type HandlerContext, runExtractImplicitFeedbackForCli } from "../cli/handlers.js";
 import type { ManageContext } from "../cli/manage.js";
+import type { HybridMemoryConfig } from "../config.js";
+import { _testing } from "../index.js";
 
 const { FactsDB } = _testing;
 
@@ -29,8 +29,7 @@ function makeDb(dir: string) {
 
 /** Access raw SQLite DB from FactsDB for test assertions. */
 function rawDb(db: InstanceType<typeof FactsDB>) {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  return (db as any).liveDb as import("better-sqlite3").Database;
+  return db.getRawDb();
 }
 
 /** Minimal HandlerContext for routing tests — only the fields runExtractImplicitFeedbackForCli uses. */
@@ -56,6 +55,7 @@ function makeCtx(
 
   return {
     factsDb: db,
+    edictStore: null as any,
     cfg,
     logger: {},
   } as unknown as HandlerContext;
@@ -64,9 +64,34 @@ function makeCtx(
 /** Write a minimal OpenClaw session JSONL file with a grateful close signal (positive). */
 function writePositiveSession(sessionsDir: string, filename: string) {
   const lines = [
-    JSON.stringify({ type: "message", message: { role: "user",      content: [{ type: "text", text: "Can you explain async await TypeScript pattern with examples for error handling in async code?" }] } }),
-    JSON.stringify({ type: "message", message: { role: "assistant", content: [{ type: "text", text: "Here is a complete async await TypeScript pattern example with proper error handling." }] } }),
-    JSON.stringify({ type: "message", message: { role: "user",      content: [{ type: "text", text: "Perfect, that is exactly what I needed. Thanks!" }] } }),
+    JSON.stringify({
+      type: "message",
+      message: {
+        role: "user",
+        content: [
+          {
+            type: "text",
+            text: "Can you explain async await TypeScript pattern with examples for error handling in async code?",
+          },
+        ],
+      },
+    }),
+    JSON.stringify({
+      type: "message",
+      message: {
+        role: "assistant",
+        content: [
+          {
+            type: "text",
+            text: "Here is a complete async await TypeScript pattern example with proper error handling.",
+          },
+        ],
+      },
+    }),
+    JSON.stringify({
+      type: "message",
+      message: { role: "user", content: [{ type: "text", text: "Perfect, that is exactly what I needed. Thanks!" }] },
+    }),
   ];
   writeFileSync(join(sessionsDir, filename), lines.join("\n"), "utf-8");
 }
@@ -74,11 +99,48 @@ function writePositiveSession(sessionsDir: string, filename: string) {
 /** Write a session with repeated corrections (negative signals). */
 function writeNegativeSession(sessionsDir: string, filename: string) {
   const lines = [
-    JSON.stringify({ type: "message", message: { role: "user",      content: [{ type: "text", text: "How do I sort an array of objects by a property in TypeScript?" }] } }),
-    JSON.stringify({ type: "message", message: { role: "assistant", content: [{ type: "text", text: "You can use Array.prototype.sort with a comparator." }] } }),
-    JSON.stringify({ type: "message", message: { role: "user",      content: [{ type: "text", text: "No that is not what I meant, I need it sorted in descending order, please fix that." }] } }),
-    JSON.stringify({ type: "message", message: { role: "assistant", content: [{ type: "text", text: "My apologies, here is the corrected descending sort." }] } }),
-    JSON.stringify({ type: "message", message: { role: "user",      content: [{ type: "text", text: "No that is still wrong, you are not listening. I need to sort by createdAt date field." }] } }),
+    JSON.stringify({
+      type: "message",
+      message: {
+        role: "user",
+        content: [{ type: "text", text: "How do I sort an array of objects by a property in TypeScript?" }],
+      },
+    }),
+    JSON.stringify({
+      type: "message",
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: "You can use Array.prototype.sort with a comparator." }],
+      },
+    }),
+    JSON.stringify({
+      type: "message",
+      message: {
+        role: "user",
+        content: [
+          { type: "text", text: "No that is not what I meant, I need it sorted in descending order, please fix that." },
+        ],
+      },
+    }),
+    JSON.stringify({
+      type: "message",
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: "My apologies, here is the corrected descending sort." }],
+      },
+    }),
+    JSON.stringify({
+      type: "message",
+      message: {
+        role: "user",
+        content: [
+          {
+            type: "text",
+            text: "No that is still wrong, you are not listening. I need to sort by createdAt date field.",
+          },
+        ],
+      },
+    }),
   ];
   writeFileSync(join(sessionsDir, filename), lines.join("\n"), "utf-8");
 }
@@ -136,9 +198,9 @@ describe("implicit feedback routing — positive → reinforcement", () => {
     expect(result.positiveCount).toBeGreaterThan(0);
 
     // The implicit_signals table must have been populated with positive signals.
-    const sigRows = rawDb(db).prepare(
-      `SELECT COUNT(*) as cnt FROM implicit_signals WHERE polarity = 'positive'`,
-    ).get() as { cnt: number };
+    const sigRows = rawDb(db)
+      .prepare(`SELECT COUNT(*) as cnt FROM implicit_signals WHERE polarity = 'positive'`)
+      .get() as { cnt: number };
     expect(sigRows.cnt).toBeGreaterThan(0);
   });
 
@@ -162,9 +224,7 @@ describe("implicit feedback routing — positive → reinforcement", () => {
     expect(result.positiveCount).toBeGreaterThan(0);
 
     // No reinforcement_log entries should have been created.
-    const logRows = rawDb(db).prepare(
-      `SELECT COUNT(*) as cnt FROM reinforcement_log`,
-    ).get() as { cnt: number };
+    const logRows = rawDb(db).prepare("SELECT COUNT(*) as cnt FROM reinforcement_log").get() as { cnt: number };
     expect(logRows.cnt).toBe(0);
   });
 });
@@ -206,9 +266,10 @@ describe("implicit feedback routing — negative → pattern facts", () => {
     expect(result.negativeCount).toBeGreaterThan(0);
 
     // Verify pattern facts with implicit-feedback + negative tags were stored.
-    const negFacts = rawDb(db).prepare(
-      `SELECT * FROM facts WHERE source = 'implicit-feedback'`,
-    ).all() as Array<{ category: string; tags: string }>;
+    const negFacts = rawDb(db).prepare(`SELECT * FROM facts WHERE source = 'implicit-feedback'`).all() as Array<{
+      category: string;
+      tags: string;
+    }>;
 
     expect(negFacts.length).toBeGreaterThan(0);
     for (const fact of negFacts) {
@@ -238,9 +299,9 @@ describe("implicit feedback routing — negative → pattern facts", () => {
 
     expect(result.negativeCount).toBeGreaterThan(0);
 
-    const negFacts = rawDb(db).prepare(
-      `SELECT COUNT(*) as cnt FROM facts WHERE source = 'implicit-feedback'`,
-    ).get() as { cnt: number };
+    const negFacts = rawDb(db)
+      .prepare(`SELECT COUNT(*) as cnt FROM facts WHERE source = 'implicit-feedback'`)
+      .get() as { cnt: number };
     expect(negFacts.cnt).toBe(0);
   });
 });
@@ -278,14 +339,12 @@ describe("implicit feedback routing — dry-run mode", () => {
 
     expect(result.signalsExtracted).toBeGreaterThan(0);
 
-    const sigRows = rawDb(db).prepare(
-      `SELECT COUNT(*) as cnt FROM implicit_signals`,
-    ).get() as { cnt: number };
+    const sigRows = rawDb(db).prepare("SELECT COUNT(*) as cnt FROM implicit_signals").get() as { cnt: number };
     expect(sigRows.cnt).toBe(0);
 
-    const factRows = rawDb(db).prepare(
-      `SELECT COUNT(*) as cnt FROM facts WHERE source = 'implicit-feedback'`,
-    ).get() as { cnt: number };
+    const factRows = rawDb(db)
+      .prepare(`SELECT COUNT(*) as cnt FROM facts WHERE source = 'implicit-feedback'`)
+      .get() as { cnt: number };
     expect(factRows.cnt).toBe(0);
   });
 });

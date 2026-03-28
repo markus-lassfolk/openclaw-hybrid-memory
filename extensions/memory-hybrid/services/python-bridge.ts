@@ -10,10 +10,10 @@
  *   - Gracefully shut down via shutdown()
  */
 
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { type ChildProcessWithoutNullStreams, spawn, spawnSync } from "node:child_process";
+import { dirname, join } from "node:path";
 import { createInterface } from "node:readline";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { dirname, join } from "node:path";
 import { capturePluginError } from "./error-reporter.js";
 
 const MAX_RETRIES = 3;
@@ -57,6 +57,24 @@ export class PythonBridge {
     this.proc = spawn(this.pythonPath, [this.workerPath], {
       stdio: ["pipe", "pipe", "pipe"],
     });
+
+    const stdin = this.proc.stdin;
+    if (
+      stdin &&
+      typeof (stdin as { on?: (ev: string, fn: (err: NodeJS.ErrnoException) => void) => void }).on === "function"
+    ) {
+      (stdin as { on: (ev: string, fn: (err: NodeJS.ErrnoException) => void) => void }).on(
+        "error",
+        (err: NodeJS.ErrnoException) => {
+          // EPIPE when the worker exits before we finish writing — avoid crashing the host on an unhandled stream error.
+          if (err?.code === "EPIPE") return;
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+            subsystem: "python-bridge",
+            operation: "stdin-error",
+          });
+        },
+      );
+    }
 
     const rl = createInterface({ input: this.proc.stdout });
     rl.on("line", (line) => this.handleLine(line));
@@ -165,7 +183,7 @@ export class PythonBridge {
         timer,
       });
       const msg = JSON.stringify({ jsonrpc: "2.0", id, method, params: params ?? {} });
-      this.proc!.stdin.write(msg + "\n");
+      this.proc?.stdin.write(`${msg}\n`);
     });
   }
 
@@ -221,5 +239,43 @@ export class PythonBridge {
 
   get isRunning(): boolean {
     return this.proc !== null && !this.proc.killed;
+  }
+
+  /**
+   * Checks that required Python packages are installed.
+   *
+   * Runs synchronously (fast — just a python import check) so it can be called
+   * at plugin startup to surface missing dependencies early rather than on first use.
+   *
+   * @returns Object with `ok` flag and list of any `missing` packages.
+   */
+  checkDependencies(): { ok: boolean; missing: string[]; spawnError?: Error } {
+    const required = ["markitdown"];
+    const missing: string[] = [];
+    for (const pkg of required) {
+      const result = spawnSync(this.pythonPath, ["-c", `import ${pkg}`], {
+        timeout: 5_000,
+        encoding: "utf8",
+      });
+      if (result.error) {
+        return { ok: false, missing, spawnError: result.error };
+      }
+      if (result.status !== 0) {
+        const output = (result.stderr ?? "") + (result.stdout ?? "");
+        if (output.includes("ImportError") || output.includes("ModuleNotFoundError")) {
+          missing.push(pkg);
+        } else {
+          // Non-zero exit for a reason other than a missing import (e.g. permissions,
+          // bad Python installation). Treat as a spawn-level failure so callers can
+          // surface a more actionable message.
+          return {
+            ok: false,
+            missing,
+            spawnError: new Error(`Python import check failed (status=${result.status}): ${output.slice(0, 200)}`),
+          };
+        }
+      }
+    }
+    return { ok: missing.length === 0, missing };
   }
 }

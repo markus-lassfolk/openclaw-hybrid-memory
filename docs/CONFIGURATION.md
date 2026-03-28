@@ -10,7 +10,7 @@ All settings live in `~/.openclaw/openclaw.json`. Merge these into your existing
 
 **Quick setup:** Run `openclaw hybrid-mem install` to apply all recommended defaults at once. Then customise as needed below.
 
-**Configuration modes:** Default is **Full** (best experience). You can set `"mode": "essential" | "normal" | "expert" | "full"` to apply a preset (e.g. **Essential** or **Normal** to reduce API cost or for low-resource hosts). See [CONFIGURATION-MODES.md](CONFIGURATION-MODES.md) for the matrix.
+**Configuration modes:** Default is **Local** (cost-safety: no external LLM). You can set `"mode": "local" | "minimal" | "enhanced" | "complete"` to apply a preset. See [CONFIGURATION-MODES.md](CONFIGURATION-MODES.md) and [FEATURES-AND-TIERS.md](FEATURES-AND-TIERS.md) for the matrix and which tier each feature uses.
 
 ---
 
@@ -32,6 +32,7 @@ OpenClaw allows only one plugin to own the `memory` slot. Set it to **openclaw-h
         "enabled": true,
         "config": {
           "embedding": {
+            "provider": "openai",
             "apiKey": "YOUR_OPENAI_API_KEY",
             "model": "text-embedding-3-small"
           },
@@ -47,13 +48,37 @@ OpenClaw allows only one plugin to own the `memory` slot. Set it to **openclaw-h
 
 **memory-core** stays `enabled: true` alongside memory-hybrid: it provides file-based tools independently of the slot.
 
-**API key:** Inline the key if non-interactive shells don't load your env. Editing the config file directly is more reliable than using `config.patch`.
+**API key:** Supports three formats: a literal string (`"sk-..."`), an environment variable template (`"${OPENAI_API_KEY}"`), or a SecretRef (`"env:OPENAI_API_KEY"` or `"file:/path/to/key"`). The SecretRef format is resolved at config load — if the referenced variable or file is unset, the plugin throws a clear error rather than passing the literal string to the API. Editing the config file directly is more reliable than using `config.patch`.
 
-**Embedding model preference:** Optional `embedding.models` is an ordered list of embedding model names (e.g. `["text-embedding-3-small"]`). The plugin tries the first; on failure (rate limit, provider down) it tries the next. All entries must have the **same vector dimension** (1536 for `text-embedding-3-small`, 3072 for `text-embedding-3-large`). The first model in the list defines the dimension used for LanceDB. See [LLM-AND-PROVIDERS.md](LLM-AND-PROVIDERS.md#embedding-configuration).
+**Embedding provider:** Set `embedding.provider` to choose your embedding backend. Options: `"openai"` (default, requires API key), `"ollama"` (local, no key), `"onnx"` (local, no key, requires `onnxruntime-node`), `"google"` (Gemini API, requires `llm.providers.google.apiKey`). Use `embedding.preferredProviders` for ordered failover (e.g. `["ollama", "openai"]`). See [LLM-AND-PROVIDERS.md](LLM-AND-PROVIDERS.md#embedding-providers) for full examples.
+
+**Embedding model preference:** Optional `embedding.models` is an ordered list of embedding model names (e.g. `["text-embedding-3-small"]`). The plugin tries the first; on failure (rate limit, provider down) it tries the next. All entries must have the **same vector dimension** (1536 for `text-embedding-3-small`, 3072 for `text-embedding-3-large`). The first model in the list defines the dimension used for LanceDB. See [LLM-AND-PROVIDERS.md](LLM-AND-PROVIDERS.md#embedding-providers).
 
 Optional: `lanceDbPath` and `sqlitePath` (defaults: `~/.openclaw/memory/lancedb` and `~/.openclaw/memory/facts.db`).
 
 ---
+
+## Verbosity level (silent mode)
+
+The plugin supports four verbosity levels for CLI commands and tool output, configured via `verbosity`.
+
+```json
+{
+  "verbosity": "silent"
+}
+```
+
+- **`silent`**: Suppresses all unsolicited context blocks injected into prompts (e.g. capability hints, `<relevant-memories>`, `<relevant-procedures>`, and credential-hint blocks). Memory tools (`memory_store`, `memory_recall`, etc.) remain fully functional. Ideal for users who want the plugin to work entirely in the background without cluttering the context window.
+- **`quiet`**: Minimal output. For CLI commands, shows only counts/totals without decorative headers. (Default for `local` mode).
+- **`normal`**: Balanced output with key details. (Default for `minimal` and `enhanced` modes).
+- **`verbose`**: Extra detail. Full breakdowns, all fields, and config summaries. Ideal for debugging. (Default for `complete` mode).
+
+You can change this on the fly using the CLI:
+
+```bash
+openclaw hybrid-mem config set verbosity silent
+```
+
 
 ## Auto-capture and auto-recall
 
@@ -243,8 +268,6 @@ When `autoBuild` is `true`, the plugin samples recent facts, detects the top lan
       "memorySearch": {
         "enabled": true,
         "sources": ["memory"],
-        "provider": "openai",
-        "model": "text-embedding-3-small",
         "sync": {
           "onSessionStart": true,
           "onSearch": true,
@@ -264,6 +287,30 @@ When `autoBuild` is `true`, the plugin samples recent facts, detects the top lan
   }
 }
 ```
+
+`memorySearch.provider` and `memorySearch.model` are optional. Leaving them unset lets OpenClaw reuse the embedding provider/model you already configured elsewhere, which avoids pinning memorySearch to a fixed provider enum and works better for Azure Foundry and other gateway-routed providers.
+
+---
+
+## Vector database (LanceDB)
+
+```json
+{
+  "plugins": {
+    "entries": {
+      "openclaw-hybrid-memory": {
+        "config": {
+          "vector": {
+            "autoRepair": false
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+- **`autoRepair`** (boolean) — When `true`, automatically drops and recreates the LanceDB table if its vector dimension doesn't match the configured embedding model dimension, re-embedding facts from SQLite. Default: `false` (logs a warning and skips vector search instead of spamming errors on dimension mismatch).
 
 ---
 
@@ -391,49 +438,6 @@ Pattern synthesis from session history. See [REFLECTION.md](REFLECTION.md) for f
 
 ---
 
-## Memory-to-skills (issue #114)
-
-Cluster procedural memories and synthesize SKILL.md drafts into `skills/auto-generated/`. See [MEMORY-TO-SKILLS.md](MEMORY-TO-SKILLS.md) for full documentation.
-
-```json
-{
-  "plugins": {
-    "entries": {
-      "openclaw-hybrid-memory": {
-        "config": {
-          "memoryToSkills": {
-            "enabled": true,
-            "schedule": "15 2 * * *",
-            "windowDays": 30,
-            "minInstances": 3,
-            "consistencyThreshold": 0.7,
-            "outputDir": "skills/auto-generated",
-            "notify": true,
-            "autoPublish": false
-          }
-        }
-      }
-    }
-  }
-}
-```
-
-| Key | Default | Description |
-|-----|---------|-------------|
-| `enabled` | same as procedures | Enable memory-to-skills pipeline |
-| `schedule` | `"15 2 * * *"` | Cron for nightly run (2:15 AM, staggered after nightly-distill) |
-| `windowDays` | `30` | Procedures updated in last N days |
-| `minInstances` | `3` | Minimum procedure instances per cluster |
-| `consistencyThreshold` | `0.7` | Step consistency 0–1 required |
-| `outputDir` | `"skills/auto-generated"` | Output path relative to workspace |
-| `notify` | `true` | Intended hint that the agent should notify on new drafts; currently informational only (nightly cron/publish flow does not yet consult this). |
-| `autoPublish` | `false` | Intended toggle for auto-publishing vs. always requiring human review; currently informational only (nightly cron/publish flow does not yet consult this). |
-| `validateScript` | — | Optional path to post-generation validation script (e.g. quick_validate.py). Not invoked by the plugin; for documentation/workflow only. |
-
-When you run `install` or `verify --fix`, the **nightly-memory-to-skills** cron job is added or updated; its schedule is taken from `memoryToSkills.schedule` when available.
-
----
-
 ## LLM model tiers and provider config
 
 The plugin makes **direct API calls** to provider endpoints — it does not route through the OpenClaw gateway agent pipeline. Use the **`llm`** block to configure ordered model lists per tier and per-provider API keys.
@@ -474,7 +478,7 @@ See [LLM-AND-PROVIDERS.md](LLM-AND-PROVIDERS.md) for the full reference, provide
 | `nano` | Ordered list for ultra-cheap nano-tier ops. Falls back to `default[0]` when unset. |
 | `default` | Ordered list for default-tier features (reflection, classify, ingest, query expansion, build-languages). First working model wins. |
 | `heavy` | Ordered list for heavy-tier features (distillation, persona proposals, self-correction). |
-| `providers` | Per-provider API keys and optional `baseURL`. Built-in: `google` (uses `distill.apiKey` fallback), `openai` (uses `embedding.apiKey` fallback), `anthropic` (requires explicit key). Any other OpenAI-compatible provider can be added here. |
+| `providers` | Per-provider API keys and optional `baseURL`. Built-in (no `baseURL` needed): `google` (uses `distill.apiKey` fallback), `openai` (uses `embedding.apiKey` fallback), `anthropic` (requires explicit key), `minimax` (uses `MINIMAX_API_KEY` env var fallback). Any other OpenAI-compatible provider can be added here with an explicit `baseURL`. |
 | `fallbackToDefault` | If `true`, after all list models fail, try one more fallback model. |
 | `fallbackModel` | Optional last-resort model when `fallbackToDefault` is true. |
 
@@ -497,7 +501,7 @@ Session distillation uses an LLM to extract durable facts from conversation logs
 
 | Key | Default | Description |
 |-----|---------|-------------|
-| `apiKey` | (none) | Legacy Google API key. Still used as a fallback key for `google/*` models when `llm.providers.google.apiKey` is not set. |
+| `apiKey` | (none) | Legacy Google API key. Still used as a fallback key for `google/*` models when `llm.providers.google.apiKey` is not set. Accepts a plain key or SecretRef (`"env:VAR"`, `"file:/path"`, `"${VAR}"`). |
 | `defaultModel` | — | Model used when `openclaw hybrid-mem distill --model` is not specified and `llm` is not set. |
 
 **Batch size:** Long-context models (model name containing `gemini`) use larger batches (500k tokens); others default to 80k. See [SESSION-DISTILLATION.md](SESSION-DISTILLATION.md) for details.
@@ -593,7 +597,7 @@ Opt-in **query expansion** generates a hypothetical answer (or expanded query) b
           "queryExpansion": {
             "enabled": true,
             "model": "google/gemini-2.5-flash-lite",
-            "timeoutMs": 5000
+            "timeoutMs": 15000
           }
         }
       }
@@ -606,9 +610,10 @@ Opt-in **query expansion** generates a hypothetical answer (or expanded query) b
 |-----|---------|-------------|
 | `enabled` | `false` | Enable query expansion before embedding (uses nano-tier model when `model` unset) |
 | `model` | (nano tier) | Model for expansion; when omitted, uses first model from `llm.nano` |
-| `timeoutMs` | `5000` (25s when migrating from HyDE) | Timeout for expansion call in ms |
+| `timeoutMs` | `15000` (25s when migrating from HyDE) | Timeout for expansion call in ms. Raised to 15s in #339 to accommodate thinking models (e.g. Gemini 2.5 Flash) that routinely exceed 5s. A minimum floor of 10000ms is enforced (#384); values explicitly set below that are silently raised. Set to `0` or a negative value to remove the timeout entirely. |
 | `maxVariants` | `4` | Max query variants to generate and merge |
 | `cacheSize` | `100` | Cache size for expansion results |
+| `skipForInteractiveTurns` | `true` | When `true` (default), query expansion is skipped during interactive `before_agent_start` turns. HyDE/QE adds a full LLM round-trip before embedding, which can add 5–15 s of latency on the hot interactive path. Background/cron recall is unaffected by this flag. Set to `false` only if you explicitly want query expansion on every user-facing turn. |
 
 **Migration from HyDE:** If you still have `search.hydeEnabled: true`, the plugin auto-enables `queryExpansion` and uses `search.hydeModel` (or nano tier) for the model. You will see a deprecation warning in the logs. Set `queryExpansion.enabled` and `queryExpansion.model` in config and remove `search.hydeEnabled` / `search.hydeModel` to silence it. Explicit `queryExpansion.enabled: false` overrides the old flag.
 
@@ -845,6 +850,39 @@ In addition to `openai` and `google`, the plugin supports **local** embedding pr
 
 ---
 
+
+## Local LLM session pre-filtering (#290)
+
+Introduces an optional **two-tier session triage** step. A new `session-pre-filter` service calls a local Ollama model to classify session JSONL files as interesting (`kept`) or not (`skipped`), with a safe fallback that processes all sessions when Ollama is unreachable.
+
+This integrates directly into bulk CLI workflows (`runDistillForCli`, directive/reinforcement extraction, and self-correction runs), reducing cloud LLM costs by up to 90% when re-indexing large session histories.
+
+```json
+{
+  "plugins": {
+    "openclaw-hybrid-memory": {
+      "config": {
+        "extraction": {
+          "preFilter": {
+            "enabled": true,
+            "model": "qwen3:8b",
+            "endpoint": "http://localhost:11434",
+            "maxCharsPerSession": 2000
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `enabled` | `false` | Enable local LLM pre-filtering. |
+| `model` | `"qwen3:8b"` | Ollama model identifier (e.g. `"qwen3:8b"` or `"ollama/qwen3:8b"`). The `"ollama/"` prefix is stripped automatically. |
+| `endpoint` | `"http://localhost:11434"` | Optional. Falls back to `llm.providers.ollama.baseURL` if unset. |
+| `maxCharsPerSession` | `2000` | Max chars of user messages extracted per session for triage. Higher values improve accuracy but increase local LLM call time. |
+
 ## Multi-model embedding registry (#158)
 
 Use **multiple embedding models in parallel** — each model contributes a separate vector index, and results are merged via Reciprocal Rank Fusion (RRF) at retrieval time.
@@ -963,7 +1001,7 @@ After RRF fusion produces the initial ranked list, **LLM re-ranking** re-orders 
 | `model` | `openai/gpt-4.1-nano` | LLM for re-ranking |
 | `candidateCount` | `50` | Top-N RRF candidates to present to the LLM |
 | `outputCount` | `20` | Results to return after re-ranking |
-| `timeoutMs` | `10000` | LLM call timeout in ms; on timeout, falls back to original RRF order |
+| `timeoutMs` | `10000` | LLM call timeout in ms; on timeout, falls back to original RRF order. A minimum floor of 5000ms is enforced (#384); values explicitly set below that are silently raised. Set to `0` or a negative value to remove the timeout entirely. |
 
 Re-ranking runs for both `memory_recall` (explicit) and auto-recall (ambient injection) when enabled.
 
@@ -1446,6 +1484,54 @@ Defaults are **enabled** (opt-out).
 
 ---
 
+## Mission Control dashboard (dashboard)
+
+A built-in HTTP server that serves a **real-time web dashboard** (Issue #309). The dashboard auto-refreshes every 60 seconds and shows memory stats, cron job status, task queue, Forge agent state, recent GitHub PRs/issues, and LLM cost tracking for the last 7 days.
+
+Enabled by default. Access it at `http://localhost:7700` while the gateway is running.
+
+```json
+{
+  "plugins": {
+    "entries": {
+      "openclaw-hybrid-memory": {
+        "config": {
+          "dashboard": {
+            "enabled": true,
+            "port": 7700
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `enabled` | `true` | Start the dashboard HTTP server with the gateway. Set `false` to disable. |
+| `port` | `7700` | Port to bind on `127.0.0.1`. Must be between 1024 and 65535. |
+
+**Dashboard sections:**
+
+| Section | What it shows |
+|---------|---------------|
+| 🧠 Memory Stats | Active/expired facts, vector index count, SQLite and LanceDB storage sizes |
+| 📋 Task Queue | Current task in progress + last 5 completed tasks (from `~/.openclaw/workspace/state/task-queue/`) |
+| ⚒️ Agent Status | Active Forge agent tasks (from `~/.openclaw/workspace/state/forge/*.json`). Agent avatars: ⚒️ Forge, 📚 Scholar, 🏠 Hearth, 🛡️ Warden, 🔧 Reaver |
+| ⏰ Cron Jobs | All registered cron jobs with schedule, last run time, and status (from `~/.openclaw/cron/jobs.json`) |
+| 🔀 Git Activity | Last 10 open PRs and issues via `gh` CLI (requires GitHub CLI installed and authenticated) |
+| 💰 Cost Tracking (7d) | LLM cost breakdown by feature for the last 7 days (requires cost tracking enabled) |
+
+**JSON API:** `GET /api/status` returns the same data as JSON for scripting or external monitoring tools.
+
+**Notes:**
+- The server binds to `127.0.0.1` only — it is not exposed to the network.
+- Git activity requires the `gh` CLI; if unavailable, the section shows "gh CLI unavailable".
+- LanceDB size is cached for 5 minutes to avoid blocking on large directory traversals.
+
+---
+
 ## Error reporting (errorReporting)
 
 Anonymous error reporting to GlitchTip/Sentry. **Enabled by default (opt-out)** in `community` mode.
@@ -1464,7 +1550,7 @@ See [ERROR-REPORTING.md](ERROR-REPORTING.md) for full privacy and audit details.
             "mode": "community",
             "sampleRate": 1.0,
             "environment": "production",
-            "botName": "Maeve"
+            "botName": "MyBot"
           }
         }
       }
@@ -1481,8 +1567,75 @@ See [ERROR-REPORTING.md](ERROR-REPORTING.md) for full privacy and audit details.
 | `dsn` | *(community DSN)* | Optional override DSN (community) or required DSN (self-hosted) |
 | `environment` | `"production"` | Environment tag |
 | `sampleRate` | `1.0` | Sampling rate (0.0–1.0) |
-| `botId` | *(unset)* | Optional UUID tag for grouping errors by bot |
-| `botName` | *(unset)* | Optional friendly name tag for grouping errors by bot |
+| `botId` | *(unset)* | Optional identifier tag (string) for grouping errors by agent (`agent_id` / `bot_id`) |
+| `botName` | *(unset)* | Optional friendly name tag for grouping errors by agent (`agent_name` / `bot_name`) |
+
+The reporter also sets `server_name` and a `node` tag automatically from `OPENCLAW_NODE_NAME` when present.
+
+---
+
+## Sensor Sweep (sensorSweep) (#236)
+
+Enables cron-based background data collection without invoking an LLM at collection time. The system queries configured sensors and writes structured events to the Event Bus (`event-bus.db`). 
+
+Sensors are divided into tiers (e.g. Tier 1: Garmin, GitHub, memory stats; Tier 2: Anomaly detection, weather). A 3-hour deduplication cooldown is applied by default using event fingerprinting.
+
+```json
+{
+  "sensorSweep": {
+    "enabled": true,
+    "schedule": "0 */4 * * *",
+    "dedupCooldownHours": 3,
+    "homeAssistant": {
+      "baseUrl": "http://homeassistant.local:8123",
+      "token": "env:HA_TOKEN",
+      "timeoutMs": 10000
+    },
+    "garmin": {
+      "enabled": true,
+      "importance": 0.5,
+      "entityPrefix": "sensor.garmin"
+    },
+    "github": {
+      "enabled": true,
+      "repo": "markus-lassfolk/openclaw-hybrid-memory",
+      "includeReviewRequests": true,
+      "staleIssueDays": 7
+    },
+    "sessionHistory": {
+      "enabled": true,
+      "recentSessions": 10
+    },
+    "memoryPatterns": {
+      "enabled": true,
+      "hotAccessThreshold": 3,
+      "staleAfterDays": 14
+    },
+    "homeAssistantAnomaly": {
+      "enabled": true,
+      "watchEntities": ["sensor.energy_today", "binary_sensor.front_door"]
+    },
+    "systemHealth": {
+      "enabled": true
+    },
+    "weather": {
+      "enabled": true,
+      "location": "auto"
+    },
+    "yarbo": {
+      "enabled": true,
+      "entityPrefix": "sensor.yarbo"
+    }
+  }
+}
+```
+
+- **enabled**: Master toggle for all sensor sweeps.
+- **schedule**: Cron string for collection frequency (default is every 4 hours).
+- **dedupCooldownHours**: Prevents duplicate identical events from being written in the configured window.
+- **homeAssistant**: Requires a base URL and token. Used by the `garmin`, `homeAssistantAnomaly`, and `yarbo` sensors. Use `env:HA_TOKEN` to pull from the environment.
+- **Tier 1 Sensors**: `garmin`, `github`, `sessionHistory`, `memoryPatterns`.
+- **Tier 2 Sensors**: `homeAssistantAnomaly`, `systemHealth`, `weather`, `yarbo`.
 
 ---
 

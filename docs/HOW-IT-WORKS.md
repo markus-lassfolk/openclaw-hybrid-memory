@@ -44,7 +44,7 @@ No manual intervention needed — the plugin hooks into OpenClaw's lifecycle eve
 
 When you send a message, **before the agent sees it**, the plugin:
 
-1. **Embeds your prompt** — sends it to OpenAI to get a vector representation.
+1. **Embeds your prompt** — sends it to the configured embedding provider (OpenAI by default; or Ollama, ONNX, or Google) to get a vector representation.
 2. **Searches both backends in parallel:**
    - **SQLite FTS5** — full-text search over all stored facts (free, instant).
    - **LanceDB** — vector similarity search over embeddings (finds fuzzy/semantic matches).
@@ -70,7 +70,7 @@ When you send a message, **before the agent sees it**, the plugin:
 - **Graph traversal** — if graph memory is enabled, related facts are discovered via typed links (zero LLM cost).
 - **Query expansion** — when `queryExpansion.enabled` is true, the plugin asks the LLM for a short hypothetical answer or expanded query, then embeds that for vector search. The expanded text often sits closer in embedding space to stored facts. Uses the **nano tier** model. (Legacy: `search.hydeEnabled` is deprecated; use `queryExpansion.enabled`.) See [SEARCH-RRF-INGEST.md](SEARCH-RRF-INGEST.md).
 
-**Cost per turn:** One embedding API call (~$0.00002 for `text-embedding-3-small`). One nano-tier LLM call if query expansion is enabled (~$0.0001 for nano-tier models).
+**Cost per turn:** One embedding call per turn (~$0.00002 for OpenAI `text-embedding-3-small`; **free** with local providers such as Ollama or ONNX). One nano-tier LLM call if query expansion is enabled (~$0.0001 for nano-tier models). See [LLM-AND-PROVIDERS.md](LLM-AND-PROVIDERS.md#embedding-providers) for local provider options.
 
 ---
 

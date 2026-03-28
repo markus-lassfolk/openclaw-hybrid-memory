@@ -4,8 +4,8 @@
  */
 
 import type { FactsDB } from "../backends/facts-db.js";
-import type { ProcedureStep } from "../types/memory.js";
 import type { ExtractProceduresResult } from "../cli/register.js";
+import type { ProcedureStep } from "../types/memory.js";
 import { capturePluginError } from "./error-reporter.js";
 
 export type ParsedSession = {
@@ -20,16 +20,13 @@ export type ParsedSession = {
 const TASK_INTENT_MAX = 300;
 
 function normalizeTaskIntent(text: string): string {
-  return text
-    .replace(/\s+/g, " ")
-    .trim()
-    .slice(0, TASK_INTENT_MAX);
+  return text.replace(/\s+/g, " ").trim().slice(0, TASK_INTENT_MAX);
 }
 
 /** Check if tool result content indicates failure (error, 404, exception, etc.). */
 function looksLikeFailure(content: unknown): boolean {
   if (content == null) return false;
-  
+
   // For objects, check for common error properties first before stringifying
   if (typeof content === "object" && content !== null) {
     const obj = content as Record<string, unknown>;
@@ -37,7 +34,7 @@ function looksLikeFailure(content: unknown): boolean {
       return true;
     }
   }
-  
+
   // For strings or small objects, check content
   let s: string;
   if (typeof content === "string") {
@@ -54,15 +51,15 @@ function looksLikeFailure(content: unknown): boolean {
       }
     } catch (err) {
       capturePluginError(err as Error, {
-        operation: 'stringify-result',
-        severity: 'info',
-        subsystem: 'procedures'
+        operation: "stringify-result",
+        severity: "info",
+        subsystem: "procedures",
       });
       // If stringification fails (circular refs, etc.), assume not a failure
       return false;
     }
   }
-  
+
   const lower = s.toLowerCase();
   return (
     lower.includes("error") ||
@@ -70,7 +67,7 @@ function looksLikeFailure(content: unknown): boolean {
     lower.includes("failed") ||
     lower.includes("exception") ||
     lower.includes("econnrefused") ||
-    lower.includes("html") && lower.includes("<!doctype")
+    (lower.includes("html") && lower.includes("<!doctype"))
   );
 }
 
@@ -104,9 +101,9 @@ export function parseSessionJsonl(
       obj = JSON.parse(line);
     } catch (err) {
       capturePluginError(err as Error, {
-        operation: 'parse-session-line',
-        severity: 'info',
-        subsystem: 'procedures'
+        operation: "parse-session-line",
+        severity: "info",
+        subsystem: "procedures",
       });
       continue;
     }
@@ -125,7 +122,15 @@ export function parseSessionJsonl(
 
     if (!Array.isArray(rawContent)) continue;
 
-    const content = rawContent as Array<{ type?: string; text?: string; name?: string; input?: unknown; arguments?: unknown; id?: string; tool_use_id?: string }>;
+    const content = rawContent as Array<{
+      type?: string;
+      text?: string;
+      name?: string;
+      input?: unknown;
+      arguments?: unknown;
+      id?: string;
+      tool_use_id?: string;
+    }>;
 
     for (const block of content) {
       if (!block || typeof block !== "object") continue;
@@ -139,9 +144,10 @@ export function parseSessionJsonl(
       const isToolUse = type === "tool_use" || type === "toolCall";
       if (role === "assistant" && isToolUse && block.name) {
         const rawArgs = block.input ?? block.arguments;
-        const args = rawArgs != null && typeof rawArgs === "object" && !Array.isArray(rawArgs)
-          ? (rawArgs as Record<string, unknown>)
-          : undefined;
+        const args =
+          rawArgs != null && typeof rawArgs === "object" && !Array.isArray(rawArgs)
+            ? (rawArgs as Record<string, unknown>)
+            : undefined;
         steps.push({
           tool: block.name,
           args: args as Record<string, unknown> | undefined,
@@ -154,7 +160,8 @@ export function parseSessionJsonl(
       if (isToolResult && (type === "tool_result" || type === "result" || type === "toolResult" || type === "text")) {
         const toolContent = (block as Record<string, unknown>).content ?? (block as Record<string, unknown>).text;
         if (looksLikeFailure(toolContent)) {
-          lastFailure = typeof toolContent === "string" ? toolContent.slice(0, 200) : JSON.stringify(toolContent).slice(0, 200);
+          lastFailure =
+            typeof toolContent === "string" ? toolContent.slice(0, 200) : JSON.stringify(toolContent).slice(0, 200);
         } else {
           lastFailure = undefined;
         }
@@ -209,7 +216,7 @@ export function minimalRecipe(steps: ProcedureStep[]): ProcedureStep[] {
         if (SECRET_KEYS.has(k.toLowerCase())) continue;
         if (k === "query" || k === "url" || k === "path" || k === "command" || k === "name") {
           const str = typeof v === "string" ? v : JSON.stringify(v);
-          safeArgs[k] = str.length > 200 ? str.slice(0, 200) + "…" : v;
+          safeArgs[k] = str.length > 200 ? `${str.slice(0, 200)}…` : v;
         } else if (typeof v !== "object" || v === null) {
           safeArgs[k] = v;
         }
@@ -231,10 +238,16 @@ export type ExtractProceduresOptions = {
 /** Calculate word overlap ratio between two task patterns (0.0 to 1.0). */
 function taskSimilarity(pattern1: string, pattern2: string): number {
   const words1 = new Set(
-    pattern1.toLowerCase().split(/\s+/).filter((w) => w.length > 2)
+    pattern1
+      .toLowerCase()
+      .split(/\s+/)
+      .filter((w) => w.length > 2),
   );
   const words2 = new Set(
-    pattern2.toLowerCase().split(/\s+/).filter((w) => w.length > 2)
+    pattern2
+      .toLowerCase()
+      .split(/\s+/)
+      .filter((w) => w.length > 2),
   );
   if (words1.size === 0 || words2.size === 0) return 0;
   const intersection = new Set([...words1].filter((w) => words2.has(w)));
@@ -264,9 +277,7 @@ export async function extractProceduresFromSessions(
       return { sessionsScanned: 0, proceduresStored: 0, positiveCount: 0, negativeCount: 0, dryRun };
     }
     const files = fs.readdirSync(dir);
-    filePaths = files
-      .filter((f) => f.endsWith(".jsonl") && !f.startsWith(".deleted"))
-      .map((f) => path.join(dir, f));
+    filePaths = files.filter((f) => f.endsWith(".jsonl") && !f.startsWith(".deleted")).map((f) => path.join(dir, f));
   }
 
   let proceduresStored = 0;
@@ -296,7 +307,10 @@ export async function extractProceduresFromSessions(
       continue;
     }
     if (!parsed || parsed.steps.length < minSteps) {
-      if (verbose && parsed) logger.info(`procedure-extractor: skip ${sessionId}.jsonl — fewer than minSteps (${parsed.steps.length} < ${minSteps})`);
+      if (verbose && parsed)
+        logger.info(
+          `procedure-extractor: skip ${sessionId}.jsonl — fewer than minSteps (${parsed.steps.length} < ${minSteps})`,
+        );
       continue;
     }
 

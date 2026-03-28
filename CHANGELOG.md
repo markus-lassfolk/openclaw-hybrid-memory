@@ -10,7 +10,312 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
-- (none yet)
+- **Episodic Memory (#781):** New first-class `category: "episode"` memory type with structured fields: `event`, `outcome` (`success|failure|partial|unknown`), `timestamp`, `duration`, `context`, `relatedFactIds`, `procedureId`, scope, agent/user/session IDs, importance, tags, and decay class. Episodes are stored in a dedicated `episodes` SQLite table with indexed `outcome` and `timestamp` columns, and mirrored as vectors in LanceDB (same table as facts, filtered by `category="episode"`). Episodes with `outcome="failure"` are auto-boosted to `importance ≥ 0.8` at store time.
+
+- **`memory.record_episode()` tool:** Records an episodic event with structured outcome. Wraps `factsDb.storeEpisode()`. Auto-boosts failures to importance ≥ 0.8.
+
+- **`memory.search_episodes()` tool:** Queries episodes with optional outcome filter, time-range (`since`/`until`), `procedureId` filter, and semantic text search over `event + context`. Returns structured `Episode[]` ordered by timestamp DESC.
+
+- **Auto-capture in session compaction (#781):** During session-end compaction (`context-engine compact`), the session JSONL is scanned for outcome-indicating phrases (`✅ merged`, `❌ failed`, `🔧 fixed`, `⚠️ partial`, `FAILED`, `ERROR`, etc.) and episode records are auto-created for significant events.
+
+- **`FactsDB.episodesCount()` method:** Returns `{ total, success, failure, partial, unknown }` counts for episode statistics.
+
+- **`FactsDB.searchEpisodes()` method:** Supports outcome filter, time range, procedureId, FTS text search, and limit.
+
+- **`FactsDB.storeEpisode()` method:** Inserts episodes with outcome CHECK constraint, indexed columns, and auto-boost for failures.
+
+- **`FactsDB.getEpisode()` / `deleteEpisode()` methods:** Episode CRUD operations.
+
+- **`episodes_fts` FTS5 virtual table:** Semantic search over `event + context` for episodes.
+
+- **`episodes.test.ts` tests:** Full test suite covering episode CRUD, outcome filter, time-range filter, procedureId filter, limit, `episodesCount()`, and importance auto-boost.
+
+### Changed
+
+- **`DEFAULT_MEMORY_CATEGORIES`:** Added `"episode"` as a first-class category alongside `fact`, `preference`, `decision`, etc.
+
+- **`EpisodeEntry` type** added to `types/memory.ts` with full discriminated union for `outcome`.
+- **Edict memory type (#791):** New `category: "edict"` for verified ground-truth facts. Separate SQLite `edicts` table with TTL support (never/event/seconds). Six new tools: `memory.add_edict`, `memory.list_edicts`, `memory.get_edicts`, `memory.update_edict`, `memory.remove_edict`, `memory.edict_stats`. Edicts are forced-injected into system prompts before issue/narrative/hot blocks and are **never trimmed** by token budget pressure. Edict creation is **propose-only** — agents suggest via `[EDICT CANDIDATE]` GitHub comment; Markus (human) reviews and creates.
+
+- **Procedure feedback loop (#782):** New `procedure_versions` and `procedure_failures` SQLite tables track per-version outcomes and individual failure events. New `procedureFeedback()` method on FactsDB handles success and failure feedback — failures bump the version number, create an avoidance note, and automatically create an episode record via `recordEpisode()`. New `memory.procedure_feedback()` tool lets agents record procedure outcomes in context. `memory_recall_procedures` output now includes `lastOutcome`, `successRate`, and `avoidanceNotes` inline so the agent sees historical context before attempting a procedure. New `memory procedure show <id>` CLI command shows all versions, failure history, and avoidance notes for a procedure. `memory procedure list` lists all procedures with version/outcome summary. Procedure entries (`ProcedureEntry` type) now carry `version`, `lastOutcome`, `successRate`, and `avoidanceNotes` fields enriched from the version tracking system.
+
+- **Episodic memory (#781):** New `category: "episode"` first-class memory type for structured event records with explicit outcomes (`success`, `failure`, `partial`, `unknown`) and timestamps. Episodes are stored in a dedicated `episodes` SQLite table with indexed `timestamp` and `outcome` columns, searchable via FTS5. New `memory.record_episode()` tool creates episode records; `memory.search_episodes()` searches with outcome, time-range, and procedure filters. Failures are auto-boosted to importance ≥ 0.8. Session-end auto-capture scans for outcome-indicating phrases (✅, ❌, merged, FAILED, fixed, etc.) and creates episode records automatically.
+
+- **Frequency-based auto-save (#784):** New `recent_mentions` SQLite table tracks entity and credential mentions across sessions for frequency-based auto-capture. When a non-credential entity is mentioned `mentionThreshold`+ times, it's auto-saved as a memory. When a credential is mentioned, it's stored in the vault. Key design: SHA-256 hash of mention text for deduplication (never stores raw credential values); supersession key = `host+username+scope` for multi-credential per host support; configurable TTL purge for stale mention records. New `FrequencyCaptureConfig` with `enabled`, `mentionThreshold`, `lookbackSessions`, `defaultImportance`, `captureCredentials`, and `ttlDays` options. Credential pattern detection supports GitHub PATs, OpenAI keys, JWTs, SSH keys, and more.
+
+---
+
+## [2026.3.260] - 2026-03-26
+
+### Release summary
+
+A focused stability and usability release building on the large 2026.3.250 feature drop. Highlights: **Lineage Tracking** ("why" field on all memories and decisions), **flattened config schema** with backwards-compatible migration, **pinned-constraint auto-injection** before context compaction, and a comprehensive wave of LanceDB reliability fixes. All known LanceDB crash paths from 2026.3.250–251 are now resolved.
+
+### Added
+
+- **Lineage Tracking — "Why" field for files and decisions (#750, #752):** Every memory fact, file reference, and decision stored by the plugin now carries an optional `why` field capturing the reason it was created. The LanceDB schema and FTS5 index are both extended; `memory-tools` and CLI `vector store` commands support the new field. Enables provenance queries ("why was this fact stored?") and richer audit trails.
+- **Auto-inject pinned constraints before context compaction (#758):** Constraints marked as `pinned` in the memory store are now automatically re-injected into the context window immediately before compaction runs. Previously, pinned constraints could be silently dropped during aggressive compaction; they are now guaranteed to survive.
+- **Link timeline summaries to raw session logs (#766):** The session timeline UI now renders direct links from each summary entry to the underlying raw session log file, making it easy to jump from a high-level summary to the exact conversation that produced it.
+- **preferredProviders in embedding schema (#743):** The `openclaw.plugin.json` embedding schema now accepts a `preferredProviders` array, letting operators declare a preferred embedding provider order per-deployment without touching code.
+
+### Fixed
+
+- **LanceDB re-index race condition and ENOTEMPTY on LanceDB 0.27.x (#771):** Concurrent re-index operations on LanceDB 0.27.x could leave a partial `_tmp` directory and throw `ENOTEMPTY`. The re-index path now uses atomic rename semantics and a lock guard to prevent interleaving.
+- **LanceDB data file not found during vector-duplicate-check (#768, #774):** `hasDuplicate()` threw a file-not-found error on freshly initialised stores before the first write. The check now gracefully returns `false` when the underlying data file is absent.
+- **Crystallization pipeline produces zero proposals (#742, #773):** A logic inversion in the candidate scoring step caused the crystallization pipeline to filter out all proposals instead of the weakest ones. Fixed; pipeline now consistently produces ranked proposals.
+- **VectorDB schema error suppression tightened (#740, #753):** The `LANCE_NO_VECTOR_COL_MSG` error suppression was previously applied unconditionally, masking genuine schema errors. Guard now requires `!this.schemaValid` before suppressing, so real schema problems surface correctly.
+- **Vector dimension mismatch in LanceDB fallback queries (#764):** When the active embedding model returns a different dimension than what the LanceDB table was created with, fallback queries no longer crash — they skip the vector leg and return FTS-only results.
+- **SQLite FTS5 throws "unterminated string" on null bytes (#737, #738):** FTS5 queries containing null bytes (e.g. from binary clipboard content) caused an unhandled SQLite error. Input is now sanitized before FTS5 query construction.
+- **LanceDB concurrent-close null guard (#771):** Concurrent close calls on the LanceDB connection could dereference a null handle. Added null guard in the close path.
+- **`truncateForStorage` crashes on undefined/null input (#755, #756):** Two separate callers could pass `undefined` or `null` to `truncateForStorage`. Both paths now coerce to empty string before truncation.
+- **selfCorrection and implicitFeedback JSON schema missing `enabled` field (#765, #767):** The `enabled` toggle was accepted at runtime but omitted from the JSON schema, causing validation warnings. Both schemas now declare `enabled` explicitly.
+- **CLI config display: nightlyCycle enabled state always shown as false (#760):** The `hybrid-mem config` CLI output hardcoded `false` for the `nightlyCycle.enabled` field regardless of actual config. Now reads the live value correctly.
+- **`stringEnum` removed — replaced with inline implementation (#762):** A utility that was removed in a dependency update was still being imported. Replaced with a minimal inline implementation to restore correct schema validation.
+- **Suppress transient HTTP 500 errors from OpenAI to GlitchTip (#739, #759):** Transient 500 responses from OpenAI (server-side errors outside plugin control) are no longer reported as plugin errors in GlitchTip, reducing alert noise.
+- **Distill description referenced removed GOOGLE_API_KEY (#776):** The distillation step description mentioned `GOOGLE_API_KEY` which was removed in favour of `llm.heavy` tier config. Updated to reflect current setup.
+- **Google embedding model name (#743):** Default Google embedding updated from `text-embedding-005` (404) to `gemini-embedding-001` (current name).
+- **Azure embedding label in verify output:** The verify `--test-llm` table now correctly labels the Azure embedding provider row.
+- **CI: Biome format, lint error, and npm audit vulnerability (f240d914):** Three CI issues fixed on main: `vector-db.ts` Biome format (ternary line-length), `cmd-config.ts` unused `catch (e)` binding, `config-view-nightly-cycle.test.ts` missing `node:` import prefix, and `smol-toml` bumped to ≥1.6.1 (GHSA-v3rj-xjv7-4jmq, moderate DoS).
+
+### Changed
+
+- **Flattened config schema (#754, #776):** Three previously nested config keys are promoted to top-level:
+  - `implicitFeedback.trajectoryLLMAnalysis` → `trajectoryLLMAnalysis`
+  - `implicitFeedback.feedToSelfCorrection` → `feedToSelfCorrection`
+  - `distill.extractReinforcement` → `extractReinforcement`
+
+  Old nested keys continue to work during a migration period (deprecation warning logged when both are set). Top-level keys take precedence. Update your `openclaw.plugin.json` or agent config to use the new flat paths.
+
+- **VectorDB error handler precision:** Schema-error suppression now conditioned on `!this.schemaValid`, making error handling more surgical and preventing silent masking of genuine issues.
+
+### Dependencies
+
+- `yaml` bumped from 2.8.2 → 2.8.3 in `extensions/memory-hybrid`
+- `picomatch` bumped in both `extensions/memory-hybrid` and root workspace
+- Root workspace dependencies updated to latest patch versions
+- `smol-toml` bumped to ≥1.6.1 (security: GHSA-v3rj-xjv7-4jmq)
+
+---
+
+## [2026.3.250] - 2026-03-24
+
+### Release summary
+
+The largest feature release since the memory-manager 3.0 rewrite. This release ships **Production RAG principles**, **NarrativesDB** for temporal memory summaries, **identity reflection**, an **auto-generated memory mind-map**, a **task-queue watchdog**, and a comprehensive **database reliability overhaul** — alongside five crash-level bug fixes surfaced through real-world telemetry.
+
+### Added
+
+- **Production RAG principles (#656):** Full-featured Retrieval-Augmented Generation pipeline — reranking, semantic cache, document grading with configurable toggle, and best-match tiebreaking by `cachedAt` so higher-similarity results always win.
+- **NarrativesDB — temporal + narrative summaries (#646):** New `NarrativesDB` backend stores per-session narrative snapshots synthesized from event-log events. Session summaries are generated at `agent_end` and surfaced during recall to give the agent temporal context ("what happened in the last session").
+- **Identity reflection layer (#647):** A dedicated reflection pass builds and maintains a durable persona identity store from the agent's own outputs. Reflection outputs are promoted through a pipeline into `persona-state-store`, giving the agent long-term self-awareness across sessions.
+- **Auto-generated memory mind-map / index (#645):** A background job synthesizes all stored facts into a human-readable memory index — a navigable mind-map of what the agent knows. Short entries now use their actual text as labels instead of generic category names.
+- **Task-queue watchdog (#662):** A new watchdog service monitors the autonomous task queue for stale leases, clears expired entries, and emits alerts. Includes lease tracking with proper expiry management and Azure model documentation.
+- **Retrieval modes — interactive vs. deep (#639):** First-class support for two distinct retrieval strategies: `interactive` (low-latency, FTS5-first) and `deep` (higher-recall, multi-strategy). Mode is selected per query based on context signals.
+- **Hard FTS5 capability check (#727):** On startup the plugin verifies the SQLite FTS5 extension is available. If missing, it degrades gracefully with a clear alert rather than silent query failures.
+- **Pre-consolidation flush & decay controls (#729):** New explicit controls for pre-consolidation memory flush and decay scheduling. Operators can now configure flush triggers and decay intervals directly rather than relying on implicit cron timing.
+- **Provenance tagging to prevent cron contamination (#728):** Every fact written by a background cron job is tagged with its provenance source. Prevents cron-written facts from polluting feedback loops and corrupting the interactive memory signal.
+- **Automated CI feedback loop (#664):** CI review comments are now automatically consumed and re-queued as follow-up tasks, closing the loop between review feedback and code changes without manual triage.
+- **Architecture center (#637):** Formal definition of the core runtime boundary vs. adjacent subsystems. Enforced via lint rules to prevent coupling creep between plugin internals and external tooling layers.
+- **`verify --test-llm`:** New `--test-llm` flag for `openclaw hybrid-mem verify` tests every configured LLM endpoint with a real API call, reporting which models are reachable and what dimensions/capabilities they expose.
+- **ANTHROPIC_API_KEY env support in verify:** Verify now resolves the Anthropic key from `ANTHROPIC_API_KEY` env var (in addition to the existing config path), making it easier to run without a hardcoded key.
+- **Agent + node tagging in error reports (#706):** GlitchTip / error reports now include which agent (Maeve, Doris, etc.) and which machine generated the error, enabling per-agent filtering in the telemetry dashboard.
+- **Version-aware telemetry muting (#705):** Outdated plugin versions suppress telemetry noise by default. Configurable update nudges alert operators when a newer version is available.
+
+### Fixed
+
+- **EventLog closed after session dispose (#683, #712):** The `EventLog.liveDb` getter previously threw `"EventLog is closed"` permanently after `close()` was called. Changed from a permanent closed flag (better-sqlite3 pattern) to a reopen path using Node.js `DatabaseSync.open()`. Additionally added an `isOpen()` guard in `buildDailyNarrative` to skip narrative synthesis cleanly when the session is already torn down.
+- **"database is not open" on hot-reload (#682, #711):** Defensive database connection initialization prevents `"database is not open"` errors during gateway hot-reload or SIGUSR1 restart cycles.
+- **All embedding providers failed (#678, #680, #707, #710):** Fixed two separate causes: (1) incorrect provider chain fallback when the primary embedding provider is unreachable; (2) dimension mismatch when switching embedding models that caused the fallback chain to abort unnecessarily.
+- **LanceDB "No vector column found" (#679, #708):** Query stream now handles the case where no vector column exists in the LanceDB table (e.g. on a freshly initialized or migrated store) without throwing.
+- **Ollama connection failure noise (#681, #709):** Ollama `fetch failed` errors are no longer reported to the error tracker when Ollama is not configured; they are swallowed as expected unavailability.
+- **Connection error circuit-breaker noise (#703, #713):** Generic "Connection error" and network errors are filtered from Sentry/GlitchTip SDK config to avoid alert fatigue when the network is temporarily unavailable.
+- **Persona reflection — missing requirements (#647, #674, #675):** Fixed incomplete requirements resolution in the persona reflection pass that caused the pipeline to skip promotion steps silently.
+- **Autonomous queue duplicate dispatch (#634):** Prevented the autonomous task queue from dispatching the same issue twice when a GitHub branch isn't yet visible during fast successive queue runs.
+- **Gateway register parse failure (#661):** Isolated `hybridConfigSchema` to prevent the gateway registration parse from failing when the plugin config has extra top-level keys.
+- **Upgrade missing @lancedb/lancedb (#636, #663):** Upgrade from 2026.3.181 no longer risks missing the native LanceDB bindings; postinstall script now checks for and rebuilds them when needed.
+- **`fix(embedding)`: primary model/dimension alignment (#05b52d44):** Ensured the primary embedding model always resolves to consistent dimensions on backward-compatible stores to prevent re-indexing on restart.
+- **Google embedding — gemini-embedding-001 (#8240914a):** Updated Google embedding to use `gemini-embedding-001` (the current model name after Google renamed `text-embedding-004`/`005`). Dimension chaining and verify output now reflect the corrected model.
+- **CI actions failure on main branch (#733, #734):** Fixed concurrency and branch filter issues that caused CI to fail when running directly against `main`.
+
+### Changed
+
+- **FactsDB refactor (#638, #649):** `backends/facts-db.ts` split by responsibility boundary into focused sub-modules (retrieval, write, consolidation, decay), reducing module size and coupling.
+- **Bootstrap slimmed (#640, #659):** Context-bag and service registration assembly streamlined — removed redundant tool registrations and tightened the wiring between plugin init and feature flags.
+- **Google embedding — migrated to gemini-2.5-flash-lite (#e11c5ec1):** The Google embedding provider now defaults to the `gemini-2.5-flash-lite` model for classification/distill use cases (lower cost, same quality for short texts).
+- **Error reporting filter (#704, #715):** Noisy network errors, auth failures, and circuit-breaker events are now filtered out of the Sentry SDK config. Only actionable plugin-internal errors reach the tracker.
+- **Dependency updates:** `fast-xml-parser` bumped; minor/patch dependency group updated across `extensions/memory-hybrid`.
+
+### Developer / Internal
+
+- **Architecture lint rules (#637):** `lint-arch.sh` now enforces the boundary between the core runtime and adjacent subsystems. Violations fail CI.
+- **PR template (#ae8d8fde):** Strict documentation requirements added to the pull request template — every PR must document user-facing impact and include test evidence.
+- **Test improvements:** Fixed narrative-recall test timestamps (2025 → 2026), lease expiry bug in task-queue tests, and FTS5 degradation test coverage.
+
+---
+
+## [2026.3.181] - 2026-03-18
+
+### Fixed
+
+- **Release workflow:** Resolved concurrency deadlock when Release runs on tag push (caller and called CI workflow shared the same concurrency group). Release now uses a distinct group (`release-cd-${{ github.ref }}`) so the workflow completes and creates the GitHub Release and publishes to npm.
+
+---
+
+## [2026.3.180] - 2026-03-18
+
+### Release summary (user-friendly)
+
+This release includes a **security override** for the Hono node server dependency and documents **migration steps** for the retrieval pipeline API and Google embedding default change.
+
+### Security
+
+- **Override @hono/node-server to >=1.19.10 <2 (GHSA-wc8c-qw6v-h7f6):** Added npm `overrides` to force `@hono/node-server` to a patched version. The unbounded range is capped at `<2` to prevent accidental major-version upgrades.
+
+### Migration notes
+
+- **`runRetrievalPipeline` signature changed to options bag — breaking change (#501):** The function signature was refactored from many optional positional parameters to a single `RetrievalPipelineOptions` object. `runRetrievalPipeline` is re-exported from the package root (`extensions/memory-hybrid/index.ts`), so **any external consumer calling the old positional form must migrate**.
+
+  Before:
+  ```ts
+  await runRetrievalPipeline(query, queryVector, db, vectorDb, factsDb, config, budgetTokens, tagFilter, ...);
+  ```
+  After:
+  ```ts
+  await runRetrievalPipeline(query, queryVector, db, vectorDb, factsDb, { config, budgetTokens, tagFilter, ... });
+  ```
+  The five required positional parameters (`query`, `queryVector`, `db`, `vectorDb`, `factsDb`) are unchanged; everything else moves into the `options` bag. Omitting any option preserves existing default behaviour.
+
+- **Google embedding model default changed: `text-embedding-004` → `gemini-embedding-001` (#385):** If your deployment previously used `text-embedding-004` (explicitly or as the inferred default), switching to `gemini-embedding-001` produces different vector representations. **Existing LanceDB tables indexed with `text-embedding-004` will have degraded semantic retrieval quality until re-indexed.** Run `openclaw hybrid-mem re-index` after upgrading to rebuild the vector index with the new model. To keep using `text-embedding-004`, set `embedding.model: "text-embedding-004"` explicitly in your plugin config.
+
+---
+
+## [2026.3.152] - 2026-03-15
+
+### Changed
+
+- **config-set:** Simpler toggle syntax: use `openclaw hybrid-mem config-set <feature> enabled|disabled` (e.g. `config-set nightlyCycle enabled`) instead of `config-set nightlyCycle.enabled true`. Values validated; unknown values return a clear error. `costTracking` added to object toggles.
+- **verify:** Clear summary and guidance after Embeddings/LLM tables. "Embeddings: OK" / "LLMs: OK" lines and a single "Summary: Ready" or "Summary: Fix the issue(s)…" so users know at a glance if setup is good. Source column no longer blank (shows "gateway" or "—" when key is not in plugin config). "In config" shows "No" instead of "—" for reference models. Legend explains Source and In config.
+
+### Fixed
+
+- **verify:** Empty Source column when API keys come from gateway/env; now shows "gateway" or "—". "In config" column now explicitly "No" when model is not in llm.nano/default/heavy.
+
+---
+
+## [2026.3.151] - 2026-03-15
+
+### Fixed
+
+- **Plugin config schema (OpenClaw validation):** `config.mode` enum in `openclaw.plugin.json` now includes `local`, `minimal`, `enhanced`, `complete` so configs using the new preset names pass OpenClaw validation. Legacy values (`essential`, `normal`, `expert`, `full`) remain accepted.
+
+### Changed
+
+- **Verify output:** Full embedding and LLM tables always visible (not suppressed in quiet). LLM table shows one row per model (from config + reference list), with Model, Provider, Auth, Source, In config, Enabled. Reference models (Opus, GPT-5.4, Codex, o3, etc.) always listed.
+
+---
+
+## [2026.3.150] - 2026-03-15
+
+### Release summary (user-friendly)
+
+This release adds **Phase 3 modularization** and **Phase 2.3 lifecycle staging**, plus **OAuth-first auth with smart failover** and clearer **configuration modes**.
+
+- **OAuth preferred when both OAuth and API key exist** — The plugin now tries OAuth first when a provider has both. If OAuth fails (e.g. gateway down), it automatically falls back to your API key and uses **incremental backoff** (5 min → 30 min → 1 h → 2 h → 4 h) before retrying OAuth. You can clear backoff anytime with `openclaw hybrid-mem reset-auth-backoff`. See [LLM-AND-PROVIDERS.md](docs/LLM-AND-PROVIDERS.md).
+- **Configuration mode names updated** — Modes are now `local` | `minimal` | `enhanced` | `complete`. **Default when omitted is `local`** (backward compatible with previous “full” behavior). Deprecated names (`essential`, `normal`, `expert`, `full`) are reset to **`local`** and a one-time warning is logged; set the new mode explicitly to enable LLM or other features. See [CONFIGURATION-MODES.md](docs/CONFIGURATION-MODES.md).
+- **New CLI** — `openclaw hybrid-mem config` shows effective config and mode; `openclaw hybrid-mem reset-auth-backoff` clears OAuth failover state. `verify` gains `--test-llm` and richer Embeddings/LLM tables (credential source, OAuth vs API results, disabled providers).
+- **Memory-to-skills removed** — The `skills-suggest` command, cron job, and related config/docs have been removed. Use workflow crystallization and tool proposals instead.
+- **Stable internal API** — Optional modules can depend on `MemoryPluginAPI` (see `api/memory-plugin-api.ts`) for tool and lifecycle registration without circular dependencies.
+- **Lifecycle pipeline** — Hooks are decomposed into staged pipeline (setup, recall, injection, capture, cleanup) with per-stage timeouts and toggles.
+
+### Added
+
+- **OAuth failover and backoff:** When OAuth fails for a provider that also has an API key, the plugin records the failure and uses the API key. Retries to OAuth use a configurable backoff schedule (default: 5 min, 30 min, 1 h, 2 h, 4 h). State is stored in `.auth-backoff.json` next to the SQLite DB. Config: `auth.preferOAuthWhenBoth` (default `true`), `auth.backoffScheduleMinutes`, `auth.resetBackoffAfterHours` (default 24). See [LLM-AND-PROVIDERS.md](docs/LLM-AND-PROVIDERS.md).
+- **CLI `reset-auth-backoff`:** Clears OAuth failover state so the next LLM call tries OAuth again for providers with both OAuth and API key.
+- **CLI `config`:** New subcommand to print effective plugin config and detected mode (or “Custom” when presets are overridden).
+- **`verify --test-llm`:** Runs minimal completions per provider and reports OAuth vs API result separately; shows credential source (env, file, plugin, gateway, local) and honors `llm.disabledProviders`.
+- **Stable `MemoryPluginAPI`:** Type in `api/memory-plugin-api.ts` consumed by `registerTools` and `registerLifecycleHooks` so optional modules can depend on a single API surface.
+- **Config:** `llm.disabledProviders` (array of provider IDs to exclude from all LLM use), `procedures.maxInjectionTokens` (default 500), mode presets for `local` / `minimal` / `enhanced` / `complete`.
+
+### Changed
+
+- **Default mode:** When `mode` is omitted, the plugin uses **`local`** (cost-safety: no external LLM, FTS-only). Set `"mode": "minimal"`, `"enhanced"`, or `"complete"` to enable LLM and other features.
+- **Deprecated mode mapping:** All deprecated names (`essential`, `normal`, `expert`, `full`) are **reset to `local`**. A one-time warning is logged; set the new mode explicitly to restore higher tiers.
+- **Lifecycle:** Single `pluginContext` (typed as `MemoryPluginAPI`) is passed into `registerLifecycleHooks` and `registerTools`. Hooks are implemented as staged pipeline (setup, recall, injection, capture, cleanup) with config toggles and timeouts.
+- **Local / FTS-only:** When mode is `local`, retrieval uses FTS-only (no embeddings or vector DB). Capture and recall skip embedding/vector work when semantic retrieval is disabled.
+- **Procedure injection:** Capped by `procedures.maxInjectionTokens`; blocks are trimmed to stay within the cap.
+
+### Removed
+
+- **Memory-to-skills feature:** `skills-suggest` CLI command, cron job, `memory-to-skills` service, prompts, and related config/types/docs. Maintenance cron set reduced from 9 to 8 jobs.
+
+### Fixed
+
+- **Credential source fallback:** `credentialSource` now returns empty string for missing keys so verify’s fallback logic correctly shows the actual source (e.g. `llm.providers` with `env:`).
+- **Google LLM base URL:** Removed `/v1` appending in `buildDirectClient` so Google’s `v1beta/openai/` endpoint is used correctly in `verify --test-llm`.
+- **Stale references:** Removed `skills-suggest` from CLI help and command list after feature removal.
+
+### Migration notes
+
+- If you used **deprecated mode names** (`essential`, `normal`, `expert`, `full`), the plugin resets them to **`local`**. Set `"mode": "minimal"`, `"enhanced"`, or `"complete"` explicitly to enable LLM and other features.
+- If you relied on **memory-to-skills** or **skills-suggest**, remove those from cron/config; use workflow crystallization and tool proposals instead.
+- **OAuth + API key** users: no change required; OAuth is preferred by default and API key is used on failure with backoff. Use `openclaw hybrid-mem reset-auth-backoff` to clear backoff if needed.
+
+---
+
+## [2026.3.140] - 2026-03-14
+
+### Changed
+
+- **Version 2026.3.140:** Bump for Phase 1 remodeling release.
+- **Upgrade migration (core-only baseline):** When running plugin version **2026.3.140 or later**, config parsing applies a **Phase 1 core-only migration**. The plugin **overrides** every listed option to the disabled value, **including values the user had set**, so all installations get the same baseline. Affected areas: `queryExpansion`, `frustrationDetection`, `nightlyCycle`, `passiveObserver`, `workflowTracking`, `selfExtension`, `crystallization`, `verification`, `provenance`, `aliases`, `crossAgentLearning`, `reranking`, `contextualVariants`, `documents`, `personaProposals`, and `graph.strengthenOnRecall`. To re-enable any feature, set it explicitly in your plugin config after upgrading (e.g. `queryExpansion: { enabled: true }`).
+
+---
+
+## [2026.3.110] - 2026-03-11
+
+### Fixed
+
+- **GlitchTip false-positive for UnconfiguredProviderError in mixed fallback chains (#328):** In `chatCompleteWithRetry`, when the final fallback model threw `UnconfiguredProviderError` but an earlier model in the chain had failed for a different reason (e.g. ECONNREFUSED, rate limit), the `else if (unconfiguredCount > 0)` branch was incorrectly reporting the error to GlitchTip. `UnconfiguredProviderError` is always a config issue, not a code bug — GlitchTip reporting is now suppressed whenever the final error is an unconfigured-provider error, regardless of what earlier models failed with.
+- **Qwen3 thinking mode empty responses (#314):** Qwen3 models running via Ollama default to `enable_thinking=true`, which places the actual model output in `message.reasoning_content` (current standard) or the legacy `message.reasoning` field while leaving `message.content` empty. `chatComplete()` now falls back to these fields when `content` is empty, so cron agents routing to `ollama/qwen3:*` receive the full response instead of timing out on a blank reply. Non-Qwen models are unaffected.
+
+---
+
+## [2026.3.100] - 2026-03-10
+
+Major stability release: LanceDB OOM fix, provider hardening, 4-model council review, 13 bug fixes, cron guard system.
+
+### Added
+
+- **LanceDB auto-compaction (#292):** `VectorDB.optimize()` method with race-condition guard (`promiseRef` pattern). Auto-compacts after every 100 `store()` calls. New CLI command `openclaw hybrid-mem optimize` for manual compaction. Weekly cron job integration.
+- **Cron job re-run guards (#304, #305):** `buildGuardPrefix()` generates `MIN_INTERVAL_MS` checks using `/tmp/hybrid-mem-guard-<job>.txt` timestamp files. Three tiers: daily (20h), weekly (5d), monthly (25d). Prevents jobs re-firing on every gateway restart.
+- **Per-URL Ollama circuit breaker (#298):** Module-level circuit breaker tracks failures per endpoint URL instead of globally. Prevents one bad Ollama endpoint from disabling all local models.
+- **Transient error retry logic (#301, #302):** LLM request timeouts and 5xx errors are now retried with configurable limits. Connection errors trigger graceful fallback to next provider.
+- **`Retry-After` header parsing (#296):** 429 rate-limit responses now respect the server's `Retry-After` header with exponential backoff.
+- **Provider fallback chain (#294, #300):** `UnconfiguredProviderError` now resolves fallback keys for OpenRouter, Anthropic, and generic API configurations. Embedding provider chain exhaustion handled gracefully — stores facts without embeddings when all providers fail.
+- **`is404Like` detection (#303):** LLM 404 responses (model not found) now skip retry loops and move to next model immediately.
+- **Try/finally scan locks:** `extract-directives`, `extract-reinforcement`, and `self-correction-run` now release concurrency locks in `finally` blocks, preventing lock leaks on errors.
+- **Gateway token leak fix (#init-databases):** Removed `OPENCLAW_GATEWAY_TOKEN` from the OpenAI provider fallback chain — was sending internal gateway tokens to external endpoints.
+- **Scan cursor fix:** `getScanCursor()` now returns `last_run_at` (not `last_session_ts`), fixing the 23-hour guard to check actual run time.
+- **`$HOME` expansion fix (#299):** `.last-post-upgrade-version` path now expands `$HOME` explicitly in `plugin-service.ts`.
+- **401 fast-fail (#295):** Authentication errors skip retry loops and fall back to next provider immediately.
+- **Config validation (#289):** Placeholder API key detection for `embedding.apiKey`. Nano-tier defaults for all background features.
+
+### Changed
+
+- **LLM tier defaults:** Background features (autoClassify, HyDE, query expansion, summarize) default to nano tier. Self-correction spawn model changed to Sonnet. Distill model tier defaults to Flash.
+- **Incremental processing for all scans (#288):** Watermark-based scan cursors. Full re-index only on explicit `--full` flag.
+
+### Fixed
+
+- 13 bugs identified from GlitchTip error reports (#294–#303) plus cron re-trigger (#304)
+- LanceDB OOM crashes: 9036 uncompacted fragments → 1 after optimize (freed 2.6 GB)
+- Race condition in `VectorDB.optimize()`: circular promise reference fixed with intermediate `promiseRef` variable
+- All 76 review threads from 4-model council review (GPT, Opus, Gemini, Sonnet) resolved
+
+### Security
+
+- Gateway token no longer leaked to external OpenAI-compatible endpoints
+- 401 errors no longer trigger infinite retry loops exposing invalid keys
 
 ---
 
@@ -617,7 +922,16 @@ Major feature release including procedural memory, directive extraction, reinfor
 
 ---
 
-[Unreleased]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.3.92...HEAD
+[Unreleased]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.3.250...HEAD
+[2026.3.250]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.3.181...v2026.3.250
+[2026.3.181]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/releases/tag/v2026.3.181
+[2026.3.180]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/releases/tag/v2026.3.180
+[2026.3.152]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/releases/tag/v2026.3.152
+[2026.3.151]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/releases/tag/v2026.3.151
+[2026.3.150]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/releases/tag/v2026.3.150
+[2026.3.140]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/releases/tag/v2026.3.140
+[2026.3.110]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/releases/tag/v2026.3.110
+[2026.3.100]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/releases/tag/v2026.3.100
 [2026.3.92]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/releases/tag/v2026.3.92
 [2026.3.91]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/releases/tag/v2026.3.91
 [2026.3.90]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/releases/tag/v2026.3.90

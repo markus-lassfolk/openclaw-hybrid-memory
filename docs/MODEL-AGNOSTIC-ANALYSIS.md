@@ -12,6 +12,10 @@ The hybrid-memory plugin currently hardcodes **OpenAI** for embeddings and chat 
 
 ---
 
+> **⚠️ Status update (implemented):** The embedding multi-provider support described in this document **has since been implemented** (see Option C below and [PR #251](https://github.com/markus-lassfolk/openclaw-hybrid-memory/pull/251)). As of the current release, the plugin supports four embedding providers: **OpenAI**, **Ollama** (fully local), **ONNX** (fully local, no API key), and **Google** (Gemini API). Set `embedding.provider` in config; use `embedding.preferredProviders` for ordered fallback chains. See [LLM-AND-PROVIDERS.md](LLM-AND-PROVIDERS.md#embedding-providers) for configuration details. The original decision and analysis below are kept for historical context.
+
+---
+
 ## Current hardcoding
 
 | Area | What’s hardcoded | Where |

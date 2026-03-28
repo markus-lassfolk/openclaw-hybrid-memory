@@ -6,8 +6,9 @@
  * ⚠️ Costs are estimates based on published model pricing, not billing-accurate.
  */
 
-import type Database from "better-sqlite3";
+import type { DatabaseSync } from "node:sqlite";
 import { estimateCost } from "../services/model-pricing.js";
+import { pluginLogger } from "../utils/logger.js";
 
 /**
  * A savings entry records work performed automatically that would have
@@ -46,12 +47,12 @@ export interface SavingsReport {
 }
 
 export interface CostEntry {
-  feature: string;         // e.g. 'auto-classify', 'query-expansion'
-  model: string;           // e.g. 'openai/gpt-4.1-nano'
+  feature: string; // e.g. 'auto-classify', 'query-expansion'
+  model: string; // e.g. 'openai/gpt-4.1-nano'
   inputTokens: number;
   outputTokens: number;
   durationMs?: number;
-  success?: boolean;       // default true
+  success?: boolean; // default true
 }
 
 export interface FeatureCostRow {
@@ -86,11 +87,11 @@ export interface CostReport {
 }
 
 export class CostTracker {
-  private readonly db: Database.Database;
+  private readonly db: DatabaseSync;
   /** Rate-limit: log at most one DB error per session to avoid spamming the console. */
   private _errorLogged = false;
 
-  constructor(db: Database.Database) {
+  constructor(db: DatabaseSync) {
     this.db = db;
     this.initSchema();
   }
@@ -155,7 +156,9 @@ export class CostTracker {
       // Never let cost tracking break LLM calls — but log the first failure per session for debuggability
       if (!this._errorLogged) {
         this._errorLogged = true;
-        console.warn(`[cost-tracker] Failed to record cost entry: ${err instanceof Error ? err.message : String(err)}`);
+        pluginLogger.warn(
+          `[cost-tracker] Failed to record cost entry: ${err instanceof Error ? err.message : String(err)}`,
+        );
       }
     }
   }
@@ -164,8 +167,7 @@ export class CostTracker {
     const days = options.days ?? 7;
     const cutoff = Math.floor(Date.now() / 1000) - days * 86400;
 
-    let query =
-      `SELECT feature,
+    let query = `SELECT feature,
               COUNT(*) AS calls,
               SUM(input_tokens) AS inputTokens,
               SUM(output_tokens) AS outputTokens,
@@ -175,10 +177,10 @@ export class CostTracker {
     const params: (number | string)[] = [cutoff];
 
     if (options.feature) {
-      query += ` AND feature = ?`;
+      query += " AND feature = ?";
       params.push(options.feature);
     }
-    query += ` GROUP BY feature ORDER BY estimatedCostUsd DESC`;
+    query += " GROUP BY feature ORDER BY estimatedCostUsd DESC";
 
     const rows = this.db.prepare(query).all(...params) as Array<{
       feature: string;
@@ -214,16 +216,20 @@ export class CostTracker {
          FROM llm_cost_log WHERE timestamp >= ? AND estimated_cost_usd IS NULL`;
       const unknownParams: (number | string)[] = [cutoff];
       if (options.feature) {
-        unknownQuery += ` AND feature = ?`;
+        unknownQuery += " AND feature = ?";
         unknownParams.push(options.feature);
       }
-      const unknownRow = this.db.prepare(unknownQuery).get(...unknownParams) as {
-        cnt: number | bigint;
-        models: string | null;
-      } | undefined;
+      const unknownRow = this.db.prepare(unknownQuery).get(...unknownParams) as
+        | {
+            cnt: number | bigint;
+            models: string | null;
+          }
+        | undefined;
       unknownModelCalls = Number(unknownRow?.cnt ?? 0);
       unknownModels = unknownRow?.models ? unknownRow.models.split(",").filter(Boolean) : [];
-    } catch { /* best-effort */ }
+    } catch {
+      /* best-effort */
+    }
 
     return { features, total, days, unknownModelCalls, unknownModels };
   }
@@ -301,17 +307,13 @@ export class CostTracker {
           `INSERT INTO llm_savings_log (feature, action, count_avoided, estimated_saving_usd, note)
            VALUES (?, ?, ?, ?, ?)`,
         )
-        .run(
-          entry.feature,
-          entry.action,
-          entry.countAvoided,
-          entry.estimatedSavingUsd,
-          entry.note ?? null,
-        );
+        .run(entry.feature, entry.action, entry.countAvoided, entry.estimatedSavingUsd, entry.note ?? null);
     } catch (err) {
       if (!this._errorLogged) {
         this._errorLogged = true;
-        console.warn(`[cost-tracker] Failed to record savings entry: ${err instanceof Error ? err.message : String(err)}`);
+        pluginLogger.warn(
+          `[cost-tracker] Failed to record savings entry: ${err instanceof Error ? err.message : String(err)}`,
+        );
       }
     }
   }
@@ -333,11 +335,11 @@ export class CostTracker {
          ORDER BY estimatedSavingUsd DESC`,
       )
       .all(cutoff) as Array<{
-        feature: string;
-        entries: number | bigint;
-        countAvoided: number | bigint;
-        estimatedSavingUsd: number;
-      }>;
+      feature: string;
+      entries: number | bigint;
+      countAvoided: number | bigint;
+      estimatedSavingUsd: number;
+    }>;
 
     const features: SavingsFeatureRow[] = rows.map((r) => ({
       feature: r.feature,
@@ -364,12 +366,8 @@ export class CostTracker {
    */
   pruneOldEntries(retainDays = 90): number {
     const cutoff = Math.floor(Date.now() / 1000) - retainDays * 86400;
-    const costResult = this.db
-      .prepare(`DELETE FROM llm_cost_log WHERE timestamp < ?`)
-      .run(cutoff);
-    const savingsResult = this.db
-      .prepare(`DELETE FROM llm_savings_log WHERE timestamp < ?`)
-      .run(cutoff);
-    return costResult.changes + savingsResult.changes;
+    const costResult = this.db.prepare("DELETE FROM llm_cost_log WHERE timestamp < ?").run(cutoff);
+    const savingsResult = this.db.prepare("DELETE FROM llm_savings_log WHERE timestamp < ?").run(cutoff);
+    return Number(costResult.changes) + Number(savingsResult.changes);
   }
 }

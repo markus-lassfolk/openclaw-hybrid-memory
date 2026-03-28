@@ -4,9 +4,9 @@
  * Issue #262 — Phase 3.
  */
 
-import { capturePluginError } from "./error-reporter.js";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { ClosedLoopConfig } from "../config/types/features.js";
+import { capturePluginError } from "./error-reporter.js";
 
 export interface FeedbackEffectiveness {
   ruleId: string;
@@ -51,9 +51,7 @@ function countFeedbackInWindow(
   implicitPositive: number;
   implicitNegative: number;
 } {
-  // Use the raw DB via a type-cast to access the db instance for direct SQL
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const db = (factsDb as any).liveDb as import("better-sqlite3").Database | undefined;
+  const db = factsDb.getRawDb();
   if (!db) return { corrections: 0, praise: 0, implicitPositive: 0, implicitNegative: 0 };
 
   let corrections = 0;
@@ -77,8 +75,8 @@ function countFeedbackInWindow(
   try {
     // Praise from reinforcement_log (positive signal = reinforcement)
     const praiseQ = topic
-      ? `SELECT COUNT(*) as cnt FROM reinforcement_log WHERE occurred_at >= ? AND occurred_at <= ? AND (topic LIKE ?)`
-      : `SELECT COUNT(*) as cnt FROM reinforcement_log WHERE occurred_at >= ? AND occurred_at <= ?`;
+      ? "SELECT COUNT(*) as cnt FROM reinforcement_log WHERE occurred_at >= ? AND occurred_at <= ? AND (topic LIKE ?)"
+      : "SELECT COUNT(*) as cnt FROM reinforcement_log WHERE occurred_at >= ? AND occurred_at <= ?";
     const praiseRow = topic
       ? (db.prepare(praiseQ).get(windowStart, windowEnd, `%${topic}%`) as { cnt: number })
       : (db.prepare(praiseQ).get(windowStart, windowEnd) as { cnt: number });
@@ -90,10 +88,13 @@ function countFeedbackInWindow(
   try {
     // Implicit signals
     const implQ = topic
-      ? `SELECT polarity, COUNT(*) as cnt FROM implicit_signals WHERE created_at >= ? AND created_at <= ? AND (user_message LIKE ? OR agent_message LIKE ?) GROUP BY polarity`
-      : `SELECT polarity, COUNT(*) as cnt FROM implicit_signals WHERE created_at >= ? AND created_at <= ? GROUP BY polarity`;
+      ? "SELECT polarity, COUNT(*) as cnt FROM implicit_signals WHERE created_at >= ? AND created_at <= ? AND (user_message LIKE ? OR agent_message LIKE ?) GROUP BY polarity"
+      : "SELECT polarity, COUNT(*) as cnt FROM implicit_signals WHERE created_at >= ? AND created_at <= ? GROUP BY polarity";
     const implRows = topic
-      ? (db.prepare(implQ).all(windowStart, windowEnd, `%${topic}%`, `%${topic}%`) as Array<{ polarity: string; cnt: number }>)
+      ? (db.prepare(implQ).all(windowStart, windowEnd, `%${topic}%`, `%${topic}%`) as Array<{
+          polarity: string;
+          cnt: number;
+        }>)
       : (db.prepare(implQ).all(windowStart, windowEnd) as Array<{ polarity: string; cnt: number }>);
     for (const row of implRows) {
       if (row.polarity === "positive") implicitPositive = row.cnt;
@@ -147,7 +148,7 @@ export function measureRuleEffectiveness(
     const clampedScore = Math.max(-1, Math.min(1, effectScore));
 
     // Confidence scales with sample size
-    const confidence = Math.min(1.0, sampleSize / Math.max(config.minSampleSize ?? 5, 1) * 0.5);
+    const confidence = Math.min(1.0, (sampleSize / Math.max(config.minSampleSize ?? 5, 1)) * 0.5);
 
     return {
       ruleId,
@@ -200,8 +201,7 @@ export function runClosedLoopAnalysis(factsDb: FactsDB, config: Partial<ClosedLo
 
   try {
     // Find rules/patterns created in last 30 days
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const db = (factsDb as any).liveDb as import("better-sqlite3").Database | undefined;
+    const db = factsDb.getRawDb();
     if (!db) return report;
 
     const rows = db
@@ -227,7 +227,7 @@ export function runClosedLoopAnalysis(factsDb: FactsDB, config: Partial<ClosedLo
       if (m.effectScore < deprecateThreshold) {
         try {
           // Lower confidence to 0.1 to effectively deprecate the rule
-          db.prepare(`UPDATE facts SET importance = 0.1 WHERE id = ?`).run(row.id);
+          db.prepare("UPDATE facts SET importance = 0.1 WHERE id = ?").run(row.id);
           report.deprecated++;
         } catch (err) {
           capturePluginError(err instanceof Error ? err : new Error(String(err)), {
@@ -241,7 +241,7 @@ export function runClosedLoopAnalysis(factsDb: FactsDB, config: Partial<ClosedLo
       // Auto-boost proven rules
       if (m.effectScore > boostThreshold) {
         try {
-          db.prepare(`UPDATE facts SET importance = MIN(1.0, importance + 0.2) WHERE id = ?`).run(row.id);
+          db.prepare("UPDATE facts SET importance = MIN(1.0, importance + 0.2) WHERE id = ?").run(row.id);
           report.boosted++;
         } catch (err) {
           capturePluginError(err instanceof Error ? err : new Error(String(err)), {
@@ -254,7 +254,8 @@ export function runClosedLoopAnalysis(factsDb: FactsDB, config: Partial<ClosedLo
 
       // Persist measurement
       try {
-        db.prepare(`
+        db.prepare(
+          `
           INSERT OR REPLACE INTO feedback_effectiveness (
             rule_id, rule_text, created_at, window_start, window_end,
             corrections_before, corrections_after, praise_before, praise_after,
@@ -262,12 +263,24 @@ export function runClosedLoopAnalysis(factsDb: FactsDB, config: Partial<ClosedLo
             implicit_negative_before, implicit_negative_after,
             effect_score, confidence, sample_size, measured_at
           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `).run(
-          m.ruleId, m.ruleText, m.createdAt, m.windowStart, m.windowEnd,
-          m.correctionsBeforeRule, m.correctionsAfterRule, m.praiseBeforeRule, m.praiseAfterRule,
-          m.implicitPositiveBefore, m.implicitPositiveAfter,
-          m.implicitNegativeBefore, m.implicitNegativeAfter,
-          m.effectScore, m.confidence, m.sampleSize,
+        `,
+        ).run(
+          m.ruleId,
+          m.ruleText,
+          m.createdAt,
+          m.windowStart,
+          m.windowEnd,
+          m.correctionsBeforeRule,
+          m.correctionsAfterRule,
+          m.praiseBeforeRule,
+          m.praiseAfterRule,
+          m.implicitPositiveBefore,
+          m.implicitPositiveAfter,
+          m.implicitNegativeBefore,
+          m.implicitNegativeAfter,
+          m.effectScore,
+          m.confidence,
+          m.sampleSize,
           report.measuredAt,
         );
       } catch {
@@ -290,8 +303,7 @@ export function runClosedLoopAnalysis(factsDb: FactsDB, config: Partial<ClosedLo
  */
 export function getEffectivenessReport(factsDb: FactsDB): string {
   try {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const db = (factsDb as any).liveDb as import("better-sqlite3").Database | undefined;
+    const db = factsDb.getRawDb();
     if (!db) return "No database available.";
 
     const rows = db
@@ -302,13 +314,13 @@ export function getEffectivenessReport(factsDb: FactsDB): string {
          LIMIT 20`,
       )
       .all() as Array<{
-        rule_id: string;
-        rule_text: string;
-        effect_score: number;
-        confidence: number;
-        sample_size: number;
-        measured_at: number;
-      }>;
+      rule_id: string;
+      rule_text: string;
+      effect_score: number;
+      confidence: number;
+      sample_size: number;
+      measured_at: number;
+    }>;
 
     if (rows.length === 0) return "No feedback effectiveness data available yet.";
 

@@ -2,13 +2,13 @@
  * Tests for auth failure detection service
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
 import {
+  DEFAULT_AUTH_FAILURE_PATTERNS,
+  buildCredentialQuery,
   detectAuthFailure,
   extractTarget,
-  buildCredentialQuery,
   formatCredentialHint,
-  DEFAULT_AUTH_FAILURE_PATTERNS,
 } from "../services/auth-failure-detect.js";
 
 describe("auth-failure-detect", () => {
@@ -70,9 +70,7 @@ describe("auth-failure-detect", () => {
     });
 
     it("supports custom patterns", () => {
-      const customPatterns = [
-        { regex: /access.denied/i, type: "generic" as const, hint: "Custom access denied" },
-      ];
+      const customPatterns = [{ regex: /access.denied/i, type: "generic" as const, hint: "Custom access denied" }];
       const text = "Error: Access Denied for resource";
       const result = detectAuthFailure(text, customPatterns);
       expect(result.detected).toBe(true);

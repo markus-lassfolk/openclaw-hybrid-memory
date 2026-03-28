@@ -1,9 +1,9 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
-import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { runMemoryDiagnostics } from "../services/memory-diagnostics.js";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { _testing } from "../index.js";
+import { runMemoryDiagnostics } from "../services/memory-diagnostics.js";
 
 const { FactsDB, VectorDB } = _testing;
 

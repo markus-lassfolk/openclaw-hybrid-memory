@@ -119,15 +119,9 @@ export function expandGraph(
   seedResults: Array<{ factId: string; score: number; entry: MemoryEntry }>,
   options: GraphRetrievalOptions = {},
 ): GraphExpandedResult[] {
-  const {
-    maxDepth = 2,
-    maxExpandedResults = 20,
-    scopeFilter,
-    asOf,
-  } = options;
+  const { maxDepth = 2, maxExpandedResults = 20, scopeFilter, asOf } = options;
 
-  const getByIdOpts =
-    scopeFilter != null || asOf != null ? { asOf, scopeFilter } : undefined;
+  const getByIdOpts = scopeFilter != null || asOf != null ? { asOf, scopeFilter } : undefined;
 
   // Build direct results first.
   const directResults: GraphExpandedResult[] = seedResults.map((s) => ({
@@ -270,9 +264,7 @@ export function expandGraph(
   }
 
   // Sort expanded: by hopCount asc, then score desc.
-  expandedResults.sort((a, b) =>
-    a.hopCount !== b.hopCount ? a.hopCount - b.hopCount : b.score - a.score,
-  );
+  expandedResults.sort((a, b) => (a.hopCount !== b.hopCount ? a.hopCount - b.hopCount : b.score - a.score));
 
   const trimmed = expandedResults.slice(0, maxExpandedResults);
 
@@ -293,7 +285,5 @@ export function expandGraph(
  */
 export function formatLinkPath(linkPath: LinkPathStep[]): string {
   if (linkPath.length === 0) return "";
-  return linkPath
-    .map((step) => `via ${step.linkType} from ${step.fromFactId.slice(0, 8)}\u2026`)
-    .join(" \u2192 ");
+  return linkPath.map((step) => `via ${step.linkType} from ${step.fromFactId.slice(0, 8)}\u2026`).join(" \u2192 ");
 }

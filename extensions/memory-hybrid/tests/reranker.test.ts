@@ -32,20 +32,15 @@
  *     - runRetrievalPipeline calls reranking when enabled and openai provided
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
-import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import {
-  rerankResults,
-  buildRerankPrompt,
-  parseRankedIds,
-  type ScoredFact,
-} from "../services/reranker.js";
-import { runRetrievalPipeline, DEFAULT_RETRIEVAL_CONFIG } from "../services/retrieval-orchestrator.js";
-import { _testing } from "../index.js";
 import type { RerankingConfig } from "../config.js";
+import { _testing } from "../index.js";
+import { type ScoredFact, buildRerankPrompt, parseRankedIds, rerankResults } from "../services/reranker.js";
+import { DEFAULT_RETRIEVAL_CONFIG, runRetrievalPipeline } from "../services/retrieval-orchestrator.js";
 
 const { FactsDB } = _testing;
 
@@ -123,7 +118,7 @@ describe("buildRerankPrompt", () => {
     const fact = makeFact({ text: longText });
     const prompt = buildRerankPrompt("query", [fact]);
     // The snippet should be at most 200 chars (197 + "...")
-    expect(prompt).toContain("A".repeat(197) + "...");
+    expect(prompt).toContain(`${"A".repeat(197)}...`);
     expect(prompt).not.toContain("A".repeat(200));
   });
 
@@ -140,10 +135,7 @@ describe("buildRerankPrompt", () => {
   });
 
   it("includes all fact IDs in the prompt", () => {
-    const facts = [
-      makeFact({ factId: "id-alpha" }),
-      makeFact({ factId: "id-beta" }),
-    ];
+    const facts = [makeFact({ factId: "id-alpha" }), makeFact({ factId: "id-beta" })];
     const prompt = buildRerankPrompt("test", facts);
     expect(prompt).toContain("id-alpha");
     expect(prompt).toContain("id-beta");
@@ -167,7 +159,7 @@ describe("parseRankedIds", () => {
   });
 
   it("handles code-fenced JSON", () => {
-    const response = "```json\n[\"id-x\", \"id-y\"]\n```";
+    const response = '```json\n["id-x", "id-y"]\n```';
     const result = parseRankedIds(response);
     expect(result).toEqual(["id-x", "id-y"]);
   });
@@ -215,8 +207,7 @@ describe("rerankResults — disabled", () => {
     const result = await rerankResults("query", facts, DISABLED_CFG, openai as never);
     expect(result.map((f) => f.factId)).toEqual(["fact-1", "fact-2"]);
     expect(
-      (openai as { chat: { completions: { create: ReturnType<typeof vi.fn> } } })
-        .chat.completions.create,
+      (openai as { chat: { completions: { create: ReturnType<typeof vi.fn> } } }).chat.completions.create,
     ).not.toHaveBeenCalled();
   });
 
@@ -225,8 +216,7 @@ describe("rerankResults — disabled", () => {
     const result = await rerankResults("query", [], ENABLED_CFG, openai as never);
     expect(result).toEqual([]);
     expect(
-      (openai as { chat: { completions: { create: ReturnType<typeof vi.fn> } } })
-        .chat.completions.create,
+      (openai as { chat: { completions: { create: ReturnType<typeof vi.fn> } } }).chat.completions.create,
     ).not.toHaveBeenCalled();
   });
 });
@@ -250,11 +240,7 @@ describe("rerankResults — success", () => {
   it("appends facts omitted by LLM after the ranked ones in original order", async () => {
     // LLM only returns fact-1 and fact-3, omitting fact-2
     const openai = makeMockOpenAI('["fact-1", "fact-3"]');
-    const facts = [
-      makeFact({ factId: "fact-1" }),
-      makeFact({ factId: "fact-2" }),
-      makeFact({ factId: "fact-3" }),
-    ];
+    const facts = [makeFact({ factId: "fact-1" }), makeFact({ factId: "fact-2" }), makeFact({ factId: "fact-3" })];
     const result = await rerankResults("query", facts, { ...ENABLED_CFG, outputCount: 10 }, openai as never);
     expect(result.map((f) => f.factId)).toEqual(["fact-1", "fact-3", "fact-2"]);
   });
@@ -300,12 +286,8 @@ describe("rerankResults — success", () => {
     const cfg: RerankingConfig = { ...ENABLED_CFG, model: "openai/gpt-4.1-mini" };
     await rerankResults("query", facts, cfg, openai as never);
     expect(
-      (openai as { chat: { completions: { create: ReturnType<typeof vi.fn> } } })
-        .chat.completions.create,
-    ).toHaveBeenCalledWith(
-      expect.objectContaining({ model: "openai/gpt-4.1-mini" }),
-      expect.anything(),
-    );
+      (openai as { chat: { completions: { create: ReturnType<typeof vi.fn> } } }).chat.completions.create,
+    ).toHaveBeenCalledWith(expect.objectContaining({ model: "openai/gpt-4.1-mini" }), expect.anything());
   });
 
   it("uses default model openai/gpt-4.1-nano when no model specified", async () => {
@@ -315,12 +297,8 @@ describe("rerankResults — success", () => {
     const cfg: RerankingConfig = { enabled: true, candidateCount: 50, outputCount: 20, timeoutMs: 10000 };
     await rerankResults("query", facts, cfg, openai as never);
     expect(
-      (openai as { chat: { completions: { create: ReturnType<typeof vi.fn> } } })
-        .chat.completions.create,
-    ).toHaveBeenCalledWith(
-      expect.objectContaining({ model: "openai/gpt-4.1-nano" }),
-      expect.anything(),
-    );
+      (openai as { chat: { completions: { create: ReturnType<typeof vi.fn> } } }).chat.completions.create,
+    ).toHaveBeenCalledWith(expect.objectContaining({ model: "openai/gpt-4.1-nano" }), expect.anything());
   });
 });
 
@@ -331,11 +309,7 @@ describe("rerankResults — success", () => {
 describe("rerankResults — fallback on error", () => {
   it("returns original facts (unsliced) on LLM error", async () => {
     const openai = makeMockOpenAI(new Error("API unavailable"));
-    const facts = [
-      makeFact({ factId: "fact-1" }),
-      makeFact({ factId: "fact-2" }),
-      makeFact({ factId: "fact-3" }),
-    ];
+    const facts = [makeFact({ factId: "fact-1" }), makeFact({ factId: "fact-2" }), makeFact({ factId: "fact-3" })];
     const result = await rerankResults("query", facts, ENABLED_CFG, openai as never);
     expect(result.map((f) => f.factId)).toEqual(["fact-1", "fact-2", "fact-3"]);
   });
@@ -345,10 +319,7 @@ describe("rerankResults — fallback on error", () => {
     const timeoutError = new Error("LLM request timeout after 10000ms (model: openai/gpt-4.1-nano)");
     timeoutError.name = "AbortError";
     const openai = makeMockOpenAI(timeoutError);
-    const facts = [
-      makeFact({ factId: "fact-1" }),
-      makeFact({ factId: "fact-2" }),
-    ];
+    const facts = [makeFact({ factId: "fact-1" }), makeFact({ factId: "fact-2" })];
     const result = await rerankResults("query", facts, ENABLED_CFG, openai as never);
     expect(result.map((f) => f.factId)).toEqual(["fact-1", "fact-2"]);
   });
@@ -436,7 +407,10 @@ describe("Integration — runRetrievalPipeline with re-ranking", () => {
     const config = { ...DEFAULT_RETRIEVAL_CONFIG, strategies: ["fts5"] as Array<"fts5"> };
 
     // Should not throw — omitting re-ranking params is backward compatible
-    const result = await runRetrievalPipeline("apple", null, factsDb.getRawDb(), vectorDb, factsDb, config, 2000);
+    const result = await runRetrievalPipeline("apple", null, factsDb.getRawDb(), vectorDb, factsDb, {
+      config,
+      budgetTokens: 2000,
+    });
     expect(result).toBeDefined();
   });
 
@@ -466,29 +440,12 @@ describe("Integration — runRetrievalPipeline with re-ranking", () => {
     const config = { ...DEFAULT_RETRIEVAL_CONFIG, strategies: ["fts5"] as Array<"fts5"> };
     const rerankingCfg: RerankingConfig = { enabled: true, candidateCount: 50, outputCount: 20, timeoutMs: 10000 };
 
-    const result = await runRetrievalPipeline(
-      "apple",
-      null,
-      factsDb.getRawDb(),
-      vectorDb,
-      factsDb,
+    const result = await runRetrievalPipeline("apple", null, factsDb.getRawDb(), vectorDb, factsDb, {
       config,
-      2000,
-      undefined, // nowSec
-      undefined, // tagFilter
-      undefined, // includeSuperseded
-      undefined, // scopeFilter
-      undefined, // asOf
-      undefined, // aliasDb
-      undefined, // clustersConfig
-      undefined, // embeddingRegistry
-      undefined, // factsDbForEmbeddings
-      undefined, // queryExpander
-      undefined, // embedFn
-      undefined, // queryExpansionContext
-      rerankingCfg,
-      openai as never,
-    );
+      budgetTokens: 2000,
+      rerankingConfig: rerankingCfg,
+      rerankingOpenai: openai as never,
+    });
 
     // After re-ranking, stored2 should come first
     expect(result.fused[0]?.factId).toBe(stored2.id);
@@ -511,29 +468,12 @@ describe("Integration — runRetrievalPipeline with re-ranking", () => {
     const rerankingCfg: RerankingConfig = { enabled: true, candidateCount: 50, outputCount: 20, timeoutMs: 10000 };
 
     // Should not throw
-    const result = await runRetrievalPipeline(
-      "banana",
-      null,
-      factsDb.getRawDb(),
-      vectorDb,
-      factsDb,
+    const result = await runRetrievalPipeline("banana", null, factsDb.getRawDb(), vectorDb, factsDb, {
       config,
-      2000,
-      undefined, // nowSec
-      undefined, // tagFilter
-      undefined, // includeSuperseded
-      undefined, // scopeFilter
-      undefined, // asOf
-      undefined, // aliasDb
-      undefined, // clustersConfig
-      undefined, // embeddingRegistry
-      undefined, // factsDbForEmbeddings
-      undefined, // queryExpander
-      undefined, // embedFn
-      undefined, // queryExpansionContext
-      rerankingCfg,
-      openai as never,
-    );
+      budgetTokens: 2000,
+      rerankingConfig: rerankingCfg,
+      rerankingOpenai: openai as never,
+    });
 
     // Should still return the fact (fallback order preserved)
     const ids = result.fused.map((r) => r.factId);

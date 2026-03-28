@@ -8,10 +8,10 @@
  * These tests mirror the initialization and teardown patterns in setup/init-databases.ts.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
-import { join, dirname } from "node:path";
 import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { _testing } from "../index.js";
 
 const { FactsDB, VerificationStore } = _testing;
@@ -76,7 +76,7 @@ describe("DB lifecycle: VerificationStore shared connection", () => {
     verificationStore.verify(entry.id, entry.text, "agent");
     const vf = verificationStore.getVerified(entry.id);
     expect(vf).not.toBeNull();
-    expect(vf!.canonicalText).toBe(entry.text);
+    expect(vf?.canonicalText).toBe(entry.text);
     expect(factsDb.getById(entry.id)).not.toBeNull();
   });
 
@@ -285,7 +285,7 @@ describe("DB lifecycle: VerificationStore with own connection", () => {
     });
     const vf = store2.getVerified("f1");
     expect(vf).not.toBeNull();
-    expect(vf!.canonicalText).toBe("Fact one");
+    expect(vf?.canonicalText).toBe("Fact one");
     store2.close();
   });
 });

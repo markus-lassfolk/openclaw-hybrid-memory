@@ -19,9 +19,52 @@ export type PassiveObserverConfig = {
 /** Reflection / pattern synthesis from session history */
 export type ReflectionConfig = {
   enabled: boolean;
-  model?: string;            // when unset, runtime uses getDefaultCronModel(cfg, "default")
-  defaultWindow: number;      // Time window in days (default: 14)
-  minObservations: number;   // Min observations to support a pattern (default: 2)
+  model?: string; // when unset, runtime uses getDefaultCronModel(cfg, "default")
+  defaultWindow: number; // Time window in days (default: 14)
+  minObservations: number; // Min observations to support a pattern (default: 2)
+};
+
+/** Identity reflection: persona-level synthesis from reflection outputs */
+export type IdentityReflectionConfig = {
+  enabled: boolean;
+  model?: string; // when unset, runtime uses getDefaultCronModel(cfg, "default")
+  defaultWindow: number; // Time window in days (default: 30)
+  minInsights: number; // Min pattern/rule/meta insights required (default: 3)
+  maxInsightsPerRun: number; // Max identity insights stored per run (default: 8)
+  questions: Array<{ key: string; prompt: string }>; // Recurring identity questions
+};
+
+/** Promotion pipeline from repeated durable identity reflections into stable persona state. */
+export type IdentityPromotionConfig = {
+  enabled: boolean;
+  lookbackDays: number; // Time window in days when scanning durable identity reflections (default: 90)
+  minDurableReflections: number; // Minimum repeated durable reflections before promotion (default: 2)
+  minConfidence: number; // Minimum average confidence required for promotion (default: 0.72)
+  similarityThreshold: number; // Insight similarity threshold 0-1 used to cluster paraphrases (default: 0.72)
+  maxPromotionsPerRun: number; // Max persona-state promotions/upserts per run (default: 8)
+};
+
+/** Two-tier LLM pre-filter configuration for bulk session triage (Issue #290). */
+export type ExtractionPreFilterConfig = {
+  /** Enable local LLM pre-filtering (default: false). When true, each session is triaged by a local Ollama model before cloud LLM analysis. */
+  enabled: boolean;
+  /**
+   * Ollama model identifier (e.g. "qwen3:8b" or "ollama/qwen3:8b").
+   * The "ollama/" prefix is stripped automatically when calling Ollama directly.
+   * For Qwen3 thinking models, consider using a ":no_think" variant to reduce token usage.
+   * Default: "qwen3:8b".
+   */
+  model: string;
+  /**
+   * Ollama base URL. When unset, falls back to llm.providers.ollama.baseURL,
+   * then defaults to "http://localhost:11434".
+   */
+  endpoint?: string;
+  /**
+   * Max characters of user messages extracted per session for triage (default: 2000).
+   * Higher values improve accuracy but increase local LLM call time.
+   */
+  maxCharsPerSession?: number;
 };
 
 /** Multi-pass extraction with LLM verification (Issue #166). */
@@ -36,6 +79,14 @@ export type ExtractionConfig = {
   implicitModel?: string;
   /** Model for Pass 3 verification against transcript; when unset, uses nano tier. */
   verificationModel?: string;
+  /**
+   * Two-tier LLM pre-filter: use a local Ollama model to triage sessions before cloud LLM analysis (Issue #290).
+   * When enabled, only sessions flagged as interesting by the local model are sent to the cloud LLM.
+   * Reduces cloud LLM costs by ~80–95% for bulk re-index operations.
+   */
+  preFilter?: ExtractionPreFilterConfig;
+  /** Model tier for extraction pipeline LLM calls. "nano" or "default" saves cost; unset = "heavy". */
+  extractionModelTier?: "nano" | "default" | "heavy";
 };
 
 /** Procedural memory: auto-generated skills from learned patterns */
@@ -53,4 +104,6 @@ export type ProceduresConfig = {
   skillsAutoPath: string;
   /** Require human approval before promoting auto-skill to permanent (default: true) */
   requireApprovalForPromote: boolean;
+  /** Max tokens for procedure block injected into recall (default: 500). Prevents procedure context from dominating. */
+  maxInjectionTokens: number;
 };

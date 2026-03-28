@@ -5,10 +5,11 @@
  * through consolidation events to the original session and conversation turn.
  */
 
-import Database from "better-sqlite3";
+import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import { randomUUID } from "node:crypto";
+import { DatabaseSync } from "node:sqlite";
+import { BaseSqliteStore } from "../backends/base-sqlite-store.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -75,24 +76,20 @@ interface FactProvenanceRow {
 // ProvenanceService
 // ---------------------------------------------------------------------------
 
-export class ProvenanceService {
-  private db: Database.Database;
-
+export class ProvenanceService extends BaseSqliteStore {
   constructor(dbPath: string) {
     mkdirSync(dirname(dbPath), { recursive: true });
-    this.db = new Database(dbPath);
-    this.applyPragmas();
+    const db = new DatabaseSync(dbPath);
+    super(db, { customPragmas: ["PRAGMA synchronous = NORMAL"] });
     this.initSchema();
   }
 
-  private applyPragmas(): void {
-    this.db.pragma("journal_mode = WAL");
-    this.db.pragma("busy_timeout = 5000");
-    this.db.pragma("synchronous = NORMAL");
+  protected getSubsystemName(): string {
+    return "provenance-service";
   }
 
   private initSchema(): void {
-    this.db.exec(`
+    this.liveDb.exec(`
       CREATE TABLE IF NOT EXISTS provenance_edges (
         id TEXT PRIMARY KEY,
         fact_id TEXT NOT NULL,
@@ -115,7 +112,7 @@ export class ProvenanceService {
   addEdge(factId: string, edge: ProvenanceEdge): string {
     const id = randomUUID();
     const now = new Date().toISOString();
-    this.db
+    this.liveDb
       .prepare(
         `INSERT INTO provenance_edges (id, fact_id, edge_type, source_type, source_id, source_text, created_at)
          VALUES (?, ?, ?, ?, ?, ?, ?)`,
@@ -129,9 +126,9 @@ export class ProvenanceService {
   // -------------------------------------------------------------------------
 
   getEdges(factId: string): ProvenanceEdgeRecord[] {
-    const rows = this.db
-      .prepare(`SELECT * FROM provenance_edges WHERE fact_id = ? ORDER BY created_at ASC`)
-      .all(factId) as ProvenanceEdgeRow[];
+    const rows = this.liveDb
+      .prepare("SELECT * FROM provenance_edges WHERE fact_id = ? ORDER BY created_at ASC")
+      .all(factId) as unknown as ProvenanceEdgeRow[];
     return rows.map((r) => ({
       id: r.id,
       factId: r.fact_id,
@@ -147,7 +144,7 @@ export class ProvenanceService {
   // getProvenance — full provenance chain for a fact
   // -------------------------------------------------------------------------
 
-  getProvenance(factId: string, factsDb?: Database.Database): ProvenanceChain {
+  getProvenance(factId: string, factsDb?: DatabaseSync): ProvenanceChain {
     const edges = this.getEdges(factId);
 
     let factData: { id: string; text: string; confidence: number } = {
@@ -196,8 +193,8 @@ export class ProvenanceService {
   // -------------------------------------------------------------------------
 
   getFactsFromSource(sourceId: string): string[] {
-    const rows = this.db
-      .prepare(`SELECT DISTINCT fact_id FROM provenance_edges WHERE source_id = ?`)
+    const rows = this.liveDb
+      .prepare("SELECT DISTINCT fact_id FROM provenance_edges WHERE source_id = ?")
       .all(sourceId) as Array<{ fact_id: string }>;
     return rows.map((r) => r.fact_id);
   }
@@ -208,17 +205,7 @@ export class ProvenanceService {
 
   prune(retentionDays: number): number {
     const cutoff = new Date(Date.now() - retentionDays * 24 * 3600 * 1000).toISOString();
-    const result = this.db
-      .prepare(`DELETE FROM provenance_edges WHERE created_at < ?`)
-      .run(cutoff);
-    return result.changes;
-  }
-
-  // -------------------------------------------------------------------------
-  // close — release SQLite connection
-  // -------------------------------------------------------------------------
-
-  close(): void {
-    this.db.close();
+    const result = this.liveDb.prepare("DELETE FROM provenance_edges WHERE created_at < ?").run(cutoff);
+    return Number(result.changes);
   }
 }

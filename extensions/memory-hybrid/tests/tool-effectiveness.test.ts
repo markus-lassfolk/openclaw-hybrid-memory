@@ -9,20 +9,20 @@
  *   - formatToolEffectivenessReport: output format
  */
 
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
-import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { _testing } from "../index.js";
 import {
-  aggregateTraceRows,
-  generateRecommendations,
-  formatToolEffectivenessReport,
-  generateToolHint,
-  generateMonthlyReport,
   ToolEffectivenessStore,
   type ToolMetrics,
+  aggregateTraceRows,
+  formatToolEffectivenessReport,
+  generateMonthlyReport,
+  generateRecommendations,
+  generateToolHint,
 } from "../services/tool-effectiveness.js";
-import { _testing } from "../index.js";
 
 const { FactsDB } = _testing;
 
@@ -100,9 +100,9 @@ describe("aggregateTraceRows", () => {
     const result = aggregateTraceRows(rows, 1);
     const tool = result.find((m) => m.tool === "my_tool");
     expect(tool).toBeDefined();
-    expect(tool!.successCalls).toBe(3);
-    expect(tool!.failureCalls).toBe(1);
-    expect(tool!.successRate).toBeCloseTo(0.75, 2);
+    expect(tool?.successCalls).toBe(3);
+    expect(tool?.failureCalls).toBe(1);
+    expect(tool?.successRate).toBeCloseTo(0.75, 2);
   });
 
   it("computes compositeScore in [0, 1]", () => {
@@ -110,8 +110,8 @@ describe("aggregateTraceRows", () => {
     const result = aggregateTraceRows(rows, 3);
     const tool = result.find((m) => m.tool === "tool_a");
     expect(tool).toBeDefined();
-    expect(tool!.compositeScore).toBeGreaterThanOrEqual(0);
-    expect(tool!.compositeScore).toBeLessThanOrEqual(1);
+    expect(tool?.compositeScore).toBeGreaterThanOrEqual(0);
+    expect(tool?.compositeScore).toBeLessThanOrEqual(1);
   });
 
   it("handles tools called multiple times in one trace", () => {
@@ -123,7 +123,7 @@ describe("aggregateTraceRows", () => {
     const result = aggregateTraceRows(rows, 1);
     const execMetric = result.find((m) => m.tool === "exec");
     expect(execMetric).toBeDefined();
-    expect(execMetric!.totalCalls).toBeGreaterThan(4); // 3 + 1 + 2 = 6
+    expect(execMetric?.totalCalls).toBeGreaterThan(4); // 3 + 1 + 2 = 6
   });
 
   it("computes redundancy score between 0 and 1", () => {
@@ -133,8 +133,8 @@ describe("aggregateTraceRows", () => {
     const result = aggregateTraceRows(rows, 3);
     const tool = result.find((m) => m.tool === "repeat_tool");
     expect(tool).toBeDefined();
-    expect(tool!.redundancyScore).toBeGreaterThan(0);
-    expect(tool!.redundancyScore).toBeLessThanOrEqual(1);
+    expect(tool?.redundancyScore).toBeGreaterThan(0);
+    expect(tool?.redundancyScore).toBeLessThanOrEqual(1);
   });
 
   it("handles malformed JSON in tool_sequence gracefully", () => {
@@ -158,7 +158,7 @@ describe("aggregateTraceRows", () => {
     const result = aggregateTraceRows(rows, 3);
     if (result.length >= 2) {
       for (let i = 0; i < result.length - 1; i++) {
-        expect(result[i]!.compositeScore).toBeGreaterThanOrEqual(result[i + 1]!.compositeScore);
+        expect(result[i]?.compositeScore).toBeGreaterThanOrEqual(result[i + 1]?.compositeScore);
       }
     }
   });
@@ -174,7 +174,7 @@ describe("aggregateTraceRows", () => {
     const perfect = result.find((m) => m.tool === "perfect");
     expect(perfect).toBeDefined();
     // Score should be high (0.5 success + 0 duration + 0.2 non-redundancy = 0.7 min)
-    expect(perfect!.compositeScore).toBeGreaterThanOrEqual(0.7);
+    expect(perfect?.compositeScore).toBeGreaterThanOrEqual(0.7);
   });
 });
 
@@ -208,9 +208,7 @@ describe("generateRecommendations", () => {
   });
 
   it("returns best tool recommendation when all healthy", () => {
-    const metrics: ToolMetrics[] = [
-      makeMetrics({ tool: "great_tool", compositeScore: 0.95, successRate: 0.99 }),
-    ];
+    const metrics: ToolMetrics[] = [makeMetrics({ tool: "great_tool", compositeScore: 0.95, successRate: 0.99 })];
     const recs = generateRecommendations(metrics, 0.3);
     expect(recs.some((r) => r.toLowerCase().includes("great_tool"))).toBe(true);
   });
@@ -235,7 +233,11 @@ describe("ToolEffectivenessStore", () => {
   });
 
   afterEach(() => {
-    try { store.close(); } catch { /* ignore */ }
+    try {
+      store.close();
+    } catch {
+      /* ignore */
+    }
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
@@ -252,8 +254,8 @@ describe("ToolEffectivenessStore", () => {
     store.upsert(makeMetrics({ tool: "alpha_tool", compositeScore: 0.8 }));
     const result = store.getByTool("alpha_tool");
     expect(result).not.toBeNull();
-    expect(result!.tool).toBe("alpha_tool");
-    expect(result!.compositeScore).toBeCloseTo(0.8, 2);
+    expect(result?.tool).toBe("alpha_tool");
+    expect(result?.compositeScore).toBeCloseTo(0.8, 2);
   });
 
   it("getByTool returns null for unknown tool", () => {
@@ -264,7 +266,7 @@ describe("ToolEffectivenessStore", () => {
     store.upsert(makeMetrics({ tool: "my_tool", compositeScore: 0.5 }));
     store.upsert(makeMetrics({ tool: "my_tool", compositeScore: 0.9 }));
     expect(store.count()).toBe(1);
-    expect(store.getByTool("my_tool")!.compositeScore).toBeCloseTo(0.9, 2);
+    expect(store.getByTool("my_tool")?.compositeScore).toBeCloseTo(0.9, 2);
   });
 
   it("getAll returns sorted by compositeScore DESC", () => {
@@ -272,27 +274,27 @@ describe("ToolEffectivenessStore", () => {
     store.upsert(makeMetrics({ tool: "high", compositeScore: 0.9 }));
     store.upsert(makeMetrics({ tool: "mid", compositeScore: 0.6 }));
     const all = store.getAll();
-    expect(all[0]!.tool).toBe("high");
-    expect(all[2]!.tool).toBe("low");
+    expect(all[0]?.tool).toBe("high");
+    expect(all[2]?.tool).toBe("low");
   });
 
   it("applyDecay reduces all composite scores", () => {
     store.upsert(makeMetrics({ tool: "decaying", compositeScore: 1.0 }));
     store.applyDecay(0.5);
     const result = store.getByTool("decaying");
-    expect(result!.compositeScore).toBeCloseTo(0.5, 3);
+    expect(result?.compositeScore).toBeCloseTo(0.5, 3);
   });
 
   it("applyDecay with factor 1.0 leaves scores unchanged", () => {
     store.upsert(makeMetrics({ tool: "stable", compositeScore: 0.7 }));
     store.applyDecay(1.0);
-    expect(store.getByTool("stable")!.compositeScore).toBeCloseTo(0.7, 3);
+    expect(store.getByTool("stable")?.compositeScore).toBeCloseTo(0.7, 3);
   });
 
   it("successRate is computed correctly from raw counts", () => {
     store.upsert(makeMetrics({ tool: "sr_tool", totalCalls: 10, successCalls: 7, compositeScore: 0.5 }));
     const result = store.getByTool("sr_tool");
-    expect(result!.successRate).toBeCloseTo(0.7, 2);
+    expect(result?.successRate).toBeCloseTo(0.7, 2);
   });
 });
 
@@ -369,7 +371,11 @@ describe("ToolEffectivenessStore — context-aware", () => {
   });
 
   afterEach(() => {
-    try { store.close(); } catch { /* ignore */ }
+    try {
+      store.close();
+    } catch {
+      /* ignore */
+    }
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
@@ -377,7 +383,7 @@ describe("ToolEffectivenessStore — context-aware", () => {
     store.upsert(makeMetrics({ tool: "exec", context: "home-assistant", compositeScore: 0.8 }));
     const rows = store.getToolEffectiveness("exec", "home-assistant");
     expect(rows).toHaveLength(1);
-    expect(rows[0]!.context).toBe("home-assistant");
+    expect(rows[0]?.context).toBe("home-assistant");
   });
 
   it("same tool can have different scores per context", () => {
@@ -385,8 +391,8 @@ describe("ToolEffectivenessStore — context-aware", () => {
     store.upsert(makeMetrics({ tool: "exec", context: "home-assistant", compositeScore: 0.9 }));
     const general = store.getToolEffectiveness("exec", "general");
     const ha = store.getToolEffectiveness("exec", "home-assistant");
-    expect(general[0]!.compositeScore).toBeCloseTo(0.6, 2);
-    expect(ha[0]!.compositeScore).toBeCloseTo(0.9, 2);
+    expect(general[0]?.compositeScore).toBeCloseTo(0.6, 2);
+    expect(ha[0]?.compositeScore).toBeCloseTo(0.9, 2);
   });
 
   it("getToolEffectiveness without context returns all rows for tool", () => {
@@ -437,7 +443,11 @@ describe("generateToolHint", () => {
   });
 
   afterEach(() => {
-    try { store.close(); } catch { /* ignore */ }
+    try {
+      store.close();
+    } catch {
+      /* ignore */
+    }
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
@@ -504,8 +514,16 @@ describe("generateMonthlyReport", () => {
   });
 
   afterEach(() => {
-    try { store.close(); } catch { /* ignore */ }
-    try { factsDb.close?.(); } catch { /* ignore */ }
+    try {
+      store.close();
+    } catch {
+      /* ignore */
+    }
+    try {
+      factsDb.close?.();
+    } catch {
+      /* ignore */
+    }
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
@@ -525,9 +543,9 @@ describe("generateMonthlyReport", () => {
     const facts = factsDb.getByCategory("pattern");
     const reports = facts.filter((f) => f.tags?.includes("monthly-report"));
     expect(reports).toHaveLength(1);
-    expect(reports[0]!.tags).toContain("tool-effectiveness");
-    expect(reports[0]!.tags).toContain("monthly-report");
-    expect(reports[0]!.importance).toBeCloseTo(0.7, 2);
+    expect(reports[0]?.tags).toContain("tool-effectiveness");
+    expect(reports[0]?.tags).toContain("monthly-report");
+    expect(reports[0]?.importance).toBeCloseTo(0.7, 2);
   });
 
   it("includes top tools in the stored fact text", async () => {
@@ -539,6 +557,6 @@ describe("generateMonthlyReport", () => {
     const facts = factsDb.getByCategory("pattern");
     const report = facts.find((f) => f.tags?.includes("monthly-report"));
     expect(report).toBeDefined();
-    expect(report!.text).toContain("exec");
+    expect(report?.text).toContain("exec");
   });
 });

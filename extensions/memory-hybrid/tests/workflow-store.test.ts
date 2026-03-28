@@ -2,21 +2,14 @@
  * Tests for WorkflowStore, helper utilities, and WorkflowTracker (Issue #209).
  */
 
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
-import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { _testing } from "../index.js";
 
-const {
-  WorkflowStore,
-  WorkflowTracker,
-  sequenceDistance,
-  sequenceSimilarity,
-  extractGoalKeywords,
-  hashToolSequence,
-  _resetRateLimitForTest,
-} = _testing;
+const { WorkflowStore, WorkflowTracker, sequenceDistance, sequenceSimilarity, extractGoalKeywords, hashToolSequence } =
+  _testing;
 
 let tmpDir: string;
 let store: InstanceType<typeof WorkflowStore>;
@@ -24,7 +17,6 @@ let store: InstanceType<typeof WorkflowStore>;
 beforeEach(() => {
   tmpDir = mkdtempSync(join(tmpdir(), "workflow-store-test-"));
   store = new WorkflowStore(join(tmpDir, "workflow-traces.db"));
-  _resetRateLimitForTest();
 });
 
 afterEach(() => {
@@ -201,8 +193,8 @@ describe("WorkflowStore.getById", () => {
     const t = store.record({ goal: "test goal", toolSequence: ["exec", "read"] });
     const fetched = store.getById(t.id);
     expect(fetched).not.toBeNull();
-    expect(fetched!.id).toBe(t.id);
-    expect(fetched!.goal).toBe("test goal");
+    expect(fetched?.id).toBe(t.id);
+    expect(fetched?.goal).toBe("test goal");
   });
 });
 
@@ -210,7 +202,12 @@ describe("WorkflowStore.list", () => {
   beforeEach(() => {
     store.record({ goal: "deploy server", toolSequence: ["exec", "exec"], outcome: "success", sessionId: "s1" });
     store.record({ goal: "read config file", toolSequence: ["read"], outcome: "failure", sessionId: "s2" });
-    store.record({ goal: "write summary", toolSequence: ["write", "memory_store"], outcome: "unknown", sessionId: "s1" });
+    store.record({
+      goal: "write summary",
+      toolSequence: ["write", "memory_store"],
+      outcome: "unknown",
+      sessionId: "s1",
+    });
   });
 
   it("lists all traces", () => {
@@ -250,8 +247,16 @@ describe("WorkflowStore.list", () => {
 
 describe("WorkflowStore.getByGoal", () => {
   beforeEach(() => {
-    store.record({ goal: "deploy the application to production", toolSequence: ["exec"], goalKeywords: ["deploy", "application", "production"] });
-    store.record({ goal: "read config file contents", toolSequence: ["read"], goalKeywords: ["read", "config", "file"] });
+    store.record({
+      goal: "deploy the application to production",
+      toolSequence: ["exec"],
+      goalKeywords: ["deploy", "application", "production"],
+    });
+    store.record({
+      goal: "read config file contents",
+      toolSequence: ["read"],
+      goalKeywords: ["read", "config", "file"],
+    });
   });
 
   it("finds traces matching keywords", () => {
@@ -290,7 +295,12 @@ describe("WorkflowStore.getSuccessRate", () => {
 describe("WorkflowStore.getPatterns", () => {
   beforeEach(() => {
     store.record({ goal: "deploy app", toolSequence: ["exec", "exec", "read"], outcome: "success", durationMs: 1000 });
-    store.record({ goal: "also deploy app", toolSequence: ["exec", "exec", "read"], outcome: "success", durationMs: 2000 });
+    store.record({
+      goal: "also deploy app",
+      toolSequence: ["exec", "exec", "read"],
+      outcome: "success",
+      durationMs: 2000,
+    });
     store.record({ goal: "read file", toolSequence: ["read"], outcome: "failure", durationMs: 100 });
   });
 
@@ -304,13 +314,13 @@ describe("WorkflowStore.getPatterns", () => {
     const patterns = store.getPatterns();
     const execPattern = patterns.find((p) => p.toolSequence.includes("exec"));
     expect(execPattern).toBeDefined();
-    expect(execPattern!.successRate).toBe(1);
+    expect(execPattern?.successRate).toBe(1);
   });
 
   it("computes avgDurationMs", () => {
     const patterns = store.getPatterns();
     const execPattern = patterns.find((p) => p.toolSequence.includes("exec"));
-    expect(execPattern!.avgDurationMs).toBe(1500);
+    expect(execPattern?.avgDurationMs).toBe(1500);
   });
 
   it("filters by minSuccessRate", () => {
@@ -330,7 +340,7 @@ describe("WorkflowStore.prune", () => {
     const trace = store.record({ goal: "old task", toolSequence: ["exec"] });
 
     // Backdate to 100 days ago via direct DB manipulation using private access
-    const db = (store as any).db as import("better-sqlite3").Database;
+    const db = (store as any).db as import("node:sqlite").DatabaseSync;
     const oldDate = new Date(Date.now() - 100 * 24 * 60 * 60 * 1000).toISOString();
     db.prepare("UPDATE workflow_traces SET created_at = ? WHERE id = ?").run(oldDate, trace.id);
 
@@ -387,8 +397,8 @@ describe("WorkflowTracker", () => {
   let tracker: InstanceType<typeof WorkflowTracker>;
 
   beforeEach(() => {
+    // Each test gets a fresh tracker instance — no shared module-global state
     tracker = new WorkflowTracker(store, cfg);
-    _resetRateLimitForTest();
   });
 
   it("buffers tool calls per session", () => {
@@ -415,19 +425,37 @@ describe("WorkflowTracker", () => {
 
     const saved = store.getById(id!);
     expect(saved).not.toBeNull();
-    expect(saved!.outcome).toBe("success");
-    expect(saved!.toolSequence).toEqual(["exec", "read"]);
+    expect(saved?.outcome).toBe("success");
+    expect(saved?.toolSequence).toEqual(["exec", "read"]);
   });
 
-  it("flush returns null for empty buffer", () => {
+  it("flush returns null for empty buffer (no prior push)", () => {
     const id = tracker.flush("empty-sess", "some goal");
     expect(id).toBeNull();
+    expect(store.count()).toBe(0);
+  });
+
+  it("flush with outcome=failure records a failed trace", () => {
+    tracker.push("fail-sess", "exec");
+    const id = tracker.flush("fail-sess", "broken task", "failure");
+    expect(id).not.toBeNull();
+    const saved = store.getById(id!);
+    expect(saved).not.toBeNull();
+    expect(saved?.outcome).toBe("failure");
   });
 
   it("discard removes buffer without saving", () => {
     tracker.push("disc-sess", "exec");
     tracker.discard("disc-sess");
     expect(tracker.getBuffer("disc-sess")).toEqual([]);
+    expect(store.count()).toBe(0);
+  });
+
+  it("discard then flush returns null", () => {
+    tracker.push("disc-then-flush", "exec");
+    tracker.discard("disc-then-flush");
+    const id = tracker.flush("disc-then-flush", "some goal");
+    expect(id).toBeNull();
     expect(store.count()).toBe(0);
   });
 
@@ -439,22 +467,69 @@ describe("WorkflowTracker", () => {
     expect(id).toBeNull();
   });
 
-  it("rate limit prevents recording beyond maxTracesPerDay", () => {
+  it("rate limit boundary: exactly maxPerDay calls allowed, maxPerDay+1 rejected", () => {
     const strictCfg = { enabled: true, maxTracesPerDay: 2, retentionDays: 90 };
     const t = new WorkflowTracker(store, strictCfg);
-    _resetRateLimitForTest();
 
     t.push("s1", "exec");
-    t.flush("s1", "g1", "success");
+    const id1 = t.flush("s1", "g1", "success");
+    expect(id1).not.toBeNull(); // 1st — allowed
 
     t.push("s2", "read");
-    t.flush("s2", "g2", "success");
+    const id2 = t.flush("s2", "g2", "success");
+    expect(id2).not.toBeNull(); // 2nd — allowed (boundary)
 
     t.push("s3", "write");
-    const id = t.flush("s3", "g3", "success");
+    const id3 = t.flush("s3", "g3", "success");
+    expect(id3).toBeNull(); // 3rd — rejected
 
-    // Third flush should be rejected
-    expect(id).toBeNull();
+    expect(store.count()).toBe(2);
+  });
+
+  it("day rollover resets the rate limit counter (separate instances)", () => {
+    const strictCfg = { enabled: true, maxTracesPerDay: 1, retentionDays: 90 };
+
+    // Day 1 instance
+    const day1 = new Date("2025-01-01T12:00:00Z");
+    const t1 = new WorkflowTracker(store, strictCfg, () => day1);
+
+    t1.push("s1", "exec");
+    const id1 = t1.flush("s1", "g1", "success");
+    expect(id1).not.toBeNull(); // day 1, 1st — allowed
+
+    t1.push("s2", "exec");
+    const id2 = t1.flush("s2", "g2", "success");
+    expect(id2).toBeNull(); // day 1, 2nd — rejected
+
+    // Day 2 — fresh instance (simulates new process / test isolation)
+    const day2 = new Date("2025-01-02T12:00:00Z");
+    const t2 = new WorkflowTracker(store, strictCfg, () => day2);
+
+    t2.push("s3", "exec");
+    const id3 = t2.flush("s3", "g3", "success");
+    expect(id3).not.toBeNull(); // day 2, fresh counter — allowed
+
+    expect(store.count()).toBe(2);
+  });
+
+  it("day rollover within same instance resets counter", () => {
+    const strictCfg = { enabled: true, maxTracesPerDay: 1, retentionDays: 90 };
+
+    let currentTime = new Date("2025-06-15T23:59:00Z");
+    const clock = () => currentTime;
+    const t = new WorkflowTracker(store, strictCfg, clock);
+
+    t.push("s1", "exec");
+    const id1 = t.flush("s1", "g1", "success");
+    expect(id1).not.toBeNull(); // day 1, allowed
+
+    // Advance clock past midnight
+    currentTime = new Date("2025-06-16T00:01:00Z");
+
+    t.push("s2", "exec");
+    const id2 = t.flush("s2", "g2", "success");
+    expect(id2).not.toBeNull(); // day 2, counter reset — allowed
+
     expect(store.count()).toBe(2);
   });
 
@@ -463,7 +538,7 @@ describe("WorkflowTracker", () => {
     tracker.flush("s", "old goal", "success");
 
     // Backdate via DB
-    const db = (store as any).db as import("better-sqlite3").Database;
+    const db = (store as any).db as import("node:sqlite").DatabaseSync;
     const oldDate = new Date(Date.now() - 100 * 24 * 60 * 60 * 1000).toISOString();
     db.prepare("UPDATE workflow_traces SET created_at = ?").run(oldDate);
 
@@ -492,7 +567,7 @@ describe("parseWorkflowTrackingConfig", () => {
         goalExtractionModel: "google/gemini-2.0-flash",
       },
     });
-    expect(cfg.workflowTracking.enabled).toBe(true);
+    expect(cfg.workflowTracking.enabled).toBe(false); // 2026.3.140 baseline
     expect(cfg.workflowTracking.maxTracesPerDay).toBe(200);
     expect(cfg.workflowTracking.retentionDays).toBe(30);
     expect(cfg.workflowTracking.goalExtractionModel).toBe("google/gemini-2.0-flash");
@@ -500,7 +575,7 @@ describe("parseWorkflowTrackingConfig", () => {
 
   it("defaults to disabled with sensible values when omitted", async () => {
     const { hybridConfigSchema } = await import("../config.js");
-    const cfg = hybridConfigSchema.parse({ ...BASE_CFG, mode: "normal" });
+    const cfg = hybridConfigSchema.parse({ ...BASE_CFG, mode: "minimal" });
     expect(cfg.workflowTracking.enabled).toBe(false);
     expect(cfg.workflowTracking.maxTracesPerDay).toBe(100);
     expect(cfg.workflowTracking.retentionDays).toBe(90);

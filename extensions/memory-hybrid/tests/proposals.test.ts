@@ -3,12 +3,17 @@
  * and applyApprovedProposal (including non-git workspace — issue #90).
  */
 
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, rmSync, writeFileSync, readFileSync, existsSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { parseSuggestedChange, buildAppliedContent, capProposalConfidence, applyApprovedProposal } from "../cli/proposals.js";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ProposalsDB } from "../backends/proposals-db.js";
+import {
+  applyApprovedProposal,
+  buildAppliedContent,
+  capProposalConfidence,
+  parseSuggestedChange,
+} from "../cli/proposals.js";
 
 describe("parseSuggestedChange", () => {
   it("returns append when text does not start with replace phrase", () => {
@@ -113,7 +118,7 @@ describe("applyApprovedProposal (non-git workspace — issue #90)", () => {
     if (originalWorkspace !== undefined) {
       process.env.OPENCLAW_WORKSPACE = originalWorkspace;
     } else {
-      delete process.env.OPENCLAW_WORKSPACE;
+      process.env.OPENCLAW_WORKSPACE = undefined;
     }
     rmSync(tmpDir, { recursive: true, force: true });
   });

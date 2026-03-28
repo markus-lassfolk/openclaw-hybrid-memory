@@ -1,9 +1,11 @@
 export * from "./core.js";
+export * from "./bootstrap.js";
 export * from "./retrieval.js";
 export * from "./capture.js";
 export * from "./maintenance.js";
 export * from "./features.js";
 export * from "./agents.js";
+export * from "./sensors.js";
 
 // Re-export all types from domain files and define HybridMemoryConfig and other shared types
 
@@ -15,18 +17,16 @@ import type {
   QueryExpansionConfig,
   RerankingConfig,
   ContextualVariantsConfig,
+  DocumentGradingConfig,
 } from "./retrieval.js";
 
-import type {
-  StoreConfig,
-  WALConfig,
-  EventLogConfig,
-  PathConfig,
-} from "./core.js";
+import type { StoreConfig, WALConfig, EventLogConfig, PathConfig } from "./core.js";
 
 import type {
   PassiveObserverConfig,
   ReflectionConfig,
+  IdentityReflectionConfig,
+  IdentityPromotionConfig,
   ProceduresConfig,
   ExtractionConfig,
 } from "./capture.js";
@@ -63,13 +63,15 @@ import type {
   CrossAgentLearningConfig,
   ToolEffectivenessConfig,
   CostTrackingConfig,
+  DashboardConfig,
+  ApiTapConfig,
+  HumanizerConfig,
+  FrequencyCaptureConfig,
 } from "./features.js";
 
-import type {
-  MultiAgentConfig,
-  PersonaProposalsConfig,
-  MemoryToSkillsConfig,
-} from "./agents.js";
+import type { MultiAgentConfig, PersonaProposalsConfig } from "./agents.js";
+
+import type { SensorSweepConfig } from "./sensors.js";
 
 /** Tier for cron job model selection: "default" = standard, "heavy" = larger context/reasoning. */
 /** "nano" = ultra-cheap for high-frequency ops (autoClassify, HyDE, classifyBeforeWrite, summarize); falls back to "default" when unset. */
@@ -98,7 +100,7 @@ export type LLMConfig = {
    * Optional: ordered model list for nano/ultra-light ops — autoClassify, HyDE, classifyBeforeWrite, auto-recall summarize.
    * These run on every chat message or write, so cheapness matters most.
    * When not set, falls back to the default tier.
-   * Ideal models: openai/gpt-4.1-nano, google/gemini-2.0-flash-lite, anthropic/claude-haiku-*.
+   * Ideal models: openai/gpt-4.1-nano, google/gemini-2.5-flash-lite, anthropic/claude-haiku-*.
    */
   nano?: string[];
   /** When true, if all preferred models fail, try the fallback model. */
@@ -107,11 +109,24 @@ export type LLMConfig = {
   fallbackModel?: string;
   /**
    * Per-provider API config for direct LLM calls.
-   * Keys are provider prefixes as they appear in model IDs (e.g. "google", "openai", "anthropic").
-   * Built-in providers (google, openai) have defaults; others require explicit apiKey + baseURL.
+   * Keys are provider prefixes as they appear in model IDs (e.g. "google", "openai", "anthropic", "ollama").
+   * Built-in providers (google, openai, ollama) have defaults; others require explicit apiKey + baseURL.
    * Example: { google: { apiKey: "AIzaSy..." }, anthropic: { apiKey: "sk-ant-...", baseURL: "https://api.anthropic.com/v1" } }
+   * Ollama example: { ollama: { baseURL: "http://127.0.0.1:11434/v1" } }
    */
   providers?: Record<string, LLMProviderConfig | undefined>;
+  /**
+   * When true and an `ollama/*` model appears in any tier list, automatically start Ollama (`ollama serve`)
+   * if it is not already running. Only has effect when Ollama models are configured.
+   * Default: false.
+   */
+  localAutoStart?: boolean;
+  /**
+   * Provider IDs to exclude from all LLM use (tier lists, verify, etc.).
+   * Use when a provider is configured (e.g. in llm.default) but you want hybrid-memory to never use it (e.g. low credits).
+   * Example: ["anthropic"] — Anthropic models are not tried even if listed in llm.nano/default/heavy.
+   */
+  disabledProviders?: string[];
 };
 
 /** Minimal plugin config shape for resolving cron job model (no full parse). */
@@ -126,14 +141,7 @@ export type CronModelConfig = {
 };
 
 /** Credential types supported by the credentials store */
-export const CREDENTIAL_TYPES = [
-  "token",
-  "password",
-  "api_key",
-  "ssh",
-  "bearer",
-  "other",
-] as const;
+export const CREDENTIAL_TYPES = ["token", "password", "api_key", "ssh", "bearer", "other"] as const;
 export type CredentialType = (typeof CREDENTIAL_TYPES)[number];
 
 /** Auto-capture configuration for credential scanning from tool call inputs */
@@ -166,6 +174,16 @@ export type CredentialsConfig = {
 };
 
 /** Error reporting configuration for GlitchTip/Sentry integration (opt-in, privacy-first) */
+export type UpdateNudgeConfig = {
+  /** Emit upgrade reminders for outdated installs (default: true). */
+  enabled: boolean;
+  /** Minimum hours between repeated upgrade reminders (default: 24). */
+  intervalHours: number;
+  /** How long cached latest-version results stay fresh (default: 24). */
+  cacheTtlHours: number;
+};
+
+/** Error reporting configuration for GlitchTip/Sentry integration (opt-in, privacy-first) */
 export type ErrorReportingConfig = {
   enabled: boolean;
   /** DSN for self-hosted mode. Not required in schema (only at runtime for self-hosted). */
@@ -175,10 +193,21 @@ export type ErrorReportingConfig = {
   mode: "community" | "self-hosted";
   environment?: string;
   sampleRate?: number;
-  /** Optional UUID identifying this bot instance; sent as tag so GlitchTip can group errors by bot. */
+  /** Opt-in: Only sent when explicitly configured. Not sent by default for privacy.
+   * Optional UUID identifying this bot instance; sent as tag so GlitchTip can group errors by bot. */
   botId?: string;
-  /** Optional friendly name for this bot (e.g. Maeve, Doris); sent as tag for readable reports. */
+  /** Opt-in: Only sent when explicitly configured. Not sent by default for privacy.
+   * Optional friendly name for this bot; sent as tag for readable reports. */
   botName?: string;
+  /**
+   * Optional map of error fingerprints to the version that fixed them.
+   * Errors matching a fingerprint from an older version are silently dropped (not regressions).
+   * Format: { "ErrorType:message prefix (first 100 chars)": "YYYY.M.NNN" }
+   * When not configured, behavior is identical to today.
+   */
+  resolvedIssues?: Record<string, string>;
+  /** Background latest-version check plus user-facing upgrade reminders. */
+  updateNudge: UpdateNudgeConfig;
 };
 
 /** Configuration for a single embedding model in a multi-model setup (Issue #158). */
@@ -239,6 +268,8 @@ export type ActiveTaskConfig = {
 
 /** Self-correction pipeline: semantic dedup, TOOLS.md sectioning, auto-rewrite vs approve */
 export type SelfCorrectionConfig = {
+  /** Enable self-correction pipeline (default: true). */
+  enabled?: boolean;
   /** Use embedding similarity to skip near-duplicate facts before MEMORY_STORE (default: true). */
   semanticDedup: boolean;
   /** Similarity threshold for semantic dedup, 0–1 (default: 0.92). */
@@ -265,18 +296,97 @@ export type SelfCorrectionConfig = {
   agentsRuleToProposals?: boolean;
 };
 
+/**
+ * Gateway authentication configuration.
+ * The token field accepts a SecretRef for safe storage:
+ *   - "env:VAR_NAME"   — resolve from process.env[VAR_NAME] at startup
+ *   - "file:/path"     — read from a file at startup (whitespace-trimmed)
+ *   - plain string     — used as-is (not recommended; token will be in config)
+ * When set, takes priority over the OPENCLAW_GATEWAY_TOKEN environment variable.
+ */
+export type GatewayAuthConfig = {
+  /**
+   * Auth token for the OpenClaw gateway.
+   * Use a SecretRef so the plaintext token is never stored in config files:
+   *   "env:OPENCLAW_GATEWAY_TOKEN" or "file:/run/secrets/gateway-token"
+   */
+  token?: string;
+};
+
+/**
+ * @internal Runtime representation of GatewayAuthConfig after SecretRef resolution.
+ * `_resolvedToken` holds the actual token value; it is stored as a non-enumerable
+ * property so it never appears in JSON.stringify or config dumps.
+ */
+export type ResolvedGatewayAuthConfig = GatewayAuthConfig & {
+  readonly _resolvedToken?: string;
+};
+
+export type GatewayConfig = {
+  auth?: ResolvedGatewayAuthConfig;
+};
+
+/**
+ * Per-provider auth profile ordering for OAuth-first LLM authentication.
+ * When configured, OAuth profiles are tried before API keys (first eligible wins).
+ * Requires the OpenClaw gateway (OPENCLAW_GATEWAY_PORT) to be running for OAuth routing.
+ *
+ * Example:
+ *   auth:
+ *     order:
+ *       anthropic: ['anthropic:claude-cli', 'anthropic:api']   # OAuth first, API key fallback
+ *       openai:    ['openai-codex', 'openai:api']              # OAuth first, API key fallback
+ *       google:    ['google-gemini-cli', 'google:default']     # OAuth first, API key fallback
+ *
+ * Supported OAuth/token profiles (must be set up via `openclaw configure`):
+ *   - anthropic:claude-cli  — Claude Code CLI OAuth
+ *   - openai-codex          — OpenAI Codex OAuth
+ *   - github-copilot        — GitHub Copilot token (device code flow)
+ *   - google-gemini-cli     — Gemini CLI OAuth
+ *   - google-vertex         — Google Vertex AI OAuth
+ *   - qwen-portal:qwen-cli  — Qwen Code CLI OAuth
+ *   - minimax-portal:minimax-cli — MiniMax CLI OAuth
+ */
+export type AuthOrderConfig = {
+  /**
+   * Per-provider ordered list of auth profile IDs.
+   * First eligible profile wins; falls through on missing/expired OAuth token.
+   * Keys are provider prefixes (e.g. "anthropic", "openai", "google").
+   * Always populated when an AuthOrderConfig is present (parseAuthConfig never returns {}).
+   */
+  order: Record<string, string[]>;
+  /**
+   * When a provider has both OAuth and an API key, prefer OAuth (default: true).
+   * On OAuth failure the plugin records backoff and uses the API key until backoff expires.
+   */
+  preferOAuthWhenBoth?: boolean;
+  /**
+   * Backoff delays in minutes after each OAuth failure before trying OAuth again.
+   * Default: [5, 30, 60, 120, 240] (5min → 30min → 1h → 2h → 4h).
+   */
+  backoffScheduleMinutes?: number[];
+  /**
+   * Reset backoff levels after this many hours so OAuth is tried again from level 0.
+   * Default: 24.
+   */
+  resetBackoffAfterHours?: number;
+};
+
 /** Configuration mode presets. See docs/CONFIGURATION-MODES.md. */
-export type ConfigMode = "essential" | "normal" | "expert" | "full";
+export type ConfigMode = "local" | "minimal" | "enhanced" | "complete";
 
 /**
  * Output verbosity level for CLI commands and tool responses.
+ * - silent: no unsolicited output — suppresses capability hints, relevant-memories,
+ *   relevant-procedures, and credential-hint blocks. Memory tools remain fully functional.
+ *   Ideal for users who want the plugin to work silently in the background.
  * - quiet: minimal output — counts/totals only, no decorative headers or config echo.
- *   Ideal for scripted/cron use and low-noise deployments (default for essential mode).
+ *   Ideal for scripted/cron use and low-noise deployments (default for local mode).
  * - normal: current default behaviour — balanced output with key details.
  * - verbose: extra detail — full breakdowns, all fields, config summaries.
- *   Ideal for debugging and interactive sessions (default for full mode).
+ *   Ideal for debugging and interactive sessions (default for complete mode).
  */
-export type VerbosityLevel = "quiet" | "normal" | "verbose";
+export type VerbosityLevel = "silent" | "quiet" | "normal" | "verbose";
 
 export type MemoryCategory = string;
 
@@ -290,6 +400,8 @@ export type HybridMemoryConfig = {
     models?: string[];
     /** Vector dimensions for this model (required for ollama/onnx; auto-resolved for known openai models). */
     dimensions: number;
+    /** Azure OpenAI: embedding deployment name (must match Azure Portal). When set, used as the API model id; `model` still resolves dimensions. */
+    deployment?: string;
     /** Ollama endpoint URL (default: http://localhost:11434). Only used when provider='ollama'. */
     endpoint?: string;
     /** Number of texts to embed per batch call (default: 50). */
@@ -340,16 +452,24 @@ export type HybridMemoryConfig = {
   passiveObserver: PassiveObserverConfig;
   /** Reflection layer — synthesize behavioral patterns from facts (default: disabled) */
   reflection: ReflectionConfig;
+  /** Identity reflection layer — synthesize persona-level insights from reflection outputs (default: disabled) */
+  identityReflection: IdentityReflectionConfig;
+  /** Promotion pipeline — cluster repeated durable identity reflections into stable persona state. */
+  identityPromotion: IdentityPromotionConfig;
   /** Procedural memory — procedure tagging and auto-skills (default: enabled) */
   procedures: ProceduresConfig;
   /** Multi-pass extraction with LLM verification (Issue #166, default: disabled). */
   extraction: ExtractionConfig;
-  /** Memory-to-skills: synthesize skill drafts from clustered procedures (default: enabled when procedures enabled) */
-  memoryToSkills: MemoryToSkillsConfig;
   /** Dynamic memory tiering — hot/warm/cold (default: enabled) */
   memoryTiering: MemoryTieringConfig;
   /** Optional: LLM preference lists and per-provider API config for direct chat calls (issue #87). */
   llm?: LLMConfig;
+  /**
+   * Optional: OAuth-first auth profile ordering per provider (issue #311).
+   * When set, providers with OAuth profiles route through the OpenClaw gateway instead of direct API keys.
+   * Falls back to API keys when gateway is unavailable or OAuth token is missing/expired.
+   */
+  auth?: AuthOrderConfig;
   /** Optional: Gemini for distill (1M context). apiKey/defaultModel deprecated in favor of llm + gateway. */
   distill?: {
     apiKey?: string;
@@ -417,6 +537,24 @@ export type HybridMemoryConfig = {
   crystallization: CrystallizationConfig;
   /** Plugin self-extension: generate tool proposals from usage-pattern gaps (Issue #210, default: disabled). */
   selfExtension: SelfExtensionConfig;
+  /**
+   * Top-level alias for implicitFeedback.trajectoryLLMAnalysis (Issue #754).
+   * When set, takes precedence over implicitFeedback.trajectoryLLMAnalysis.
+   * The nested key is still supported with a deprecation warning.
+   */
+  trajectoryLLMAnalysis?: boolean;
+  /**
+   * Top-level alias for implicitFeedback.feedToSelfCorrection (Issue #754).
+   * When set, takes precedence over implicitFeedback.feedToSelfCorrection.
+   * The nested key is still supported with a deprecation warning.
+   */
+  feedToSelfCorrection?: boolean;
+  /**
+   * Top-level alias for distill.extractReinforcement (Issue #754).
+   * When set, takes precedence over distill.extractReinforcement.
+   * The nested key is still supported with a deprecation warning.
+   */
+  extractReinforcement?: boolean;
   /** Implicit feedback detection from behavioral conversation signals (Issue #262, default: enabled). */
   implicitFeedback: ImplicitFeedbackConfig;
   /** Closed-loop rule effectiveness measurement (Issue #262, default: enabled). */
@@ -433,18 +571,36 @@ export type HybridMemoryConfig = {
   queryExpansion: QueryExpansionConfig;
   /** LLM re-ranking of RRF fusion results (Issue #161, default: disabled). */
   reranking: RerankingConfig;
+  /** Adaptive document grading and query rewriting for retrieval quality (default: disabled). */
+  documentGrading: DocumentGradingConfig;
   /** Verification store for critical facts (Issue #162, default: disabled). */
   verification: VerificationConfig;
   /** Provenance tracing for fact-to-source chains (Issue #163, default: disabled). */
   provenance: ProvenanceConfig;
   /** LLM cost tracking — per-feature token usage and estimated cost (Issue #270, default: enabled). */
   costTracking: CostTrackingConfig;
+  /** Mission Control dashboard HTTP server (Issue #309, default: enabled on port 7700). */
+  dashboard: DashboardConfig;
+  /** Sensor sweep — cron-based data collection writing to Event Bus, no LLM (Issue #236, default: disabled). */
+  sensorSweep: SensorSweepConfig;
+  /** ApiTap integration — intercept browser traffic to auto-generate API skill specs (Issue #614, default: disabled). */
+  apiTap: ApiTapConfig;
+  /** Humanizer style scoring — quality-loop metric for detecting AI-writing patterns (Issue #616, default: disabled). */
+  humanizer: HumanizerConfig;
+  /** Frequency-based auto-save: capture repeated references including credentials to vault (Issue #784, default: disabled). */
+  frequencyCapture: FrequencyCaptureConfig;
   /**
    * Output verbosity level for CLI commands and tool responses (Issue #282).
    * quiet: counts/totals only. normal: balanced default. verbose: full detail.
-   * Defaults: essential→quiet, normal→normal, expert→normal, full→verbose.
+   * Defaults: local→quiet, minimal→normal, enhanced→normal, complete→verbose.
    */
   verbosity: VerbosityLevel;
   /** Set when user specified a mode in config; used by verify to show "Mode: Normal" etc. */
   mode?: ConfigMode | "custom";
+  /**
+   * Gateway connection settings. Token supports SecretRef:
+   *   "env:VAR_NAME" or "file:/path/to/file"
+   * Overrides the OPENCLAW_GATEWAY_TOKEN environment variable when set.
+   */
+  gateway?: GatewayConfig;
 };

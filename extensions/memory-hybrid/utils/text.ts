@@ -10,10 +10,12 @@ export function truncateText(text: string, maxLen: number, suffix = "…"): stri
   return text.slice(0, maxLen - suffix.length).trim() + suffix;
 }
 
-/** Truncate for storage (config-driven); appends " [truncated]" when truncated. */
-export function truncateForStorage(text: string, maxChars: number): string {
+/** Truncate for storage (config-driven); appends " [truncated]" when truncated. Handles null/undefined gracefully. */
+export function truncateForStorage(text: string | null | undefined, maxChars: number): string {
+  if (text == null) return "";
+  if (maxChars <= 0) return "";
   if (text.length <= maxChars) return text.trim();
-  return text.slice(0, maxChars).trim() + " [truncated]";
+  return `${text.slice(0, maxChars).trim()} [truncated]`;
 }
 
 /** Rough token count (OpenAI-style: ~4 chars per token for English). Used for auto-recall cap. */
@@ -107,7 +109,7 @@ export function extractMessageText(content: unknown): string {
 export function truncate(s: string, max: number): string {
   const t = s.trim();
   if (t.length <= max) return t;
-  return t.slice(0, max) + "...";
+  return `${t.slice(0, max)}...`;
 }
 
 /**
@@ -134,4 +136,11 @@ export function slugifyForSkill(text: string, fallback = "skill"): string {
     .replace(/^-|-$/g, "")
     .slice(0, 60);
   return slug || fallback;
+}
+
+/**
+ * Deduplicate and clean an array of strings (trim, filter empty).
+ */
+export function uniqueStrings(values: string[]): string[] {
+  return Array.from(new Set(values.map((value) => value.trim()).filter((value) => value.length > 0)));
 }

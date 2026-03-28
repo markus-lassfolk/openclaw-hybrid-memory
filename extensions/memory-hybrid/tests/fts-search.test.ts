@@ -6,12 +6,13 @@
  * rebuildFtsIndex, edge cases, and performance.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, rmSync } from "node:fs";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { _testing } from "../index.js";
+import { createTransaction } from "../utils/sqlite-transaction.js";
 
 const { FactsDB, searchFts, rebuildFtsIndex, buildFts5Query } = _testing;
 
@@ -21,10 +22,9 @@ const { FactsDB, searchFts, rebuildFtsIndex, buildFts5Query } = _testing;
 
 type DB = InstanceType<typeof FactsDB>;
 
-/** Access the private liveDb connection from FactsDB (for FTS service calls). */
+/** Access the raw SQLite connection from FactsDB (for FTS service calls). */
 function rawDb(db: DB) {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  return (db as any).liveDb as import("better-sqlite3").Database;
+  return db.getRawDb();
 }
 
 /** Direct INSERT bypassing FactsDB (for perf test bulk seeding). */
@@ -60,37 +60,44 @@ afterEach(() => {
 
 describe("schema", () => {
   it("facts_fts virtual table exists after FactsDB init", () => {
-    const row = rawDb(db)
-      .prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='facts_fts'`)
-      .get() as { name: string } | undefined;
+    const row = rawDb(db).prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='facts_fts'`).get() as
+      | { name: string }
+      | undefined;
     expect(row?.name).toBe("facts_fts");
   });
 
   it("facts_fts schema includes tags column", () => {
-    const row = rawDb(db)
-      .prepare(`SELECT sql FROM sqlite_master WHERE type='table' AND name='facts_fts'`)
-      .get() as { sql: string } | undefined;
+    const row = rawDb(db).prepare(`SELECT sql FROM sqlite_master WHERE type='table' AND name='facts_fts'`).get() as
+      | { sql: string }
+      | undefined;
     expect(row?.sql).toContain("tags");
   });
 
+  it("facts_fts schema includes why column", () => {
+    const row = rawDb(db).prepare(`SELECT sql FROM sqlite_master WHERE type='table' AND name='facts_fts'`).get() as
+      | { sql: string }
+      | undefined;
+    expect(row?.sql).toContain("why");
+  });
+
   it("insert trigger exists", () => {
-    const row = rawDb(db)
-      .prepare(`SELECT name FROM sqlite_master WHERE type='trigger' AND name='facts_ai'`)
-      .get() as { name: string } | undefined;
+    const row = rawDb(db).prepare(`SELECT name FROM sqlite_master WHERE type='trigger' AND name='facts_ai'`).get() as
+      | { name: string }
+      | undefined;
     expect(row?.name).toBe("facts_ai");
   });
 
   it("update trigger exists", () => {
-    const row = rawDb(db)
-      .prepare(`SELECT name FROM sqlite_master WHERE type='trigger' AND name='facts_au'`)
-      .get() as { name: string } | undefined;
+    const row = rawDb(db).prepare(`SELECT name FROM sqlite_master WHERE type='trigger' AND name='facts_au'`).get() as
+      | { name: string }
+      | undefined;
     expect(row?.name).toBe("facts_au");
   });
 
   it("delete trigger exists", () => {
-    const row = rawDb(db)
-      .prepare(`SELECT name FROM sqlite_master WHERE type='trigger' AND name='facts_ad'`)
-      .get() as { name: string } | undefined;
+    const row = rawDb(db).prepare(`SELECT name FROM sqlite_master WHERE type='trigger' AND name='facts_ad'`).get() as
+      | { name: string }
+      | undefined;
     expect(row?.name).toBe("facts_ad");
   });
 });
@@ -129,7 +136,7 @@ describe("trigger sync", () => {
 
     // Update the text directly (triggers facts_au).
     rawDb(db)
-      .prepare(`UPDATE facts SET text = ? WHERE id = ?`)
+      .prepare("UPDATE facts SET text = ? WHERE id = ?")
       .run("Python is a high-level programming language", entry.id);
 
     const old = searchFts(rawDb(db), "scripting");
@@ -185,6 +192,23 @@ describe("keyword search", () => {
       value: null,
       source: "conversation",
     });
+  });
+
+  it("searches lineage context in why column", () => {
+    db.store({
+      text: "Use transactional outbox pattern for event publishing",
+      why: "Direct publish in request path lost events during DB failover",
+      category: "decision",
+      importance: 0.9,
+      entity: "architecture",
+      key: null,
+      value: null,
+      source: "conversation",
+    });
+
+    const results = searchFts(rawDb(db), "lost events failover");
+    expect(results.length).toBeGreaterThan(0);
+    expect(results[0].text).toContain("transactional outbox pattern");
   });
 
   it("simple keyword returns matching fact", () => {
@@ -584,7 +608,7 @@ describe("edge cases", () => {
 
     expect(() => searchFts(rawDb(db), "SELECT * FROM facts; DROP TABLE facts;--")).not.toThrow();
     expect(() => searchFts(rawDb(db), "'; DROP TABLE facts_fts;--")).not.toThrow();
-    expect(() => searchFts(rawDb(db), "hello \"world\" (test)")).not.toThrow();
+    expect(() => searchFts(rawDb(db), 'hello "world" (test)')).not.toThrow();
     expect(() => searchFts(rawDb(db), "* AND OR NOT")).not.toThrow();
   });
 
@@ -623,7 +647,7 @@ describe("buildFts5Query", () => {
 
   it("passes through FTS5 boolean operators", () => {
     const q = buildFts5Query("foo AND bar");
-    expect(q).toBe("\"foo\" AND \"bar\"");
+    expect(q).toBe('"foo" AND "bar"');
   });
 
   it("passes through prefix operator *", () => {
@@ -635,6 +659,11 @@ describe("buildFts5Query", () => {
     const q = buildFts5Query("hello' DROP TABLE; --");
     expect(q).not.toContain("'");
     expect(q).not.toContain(";");
+  });
+
+  it("replaces null bytes before quoting terms", () => {
+    const q = buildFts5Query("hello\u0000world");
+    expect(q).toBe('"hello" OR "world"');
   });
 });
 
@@ -650,15 +679,11 @@ describe("performance", () => {
        VALUES (?, ?, 'other', 0.7, NULL, NULL, NULL, NULL, 'conversation', ?)`,
     );
 
-    const insertMany = rawDb(db).transaction(() => {
+    const insertMany = createTransaction(rawDb(db), () => {
       const now = Math.floor(Date.now() / 1000);
       for (let i = 0; i < 1100; i++) {
         const topic = i % 2 === 0 ? "database" : "networking";
-        insert.run(
-          randomUUID(),
-          `Fact about ${topic} number ${i}: various details and information stored here`,
-          now,
-        );
+        insert.run(randomUUID(), `Fact about ${topic} number ${i}: various details and information stored here`, now);
       }
     });
 

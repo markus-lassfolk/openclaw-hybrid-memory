@@ -3,12 +3,13 @@
  * Covers extractCredentialsFromToolCalls() pattern extraction and vault storage integration.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
-import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { extractCredentialsFromToolCalls, extractHostFromUrl, slugify } from "../services/credential-scanner.js";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { CredentialsDB } from "../backends/credentials-db.js";
+import { shouldCapture } from "../services/capture-utils.js";
+import { extractCredentialsFromToolCalls, extractHostFromUrl, slugify } from "../services/credential-scanner.js";
 
 // Note: extractCredentialsFromToolCalls moved to credential-scanner service
 
@@ -26,8 +27,8 @@ describe("extractCredentialsFromToolCalls", () => {
       expect(results.length).toBeGreaterThanOrEqual(1);
       const cred = results.find((r) => r.type === "password");
       expect(cred).toBeDefined();
-      expect(cred!.value).toBe("s3cr3tPass");
-      expect(cred!.service).toBe("ssh://root@192.168.1.19");
+      expect(cred?.value).toBe("s3cr3tPass");
+      expect(cred?.service).toBe("ssh://root@192.168.1.19");
     });
 
     it("extracts password from sshpass with extra ssh options", () => {
@@ -35,8 +36,8 @@ describe("extractCredentialsFromToolCalls", () => {
       const results = extractCredentialsFromToolCalls(input);
       const cred = results.find((r) => r.type === "password");
       expect(cred).toBeDefined();
-      expect(cred!.value).toBe("myP@ssw0rd");
-      expect(cred!.service).toBe("ssh://admin@10.0.0.1");
+      expect(cred?.value).toBe("myP@ssw0rd");
+      expect(cred?.service).toBe("ssh://admin@10.0.0.1");
     });
 
     it("ignores sshpass with short (< 4 char) password", () => {
@@ -53,9 +54,9 @@ describe("extractCredentialsFromToolCalls", () => {
       const results = extractCredentialsFromToolCalls(input);
       const cred = results.find((r) => r.type === "bearer");
       expect(cred).toBeDefined();
-      expect(cred!.value).toContain("TEST_JWT_HEADER");
-      expect(cred!.service).toBe("api.example.com");
-      expect(cred!.url).toBe("https://api.example.com/data");
+      expect(cred?.value).toContain("TEST_JWT_HEADER");
+      expect(cred?.service).toBe("api.example.com");
+      expect(cred?.url).toBe("https://api.example.com/data");
     });
 
     it("falls back to 'api' service when no URL present", () => {
@@ -63,23 +64,23 @@ describe("extractCredentialsFromToolCalls", () => {
       const results = extractCredentialsFromToolCalls(input);
       const cred = results.find((r) => r.type === "bearer");
       expect(cred).toBeDefined();
-      expect(cred!.service).toBe("api");
+      expect(cred?.service).toBe("api");
     });
   });
 
   describe("curl -u user:pass pattern", () => {
     it("extracts password from curl -u user:pass URL", () => {
-      const input = `curl -u admin:superSecret123 https://jenkins.example.com/api`;
+      const input = "curl -u admin:superSecret123 https://jenkins.example.com/api";
       const results = extractCredentialsFromToolCalls(input);
       const cred = results.find((r) => r.type === "password");
       expect(cred).toBeDefined();
-      expect(cred!.value).toBe("superSecret123");
-      expect(cred!.service).toBe("jenkins.example.com");
-      expect(cred!.url).toBe("https://jenkins.example.com/api");
+      expect(cred?.value).toBe("superSecret123");
+      expect(cred?.service).toBe("jenkins.example.com");
+      expect(cred?.url).toBe("https://jenkins.example.com/api");
     });
 
     it("ignores curl -u with short password", () => {
-      const input = `curl -u user:abc https://example.com`;
+      const input = "curl -u user:abc https://example.com";
       const results = extractCredentialsFromToolCalls(input);
       const cred = results.find((r) => r.type === "password" && r.service === "example.com");
       expect(cred).toBeUndefined();
@@ -92,7 +93,7 @@ describe("extractCredentialsFromToolCalls", () => {
       const results = extractCredentialsFromToolCalls(input);
       const cred = results.find((r) => r.type === "api_key");
       expect(cred).toBeDefined();
-      expect(cred!.value).toBe("abcdef1234567890");
+      expect(cred?.value).toBe("abcdef1234567890");
     });
 
     it("ignores X-API-Key shorter than 8 chars", () => {
@@ -104,20 +105,20 @@ describe("extractCredentialsFromToolCalls", () => {
 
   describe("connection string patterns", () => {
     it("extracts postgres connection string credentials", () => {
-      const input = `psql postgres://dbuser:dbpassword123@db.example.com:5432/mydb`;
+      const input = "psql postgres://dbuser:dbpassword123@db.example.com:5432/mydb";
       const results = extractCredentialsFromToolCalls(input);
       const cred = results.find((r) => r.type === "password" && r.service.startsWith("postgres://"));
       expect(cred).toBeDefined();
-      expect(cred!.value).toBe("dbpassword123");
-      expect(cred!.service).toBe("postgres://db.example.com:5432/mydb");
+      expect(cred?.value).toBe("dbpassword123");
+      expect(cred?.service).toBe("postgres://db.example.com:5432/mydb");
     });
 
     it("extracts mysql connection string credentials", () => {
-      const input = `mysql mysql://root:rootPass456@localhost:3306/production`;
+      const input = "mysql mysql://root:rootPass456@localhost:3306/production";
       const results = extractCredentialsFromToolCalls(input);
       const cred = results.find((r) => r.service.startsWith("mysql://"));
       expect(cred).toBeDefined();
-      expect(cred!.value).toBe("rootPass456");
+      expect(cred?.value).toBe("rootPass456");
     });
 
     it("extracts mongodb connection string credentials", () => {
@@ -125,11 +126,11 @@ describe("extractCredentialsFromToolCalls", () => {
       const results = extractCredentialsFromToolCalls(input);
       const cred = results.find((r) => r.service.startsWith("mongodb://"));
       expect(cred).toBeDefined();
-      expect(cred!.value).toBe("mongoSecret789");
+      expect(cred?.value).toBe("mongoSecret789");
     });
 
     it("ignores connection strings with short passwords", () => {
-      const input = `postgres://user:abc@host/db`;
+      const input = "postgres://user:abc@host/db";
       const results = extractCredentialsFromToolCalls(input);
       const cred = results.find((r) => r.service.startsWith("postgres://"));
       expect(cred).toBeUndefined();
@@ -138,41 +139,41 @@ describe("extractCredentialsFromToolCalls", () => {
 
   describe("export VAR=value pattern", () => {
     it("extracts API key from export *_KEY=value", () => {
-      const input = `export OPENAI_API_KEY=test_key_abcdefghijklmnopqrst123456`;
+      const input = "export OPENAI_API_KEY=test_key_abcdefghijklmnopqrst123456";
       const results = extractCredentialsFromToolCalls(input);
       const cred = results.find((r) => r.service === "openai-api");
       expect(cred).toBeDefined();
-      expect(cred!.type).toBe("api_key");
-      expect(cred!.value).toBe("test_key_abcdefghijklmnopqrst123456");
+      expect(cred?.type).toBe("api_key");
+      expect(cred?.value).toBe("test_key_abcdefghijklmnopqrst123456");
     });
 
     it("extracts token from export *_TOKEN=value", () => {
-      const input = `export GITHUB_TOKEN=test_token_abcdefghijklmnopqrstuvwxyz123456`;
+      const input = "export GITHUB_TOKEN=test_token_abcdefghijklmnopqrstuvwxyz123456";
       const results = extractCredentialsFromToolCalls(input);
       const cred = results.find((r) => r.service === "github");
       expect(cred).toBeDefined();
-      expect(cred!.type).toBe("token");
+      expect(cred?.type).toBe("token");
     });
 
     it("extracts password from export *_PASSWORD=value", () => {
-      const input = `export DB_PASSWORD=myDatabasePassword123`;
+      const input = "export DB_PASSWORD=myDatabasePassword123";
       const results = extractCredentialsFromToolCalls(input);
       const cred = results.find((r) => r.service === "db");
       expect(cred).toBeDefined();
-      expect(cred!.type).toBe("password");
-      expect(cred!.value).toBe("myDatabasePassword123");
+      expect(cred?.type).toBe("password");
+      expect(cred?.value).toBe("myDatabasePassword123");
     });
 
     it("extracts secret from export *_SECRET=value", () => {
-      const input = `export JWT_SECRET=supersecretjwtkey12345678`;
+      const input = "export JWT_SECRET=supersecretjwtkey12345678";
       const results = extractCredentialsFromToolCalls(input);
       const cred = results.find((r) => r.service === "jwt");
       expect(cred).toBeDefined();
-      expect(cred!.type).toBe("other");
+      expect(cred?.type).toBe("other");
     });
 
     it("ignores export with short value (< 8 chars)", () => {
-      const input = `export API_KEY=short`;
+      const input = "export API_KEY=short";
       const results = extractCredentialsFromToolCalls(input);
       expect(results.find((r) => r.service === "api")).toBeUndefined();
     });
@@ -180,19 +181,19 @@ describe("extractCredentialsFromToolCalls", () => {
 
   describe(".env file write patterns", () => {
     it("extracts credentials from .env file content", () => {
-      const envContent = `DATABASE_URL=postgres://host/db\nAPI_KEY=longsecretkey1234567890\nNODE_ENV=production`;
+      const envContent = "DATABASE_URL=postgres://host/db\nAPI_KEY=longsecretkey1234567890\nNODE_ENV=production";
       const results = extractCredentialsFromToolCalls(envContent);
       const cred = results.find((r) => r.service === "api");
       expect(cred).toBeDefined();
-      expect(cred!.type).toBe("api_key");
-      expect(cred!.value).toBe("longsecretkey1234567890");
+      expect(cred?.type).toBe("api_key");
+      expect(cred?.value).toBe("longsecretkey1234567890");
     });
   });
 
   describe("deduplication", () => {
     it("returns only one entry per service+type combination", () => {
       // Two export patterns for same conceptual service+type
-      const input = `export API_KEY=secret12345678\nAPI_KEY=secret12345678`;
+      const input = "export API_KEY=secret12345678\nAPI_KEY=secret12345678";
       const results = extractCredentialsFromToolCalls(input);
       const apiKeyCreds = results.filter((r) => r.service === "api" && r.type === "api_key");
       // Should have at most 1 entry per service+type
@@ -254,8 +255,8 @@ describe("tool call credential auto-capture integration", () => {
 
     const stored = db.get("ssh://root@192.168.1.19", "password");
     expect(stored).not.toBeNull();
-    expect(stored!.value).toBe("secret1234");
-    expect(stored!.service).toBe("ssh://root@192.168.1.19");
+    expect(stored?.value).toBe("secret1234");
+    expect(stored?.service).toBe("ssh://root@192.168.1.19");
   });
 
   it("upserts when same credential is captured twice", () => {
@@ -270,7 +271,7 @@ describe("tool call credential auto-capture integration", () => {
     }
 
     const stored = db.get("ssh://root@10.0.0.1", "password");
-    expect(stored!.value).toBe("newPassword456");
+    expect(stored?.value).toBe("newPassword456");
   });
 
   it("stores bearer token from curl tool call into vault", () => {
@@ -284,7 +285,7 @@ describe("tool call credential auto-capture integration", () => {
 
     const stored = db.get("api.example.com", "bearer");
     expect(stored).not.toBeNull();
-    expect(stored!.url).toBe("https://api.example.com/resource");
+    expect(stored?.url).toBe("https://api.example.com/resource");
   });
 
   it("does not store credential values in facts DB (vault only)", () => {
@@ -292,7 +293,7 @@ describe("tool call credential auto-capture integration", () => {
     // intended only for vault storage — it should not contain any reference
     // to factsDb storage (structural test: ensure the returned type has no 'text' field
     // like MemoryEntry would have, confirming vault-only path).
-    const args = `export PAYMENT_SECRET_KEY=test_key_abcdefghijklmnopqrst123456`;
+    const args = "export PAYMENT_SECRET_KEY=test_key_abcdefghijklmnopqrst123456";
     const creds = extractCredentialsFromToolCalls(args);
     for (const cred of creds) {
       expect(Object.keys(cred)).not.toContain("text");
@@ -313,7 +314,7 @@ describe("council review fixes", () => {
       const results = extractCredentialsFromToolCalls(input);
       const cred = results.find((r) => r.service === "api");
       expect(cred).toBeDefined();
-      expect(cred!.value).toBe("my secret key with spaces 12345");
+      expect(cred?.value).toBe("my secret key with spaces 12345");
     });
 
     it("extracts single-quoted env var with spaces", () => {
@@ -321,7 +322,7 @@ describe("council review fixes", () => {
       const results = extractCredentialsFromToolCalls(input);
       const cred = results.find((r) => r.service === "db");
       expect(cred).toBeDefined();
-      expect(cred!.value).toBe("my password with spaces 789");
+      expect(cred?.value).toBe("my password with spaces 789");
     });
   });
 
@@ -330,11 +331,11 @@ describe("council review fixes", () => {
       // Test with SQL injection attempt
       const result1 = extractHostFromUrl("https://'; DROP TABLE users; --/api");
       expect(result1).toBe("api"); // Should fall back to safe default
-      
+
       // Test with path traversal
       const result2 = extractHostFromUrl("https://../../../etc/passwd");
       expect(result2).toBe("api");
-      
+
       // Valid hostname should work
       const result3 = extractHostFromUrl("https://api.example.com/path");
       expect(result3).toBe("api.example.com");
@@ -352,30 +353,67 @@ describe("council review fixes", () => {
 
   describe("Fix #19: connection string extraction", () => {
     it("extracts credentials from connection strings in .env format", () => {
-      const input = `DATABASE_URL=postgres://user:pass12345@db.example.com:5432/mydb`;
+      const input = "DATABASE_URL=postgres://user:pass12345@db.example.com:5432/mydb";
       const results = extractCredentialsFromToolCalls(input);
       const cred = results.find((r) => r.service.startsWith("postgres://"));
       expect(cred).toBeDefined();
-      expect(cred!.value).toBe("pass12345");
-      expect(cred!.service).toBe("postgres://db.example.com:5432/mydb");
+      expect(cred?.value).toBe("pass12345");
+      expect(cred?.service).toBe("postgres://db.example.com:5432/mydb");
     });
 
     it("handles mongodb+srv connection strings", () => {
-      const input = `MONGO_URI=mongodb+srv://admin:secret789@cluster.mongodb.net/dbname`;
+      const input = "MONGO_URI=mongodb+srv://admin:secret789@cluster.mongodb.net/dbname";
       const results = extractCredentialsFromToolCalls(input);
       const cred = results.find((r) => r.service.startsWith("mongodb+srv://"));
       expect(cred).toBeDefined();
-      expect(cred!.value).toBe("secret789");
+      expect(cred?.value).toBe("secret789");
     });
   });
 
   describe("Fix #15: error resilience", () => {
     it("continues extraction even if one pattern fails", () => {
       // This test verifies that if one regex throws, others still work
-      const input = `export API_KEY=validkey12345\nsshpass -p password456 ssh user@host`;
+      const input = "export API_KEY=validkey12345\nsshpass -p password456 ssh user@host";
       const results = extractCredentialsFromToolCalls(input);
       // Should have extracted at least one credential even if other patterns fail
       expect(results.length).toBeGreaterThan(0);
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Issue #555: shouldCapture uses unified SENSITIVE_PATTERNS from auto-capture.ts
+// Verifies the three patterns that were missing from the old capture-utils.ts.
+// ---------------------------------------------------------------------------
+
+describe("shouldCapture — unified SENSITIVE_PATTERNS (issue #555)", () => {
+  const alwaysMatch: RegExp[] = [/remember/i];
+  const maxChars = 10_000;
+
+  it("blocks AWS access key text that also contains a memory trigger", () => {
+    const text = "remember AKIA0123456789ABCDEF is the AWS key for staging";
+    expect(shouldCapture(text, maxChars, alwaysMatch)).toBe(false);
+  });
+
+  it("blocks private key header text that also contains a memory trigger", () => {
+    const text = "remember that -----BEGIN RSA PRIVATE KEY----- is the cert header";
+    expect(shouldCapture(text, maxChars, alwaysMatch)).toBe(false);
+  });
+
+  it("blocks connection string with embedded password that also contains a memory trigger", () => {
+    const text = "remember mongodb://admin:Pa$$w0rd@localhost/mydb for the service";
+    expect(shouldCapture(text, maxChars, alwaysMatch)).toBe(false);
+  });
+
+  // Regression: CAPTURE_FILTER_PATTERNS uses /token/i (not /token\s+is/i), so common
+  // "token=" and "token: " formats must still be blocked by shouldCapture.
+  it("blocks text with token=value format that also contains a memory trigger", () => {
+    const text = "remember my API token=ghp_abc123def456 for the staging environment";
+    expect(shouldCapture(text, maxChars, alwaysMatch)).toBe(false);
+  });
+
+  it("blocks text with token: value format that also contains a memory trigger", () => {
+    const text = "remember to use token: sk-abcdefghijklmnopqrstuvwxyz for the service";
+    expect(shouldCapture(text, maxChars, alwaysMatch)).toBe(false);
   });
 });

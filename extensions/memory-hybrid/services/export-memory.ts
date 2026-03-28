@@ -30,12 +30,14 @@ export type ExportResult = {
 
 /** Sanitize a string for use as a filesystem-safe filename (no path separators, no special chars). */
 function sanitizeFileName(s: string): string {
-  return s
-    .replace(/[/\\?*:|"<>]/g, "-")
-    .replace(/\s+/g, "-")
-    .replace(/-+/g, "-")
-    .replace(/^-|-$/g, "")
-    .slice(0, 80) || "untitled";
+  return (
+    s
+      .replace(/[/\\?*:|"<>]/g, "-")
+      .replace(/\s+/g, "-")
+      .replace(/-+/g, "-")
+      .replace(/^-|-$/g, "")
+      .slice(0, 80) || "untitled"
+  );
 }
 
 /** Format fact text for vanilla-compatible markdown (backfill can re-extract). */
@@ -44,7 +46,7 @@ function formatFactContent(entry: MemoryEntry): string {
   if (entry.entity && entry.key && entry.value) {
     parts.push(`${entry.entity}'s ${entry.key} is ${entry.value}.`);
   }
-  if (entry.text && !parts.some((p) => p.includes(entry.text!.slice(0, 30)))) {
+  if (entry.text && !parts.some((p) => p.includes(entry.text?.slice(0, 30)))) {
     parts.push(entry.text);
   }
   return parts.length > 0 ? parts.join("\n\n") : entry.text;
@@ -109,7 +111,7 @@ export function runExport(
   for (const f of facts) {
     const cat = categoryDir(f.category);
     if (!byCategory.has(cat)) byCategory.set(cat, []);
-    byCategory.get(cat)!.push(f);
+    byCategory.get(cat)?.push(f);
   }
 
   const memLinks: string[] = [];
@@ -123,7 +125,7 @@ export function runExport(
     for (const e of entries) {
       const sub = tagSubdir(e.tags);
       if (!byTag.has(sub)) byTag.set(sub, []);
-      byTag.get(sub)!.push(e);
+      byTag.get(sub)?.push(e);
     }
 
     for (const [sub, items] of byTag) {
@@ -138,7 +140,9 @@ export function runExport(
         const content = formatFactContent(entry);
         writeFileSync(fullPath, content, "utf-8");
         filesWritten++;
-        memLinks.push(`- [[memory/${relPath.replace(/\\/g, "/")}]] — ${entry.text.slice(0, 60)}${entry.text.length > 60 ? "…" : ""}`);
+        memLinks.push(
+          `- [[memory/${relPath.replace(/\\/g, "/")}]] — ${entry.text.slice(0, 60)}${entry.text.length > 60 ? "…" : ""}`,
+        );
       }
     }
   }
@@ -153,7 +157,9 @@ export function runExport(
     const content = `# Procedure: ${p.taskPattern}\n\nType: ${p.procedureType}\nConfidence: ${p.confidence}\n\n## Steps\n\n${p.recipeJson}`;
     writeFileSync(fullPath, content, "utf-8");
     filesWritten++;
-    memLinks.push(`- [[memory/procedures/${fname}]] — ${p.taskPattern.slice(0, 50)}${p.taskPattern.length > 50 ? "…" : ""}`);
+    memLinks.push(
+      `- [[memory/procedures/${fname}]] — ${p.taskPattern.slice(0, 50)}${p.taskPattern.length > 50 ? "…" : ""}`,
+    );
   }
 
   // MEMORY.md root index

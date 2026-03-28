@@ -41,6 +41,7 @@ If you want an agent that feels like it knows you and gets better with use, this
 ## Features
 
 ### Core memory system
+- **Event Bus** — internal append-only SQLite table tracking sensor events and telemetry for the Rumination Engine.
 - **Auto-capture** — automatically extracts preferences, decisions, facts, and entities from conversations
 - **Auto-recall** — injects relevant memories into context each turn (configurable token budget)
 - **Dual backend** — SQLite + FTS5 for fast structured lookups; LanceDB for semantic vector search (RRF merge)
@@ -53,13 +54,14 @@ If you want an agent that feels like it knows you and gets better with use, this
 - **Auto-classify** — background LLM reclassifies facts into proper categories (7 built-in + custom)
 - **Category discovery** — LLM suggests new categories from your data patterns
 - **Retrieval directives** — targeted recall by entity mention, keywords, task type, or session start (config: `autoRecall.retrievalDirectives`)
-- **Query expansion** — optional LLM-expanded query before embedding for better semantic recall (config: `queryExpansion.enabled`; replaces deprecated HyDE options)
+- **Query expansion** — optional LLM-expanded query before embedding for better semantic recall (config: `queryExpansion.enabled`; replaces deprecated HyDE options). Skipped on interactive turns by default (`queryExpansion.skipForInteractiveTurns: true`) to avoid 5–15 s latency spikes; set to `false` to enable on every turn.
 - **Auth failure auto-recall** — reactive memory trigger detects SSH/HTTP/API auth failures and automatically injects credentials ([docs/AUTH-FAILURE-AUTO-RECALL.md](docs/AUTH-FAILURE-AUTO-RECALL.md))
 - **Reflection layer** — synthesizes behavioral patterns and rules from accumulated facts ([docs/REFLECTION.md](docs/REFLECTION.md))
 - **Graph memory** — typed relationships between facts enable zero-LLM recall via graph traversal ([docs/GRAPH-MEMORY.md](docs/GRAPH-MEMORY.md))
 - **Session distillation** — batch-extracts durable facts from old conversation logs ([docs/SESSION-DISTILLATION.md](docs/SESSION-DISTILLATION.md))
 - **Procedural memory** — extracts tool-call procedures from sessions, injects "last time this worked" in recall, auto-generates skills ([docs/PROCEDURAL-MEMORY.md](docs/PROCEDURAL-MEMORY.md))
 - **Workflow crystallization & self-extension** — tool-sequence patterns, skill proposals (`memory_crystallize`), and tool proposals from usage gaps (`memory_propose_tool`); human approval required ([docs/CONFIGURATION.md](docs/CONFIGURATION.md), release notes 2026.3.70)
+- **Sensor Sweep (Event Bus)** — cron-based background data collection (GitHub, HA, System Health) without LLM overhead ([docs/CONFIGURATION.md](docs/CONFIGURATION.md))
 
 ### Reliability
 - **Write-ahead log (WAL)** — crash-resilient memory operations with automatic recovery ([docs/WAL-CRASH-RESILIENCE.md](docs/WAL-CRASH-RESILIENCE.md))
@@ -69,8 +71,10 @@ If you want an agent that feels like it knows you and gets better with use, this
 - **Scope promote** — CLI and cron job promote high-importance session-scoped facts to global ([docs/MEMORY-SCOPING.md](docs/MEMORY-SCOPING.md))
 
 ### Developer experience
+- **Silent mode** — set `verbosity: "silent"` to suppress all unsolicited memory context injections into prompts, working purely in the background.
 - **Full CLI** — commands for stats, search, classify, consolidate, reflect, dream-cycle, scope promote, verify, install, uninstall, and more ([docs/CLI-REFERENCE.md](docs/CLI-REFERENCE.md))
-- **One-command setup** — `openclaw hybrid-mem install` applies recommended config and **9 maintenance cron jobs** (nightly distill, memory-to-skills, self-correction, dream-cycle, weekly reflection, extract-procedures, deep-maintenance, persona-proposals, monthly consolidation)
+- **Mission Control dashboard** — real-time web dashboard at `http://localhost:7700`: memory stats, cron job status, task queue, agent state, GitHub activity, and 7-day LLM cost tracking. Auto-refreshes every 60s. ([docs/CONFIGURATION.md](docs/CONFIGURATION.md#mission-control-dashboard-dashboard))
+- **One-command setup** — `openclaw hybrid-mem install` applies recommended config and **8 maintenance cron jobs** (nightly distill, self-correction, dream-cycle, weekly reflection, extract-procedures, deep-maintenance, persona-proposals, monthly consolidation)
 - **Verify & fix** — `openclaw hybrid-mem verify --fix` diagnoses issues and adds any missing cron jobs
 - **Clean uninstall** — `openclaw hybrid-mem uninstall` reverts to default memory; data kept unless `--clean-all`
 
@@ -113,6 +117,7 @@ See [docs/QUICKSTART.md](docs/QUICKSTART.md) for the full walkthrough.
 
 ## Prerequisites
 
+- **OpenClaw v2026.3.8+** (required) — the plugin enforces this minimum version at startup to ensure CLI subcommands and config reloads work.
 - **Embedding access** (required) — for semantic search (auto-recall, store, ingest). Configure `embedding.apiKey` and `embedding.model` (e.g. `text-embedding-3-small`). The plugin will not load without valid embedding config.
 - **Chat/completion access** (optional for basic memory) — required for distillation, reflection, auto-classify, query expansion, and other LLM-backed features. The plugin can call provider APIs **directly** (recommended: configure the **`llm`** block with `nano` / `default` / `heavy` tiers and per-provider API keys) or use gateway-derived models. See [docs/LLM-AND-PROVIDERS.md](docs/LLM-AND-PROVIDERS.md) for tiers and provider setup.
 
@@ -136,6 +141,7 @@ See [docs/QUICKSTART.md](docs/QUICKSTART.md) for the full walkthrough.
 | Document | Description |
 |----------|-------------|
 | **[ARCHITECTURE.md](docs/ARCHITECTURE.md)** | Four-part hybrid architecture, workspace layout, bootstrap files |
+| **[ARCHITECTURE-CENTER.md](docs/ARCHITECTURE-CENTER.md)** | Architecture anchor: core runtime boundary vs adjacent subsystems |
 | **[CONFIGURATION.md](docs/CONFIGURATION.md)** | Full `openclaw.json` reference |
 | **[LLM-AND-PROVIDERS.md](docs/LLM-AND-PROVIDERS.md)** | Prerequisites, what LLMs are used for, gateway routing, `llm` config |
 | **[FEATURES.md](docs/FEATURES.md)** | Categories, decay, tags, auto-classify, source dates; index of [per-feature docs](docs/FEATURES.md#feature-documentation-by-topic) |
@@ -191,6 +197,18 @@ See [docs/QUICKSTART.md](docs/QUICKSTART.md) for the full walkthrough.
 
 ---
 
+## Development
+
+**Pre-commit formatting:** A pre-commit hook runs [Prettier](https://prettier.io/) on staged `extensions/memory-hybrid/**/*.ts` so CI format checks pass. Run **once** from the repo root:
+
+```bash
+npm install
+```
+
+This installs [husky](https://typicode.github.io/husky/) and [lint-staged](https://github.com/okonet/lint-staged); every `git commit` will format staged TypeScript files before the commit. Plugin code and tests live in `extensions/memory-hybrid/`; run `npm run test`, `npm run lint`, and `npx tsc --noEmit` there.
+
+---
+
 ## Credits & Attribution
 
 ### Clawdboss.ai
@@ -207,4 +225,4 @@ The hierarchical file memory layout (lightweight `MEMORY.md` index + drill-down 
 
 ### What this repo adds
 
-This repo combines both approaches into a **unified system (v3.0)** and adds: auto-capture/recall lifecycle hooks, **memory tiering** (hot/warm/cold) and **multi-agent scoping**, **retrieval directives** and **query expansion** (#160), **LLM re-ranking** (#161), **contextual variants at index time** (#159), **multi-model embedding registry with RRF merge** (#158), **local embedding providers** (Ollama/ONNX, #153), **future-date decay protection** (#144), **episodic event log Layer 1** (#150), **verification store** (#162), **provenance tracing** (#163), **document ingestion** (PDF/DOCX/HTML/images, #206), **workflow crystallization** (skill proposals) and **self-extension** (tool proposals), graph-based spreading activation, reflection layer, session distillation pipeline, WAL crash resilience, auto-classification with category discovery, consolidation, deduplication, credential vault, persona proposals, **scope promote** and 9 maintenance cron jobs, full CLI, verify/fix diagnostics, one-command install, clean uninstall, and upgrade helpers.
+This repo combines both approaches into a **unified system (v3.0)** and adds: auto-capture/recall lifecycle hooks, **memory tiering** (hot/warm/cold) and **multi-agent scoping**, **retrieval directives** and **query expansion** (#160), **LLM re-ranking** (#161), **contextual variants at index time** (#159), **multi-model embedding registry with RRF merge** (#158), **local embedding providers** (Ollama/ONNX, #153), **local LLM session pre-filtering** (#290), **future-date decay protection** (#144), **episodic event log Layer 1** (#150), **verification store** (#162), **provenance tracing** (#163), **document ingestion** (PDF/DOCX/HTML/images, #206), **workflow crystallization** (skill proposals) and **self-extension** (tool proposals), graph-based spreading activation, reflection layer, session distillation pipeline, WAL crash resilience, auto-classification with category discovery, consolidation, deduplication, credential vault, persona proposals, **scope promote** and 9 maintenance cron jobs, full CLI, verify/fix diagnostics, one-command install, clean uninstall, and upgrade helpers.

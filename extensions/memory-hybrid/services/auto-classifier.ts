@@ -5,18 +5,21 @@
  * Includes optional category discovery (grouping by free-form labels).
  */
 
-import type OpenAI from "openai";
-import { dirname } from "node:path";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { dirname } from "node:path";
+import type OpenAI from "openai";
 import type { FactsDB } from "../backends/facts-db.js";
-import { getMemoryCategories, setMemoryCategories, isValidCategory } from "../config.js";
-import { loadPrompt, fillPrompt } from "../utils/prompt-loader.js";
+import { getMemoryCategories, isValidCategory, setMemoryCategories } from "../config.js";
+import { fillPrompt, loadPrompt } from "../utils/prompt-loader.js";
+import { is404Like, is500Like, isConnectionErrorLike, isOllamaOOM } from "./chat.js";
 import { capturePluginError } from "./error-reporter.js";
 
 /** Minimum "other" facts before category discovery kicks in. */
 const MIN_OTHER_FOR_DISCOVERY = 15;
 /** Batch size for discovery prompts (leave room for JSON array of labels). */
 const DISCOVERY_BATCH_SIZE = 25;
+/** Default cooldown between discovery runs in hours. */
+const DEFAULT_DISCOVERY_INTERVAL_HOURS = 72;
 
 /**
  * Normalize a free-form label to a valid category slug: lowercase, alphanumeric + underscore.
@@ -34,6 +37,43 @@ function normalizeSuggestedLabel(s: string): string {
 }
 
 /**
+ * Derive the sidecar path for last-discovery timestamp from the categories file path.
+ * Exported for testing.
+ */
+export function getLastDiscoveryPath(discoveredCategoriesPath: string): string {
+  return `${discoveredCategoriesPath.replace(/\.json$/i, "")}.last-run.json`;
+}
+
+/**
+ * Read the last-discovery timestamp from the sidecar file.
+ * Returns null if the file doesn't exist or is malformed.
+ */
+async function readLastDiscoveryTimestamp(lastRunPath: string): Promise<number | null> {
+  try {
+    const raw = await readFile(lastRunPath, "utf-8");
+    const parsed: unknown = JSON.parse(raw);
+    if (
+      typeof parsed === "object" &&
+      parsed !== null &&
+      typeof (parsed as Record<string, unknown>).lastRunAt === "number"
+    ) {
+      return (parsed as { lastRunAt: number }).lastRunAt;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Write the last-discovery timestamp to the sidecar file.
+ */
+async function writeLastDiscoveryTimestamp(lastRunPath: string, timestampMs: number): Promise<void> {
+  await mkdir(dirname(lastRunPath), { recursive: true });
+  await writeFile(lastRunPath, JSON.stringify({ lastRunAt: timestampMs }, null, 2), "utf-8");
+}
+
+/**
  * Ask the LLM to group "other" facts by topic (free-form labels). Labels with at least
  * minFactsForNewCategory facts become new categories; we do not tell the LLM the threshold.
  * Returns list of newly created category names; updates DB and persists to discoveredCategoriesPath.
@@ -41,7 +81,13 @@ function normalizeSuggestedLabel(s: string): string {
 async function discoverCategoriesFromOther(
   factsDb: FactsDB,
   openai: OpenAI,
-  config: { model: string; batchSize: number; suggestCategories?: boolean; minFactsForNewCategory?: number },
+  config: {
+    model: string;
+    batchSize: number;
+    suggestCategories?: boolean;
+    minFactsForNewCategory?: number;
+    discoveryIntervalHours?: number;
+  },
   logger: { info: (msg: string) => void; warn: (msg: string) => void },
   discoveredCategoriesPath: string,
 ): Promise<string[]> {
@@ -50,10 +96,29 @@ async function discoverCategoriesFromOther(
   const others = factsDb.getByCategory("other");
   if (others.length < MIN_OTHER_FOR_DISCOVERY) return [];
 
+  // Cooldown check: skip LLM if last discovery ran within discoveryIntervalHours
+  const intervalHours = config.discoveryIntervalHours ?? DEFAULT_DISCOVERY_INTERVAL_HOURS;
+  if (intervalHours > 0) {
+    const lastRunPath = getLastDiscoveryPath(discoveredCategoriesPath);
+    const lastRunAt = await readLastDiscoveryTimestamp(lastRunPath);
+    if (lastRunAt !== null) {
+      const elapsedMs = Date.now() - lastRunAt;
+      const intervalMs = intervalHours * 60 * 60 * 1000;
+      if (elapsedMs < intervalMs) {
+        const remainingHours = ((intervalMs - elapsedMs) / (60 * 60 * 1000)).toFixed(1);
+        logger.info(
+          `memory-hybrid: category discovery skipped — last run ${(elapsedMs / (60 * 60 * 1000)).toFixed(1)}h ago, cooldown ${intervalHours}h (${remainingHours}h remaining)`,
+        );
+        return [];
+      }
+    }
+  }
+
   logger.info(`memory-hybrid: category discovery on ${others.length} "other" facts (min ${minForNew} per label)`);
 
   const existingCategories = new Set(getMemoryCategories());
   const labelToIds = new Map<string, string[]>();
+  let anyBatchSucceeded = false;
 
   for (let i = 0; i < others.length; i += DISCOVERY_BATCH_SIZE) {
     const batch = others.slice(i, i + DISCOVERY_BATCH_SIZE);
@@ -63,30 +128,42 @@ async function discoverCategoriesFromOther(
     try {
       const { withLLMRetry } = await import("./chat.js");
       const resp = await withLLMRetry(
-        () => openai.chat.completions.create({
-          model: config.model,
-          messages: [{ role: "user", content: prompt }],
-          temperature: 0,
-          max_tokens: batch.length * 24,
-        }),
-        { maxRetries: 2 }
+        () =>
+          openai.chat.completions.create({
+            model: config.model,
+            messages: [{ role: "user", content: prompt }],
+            temperature: 0,
+            max_tokens: batch.length * 24,
+          }),
+        { maxRetries: 2 },
       );
       const content = resp.choices[0]?.message?.content?.trim() || "[]";
       const jsonMatch = content.match(/\[[\s\S]*\]/);
       if (!jsonMatch) continue;
       const labels: unknown[] = JSON.parse(jsonMatch[0]);
+      anyBatchSucceeded = true;
       for (let j = 0; j < Math.min(labels.length, batch.length); j++) {
         const raw = typeof labels[j] === "string" ? (labels[j] as string) : "";
         const label = normalizeSuggestedLabel(raw);
         if (!label) continue;
         if (!labelToIds.has(label)) labelToIds.set(label, []);
-        labelToIds.get(label)!.push(batch[j].id);
+        labelToIds.get(label)?.push(batch[j].id);
       }
     } catch (err) {
-      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-        subsystem: "auto-classifier",
-        operation: "category-discovery-batch",
-      });
+      const discErr = err instanceof Error ? err : new Error(String(err));
+      // Suppress GlitchTip for transient/expected LLM failures (OOM, 5xx, 404, timeout).
+      const isTransient =
+        isOllamaOOM(discErr) ||
+        is500Like(discErr) ||
+        is404Like(discErr) ||
+        /timed out|llm request timeout|request was aborted/i.test(discErr.message) ||
+        isConnectionErrorLike(discErr);
+      if (!isTransient) {
+        capturePluginError(discErr, {
+          subsystem: "auto-classifier",
+          operation: "category-discovery-batch",
+        });
+      }
       logger.warn(`memory-hybrid: category discovery batch failed: ${err}`);
     }
     if (i + DISCOVERY_BATCH_SIZE < others.length) await new Promise((r) => setTimeout(r, 400));
@@ -100,10 +177,20 @@ async function discoverCategoriesFromOther(
     for (const id of ids) factsDb.updateCategory(id, label);
   }
 
+  // Write last-run timestamp only if at least one batch succeeded (even if no new categories were created).
+  // This prevents the LLM from firing again on the next cron tick when categories are settled.
+  // If all batches failed, don't write the timestamp so discovery is retried on the next run.
+  if (intervalHours > 0 && anyBatchSucceeded) {
+    const lastRunPath = getLastDiscoveryPath(discoveredCategoriesPath);
+    await writeLastDiscoveryTimestamp(lastRunPath, Date.now());
+  }
+
   if (newCategoryNames.length === 0) return [];
 
   setMemoryCategories([...getMemoryCategories(), ...newCategoryNames]);
-  logger.info(`memory-hybrid: discovered ${newCategoryNames.length} new categories: ${newCategoryNames.join(", ")} (${newCategoryNames.reduce((acc, c) => acc + (labelToIds.get(c)?.length ?? 0), 0)} facts reclassified)`);
+  logger.info(
+    `memory-hybrid: discovered ${newCategoryNames.length} new categories: ${newCategoryNames.join(", ")} (${newCategoryNames.reduce((acc, c) => acc + (labelToIds.get(c)?.length ?? 0), 0)} facts reclassified)`,
+  );
 
   await mkdir(dirname(discoveredCategoriesPath), { recursive: true });
   let existingList: string[] = [];
@@ -111,9 +198,9 @@ async function discoverCategoriesFromOther(
     existingList = JSON.parse(await readFile(discoveredCategoriesPath, "utf-8")) as string[];
   } catch (err) {
     capturePluginError(err as Error, {
-      operation: 'read-discovered-categories',
-      severity: 'info',
-      subsystem: 'classifier'
+      operation: "read-discovered-categories",
+      severity: "info",
+      subsystem: "classifier",
     });
     // file doesn't exist yet
   }
@@ -134,9 +221,7 @@ async function classifyBatch(
   categories: readonly string[],
 ): Promise<Map<string, string>> {
   const catList = categories.filter((c) => c !== "other").join(", ");
-  const factLines = facts
-    .map((f, i) => `${i + 1}. ${f.text.slice(0, 300)}`)
-    .join("\n");
+  const factLines = facts.map((f, i) => `${i + 1}. ${f.text.slice(0, 300)}`).join("\n");
 
   const prompt = `You are a memory classifier. Categorize each fact into exactly one category.
 
@@ -151,13 +236,14 @@ Respond with ONLY a JSON array of category strings, one per fact, in order. Exam
   try {
     const { withLLMRetry } = await import("./chat.js");
     const resp = await withLLMRetry(
-      () => openai.chat.completions.create({
-        model,
-        messages: [{ role: "user", content: prompt }],
-        temperature: 0,
-        max_tokens: facts.length * 20,
-      }),
-      { maxRetries: 2 }
+      () =>
+        openai.chat.completions.create({
+          model,
+          messages: [{ role: "user", content: prompt }],
+          temperature: 0,
+          max_tokens: facts.length * 20,
+        }),
+      { maxRetries: 2 },
     );
 
     const content = resp.choices[0]?.message?.content?.trim() || "[]";
@@ -176,11 +262,22 @@ Respond with ONLY a JSON array of category strings, one per fact, in order. Exam
     }
     return map;
   } catch (err) {
-    capturePluginError(err as Error, {
-      operation: 'classify-batch',
-      severity: 'info',
-      subsystem: 'classifier'
-    });
+    const classifyErr = err instanceof Error ? err : new Error(String(err));
+    // Suppress GlitchTip for transient/expected LLM failures (OOM, 5xx, 404, timeout).
+    // OOM: Ollama model too large for available RAM — not a bug, degrade gracefully.
+    const isTransient =
+      isOllamaOOM(classifyErr) ||
+      is500Like(classifyErr) ||
+      is404Like(classifyErr) ||
+      /timed out|llm request timeout|request was aborted/i.test(classifyErr.message) ||
+      isConnectionErrorLike(classifyErr);
+    if (!isTransient) {
+      capturePluginError(classifyErr, {
+        operation: "classify-batch",
+        severity: "info",
+        subsystem: "classifier",
+      });
+    }
     return new Map();
   }
 }
@@ -215,7 +312,7 @@ function createProgressReporter(
       const dots = Math.max(0, width - filled - arrow);
       const bar = "=".repeat(filled) + ">".repeat(arrow) + ".".repeat(dots);
       const line = `${label}: ${pct}% [${bar}] ${current}/${total}${extra ? ` (${extra})` : ""}`;
-      process.stdout.write("\r" + line + " ".repeat(Math.max(0, lastLen - line.length)));
+      process.stdout.write(`\r${line}${" ".repeat(Math.max(0, lastLen - line.length))}`);
       lastLen = line.length;
     },
     done() {
@@ -231,7 +328,13 @@ function createProgressReporter(
 async function runClassifyForCli(
   factsDb: FactsDB,
   openai: OpenAI,
-  config: { model?: string; batchSize: number; suggestCategories?: boolean; minFactsForNewCategory?: number },
+  config: {
+    model?: string;
+    batchSize: number;
+    suggestCategories?: boolean;
+    minFactsForNewCategory?: number;
+    discoveryIntervalHours?: number;
+  },
   opts: { dryRun: boolean; limit: number; model?: string },
   discoveredPath: string,
   logger: { info: (msg: string) => void; warn: (msg: string) => void },
@@ -252,14 +355,15 @@ async function runClassifyForCli(
   }
 
   const numBatches = Math.ceil(others.length / config.batchSize);
-  if (!progressReporter && numBatches > 0) {
-    const sink = { log: (m: string) => logger.info(m) };
-    progressReporter = createProgressReporter(sink, numBatches, "Classifying");
-  }
+  const reporter =
+    progressReporter ??
+    (numBatches > 0
+      ? createProgressReporter({ log: (m: string) => logger.info(m) }, numBatches, "Classifying")
+      : undefined);
   let totalReclassified = 0;
   let batchIndex = 0;
   for (let i = 0; i < others.length; i += config.batchSize) {
-    progressReporter?.update(batchIndex + 1);
+    reporter?.update(batchIndex + 1);
     const batch = others.slice(i, i + config.batchSize).map((e) => ({ id: e.id, text: e.text }));
     const results = await classifyBatch(openai, classifyModel, batch, categories);
     for (const [id, newCat] of results) {
@@ -269,7 +373,7 @@ async function runClassifyForCli(
     batchIndex++;
     if (i + config.batchSize < others.length) await new Promise((r) => setTimeout(r, 500));
   }
-  progressReporter?.done();
+  reporter?.done();
 
   const breakdown = !opts.dryRun ? factsDb.statsBreakdown() : undefined;
   return { reclassified: totalReclassified, total: others.length, breakdown };
@@ -284,13 +388,21 @@ async function runClassifyForCli(
 async function runAutoClassify(
   factsDb: FactsDB,
   openai: OpenAI,
-  config: { model?: string; batchSize: number; suggestCategories?: boolean; minFactsForNewCategory?: number },
+  config: {
+    model?: string;
+    batchSize: number;
+    suggestCategories?: boolean;
+    minFactsForNewCategory?: number;
+    discoveryIntervalHours?: number;
+  },
   logger: { info: (msg: string) => void; warn: (msg: string) => void },
   opts?: { discoveredCategoriesPath?: string; model?: string },
 ): Promise<{ reclassified: number; suggested: string[] }> {
   const model = opts?.model ?? config.model;
   if (!model) {
-    throw new Error("auto-classify model required: set autoClassify.model or pass opts.model (e.g. from getDefaultCronModel)");
+    throw new Error(
+      "auto-classify model required: set autoClassify.model or pass opts.model (e.g. from getDefaultCronModel)",
+    );
   }
   const configWithModel = { ...config, model };
   const categories = getMemoryCategories();
@@ -338,9 +450,4 @@ async function runAutoClassify(
 // Exports
 // ============================================================================
 
-export {
-  runAutoClassify,
-  runClassifyForCli,
-  normalizeSuggestedLabel,
-  type ClassifyProgressReporter,
-};
+export { runAutoClassify, runClassifyForCli, normalizeSuggestedLabel, type ClassifyProgressReporter };

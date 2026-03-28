@@ -1,0 +1,31 @@
+name: Stale
+
+on:
+  schedule:
+    - cron: "0 4 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  issues: write
+  pull-requests: write
+
+jobs:
+  stale:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/stale@v9
+        with:
+          days-before-issue-stale: 14
+          days-before-issue-close: 7
+          days-before-pr-stale: 7
+          days-before-pr-close: 5
+          stale-issue-label: stale
+          stale-pr-label: stale
+          exempt-issue-labels: "milestone-d,autonomous,bug"
+          exempt-pr-labels: "dependencies"
+          stale-issue-message: "This issue has been inactive for 14 days and will be closed in 7 days unless there's activity."
+          stale-pr-message: "This PR has been inactive for 7 days and will be closed in 5 days unless there's activity."

@@ -3,10 +3,12 @@
  * Append-only NDJSON format; fsync after each write for durability.
  */
 
-import { mkdirSync, existsSync, readFileSync, rmSync, writeFileSync, appendFileSync, openSync, fsyncSync, closeSync } from "node:fs";
+import { mkdirSync } from "node:fs";
+import { appendFile, open, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import type { DecayClass } from "../config.js";
 import { capturePluginError } from "../services/error-reporter.js";
+import { pluginLogger } from "../utils/logger.js";
 
 export type WALEntry = {
   id: string;
@@ -43,39 +45,109 @@ export function isWalEntry(obj: unknown): obj is WALEntry {
 export class WriteAheadLog {
   private walPath: string;
   private maxAge: number;
+  private fsyncWarnEmitted = false;
+  private writeLock: Promise<void> = Promise.resolve();
+  private activeIds = new Set<string>();
+  private initPromise: Promise<void> | null = null;
 
   constructor(walPath: string, maxAge: number = 5 * 60 * 1000) {
     this.walPath = walPath;
     this.maxAge = maxAge;
+    // mkdirSync is acceptable here — constructor runs once at startup, not on the hot path.
     mkdirSync(dirname(walPath), { recursive: true });
   }
 
-  private fsyncAfterWrite(): void {
-    const fd = openSync(this.walPath, "r");
-    try {
-      fsyncSync(fd);
-    } finally {
-      closeSync(fd);
+  async init(): Promise<void> {
+    if (this.initPromise) {
+      return this.initPromise;
+    }
+    this.initPromise = (async () => {
+      const prevLock = this.writeLock;
+      let releaseLock: () => void;
+      this.writeLock = new Promise((resolve) => {
+        releaseLock = resolve;
+      });
+
+      try {
+        await prevLock;
+        const entries = await this.readAll();
+        this.activeIds = new Set(entries.map((e) => e.id));
+      } catch {
+        this.activeIds = new Set();
+      } finally {
+        releaseLock!();
+      }
+    })();
+    return this.initPromise;
+  }
+
+  private async ensureInitialized(): Promise<void> {
+    if (!this.initPromise) {
+      await this.init();
+    } else {
+      await this.initPromise;
     }
   }
 
-  write(entry: WALEntry): void {
+  private async fsyncAfterWrite(): Promise<void> {
+    let fh: Awaited<ReturnType<typeof open>> | undefined;
     try {
-      const line = JSON.stringify(entry) + "\n";
-      appendFileSync(this.walPath, line, "utf-8");
-      this.fsyncAfterWrite();
+      fh = await open(this.walPath, "r");
+      await fh.datasync();
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code === "EPERM" || code === "EINVAL") {
+        // Some filesystems (e.g. NTFS via WSL2) do not support fsync on a
+        // read-only file descriptor.  The data has already been written by
+        // appendFile / writeFile; skipping fsync here is safe and the
+        // durability guarantee degrades to best-effort on those filesystems.
+        if (!this.fsyncWarnEmitted) {
+          pluginLogger.warn(
+            `[WAL] fsync skipped (${code}): filesystem may not support fsync – durability is best-effort`,
+          );
+          this.fsyncWarnEmitted = true;
+        }
+      } else {
+        throw err;
+      }
+    } finally {
+      await fh?.close();
+    }
+  }
+
+  async write(entry: WALEntry): Promise<void> {
+    const prevLock = this.writeLock;
+    let releaseLock: () => void;
+    this.writeLock = new Promise((resolve) => {
+      releaseLock = resolve;
+    });
+
+    try {
+      await prevLock;
+      const line = `${JSON.stringify(entry)}\n`;
+      await appendFile(this.walPath, line, "utf-8");
+      this.activeIds.add(entry.id);
+      await this.fsyncAfterWrite();
     } catch (err) {
       capturePluginError(err as Error, {
-        operation: 'wal-write',
-        subsystem: 'wal'
+        operation: "wal-write",
+        subsystem: "wal",
       });
       throw new Error(`WAL write failed: ${err}`);
+    } finally {
+      releaseLock!();
     }
   }
 
-  readAll(): WALEntry[] {
-    if (!existsSync(this.walPath)) return [];
-    const content = readFileSync(this.walPath, "utf-8").trim();
+  async readAll(): Promise<WALEntry[]> {
+    let rawContent: string;
+    try {
+      rawContent = await readFile(this.walPath, "utf-8");
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") return [];
+      throw err;
+    }
+    const content = rawContent.trim();
     if (!content) return [];
 
     // Backward-compat: support full-file JSON array format if present.
@@ -85,12 +157,14 @@ export class WriteAheadLog {
         return Array.isArray(entries) ? entries : [];
       } catch (err) {
         capturePluginError(err as Error, {
-          operation: 'wal-parse-array',
-          severity: 'info',
-          subsystem: 'wal'
+          operation: "wal-parse-array",
+          severity: "info",
+          subsystem: "wal",
         });
         // Fall back to NDJSON parsing if the array is corrupted.
-        console.warn(`WAL readAll: failed to parse JSON array format, falling back to line-by-line parsing: ${err}`);
+        pluginLogger.warn(
+          `WAL readAll: failed to parse JSON array format, falling back to line-by-line parsing: ${err}`,
+        );
       }
     }
 
@@ -103,11 +177,11 @@ export class WriteAheadLog {
         if (obj.op === "remove" && obj.id) removedIds.add(obj.id);
       } catch (err) {
         capturePluginError(err as Error, {
-          operation: 'wal-parse-remove',
-          severity: 'info',
-          subsystem: 'wal'
+          operation: "wal-parse-remove",
+          severity: "info",
+          subsystem: "wal",
         });
-        console.warn(`WAL readAll: failed to parse remove line, skipping: ${err}`);
+        pluginLogger.warn(`WAL readAll: failed to parse remove line, skipping: ${err}`);
       }
     }
 
@@ -120,65 +194,109 @@ export class WriteAheadLog {
         if (isWalEntry(obj) && !removedIds.has(obj.id)) entries.push(obj);
       } catch (err) {
         capturePluginError(err as Error, {
-          operation: 'wal-parse-entry',
-          severity: 'info',
-          subsystem: 'wal'
+          operation: "wal-parse-entry",
+          severity: "info",
+          subsystem: "wal",
         });
-        console.warn(`WAL readAll: failed to parse WAL entry line, skipping: ${err}`);
+        pluginLogger.warn(`WAL readAll: failed to parse WAL entry line, skipping: ${err}`);
       }
     }
 
     return entries;
   }
 
-  remove(id: string): void {
+  async remove(id: string): Promise<void> {
+    await this.ensureInitialized();
+    const prevLock = this.writeLock;
+    let releaseLock: () => void;
+    this.writeLock = new Promise((resolve) => {
+      releaseLock = resolve;
+    });
+
     try {
-      const line = JSON.stringify({ op: "remove", id }) + "\n";
-      appendFileSync(this.walPath, line, "utf-8");
-      this.fsyncAfterWrite();
-      if (this.readAll().length === 0) this.clear();
+      await prevLock;
+      const line = `${JSON.stringify({ op: "remove", id })}\n`;
+      await appendFile(this.walPath, line, "utf-8");
+      this.activeIds.delete(id);
+      await this.fsyncAfterWrite();
+      if (this.activeIds.size === 0) {
+        await this._clearInternal();
+      }
     } catch (err) {
       capturePluginError(err as Error, {
-        operation: 'wal-remove',
-        subsystem: 'wal'
+        operation: "wal-remove",
+        subsystem: "wal",
       });
       throw new Error(`WAL remove failed: ${err}`);
+    } finally {
+      releaseLock!();
     }
   }
 
-  clear(): void {
+  private async _clearInternal(): Promise<void> {
     try {
-      if (existsSync(this.walPath)) rmSync(this.walPath, { force: true });
+      await rm(this.walPath, { force: true });
+      this.activeIds.clear();
     } catch (err) {
       capturePluginError(err as Error, {
-        operation: 'wal-clear',
-        subsystem: 'wal'
+        operation: "wal-clear",
+        subsystem: "wal",
       });
       throw new Error(`WAL clear failed: ${err}`);
     }
   }
 
-  getValidEntries(): WALEntry[] {
-    const entries = this.readAll();
+  async clear(): Promise<void> {
+    const prevLock = this.writeLock;
+    let releaseLock: () => void;
+    this.writeLock = new Promise((resolve) => {
+      releaseLock = resolve;
+    });
+
+    try {
+      await prevLock;
+      await this._clearInternal();
+    } finally {
+      releaseLock!();
+    }
+  }
+
+  async getValidEntries(): Promise<WALEntry[]> {
+    const entries = await this.readAll();
     const now = Date.now();
     return entries.filter((e) => now - e.timestamp < this.maxAge);
   }
 
-  pruneStale(): number {
-    const entries = this.readAll();
-    const now = Date.now();
-    const valid = entries.filter((e) => now - e.timestamp < this.maxAge);
-    const pruned = entries.length - valid.length;
+  async pruneStale(): Promise<number> {
+    const prevLock = this.writeLock;
+    let releaseLock: () => void;
+    this.writeLock = new Promise((resolve) => {
+      releaseLock = resolve;
+    });
 
-    if (pruned > 0) {
-      if (valid.length === 0) {
-        this.clear();
-      } else {
-        const ndjson = valid.map((e) => JSON.stringify(e)).join("\n") + (valid.length ? "\n" : "");
-        writeFileSync(this.walPath, ndjson, "utf-8");
-        this.fsyncAfterWrite();
+    try {
+      await prevLock;
+      const entries = await this.readAll();
+      const now = Date.now();
+      const valid = entries.filter((e) => now - e.timestamp < this.maxAge);
+      const pruned = entries.length - valid.length;
+
+      if (pruned > 0) {
+        if (valid.length === 0) {
+          await this._clearInternal();
+        } else {
+          const ndjson = valid.map((e) => JSON.stringify(e)).join("\n") + (valid.length ? "\n" : "");
+          await writeFile(this.walPath, ndjson, "utf-8");
+          await this.fsyncAfterWrite();
+          this.activeIds.clear();
+          for (const e of valid) {
+            this.activeIds.add(e.id);
+          }
+        }
       }
+      return pruned;
+    } finally {
+      releaseLock!();
     }
-    return pruned;
   }
 }

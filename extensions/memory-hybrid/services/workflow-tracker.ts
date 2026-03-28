@@ -9,42 +9,18 @@
  *   5. Inspect: `tracker.getBuffer()` to see buffered tool names
  *
  * Privacy: only tool *names* are stored; argument values are never persisted.
- * Rate limiting: enforced per UTC calendar day across all sessions.
+ * Rate limiting: enforced per UTC calendar day, scoped to the instance.
  */
 
-import { capturePluginError } from "./error-reporter.js";
 import type { WorkflowStore } from "../backends/workflow-store.js";
 import { extractGoalKeywords } from "../backends/workflow-store.js";
 import type { WorkflowTrackingConfig } from "../config/types/features.js";
+import { capturePluginError } from "./error-reporter.js";
 
 export interface SessionBuffer {
   sessionId: string;
   toolCalls: string[];
   startedAt: number;
-}
-
-// ---------------------------------------------------------------------------
-// Simple in-memory rate-limiter: count traces persisted per UTC day
-// ---------------------------------------------------------------------------
-
-let currentDay = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
-let todayCount = 0;
-
-function checkAndIncrementRateLimit(maxPerDay: number): boolean {
-  const today = new Date().toISOString().slice(0, 10);
-  if (today !== currentDay) {
-    currentDay = today;
-    todayCount = 0;
-  }
-  if (todayCount >= maxPerDay) return false;
-  todayCount++;
-  return true;
-}
-
-/** Exported for tests only */
-export function _resetRateLimitForTest(): void {
-  currentDay = new Date().toISOString().slice(0, 10);
-  todayCount = 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -54,20 +30,41 @@ export function _resetRateLimitForTest(): void {
 export class WorkflowTracker {
   private sessions = new Map<string, SessionBuffer>();
 
+  // Instance-level rate-limit state (not module-global)
+  private rateLimitDay: string;
+  private rateLimitCount = 0;
+
   constructor(
     private readonly store: WorkflowStore,
     private readonly cfg: WorkflowTrackingConfig,
-  ) {}
+    private readonly clock: () => Date = () => new Date(),
+  ) {
+    this.rateLimitDay = this.clock().toISOString().slice(0, 10);
+  }
+
+  private checkAndIncrementRateLimit(): boolean {
+    const today = this.clock().toISOString().slice(0, 10);
+    if (today !== this.rateLimitDay) {
+      this.rateLimitDay = today;
+      this.rateLimitCount = 0;
+    }
+    if (this.rateLimitCount >= this.cfg.maxTracesPerDay) return false;
+    this.rateLimitCount++;
+    return true;
+  }
 
   /**
    * Push a tool name onto the given session's buffer.
    * No-op when tracking is disabled.
+   * @param sessionId - The session identifier
+   * @param toolName - The tool name to record
+   * @param startTime - Optional start time in milliseconds; if provided on first push, used as startedAt
    */
-  push(sessionId: string, toolName: string): void {
+  push(sessionId: string, toolName: string, startTime?: number): void {
     if (!this.cfg.enabled) return;
     let buf = this.sessions.get(sessionId);
     if (!buf) {
-      buf = { sessionId, toolCalls: [], startedAt: Date.now() };
+      buf = { sessionId, toolCalls: [], startedAt: startTime ?? this.clock().getTime() };
       this.sessions.set(sessionId, buf);
     }
     buf.toolCalls.push(toolName);
@@ -77,11 +74,7 @@ export class WorkflowTracker {
    * Flush the session buffer to persistent storage.
    * Returns the recorded trace id or null if nothing was recorded.
    */
-  flush(
-    sessionId: string,
-    goal: string,
-    outcome: "success" | "failure" | "unknown" = "unknown",
-  ): string | null {
+  flush(sessionId: string, goal: string, outcome: "success" | "failure" | "unknown" = "unknown"): string | null {
     if (!this.cfg.enabled) return null;
     const buf = this.sessions.get(sessionId);
     if (!buf || buf.toolCalls.length === 0) {
@@ -90,12 +83,12 @@ export class WorkflowTracker {
     }
 
     // Rate limit
-    if (!checkAndIncrementRateLimit(this.cfg.maxTracesPerDay)) {
+    if (!this.checkAndIncrementRateLimit()) {
       this.sessions.delete(sessionId);
       return null;
     }
 
-    const durationMs = Date.now() - buf.startedAt;
+    const durationMs = this.clock().getTime() - buf.startedAt;
     const goalKeywords = extractGoalKeywords(goal);
 
     try {

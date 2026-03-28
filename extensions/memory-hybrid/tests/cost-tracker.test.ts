@@ -1,14 +1,14 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import Database from "better-sqlite3";
+import { DatabaseSync } from "node:sqlite";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { CostTracker } from "../backends/cost-tracker.js";
-import { withCostFeature, getCurrentCostFeature } from "../services/cost-context.js";
+import { getCurrentCostFeature, withCostFeature } from "../services/cost-context.js";
 
-function createInMemoryDb(): Database.Database {
-  return new Database(":memory:");
+function createInMemoryDb(): DatabaseSync {
+  return new DatabaseSync(":memory:");
 }
 
 describe("CostTracker", () => {
-  let db: Database.Database;
+  let db: DatabaseSync;
   let tracker: CostTracker;
 
   beforeEach(() => {
@@ -45,7 +45,7 @@ describe("CostTracker", () => {
       });
       const row = db.prepare("SELECT estimated_cost_usd FROM llm_cost_log").get() as { estimated_cost_usd: number };
       // $0.10 + $0.40 = $0.50
-      expect(row.estimated_cost_usd).toBeCloseTo(0.50, 4);
+      expect(row.estimated_cost_usd).toBeCloseTo(0.5, 4);
     });
 
     it("records null estimated_cost_usd for unknown model", () => {
@@ -55,7 +55,9 @@ describe("CostTracker", () => {
         inputTokens: 100,
         outputTokens: 50,
       });
-      const row = db.prepare("SELECT estimated_cost_usd FROM llm_cost_log").get() as { estimated_cost_usd: number | null };
+      const row = db.prepare("SELECT estimated_cost_usd FROM llm_cost_log").get() as {
+        estimated_cost_usd: number | null;
+      };
       expect(row.estimated_cost_usd).toBeNull();
     });
 
@@ -67,7 +69,9 @@ describe("CostTracker", () => {
         outputTokens: 0,
         success: false,
       });
-      const row = db.prepare("SELECT success FROM llm_cost_log").get() as { success: number };
+      const row = db.prepare("SELECT success FROM llm_cost_log").get() as {
+        success: number;
+      };
       expect(row.success).toBe(0);
     });
 
@@ -79,7 +83,9 @@ describe("CostTracker", () => {
         outputTokens: 200,
         durationMs: 1500,
       });
-      const row = db.prepare("SELECT duration_ms FROM llm_cost_log").get() as { duration_ms: number };
+      const row = db.prepare("SELECT duration_ms FROM llm_cost_log").get() as {
+        duration_ms: number;
+      };
       expect(row.duration_ms).toBe(1500);
     });
   });
@@ -88,24 +94,44 @@ describe("CostTracker", () => {
     it("returns features aggregated by feature name", () => {
       // Insert several records
       for (let i = 0; i < 5; i++) {
-        tracker.record({ feature: "auto-classify", model: "openai/gpt-4.1-nano", inputTokens: 1000, outputTokens: 200 });
+        tracker.record({
+          feature: "auto-classify",
+          model: "openai/gpt-4.1-nano",
+          inputTokens: 1000,
+          outputTokens: 200,
+        });
       }
       for (let i = 0; i < 3; i++) {
-        tracker.record({ feature: "query-expansion", model: "openai/gpt-4.1-nano", inputTokens: 500, outputTokens: 100 });
+        tracker.record({
+          feature: "query-expansion",
+          model: "openai/gpt-4.1-nano",
+          inputTokens: 500,
+          outputTokens: 100,
+        });
       }
 
       const report = tracker.getReport({ days: 1 });
       expect(report.features.length).toBe(2);
       const classifyFeature = report.features.find((f) => f.feature === "auto-classify");
       expect(classifyFeature).toBeDefined();
-      expect(classifyFeature!.calls).toBe(5);
-      expect(classifyFeature!.inputTokens).toBe(5000);
-      expect(classifyFeature!.outputTokens).toBe(1000);
+      expect(classifyFeature?.calls).toBe(5);
+      expect(classifyFeature?.inputTokens).toBe(5000);
+      expect(classifyFeature?.outputTokens).toBe(1000);
     });
 
     it("computes correct totals", () => {
-      tracker.record({ feature: "auto-classify", model: "openai/gpt-4.1-nano", inputTokens: 1000, outputTokens: 200 });
-      tracker.record({ feature: "query-expansion", model: "openai/gpt-4.1-nano", inputTokens: 500, outputTokens: 100 });
+      tracker.record({
+        feature: "auto-classify",
+        model: "openai/gpt-4.1-nano",
+        inputTokens: 1000,
+        outputTokens: 200,
+      });
+      tracker.record({
+        feature: "query-expansion",
+        model: "openai/gpt-4.1-nano",
+        inputTokens: 500,
+        outputTokens: 100,
+      });
 
       const report = tracker.getReport({ days: 1 });
       expect(report.total.calls).toBe(2);
@@ -114,16 +140,31 @@ describe("CostTracker", () => {
     });
 
     it("filters by feature when specified", () => {
-      tracker.record({ feature: "auto-classify", model: "openai/gpt-4.1-nano", inputTokens: 1000, outputTokens: 200 });
-      tracker.record({ feature: "query-expansion", model: "openai/gpt-4.1-nano", inputTokens: 500, outputTokens: 100 });
+      tracker.record({
+        feature: "auto-classify",
+        model: "openai/gpt-4.1-nano",
+        inputTokens: 1000,
+        outputTokens: 200,
+      });
+      tracker.record({
+        feature: "query-expansion",
+        model: "openai/gpt-4.1-nano",
+        inputTokens: 500,
+        outputTokens: 100,
+      });
 
       const report = tracker.getReport({ days: 1, feature: "auto-classify" });
       expect(report.features.length).toBe(1);
-      expect(report.features[0]!.feature).toBe("auto-classify");
+      expect(report.features[0]?.feature).toBe("auto-classify");
     });
 
     it("returns empty report when no data in window", () => {
-      tracker.record({ feature: "auto-classify", model: "openai/gpt-4.1-nano", inputTokens: 1000, outputTokens: 200 });
+      tracker.record({
+        feature: "auto-classify",
+        model: "openai/gpt-4.1-nano",
+        inputTokens: 1000,
+        outputTokens: 200,
+      });
 
       // Set cutoff in the future — no records should match (days=0 means timestamp >= now)
       // Actually days=0 means cutoff is right now, so recent records might fall within it.
@@ -137,22 +178,47 @@ describe("CostTracker", () => {
 
   describe("getModelBreakdown()", () => {
     it("aggregates by model", () => {
-      tracker.record({ feature: "auto-classify", model: "openai/gpt-4.1-nano", inputTokens: 1000, outputTokens: 200 });
-      tracker.record({ feature: "query-expansion", model: "openai/gpt-4.1-nano", inputTokens: 500, outputTokens: 100 });
-      tracker.record({ feature: "reflection", model: "openai/gpt-4o", inputTokens: 5000, outputTokens: 1000 });
+      tracker.record({
+        feature: "auto-classify",
+        model: "openai/gpt-4.1-nano",
+        inputTokens: 1000,
+        outputTokens: 200,
+      });
+      tracker.record({
+        feature: "query-expansion",
+        model: "openai/gpt-4.1-nano",
+        inputTokens: 500,
+        outputTokens: 100,
+      });
+      tracker.record({
+        feature: "reflection",
+        model: "openai/gpt-4o",
+        inputTokens: 5000,
+        outputTokens: 1000,
+      });
 
       const breakdown = tracker.getModelBreakdown(1);
       expect(breakdown.length).toBe(2);
       const nanoRow = breakdown.find((b) => b.model === "openai/gpt-4.1-nano");
       expect(nanoRow).toBeDefined();
-      expect(nanoRow!.calls).toBe(2);
+      expect(nanoRow?.calls).toBe(2);
     });
   });
 
   describe("getTotalCost()", () => {
     it("sums all records in the window", () => {
-      tracker.record({ feature: "auto-classify", model: "openai/gpt-4.1-nano", inputTokens: 1000, outputTokens: 200 });
-      tracker.record({ feature: "reflection", model: "openai/gpt-4o", inputTokens: 5000, outputTokens: 1000 });
+      tracker.record({
+        feature: "auto-classify",
+        model: "openai/gpt-4.1-nano",
+        inputTokens: 1000,
+        outputTokens: 200,
+      });
+      tracker.record({
+        feature: "reflection",
+        model: "openai/gpt-4o",
+        inputTokens: 5000,
+        outputTokens: 1000,
+      });
 
       const total = tracker.getTotalCost(1);
       expect(total.calls).toBe(2);
@@ -178,7 +244,12 @@ describe("CostTracker", () => {
          VALUES (1000, 'auto-classify', 'openai/gpt-4.1-nano', 100, 20, 1)`,
       ).run();
       // Insert a recent record
-      tracker.record({ feature: "recent", model: "openai/gpt-4.1-nano", inputTokens: 100, outputTokens: 20 });
+      tracker.record({
+        feature: "recent",
+        model: "openai/gpt-4.1-nano",
+        inputTokens: 100,
+        outputTokens: 20,
+      });
 
       const deleted = tracker.pruneOldEntries(90);
       expect(deleted).toBe(1);
@@ -188,7 +259,12 @@ describe("CostTracker", () => {
     });
 
     it("returns 0 when nothing to prune", () => {
-      tracker.record({ feature: "auto-classify", model: "openai/gpt-4.1-nano", inputTokens: 100, outputTokens: 20 });
+      tracker.record({
+        feature: "auto-classify",
+        model: "openai/gpt-4.1-nano",
+        inputTokens: 100,
+        outputTokens: 20,
+      });
       const deleted = tracker.pruneOldEntries(90);
       expect(deleted).toBe(0);
     });
@@ -196,20 +272,35 @@ describe("CostTracker", () => {
 
   describe("record() error isolation", () => {
     it("does not throw when the DB is closed", () => {
-      const tmpDb = new Database(":memory:");
+      const tmpDb = new DatabaseSync(":memory:");
       const tmpTracker = new CostTracker(tmpDb);
       tmpDb.close(); // close before recording
       // Should silently swallow — never let tracking break callers
       expect(() =>
-        tmpTracker.record({ feature: "test", model: "openai/gpt-4.1-nano", inputTokens: 1, outputTokens: 1 }),
+        tmpTracker.record({
+          feature: "test",
+          model: "openai/gpt-4.1-nano",
+          inputTokens: 1,
+          outputTokens: 1,
+        }),
       ).not.toThrow();
     });
   });
 
   describe("getReport() unknown model visibility", () => {
     it("reports unknownModelCalls and unknownModels for unrecognized models", () => {
-      tracker.record({ feature: "test", model: "unknown/mystery-model", inputTokens: 100, outputTokens: 50 });
-      tracker.record({ feature: "test", model: "openai/gpt-4.1-nano", inputTokens: 100, outputTokens: 50 });
+      tracker.record({
+        feature: "test",
+        model: "unknown/mystery-model",
+        inputTokens: 100,
+        outputTokens: 50,
+      });
+      tracker.record({
+        feature: "test",
+        model: "openai/gpt-4.1-nano",
+        inputTokens: 100,
+        outputTokens: 50,
+      });
 
       const report = tracker.getReport({ days: 1 });
       expect(report.unknownModelCalls).toBe(1);
@@ -217,7 +308,12 @@ describe("CostTracker", () => {
     });
 
     it("returns unknownModelCalls=0 when all models are recognized", () => {
-      tracker.record({ feature: "test", model: "openai/gpt-4.1-nano", inputTokens: 100, outputTokens: 50 });
+      tracker.record({
+        feature: "test",
+        model: "openai/gpt-4.1-nano",
+        inputTokens: 100,
+        outputTokens: 50,
+      });
 
       const report = tracker.getReport({ days: 1 });
       expect(report.unknownModelCalls).toBe(0);
@@ -255,7 +351,13 @@ describe("CostTracker", () => {
       // Simulate what the proxy does: record using the feature from context
       withCostFeature("auto-classify", () => {
         const feature = getCurrentCostFeature() ?? "unknown";
-        tracker.record({ feature, model: "openai/gpt-4.1-nano", inputTokens: 200, outputTokens: 50, success: true });
+        tracker.record({
+          feature,
+          model: "openai/gpt-4.1-nano",
+          inputTokens: 200,
+          outputTokens: 50,
+          success: true,
+        });
       });
       const report = tracker.getReport({ days: 1 });
       expect(report.features[0]?.feature).toBe("auto-classify");
@@ -265,11 +367,11 @@ describe("CostTracker", () => {
 
   describe("schema initialization", () => {
     it("creates the llm_cost_log table on construction", () => {
-      const tableInfo = db
-        .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='llm_cost_log'")
-        .get() as { name: string } | undefined;
+      const tableInfo = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='llm_cost_log'").get() as
+        | { name: string }
+        | undefined;
       expect(tableInfo).toBeDefined();
-      expect(tableInfo!.name).toBe("llm_cost_log");
+      expect(tableInfo?.name).toBe("llm_cost_log");
     });
 
     it("creates the llm_savings_log table on construction", () => {
@@ -277,7 +379,7 @@ describe("CostTracker", () => {
         .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='llm_savings_log'")
         .get() as { name: string } | undefined;
       expect(tableInfo).toBeDefined();
-      expect(tableInfo!.name).toBe("llm_savings_log");
+      expect(tableInfo?.name).toBe("llm_savings_log");
     });
 
     it("creates the expected indexes", () => {
@@ -327,7 +429,9 @@ describe("CostTracker", () => {
         countAvoided: 19,
         estimatedSavingUsd: 0.0019,
       });
-      const row = db.prepare("SELECT note FROM llm_savings_log").get() as { note: string | null };
+      const row = db.prepare("SELECT note FROM llm_savings_log").get() as {
+        note: string | null;
+      };
       expect(row.note).toBeNull();
     });
 
@@ -338,7 +442,9 @@ describe("CostTracker", () => {
         countAvoided: 0,
         estimatedSavingUsd: 0,
       });
-      const row = db.prepare("SELECT estimated_saving_usd FROM llm_savings_log").get() as { estimated_saving_usd: number };
+      const row = db.prepare("SELECT estimated_saving_usd FROM llm_savings_log").get() as {
+        estimated_saving_usd: number;
+      };
       expect(row.estimated_saving_usd).toBe(0);
     });
   });
@@ -354,28 +460,53 @@ describe("CostTracker", () => {
     });
 
     it("aggregates savings by feature", () => {
-      tracker.recordSavings({ feature: "self-correction", action: "auto-fixed incident", countAvoided: 2, estimatedSavingUsd: 0.004 });
-      tracker.recordSavings({ feature: "self-correction", action: "auto-fixed incident", countAvoided: 1, estimatedSavingUsd: 0.002 });
-      tracker.recordSavings({ feature: "auto-classify", action: "batch-classified facts", countAvoided: 19, estimatedSavingUsd: 0.0019 });
+      tracker.recordSavings({
+        feature: "self-correction",
+        action: "auto-fixed incident",
+        countAvoided: 2,
+        estimatedSavingUsd: 0.004,
+      });
+      tracker.recordSavings({
+        feature: "self-correction",
+        action: "auto-fixed incident",
+        countAvoided: 1,
+        estimatedSavingUsd: 0.002,
+      });
+      tracker.recordSavings({
+        feature: "auto-classify",
+        action: "batch-classified facts",
+        countAvoided: 19,
+        estimatedSavingUsd: 0.0019,
+      });
 
       const report = tracker.getSavingsReport(7);
       expect(report.features).toHaveLength(2);
 
       const sc = report.features.find((f) => f.feature === "self-correction");
       expect(sc).toBeDefined();
-      expect(sc!.entries).toBe(2);
-      expect(sc!.countAvoided).toBe(3);
-      expect(sc!.estimatedSavingUsd).toBeCloseTo(0.006, 6);
+      expect(sc?.entries).toBe(2);
+      expect(sc?.countAvoided).toBe(3);
+      expect(sc?.estimatedSavingUsd).toBeCloseTo(0.006, 6);
 
       const ac = report.features.find((f) => f.feature === "auto-classify");
       expect(ac).toBeDefined();
-      expect(ac!.entries).toBe(1);
-      expect(ac!.countAvoided).toBe(19);
+      expect(ac?.entries).toBe(1);
+      expect(ac?.countAvoided).toBe(19);
     });
 
     it("computes correct totals", () => {
-      tracker.recordSavings({ feature: "self-correction", action: "fix", countAvoided: 5, estimatedSavingUsd: 0.01 });
-      tracker.recordSavings({ feature: "reflection", action: "pattern", countAvoided: 10, estimatedSavingUsd: 0.005 });
+      tracker.recordSavings({
+        feature: "self-correction",
+        action: "fix",
+        countAvoided: 5,
+        estimatedSavingUsd: 0.01,
+      });
+      tracker.recordSavings({
+        feature: "reflection",
+        action: "pattern",
+        countAvoided: 10,
+        estimatedSavingUsd: 0.005,
+      });
 
       const report = tracker.getSavingsReport(7);
       expect(report.total.entries).toBe(2);
@@ -389,7 +520,12 @@ describe("CostTracker", () => {
         "INSERT INTO llm_savings_log (timestamp, feature, action, count_avoided, estimated_saving_usd) VALUES (?, ?, ?, ?, ?)",
       ).run(Math.floor(Date.now() / 1000) - 10 * 86400, "old-feature", "old action", 5, 0.005);
 
-      tracker.recordSavings({ feature: "new-feature", action: "new action", countAvoided: 2, estimatedSavingUsd: 0.002 });
+      tracker.recordSavings({
+        feature: "new-feature",
+        action: "new action",
+        countAvoided: 2,
+        estimatedSavingUsd: 0.002,
+      });
 
       const report7 = tracker.getSavingsReport(7);
       expect(report7.features.map((f) => f.feature)).not.toContain("old-feature");
@@ -401,12 +537,22 @@ describe("CostTracker", () => {
     });
 
     it("orders features by estimatedSavingUsd descending", () => {
-      tracker.recordSavings({ feature: "cheap-feature", action: "a", countAvoided: 1, estimatedSavingUsd: 0.001 });
-      tracker.recordSavings({ feature: "expensive-feature", action: "b", countAvoided: 10, estimatedSavingUsd: 0.05 });
+      tracker.recordSavings({
+        feature: "cheap-feature",
+        action: "a",
+        countAvoided: 1,
+        estimatedSavingUsd: 0.001,
+      });
+      tracker.recordSavings({
+        feature: "expensive-feature",
+        action: "b",
+        countAvoided: 10,
+        estimatedSavingUsd: 0.05,
+      });
 
       const report = tracker.getSavingsReport(7);
-      expect(report.features[0]!.feature).toBe("expensive-feature");
-      expect(report.features[1]!.feature).toBe("cheap-feature");
+      expect(report.features[0]?.feature).toBe("expensive-feature");
+      expect(report.features[1]?.feature).toBe("cheap-feature");
     });
   });
 
@@ -417,7 +563,12 @@ describe("CostTracker", () => {
         "INSERT INTO llm_savings_log (timestamp, feature, action, count_avoided, estimated_saving_usd) VALUES (?, ?, ?, ?, ?)",
       ).run(Math.floor(Date.now() / 1000) - 100 * 86400, "old", "x", 1, 0.001);
       // Recent savings entry
-      tracker.recordSavings({ feature: "recent", action: "y", countAvoided: 1, estimatedSavingUsd: 0.001 });
+      tracker.recordSavings({
+        feature: "recent",
+        action: "y",
+        countAvoided: 1,
+        estimatedSavingUsd: 0.001,
+      });
 
       const pruned = tracker.pruneOldEntries(90);
       expect(pruned).toBeGreaterThanOrEqual(1);

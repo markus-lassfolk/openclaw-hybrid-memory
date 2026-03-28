@@ -51,9 +51,7 @@ export function extractStructuredFields(
     };
   }
 
-  const ruleMatch = text.match(
-    /(?:always|never|must|should always|should never|alltid|aldrig)\s+(.+?)\.?$/i,
-  );
+  const ruleMatch = text.match(/(?:always|never|must|should always|should never|alltid|aldrig)\s+(.+?)\.?$/i);
   if (ruleMatch) {
     return {
       entity: "convention",
@@ -62,9 +60,7 @@ export function extractStructuredFields(
     };
   }
 
-  const possessiveMatch = text.match(
-    /(?:(\w+(?:\s+\w+)?)'s|[Mm]y)\s+(.+?)\s+(?:is|are|was)\s+(.+?)\.?$/,
-  );
+  const possessiveMatch = text.match(/(?:(\w+(?:\s+\w+)?)'s|[Mm]y)\s+(.+?)\s+(?:is|are|was)\s+(.+?)\.?$/);
   if (possessiveMatch) {
     return {
       entity: possessiveMatch[1] || "user",
@@ -73,9 +69,7 @@ export function extractStructuredFields(
     };
   }
 
-  const possessiveMatchSv = text.match(
-    /(?:mitt|min)\s+(\S+)\s+är\s+(.+?)\.?$/i,
-  );
+  const possessiveMatchSv = text.match(/(?:mitt|min)\s+(\S+)\s+är\s+(.+?)\.?$/i);
   if (possessiveMatchSv) {
     return {
       entity: "user",
@@ -84,9 +78,7 @@ export function extractStructuredFields(
     };
   }
 
-  const preferMatch = text.match(
-    /[Ii]\s+(prefer|like|love|hate|want|need|use)\s+(.+?)\.?$/,
-  );
+  const preferMatch = text.match(/[Ii]\s+(prefer|like|love|hate|want|need|use)\s+(.+?)\.?$/);
   if (preferMatch) {
     return {
       entity: "user",
@@ -95,9 +87,7 @@ export function extractStructuredFields(
     };
   }
 
-  const preferMatchSv = text.match(
-    /jag\s+(föredrar|gillar|ogillar|vill ha|behöver)\s+(.+?)\.?$/i,
-  );
+  const preferMatchSv = text.match(/jag\s+(föredrar|gillar|ogillar|vill ha|behöver)\s+(.+?)\.?$/i);
   if (preferMatchSv) {
     return {
       entity: "user",
@@ -106,9 +96,7 @@ export function extractStructuredFields(
     };
   }
 
-  const heterMatch = text.match(
-    /heter\s+(.+?)\.?$/i,
-  );
+  const heterMatch = text.match(/heter\s+(.+?)\.?$/i);
   if (heterMatch) {
     return {
       entity: "entity",
@@ -132,7 +120,7 @@ export function extractStructuredFields(
 
   if (category === "entity") {
     const words = text.split(/\s+/);
-    // Include Swedish/Nordic letters (åäö) and other Unicode letters so names like Doris, Lotta, Åsa match
+    // Include Swedish/Nordic letters (åäö) and other Unicode letters for proper name matching
     const properNouns = words.filter((w) => /^\p{Lu}\p{L}+$/u.test(w));
     if (properNouns.length > 0) {
       return { entity: properNouns[0], key: null, value: null };

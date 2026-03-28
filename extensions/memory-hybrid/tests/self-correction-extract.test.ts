@@ -1,7 +1,7 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { runSelfCorrectionExtract } from "../services/self-correction-extract.js";
 
 function msg(role: string, text: string): string {
@@ -64,9 +64,7 @@ describe("self-correction-extract", () => {
   });
 
   it("skips very short user message even if it matches", () => {
-    const jsonl = [
-      msg("user", "try again"),
-    ].join("\n");
+    const jsonl = [msg("user", "try again")].join("\n");
     const path = join(tmpDir, "short.jsonl");
     writeFileSync(path, jsonl, "utf-8");
 
@@ -77,10 +75,9 @@ describe("self-correction-extract", () => {
   });
 
   it("returns empty when no user message matches correction regex", () => {
-    const jsonl = [
-      msg("user", "Please add a new feature to the dashboard."),
-      msg("assistant", "I will add it."),
-    ].join("\n");
+    const jsonl = [msg("user", "Please add a new feature to the dashboard."), msg("assistant", "I will add it.")].join(
+      "\n",
+    );
     const path = join(tmpDir, "session.jsonl");
     writeFileSync(path, jsonl, "utf-8");
 
@@ -92,12 +89,10 @@ describe("self-correction-extract", () => {
   });
 
   it("truncates long user and assistant messages", () => {
-    const longUser = "That was wrong. " + "word ".repeat(200);
-    const jsonl = [
-      msg("assistant", "x".repeat(600)),
-      msg("user", longUser),
-      msg("assistant", "y".repeat(600)),
-    ].join("\n");
+    const longUser = `That was wrong. ${"word ".repeat(200)}`;
+    const jsonl = [msg("assistant", "x".repeat(600)), msg("user", longUser), msg("assistant", "y".repeat(600))].join(
+      "\n",
+    );
     const path = join(tmpDir, "long.jsonl");
     writeFileSync(path, jsonl, "utf-8");
 

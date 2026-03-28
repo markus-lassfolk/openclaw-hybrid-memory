@@ -2,15 +2,14 @@
  * Converter Registry
  *
  * Central registry for domain-specific file format converters.
- * Converters transform smart home configs into structured Markdown
- * for ingestion by the document ingestion pipeline.
+ * Converters transform configs into structured Markdown for ingestion.
+ *
+ * Domain converters (Home Assistant, ESPHome, Victron VRM, Zigbee2MQTT) have been
+ * removed from the built-in registry; use a separate plugin (e.g. openclaw-ha-converters)
+ * and registerConverter() to add them back.
  */
 
-import { extname, basename } from "node:path";
-import { haYamlConverter } from "./ha-yaml-converter.js";
-import { esphomeYamlConverter } from "./esphome-yaml-converter.js";
-import { victronVrmConverter } from "./victron-vrm-converter.js";
-import { zigbee2mqttConverter } from "./zigbee2mqtt-converter.js";
+import { basename, extname } from "node:path";
 
 export interface ConversionResult {
   markdown: string;
@@ -22,15 +21,13 @@ export interface Converter {
   /** File extensions this converter handles (lowercase, with dot, e.g. ".yaml") */
   extensions: string[];
   mimeTypes?: string[];
+  /** Optional: inspect content/fileName to determine if this converter should handle the file */
+  canHandle?(content: string, fileName: string): boolean;
   convert(content: string, filePath: string): ConversionResult;
 }
 
-const builtinConverters: Converter[] = [
-  haYamlConverter,
-  esphomeYamlConverter,
-  victronVrmConverter,
-  zigbee2mqttConverter,
-];
+/** Built-in converters. Domain converters (HA, ESPHome, Victron, Zigbee2MQTT) removed — register via plugin. */
+const builtinConverters: Converter[] = [];
 
 const extraConverters: Converter[] = [];
 
@@ -55,7 +52,7 @@ export function getConverter(filePath: string, content?: string): Converter | nu
 
   if (ext === ".yaml" || ext === ".yml") {
     if (content === undefined) return null;
-    return sniffYamlConverter(content, fileName);
+    return sniffYamlConverter(content, fileName, ext);
   }
 
   if (ext === ".json") {
@@ -73,64 +70,35 @@ export function getConverter(filePath: string, content?: string): Converter | nu
   return null;
 }
 
-function sniffYamlConverter(content: string, fileName: string): Converter | null {
-  // Zigbee2MQTT: must be configuration.yaml or configuration.yml with both mqtt: and serial: at root
-  if (
-    (fileName === "configuration.yaml" || fileName === "configuration.yml") &&
-    /^mqtt:/m.test(content) &&
-    /^serial:/m.test(content)
-  ) {
-    return zigbee2mqttConverter;
+/** Sniff YAML: only registered converters that support this file's extension. */
+function sniffYamlConverter(content: string, fileName: string, ext: string): Converter | null {
+  const candidates = extraConverters.filter((c) => c.extensions.includes(ext));
+  for (const converter of candidates) {
+    if (converter.canHandle?.(content, fileName)) {
+      return converter;
+    }
   }
-
-  // ESPHome: top-level esphome:, esp32:, or esp8266: key
-  if (/^esphome:/m.test(content) || /^esp32:/m.test(content) || /^esp8266:/m.test(content)) {
-    return esphomeYamlConverter;
-  }
-
-  // Home Assistant: common HA top-level keys
-  const haKeys = [
-    "automation:",
-    "homeassistant:",
-    "sensor:",
-    "binary_sensor:",
-    "switch:",
-    "light:",
-    "script:",
-    "scene:",
-  ];
-  if (haKeys.some((key) => new RegExp(`^${key}`, "m").test(content))) {
-    return haYamlConverter;
-  }
-
-  return null;
+  const fallbackCandidate = candidates.find((c) => !c.canHandle);
+  return fallbackCandidate ?? null;
 }
 
+/** Sniff JSON: only registered (extra) converters; no builtin domain converters. */
 function sniffJsonConverter(content: string): Converter | null {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(content);
-  } catch {
-    return null;
+  const candidates: Converter[] = [];
+  for (const converter of extraConverters) {
+    if (converter.extensions.includes(".json")) {
+      candidates.push(converter);
+    }
   }
 
-  if (typeof parsed !== "object" || parsed === null) return null;
-  const obj = parsed as Record<string, unknown>;
-
-  // Zigbee2MQTT device database: object where keys look like IEEE addresses (0x...)
-  const keys = Object.keys(obj);
-  if (keys.length > 0 && keys.some((k) => k.startsWith("0x") || /^[0-9a-f]{16}$/i.test(k))) {
-    return zigbee2mqttConverter;
+  // Try content-based selection first (fileName not available for JSON path)
+  for (const converter of candidates) {
+    if (converter.canHandle?.(content, "")) {
+      return converter;
+    }
   }
 
-  // Victron: has records/data arrays, or Victron-style fields
-  if (Array.isArray(obj["records"]) || Array.isArray(obj["data"])) {
-    return victronVrmConverter;
-  }
-  const keyStr = keys.join(" ").toLowerCase();
-  if (keyStr.includes("soc") || keyStr.includes("pv") || keyStr.includes("battery") || keyStr.includes("victron")) {
-    return victronVrmConverter;
-  }
-
-  return null;
+  // Fall back to first converter without canHandle method (accepts all files of this extension)
+  const fallbackCandidate = candidates.find((c) => !c.canHandle);
+  return fallbackCandidate ?? null;
 }

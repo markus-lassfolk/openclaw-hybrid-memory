@@ -21,20 +21,16 @@ type PatternRunner = (text: string) => ExtractionResult | null;
  * Build pattern runners from a language's extraction template.
  * Each runner returns { entity, key, value } or null.
  */
-export function buildExtractionRunners(
-  template: LanguageExtractionTemplate,
-): PatternRunner[] {
+export function buildExtractionRunners(template: LanguageExtractionTemplate): PatternRunner[] {
   const runners: PatternRunner[] = [];
 
   if (template.decision && template.decision.verbs.length > 0) {
     const verbs = template.decision.verbs.map(escapeRegex).join("|");
-    const conn = template.decision.connectors.length > 0
-      ? template.decision.connectors.map(escapeRegex).join("|")
-      : "(?:because|since|for|due to|over)";
-    const re = new RegExp(
-      `(?:${verbs})\\s+(?:to\\s+)?(?:use\\s+)?(.+?)(?:\\s+(?:${conn})\\s+(.+?))?\\.?$`,
-      "i",
-    );
+    const conn =
+      template.decision.connectors.length > 0
+        ? template.decision.connectors.map(escapeRegex).join("|")
+        : "(?:because|since|for|due to|over)";
+    const re = new RegExp(`(?:${verbs})\\s+(?:to\\s+)?(?:use\\s+)?(.+?)(?:\\s+(?:${conn})\\s+(.+?))?\\.?$`, "i");
     runners.push((text) => {
       const m = text.match(re);
       if (!m) return null;
@@ -49,13 +45,11 @@ export function buildExtractionRunners(
   if (template.choiceOver && template.choiceOver.verbs.length > 0 && template.choiceOver.rejectors.length > 0) {
     const verbs = template.choiceOver.verbs.map(escapeRegex).join("|");
     const rejectors = template.choiceOver.rejectors.map(escapeRegex).join("|");
-    const conn = template.choiceOver.connectors.length > 0
-      ? template.choiceOver.connectors.map(escapeRegex).join("|")
-      : "because|since|for|due to";
-    const re = new RegExp(
-      `(?:${verbs})\\s+(.+?)\\s+(?:${rejectors})\\s+(.+?)(?:\\s+(?:${conn})\\s+(.+?))?\\.?$`,
-      "i",
-    );
+    const conn =
+      template.choiceOver.connectors.length > 0
+        ? template.choiceOver.connectors.map(escapeRegex).join("|")
+        : "because|since|for|due to";
+    const re = new RegExp(`(?:${verbs})\\s+(.+?)\\s+(?:${rejectors})\\s+(.+?)(?:\\s+(?:${conn})\\s+(.+?))?\\.?$`, "i");
     runners.push((text) => {
       const m = text.match(re);
       if (!m) return null;
@@ -89,10 +83,7 @@ export function buildExtractionRunners(
   if (template.possessive && template.possessive.possessiveWords.length > 0 && template.possessive.isWords.length > 0) {
     const poss = template.possessive.possessiveWords.map(escapeRegex).join("|");
     const isWords = template.possessive.isWords.map(escapeRegex).join("|");
-    const re = new RegExp(
-      `(?:${poss})\\s+(\\S+)\\s+(?:${isWords})\\s+(.+?)\\.?$`,
-      "i",
-    );
+    const re = new RegExp(`(?:${poss})\\s+(\\S+)\\s+(?:${isWords})\\s+(.+?)\\.?$`, "i");
     runners.push((text) => {
       const m = text.match(re);
       if (!m) return null;
@@ -107,14 +98,13 @@ export function buildExtractionRunners(
   if (template.preference && template.preference.subject.length > 0 && template.preference.verbs.length > 0) {
     const subject = template.preference.subject.map(escapeRegex).join("|");
     const verbs = template.preference.verbs.map(escapeRegex).join("|");
-    const re = new RegExp(
-      `(?:${subject})\\s+(?:${verbs})\\s+(.+?)\\.?$`,
-      "i",
-    );
+    const re = new RegExp(`(?:${subject})\\s+(?:${verbs})\\s+(.+?)\\.?$`, "i");
     runners.push((text) => {
       const m = text.match(re);
       if (!m) return null;
-      const verbMatch = text.match(new RegExp(`(?:${subject})\\s+(${template.preference!.verbs.map(escapeRegex).join("|")})\\s+(.+?)\\.?$`, "i"));
+      const verbMatch = text.match(
+        new RegExp(`(?:${subject})\\s+(${template.preference?.verbs.map(escapeRegex).join("|")})\\s+(.+?)\\.?$`, "i"),
+      );
       const verb = verbMatch ? verbMatch[1] : "prefer";
       return {
         entity: "user",

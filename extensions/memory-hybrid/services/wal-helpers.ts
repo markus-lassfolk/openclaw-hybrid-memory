@@ -13,16 +13,16 @@ const WAL_FAILURE_THRESHOLD = 10;
 let walFailureCount = 0;
 let walDisabled = false;
 
-export function walWrite(
+export async function walWrite(
   wal: WriteAheadLog | null,
   operation: "store" | "update",
   data: Record<string, unknown>,
   logger: { warn: (msg: string) => void },
-): string {
+): Promise<string> {
   const id = randomUUID();
   if (wal && !walDisabled) {
     try {
-      wal.write({ id, timestamp: Date.now(), operation, data: data as any });
+      await wal.write({ id, timestamp: Date.now(), operation, data: data as any });
       walFailureCount = 0; // Reset on success
     } catch (err) {
       walFailureCount++;
@@ -40,14 +40,14 @@ export function walWrite(
   return id;
 }
 
-export function walRemove(
+export async function walRemove(
   wal: WriteAheadLog | null,
   id: string,
   logger: { warn: (msg: string) => void },
-): void {
+): Promise<void> {
   if (wal) {
     try {
-      wal.remove(id);
+      await wal.remove(id);
     } catch (err) {
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
         subsystem: "wal",
@@ -56,4 +56,13 @@ export function walRemove(
       logger.warn(`memory-hybrid: WAL cleanup failed: ${err}`);
     }
   }
+}
+
+/**
+ * Reset the WAL circuit breaker state to its initial values.
+ * Intended for use in tests only — do not call in production code.
+ */
+export function _resetWalCircuitBreakerForTesting(): void {
+  walFailureCount = 0;
+  walDisabled = false;
 }

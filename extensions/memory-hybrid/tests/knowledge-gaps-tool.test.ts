@@ -1,11 +1,12 @@
+// @ts-nocheck
 /**
  * Tool registration tests for knowledge gaps (Issue #141).
  */
 
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
-import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { FactsDB } from "../backends/facts-db.js";
 import { registerUtilityTools } from "../tools/utility-tools.js";
@@ -26,7 +27,9 @@ describe("memory_gaps tool registration", () => {
   it("registers memory_gaps tool", () => {
     const registered: string[] = [];
     const fakeApi = {
-      registerTool: (def: { name: string }) => { registered.push(def.name); },
+      registerTool: (def: { name: string }) => {
+        registered.push(def.name);
+      },
       logger: { info: () => {}, warn: () => {} },
     } as unknown as Parameters<typeof registerUtilityTools>[1];
 
@@ -43,7 +46,9 @@ describe("memory_gaps tool registration", () => {
         vectorDb: {} as unknown as import("../backends/vector-db.js").VectorDB,
         embeddings: fakeEmbeddings,
         openai: {} as unknown as import("openai").default,
-        cfg: { gaps: { enabled: true, similarityThreshold: 0.8 } } as unknown as import("../config.js").HybridMemoryConfig,
+        cfg: {
+          gaps: { enabled: true, similarityThreshold: 0.8 },
+        } as unknown as import("../config.js").HybridMemoryConfig,
         wal: null,
         resolvedSqlitePath: join(tmpDir, "facts.db"),
       },

@@ -29,12 +29,12 @@ export async function replayWalEntries(
   wal: WriteAheadLog,
   factsDb: FactsDB,
   vectorDb?: VectorDB,
-  embeddings?: EmbeddingProvider | null
+  embeddings?: EmbeddingProvider | null,
 ): Promise<WalReplayResult> {
   let committed = 0;
   let skipped = 0;
 
-  const walEntries = wal.readAll();
+  const walEntries = await wal.readAll();
 
   for (const entry of walEntries) {
     try {
@@ -44,7 +44,7 @@ export async function replayWalEntries(
           const stored = factsDb.store({
             text: entry.data.text as string,
             category: (entry.data.category as import("../config.js").MemoryCategory) ?? "other",
-            importance: (entry.data.importance as number) ?? 0.7,
+            importance: (entry.data.importance as number) ?? 0.5,
             entity: (entry.data.entity as string | null | undefined) ?? null,
             key: (entry.data.key as string | null | undefined) ?? null,
             value: (entry.data.value as string | null | undefined) ?? null,
@@ -84,26 +84,24 @@ export async function replayWalEntries(
             }
           }
           committed++;
-          wal.remove(entry.id);
+          await wal.remove(entry.id);
         } else {
           skipped++;
-          wal.remove(entry.id);
+          await wal.remove(entry.id);
         }
       } else if (entry.operation === "update") {
         // Skip update operations during replay: WAL entries lack the targetId needed
         // to properly supersede the old fact, so replaying would create duplicates.
         // Remove these entries to prevent unbounded WAL growth.
         skipped++;
-        wal.remove(entry.id);
-      } else if (entry.operation === "delete" && entry.data?.text) {
-        const factId = entry.data.text as string;
-        const deleted = factsDb.delete(factId);
-        if (deleted) {
-          committed++;
-        } else {
-          skipped++;
-        }
-        wal.remove(entry.id);
+        await wal.remove(entry.id);
+      } else if (entry.operation === "delete") {
+        // Delete WAL entries cannot be reliably replayed: the WAL data structure stores
+        // text content in data.text, not the target fact UUID. Replaying would pass the
+        // memory text as a UUID, causing an "Invalid UUID format" error (see issue #334).
+        // Skip and remove to prevent unbounded WAL growth.
+        skipped++;
+        await wal.remove(entry.id);
       }
     } catch (err) {
       // Non-fatal: log the failure (with entry id + operation for diagnostics) and continue

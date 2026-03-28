@@ -12,20 +12,44 @@ on:
   pull_request:
   workflow_call:
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
+  changes:
+    name: Detect Changes
+    runs-on: ubuntu-latest
+    outputs:
+      code: ${{ github.event_name == 'workflow_call' && 'true' || steps.filter.outputs.code }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        if: github.event_name != 'workflow_call'
+        with:
+          filters: |
+            code:
+              - 'extensions/memory-hybrid/**'
+              - 'extensions/memory-hybrid/package*.json'
+              - 'extensions/memory-hybrid/tsconfig*.json'
+              - '.github/workflows/ci.yml'
+
   typecheck:
     name: Type Check (Node ${{ matrix.node-version }})
+    needs: changes
+    if: needs.changes.outputs.code == 'true' || github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     strategy:
       matrix:
         node-version: [22, 24]
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-node@v6
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node-version }}
       - name: Cache node_modules
-        uses: actions/cache@v5
+        uses: actions/cache@v4
         with:
           path: extensions/memory-hybrid/node_modules
           key: ${{ runner.os }}-node-${{ matrix.node-version }}-${{ hashFiles('extensions/memory-hybrid/package-lock.json') }}
@@ -38,17 +62,19 @@ jobs:
 
   lint:
     name: Lint (Node ${{ matrix.node-version }})
+    needs: changes
+    if: needs.changes.outputs.code == 'true' || github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     strategy:
       matrix:
         node-version: [22, 24]
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-node@v6
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node-version }}
       - name: Cache node_modules
-        uses: actions/cache@v5
+        uses: actions/cache@v4
         with:
           path: extensions/memory-hybrid/node_modules
           key: ${{ runner.os }}-node-${{ matrix.node-version }}-${{ hashFiles('extensions/memory-hybrid/package-lock.json') }}
@@ -61,17 +87,19 @@ jobs:
 
   test:
     name: Test (Node ${{ matrix.node-version }})
+    needs: changes
+    if: needs.changes.outputs.code == 'true' || github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     strategy:
       matrix:
         node-version: [22, 24]
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-node@v6
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node-version }}
       - name: Cache node_modules
-        uses: actions/cache@v5
+        uses: actions/cache@v4
         with:
           path: extensions/memory-hybrid/node_modules
           key: ${{ runner.os }}-node-${{ matrix.node-version }}-${{ hashFiles('extensions/memory-hybrid/package-lock.json') }}
@@ -84,14 +112,16 @@ jobs:
 
   test-coverage:
     name: Test Coverage
+    needs: changes
+    if: needs.changes.outputs.code == 'true' || github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-node@v6
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: 22
       - name: Cache node_modules
-        uses: actions/cache@v5
+        uses: actions/cache@v4
         with:
           path: extensions/memory-hybrid/node_modules
           key: ${{ runner.os }}-node-22-${{ hashFiles('extensions/memory-hybrid/package-lock.json') }}
@@ -102,8 +132,163 @@ jobs:
       - name: Run tests with coverage
         run: cd extensions/memory-hybrid && npm run test:coverage
       - name: Upload coverage report
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v4
         with:
           name: coverage-report
           path: extensions/memory-hybrid/coverage/
           if-no-files-found: warn
+
+  dead-code:
+    name: Dead Code Analysis (knip)
+    needs: changes
+    if: needs.changes.outputs.code == 'true' || github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Cache node_modules
+        uses: actions/cache@v4
+        with:
+          path: extensions/memory-hybrid/node_modules
+          key: ${{ runner.os }}-node-22-${{ hashFiles('extensions/memory-hybrid/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-node-22-
+      - name: Install dependencies
+        run: cd extensions/memory-hybrid && npm install
+      - name: Run knip
+        run: cd extensions/memory-hybrid && npx knip --no-exit-code
+
+  format-check:
+    name: Format Check (Biome)
+    needs: changes
+    if: needs.changes.outputs.code == 'true' || github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install dependencies
+        run: cd extensions/memory-hybrid && npm ci
+      - name: Check formatting
+        run: cd extensions/memory-hybrid && npm run format:check
+
+  strict-typecheck:
+    name: Strict TypeScript Check
+    needs: changes
+    if: needs.changes.outputs.code == 'true' || github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Cache node_modules
+        uses: actions/cache@v4
+        with:
+          path: extensions/memory-hybrid/node_modules
+          key: ${{ runner.os }}-node-22-${{ hashFiles('extensions/memory-hybrid/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-node-22-
+      - name: Install dependencies
+        run: cd extensions/memory-hybrid && npm install
+      - name: Strict type check
+        run: cd extensions/memory-hybrid && (npx tsc --noEmit -p tsconfig.strict.json || true)
+
+  install-smoke:
+    name: Install Smoke Test
+    needs: changes
+    if: needs.changes.outputs.code == 'true' || github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Cache node_modules
+        uses: actions/cache@v4
+        with:
+          path: extensions/memory-hybrid/node_modules
+          key: ${{ runner.os }}-node-22-${{ hashFiles('extensions/memory-hybrid/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-node-22-
+      - name: Install dependencies
+        run: cd extensions/memory-hybrid && npm install
+      - name: Pack and test install
+        run: |
+          cd extensions/memory-hybrid
+          npm pack
+          TARBALL=$(find . -maxdepth 1 -name "openclaw-hybrid-memory-*.tgz" -printf '%f\n' | head -1)
+          TARBALL_PATH="$(pwd)/$TARBALL"
+          mkdir -p /tmp/smoke-test && cd /tmp/smoke-test
+          npm init -y
+          npm install "$TARBALL_PATH" --ignore-scripts
+          node -e "const pkg = require('./node_modules/openclaw-hybrid-memory/package.json'); console.log('Import OK:', pkg.name, pkg.version)"
+
+  lint-arch:
+    name: Architectural Lint
+    needs: changes
+    if: needs.changes.outputs.code == 'true' || github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run architectural lint
+        run: cd extensions/memory-hybrid && npm run lint:arch
+
+  # Passthrough jobs: satisfy required status checks when no code changes detected
+  # (e.g. CI-only, docs, or dependency PRs where path filter skips the real jobs)
+  typecheck-pass-22:
+    name: Type Check (Node 22)
+    needs: changes
+    if: needs.changes.outputs.code != 'true' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "No code changes detected — required check satisfied"
+
+  typecheck-pass-24:
+    name: Type Check (Node 24)
+    needs: changes
+    if: needs.changes.outputs.code != 'true' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "No code changes detected — required check satisfied"
+
+  lint-pass-22:
+    name: Lint (Node 22)
+    needs: changes
+    if: needs.changes.outputs.code != 'true' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "No code changes detected — required check satisfied"
+
+  lint-pass-24:
+    name: Lint (Node 24)
+    needs: changes
+    if: needs.changes.outputs.code != 'true' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "No code changes detected — required check satisfied"
+
+  test-pass-22:
+    name: Test (Node 22)
+    needs: changes
+    if: needs.changes.outputs.code != 'true' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "No code changes detected — required check satisfied"
+
+  test-pass-24:
+    name: Test (Node 24)
+    needs: changes
+    if: needs.changes.outputs.code != 'true' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "No code changes detected — required check satisfied"

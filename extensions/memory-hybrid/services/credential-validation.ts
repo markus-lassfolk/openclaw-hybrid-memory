@@ -50,11 +50,7 @@ function looksLikeNaturalLanguage(value: string): boolean {
  *
  * Callers in `auto-capture.ts` apply this correctly via `secretFromParam` logic.
  */
-export function validateCredentialValue(
-  value: string,
-  type: string,
-  hasPatternMatch: boolean,
-): ValidationResult {
+export function validateCredentialValue(value: string, type: string, hasPatternMatch: boolean): ValidationResult {
   const trimmed = value.trim();
   if (!trimmed) return { ok: false, reason: "empty" };
 
@@ -119,7 +115,11 @@ export function validateAndNormalizeServiceName(serviceSlug: string): string | n
     return trimmed.toLowerCase();
   }
 
-  const slug = trimmed.toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9_-]/g, "") || "imported";
+  const slug =
+    trimmed
+      .toLowerCase()
+      .replace(/\s+/g, "-")
+      .replace(/[^a-z0-9_-]/g, "") || "imported";
   if (slug === "imported") return slug;
   if (slug.length > CREDENTIAL_SERVICE_MAX_LENGTH) return null;
   const tokens = slug.split("-").filter(Boolean);
@@ -145,7 +145,11 @@ export function normalizeServiceForDedup(serviceSlug: string): string {
     const lower = serviceSlug.toLowerCase();
     return SERVICE_NORMALIZE_MAP[lower] ?? lower;
   }
-  const key = serviceSlug.toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9_-]/g, "") || "imported";
+  const key =
+    serviceSlug
+      .toLowerCase()
+      .replace(/\s+/g, "-")
+      .replace(/[^a-z0-9_-]/g, "") || "imported";
   return SERVICE_NORMALIZE_MAP[key] ?? key;
 }
 

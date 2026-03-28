@@ -7,14 +7,14 @@
  *   - onSubagentEnded(): counts and logs facts captured from child sessions
  */
 
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { mkdtempSync, rmSync } from "node:fs";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { _testing } from "../index.js";
 import { HybridMemoryContextEngine } from "../services/context-engine.js";
 import type { ContextEngineOptions } from "../services/context-engine.js";
-import { _testing } from "../index.js";
 
 const { FactsDB, WriteAheadLog } = _testing;
 
@@ -64,14 +64,19 @@ let tmpDir: string;
 let factsDb: InstanceType<typeof FactsDB>;
 let wal: InstanceType<typeof WriteAheadLog>;
 
-beforeEach(() => {
+beforeEach(async () => {
   tmpDir = mkdtempSync(join(tmpdir(), "ctx-engine-test-"));
   factsDb = new FactsDB(join(tmpDir, "facts.db"));
   wal = new WriteAheadLog(join(tmpDir, "test.wal"), DEFAULT_WAL_MAX_AGE_MS);
+  await wal.init();
 });
 
 afterEach(() => {
-  try { factsDb.close(); } catch { /* ignore */ }
+  try {
+    factsDb.close();
+  } catch {
+    /* ignore */
+  }
   rmSync(tmpDir, { recursive: true, force: true });
 });
 
@@ -97,8 +102,18 @@ describe("HybridMemoryContextEngine.compact()", () => {
     // Arrange: write 2 entries to WAL
     const id1 = randomUUID();
     const id2 = randomUUID();
-    wal.write({ id: id1, timestamp: Date.now(), operation: "store", data: { text: "Compact fact A", category: "fact", importance: 0.8, source: "test" } });
-    wal.write({ id: id2, timestamp: Date.now(), operation: "store", data: { text: "Compact fact B", category: "preference", importance: 0.7, source: "test" } });
+    await wal.write({
+      id: id1,
+      timestamp: Date.now(),
+      operation: "store",
+      data: { text: "Compact fact A", category: "fact", importance: 0.8, source: "test" },
+    });
+    await wal.write({
+      id: id2,
+      timestamp: Date.now(),
+      operation: "store",
+      data: { text: "Compact fact B", category: "preference", importance: 0.7, source: "test" },
+    });
 
     const engine = makeEngine();
     const before = factsDb.getCount();
@@ -126,10 +141,18 @@ describe("HybridMemoryContextEngine.compact()", () => {
 
   it("skips duplicate WAL entries (idempotent)", async () => {
     // Pre-store the fact in FactsDB
-    factsDb.store({ entity: null, key: null, value: null, text: "Already stored fact", category: "fact", importance: 0.9, source: "test" });
+    factsDb.store({
+      entity: null,
+      key: null,
+      value: null,
+      text: "Already stored fact",
+      category: "fact",
+      importance: 0.9,
+      source: "test",
+    });
 
     // Write same text to WAL
-    wal.write({
+    await wal.write({
       id: randomUUID(),
       timestamp: Date.now(),
       operation: "store",
@@ -151,10 +174,51 @@ describe("HybridMemoryContextEngine.compact()", () => {
     expect(result.ok).toBe(true);
   });
 
+  it("skips delete WAL entries without attempting deletion (issue #334)", async () => {
+    // A delete WAL entry stores memory text in data.text, NOT a UUID.
+    // Replaying it used to pass the text as a fact ID, causing "Invalid UUID format" errors.
+    // The fix: skip delete entries during replay (same as update entries).
+    const deleteEntryId = randomUUID();
+    await wal.write({
+      id: deleteEntryId,
+      timestamp: Date.now(),
+      operation: "delete",
+      data: { text: "MiniMax M2.5 limitations for council reviews (2026-02-22)", source: "test" },
+    });
+
+    const before = factsDb.getCount();
+    const engine = makeEngine();
+
+    // Should not throw — delete entries are now skipped
+    const result = await engine.compact({ sessionId: "delete-skip-session", sessionFile: "/tmp/s.json" });
+
+    expect(result.ok).toBe(true);
+    // No facts added — the delete entry was skipped, not replayed as a store
+    expect(factsDb.getCount()).toBe(before);
+    // The WAL entry should have been removed (no longer pending)
+    expect(await wal.readAll()).toHaveLength(0);
+  });
+
   it("includes top-fact summary in result when facts are present", async () => {
     // Store a few facts first
-    factsDb.store({ entity: null, key: null, value: null, text: "Important context fact", category: "fact", importance: 0.9, source: "test" });
-    factsDb.store({ entity: null, key: null, value: null, text: "User preference detail", category: "preference", importance: 0.8, source: "test" });
+    factsDb.store({
+      entity: null,
+      key: null,
+      value: null,
+      text: "Important context fact",
+      category: "fact",
+      importance: 0.9,
+      source: "test",
+    });
+    factsDb.store({
+      entity: null,
+      key: null,
+      value: null,
+      text: "User preference detail",
+      category: "preference",
+      importance: 0.8,
+      source: "test",
+    });
 
     const engine = makeEngine();
     const result = await engine.compact({ sessionId: "summary-session", sessionFile: "/tmp/s.json" });
@@ -178,8 +242,24 @@ describe("HybridMemoryContextEngine.compact()", () => {
 describe("HybridMemoryContextEngine.prepareSubagentSpawn()", () => {
   it("returns a SubagentSpawnPreparation with rollback when facts exist", async () => {
     // Seed some parent facts
-    factsDb.store({ entity: null, key: null, value: null, text: "Parent session context memory", category: "fact", importance: 0.85, source: "parent" });
-    factsDb.store({ entity: null, key: null, value: null, text: "User preference: dark mode", category: "preference", importance: 0.7, source: "parent" });
+    factsDb.store({
+      entity: null,
+      key: null,
+      value: null,
+      text: "Parent session context memory",
+      category: "fact",
+      importance: 0.85,
+      source: "parent",
+    });
+    factsDb.store({
+      entity: null,
+      key: null,
+      value: null,
+      text: "User preference: dark mode",
+      category: "preference",
+      importance: 0.7,
+      source: "parent",
+    });
 
     const engine = makeEngine();
     const prep = await engine.prepareSubagentSpawn?.({
@@ -188,7 +268,7 @@ describe("HybridMemoryContextEngine.prepareSubagentSpawn()", () => {
     });
 
     expect(prep).toBeDefined();
-    expect(typeof prep!.rollback).toBe("function");
+    expect(typeof prep?.rollback).toBe("function");
 
     // Extended field: contextAddition should contain the injected parent facts
     const extended = prep as { rollback: () => void; contextAddition?: string };
@@ -206,11 +286,19 @@ describe("HybridMemoryContextEngine.prepareSubagentSpawn()", () => {
 
     // Should still return a valid preparation (not throw / not return undefined)
     expect(prep).toBeDefined();
-    expect(typeof prep!.rollback).toBe("function");
+    expect(typeof prep?.rollback).toBe("function");
   });
 
   it("rollback is a no-op (does not throw)", async () => {
-    factsDb.store({ entity: null, key: null, value: null, text: "Some fact", category: "fact", importance: 0.8, source: "test" });
+    factsDb.store({
+      entity: null,
+      key: null,
+      value: null,
+      text: "Some fact",
+      category: "fact",
+      importance: 0.8,
+      source: "test",
+    });
 
     const engine = makeEngine();
     const prep = await engine.prepareSubagentSpawn?.({
@@ -219,13 +307,21 @@ describe("HybridMemoryContextEngine.prepareSubagentSpawn()", () => {
     });
 
     // Rollback should resolve cleanly
-    await expect(prep!.rollback()).resolves.not.toThrow();
+    await expect(prep?.rollback()).resolves.not.toThrow();
   });
 
   it("respects autoRecall.limit when fetching parent facts", async () => {
     // Store 20 facts
     for (let i = 0; i < 20; i++) {
-      factsDb.store({ entity: null, key: null, value: null, text: `Fact number ${i}`, category: "fact", importance: 0.7, source: "test" });
+      factsDb.store({
+        entity: null,
+        key: null,
+        value: null,
+        text: `Fact number ${i}`,
+        category: "fact",
+        importance: 0.7,
+        source: "test",
+      });
     }
 
     const cfgWithLimit = { ...makeMinimalConfig() };
@@ -237,7 +333,7 @@ describe("HybridMemoryContextEngine.prepareSubagentSpawn()", () => {
 
     // contextAddition should not contain all 20 facts (limited to min(5, 15))
     expect(extended.contextAddition).toBeDefined();
-    const bulletCount = (extended.contextAddition!.match(/^- /gm) ?? []).length;
+    const bulletCount = (extended.contextAddition?.match(/^- /gm) ?? []).length;
     expect(bulletCount).toBeLessThanOrEqual(15);
   });
 });
@@ -248,11 +344,27 @@ describe("HybridMemoryContextEngine.prepareSubagentSpawn()", () => {
 
 describe("HybridMemoryContextEngine.onSubagentEnded()", () => {
   it("logs fact count when child session has captured facts", async () => {
-    const childSessionKey = "child-session-" + randomUUID();
+    const childSessionKey = `child-session-${randomUUID()}`;
 
     // Simulate facts captured by the child session
-    factsDb.store({ entity: null, key: null, value: null, text: "Child session discovery A", category: "fact", importance: 0.8, source: childSessionKey });
-    factsDb.store({ entity: null, key: null, value: null, text: "Child session discovery B", category: "technical", importance: 0.75, source: childSessionKey });
+    factsDb.store({
+      entity: null,
+      key: null,
+      value: null,
+      text: "Child session discovery A",
+      category: "fact",
+      importance: 0.8,
+      source: childSessionKey,
+    });
+    factsDb.store({
+      entity: null,
+      key: null,
+      value: null,
+      text: "Child session discovery B",
+      category: "technical",
+      importance: 0.75,
+      source: childSessionKey,
+    });
 
     const logger = makeLogger();
     const engine = makeEngine({ logger });
@@ -267,7 +379,7 @@ describe("HybridMemoryContextEngine.onSubagentEnded()", () => {
   });
 
   it("logs debug (not info) when child session has no captured facts", async () => {
-    const childSessionKey = "child-no-facts-" + randomUUID();
+    const childSessionKey = `child-no-facts-${randomUUID()}`;
     const logger = makeLogger();
     const engine = makeEngine({ logger });
 
@@ -286,7 +398,9 @@ describe("HybridMemoryContextEngine.onSubagentEnded()", () => {
 
   it("does not throw on DB errors (non-fatal)", async () => {
     const brokenFactsDb = {
-      countBySource: vi.fn().mockImplementation(() => { throw new Error("DB error"); }),
+      countBySource: vi.fn().mockImplementation(() => {
+        throw new Error("DB error");
+      }),
       getCount: vi.fn().mockReturnValue(0),
       list: vi.fn().mockReturnValue([]),
       hasDuplicate: vi.fn().mockReturnValue(false),
@@ -296,7 +410,7 @@ describe("HybridMemoryContextEngine.onSubagentEnded()", () => {
 
     // Should not throw
     await expect(
-      engine.onSubagentEnded?.({ childSessionKey: "broken-child", reason: "completed" })
+      engine.onSubagentEnded?.({ childSessionKey: "broken-child", reason: "completed" }),
     ).resolves.not.toThrow();
   });
 
@@ -306,7 +420,7 @@ describe("HybridMemoryContextEngine.onSubagentEnded()", () => {
 
     for (const reason of reasons) {
       await expect(
-        engine.onSubagentEnded?.({ childSessionKey: "child-" + randomUUID(), reason })
+        engine.onSubagentEnded?.({ childSessionKey: `child-${randomUUID()}`, reason }),
       ).resolves.not.toThrow();
     }
   });

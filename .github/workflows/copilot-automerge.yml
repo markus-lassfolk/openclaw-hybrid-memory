@@ -7,6 +7,10 @@ on:
   pull_request:
     types: [opened, synchronize]
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: write
   pull-requests: write
@@ -101,6 +105,7 @@ jobs:
               // Only consider checks from the CI workflow so CodeQL/Labeler/etc. don't block automerge
               const CI_JOB_NAME_PREFIXES = ['Type Check', 'Lint', 'Test'];
               const runs = allCheckRuns.filter(r => {
+                if (!r || !r.name) return false;
                 if (r.name === 'Automerge bot PRs') return false;
                 return CI_JOB_NAME_PREFIXES.some(prefix => r.name.startsWith(prefix));
               });

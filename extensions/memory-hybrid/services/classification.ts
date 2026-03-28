@@ -4,9 +4,9 @@
  * Extracted from index.ts - pure function for classifying memory operations
  */
 
-import OpenAI from "openai";
+import type OpenAI from "openai";
 import type { MemoryEntry } from "../types/memory.js";
-import { loadPrompt, fillPrompt } from "../utils/prompt-loader.js";
+import { fillPrompt, loadPrompt } from "../utils/prompt-loader.js";
 import { capturePluginError } from "./error-reporter.js";
 
 export type MemoryClassification = {
@@ -21,10 +21,7 @@ export type MemoryClassification = {
  * Parse LLM classification response into MemoryClassification.
  * Format: "ACTION [id] | reason". Exported for tests.
  */
-export function parseClassificationResponse(
-  content: string,
-  existingFacts: MemoryEntry[],
-): MemoryClassification {
+export function parseClassificationResponse(content: string, existingFacts: MemoryEntry[]): MemoryClassification {
   const match = content.match(/^(ADD|UPDATE|DELETE|NOOP)\s*([a-f0-9-]*)\s*\|\s*(.+)$/i);
   if (!match) {
     return { action: "ADD", reason: `unparseable LLM response: ${content.slice(0, 80)}` };
@@ -84,20 +81,21 @@ export async function classifyMemoryOperation(
   try {
     const { withLLMRetry } = await import("./chat.js");
     const resp = await withLLMRetry(
-      () => openai.chat.completions.create({
-        model,
-        messages: [{ role: "user", content: prompt }],
-        temperature: 0,
-        max_tokens: 100,
-      }),
-      { maxRetries: 2 }
+      () =>
+        openai.chat.completions.create({
+          model,
+          messages: [{ role: "user", content: prompt }],
+          temperature: 0,
+          max_tokens: 100,
+        }),
+      { maxRetries: 2 },
     );
     const content = (resp.choices[0]?.message?.content ?? "").trim();
     return parseClassificationResponse(content, existingFacts);
   } catch (err) {
     capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-      operation: 'classify-memory-operation',
-      subsystem: 'openai',
+      operation: "classify-memory-operation",
+      subsystem: "openai",
       model,
     });
     logger.warn(`memory-hybrid: classify operation failed: ${err}`);

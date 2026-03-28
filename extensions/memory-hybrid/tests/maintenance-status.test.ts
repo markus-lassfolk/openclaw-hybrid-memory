@@ -3,7 +3,7 @@
  * Covers config parsing of maintenance.cronReliability.
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
 import { hybridConfigSchema } from "../config.js";
 
 // ---------------------------------------------------------------------------
@@ -12,7 +12,11 @@ import { hybridConfigSchema } from "../config.js";
 
 describe("config maintenance.cronReliability parsing", () => {
   const baseConfig = {
-    embedding: { provider: "openai" as const, model: "text-embedding-3-small", apiKey: "sk-test-key-that-is-long-enough" },
+    embedding: {
+      provider: "openai" as const,
+      model: "text-embedding-3-small",
+      apiKey: "sk-test-key-that-is-long-enough",
+    },
     lanceDbPath: "/tmp/test-lance",
     sqlitePath: "/tmp/test.db",
   };
@@ -99,7 +103,7 @@ describe("config maintenance.cronReliability parsing", () => {
   });
 
   it("cronReliability is present in all presets", () => {
-    for (const mode of ["essential", "normal", "expert", "full"] as const) {
+    for (const mode of ["local", "minimal", "enhanced", "complete"] as const) {
       const cfg = hybridConfigSchema.parse({ ...baseConfig, mode });
       expect(cfg.maintenance.cronReliability).toBeDefined();
       expect(typeof cfg.maintenance.cronReliability.staleThresholdHours).toBe("number");
@@ -114,7 +118,11 @@ describe("config maintenance.cronReliability parsing", () => {
 describe("MaintenanceConfig sub-config co-existence", () => {
   it("maintenance has monthlyReview, cronReliability, and council", () => {
     const cfg = hybridConfigSchema.parse({
-      embedding: { provider: "openai" as const, model: "text-embedding-3-small", apiKey: "sk-test-key-that-is-long-enough" },
+      embedding: {
+        provider: "openai" as const,
+        model: "text-embedding-3-small",
+        apiKey: "sk-test-key-that-is-long-enough",
+      },
       lanceDbPath: "/tmp/test-lance",
       sqlitePath: "/tmp/test.db",
     });
@@ -125,7 +133,11 @@ describe("MaintenanceConfig sub-config co-existence", () => {
 
   it("all three sub-configs can be set independently", () => {
     const cfg = hybridConfigSchema.parse({
-      embedding: { provider: "openai" as const, model: "text-embedding-3-small", apiKey: "sk-test-key-that-is-long-enough" },
+      embedding: {
+        provider: "openai" as const,
+        model: "text-embedding-3-small",
+        apiKey: "sk-test-key-that-is-long-enough",
+      },
       lanceDbPath: "/tmp/test-lance",
       sqlitePath: "/tmp/test.db",
       maintenance: {

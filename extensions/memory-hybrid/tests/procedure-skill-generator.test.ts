@@ -1,7 +1,7 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, rmSync, readFileSync, existsSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { FactsDB } from "../backends/facts-db.js";
 import { generateAutoSkills } from "../services/procedure-skill-generator.js";
 
@@ -62,8 +62,8 @@ describe("generateAutoSkills", () => {
     expect(recipeContent).toHaveLength(2);
 
     const updated = db.getProcedureById(proc.id);
-    expect(updated!.promotedToSkill).toBe(1);
-    expect(updated!.skillPath).toContain("check-moltbook-notifications");
+    expect(updated?.promotedToSkill).toBe(1);
+    expect(updated?.skillPath).toContain("check-moltbook-notifications");
   });
 
   it("dry-run does not write files", () => {

@@ -6,16 +6,20 @@
  */
 
 import { basename } from "node:path";
-import type { Converter, ConversionResult } from "./index.js";
-import yaml from "js-yaml";
+import { parseYaml } from "../../utils/yaml-parser.js";
+import type { ConversionResult, Converter } from "./index.js";
 
-// ESPHome allows !secret directives
-const ESPHOME_SECRET_TYPE = new yaml.Type("!secret", {
-  kind: "scalar",
-  construct: (_data: string) => "[REDACTED]",
-});
-
-const ESPHOME_SCHEMA = yaml.DEFAULT_SCHEMA.extend([ESPHOME_SECRET_TYPE]);
+/**
+ * Replace !secret directives with [REDACTED] before parsing.
+ * ESPHome uses !secret for sensitive values; we always redact them.
+ * Only matches tags at the start of values (not inside quoted strings or after other content).
+ */
+function preprocessESPHomeYaml(content: string): string {
+  // Match tags at the start of a line value (after key: or after sequence dash -)
+  return content
+    .replace(/(^|\n)(\s*)([\w.-]+):[ \t]+!secret\s+\S+/g, '$1$2$3: "[REDACTED]"')
+    .replace(/(^|\n)(\s*)-\s+!secret\s+\S+/g, '$1$2- "[REDACTED]"');
+}
 
 type ESPDoc = Record<string, unknown>;
 
@@ -36,10 +40,10 @@ function renderSensor(sensor: unknown, idx: number): string {
   const s = sensor as Record<string, unknown>;
   const name = getStr(s, "name", `sensor_${idx + 1}`);
   const platform = getStr(s, "platform", "unknown");
-  const unit = s["unit_of_measurement"] ? ` (${getStr(s, "unit_of_measurement")})` : "";
-  const pin = s["pin"] ? ` pin: ${JSON.stringify(s["pin"])}` : "";
-  const address = s["address"] ? ` address: ${getStr(s, "address")}` : "";
-  const filters = asArray(s["filters"]);
+  const unit = s.unit_of_measurement ? ` (${getStr(s, "unit_of_measurement")})` : "";
+  const pin = s.pin ? ` pin: ${JSON.stringify(s.pin)}` : "";
+  const address = s.address ? ` address: ${getStr(s, "address")}` : "";
+  const filters = asArray(s.filters);
   const filterStr = filters.length ? ` [${filters.length} filter(s)]` : "";
   return `- **${name}** — platform: ${platform}${unit}${pin}${address}${filterStr}`;
 }
@@ -49,8 +53,8 @@ function renderBinarySensor(sensor: unknown, idx: number): string {
   const s = sensor as Record<string, unknown>;
   const name = getStr(s, "name", `binary_sensor_${idx + 1}`);
   const platform = getStr(s, "platform", "unknown");
-  const deviceClass = s["device_class"] ? ` (${getStr(s, "device_class")})` : "";
-  const pin = s["pin"] ? ` pin: ${JSON.stringify(s["pin"])}` : "";
+  const deviceClass = s.device_class ? ` (${getStr(s, "device_class")})` : "";
+  const pin = s.pin ? ` pin: ${JSON.stringify(s.pin)}` : "";
   return `- **${name}** — platform: ${platform}${deviceClass}${pin}`;
 }
 
@@ -59,7 +63,7 @@ function renderSwitch(sw: unknown, idx: number): string {
   const s = sw as Record<string, unknown>;
   const name = getStr(s, "name", `switch_${idx + 1}`);
   const platform = getStr(s, "platform", "unknown");
-  const pin = s["pin"] ? ` pin: ${JSON.stringify(s["pin"])}` : "";
+  const pin = s.pin ? ` pin: ${JSON.stringify(s.pin)}` : "";
   return `- **${name}** — platform: ${platform}${pin}`;
 }
 
@@ -68,7 +72,7 @@ function renderOutput(output: unknown, idx: number): string {
   const o = output as Record<string, unknown>;
   const id = getStr(o, "id", `output_${idx + 1}`);
   const platform = getStr(o, "platform", "unknown");
-  const pin = o["pin"] ? ` pin: ${JSON.stringify(o["pin"])}` : "";
+  const pin = o.pin ? ` pin: ${JSON.stringify(o.pin)}` : "";
   return `- **${id}** — platform: ${platform}${pin}`;
 }
 
@@ -80,27 +84,27 @@ export const esphomeYamlConverter: Converter = {
     let doc: ESPDoc;
 
     try {
-      const parsed = yaml.load(content, { schema: ESPHOME_SCHEMA });
-      doc = (typeof parsed === "object" && parsed !== null ? parsed : {}) as ESPDoc;
+      const preprocessed = preprocessESPHomeYaml(content);
+      const parsed = parseYaml(preprocessed);
+      doc = (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed) ? parsed : {}) as ESPDoc;
     } catch {
       doc = {};
     }
 
     // Device name
-    const esphomeSection = doc["esphome"] as Record<string, unknown> | undefined;
+    const esphomeSection = doc.esphome as Record<string, unknown> | undefined;
     const deviceName = esphomeSection ? getStr(esphomeSection, "name", fileName) : fileName;
     const title = `ESPHome Device: ${deviceName}`;
     const sections: string[] = [`# ${title}\n`];
 
     // Board info
     const boardSection =
-      (doc["esp32"] as Record<string, unknown> | undefined) ??
-      (doc["esp8266"] as Record<string, unknown> | undefined);
-    const platform = doc["esp32"] ? "ESP32" : doc["esp8266"] ? "ESP8266" : "Unknown";
+      (doc.esp32 as Record<string, unknown> | undefined) ?? (doc.esp8266 as Record<string, unknown> | undefined);
+    const platform = doc.esp32 ? "ESP32" : doc.esp8266 ? "ESP8266" : "Unknown";
     if (boardSection) {
       const board = getStr(boardSection, "board", "unknown");
-      const framework = boardSection["framework"]
-        ? ` / framework: ${typeof boardSection["framework"] === "object" ? getStr(boardSection["framework"] as Record<string, unknown>, "type", "default") : String(boardSection["framework"])}`
+      const framework = boardSection.framework
+        ? ` / framework: ${typeof boardSection.framework === "object" ? getStr(boardSection.framework as Record<string, unknown>, "type", "default") : String(boardSection.framework)}`
         : "";
       sections.push(`## Board\n\n- Platform: ${platform}\n- Board: ${board}${framework}\n`);
     } else if (platform !== "Unknown") {
@@ -108,56 +112,53 @@ export const esphomeYamlConverter: Converter = {
     }
 
     // Sensors
-    const sensors = asArray(doc["sensor"]);
+    const sensors = asArray(doc.sensor);
     if (sensors.length > 0) {
       sections.push(`## Sensors\n\n${sensors.map((s, i) => renderSensor(s, i)).join("\n")}\n`);
     }
 
     // Binary Sensors
-    const binarySensors = asArray(doc["binary_sensor"]);
+    const binarySensors = asArray(doc.binary_sensor);
     if (binarySensors.length > 0) {
       sections.push(`## Binary Sensors\n\n${binarySensors.map((s, i) => renderBinarySensor(s, i)).join("\n")}\n`);
     }
 
     // Switches & Outputs
-    const switches = asArray(doc["switch"]);
-    const outputs = asArray(doc["output"]);
+    const switches = asArray(doc.switch);
+    const outputs = asArray(doc.output);
     if (switches.length > 0 || outputs.length > 0) {
-      const lines = [
-        ...switches.map((s, i) => renderSwitch(s, i)),
-        ...outputs.map((o, i) => renderOutput(o, i)),
-      ];
+      const lines = [...switches.map((s, i) => renderSwitch(s, i)), ...outputs.map((o, i) => renderOutput(o, i))];
       sections.push(`## Switches/Outputs\n\n${lines.join("\n")}\n`);
     }
 
     // WiFi — NEVER include password
-    const wifi = doc["wifi"] as Record<string, unknown> | undefined;
+    const wifi = doc.wifi as Record<string, unknown> | undefined;
     if (wifi) {
-      const ssid = wifi["ssid"] ? getStr(wifi, "ssid") : "*(not set)*";
+      const ssid = wifi.ssid ? getStr(wifi, "ssid") : "*(not set)*";
       // password: always redact
-      const staticIp = wifi["manual_ip"]
-        ? ` / static IP: ${getStr(wifi["manual_ip"] as Record<string, unknown>, "static_ip")}`
+      const staticIp = wifi.manual_ip
+        ? ` / static IP: ${getStr(wifi.manual_ip as Record<string, unknown>, "static_ip")}`
         : "";
-      const ap = wifi["ap"] ? " / access point: enabled" : "";
+      const ap = wifi.ap ? " / access point: enabled" : "";
       sections.push(`## WiFi\n\n- SSID: ${ssid}\n- Password: [REDACTED]${staticIp}${ap}\n`);
     }
 
     // API
-    const api = doc["api"];
+    const api = doc.api;
     if (api !== undefined) {
       const apiEnabled = api !== false && api !== null;
       sections.push(`## API\n\n- Enabled: ${apiEnabled}\n- Password: [REDACTED]\n`);
     }
 
     // OTA
-    const ota = doc["ota"];
+    const ota = doc.ota;
     if (ota !== undefined) {
       const otaEnabled = ota !== false && ota !== null;
       sections.push(`## OTA\n\n- Enabled: ${otaEnabled}\n- Password: [REDACTED]\n`);
     }
 
     // Logger
-    const logger = doc["logger"] as Record<string, unknown> | undefined;
+    const logger = doc.logger as Record<string, unknown> | undefined;
     if (logger) {
       const level = getStr(logger, "level", "DEBUG");
       sections.push(`## Logger\n\n- Level: ${level}\n`);

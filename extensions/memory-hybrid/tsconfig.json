@@ -18,6 +18,7 @@
   "include": [
     "*.ts",
     "backends/**/*.ts",
+    "benchmark/**/*.ts",
     "cli/**/*.ts",
     "services/**/*.ts",
     "tools/**/*.ts",

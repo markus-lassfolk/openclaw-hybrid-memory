@@ -1,7 +1,7 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
-import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { _testing } from "../index.js";
 
 const { EventLog } = _testing;
@@ -165,11 +165,7 @@ describe("EventLog.getByTimeRange", () => {
     log.append({ sessionId: "s", timestamp: ts, eventType: "fact_learned", content: {} });
     log.append({ sessionId: "s", timestamp: ts, eventType: "decision_made", content: {} });
 
-    const results = log.getByTimeRange(
-      "2024-01-01T00:00:00.000Z",
-      "2025-01-01T00:00:00.000Z",
-      "fact_learned",
-    );
+    const results = log.getByTimeRange("2024-01-01T00:00:00.000Z", "2025-01-01T00:00:00.000Z", "fact_learned");
     expect(results).toHaveLength(1);
     expect(results[0].eventType).toBe("fact_learned");
   });
@@ -395,8 +391,8 @@ describe("EventLog.getStats", () => {
 
     const stats = log.getStats();
     expect(stats.total).toBe(3);
-    expect(stats.byType["fact_learned"]).toBe(2);
-    expect(stats.byType["decision_made"]).toBe(1);
+    expect(stats.byType.fact_learned).toBe(2);
+    expect(stats.byType.decision_made).toBe(1);
   });
 
   it("tracks unconsolidated count correctly", () => {

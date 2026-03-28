@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 describe("version command utilities", () => {
   describe("version comparison", () => {
@@ -101,18 +101,18 @@ describe("version command utilities", () => {
       expect(result).toBe(mockResponse);
       expect(global.fetch).toHaveBeenCalledWith(
         "https://example.com",
-        expect.objectContaining({ signal: expect.any(AbortSignal) })
+        expect.objectContaining({ signal: expect.any(AbortSignal) }),
       );
     });
 
     it("throws timeout error when fetch takes too long", async () => {
       let abortHandler: (() => void) | null = null;
       (global.fetch as any).mockImplementation(
-        ({ signal }: { signal: AbortSignal }) => 
+        ({ signal }: { signal: AbortSignal }) =>
           new Promise((_, reject) => {
-            abortHandler = () => reject(new Error('aborted'));
-            signal.addEventListener('abort', abortHandler);
-          })
+            abortHandler = () => reject(new Error("aborted"));
+            signal.addEventListener("abort", abortHandler);
+          }),
       );
 
       const fetchWithTimeout = async (url: string, timeoutMs: number): Promise<Response> => {
@@ -128,10 +128,10 @@ describe("version command utilities", () => {
         }
       };
 
-      const promise = fetchWithTimeout("https://example.com", 3000).catch(err => err);
-      
+      const promise = fetchWithTimeout("https://example.com", 3000).catch((err) => err);
+
       await vi.advanceTimersByTimeAsync(3001);
-      
+
       const result = await promise;
       expect(result).toBeInstanceOf(Error);
       expect(result.message).toBe("timeout or network error");
@@ -153,9 +153,7 @@ describe("version command utilities", () => {
         }
       };
 
-      await expect(fetchWithTimeout("https://example.com", 3000)).rejects.toThrow(
-        "timeout or network error"
-      );
+      await expect(fetchWithTimeout("https://example.com", 3000)).rejects.toThrow("timeout or network error");
     });
   });
 
@@ -304,7 +302,7 @@ describe("version command utilities", () => {
       const data = { tag_name: "v2026.2.222" };
       const tag = data.tag_name;
       const version = typeof tag === "string" ? tag.replace(/^v/, "") : null;
-      
+
       expect(version).toBe("2026.2.222");
     });
 
@@ -312,7 +310,7 @@ describe("version command utilities", () => {
       const data = { tag_name: "2026.2.222" };
       const tag = data.tag_name;
       const version = typeof tag === "string" ? tag.replace(/^v/, "") : null;
-      
+
       expect(version).toBe("2026.2.222");
     });
 
@@ -320,7 +318,7 @@ describe("version command utilities", () => {
       const data = {};
       const tag = (data as any).tag_name;
       const version = typeof tag === "string" ? tag.replace(/^v/, "") : null;
-      
+
       expect(version).toBe(null);
     });
 
@@ -328,7 +326,7 @@ describe("version command utilities", () => {
       const data = { tag_name: 123 } as unknown as { tag_name?: string };
       const tag = data.tag_name;
       const version = typeof tag === "string" ? tag.replace(/^v/, "") : null;
-      
+
       expect(version).toBe(null);
     });
   });
@@ -337,21 +335,21 @@ describe("version command utilities", () => {
     it("extracts version from response", () => {
       const data = { version: "2026.2.222" };
       const version = typeof data.version === "string" ? data.version : null;
-      
+
       expect(version).toBe("2026.2.222");
     });
 
     it("returns null for missing version", () => {
       const data = {};
       const version = typeof (data as any).version === "string" ? (data as any).version : null;
-      
+
       expect(version).toBe(null);
     });
 
     it("returns null for non-string version", () => {
       const data = { version: 123 };
       const version = typeof data.version === "string" ? data.version : null;
-      
+
       expect(version).toBe(null);
     });
   });
@@ -376,33 +374,34 @@ describe("version command utilities", () => {
     it("shows 'installed is newer' for GitHub when installed > github", () => {
       const installed = "2026.2.222";
       const githubVersion = "2026.2.221";
-      
-      const hint = githubVersion != null && compare(installed, githubVersion) > 0
-        ? " (installed is newer)"
-        : updateHint(githubVersion);
-      
+
+      const hint =
+        githubVersion != null && compare(installed, githubVersion) > 0
+          ? " (installed is newer)"
+          : updateHint(githubVersion);
+
       expect(hint).toBe(" (installed is newer)");
     });
 
     it("shows 'installed is newer' for npm when installed > npm", () => {
       const installed = "2026.2.222";
       const npmVersion = "2026.2.221";
-      
-      const hint = npmVersion != null && compare(installed, npmVersion) > 0
-        ? " (installed is newer)"
-        : updateHint(npmVersion);
-      
+
+      const hint =
+        npmVersion != null && compare(installed, npmVersion) > 0 ? " (installed is newer)" : updateHint(npmVersion);
+
       expect(hint).toBe(" (installed is newer)");
     });
 
     it("does not show 'installed is newer' when versions match", () => {
       const installed = "2026.2.222";
       const githubVersion = "2026.2.222";
-      
-      const hint = githubVersion != null && compare(installed, githubVersion) > 0
-        ? " (installed is newer)"
-        : updateHint(githubVersion);
-      
+
+      const hint =
+        githubVersion != null && compare(installed, githubVersion) > 0
+          ? " (installed is newer)"
+          : updateHint(githubVersion);
+
       expect(hint).toBe(" (up to date)");
     });
   });

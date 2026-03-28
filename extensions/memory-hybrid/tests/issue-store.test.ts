@@ -1,7 +1,7 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
-import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { _testing } from "../index.js";
 
 const { IssueStore } = _testing;
@@ -100,8 +100,8 @@ describe("IssueStore.get", () => {
     const created = store.create({ title: "Auth fails", symptoms: ["401 error"] });
     const fetched = store.get(created.id);
     expect(fetched).not.toBeNull();
-    expect(fetched!.id).toBe(created.id);
-    expect(fetched!.title).toBe("Auth fails");
+    expect(fetched?.id).toBe(created.id);
+    expect(fetched?.title).toBe("Auth fails");
   });
 
   it("returns null for unknown id", () => {

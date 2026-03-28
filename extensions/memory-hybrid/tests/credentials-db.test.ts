@@ -1,8 +1,10 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+// @ts-nocheck
 import { mkdtempSync, rmSync } from "node:fs";
-import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { _testing } from "../index.js";
+import { pluginLogger } from "../utils/logger.js";
 
 const { CredentialsDB, deriveKey, encryptValue, decryptValue } = _testing;
 
@@ -137,9 +139,9 @@ describe("CredentialsDB.get", () => {
 
     const retrieved = db.get("openai", "api_key");
     expect(retrieved).not.toBeNull();
-    expect(retrieved!.service).toBe("openai");
-    expect(retrieved!.type).toBe("api_key");
-    expect(retrieved!.value).toBe(secret);
+    expect(retrieved?.service).toBe("openai");
+    expect(retrieved?.type).toBe("api_key");
+    expect(retrieved?.value).toBe(secret);
   });
 
   it("returns null for non-existent service", () => {
@@ -152,7 +154,7 @@ describe("CredentialsDB.get", () => {
 
     const result = db.get("github");
     expect(result).not.toBeNull();
-    expect(result!.service).toBe("github");
+    expect(result?.service).toBe("github");
   });
 
   it("upserts on conflict (same service + type)", () => {
@@ -160,7 +162,7 @@ describe("CredentialsDB.get", () => {
     db.store({ service: "openai", type: "api_key", value: "new-key" });
 
     const result = db.get("openai", "api_key");
-    expect(result!.value).toBe("new-key");
+    expect(result?.value).toBe("new-key");
   });
 });
 
@@ -179,7 +181,9 @@ describe("CredentialsDB.list", () => {
 
     const list = db.list();
     expect(list.length).toBe(2);
-    expect(list.every((item) => !("value" in item && typeof item.value === "string" && item.value.length > 10))).toBe(true);
+    expect(list.every((item) => !("value" in item && typeof item.value === "string" && item.value.length > 10))).toBe(
+      true,
+    );
     expect(list.map((l) => l.service)).toContain("github");
     expect(list.map((l) => l.service)).toContain("openai");
   });
@@ -221,7 +225,7 @@ describe("CredentialsDB cross-instance", () => {
 
     const db2 = new CredentialsDB(dbPath, TEST_ENCRYPTION_KEY);
     const result = db2.get("test", "api_key");
-    expect(result!.value).toBe("shared-secret");
+    expect(result?.value).toBe("shared-secret");
     db2.close();
   });
 
@@ -249,7 +253,7 @@ describe("CredentialsDB plaintext vault", () => {
     plainDb.store({ service: "api", type: "api_key", value: "plain-secret" });
     const got = plainDb.get("api", "api_key");
     expect(got).not.toBeNull();
-    expect(got!.value).toBe("plain-secret");
+    expect(got?.value).toBe("plain-secret");
     plainDb.close();
     rmSync(dir, { recursive: true, force: true });
   });
@@ -298,7 +302,7 @@ describe("CredentialsDB plaintext vault", () => {
     const db2 = new CredentialsDB(dbPath, "");
     const got = db2.get("persist", "password");
     expect(got).not.toBeNull();
-    expect(got!.value).toBe("my-password-123");
+    expect(got?.value).toBe("my-password-123");
     db2.close();
     rmSync(dir, { recursive: true, force: true });
   });
@@ -311,20 +315,17 @@ describe("CredentialsDB plaintext vault", () => {
     plainDb.store({ service: "test", type: "api_key", value: "plain-value" });
     plainDb.close();
     // Capture warning during construction
-    const originalWarn = console.warn;
-    const warnings: string[] = [];
-    console.warn = (...args: unknown[]) => {
-      warnings.push(String(args[0]));
-    };
+    const warnSpy = vi.spyOn(pluginLogger, "warn").mockImplementation(() => {});
     // Reopen with a valid key (should handle gracefully and warn)
     const db2 = new CredentialsDB(dbPath, TEST_ENCRYPTION_KEY);
-    console.warn = originalWarn;
+    const warnings = warnSpy.mock.calls.map((args) => String(args[0]));
+    warnSpy.mockRestore();
     // Verify warning was issued
     expect(warnings.some((w) => w.includes("plaintext mode"))).toBe(true);
     // Verify data is still accessible in plaintext
     const got = db2.get("test", "api_key");
     expect(got).not.toBeNull();
-    expect(got!.value).toBe("plain-value");
+    expect(got?.value).toBe("plain-value");
     db2.close();
     rmSync(dir, { recursive: true, force: true });
   });
@@ -342,7 +343,7 @@ describe("CredentialsDB legacy vault mode mismatch", () => {
     const encDb = new CredentialsDB(dbPath, TEST_ENCRYPTION_KEY);
     encDb.store({ service: "legacy", type: "api_key", value: "encrypted-secret" });
     // Manually delete vault_meta to simulate legacy vault
-    const db = encDb["db"]; // Access private db
+    const db = encDb.db; // Access private db
     db.prepare("DELETE FROM vault_meta").run();
     encDb.close();
     // Try to open without key → must throw

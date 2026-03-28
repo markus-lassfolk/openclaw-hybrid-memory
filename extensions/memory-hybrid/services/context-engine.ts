@@ -21,7 +21,158 @@ import type { WriteAheadLog } from "../backends/wal.js";
 import type { HybridMemoryConfig } from "../config.js";
 import type { EmbeddingProvider } from "./embeddings.js";
 import { capturePluginError } from "./error-reporter.js";
-import { replayWalEntries } from "../utils/wal-replay.js";
+import { runPreConsolidationFlush } from "./pre-consolidation-flush.js";
+import { readFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
+
+// ---------------------------------------------------------------------------
+// Auto-capture: outcome phrase patterns for episodic memory (#781)
+// ---------------------------------------------------------------------------
+
+/**
+ * Outcome phrase → EpisodeOutcome mapping.
+ * Scanned in session JSONL during compaction to auto-create episode records.
+ * Order matters: more specific patterns should come before generic ones.
+ */
+const OUTCOME_PATTERNS: Array<{
+  pattern: RegExp;
+  outcome: "success" | "failure" | "partial" | "unknown";
+  eventTemplate: (phrase: string, context: string) => string;
+}> = [
+  // Success patterns
+  {
+    pattern: /✅?\s*merged\b/i,
+    outcome: "success",
+    eventTemplate: (_p, ctx) => `PR/branch merged: ${ctx.slice(0, 120).trim()}`,
+  },
+  {
+    pattern: /✅?\s*(?:successfully\s+)?(?:deployed|deploy\b)/i,
+    outcome: "success",
+    eventTemplate: (_p, ctx) => `Deployment succeeded: ${ctx.slice(0, 120).trim()}`,
+  },
+  {
+    pattern: /✅?\s*(?:passed|tests?\s+passed|test\s+pass)/i,
+    outcome: "success",
+    eventTemplate: (_p, ctx) => `Tests passed: ${ctx.slice(0, 120).trim()}`,
+  },
+  {
+    pattern: /🔧\s*fixed\b/i,
+    outcome: "success",
+    eventTemplate: (_p, ctx) => `Issue fixed: ${ctx.slice(0, 120).trim()}`,
+  },
+  {
+    pattern: /\b(?:successfully\s+)?completed\b/i,
+    outcome: "success",
+    eventTemplate: (_p, ctx) => `Task completed: ${ctx.slice(0, 120).trim()}`,
+  },
+  {
+    pattern: /✅?\s*(?:resolved|fix(?:ed)?)\b/i,
+    outcome: "success",
+    eventTemplate: (_p, ctx) => `Resolved: ${ctx.slice(0, 120).trim()}`,
+  },
+  // Failure patterns
+  {
+    pattern: /❌\s*(?:failed|failure|error\b)/i,
+    outcome: "failure",
+    eventTemplate: (_p, ctx) => `Failed: ${ctx.slice(0, 120).trim()}`,
+  },
+  {
+    pattern: /\b(?:FAILED|FAILURE|CRASH(?:ed)?)\b/i,
+    outcome: "failure",
+    eventTemplate: (_p, ctx) => `Failed: ${ctx.slice(0, 120).trim()}`,
+  },
+  {
+    pattern: /\b(?:\berror\b|\bfailed\b).*(?:during|when|in|while)\b/i,
+    outcome: "failure",
+    eventTemplate: (_p, ctx) => `Error encountered: ${ctx.slice(0, 120).trim()}`,
+  },
+  // Partial patterns
+  {
+    pattern: /⚠️?\s*partial(?:ly)?\b/i,
+    outcome: "partial",
+    eventTemplate: (_p, ctx) => `Partial result: ${ctx.slice(0, 120).trim()}`,
+  },
+  {
+    pattern: /\b(?:partial(?:ly)?|incomplete)\b/i,
+    outcome: "partial",
+    eventTemplate: (_p, ctx) => `Partial result: ${ctx.slice(0, 120).trim()}`,
+  },
+];
+
+/**
+ * Extract readable text from a session JSONL file for episode scanning.
+ */
+async function extractTextFromSessionFile(sessionFile: string): Promise<string> {
+  if (!existsSync(sessionFile)) return "";
+  try {
+    const content = await readFile(sessionFile, "utf-8");
+    const lines = content.split("\n").filter((l) => l.trim());
+    const parts: string[] = [];
+    for (const line of lines) {
+      let obj: unknown;
+      try {
+        obj = JSON.parse(line);
+      } catch {
+        continue;
+      }
+      if (!obj || typeof obj !== "object") continue;
+      const msg = (obj as Record<string, unknown>).message as Record<string, unknown> | undefined;
+      if (!msg || typeof msg !== "object") continue;
+      const text = (msg.content as string) || (msg.text as string) || "";
+      if (text) parts.push(text);
+    }
+    return parts.join(" ");
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * Scan session text for outcome-indicating phrases and create episode records.
+ * Called during session compaction to auto-capture significant events.
+ * Returns the number of episodes created.
+ */
+async function autoCaptureEpisodes(
+  factsDb: FactsDB,
+  sessionFile: string,
+  sessionId: string,
+  logger: { debug?: (msg: string) => void; warn?: (msg: string) => void },
+): Promise<number> {
+  const text = await extractTextFromSessionFile(sessionFile);
+  if (!text) return 0;
+
+  // Track which patterns have already fired to avoid duplicate episodes for the same phrase
+  const seen = new Set<string>();
+  let created = 0;
+
+  for (const { pattern, outcome, eventTemplate } of OUTCOME_PATTERNS) {
+    const match = text.match(pattern);
+    if (!match) continue;
+    const phrase = match[0];
+    const contextKey = phrase.toLowerCase().slice(0, 50);
+    if (seen.has(contextKey)) continue;
+    seen.add(contextKey);
+
+    try {
+      const contextSnippet = text.slice(Math.max(0, text.indexOf(phrase) - 20), text.indexOf(phrase) + 100);
+      const event = eventTemplate(phrase, contextSnippet);
+      // Deduplicate: don't create the same episode event within this session
+      factsDb.recordEpisode({
+        event,
+        outcome,
+        context: contextSnippet.slice(0, 500),
+        sessionId,
+        tags: ["auto-captured"],
+      });
+      created++;
+      logger.debug?.(`memory-hybrid: auto-captured episode [${outcome}]: ${event.slice(0, 80)}`);
+    } catch (err) {
+      logger.warn?.(`memory-hybrid: auto-capture episode failed: ${err}`);
+    }
+  }
+
+  return created;
+}
 
 // ---------------------------------------------------------------------------
 // Types (local stubs if SDK types are unavailable)
@@ -109,7 +260,7 @@ export class HybridMemoryContextEngine implements MinimalContextEngine {
    *  1. Drain the WAL — replay pending entries to SQLite (and LanceDB if embeddings available)
    *  2. Snapshot session-scoped facts to WAL for durability
    */
-  async compact(params: {
+  async compact(_params: {
     sessionId: string;
     sessionFile: string;
     tokenBudget?: number;
@@ -119,22 +270,26 @@ export class HybridMemoryContextEngine implements MinimalContextEngine {
     const { logger, wal, factsDb, vectorDb, embeddings } = this.opts;
     try {
       // 1. Replay pending WAL entries — commit any writes that didn't complete before crash/compaction
-      let walCommitted = 0;
-      let walSkipped = 0;
-      if (wal) {
-        try {
-          const result = await replayWalEntries(wal, factsDb, vectorDb, embeddings);
-          walCommitted = result.committed;
-          walSkipped = result.skipped;
-          if (walCommitted > 0 || walSkipped > 0) {
-            logger.info?.(`memory-hybrid: context-engine compact — WAL replay complete: ${walCommitted} committed, ${walSkipped} skipped (already present)`);
-          }
-        } catch {
-          // Non-fatal — WAL replay failure should not block compaction
+      const { committed: walCommitted, skipped: walSkipped } = await runPreConsolidationFlush(
+        { wal, factsDb, vectorDb, embeddings },
+        logger,
+        "context-engine compact",
+      );
+
+      // 2. Auto-capture episodic events from session log (#781)
+      //    Scans the session JSONL for outcome-indicating phrases (✅ merged, ❌ failed, etc.)
+      //    and creates episode records for significant events.
+      let episodesCreated = 0;
+      try {
+        episodesCreated = await autoCaptureEpisodes(factsDb, _params.sessionFile, _params.sessionId, logger);
+        if (episodesCreated > 0) {
+          logger.info?.(`memory-hybrid: auto-captured ${episodesCreated} episode(s) from session compaction`);
         }
+      } catch (err) {
+        logger.warn?.(`memory-hybrid: episode auto-capture failed (non-fatal): ${err}`);
       }
 
-      // 2. Count total facts and build a brief post-compaction memory summary.
+      // 3. Count total facts and build a brief post-compaction memory summary.
       //
       //    The summary is returned in the `result` field so that SDK versions which
       //    consume it can inject the top facts into the post-compaction context.
@@ -159,7 +314,7 @@ export class HybridMemoryContextEngine implements MinimalContextEngine {
           ];
           for (const f of topFacts) {
             const entityPrefix = f.entity ? `[${f.entity}] ` : "";
-            const preview = f.text.length > 150 ? f.text.slice(0, 150) + "…" : f.text;
+            const preview = f.text.length > 150 ? `${f.text.slice(0, 150)}…` : f.text;
             lines.push(`- ${entityPrefix}${preview}`);
           }
           lines.push("<!-- /memory-hybrid: post-compaction memory summary -->");
@@ -169,13 +324,17 @@ export class HybridMemoryContextEngine implements MinimalContextEngine {
         // Non-fatal
       }
 
-      logger.debug?.(`memory-hybrid: context-engine compact — pre-compaction flush done, sessionFacts≈${sessionFacts}`);
+      logger.debug?.(
+        `memory-hybrid: context-engine compact — pre-compaction flush done, sessionFacts≈${sessionFacts}, episodes≈${episodesCreated}`,
+      );
       return {
         ok: true,
         compacted: false,
-        reason: `flushed pending state (wal: ${walCommitted} committed)`,
+        reason: `flushed pending state (wal: ${walCommitted} committed, ${episodesCreated} episodes auto-captured)`,
         // Extended result field: SDK ≥ 2026.3.8 may inject memorySummary into context.
-        result: memorySummary ? { topFacts, factCount: sessionFacts, memorySummary } : { factCount: sessionFacts },
+        result: memorySummary
+          ? { topFacts, factCount: sessionFacts, memorySummary, episodesCreated }
+          : { factCount: sessionFacts, episodesCreated },
       };
     } catch (err) {
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
@@ -217,7 +376,7 @@ export class HybridMemoryContextEngine implements MinimalContextEngine {
 
       const lines = topFacts.map((f) => {
         const entityPrefix = f.entity ? `[${f.entity}] ` : "";
-        const preview = f.text.length > 200 ? f.text.slice(0, 200) + "…" : f.text;
+        const preview = f.text.length > 200 ? `${f.text.slice(0, 200)}…` : f.text;
         return `- ${entityPrefix}${preview}`;
       });
 
@@ -227,7 +386,7 @@ export class HybridMemoryContextEngine implements MinimalContextEngine {
         `<!-- memory-hybrid: parent context injected for subagent ${params.childSessionKey} -->`,
         `Relevant memories from parent session (${params.parentSessionKey}):`,
         ...lines,
-        `<!-- /memory-hybrid: parent context -->`,
+        "<!-- /memory-hybrid: parent context -->",
       ].join("\n");
 
       logger.debug?.(
@@ -237,7 +396,9 @@ export class HybridMemoryContextEngine implements MinimalContextEngine {
       return {
         rollback: async () => {
           // No state was mutated; rollback is a no-op.
-          logger.debug?.(`memory-hybrid: prepareSubagentSpawn rollback — no state to revert for child=${params.childSessionKey}`);
+          logger.debug?.(
+            `memory-hybrid: prepareSubagentSpawn rollback — no state to revert for child=${params.childSessionKey}`,
+          );
         },
         // Extended field: injected into sub-agent context by SDK ≥ 2026.3.8
         contextAddition,

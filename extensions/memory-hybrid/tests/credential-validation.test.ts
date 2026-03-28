@@ -2,17 +2,17 @@
  * Unit tests for credential value and service name validation (Issue #98).
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
 import { tryParseCredentialForVault } from "../services/auto-capture.js";
 import {
-  validateCredentialValue,
-  validateAndNormalizeServiceName,
+  CREDENTIAL_SERVICE_MAX_LENGTH,
+  MAX_SERVICE_NAME_LENGTH,
+  MIN_CREDENTIAL_VALUE_LENGTH,
   auditCredentialValue,
   auditServiceName,
   normalizeServiceForDedup,
-  CREDENTIAL_SERVICE_MAX_LENGTH,
-  MIN_CREDENTIAL_VALUE_LENGTH,
-  MAX_SERVICE_NAME_LENGTH,
+  validateAndNormalizeServiceName,
+  validateCredentialValue,
 } from "../services/credential-validation.js";
 
 describe("exported constants", () => {
@@ -28,7 +28,9 @@ describe("exported constants", () => {
 
 describe("validateCredentialValue", () => {
   it("accepts JWT-like value when hasPatternMatch", () => {
-    expect(validateCredentialValue("eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.xxx.yyy", "bearer", true)).toEqual({ ok: true });
+    expect(validateCredentialValue("eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.xxx.yyy", "bearer", true)).toEqual({
+      ok: true,
+    });
   });
 
   it("accepts sk- key when hasPatternMatch", () => {
@@ -65,7 +67,10 @@ describe("validateCredentialValue", () => {
   });
 
   it("rejects value too short for other when no pattern match", () => {
-    expect(validateCredentialValue("short", "other", false)).toEqual({ ok: false, reason: "value_too_short_for_other" });
+    expect(validateCredentialValue("short", "other", false)).toEqual({
+      ok: false,
+      reason: "value_too_short_for_other",
+    });
   });
 
   it("rejects empty value", () => {
@@ -159,8 +164,8 @@ describe("tryParseCredentialForVault — P2 hasPatternMatch bypass", () => {
     const text = "The login token is sk-abc123def456xyz789jkl012. It requires explicit login via the gateway";
     const result = tryParseCredentialForVault(
       text,
-      "credentials",     // entity
-      "gateway-auth",    // key
+      "credentials", // entity
+      "gateway-auth", // key
       "requires explicit login via the gateway", // value — narrative text
     );
     expect(result).not.toBeNull();
@@ -176,4 +181,3 @@ describe("tryParseCredentialForVault — P2 hasPatternMatch bypass", () => {
     expect(result?.service).toBe("openai");
   });
 });
-

@@ -6,9 +6,9 @@
  * only — no code is generated. Implementation is left to humans or LLMs.
  */
 
-import type { ToolProposalStore, ToolProposal } from "../backends/tool-proposal-store.js";
-import type { GapDetector, DetectedGap, GapDetectorOptions } from "./gap-detector.js";
+import type { ToolProposal, ToolProposalStore } from "../backends/tool-proposal-store.js";
 import type { SelfExtensionConfig } from "../config/types/features.js";
+import type { DetectedGap, GapDetector, GapDetectorOptions } from "./gap-detector.js";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -33,7 +33,7 @@ function generateParameterSchema(gap: DetectedGap): string {
   const params: Record<string, { type: string; description: string }> = {};
 
   // Always include the goal the tool should accomplish
-  params["goal"] = {
+  params.goal = {
     type: "string",
     description: "What you want to accomplish (replaces the multi-step workflow).",
   };
@@ -41,7 +41,7 @@ function generateParameterSchema(gap: DetectedGap): string {
   // If the sequence contains memory_recall-like tools, add a query param
   const hasMemoryTools = gap.toolSequence.some((t) => t.startsWith("memory_"));
   if (hasMemoryTools) {
-    params["queries"] = {
+    params.queries = {
       type: "array",
       description: "List of search queries to run in one batch call.",
     };
@@ -50,7 +50,7 @@ function generateParameterSchema(gap: DetectedGap): string {
   // If the sequence contains exec calls, add a commands param
   const hasExec = gap.toolSequence.some((t) => t === "exec");
   if (hasExec) {
-    params["commands"] = {
+    params.commands = {
       type: "array",
       description: "List of shell commands to execute in sequence.",
     };
@@ -70,13 +70,13 @@ function generateImplementationHint(gap: DetectedGap): string {
   const unique = [...new Set(gap.toolSequence)];
   const lines: string[] = [
     `This tool replaces the recurring ${gap.toolSequence.length}-step workflow: [${gap.toolSequence.join(" → ")}].`,
-    ``,
-    `Implementation sketch:`,
-    `1. Accept a goal/query parameter and any tool-specific inputs (see parameters schema).`,
+    "",
+    "Implementation sketch:",
+    "1. Accept a goal/query parameter and any tool-specific inputs (see parameters schema).",
     `2. Internally call the following tools in sequence: ${unique.join(", ")}.`,
-    `3. Merge and deduplicate results before returning.`,
+    "3. Merge and deduplicate results before returning.",
     `4. Return a single consolidated response instead of ${gap.toolSequence.length} separate calls.`,
-    ``,
+    "",
     `Observed success rate: ${Math.round(gap.successRate * 100)}% across ${gap.frequency} executions.`,
     `Estimated tool-call savings: ${gap.toolSavings} calls per invocation.`,
   ];
@@ -93,12 +93,7 @@ function generateRationale(gap: DetectedGap): string {
       ? `\nExample goals where this pattern appeared:\n${gap.exampleGoals.map((g) => `  - "${g}"`).join("\n")}`
       : "";
 
-  return (
-    `The agent repeatedly uses [${gap.toolSequence.join(" → ")}] (${gap.frequency} times, ` +
-    `${Math.round(gap.successRate * 100)}% success rate) to achieve what could be a single tool call. ` +
-    `A purpose-built tool would save ${gap.toolSavings} tool calls per invocation.` +
-    goalExamples
-  );
+  return `The agent repeatedly uses [${gap.toolSequence.join(" → ")}] (${gap.frequency} times, ${Math.round(gap.successRate * 100)}% success rate) to achieve what could be a single tool call. A purpose-built tool would save ${gap.toolSavings} tool calls per invocation.${goalExamples}`;
 }
 
 // ---------------------------------------------------------------------------

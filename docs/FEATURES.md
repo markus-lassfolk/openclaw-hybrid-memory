@@ -36,12 +36,15 @@ Detailed reference for the memory-hybrid plugin's classification, decay, tagging
 | **Future-date decay protection** | [CONFIGURATION.md](CONFIGURATION.md#future-date-decay-protection-144) | Facts with future dates have their decay frozen until the date passes. Default: enabled. (#144) |
 | **Episodic event log (Layer 1)** | [event-log.md](../extensions/memory-hybrid/docs/event-log.md) | Append-only session event journal; raw capture layer for Dream Cycle consolidation. (#150) |
 | **Local embeddings (Ollama/ONNX)** | [CONFIGURATION.md](CONFIGURATION.md#local-embedding-providers-153) | Run embeddings locally without an API key using Ollama or ONNX providers. (#153) |
+| **Local LLM pre-filtering (Ollama)** | [CONFIGURATION.md](CONFIGURATION.md#local-llm-session-pre-filtering) | Two-tier session triage: uses a local model (e.g. qwen3) to filter out uninteresting sessions before sending to the cloud LLM. (#290) |
+| **Sensor Sweep (Event Bus)** | [CONFIGURATION.md](CONFIGURATION.md#sensor-sweep-sensorsweep-236) | Cron-based background data collection (Garmin, GitHub, Session History, System Health, HA anomalies, Weather, Yarbo) without LLM overhead. Events stored in `event-bus.db`. (#236) |
 | **Multi-model embedding registry** | [CONFIGURATION.md](CONFIGURATION.md#multi-model-embedding-registry-158) | Embed each fact with multiple models in parallel; merge results via RRF at recall. (#158) |
 | **Contextual variants at index time** | [CONFIGURATION.md](CONFIGURATION.md#contextual-variants-at-index-time-159) | LLM-generated alternative phrasings embedded alongside facts to improve recall. (#159) |
 | **LLM re-ranking** | [CONFIGURATION.md](CONFIGURATION.md#llm-re-ranking-161) | Re-order RRF fusion results with an LLM for higher-precision recall. (#161) |
 | **Verification store** | [CONFIGURATION.md](CONFIGURATION.md#verification-store-162) | Integrity layer for critical facts: `memory_verify`, `memory_verified_list`, re-verification schedule. (#162) |
 | **Provenance tracing** | [CONFIGURATION.md](CONFIGURATION.md#provenance-tracing-163) | Full origin chain from any fact back to its source events via `memory_provenance`. (#163) |
 | **Document ingestion** | [CONFIGURATION.md](CONFIGURATION.md#document-ingestion-206) | Ingest PDF, DOCX, HTML, images, and more as searchable fact chunks (`memory_ingest_document`, `memory_ingest_folder`). (#206) |
+| **Mission Control dashboard** | [CONFIGURATION.md](CONFIGURATION.md#mission-control-dashboard-dashboard) | Real-time web dashboard (port 7700) — memory stats, cron jobs, task queue, agent status, git activity, and 7-day LLM cost tracking. Auto-refreshes every 60s. (#309) |
 
 ---
 
@@ -181,7 +184,7 @@ Without this, custom categories are only assigned via explicit `memory_store` ca
 
 ## Decay and Pruning
 
-**No cron or external jobs are required.** The plugin handles decay automatically: on gateway start (hard-delete expired) and every 60 minutes (hard prune + soft-decay confidence). Decay classes: permanent, stable (90d), active (14d), session (24h), checkpoint (4h). Stable and active facts get their expiry refreshed when recalled.
+**No cron or external jobs are required.** The plugin handles decay automatically: on gateway start (hard-delete expired) and every 60 minutes (hard prune + soft-decay confidence). Decay classes: permanent, durable (~3mo), normal (2w), short (2d), ephemeral (4h), and legacy classes (stable, active, session, checkpoint). Durable, normal, stable, and active facts get their expiry refreshed when recalled.
 
 **Manual controls:** `openclaw hybrid-mem prune` (options: `--soft`, `--dry-run`), `openclaw hybrid-mem backfill-decay` to re-classify existing facts.
 

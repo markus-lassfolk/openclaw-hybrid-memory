@@ -15,8 +15,8 @@
  */
 
 import type OpenAI from "openai";
-import { chatComplete } from "./chat.js";
 import type { RerankingConfig } from "../config.js";
+import { chatComplete } from "./chat.js";
 import { extractJsonArray } from "./json-array-parser.js";
 
 // ---------------------------------------------------------------------------
@@ -59,14 +59,7 @@ export function buildRerankPrompt(query: string, facts: ScoredFact[]): string {
     })
     .join("\n\n");
 
-  return (
-    `You are a retrieval relevance ranker. Given a search query and a list of candidate facts, ` +
-    `return a JSON array of fact IDs ordered from most to least relevant to the query.\n\n` +
-    `Query: "${query}"\n\n` +
-    `Candidate facts:\n${factLines}\n\n` +
-    `Return ONLY a JSON array of fact ID strings in relevance order. ` +
-    `Example: ["id-a", "id-b", "id-c"]`
-  );
+  return `You are a retrieval relevance ranker. Given a search query and a list of candidate facts, return a JSON array of fact IDs ordered from most to least relevant to the query.\n\nQuery: "${query}"\n\nCandidate facts:\n${factLines}\n\nReturn ONLY a JSON array of fact ID strings in relevance order. Example: ["id-a", "id-b", "id-c"]`;
 }
 
 // ---------------------------------------------------------------------------

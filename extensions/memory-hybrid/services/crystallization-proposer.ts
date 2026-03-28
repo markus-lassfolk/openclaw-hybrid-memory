@@ -11,12 +11,12 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import type { CrystallizationStore } from "../backends/crystallization-store.js";
+import type { WorkflowStore } from "../backends/workflow-store.js";
 import type { CrystallizationConfig } from "../config/types/features.js";
+import { capturePluginError } from "./error-reporter.js";
 import { PatternDetector } from "./pattern-detector.js";
 import { SkillCrystallizer } from "./skill-crystallizer.js";
 import { SkillValidator } from "./skill-validator.js";
-import { capturePluginError } from "./error-reporter.js";
-import type { WorkflowStore } from "../backends/workflow-store.js";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -183,7 +183,7 @@ export class CrystallizationProposer {
     }
 
     // Determine output path — sanitize skill name to prevent path traversal
-    const outputDir = this.cfg.outputDir.replace(/^~/, process.env["HOME"] ?? "~");
+    const outputDir = this.cfg.outputDir.replace(/^~/, process.env.HOME ?? "~");
     const safeName = proposal.skillName.replace(/[^a-z0-9_-]/gi, "-").replace(/^\.+/, "");
     const outputPath = `${outputDir}/${safeName}/SKILL.md`;
 

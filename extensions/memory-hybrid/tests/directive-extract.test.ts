@@ -2,11 +2,11 @@
  * Tests for directive extraction.
  */
 
-import { describe, it, expect } from "vitest";
-import { runDirectiveExtract, DIRECTIVE_CATEGORIES } from "../services/directive-extract.js";
-import { writeFileSync, mkdtempSync, rmSync } from "node:fs";
-import { join } from "node:path";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { describe, expect, it } from "vitest";
+import { DIRECTIVE_CATEGORIES, runDirectiveExtract } from "../services/directive-extract.js";
 
 describe("directive-extract", () => {
   it("should detect explicit memory requests", () => {
@@ -18,7 +18,8 @@ describe("directive-extract", () => {
 
     const result = runDirectiveExtract({
       filePaths: [sessionFile],
-      directiveRegex: /\b(remember|don't forget|keep in mind|from now on|always|never|i prefer|be careful|first check|no, use|when .* happens)\b/i,
+      directiveRegex:
+        /\b(remember|don't forget|keep in mind|from now on|always|never|i prefer|be careful|first check|no, use|when .* happens)\b/i,
     });
 
     expect(result.incidents.length).toBeGreaterThan(0);
@@ -39,7 +40,8 @@ describe("directive-extract", () => {
 
     const result = runDirectiveExtract({
       filePaths: [sessionFile],
-      directiveRegex: /\b(remember|don't forget|keep in mind|from now on|always|never|i prefer|be careful|first check|no, use|when .* happens)\b/i,
+      directiveRegex:
+        /\b(remember|don't forget|keep in mind|from now on|always|never|i prefer|be careful|first check|no, use|when .* happens)\b/i,
     });
 
     expect(result.incidents.length).toBeGreaterThan(0);
@@ -59,7 +61,8 @@ describe("directive-extract", () => {
 
     const result = runDirectiveExtract({
       filePaths: [sessionFile],
-      directiveRegex: /\b(remember|don't forget|keep in mind|from now on|always|never|i prefer|be careful|first check|no, use|when .* happens)\b/i,
+      directiveRegex:
+        /\b(remember|don't forget|keep in mind|from now on|always|never|i prefer|be careful|first check|no, use|when .* happens)\b/i,
     });
 
     expect(result.incidents.length).toBeGreaterThan(0);
@@ -78,7 +81,8 @@ describe("directive-extract", () => {
 
     const result = runDirectiveExtract({
       filePaths: [sessionFile],
-      directiveRegex: /\b(remember|don't forget|keep in mind|from now on|always|never|i prefer|be careful|first check|no, use|when .* happens)\b/i,
+      directiveRegex:
+        /\b(remember|don't forget|keep in mind|from now on|always|never|i prefer|be careful|first check|no, use|when .* happens)\b/i,
     });
 
     expect(result.incidents.length).toBeGreaterThan(0);
@@ -101,7 +105,8 @@ describe("directive-extract", () => {
 
     const result = runDirectiveExtract({
       filePaths: [sessionFile],
-      directiveRegex: /\b(remember|don't forget|keep in mind|from now on|always|never|i prefer|be careful|first check|no, use|when .* happens)\b/i,
+      directiveRegex:
+        /\b(remember|don't forget|keep in mind|from now on|always|never|i prefer|be careful|first check|no, use|when .* happens)\b/i,
     });
 
     expect(result.incidents.length).toBe(0);
@@ -118,7 +123,8 @@ describe("directive-extract", () => {
 
     const result = runDirectiveExtract({
       filePaths: [sessionFile],
-      directiveRegex: /\b(remember|don't forget|keep in mind|from now on|always|never|i prefer|be careful|first check|no, use|when .* happens)\b/i,
+      directiveRegex:
+        /\b(remember|don't forget|keep in mind|from now on|always|never|i prefer|be careful|first check|no, use|when .* happens)\b/i,
     });
 
     expect(result.incidents.length).toBeGreaterThan(0);
@@ -142,7 +148,8 @@ describe("directive-extract", () => {
 
     const result = runDirectiveExtract({
       filePaths: [sessionFile],
-      directiveRegex: /\b(remember|don't forget|keep in mind|from now on|always|never|i prefer|be careful|first check|no, use|when .* happens)\b/i,
+      directiveRegex:
+        /\b(remember|don't forget|keep in mind|from now on|always|never|i prefer|be careful|first check|no, use|when .* happens)\b/i,
     });
 
     expect(result.incidents.length).toBeGreaterThan(0);
@@ -164,7 +171,8 @@ describe("directive-extract", () => {
 
     const result = runDirectiveExtract({
       filePaths: [sessionFile],
-      directiveRegex: /\b(remember|don't forget|keep in mind|from now on|always|never|i prefer|be careful|first check|no, use|when .* happens)\b/i,
+      directiveRegex:
+        /\b(remember|don't forget|keep in mind|from now on|always|never|i prefer|be careful|first check|no, use|when .* happens)\b/i,
     });
 
     expect(result.incidents.length).toBeGreaterThan(0);
@@ -186,7 +194,8 @@ describe("directive-extract", () => {
 
     const result = runDirectiveExtract({
       filePaths: [sessionFile],
-      directiveRegex: /\b(remember|don't forget|keep in mind|from now on|always|never|i prefer|be careful|first check|no, use|when .* happens)\b/i,
+      directiveRegex:
+        /\b(remember|don't forget|keep in mind|from now on|always|never|i prefer|be careful|first check|no, use|when .* happens)\b/i,
     });
 
     expect(result.incidents.length).toBe(1);
@@ -206,7 +215,8 @@ describe("directive-extract", () => {
 
     const result = runDirectiveExtract({
       filePaths: [sessionFile],
-      directiveRegex: /\b(remember|don't forget|keep in mind|from now on|always|never|i prefer|be careful|first check|no, use|when .* happens)\b/i,
+      directiveRegex:
+        /\b(remember|don't forget|keep in mind|from now on|always|never|i prefer|be careful|first check|no, use|when .* happens)\b/i,
     });
 
     expect(result.incidents.length).toBe(1);
@@ -228,7 +238,8 @@ describe("directive-extract", () => {
 
     const result = runDirectiveExtract({
       filePaths: [sessionFile],
-      directiveRegex: /\b(remember|don't forget|keep in mind|from now on|always|never|i prefer|be careful|first check|no, use|when .* happens)\b/i,
+      directiveRegex:
+        /\b(remember|don't forget|keep in mind|from now on|always|never|i prefer|be careful|first check|no, use|when .* happens)\b/i,
     });
 
     expect(result.incidents.length).toBe(1);
@@ -248,7 +259,8 @@ describe("directive-extract", () => {
 
     const result = runDirectiveExtract({
       filePaths: [sessionFile],
-      directiveRegex: /\b(remember|don't forget|keep in mind|from now on|always|never|i prefer|be careful|first check|no, use|when .* happens)\b/i,
+      directiveRegex:
+        /\b(remember|don't forget|keep in mind|from now on|always|never|i prefer|be careful|first check|no, use|when .* happens)\b/i,
     });
 
     expect(result.incidents.length).toBe(1);
@@ -272,23 +284,24 @@ describe("directive-extract", () => {
 
     const result = runDirectiveExtract({
       filePaths: [sessionFile],
-      directiveRegex: /\b(remember|don't forget|keep in mind|from now on|always|never|i prefer|be careful|first check|no, use|when .* happens|note)\b/i,
+      directiveRegex:
+        /\b(remember|don't forget|keep in mind|from now on|always|never|i prefer|be careful|first check|no, use|when .* happens|note)\b/i,
     });
 
     expect(result.incidents.length).toBe(3);
-    
+
     // First incident: time format should not be used as separator
     const incident1 = result.incidents[0];
     expect(incident1.extractedRule).not.toMatch(/^30/);
     expect(incident1.extractedRule.toLowerCase()).toContain("check");
     expect(incident1.extractedRule.toLowerCase()).toContain("deploy");
-    
+
     // Second incident: numbered list should not be used as separator
     const incident2 = result.incidents[1];
     expect(incident2.extractedRule).not.toMatch(/^backup/);
     expect(incident2.extractedRule.toLowerCase()).toContain("never");
     expect(incident2.extractedRule.toLowerCase()).toContain("skip");
-    
+
     // Third incident: ftp:// should not be used as separator
     const incident3 = result.incidents[2];
     expect(incident3.extractedRule).not.toMatch(/^\/\//);
@@ -309,17 +322,18 @@ describe("directive-extract", () => {
 
     const result = runDirectiveExtract({
       filePaths: [sessionFile],
-      directiveRegex: /\b(remember|don't forget|keep in mind|from now on|always|never|i prefer|be careful|first check|no, use|when .* happens|note)\b/i,
+      directiveRegex:
+        /\b(remember|don't forget|keep in mind|from now on|always|never|i prefer|be careful|first check|no, use|when .* happens|note)\b/i,
     });
 
     expect(result.incidents.length).toBe(2);
-    
+
     // First incident: localhost:8080 should not be used as separator
     const incident1 = result.incidents[0];
     expect(incident1.extractedRule).not.toMatch(/^8080/);
     expect(incident1.extractedRule.toLowerCase()).toContain("always");
     expect(incident1.extractedRule.toLowerCase()).toContain("staging");
-    
+
     // Second incident: server.com:21 should not be used as separator
     const incident2 = result.incidents[1];
     expect(incident2.extractedRule).not.toMatch(/^21/);

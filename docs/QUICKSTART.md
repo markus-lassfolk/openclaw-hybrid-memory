@@ -4,16 +4,22 @@ title: Quick Start
 parent: Getting Started
 nav_order: 1
 ---
-# Quick Start — Hybrid Memory Plugin
+# Quick Start - Hybrid Memory Plugin
 
-Get an agent that **remembers you** and **gets better at giving the right context** over time — in about 10 minutes. For full configuration options see [CONFIGURATION.md](CONFIGURATION.md); for architecture background see [ARCHITECTURE.md](ARCHITECTURE.md).
+Get an agent that **remembers you** and **gets better at giving the right context** over time - in about 10 minutes. For full configuration options see [CONFIGURATION.md](CONFIGURATION.md); for architecture background see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ---
 
 ## Prerequisites
 
-- **OpenClaw** installed and running.
-- **Embedding access** (required): configure `embedding.apiKey` and `embedding.model` in plugin config so the plugin can call an embedding API (e.g. OpenAI `text-embedding-3-small`). The plugin uses the gateway’s OpenAI-compatible client when available.
+- **OpenClaw v2026.3.8+** (required) - the plugin enforces this minimum version at startup to ensure CLI subcommands and config reloads work.
+- **Embedding access** (required): configure `embedding.provider` and related settings so the plugin can generate embedding vectors. Four providers are supported:
+  - **OpenAI** (default): set `embedding.apiKey` and `embedding.model` (e.g. `text-embedding-3-small`).
+  - **Ollama**: set `embedding.provider: "ollama"` and `embedding.model` (e.g. `nomic-embed-text`). No API key required — Ollama must be running locally.
+  - **ONNX**: set `embedding.provider: "onnx"` and `embedding.model` (e.g. `all-MiniLM-L6-v2`). Fully local; install `onnxruntime-node` first.
+  - **Google**: set `embedding.provider: "google"` and `llm.providers.google.apiKey`. Uses `gemini-embedding-001` via Gemini API.
+  
+  Use `embedding.preferredProviders` for automatic failover between providers (e.g. `["ollama", "openai"]`). See [LLM-AND-PROVIDERS.md](LLM-AND-PROVIDERS.md#embedding-providers) for full details.
 - **Chat/completion** (optional for basic memory): needed for distillation, reflection, auto-classify, etc. Any provider the OpenClaw gateway supports works; optional **`llm`** config sets model preference lists. See [LLM-AND-PROVIDERS.md](LLM-AND-PROVIDERS.md).
 - **Node.js** with npm.
 
@@ -21,13 +27,13 @@ Get an agent that **remembers you** and **gets better at giving the right contex
 
 ## 1. Install the plugin
 
-**Recommended (NPM):** OpenClaw installs the plugin into `~/.openclaw/extensions` and runs `npm install` (including a `postinstall` that rebuilds `better-sqlite3`). If you ever see "duplicate plugin id detected", run once: `./scripts/use-npm-only.sh` from this repo so only the NPM copy is used.
+**Recommended (NPM):** OpenClaw installs the plugin into `~/.openclaw/extensions` and runs `npm install` (including a `postinstall` that rebuilds `@lancedb/lancedb` if needed). If you ever see "duplicate plugin id detected", run once: `./scripts/use-npm-only.sh` from this repo so only the NPM copy is used.
 
 ```bash
 openclaw plugins install openclaw-hybrid-memory
 ```
 
-If the installer shows a warning about "dangerous code patterns" or "credential harvesting", it is a false positive — the plugin only uses your API key with OpenAI’s embedding API. See [TROUBLESHOOTING.md](TROUBLESHOOTING.md#install-warning-dangerous-code-patterns--credential-harvesting).
+If the installer shows a warning about "dangerous code patterns" or "credential harvesting", it is a false positive — the plugin only uses your configured API keys (OpenAI, Google, or none for local providers) with the respective embedding APIs, and never exfiltrates credentials. See [TROUBLESHOOTING.md](TROUBLESHOOTING.md#install-warning-dangerous-code-patterns--credential-harvesting).
 
 **Manual (copy from repo):** Copy `extensions/memory-hybrid/` into your OpenClaw extensions directory:
 
@@ -48,7 +54,7 @@ node -e "let p=require('./package.json'); delete p.devDependencies; require('fs'
 npm install
 ```
 
-If `better-sqlite3` fails to compile, install the C++ build toolchain (Linux: `build-essential`, `python3`; Windows: Visual Studio Build Tools 2022 with "Desktop development with C++"). The published package runs `npm rebuild better-sqlite3` in a postinstall step.
+If `@lancedb/lancedb` fails to build, install the C++ build toolchain (Linux: `build-essential`, `python3`; Windows: Visual Studio Build Tools 2022 with "Desktop development with C++"). The published package runs `npm rebuild @lancedb/lancedb` in a postinstall step.
 
 ---
 
@@ -60,14 +66,15 @@ The fastest way to configure everything:
 openclaw hybrid-mem install
 ```
 
-This merges recommended defaults into `~/.openclaw/openclaw.json` — plugin config, memorySearch, compaction prompts, bootstrap limits, and a nightly distillation job. It preserves any existing API key.
+This merges recommended defaults into `~/.openclaw/openclaw.json` - plugin config, memorySearch, compaction prompts, bootstrap limits, and a nightly distillation job. It preserves any existing API key.
 
 Then set your **embedding** config (required) and optionally **LLM** preferences:
 
 ```bash
 # Edit ~/.openclaw/openclaw.json:
-# - embedding.apiKey and embedding.model (required for vector search)
-# - llm.default / llm.heavy (optional) for chat model preference lists — see LLM-AND-PROVIDERS.md
+# - embedding.provider + embedding.model + embedding.dimensions (required for vector search)
+# - embedding.apiKey (required for OpenAI and Google providers only)
+# - llm.default / llm.heavy (optional) for chat model preference lists - see LLM-AND-PROVIDERS.md
 # Or use env: e.g. embedding.apiKey = "env:OPENAI_API_KEY"
 ```
 
@@ -105,7 +112,7 @@ If SQLite or LanceDB show native bindings errors, run `openclaw hybrid-mem verif
 You should see:
 
 ```
-Config: embedding.apiKey and model present
+Config: embedding.provider and model present
 SQLite: OK (...)
 LanceDB: OK (...)
 Embedding API: OK
@@ -129,12 +136,12 @@ openclaw hybrid-mem stats
 
 ---
 
-## 5. Optional — Backfill existing data
+## 5. Optional - Backfill existing data
 
 If you have existing `memory/` files or daily logs:
 
 ```bash
-# Backfill from memory files (dynamic — discovers all .md files)
+# Backfill from memory files (dynamic - discovers all .md files)
 EXT_DIR="$(npm root -g)/openclaw/extensions/memory-hybrid"
 NODE_PATH="$EXT_DIR/node_modules" node scripts/backfill-memory.mjs
 
@@ -149,11 +156,11 @@ Restart the gateway after backfill so memorySearch re-indexes.
 
 ## Next steps
 
-- [HOW-IT-WORKS.md](HOW-IT-WORKS.md) — What happens each turn (auto-recall, auto-capture, costs)
-- [EXAMPLES.md](EXAMPLES.md) — Real-world recipes and patterns
-- [FAQ.md](FAQ.md) — Common questions and quick answers
-- [CONFIGURATION.md](CONFIGURATION.md) — Full config reference
-- [FEATURES.md](FEATURES.md) — Categories, decay, tags, auto-classify
-- [CLI-REFERENCE.md](CLI-REFERENCE.md) — All CLI commands
-- [OPERATIONS.md](OPERATIONS.md) — Background jobs, scripts, upgrades
-- [TROUBLESHOOTING.md](TROUBLESHOOTING.md) — Common issues and fixes
+- [HOW-IT-WORKS.md](HOW-IT-WORKS.md) - What happens each turn (auto-recall, auto-capture, costs)
+- [EXAMPLES.md](EXAMPLES.md) - Real-world recipes and patterns
+- [FAQ.md](FAQ.md) - Common questions and quick answers
+- [CONFIGURATION.md](CONFIGURATION.md) - Full config reference
+- [FEATURES.md](FEATURES.md) - Categories, decay, tags, auto-classify
+- [CLI-REFERENCE.md](CLI-REFERENCE.md) - All CLI commands
+- [OPERATIONS.md](OPERATIONS.md) - Background jobs, scripts, upgrades
+- [TROUBLESHOOTING.md](TROUBLESHOOTING.md) - Common issues and fixes

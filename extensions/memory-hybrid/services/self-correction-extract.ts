@@ -6,7 +6,7 @@
 
 import { readFileSync } from "node:fs";
 import { basename } from "node:path";
-import { extractMessageText, truncate, timestampFromFilename } from "../utils/text.js";
+import { extractMessageText, timestampFromFilename, truncate } from "../utils/text.js";
 import { capturePluginError } from "./error-reporter.js";
 
 export type CorrectionIncident = {
@@ -65,9 +65,9 @@ export function runSelfCorrectionExtract(opts: RunSelfCorrectionExtractOpts): Se
       lines = readFileSync(filePath, "utf-8").split("\n");
     } catch (err) {
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-        operation: 'read-session-file',
-        severity: 'info',
-        subsystem: 'self-correction-extract'
+        operation: "read-session-file",
+        severity: "info",
+        subsystem: "self-correction-extract",
       });
       continue;
     }
@@ -86,9 +86,9 @@ export function runSelfCorrectionExtract(opts: RunSelfCorrectionExtractOpts): Se
         messages.push({ role, text });
       } catch (err) {
         capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-          operation: 'parse-session-line',
-          severity: 'info',
-          subsystem: 'self-correction-extract'
+          operation: "parse-session-line",
+          severity: "info",
+          subsystem: "self-correction-extract",
         });
         // skip malformed lines
       }
@@ -103,8 +103,7 @@ export function runSelfCorrectionExtract(opts: RunSelfCorrectionExtractOpts): Se
       if (!correctionRegex.test(userText)) continue;
       if (shouldSkipUserMessage(userText)) continue;
 
-      const precedingAssistant =
-        i > 0 && messages[i - 1].role === "assistant" ? messages[i - 1].text : "";
+      const precedingAssistant = i > 0 && messages[i - 1].role === "assistant" ? messages[i - 1].text : "";
       const followingAssistant =
         i + 1 < messages.length && messages[i + 1].role === "assistant" ? messages[i + 1].text : "";
 

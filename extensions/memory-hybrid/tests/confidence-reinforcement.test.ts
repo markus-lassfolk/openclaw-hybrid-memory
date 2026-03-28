@@ -8,17 +8,14 @@
  * - Decay + reinforcement interaction
  */
 
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { _testing } from "../index.js";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { hybridConfigSchema } from "../config.js";
-import {
-  runPassiveObserver,
-  type PassiveObserverConfig,
-} from "../services/passive-observer.js";
 import type { ReinforcementConfig } from "../config.js";
+import { _testing } from "../index.js";
+import { type PassiveObserverConfig, runPassiveObserver } from "../services/passive-observer.js";
 
 const { FactsDB } = _testing;
 
@@ -163,7 +160,13 @@ describe("parseConfig — reinforcement section", () => {
   it("parses custom reinforcement values", () => {
     const cfg = hybridConfigSchema.parse({
       ...BASE_CFG,
-      reinforcement: { enabled: true, passiveBoost: 0.2, activeBoost: 0.08, maxConfidence: 0.9, similarityThreshold: 0.9 },
+      reinforcement: {
+        enabled: true,
+        passiveBoost: 0.2,
+        activeBoost: 0.08,
+        maxConfidence: 0.9,
+        similarityThreshold: 0.9,
+      },
     });
     expect(cfg.reinforcement.passiveBoost).toBeCloseTo(0.2, 5);
     expect(cfg.reinforcement.activeBoost).toBeCloseTo(0.08, 5);
@@ -220,7 +223,7 @@ describe("Decay + reinforcement interaction", () => {
     db.boostConfidence(reinforced.id, 0.1);
     const r = db.getById(reinforced.id);
     const p = db.getById(plain.id);
-    expect((r?.confidence ?? 0)).toBeGreaterThan(p?.confidence ?? 0);
+    expect(r?.confidence ?? 0).toBeGreaterThan(p?.confidence ?? 0);
   });
 
   it("multiple reinforcements counteract decay (confidence stays high)", () => {
@@ -294,8 +297,8 @@ describe("Passive observer — reinforcement on similarity", () => {
     };
   }
 
-  function makeVectorDb() {
-    return { store: vi.fn() };
+  function makeVectorDb(searchResults: unknown[] = []) {
+    return { store: vi.fn(), search: vi.fn().mockResolvedValue(searchResults) };
   }
 
   function makeEmbeddings(vec = [1, 0, 0]) {
@@ -320,24 +323,29 @@ describe("Passive observer — reinforcement on similarity", () => {
     expect(result.factsReinforced).toBe(0);
   });
 
-  it("reinforcement config disabled does not call boostConfidence", async () => {
+  it("reinforcement config disabled does not call boostConfidence even when vectorDb.search finds a match", async () => {
     const sessionFile = join(sessionsDir, "session-abc.jsonl");
     writeFileSync(
       sessionFile,
-      JSON.stringify({ type: "message", message: { role: "user", content: "I use TypeScript" } }) + "\n",
+      `${JSON.stringify({ type: "message", message: { role: "user", content: "I use TypeScript" } })}\n`,
     );
 
     const factsDb = makeFactsDb([{ id: "existing-fact-1", text: "I use TypeScript", confidence: 0.7 }]);
 
     vi.doMock("../services/chat.js", () => ({
-      chatCompleteWithRetry: vi.fn().mockResolvedValue('[{"text":"I use TypeScript","category":"preference","importance":0.8}]'),
+      chatCompleteWithRetry: vi
+        .fn()
+        .mockResolvedValue('[{"text":"I use TypeScript","category":"preference","importance":0.8}]'),
     }));
 
     const { runPassiveObserver: runFn } = await import("../services/passive-observer.js");
 
+    // vectorDb.search returns a match — the duplicate is found, but reinforcement is disabled
+    const vectorDbWithMatch = makeVectorDb([{ entry: { id: "existing-fact-1" }, score: 0.95 }]);
+
     const result = await runFn(
       factsDb as never,
-      makeVectorDb() as never,
+      vectorDbWithMatch as never,
       makeEmbeddings([1, 0, 0]) as never,
       {} as never,
       makeConfig(),
@@ -345,7 +353,13 @@ describe("Passive observer — reinforcement on similarity", () => {
       {
         model: "test-model",
         dbDir: tmpDir,
-        reinforcement: { enabled: false, passiveBoost: 0.1, activeBoost: 0.05, maxConfidence: 1.0, similarityThreshold: 0.85 },
+        reinforcement: {
+          enabled: false,
+          passiveBoost: 0.1,
+          activeBoost: 0.05,
+          maxConfidence: 1.0,
+          similarityThreshold: 0.85,
+        },
       },
       { info: () => {}, warn: () => {} },
     );

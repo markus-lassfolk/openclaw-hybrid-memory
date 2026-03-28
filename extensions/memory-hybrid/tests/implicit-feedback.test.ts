@@ -2,24 +2,24 @@
  * Tests for implicit feedback extraction (Issue #262 — Phase 1).
  */
 
-import { describe, it, expect } from "vitest";
-import {
-  computeSimpleSimilarity,
-  extractImplicitSignals,
-  detectRephrase,
-  detectImmediateAction,
-  detectTopicChange,
-  detectGratefulClose,
-  detectTerseResponse,
-  detectExtendedEngagement,
-  detectCorrectionCascade,
-  detectCopyPaste,
-  detectSelfService,
-  detectEscalation,
-  detectSilenceAfterAction,
-  type ConversationTurn,
-} from "../services/implicit-feedback-extract.js";
+import { describe, expect, it } from "vitest";
 import type { ImplicitFeedbackConfig } from "../config/types/features.js";
+import {
+  type ConversationTurn,
+  computeSimpleSimilarity,
+  detectCopyPaste,
+  detectCorrectionCascade,
+  detectEscalation,
+  detectExtendedEngagement,
+  detectGratefulClose,
+  detectImmediateAction,
+  detectRephrase,
+  detectSelfService,
+  detectSilenceAfterAction,
+  detectTerseResponse,
+  detectTopicChange,
+  extractImplicitSignals,
+} from "../services/implicit-feedback-extract.js";
 
 const DEFAULT_CONFIG: ImplicitFeedbackConfig = {
   enabled: true,
@@ -103,9 +103,7 @@ describe("detectRephrase", () => {
   });
 
   it("returns null for the first user turn", () => {
-    const turns: ConversationTurn[] = [
-      { role: "user", content: "Hello how are you doing today" },
-    ];
+    const turns: ConversationTurn[] = [{ role: "user", content: "Hello how are you doing today" }];
     expect(detectRephrase(turns, DEFAULT_CONFIG, 0)).toBeNull();
   });
 
@@ -174,7 +172,11 @@ describe("detectImmediateAction", () => {
 describe("detectTopicChange", () => {
   it("detects topic change when similarity is very low", () => {
     const turns: ConversationTurn[] = [
-      { role: "assistant", content: "Here is how to deploy your React application to AWS S3 using the CLI commands and configuration settings." },
+      {
+        role: "assistant",
+        content:
+          "Here is how to deploy your React application to AWS S3 using the CLI commands and configuration settings.",
+      },
       { role: "user", content: "What is the best recipe for chocolate cake?" },
     ];
     const signal = detectTopicChange(turns, { topicChangeThreshold: 0.3 }, 1);
@@ -187,7 +189,10 @@ describe("detectTopicChange", () => {
     // Use messages with strong keyword overlap so similarity is above threshold
     const turns: ConversationTurn[] = [
       { role: "assistant", content: "webpack optimization splitChunks treeshaking production configuration settings." },
-      { role: "user", content: "What webpack optimization splitChunks treeshaking production settings should I adjust?" },
+      {
+        role: "user",
+        content: "What webpack optimization splitChunks treeshaking production settings should I adjust?",
+      },
     ];
     const signal = detectTopicChange(turns, { topicChangeThreshold: 0.3 }, 1);
     expect(signal).toBeNull();
@@ -248,11 +253,23 @@ describe("detectGratefulClose", () => {
 describe("detectTerseResponse", () => {
   it("detects terse response when message is much shorter than average", () => {
     const turns: ConversationTurn[] = [
-      { role: "user", content: "I need help setting up the webpack configuration for my React application to support TypeScript, CSS modules, and hot reload." },
+      {
+        role: "user",
+        content:
+          "I need help setting up the webpack configuration for my React application to support TypeScript, CSS modules, and hot reload.",
+      },
       { role: "assistant", content: "Here is how you configure webpack." },
-      { role: "user", content: "I need to understand how the entry point configuration works in webpack for multiple pages and how it interacts with the output path settings." },
+      {
+        role: "user",
+        content:
+          "I need to understand how the entry point configuration works in webpack for multiple pages and how it interacts with the output path settings.",
+      },
       { role: "assistant", content: "The entry config specifies starting points." },
-      { role: "user", content: "I want to configure the optimization settings for production builds with code splitting and tree shaking." },
+      {
+        role: "user",
+        content:
+          "I want to configure the optimization settings for production builds with code splitting and tree shaking.",
+      },
       { role: "assistant", content: "Use splitChunks and usedExports." },
       { role: "user", content: "ok" }, // very terse
     ];
@@ -362,8 +379,8 @@ describe("detectCopyPaste", () => {
     // Create messages with very high keyword overlap (> 0.8 cosine similarity)
     const shared = "deploy application production kubernetes cluster configuration settings optimization scaling";
     const turns: ConversationTurn[] = [
-      { role: "assistant", content: shared + " ingress replicas namespace service" },
-      { role: "user", content: shared + " ingress replicas namespace service verified" },
+      { role: "assistant", content: `${shared} ingress replicas namespace service` },
+      { role: "user", content: `${shared} ingress replicas namespace service verified` },
     ];
     const signal = detectCopyPaste(turns, DEFAULT_CONFIG, 1);
     expect(signal).not.toBeNull();
@@ -485,9 +502,7 @@ describe("detectSilenceAfterAction", () => {
   });
 
   it("returns null on user turns", () => {
-    const turns: ConversationTurn[] = [
-      { role: "user", content: "deploy please" },
-    ];
+    const turns: ConversationTurn[] = [{ role: "user", content: "deploy please" }];
     const signal = detectSilenceAfterAction(turns, DEFAULT_CONFIG, 0);
     expect(signal).toBeNull();
   });

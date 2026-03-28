@@ -3,10 +3,16 @@
  * Uses a multi-provider OpenAI-compatible proxy; provider-agnostic model fallback (issue #87).
  */
 
-import OpenAI from "openai";
-import { capturePluginError } from "./error-reporter.js";
+import type { OpenAI } from "openai";
+import { pluginLogger } from "../utils/logger.js";
 import { withCostFeature } from "./cost-context.js";
-
+import { capturePluginError } from "./error-reporter.js";
+import {
+  getDistillBatchTokenLimit as getDistillBatchTokenLimitFromCatalog,
+  getDistillMaxOutputTokens as getDistillMaxOutputTokensFromCatalog,
+  isReasoningModel,
+  requiresMaxCompletionTokens,
+} from "./model-capabilities.js";
 
 /**
  * Thrown when a model's provider has no API key or base URL configured in llm.providers.
@@ -50,14 +56,293 @@ export function createPendingLLMWarnings(): PendingLLMWarnings {
   };
 }
 
-/** True when model name suggests long-context (e.g. Gemini). Used only for token limits. Only "gemini" is matched; "thinking" is not, to avoid false positives with gateway aliases. */
-function isLongContextModel(model: string): boolean {
-  const m = model.toLowerCase();
-  return m.includes("gemini");
-}
-
 /** Default timeout for chat completion (prevents indefinite hang if gateway/LLM never responds). */
 const DEFAULT_CHAT_TIMEOUT_MS = 45_000;
+
+/**
+ * Unified 404 detection helper.
+ * Checks the HTTP status code property first (reliable), then falls back to
+ * targeted message pattern matching. Only matches "model not found" scenarios,
+ * NOT generic "file not found" or "module not found" errors.
+ *
+ * Exported so embeddings.ts can suppress capturePluginError for 404 errors.
+ */
+export function is404Like(err: unknown): boolean {
+  if (err && typeof err === "object") {
+    // OpenAI SDK sets .status directly (number); also tolerate string "404" for robustness
+    const status = (err as { status?: unknown }).status;
+    if (status === 404 || status === "404") return true;
+  }
+  if (err instanceof Error) {
+    // Match HTTP 404 patterns specifically — avoid false positives from
+    // "file not found" or "module not found" strings in non-HTTP errors.
+    return (
+      /\bHTTP\s+404\b|\b404\b.*not\s+found|model.*not\s+found|not\s+found.*model/i.test(err.message) ||
+      // Also match bare numeric 404 in error messages (e.g. "404 Not Found" from HTTP responses)
+      /^\b404\b/.test(err.message.trim()) ||
+      // OpenAI SDK formats: "404 Model not found" or "Error code: 404"
+      /\bError\s+code:\s*404\b|\b404\s+[A-Za-z]/.test(err.message) ||
+      // Google Generative Language API: "models/<name> is not found for API version <v>"
+      // Occurs when a model is unavailable through a specific API version endpoint (e.g. v1beta/openai/).
+      /is not found for api version/i.test(err.message)
+    );
+  }
+  return false;
+}
+
+/**
+ * 403 Forbidden / access-denied detection helper.
+ * A 403 is a permanent operator config issue (e.g. Google country/region restriction,
+ * IP block, billing restriction) that will never be resolved by retrying.
+ * Exported so embeddings.ts can treat 403 as a config error and suppress capturePluginError.
+ *
+ * Also detects provider-specific geo-restriction phrases that may arrive without a "403"
+ * numeric prefix when the error passes through a proxy or gateway that strips HTTP status
+ * from the Error object (GlitchTip #324 / issue #490).
+ */
+export function is403Like(err: unknown): boolean {
+  if (err && typeof err === "object") {
+    const status = (err as { status?: unknown }).status;
+    if (status === 403 || status === "403") return true;
+  }
+  if (err instanceof Error) {
+    // Match HTTP 403 patterns: "403 Forbidden", "403 Country, region, or territory not supported", etc.
+    if (
+      /^\b403\b/.test(err.message.trim()) ||
+      /\bHTTP\s+403\b|\bError\s+code:\s*403\b|\b403\s+[A-Za-z]/i.test(err.message)
+    ) {
+      return true;
+    }
+    // Match provider-specific geo-restriction / permission-denied phrases that arrive WITHOUT
+    // a numeric "403" prefix when errors pass through a proxy or gateway.
+    // #490: Google returns "Country, region, or territory not supported" (exact phrase) as
+    // the message body when the API key / project is not permitted in the request's region.
+    if (/\bcountry,\s*region,\s*or\s*territory\s+not\s+supported\b/i.test(err.message)) return true;
+    // gRPC PERMISSION_DENIED status mapped to HTTP 403 — some gateway implementations
+    // embed the gRPC status name instead of (or in addition to) the HTTP code.
+    if (/\bPERMISSION_DENIED\b/.test(err.message)) return true;
+    // Generic "access denied" / "access forbidden" phrases without a numeric status prefix
+    // that certain proxy implementations emit when forwarding a 403 response.
+    if (/\baccess\s+(denied|forbidden)\b/i.test(err.message) && !/\b(file|directory|path|disk)\b/i.test(err.message))
+      return true;
+  }
+  return false;
+}
+
+/**
+ * 401 Unauthorized / invalid api key detection helper.
+ * A 401 is a permanent operator config issue (wrong API key) that will never be resolved by retrying.
+ * Exported so other modules can treat 401 as a config error and suppress capturePluginError.
+ */
+export function is401Like(err: unknown): boolean {
+  if (err && typeof err === "object") {
+    const status = (err as { status?: unknown }).status;
+    if (status === 401 || status === "401") return true;
+  }
+  if (err instanceof Error) {
+    if (/\b401\b|unauthorized/i.test(err.message)) return true;
+    // Also match specific auth failure phrases for robustness — catches errors from providers
+    // that don't include "401" or "unauthorized" in the message and don't set a .status property.
+    if (/incorrect api key|invalid api key|authentication failed/i.test(err.message)) return true;
+  }
+  return false;
+}
+
+/** Returns true when the error is a 401 (auth failure) — either directly or wrapped in LLMRetryError. */
+export function is401OrWrapped(err: Error): boolean {
+  if (is401Like(err)) return true;
+  if (err instanceof LLMRetryError && is401Like(err.cause)) return true;
+  return false;
+}
+
+/**
+ * 429 Too Many Requests / rate-limit detection helper.
+ * Checks the HTTP status code property first (reliable), then falls back to
+ * message pattern matching. Rate limits are transient — suppress GlitchTip reporting.
+ * Exported so embeddings.ts can suppress capturePluginError for 429 errors.
+ */
+export function is429Like(err: unknown): boolean {
+  if (err && typeof err === "object") {
+    const status = (err as { status?: unknown }).status;
+    if (status === 429 || status === "429") return true;
+  }
+  if (err instanceof Error) {
+    return (
+      /^\b429\b/.test(err.message.trim()) ||
+      /\bHTTP\s+429\b|\bError\s+code:\s*429\b|\b429\s+[A-Za-z]/i.test(err.message) ||
+      /\btoo\s+many\s+requests\b/i.test(err.message)
+    );
+  }
+  return false;
+}
+
+/**
+ * Returns true when the error is a 429 (rate limit) — either directly or wrapped in LLMRetryError.
+ * Used in chatCompleteWithRetry to detect 429 errors that were retried and wrapped by withLLMRetry.
+ * Exported so embeddings.ts can suppress capturePluginError for 429 errors.
+ */
+export function is429OrWrapped(err: Error): boolean {
+  if (is429Like(err)) return true;
+  if (err instanceof LLMRetryError && is429Like(err.cause)) return true;
+  return false;
+}
+
+/**
+ * Unified 5xx / internal server error detection helper.
+ * Checks HTTP status code property first, then uses conservative message patterns.
+ * Avoids false positives from non-HTTP "internal error" messages (e.g. JavaScript errors).
+ *
+ * Exported so other modules (lifecycle/hooks, auto-classifier) can suppress
+ * capturePluginError for transient server errors.
+ */
+export function is500Like(err: unknown): boolean {
+  if (err && typeof err === "object") {
+    const status = (err as { status?: unknown }).status;
+    if (typeof status === "number" && status >= 500 && status < 600) return true;
+  }
+  if (err instanceof Error) {
+    // Only match HTTP 5xx patterns — not generic "internal error" from JS
+    return /\bHTTP\s+5\d{2}\b|\b5\d{2}\s+(internal\s+)?(error|status)|status\s+5\d{2}|internal\s+server\s+error/i.test(
+      err.message,
+    );
+  }
+  return false;
+}
+
+/** Returns true when the error is a 5xx server error — either directly or wrapped in LLMRetryError. */
+export function is500OrWrapped(err: Error): boolean {
+  if (is500Like(err)) return true;
+  if (err instanceof LLMRetryError && is500Like(err.cause)) return true;
+  return false;
+}
+
+/**
+ * Detect transient SDK/network connection failures.
+ *
+ * OpenAI-compatible SDKs may surface connectivity problems as a bare
+ * "Connection error." message (e.g. APIConnectionError) without exposing the
+ * underlying socket code on the top-level Error object. These are transient
+ * transport failures, not plugin logic bugs, so callers should treat them like
+ * timeouts/ECONNREFUSED for retry, fallback, and GlitchTip suppression.
+ */
+export function isConnectionErrorLike(err: unknown): boolean {
+  if (err instanceof LLMRetryError) return isConnectionErrorLike(err.cause);
+
+  const candidates: unknown[] = [err];
+  if (err && typeof err === "object" && "cause" in err) {
+    candidates.push((err as { cause?: unknown }).cause);
+  }
+
+  for (const candidate of candidates) {
+    if (!candidate || typeof candidate !== "object") continue;
+
+    const code = (candidate as { code?: unknown }).code;
+    if (
+      typeof code === "string" &&
+      /ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND|EHOSTUNREACH|UND_ERR_CONNECT_TIMEOUT/i.test(code)
+    ) {
+      return true;
+    }
+
+    const name = (candidate as { name?: unknown }).name;
+    if (typeof name === "string" && /APIConnectionError/i.test(name)) {
+      return true;
+    }
+  }
+
+  if (!(err instanceof Error)) return false;
+
+  return (
+    /\bconnection error\b/i.test(err.message) ||
+    /\bnetwork error\b/i.test(err.message) ||
+    /ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND|EHOSTUNREACH|connect\s+ETIMEDOUT|socket hang up|fetch failed/i.test(
+      err.message,
+    )
+  );
+}
+
+/**
+ * Detect 400 errors caused by exceeding the model's context length.
+ * These are unrecoverable without truncating the input — retrying is wasteful (#442).
+ * Pattern matches OpenAI's error: "400 Invalid 'input': maximum context length is 8192 tokens."
+ * Also matches Ollama's error: "Input length 768 exceeds maximum allowed token size 512" (#488).
+ */
+export function isContextLengthError(err: unknown): boolean {
+  if (err && typeof err === "object") {
+    const status = (err as { status?: unknown }).status;
+    if (typeof status === "number" && status === 400) {
+      const msg = ((err as { message?: string }).message ?? "").toLowerCase();
+      if (
+        msg.includes("context length") ||
+        msg.includes("maximum context") ||
+        /max.*token.*(length|limit)|token limit|context.length/i.test(msg) ||
+        // #488: Ollama "Input length 768 exceeds maximum allowed token size 512"
+        /input\s+length\s+\d+\s+exceeds/i.test(msg)
+      ) {
+        return true;
+      }
+    }
+  }
+  if (err instanceof Error) {
+    const msg = err.message.toLowerCase();
+    return (
+      ((msg.includes("400") || msg.includes("bad request")) &&
+        (msg.includes("context length") ||
+          msg.includes("maximum context") ||
+          /max.*token.*(length|limit)|token limit|context.length/i.test(err.message))) ||
+      /\b400\b.*maximum context length/i.test(err.message) ||
+      // #488: Ollama message-only — no "400" prefix or .status property.
+      // This pattern intentionally appears three times: some SDKs set .status=400 (first block),
+      // others embed "400" in the message (second block), others emit message-only (this block).
+      /input\s+length\s+\d+\s+exceeds/i.test(err.message)
+    );
+  }
+  return false;
+}
+
+/**
+ * Detect Ollama out-of-memory (OOM) errors from the model server.
+ * Ollama returns HTTP 500 with a body like:
+ *   "model requires more system memory (18.2 GiB) than is available (8.0 GiB)"
+ * These are expected failures when the configured model is too large for the host —
+ * not bugs — so callers should skip capturePluginError and warn the user instead.
+ *
+ * Exported so other modules (lifecycle/hooks, auto-classifier, embeddings) can
+ * detect OOM specifically for user-visible warnings and circuit-breaker decisions.
+ */
+export function isOllamaOOM(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  const msg = err.message.toLowerCase();
+  return (
+    msg.includes("model requires more system memory") ||
+    msg.includes("not enough memory to load") ||
+    // "requires X GiB" pattern covers variant phrasings from different Ollama versions
+    /\bmodel\s+requires\s+[\d.]+\s*gib/i.test(err.message) ||
+    // Bare OOM signal in error body (e.g. "oom: model 'qwen3:8b' ...")
+    /\boom:/i.test(err.message)
+  );
+}
+
+/**
+ * Try to parse a Retry-After delay (in ms) from an API error.
+ * Returns undefined when the header is absent or unparseable.
+ */
+function parseRetryAfterMs(err: unknown): number | undefined {
+  if (!err || typeof err !== "object") return undefined;
+  // OpenAI SDK exposes headers on the error response
+  const headers =
+    (err as { response?: { headers?: Record<string, string> }; headers?: Record<string, string> }).response?.headers ??
+    (err as { headers?: Record<string, string> }).headers;
+  if (!headers) return undefined;
+  const raw = headers["retry-after"] ?? headers["Retry-After"];
+  if (!raw) return undefined;
+  // Retry-After can be either a delay-seconds integer or an HTTP-date
+  const secs = Number.parseInt(raw, 10);
+  if (!Number.isNaN(secs) && secs > 0) return secs * 1000;
+  const date = Date.parse(raw);
+  if (!Number.isNaN(date)) return Math.max(0, date - Date.now());
+  return undefined;
+}
 
 export async function chatComplete(opts: {
   model: string;
@@ -86,37 +371,66 @@ export async function chatComplete(opts: {
   }
 
   try {
-    const doCreate = () => opts.openai.chat.completions.create(
-      {
-        model,
-        messages: [{ role: "user", content }],
-        temperature,
-        max_tokens: effectiveMaxTokens,
-      },
-      { signal: controller.signal },
-    );
+    // Newer models (GPT-5+, o-series) require max_completion_tokens and reject max_tokens; reasoning models also reject temperature/top_p.
+    const useMaxCompletionTokens = requiresMaxCompletionTokens(model);
+    const body: OpenAI.ChatCompletionCreateParamsNonStreaming = {
+      model,
+      messages: [{ role: "user", content }],
+      ...(useMaxCompletionTokens ? { max_completion_tokens: effectiveMaxTokens } : { max_tokens: effectiveMaxTokens }),
+    };
+    if (!isReasoningModel(model)) {
+      body.temperature = temperature;
+    }
+    const doCreate = () =>
+      opts.openai.chat.completions.create(body as unknown as Parameters<OpenAI["chat"]["completions"]["create"]>[0], {
+        signal: controller.signal,
+      });
     // If feature is provided, wrap in withCostFeature so the proxy attributes the call correctly.
     // Cost recording itself is done by the OpenAI proxy in setup/init-databases.ts.
-    const resp = await (feature ? withCostFeature(feature, doCreate) : doCreate());
+    const resp = (await (feature ? withCostFeature(feature, doCreate) : doCreate())) as OpenAI.Chat.ChatCompletion;
     clearTimeout(timeoutId);
     if (signal) signal.removeEventListener("abort", onAbort);
-    return resp.choices[0]?.message?.content?.trim() ?? "";
+    const msg = (resp as any).choices[0]?.message;
+    const msgContent = msg?.content?.trim();
+    if (msgContent) return msgContent;
+    // Qwen3 thinking mode (Ollama OpenAI-compat endpoint) puts the response in
+    // message.reasoning_content (current standard, May 2025+) or message.reasoning (legacy).
+    // Fall back to these fields when enable_thinking=true so agents don't see an empty reply (#314).
+    const msgRecord = msg as unknown as Record<string, unknown> | undefined;
+    const reasoningContent = msgRecord?.reasoning_content;
+    if (typeof reasoningContent === "string" && reasoningContent.trim()) return reasoningContent.trim();
+    const reasoning = msgRecord?.reasoning;
+    if (typeof reasoning === "string" && reasoning.trim()) return reasoning.trim();
+    return msgContent ?? "";
   } catch (err) {
     clearTimeout(timeoutId);
     if (signal) signal.removeEventListener("abort", onAbort);
     const isAbort = err instanceof Error && err.name === "AbortError";
     const error = isAbort
       ? new Error(`LLM request timeout after ${timeoutMs}ms (model: ${model})`)
-      : (err instanceof Error ? err : new Error(String(err)));
-    // Skip reporting known transient gateway/LLM errors (aborted, timeout, 5xx) and config errors (missing provider keys) to avoid GlitchTip noise
+      : err instanceof Error
+        ? err
+        : new Error(String(err));
+    // Skip reporting known transient gateway/LLM errors (aborted, timeout, 5xx, OOM, 429) and config errors (missing provider keys) to avoid GlitchTip noise
     const msg = error.message.toLowerCase();
     const isTransient =
       msg.includes("request was aborted") ||
       msg.includes("request timed out") ||
       msg.includes("timed out") ||
+      msg.includes("llm request timeout") || // #339: our own timeout message uses "timeout" not "timed out"
+      msg.includes("econnrefused") ||
+      isConnectionErrorLike(err) || // #703: OpenAI SDK APIConnectionError / "Connection error." is transient
+      is429Like(err) || // #397: rate limit is transient
       /^\d+\s*internal\s*error$/i.test(msg.trim()) ||
-      /^5\d{2}\s/.test(msg.trim());
-    const isConfigError = err instanceof UnconfiguredProviderError;
+      /^5\d{2}\s/.test(msg.trim()) ||
+      is500Like(err) || // #302: OpenAI SDK InternalServerError has no numeric prefix
+      isOllamaOOM(err); // #387: Ollama OOM — model too large for available RAM, not a bug
+    const isConfigError =
+      err instanceof UnconfiguredProviderError ||
+      is404Like(err) || // #303: model not found = wrong model name in config, not a bug
+      is403Like(err) || // #394: country/region restriction = operator config issue, not a bug
+      is401Like(err) || // #475: invalid API key = operator config issue, not a bug
+      isContextLengthError(err); // #488: input too long for model context window = wrong model choice, not a bug
     if (!isTransient && !isConfigError) {
       capturePluginError(error, {
         subsystem: "chat",
@@ -128,15 +442,14 @@ export async function chatComplete(opts: {
   }
 }
 
+/** Max input tokens for one distill batch request. From model-capabilities catalog (docs/MODEL-REFERENCE.md). */
 export function distillBatchTokenLimit(model: string): number {
-  // Use conservative limits that work across all common fallback models
-  // o3 has 450k TPM limit, so we use 400k to be safe
-  return isLongContextModel(model) ? 400_000 : 80_000;
+  return getDistillBatchTokenLimitFromCatalog(model);
 }
 
-/** Max output tokens for distill/ingest LLM calls. Long-context models (e.g. gateway-routed Gemini) support 65k+; else 8k. */
+/** Max output tokens for distill/ingest LLM calls. From model-capabilities catalog (docs/MODEL-REFERENCE.md). */
 export function distillMaxOutputTokens(model: string): number {
-  return isLongContextModel(model) ? 65_536 : 8000;
+  return getDistillMaxOutputTokensFromCatalog(model);
 }
 
 /**
@@ -175,22 +488,78 @@ export async function withLLMRetry<T>(
       if (lastError instanceof UnconfiguredProviderError) {
         throw lastError;
       }
+      // Don't retry 401 — wrong key won't be fixed by retrying
+      if (is401Like(lastError)) {
+        throw lastError;
+      }
+      // Don't retry 403 — access forbidden (country/region restriction, IP block, billing) won't be fixed by retrying (#394)
+      if (is403Like(lastError)) {
+        throw lastError;
+      }
+      // Don't retry 404 — model doesn't exist, let chatCompleteWithRetry try next model
+      if (is404Like(lastError)) {
+        const modelHint = lastError.message.match(/model[:\s]+(\S+)/i)?.[1];
+        pluginLogger.warn(
+          `memory-hybrid: Model not found (404)${modelHint ? ` for ${modelHint}` : ""} — check model name or provider availability`,
+        );
+        throw lastError;
+      }
+      // Don't retry 400 context-length errors — input was too long; retrying won't fix it (#442)
+      if (isContextLengthError(lastError)) {
+        pluginLogger.warn(
+          "memory-hybrid: Input exceeds model context length — retrying will not help; truncate input before calling",
+        );
+        throw lastError;
+      }
+      const is429 = is429Like(lastError);
+      // Timeouts: only retry once (attempt 0 → attempt 1), then throw so chatCompleteWithRetry can try next model.
+      // (attempt is 0-based: attempt >= 1 means we've already retried once.)
+      const isTimeout = /timed out|llm request timeout|request was aborted|Request was aborted/i.test(
+        lastError.message,
+      ); // #339: include our own "LLM request timeout" pattern
+      const isConnectionError = isConnectionErrorLike(lastError);
+      if ((isTimeout || isConnectionError) && attempt >= 1) {
+        throw lastError;
+      }
+      // Ollama OOM: never retry — model requires more memory than available, won't be fixed by retrying.
+      // chatCompleteWithRetry will try the next fallback model (e.g. Gemini, OpenAI).
+      if (isOllamaOOM(lastError)) {
+        pluginLogger.warn(
+          "memory-hybrid: Ollama model OOM — model requires more memory than is available. Skipping retries; will try next fallback model.",
+        );
+        throw lastError;
+      }
+      // 5xx / internal server error: only retry once
+      const isServerError = is500Like(lastError);
+      if (isServerError && attempt >= 1) {
+        throw lastError;
+      }
       if (attempt === maxRetries || opts?.signal?.aborted) {
         const retryError = new LLMRetryError(
           `Failed after ${attempt + 1} attempts: ${lastError.message}`,
           lastError,
           attempt + 1,
         );
-        // Skip reporting when the underlying cause is a transient gateway error (aborted, timeout, 5xx)
+        // Skip reporting when the underlying cause is a transient gateway error (aborted, timeout, 5xx, 429).
+        // Note: 404 and 403 errors should never reach this branch (they exit early above),
+        // but we include them as defensive safety nets in case they slip past due to future refactors.
         const causeMsg = lastError.message.toLowerCase();
         const fullMsg = retryError.message.toLowerCase();
         const isTransient =
+          is429 ||
+          isServerError || // #302: 5xx server errors are transient
+          is404Like(lastError) || // #329: defensive safety net — 404 = model not found, config issue, not a bug
+          is403Like(lastError) || // #394: defensive safety net — 403 = country/region restriction, config issue, not a bug
+          is401Like(lastError) || // #475: defensive safety net — 401 = invalid API key, config issue, not a bug
           causeMsg.includes("request was aborted") ||
           fullMsg.includes("request was aborted") ||
           causeMsg.includes("request timed out") ||
           fullMsg.includes("request timed out") ||
           causeMsg.includes("timed out") ||
           fullMsg.includes("timed out") ||
+          causeMsg.includes("llm request timeout") || // #339: our own timeout message uses "timeout" not "timed out"
+          fullMsg.includes("llm request timeout") ||
+          isConnectionErrorLike(lastError) ||
           /^\d+\s*internal\s*error$/i.test(causeMsg.trim()) ||
           /^5\d{2}\s/.test(causeMsg.trim()) ||
           /\b405\s+method\s+not\s+allowed/i.test(causeMsg) ||
@@ -204,8 +573,40 @@ export async function withLLMRetry<T>(
         }
         throw retryError;
       }
-      const delay = Math.pow(3, attempt) * 1000; // 1s, 3s, 9s
-      await new Promise((r) => setTimeout(r, delay));
+
+      // 429: respect Retry-After header if present; otherwise use exponential backoff (2s → 4s → 8s)
+      let delay: number;
+      if (is429) {
+        const retryAfterMs = parseRetryAfterMs(err);
+        delay = retryAfterMs ?? 2 ** (attempt + 1) * 1000;
+        pluginLogger.warn(`memory-hybrid: Rate limited by provider — backing off ${delay}ms`);
+      } else {
+        delay = 3 ** attempt * 1000; // 1s, 3s, 9s
+      }
+      // Abort-aware backoff sleep: if the signal fires while we are waiting, reject immediately
+      // instead of sleeping through the full delay. The listener is removed on normal resolve to
+      // prevent leaks; the { once: true } option is not relied on alone for cleanup.
+      await new Promise<void>((resolve, reject) => {
+        const onAbort = () => {
+          clearTimeout(timeout);
+          const reason = opts?.signal?.reason;
+          const msg = reason instanceof Error ? reason.message : reason != null ? String(reason) : "Aborted";
+          const abortError = new Error(msg);
+          abortError.name = "AbortError";
+          reject(abortError);
+        };
+        const timeout = setTimeout(() => {
+          opts?.signal?.removeEventListener("abort", onAbort);
+          resolve();
+        }, delay);
+        if (opts?.signal) {
+          if (opts.signal.aborted) {
+            onAbort();
+          } else {
+            opts.signal.addEventListener("abort", onAbort, { once: true });
+          }
+        }
+      });
     }
   }
   throw new Error("unreachable");
@@ -233,7 +634,16 @@ export async function chatCompleteWithRetry(opts: {
   /** Feature label for cost tracking. Passed to chatComplete which wraps the call in withCostFeature(). */
   feature?: string;
 }): Promise<string> {
-  const { fallbackModels = [], label: rawLabel, maxTokens, timeoutMs, signal, pendingWarnings, feature, ...chatOpts } = opts;
+  const {
+    fallbackModels = [],
+    label: rawLabel,
+    maxTokens,
+    timeoutMs,
+    signal,
+    pendingWarnings,
+    feature,
+    ...chatOpts
+  } = opts;
   const label = rawLabel ?? "LLM call";
   const modelsToTry = [opts.model, ...fallbackModels];
 
@@ -243,15 +653,13 @@ export async function chatCompleteWithRetry(opts: {
   for (let i = 0; i < modelsToTry.length; i++) {
     if (signal?.aborted) {
       const reason = (signal as AbortSignal).reason;
-      const abortError =
-        reason instanceof Error
-          ? reason
-          : new Error(reason != null ? String(reason) : "Aborted");
+      const msg = reason instanceof Error ? reason.message : reason != null ? String(reason) : "Aborted";
+      const abortError = new Error(msg);
       abortError.name = "AbortError";
       throw abortError;
     }
     const currentModel = modelsToTry[i];
-    const isFallback = i > 0;
+    const _isFallback = i > 0;
     // Use per-model max_tokens so fallbacks (e.g. gpt-4o) don't receive primary model's limit (e.g. 65k for Gemini)
     const effectiveMaxTokens = maxTokens ?? distillMaxOutputTokens(currentModel);
 
@@ -271,29 +679,141 @@ export async function chatCompleteWithRetry(opts: {
     } catch (err) {
       lastError = err instanceof Error ? err : new Error(String(err));
       // Check both direct UnconfiguredProviderError and wrapped in LLMRetryError
-      const isUnconfigured = lastError instanceof UnconfiguredProviderError ||
+      const isUnconfigured =
+        lastError instanceof UnconfiguredProviderError ||
         (lastError instanceof LLMRetryError && lastError.cause instanceof UnconfiguredProviderError);
+      const is429 = is429OrWrapped(lastError);
+      const isTimeout = /timed out|llm request timeout|request was aborted|Request was aborted/i.test(
+        lastError.message,
+      ); // #339: include our own "LLM request timeout" pattern
+      const isConnectionError = isConnectionErrorLike(lastError);
+      const is404 = is404Like(lastError);
+      const is403 = is403Like(lastError);
+      const is401 = is401Like(lastError);
+      const is500 = is500Like(lastError); // #302
+      const isContextLength = isContextLengthError(lastError); // #488
       if (isUnconfigured) unconfiguredCount++;
-      if (i < modelsToTry.length - 1 && !signal?.aborted && !isUnconfigured) {
-        console.warn(
-          `${label}: model ${currentModel} failed after retries, trying fallback model ${modelsToTry[i + 1]}...`,
-        );
+      if (i < modelsToTry.length - 1 && !signal?.aborted) {
+        if (!isUnconfigured) {
+          const reason = is429
+            ? "rate limited (429)"
+            : isTimeout
+              ? "timed out"
+              : isConnectionError
+                ? "connection failed"
+                : is404
+                  ? "model not found (404)"
+                  : is403
+                    ? "access denied (403)"
+                    : is401
+                      ? "unauthorized (401)"
+                      : is500
+                        ? "server error (500)" // #302
+                        : isContextLength
+                          ? "input too long" // #488
+                          : "failed after retries";
+          pluginLogger.warn(
+            `${label}: model ${currentModel} ${reason}, trying fallback model ${modelsToTry[i + 1]}...`,
+          );
+        }
       }
     }
   }
 
   const finalError = lastError ?? new Error("All models failed");
+  const finalIs500 = is500Like(finalError);
+  const finalIs404 = is404Like(finalError);
+  const finalIs403 = is403Like(finalError); // #394: country/region restriction = operator config issue
+  const finalIs401 = is401OrWrapped(finalError); // #475: invalid API key = operator config issue
+  const finalIsOOM = isOllamaOOM(finalError); // #387: OOM is expected when model too large for RAM
+  const finalIs429 = is429OrWrapped(finalError); // #397
+  const finalIsContextLength = isContextLengthError(finalError); // #488: input too long for model context window
+  const finalIsTimeout = /timed out|llm request timeout|request was aborted|Request was aborted/i.test(
+    finalError.message,
+  );
+  const finalIsConnectionError = isConnectionErrorLike(finalError);
 
   // When every model failed because provider keys are missing, queue a user-visible chat warning
   // and skip Sentry (this is a config issue, not a bug).
   if (unconfiguredCount > 0 && unconfiguredCount === modelsToTry.length) {
-    const unconfiguredProviders = [...new Set(
-      modelsToTry.map(m => m.includes("/") ? m.split("/")[0] : "openai")
-    )];
+    const unconfiguredProviders = [...new Set(modelsToTry.map((m) => (m.includes("/") ? m.split("/")[0] : "openai")))];
     pendingWarnings?.add(
-      `⚠️ Memory plugin: No LLM provider keys are configured for ${unconfiguredProviders.join(", ")}. ` +
-      `Memory features (HyDE search, classification, distillation) are degraded. ` +
-      `Add API keys via: llm.providers.<provider>.apiKey in plugin config, then run: openclaw hybrid-mem verify --test-llm`
+      `⚠️ Memory plugin: No LLM provider keys are configured for ${unconfiguredProviders.join(", ")}. Memory features (HyDE search, classification, distillation) are degraded. Add API keys via: llm.providers.<provider>.apiKey in plugin config, then run: openclaw hybrid-mem verify --test-llm`,
+    );
+  } else if (unconfiguredCount > 0) {
+    // Some models were unconfigured — warn user even if final error was 500/404
+    pendingWarnings?.add(
+      "⚠️ Memory plugin: Some LLM provider keys are missing. " +
+        "Add API keys via: llm.providers.<provider>.apiKey in plugin config, then run: openclaw hybrid-mem verify --test-llm",
+    );
+    // Don't report UnconfiguredProviderError to GlitchTip — it's a config issue, not a code bug.
+    // This can happen when the final model in the fallback chain is also unconfigured but an
+    // earlier model failed for a different reason (e.g. rate limit), so unconfiguredCount < total.
+    const finalIsUnconfigured =
+      finalError instanceof UnconfiguredProviderError ||
+      (finalError instanceof LLMRetryError && finalError.cause instanceof UnconfiguredProviderError);
+    if (
+      !finalIs500 &&
+      !finalIsOOM &&
+      !finalIsContextLength && // #488: context window exceeded = config issue, not a bug
+      !finalIsUnconfigured &&
+      !finalIsTimeout &&
+      !finalIsConnectionError &&
+      !finalIs403 &&
+      !finalIs401 &&
+      !finalIs429
+    ) {
+      capturePluginError(finalError, {
+        subsystem: "chat",
+        operation: "chatCompleteWithRetry",
+        phase: "fallback-exhausted",
+      });
+    }
+  } else if (finalIsOOM) {
+    // #387: OOM is a persistent condition (model too large for RAM), not transient — warn user to use smaller model
+    pendingWarnings?.add(
+      "⚠️ Memory plugin: LLM model requires more memory than available (OOM). " +
+        "Consider using a smaller model or configuring a cloud fallback. " +
+        "Run: openclaw hybrid-mem verify --test-llm",
+    );
+  } else if (finalIsContextLength) {
+    // #488: input too long for model's context window — config issue (model too small), not a code bug
+    pendingWarnings?.add(
+      "⚠️ Memory plugin: LLM input exceeds model context window. " +
+        "Consider using a model with a larger context window or reducing input size. " +
+        "Run: openclaw hybrid-mem verify --test-llm",
+    );
+  } else if (finalIs500) {
+    // #302: 500 server errors are transient — don't report to GlitchTip; request will be retried naturally
+  } else if (finalIs404) {
+    // #303: model not found across all fallbacks = misconfigured model name — surface to user, skip Sentry
+    pendingWarnings?.add(
+      "⚠️ Memory plugin: LLM model not found (404) for all configured models. " +
+        "Check model names in llm.default / llm.heavy / llm.nano config. " +
+        "Run: openclaw hybrid-mem verify --test-llm",
+    );
+  } else if (finalIs403) {
+    // #394: country/region restriction / IP block = operator config issue, not a bug — skip GlitchTip
+    pendingWarnings?.add(
+      "⚠️ Memory plugin: LLM access denied (403) — your API key may be restricted by country/region, " +
+        "IP block, or billing. Check provider settings. " +
+        "Run: openclaw hybrid-mem verify --test-llm",
+    );
+  } else if (finalIs401) {
+    // #475: invalid API key = operator config issue, not a bug — skip GlitchTip
+    pendingWarnings?.add(
+      "⚠️ Memory plugin: LLM unauthorized (401) — your API key is invalid or expired. Check provider settings. " +
+        "Run: openclaw hybrid-mem verify --test-llm",
+    );
+  } else if (finalIsTimeout) {
+    // #339: timeout errors are transient — don't report to GlitchTip
+  } else if (finalIsConnectionError) {
+    // #703: OpenAI SDK "Connection error." / APIConnectionError is transient — don't report to GlitchTip
+  } else if (finalIs429) {
+    // #397: rate limit / usage limit — transient provider error, don't report to GlitchTip
+    pendingWarnings?.add(
+      "⚠️ Memory plugin: LLM provider rate limited (429 Too Many Requests). " +
+        "Memory features may be degraded. Try again later or upgrade your provider plan.",
     );
   } else {
     // Only report unexpected failures to Sentry — not pure config/key issues

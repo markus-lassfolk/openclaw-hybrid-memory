@@ -5,7 +5,7 @@
  * hybrid-mem backup verify   — checks DB integrity without creating a new backup
  *
  * The backup captures:
- *  - SQLite memory.db (via better-sqlite3 .backup() — hot copy, no lock required)
+ *  - SQLite memory.db (via VACUUM INTO — consistent hot copy, works with WAL mode)
  *  - LanceDB vector store directory (recursive copy)
  *
  * Note: plugin config (openclaw.yaml) is NOT currently captured by this command.
@@ -21,10 +21,10 @@
  * Cron automation for scheduled backups should be managed via openclaw.yaml.
  */
 
-import Database from "better-sqlite3";
-import { existsSync, mkdirSync, cpSync, statSync, readdirSync, copyFileSync } from "node:fs";
-import { join, basename } from "node:path";
+import { copyFileSync, cpSync, existsSync, mkdirSync, readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
+import { basename, join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { capturePluginError } from "../services/error-reporter.js";
 
 // ---------------------------------------------------------------------------
@@ -67,10 +67,7 @@ function defaultBackupRoot(): string {
 
 function timestampedDir(root: string): string {
   const now = new Date();
-  const ts = now
-    .toISOString()
-    .replace(/[:.]/g, "-")
-    .slice(0, 19); // YYYY-MM-DDTHH-mm-ss
+  const ts = now.toISOString().replace(/[:.]/g, "-").slice(0, 19); // YYYY-MM-DDTHH-mm-ss
   return join(root, ts);
 }
 
@@ -128,7 +125,7 @@ function copyDirSync(src: string, dest: string): void {
 
 /**
  * Create a point-in-time backup of the hybrid-memory data stores.
- * Uses better-sqlite3 .backup() for a hot SQLite copy and recursive copy for LanceDB.
+ * Uses VACUUM INTO for a consistent SQLite copy and recursive copy for LanceDB.
  */
 export async function runBackup(ctx: BackupContext): Promise<BackupCliResult> {
   const start = Date.now();
@@ -148,15 +145,17 @@ export async function runBackup(ctx: BackupContext): Promise<BackupCliResult> {
   if (existsSync(ctx.resolvedSqlitePath)) {
     const destSqlite = join(dest, basename(ctx.resolvedSqlitePath));
     try {
-      // better-sqlite3 .backup() creates a consistent snapshot even while the DB is open.
-      const db = new Database(ctx.resolvedSqlitePath, { readonly: true, fileMustExist: true });
+      // Open read-only to verify integrity, then use VACUUM INTO for a consistent hot copy.
+      const db = new DatabaseSync(ctx.resolvedSqlitePath, { readOnly: true });
       try {
         // Run integrity check on source before backup
         const row = db.prepare("PRAGMA integrity_check").get() as { integrity_check?: string } | undefined;
         integrityOk = row?.integrity_check === "ok";
 
-        // Hot backup — does not require closing the DB
-        await db.backup(destSqlite);
+        // VACUUM INTO creates a consistent snapshot compatible with WAL mode databases.
+        // Escape single quotes in the path (path is system-generated, not user input).
+        const escapedDest = destSqlite.replace(/'/g, "''");
+        db.exec(`VACUUM INTO '${escapedDest}'`);
       } finally {
         db.close();
       }
@@ -210,9 +209,9 @@ export function runBackupVerify(ctx: { resolvedSqlitePath: string }): BackupVeri
     return { ok: false, error: `SQLite database not found at: ${ctx.resolvedSqlitePath}` };
   }
 
-  let db: InstanceType<typeof Database> | null = null;
+  let db: DatabaseSync | null = null;
   try {
-    db = new Database(ctx.resolvedSqlitePath, { readonly: true, fileMustExist: true });
+    db = new DatabaseSync(ctx.resolvedSqlitePath, { readOnly: true });
 
     // integrity_check
     const row = db.prepare("PRAGMA integrity_check").get() as { integrity_check?: string } | undefined;
@@ -226,9 +225,9 @@ export function runBackupVerify(ctx: { resolvedSqlitePath: string }): BackupVeri
 
     const message = integrityOk
       ? `SQLite integrity OK — ${factCount} active facts`
-      : `SQLite integrity FAILED — database may be corrupt`;
+      : "SQLite integrity FAILED — database may be corrupt";
 
-    return { ok: true, integrityOk, sqlitePath: ctx.resolvedSqlitePath, factCount, message };
+    return { ok: true, integrityOk, sqlitePath: ctx.resolvedSqlitePath, factCount: factCount, message };
   } catch (err) {
     capturePluginError(err instanceof Error ? err : new Error(String(err)), {
       subsystem: "backup",

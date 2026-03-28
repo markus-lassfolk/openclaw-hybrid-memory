@@ -21,28 +21,35 @@
  */
 
 import { existsSync } from "node:fs";
-import { readFile, writeFile, mkdir, readdir, unlink, stat, realpath } from "node:fs/promises";
+import { readFile, writeFile, mkdir, readdir, rename, unlink, stat, realpath } from "node:fs/promises";
 import { dirname, join, resolve, relative, isAbsolute } from "node:path";
-import { randomUUID } from "node:crypto";
+import { randomUUID, createHash } from "node:crypto";
 import { formatDuration } from "../utils/duration.js";
+import { pluginLogger } from "../utils/logger.js";
+import { stableStringify } from "../utils/stable-stringify.js";
+
+/**
+ * Unparseable or invalid signal files (and abandoned atomic-write temp files) older than this are
+ * deleted to prevent unbounded accumulation (issue #812). Exported for tests.
+ */
+export const STALE_CORRUPT_SIGNAL_MS = 5 * 60 * 1000;
+
+async function tryDeleteStaleCorruptSignalFile(filePath: string): Promise<void> {
+  try {
+    const s = await stat(filePath);
+    if (Date.now() - s.mtimeMs <= STALE_CORRUPT_SIGNAL_MS) return;
+    await unlink(filePath);
+  } catch {
+    // ENOENT or other — ignore
+  }
+}
 
 /** Valid task statuses */
-export const ACTIVE_TASK_STATUSES = [
-  "In progress",
-  "Waiting",
-  "Stalled",
-  "Failed",
-  "Done",
-] as const;
+export const ACTIVE_TASK_STATUSES = ["In progress", "Waiting", "Stalled", "Failed", "Done"] as const;
 export type ActiveTaskStatus = (typeof ACTIVE_TASK_STATUSES)[number];
 
 /** Non-terminal statuses (still active) */
-const ACTIVE_STATUSES: Set<ActiveTaskStatus> = new Set([
-  "In progress",
-  "Waiting",
-  "Stalled",
-  "Failed",
-]);
+const ACTIVE_STATUSES: Set<ActiveTaskStatus> = new Set(["In progress", "Waiting", "Stalled", "Failed"]);
 
 /** Structured task entry */
 export interface ActiveTaskEntry {
@@ -66,6 +73,24 @@ export interface ActiveTaskEntry {
   updated: string;
   /** Whether task is flagged as stale (not updated within staleThreshold) */
   stale?: boolean;
+  /** Structured handoff metadata from latest sub-agent signal */
+  handoff?: ActiveTaskHandoffRef;
+}
+
+/** Structured handoff reference persisted in ACTIVE-TASK.md */
+export interface ActiveTaskHandoffRef {
+  /** OCTAVE schema identifier */
+  schema: string;
+  /** Unique artifact id */
+  artifactId: string;
+  /** Signal type represented by the artifact */
+  signal: TaskSignalType;
+  /** Agent that emitted the signal */
+  agent: string;
+  /** ISO-8601 timestamp of the handoff */
+  timestamp: string;
+  /** SHA-256 checksum of the artifact canonical payload */
+  checksum: string;
 }
 
 /** Result of parsing ACTIVE-TASK.md */
@@ -136,10 +161,37 @@ function parseTaskBlock(header: string, lines: string[]): ActiveTaskEntry | null
       case "updated":
         entry.updated = value || new Date().toISOString();
         break;
+      case "handoff":
+        entry.handoff = parseHandoffRef(value) ?? undefined;
+        break;
     }
   }
 
   return entry as ActiveTaskEntry;
+}
+
+function parseHandoffRef(value: string): ActiveTaskHandoffRef | null {
+  if (!value) return null;
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (!isHandoffRef(parsed)) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function isHandoffRef(value: unknown): value is ActiveTaskHandoffRef {
+  if (!value || typeof value !== "object") return false;
+  const v = value as Partial<ActiveTaskHandoffRef>;
+  return (
+    typeof v.schema === "string" &&
+    typeof v.artifactId === "string" &&
+    typeof v.signal === "string" &&
+    typeof v.agent === "string" &&
+    typeof v.timestamp === "string" &&
+    typeof v.checksum === "string"
+  );
 }
 
 /** Parse a full ACTIVE-TASK.md file content */
@@ -220,16 +272,14 @@ export function serializeTaskEntry(entry: ActiveTaskEntry): string {
   if (entry.stashCommit) lines.push(`- **Stash/Commit:** ${entry.stashCommit}`);
   if (entry.subagent) lines.push(`- **Subagent:** ${entry.subagent}`);
   if (entry.next) lines.push(`- **Next:** ${entry.next}`);
+  if (entry.handoff) lines.push(`- **Handoff:** ${stableStringify(entry.handoff)}`);
   lines.push(`- **Started:** ${entry.started}`);
   lines.push(`- **Updated:** ${entry.updated}`);
   return lines.join("\n");
 }
 
 /** Serialize all tasks back to full ACTIVE-TASK.md content */
-export function serializeActiveTaskFile(
-  active: ActiveTaskEntry[],
-  completed: ActiveTaskEntry[],
-): string {
+export function serializeActiveTaskFile(active: ActiveTaskEntry[], completed: ActiveTaskEntry[]): string {
   const parts: string[] = ["# ACTIVE-TASK.md — Working Memory\n"];
 
   parts.push("## Active Tasks\n");
@@ -261,15 +311,12 @@ export function serializeActiveTaskFile(
  * Flag tasks that have not been updated in more than `staleMinutes` minutes.
  * Returns new array with `stale` property set.
  */
-export function detectStaleTasks(
-  tasks: ActiveTaskEntry[],
-  staleMinutes: number,
-): ActiveTaskEntry[] {
+export function detectStaleTasks(tasks: ActiveTaskEntry[], staleMinutes: number): ActiveTaskEntry[] {
   const now = Date.now();
   const staleMs = staleMinutes * 60 * 1000;
   return tasks.map((t) => {
     const updatedMs = new Date(t.updated).getTime();
-    const isStale = !isNaN(updatedMs) && now - updatedMs > staleMs;
+    const isStale = !Number.isNaN(updatedMs) && now - updatedMs > staleMs;
     return { ...t, stale: isStale };
   });
 }
@@ -284,10 +331,7 @@ export function detectStaleTasks(
  * @param filePath - Absolute path to ACTIVE-TASK.md
  * @param staleMinutes - Minutes before a task is considered stale (default: 1440 = 24h)
  */
-export async function readActiveTaskFile(
-  filePath: string,
-  staleMinutes = 1440,
-): Promise<ActiveTaskFile | null> {
+export async function readActiveTaskFile(filePath: string, staleMinutes = 1440): Promise<ActiveTaskFile | null> {
   if (!existsSync(filePath)) return null;
   try {
     const content = await readFile(filePath, "utf-8");
@@ -366,10 +410,7 @@ export function completeTask(
  * Build a compact injection block for the active task working memory.
  * Budget-capped to `maxTokens` (approximate — 4 chars ≈ 1 token).
  */
-export function buildActiveTaskInjection(
-  tasks: ActiveTaskEntry[],
-  maxTokens: number,
-): string {
+export function buildActiveTaskInjection(tasks: ActiveTaskEntry[], maxTokens: number): string {
   const activeTasks = tasks.filter((t) => ACTIVE_STATUSES.has(t.status));
   if (activeTasks.length === 0) return "";
 
@@ -381,9 +422,7 @@ export function buildActiveTaskInjection(
 
   for (const task of activeTasks) {
     const staleFlag = task.stale ? " ⚠️ STALE" : "";
-    const summary = [
-      `- [${task.label}] ${task.description} (${task.status}${staleFlag})`,
-    ];
+    const summary = [`- [${task.label}] ${task.description} (${task.status}${staleFlag})`];
     if (task.next) summary.push(`  Next: ${task.next}`);
     if (task.subagent) summary.push(`  Subagent: ${task.subagent}`);
     const block = summary.join("\n");
@@ -418,16 +457,10 @@ export function buildActiveTaskInjection(
  * @param staleMinutes Threshold used for the warning label (e.g. 1440 → shows ">24h").
  * @param maxChars Optional character budget cap (approximate — 4 chars ≈ 1 token). If provided, truncates output.
  */
-export function buildStaleWarningInjection(
-  tasks: ActiveTaskEntry[],
-  staleMinutes: number,
-  maxChars?: number,
-): string {
+export function buildStaleWarningInjection(tasks: ActiveTaskEntry[], staleMinutes: number, maxChars?: number): string {
   const staleTasks = tasks.filter((t) => t.stale);
   // Hint for any "In progress" task with a subagent — regardless of staleness.
-  const inProgressWithSubagent = tasks.filter(
-    (t) => t.status === "In progress" && t.subagent,
-  );
+  const inProgressWithSubagent = tasks.filter((t) => t.status === "In progress" && t.subagent);
 
   if (staleTasks.length === 0 && inProgressWithSubagent.length === 0) return "";
 
@@ -445,9 +478,7 @@ export function buildStaleWarningInjection(
     const now = Date.now();
     for (const task of staleTasks) {
       const updatedMs = new Date(task.updated).getTime();
-      const hoursAgo = isNaN(updatedMs)
-        ? "?"
-        : Math.floor((now - updatedMs) / (60 * 60 * 1000));
+      const hoursAgo = Number.isNaN(updatedMs) ? "?" : Math.floor((now - updatedMs) / (60 * 60 * 1000));
       const line1 = `- [${task.label}]: ${task.description} — last updated ${task.updated} (${hoursAgo}h ago)`;
       const nextPart = task.next ? `, Next: ${task.next}` : "";
       const line2 = `  Status: ${task.status}${nextPart}`;
@@ -499,10 +530,7 @@ export function buildStaleWarningInjection(
  * Append completed task summary to `memory/YYYY-MM-DD.md`.
  * Creates the file if it doesn't exist.
  */
-export async function flushCompletedTaskToMemory(
-  task: ActiveTaskEntry,
-  memoryDir: string,
-): Promise<string> {
+export async function flushCompletedTaskToMemory(task: ActiveTaskEntry, memoryDir: string): Promise<string> {
   const date = new Date().toISOString().slice(0, 10);
   const filePath = join(memoryDir, `${date}.md`);
 
@@ -522,17 +550,16 @@ export async function flushCompletedTaskToMemory(
 
   const summary = [
     `## Completed Task: [${task.label}] ${task.description}`,
-    `- **Status:** Done`,
+    "- **Status:** Done",
     `- **Started:** ${task.started}`,
     `- **Completed:** ${task.updated}`,
     ...(task.branch ? [`- **Branch:** ${task.branch}`] : []),
     ...(task.subagent ? [`- **Subagent:** ${task.subagent}`] : []),
+    ...(task.handoff ? [`- **Handoff:** ${stableStringify(task.handoff)}`] : []),
     "",
   ].join("\n");
 
-  const newContent = existing
-    ? existing.trimEnd() + "\n\n" + summary
-    : `# Memory Log — ${date}\n\n` + summary;
+  const newContent = existing ? `${existing.trimEnd()}\n\n${summary}` : `# Memory Log — ${date}\n\n${summary}`;
 
   await writeFile(filePath, newContent, "utf-8");
   return filePath;
@@ -584,6 +611,34 @@ export interface TaskSignal {
   findings?: string[];
 }
 
+/** OCTAVE-style artifact schema identifier for task handoff files. */
+export const OCTAVE_TASK_HANDOFF_SCHEMA = "octave/task-handoff@v1";
+
+/** Typed OCTAVE-style handoff artifact persisted to disk. */
+export interface OctaveTaskHandoffArtifact {
+  /** Schema identifier */
+  schema: typeof OCTAVE_TASK_HANDOFF_SCHEMA;
+  /** Artifact type */
+  artifactType: "task_handoff";
+  /** Schema version */
+  version: 1;
+  /** Unique artifact id */
+  artifactId: string;
+  /** Deterministic canonical JSON of payload used for checksum and diffing */
+  canonical: string;
+  /** SHA-256 checksum of canonical payload */
+  checksum: string;
+  /** Structured payload */
+  payload: TaskSignal;
+  /** Append-only audit trail for artifact lifecycle */
+  auditTrail: Array<{
+    at: string;
+    by: string;
+    action: "created" | "validated";
+    note?: string;
+  }>;
+}
+
 /**
  * A TaskSignal enriched with the path of the file it was read from,
  * so the orchestrator can delete/archive it after processing.
@@ -591,6 +646,86 @@ export interface TaskSignal {
 export interface PendingTaskSignal extends TaskSignal {
   /** Absolute path of the signal file on disk */
   _filePath: string;
+  /** Structured OCTAVE handoff metadata if source file used the new schema */
+  _handoff?: ActiveTaskHandoffRef;
+}
+
+function isTaskSignal(signal: unknown): signal is TaskSignal {
+  if (!signal || typeof signal !== "object") return false;
+  const s = signal as Partial<TaskSignal>;
+  return (
+    typeof s.agent === "string" &&
+    typeof s.taskRef === "string" &&
+    typeof s.timestamp === "string" &&
+    typeof s.signal === "string" &&
+    typeof s.summary === "string"
+  );
+}
+
+function buildCanonicalPayload(signal: TaskSignal): string {
+  return stableStringify(signal);
+}
+
+function buildChecksum(canonical: string): string {
+  return createHash("sha256").update(canonical).digest("hex");
+}
+
+function toHandoffRefFromArtifact(artifact: OctaveTaskHandoffArtifact): ActiveTaskHandoffRef {
+  return {
+    schema: artifact.schema,
+    artifactId: artifact.artifactId,
+    signal: artifact.payload.signal,
+    agent: artifact.payload.agent,
+    timestamp: artifact.payload.timestamp,
+    checksum: artifact.checksum,
+  };
+}
+
+export function createOctaveTaskHandoffArtifact(signal: TaskSignal): OctaveTaskHandoffArtifact {
+  const canonical = buildCanonicalPayload(signal);
+  const checksum = buildChecksum(canonical);
+  return {
+    schema: OCTAVE_TASK_HANDOFF_SCHEMA,
+    artifactType: "task_handoff",
+    version: 1,
+    artifactId: randomUUID(),
+    canonical,
+    checksum,
+    payload: signal,
+    auditTrail: [
+      {
+        at: new Date().toISOString(),
+        by: signal.agent,
+        action: "created",
+      },
+    ],
+  };
+}
+
+export function validateOctaveTaskHandoffArtifact(
+  value: unknown,
+): { valid: true; artifact: OctaveTaskHandoffArtifact } | { valid: false; reason: string } {
+  if (!value || typeof value !== "object") return { valid: false, reason: "artifact is not an object" };
+  const artifact = value as Partial<OctaveTaskHandoffArtifact>;
+  if (artifact.schema !== OCTAVE_TASK_HANDOFF_SCHEMA) return { valid: false, reason: "schema mismatch" };
+  if (artifact.artifactType !== "task_handoff") return { valid: false, reason: "artifact type mismatch" };
+  if (artifact.version !== 1) return { valid: false, reason: "unsupported artifact version" };
+  if (typeof artifact.artifactId !== "string" || artifact.artifactId.length === 0) {
+    return { valid: false, reason: "missing artifact id" };
+  }
+  if (typeof artifact.canonical !== "string" || artifact.canonical.length === 0) {
+    return { valid: false, reason: "missing canonical payload" };
+  }
+  if (typeof artifact.checksum !== "string" || artifact.checksum.length === 0) {
+    return { valid: false, reason: "missing checksum" };
+  }
+  if (!Array.isArray(artifact.auditTrail)) return { valid: false, reason: "missing audit trail" };
+  if (!isTaskSignal(artifact.payload)) return { valid: false, reason: "invalid payload" };
+  const expectedCanonical = buildCanonicalPayload(artifact.payload);
+  if (artifact.canonical !== expectedCanonical) return { valid: false, reason: "canonical mismatch" };
+  const expectedChecksum = buildChecksum(artifact.canonical);
+  if (artifact.checksum !== expectedChecksum) return { valid: false, reason: "checksum mismatch" };
+  return { valid: true, artifact: artifact as OctaveTaskHandoffArtifact };
 }
 
 /**
@@ -602,11 +737,7 @@ export interface PendingTaskSignal extends TaskSignal {
  * @param memoryDir Absolute path to the memory directory
  * @returns         Absolute path of the written signal file
  */
-export async function writeTaskSignal(
-  label: string,
-  signal: TaskSignal,
-  memoryDir: string,
-): Promise<string> {
+export async function writeTaskSignal(label: string, signal: TaskSignal, memoryDir: string): Promise<string> {
   const signalsDir = join(memoryDir, "task-signals");
   await mkdir(signalsDir, { recursive: true });
   // Sanitise label to be filesystem-safe
@@ -615,7 +746,15 @@ export async function writeTaskSignal(
   const timestamp = Date.now();
   const suffix = randomUUID().replace(/-/g, "").slice(0, 8);
   const filePath = join(signalsDir, `${safeLabel}-${timestamp}-${suffix}.json`);
-  await writeFile(filePath, JSON.stringify(signal, null, 2), "utf-8");
+  const artifact = createOctaveTaskHandoffArtifact(signal);
+  const tmpPath = `${filePath}.tmp-${process.pid}-${Date.now()}`;
+  try {
+    await writeFile(tmpPath, JSON.stringify(artifact, null, 2), "utf-8");
+    await rename(tmpPath, filePath);
+  } catch (err) {
+    await unlink(tmpPath).catch(() => {});
+    throw err;
+  }
   return filePath;
 }
 
@@ -640,6 +779,13 @@ export async function readPendingSignals(memoryDir: string): Promise<PendingTask
 
   const resolvedSignalsDir = await realpath(signalsDir);
   const signals: PendingTaskSignal[] = [];
+
+  // Orphaned atomic-write temps (crash after writeFile, before rename) — same age rule as corrupt JSON.
+  for (const file of files) {
+    if (!file.includes(".json.tmp-")) continue;
+    await tryDeleteStaleCorruptSignalFile(join(signalsDir, file));
+  }
+
   for (const file of files) {
     if (!file.endsWith(".json")) continue;
     const filePath = join(signalsDir, file);
@@ -655,21 +801,34 @@ export async function readPendingSignals(memoryDir: string): Promise<PendingTask
     }
     try {
       const raw = await readFile(resolvedFilePath, "utf-8");
-      const parsed = JSON.parse(raw) as TaskSignal;
-      // Validate required fields to avoid noisy downstream errors
-      if (
-        typeof parsed.agent !== "string" ||
-        typeof parsed.taskRef !== "string" ||
-        typeof parsed.timestamp !== "string" ||
-        typeof parsed.signal !== "string" ||
-        typeof parsed.summary !== "string"
-      ) {
-        continue; // Skip signals with missing required fields
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(raw);
+      } catch {
+        await tryDeleteStaleCorruptSignalFile(resolvedFilePath);
+        continue;
       }
-      signals.push({ ...parsed, _filePath: resolvedFilePath });
+      const validatedArtifact = validateOctaveTaskHandoffArtifact(parsed);
+      if (validatedArtifact.valid) {
+        const handoff = toHandoffRefFromArtifact(validatedArtifact.artifact);
+        signals.push({
+          ...validatedArtifact.artifact.payload,
+          _filePath: resolvedFilePath,
+          _handoff: handoff,
+        });
+        continue;
+      }
+      // Backward compatibility: legacy signal format without OCTAVE envelope.
+      if (!isTaskSignal(parsed)) {
+        await tryDeleteStaleCorruptSignalFile(resolvedFilePath);
+        continue;
+      }
+      signals.push({
+        ...parsed,
+        _filePath: resolvedFilePath,
+      });
     } catch {
-      // Skip malformed or unreadable files — don't crash the orchestrator
-      continue;
+      // Ignore transient read errors (race with delete, etc.)
     }
   }
 
@@ -715,10 +874,7 @@ export async function readActiveTaskFileWithMtime(
 ): Promise<ActiveTaskFileWithMtime | null> {
   if (!existsSync(filePath)) return null;
   try {
-    const [content, fileStat] = await Promise.all([
-      readFile(filePath, "utf-8"),
-      stat(filePath),
-    ]);
+    const [content, fileStat] = await Promise.all([readFile(filePath, "utf-8"), stat(filePath)]);
     const parsed = parseActiveTaskFile(content);
     parsed.active = detectStaleTasks(parsed.active, staleMinutes);
     return { ...parsed, mtime: fileStat.mtimeMs };
@@ -754,14 +910,13 @@ export async function writeActiveTaskFileOptimistic(
   active: ActiveTaskEntry[],
   completed: ActiveTaskEntry[],
   knownMtime: number,
-  merge: (
-    fresh: ActiveTaskFileWithMtime,
-  ) => Promise<[ActiveTaskEntry[], ActiveTaskEntry[]] | null>,
+  merge: (fresh: ActiveTaskFileWithMtime) => Promise<[ActiveTaskEntry[], ActiveTaskEntry[]] | null>,
   maxRetries = 3,
   staleMinutes = 1440,
 ): Promise<boolean> {
   let currentActive = active;
   let currentCompleted = completed;
+  let knownMtimeMutable = knownMtime;
 
   for (let attempt = 0; attempt < maxRetries; attempt++) {
     // Check current mtime before writing
@@ -778,7 +933,7 @@ export async function writeActiveTaskFileOptimistic(
       throw err;
     }
 
-    if (currentMtime !== knownMtime) {
+    if (currentMtime !== knownMtimeMutable) {
       // File was modified since we last read it — re-read and merge
       const fresh = await readActiveTaskFileWithMtime(filePath, staleMinutes);
       if (!fresh) {
@@ -790,7 +945,7 @@ export async function writeActiveTaskFileOptimistic(
       if (merged === null) return false; // Caller decided to abort
       [currentActive, currentCompleted] = merged;
       // Update knownMtime to fresh state for next iteration
-      knownMtime = fresh.mtime;
+      knownMtimeMutable = fresh.mtime;
       // Continue to next iteration to check for conflicts again
       continue;
     }
@@ -801,7 +956,7 @@ export async function writeActiveTaskFileOptimistic(
   }
 
   // Exhausted retries — write whatever we have (last-write-wins fallback)
-  console.warn(
+  pluginLogger.warn(
     `memory-hybrid: writeActiveTaskFileOptimistic exhausted ${maxRetries} retries for ${filePath}; applying last-write-wins fallback`,
   );
   await writeActiveTaskFile(filePath, currentActive, currentCompleted);

@@ -1,15 +1,17 @@
 /** Graph-based spreading activation: auto-linking and traversal settings */
 export type GraphConfig = {
   enabled: boolean;
-  autoLink: boolean;            // Auto-create RELATED_TO links during storage
-  autoLinkMinScore: number;     // Min similarity score for auto-linking (default 0.7)
-  autoLinkLimit: number;        // Max similar facts to link per storage (default 3)
-  maxTraversalDepth: number;    // Max hops for graph traversal in recall (default 2)
-  useInRecall: boolean;         // Enable graph traversal in memory_recall (default true)
+  autoLink: boolean; // Auto-create RELATED_TO links during storage
+  autoLinkMinScore: number; // Min similarity score for auto-linking (default 0.7)
+  autoLinkLimit: number; // Max similar facts to link per storage (default 3)
+  maxTraversalDepth: number; // Max hops for graph traversal in recall (default 2)
+  useInRecall: boolean; // Enable graph traversal in memory_recall (default true)
   /** Weight for temporal co-occurrence RELATES_TO edges (default 0.3) */
   coOccurrenceWeight: number;
   /** When true, auto-create SUPERSEDES edge + supersede old fact when entity+key conflict detected (default true) */
   autoSupersede: boolean;
+  /** When true, strengthen RELATED_TO links between facts recalled together (Hebbian). Default false to avoid read-path mutation. */
+  strengthenOnRecall: boolean;
 };
 
 /** GraphRAG retrieval configuration (Issue #145). */
@@ -202,7 +204,7 @@ export type ImplicitSignalType =
 /** Implicit feedback detection from behavioral conversation signals (Issue #262). */
 export type ImplicitFeedbackConfig = {
   /** Enable implicit feedback detection (default: true). */
-  enabled: boolean;
+  enabled?: boolean;
   /** Minimum confidence to include a signal (default: 0.5). */
   minConfidence: number;
   /** Signal types to detect; defaults to all types. */
@@ -248,8 +250,8 @@ export type FrustrationDetectionConfig = {
   injectionThreshold: number;
   /** Frustration level thresholds per adaptation category. */
   adaptationThresholds: {
-    medium: number;   // default 0.3
-    high: number;     // default 0.5
+    medium: number; // default 0.3
+    high: number; // default 0.5
     critical: number; // default 0.7
   };
   /** Export frustration signals to the #262 implicit feedback pipeline (default: true). */
@@ -316,4 +318,62 @@ export type ClosedLoopConfig = {
   autoBoostThreshold: number;
   /** Run measurement in the nightly cycle (default: true). */
   runInNightlyCycle: boolean;
+};
+
+/** Mission Control dashboard HTTP server (Issue #309). */
+export type DashboardConfig = {
+  /** Enable the dashboard HTTP server (default: true). */
+  enabled: boolean;
+  /** Port for the dashboard HTTP server (default: 7700). */
+  port: number;
+  /** Optional owner/repo for GitHub queries (e.g. "markus-lassfolk/openclaw-hybrid-memory"). */
+  gitRepo?: string;
+};
+
+/** ApiTap integration — intercept browser traffic to auto-generate API skill specs (Issue #614, default: disabled). */
+export type ApiTapConfig = {
+  /** Enable ApiTap integration (default: false — explicit opt-in required). */
+  enabled: boolean;
+  /** Timeout in seconds for a live capture session (default: 60). */
+  captureTimeoutSeconds: number;
+  /** Days before a discovered endpoint record expires (default: 30). */
+  endpointTtlDays: number;
+  /** Max endpoints stored per capture session (default: 50). */
+  maxEndpointsPerSession: number;
+  /** URL glob patterns allowed for capture (empty = allow all non-blocked). */
+  allowedPatterns: string[];
+  /** URL glob patterns blocked from capture (auth/OAuth flows, default: blocked). */
+  blockedPatterns: string[];
+};
+
+/** Humanizer style scoring: quality-loop metric for detecting AI-writing patterns (Issue #616). */
+export type HumanizerConfig = {
+  /** Enable humanizer scoring on agent replies (default: false — opt-in). */
+  enabled: boolean;
+  /** Path to the humanizer binary (default: "humanizer"). */
+  bin: string;
+  /** Minimum reply length in characters before scoring (default: 100). */
+  minTextLength: number;
+  /** Maximum reply length in characters sent to humanizer (default: 4000). */
+  maxTextLength: number;
+  /** Optional model name to tag in the stored quality_loop fact. */
+  modelTag?: string;
+  /** Optional skill/context tag for the stored fact. */
+  skillTag?: string;
+};
+
+/** Frequency-based auto-save: capture repeated references including credentials to vault (Issue #784). */
+export type FrequencyCaptureConfig = {
+  /** Enable frequency-based auto-save (default: false — opt-in). */
+  enabled: boolean;
+  /** Number of mentions before auto-saving (default: 3). */
+  mentionThreshold: number;
+  /** Look back this many sessions for mention counting (default: 5). */
+  lookbackSessions: number;
+  /** Default importance for auto-saved facts (default: 0.6). */
+  defaultImportance: number;
+  /** Whether to capture credentials to vault (default: true). */
+  captureCredentials: boolean;
+  /** Days before auto-purging stale mention records (default: 30). */
+  ttlDays: number;
 };

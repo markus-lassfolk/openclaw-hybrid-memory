@@ -2,17 +2,17 @@
  * Tests for closed-loop feedback effectiveness measurement (Issue #262 — Phase 3).
  */
 
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
-import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import type { ClosedLoopConfig } from "../config/types/features.js";
 import { _testing } from "../index.js";
 import {
+  getEffectivenessReport,
   measureRuleEffectiveness,
   runClosedLoopAnalysis,
-  getEffectivenessReport,
 } from "../services/feedback-effectiveness.js";
-import type { ClosedLoopConfig } from "../config/types/features.js";
 
 const { FactsDB } = _testing;
 
@@ -88,8 +88,8 @@ describe("measureRuleEffectiveness", () => {
     const result = measureRuleEffectiveness(rule.id, db, DEFAULT_CONFIG);
     expect(result).not.toBeNull();
     const windowDaySec = 7 * 24 * 60 * 60;
-    expect(result!.windowStart).toBe(rule.createdAt - windowDaySec);
-    expect(result!.windowEnd).toBe(rule.createdAt + windowDaySec);
+    expect(result?.windowStart).toBe(rule.createdAt - windowDaySec);
+    expect(result?.windowEnd).toBe(rule.createdAt + windowDaySec);
   });
 
   it("uses 0 sample size when no feedback signals exist", () => {

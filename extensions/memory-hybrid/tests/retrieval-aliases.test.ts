@@ -38,19 +38,14 @@
  *     - returns 0 for empty / mismatched length
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, rmSync } from "node:fs";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
-import {
-  AliasDB,
-  generateAliases,
-  storeAliases,
-  searchAliasStrategy,
-} from "../services/retrieval-aliases.js";
-import { cosineSimilarity } from "../services/ambient-retrieval.js";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AliasesConfig } from "../config.js";
+import { cosineSimilarity } from "../services/ambient-retrieval.js";
+import { AliasDB, generateAliases, searchAliasStrategy, storeAliases } from "../services/retrieval-aliases.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -63,16 +58,16 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  rmSync(tmpDir, { recursive: true, force: true });
+  try {
+    rmSync(tmpDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+  } catch {
+    // Ignore cleanup failures in CI (ENOTEMPTY race condition)
+  }
 });
 
 function makeDb(): AliasDB {
   const id = randomUUID();
-  return new AliasDB(
-    join(tmpDir, `${id}.db`),
-    join(tmpDir, `${id}.lance`),
-    4,
-  );
+  return new AliasDB(join(tmpDir, `${id}.db`), join(tmpDir, `${id}.lance`), 4);
 }
 
 /** Build a unit vector in `dims` dimensions along axis 0. */
@@ -371,9 +366,7 @@ describe("generateAliases", () => {
       chat: {
         completions: {
           create: vi.fn().mockResolvedValue({
-            choices: [
-              { message: { content: "1. First alias\n- Second alias\n* Third alias\n2) Fourth alias" } },
-            ],
+            choices: [{ message: { content: "1. First alias\n- Second alias\n* Third alias\n2) Fourth alias" } }],
           }),
         },
       },
@@ -481,15 +474,8 @@ describe("storeAliases", () => {
     } as unknown as import("../services/embeddings.js").EmbeddingProvider;
 
     const warnings: string[] = [];
-    await storeAliases(
-      factId,
-      "Original",
-      ENABLED_CFG,
-      "test-model",
-      mockOpenAI,
-      mockEmbeddings,
-      db,
-      (msg) => warnings.push(msg),
+    await storeAliases(factId, "Original", ENABLED_CFG, "test-model", mockOpenAI, mockEmbeddings, db, (msg) =>
+      warnings.push(msg),
     );
 
     // Second alias should be stored despite first failing

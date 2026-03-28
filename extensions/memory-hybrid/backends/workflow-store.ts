@@ -8,13 +8,14 @@
  * UUIDs for primary keys, ISO-8601 timestamps.
  */
 
-import Database from "better-sqlite3";
 import { createHash, randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
+import { DatabaseSync } from "node:sqlite";
+import type { SQLInputValue } from "node:sqlite";
 
-import { SQLITE_BUSY_TIMEOUT_MS } from "../utils/constants.js";
 import { capturePluginError } from "../services/error-reporter.js";
+import { BaseSqliteStore } from "./base-sqlite-store.js";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -104,9 +105,37 @@ export function sequenceSimilarity(a: string[], b: string[]): number {
 // ---------------------------------------------------------------------------
 
 const STOP_WORDS = new Set([
-  "a", "an", "the", "and", "or", "for", "to", "in", "on", "at", "of",
-  "with", "by", "from", "is", "it", "this", "that", "me", "my", "i",
-  "do", "use", "get", "set", "run", "show", "list", "please", "can", "you",
+  "a",
+  "an",
+  "the",
+  "and",
+  "or",
+  "for",
+  "to",
+  "in",
+  "on",
+  "at",
+  "of",
+  "with",
+  "by",
+  "from",
+  "is",
+  "it",
+  "this",
+  "that",
+  "me",
+  "my",
+  "i",
+  "do",
+  "use",
+  "get",
+  "set",
+  "run",
+  "show",
+  "list",
+  "please",
+  "can",
+  "you",
 ]);
 
 export function extractGoalKeywords(goal: string): string[] {
@@ -130,17 +159,13 @@ export function hashToolSequence(toolSequence: string[]): string {
 // WorkflowStore
 // ---------------------------------------------------------------------------
 
-export class WorkflowStore {
-  private db: Database.Database;
-  private closed = false;
-
+export class WorkflowStore extends BaseSqliteStore {
   constructor(dbPath: string) {
     mkdirSync(dirname(dbPath), { recursive: true });
-    this.db = new Database(dbPath);
-    this.db.pragma("journal_mode = WAL");
-    this.db.pragma(`busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
+    const db = new DatabaseSync(dbPath);
+    super(db);
 
-    this.db.exec(`
+    this.liveDb.exec(`
       CREATE TABLE IF NOT EXISTS workflow_traces (
         id           TEXT PRIMARY KEY,
         goal         TEXT NOT NULL,
@@ -161,6 +186,10 @@ export class WorkflowStore {
     `);
   }
 
+  protected getSubsystemName(): string {
+    return "workflow-store";
+  }
+
   // -------------------------------------------------------------------------
   // record — insert a new workflow trace
   // -------------------------------------------------------------------------
@@ -170,7 +199,7 @@ export class WorkflowStore {
     const now = new Date().toISOString();
     // Normalize explicit keywords the same way extractGoalKeywords does (lowercase, dedupe, filter)
     const keywords = input.goalKeywords
-      ? [...new Set(input.goalKeywords.map(k => k.toLowerCase().trim()).filter(k => k.length > 0))]
+      ? [...new Set(input.goalKeywords.map((k) => k.toLowerCase().trim()).filter((k) => k.length > 0))]
       : extractGoalKeywords(input.goal);
     const argsHash = input.argsHash ?? hashToolSequence(input.toolSequence);
     const outcome = input.outcome ?? "unknown";
@@ -178,7 +207,7 @@ export class WorkflowStore {
     const durationMs = Math.round(input.durationMs ?? 0);
     const sessionId = input.sessionId ?? "";
 
-    this.db
+    this.liveDb
       .prepare(
         `INSERT INTO workflow_traces
            (id, goal, goal_keywords, tool_sequence, args_hash, outcome, tool_count, duration_ms, session_id, created_at)
@@ -205,9 +234,9 @@ export class WorkflowStore {
   // -------------------------------------------------------------------------
 
   getById(id: string): WorkflowTrace | null {
-    const row = this.db
-      .prepare("SELECT * FROM workflow_traces WHERE id = ?")
-      .get(id) as Record<string, unknown> | undefined;
+    const row = this.liveDb.prepare("SELECT * FROM workflow_traces WHERE id = ?").get(id) as
+      | Record<string, unknown>
+      | undefined;
     if (!row) return null;
     return this.rowToTrace(row);
   }
@@ -218,7 +247,7 @@ export class WorkflowStore {
 
   list(filter?: WorkflowFilter): WorkflowTrace[] {
     let query = "SELECT * FROM workflow_traces WHERE 1=1";
-    const params: unknown[] = [];
+    const params: SQLInputValue[] = [];
 
     if (filter?.outcome) {
       query += " AND outcome = ?";
@@ -244,16 +273,14 @@ export class WorkflowStore {
       params.push(filter.limit);
     }
 
-    const rows = this.db.prepare(query).all(...params) as Record<string, unknown>[];
+    const rows = this.liveDb.prepare(query).all(...params) as Record<string, unknown>[];
     let results = rows.map((r) => this.rowToTrace(r));
 
     // Keyword filter (in-memory, JSON blob)
     if (filter?.goal) {
       const keywords = extractGoalKeywords(filter.goal);
       if (keywords.length > 0) {
-        results = results.filter((t) =>
-          keywords.some((kw) => t.goalKeywords.includes(kw)),
-        );
+        results = results.filter((t) => keywords.some((kw) => t.goalKeywords.includes(kw)));
       }
     }
 
@@ -271,14 +298,12 @@ export class WorkflowStore {
   getByGoal(keywords: string[], limit = 20): WorkflowTrace[] {
     if (keywords.length === 0) return [];
     // Retrieve candidates via LIKE search on the JSON blob and filter in JS
-    const candidates = this.db
+    const candidates = this.liveDb
       .prepare("SELECT * FROM workflow_traces ORDER BY created_at DESC LIMIT 500")
       .all() as Record<string, unknown>[];
 
     const kwSet = new Set(keywords.map((k) => k.toLowerCase()));
-    const matched = candidates
-      .map((r) => this.rowToTrace(r))
-      .filter((t) => t.goalKeywords.some((k) => kwSet.has(k)));
+    const matched = candidates.map((r) => this.rowToTrace(r)).filter((t) => t.goalKeywords.some((k) => kwSet.has(k)));
 
     return matched.slice(0, limit);
   }
@@ -288,9 +313,10 @@ export class WorkflowStore {
   // -------------------------------------------------------------------------
 
   getSuccessRate(toolSequence: string[], similarityThreshold = 0.8): number {
-    const allRows = this.db
-      .prepare("SELECT tool_sequence, outcome FROM workflow_traces")
-      .all() as { tool_sequence: string; outcome: string }[];
+    const allRows = this.liveDb.prepare("SELECT tool_sequence, outcome FROM workflow_traces").all() as {
+      tool_sequence: string;
+      outcome: string;
+    }[];
 
     let total = 0;
     let successes = 0;
@@ -315,13 +341,9 @@ export class WorkflowStore {
   // getPatterns — group similar sequences and compute aggregate stats
   // -------------------------------------------------------------------------
 
-  getPatterns(options?: {
-    minSuccessRate?: number;
-    similarityThreshold?: number;
-    limit?: number;
-  }): WorkflowPattern[] {
+  getPatterns(options?: { minSuccessRate?: number; similarityThreshold?: number; limit?: number }): WorkflowPattern[] {
     const threshold = options?.similarityThreshold ?? 0.8;
-    const allRows = this.db
+    const allRows = this.liveDb
       .prepare("SELECT goal, tool_sequence, outcome, duration_ms FROM workflow_traces ORDER BY created_at DESC")
       .all() as { goal: string; tool_sequence: string; outcome: string; duration_ms: number }[];
 
@@ -367,10 +389,7 @@ export class WorkflowStore {
       const successCount = c.outcomes.filter((o) => o === "success").length;
       const failureCount = c.outcomes.filter((o) => o === "failure").length;
       const successRate = totalCount > 0 ? successCount / totalCount : 0;
-      const avgDurationMs =
-        c.durations.length > 0
-          ? c.durations.reduce((a, b) => a + b, 0) / c.durations.length
-          : 0;
+      const avgDurationMs = c.durations.length > 0 ? c.durations.reduce((a, b) => a + b, 0) / c.durations.length : 0;
       // Deduplicate example goals
       const uniqueGoals = [...new Set(c.goals)].slice(0, 3);
 
@@ -401,13 +420,9 @@ export class WorkflowStore {
   // -------------------------------------------------------------------------
 
   prune(olderThanDays: number): number {
-    const cutoff = new Date(
-      Date.now() - olderThanDays * 24 * 60 * 60 * 1000,
-    ).toISOString();
-    const result = this.db
-      .prepare("DELETE FROM workflow_traces WHERE created_at < ?")
-      .run(cutoff);
-    return result.changes;
+    const cutoff = new Date(Date.now() - olderThanDays * 24 * 60 * 60 * 1000).toISOString();
+    const result = this.liveDb.prepare("DELETE FROM workflow_traces WHERE created_at < ?").run(cutoff);
+    return Number(result.changes);
   }
 
   // -------------------------------------------------------------------------
@@ -415,32 +430,8 @@ export class WorkflowStore {
   // -------------------------------------------------------------------------
 
   count(): number {
-    const row = this.db
-      .prepare("SELECT COUNT(*) as n FROM workflow_traces")
-      .get() as { n: number };
+    const row = this.liveDb.prepare("SELECT COUNT(*) as n FROM workflow_traces").get() as { n: number };
     return row.n;
-  }
-
-  // -------------------------------------------------------------------------
-  // close / isOpen
-  // -------------------------------------------------------------------------
-
-  close(): void {
-    if (this.closed) return;
-    this.closed = true;
-    try {
-      this.db.close();
-    } catch (err) {
-      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-        operation: "db-close",
-        subsystem: "workflow-store",
-        severity: "info",
-      });
-    }
-  }
-
-  isOpen(): boolean {
-    return !this.closed;
   }
 
   // -------------------------------------------------------------------------
@@ -469,7 +460,7 @@ export class WorkflowStore {
       goalKeywords: parseJsonArray(row.goal_keywords, []),
       toolSequence: parseJsonArray(row.tool_sequence, []),
       argsHash: row.args_hash as string,
-      outcome: (row.outcome as string) as "success" | "failure" | "unknown",
+      outcome: row.outcome as string as "success" | "failure" | "unknown",
       toolCount: row.tool_count as number,
       durationMs: row.duration_ms as number,
       sessionId: row.session_id as string,

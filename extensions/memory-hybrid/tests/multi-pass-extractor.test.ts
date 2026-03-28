@@ -44,18 +44,18 @@
  *     - ignores empty string model names
  */
 
-import { describe, it, expect, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { hybridConfigSchema } from "../config.js";
 import {
+  type CandidateFact,
   MultiPassExtractor,
-  extractMultiPass,
   buildPass1Prompt,
   buildPass2Prompt,
   buildVerificationPrompt,
+  extractMultiPass,
   parseCandidateFacts,
   parseVerdict,
-  type CandidateFact,
 } from "../services/multi-pass-extractor.js";
-import { hybridConfigSchema } from "../config.js";
 
 // ---------------------------------------------------------------------------
 // Mock helpers
@@ -135,7 +135,7 @@ describe("parseCandidateFacts", () => {
   });
 
   it("handles markdown code fences", () => {
-    const json = "```json\n" + JSON.stringify([{ text: "Fact B", category: "other", importance: 0.5 }]) + "\n```";
+    const json = `\`\`\`json\n${JSON.stringify([{ text: "Fact B", category: "other", importance: 0.5 }])}\n\`\`\``;
     const facts = parseCandidateFacts(json, 2);
     expect(facts).toHaveLength(1);
     expect(facts[0].pass).toBe(2);
@@ -481,7 +481,7 @@ describe("extractMultiPass", () => {
 
 describe("ExtractionConfig parsing", () => {
   it("defaults to extractionPasses=false and verificationPass=false", () => {
-    const cfg = hybridConfigSchema.parse({ ...BASE_CONFIG, mode: "normal" });
+    const cfg = hybridConfigSchema.parse({ ...BASE_CONFIG, mode: "minimal" });
     expect(cfg.extraction.extractionPasses).toBe(false);
     expect(cfg.extraction.verificationPass).toBe(false);
     expect(cfg.extraction.extractionModel).toBeUndefined();

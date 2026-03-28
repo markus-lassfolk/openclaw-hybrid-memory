@@ -23,11 +23,7 @@ export interface GapFactsDB {
 }
 
 export interface GapVectorDB {
-  search(
-    vector: number[],
-    limit: number,
-    minScore: number,
-  ): Promise<Array<{ entry: { id: string }; score: number }>>;
+  search(vector: number[], limit: number, minScore: number): Promise<Array<{ entry: { id: string }; score: number }>>;
 }
 
 export interface GapEmbeddings {
@@ -90,11 +86,7 @@ export function computeIsolationScore(linkCount: number): number {
  * Rank score = age_factor × isolation_score.
  * age_factor = max(1, ageSeconds / AGE_UNIT_SEC) so brand-new facts still score ≥ 1.
  */
-export function computeRankScore(
-  createdAt: number,
-  isolationScore: number,
-  nowSec: number,
-): number {
+export function computeRankScore(createdAt: number, isolationScore: number, nowSec: number): number {
   const ageSeconds = Math.max(0, nowSec - createdAt);
   const ageFactor = Math.max(1, ageSeconds / AGE_UNIT_SEC);
   return ageFactor * isolationScore;
@@ -118,8 +110,8 @@ export function detectOrphans(
   const results: GapFact[] = [];
 
   for (const fact of facts) {
-    const linkCount = linkCounts?.get(fact.id) ?? 
-      factsDb.getLinksFrom(fact.id).length + factsDb.getLinksTo(fact.id).length;
+    const linkCount =
+      linkCounts?.get(fact.id) ?? factsDb.getLinksFrom(fact.id).length + factsDb.getLinksTo(fact.id).length;
     if (linkCount === 0) {
       const isolationScore = computeIsolationScore(linkCount);
       results.push({
@@ -151,8 +143,8 @@ export function detectWeak(
   const results: GapFact[] = [];
 
   for (const fact of facts) {
-    const linkCount = linkCounts?.get(fact.id) ?? 
-      factsDb.getLinksFrom(fact.id).length + factsDb.getLinksTo(fact.id).length;
+    const linkCount =
+      linkCounts?.get(fact.id) ?? factsDb.getLinksFrom(fact.id).length + factsDb.getLinksTo(fact.id).length;
     if (linkCount === 1) {
       const isolationScore = computeIsolationScore(linkCount);
       results.push({
@@ -201,8 +193,8 @@ export async function detectSuggestedLinks(
   // Collect orphan + weak candidates and rank them.
   const candidates: Array<{ fact: MemoryEntry; rankScore: number }> = [];
   for (const fact of facts) {
-    const linkCount = linkCounts?.get(fact.id) ?? 
-      factsDb.getLinksFrom(fact.id).length + factsDb.getLinksTo(fact.id).length;
+    const linkCount =
+      linkCounts?.get(fact.id) ?? factsDb.getLinksFrom(fact.id).length + factsDb.getLinksTo(fact.id).length;
     if (linkCount <= 1) {
       const iso = computeIsolationScore(linkCount);
       candidates.push({
@@ -302,20 +294,12 @@ export async function analyzeKnowledgeGaps(
     }
   }
 
-  const orphans: GapFact[] =
-    mode === "orphans" || mode === "all"
-      ? detectOrphans(factsDb, limit, now, linkCounts)
-      : [];
+  const orphans: GapFact[] = mode === "orphans" || mode === "all" ? detectOrphans(factsDb, limit, now, linkCounts) : [];
 
-  const weak: GapFact[] =
-    mode === "weak" || mode === "all"
-      ? detectWeak(factsDb, limit, now, linkCounts)
-      : [];
+  const weak: GapFact[] = mode === "weak" || mode === "all" ? detectWeak(factsDb, limit, now, linkCounts) : [];
 
   const suggestedLinks: SuggestedLink[] =
-    mode === "all"
-      ? await detectSuggestedLinks(factsDb, vectorDb, embeddings, threshold, limit, now, linkCounts)
-      : [];
+    mode === "all" ? await detectSuggestedLinks(factsDb, vectorDb, embeddings, threshold, limit, now, linkCounts) : [];
 
   return { orphans, weak, suggestedLinks };
 }

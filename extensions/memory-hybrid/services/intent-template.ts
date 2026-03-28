@@ -24,6 +24,16 @@ export const KEYWORD_GROUP_INTENTS: Record<KeywordGroup, string> = {
     "Phrases that indicate temporary, session-scoped state: 'right now', 'this session', 'currently debugging'.",
   decayActive:
     "Phrases that indicate current work or short-term focus: 'working on', 'need to', 'todo', 'blocker', 'sprint'.",
+  decayPermanentKeys:
+    "Key-field fragments (not free text) that identify a fact as permanent: personal identifiers like 'name', 'email', 'phone', 'birthday'; technical anchors like 'api_key', 'architecture'; and decision markers like 'decision'. These appear as the structured key in a key–value fact, e.g. key='email', key='architektur'. Provide word-form equivalents, not phrases.",
+  decaySessionKeys:
+    "Key-field fragments that identify a fact as session-scoped (ephemeral): e.g. 'current_file', 'debug', 'temp', 'working_on_right_now'. These appear as the structured key in a fact. Provide equivalents used in code/config context.",
+  decayActiveKeys:
+    "Key-field fragments that identify a fact as an active work item: e.g. 'task', 'todo', 'wip', 'branch', 'sprint', 'blocker'. These appear as the structured key in a fact. Provide equivalents for task-management vocabulary.",
+  decayPermanentEntities:
+    "Entity labels (not free text) that cause a fact to be classified as permanent: 'decision', 'convention'. These are exact entity values assigned during extraction. Provide translated equivalents of 'decision' and 'convention' as they appear in structured fact entities.",
+  decayCheckpointKeys:
+    "Key-field fragments that identify a fact as a checkpoint (build/CI state): 'checkpoint', 'preflight'. Provide equivalents for checkpoint/validation state in development workflows.",
   /** Directive extraction — phrases where user instructs agent to remember or change behavior. */
   /** Self-correction detection — phrases indicating the user is correcting the agent. */
   correctionSignals:
@@ -39,8 +49,7 @@ export const KEYWORD_GROUP_INTENTS: Record<KeywordGroup, string> = {
     "Absolute rule phrases: 'always', 'never', 'you must', 'under no circumstances'. Strict constraints on behavior.",
   directivePreference:
     "Preference phrases (directive): 'I prefer', 'use this instead', 'default to', 'I'd rather'. User stating a choice.",
-  directiveWarning:
-    "Warning phrases: 'be careful with', 'watch out for', 'avoid', 'don't ever'. Safety instructions.",
+  directiveWarning: "Warning phrases: 'be careful with', 'watch out for', 'avoid', 'don't ever'. Safety instructions.",
   directiveProcedural:
     "Procedural instruction phrases: 'first check', 'before you do', 'step 1 is', 'the order should be'. Defining a process.",
   directiveImplicitCorrection:
@@ -82,10 +91,10 @@ export const EXTRACTION_INTENTS = {
   },
   choiceOver: {
     description:
-        "Explicit choice: ' use X over Y ' or ' prefer X instead of Y '. Capture: (1) chosen thing, (2) rejected thing, (3) optional reason.",
-      verbs: "Verbs: use, using, chose, prefer, picked.",
-      rejectors: "Phrases: over, instead of, rather than.",
-      connectors: "Reason: because, since, for.",
+      "Explicit choice: ' use X over Y ' or ' prefer X instead of Y '. Capture: (1) chosen thing, (2) rejected thing, (3) optional reason.",
+    verbs: "Verbs: use, using, chose, prefer, picked.",
+    rejectors: "Phrases: over, instead of, rather than.",
+    connectors: "Reason: because, since, for.",
   },
   convention: {
     description: "Always/never rule: ' always X ' or ' never X '. Capture: (1) the rule. Value is 'always' or 'never'.",
@@ -93,7 +102,8 @@ export const EXTRACTION_INTENTS = {
     never: "Words for 'never' (and formal variants).",
   },
   possessive: {
-    description: "Possessive fact: ' my X is Y ' or ' X's Y is Z '. Capture: (1) possessor or 'user', (2) key, (3) value.",
+    description:
+      "Possessive fact: ' my X is Y ' or ' X's Y is Z '. Capture: (1) possessor or 'user', (2) key, (3) value.",
     possessiveWords: "Words for 'my', 'our', or possessive marker; or proper noun + possessive.",
     isWords: "Copula: is, are, was (and equivalents).",
   },

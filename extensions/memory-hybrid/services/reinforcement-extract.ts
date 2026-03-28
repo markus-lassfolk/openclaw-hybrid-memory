@@ -5,10 +5,10 @@
  * Uses multi-language reinforcement signals from .language-keywords.json.
  */
 
-import { readFileSync } from "node:fs";
+import { open } from "node:fs/promises";
 import { basename } from "node:path";
 import { getReinforcementCategoryRegexes } from "../utils/language-keywords.js";
-import { extractMessageText, truncate, timestampFromFilename } from "../utils/text.js";
+import { extractMessageText, timestampFromFilename, truncate } from "../utils/text.js";
 import { capturePluginError } from "./error-reporter.js";
 
 export type ReinforcementIncident = {
@@ -31,6 +31,9 @@ export type ReinforcementExtractResult = {
   incidents: ReinforcementIncident[];
   sessionsScanned: number;
 };
+
+/** Hard cap on bytes read per file per run to avoid unbounded JSONL reads (matches passive observer). */
+const MAX_JSONL_BYTES_PER_RUN = 2_000_000;
 
 const MAX_USER_MSG = 800;
 const MAX_AGENT_BEHAVIOR = 1200;
@@ -69,7 +72,9 @@ function extractRecalledMemoryIds(content: unknown): string[] {
         const resultContent = (block as { content?: unknown }).content;
         if (typeof resultContent === "string") {
           // Match UUIDs (memory IDs)
-          const uuidMatches = resultContent.matchAll(/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi);
+          const uuidMatches = resultContent.matchAll(
+            /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi,
+          );
           for (const match of uuidMatches) {
             ids.push(match[0]);
           }
@@ -100,7 +105,6 @@ function extractToolCallSequence(content: unknown): string[] {
   }
   return tools;
 }
-
 
 let reinforcementRegexCache: {
   strongPraise: RegExp;
@@ -177,20 +181,50 @@ export type RunReinforcementExtractOpts = {
  * Correlates with preceding agent response to identify what was being praised.
  * Uses the provided regex (from getReinforcementSignalRegex() after setKeywordsPath)
  * so that all languages from .language-keywords.json are included.
+ *
+ * Reads files asynchronously with a 2MB byte cap per file to avoid blocking the
+ * event loop and prevent OOM on large session files (matching passive observer pattern).
  */
-export function runReinforcementExtract(opts: RunReinforcementExtractOpts): ReinforcementExtractResult {
+export async function runReinforcementExtract(opts: RunReinforcementExtractOpts): Promise<ReinforcementExtractResult> {
   const { filePaths, reinforcementRegex } = opts;
   const incidents: ReinforcementIncident[] = [];
 
   for (const filePath of filePaths) {
     let lines: string[];
     try {
-      lines = readFileSync(filePath, "utf-8").split("\n");
+      const handle = await open(filePath, "r");
+      let rawBuf: Buffer;
+      let fileBytelen: number;
+      try {
+        const stats = await handle.stat();
+        fileBytelen = stats.size;
+        const length = Math.min(fileBytelen, MAX_JSONL_BYTES_PER_RUN);
+        if (length <= 0) {
+          continue;
+        }
+        rawBuf = Buffer.alloc(length);
+        const { bytesRead } = await handle.read(rawBuf, 0, length, 0);
+        if (bytesRead < length) {
+          rawBuf = rawBuf.subarray(0, bytesRead);
+        }
+      } finally {
+        await handle.close();
+      }
+      // When we hit the byte cap the last read may end mid-line; trim to the
+      // last complete newline so we never parse a partial JSONL record.
+      // When reading the full file (no cap hit) there is no partial line risk.
+      if (rawBuf.length >= MAX_JSONL_BYTES_PER_RUN && rawBuf.length < fileBytelen) {
+        const lastNewlineIdx = rawBuf.lastIndexOf(0x0a);
+        if (lastNewlineIdx !== -1) {
+          rawBuf = rawBuf.subarray(0, lastNewlineIdx + 1);
+        }
+      }
+      lines = rawBuf.toString("utf-8").split("\n");
     } catch (err) {
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-        operation: 'read-session-file',
-        severity: 'info',
-        subsystem: 'reinforcement-extract'
+        operation: "read-session-file",
+        severity: "info",
+        subsystem: "reinforcement-extract",
       });
       continue;
     }
@@ -209,9 +243,9 @@ export function runReinforcementExtract(opts: RunReinforcementExtractOpts): Rein
         messages.push({ role, text, content: msg.content });
       } catch (err) {
         capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-          operation: 'parse-session-line',
-          severity: 'info',
-          subsystem: 'reinforcement-extract'
+          operation: "parse-session-line",
+          severity: "info",
+          subsystem: "reinforcement-extract",
         });
         // skip malformed lines
       }
