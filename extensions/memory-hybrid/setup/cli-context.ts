@@ -283,6 +283,8 @@ export interface HybridMemCliRegistrationContext {
   costTracker?: import("../backends/cost-tracker.js").CostTracker | null;
   /** Event Bus for sensor sweep (Issue #236). Required when sensorSweep.enabled. */
   eventBus?: import("../backends/event-bus.js").EventBus | null;
+  /** Audit log (Issue #790). */
+  auditStore?: import("../backends/audit-store.js").AuditStore | null;
 }
 
 function buildCliContextServices(ctx: HybridMemCliRegistrationContext, api: ClawdbotPluginApi): CliContextServices {
@@ -854,6 +856,7 @@ export function createHybridMemCliContext(
     runGenerateProposals: (opts) => handlers.runGenerateProposalsForCli(handlerCtx, opts, api),
     activeTask: handlerCtx.cfg.activeTask.enabled ? buildActiveTaskCliContext(handlerCtx) : undefined,
     eventBus: handlerCtx.eventBus ?? null,
+    auditStore: handlerCtx.auditStore ?? null,
   };
 }
 

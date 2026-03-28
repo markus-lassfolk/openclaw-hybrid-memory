@@ -19,6 +19,7 @@ import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
 import { getDirSize, getFileSizeAsync, readJsonFile } from "../utils/fs.js";
 import { pluginLogger } from "../utils/logger.js";
+import type { AuditStore } from "../backends/audit-store.js";
 
 const execFile = promisify(execFileCb);
 
@@ -37,6 +38,8 @@ export interface DashboardContext {
   costTracker?: import("../backends/cost-tracker.js").CostTracker | null;
   /** Optional logger for structured logging of server errors */
   logger?: { error?: (msg: string) => void };
+  /** Cross-agent audit trail (Issue #790). */
+  auditStore?: AuditStore | null;
 }
 
 export interface MemoryStats {
@@ -119,6 +122,20 @@ export interface CostStats {
   enabled: boolean;
 }
 
+export interface AuditSummaryPayload {
+  enabled: boolean;
+  total24h: number;
+  byOutcome: { success: number; partial: number; failed: number };
+  byAgent: Record<string, number>;
+  recentFailures: Array<{
+    timestamp: number;
+    agentId: string;
+    action: string;
+    target: string | null;
+    error: string | null;
+  }>;
+}
+
 export interface DashboardStatus {
   generatedAt: string;
   memory: MemoryStats;
@@ -130,6 +147,7 @@ export interface DashboardStatus {
   forge: ForgeTaskItem[];
   git: GitActivity;
   costs: CostStats;
+  audit: AuditSummaryPayload;
 }
 
 // ---------------------------------------------------------------------------
@@ -402,6 +420,43 @@ function collectCostStats(ctx: DashboardContext): CostStats {
   }
 }
 
+function collectAuditSummary(ctx: DashboardContext): AuditSummaryPayload {
+  if (!ctx.auditStore) {
+    return {
+      enabled: false,
+      total24h: 0,
+      byOutcome: { success: 0, partial: 0, failed: 0 },
+      byAgent: {},
+      recentFailures: [],
+    };
+  }
+  try {
+    const s = ctx.auditStore.summary24h();
+    const failed = ctx.auditStore.query({ sinceMs: Date.now() - 24 * 3600 * 1000, outcome: "failed", limit: 8 });
+    return {
+      enabled: true,
+      total24h: s.total,
+      byOutcome: s.byOutcome,
+      byAgent: s.byAgent,
+      recentFailures: failed.map((r) => ({
+        timestamp: r.timestamp,
+        agentId: r.agentId,
+        action: r.action,
+        target: r.target,
+        error: r.error,
+      })),
+    };
+  } catch {
+    return {
+      enabled: false,
+      total24h: 0,
+      byOutcome: { success: 0, partial: 0, failed: 0 },
+      byAgent: {},
+      recentFailures: [],
+    };
+  }
+}
+
 export async function collectStatus(ctx: DashboardContext): Promise<DashboardStatus> {
   const [memory, cronJobs, taskQueue, forge, git] = await Promise.all([
     collectMemoryStats(ctx),
@@ -418,6 +473,7 @@ export async function collectStatus(ctx: DashboardContext): Promise<DashboardSta
     forge,
     git,
     costs: collectCostStats(ctx),
+    audit: collectAuditSummary(ctx),
   };
 }
 
@@ -683,6 +739,31 @@ function renderCosts(c) {
   return html;
 }
 
+function renderAudit(a) {
+  let html = '<div class="card section-full"><div class="card-title"><span class="icon">📜</span> Audit Trail (24h)</div>';
+  if (!a || !a.enabled) {
+    html += '<div class="empty">Audit log unavailable</div></div>';
+    return html;
+  }
+  html += \`<div class="stat-row"><span class="stat-label">Total events</span><span class="stat-value">\${a.total24h.toLocaleString()}</span></div>\`;
+  html += \`<div class="stat-row"><span class="stat-label">Outcomes</span><span class="stat-value">ok \${a.byOutcome.success} · partial \${a.byOutcome.partial} · failed \${a.byOutcome.failed}</span></div>\`;
+  const agents = Object.entries(a.byAgent || {}).sort((x,y) => y[1] - x[1]).slice(0, 8);
+  if (agents.length > 0) {
+    html += '<div style="margin-top:8px;font-size:11px;color:var(--muted)">By agent</div>';
+    agents.forEach(([name, cnt]) => {
+      html += \`<div class="stat-row"><span class="stat-label">\${escHtml(name)}</span><span class="stat-value">\${cnt}</span></div>\`;
+    });
+  }
+  if (a.recentFailures && a.recentFailures.length > 0) {
+    html += '<div style="margin-top:8px;font-size:11px;color:var(--red)">Recent failures</div>';
+    a.recentFailures.slice(0, 5).forEach(f => {
+      html += \`<div class="task-row"><div class="task-title" style="font-size:12px">\${escHtml(f.agentId)} / \${escHtml(f.action)}</div><div class="task-meta">\${escHtml(f.target || '')} \${f.error ? escHtml(f.error.slice(0,120)) : ''}</div></div>\`;
+    });
+  }
+  html += '</div>';
+  return html;
+}
+
 async function refresh() {
   try {
     const res = await fetch('/api/status');
@@ -698,6 +779,7 @@ async function refresh() {
       renderCronJobs(data.cronJobs),
       renderGit(data.git),
       renderCosts(data.costs),
+      renderAudit(data.audit),
     ].join('');
     document.getElementById('last-updated').textContent = 'Updated ' + new Date(data.generatedAt).toLocaleTimeString();
   } catch (err) {
@@ -728,6 +810,45 @@ export async function createDashboardServer(ctx: DashboardContext, port: number)
   const server = createServer((req, res) => {
     const url = req.url ?? "/";
     const pathname = url.split("?")[0];
+    const searchParams = new URL(url, "http://127.0.0.1").searchParams;
+
+    if (pathname === "/api/audit/summary") {
+      try {
+        const body = JSON.stringify(collectAuditSummary(ctx));
+        res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-cache" });
+        res.end(body);
+      } catch (err: unknown) {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: String(err) }));
+      }
+      return;
+    }
+
+    if (pathname === "/api/audit/events") {
+      if (!ctx.auditStore) {
+        res.writeHead(503, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "audit store unavailable" }));
+        return;
+      }
+      try {
+        const hours = Math.min(720, Math.max(1, Number.parseInt(searchParams.get("hours") ?? "24", 10) || 24));
+        const sinceMs = Date.now() - hours * 3600 * 1000;
+        const agentId = searchParams.get("agent") ?? undefined;
+        const outcome = searchParams.get("outcome") as "success" | "partial" | "failed" | null;
+        const rows = ctx.auditStore.query({
+          sinceMs,
+          agentId,
+          outcome: outcome === "success" || outcome === "partial" || outcome === "failed" ? outcome : undefined,
+          limit: 2000,
+        });
+        res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-cache" });
+        res.end(JSON.stringify({ events: rows }));
+      } catch (err: unknown) {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: String(err) }));
+      }
+      return;
+    }
 
     if (pathname === "/api/status") {
       collectStatus(ctx)

@@ -60,6 +60,7 @@ export interface PluginServiceContext {
   pythonBridge?: import("../services/python-bridge.js").PythonBridge | null;
   provenanceService?: ProvenanceService | null;
   costTracker?: import("../backends/cost-tracker.js").CostTracker | null;
+  auditStore?: import("../backends/audit-store.js").AuditStore | null;
   // Mutable timer refs that will be updated by the start handler
   timers: {
     pruneTimer: { value: ReturnType<typeof setInterval> | null };
@@ -102,6 +103,7 @@ export function createPluginService(ctx: PluginServiceContext) {
     timers,
     provenanceService,
     costTracker,
+    auditStore,
   } = ctx;
 
   let observerRunning = false;
@@ -374,6 +376,7 @@ export function createPluginService(ctx: PluginServiceContext) {
               gitRepo: cfg.dashboard.gitRepo,
               costTracker,
               logger: api.logger,
+              auditStore,
             },
             cfg.dashboard.port,
           );
@@ -393,9 +396,17 @@ export function createPluginService(ctx: PluginServiceContext) {
           const hardPruned = factsDb.pruneExpired();
           const softPruned = factsDb.decayConfidence();
           const edictsPruned = edictStore.pruneExpired();
-          if (hardPruned > 0 || softPruned > 0 || edictsPruned > 0) {
+          let auditPruned = 0;
+          if (auditStore) {
+            try {
+              auditPruned = auditStore.prune(90);
+            } catch {
+              /* non-fatal */
+            }
+          }
+          if (hardPruned > 0 || softPruned > 0 || edictsPruned > 0 || auditPruned > 0) {
             api.logger.info(
-              `memory-hybrid: periodic prune — ${hardPruned} expired, ${softPruned} decayed, ${edictsPruned} edicts pruned`,
+              `memory-hybrid: periodic prune — ${hardPruned} expired, ${softPruned} decayed, ${edictsPruned} edicts pruned${auditPruned > 0 ? `, ${auditPruned} audit rows` : ""}`,
             );
           }
         } catch (err) {

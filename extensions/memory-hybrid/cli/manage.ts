@@ -239,6 +239,7 @@ export type ManageContext = {
   runToolEffectiveness?: (opts?: { verbose?: boolean }) => Promise<string>;
   runCostReport?: (opts: import("../cli/handlers.js").CostReportCliOpts, sink: { log: (msg: string) => void }) => void;
   pruneCostLog?: (retainDays?: number) => number;
+  auditStore?: import("../backends/audit-store.js").AuditStore | null;
 };
 
 export function registerManageCommands(mem: Chainable, ctx: ManageContext): void {
@@ -302,9 +303,82 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
     resolvedLancePath,
     runBackup,
     runBackupVerify,
+    auditStore,
   } = ctx;
 
   const BACKFILL_DECAY_MARKER = ".backfill-decay-done";
+
+  mem
+    .command("audit")
+    .description("Cross-agent audit trail (Issue #790): query logged memory operations")
+    .option("--hours <n>", "Look back window in hours", "24")
+    .option("--agent <id>", "Filter by agent id")
+    .option("--outcome <o>", "Filter: success, partial, or failed")
+    .option("--target <t>", "Substring match on target field")
+    .option("--format <f>", "Output: lines, summary, or timeline", "lines")
+    .action(
+      withExit(
+        async (opts?: {
+          hours?: string;
+          agent?: string;
+          outcome?: string;
+          target?: string;
+          format?: string;
+        }) => {
+          if (!auditStore) {
+            console.error("Audit store is not available (e.g. in-memory tests or missing DB path).");
+            process.exitCode = 1;
+            return;
+          }
+          const hours = Math.max(1, Math.min(720, Number.parseInt(String(opts?.hours ?? "24"), 10) || 24));
+          const sinceMs = Date.now() - hours * 3600 * 1000;
+          const outcome =
+            opts?.outcome === "success" || opts?.outcome === "partial" || opts?.outcome === "failed"
+              ? opts.outcome
+              : undefined;
+          const rows = auditStore.query({
+            sinceMs,
+            agentId: opts?.agent?.trim() || undefined,
+            outcome,
+            targetContains: opts?.target?.trim() || undefined,
+            limit: 500,
+          });
+          const fmt = (opts?.format ?? "lines").toLowerCase();
+          if (fmt === "summary") {
+            const s = auditStore.summary24h();
+            console.log(`Audit (last 24h in DB): total=${s.total}`);
+            console.log(`  success=${s.byOutcome.success} partial=${s.byOutcome.partial} failed=${s.byOutcome.failed}`);
+            for (const [a, c] of Object.entries(s.byAgent).sort((x, y) => y[1] - x[1])) {
+              console.log(`  ${a}: ${c}`);
+            }
+            return;
+          }
+          if (fmt === "timeline") {
+            const byHour = new Map<string, number>();
+            for (const r of rows) {
+              const d = new Date(r.timestamp);
+              const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")} ${String(d.getHours()).padStart(2, "0")}:00`;
+              byHour.set(key, (byHour.get(key) ?? 0) + 1);
+            }
+            const keys = [...byHour.keys()].sort();
+            for (const k of keys) {
+              console.log(`${k}  ${"█".repeat(Math.min(40, byHour.get(k) ?? 0))} (${byHour.get(k)})`);
+            }
+            return;
+          }
+          for (const r of rows) {
+            const ts = new Date(r.timestamp).toISOString().replace("T", " ").slice(0, 19);
+            const dur = r.durationMs != null ? ` [${r.durationMs}ms]` : "";
+            const tgt = r.target ? ` ${r.target}` : "";
+            const err = r.error ? ` err=${r.error.slice(0, 80)}` : "";
+            console.log(`${ts} ${r.agentId} ${r.action} ${r.outcome}${tgt}${dur}${err}`);
+          }
+          if (rows.length === 0) {
+            console.log("(no events in window)");
+          }
+        },
+      ),
+    );
 
   mem
     .command("run-all")

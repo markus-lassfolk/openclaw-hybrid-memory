@@ -25,6 +25,7 @@ import type { ToolProposalStore } from "../backends/tool-proposal-store.js";
 import type { EmbeddingProvider } from "../services/embeddings.js";
 import type { EmbeddingRegistry } from "../services/embedding-registry.js";
 import type { PendingLLMWarnings } from "../services/chat.js";
+import type { AuditStore } from "../backends/audit-store.js";
 import type { AliasDB } from "../services/retrieval-aliases.js";
 import type { ProvenanceService } from "../services/provenance.js";
 import type { VerificationStore } from "../services/verification-store.js";
@@ -90,6 +91,8 @@ export interface MemoryPluginAPI {
   variantQueue: VariantGenerationQueue | null;
   pythonBridge: PythonBridge | null;
   apitapStore: ApitapStore | null;
+  /** Cross-agent audit trail (Issue #790); null when memory DB is :memory:. */
+  auditStore: AuditStore | null;
 
   // --- Refs (lifecycle / degradation) ---
   restartPendingClearedRef: { value: boolean };

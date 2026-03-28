@@ -293,6 +293,8 @@ export type HybridMemCliContext = {
   runBackup?: (opts?: { backupDir?: string }) => Promise<import("../cli/backup.js").BackupCliResult>;
   /** Verify SQLite DB integrity without creating a backup (Issue #276). */
   runBackupVerify?: () => import("../cli/backup.js").BackupVerifyResult;
+  /** Cross-agent audit log (Issue #790). */
+  auditStore?: import("../backends/audit-store.js").AuditStore | null;
 };
 
 /** Chainable command type (Commander-style). */
