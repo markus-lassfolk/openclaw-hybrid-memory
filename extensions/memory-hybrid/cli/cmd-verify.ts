@@ -35,6 +35,7 @@ import { capturePluginError } from "../services/error-reporter.js";
 import { hasOAuthProfiles } from "../utils/auth.js";
 import { formatOpenAiEmbeddingDisplayLabel } from "../services/embeddings/shared.js";
 import { relativeTime } from "./shared.js";
+import { createApimGatewayFetch, isAzureApiManagementGatewayUrl } from "../utils/apim-gateway-fetch.js";
 import { PLUGIN_ID, getRestartPendingPath } from "../utils/constants.js";
 import { ensureMaintenanceCronJobs, getPluginConfigFromFile } from "./cmd-install.js";
 
@@ -515,15 +516,32 @@ export async function runVerifyForCli(
   function buildDirectClient(provider: string): OpenAI | undefined {
     const apiKey = getDirectApiKey(provider);
     if (!apiKey) return undefined;
+    const provEntry = (cronCfg.llm?.providers as Record<string, { baseURL?: string; baseUrl?: string }> | undefined)?.[
+      provider
+    ];
     const baseURL =
-      (cronCfg.llm?.providers as Record<string, { baseURL?: string }> | undefined)?.[provider]?.baseURL ??
+      (typeof provEntry?.baseURL === "string" && provEntry.baseURL.trim() ? provEntry.baseURL.trim() : undefined) ??
+      (typeof provEntry?.baseUrl === "string" && provEntry.baseUrl.trim() ? provEntry.baseUrl.trim() : undefined) ??
       VERIFY_LLM_BASE_URLS[provider];
     if (!baseURL) return undefined;
-    const opts: { apiKey: string; baseURL: string; defaultHeaders?: Record<string, string> } = {
+    const opts: {
+      apiKey: string;
+      baseURL: string;
+      defaultHeaders?: Record<string, string>;
+      fetch?: typeof globalThis.fetch;
+    } = {
       apiKey,
       baseURL,
     };
     if (provider === "anthropic") opts.defaultHeaders = { "anthropic-version": "2023-06-01" };
+    // Azure API Management rejects Bearer auth; apply same api-key + custom fetch as embeddings factory.
+    if (
+      (provider === "azure-foundry" || provider === "azure-foundry-responses") &&
+      isAzureApiManagementGatewayUrl(baseURL)
+    ) {
+      opts.defaultHeaders = { ...(opts.defaultHeaders ?? {}), "api-key": apiKey };
+      opts.fetch = createApimGatewayFetch(apiKey);
+    }
     return new OpenAI(opts);
   }
   // One row per model: configured models + reference models (Opus, GPT-5.4, Codex, o3, etc.)
