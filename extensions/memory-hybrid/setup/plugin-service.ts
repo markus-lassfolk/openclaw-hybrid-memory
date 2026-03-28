@@ -763,6 +763,9 @@ export function createPluginService(ctx: PluginServiceContext) {
       if (proposalsDb) {
         proposalsDb.close();
       }
+      if (auditStore) {
+        auditStore.close();
+      }
     },
   };
 }
