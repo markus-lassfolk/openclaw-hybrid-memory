@@ -21,7 +21,7 @@
  */
 
 import { performance } from "node:perf_hooks";
-import Database from "better-sqlite3";
+import { DatabaseSync } from "node:sqlite";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -138,7 +138,7 @@ export function shadowMeasure(
  * Pass 0 for sinceTimestamp to get all-time.
  */
 export function readTokensFromLog(
-  db: Database.Database,
+  db: DatabaseSync,
   feature: string,
   sinceTimestamp?: number,
 ): { inputTokens: number; outputTokens: number; calls: number; estimatedCostUsd: number } {
@@ -332,7 +332,7 @@ export async function runBenchmark(
   }
 
   // ── 3. Token tracking from llm_cost_log ─────────────────────────────────
-  const db = new Database(ctx.dbPath, { readonly: true, fileMustExist: true });
+  const db = new DatabaseSync(ctx.dbPath, { readOnly: true });
   try {
     const tokens = readTokensFromLog(db, feature);
     if (format === "json") {
