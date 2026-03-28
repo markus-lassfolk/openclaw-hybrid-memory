@@ -1006,39 +1006,46 @@ export function runFactsMigrations(db: DatabaseSync): void {
   migrateEpisodeRelationsTable(db);
 }
 function migrateEpisodesTable(db: DatabaseSync): void {
-  const tableExists = db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='episodes'`).get();
-  if (!tableExists) {
-    db.prepare(`
-      CREATE TABLE episodes (
-        id TEXT PRIMARY KEY,
-        event TEXT NOT NULL,
-        outcome TEXT NOT NULL,
-        timestamp INTEGER NOT NULL,
-        duration INTEGER,
-        context TEXT,
-        related_fact_ids TEXT,
-        procedure_id TEXT,
-        scope TEXT,
-        scope_target TEXT,
-        agent_id TEXT,
-        user_id TEXT,
-        session_id TEXT,
-        importance REAL DEFAULT 0.5,
-        tags TEXT,
-        decay_class TEXT,
-        created_at TEXT NOT NULL,
-        verified_at TEXT
-      )
-    `).run();
-    db.prepare("CREATE INDEX idx_episodes_timestamp ON episodes (timestamp DESC)").run();
-    db.prepare(`
-      CREATE VIRTUAL TABLE episodes_fts USING fts5(
-        event, context, outcome, tags,
-        content='episodes',
-        content_rowid='rowid'
-      )
-    `).run();
-  }
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS episodes (
+      id TEXT PRIMARY KEY,
+      event TEXT NOT NULL,
+      outcome TEXT NOT NULL CHECK(outcome IN ('success', 'failure', 'partial', 'unknown')),
+      timestamp INTEGER NOT NULL,
+      duration INTEGER,
+      context TEXT,
+      related_fact_ids TEXT,
+      procedure_id TEXT,
+      scope TEXT,
+      scope_target TEXT,
+      agent_id TEXT,
+      user_id TEXT,
+      session_id TEXT,
+      importance REAL NOT NULL DEFAULT 0.5,
+      tags TEXT,
+      decay_class TEXT,
+      created_at INTEGER NOT NULL,
+      verified_at INTEGER
+    )
+  `);
+  db.exec("CREATE INDEX IF NOT EXISTS idx_episodes_outcome ON episodes(outcome)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_episodes_timestamp ON episodes(timestamp DESC)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_episodes_procedure ON episodes(procedure_id)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_episodes_session ON episodes(session_id)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_episodes_outcome_timestamp ON episodes(outcome, timestamp DESC)");
+
+  db.exec(`
+    CREATE VIRTUAL TABLE IF NOT EXISTS episodes_fts USING fts5(
+      event,
+      context,
+      tokenize='porter unicode61'
+    )
+  `);
+  db.exec(`
+    CREATE TRIGGER IF NOT EXISTS episodes_fts_ai AFTER INSERT ON episodes BEGIN
+      INSERT INTO episodes_fts(rowid, event, context) VALUES (new.rowid, new.event, new.context);
+    END;
+  `);
 }
 function migrateEpisodeRelationsTable(db: DatabaseSync): void {
   const tableExists = db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='episode_relations'`).get();
