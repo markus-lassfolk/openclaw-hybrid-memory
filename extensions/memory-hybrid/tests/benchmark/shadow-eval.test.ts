@@ -7,7 +7,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import Database from "better-sqlite3";
+import { DatabaseSync } from "node:sqlite";
 import { randomUUID } from "node:crypto";
 
 import {
@@ -26,7 +26,7 @@ import {
 function makeTempDb() {
   const tmpDir = mkdtempSync(join(tmpdir(), "bench-test-"));
   const dbPath = join(tmpDir, "test.db");
-  const db = new Database(dbPath);
+  const db = new DatabaseSync(dbPath);
   return { db, dbPath, tmpDir };
 }
 
