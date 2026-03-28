@@ -37,6 +37,8 @@ export interface EmbeddingConfig {
   apiKey?: string;
   models?: string[];
   dimensions: number;
+  /** Azure OpenAI / Foundry: deployment name for the embeddings API (must match Portal). When set, overrides `model` in API calls only; `model` still selects vector dimensions. */
+  deployment?: string;
   endpoint?: string;
   batchSize: number;
   /** Ordered list to try (failover). When length > 1, a chain is built. */
