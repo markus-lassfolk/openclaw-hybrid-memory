@@ -1028,21 +1028,23 @@ function migrateEpisodesTable(db: DatabaseSync): void {
       verified_at INTEGER
     )
   `);
-  db.exec("CREATE INDEX IF NOT EXISTS idx_episodes_outcome ON episodes(outcome)");
+  // idx_episodes_outcome omitted: idx_episodes_outcome_timestamp (outcome, timestamp DESC) is a
+  // leading-column superset and covers the same single-column outcome filter lookups.
   db.exec("CREATE INDEX IF NOT EXISTS idx_episodes_timestamp ON episodes(timestamp DESC)");
   db.exec("CREATE INDEX IF NOT EXISTS idx_episodes_procedure ON episodes(procedure_id)");
   db.exec("CREATE INDEX IF NOT EXISTS idx_episodes_session ON episodes(session_id)");
   db.exec("CREATE INDEX IF NOT EXISTS idx_episodes_outcome_timestamp ON episodes(outcome, timestamp DESC)");
 
-  // Check if episodes_fts exists with old 4-column schema (event, context, outcome, tags)
-  // If so, drop and recreate with new 2-column schema to avoid trigger incompatibility
+  // Check if episodes_fts exists and what schema it has.
   const ftsInfo = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='episodes_fts'").get() as
     | { sql?: string }
     | undefined;
+  const ftsExists = !!ftsInfo;
+  // Old schema used content='episodes' (4-col FTS); new schema is standalone 2-col with triggers.
   const hasOldFtsSchema = ftsInfo?.sql?.includes("content='episodes'") || ftsInfo?.sql?.includes('content="episodes"');
 
   if (hasOldFtsSchema) {
-    // Drop old triggers and FTS table
+    // Drop old content-FTS triggers and table — they reference a column set that no longer matches.
     db.exec("DROP TRIGGER IF EXISTS episodes_fts_ai");
     db.exec("DROP TRIGGER IF EXISTS episodes_fts_ad");
     db.exec("DROP TRIGGER IF EXISTS episodes_fts_au");
@@ -1057,21 +1059,28 @@ function migrateEpisodesTable(db: DatabaseSync): void {
     )
   `);
 
-  // Rebuild FTS index if we dropped the old table
-  if (hasOldFtsSchema) {
+  // Backfill FTS when the table was just created (either never existed, or dropped above).
+  // Skipped when the new-schema FTS already exists to avoid duplicate rows.
+  if (!ftsExists || hasOldFtsSchema) {
     db.exec("INSERT INTO episodes_fts(rowid, event, context) SELECT rowid, event, context FROM episodes");
   }
+
+  // Trigger-based FTS maintenance: INSERT, DELETE, UPDATE all keep episodes_fts in sync.
   db.exec(`
     CREATE TRIGGER IF NOT EXISTS episodes_fts_ai AFTER INSERT ON episodes BEGIN
       INSERT INTO episodes_fts(rowid, event, context) VALUES (new.rowid, new.event, new.context);
     END;
+  `);
+  db.exec(`
     CREATE TRIGGER IF NOT EXISTS episodes_fts_ad AFTER DELETE ON episodes BEGIN
       INSERT INTO episodes_fts(episodes_fts, rowid, event, context) VALUES ('delete', old.rowid, old.event, old.context);
     END;
+  `);
+  db.exec(`
     CREATE TRIGGER IF NOT EXISTS episodes_fts_au AFTER UPDATE ON episodes BEGIN
       INSERT INTO episodes_fts(episodes_fts, rowid, event, context) VALUES ('delete', old.rowid, old.event, old.context);
       INSERT INTO episodes_fts(rowid, event, context) VALUES (new.rowid, new.event, new.context);
-    END
+    END;
   `);
 }
 function migrateEpisodeRelationsTable(db: DatabaseSync): void {
