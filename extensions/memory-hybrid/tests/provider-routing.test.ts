@@ -1,11 +1,11 @@
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 /**
  * Tests for MiniMax provider routing in the multi-provider OpenAI proxy.
  * Verifies that minimax/* models are routed to the correct base URL (issue #312).
  */
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { mkdtempSync, rmSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 
 // Mock OpenAI BEFORE any module imports (vi.mock is hoisted automatically).
 // Must use a regular named function (not arrow) so `new OpenAI(...)` works as a constructor.
@@ -33,19 +33,19 @@ vi.mock("../services/error-reporter.js", async (importOriginal) => {
 });
 
 import OpenAI from "openai";
-import { hybridConfigSchema } from "../config.js";
 import {
+  initializeDatabases,
+  closeOldDatabases,
   MINIMAX_BASE_URL,
   OPENROUTER_BASE_URL,
-  closeOldDatabases,
-  initializeDatabases,
   resolveProviderApiKey,
 } from "../setup/init-databases.js";
+import { hybridConfigSchema } from "../config.js";
 
 /** Restore an env var to its original value, or delete it if it was originally unset. */
 function restoreEnv(key: string, orig: string | undefined): void {
   if (orig !== undefined) process.env[key] = orig;
-  // biome-ignore lint/performance/noDelete: must use delete to restore env to unset state
+  // biome-ignore noDelete: must use delete to restore env to unset state
   else delete process.env[key];
 }
 

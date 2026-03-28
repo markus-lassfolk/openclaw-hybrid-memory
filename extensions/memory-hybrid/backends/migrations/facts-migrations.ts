@@ -1,6 +1,3 @@
-import type { DatabaseSync } from "node:sqlite";
-import { createTransaction } from "../../utils/sqlite-transaction.js";
-import { normalizedHash } from "../../utils/tags.js";
 /**
  * Procedure feedback loop — version tracking and failure logging (#782).
  * procedure_versions: per-version success/failure counts and avoidance notes.
@@ -916,6 +913,91 @@ function migrateTrimMetricsTable(db: DatabaseSync): void {
   db.exec("CREATE INDEX IF NOT EXISTS idx_trim_metrics_fact_id ON trim_metrics(fact_id)");
 }
 
+function migrateEpisodesTable(db: DatabaseSync): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS episodes (
+      id TEXT PRIMARY KEY,
+      event TEXT NOT NULL,
+      outcome TEXT NOT NULL CHECK(outcome IN ('success', 'failure', 'partial', 'unknown')),
+      timestamp INTEGER NOT NULL,
+      duration INTEGER,
+      context TEXT,
+      related_fact_ids TEXT,
+      procedure_id TEXT,
+      scope_target TEXT,
+      importance REAL NOT NULL DEFAULT 0.5,
+      decay_class TEXT NOT NULL DEFAULT 'normal',
+      scope TEXT NOT NULL DEFAULT 'global',
+      agent_id TEXT,
+      user_id TEXT,
+      session_id TEXT,
+      tags TEXT,
+      created_at INTEGER NOT NULL,
+      verified_at INTEGER
+    )
+  `);
+  db.exec("CREATE INDEX IF NOT EXISTS idx_episodes_outcome ON episodes(outcome)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_episodes_timestamp ON episodes(timestamp DESC)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_episodes_procedure ON episodes(procedure_id)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_episodes_session ON episodes(session_id)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_episodes_outcome_timestamp ON episodes(outcome, timestamp DESC)");
+
+  // Check if episodes_fts exists with old 4-column schema (event, context, outcome, tags)
+  // If so, drop and recreate with new 2-column schema to avoid trigger incompatibility
+  const ftsInfo = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='episodes_fts'").get() as
+    | { sql?: string }
+    | undefined;
+  const hasOldFtsSchema = ftsInfo?.sql?.includes("content='episodes'") || ftsInfo?.sql?.includes('content="episodes"');
+
+  if (hasOldFtsSchema) {
+    // Drop old triggers and FTS table
+    db.exec("DROP TRIGGER IF EXISTS episodes_fts_ai");
+    db.exec("DROP TRIGGER IF EXISTS episodes_fts_ad");
+    db.exec("DROP TRIGGER IF EXISTS episodes_fts_au");
+    db.exec("DROP TABLE IF EXISTS episodes_fts");
+  }
+
+  db.exec(`
+    CREATE VIRTUAL TABLE IF NOT EXISTS episodes_fts USING fts5(
+      event,
+      context,
+      tokenize='porter unicode61'
+    )
+  `);
+
+  // Rebuild FTS index if we dropped the old table
+  if (hasOldFtsSchema) {
+    db.exec("INSERT INTO episodes_fts(rowid, event, context) SELECT rowid, event, context FROM episodes");
+  }
+
+  db.exec(`
+    CREATE TRIGGER IF NOT EXISTS episodes_fts_ai AFTER INSERT ON episodes BEGIN
+      INSERT INTO episodes_fts(rowid, event, context) VALUES (new.rowid, new.event, new.context);
+    END;
+    CREATE TRIGGER IF NOT EXISTS episodes_fts_ad AFTER DELETE ON episodes BEGIN
+      INSERT INTO episodes_fts(episodes_fts, rowid, event, context) VALUES ('delete', old.rowid, old.event, old.context);
+    END;
+    CREATE TRIGGER IF NOT EXISTS episodes_fts_au AFTER UPDATE ON episodes BEGIN
+      INSERT INTO episodes_fts(episodes_fts, rowid, event, context) VALUES ('delete', old.rowid, old.event, old.context);
+      INSERT INTO episodes_fts(rowid, event, context) VALUES (new.rowid, new.event, new.context);
+    END
+  `);
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS episode_relations (
+      id TEXT PRIMARY KEY,
+      episode_id TEXT NOT NULL,
+      target_id TEXT NOT NULL,
+      relation_type TEXT NOT NULL,
+      strength REAL NOT NULL DEFAULT 0.5,
+      created_at INTEGER NOT NULL,
+      FOREIGN KEY (episode_id) REFERENCES episodes(id) ON DELETE CASCADE
+    )
+  `);
+  db.exec("CREATE INDEX IF NOT EXISTS idx_episode_relations_episode ON episode_relations(episode_id)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_episode_relations_target ON episode_relations(target_id)");
+}
+
 // ---------------------------------------------------------------------------
 // Migration runner
 // ---------------------------------------------------------------------------
@@ -1003,102 +1085,4 @@ export function runFactsMigrations(db: DatabaseSync): void {
 
   // Episodic memory (#781)
   migrateEpisodesTable(db);
-  migrateEpisodeRelationsTable(db);
-}
-function migrateEpisodesTable(db: DatabaseSync): void {
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS episodes (
-      id TEXT PRIMARY KEY,
-      event TEXT NOT NULL,
-      outcome TEXT NOT NULL CHECK(outcome IN ('success', 'failure', 'partial', 'unknown')),
-      timestamp INTEGER NOT NULL,
-      duration INTEGER,
-      context TEXT,
-      related_fact_ids TEXT,
-      procedure_id TEXT,
-      scope TEXT,
-      scope_target TEXT,
-      agent_id TEXT,
-      user_id TEXT,
-      session_id TEXT,
-      importance REAL NOT NULL DEFAULT 0.5,
-      tags TEXT,
-      decay_class TEXT,
-      created_at INTEGER NOT NULL,
-      verified_at INTEGER
-    )
-  `);
-  // idx_episodes_outcome omitted: idx_episodes_outcome_timestamp (outcome, timestamp DESC) is a
-  // leading-column superset and covers the same single-column outcome filter lookups.
-  db.exec("CREATE INDEX IF NOT EXISTS idx_episodes_timestamp ON episodes(timestamp DESC)");
-  db.exec("CREATE INDEX IF NOT EXISTS idx_episodes_procedure ON episodes(procedure_id)");
-  db.exec("CREATE INDEX IF NOT EXISTS idx_episodes_session ON episodes(session_id)");
-  db.exec("CREATE INDEX IF NOT EXISTS idx_episodes_outcome_timestamp ON episodes(outcome, timestamp DESC)");
-
-  // Check if episodes_fts exists and what schema it has.
-  const ftsInfo = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='episodes_fts'").get() as
-    | { sql?: string }
-    | undefined;
-  const ftsExists = !!ftsInfo;
-  // Old schema used content='episodes' (4-col FTS); new schema is standalone 2-col with triggers.
-  const hasOldFtsSchema = ftsInfo?.sql?.includes("content='episodes'") || ftsInfo?.sql?.includes('content="episodes"');
-
-  // Wrap the entire migration in a transaction so any failure leaves the DB consistent.
-  if (hasOldFtsSchema || !ftsExists) {
-    const migrate = createTransaction(db, () => {
-      if (hasOldFtsSchema) {
-        // Drop old content-FTS triggers and table — they reference a column set that no longer matches.
-        db.exec("DROP TRIGGER IF EXISTS episodes_fts_ai");
-        db.exec("DROP TRIGGER IF EXISTS episodes_fts_ad");
-        db.exec("DROP TRIGGER IF EXISTS episodes_fts_au");
-        db.exec("DROP TABLE IF EXISTS episodes_fts");
-      }
-
-      db.exec(`
-        CREATE VIRTUAL TABLE IF NOT EXISTS episodes_fts USING fts5(
-          event,
-          context,
-          tokenize='porter unicode61'
-        )
-      `);
-
-      // Backfill FTS when the table was just created (either never existed, or dropped above).
-      db.exec("INSERT INTO episodes_fts(rowid, event, context) SELECT rowid, event, context FROM episodes");
-    });
-    migrate();
-  }
-
-  // Trigger-based FTS maintenance: INSERT, DELETE, UPDATE all keep episodes_fts in sync.
-  db.exec(`
-    CREATE TRIGGER IF NOT EXISTS episodes_fts_ai AFTER INSERT ON episodes BEGIN
-      INSERT INTO episodes_fts(rowid, event, context) VALUES (new.rowid, new.event, new.context);
-    END;
-  `);
-  db.exec(`
-    CREATE TRIGGER IF NOT EXISTS episodes_fts_ad AFTER DELETE ON episodes BEGIN
-      DELETE FROM episodes_fts WHERE rowid = old.rowid;
-    END;
-  `);
-  db.exec(`
-    CREATE TRIGGER IF NOT EXISTS episodes_fts_au AFTER UPDATE ON episodes BEGIN
-      DELETE FROM episodes_fts WHERE rowid = old.rowid;
-      INSERT INTO episodes_fts(rowid, event, context) VALUES (new.rowid, new.event, new.context);
-    END;
-  `);
-}
-function migrateEpisodeRelationsTable(db: DatabaseSync): void {
-  const tableExists = db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='episode_relations'`).get();
-  if (!tableExists) {
-    db.prepare(`
-      CREATE TABLE episode_relations (
-        id TEXT PRIMARY KEY,
-        episode_id TEXT NOT NULL,
-        target_id TEXT NOT NULL,
-        relation_type TEXT,
-        strength REAL,
-        created_at TEXT NOT NULL
-      )
-    `).run();
-    db.prepare("CREATE INDEX idx_episode_relations_episode_id ON episode_relations (episode_id)").run();
-  }
 }
