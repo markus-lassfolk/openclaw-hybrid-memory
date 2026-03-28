@@ -841,14 +841,12 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
           console.log(`Model: ${name}`);
           console.log(`Vector dimensions: ${dims}`);
         } catch (err) {
-          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-            subsystem: "cli",
-            operation: "model-info",
-          });
+          const msg = err instanceof Error ? err.message : String(err);
+          console.error(`error: ${msg}`);
           console.error(
             "For models not in the catalog, set embedding.dimensions in plugin config to the vector size your provider returns.",
           );
-          throw err instanceof Error ? err : new Error(String(err));
+          process.exit(1);
         }
       }),
     );
