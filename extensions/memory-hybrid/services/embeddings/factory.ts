@@ -59,10 +59,13 @@ function openaiEmbeddingClientOpts(
     if (hasOpenAiV1Path || (isAzureEmbeddingEndpoint(baseURL) && isAzureDeploymentPath)) {
       opts.baseURL = baseURL;
     } else if (isAzureEmbeddingEndpoint(baseURL) && !isAzureDeploymentPath) {
-      opts.baseURL = `${baseURL}/openai/v1`;
+      const endsWithOpenAi = /\/openai$/i.test(baseURL);
+      opts.baseURL = endsWithOpenAi ? `${baseURL}/v1` : `${baseURL}/openai/v1`;
+    } else if (isAzureApiManagementGatewayUrl(baseURL) && isAzureDeploymentPath) {
+      opts.baseURL = baseURL;
     } else if (isAzureApiManagementGatewayUrl(baseURL) && !isAzureDeploymentPath) {
-      // e.g. https://xxx.azure-api.net/resource-name → .../openai/v1 (not bare /v1)
-      opts.baseURL = `${baseURL}/openai/v1`;
+      const endsWithOpenAi = /\/openai$/i.test(baseURL);
+      opts.baseURL = endsWithOpenAi ? `${baseURL}/v1` : `${baseURL}/openai/v1`;
     } else {
       opts.baseURL = baseURL.includes("/v1") ? baseURL : `${baseURL}/v1`;
     }
@@ -78,16 +81,26 @@ function openaiEmbeddingClientOpts(
     if (opts.baseURL && isAzureApiManagementGatewayUrl(opts.baseURL)) {
       opts.defaultHeaders = { ...(opts.defaultHeaders ?? {}), "api-key": apiKey };
       opts.fetch = createApimGatewayFetch(apiKey);
+      const openAiV1Compat = /\/openai\/v1(?:\/|$)/i.test(opts.baseURL);
+      if (!openAiV1Compat) {
+        opts.defaultQuery = { "api-version": AZURE_OPENAI_API_VERSION };
+      }
     }
   }
   return opts;
 }
 
 /** API model id(s) for OpenAI-compatible embeddings: optional Azure deployment name overrides logical `model`. */
-function openAiEmbeddingApiModels(cfg: EmbeddingConfig): string[] {
+function openAiEmbeddingApiModels(cfg: EmbeddingConfig, forFallback = false): string[] {
   const { model, models, deployment } = cfg;
   if (deployment && deployment.trim().length > 0) {
     return [deployment.trim()];
+  }
+  if (forFallback && !models?.length) {
+    if (model && OPENAI_ONLY_EMBED_MODELS.has(model)) {
+      return [model];
+    }
+    return ["text-embedding-3-small"];
   }
   return models?.length ? models : [model];
 }
@@ -180,7 +193,7 @@ export function createEmbeddingProvider(cfg: EmbeddingConfig, onFallback?: (err:
       try {
         const fallback = new Embeddings(
           openaiClient,
-          openaiApiModels,
+          openAiEmbeddingApiModels(cfg, true),
           dimensions,
           batchSize,
           azureEmbeddingLogicalModelHint(cfg),
@@ -224,7 +237,7 @@ export function createEmbeddingProvider(cfg: EmbeddingConfig, onFallback?: (err:
       try {
         const fallback = new Embeddings(
           openaiClient,
-          openaiApiModels,
+          openAiEmbeddingApiModels(cfg, true),
           dimensions,
           batchSize,
           azureEmbeddingLogicalModelHint(cfg),
