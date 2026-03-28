@@ -1441,7 +1441,7 @@ export function initializeDatabases(cfg: HybridMemoryConfig, api: ClawdbotPlugin
           });
         }
       } catch (err: unknown) {
-        if (err.code === "EEXIST") {
+        if (err && typeof err === "object" && "code" in err && err.code === "EEXIST") {
           // Another process already created the flag - skip migration
           shouldMigrate = false;
         } else {

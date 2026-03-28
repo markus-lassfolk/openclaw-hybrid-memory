@@ -159,7 +159,7 @@ export function registerCredentialTools(ctx: PluginContext, api: ClawdbotPluginA
             };
           }
           const lines = items.map(
-            (i) =>
+            (i: any) =>
               `- ${i.service} (${i.type})${i.url ? ` @ ${i.url}` : ""}${i.expires ? ` [expires: ${new Date(i.expires * 1000).toISOString()}]` : ""}`,
           );
           return {

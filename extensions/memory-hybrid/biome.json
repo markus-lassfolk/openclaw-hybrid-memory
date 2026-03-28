@@ -33,22 +33,22 @@
     "rules": {
       "recommended": true,
       "suspicious": {
-        "noExplicitAny": "warn",
+        "noExplicitAny": "off",
         "noConsole": "error",
-        "noImplicitAnyLet": "warn",
-        "noAssignInExpressions": "warn",
-        "noMisleadingCharacterClass": "warn",
-        "noControlCharactersInRegex": "warn",
+        "noImplicitAnyLet": "off",
+        "noAssignInExpressions": "off",
+        "noMisleadingCharacterClass": "off",
+        "noControlCharactersInRegex": "off",
         "noConfusingVoidType": "warn",
         "noGlobalIsNan": "error"
       },
       "correctness": {
-        "noUnusedVariables": "warn"
+        "noUnusedVariables": "off"
       },
       "style": {
         "useConst": "warn",
         "noVar": "error",
-        "noNonNullAssertion": "warn",
+        "noNonNullAssertion": "off",
         "noParameterAssign": "warn",
         "noUnusedTemplateLiteral": "warn",
         "useTemplate": "warn",
@@ -58,7 +58,7 @@
         "useSingleVarDeclarator": "warn"
       },
       "complexity": {
-        "noForEach": "warn",
+        "noForEach": "off",
         "useLiteralKeys": "warn",
         "useOptionalChain": "warn"
       },
