@@ -528,6 +528,7 @@ export async function runVerifyForCli(
       apiKey: string;
       baseURL: string;
       defaultHeaders?: Record<string, string>;
+      defaultQuery?: Record<string, string>;
       fetch?: typeof globalThis.fetch;
     } = {
       apiKey,
@@ -541,6 +542,11 @@ export async function runVerifyForCli(
     ) {
       opts.defaultHeaders = { ...(opts.defaultHeaders ?? {}), "api-key": apiKey };
       opts.fetch = createApimGatewayFetch(apiKey);
+      const openAiV1Compat = /\/openai\/v1(?:\/|$)/i.test(baseURL);
+      // APIM deployment-style paths need api-version (passed through to backend Azure OpenAI)
+      if (!openAiV1Compat) {
+        opts.defaultQuery = { "api-version": "2024-10-21" };
+      }
     }
     return new OpenAI(opts);
   }
