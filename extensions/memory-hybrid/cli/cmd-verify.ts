@@ -33,10 +33,14 @@ import {
 } from "../services/embeddings.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { hasOAuthProfiles } from "../utils/auth.js";
+
 import { createApimGatewayFetch, isAzureApiManagementGatewayUrl } from "../utils/apim-gateway-fetch.js";
+
+import { formatOpenAiEmbeddingDisplayLabel } from "../services/embeddings/shared.js";
+import { relativeTime } from "./shared.js";
+
 import { PLUGIN_ID, getRestartPendingPath } from "../utils/constants.js";
 import { ensureMaintenanceCronJobs, getPluginConfigFromFile } from "./cmd-install.js";
-import { relativeTime } from "./shared.js";
 
 import type { HandlerContext } from "./handlers.js";
 import type { VerifyCliSink } from "./types.js";
@@ -285,17 +289,14 @@ export async function runVerifyForCli(
             : "all-MiniLM-L6-v2");
     const effectiveGoogleModel =
       p === "google" && embModel && OPENAI_ONLY_EMBED_MODELS.has(embModel) ? GOOGLE_EMBED_DEFAULT_MODEL : embModel;
-    // Detect Azure OpenAI endpoint so the label says "Azure" rather than "OpenAI"
+    // Detect Azure / APIM / Foundry so the label is (Azure)OpenAI/… not OpenAI/…
     const embeddingEndpoint =
       typeof (cfg.embedding as Record<string, unknown>).endpoint === "string"
         ? ((cfg.embedding as Record<string, unknown>).endpoint as string)
         : "";
-    const isAzureEndpoint = p === "openai" && /\.azure\.com|\.openai\.azure\.com/i.test(embeddingEndpoint);
     const label =
       p === "openai"
-        ? isAzureEndpoint
-          ? `Azure/${embModel}`
-          : `OpenAI/${embModel}`
+        ? formatOpenAiEmbeddingDisplayLabel(embModel, embeddingEndpoint || undefined)
         : p === "google"
           ? `Google/${effectiveGoogleModel}`
           : p === "ollama"
