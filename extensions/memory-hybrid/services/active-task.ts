@@ -783,14 +783,7 @@ export async function readPendingSignals(memoryDir: string): Promise<PendingTask
   // Orphaned atomic-write temps (crash after writeFile, before rename) — same age rule as corrupt JSON.
   for (const file of files) {
     if (!file.includes(".json.tmp-")) continue;
-    const tmpFull = join(signalsDir, file);
-    try {
-      const s = await stat(tmpFull);
-      if (Date.now() - s.mtimeMs <= STALE_CORRUPT_SIGNAL_MS) continue;
-      await unlink(tmpFull);
-    } catch {
-      // race / gone
-    }
+    await tryDeleteStaleCorruptSignalFile(join(signalsDir, file));
   }
 
   for (const file of files) {

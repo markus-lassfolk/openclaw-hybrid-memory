@@ -320,6 +320,30 @@ function runMemoryHybridRegister(api: ClawdbotPluginApi): void {
   // Reopen guard: ensure any previous instance is closed before creating new one (avoids duplicate
   // DB instances if host calls register() before stop(), e.g. on SIGUSR1 or rapid reload).
   const old = runtimeRef.value;
+
+  let cfg: HybridMemoryConfig;
+  try {
+    cfg = hybridConfigSchema.parse(api.pluginConfig);
+  } catch (err) {
+    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+      subsystem: "registration",
+      operation: "plugin-register:config-parse",
+    });
+    throw err;
+  }
+
+  let dbContext: ReturnType<typeof initializeDatabases>;
+  try {
+    dbContext = initializeDatabases(cfg, api);
+  } catch (err) {
+    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+      subsystem: "registration",
+      operation: "plugin-register:init-databases",
+    });
+    throw err;
+  }
+
+  // Clean up old resources immediately after atomic swap to prevent leaks if registration fails (Issue #590)
   if (old) {
     // Clear old timer handles to prevent leaks
     if (old.timers.pruneTimer.value) clearInterval(old.timers.pruneTimer.value);
@@ -357,28 +381,6 @@ function runMemoryHybridRegister(api: ClawdbotPluginApi): void {
     });
     old.pythonBridge?.shutdown().catch(() => {});
     runtimeRef.value = null;
-  }
-
-  let cfg: HybridMemoryConfig;
-  try {
-    cfg = hybridConfigSchema.parse(api.pluginConfig);
-  } catch (err) {
-    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-      subsystem: "registration",
-      operation: "plugin-register:config-parse",
-    });
-    throw err;
-  }
-
-  let dbContext: ReturnType<typeof initializeDatabases>;
-  try {
-    dbContext = initializeDatabases(cfg, api);
-  } catch (err) {
-    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-      subsystem: "registration",
-      operation: "plugin-register:init-databases",
-    });
-    throw err;
   }
 
   const { resolvedSqlitePath, resolvedLancePath } = dbContext;
