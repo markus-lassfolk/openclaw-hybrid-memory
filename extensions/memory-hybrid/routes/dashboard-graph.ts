@@ -36,9 +36,9 @@ export function collectGraphPayload(factsDb: FactsDB, days: number, maxNodes: nu
   const db = factsDb.getRawDb();
   const rows = db
     .prepare(
-      `SELECT id, text, category, importance, decay_class FROM facts WHERE superseded_at IS NULL AND created_at >= ? ORDER BY created_at DESC LIMIT ?`,
+      `SELECT id, text, category, importance, decay_class FROM facts WHERE superseded_at IS NULL AND (expires_at IS NULL OR expires_at > ?) AND created_at >= ? ORDER BY created_at DESC LIMIT ?`,
     )
-    .all(cutoff, capped) as Array<{
+    .all(nowSec, cutoff, capped) as Array<{
     id: string;
     text: string;
     category: string;
@@ -84,12 +84,14 @@ export function collectGraphRecallPayload(factsDb: FactsDB, query: string): Grap
       expanded.add(c);
     }
   }
-  const ids = [...expanded];
+  const ids = [...expanded].slice(0, 2000);
   const idSet = new Set(ids);
-  const edges = factsDb.getAllEdges(10000).filter((e) => idSet.has(e.source) && idSet.has(e.target));
+  const allEdges = factsDb.getAllEdges(10000);
+  const edges = allEdges.filter((e) => idSet.has(e.source) && idSet.has(e.target)).slice(0, 2000);
+  const entryMap = factsDb.getByIds(ids);
   const nodes: MemoryGraphNode[] = [];
   for (const id of ids) {
-    const f = factsDb.getById(id);
+    const f = entryMap.get(id);
     if (!f) continue;
     nodes.push({
       id: f.id,
@@ -159,6 +161,7 @@ async function loadRecall(q) {
 }
 
 function buildGraph(data) {
+  if (sim) sim.stop();
   const width = window.innerWidth;
   const height = window.innerHeight - 56;
   d3.select('#graph').selectAll('*').remove();
