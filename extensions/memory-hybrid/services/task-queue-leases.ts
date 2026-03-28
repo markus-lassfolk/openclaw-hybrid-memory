@@ -227,7 +227,11 @@ async function tryAcquireLock(lockPath: string): Promise<boolean> {
     return false;
   } finally {
     if (fh) {
-      await fh.close();
+      try {
+        await fh.close();
+      } catch {
+        // Ignore close errors to avoid masking earlier failures.
+      }
     }
   }
 }
