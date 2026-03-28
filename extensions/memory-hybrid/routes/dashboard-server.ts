@@ -810,6 +810,14 @@ export async function createDashboardServer(ctx: DashboardContext, port: number)
   const server = createServer((req, res) => {
     const url = req.url ?? "/";
     const pathname = url.split("?")[0];
+    let searchParams: URLSearchParams;
+    try {
+      searchParams = new URL(url, "http://127.0.0.1").searchParams;
+    } catch {
+      res.writeHead(400, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "invalid request URL" }));
+      return;
+    }
 
     if (pathname === "/api/audit/summary") {
       try {
@@ -835,10 +843,12 @@ export async function createDashboardServer(ctx: DashboardContext, port: number)
         const sinceMs = Date.now() - hours * 3600 * 1000;
         const agentId = searchParams.get("agent") ?? undefined;
         const outcome = searchParams.get("outcome") as "success" | "partial" | "failed" | null;
+        const targetContains = searchParams.get("targetContains") ?? searchParams.get("target") ?? undefined;
         const rows = ctx.auditStore.query({
           sinceMs,
           agentId,
           outcome: outcome === "success" || outcome === "partial" || outcome === "failed" ? outcome : undefined,
+          targetContains,
           limit: 2000,
         });
         res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-cache" });

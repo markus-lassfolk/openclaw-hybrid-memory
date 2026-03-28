@@ -4,7 +4,7 @@
 
 import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
-import { dirname } from "node:path";
+import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { BaseSqliteStore } from "./base-sqlite-store.js";
 
@@ -41,24 +41,67 @@ export interface AuditEventRow {
 
 const SENSITIVE_KEYS = /(api[_-]?key|token|password|secret|authorization|bearer|cookie)/i;
 
-function scrubContext(obj: Record<string, unknown>): Record<string, unknown> {
-  const out: Record<string, unknown> = {};
-  for (const [k, v] of Object.entries(obj)) {
-    if (SENSITIVE_KEYS.test(k)) {
-      out[k] = "[redacted]";
-      continue;
-    }
-    if (Array.isArray(v)) {
-      out[k] = v.map((item) =>
-        item && typeof item === "object" && !Array.isArray(item) ? scrubContext(item as Record<string, unknown>) : item,
-      );
-    } else if (v && typeof v === "object") {
-      out[k] = scrubContext(v as Record<string, unknown>);
-    } else {
-      out[k] = v;
-    }
+function scrubValue(value: unknown, seen: WeakSet<object>): unknown {
+  // Primitives (except bigint) are safe and JSON-serializable as-is.
+  if (
+    value === null ||
+    typeof value === "string" ||
+    typeof value === "number" ||
+    typeof value === "boolean" ||
+    typeof value === "undefined"
+  ) {
+    return value;
   }
-  return out;
+
+  if (typeof value === "bigint") {
+    // Normalize bigint to string to avoid JSON serialization errors.
+    return value.toString();
+  }
+
+  if (typeof value === "function" || typeof value === "symbol") {
+    // Functions and symbols are not JSON-serializable; avoid leaking details.
+    return "[non-serializable]";
+  }
+
+  if (typeof value === "object") {
+    const obj = value as object;
+
+    if (seen.has(obj)) {
+      // Prevent infinite recursion on cyclic structures.
+      return "[circular]";
+    }
+    seen.add(obj);
+
+    if (Array.isArray(value)) {
+      // Recursively scrub each array element (handles arrays of objects with sensitive keys).
+      return (value as unknown[]).map((item) => scrubValue(item, seen));
+    }
+
+    const record = value as Record<string, unknown>;
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(record)) {
+      if (SENSITIVE_KEYS.test(k)) {
+        out[k] = "[redacted]";
+      } else {
+        out[k] = scrubValue(v, seen);
+      }
+    }
+    return out;
+  }
+
+  // Fallback for any remaining unexpected types.
+  return "[non-serializable]";
+}
+
+function scrubContext(obj: Record<string, unknown>): Record<string, unknown> {
+  const seen = new WeakSet<object>();
+  const scrubbed = scrubValue(obj, seen);
+
+  // Ensure we always return a plain object as declared.
+  if (scrubbed && typeof scrubbed === "object" && !Array.isArray(scrubbed)) {
+    return scrubbed as Record<string, unknown>;
+  }
+  return {};
 }
 
 export class AuditStore extends BaseSqliteStore {
@@ -222,5 +265,5 @@ export class AuditStore extends BaseSqliteStore {
 
 export function auditDbPathForMemorySqlite(memorySqlitePath: string): string | null {
   if (!memorySqlitePath || memorySqlitePath === ":memory:") return null;
-  return `${dirname(memorySqlitePath)}/audit.db`;
+  return join(dirname(memorySqlitePath), "audit.db");
 }
