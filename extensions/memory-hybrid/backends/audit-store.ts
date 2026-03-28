@@ -39,7 +39,7 @@ export interface AuditEventRow {
   tokens: number | null;
 }
 
-const SENSITIVE_KEYS = /(api[_-]?key|token|password|secret|authorization|bearer|cookie)/i;
+const SENSITIVE_KEYS = /(api[_-]?key|password|secret|authorization|bearer|cookie|\btoken\b)/i;
 
 function scrubValue(value: unknown, seen: WeakSet<object>): unknown {
   // Primitives (except bigint) are safe and JSON-serializable as-is.
@@ -194,8 +194,9 @@ export class AuditStore extends BaseSqliteStore {
       params.push(opts.outcome);
     }
     if (opts.targetContains) {
-      clauses.push("target LIKE ?");
-      params.push(`%${opts.targetContains}%`);
+      const escapedTarget = opts.targetContains.replace(/\\/g, "\\\\").replace(/[%_]/g, "\\$&");
+      clauses.push("target LIKE ? ESCAPE '\\'");
+      params.push(`%${escapedTarget}%`);
     }
     const where = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
     const rows = this.liveDb
