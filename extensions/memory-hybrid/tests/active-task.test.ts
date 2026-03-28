@@ -1125,6 +1125,21 @@ describe("writeTaskSignal / readPendingSignals / deleteSignal", () => {
     expect(signals[0].agent).toBe("test-agent");
   });
 
+  it("removes corrupt JSON signal files older than the stale threshold", async () => {
+    const { writeFile: fsWrite, mkdir: fsMkdir, utimes } = await import("node:fs/promises");
+    const signalsDir = join(tmpDir, "task-signals");
+    await fsMkdir(signalsDir, { recursive: true });
+    const badPath = join(signalsDir, "stale-bad.json");
+    await fsWrite(badPath, "not valid json", "utf-8");
+    const old = new Date(Date.now() - 6 * 60 * 1000);
+    await utimes(badPath, old, old);
+
+    await writeTaskSignal("good-label", makeSignal(), tmpDir);
+    const signals = await readPendingSignals(tmpDir);
+    expect(signals).toHaveLength(1);
+    await expect(readFile(badPath, "utf-8")).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
   it("ignores non-JSON files in signals dir", async () => {
     const { writeFile: fsWrite, mkdir: fsMkdir } = await import("node:fs/promises");
     const signalsDir = join(tmpDir, "task-signals");
