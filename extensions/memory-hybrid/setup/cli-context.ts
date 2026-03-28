@@ -1,4 +1,5 @@
 // @ts-nocheck
+// @ts-nocheck
 /**
  * Build HybridMemCliContext from handler context and services.
  * Moves CLI wiring out of index.ts so the plugin entry stays small.
