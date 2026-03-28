@@ -42,6 +42,43 @@ import { CostTracker } from "../backends/cost-tracker.js";
 import type { ApitapStore } from "../backends/apitap-store.js";
 import { isNanoModel, isHeavyModel, isLightModel } from "../utils/model-tier.js";
 import { installCoreBootstrapServices, installOptionalBootstrapServices } from "../services/index.js";
+import { formatOpenAiEmbeddingDisplayLabel } from "../services/embeddings/shared.js";
+
+/**
+ * Normalize baseURL vs baseUrl (OpenClaw config uses camelCase `baseUrl`; SDK uses `baseURL`).
+ * Intentionally duplicated from config/parsers/index.ts to avoid a circular module dependency —
+ * init-databases bootstraps before the full config parser is available.
+ */
+function readProviderBaseUrl(p: { baseURL?: string; baseUrl?: string } | undefined): string | undefined {
+  if (!p) return undefined;
+  const u = typeof p.baseURL === "string" ? p.baseURL : typeof p.baseUrl === "string" ? p.baseUrl : undefined;
+  const t = u?.trim();
+  return t && t.length > 0 ? t : undefined;
+}
+
+/**
+ * Embeddings are created before `models.providers` is merged into `cfg.llm`. If `embedding.endpoint`
+ * was stripped by the host validator or omitted, inherit the APIM / Foundry base from the global
+ * `models.providers["azure-foundry"]` entry so requests do not fall through to api.openai.com with
+ * an Azure or subscription key (401 "Incorrect API key" from platform.openai.com).
+ */
+function patchEmbeddingEndpointFromGatewayProviders(cfg: HybridMemoryConfig, api: ClawdbotPluginApi): void {
+  const ep = cfg.embedding?.endpoint;
+  if (typeof ep === "string" && ep.trim().length > 0) return;
+  // Only inherit Azure Foundry endpoint for OpenAI provider
+  if (cfg.embedding?.provider !== "openai") return;
+  const gwConfig = api.config as Record<string, unknown> | undefined;
+  const gwProviders = ((gwConfig?.models as Record<string, unknown> | undefined)?.providers ??
+    (gwConfig?.llm as Record<string, unknown> | undefined)?.providers ??
+    (gwConfig?.providers as Record<string, unknown> | undefined)) as Record<string, unknown> | undefined;
+  const af = gwProviders?.["azure-foundry"] as { baseURL?: string; baseUrl?: string } | undefined;
+  const base = readProviderBaseUrl(af);
+  if (!base) return;
+  (cfg.embedding as Record<string, unknown>).endpoint = base;
+  api.logger?.info?.(
+    `memory-hybrid: embedding.endpoint was empty — using models.providers["azure-foundry"] base URL (${base})`,
+  );
+}
 
 /**
  * Provider prefixes that resolveClient() handles natively without explicit llm.providers config.
@@ -861,6 +898,8 @@ export function initializeDatabases(cfg: HybridMemoryConfig, api: ClawdbotPlugin
   const resolvedSqlitePath = api.resolvePath(cfg.sqlitePath);
   setKeywordsPath(dirname(resolvedSqlitePath));
 
+  patchEmbeddingEndpointFromGatewayProviders(cfg, api);
+
   const { factsDb, edictStore, vectorDb, embeddings, embeddingRegistry } = installCoreBootstrapServices({
     cfg,
     api,
@@ -1335,10 +1374,14 @@ export function initializeDatabases(cfg: HybridMemoryConfig, api: ClawdbotPlugin
       await embeddings.embed("verify");
       health.embeddingsOk = true;
       const effectiveProvider = embeddings.activeProvider ?? cfg.embedding.provider;
+      const modelForLog =
+        effectiveProvider === "openai"
+          ? formatOpenAiEmbeddingDisplayLabel(embeddings.modelName, cfg.embedding.endpoint)
+          : embeddings.modelName;
       api.logger.info(
         effectiveProvider !== cfg.embedding.provider
-          ? `memory-hybrid: embedding check OK (provider=${effectiveProvider}, model=${embeddings.modelName} — using fallback; ${cfg.embedding.provider} unavailable)`
-          : `memory-hybrid: embedding check OK (provider=${effectiveProvider}, model=${embeddings.modelName})`,
+          ? `memory-hybrid: embedding check OK (provider=${effectiveProvider}, model=${modelForLog} — using fallback; ${cfg.embedding.provider} unavailable)`
+          : `memory-hybrid: embedding check OK (provider=${effectiveProvider}, model=${modelForLog})`,
       );
     } catch (e) {
       capturePluginError(e instanceof Error ? e : new Error(String(e)), {
@@ -1347,10 +1390,17 @@ export function initializeDatabases(cfg: HybridMemoryConfig, api: ClawdbotPlugin
         phase: "initialization",
         backend: cfg.embedding.provider,
       });
+      const errText = String(e);
+      const azure404 =
+        typeof cfg.embedding.endpoint === "string" &&
+        /\.openai\.azure\.com/i.test(cfg.embedding.endpoint) &&
+        (/404|not found/i.test(errText) || /Model not found/i.test(errText));
       const hint =
         cfg.embedding.provider === "ollama"
           ? `Ensure Ollama is running at ${cfg.embedding.endpoint ?? "http://localhost:11434"} and model '${cfg.embedding.model}' is pulled. Run 'openclaw hybrid-mem verify' for details.`
-          : "Set a valid embedding.apiKey in plugin config and ensure the model is accessible. Run 'openclaw hybrid-mem verify' for details.";
+          : azure404
+            ? 'Azure OpenAI embeddings use the deployment name as the API model id. In plugins.entries["openclaw-hybrid-memory"].config.embedding set "deployment" to the exact embedding deployment name from Azure Portal (Resource → Model deployments), or rename the deployment to match embedding.model. Ensure embedding.endpoint is the resource URL (e.g. …/openai/v1). Run \'openclaw hybrid-mem verify\' for details.'
+            : "Set a valid embedding.apiKey in plugin config and ensure the model is accessible. Run 'openclaw hybrid-mem verify' for details.";
       api.logger.error(
         `memory-hybrid: ⚠️  EMBEDDING CHECK FAILED (provider=${cfg.embedding.provider}) — ${String(e)}. ` +
           `Plugin will continue but semantic search will not work. ${hint}`,

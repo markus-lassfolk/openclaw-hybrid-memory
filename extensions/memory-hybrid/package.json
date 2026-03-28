@@ -60,9 +60,7 @@
   },
   "devDependencies": {
     "@biomejs/biome": "^1.9.4",
-    "@types/better-sqlite3": "^7.6.13",
     "@vitest/coverage-v8": "^4.0.18",
-    "better-sqlite3": "^12.8.0",
     "commander": "^13.1.0",
     "knip": "^5.0.0",
     "typescript": "^5.9.3",

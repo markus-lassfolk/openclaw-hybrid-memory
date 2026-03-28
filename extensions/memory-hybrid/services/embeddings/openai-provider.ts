@@ -17,6 +17,11 @@ export class Embeddings implements EmbeddingProvider {
   private cache = new Map<string, number[]>();
   /** Ordered list: try first model, on failure try next (all must produce same vector dimension). */
   private readonly models: string[];
+  /**
+   * When the API uses an Azure deployment id (not a public OpenAI model id), use this for
+   * dimension limits and the `dimensions` request field (e.g. `text-embedding-3-large`).
+   */
+  private readonly logicalModelForEmbedding?: string;
   readonly dimensions: number;
   modelName: string;
   private readonly batchSize: number;
@@ -26,10 +31,12 @@ export class Embeddings implements EmbeddingProvider {
     modelOrModels: string | string[],
     dimensions?: number,
     batchSize?: number,
+    logicalModelForEmbedding?: string,
   ) {
     this.client = typeof clientOrApiKey === "string" ? new OpenAI({ apiKey: clientOrApiKey }) : clientOrApiKey;
     this.models = Array.isArray(modelOrModels) ? modelOrModels : [modelOrModels];
     if (this.models.length === 0) throw new Error("Embeddings requires at least one model");
+    this.logicalModelForEmbedding = logicalModelForEmbedding;
     this.modelName = this.models[0];
     this.dimensions = dimensions ?? 1536; // default: text-embedding-3-small
     this.batchSize = batchSize || 2048;
@@ -45,15 +52,16 @@ export class Embeddings implements EmbeddingProvider {
       "text-embedding-ada-002": 1536,
     };
     for (const model of this.models) {
-      const maxDim = modelMaxDimensions[model];
+      const effective = this.logicalModelForEmbedding ?? model;
+      const maxDim = modelMaxDimensions[effective];
       if (maxDim !== undefined && this.dimensions > maxDim) {
-        throw new Error(`Dimensions ${this.dimensions} exceed maximum ${maxDim} for model ${model}`);
+        throw new Error(`Dimensions ${this.dimensions} exceed maximum ${maxDim} for model ${effective}`);
       }
-      const nativeDim = modelNativeDimensions[model];
-      const supportsDimensions = model.startsWith("text-embedding-3-");
+      const nativeDim = modelNativeDimensions[effective];
+      const supportsDimensions = effective.startsWith("text-embedding-3-");
       if (nativeDim !== undefined && this.dimensions !== nativeDim && !supportsDimensions) {
         throw new Error(
-          `Model ${model} does not support custom dimensions (native: ${nativeDim}, requested: ${this.dimensions}). Use a text-embedding-3-* model for custom dimensions.`,
+          `Model ${effective} does not support custom dimensions (native: ${nativeDim}, requested: ${this.dimensions}). Use a text-embedding-3-* model for custom dimensions.`,
         );
       }
     }
@@ -86,7 +94,8 @@ export class Embeddings implements EmbeddingProvider {
         return cached;
       }
       try {
-        const supportsDimensions = model.startsWith("text-embedding-3-");
+        const effective = this.logicalModelForEmbedding ?? model;
+        const supportsDimensions = effective.startsWith("text-embedding-3-");
         // Truncate to stay within the 8192-token OpenAI embedding limit (#442)
         const input = truncateForEmbedding(text);
         const resp = await withLLMRetry(
@@ -168,7 +177,8 @@ export class Embeddings implements EmbeddingProvider {
       let succeededModel: string | undefined;
       for (const model of this.models) {
         try {
-          const supportsDimensions = model.startsWith("text-embedding-3-");
+          const effective = this.logicalModelForEmbedding ?? model;
+          const supportsDimensions = effective.startsWith("text-embedding-3-");
           // Truncate each item to stay within the 8192-token OpenAI embedding limit (#442)
           const truncatedBatch = batch.map(truncateForEmbedding);
           resp = await withLLMRetry(
