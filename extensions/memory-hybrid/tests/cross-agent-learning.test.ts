@@ -41,37 +41,6 @@ function rawDb(db: InstanceType<typeof FactsDB>) {
   return db.getRawDb();
 }
 
-/** Insert an agent-scoped fact directly (bypassing store to control all fields). */
-function insertAgentFact(
-  db: InstanceType<typeof FactsDB>,
-  opts: {
-    id?: string;
-    agentId: string;
-    text: string;
-    category?: string;
-    confidence?: number;
-    importance?: number;
-  },
-): string {
-  const id = opts.id ?? Math.random().toString(36).slice(2, 12);
-  const now = Math.floor(Date.now() / 1000);
-  rawDb(db)
-    .prepare(
-      `INSERT INTO facts (id, text, category, scope, scope_target, confidence, importance, source, created_at, last_confirmed_at, decay_class)
-     VALUES (?, ?, ?, 'agent', ?, ?, ?, 'test', ?, ?, 'stable')`,
-    )
-    .run(
-      id,
-      opts.text,
-      opts.category ?? "pattern",
-      opts.agentId,
-      opts.confidence ?? 0.7,
-      opts.importance ?? 0.7,
-      now,
-      now,
-    );
-  return id;
-}
 
 /** Create a mock OpenAI client that returns a fixed JSON response. */
 function makeMockOpenAI(responseJson: unknown): unknown {

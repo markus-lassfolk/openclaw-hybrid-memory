@@ -87,7 +87,9 @@ function extractCandidates(text: string, nowMs: number): number[] {
   // -------------------------------------------------------------------------
   const isoRe = /\b(\d{4})-(\d{2})-(\d{2})(?:T\d{2}:\d{2}(?::\d{2})?)?/g;
   let m: RegExpExecArray | null;
-  while ((m = isoRe.exec(text)) !== null) {
+  while (true) {
+    m = isoRe.exec(text);
+    if (m === null) break;
     const y = Number.parseInt(m[1]!, 10);
     const moRaw = Number.parseInt(m[2]!, 10);
     const d = Number.parseInt(m[3]!, 10);
@@ -108,7 +110,9 @@ function extractCandidates(text: string, nowMs: number): number[] {
   //    Uses module-level MD_RE_SOURCE (Fix #4).
   // -------------------------------------------------------------------------
   const mdRe = new RegExp(MD_RE_SOURCE, "gi");
-  while ((m = mdRe.exec(text)) !== null) {
+  while (true) {
+    m = mdRe.exec(text);
+    if (m === null) break;
     let monthStr: string;
     let dayNum: number;
     if (m[1] !== undefined && m[2] !== undefined) {
@@ -154,7 +158,9 @@ function extractCandidates(text: string, nowMs: number): number[] {
   // -------------------------------------------------------------------------
   const nextWdRe =
     /\bnext\s+(sunday|monday|tuesday|wednesday|thursday|friday|saturday|sun|mon|tue|wed|thu|fri|sat)\b/gi;
-  while ((m = nextWdRe.exec(text)) !== null) {
+  while (true) {
+    m = nextWdRe.exec(text);
+    if (m === null) break;
     const targetWd = WEEKDAY_MAP[m[1]?.toLowerCase()];
     if (targetWd === undefined) continue;
     const currentWd = now.getUTCDay();
@@ -183,7 +189,9 @@ function extractCandidates(text: string, nowMs: number): number[] {
   // 6. "in N days/weeks/months": "in 3 days", "in 2 weeks", "in 1 month"
   // -------------------------------------------------------------------------
   const inOffsetRe = /\bin\s+(\d+)\s+(day|days|week|weeks|month|months)\b/gi;
-  while ((m = inOffsetRe.exec(text)) !== null) {
+  while (true) {
+    m = inOffsetRe.exec(text);
+    if (m === null) break;
     const n = Number.parseInt(m[1]!, 10);
     const unit = m[2]?.toLowerCase();
     let daysAhead = 0;

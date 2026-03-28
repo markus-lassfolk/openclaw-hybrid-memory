@@ -81,7 +81,7 @@ export function registerCredentialTools(ctx: PluginContext, api: ClawdbotPluginA
         async execute(_toolCallId: string, params: Record<string, unknown>) {
           const { service, type } = params as { service: string; type?: CredentialType };
           if (!credentialsDb) throw new Error("Credentials store not available");
-          let entry;
+          let entry: any;
           try {
             entry = credentialsDb.get(service, type);
           } catch (err) {
@@ -140,7 +140,7 @@ export function registerCredentialTools(ctx: PluginContext, api: ClawdbotPluginA
         parameters: Type.Object({}),
         async execute() {
           if (!credentialsDb) throw new Error("Credentials store not available");
-          let items;
+          let items: any;
           try {
             items = credentialsDb.list();
           } catch (err) {
@@ -184,7 +184,7 @@ export function registerCredentialTools(ctx: PluginContext, api: ClawdbotPluginA
         async execute(_toolCallId: string, params: Record<string, unknown>) {
           const { service, type } = params as { service: string; type?: CredentialType };
           if (!credentialsDb) throw new Error("Credentials store not available");
-          let deleted;
+          let deleted: any;
           try {
             deleted = credentialsDb.delete(service, type);
           } catch (err) {

@@ -109,7 +109,7 @@ export function registerIssueTools(ctx: IssueToolsContext, api: ClawdbotPluginAp
         };
 
         try {
-          let issue;
+          let issue: any;
           if (status) {
             // Use transition() to validate state machine
             issue = issueStore.transition(id, status, { rootCause, fix, rollback, symptoms });

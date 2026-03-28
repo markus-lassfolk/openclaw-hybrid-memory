@@ -28,7 +28,7 @@ function isAzureEmbeddingEndpoint(baseURL: string): boolean {
 }
 
 /** Classic Azure OpenAI REST (e.g. `/openai/deployments/...`) uses this query param. `/openai/v1` compat endpoints reject it (400). */
-const AZURE_OPENAI_API_VERSION = "2024-10-21";
+export const AZURE_OPENAI_API_VERSION = "2024-10-21";
 
 /**
  * Build OpenAI client options for the openai embedding provider.

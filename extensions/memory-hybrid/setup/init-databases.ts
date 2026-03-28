@@ -1440,7 +1440,7 @@ export function initializeDatabases(cfg: HybridMemoryConfig, api: ClawdbotPlugin
             /* ignore close errors */
           });
         }
-      } catch (err: any) {
+      } catch (err: unknown) {
         if (err.code === "EEXIST") {
           // Another process already created the flag - skip migration
           shouldMigrate = false;

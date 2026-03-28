@@ -567,7 +567,7 @@ export function registerDocumentTools(ctx: DocumentToolsContext, api: ClawdbotPl
       const chunkTags = [...baseTags, ...(headingTag ? [headingTag] : []), ...extractTags(chunk.text, title)];
 
       const chunkText = chunk.text;
-      let entry;
+      let entry: any;
       try {
         entry = factsDb.store({
           text: chunkText,
