@@ -36,7 +36,7 @@ import type { SearchResult } from "../types/memory.js";
 import { mergeResults, filterByScope } from "../services/merge-results.js";
 import type { ScopeFilter } from "../types/memory.js";
 import type { HybridMemoryConfig } from "../config.js";
-import { getCronModelConfig, getDefaultCronModel } from "../config.js";
+import { getCronModelConfig, getDefaultCronModel, vectorDimsForModel } from "../config.js";
 import { parseSourceDate } from "../utils/dates.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { withExit, type Chainable } from "./shared.js";
@@ -797,6 +797,58 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
         console.log(`Semantic search: ${icon(result.semantic.ok)} (${result.semantic.count} result(s))`);
         console.log(`Hybrid search: ${icon(result.hybrid.ok)} (${result.hybrid.count} result(s))`);
         console.log(`Auto-recall: ${icon(result.autoRecall.ok)} (${result.autoRecall.count} candidate(s))`);
+      }),
+    );
+
+  mem
+    .command("model-info [model]")
+    .description(
+      "Show vector dimensions for a built-in embedding model name, or print current embedding config when [model] is omitted",
+    )
+    .action(
+      withExit(async (modelArg?: string) => {
+        const name = typeof modelArg === "string" ? modelArg.trim() : "";
+        if (!name) {
+          const emb = cfg.embedding;
+          console.log("=== Current embedding config ===");
+          console.log(`Provider: ${emb.provider}`);
+          console.log(`Model: ${emb.model}`);
+          if (emb.models && emb.models.length > 0) {
+            console.log(`Models (multi): ${emb.models.join(", ")}`);
+          }
+          console.log(`Dimensions (resolved in config): ${emb.dimensions}`);
+          try {
+            const catalog = vectorDimsForModel(emb.model);
+            if (catalog === emb.dimensions) {
+              console.log(`Catalog dimensions for '${emb.model}': ${catalog} (matches config)`);
+            } else {
+              console.log(
+                `Catalog dimensions for '${emb.model}': ${catalog} (config uses ${emb.dimensions} — may be intentional)`,
+              );
+            }
+          } catch {
+            console.log(
+              `Model '${emb.model}' is not in the built-in catalog; dimensions are taken from config (${emb.dimensions}).`,
+            );
+            console.log(
+              "For custom Ollama/ONNX models, set embedding.dimensions to the vector size your model outputs.",
+            );
+          }
+          return;
+        }
+        try {
+          const dims = vectorDimsForModel(name);
+          console.log(`Model: ${name}`);
+          console.log(`Vector dimensions: ${dims}`);
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          console.error(`error: ${msg}`);
+          console.error(
+            "For models not in the catalog, set embedding.dimensions in plugin config to the vector size your provider returns.",
+          );
+          process.exitCode = 1;
+          return;
+        }
       }),
     );
 
