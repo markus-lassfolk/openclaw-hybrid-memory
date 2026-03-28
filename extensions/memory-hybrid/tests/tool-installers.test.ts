@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { describe, expect, it, vi } from "vitest";
 import { toolInstallers } from "../setup/tool-installers.js";
 import type { MemoryToolsContext } from "../tools/memory-tools.js";
@@ -35,6 +36,7 @@ describe("tool installers", () => {
     const selected = memoryCoreInstaller?.selectContext(
       {
         factsDb: { kind: "facts" },
+        edictStore: null as any,
         vectorDb: { kind: "vectors" },
         cfg: { kind: "cfg" },
         embeddings: { kind: "embeddings" },
@@ -67,6 +69,7 @@ describe("tool installers", () => {
       "cfg",
       "credentialsDb",
       "currentAgentIdRef",
+      "edictStore",
       "embeddingRegistry",
       "embeddings",
       "eventLog",

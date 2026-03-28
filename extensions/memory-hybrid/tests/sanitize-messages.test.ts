@@ -1,5 +1,5 @@
-import { describe, it, expect } from "vitest";
-import { sanitizeMessagesForClaude, type MessageLike } from "../utils/sanitize-messages.js";
+import { describe, expect, it } from "vitest";
+import { type MessageLike, sanitizeMessagesForClaude } from "../utils/sanitize-messages.js";
 
 describe("sanitizeMessagesForClaude", () => {
   it("returns same array when no assistant message has tool_use", () => {

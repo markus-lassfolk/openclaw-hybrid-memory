@@ -12,7 +12,7 @@
  *     - empty response → []
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
 import { extractJsonArray } from "../services/json-array-parser.js";
 
 describe("extractJsonArray", () => {

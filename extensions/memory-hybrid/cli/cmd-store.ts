@@ -6,17 +6,17 @@
  */
 
 import type { MemoryCategory } from "../config.js";
-import { getDefaultCronModel, getCronModelConfig } from "../config.js";
+import { getCronModelConfig, getDefaultCronModel } from "../config.js";
+import { VAULT_POINTER_PREFIX, isCredentialLike, tryParseCredentialForVault } from "../services/auto-capture.js";
+import { classifyMemoryOperation } from "../services/classification.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { extractStructuredFields } from "../services/fact-extraction.js";
-import { isCredentialLike, tryParseCredentialForVault, VAULT_POINTER_PREFIX } from "../services/auto-capture.js";
 import { findSimilarByEmbedding } from "../services/vector-search.js";
-import { classifyMemoryOperation } from "../services/classification.js";
+import { CLI_STORE_IMPORTANCE } from "../utils/constants.js";
 import { parseSourceDate } from "../utils/dates.js";
 import { extractTags } from "../utils/tags.js";
-import { CLI_STORE_IMPORTANCE } from "../utils/constants.js";
-import type { StoreCliOpts, StoreCliResult } from "./types.js";
 import type { HandlerContext } from "./handlers.js";
+import type { StoreCliOpts, StoreCliResult } from "./types.js";
 
 /**
  * Infer which identity file a rule or suggestion should target (#260).

@@ -3,15 +3,15 @@
  * Covers utils/provenance.ts and config parsing for maintenance.council.
  */
 
-import { describe, it, expect } from "vitest";
-import {
-  getProvenanceHeaders,
-  formatProvenanceReceipt,
-  buildProvenanceMetadata,
-  generateTraceId,
-  buildCouncilSessionKey,
-} from "../utils/provenance.js";
+import { describe, expect, it } from "vitest";
 import { hybridConfigSchema } from "../config.js";
+import {
+  buildCouncilSessionKey,
+  buildProvenanceMetadata,
+  formatProvenanceReceipt,
+  generateTraceId,
+  getProvenanceHeaders,
+} from "../utils/provenance.js";
 
 // ---------------------------------------------------------------------------
 // generateTraceId

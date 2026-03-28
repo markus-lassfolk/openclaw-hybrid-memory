@@ -3,17 +3,17 @@
  * and applyApprovedProposal (including non-git workspace — issue #90).
  */
 
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, rmSync, writeFileSync, readFileSync, existsSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { ProposalsDB } from "../backends/proposals-db.js";
 import {
-  parseSuggestedChange,
+  applyApprovedProposal,
   buildAppliedContent,
   capProposalConfidence,
-  applyApprovedProposal,
+  parseSuggestedChange,
 } from "../cli/proposals.js";
-import { ProposalsDB } from "../backends/proposals-db.js";
 
 describe("parseSuggestedChange", () => {
   it("returns append when text does not start with replace phrase", () => {

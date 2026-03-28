@@ -23,9 +23,9 @@
  * - No-op when scopeFilter is absent or empty.
  * - Removes results that `getById` returns `null` for under the given scope.
  */
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
 import { _testing } from "../index.js";
-import { mergeResults as mergeResultsModule, RRF_K_DEFAULT } from "../services/merge-results.js";
+import { RRF_K_DEFAULT, mergeResults as mergeResultsModule } from "../services/merge-results.js";
 
 const { mergeResults, filterByScope } = _testing;
 

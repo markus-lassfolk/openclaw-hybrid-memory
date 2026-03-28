@@ -3,8 +3,13 @@
  */
 
 import OpenAI from "openai";
+import { pluginLogger } from "../../utils/logger.js";
 import { capturePluginError } from "../error-reporter.js";
-import type { EmbeddingProvider, EmbeddingConfig } from "./types.js";
+import { ChainEmbeddingProvider } from "./chain-provider.js";
+import { FallbackEmbeddingProvider } from "./fallback-provider.js";
+import { OllamaEmbeddingProvider } from "./ollama-provider.js";
+import { OnnxEmbeddingProvider, isOnnxRuntimeMissingError } from "./onnx-provider.js";
+import { Embeddings } from "./openai-provider.js";
 import {
   GOOGLE_EMBEDDING_BASE_URL,
   GOOGLE_EMBED_DEFAULT_DIMENSIONS,
@@ -12,12 +17,7 @@ import {
   KNOWN_GOOGLE_EMBED_MODELS,
   OPENAI_ONLY_EMBED_MODELS,
 } from "./shared.js";
-import { Embeddings } from "./openai-provider.js";
-import { OllamaEmbeddingProvider } from "./ollama-provider.js";
-import { OnnxEmbeddingProvider, isOnnxRuntimeMissingError } from "./onnx-provider.js";
-import { FallbackEmbeddingProvider } from "./fallback-provider.js";
-import { ChainEmbeddingProvider } from "./chain-provider.js";
-import { pluginLogger } from "../../utils/logger.js";
+import type { EmbeddingConfig, EmbeddingProvider } from "./types.js";
 
 /** True when the given base URL is an Azure OpenAI / Foundry endpoint (needs api-key header). */
 function isAzureEmbeddingEndpoint(baseURL: string): boolean {

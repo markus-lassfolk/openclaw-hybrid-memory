@@ -1,6 +1,6 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
-import { walWrite, walRemove, _resetWalCircuitBreakerForTesting } from "../services/wal-helpers.js";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { WriteAheadLog } from "../backends/wal.js";
+import { _resetWalCircuitBreakerForTesting, walRemove, walWrite } from "../services/wal-helpers.js";
 
 // ---------------------------------------------------------------------------
 // Helpers

@@ -5,7 +5,7 @@
  * does NOT leak sensitive data like prompts, API keys, home paths, IPs, or emails.
  */
 
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // Test the native fetch implementation of the error reporter.
 // Sentry-specific functions (sanitizeEvent, scrubString, etc.) are pure and

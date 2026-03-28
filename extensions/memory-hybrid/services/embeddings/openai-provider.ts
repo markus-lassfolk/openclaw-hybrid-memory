@@ -3,10 +3,10 @@
  */
 
 import OpenAI from "openai";
-import { capturePluginError } from "../error-reporter.js";
 import { withLLMRetry } from "../chat.js";
+import { capturePluginError } from "../error-reporter.js";
+import { EMBEDDING_CACHE_MAX, makeCacheKey, shouldSuppressEmbeddingError, truncateForEmbedding } from "./shared.js";
 import type { EmbeddingProvider } from "./types.js";
-import { EMBEDDING_CACHE_MAX, truncateForEmbedding, makeCacheKey, shouldSuppressEmbeddingError } from "./shared.js";
 
 /**
  * OpenAI-based embedding provider.

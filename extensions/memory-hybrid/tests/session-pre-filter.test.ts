@@ -2,11 +2,11 @@
  * Tests for session-pre-filter service (Issue #290).
  */
 
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { preFilterSessions, extractSessionSample, type PreFilterConfig } from "../services/session-pre-filter.js";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { type PreFilterConfig, extractSessionSample, preFilterSessions } from "../services/session-pre-filter.js";
 
 function msg(role: string, text: string): string {
   return JSON.stringify({

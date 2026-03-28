@@ -1,10 +1,10 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { runContextAudit } from "../services/context-audit.js";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { hybridConfigSchema } from "../config.js";
 import { _testing } from "../index.js";
+import { runContextAudit } from "../services/context-audit.js";
 
 const { FactsDB } = _testing;
 

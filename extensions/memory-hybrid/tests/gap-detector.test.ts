@@ -29,9 +29,9 @@
  * - Accepts custom minFrequency and minToolSavings overrides.
  */
 
-import { describe, it, expect, vi } from "vitest";
-import { GapDetector, deriveToolNameFromSequence, computeGapId } from "../services/gap-detector.js";
-import type { WorkflowStore, WorkflowPattern } from "../backends/workflow-store.js";
+import { describe, expect, it, vi } from "vitest";
+import type { WorkflowPattern, WorkflowStore } from "../backends/workflow-store.js";
+import { GapDetector, computeGapId, deriveToolNameFromSequence } from "../services/gap-detector.js";
 
 // ---------------------------------------------------------------------------
 // Mock WorkflowStore

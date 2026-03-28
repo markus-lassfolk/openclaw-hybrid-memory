@@ -12,12 +12,12 @@
  * - Disabled config (no freeze)
  */
 
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
-import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { detectFutureDate, type FutureDateProtectionConfig } from "../utils/date-detector.js";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { _testing } from "../index.js";
+import { type FutureDateProtectionConfig, detectFutureDate } from "../utils/date-detector.js";
 
 const { FactsDB } = _testing;
 

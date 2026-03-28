@@ -29,12 +29,12 @@
  * - Multiple patterns in same text each yield a separate result.
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
 import {
+  extractCredentialsFromToolCalls,
   extractHostFromUrl,
   slugify,
   typeFromVarName,
-  extractCredentialsFromToolCalls,
 } from "../services/credential-scanner.js";
 
 // ---------------------------------------------------------------------------

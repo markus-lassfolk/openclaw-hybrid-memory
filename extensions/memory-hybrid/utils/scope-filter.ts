@@ -6,8 +6,8 @@
  * cross-user memory access in multi-tenant setups. Set multiAgent.trustToolScopeParams=true to enable.
  */
 
-import type { ScopeFilter } from "../types/memory.js";
 import { addOperationBreadcrumb } from "../services/error-reporter.js";
+import type { ScopeFilter } from "../types/memory.js";
 
 export function buildToolScopeFilter(
   params: { userId?: string | null; agentId?: string | null; sessionId?: string | null },

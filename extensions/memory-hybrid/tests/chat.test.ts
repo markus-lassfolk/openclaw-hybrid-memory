@@ -1,19 +1,19 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
-  chatComplete,
-  distillBatchTokenLimit,
-  distillMaxOutputTokens,
-  withLLMRetry,
   LLMRetryError,
+  UnconfiguredProviderError,
+  chatComplete,
   chatCompleteWithRetry,
   createPendingLLMWarnings,
-  is404Like,
+  distillBatchTokenLimit,
+  distillMaxOutputTokens,
   is403Like,
+  is404Like,
   is500Like,
   isConnectionErrorLike,
-  isOllamaOOM,
   isContextLengthError,
-  UnconfiguredProviderError,
+  isOllamaOOM,
+  withLLMRetry,
 } from "../services/chat.js";
 
 vi.mock("../services/error-reporter.js", () => ({

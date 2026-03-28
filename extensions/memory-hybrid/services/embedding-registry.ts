@@ -11,7 +11,7 @@
 
 import OpenAI from "openai";
 import type { EmbeddingModelConfig } from "../config.js";
-import { Embeddings, OllamaEmbeddingProvider, OnnxEmbeddingProvider, type EmbeddingProvider } from "./embeddings.js";
+import { type EmbeddingProvider, Embeddings, OllamaEmbeddingProvider, OnnxEmbeddingProvider } from "./embeddings.js";
 import { capturePluginError } from "./error-reporter.js";
 
 // ---------------------------------------------------------------------------

@@ -12,7 +12,7 @@
  *    text-transform tool
  */
 
-import type { WorkflowStore, WorkflowPattern } from "../backends/workflow-store.js";
+import type { WorkflowPattern, WorkflowStore } from "../backends/workflow-store.js";
 
 // ---------------------------------------------------------------------------
 // Public types

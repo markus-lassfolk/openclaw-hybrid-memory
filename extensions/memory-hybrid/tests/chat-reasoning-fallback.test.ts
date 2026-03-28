@@ -1,9 +1,9 @@
+import type OpenAI from "openai";
 /**
  * Tests for chatComplete() reasoning field fallback (#314).
  * Qwen3 thinking mode (Ollama) returns empty content with response in message.reasoning.
  */
-import { describe, it, expect, vi } from "vitest";
-import type OpenAI from "openai";
+import { describe, expect, it, vi } from "vitest";
 
 vi.mock("../services/error-reporter.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../services/error-reporter.js")>();

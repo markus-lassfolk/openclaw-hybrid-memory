@@ -8,7 +8,7 @@
 import { open } from "node:fs/promises";
 import { basename } from "node:path";
 import { getReinforcementCategoryRegexes } from "../utils/language-keywords.js";
-import { extractMessageText, truncate, timestampFromFilename } from "../utils/text.js";
+import { extractMessageText, timestampFromFilename, truncate } from "../utils/text.js";
 import { capturePluginError } from "./error-reporter.js";
 
 export type ReinforcementIncident = {

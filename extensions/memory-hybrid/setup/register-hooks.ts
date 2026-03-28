@@ -8,11 +8,11 @@
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import type { MemoryPluginAPI } from "../api/memory-plugin-api.js";
 import { getMemoryCategories } from "../config.js";
-import { createLifecycleHooks, type LifecycleContext } from "../lifecycle/hooks.js";
+import { type LifecycleContext, createLifecycleHooks } from "../lifecycle/hooks.js";
 import { capturePluginError } from "../services/error-reporter.js";
-import { sanitizeMessagesForClaude, type MessageLike } from "../utils/sanitize-messages.js";
 import { runPreConsolidationFlush } from "../services/pre-consolidation-flush.js";
 import { WorkflowTracker } from "../services/workflow-tracker.js";
+import { type MessageLike, sanitizeMessagesForClaude } from "../utils/sanitize-messages.js";
 
 /** Lifecycle hooks receive the stable plugin API (Phase 3). */
 export type HooksContext = MemoryPluginAPI;

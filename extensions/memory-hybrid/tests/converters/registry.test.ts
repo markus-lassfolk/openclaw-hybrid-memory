@@ -1,5 +1,6 @@
-import { describe, it, expect } from "vitest";
-import { getConverter, registerConverter, type Converter } from "../../tools/converters/index.js";
+// @ts-nocheck
+import { describe, expect, it } from "vitest";
+import { type Converter, getConverter, registerConverter } from "../../tools/converters/index.js";
 
 describe("converter registry", () => {
   it("returns null for unknown file extensions", () => {

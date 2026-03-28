@@ -4,18 +4,18 @@ import { ApitapStore } from "../backends/apitap-store.js";
 import { CredentialsDB } from "../backends/credentials-db.js";
 import { CrystallizationStore } from "../backends/crystallization-store.js";
 import { EventLog } from "../backends/event-log.js";
+import type { FactsDB } from "../backends/facts-db.js";
 import { IdentityReflectionStore } from "../backends/identity-reflection-store.js";
 import { IssueStore } from "../backends/issue-store.js";
 import { PersonaStateStore } from "../backends/persona-state-store.js";
 import { ProposalsDB } from "../backends/proposals-db.js";
 import { ToolProposalStore } from "../backends/tool-proposal-store.js";
-import { WorkflowStore } from "../backends/workflow-store.js";
 import { WriteAheadLog } from "../backends/wal.js";
+import { WorkflowStore } from "../backends/workflow-store.js";
 import type { BootstrapPhaseConfig, HybridMemoryConfig } from "../config.js";
 import { ProvenanceService } from "./provenance.js";
 import { AliasDB } from "./retrieval-aliases.js";
 import { VerificationStore } from "./verification-store.js";
-import type { FactsDB } from "../backends/facts-db.js";
 
 export interface OptionalBootstrapContext {
   cfg: HybridMemoryConfig;

@@ -1,3 +1,6 @@
+import type { DatabaseSync } from "node:sqlite";
+import { createTransaction } from "../../utils/sqlite-transaction.js";
+import { normalizedHash } from "../../utils/tags.js";
 /**
  * Procedure feedback loop — version tracking and failure logging (#782).
  * procedure_versions: per-version success/failure counts and avoidance notes.
@@ -1000,4 +1003,56 @@ export function runFactsMigrations(db: DatabaseSync): void {
 
   // Episodic memory (#781)
   migrateEpisodesTable(db);
+  migrateEpisodeRelationsTable(db);
+}
+function migrateEpisodesTable(db: DatabaseSync): void {
+  const tableExists = db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='episodes'`).get();
+  if (!tableExists) {
+    db.prepare(`
+      CREATE TABLE episodes (
+        id TEXT PRIMARY KEY,
+        event TEXT NOT NULL,
+        outcome TEXT NOT NULL,
+        timestamp INTEGER NOT NULL,
+        duration INTEGER,
+        context TEXT,
+        related_fact_ids TEXT,
+        procedure_id TEXT,
+        scope TEXT,
+        scope_target TEXT,
+        agent_id TEXT,
+        user_id TEXT,
+        session_id TEXT,
+        importance REAL DEFAULT 0.5,
+        tags TEXT,
+        decay_class TEXT,
+        created_at TEXT NOT NULL,
+        verified_at TEXT
+      )
+    `).run();
+    db.prepare("CREATE INDEX idx_episodes_timestamp ON episodes (timestamp DESC)").run();
+    db.prepare(`
+      CREATE VIRTUAL TABLE episodes_fts USING fts5(
+        event, context, outcome, tags,
+        content='episodes',
+        content_rowid='rowid'
+      )
+    `).run();
+  }
+}
+function migrateEpisodeRelationsTable(db: DatabaseSync): void {
+  const tableExists = db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='episode_relations'`).get();
+  if (!tableExists) {
+    db.prepare(`
+      CREATE TABLE episode_relations (
+        id TEXT PRIMARY KEY,
+        episode_id TEXT NOT NULL,
+        target_id TEXT NOT NULL,
+        relation_type TEXT,
+        strength REAL,
+        created_at TEXT NOT NULL
+      )
+    `).run();
+    db.prepare("CREATE INDEX idx_episode_relations_episode_id ON episode_relations (episode_id)").run();
+  }
 }
