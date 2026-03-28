@@ -67,7 +67,7 @@ function openaiEmbeddingClientOpts(
       opts.baseURL = `${baseURL}/openai/v1`;
     } else if (isAzureApiManagementGatewayUrl(baseURL) && !isAzureDeploymentPath) {
       // e.g. https://xxx.azure-api.net/resource-name → .../openai/v1 (not bare /v1)
-      opts.baseURL = hasOpenAiV1Path ? baseURL : `${baseURL}/openai/v1`;
+      opts.baseURL = `${baseURL}/openai/v1`;
     } else if (isAzureApiManagementGatewayUrl(baseURL) && isAzureDeploymentPath) {
       // APIM gateway with deployment path: use as-is, don't append /v1
       opts.baseURL = baseURL;
@@ -98,7 +98,10 @@ function openAiEmbeddingApiModels(cfg: EmbeddingConfig, forFallback: boolean = f
     return [deployment.trim()];
   }
   if (forFallback && !models?.length) {
-    // For fallback paths where primary provider is non-OpenAI, default to a valid OpenAI model
+    // For fallback paths where primary provider is non-OpenAI, check if cfg.model is a valid OpenAI model
+    if (model && OPENAI_ONLY_EMBED_MODELS.has(model)) {
+      return [model];
+    }
     return ["text-embedding-3-small"];
   }
   return models?.length ? models : [model];
