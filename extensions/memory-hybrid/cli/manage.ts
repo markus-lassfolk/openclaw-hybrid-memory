@@ -336,19 +336,26 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
             opts?.outcome === "success" || opts?.outcome === "partial" || opts?.outcome === "failed"
               ? opts.outcome
               : undefined;
+          const fmt = (opts?.format ?? "lines").toLowerCase();
           const rows = auditStore.query({
             sinceMs,
             agentId: opts?.agent?.trim() || undefined,
             outcome,
             targetContains: opts?.target?.trim() || undefined,
-            limit: 500,
+            limit: fmt === "summary" ? 5000 : 500,
           });
-          const fmt = (opts?.format ?? "lines").toLowerCase();
           if (fmt === "summary") {
-            const s = auditStore.summary24h();
-            console.log(`Audit (last 24h in DB): total=${s.total}`);
-            console.log(`  success=${s.byOutcome.success} partial=${s.byOutcome.partial} failed=${s.byOutcome.failed}`);
-            for (const [a, c] of Object.entries(s.byAgent).sort((x, y) => y[1] - x[1])) {
+            let total = 0;
+            const byOutcome: Record<string, number> = { success: 0, partial: 0, failed: 0 };
+            const byAgent: Record<string, number> = {};
+            for (const r of rows) {
+              total++;
+              byOutcome[r.outcome] = (byOutcome[r.outcome] ?? 0) + 1;
+              byAgent[r.agentId] = (byAgent[r.agentId] ?? 0) + 1;
+            }
+            console.log(`Audit (last ${hours}h, filtered): total=${total}`);
+            console.log(`  success=${byOutcome.success} partial=${byOutcome.partial} failed=${byOutcome.failed}`);
+            for (const [a, c] of Object.entries(byAgent).sort((x, y) => y[1] - x[1])) {
               console.log(`  ${a}: ${c}`);
             }
             return;
