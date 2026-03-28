@@ -78,12 +78,7 @@ export function collectGraphRecallPayload(factsDb: FactsDB, query: string): Grap
     diversityWeight: 1,
   });
   const seeds = results.map((r) => r.entry.id);
-  const expanded = new Set<string>(seeds);
-  for (const id of seeds) {
-    for (const c of factsDb.getConnectedFactIds([id], 3)) {
-      expanded.add(c);
-    }
-  }
+  const expanded = new Set<string>(factsDb.getConnectedFactIds(seeds, 3));
   const ids = [...expanded].slice(0, 2000);
   const entryMap = factsDb.getByIds(ids);
   const nodes: MemoryGraphNode[] = [];
