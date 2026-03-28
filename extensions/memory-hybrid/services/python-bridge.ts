@@ -58,6 +58,24 @@ export class PythonBridge {
       stdio: ["pipe", "pipe", "pipe"],
     });
 
+    const stdin = this.proc.stdin;
+    if (
+      stdin &&
+      typeof (stdin as { on?: (ev: string, fn: (err: NodeJS.ErrnoException) => void) => void }).on === "function"
+    ) {
+      (stdin as { on: (ev: string, fn: (err: NodeJS.ErrnoException) => void) => void }).on(
+        "error",
+        (err: NodeJS.ErrnoException) => {
+          // EPIPE when the worker exits before we finish writing — avoid crashing the host on an unhandled stream error.
+          if (err?.code === "EPIPE") return;
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+            subsystem: "python-bridge",
+            operation: "stdin-error",
+          });
+        },
+      );
+    }
+
     const rl = createInterface({ input: this.proc.stdout });
     rl.on("line", (line) => this.handleLine(line));
 
