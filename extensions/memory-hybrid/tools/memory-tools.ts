@@ -1848,15 +1848,6 @@ export function registerMemoryTools(
             }
           }
 
-          auditAppend({
-            agentId: agentIdForAudit(),
-            action: "memory_store",
-            target: `memory #${entry.id}`,
-            outcome: "success",
-            sessionId: api.context?.sessionId ?? undefined,
-            context: { category },
-          });
-
           // Issue #159: enqueue contextual variant generation (non-blocking)
           if (variantQueue) {
             variantQueue.enqueue({ factId: entry.id, text: textToStore, category: category as string });
@@ -1973,6 +1964,15 @@ export function registerMemoryTools(
                 storedMsg += ` [scope: ${entry.scope}${entry.scopeTarget ? `/${entry.scopeTarget}` : ""}]`;
             }
           }
+
+          auditAppend({
+            agentId: agentIdForAudit(),
+            action: "memory_store",
+            target: `memory #${entry.id}`,
+            outcome: "success",
+            sessionId: api.context?.sessionId ?? undefined,
+            context: { category },
+          });
 
           return {
             content: [
