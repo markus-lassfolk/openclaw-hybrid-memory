@@ -39,7 +39,7 @@ export interface AuditEventRow {
   tokens: number | null;
 }
 
-const SENSITIVE_KEYS = /^(api[_-]?key|token|password|secret|authorization|bearer|cookie)$/i;
+const SENSITIVE_KEYS = /(api[_-]?key|token|password|secret|authorization|bearer|cookie)/i;
 
 function scrubContext(obj: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {};

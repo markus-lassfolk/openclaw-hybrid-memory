@@ -810,7 +810,6 @@ export async function createDashboardServer(ctx: DashboardContext, port: number)
   const server = createServer((req, res) => {
     const url = req.url ?? "/";
     const pathname = url.split("?")[0];
-    const searchParams = new URL(url, "http://127.0.0.1").searchParams;
 
     if (pathname === "/api/audit/summary") {
       try {
@@ -831,6 +830,7 @@ export async function createDashboardServer(ctx: DashboardContext, port: number)
         return;
       }
       try {
+        const searchParams = new URL(url, "http://127.0.0.1").searchParams;
         const hours = Math.min(720, Math.max(1, Number.parseInt(searchParams.get("hours") ?? "24", 10) || 24));
         const sinceMs = Date.now() - hours * 3600 * 1000;
         const agentId = searchParams.get("agent") ?? undefined;
