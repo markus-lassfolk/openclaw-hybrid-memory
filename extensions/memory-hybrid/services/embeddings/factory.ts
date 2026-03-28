@@ -16,16 +16,10 @@ import {
   GOOGLE_EMBED_DEFAULT_MODEL,
   KNOWN_GOOGLE_EMBED_MODELS,
   OPENAI_ONLY_EMBED_MODELS,
+  isAzureOpenAiCompatibleEndpoint,
 } from "./shared.js";
 import type { EmbeddingConfig, EmbeddingProvider } from "./types.js";
 import { createApimGatewayFetch, isAzureApiManagementGatewayUrl } from "../../utils/apim-gateway-fetch.js";
-
-/** True when the given base URL is an Azure OpenAI / Foundry endpoint (needs api-key header + api-version). */
-function isAzureEmbeddingEndpoint(baseURL: string): boolean {
-  return /\.openai\.azure\.com(?:\/|$)|\.cognitiveservices\.azure\.com(?:\/|$)|\.services\.ai\.azure\.com(?:\/|$)/i.test(
-    baseURL,
-  );
-}
 
 /** Classic Azure OpenAI REST (e.g. `/openai/deployments/...`) uses this query param. `/openai/v1` compat endpoints reject it (400). */
 const AZURE_OPENAI_API_VERSION = "2024-10-21";
@@ -56,9 +50,10 @@ function openaiEmbeddingClientOpts(
     const baseURL = endpoint.trim().replace(/\/+$/, "");
     const isAzureDeploymentPath = /\/openai\/deployments\//i.test(baseURL);
     const hasOpenAiV1Path = /\/openai\/v1(?:\/|$)/i.test(baseURL);
-    if (hasOpenAiV1Path || (isAzureEmbeddingEndpoint(baseURL) && isAzureDeploymentPath)) {
+    const isAzureEndpoint = isAzureOpenAiCompatibleEndpoint(baseURL) && !isAzureApiManagementGatewayUrl(baseURL);
+    if (hasOpenAiV1Path || (isAzureEndpoint && isAzureDeploymentPath)) {
       opts.baseURL = baseURL;
-    } else if (isAzureEmbeddingEndpoint(baseURL) && !isAzureDeploymentPath) {
+    } else if (isAzureEndpoint && !isAzureDeploymentPath) {
       // If the user already appended /openai (e.g. .../openai.azure.com/openai), don't double it.
       const endsWithOpenAi = /\/openai$/i.test(baseURL);
       opts.baseURL = endsWithOpenAi ? `${baseURL}/v1` : `${baseURL}/openai/v1`;
@@ -73,7 +68,7 @@ function openaiEmbeddingClientOpts(
     } else {
       opts.baseURL = baseURL.includes("/v1") ? baseURL : `${baseURL}/v1`;
     }
-    if (isAzureEmbeddingEndpoint(opts.baseURL)) {
+    if (isAzureOpenAiCompatibleEndpoint(opts.baseURL) && !isAzureApiManagementGatewayUrl(opts.baseURL)) {
       opts.defaultHeaders = { "api-key": apiKey };
       const openAiV1Compat = /\/openai\/v1(?:\/|$)/i.test(opts.baseURL);
       // Foundry / Azure AI: `/openai/v1/*` returns 400 "API version not supported" when `api-version` is present.
