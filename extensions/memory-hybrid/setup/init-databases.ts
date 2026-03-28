@@ -39,6 +39,7 @@ import type { WorkflowStore } from "../backends/workflow-store.js";
 import type { ToolProposalStore } from "../backends/tool-proposal-store.js";
 import type { VerificationStore } from "../services/verification-store.js";
 import { CostTracker } from "../backends/cost-tracker.js";
+import { createApimGatewayFetch, isAzureApiManagementGatewayUrl } from "../utils/apim-gateway-fetch.js";
 import type { ApitapStore } from "../backends/apitap-store.js";
 import { isNanoModel, isHeavyModel, isLightModel } from "../utils/model-tier.js";
 import { installCoreBootstrapServices, installOptionalBootstrapServices } from "../services/index.js";
@@ -680,19 +681,32 @@ function buildMultiProviderOpenAI(
     // The gateway token is intentionally excluded — it is scoped to the local gateway and must
     // never be sent to arbitrary external endpoints.
     const { value: resolvedApiKey } = resolveProviderApiKey(prefix, providerCfg, cfg, resolveApiKey);
-    if (providerCfg?.baseURL || resolvedApiKey) {
+    if (readProviderBaseUrl(providerCfg) || resolvedApiKey) {
       // apiKey may be absent when the provider only needs a custom baseURL (some self-hosted servers)
       const apiKey = resolvedApiKey ?? "no-key";
-      const baseURL = providerCfg?.baseURL;
-      // Azure OpenAI / Foundry expect the key in the api-key header for reliable auth.
-      const isAzure =
+      const baseURL = readProviderBaseUrl(providerCfg);
+      // Azure OpenAI / Foundry resource hosts: api-key header (SDK still adds Bearer; many endpoints accept both).
+      const isAzureResource =
         typeof baseURL === "string" &&
         /\.openai\.azure\.com\/|\.cognitiveservices\.azure\.com\/|\.services\.ai\.azure\.com\//i.test(baseURL);
-      const clientOpts: { apiKey: string; baseURL?: string; defaultHeaders?: Record<string, string> } = {
+      // Azure API Management (*.azure-api.net): must strip Bearer — use same fetch as embeddings factory.
+      const isApim = typeof baseURL === "string" && isAzureApiManagementGatewayUrl(baseURL);
+      const clientOpts: {
+        apiKey: string;
+        baseURL?: string;
+        defaultHeaders?: Record<string, string>;
+        fetch?: typeof globalThis.fetch;
+      } = {
         apiKey,
         ...(baseURL ? { baseURL } : {}),
       };
-      if (isAzure && apiKey !== "no-key") clientOpts.defaultHeaders = { "api-key": apiKey };
+      if (apiKey !== "no-key") {
+        if (isAzureResource) clientOpts.defaultHeaders = { "api-key": apiKey };
+        if (isApim) {
+          clientOpts.defaultHeaders = { ...(clientOpts.defaultHeaders ?? {}), "api-key": apiKey };
+          clientOpts.fetch = createApimGatewayFetch(apiKey);
+        }
+      }
       const cacheKey = `custom:${prefix}:${apiKey.slice(0, 8)}:${baseURL ?? "default"}`;
       return {
         client: getOrCreate(cacheKey, () => new OpenAI(clientOpts)),
