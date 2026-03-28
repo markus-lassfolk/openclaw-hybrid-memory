@@ -215,16 +215,24 @@ async function writeRegistry(filePath: string, registry: DispatchLeaseRegistry):
 }
 
 async function tryAcquireLock(lockPath: string): Promise<boolean> {
+  let fh: Awaited<ReturnType<typeof open>> | undefined;
   try {
-    const fh = await open(lockPath, "wx");
+    fh = await open(lockPath, "wx");
     await fh.writeFile(`${process.pid}\n${new Date().toISOString()}\n`, "utf-8");
-    await fh.close();
     return true;
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code !== "EEXIST") {
       throw err;
     }
     return false;
+  } finally {
+    if (fh) {
+      try {
+        await fh.close();
+      } catch {
+        // Ignore close errors to avoid masking earlier failures.
+      }
+    }
   }
 }
 
