@@ -64,7 +64,9 @@ function openaiEmbeddingClientOpts(
       opts.baseURL = endsWithOpenAi ? `${baseURL}/v1` : `${baseURL}/openai/v1`;
     } else if (isAzureApiManagementGatewayUrl(baseURL) && !isAzureDeploymentPath) {
       // e.g. https://xxx.azure-api.net/resource-name → .../openai/v1 (not bare /v1)
-      opts.baseURL = `${baseURL}/openai/v1`;
+      // Guard against double-prefix when user already appended /openai to the gateway URL.
+      const apimEndsWithOpenAi = /\/openai$/i.test(baseURL);
+      opts.baseURL = apimEndsWithOpenAi ? `${baseURL}/v1` : `${baseURL}/openai/v1`;
     } else if (isAzureApiManagementGatewayUrl(baseURL) && isAzureDeploymentPath) {
       // APIM gateway with deployment path: use as-is, don't append /v1
       opts.baseURL = baseURL;
