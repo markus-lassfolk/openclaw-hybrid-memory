@@ -939,10 +939,10 @@ function migrateEpisodesTable(db: DatabaseSync): void {
       verified_at INTEGER
     )
   `);
-  db.exec("CREATE INDEX IF NOT EXISTS idx_episodes_outcome ON episodes(outcome)");
   db.exec("CREATE INDEX IF NOT EXISTS idx_episodes_timestamp ON episodes(timestamp DESC)");
   db.exec("CREATE INDEX IF NOT EXISTS idx_episodes_procedure ON episodes(procedure_id)");
   db.exec("CREATE INDEX IF NOT EXISTS idx_episodes_session ON episodes(session_id)");
+  // idx_episodes_outcome omitted: idx_episodes_outcome_timestamp (outcome, timestamp DESC) is a leading-column superset and covers the same single-column outcome filter lookups.
   db.exec("CREATE INDEX IF NOT EXISTS idx_episodes_outcome_timestamp ON episodes(outcome, timestamp DESC)");
 
   // Check if episodes_fts exists with old 4-column schema (event, context, outcome, tags)

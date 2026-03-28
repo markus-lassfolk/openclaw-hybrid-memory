@@ -43,7 +43,7 @@ import { createApimGatewayFetch, isAzureApiManagementGatewayUrl } from "../utils
 import type { ApitapStore } from "../backends/apitap-store.js";
 import { isNanoModel, isHeavyModel, isLightModel } from "../utils/model-tier.js";
 import { installCoreBootstrapServices, installOptionalBootstrapServices } from "../services/index.js";
-import { formatOpenAiEmbeddingDisplayLabel } from "../services/embeddings/shared.js";
+import { formatOpenAiEmbeddingDisplayLabel, isAzureOpenAiResourceEndpoint } from "../services/embeddings/shared.js";
 
 /**
  * Normalize baseURL vs baseUrl (OpenClaw config uses camelCase `baseUrl`; SDK uses `baseURL`).
@@ -686,11 +686,7 @@ function buildMultiProviderOpenAI(
       const apiKey = resolvedApiKey ?? "no-key";
       const baseURL = readProviderBaseUrl(providerCfg);
       // Azure OpenAI / Foundry resource hosts: api-key header (SDK still adds Bearer; many endpoints accept both).
-      const isAzureResource =
-        typeof baseURL === "string" &&
-        /\.openai\.azure\.com(?:\/|$)|\.cognitiveservices\.azure\.com(?:\/|$)|\.services\.ai\.azure\.com(?:\/|$)/i.test(
-          baseURL,
-        );
+      const isAzureResource = typeof baseURL === "string" && isAzureOpenAiResourceEndpoint(baseURL);
       // Azure API Management (*.azure-api.net): must strip Bearer — use same fetch as embeddings factory.
       const isApim = typeof baseURL === "string" && isAzureApiManagementGatewayUrl(baseURL);
       const clientOpts: {
