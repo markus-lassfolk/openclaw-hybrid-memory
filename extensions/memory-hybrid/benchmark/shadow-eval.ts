@@ -226,7 +226,6 @@ Respond with a JSON object and nothing else:
     }
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    // biome-ignore lint/suspicious/noExplicitAny: third-party SDK typing
     const client: any = new OpenAI({ apiKey });
     const isGoogle = judgeModel.startsWith("google/") || judgeModel.startsWith("gemini/");
     const isAnthropic = judgeModel.startsWith("anthropic/") || judgeModel.startsWith("claude/");
@@ -246,7 +245,6 @@ Respond with a JSON object and nothing else:
 
     llmCalls = 1;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    // biome-ignore lint/suspicious/noExplicitAny: LLM response typing requires any
     const resAny = res as any;
     const responseText: string = resAny.choices?.[0]?.message?.content ?? "";
     tokensUsed = resAny.usage?.total_tokens ?? 0;

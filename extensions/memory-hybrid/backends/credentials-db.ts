@@ -150,7 +150,6 @@ export class CredentialsDB extends BaseSqliteStore {
     // Check if vault is plaintext first (before assuming legacy)
     if (versionRow && versionRow.value != null && toBuffer(versionRow.value)[0] === CRED_KDF_PLAINTEXT) {
       // C2 FIX: DB is plaintext, override this.encrypted regardless of key length
-      // biome-ignore lint/suspicious/noExplicitAny: encrypted is readonly and must be reassigned after initial assignment
       (this as any).encrypted = false;
       this.kdfVersion = CRED_KDF_PLAINTEXT;
       this.salt = Buffer.alloc(0);

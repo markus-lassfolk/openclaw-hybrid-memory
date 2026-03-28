@@ -41,7 +41,6 @@ function rawDb(db: InstanceType<typeof FactsDB>) {
   return db.getRawDb();
 }
 
-
 /** Create a mock OpenAI client that returns a fixed JSON response. */
 function makeMockOpenAI(responseJson: unknown): unknown {
   return {

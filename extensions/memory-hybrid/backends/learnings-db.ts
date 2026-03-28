@@ -106,7 +106,6 @@ export class LearningsDB extends BaseSqliteStore {
         .run(id, slug, input.type, input.area, input.content, JSON.stringify(input.tags ?? []), now, now);
 
       this.liveDb.exec("COMMIT");
-      // biome-ignore lint/style/noNonNullAssertion: Known to exist
       return this.get(id)!;
     } catch (err) {
       this.liveDb.exec("ROLLBACK");
@@ -122,7 +121,6 @@ export class LearningsDB extends BaseSqliteStore {
     const now = new Date().toISOString();
     this.liveDb.prepare("UPDATE learnings SET recurrence = recurrence + 1, updated_at = ? WHERE id = ?").run(now, id);
 
-    // biome-ignore lint/style/noNonNullAssertion: Known to exist
     return this.get(id)!;
   }
 
@@ -153,7 +151,6 @@ export class LearningsDB extends BaseSqliteStore {
     params.push(id);
     this.liveDb.prepare(`UPDATE learnings SET ${sets.join(", ")} WHERE id = ?`).run(...params);
 
-    // biome-ignore lint/style/noNonNullAssertion: Known to exist
     return this.get(id)!;
   }
 

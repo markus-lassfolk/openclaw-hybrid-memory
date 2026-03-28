@@ -897,9 +897,10 @@ describe("createEmbeddingProvider factory", () => {
       dimensions: 4096, // exceeds text-embedding-3-large max of 3072
       batchSize: 50,
     };
-    // Should not throw; should degrade gracefully to primary only
+    // Should not throw; with apiKey present a FallbackEmbeddingProvider is returned (OpenAI fallback is attempted
+    // regardless of dimensions mismatch — it fails silently at runtime and primary Ollama is used).
     const provider = createEmbeddingProvider(cfg);
-    expect(provider).toBeInstanceOf(OllamaEmbeddingProvider);
+    expect(provider).toBeInstanceOf(FallbackEmbeddingProvider);
     expect(provider.dimensions).toBe(4096);
   });
 

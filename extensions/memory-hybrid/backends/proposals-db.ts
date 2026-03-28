@@ -146,7 +146,6 @@ export class ProposalsDB extends BaseSqliteStore {
         entry.targetHash ?? null,
       );
 
-    // biome-ignore lint/style/noNonNullAssertion: Known to exist
     return this.get(id)!;
   }
 

@@ -151,7 +151,6 @@ export class ApitapStore extends BaseSqliteStore {
         now,
       );
 
-    // biome-ignore lint/style/noNonNullAssertion: Known to exist
     return this.getById(id)!;
   }
 
