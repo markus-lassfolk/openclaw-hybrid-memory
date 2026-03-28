@@ -1034,6 +1034,21 @@ function migrateEpisodesTable(db: DatabaseSync): void {
   db.exec("CREATE INDEX IF NOT EXISTS idx_episodes_session ON episodes(session_id)");
   db.exec("CREATE INDEX IF NOT EXISTS idx_episodes_outcome_timestamp ON episodes(outcome, timestamp DESC)");
 
+  // Check if episodes_fts exists with old 4-column schema (event, context, outcome, tags)
+  // If so, drop and recreate with new 2-column schema to avoid trigger incompatibility
+  const ftsInfo = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='episodes_fts'").get() as
+    | { sql?: string }
+    | undefined;
+  const hasOldFtsSchema = ftsInfo?.sql?.includes("content='episodes'") || ftsInfo?.sql?.includes('content="episodes"');
+
+  if (hasOldFtsSchema) {
+    // Drop old triggers and FTS table
+    db.exec("DROP TRIGGER IF EXISTS episodes_fts_ai");
+    db.exec("DROP TRIGGER IF EXISTS episodes_fts_ad");
+    db.exec("DROP TRIGGER IF EXISTS episodes_fts_au");
+    db.exec("DROP TABLE IF EXISTS episodes_fts");
+  }
+
   db.exec(`
     CREATE VIRTUAL TABLE IF NOT EXISTS episodes_fts USING fts5(
       event,
@@ -1041,6 +1056,11 @@ function migrateEpisodesTable(db: DatabaseSync): void {
       tokenize='porter unicode61'
     )
   `);
+
+  // Rebuild FTS index if we dropped the old table
+  if (hasOldFtsSchema) {
+    db.exec("INSERT INTO episodes_fts(rowid, event, context) SELECT rowid, event, context FROM episodes");
+  }
   db.exec(`
     CREATE TRIGGER IF NOT EXISTS episodes_fts_ai AFTER INSERT ON episodes BEGIN
       INSERT INTO episodes_fts(rowid, event, context) VALUES (new.rowid, new.event, new.context);
