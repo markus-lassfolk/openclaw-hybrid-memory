@@ -25,6 +25,7 @@ import {
 import { resolveSecretRef } from "../config/parsers/core.js";
 import { chatComplete } from "../services/chat.js";
 import {
+  AZURE_OPENAI_API_VERSION,
   type EmbeddingConfig,
   GOOGLE_EMBED_DEFAULT_DIMENSIONS,
   GOOGLE_EMBED_DEFAULT_MODEL,
@@ -545,7 +546,7 @@ export async function runVerifyForCli(
       const openAiV1Compat = /\/openai\/v1(?:\/|$)/i.test(baseURL);
       // APIM deployment-style paths need api-version (passed through to backend Azure OpenAI)
       if (!openAiV1Compat) {
-        opts.defaultQuery = { "api-version": "2024-10-21" };
+        opts.defaultQuery = { "api-version": AZURE_OPENAI_API_VERSION };
       }
     }
     return new OpenAI(opts);
