@@ -550,11 +550,6 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
     embeddingEndpointOverride ??
     (typeof embedding?.endpoint === "string" && embedding.endpoint.trim().length > 0
       ? embedding.endpoint.trim()
-      : undefined) ??
-    (embeddingProvider === "openai"
-      ? readAzureFoundryBaseUrl(
-          (cfg.llm as { providers?: Record<string, { baseURL?: string; baseUrl?: string }> } | undefined)?.providers,
-        )
       : undefined);
   const resolvedDeployment =
     typeof embedding?.deployment === "string" && embedding.deployment.trim().length > 0
