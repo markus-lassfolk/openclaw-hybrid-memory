@@ -33,7 +33,9 @@ export function isAzureApiManagementGatewayUrl(baseURL: string): boolean {
 export function createApimGatewayFetch(apiKey: string): typeof globalThis.fetch {
   return async (...[input, init]: Parameters<typeof globalThis.fetch>): Promise<Response> => {
     const headers = new Headers(init?.headers);
-    // Inject APIM auth; do not use Authorization: Bearer
+    // Strip the SDK's default Authorization: Bearer — APIM gateways reject duplicate auth.
+    headers.delete("Authorization");
+    // Inject APIM auth headers.
     headers.set("api-key", apiKey);
     if (!headers.has("Ocp-Apim-Subscription-Key")) {
       headers.set("Ocp-Apim-Subscription-Key", apiKey);
