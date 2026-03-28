@@ -45,7 +45,9 @@ export const OPENAI_ONLY_EMBED_MODELS = new Set([
  */
 export function isAzureOpenAiCompatibleEndpoint(endpoint: string | undefined): boolean {
   if (typeof endpoint !== "string" || !endpoint.trim()) return false;
-  return /\.azure\.com|\.openai\.azure\.com|\.azure-api\.net|\.cognitiveservices\.azure\.com|\.services\.ai\.azure\.com/i.test(
+  // Use specific Azure AI/OpenAI domains only — `\.azure\.com` alone is too broad and would
+  // match unrelated Azure services (portal.azure.com, devops.azure.com, etc.).
+  return /\.openai\.azure\.com(?:\/|$)|\.cognitiveservices\.azure\.com(?:\/|$)|\.services\.ai\.azure\.com(?:\/|$)|\.azure-api\.net(?:\/|$)/i.test(
     endpoint.trim(),
   );
 }

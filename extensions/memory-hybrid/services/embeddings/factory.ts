@@ -17,12 +17,7 @@ import {
   KNOWN_GOOGLE_EMBED_MODELS,
   OPENAI_ONLY_EMBED_MODELS,
 } from "./shared.js";
-import { Embeddings } from "./openai-provider.js";
-import { OllamaEmbeddingProvider } from "./ollama-provider.js";
-import { OnnxEmbeddingProvider, isOnnxRuntimeMissingError } from "./onnx-provider.js";
-import { FallbackEmbeddingProvider } from "./fallback-provider.js";
-import { ChainEmbeddingProvider } from "./chain-provider.js";
-import { pluginLogger } from "../../utils/logger.js";
+import type { EmbeddingConfig, EmbeddingProvider } from "./types.js";
 import { createApimGatewayFetch, isAzureApiManagementGatewayUrl } from "../../utils/apim-gateway-fetch.js";
 
 /** True when the given base URL is an Azure OpenAI / Foundry endpoint (needs api-key header + api-version). */
@@ -64,7 +59,9 @@ function openaiEmbeddingClientOpts(
     if (hasOpenAiV1Path || (isAzureEmbeddingEndpoint(baseURL) && isAzureDeploymentPath)) {
       opts.baseURL = baseURL;
     } else if (isAzureEmbeddingEndpoint(baseURL) && !isAzureDeploymentPath) {
-      opts.baseURL = `${baseURL}/openai/v1`;
+      // If the user already appended /openai (e.g. .../openai.azure.com/openai), don't double it.
+      const endsWithOpenAi = /\/openai$/i.test(baseURL);
+      opts.baseURL = endsWithOpenAi ? `${baseURL}/v1` : `${baseURL}/openai/v1`;
     } else if (isAzureApiManagementGatewayUrl(baseURL) && !isAzureDeploymentPath) {
       // e.g. https://xxx.azure-api.net/resource-name → .../openai/v1 (not bare /v1)
       opts.baseURL = `${baseURL}/openai/v1`;
@@ -97,7 +94,7 @@ function openaiEmbeddingClientOpts(
 }
 
 /** API model id(s) for OpenAI-compatible embeddings: optional Azure deployment name overrides logical `model`. */
-function openAiEmbeddingApiModels(cfg: EmbeddingConfig, forFallback: boolean = false): string[] {
+function openAiEmbeddingApiModels(cfg: EmbeddingConfig, forFallback = false): string[] {
   const { model, models, deployment } = cfg;
   if (deployment && deployment.trim().length > 0) {
     return [deployment.trim()];

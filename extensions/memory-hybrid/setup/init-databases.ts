@@ -44,7 +44,11 @@ import { isNanoModel, isHeavyModel, isLightModel } from "../utils/model-tier.js"
 import { installCoreBootstrapServices, installOptionalBootstrapServices } from "../services/index.js";
 import { formatOpenAiEmbeddingDisplayLabel } from "../services/embeddings/shared.js";
 
-/** OpenClaw uses camelCase `baseUrl`; normalize for gateway + plugin merge. */
+/**
+ * Normalize baseURL vs baseUrl (OpenClaw config uses camelCase `baseUrl`; SDK uses `baseURL`).
+ * Intentionally duplicated from config/parsers/index.ts to avoid a circular module dependency —
+ * init-databases bootstraps before the full config parser is available.
+ */
 function readProviderBaseUrl(p: { baseURL?: string; baseUrl?: string } | undefined): string | undefined {
   if (!p) return undefined;
   const u = typeof p.baseURL === "string" ? p.baseURL : typeof p.baseUrl === "string" ? p.baseUrl : undefined;
