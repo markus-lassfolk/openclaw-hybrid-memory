@@ -1,11 +1,11 @@
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 /**
  * Tests for MiniMax provider routing in the multi-provider OpenAI proxy.
  * Verifies that minimax/* models are routed to the correct base URL (issue #312).
  */
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { mkdtempSync, rmSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 
 // Mock OpenAI BEFORE any module imports (vi.mock is hoisted automatically).
 // Must use a regular named function (not arrow) so `new OpenAI(...)` works as a constructor.
@@ -33,14 +33,14 @@ vi.mock("../services/error-reporter.js", async (importOriginal) => {
 });
 
 import OpenAI from "openai";
-import { hybridConfigSchema } from "../config.js";
 import {
+  initializeDatabases,
+  closeOldDatabases,
   MINIMAX_BASE_URL,
   OPENROUTER_BASE_URL,
-  closeOldDatabases,
-  initializeDatabases,
   resolveProviderApiKey,
 } from "../setup/init-databases.js";
+import { hybridConfigSchema } from "../config.js";
 
 /** Restore an env var to its original value, or delete it if it was originally unset. */
 function restoreEnv(key: string, orig: string | undefined): void {
@@ -1251,6 +1251,70 @@ describe("OpenRouter gateway merge — issue #392", () => {
     // The proxy strips only "openrouter/" prefix; bareModel must be "qwen/qwen3-14b" (not "qwen3-14b")
     const callWithBareModel = createCalls.find(([body]) => (body as { model?: string })?.model === "qwen/qwen3-14b");
     expect(callWithBareModel).toBeDefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Azure APIM provider routing
+// ---------------------------------------------------------------------------
+
+describe("Azure APIM provider routing", () => {
+  let tmpDir: string;
+  let MockOpenAI: ReturnType<typeof vi.fn>;
+  let ctx: ReturnType<typeof initializeDatabases> | undefined;
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), "openclaw-test-"));
+    // Retrieve the mock constructor to check arguments.
+    MockOpenAI = vi.mocked(OpenAI);
+    MockOpenAI.mockClear();
+  });
+
+  afterEach(() => {
+    if (ctx) closeOldDatabases(ctx);
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("sets up APIM gateway fetch and api-key header for *.azure-api.net base URLs", async () => {
+    const APIM_BASE_URL = "https://my-gateway.azure-api.net/openai";
+    const cfg = getTestConfig(tmpDir, {
+      llm: {
+        providers: {
+          "azure-foundry": {
+            apiKey: "sk-apim-gateway-key",
+            baseURL: APIM_BASE_URL,
+          },
+        },
+        default: ["azure-foundry/gpt-4o"],
+      },
+    });
+
+    const api = makeMockApi({
+      resolvePath: (p: string) => (p.startsWith("/") ? p : join(tmpDir, p)),
+    });
+
+    ctx = initializeDatabases(cfg, api as never);
+
+    await ctx.openai.chat.completions.create({
+      model: "azure-foundry/gpt-4o",
+      messages: [{ role: "user", content: "hello" }],
+    });
+
+    const apimCall = MockOpenAI.mock.calls.find(
+      ([args]) => (args as Record<string, unknown>)?.baseURL === APIM_BASE_URL,
+    );
+    expect(apimCall).toBeDefined();
+
+    const args = apimCall?.[0] as {
+      apiKey: string;
+      baseURL?: string;
+      defaultHeaders?: Record<string, string>;
+      fetch?: typeof globalThis.fetch;
+    };
+    expect(args.baseURL).toBe(APIM_BASE_URL);
+    expect(args.apiKey).toBe("sk-apim-gateway-key");
+    expect(args.defaultHeaders).toEqual({ "api-key": "sk-apim-gateway-key" });
+    expect(args.fetch).toBeInstanceOf(Function);
   });
 });
 

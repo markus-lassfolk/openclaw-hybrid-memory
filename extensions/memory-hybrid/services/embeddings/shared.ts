@@ -40,6 +40,17 @@ export const OPENAI_ONLY_EMBED_MODELS = new Set([
 ]);
 
 /**
+ * True when the base URL targets an Azure OpenAI resource (excluding APIM gateways).
+ * Azure OpenAI resources use api-key header authentication.
+ */
+export function isAzureOpenAiResourceEndpoint(endpoint: string | undefined): boolean {
+  if (typeof endpoint !== "string" || !endpoint.trim()) return false;
+  return /\.openai\.azure\.com(?:\/|$)|\.cognitiveservices\.azure\.com(?:\/|$)|\.services\.ai\.azure\.com(?:\/|$)/i.test(
+    endpoint.trim(),
+  );
+}
+
+/**
  * True when the embedding base URL targets Azure (resource, APIM gateway, Cognitive Services, Foundry),
  * not public api.openai.com.
  */
