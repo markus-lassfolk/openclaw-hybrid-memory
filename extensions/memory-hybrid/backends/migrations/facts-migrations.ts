@@ -1,3 +1,7 @@
+
+import type { DatabaseSync } from "node:sqlite";
+import { createTransaction } from "../../utils/sqlite-transaction.js";
+import { normalizedHash } from "../../utils/tags.js";
 /**
  * Procedure feedback loop — version tracking and failure logging (#782).
  * procedure_versions: per-version success/failure counts and avoidance notes.

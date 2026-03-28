@@ -45,7 +45,7 @@ import { hybridConfigSchema } from "../config.js";
 /** Restore an env var to its original value, or delete it if it was originally unset. */
 function restoreEnv(key: string, orig: string | undefined): void {
   if (orig !== undefined) process.env[key] = orig;
-  // biome-ignore noDelete: must use delete to restore env to unset state
+  // biome-ignore lint/performance/noDelete: must use delete to restore env to unset state
   else delete process.env[key];
 }
 
