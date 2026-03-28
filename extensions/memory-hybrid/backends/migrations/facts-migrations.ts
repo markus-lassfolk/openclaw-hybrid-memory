@@ -979,10 +979,10 @@ function migrateEpisodesTable(db: DatabaseSync): void {
       INSERT INTO episodes_fts(rowid, event, context) VALUES (new.rowid, new.event, new.context);
     END;
     CREATE TRIGGER IF NOT EXISTS episodes_fts_ad AFTER DELETE ON episodes BEGIN
-      INSERT INTO episodes_fts(episodes_fts, rowid, event, context) VALUES ('delete', old.rowid, old.event, old.context);
+      DELETE FROM episodes_fts WHERE rowid = old.rowid;
     END;
     CREATE TRIGGER IF NOT EXISTS episodes_fts_au AFTER UPDATE ON episodes BEGIN
-      INSERT INTO episodes_fts(episodes_fts, rowid, event, context) VALUES ('delete', old.rowid, old.event, old.context);
+      DELETE FROM episodes_fts WHERE rowid = old.rowid;
       INSERT INTO episodes_fts(rowid, event, context) VALUES (new.rowid, new.event, new.context);
     END
   `);
