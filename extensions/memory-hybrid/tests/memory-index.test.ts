@@ -1,6 +1,6 @@
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
-import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { _testing } from "../index.js";
 import { buildMemoryIndexSnapshot, renderMemoryIndexMarkdown, writeMemoryIndex } from "../services/memory-index.js";
@@ -25,7 +25,7 @@ describe("memory index", () => {
     factsDb.close();
     rmSync(tmpDir, { recursive: true, force: true });
     if (originalWorkspace !== undefined) process.env.OPENCLAW_WORKSPACE = originalWorkspace;
-    else delete process.env.OPENCLAW_WORKSPACE;
+    else process.env.OPENCLAW_WORKSPACE = undefined;
   });
 
   it("builds a compact awareness snapshot from clusters, decisions, entities, and patterns", () => {

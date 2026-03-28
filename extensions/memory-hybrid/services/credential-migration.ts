@@ -4,15 +4,15 @@
  */
 
 import { writeFileSync } from "node:fs";
+import type { CredentialsDB } from "../backends/credentials-db.js";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
-import type { CredentialsDB } from "../backends/credentials-db.js";
-import type { EmbeddingProvider } from "./embeddings.js";
 import type { MemoryCategory } from "../types/memory.js";
-import { tryParseCredentialForVault, VAULT_POINTER_PREFIX } from "./auto-capture.js";
-import { shouldSuppressEmbeddingError } from "./embeddings.js";
-import { extractTags } from "../utils/tags.js";
 import { BATCH_STORE_IMPORTANCE } from "../utils/constants.js";
+import { extractTags } from "../utils/tags.js";
+import { VAULT_POINTER_PREFIX, tryParseCredentialForVault } from "./auto-capture.js";
+import type { EmbeddingProvider } from "./embeddings.js";
+import { shouldSuppressEmbeddingError } from "./embeddings.js";
 import { capturePluginError } from "./error-reporter.js";
 
 export const CREDENTIAL_REDACTION_MIGRATION_FLAG = ".credential-redaction-migrated";

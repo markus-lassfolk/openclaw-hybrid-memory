@@ -3,20 +3,20 @@
  * No LLM calls — pure data collection.
  */
 
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { EventBus } from "../backends/event-bus.js";
-import {
-  sweepSessionHistory,
-  sweepMemoryPatterns,
-  sweepGitHub,
-  sweepSystemHealth,
-  sweepAll,
-} from "../services/sensor-sweep.js";
-import { parseSensorSweepConfig } from "../config/parsers/sensors.js";
 import type { FactsDB } from "../backends/facts-db.js";
+import { parseSensorSweepConfig } from "../config/parsers/sensors.js";
+import {
+  sweepAll,
+  sweepGitHub,
+  sweepMemoryPatterns,
+  sweepSessionHistory,
+  sweepSystemHealth,
+} from "../services/sensor-sweep.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -184,7 +184,7 @@ describe("sweepSessionHistory", () => {
         expect(Array.isArray(payload.sessions)).toBe(true);
       }
     } finally {
-      delete process.env.OPENCLAW_SESSION_DIR;
+      process.env.OPENCLAW_SESSION_DIR = undefined;
     }
   });
 
@@ -208,7 +208,7 @@ describe("sweepSessionHistory", () => {
       const events = bus.queryEvents({ type: "sensor.session-history" });
       expect(events.length).toBeLessThanOrEqual(1);
     } finally {
-      delete process.env.OPENCLAW_SESSION_DIR;
+      process.env.OPENCLAW_SESSION_DIR = undefined;
     }
   });
 });
@@ -429,7 +429,7 @@ describe("sweepAll", () => {
       expect(sensorNames).toContain("session-history");
       expect(sensorNames).toContain("memory-patterns");
     } finally {
-      delete process.env.OPENCLAW_SESSION_DIR;
+      process.env.OPENCLAW_SESSION_DIR = undefined;
     }
   });
 

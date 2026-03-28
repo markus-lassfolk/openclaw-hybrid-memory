@@ -12,17 +12,17 @@
  * Self-contained — does not require an active agent session.
  */
 
-import type { FactsDB } from "../backends/facts-db.js";
-import type { VectorDB } from "../backends/vector-db.js";
-import type { EmbeddingProvider } from "./embeddings.js";
 import type OpenAI from "openai";
 import type { EventLog, EventLogEntry } from "../backends/event-log.js";
+import type { FactsDB } from "../backends/facts-db.js";
+import type { VectorDB } from "../backends/vector-db.js";
 import type { MemoryCategory } from "../types/memory.js";
-import type { ProvenanceService } from "./provenance.js";
-import { runReflection, runReflectionRules, type ReflectionConfig } from "./reflection.js";
-import { capturePluginError } from "./error-reporter.js";
 import { CONSOLIDATED_FACT_DECAY_CLASS } from "../utils/consolidation-controls.js";
+import type { EmbeddingProvider } from "./embeddings.js";
+import { capturePluginError } from "./error-reporter.js";
 import { writeMemoryIndex } from "./memory-index.js";
+import type { ProvenanceService } from "./provenance.js";
+import { type ReflectionConfig, runReflection, runReflectionRules } from "./reflection.js";
 
 /** Prune modes for the dream cycle. */
 export type DreamCyclePruneMode = "expired" | "decay" | "both";

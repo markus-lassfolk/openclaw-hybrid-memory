@@ -9,21 +9,21 @@
  * Engineering Goal 4: Testability (simple stubs, no live API keys)
  */
 
+import type OpenAI from "openai";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
-import type { EmbeddingProvider } from "./embeddings.js";
-import type OpenAI from "openai";
-import type { SearchResult, ScopeFilter } from "../types/memory.js";
 import type { QueryExpansionConfig } from "../config.js";
 import type { getCronModelConfig } from "../config.js";
 import type { PendingLLMWarnings } from "../services/chat.js";
-import { shouldSuppressEmbeddingError } from "./embeddings.js";
-import { mergeResults, filterByScope } from "../services/merge-results.js";
-import { computeDynamicSalience } from "../utils/salience.js";
-import { applyConsolidationRetrievalControls } from "../utils/consolidation-controls.js";
 import { capturePluginError } from "../services/error-reporter.js";
-import { DEFAULT_INTERACTIVE_RECALL_POLICY, type InteractiveRecallPolicy } from "./retrieval-mode-policy.js";
+import { filterByScope, mergeResults } from "../services/merge-results.js";
+import type { ScopeFilter, SearchResult } from "../types/memory.js";
+import { applyConsolidationRetrievalControls } from "../utils/consolidation-controls.js";
+import { computeDynamicSalience } from "../utils/salience.js";
+import type { EmbeddingProvider } from "./embeddings.js";
+import { shouldSuppressEmbeddingError } from "./embeddings.js";
 import { expandQueryWithHyde } from "./hyde-helper.js";
+import { DEFAULT_INTERACTIVE_RECALL_POLICY, type InteractiveRecallPolicy } from "./retrieval-mode-policy.js";
 
 /** Logger subset required by the recall pipeline (avoids importing ClawdbotPluginApi). */
 export interface RecallLogger {

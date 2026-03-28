@@ -4,14 +4,14 @@
  */
 
 import type { OpenAI } from "openai";
-import { capturePluginError } from "./error-reporter.js";
-import { withCostFeature } from "./cost-context.js";
 import { pluginLogger } from "../utils/logger.js";
+import { withCostFeature } from "./cost-context.js";
+import { capturePluginError } from "./error-reporter.js";
 import {
   getDistillBatchTokenLimit as getDistillBatchTokenLimitFromCatalog,
   getDistillMaxOutputTokens as getDistillMaxOutputTokensFromCatalog,
-  requiresMaxCompletionTokens,
   isReasoningModel,
+  requiresMaxCompletionTokens,
 } from "./model-capabilities.js";
 
 /**

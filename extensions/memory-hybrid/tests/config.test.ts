@@ -1,25 +1,25 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { pluginLogger } from "../utils/logger.js";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
-  DECAY_CLASSES,
-  TTL_DEFAULTS,
-  DEFAULT_MEMORY_CATEGORIES,
-  getMemoryCategories,
-  setMemoryCategories,
-  isValidCategory,
-  vectorDimsForModel,
-  hybridConfigSchema,
   CREDENTIAL_TYPES,
-  getDefaultCronModel,
-  getCronModelConfig,
-  getLLMModelPreference,
-  getLLMModelPreferenceUnfiltered,
-  getProvidersWithKeys,
-  resolveReflectionModelAndFallbacks,
+  DECAY_CLASSES,
+  DEFAULT_MEMORY_CATEGORIES,
   type DecayClass,
   type HybridMemoryConfig,
+  TTL_DEFAULTS,
+  getCronModelConfig,
+  getDefaultCronModel,
+  getLLMModelPreference,
+  getLLMModelPreferenceUnfiltered,
+  getMemoryCategories,
+  getProvidersWithKeys,
+  hybridConfigSchema,
+  isValidCategory,
+  resolveReflectionModelAndFallbacks,
+  setMemoryCategories,
+  vectorDimsForModel,
 } from "../config.js";
 import type { ConfigMode } from "../config.js";
+import { pluginLogger } from "../utils/logger.js";
 
 // ---------------------------------------------------------------------------
 // Decay classes & TTL defaults
@@ -260,7 +260,7 @@ describe("hybridConfigSchema.parse", () => {
   });
 
   it("throws when embedding.apiKey env: SecretRef references an unset env var", () => {
-    delete process.env.TEST_EMBED_KEY_UNSET_333;
+    process.env.TEST_EMBED_KEY_UNSET_333 = undefined;
     expect(() =>
       hybridConfigSchema.parse({
         embedding: { provider: "openai", apiKey: "env:TEST_EMBED_KEY_UNSET_333", model: "text-embedding-3-small" },
@@ -324,7 +324,7 @@ describe("hybridConfigSchema.parse", () => {
 
   // Finding 3: unresolvable SecretRef in fallback path warns instead of silently dropping
   it("warns when fallback embedding.apiKey SecretRef cannot be resolved", () => {
-    delete process.env.TEST_EMBED_FALLBACK_UNSET_333;
+    process.env.TEST_EMBED_FALLBACK_UNSET_333 = undefined;
     const warnSpy = vi.spyOn(pluginLogger, "warn").mockImplementation(() => {});
     try {
       const result = hybridConfigSchema.parse({
@@ -920,7 +920,7 @@ describe("hybridConfigSchema.parse", () => {
   });
 
   it("throws when distill.apiKey env: SecretRef for google embedding references an unset env var (Issue #344)", () => {
-    delete process.env.TEST_GEMINI_KEY_UNSET_344;
+    process.env.TEST_GEMINI_KEY_UNSET_344 = undefined;
     expect(() =>
       hybridConfigSchema.parse({
         embedding: { provider: "google", model: "text-embedding-004", dimensions: 768 },
@@ -965,7 +965,7 @@ describe("hybridConfigSchema.parse", () => {
   });
 
   it("throws when distill.apiKey ${VAR} template references an unset env var (Issue #373)", () => {
-    delete process.env.TEST_GEMINI_TMPL_UNSET_373;
+    process.env.TEST_GEMINI_TMPL_UNSET_373 = undefined;
     expect(() =>
       hybridConfigSchema.parse({
         embedding: { provider: "google", model: "text-embedding-004", dimensions: 768 },
@@ -1660,7 +1660,7 @@ describe("hybridConfigSchema.parse", () => {
         expect(result.credentials.autoDetect).toBe(false);
         expect(result.credentials.autoCapture?.toolCalls).toBe(true);
       } finally {
-        delete process.env.OPENCLAW_CRED_KEY;
+        process.env.OPENCLAW_CRED_KEY = undefined;
       }
     });
 

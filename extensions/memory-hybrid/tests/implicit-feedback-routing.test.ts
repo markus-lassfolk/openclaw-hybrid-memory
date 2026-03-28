@@ -8,14 +8,14 @@
  *   - CLI command 'extract-implicit' is registered in ManageContext
  */
 
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { _testing } from "../index.js";
-import { runExtractImplicitFeedbackForCli, type HandlerContext } from "../cli/handlers.js";
-import type { HybridMemoryConfig } from "../config.js";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { type HandlerContext, runExtractImplicitFeedbackForCli } from "../cli/handlers.js";
 import type { ManageContext } from "../cli/manage.js";
+import type { HybridMemoryConfig } from "../config.js";
+import { _testing } from "../index.js";
 
 const { FactsDB } = _testing;
 
@@ -55,6 +55,7 @@ function makeCtx(
 
   return {
     factsDb: db,
+    edictStore: null as any,
     cfg,
     logger: {},
   } as unknown as HandlerContext;

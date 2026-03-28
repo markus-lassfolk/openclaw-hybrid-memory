@@ -5,10 +5,10 @@
 
 import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
+import { isStructuredForConsolidation } from "./consolidation.js";
 import type { EmbeddingProvider } from "./embeddings.js";
 import { shouldSuppressEmbeddingError } from "./embeddings.js";
 import { capturePluginError } from "./error-reporter.js";
-import { isStructuredForConsolidation } from "./consolidation.js";
 
 export interface FindDuplicatesOptions {
   threshold: number;

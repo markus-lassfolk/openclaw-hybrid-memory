@@ -6,19 +6,19 @@
  * journal: what happened, when, in which session, and involving which entities.
  */
 
+import { randomUUID } from "node:crypto";
+import { createReadStream, createWriteStream, existsSync, mkdirSync, renameSync, unlinkSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { createInterface } from "node:readline";
 import { DatabaseSync } from "node:sqlite";
 import type { SQLInputValue } from "node:sqlite";
-import { createTransaction } from "../utils/sqlite-transaction.js";
-import { randomUUID } from "node:crypto";
-import { mkdirSync, createWriteStream, createReadStream, existsSync, renameSync, unlinkSync } from "node:fs";
-import { createInterface } from "node:readline";
-import { dirname, join } from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
-import { createGzip, createGunzip } from "node:zlib";
-import { BaseSqliteStore } from "./base-sqlite-store.js";
+import { createGunzip, createGzip } from "node:zlib";
 import { capturePluginError } from "../services/error-reporter.js";
 import { expandTilde } from "../utils/path.js";
+import { createTransaction } from "../utils/sqlite-transaction.js";
+import { BaseSqliteStore } from "./base-sqlite-store.js";
 
 export type EventType =
   | "fact_learned"

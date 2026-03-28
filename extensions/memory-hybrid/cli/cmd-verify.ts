@@ -8,11 +8,11 @@
  * Extracted from cli/handlers.ts to keep that file manageable.
  */
 
-import OpenAI from "openai";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { homedir } from "node:os";
+import OpenAI from "openai";
 
 import type { CredentialType } from "../config.js";
 import {
@@ -24,18 +24,18 @@ import {
 } from "../config.js";
 import { resolveSecretRef } from "../config/parsers/core.js";
 import { chatComplete } from "../services/chat.js";
-import { capturePluginError } from "../services/error-reporter.js";
-import { hasOAuthProfiles } from "../utils/auth.js";
 import {
-  createEmbeddingProvider,
   type EmbeddingConfig,
   GOOGLE_EMBED_DEFAULT_DIMENSIONS,
   GOOGLE_EMBED_DEFAULT_MODEL,
   OPENAI_ONLY_EMBED_MODELS,
+  createEmbeddingProvider,
 } from "../services/embeddings.js";
-import { relativeTime } from "./shared.js";
+import { capturePluginError } from "../services/error-reporter.js";
+import { hasOAuthProfiles } from "../utils/auth.js";
 import { PLUGIN_ID, getRestartPendingPath } from "../utils/constants.js";
 import { ensureMaintenanceCronJobs, getPluginConfigFromFile } from "./cmd-install.js";
+import { relativeTime } from "./shared.js";
 
 import type { HandlerContext } from "./handlers.js";
 import type { VerifyCliSink } from "./types.js";

@@ -9,12 +9,12 @@
  * - English-only fallback when no language file present
  */
 
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { classifyDecay } from "../utils/decay.js";
-import { setKeywordsPath, clearKeywordCache } from "../utils/language-keywords.js";
+import { clearKeywordCache, setKeywordsPath } from "../utils/language-keywords.js";
 
 // ---------------------------------------------------------------------------
 // Helpers

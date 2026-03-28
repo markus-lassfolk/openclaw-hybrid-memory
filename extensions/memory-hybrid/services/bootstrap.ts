@@ -1,9 +1,11 @@
-import type { ClawdbotPluginApi } from "openclaw/plugin-sdk";
+import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import { FactsDB } from "../backends/facts-db.js";
+import { EdictStore } from "../backends/edict-store.js";
 import { VectorDB } from "../backends/vector-db.js";
 import type { BootstrapPhaseConfig, EmbeddingModelConfig, HybridMemoryConfig } from "../config.js";
 import { buildEmbeddingRegistry, type EmbeddingRegistry } from "./embedding-registry.js";
 import { createEmbeddingProvider, type EmbeddingProvider } from "./embeddings.js";
+import { join, dirname } from "node:path";
 
 export interface CoreBootstrapContext {
   cfg: HybridMemoryConfig;
@@ -14,6 +16,7 @@ export interface CoreBootstrapContext {
 
 export interface CoreBootstrapServices {
   factsDb: FactsDB;
+  edictStore: EdictStore;
   vectorDb: VectorDB;
   embeddings: EmbeddingProvider;
   embeddingRegistry: EmbeddingRegistry;
@@ -50,6 +53,11 @@ export const coreBootstrapInstaller: CoreBootstrapInstaller = {
       api.logger.error(`memory-hybrid: core bootstrap failed: ${err instanceof Error ? err.message : String(err)}`);
       throw err;
     }
+
+    // EdictStore: separate SQLite file alongside facts DB, for verified ground-truth facts
+    const edictStorePath = join(dirname(resolvedSqlitePath), "edicts.db");
+    const edictStore = new EdictStore(edictStorePath);
+
     const vectorDb = new VectorDB(resolvedLancePath, cfg.embedding.dimensions, cfg.vector.autoRepair);
     vectorDb.setLogger(api.logger);
 
@@ -66,6 +74,7 @@ export const coreBootstrapInstaller: CoreBootstrapInstaller = {
 
     return {
       factsDb,
+      edictStore,
       vectorDb,
       embeddings,
       embeddingRegistry,

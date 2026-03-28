@@ -2,8 +2,8 @@
  * Capture a lightweight snapshot of a file for conflict detection.
  */
 
-import { readFileSync, statSync } from "node:fs";
 import { createHash } from "node:crypto";
+import { readFileSync, statSync } from "node:fs";
 
 export type FileSnapshot = {
   mtimeMs: number;

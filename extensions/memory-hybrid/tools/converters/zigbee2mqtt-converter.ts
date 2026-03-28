@@ -7,8 +7,8 @@
  */
 
 import { basename, extname } from "node:path";
-import type { Converter, ConversionResult } from "./index.js";
 import { parseYaml } from "../../utils/yaml-parser.js";
+import type { ConversionResult, Converter } from "./index.js";
 
 type Z2MDoc = Record<string, unknown>;
 

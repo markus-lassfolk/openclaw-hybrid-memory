@@ -1,18 +1,50 @@
-/**
- * FactsDB schema migrations.
- *
- * Each function is idempotent (safe to run on an already-migrated database).
- * `runFactsMigrations` runs them in the canonical order required for correctness.
- */
-
 import type { DatabaseSync } from "node:sqlite";
 import { createTransaction } from "../../utils/sqlite-transaction.js";
 import { normalizedHash } from "../../utils/tags.js";
+/**
+ * Procedure feedback loop — version tracking and failure logging (#782).
+ * procedure_versions: per-version success/failure counts and avoidance notes.
+ * procedure_failures: individual failure events with context and step info.
+ */
 
-// ---------------------------------------------------------------------------
-// Individual migration functions
-// ---------------------------------------------------------------------------
+/** Create procedure_versions table for version-level outcome tracking (#782). */
+function migrateProcedureVersionsTable(db: DatabaseSync): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS procedure_versions (
+      id TEXT PRIMARY KEY,
+      procedure_id TEXT NOT NULL,
+      version_number INTEGER NOT NULL DEFAULT 1,
+      success_count INTEGER NOT NULL DEFAULT 0,
+      failure_count INTEGER NOT NULL DEFAULT 0,
+      avoidance_notes TEXT,
+      created_at INTEGER NOT NULL,
+      UNIQUE(procedure_id, version_number)
+    )
+  `);
+  db.exec("CREATE INDEX IF NOT EXISTS idx_proc_ver_procedure ON procedure_versions(procedure_id)");
+  db.exec(
+    "CREATE INDEX IF NOT EXISTS idx_proc_ver_num ON procedure_versions(procedure_id, version_number) WHERE version_number IS NOT NULL",
+  );
+}
 
+/** Create procedure_failures table for individual failure event logging (#782). */
+function migrateProcedureFailuresTable(db: DatabaseSync): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS procedure_failures (
+      id TEXT PRIMARY KEY,
+      procedure_id TEXT NOT NULL,
+      version_number INTEGER NOT NULL,
+      timestamp INTEGER NOT NULL,
+      context TEXT,
+      failed_at_step INTEGER
+    )
+  `);
+  db.exec("CREATE INDEX IF NOT EXISTS idx_proc_fail_procedure ON procedure_failures(procedure_id)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_proc_fail_version ON procedure_failures(procedure_id, version_number)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_proc_fail_ts ON procedure_failures(timestamp DESC)");
+}
+
+/** Create episodes table for episodic memory (#781). */
 function migrateDecayColumns(db: DatabaseSync): void {
   const cols = db.prepare("PRAGMA table_info(facts)").all() as Array<{ name: string }>;
   const colNames = new Set(cols.map((c) => c.name));
@@ -850,6 +882,40 @@ function migrateAccessCountAndLastAccessedAt(db: DatabaseSync): void {
   }
 }
 
+// Token-budget tiered trimming (Issue #792)
+function migratePreserveColumns(db: DatabaseSync): void {
+  const cols = db.prepare("PRAGMA table_info(facts)").all() as Array<{ name: string }>;
+  const colNames = new Set(cols.map((c) => c.name));
+  if (!colNames.has("preserve_until")) {
+    db.exec("ALTER TABLE facts ADD COLUMN preserve_until INTEGER");
+    db.exec(
+      "CREATE INDEX IF NOT EXISTS idx_facts_preserve_until ON facts(preserve_until) WHERE preserve_until IS NOT NULL",
+    );
+  }
+  if (!colNames.has("preserve_tags")) {
+    db.exec("ALTER TABLE facts ADD COLUMN preserve_tags TEXT");
+  }
+}
+
+function migrateTrimMetricsTable(db: DatabaseSync): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS trim_metrics (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      trimmed_at INTEGER NOT NULL,
+      fact_id TEXT NOT NULL,
+      fact_text_preview TEXT NOT NULL,
+      tier TEXT NOT NULL,
+      importance REAL NOT NULL,
+      preserve_until INTEGER,
+      token_cost INTEGER NOT NULL,
+      budget_before INTEGER NOT NULL,
+      budget_after INTEGER NOT NULL
+    )
+  `);
+  db.exec("CREATE INDEX IF NOT EXISTS idx_trim_metrics_trimmed_at ON trim_metrics(trimmed_at)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_trim_metrics_fact_id ON trim_metrics(fact_id)");
+}
+
 // ---------------------------------------------------------------------------
 // Migration runner
 // ---------------------------------------------------------------------------
@@ -925,4 +991,68 @@ export function runFactsMigrations(db: DatabaseSync): void {
   // Scan cursors and access salience
   migrateScanCursorsTable(db);
   migrateAccessCountAndLastAccessedAt(db);
+
+  // Token-budget tiered trimming (Issue #792)
+  migratePreserveColumns(db);
+  migrateTrimMetricsTable(db);
+
+  // Episodic memory (Issue #781)
+  // Procedural feedback loop (#782)
+  migrateProcedureVersionsTable(db);
+  migrateProcedureFailuresTable(db);
+
+  // Episodic memory (#781)
+  migrateEpisodesTable(db);
+  migrateEpisodeRelationsTable(db);
+}
+function migrateEpisodesTable(db: DatabaseSync): void {
+  const tableExists = db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='episodes'`).get();
+  if (!tableExists) {
+    db.prepare(`
+      CREATE TABLE episodes (
+        id TEXT PRIMARY KEY,
+        event TEXT NOT NULL,
+        outcome TEXT NOT NULL,
+        timestamp INTEGER NOT NULL,
+        duration INTEGER,
+        context TEXT,
+        related_fact_ids TEXT,
+        procedure_id TEXT,
+        scope TEXT,
+        scope_target TEXT,
+        agent_id TEXT,
+        user_id TEXT,
+        session_id TEXT,
+        importance REAL DEFAULT 0.5,
+        tags TEXT,
+        decay_class TEXT,
+        created_at TEXT NOT NULL,
+        verified_at TEXT
+      )
+    `).run();
+    db.prepare("CREATE INDEX idx_episodes_timestamp ON episodes (timestamp DESC)").run();
+    db.prepare(`
+      CREATE VIRTUAL TABLE episodes_fts USING fts5(
+        event, context, outcome, tags,
+        content='episodes',
+        content_rowid='rowid'
+      )
+    `).run();
+  }
+}
+function migrateEpisodeRelationsTable(db: DatabaseSync): void {
+  const tableExists = db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='episode_relations'`).get();
+  if (!tableExists) {
+    db.prepare(`
+      CREATE TABLE episode_relations (
+        id TEXT PRIMARY KEY,
+        episode_id TEXT NOT NULL,
+        target_id TEXT NOT NULL,
+        relation_type TEXT,
+        strength REAL,
+        created_at TEXT NOT NULL
+      )
+    `).run();
+    db.prepare("CREATE INDEX idx_episode_relations_episode_id ON episode_relations (episode_id)").run();
+  }
 }

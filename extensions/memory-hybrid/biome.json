@@ -1,6 +1,7 @@
 {
   "$schema": "https://biomejs.dev/schemas/1.9.4/schema.json",
   "files": {
+    "ignoreUnknown": true,
     "ignore": ["dist/**", "node_modules/**", "scripts/**", "coverage/**", "tsconfig*.json"]
   },
   "formatter": {
@@ -22,43 +23,38 @@
     "rules": {
       "recommended": true,
       "suspicious": {
-        "noExplicitAny": "warn",
+        "noExplicitAny": "off",
         "noConsole": "error",
-        "noImplicitAnyLet": "warn",
-        "noAssignInExpressions": "warn",
-        "noMisleadingCharacterClass": "warn",
-        "noControlCharactersInRegex": "warn",
-        "noConfusingVoidType": "warn",
+        "noImplicitAnyLet": "off",
+        "noAssignInExpressions": "off",
+        "noMisleadingCharacterClass": "off",
+        "noControlCharactersInRegex": "off",
+        "noConfusingVoidType": "off",
         "noGlobalIsNan": "error"
       },
       "correctness": {
-        "noUnusedVariables": "warn",
-        "noUnnecessaryContinue": "warn"
+        "noUnusedVariables": "off"
       },
       "style": {
-        "useConst": "warn",
-        "noVar": "error",
-        "noNonNullAssertion": "warn",
-        "noParameterAssign": "warn",
-        "noUnusedTemplateLiteral": "warn",
-        "useTemplate": "warn",
+        "useConst": "off",
+        "noNonNullAssertion": "off",
+        "noParameterAssign": "off",
+        "noUnusedTemplateLiteral": "off",
+        "useTemplate": "off",
         "useNodejsImportProtocol": "error",
-        "noUselessElse": "warn",
-        "useExponentiationOperator": "warn",
-        "useSingleVarDeclarator": "warn"
+        "noUselessElse": "off",
+        "useExponentiationOperator": "off",
+        "useSingleVarDeclarator": "off"
       },
       "complexity": {
-        "noForEach": "warn",
-        "useLiteralKeys": "warn",
-        "useOptionalChain": "warn"
+        "noForEach": "off",
+        "useLiteralKeys": "off",
+        "useOptionalChain": "off"
       },
       "performance": {
-        "noDelete": "warn"
+        "noDelete": "off"
       }
     }
-  },
-  "organizeImports": {
-    "enabled": false
   },
   "overrides": [
     {

@@ -3,7 +3,7 @@
  * On before_agent_start, detect auth failure in prompt/messages and inject credential facts.
  */
 
-import type { ClawdbotPluginApi } from "openclaw/plugin-sdk";
+import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import type { ScopeFilter } from "../types/memory.js";
 import { mergeResults, filterByScope } from "../services/merge-results.js";
 import { VAULT_POINTER_PREFIX } from "../services/auto-capture.js";

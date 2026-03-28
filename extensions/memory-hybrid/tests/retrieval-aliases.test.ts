@@ -38,14 +38,14 @@
  *     - returns 0 for empty / mismatched length
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, rmSync } from "node:fs";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
-import { AliasDB, generateAliases, storeAliases, searchAliasStrategy } from "../services/retrieval-aliases.js";
-import { cosineSimilarity } from "../services/ambient-retrieval.js";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AliasesConfig } from "../config.js";
+import { cosineSimilarity } from "../services/ambient-retrieval.js";
+import { AliasDB, generateAliases, searchAliasStrategy, storeAliases } from "../services/retrieval-aliases.js";
 
 // ---------------------------------------------------------------------------
 // Helpers

@@ -1,11 +1,11 @@
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 /**
  * Tests for MiniMax provider routing in the multi-provider OpenAI proxy.
  * Verifies that minimax/* models are routed to the correct base URL (issue #312).
  */
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, rmSync } from "node:fs";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // Mock OpenAI BEFORE any module imports (vi.mock is hoisted automatically).
 // Must use a regular named function (not arrow) so `new OpenAI(...)` works as a constructor.
@@ -33,14 +33,14 @@ vi.mock("../services/error-reporter.js", async (importOriginal) => {
 });
 
 import OpenAI from "openai";
+import { hybridConfigSchema } from "../config.js";
 import {
-  initializeDatabases,
-  closeOldDatabases,
   MINIMAX_BASE_URL,
   OPENROUTER_BASE_URL,
+  closeOldDatabases,
+  initializeDatabases,
   resolveProviderApiKey,
 } from "../setup/init-databases.js";
-import { hybridConfigSchema } from "../config.js";
 
 /** Restore an env var to its original value, or delete it if it was originally unset. */
 function restoreEnv(key: string, orig: string | undefined): void {
@@ -117,9 +117,9 @@ describe("MiniMax provider routing — direct API key", () => {
     origGatewayToken = process.env.OPENCLAW_GATEWAY_TOKEN;
     origMinimaxApiKey = process.env.MINIMAX_API_KEY;
     // Unset gateway env vars to ensure direct routing
-    delete process.env.OPENCLAW_GATEWAY_PORT;
-    delete process.env.OPENCLAW_GATEWAY_TOKEN;
-    delete process.env.MINIMAX_API_KEY;
+    process.env.OPENCLAW_GATEWAY_PORT = undefined;
+    process.env.OPENCLAW_GATEWAY_TOKEN = undefined;
+    process.env.MINIMAX_API_KEY = undefined;
   });
 
   afterEach(() => {
@@ -384,9 +384,9 @@ describe("MiniMax provider routing — gateway key auto-merge", () => {
     origGatewayPort = process.env.OPENCLAW_GATEWAY_PORT;
     origGatewayToken = process.env.OPENCLAW_GATEWAY_TOKEN;
     origMinimaxApiKey = process.env.MINIMAX_API_KEY;
-    delete process.env.OPENCLAW_GATEWAY_PORT;
-    delete process.env.OPENCLAW_GATEWAY_TOKEN;
-    delete process.env.MINIMAX_API_KEY;
+    process.env.OPENCLAW_GATEWAY_PORT = undefined;
+    process.env.OPENCLAW_GATEWAY_TOKEN = undefined;
+    process.env.MINIMAX_API_KEY = undefined;
   });
 
   afterEach(() => {
@@ -717,9 +717,9 @@ describe("OpenRouter provider routing (issue #380)", () => {
     origOpenrouterApiKey = process.env.OPENROUTER_API_KEY;
     origGatewayPort = process.env.OPENCLAW_GATEWAY_PORT;
     origGatewayToken = process.env.OPENCLAW_GATEWAY_TOKEN;
-    delete process.env.OPENROUTER_API_KEY;
-    delete process.env.OPENCLAW_GATEWAY_PORT;
-    delete process.env.OPENCLAW_GATEWAY_TOKEN;
+    process.env.OPENROUTER_API_KEY = undefined;
+    process.env.OPENCLAW_GATEWAY_PORT = undefined;
+    process.env.OPENCLAW_GATEWAY_TOKEN = undefined;
   });
 
   afterEach(() => {
@@ -905,9 +905,9 @@ describe("Anthropic provider routing — issue #386", () => {
     origAnthropicApiKey = process.env.ANTHROPIC_API_KEY;
     origGatewayPort = process.env.OPENCLAW_GATEWAY_PORT;
     origGatewayToken = process.env.OPENCLAW_GATEWAY_TOKEN;
-    delete process.env.ANTHROPIC_API_KEY;
-    delete process.env.OPENCLAW_GATEWAY_PORT;
-    delete process.env.OPENCLAW_GATEWAY_TOKEN;
+    process.env.ANTHROPIC_API_KEY = undefined;
+    process.env.OPENCLAW_GATEWAY_PORT = undefined;
+    process.env.OPENCLAW_GATEWAY_TOKEN = undefined;
   });
 
   afterEach(() => {
@@ -1091,9 +1091,9 @@ describe("OpenRouter gateway merge — issue #392", () => {
     origOpenrouterApiKey = process.env.OPENROUTER_API_KEY;
     origGatewayPort = process.env.OPENCLAW_GATEWAY_PORT;
     origGatewayToken = process.env.OPENCLAW_GATEWAY_TOKEN;
-    delete process.env.OPENROUTER_API_KEY;
-    delete process.env.OPENCLAW_GATEWAY_PORT;
-    delete process.env.OPENCLAW_GATEWAY_TOKEN;
+    process.env.OPENROUTER_API_KEY = undefined;
+    process.env.OPENCLAW_GATEWAY_PORT = undefined;
+    process.env.OPENCLAW_GATEWAY_TOKEN = undefined;
   });
 
   afterEach(() => {
@@ -1269,8 +1269,8 @@ describe("gateway model auto-derivation — unknown provider prefix filter", () 
     ctx = undefined;
     origGatewayPort = process.env.OPENCLAW_GATEWAY_PORT;
     origGatewayToken = process.env.OPENCLAW_GATEWAY_TOKEN;
-    delete process.env.OPENCLAW_GATEWAY_PORT;
-    delete process.env.OPENCLAW_GATEWAY_TOKEN;
+    process.env.OPENCLAW_GATEWAY_PORT = undefined;
+    process.env.OPENCLAW_GATEWAY_TOKEN = undefined;
   });
 
   afterEach(() => {

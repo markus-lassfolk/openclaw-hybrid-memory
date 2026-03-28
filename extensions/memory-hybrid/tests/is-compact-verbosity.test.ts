@@ -2,9 +2,9 @@
  * Tests for isCompactVerbosity helper function (Issue #317 bugfix)
  */
 
-import { describe, it, expect } from "vitest";
-import { isCompactVerbosity } from "../config/utils.js";
+import { describe, expect, it } from "vitest";
 import type { VerbosityLevel } from "../config/types/index.js";
+import { isCompactVerbosity } from "../config/utils.js";
 
 describe("isCompactVerbosity helper", () => {
   it("returns false for undefined", () => {

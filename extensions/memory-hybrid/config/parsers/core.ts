@@ -1,21 +1,21 @@
+import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { readFileSync } from "node:fs";
-import type { StoreConfig, WALConfig, EventLogConfig, PathConfig } from "../types/core.js";
-import type {
-  CredentialsConfig,
-  CredentialAutoCaptureConfig,
-  VectorConfig,
-  ActiveTaskConfig,
-  SelfCorrectionConfig,
-  LLMConfig,
-  LLMProviderConfig,
-  GatewayConfig,
-  ResolvedGatewayAuthConfig,
-  AuthOrderConfig,
-} from "../types/index.js";
 import { parseDuration } from "../../utils/duration.js";
 import { pluginLogger } from "../../utils/logger.js";
+import type { EventLogConfig, PathConfig, StoreConfig, WALConfig } from "../types/core.js";
+import type {
+  ActiveTaskConfig,
+  AuthOrderConfig,
+  CredentialAutoCaptureConfig,
+  CredentialsConfig,
+  GatewayConfig,
+  LLMConfig,
+  LLMProviderConfig,
+  ResolvedGatewayAuthConfig,
+  SelfCorrectionConfig,
+  VectorConfig,
+} from "../types/index.js";
 
 export const DEFAULT_MODEL = "text-embedding-3-small";
 export const DEFAULT_LANCE_PATH = join(homedir(), ".openclaw", "memory", "lancedb");
@@ -241,6 +241,7 @@ export function parseActiveTaskConfig(cfg: Record<string, unknown>): ActiveTaskC
 export function parseSelfCorrectionConfig(cfg: Record<string, unknown>): SelfCorrectionConfig | undefined {
   const scRaw = cfg.selfCorrection as Record<string, unknown> | undefined;
   if (!scRaw || typeof scRaw !== "object") return undefined;
+  if (scRaw.enabled === false) return undefined;
   return {
     semanticDedup: scRaw.semanticDedup !== false,
     semanticDedupThreshold:

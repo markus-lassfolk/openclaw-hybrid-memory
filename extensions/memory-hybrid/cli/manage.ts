@@ -1092,6 +1092,179 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
       }),
     );
 
+  // ---- Token-budget tiered trimming (Issue #792) ----
+  const budget = mem.command("budget").description("Token budget status and tiered trimming simulation");
+  budget
+    .command("show")
+    .description("Show current token budget status and overflow")
+    .action(
+      withExit(async () => {
+        try {
+          const status = factsDb.getTokenBudgetStatus();
+          const fmt = (n: number) => n.toLocaleString();
+          console.log("Token Budget Report");
+          console.log(
+            `  Budget:  ${fmt(status.budget)} tokens (approx ${fmt(Math.round(status.budget * 3.8))} chars @ 3.8 chars/token)`,
+          );
+          console.log(
+            `  Used:    ${fmt(status.totalTokens)} tokens (approx ${fmt(Math.round(status.totalTokens * 3.8))} chars)`,
+          );
+          console.log(`  Overflow: ${fmt(status.overflow)} tokens`);
+          console.log(`
+By Tier:`);
+          console.log(
+            `  P0 (never trim):  ${fmt(status.byTier.p0)} tokens  (${status.factCount.p0} facts) — edicts, verified, preserveUntil, preserveTags`,
+          );
+          console.log(
+            `  P1 (trim last):   ${fmt(status.byTier.p1)} tokens  (${status.factCount.p1} facts) — importance >0.8, recent <1h`,
+          );
+          console.log(
+            `  P2 (trim middle): ${fmt(status.byTier.p2)} tokens  (${status.factCount.p2} facts) — importance 0.5-0.8`,
+          );
+          console.log(
+            `  P3 (trim first):  ${fmt(status.byTier.p3)} tokens  (${status.factCount.p3} facts) — importance <0.5`,
+          );
+          if (status.overflow > 0) {
+            console.log(`
+⚠️  Budget exceeded by ${fmt(status.overflow)} tokens. Run 'memory budget simulate' to see what would be trimmed.`);
+          }
+        } catch (err) {
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+            subsystem: "cli",
+            operation: "budget-show",
+          });
+          throw err;
+        }
+      }),
+    );
+  budget
+    .command("simulate")
+    .description("Simulate tiered trimming to stay within budget")
+    .option(
+      "--budget <n>",
+      "Token budget override (default: 80% of 32k context)",
+      String(Math.ceil((32_000 * 0.8) / 3.8)),
+    )
+    .action(
+      withExit(async (opts?: { budget?: string }) => {
+        try {
+          const DEFAULT_BUDGET = Math.ceil((32_000 * 0.8) / 3.8);
+          const budgetVal = Number.parseInt(opts?.budget ?? String(DEFAULT_BUDGET), 10);
+          const result = factsDb.trimToBudget(budgetVal, true);
+          const fmt = (n: number) => n.toLocaleString();
+          console.log(`Budget Simulation (budget=${fmt(budgetVal)} tokens)`);
+          console.log(`  Before: ${fmt(result.beforeTokens)} tokens`);
+          console.log(`  After:  ${fmt(result.afterTokens)} tokens`);
+          console.log(`  Would trim ${result.trimmed.length} fact(s):`);
+          if (result.trimmed.length === 0) {
+            console.log("    (nothing to trim — within budget)");
+          } else {
+            for (const t of result.trimmed) {
+              console.log(
+                `  [${t.tier}] importance=${t.importance.toFixed(2)} tokens=${fmt(t.tokenCost)} — "${t.textPreview}"`,
+              );
+            }
+          }
+          console.log(`
+Preserved (P0 — never trimmed, ${result.preserved.length} fact(s)):`);
+          if (result.preserved.length === 0) {
+            console.log("    (none)");
+          } else {
+            for (const p of result.preserved.slice(0, 20)) {
+              console.log(`  ${p.id} — ${p.reason}`);
+            }
+            if (result.preserved.length > 20) {
+              console.log(`  ... and ${result.preserved.length - 20} more`);
+            }
+          }
+        } catch (err) {
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+            subsystem: "cli",
+            operation: "budget-simulate",
+          });
+          throw err;
+        }
+      }),
+    );
+
+  mem
+    .command("preserve")
+    .description("Force-preserve a fact from tiered trimming. Run without options to show current preserve status.")
+    .option("--until <epoch>", "Preserve until epoch seconds, 'never' to clear, or shorthand like '1y' (default: 1y)")
+    .option("-t, --tag <tag>", "Add a preserve tag (can be repeated)")
+    .action(
+      withExit(async (id: string, opts?: { until?: string; tag?: string | null }) => {
+        try {
+          const fact = factsDb.get(id);
+          if (!fact) {
+            console.log(`Fact not found: ${id}`);
+            process.exitCode = 1;
+            return;
+          }
+          const nowSec = Math.floor(Date.now() / 1000);
+          const YEAR_SEC = 365 * 24 * 3600;
+
+          let untilSec: number | null = null;
+          const untilRaw = opts?.until;
+          if (untilRaw && untilRaw !== "never") {
+            const shorthandMatch = untilRaw.match(/^(\d+)([yYmMdD])$/);
+            if (shorthandMatch) {
+              const val = Number.parseInt(shorthandMatch[1]!, 10);
+              const unit = shorthandMatch[2]?.toLowerCase();
+              if (unit === "y") untilSec = nowSec + val * YEAR_SEC;
+              else if (unit === "d") untilSec = nowSec + val * 86400;
+              else if (unit === "m") untilSec = nowSec + val * 30 * 86400;
+            } else {
+              const parsed = Number.parseInt(untilRaw, 10);
+              if (Number.isNaN(parsed) || parsed <= nowSec) {
+                console.error(
+                  `error: --until must be epoch seconds in the future, 'never', or shorthand like '1y'. Got: ${untilRaw}`,
+                );
+                process.exitCode = 1;
+                return;
+              }
+              untilSec = parsed;
+            }
+          } else if (untilRaw === "never") {
+            untilSec = null;
+          } else {
+            untilSec = nowSec + YEAR_SEC;
+          }
+
+          const addedTags: string[] = [];
+          if (opts?.tag) {
+            const tagVal = opts.tag;
+            if (Array.isArray(tagVal)) {
+              addedTags.push(...tagVal.map(String));
+            } else {
+              addedTags.push(String(tagVal));
+            }
+          }
+
+          factsDb.setPreserveUntil(id, untilSec);
+          if (addedTags.length > 0) {
+            factsDb.setPreserveTags(id, addedTags, "add");
+          }
+          const final = factsDb.getById(id);
+          const preview = fact.text.length > 80 ? `${fact.text.slice(0, 80)}…` : fact.text;
+          console.log(`Preserved: "${preview}"`);
+          const untilStr = final?.preserveUntil != null ? new Date(final.preserveUntil! * 1000).toISOString() : "null";
+          console.log(`  preserveUntil: ${untilStr}`);
+          console.log(`  preserveTags:  ${(final?.preserveTags ?? []).join(", ") || "(none)"}`);
+          const tags = (fact.tags ?? []).map(String);
+          if (tags.includes("edict")) {
+            console.log(`  note: fact already has 'edict' tag — already P0 (never trimmed)`);
+          }
+        } catch (err) {
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+            subsystem: "cli",
+            operation: "preserve",
+          });
+          throw err;
+        }
+      }),
+    );
+
   const proposals = mem.command("proposals").description("Manage persona-driven proposals");
   const proposalStatusValues = ["pending", "approved", "rejected", "applied"] as const;
   proposals
@@ -2559,6 +2732,104 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
           }
         }
         console.log(`Promoted ${promoted} facts from session to global scope.`);
+      }),
+    );
+
+  // Procedure feedback loop CLI (#782)
+  const procedureCmd = mem
+    .command("procedure")
+    .description("Show procedure details (versions, failures, avoidance notes)");
+  procedureCmd
+    .command("show <id>")
+    .description("Show all versions and failure history for a procedure")
+    .action(
+      withExit(async (opts: { id: string }) => {
+        const proc = factsDb.getProcedureById(opts.id);
+        if (!proc) {
+          console.log(`Procedure not found: ${opts.id}`);
+          return;
+        }
+
+        const versions = factsDb.getProcedureVersions(opts.id);
+        const failures = factsDb.getProcedureFailures(opts.id);
+        const totalSuccess = proc.successCount + versions.reduce((s, v) => s + v.successCount, 0);
+        const totalFailure = proc.failureCount + versions.reduce((s, v) => s + v.failureCount, 0);
+        const total = totalSuccess + totalFailure;
+        const rate = total > 0 ? totalSuccess / total : 0;
+
+        console.log(`Procedure: ${proc.taskPattern}`);
+        console.log(`  ID:         ${proc.id}`);
+        console.log(`  Type:       ${proc.procedureType}`);
+        console.log(`  Confidence: ${proc.confidence?.toFixed(3) ?? "n/a"}`);
+        console.log(
+          `  Success:    ${totalSuccess} (procedure table) + ${versions.reduce((s, v) => s + v.successCount, 0)} (versions) = ${totalSuccess}`,
+        );
+        console.log(
+          `  Failure:   ${totalFailure} (procedure table) + ${versions.reduce((s, v) => s + v.failureCount, 0)} (versions) = ${totalFailure}`,
+        );
+        console.log(`  Rate:      ${(rate * 100).toFixed(1)}%`);
+        console.log(`  Outcome:   ${proc.lastOutcome ?? "unknown"}`);
+        console.log(
+          `  Last Validated: ${proc.lastValidated ? new Date(proc.lastValidated * 1000).toISOString() : "never"}`,
+        );
+        console.log(`  Last Failed:   ${proc.lastFailed ? new Date(proc.lastFailed * 1000).toISOString() : "never"}`);
+
+        if (proc.avoidanceNotes && proc.avoidanceNotes.length > 0) {
+          console.log("\n  Avoidance notes (all versions):");
+          for (const note of proc.avoidanceNotes) {
+            console.log(`    - ${note}`);
+          }
+        }
+
+        if (versions.length > 0) {
+          console.log(`\n  Versions (${versions.length}):`);
+          for (const v of versions) {
+            const pct =
+              v.successCount + v.failureCount > 0
+                ? ` (${((v.successCount / (v.successCount + v.failureCount)) * 100).toFixed(0)}% success)`
+                : "";
+            console.log(`    v${v.versionNumber}: ${v.successCount} OK, ${v.failureCount} failed${pct}`);
+            if (v.avoidanceNotes && v.avoidanceNotes.length > 0) {
+              for (const note of v.avoidanceNotes.slice(0, 3)) {
+                console.log(`      ⚠ ${note}`);
+              }
+            }
+          }
+        }
+
+        if (failures.length > 0) {
+          console.log(`\n  Recent failures (${failures.length} total):`);
+          for (const f of failures.slice(0, 10)) {
+            const when = new Date(f.timestamp * 1000).toISOString();
+            const step = f.failedAtStep !== null ? ` step ${f.failedAtStep}` : "";
+            console.log(`    [${when}] v${f.versionNumber}${step}: ${f.context ?? "(no context)"}`);
+          }
+        } else {
+          console.log("\n  No failures recorded.");
+        }
+      }),
+    );
+
+  procedureCmd
+    .command("list")
+    .description("List all procedures (optionally filtered by type)")
+    .option("--type <type>", "Filter by type: positive, negative, or all (default: all)")
+    .option("--limit <n>", "Maximum number to show (default: 20)")
+    .action(
+      withExit(async (opts: { type?: string; limit?: number }) => {
+        const limit = opts.limit ?? 20;
+        const procs = factsDb.listProcedures(limit * 3); // over-fetch then filter
+        const filtered = opts.type && opts.type !== "all" ? procs.filter((p) => p.procedureType === opts.type) : procs;
+        const shown = filtered.slice(0, limit);
+
+        console.log(`Procedures (showing ${shown.length} of ${filtered.length}):`);
+        for (const p of shown) {
+          const rate = p.successRate !== undefined ? ` ${(p.successRate * 100).toFixed(0)}%` : "";
+          const ver = p.version !== undefined ? ` v${p.version}` : "";
+          console.log(
+            `  [${p.id.slice(0, 8)}] ${p.procedureType.padEnd(8)} ${rate.padEnd(6)} ${ver} "${p.taskPattern.slice(0, 60)}"`,
+          );
+        }
       }),
     );
 

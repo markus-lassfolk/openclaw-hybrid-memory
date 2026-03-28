@@ -3,9 +3,9 @@
  * Reads credentials-pending.json and injects hint on before_agent_start when enabled.
  */
 
-import { readFile, unlink, access } from "node:fs/promises";
+import { access, readFile, unlink } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import type { ClawdbotPluginApi } from "openclaw/plugin-sdk";
+import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import { capturePluginError } from "../services/error-reporter.js";
 import type { LifecycleContext } from "./types.js";
 

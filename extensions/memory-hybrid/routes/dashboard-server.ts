@@ -7,13 +7,13 @@
  *   GET /api/status — JSON data for all dashboard sections
  */
 
-import { createServer } from "node:http";
-import type { Server } from "node:http";
+import { execFile as execFileCb } from "node:child_process";
 import { existsSync } from "node:fs";
 import { readdir, stat } from "node:fs/promises";
-import { join } from "node:path";
+import { createServer } from "node:http";
+import type { Server } from "node:http";
 import { homedir } from "node:os";
-import { execFile as execFileCb } from "node:child_process";
+import { join } from "node:path";
 import { promisify } from "node:util";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";

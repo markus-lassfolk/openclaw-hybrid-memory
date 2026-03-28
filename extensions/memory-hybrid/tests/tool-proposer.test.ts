@@ -27,14 +27,14 @@
  * - Returns success=true and updated proposal on success.
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
-import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { ToolProposer } from "../services/tool-proposer.js";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ToolProposalStore } from "../backends/tool-proposal-store.js";
-import type { GapDetector, DetectedGap } from "../services/gap-detector.js";
 import type { SelfExtensionConfig } from "../config/types/features.js";
+import type { DetectedGap, GapDetector } from "../services/gap-detector.js";
+import { ToolProposer } from "../services/tool-proposer.js";
 
 // ---------------------------------------------------------------------------
 // Fixtures

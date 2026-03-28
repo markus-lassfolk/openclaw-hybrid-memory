@@ -2,8 +2,8 @@
  * Shared constants to avoid magic numbers across the plugin.
  */
 
-import { join } from "node:path";
 import { homedir } from "node:os";
+import { join } from "node:path";
 
 /** Plugin identifier used across the codebase. */
 export const PLUGIN_ID = "openclaw-hybrid-memory";

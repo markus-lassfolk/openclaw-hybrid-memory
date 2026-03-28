@@ -11,19 +11,19 @@
  *   4. getGuardFilePath returns the expected persistent path.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdirSync, writeFileSync, readFileSync, rmSync, existsSync } from "node:fs";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 // Functions under test
 import {
+  GUARD_SUBDIR,
   buildGuardPrefix,
   getGuardFilePath,
   readGuardTimestampMs,
   syncCronLastRunFromGuards,
-  GUARD_SUBDIR,
 } from "../services/cron-guard.js";
 
 // ---------------------------------------------------------------------------

@@ -8,10 +8,10 @@
  * These tests mirror the initialization and teardown patterns in setup/init-databases.ts.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
-import { join, dirname } from "node:path";
 import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { _testing } from "../index.js";
 
 const { FactsDB, VerificationStore } = _testing;

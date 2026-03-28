@@ -24,6 +24,7 @@ import type {
   DashboardConfig,
   ApiTapConfig,
   HumanizerConfig,
+  FrequencyCaptureConfig,
 } from "../types/features.js";
 import type { PersonaProposalsConfig } from "../types/agents.js";
 import { IDENTITY_FILE_TYPES, type IdentityFileType } from "../types/agents.js";
@@ -513,6 +514,27 @@ export function parseImplicitFeedbackConfig(cfg: Record<string, unknown>): Impli
   const signalTypes: ImplicitSignalType[] = Array.isArray(raw?.signalTypes)
     ? (raw.signalTypes as unknown[]).filter((t): t is ImplicitSignalType => typeof t === "string" && validTypes.has(t))
     : ALL_IMPLICIT_SIGNAL_TYPES;
+
+  // Issue #754: top-level aliases take precedence over nested keys
+  const topLevelTrajectoryLLMAnalysis =
+    typeof cfg.trajectoryLLMAnalysis === "boolean" ? cfg.trajectoryLLMAnalysis : undefined;
+  const topLevelFeedToSelfCorrection =
+    typeof cfg.feedToSelfCorrection === "boolean" ? cfg.feedToSelfCorrection : undefined;
+
+  // Deprecation warnings for old nested keys when top-level is also set
+  if (topLevelTrajectoryLLMAnalysis !== undefined && raw?.trajectoryLLMAnalysis !== undefined) {
+    pluginLogger.warn(
+      "memory-hybrid: both `trajectoryLLMAnalysis` (top-level) and `implicitFeedback.trajectoryLLMAnalysis` are set; " +
+        "using top-level `trajectoryLLMAnalysis`. The nested key is deprecated — move it to the top level.",
+    );
+  }
+  if (topLevelFeedToSelfCorrection !== undefined && raw?.feedToSelfCorrection !== undefined) {
+    pluginLogger.warn(
+      "memory-hybrid: both `feedToSelfCorrection` (top-level) and `implicitFeedback.feedToSelfCorrection` are set; " +
+        "using top-level `feedToSelfCorrection`. The nested key is deprecated — move it to the top level.",
+    );
+  }
+
   return {
     enabled: raw?.enabled !== false,
     minConfidence:
@@ -533,8 +555,11 @@ export function parseImplicitFeedbackConfig(cfg: Record<string, unknown>): Impli
         ? raw.terseResponseRatio
         : 0.4,
     feedToReinforcement: raw?.feedToReinforcement !== false,
-    feedToSelfCorrection: raw?.feedToSelfCorrection !== false,
-    trajectoryLLMAnalysis: raw?.trajectoryLLMAnalysis === true,
+    // Issue #754: top-level takes precedence; fall back to nested with deprecation warning
+    feedToSelfCorrection:
+      topLevelFeedToSelfCorrection !== undefined ? topLevelFeedToSelfCorrection : raw?.feedToSelfCorrection !== false,
+    trajectoryLLMAnalysis:
+      topLevelTrajectoryLLMAnalysis !== undefined ? topLevelTrajectoryLLMAnalysis : raw?.trajectoryLLMAnalysis === true,
   };
 }
 
@@ -710,5 +735,22 @@ export function parseHumanizerConfig(cfg: Record<string, unknown>): HumanizerCon
     maxTextLength,
     modelTag: typeof raw?.modelTag === "string" && raw.modelTag.trim().length > 0 ? raw.modelTag.trim() : undefined,
     skillTag: typeof raw?.skillTag === "string" && raw.skillTag.trim().length > 0 ? raw.skillTag.trim() : undefined,
+  };
+}
+
+export function parseFrequencyCaptureConfig(cfg: Record<string, unknown>): FrequencyCaptureConfig {
+  const raw = cfg.frequencyCapture as Record<string, unknown> | undefined;
+  return {
+    enabled: raw?.enabled === true,
+    mentionThreshold:
+      typeof raw?.mentionThreshold === "number" && raw.mentionThreshold >= 1 ? Math.floor(raw.mentionThreshold) : 3,
+    lookbackSessions:
+      typeof raw?.lookbackSessions === "number" && raw.lookbackSessions >= 1 ? Math.floor(raw.lookbackSessions) : 5,
+    defaultImportance:
+      typeof raw?.defaultImportance === "number" && raw.defaultImportance >= 0 && raw.defaultImportance <= 1
+        ? raw.defaultImportance
+        : 0.6,
+    captureCredentials: raw?.captureCredentials !== false,
+    ttlDays: typeof raw?.ttlDays === "number" && raw.ttlDays >= 1 ? Math.floor(raw.ttlDays) : 30,
   };
 }

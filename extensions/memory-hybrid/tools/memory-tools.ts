@@ -7,11 +7,12 @@
 
 import { Type } from "@sinclair/typebox";
 import type OpenAI from "openai";
-import type { ClawdbotPluginApi } from "openclaw/plugin-sdk";
+import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import { stringEnum } from "../utils/typebox.js";
 
 import type { BuildToolScopeFilterFn, FindSimilarByEmbeddingFn } from "../api/memory-plugin-api.js";
 import type { FactsDB } from "../backends/facts-db.js";
+import type { EdictStore } from "../backends/edict-store.js";
 import type { VectorDB } from "../backends/vector-db.js";
 import type { CredentialsDB } from "../backends/credentials-db.js";
 import type { EventLog } from "../backends/event-log.js";
@@ -44,7 +45,7 @@ import {
   getLLMModelPreference,
   isCompactVerbosity,
 } from "../config.js";
-import type { MemoryEntry, SearchResult, ScopeFilter } from "../types/memory.js";
+import type { MemoryEntry, SearchResult, ScopeFilter, Episode, EpisodeOutcome } from "../types/memory.js";
 import { MEMORY_SCOPES } from "../types/memory.js";
 import { truncateForStorage } from "../utils/text.js";
 import { extractTags } from "../utils/tags.js";
@@ -66,6 +67,7 @@ export type BoundWalRemoveFn = (id: string, logger: { warn: (msg: string) => voi
 
 export interface MemoryToolsContext {
   factsDb: FactsDB;
+  edictStore: EdictStore;
   vectorDb: VectorDB;
   cfg: HybridMemoryConfig;
   aliasDb?: AliasDB | null;
@@ -239,6 +241,7 @@ export function registerMemoryTools(
 
   const {
     factsDb,
+    edictStore,
     vectorDb,
     cfg,
     embeddings,
@@ -446,6 +449,7 @@ export function registerMemoryTools(
               id: summary.id,
               source: summary.source,
               sessionId: summary.sessionId,
+              sessionKey: summary.sessionId,
               sessionLogPath: `~/.openclaw/agents/${currentAgentIdRef.value || "main"}/sessions/${summary.sessionId}.jsonl`,
               periodStart: new Date(summary.periodStart * 1000).toISOString(),
               periodEnd: new Date(summary.periodEnd * 1000).toISOString(),
@@ -962,7 +966,17 @@ export function registerMemoryTools(
                       )
                       .join(" → ")
                   : p.recipeJson.slice(0, 200);
-                lines.push(`- ${p.taskPattern.slice(0, 80)}…: ${steps} (validated ${p.successCount}x)`);
+                const rate = p.successRate !== undefined ? `, rate ${(p.successRate * 100).toFixed(0)}%` : "";
+                const ver = p.version !== undefined ? `, v${p.version}` : "";
+                const outcome = p.lastOutcome === "failure" ? " ⚠️" : p.lastOutcome === "success" ? " ✅" : "";
+                lines.push(
+                  `- ${p.taskPattern.slice(0, 80)}…: ${steps} (validated ${p.successCount}x${rate}${ver}${outcome})`,
+                );
+                if (p.avoidanceNotes && p.avoidanceNotes.length > 0) {
+                  for (const note of p.avoidanceNotes.slice(0, 2)) {
+                    lines.push(`  ⚠ ${note}`);
+                  }
+                }
               }
             }
             if (negatives.length > 0) {
@@ -986,7 +1000,13 @@ export function registerMemoryTools(
                       .filter(Boolean)
                       .join(" → ")
                   : "";
-                lines.push(`- ${p.taskPattern.slice(0, 80)}… ${steps ? `(${steps})` : ""}`);
+                const ver = p.version !== undefined ? ` (v${p.version})` : "";
+                lines.push(`- ${p.taskPattern.slice(0, 80)}… ${steps ? `(${steps})` : ""}${ver}`);
+                if (p.avoidanceNotes && p.avoidanceNotes.length > 0) {
+                  for (const note of p.avoidanceNotes.slice(0, 2)) {
+                    lines.push(`  ⚠ ${note}`);
+                  }
+                }
               }
             }
             if (lines.length === 0) {
@@ -1014,6 +1034,104 @@ export function registerMemoryTools(
         },
       },
       { name: "memory_recall_procedures" },
+    );
+
+    // Procedure feedback loop (#782)
+    api.registerTool(
+      {
+        name: "memory_procedure_feedback",
+        label: "Procedure Feedback",
+        description:
+          "Record the outcome of using a procedure — success or failure. On failure, bumps the procedure version, logs the failure context, and creates an episode record. On success, records the validation. Use this whenever a procedure from memory_recall_procedures is attempted.",
+        parameters: Type.Object({
+          procedureId: Type.String({ description: "ID of the procedure that was used" }),
+          success: Type.Boolean({ description: "true if the procedure succeeded, false if it failed" }),
+          context: Type.Optional(
+            Type.String({
+              description: "What happened — error message, environment notes, or a summary of the outcome.",
+            }),
+          ),
+          failedAtStep: Type.Optional(
+            Type.Number({
+              description: "If failure: which step number failed (1-based).",
+            }),
+          ),
+          duration: Type.Optional(
+            Type.Number({
+              description: "Optional: how long the procedure took in milliseconds.",
+            }),
+          ),
+          tags: Type.Optional(
+            Type.Array(Type.String(), {
+              description: "Optional tags to associate with the episode (e.g. 'production', 'doris').",
+            }),
+          ),
+        }),
+        async execute(_toolCallId: string, params: Record<string, unknown>) {
+          try {
+            const { procedureId, success, context, failedAtStep, duration, tags } = params as {
+              procedureId: string;
+              success: boolean;
+              context?: string;
+              failedAtStep?: number;
+              duration?: number;
+              tags?: string[];
+            };
+
+            const result = factsDb.procedureFeedback({
+              procedureId,
+              success,
+              context,
+              failedAtStep,
+              duration,
+              tags,
+            });
+
+            if (!result) {
+              return {
+                content: [{ type: "text" as const, text: `Procedure not found: ${procedureId}` }],
+                details: { success: false, error: "procedure_not_found" },
+              };
+            }
+
+            const lines: string[] = [];
+            if (success) {
+              lines.push(
+                `✅ Procedure validated (now ${result.successCount} successes, confidence: ${(result.confidence ?? 0).toFixed(2)})`,
+              );
+            } else {
+              lines.push(
+                `❌ Procedure failure recorded (now ${result.failureCount} failures, version ${result.version ?? 1}, confidence: ${(result.confidence ?? 0).toFixed(2)})`,
+              );
+              if (context) lines.push(`  Context: ${context}`);
+              if (result.avoidanceNotes && result.avoidanceNotes.length > 0) {
+                lines.push(`  Avoidance notes: ${result.avoidanceNotes.join("; ")}`);
+              }
+            }
+
+            return {
+              content: [{ type: "text" as const, text: lines.join("\n") }],
+              details: {
+                success: true,
+                procedureId: result.id,
+                version: result.version,
+                outcome: success ? "success" : "failure",
+                successCount: result.successCount,
+                failureCount: result.failureCount,
+                successRate: result.successRate,
+              },
+            };
+          } catch (err) {
+            capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+              subsystem: "memory",
+              operation: "memory-procedure-feedback",
+              phase: "runtime",
+            });
+            throw err;
+          }
+        },
+      },
+      { name: "memory_procedure_feedback" },
     );
   }
 
@@ -2102,5 +2220,469 @@ export function registerMemoryTools(
       },
     },
     { name: "memory_forget" },
+  );
+
+  // ---------------------------------------------------------------------------
+  // Episodic Memory tools (#781)
+  // ---------------------------------------------------------------------------
+
+  /** memory.record_episode — store a structured event with explicit outcome. */
+  api.registerTool(
+    {
+      name: "memory.record_episode",
+      description:
+        "Record a structured episodic memory: a significant event with an explicit outcome (success/failure/partial/unknown), timestamp, and optional context. Use after deployments, migrations, incidents, or other notable events to build a queryable history of what happened and how it turned out.",
+      parameters: Type.Object({
+        event: Type.String({ description: "What happened (e.g. 'deployed openclaw to production')." }),
+        outcome: stringEnum(["success", "failure", "partial", "unknown"] as const, {
+          description: "Outcome of the event.",
+        }),
+        timestamp: Type.Optional(
+          Type.Number({ description: "Unix epoch seconds when the event occurred. Defaults to now." }),
+        ),
+        duration: Type.Optional(
+          Type.Number({ description: "Duration in milliseconds (e.g. how long a deployment took)." }),
+        ),
+        context: Type.Optional(Type.String({ description: "Context: environment state, what led up to it, etc." })),
+        relatedFactIds: Type.Optional(
+          Type.Array(Type.String(), { description: "IDs of related memory facts to link to this episode." }),
+        ),
+        procedureId: Type.Optional(
+          Type.String({ description: "ID of the procedure that triggered this episode, if any." }),
+        ),
+        importance: Type.Optional(
+          Type.Number({ description: "Importance 0–1 (default 0.5). Failures are auto-boosted to ≥0.8." }),
+        ),
+        tags: Type.Optional(Type.Array(Type.String(), { description: "Topic tags for filtering." })),
+        scope: Type.Optional(
+          stringEnum(["global", "user", "agent", "session"] as const, {
+            description: "Memory scope. Default: global.",
+          }),
+        ),
+        agentId: Type.Optional(Type.String()),
+        userId: Type.Optional(Type.String()),
+        sessionId: Type.Optional(Type.String()),
+      }),
+      async execute(_toolCallId: string, params: Record<string, unknown>) {
+        try {
+          const scopeFilter = buildToolScopeFilter({}, currentAgentIdRef.value, cfg);
+          const episode = ctx.factsDb.recordEpisode({
+            event: params.event as string,
+            outcome: params.outcome as EpisodeOutcome,
+            timestamp: params.timestamp as number | undefined,
+            duration: params.duration as number | undefined,
+            context: params.context as string | undefined,
+            relatedFactIds: params.relatedFactIds as string[] | undefined,
+            procedureId: params.procedureId as string | undefined,
+            importance: params.importance as number | undefined,
+            tags: params.tags as string[] | undefined,
+            decayClass: "normal",
+            scope: params.scope as "global" | "user" | "agent" | "session" | undefined,
+            scopeTarget: scopeFilter?.sessionId ?? scopeFilter?.userId ?? scopeFilter?.agentId ?? null,
+            agentId: (params.agentId as string | undefined) ?? scopeFilter?.agentId ?? undefined,
+            userId: (params.userId as string | undefined) ?? scopeFilter?.userId ?? undefined,
+            sessionId: (params.sessionId as string | undefined) ?? scopeFilter?.sessionId ?? undefined,
+          });
+
+          return {
+            content: [
+              {
+                type: "text",
+                text: `Episode recorded: [${episode.outcome}] "${episode.event}" at ${new Date(episode.timestamp * 1000).toISOString()} (id: ${episode.id})`,
+              },
+            ],
+            details: { episode },
+          };
+        } catch (err) {
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+            subsystem: "memory",
+            operation: "record_episode",
+            phase: "runtime",
+          });
+          throw err;
+        }
+      },
+    },
+    { name: "memory.record_episode" },
+  );
+
+  /** memory.search_episodes — search structured episodic memories with filters. */
+  api.registerTool(
+    {
+      name: "memory.search_episodes",
+      description:
+        "Search episodic memories — structured records of events with outcomes and timestamps. Filter by outcome (success/failure/partial/unknown), time range, or procedure. Returns events ordered by most recent first.",
+      parameters: Type.Object({
+        query: Type.Optional(Type.String({ description: "Full-text search over event and context fields." })),
+        outcome: Type.Optional(Type.Array(stringEnum(["success", "failure", "partial", "unknown"] as const))),
+        since: Type.Optional(Type.Number({ description: "Unix epoch seconds — only events after this time." })),
+        until: Type.Optional(Type.Number({ description: "Unix epoch seconds — only events before this time." })),
+        procedureId: Type.Optional(Type.String({ description: "Filter to episodes linked to a specific procedure." })),
+        limit: Type.Optional(Type.Number({ description: "Max results to return (default 50, max 200)." })),
+      }),
+      async execute(_toolCallId: string, params: Record<string, unknown>) {
+        try {
+          const scopeFilter = buildToolScopeFilter({}, currentAgentIdRef.value, cfg);
+          const episodes = ctx.factsDb.searchEpisodes({
+            query: params.query as string | undefined,
+            outcome: params.outcome as EpisodeOutcome[] | undefined,
+            since: params.since as number | undefined,
+            until: params.until as number | undefined,
+            procedureId: params.procedureId as string | undefined,
+            limit: Math.min((params.limit as number | undefined) ?? 50, 200),
+            scopeFilter,
+          });
+
+          if (episodes.length === 0) {
+            return {
+              content: [{ type: "text", text: "No episodes found matching the criteria." }],
+              details: { found: 0, episodes: [] },
+            };
+          }
+
+          const lines = episodes.map((e) => {
+            const ts = new Date(e.timestamp * 1000).toLocaleString();
+            const tagStr = e.tags.length > 0 ? ` #${e.tags.join(" #")}` : "";
+            return `- [${e.outcome}] ${ts}: ${e.event}${tagStr} (id: ${e.id})`;
+          });
+
+          return {
+            content: [
+              {
+                type: "text",
+                text: `Found ${episodes.length} episode(s):\n${lines.join("\n")}`,
+              },
+            ],
+            details: { found: episodes.length, episodes },
+          };
+        } catch (err) {
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+            subsystem: "memory",
+            operation: "search_episodes",
+            phase: "runtime",
+          });
+          throw err;
+        }
+      },
+    },
+    { name: "memory.search_episodes" },
+  );
+
+  // ---------------------------------------------------------------------------
+  // Edict tools — verified ground-truth facts with forced prompt injection (#791)
+  // ---------------------------------------------------------------------------
+
+  /** memory.add_edict — create a verified ground-truth fact (human-only; agents propose via GitHub). */
+  api.registerTool(
+    {
+      name: "memory.add_edict",
+      label: "Add Edict",
+      description:
+        "Add a verified ground-truth fact (edict) to memory. Edicts are always injected verbatim into system prompts — the agent does NOT reason about them.\n\n" +
+        'NOTE: Agents should NOT create edicts directly. To propose an edict, add a GitHub comment: [EDICT CANDIDATE] text="..." reason="..." tags=[...]. ' +
+        "Only Markus (the human) should use this tool directly.",
+      parameters: Type.Object({
+        text: Type.String({ description: "The verified statement of fact to store" }),
+        source: Type.Optional(
+          Type.String({
+            description: "Who or what verified this edict (e.g. 'human:markus', 'ops:runbook')",
+          }),
+        ),
+        tags: Type.Optional(
+          Type.Array(Type.String(), { description: "Labels for filtering (e.g. ['operations', 'ssh'])" }),
+        ),
+        ttl: Type.Optional(
+          Type.String({
+            description: "TTL mode: 'never' (permanent), 'event' (use expiresAt date), or seconds as number",
+          }),
+        ),
+        expiresAt: Type.Optional(
+          Type.String({
+            description: "ISO 8601 date when this edict expires (for ttl='event')",
+          }),
+        ),
+      }),
+      async execute(_toolCallId: string, params: Record<string, unknown>) {
+        try {
+          const { text, source, tags, ttl, expiresAt } = params as {
+            text: string;
+            source?: string;
+            tags?: string[];
+            ttl?: string;
+            expiresAt?: string;
+          };
+
+          if (!text || text.trim().length === 0) {
+            return {
+              content: [{ type: "text", text: "Provide the 'text' parameter: the verified statement to store." }],
+              details: { error: "missing_text" },
+            };
+          }
+
+          let ttlValue: "never" | "event" | number = "never";
+          if (ttl === "event") {
+            ttlValue = "event";
+          } else if (ttl !== undefined && !Number.isNaN(Number(ttl))) {
+            ttlValue = Number(ttl);
+          }
+
+          const edict = edictStore.add({
+            text: text.trim(),
+            source,
+            tags,
+            ttl: ttlValue,
+            expiresAt,
+          });
+
+          return {
+            content: [
+              {
+                type: "text",
+                text: `Edict added: \"${edict.text.slice(0, 80)}${edict.text.length > 80 ? "..." : ""}\" (id: ${edict.id})`,
+              },
+            ],
+            details: { edict },
+          };
+        } catch (err) {
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+            subsystem: "memory",
+            operation: "add_edict",
+            phase: "runtime",
+          });
+          throw err;
+        }
+      },
+    },
+    { name: "memory.add_edict" },
+  );
+
+  /** memory.list_edicts — list edicts, optionally filtered by tags. */
+  api.registerTool(
+    {
+      name: "memory.list_edicts",
+      label: "List Edicts",
+      description: "List all non-expired edicts, optionally filtered by tags.",
+      parameters: Type.Object({
+        tags: Type.Optional(Type.Array(Type.String(), { description: "Filter to edicts with any of these tags" })),
+        limit: Type.Optional(Type.Number({ description: "Max results (default 100)" })),
+      }),
+      async execute(_toolCallId: string, params: Record<string, unknown>) {
+        try {
+          const { tags, limit } = params as { tags?: string[]; limit?: number };
+          const edicts = edictStore.list({ tags, limit });
+          if (edicts.length === 0) {
+            return {
+              content: [{ type: "text", text: "No edicts found." }],
+              details: { count: 0, edicts: [] },
+            };
+          }
+          const lines = edicts.map((e) => {
+            const tagStr = e.tags.length > 0 ? `[${e.tags[0]}] ` : "";
+            return `- ${tagStr}${e.text}${e.expiresAt ? ` (expires: ${e.expiresAt})` : ""} (id: ${e.id})`;
+          });
+          return {
+            content: [
+              {
+                type: "text",
+                text: `Edicts (${edicts.length}):\n${lines.join("\n")}`,
+              },
+            ],
+            details: { count: edicts.length, edicts },
+          };
+        } catch (err) {
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+            subsystem: "memory",
+            operation: "list_edicts",
+            phase: "runtime",
+          });
+          throw err;
+        }
+      },
+    },
+    { name: "memory.list_edicts" },
+  );
+
+  /** memory.get_edicts — get edicts formatted for system prompt injection. */
+  api.registerTool(
+    {
+      name: "memory.get_edicts",
+      label: "Get Edicts for Prompt",
+      description:
+        "Get all non-expired edicts as a pre-formatted Markdown block for system prompt injection. " +
+        "This is called automatically during context compaction — prefer using this tool when you need edicts explicitly.",
+      parameters: Type.Object({
+        tags: Type.Optional(Type.Array(Type.String(), { description: "Filter to edicts with any of these tags" })),
+        format: Type.Optional(
+          Type.String({ description: "Output format: 'prompt' (Markdown block, default) or 'full' (structured)" }),
+        ),
+        limit: Type.Optional(Type.Number({ description: "Max results (default 100)" })),
+      }),
+      async execute(_toolCallId: string, params: Record<string, unknown>) {
+        try {
+          const { tags, format, limit } = params as { tags?: string[]; format?: string; limit?: number };
+          const result = edictStore.getEdicts({ tags, format: format as "prompt" | "full", limit });
+          if (result.edicts.length === 0) {
+            return {
+              content: [{ type: "text", text: "No edicts found." }],
+              details: { count: 0, edicts: [], renderForPrompt: "" },
+            };
+          }
+          return {
+            content: [{ type: "text", text: result.renderForPrompt || JSON.stringify(result.edicts, null, 2) }],
+            details: { count: result.edicts.length, edicts: result.edicts, renderForPrompt: result.renderForPrompt },
+          };
+        } catch (err) {
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+            subsystem: "memory",
+            operation: "get_edicts",
+            phase: "runtime",
+          });
+          throw err;
+        }
+      },
+    },
+    { name: "memory.get_edicts" },
+  );
+
+  /** memory.update_edict — update an existing edict's text, tags, source, or expiry. */
+  api.registerTool(
+    {
+      name: "memory.update_edict",
+      label: "Update Edict",
+      description: "Update the text, tags, source, or expiry of an existing edict.",
+      parameters: Type.Object({
+        id: Type.String({ description: "The edict id to update" }),
+        text: Type.Optional(Type.String({ description: "New verified statement text" })),
+        source: Type.Optional(Type.String({ description: "New or updated source" })),
+        tags: Type.Optional(Type.Array(Type.String(), { description: "Replacement tags array" })),
+        ttl: Type.Optional(Type.String({ description: "New TTL mode: 'never', 'event', or seconds as number" })),
+        expiresAt: Type.Optional(Type.String({ description: "ISO 8601 expiry date for ttl='event'" })),
+      }),
+      async execute(_toolCallId: string, params: Record<string, unknown>) {
+        try {
+          const { id, text, source, tags, ttl, expiresAt } = params as {
+            id: string;
+            text?: string;
+            source?: string;
+            tags?: string[];
+            ttl?: string;
+            expiresAt?: string;
+          };
+
+          let ttlValue: "never" | "event" | number | undefined;
+          if (ttl !== undefined) {
+            if (ttl === "event") ttlValue = "event";
+            else if (!Number.isNaN(Number(ttl))) ttlValue = Number(ttl);
+            else ttlValue = "never";
+          }
+
+          const updated = edictStore.update({
+            id,
+            text,
+            source,
+            tags,
+            ttl: ttlValue,
+            expiresAt,
+          });
+
+          if (!updated) {
+            return {
+              content: [{ type: "text", text: `Edict not found: ${id}` }],
+              details: { error: "not_found" },
+            };
+          }
+
+          return {
+            content: [
+              {
+                type: "text",
+                text: `Edict updated: \"${updated.text.slice(0, 80)}${updated.text.length > 80 ? "..." : ""}\" (id: ${updated.id})`,
+              },
+            ],
+            details: { edict: updated },
+          };
+        } catch (err) {
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+            subsystem: "memory",
+            operation: "update_edict",
+            phase: "runtime",
+          });
+          throw err;
+        }
+      },
+    },
+    { name: "memory.update_edict" },
+  );
+
+  /** memory.remove_edict — delete an edict by id. */
+  api.registerTool(
+    {
+      name: "memory.remove_edict",
+      label: "Remove Edict",
+      description: "Delete an edict from memory by its id.",
+      parameters: Type.Object({
+        id: Type.String({ description: "The edict id to delete" }),
+      }),
+      async execute(_toolCallId: string, params: Record<string, unknown>) {
+        try {
+          const { id } = params as { id: string };
+          const removed = edictStore.remove(id);
+          return {
+            content: [
+              {
+                type: "text",
+                text: removed ? `Edict removed: ${id}` : `Edict not found: ${id}`,
+              },
+            ],
+            details: { removed },
+          };
+        } catch (err) {
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+            subsystem: "memory",
+            operation: "remove_edict",
+            phase: "runtime",
+          });
+          throw err;
+        }
+      },
+    },
+    { name: "memory.remove_edict" },
+  );
+
+  /** memory.edict_stats — get statistics about the edict store. */
+  api.registerTool(
+    {
+      name: "memory.edict_stats",
+      label: "Edict Stats",
+      description: "Get statistics about the edict store: total, by-tag counts, expired, and expiring soon.",
+      parameters: Type.Object({}),
+      async execute(_toolCallId: string) {
+        try {
+          const stats = edictStore.stats();
+          const lines = [
+            `Total edicts: ${stats.total}`,
+            `Expired: ${stats.expired}`,
+            `Expiring in 7 days: ${stats.expiringIn7Days}`,
+            `By tag: ${
+              Object.entries(stats.byTag)
+                .map(([k, v]) => `${k}=${v}`)
+                .join(", ") || "none"
+            }`,
+          ];
+          return {
+            content: [{ type: "text", text: lines.join("\n") }],
+            details: stats,
+          };
+        } catch (err) {
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+            subsystem: "memory",
+            operation: "edict_stats",
+            phase: "runtime",
+          });
+          throw err;
+        }
+      },
+    },
+    { name: "memory.edict_stats" },
   );
 }

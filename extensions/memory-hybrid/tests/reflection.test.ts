@@ -2,12 +2,12 @@
  * Reflection layer — parsePatternsFromReflectionResponse and prompt loading.
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
 import { _testing } from "../index.js";
-import { loadPrompt, fillPrompt } from "../utils/prompt-loader.js";
-import { runReflection, runReflectionRules, runReflectionMeta } from "../services/reflection.js";
 import { getCurrentCostFeature } from "../services/cost-context.js";
+import { runReflection, runReflectionMeta, runReflectionRules } from "../services/reflection.js";
 import type { MemoryEntry } from "../types/memory.js";
+import { fillPrompt, loadPrompt } from "../utils/prompt-loader.js";
 
 const { parsePatternsFromReflectionResponse } = _testing;
 

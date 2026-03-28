@@ -3,12 +3,12 @@
  * Tests parseClassificationResponse (LLM response parser) and findSimilarByEmbedding (embedding-based similar-fact retrieval).
  */
 
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
-import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { _testing } from "../index.js";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { vectorDimsForModel } from "../config.js";
+import { _testing } from "../index.js";
 import type { MemoryEntry } from "../types/memory.js";
 
 const { FactsDB, VectorDB, findSimilarByEmbedding, parseClassificationResponse } = _testing;

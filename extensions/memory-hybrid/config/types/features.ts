@@ -204,7 +204,7 @@ export type ImplicitSignalType =
 /** Implicit feedback detection from behavioral conversation signals (Issue #262). */
 export type ImplicitFeedbackConfig = {
   /** Enable implicit feedback detection (default: true). */
-  enabled: boolean;
+  enabled?: boolean;
   /** Minimum confidence to include a signal (default: 0.5). */
   minConfidence: number;
   /** Signal types to detect; defaults to all types. */
@@ -360,4 +360,20 @@ export type HumanizerConfig = {
   modelTag?: string;
   /** Optional skill/context tag for the stored fact. */
   skillTag?: string;
+};
+
+/** Frequency-based auto-save: capture repeated references including credentials to vault (Issue #784). */
+export type FrequencyCaptureConfig = {
+  /** Enable frequency-based auto-save (default: false — opt-in). */
+  enabled: boolean;
+  /** Number of mentions before auto-saving (default: 3). */
+  mentionThreshold: number;
+  /** Look back this many sessions for mention counting (default: 5). */
+  lookbackSessions: number;
+  /** Default importance for auto-saved facts (default: 0.6). */
+  defaultImportance: number;
+  /** Whether to capture credentials to vault (default: true). */
+  captureCredentials: boolean;
+  /** Days before auto-purging stale mention records (default: 30). */
+  ttlDays: number;
 };

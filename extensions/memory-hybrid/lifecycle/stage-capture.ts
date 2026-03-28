@@ -7,7 +7,7 @@
 
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import type { ClawdbotPluginApi } from "openclaw/plugin-sdk";
+import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import type { MemoryCategory } from "../config.js";
 import { getCronModelConfig, getDefaultCronModel } from "../config.js";
 import { CLI_STORE_IMPORTANCE } from "../utils/constants.js";
@@ -21,6 +21,7 @@ import {
   resolveCaptureProvenance,
 } from "../services/capture-provenance.js";
 import { classifyMemoryOperation } from "../services/classification.js";
+import type { EpisodeOutcome } from "../types/memory.js";
 import { extractCredentialsFromToolCalls } from "../services/credential-scanner.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { isOllamaCircuitBreakerOpen } from "../services/embeddings.js";
@@ -29,6 +30,47 @@ import { runHumanizerScore, formatQualityLoopEntry } from "../services/humanizer
 import type { LifecycleContext, SessionState } from "./types.js";
 
 const CAPTURE_STAGE_TIMEOUT_MS = 60_000;
+
+/** Outcome indicator patterns for episodic memory auto-capture (#781). */
+interface OutcomePattern {
+  regex: RegExp;
+  label?: string;
+}
+
+/** Patterns that indicate a successful outcome. */
+const SUCCESS_PATTERNS: OutcomePattern[] = [
+  // Git merge / PR merge
+  { regex: /✅\s*(?:merged|Merge)/i, label: "merged" },
+  { regex: /\b(?:successfully\s+)?(?:merged|Merge)\b/i, label: "merged" },
+  // Checkmark / success
+  { regex: /✅/i, label: "success" },
+  // Explicit success language
+  { regex: /\bsucceeded\b/i, label: "succeeded" },
+  { regex: /\bcompleted(?:\s+successfully)?\b/i, label: "completed" },
+  { regex: /\bfixed\b/i, label: "fixed" },
+  { regex: /\bpassed\b/i, label: "passed" },
+  { regex: /\bdeployed\b/i, label: "deployed" },
+  { regex: /\bresolved\b/i, label: "resolved" },
+];
+
+/** Patterns that indicate a failed outcome. */
+const FAILURE_PATTERNS: OutcomePattern[] = [
+  // Cross mark
+  { regex: /❌/i, label: "failed" },
+  // Explicit failure
+  { regex: /\bfailed\b/i, label: "failed" },
+  { regex: /\bfailure\b/i, label: "failure" },
+  { regex: /\bFAILED\b/i, label: "failed" },
+  // Error
+  { regex: /\berror\b/i, label: "error" },
+  { regex: /\bcrashed\b/i, label: "crashed" },
+  { regex: /\bbroke\b/i, label: "broke" },
+  { regex: /\bbug\b/i, label: "bug" },
+  { regex: /\brejected\b/i, label: "rejected" },
+  { regex: /\bdenied\b/i, label: "denied" },
+  { regex: /\brevert(?:ed)?\b/i, label: "reverted" },
+  { regex: /\brollback\b/i, label: "rollback" },
+];
 
 /**
  * Extract text content from the last assistant message in a message array.
@@ -421,6 +463,111 @@ async function runCapture(
         subsystem: "auto-capture",
       });
       api.logger.warn(`memory-hybrid: capture failed: ${String(err)}`);
+    }
+  }
+
+  // 6b. Episodic memory auto-capture (#781): scan conversation for outcome-indicating phrases
+  // and create episode records. This runs regardless of autoCapture config flag, because
+  // capturing outcomes is low-cost and high-value for the episodic history.
+  {
+    const sessionId = sessionKey;
+    const agentId = ctx.currentAgentIdRef.value ?? undefined;
+    // Collect all text from the session for scanning
+    const sessionTexts: Array<{ text: string; turnIndex: number }> = [];
+    for (let turnIndex = 0; turnIndex < (messages as unknown[]).length; turnIndex++) {
+      const msg = (messages as unknown[])[turnIndex];
+      if (!msg || typeof msg !== "object") continue;
+      const msgObj = msg as Record<string, unknown>;
+      const content = msgObj.content;
+      if (typeof content === "string") {
+        sessionTexts.push({ text: content, turnIndex });
+      } else if (Array.isArray(content)) {
+        for (const block of content) {
+          if (
+            block &&
+            typeof block === "object" &&
+            "text" in block &&
+            typeof (block as Record<string, unknown>).text === "string"
+          ) {
+            sessionTexts.push({ text: (block as Record<string, unknown>).text as string, turnIndex });
+          }
+        }
+      }
+    }
+
+    for (const { text } of sessionTexts) {
+      // Scan for success indicators
+      for (const pattern of SUCCESS_PATTERNS) {
+        const match = pattern.regex.exec(text);
+        if (match) {
+          const eventText = pattern.label ? `Agent reported: ${pattern.label}` : match[0];
+          const existing = ctx.factsDb.searchEpisodes({
+            query: eventText,
+            since: Math.floor(Date.now() / 1000) - 300, // within last 5 min
+            limit: 1,
+          });
+          if (existing.length === 0) {
+            try {
+              const episode = ctx.factsDb.recordEpisode({
+                event: eventText,
+                outcome: "success",
+                timestamp: Math.floor(Date.now() / 1000),
+                context: text.slice(0, 500),
+                sessionId,
+                agentId,
+                scope: "session",
+                scopeTarget: sessionId,
+                tags: pattern.label ? [pattern.label] : [],
+              });
+              api.logger.debug?.(`memory-hybrid: auto-captured success episode: ${episode.id}`);
+            } catch (err) {
+              capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+                operation: "episode-auto-capture-success",
+                subsystem: "episodes",
+                severity: "info",
+              });
+            }
+          }
+          break; // only one episode per message
+        }
+      }
+
+      // Scan for failure indicators
+      for (const pattern of FAILURE_PATTERNS) {
+        const match = pattern.regex.exec(text);
+        if (match) {
+          const eventText = pattern.label ? `Agent reported: ${pattern.label}` : match[0];
+          const existing = ctx.factsDb.searchEpisodes({
+            query: eventText,
+            since: Math.floor(Date.now() / 1000) - 300,
+            limit: 1,
+          });
+          if (existing.length === 0) {
+            try {
+              const episode = ctx.factsDb.recordEpisode({
+                event: eventText,
+                outcome: "failure",
+                timestamp: Math.floor(Date.now() / 1000),
+                context: text.slice(0, 500),
+                sessionId,
+                agentId,
+                scope: "session",
+                scopeTarget: sessionId,
+                tags: pattern.label ? [pattern.label] : [],
+                // failures get importance >= 0.8 automatically via recordEpisode
+              });
+              api.logger.debug?.(`memory-hybrid: auto-captured failure episode: ${episode.id}`);
+            } catch (err) {
+              capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+                operation: "episode-auto-capture-failure",
+                subsystem: "episodes",
+                severity: "info",
+              });
+            }
+          }
+          break;
+        }
+      }
     }
   }
 

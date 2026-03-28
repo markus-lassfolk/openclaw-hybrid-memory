@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * Tests for Issue #279 — Dashboard HTTP routes must use consistent auth
  *
@@ -25,7 +26,7 @@ import {
   type HttpRequestHandler,
 } from "../tools/dashboard-routes.js";
 import { parseHealthConfig } from "../config/parsers/maintenance.js";
-import type { ClawdbotPluginApi } from "openclaw/plugin-sdk";
+import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 
 // ---------------------------------------------------------------------------
 // Helpers

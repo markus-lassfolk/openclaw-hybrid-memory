@@ -5,13 +5,14 @@
  * Extracted from index.ts to reduce main file size.
  */
 
-import type { ClawdbotPluginApi } from "openclaw/plugin-sdk";
+import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import type { MemoryPluginAPI } from "../api/memory-plugin-api.js";
 import { getMemoryCategories } from "../config.js";
-import { createLifecycleHooks, type LifecycleContext } from "../lifecycle/hooks.js";
+import { type LifecycleContext, createLifecycleHooks } from "../lifecycle/hooks.js";
 import { capturePluginError } from "../services/error-reporter.js";
-import { sanitizeMessagesForClaude, type MessageLike } from "../utils/sanitize-messages.js";
 import { runPreConsolidationFlush } from "../services/pre-consolidation-flush.js";
+import { WorkflowTracker } from "../services/workflow-tracker.js";
+import { type MessageLike, sanitizeMessagesForClaude } from "../utils/sanitize-messages.js";
 
 /** Lifecycle hooks receive the stable plugin API (Phase 3). */
 export type HooksContext = MemoryPluginAPI;
@@ -32,6 +33,7 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
   try {
     lifecycleContext = {
       factsDb: ctx.factsDb,
+      edictStore: ctx.edictStore,
       vectorDb: ctx.vectorDb,
       embeddings: ctx.embeddings,
       embeddingRegistry: ctx.embeddingRegistry ?? null,
@@ -43,6 +45,12 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
       eventLog: ctx.eventLog,
       narrativesDb: ctx.narrativesDb,
       workflowStore: ctx.workflowStore,
+      // Issue #742: instantiate WorkflowTracker and wire into lifecycle so tool sequences
+      // are recorded to workflow-traces.db (was implemented but never connected).
+      workflowTracker:
+        ctx.workflowStore && ctx.cfg.workflowTracking?.enabled
+          ? new WorkflowTracker(ctx.workflowStore, ctx.cfg.workflowTracking)
+          : undefined,
       currentAgentIdRef: ctx.currentAgentIdRef,
       lastProgressiveIndexIds: ctx.lastProgressiveIndexIds,
       restartPendingClearedRef: ctx.restartPendingClearedRef,
@@ -224,8 +232,8 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
         );
 
         if (pinnedFacts.length > 0) {
-          injectedContext += `\n<!-- Pinned Session Constraints / Memories -->\n`;
-          injectedContext += pinnedFacts.map((f) => `- ${f.entry.summary || f.entry.text}`).join("\n") + "\n";
+          injectedContext += "\n<!-- Pinned Session Constraints / Memories -->\n";
+          injectedContext += `${pinnedFacts.map((f) => `- ${f.entry.summary || f.entry.text}`).join("\n")}\n`;
         }
       } catch (err) {
         api.logger.debug?.(`memory-hybrid: failed to fetch pinned facts for pre-compaction: ${err}`);

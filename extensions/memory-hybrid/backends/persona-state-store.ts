@@ -5,13 +5,13 @@
  * It stays separate from factual memory, operational rules, and human-reviewed file proposals.
  */
 
-import { DatabaseSync } from "node:sqlite";
 import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import { BaseSqliteStore } from "./base-sqlite-store.js";
-import { uniqueStrings } from "../utils/text.js";
+import { DatabaseSync } from "node:sqlite";
 import type { IdentityFileType } from "../config/types/agents.js";
+import { uniqueStrings } from "../utils/text.js";
+import { BaseSqliteStore } from "./base-sqlite-store.js";
 
 interface PersonaStateRow {
   id: string;
@@ -103,7 +103,7 @@ export class PersonaStateStore extends BaseSqliteStore {
   }
 
   getByStateKey(stateKey: string): PersonaStateEntry | null {
-    const row = this.liveDb.prepare(`SELECT * FROM persona_state WHERE state_key = ?`).get(stateKey) as
+    const row = this.liveDb.prepare("SELECT * FROM persona_state WHERE state_key = ?").get(stateKey) as
       | PersonaStateRow
       | undefined;
     return row ? this.rowToEntry(row) : null;
@@ -111,13 +111,13 @@ export class PersonaStateStore extends BaseSqliteStore {
 
   listRecent(limit = 50): PersonaStateEntry[] {
     const rows = this.liveDb
-      .prepare(`SELECT * FROM persona_state ORDER BY updated_at DESC LIMIT ?`)
+      .prepare("SELECT * FROM persona_state ORDER BY updated_at DESC LIMIT ?")
       .all(limit) as unknown as PersonaStateRow[];
     return rows.map((row) => this.rowToEntry(row));
   }
 
   count(): number {
-    const row = this.liveDb.prepare(`SELECT COUNT(*) AS count FROM persona_state`).get() as
+    const row = this.liveDb.prepare("SELECT COUNT(*) AS count FROM persona_state").get() as
       | { count?: number }
       | undefined;
     return row?.count ?? 0;

@@ -6,13 +6,13 @@
  */
 
 import { Type } from "@sinclair/typebox";
-import type { ClawdbotPluginApi } from "openclaw/plugin-sdk";
+import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import { stringEnum } from "../utils/typebox.js";
 
 import type { FactsDB, MemoryLinkType } from "../backends/facts-db.js";
 import { MEMORY_LINK_TYPES } from "../backends/facts-db.js";
 import type { HybridMemoryConfig } from "../config.js";
-import { findShortestPath, resolveInput, formatPath } from "../services/shortest-path.js";
+import { findShortestPath, formatPath, resolveInput } from "../services/shortest-path.js";
 
 export interface PluginContext {
   factsDb: FactsDB;

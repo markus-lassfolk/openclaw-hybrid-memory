@@ -11,6 +11,7 @@
  */
 
 import type { FactsDB } from "../backends/facts-db.js";
+import type { EdictStore } from "../backends/edict-store.js";
 import type { VectorDB } from "../backends/vector-db.js";
 import type { WriteAheadLog } from "../backends/wal.js";
 import type { CredentialsDB } from "../backends/credentials-db.js";
@@ -62,6 +63,7 @@ export type BuildToolScopeFilterFn = (
 export interface MemoryPluginAPI {
   // --- Core (always present) ---
   factsDb: FactsDB;
+  edictStore: EdictStore;
   vectorDb: VectorDB;
   cfg: HybridMemoryConfig;
   embeddings: EmbeddingProvider;

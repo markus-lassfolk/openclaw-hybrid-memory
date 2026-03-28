@@ -8,9 +8,9 @@
  * - Separates queue authority from eventual GitHub branch visibility
  */
 
+import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { mkdir, open, readFile, rename, stat, unlink, writeFile } from "node:fs/promises";
-import { randomUUID } from "node:crypto";
 import { dirname, join } from "node:path";
 
 const LEASES_FILE = "dispatch-leases.json";

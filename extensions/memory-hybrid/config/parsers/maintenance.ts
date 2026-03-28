@@ -1,13 +1,13 @@
 import type {
-  VerificationConfig,
-  ProvenanceConfig,
-  NightlyCycleConfig,
-  HealthConfig,
-  MonthlyReviewConfig,
-  MaintenanceConfig,
   CouncilConfig,
   CouncilProvenanceMode,
   CronReliabilityConfig,
+  HealthConfig,
+  MaintenanceConfig,
+  MonthlyReviewConfig,
+  NightlyCycleConfig,
+  ProvenanceConfig,
+  VerificationConfig,
 } from "../types/maintenance.js";
 
 export function parseVerificationConfig(cfg: Record<string, unknown>): VerificationConfig {

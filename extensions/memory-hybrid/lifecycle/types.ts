@@ -4,6 +4,7 @@
  */
 
 import type { FactsDB } from "../backends/facts-db.js";
+import type { EdictStore } from "../backends/edict-store.js";
 import type { VectorDB } from "../backends/vector-db.js";
 import type { EmbeddingProvider } from "../services/embeddings.js";
 import type { EmbeddingRegistry } from "../services/embedding-registry.js";
@@ -12,6 +13,7 @@ import type { CredentialsDB } from "../backends/credentials-db.js";
 import type { EventLog } from "../backends/event-log.js";
 import type { NarrativesDB } from "../backends/narratives-db.js";
 import type { WorkflowStore } from "../backends/workflow-store.js";
+import type { WorkflowTracker } from "../services/workflow-tracker.js";
 import type OpenAI from "openai";
 import type { HybridMemoryConfig, MemoryCategory } from "../config.js";
 import type { MemoryEntry, ScopeFilter, SearchResult } from "../types/memory.js";
@@ -21,6 +23,7 @@ import type { FrustrationConversationTurn } from "../services/frustration-detect
 
 export interface LifecycleContext {
   factsDb: FactsDB;
+  edictStore: EdictStore;
   vectorDb: VectorDB;
   embeddings: EmbeddingProvider;
   embeddingRegistry: EmbeddingRegistry | null;
@@ -32,6 +35,7 @@ export interface LifecycleContext {
   eventLog: EventLog | null;
   narrativesDb: NarrativesDB | null;
   workflowStore: WorkflowStore | null;
+  workflowTracker?: WorkflowTracker;
   currentAgentIdRef: { value: string | null };
   lastProgressiveIndexIds: string[];
   restartPendingClearedRef: { value: boolean };
