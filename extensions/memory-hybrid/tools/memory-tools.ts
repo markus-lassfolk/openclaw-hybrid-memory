@@ -358,6 +358,14 @@ export function registerMemoryTools(
         try {
           return await memoryRecallImpl(params);
         } catch (err) {
+          auditAppend({
+            agentId: agentIdForAudit(),
+            action: "memory_recall",
+            target: null,
+            outcome: "failed",
+            error: err instanceof Error ? err.message : String(err),
+            sessionId: api.context?.sessionId ?? undefined,
+          });
           capturePluginError(err instanceof Error ? err : new Error(String(err)), {
             subsystem: "memory",
             operation: "memory-recall",
@@ -602,6 +610,14 @@ export function registerMemoryTools(
         }
       }
       logRecall(false);
+      auditAppend({
+        agentId: agentIdForAudit(),
+        action: "memory_recall",
+        target: typeof idParam === "number" ? `index ${idParam}` : `id ${idParam}`,
+        outcome: "partial",
+        durationMs: Date.now() - recallStartedAt,
+        sessionId: api.context?.sessionId ?? undefined,
+      });
       return {
         content: [
           {
@@ -619,6 +635,14 @@ export function registerMemoryTools(
     const query = typeof queryParam === "string" && queryParam.trim().length > 0 ? queryParam.trim() : null;
     if (!query) {
       logRecall(false);
+      auditAppend({
+        agentId: agentIdForAudit(),
+        action: "memory_recall",
+        target: null,
+        outcome: "partial",
+        durationMs: Date.now() - recallStartedAt,
+        sessionId: api.context?.sessionId ?? undefined,
+      });
       return {
         content: [
           {
@@ -1978,6 +2002,14 @@ export function registerMemoryTools(
             },
           };
         } catch (err) {
+          auditAppend({
+            agentId: agentIdForAudit(),
+            action: "memory_store",
+            target: null,
+            outcome: "failed",
+            error: err instanceof Error ? err.message : String(err),
+            sessionId: api.context?.sessionId ?? undefined,
+          });
           capturePluginError(err instanceof Error ? err : new Error(String(err)), {
             subsystem: "memory",
             operation: "memory-store",
