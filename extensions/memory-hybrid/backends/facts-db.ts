@@ -3328,8 +3328,6 @@ export class FactsDB extends BaseSqliteStore {
 
       return {
         ...base,
-        successCount: base.successCount + totalSuccess,
-        failureCount: base.failureCount + totalFailure,
         version: versionRow.version_number,
         successRate,
         avoidanceNotes: allNotes.size > 0 ? Array.from(allNotes) : undefined,

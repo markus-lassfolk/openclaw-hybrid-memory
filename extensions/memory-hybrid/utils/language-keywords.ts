@@ -5,8 +5,8 @@
  * Used for shouldCapture, detectCategory, and decay classification.
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { readFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { join, dirname } from "node:path";
 import { capturePluginError } from "../services/error-reporter.js";
 
 const LANG_FILE_NAME = ".language-keywords.json";

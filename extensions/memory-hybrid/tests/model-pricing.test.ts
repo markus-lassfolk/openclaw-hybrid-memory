@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
-import { MODEL_PRICING, estimateCost, getModeCostEstimates, getModelPricing } from "../services/model-pricing.js";
+import { describe, it, expect } from "vitest";
+import { estimateCost, getModelPricing, MODEL_PRICING, getModeCostEstimates } from "../services/model-pricing.js";
 
 describe("getModelPricing", () => {
   it("returns pricing for known OpenAI models", () => {

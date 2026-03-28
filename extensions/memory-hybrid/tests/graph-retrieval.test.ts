@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * Tests for Issue #145 — GraphRAG Retrieval: semantic search + graph traversal.
  *
@@ -33,10 +32,10 @@
  *   - Integration with FactsDB: real DB links traversed correctly
  */
 
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { tmpdir } from "node:os";
 import { _testing } from "../index.js";
 import type { MemoryEntry } from "../types/memory.js";
 

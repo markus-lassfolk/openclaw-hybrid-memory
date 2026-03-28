@@ -4,9 +4,9 @@
  * Issue #262 — Phase 3.
  */
 
+import { capturePluginError } from "./error-reporter.js";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { ClosedLoopConfig } from "../config/types/features.js";
-import { capturePluginError } from "./error-reporter.js";
 
 export interface FeedbackEffectiveness {
   ruleId: string;

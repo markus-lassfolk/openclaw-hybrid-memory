@@ -3,12 +3,12 @@
  * Issue #236
  */
 
+import { capturePluginError } from "../services/error-reporter.js";
+import { sweepAll, type SweepAllOpts } from "../services/sensor-sweep.js";
 import type { EventBus } from "../backends/event-bus.js";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { HybridMemoryConfig } from "../config.js";
-import { capturePluginError } from "../services/error-reporter.js";
-import { type SweepAllOpts, sweepAll } from "../services/sensor-sweep.js";
-import { type Chainable, withExit } from "./shared.js";
+import { withExit, type Chainable } from "./shared.js";
 
 export interface SensorSweepContext {
   factsDb: FactsDB;

@@ -9,25 +9,25 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
-import { homedir } from "node:os";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { homedir } from "node:os";
 import { type EventBus, computeFingerprint } from "../backends/event-bus.js";
-import type { FactsDB } from "../backends/facts-db.js";
+import { capturePluginError } from "./error-reporter.js";
+import { stableStringify } from "../utils/stable-stringify.js";
 import type {
+  SensorSweepConfig,
+  HomeAssistantSensorConfig,
   GarminSensorConfig,
+  SessionHistorySensorConfig,
+  MemoryPatternsSensorConfig,
   GitHubSensorConfig,
   HomeAssistantAnomalySensorConfig,
-  HomeAssistantSensorConfig,
-  MemoryPatternsSensorConfig,
-  SensorSweepConfig,
-  SessionHistorySensorConfig,
   SystemHealthSensorConfig,
   WeatherSensorConfig,
   YarboSensorConfig,
 } from "../config/types/sensors.js";
-import { stableStringify } from "../utils/stable-stringify.js";
-import { capturePluginError } from "./error-reporter.js";
+import type { FactsDB } from "../backends/facts-db.js";
 
 // ---------------------------------------------------------------------------
 // Types

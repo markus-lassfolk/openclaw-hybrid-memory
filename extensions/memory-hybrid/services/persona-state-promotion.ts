@@ -1,7 +1,7 @@
-import type { IdentityReflectionEntry, IdentityReflectionStore } from "../backends/identity-reflection-store.js";
-import type { PersonaStateEntry, PersonaStateStore } from "../backends/persona-state-store.js";
 import type { IdentityFileType } from "../config/types/agents.js";
 import type { IdentityPromotionConfig } from "../config/types/capture.js";
+import type { IdentityReflectionEntry, IdentityReflectionStore } from "../backends/identity-reflection-store.js";
+import type { PersonaStateEntry, PersonaStateStore } from "../backends/persona-state-store.js";
 import { uniqueStrings } from "../utils/text.js";
 
 const INSIGHT_STOPWORDS = new Set([

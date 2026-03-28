@@ -7,26 +7,26 @@
  * 3. Meta-patterns (runReflectionMeta): Synthesize patterns into 1-3 meta-patterns
  */
 
-import { randomUUID } from "node:crypto";
-import type OpenAI from "openai";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
-import type { MemoryCategory, MemoryEntry } from "../types/memory.js";
-import {
-  REFLECTION_DEDUPE_THRESHOLD,
-  REFLECTION_IMPORTANCE,
-  REFLECTION_MAX_FACTS_PER_CATEGORY,
-  REFLECTION_MAX_FACT_LENGTH,
-  REFLECTION_META_MAX_CHARS,
-  REFLECTION_PATTERN_MAX_CHARS,
-  REFLECTION_TEMPERATURE,
-} from "../utils/constants.js";
-import { fillPrompt, loadPrompt } from "../utils/prompt-loader.js";
-import { LLMRetryError, chatCompleteWithRetry } from "./chat.js";
 import type { EmbeddingProvider } from "./embeddings.js";
 import { shouldSuppressEmbeddingError } from "./embeddings.js";
-import { capturePluginError } from "./error-reporter.js";
+import type OpenAI from "openai";
+import type { MemoryEntry, MemoryCategory } from "../types/memory.js";
 import type { ProvenanceService } from "./provenance.js";
+import { loadPrompt, fillPrompt } from "../utils/prompt-loader.js";
+import {
+  REFLECTION_MAX_FACT_LENGTH,
+  REFLECTION_MAX_FACTS_PER_CATEGORY,
+  REFLECTION_IMPORTANCE,
+  REFLECTION_DEDUPE_THRESHOLD,
+  REFLECTION_TEMPERATURE,
+  REFLECTION_PATTERN_MAX_CHARS,
+  REFLECTION_META_MAX_CHARS,
+} from "../utils/constants.js";
+import { capturePluginError } from "./error-reporter.js";
+import { chatCompleteWithRetry, LLMRetryError } from "./chat.js";
+import { randomUUID } from "node:crypto";
 
 const REFLECTION_PATTERN_MIN_CHARS = 20;
 const REFLECTION_RULE_MIN_CHARS = 10;

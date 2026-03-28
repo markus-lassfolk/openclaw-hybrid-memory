@@ -6,7 +6,7 @@
 
 import type OpenAI from "openai";
 import type { MemoryEntry } from "../types/memory.js";
-import { fillPrompt, loadPrompt } from "../utils/prompt-loader.js";
+import { loadPrompt, fillPrompt } from "../utils/prompt-loader.js";
 import { capturePluginError } from "./error-reporter.js";
 
 export type MemoryClassification = {

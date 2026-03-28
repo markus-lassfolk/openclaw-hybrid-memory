@@ -10,21 +10,21 @@
  *  - Testability: single constructor arg, no global state.
  */
 
+import { DatabaseSync } from "node:sqlite";
+import type { SQLInputValue } from "node:sqlite";
 import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import { DatabaseSync } from "node:sqlite";
-import type { SQLInputValue } from "node:sqlite";
 
+import { BaseSqliteStore } from "./base-sqlite-store.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import type {
-  CreateLearningEntryInput,
   LearningEntry,
-  LearningEntryStatus,
   LearningEntryType,
+  LearningEntryStatus,
+  CreateLearningEntryInput,
 } from "../types/learnings-types.js";
 import { LEARNING_STATUS_TRANSITIONS } from "../types/learnings-types.js";
-import { BaseSqliteStore } from "./base-sqlite-store.js";
 
 export type {
   LearningEntry,

@@ -12,23 +12,23 @@
  */
 
 import { existsSync, readdirSync } from "node:fs";
-import { mkdir, open, readFile, stat, writeFile } from "node:fs/promises";
-import { homedir } from "node:os";
+import { open, readFile, writeFile, mkdir, stat } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import type OpenAI from "openai";
-import type { EventLog } from "../backends/event-log.js";
-import { categoryToEventType } from "../backends/event-log.js";
+import { homedir } from "node:os";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
-import type { MemoryCategory, ReinforcementConfig } from "../config.js";
-import { fillPrompt, loadPrompt } from "../utils/prompt-loader.js";
-import { chunkTextByChars } from "../utils/text.js";
-import { LLMRetryError, chatCompleteWithRetry } from "./chat.js";
+import type { EventLog } from "../backends/event-log.js";
+import { categoryToEventType } from "../backends/event-log.js";
 import type { EmbeddingProvider } from "./embeddings.js";
 import { shouldSuppressEmbeddingError } from "./embeddings.js";
-import { capturePluginError } from "./error-reporter.js";
 import type { ProvenanceService } from "./provenance.js";
-import { dotProductSimilarity, normalizeVector } from "./reflection.js";
+import type OpenAI from "openai";
+import type { MemoryCategory, ReinforcementConfig } from "../config.js";
+import { chunkTextByChars } from "../utils/text.js";
+import { loadPrompt, fillPrompt } from "../utils/prompt-loader.js";
+import { chatCompleteWithRetry, LLMRetryError } from "./chat.js";
+import { capturePluginError } from "./error-reporter.js";
+import { normalizeVector, dotProductSimilarity } from "./reflection.js";
 
 // ---------------------------------------------------------------------------
 // Types

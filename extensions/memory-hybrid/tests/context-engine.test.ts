@@ -7,14 +7,14 @@
  *   - onSubagentEnded(): counts and logs facts captured from child sessions
  */
 
-import { randomUUID } from "node:crypto";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { _testing } from "../index.js";
+import { tmpdir } from "node:os";
+import { randomUUID } from "node:crypto";
 import { HybridMemoryContextEngine } from "../services/context-engine.js";
 import type { ContextEngineOptions } from "../services/context-engine.js";
+import { _testing } from "../index.js";
 
 const { FactsDB, WriteAheadLog } = _testing;
 

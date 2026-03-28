@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * Shadow Evaluation Benchmark Framework
  *

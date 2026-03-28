@@ -1,12 +1,11 @@
-// @ts-nocheck
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi, beforeEach } from "vitest";
+import { buildExplicitSemanticQueryVector, DEFAULT_RETRIEVAL_CONFIG } from "../services/retrieval-orchestrator.js";
 import { AllEmbeddingProvidersFailed } from "../services/embeddings.js";
 import * as errorReporter from "../services/error-reporter.js";
 import {
   resolveExplicitDeepRetrievalPolicy,
   resolveInteractiveRecallPolicy,
 } from "../services/retrieval-mode-policy.js";
-import { DEFAULT_RETRIEVAL_CONFIG, buildExplicitSemanticQueryVector } from "../services/retrieval-orchestrator.js";
 
 beforeEach(() => {
   vi.restoreAllMocks();

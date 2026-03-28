@@ -12,8 +12,8 @@
  */
 
 import type { DatabaseSync } from "node:sqlite";
-import { capturePluginError } from "../services/error-reporter.js";
 import { SQLITE_BUSY_TIMEOUT_MS } from "../utils/constants.js";
+import { capturePluginError } from "../services/error-reporter.js";
 
 export interface BaseSqliteStoreOptions {
   /** Enable foreign key constraints (default: false). */

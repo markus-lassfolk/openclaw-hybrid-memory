@@ -1,6 +1,6 @@
-import { describe, expect, it } from "vitest";
-import { distillBatchTokenLimit } from "../services/chat.js";
+import { describe, it, expect } from "vitest";
 import { chunkSessionText, chunkTextByChars } from "../utils/text.js";
+import { distillBatchTokenLimit } from "../services/chat.js";
 
 describe("chunkSessionText", () => {
   it("returns single-element array when text fits in maxTokens", () => {

@@ -10,21 +10,21 @@
  *   - Deduplication: already-generalised facts skipped
  */
 
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { parseCrossAgentLearningConfig } from "../config/parsers/features.js";
-import type { CrossAgentLearningConfig } from "../config/types/features.js";
+import { tmpdir } from "node:os";
 import { _testing } from "../index.js";
-import { getCurrentCostFeature } from "../services/cost-context.js";
 import {
-  formatBriefInjection,
   getCrossAgentFacts,
   getCrossAgentLessons,
-  runCrossAgentLearning,
+  formatBriefInjection,
   verifyLessonForAgent,
+  runCrossAgentLearning,
 } from "../services/cross-agent-learning.js";
+import { parseCrossAgentLearningConfig } from "../config/parsers/features.js";
+import type { CrossAgentLearningConfig } from "../config/types/features.js";
+import { getCurrentCostFeature } from "../services/cost-context.js";
 
 const { FactsDB } = _testing;
 

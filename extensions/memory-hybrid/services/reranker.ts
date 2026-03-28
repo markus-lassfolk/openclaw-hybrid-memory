@@ -15,8 +15,8 @@
  */
 
 import type OpenAI from "openai";
-import type { RerankingConfig } from "../config.js";
 import { chatComplete } from "./chat.js";
+import type { RerankingConfig } from "../config.js";
 import { extractJsonArray } from "./json-array-parser.js";
 
 // ---------------------------------------------------------------------------

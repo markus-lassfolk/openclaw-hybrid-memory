@@ -8,13 +8,13 @@
  * - Semantic dedup prevents duplicate rules
  */
 
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { mkdtempSync, rmSync, writeFileSync, readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { tmpdir } from "node:os";
+import { inferTargetFile, runExtractReinforcementForCli, runSelfCorrectionRunForCli } from "../cli/handlers.js";
 import { FactsDB } from "../backends/facts-db.js";
 import { ProposalsDB } from "../backends/proposals-db.js";
-import { inferTargetFile, runExtractReinforcementForCli, runSelfCorrectionRunForCli } from "../cli/handlers.js";
 import type { HandlerContext } from "../cli/handlers.js";
 
 // ---------------------------------------------------------------------------

@@ -8,14 +8,14 @@
  * UUIDs for primary keys, ISO-8601 timestamps.
  */
 
+import { DatabaseSync } from "node:sqlite";
+import type { SQLInputValue } from "node:sqlite";
 import { createHash, randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import { DatabaseSync } from "node:sqlite";
-import type { SQLInputValue } from "node:sqlite";
 
-import { capturePluginError } from "../services/error-reporter.js";
 import { BaseSqliteStore } from "./base-sqlite-store.js";
+import { capturePluginError } from "../services/error-reporter.js";
 
 // ---------------------------------------------------------------------------
 // Public types

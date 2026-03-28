@@ -32,15 +32,15 @@
  *     - runRetrievalPipeline calls reranking when enabled and openai provided
  */
 
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { tmpdir } from "node:os";
 
-import type { RerankingConfig } from "../config.js";
+import { rerankResults, buildRerankPrompt, parseRankedIds, type ScoredFact } from "../services/reranker.js";
+import { runRetrievalPipeline, DEFAULT_RETRIEVAL_CONFIG } from "../services/retrieval-orchestrator.js";
 import { _testing } from "../index.js";
-import { type ScoredFact, buildRerankPrompt, parseRankedIds, rerankResults } from "../services/reranker.js";
-import { DEFAULT_RETRIEVAL_CONFIG, runRetrievalPipeline } from "../services/retrieval-orchestrator.js";
+import type { RerankingConfig } from "../config.js";
 
 const { FactsDB } = _testing;
 

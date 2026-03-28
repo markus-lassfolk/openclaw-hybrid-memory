@@ -2,8 +2,8 @@
  * File system utilities
  */
 
-import { readdirSync, statSync } from "node:fs";
-import { readFile, readdir, stat } from "node:fs/promises";
+import { statSync, readdirSync } from "node:fs";
+import { readdir, stat, readFile } from "node:fs/promises";
 import { join } from "node:path";
 
 /**

@@ -1,5 +1,5 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { initPluginLogger, pluginLogger, resetPluginLogger, restoreDefaultLogger } from "../utils/logger.js";
+import { describe, it, expect, vi, afterEach } from "vitest";
+import { pluginLogger, initPluginLogger, resetPluginLogger, restoreDefaultLogger } from "../utils/logger.js";
 
 describe("pluginLogger", () => {
   afterEach(() => {

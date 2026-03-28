@@ -12,19 +12,19 @@
  *   - deduplicateResultsById(): generic helper with custom key extractor
  */
 
-import { beforeEach, describe, expect, it } from "vitest";
-import type { AmbientConfig } from "../config.js";
+import { describe, it, expect, beforeEach } from "vitest";
 import {
-  type AmbientQuery,
-  SessionSeenFacts,
-  cosineDistance,
   cosineSimilarity,
-  deduplicateResultsById,
+  cosineDistance,
   detectTopicShift,
   extractEntitiesFromMessage,
-  generateAmbientQueries,
   generateTemporalQueries,
+  SessionSeenFacts,
+  generateAmbientQueries,
+  deduplicateResultsById,
+  type AmbientQuery,
 } from "../services/ambient-retrieval.js";
+import type { AmbientConfig } from "../config.js";
 
 // ---------------------------------------------------------------------------
 // Helpers

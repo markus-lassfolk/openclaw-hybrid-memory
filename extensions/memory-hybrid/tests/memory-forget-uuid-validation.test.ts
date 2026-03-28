@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * Tests for memory_forget UUID validation (issue #334).
  *
@@ -7,17 +6,17 @@
  * LanceDB. The fix validates the resolved ID is a proper UUID before deletion.
  */
 
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { tmpdir } from "node:os";
+import { registerMemoryTools } from "../tools/memory-tools.js";
 import { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
-import { hybridConfigSchema } from "../config.js";
-import { createPendingLLMWarnings } from "../services/chat.js";
 import { buildEmbeddingRegistry } from "../services/embedding-registry.js";
+import { createPendingLLMWarnings } from "../services/chat.js";
+import { hybridConfigSchema } from "../config.js";
 import type { EmbeddingProvider } from "../services/embeddings.js";
-import { registerMemoryTools } from "../tools/memory-tools.js";
 
 // ---------------------------------------------------------------------------
 // Helpers

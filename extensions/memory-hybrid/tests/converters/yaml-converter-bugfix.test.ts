@@ -1,6 +1,6 @@
-import { describe, expect, it } from "vitest";
-import { esphomeYamlConverter } from "../../tools/converters/esphome-yaml-converter.js";
+import { describe, it, expect } from "vitest";
 import { haYamlConverter } from "../../tools/converters/ha-yaml-converter.js";
+import { esphomeYamlConverter } from "../../tools/converters/esphome-yaml-converter.js";
 
 describe("yaml-converter bugfixes", () => {
   describe("Bug 2: Preprocessor should not corrupt quoted strings", () => {

@@ -5,19 +5,19 @@
  * their embeddings — so facts can be found from multiple semantic angles.
  */
 
-import { randomUUID } from "node:crypto";
-import { mkdirSync } from "node:fs";
-import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import * as lancedb from "@lancedb/lancedb";
+import { mkdirSync } from "node:fs";
+import { dirname } from "node:path";
+import { randomUUID } from "node:crypto";
 import type OpenAI from "openai";
-import type { AliasesConfig } from "../config.js";
-import { LANCE_NO_VECTOR_COL_MSG, UUID_REGEX } from "../utils/constants.js";
-import { pluginLogger } from "../utils/logger.js";
-import { chatComplete } from "./chat.js";
 import type { EmbeddingProvider } from "./embeddings.js";
 import { shouldSuppressEmbeddingError } from "./embeddings.js";
+import { chatComplete } from "./chat.js";
 import { capturePluginError } from "./error-reporter.js";
+import type { AliasesConfig } from "../config.js";
+import { UUID_REGEX, LANCE_NO_VECTOR_COL_MSG } from "../utils/constants.js";
+import { pluginLogger } from "../utils/logger.js";
 
 // ---------------------------------------------------------------------------
 // AliasDB

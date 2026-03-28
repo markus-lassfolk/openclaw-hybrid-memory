@@ -5,13 +5,13 @@
  * Status lifecycle: raw → processed → surfaced → pushed → archived
  */
 
-import { createHash } from "node:crypto";
-import { mkdirSync } from "node:fs";
-import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { SQLInputValue } from "node:sqlite";
-import { capturePluginError } from "../services/error-reporter.js";
+import { mkdirSync } from "node:fs";
+import { dirname } from "node:path";
+import { createHash } from "node:crypto";
 import { BaseSqliteStore } from "./base-sqlite-store.js";
+import { capturePluginError } from "../services/error-reporter.js";
 
 export type EventStatus = "raw" | "processed" | "surfaced" | "pushed" | "archived";
 

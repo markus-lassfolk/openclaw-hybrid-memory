@@ -10,24 +10,24 @@
 
 import { join } from "node:path";
 import { dirname } from "node:path";
-import {
-  ACTIVE_TASK_STATUSES,
-  type ActiveTaskEntry,
-  type ActiveTaskStatus,
-  completeTask,
-  flushCompletedTaskToMemory,
-  readActiveTaskFile,
-  upsertTask,
-  writeActiveTaskFile,
-} from "../services/active-task.js";
 import { formatDuration } from "../utils/duration.js";
-import type { Chainable } from "./shared.js";
+import {
+  readActiveTaskFile,
+  writeActiveTaskFile,
+  completeTask,
+  upsertTask,
+  flushCompletedTaskToMemory,
+  type ActiveTaskEntry,
+  ACTIVE_TASK_STATUSES,
+  type ActiveTaskStatus,
+} from "../services/active-task.js";
 import type {
-  ActiveTaskAddResult,
-  ActiveTaskCompleteResult,
   ActiveTaskListResult,
+  ActiveTaskCompleteResult,
   ActiveTaskStaleResult,
+  ActiveTaskAddResult,
 } from "./types.js";
+import type { Chainable } from "./shared.js";
 
 /** Context injected into all active-task CLI commands */
 export type ActiveTaskContext = {

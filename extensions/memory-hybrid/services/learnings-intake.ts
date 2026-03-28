@@ -19,9 +19,9 @@
  *  - Rock-Solid Stability: every code path uses capturePluginError.
  */
 
-import type { LearningsDB } from "../backends/learnings-db.js";
-import type { CreateLearningEntryInput, LearningEntry, LearningEntryType } from "../types/learnings-types.js";
 import { capturePluginError } from "./error-reporter.js";
+import type { LearningsDB } from "../backends/learnings-db.js";
+import type { LearningEntry, LearningEntryType, CreateLearningEntryInput } from "../types/learnings-types.js";
 
 // ---------------------------------------------------------------------------
 // Promotion evaluation

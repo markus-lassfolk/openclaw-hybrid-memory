@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, it, expect } from "vitest";
 import { esphomeYamlConverter } from "../../tools/converters/esphome-yaml-converter.js";
 
 describe("esphomeYamlConverter", () => {

@@ -2,8 +2,8 @@
  * Ollama local embedding provider with per-endpoint circuit breaker.
  */
 
-import { pluginLogger } from "../../utils/logger.js";
 import type { EmbeddingProvider } from "./types.js";
+import { pluginLogger } from "../../utils/logger.js";
 
 const OLLAMA_MAX_FAILS = 3;
 const OLLAMA_COOLDOWN_MS = 5 * 60 * 1000; // 5 minutes

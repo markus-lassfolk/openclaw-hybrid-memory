@@ -2,13 +2,13 @@ vi.mock("../services/error-reporter.js", () => ({
   capturePluginError: vi.fn(),
 }));
 
-import { randomUUID } from "node:crypto";
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import * as errorReporter from "../services/error-reporter.js";
+import { mkdtempSync, rmSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+import { randomUUID } from "node:crypto";
 import { AliasDB } from "../services/retrieval-aliases.js";
+import * as errorReporter from "../services/error-reporter.js";
 
 function unitVec(dims = 4): number[] {
   const vector = new Array(dims).fill(0);

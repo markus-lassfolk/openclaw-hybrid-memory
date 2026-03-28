@@ -3,15 +3,15 @@
  * Verifies compensating delete when vault write succeeds but pointer write fails.
  */
 
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { CredentialsDB } from "../backends/credentials-db.js";
-import { FactsDB } from "../backends/facts-db.js";
+import { tmpdir } from "node:os";
 import { runStoreForCli } from "../cli/handlers.js";
-import type { HandlerContext } from "../cli/handlers.js";
+import { FactsDB } from "../backends/facts-db.js";
+import { CredentialsDB } from "../backends/credentials-db.js";
 import type { StoreCliOpts, StoreCliResult } from "../cli/types.js";
+import type { HandlerContext } from "../cli/handlers.js";
 
 const TEST_ENCRYPTION_KEY = "test-encryption-key-for-unit-tests-32chars";
 

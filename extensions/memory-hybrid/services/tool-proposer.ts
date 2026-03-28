@@ -6,9 +6,9 @@
  * only — no code is generated. Implementation is left to humans or LLMs.
  */
 
-import type { ToolProposal, ToolProposalStore } from "../backends/tool-proposal-store.js";
+import type { ToolProposalStore, ToolProposal } from "../backends/tool-proposal-store.js";
+import type { GapDetector, DetectedGap, GapDetectorOptions } from "./gap-detector.js";
 import type { SelfExtensionConfig } from "../config/types/features.js";
-import type { DetectedGap, GapDetector, GapDetectorOptions } from "./gap-detector.js";
 
 // ---------------------------------------------------------------------------
 // Public types

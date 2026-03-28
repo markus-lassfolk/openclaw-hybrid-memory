@@ -21,9 +21,9 @@ export { EMBEDDING_DIMENSIONS, OPENAI_MODELS } from "./parsers/core.js";
 // Re-export vectorDimsForModel and parseVerbosityLevel from parsers/index
 export { vectorDimsForModel, parseVerbosityLevel } from "./parsers/index.js";
 
-import { resolveSecretRef } from "./parsers/core.js";
 // LLM model utilities
 import type { CronModelConfig, CronModelTier, HybridMemoryConfig } from "./types/index.js";
+import { resolveSecretRef } from "./parsers/core.js";
 
 const OPENAI_NANO_CRON_MODEL = "openai/gpt-4.1-nano";
 const OPENAI_DEFAULT_CRON_MODEL = "openai/gpt-4.1-mini";

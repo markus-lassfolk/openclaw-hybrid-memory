@@ -8,10 +8,10 @@
  */
 
 import type OpenAI from "openai";
-import type { FactsDB } from "../backends/facts-db.js";
 import { chatComplete } from "./chat.js";
 import { capturePluginError } from "./error-reporter.js";
 import type { VerificationStore, VerifiedFact } from "./verification-store.js";
+import type { FactsDB } from "../backends/facts-db.js";
 
 // ---------------------------------------------------------------------------
 // Types

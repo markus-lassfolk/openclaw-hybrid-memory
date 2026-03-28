@@ -7,8 +7,8 @@
  */
 
 import { basename } from "node:path";
+import type { Converter, ConversionResult } from "./index.js";
 import { parseYaml } from "../../utils/yaml-parser.js";
-import type { ConversionResult, Converter } from "./index.js";
 
 // Sentinel prefixes used after pre-processing HA custom tags
 const HA_INCLUDE_PREFIX = "__HA_INCLUDE__";

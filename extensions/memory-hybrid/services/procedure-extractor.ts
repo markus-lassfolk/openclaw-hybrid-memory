@@ -4,8 +4,8 @@
  */
 
 import type { FactsDB } from "../backends/facts-db.js";
-import type { ExtractProceduresResult } from "../cli/register.js";
 import type { ProcedureStep } from "../types/memory.js";
+import type { ExtractProceduresResult } from "../cli/register.js";
 import { capturePluginError } from "./error-reporter.js";
 
 export type ParsedSession = {

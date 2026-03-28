@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * Benchmark shadow-eval tests
  */

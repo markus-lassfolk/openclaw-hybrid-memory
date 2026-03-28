@@ -9,14 +9,14 @@
  *   - credentials prune  — remove flagged entries (dry-run by default)
  */
 
-import { dirname, join } from "node:path";
+import { join, dirname } from "node:path";
 
 import type { CredentialType } from "../config.js";
-import { CREDENTIAL_REDACTION_MIGRATION_FLAG, migrateCredentialsToVault } from "../services/credential-migration.js";
-import { auditCredentialValue, auditServiceName, normalizeServiceForDedup } from "../services/credential-validation.js";
+import type { MigrateToVaultResult, CredentialsAuditResult, CredentialsPruneResult } from "./types.js";
 import { capturePluginError } from "../services/error-reporter.js";
+import { auditCredentialValue, auditServiceName, normalizeServiceForDedup } from "../services/credential-validation.js";
+import { migrateCredentialsToVault, CREDENTIAL_REDACTION_MIGRATION_FLAG } from "../services/credential-migration.js";
 import type { HandlerContext } from "./handlers.js";
-import type { CredentialsAuditResult, CredentialsPruneResult, MigrateToVaultResult } from "./types.js";
 
 // ---------------------------------------------------------------------------
 // migrate-to-vault

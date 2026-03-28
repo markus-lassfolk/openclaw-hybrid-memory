@@ -17,7 +17,7 @@
  * - Does not overwrite existing properties in target
  * - Handles arrays correctly (treats them as values, not objects to merge)
  */
-import { beforeEach, describe, expect, it } from "vitest";
+import { describe, it, expect, beforeEach } from "vitest";
 import { _testing } from "../index.js";
 
 const { deepMerge } = _testing;
@@ -58,7 +58,7 @@ describe("deepMerge - Prototype Pollution Prevention", () => {
     expect(({} as Record<string, unknown>).isAdmin).toBeUndefined();
     // Target should not have constructor key added
     expect(target.constructor).toBeDefined(); // constructor exists naturally on objects
-    expect(((target.constructor as any).prototype as any)?.isAdmin).toBeUndefined();
+    expect((target.constructor as unknown as Record<string, unknown>).prototype).not.toHaveProperty("isAdmin");
   });
 
   it("blocks prototype key from being merged", () => {

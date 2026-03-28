@@ -10,24 +10,24 @@
  */
 
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import { homedir } from "node:os";
 
 import { getCronModelConfig, getDefaultCronModel, getLLMModelPreference } from "../config.js";
+import type { SelfCorrectionExtractResult, SelfCorrectionRunResult } from "./types.js";
 import { chatCompleteWithRetry, distillMaxOutputTokens } from "../services/chat.js";
+import { runSelfCorrectionExtract, type CorrectionIncident } from "../services/self-correction-extract.js";
 import { capturePluginError } from "../services/error-reporter.js";
-import { type CorrectionIncident, runSelfCorrectionExtract } from "../services/self-correction-extract.js";
-import { preFilterSessions } from "../services/session-pre-filter.js";
-import { insertRulesUnderSection } from "../services/tools-md-section.js";
-import { CLI_STORE_IMPORTANCE } from "../utils/constants.js";
 import { getCorrectionSignalRegex } from "../utils/language-keywords.js";
-import { fillPrompt, loadPrompt } from "../utils/prompt-loader.js";
+import { loadPrompt, fillPrompt } from "../utils/prompt-loader.js";
+import { insertRulesUnderSection } from "../services/tools-md-section.js";
+import { preFilterSessions } from "../services/session-pre-filter.js";
+import { CLI_STORE_IMPORTANCE } from "../utils/constants.js";
+import type { HandlerContext } from "./handlers.js";
 import { gatherSessionFiles } from "./cmd-distill.js";
 import { buildPreFilterConfig } from "./cmd-install.js";
 import { inferTargetFile } from "./cmd-store.js";
-import type { HandlerContext } from "./handlers.js";
 import { acquireScanSlot, clearScanLock } from "./shared.js";
-import type { SelfCorrectionExtractResult, SelfCorrectionRunResult } from "./types.js";
 
 // ---------------------------------------------------------------------------
 // Module-level constants (self-correction-specific)

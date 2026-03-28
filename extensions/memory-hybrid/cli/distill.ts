@@ -2,17 +2,17 @@
  * CLI commands for distillation and extraction (distill, extract-*, generate-auto-skills, record-distill).
  */
 
-import { type Chainable, withExit } from "./shared.js";
 import type {
-  DistillCliResult,
-  DistillCliSink,
   DistillWindowResult,
+  RecordDistillResult,
   ExtractDailyResult,
   ExtractDailySink,
   ExtractProceduresResult,
   GenerateAutoSkillsResult,
-  RecordDistillResult,
+  DistillCliResult,
+  DistillCliSink,
 } from "./types.js";
+import { withExit, type Chainable } from "./shared.js";
 
 export type DistillContext = {
   runDistillWindow: (opts: { json: boolean }) => Promise<DistillWindowResult>;

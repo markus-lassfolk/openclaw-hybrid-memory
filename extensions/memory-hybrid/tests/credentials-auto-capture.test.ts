@@ -3,13 +3,13 @@
  * Covers extractCredentialsFromToolCalls() pattern extraction and vault storage integration.
  */
 
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { tmpdir } from "node:os";
+import { extractCredentialsFromToolCalls, extractHostFromUrl, slugify } from "../services/credential-scanner.js";
 import { CredentialsDB } from "../backends/credentials-db.js";
 import { shouldCapture } from "../services/capture-utils.js";
-import { extractCredentialsFromToolCalls, extractHostFromUrl, slugify } from "../services/credential-scanner.js";
 
 // Note: extractCredentialsFromToolCalls moved to credential-scanner service
 

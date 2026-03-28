@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * Tests for ACTIVE-TASK.md working memory service and CLI commands.
  */

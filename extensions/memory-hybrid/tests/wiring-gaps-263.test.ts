@@ -10,23 +10,23 @@
  *            per calendar month even if runToolEffectivenessForCli is called twice.
  */
 
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { _testing } from "../index.js";
+import { tmpdir } from "node:os";
 import {
-  type FrustrationConversationTurn,
-  type FrustrationDetectionConfig,
   detectFrustration,
   exportAsImplicitSignals,
+  type FrustrationConversationTurn,
+  type FrustrationDetectionConfig,
 } from "../services/frustration-detector.js";
 import {
+  generateToolHint,
+  generateMonthlyReport,
   ToolEffectivenessStore,
   type ToolMetrics,
-  generateMonthlyReport,
-  generateToolHint,
 } from "../services/tool-effectiveness.js";
+import { _testing } from "../index.js";
 
 const { FactsDB } = _testing;
 

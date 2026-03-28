@@ -17,8 +17,8 @@
  * - silent mode: agent_end credential auto-detect does not register in silent mode
  */
 
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { rmSync } from "node:fs";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { hybridConfigSchema, parseVerbosityLevel } from "../config.js";
 import type { VerbosityLevel } from "../config.js";
 import { createLifecycleHooks } from "../lifecycle/hooks.js";
@@ -288,7 +288,6 @@ describe("runConfigSetForCli — verbosity", () => {
     const ctx = {
       cfg,
       factsDb: {},
-      edictStore: null as any,
       vectorDb: {},
       embeddings: {},
       credentialsDb: null,
@@ -611,7 +610,6 @@ describe("runCostReportForCli — compact=true when verbosity=quiet", () => {
     const ctx = {
       cfg,
       factsDb: {},
-      edictStore: null as any,
       vectorDb: {},
       embeddings: {},
       credentialsDb: null,
@@ -642,7 +640,6 @@ describe("runCostReportForCli — compact=true when verbosity=quiet", () => {
     const ctx = {
       cfg,
       factsDb: {},
-      edictStore: null as any,
       vectorDb: {},
       embeddings: {},
       credentialsDb: null,
@@ -727,7 +724,6 @@ function makeMinimalLifecycleContext(verbosity: VerbosityLevel): LifecycleContex
     resolvedSqlitePath: "/tmp/test.sqlite",
     vectorDb: { open: vi.fn(), close: vi.fn() } as unknown as LifecycleContext["vectorDb"],
     factsDb: {} as unknown as LifecycleContext["factsDb"],
-    edictStore: null as any,
     embeddings: {} as unknown as LifecycleContext["embeddings"],
     openai: {} as unknown as LifecycleContext["openai"],
     issueStore: null,

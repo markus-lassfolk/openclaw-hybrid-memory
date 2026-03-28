@@ -1,9 +1,8 @@
-// @ts-nocheck
-import * as fs from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import * as fs from "node:fs";
 
-import { runConfigViewForCli } from "../cli/cmd-config.js";
 import type { HandlerContext } from "../cli/handlers.js";
+import { runConfigViewForCli } from "../cli/cmd-config.js";
 
 function makeCtx(enabled: boolean): HandlerContext {
   const cfg = {

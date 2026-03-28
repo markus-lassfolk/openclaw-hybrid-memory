@@ -44,18 +44,18 @@
  *     - ignores empty string model names
  */
 
-import { describe, expect, it, vi } from "vitest";
-import { hybridConfigSchema } from "../config.js";
+import { describe, it, expect, vi } from "vitest";
 import {
-  type CandidateFact,
   MultiPassExtractor,
+  extractMultiPass,
   buildPass1Prompt,
   buildPass2Prompt,
   buildVerificationPrompt,
-  extractMultiPass,
   parseCandidateFacts,
   parseVerdict,
+  type CandidateFact,
 } from "../services/multi-pass-extractor.js";
+import { hybridConfigSchema } from "../config.js";
 
 // ---------------------------------------------------------------------------
 // Mock helpers

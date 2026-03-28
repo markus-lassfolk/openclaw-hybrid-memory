@@ -1,7 +1,7 @@
-import { mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { FactsDB } from "../backends/facts-db.js";
 import { runExport } from "../services/export-memory.js";
 

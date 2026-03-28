@@ -11,20 +11,20 @@
  *  - prune() maintenance helper
  */
 
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { tmpdir } from "node:os";
 
 import { LearningsDB } from "../backends/learnings-db.js";
 import {
   addError,
-  addFeatureRequest,
   addLearning,
+  addFeatureRequest,
+  promoteEntry,
   dismissEntry,
   evaluatePromotion,
   getPendingPromotions,
-  promoteEntry,
 } from "../services/learnings-intake.js";
 
 // ---------------------------------------------------------------------------

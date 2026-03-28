@@ -1,30 +1,30 @@
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { tmpdir } from "node:os";
 import {
   ENGLISH_KEYWORDS,
-  type KeywordGroup,
-  clearKeywordCache,
-  getCategoryDecisionRegex,
-  getCategoryEntityRegex,
-  getCategoryFactRegex,
-  getCategoryPreferenceRegex,
-  getCorrectionSignalRegex,
-  getDecayActiveRegex,
-  getDecayPermanentRegex,
-  getDecaySessionRegex,
-  getDirectiveCategoryRegexes,
+  setKeywordsPath,
   getKeywordsPath,
   getLanguageKeywordsFilePath,
-  getMemoryTriggerRegexes,
-  getReinforcementCategoryRegexes,
-  getReinforcementSignalRegex,
-  getUserFeedbackPhrasesPath,
   loadMergedKeywords,
+  clearKeywordCache,
+  getMemoryTriggerRegexes,
+  getCategoryDecisionRegex,
+  getCategoryPreferenceRegex,
+  getCategoryEntityRegex,
+  getCategoryFactRegex,
+  getDecayPermanentRegex,
+  getDecaySessionRegex,
+  getDecayActiveRegex,
+  getCorrectionSignalRegex,
+  getReinforcementSignalRegex,
+  getDirectiveCategoryRegexes,
+  getReinforcementCategoryRegexes,
+  getUserFeedbackPhrasesPath,
   loadUserFeedbackPhrases,
   saveUserFeedbackPhrases,
-  setKeywordsPath,
+  type KeywordGroup,
 } from "../utils/language-keywords.js";
 
 describe("language-keywords", () => {

@@ -1,9 +1,9 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { mkdtempSync, rmSync, readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { tmpdir } from "node:os";
 import { collectSamplesFromFacts, runBuildLanguageKeywords } from "../services/language-keywords-build.js";
-import { clearKeywordCache, setKeywordsPath } from "../utils/language-keywords.js";
+import { setKeywordsPath, clearKeywordCache } from "../utils/language-keywords.js";
 
 describe("language-keywords-build", () => {
   let tmpDir: string;

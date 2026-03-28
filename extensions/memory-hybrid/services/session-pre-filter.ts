@@ -12,9 +12,9 @@
  * (e.g. "qwen3:8b/no_think") to disable chain-of-thought and get faster, shorter responses.
  */
 
+import OpenAI from "openai";
 import { createReadStream } from "node:fs";
 import { createInterface } from "node:readline";
-import OpenAI from "openai";
 import { chatComplete, isConnectionErrorLike, isContextLengthError } from "./chat.js";
 import { capturePluginError } from "./error-reporter.js";
 

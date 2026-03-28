@@ -6,14 +6,14 @@
 import type { DecayClass } from "../config.js";
 import { TTL_DEFAULTS } from "../config.js";
 import {
-  getDecayActiveKeys,
-  getDecayActiveRegex,
-  getDecayCheckpointKeys,
-  getDecayPermanentEntities,
-  getDecayPermanentKeys,
   getDecayPermanentRegex,
-  getDecaySessionKeys,
   getDecaySessionRegex,
+  getDecayActiveRegex,
+  getDecayPermanentKeys,
+  getDecaySessionKeys,
+  getDecayActiveKeys,
+  getDecayPermanentEntities,
+  getDecayCheckpointKeys,
 } from "./language-keywords.js";
 
 export function calculateExpiry(decayClass: DecayClass, fromTimestamp = Math.floor(Date.now() / 1000)): number | null {

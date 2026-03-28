@@ -2,10 +2,10 @@
  * Tests for ApitapStore — SQLite backend for discovered API endpoints (Issue #614).
  */
 
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { tmpdir } from "node:os";
 import { ApitapStore } from "../backends/apitap-store.js";
 
 let tmpDir: string;

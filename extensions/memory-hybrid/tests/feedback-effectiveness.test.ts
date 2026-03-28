@@ -2,17 +2,17 @@
  * Tests for closed-loop feedback effectiveness measurement (Issue #262 — Phase 3).
  */
 
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import type { ClosedLoopConfig } from "../config/types/features.js";
+import { tmpdir } from "node:os";
 import { _testing } from "../index.js";
 import {
-  getEffectivenessReport,
   measureRuleEffectiveness,
   runClosedLoopAnalysis,
+  getEffectivenessReport,
 } from "../services/feedback-effectiveness.js";
+import type { ClosedLoopConfig } from "../config/types/features.js";
 
 const { FactsDB } = _testing;
 

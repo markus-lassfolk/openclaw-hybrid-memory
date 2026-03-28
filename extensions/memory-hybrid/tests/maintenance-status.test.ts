@@ -3,7 +3,7 @@
  * Covers config parsing of maintenance.cronReliability.
  */
 
-import { describe, expect, it } from "vitest";
+import { describe, it, expect } from "vitest";
 import { hybridConfigSchema } from "../config.js";
 
 // ---------------------------------------------------------------------------

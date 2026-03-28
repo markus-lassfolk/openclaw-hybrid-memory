@@ -1,10 +1,10 @@
 import { randomUUID } from "node:crypto";
+import type { EmbeddingProvider } from "./embeddings.js";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
-import type { ScopeFilter, SearchResult } from "../types/memory.js";
-import type { EmbeddingProvider } from "./embeddings.js";
+import type { SearchResult, ScopeFilter } from "../types/memory.js";
+import { mergeResults, filterByScope } from "./merge-results.js";
 import { capturePluginError } from "./error-reporter.js";
-import { filterByScope, mergeResults } from "./merge-results.js";
 
 export type MemoryDiagnosticsResult = {
   markerId: string;

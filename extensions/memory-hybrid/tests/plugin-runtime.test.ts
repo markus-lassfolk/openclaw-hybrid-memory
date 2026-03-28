@@ -9,10 +9,10 @@
  * in the same process and almost impossible to test in isolation.
  */
 
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { tmpdir } from "node:os";
 import { type PluginRuntime, createTimers } from "../api/plugin-runtime.js";
 import { _testing } from "../index.js";
 

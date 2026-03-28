@@ -3,17 +3,17 @@ import { dirname, join } from "node:path";
 import type OpenAI from "openai";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { MemoryEntry } from "../types/memory.js";
-import { fillPrompt, loadPrompt } from "../utils/prompt-loader.js";
-import {
-  LLMRetryError,
-  chatCompleteWithRetry,
-  is404Like,
-  is500Like,
-  isConnectionErrorLike,
-  isOllamaOOM,
-} from "./chat.js";
-import { capturePluginError } from "./error-reporter.js";
 import { detectClusters } from "./topic-clusters.js";
+import { loadPrompt, fillPrompt } from "../utils/prompt-loader.js";
+import { capturePluginError } from "./error-reporter.js";
+import {
+  chatCompleteWithRetry,
+  LLMRetryError,
+  is500Like,
+  is404Like,
+  isOllamaOOM,
+  isConnectionErrorLike,
+} from "./chat.js";
 
 const MAX_CLUSTERS = 5;
 const MAX_DECISIONS = 5;

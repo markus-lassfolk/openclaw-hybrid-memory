@@ -8,9 +8,9 @@
  *   - parseHumanizerConfig: defaults, custom values, opt-in behavior
  */
 
-import { describe, expect, it } from "vitest";
+import { describe, it, expect } from "vitest";
+import { parseHumanizerOutput, formatQualityLoopEntry, runHumanizerScore } from "../services/humanizer-score.js";
 import { parseHumanizerConfig } from "../config/parsers/features.js";
-import { formatQualityLoopEntry, parseHumanizerOutput, runHumanizerScore } from "../services/humanizer-score.js";
 
 // ---------------------------------------------------------------------------
 // parseHumanizerOutput

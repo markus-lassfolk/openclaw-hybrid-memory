@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const { replayWalEntries } = vi.hoisted(() => ({ replayWalEntries: vi.fn() }));
@@ -14,7 +13,7 @@ describe("runPreConsolidationFlush", () => {
 
   it("returns zeroes when WAL is unavailable", async () => {
     const result = await runPreConsolidationFlush(
-      { wal: null, factsDb: {} as never, edictStore: null as any, vectorDb: {} as never, embeddings: {} as never },
+      { wal: null, factsDb: {} as never, vectorDb: {} as never, embeddings: {} as never },
       {},
       "test-phase",
     );
@@ -28,13 +27,7 @@ describe("runPreConsolidationFlush", () => {
     const logger = { info: vi.fn(), warn: vi.fn() };
 
     const result = await runPreConsolidationFlush(
-      {
-        wal: {} as never,
-        factsDb: {} as never,
-        edictStore: null as any,
-        vectorDb: {} as never,
-        embeddings: {} as never,
-      },
+      { wal: {} as never, factsDb: {} as never, vectorDb: {} as never, embeddings: {} as never },
       logger,
       "test-phase",
     );

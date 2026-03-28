@@ -1,5 +1,5 @@
-import { describe, expect, it, vi } from "vitest";
-import { MIN_OPENCLAW_VERSION, checkOpenClawVersion, isVersionAtLeast, parseVersion } from "../utils/version-check.js";
+import { describe, it, expect, vi } from "vitest";
+import { MIN_OPENCLAW_VERSION, parseVersion, isVersionAtLeast, checkOpenClawVersion } from "../utils/version-check.js";
 
 describe("MIN_OPENCLAW_VERSION", () => {
   it("is 2026.3.8", () => {

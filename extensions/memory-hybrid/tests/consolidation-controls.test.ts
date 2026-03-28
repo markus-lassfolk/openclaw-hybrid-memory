@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, it, expect } from "vitest";
 import { applyConsolidationRetrievalControls, isConsolidatedDerivedFact } from "../utils/consolidation-controls.js";
 
 describe("consolidation controls", () => {

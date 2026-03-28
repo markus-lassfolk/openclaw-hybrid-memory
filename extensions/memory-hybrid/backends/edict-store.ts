@@ -107,8 +107,8 @@ export class EdictStore {
   constructor(dbPath: string) {
     mkdirSync(dirname(dbPath), { recursive: true });
     this.dbPath = dbPath;
+    // DatabaseSync opens the file in the constructor; calling .open() again throws "database is already open".
     this.db = new DatabaseSync(dbPath);
-
     this.runMigrations();
   }
 

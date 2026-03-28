@@ -2,13 +2,13 @@ import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type OpenAI from "openai";
-import type { IdentityReflectionEntry, IdentityReflectionStore } from "../backends/identity-reflection-store.js";
+import type { IdentityReflectionStore, IdentityReflectionEntry } from "../backends/identity-reflection-store.js";
 import type { ProposalsDB } from "../backends/proposals-db.js";
 import type { HybridMemoryConfig } from "../config.js";
-import { getFileSnapshot } from "../utils/file-snapshot.js";
-import { fillPrompt, loadPrompt } from "../utils/prompt-loader.js";
 import { chatCompleteWithRetry } from "./chat.js";
+import { loadPrompt, fillPrompt } from "../utils/prompt-loader.js";
 import { capturePluginError } from "./error-reporter.js";
+import { getFileSnapshot } from "../utils/file-snapshot.js";
 
 const REPLACE_PREFIXES = [
   /^replace the entire file\b/i,

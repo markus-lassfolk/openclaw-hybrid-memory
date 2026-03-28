@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * Tests for Issue #165 — Monthly Knowledge Quality Review.
  *
@@ -13,15 +12,15 @@
  *   - Graceful LLM failure (recommendations empty)
  */
 
-import { randomUUID } from "node:crypto";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { tmpdir } from "node:os";
+import { randomUUID } from "node:crypto";
 
-import { hybridConfigSchema } from "../config.js";
 import { _testing } from "../index.js";
 import { MonthlyReviewService, runMonthlyReview } from "../services/monthly-review.js";
+import { hybridConfigSchema } from "../config.js";
 
 const { FactsDB } = _testing;
 
@@ -108,7 +107,6 @@ describe("MonthlyReviewService coverage analysis", () => {
     const openai = makeOpenAIMock(["", ""]);
     const report = await runMonthlyReview({
       factsDb: db,
-      edictStore: null as any,
       openai: openai as never,
       model: "openai/gpt-test",
     });
@@ -147,7 +145,6 @@ describe("MonthlyReviewService coverage analysis", () => {
     const openai = makeOpenAIMock(["", ""]);
     const report = await runMonthlyReview({
       factsDb: db,
-      edictStore: null as any,
       openai: openai as never,
       model: "openai/gpt-test",
     });
@@ -173,7 +170,6 @@ describe("MonthlyReviewService quality trends", () => {
     const openai = makeOpenAIMock(["", ""]);
     const report = await runMonthlyReview({
       factsDb: db,
-      edictStore: null as any,
       openai: openai as never,
       model: "openai/gpt-test",
     });
@@ -197,7 +193,6 @@ describe("MonthlyReviewService quality trends", () => {
     const openai = makeOpenAIMock(["", ""]);
     const report = await runMonthlyReview({
       factsDb: db,
-      edictStore: null as any,
       openai: openai as never,
       model: "openai/gpt-test",
     });
@@ -217,7 +212,6 @@ describe("MonthlyReviewService quality trends", () => {
     const openai = makeOpenAIMock(["", ""]);
     const report = await runMonthlyReview({
       factsDb: db,
-      edictStore: null as any,
       openai: openai as never,
       model: "openai/gpt-test",
     });
@@ -246,7 +240,6 @@ describe("MonthlyReviewService quality trends", () => {
     const openai = makeOpenAIMock(["", ""]);
     const report = await runMonthlyReview({
       factsDb: db,
-      edictStore: null as any,
       openai: openai as never,
       model: "openai/gpt-test",
     });
@@ -265,7 +258,6 @@ describe("MonthlyReviewService LLM synthesis", () => {
 
     const report = await runMonthlyReview({
       factsDb: db,
-      edictStore: null as any,
       openai: openai as never,
       model: "openai/gpt-test",
     });
@@ -288,7 +280,6 @@ describe("MonthlyReviewService LLM synthesis", () => {
 
     const report = await runMonthlyReview({
       factsDb: db,
-      edictStore: null as any,
       openai: openai as never,
       model: "openai/gpt-test",
     });
@@ -301,7 +292,6 @@ describe("MonthlyReviewService LLM synthesis", () => {
 
     const report = await runMonthlyReview({
       factsDb: db,
-      edictStore: null as any,
       openai: openai as never,
       model: "openai/gpt-test",
     });
@@ -316,7 +306,6 @@ describe("MonthlyReviewService edge cases", () => {
     const openai = makeOpenAIMock(["", ""]);
     const report = await runMonthlyReview({
       factsDb: db,
-      edictStore: null as any,
       openai: openai as never,
       model: "openai/gpt-test",
     });
@@ -331,7 +320,6 @@ describe("MonthlyReviewService edge cases", () => {
     const openai = makeOpenAIMock(["", ""]);
     const report = await runMonthlyReview({
       factsDb: db,
-      edictStore: null as any,
       openai: openai as never,
       model: "openai/gpt-test",
     });

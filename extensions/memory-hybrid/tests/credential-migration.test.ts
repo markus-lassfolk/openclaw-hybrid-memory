@@ -1,12 +1,11 @@
-// @ts-nocheck
 /**
  * Tests for migrateCredentialsToVault (services/credential-migration.ts).
  * All backends are mocked — no real SQLite / LanceDB / filesystem required.
  */
 
-import { describe, expect, it, vi } from "vitest";
+import { describe, it, expect, vi } from "vitest";
+import { migrateCredentialsToVault, type MigrateCredentialsOptions } from "../services/credential-migration.js";
 import { VAULT_POINTER_PREFIX } from "../services/auto-capture.js";
-import { type MigrateCredentialsOptions, migrateCredentialsToVault } from "../services/credential-migration.js";
 import { AllEmbeddingProvidersFailed } from "../services/embeddings.js";
 import * as errorReporter from "../services/error-reporter.js";
 
@@ -115,7 +114,6 @@ function makeOpts(
 ): MigrateCredentialsOptions {
   return {
     factsDb: (overrides.factsDb ?? makeFactsDB()) as unknown as MigrateCredentialsOptions["factsDb"],
-    edictStore: null as any,
     vectorDb: (overrides.vectorDb ?? makeVectorDB()) as unknown as MigrateCredentialsOptions["vectorDb"],
     embeddings: (overrides.embeddings ?? makeEmbeddings()) as unknown as MigrateCredentialsOptions["embeddings"],
     credentialsDb: (overrides.credentialsDb ??

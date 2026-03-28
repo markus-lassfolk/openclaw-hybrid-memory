@@ -6,19 +6,19 @@
  * and idioms per language.
  */
 
-import { mkdirSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
 import type OpenAI from "openai";
+import { writeFileSync, mkdirSync } from "node:fs";
+import { dirname, join } from "node:path";
 import {
   ENGLISH_KEYWORDS,
-  type KeywordGroup,
-  type LanguageExtractionTemplate,
-  type LanguageKeywordsFile,
   buildMergedFromTranslations,
+  type LanguageKeywordsFile,
+  type LanguageExtractionTemplate,
+  type KeywordGroup,
   clearKeywordCache,
 } from "../utils/language-keywords.js";
 import { capturePluginError } from "./error-reporter.js";
-import { EXTRACTION_INTENTS, KEYWORD_GROUP_INTENTS, STRUCTURAL_TRIGGER_INTENTS } from "./intent-template.js";
+import { KEYWORD_GROUP_INTENTS, STRUCTURAL_TRIGGER_INTENTS, EXTRACTION_INTENTS } from "./intent-template.js";
 
 const LANG_FILE_NAME = ".language-keywords.json";
 const MAX_SAMPLES = 50;

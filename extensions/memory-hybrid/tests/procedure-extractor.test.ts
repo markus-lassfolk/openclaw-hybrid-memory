@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
-import { type ParsedSession, minimalRecipe, parseSessionJsonl } from "../services/procedure-extractor.js";
+import { describe, it, expect } from "vitest";
+import { parseSessionJsonl, minimalRecipe, type ParsedSession } from "../services/procedure-extractor.js";
 import type { ProcedureStep } from "../types/memory.js";
 
 describe("procedure-extractor", () => {

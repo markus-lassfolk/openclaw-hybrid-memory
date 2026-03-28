@@ -1,10 +1,10 @@
 import type OpenAI from "openai";
-import type { EventLog } from "../../backends/event-log.js";
-import type { NarrativesDB } from "../../backends/narratives-db.js";
-import type { WorkflowStore } from "../../backends/workflow-store.js";
 import { chatCompleteWithRetry } from "../../services/chat.js";
+import { loadPrompt, fillPrompt } from "../../utils/prompt-loader.js";
 import { capturePluginError } from "../../services/error-reporter.js";
-import { fillPrompt, loadPrompt } from "../../utils/prompt-loader.js";
+import type { EventLog } from "../../backends/event-log.js";
+import type { WorkflowStore } from "../../backends/workflow-store.js";
+import type { NarrativesDB } from "../../backends/narratives-db.js";
 
 const MAX_EVENTS_FOR_PROMPT = 80;
 const MAX_WORKFLOWS_FOR_PROMPT = 20;

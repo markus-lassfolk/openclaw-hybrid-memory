@@ -19,9 +19,9 @@
  *   runner processes the queue on startup.
  */
 
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { homedir } from "node:os";
 
 /** Subdirectory (relative to openclawDir) where guard files are kept. */
 export const GUARD_SUBDIR = join("cron", "guard");

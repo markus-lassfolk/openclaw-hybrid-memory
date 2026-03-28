@@ -28,12 +28,12 @@
  *   - registerHealthTools: registers tool when health.enabled is true
  */
 
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { _testing } from "../index.js";
+import { tmpdir } from "node:os";
 import { buildHealthReport, registerHealthTools } from "../tools/health-dashboard.js";
+import { _testing } from "../index.js";
 
 const { FactsDB } = _testing;
 

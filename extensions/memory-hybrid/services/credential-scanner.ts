@@ -8,8 +8,8 @@
  */
 
 import type { CredentialType } from "../config.js";
-import { validateAndNormalizeServiceName, validateCredentialValue } from "./credential-validation.js";
 import { capturePluginError } from "./error-reporter.js";
+import { validateAndNormalizeServiceName, validateCredentialValue } from "./credential-validation.js";
 
 export type ToolCallCredential = {
   service: string; // e.g., "ssh://user@host", "github", "api.example.com"

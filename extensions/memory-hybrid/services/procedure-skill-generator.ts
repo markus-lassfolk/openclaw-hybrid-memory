@@ -5,10 +5,10 @@
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { FactsDB } from "../backends/facts-db.js";
-import type { GenerateAutoSkillsResult } from "../cli/register.js";
 import type { ProcedureEntry } from "../types/memory.js";
-import { slugifyForSkill } from "../utils/text.js";
+import type { GenerateAutoSkillsResult } from "../cli/register.js";
 import { capturePluginError } from "./error-reporter.js";
+import { slugifyForSkill } from "../utils/text.js";
 
 const MAX_SKILLS_PER_RUN = 10;
 

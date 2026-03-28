@@ -8,10 +8,10 @@
  * - issues and fixes arrays are cleared after a successful fix
  */
 
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { mkdtempSync, writeFileSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { tmpdir } from "node:os";
 
 // ---------------------------------------------------------------------------
 // Helper: inline re-implementation of the pruning check/fix logic

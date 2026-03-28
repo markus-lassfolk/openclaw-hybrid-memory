@@ -22,7 +22,7 @@
  * - undefined profile list does NOT trigger OAuth routing
  */
 
-import { describe, expect, it } from "vitest";
+import { describe, it, expect } from "vitest";
 import { parseAuthConfig } from "../config/parsers/core.js";
 import { hasOAuthProfiles } from "../utils/auth.js";
 

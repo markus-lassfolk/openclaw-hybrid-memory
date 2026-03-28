@@ -5,16 +5,16 @@
  * machine transitions.
  */
 
+import { DatabaseSync } from "node:sqlite";
+import type { SQLInputValue } from "node:sqlite";
 import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import { DatabaseSync } from "node:sqlite";
-import type { SQLInputValue } from "node:sqlite";
 
-import { capturePluginError } from "../services/error-reporter.js";
-import type { CreateIssueInput, Issue, IssueSeverity, IssueStatus } from "../types/issue-types.js";
-import { ISSUE_TRANSITIONS } from "../types/issue-types.js";
 import { BaseSqliteStore } from "./base-sqlite-store.js";
+import { capturePluginError } from "../services/error-reporter.js";
+import type { Issue, CreateIssueInput, IssueStatus, IssueSeverity } from "../types/issue-types.js";
+import { ISSUE_TRANSITIONS } from "../types/issue-types.js";
 
 export type { Issue, CreateIssueInput, IssueStatus } from "../types/issue-types.js";
 
@@ -93,7 +93,7 @@ export class IssueStore extends BaseSqliteStore {
         now,
       );
 
-    return this.get(id) as Issue;
+    return this.get(id)!;
   }
 
   get(id: string): Issue | null {
@@ -162,7 +162,7 @@ export class IssueStore extends BaseSqliteStore {
     params.push(id);
     this.liveDb.prepare(`UPDATE issues SET ${sets.join(", ")} WHERE id = ?`).run(...params);
 
-    return this.get(id) as Issue;
+    return this.get(id)!;
   }
 
   transition(id: string, newStatus: IssueStatus, data?: Partial<Issue>): Issue {

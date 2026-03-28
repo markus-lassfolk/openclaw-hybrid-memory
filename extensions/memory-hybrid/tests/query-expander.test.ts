@@ -40,15 +40,15 @@
  *     - retrieval pipeline works without expander (backward compat)
  */
 
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { tmpdir } from "node:os";
 
-import type { QueryExpansionConfig } from "../config.js";
+import { QueryExpander, parseExpansionsFromResponse, generateRuleBasedAlias } from "../services/query-expander.js";
+import { runRetrievalPipeline, DEFAULT_RETRIEVAL_CONFIG } from "../services/retrieval-orchestrator.js";
 import { _testing } from "../index.js";
-import { QueryExpander, generateRuleBasedAlias, parseExpansionsFromResponse } from "../services/query-expander.js";
-import { DEFAULT_RETRIEVAL_CONFIG, runRetrievalPipeline } from "../services/retrieval-orchestrator.js";
+import type { QueryExpansionConfig } from "../config.js";
 
 const { FactsDB } = _testing;
 

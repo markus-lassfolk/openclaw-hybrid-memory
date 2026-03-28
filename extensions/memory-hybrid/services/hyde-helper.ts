@@ -5,10 +5,10 @@
  */
 
 import type OpenAI from "openai";
-import { getCronModelConfig, getLLMModelPreference } from "../config.js";
 import type { PendingLLMWarnings } from "./chat.js";
-import { chatCompleteWithRetry, is404Like, is500Like, isConnectionErrorLike, isOllamaOOM } from "./chat.js";
+import { chatCompleteWithRetry, is500Like, is404Like, isOllamaOOM, isConnectionErrorLike } from "./chat.js";
 import { capturePluginError } from "./error-reporter.js";
+import { getCronModelConfig, getLLMModelPreference } from "../config.js";
 
 export interface HydeOptions {
   /** The raw query text to expand. */

@@ -11,8 +11,8 @@
  *   4. "context"  — User/channel context queries ("recent topics with [user]").
  */
 
-import type { IssueStore } from "../backends/issue-store.js";
 import type { AmbientConfig } from "../config.js";
+import type { IssueStore } from "../backends/issue-store.js";
 import type { Issue } from "../types/issue-types.js";
 
 // ---------------------------------------------------------------------------

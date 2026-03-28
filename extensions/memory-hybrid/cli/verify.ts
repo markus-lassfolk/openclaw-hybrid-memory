@@ -2,9 +2,9 @@
  * CLI commands for verification and installation (verify, install).
  */
 
-import { capturePluginError } from "../services/error-reporter.js";
-import { type Chainable, withExit } from "./shared.js";
 import type { InstallCliResult, VerifyCliSink } from "./types.js";
+import { capturePluginError } from "../services/error-reporter.js";
+import { withExit, type Chainable } from "./shared.js";
 
 export type VerifyContext = {
   runVerify: (opts: { fix: boolean; logFile?: string; testLlm?: boolean }, sink: VerifyCliSink) => Promise<void>;

@@ -1,13 +1,13 @@
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { tmpdir } from "node:os";
 
 import { EventLog } from "../backends/event-log.js";
-import { NarrativesDB } from "../backends/narratives-db.js";
 import { WorkflowStore } from "../backends/workflow-store.js";
-import * as chatModule from "../services/chat.js";
+import { NarrativesDB } from "../backends/narratives-db.js";
 import { buildDailyNarrative } from "../src/worker/narratives.js";
+import * as chatModule from "../services/chat.js";
 
 describe("buildDailyNarrative", () => {
   let dir: string;

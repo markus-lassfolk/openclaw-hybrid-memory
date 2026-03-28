@@ -2,18 +2,18 @@
  * Tests for the Task Queue Watchdog — Issue #631
  */
 
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { mkdtemp, rm, writeFile, mkdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { tmpdir } from "node:os";
 import { acquireDispatchLease, getDispatchLease } from "../services/task-queue-leases.js";
 import {
-  type TaskQueueItem,
-  type TaskQueueWatchdogConfig,
-  getActiveWorktreeBranches,
   isPidAlive,
   isRuntimeExceeded,
+  getActiveWorktreeBranches,
   runTaskQueueWatchdog,
+  type TaskQueueItem,
+  type TaskQueueWatchdogConfig,
 } from "../services/task-queue-watchdog.js";
 
 // ---------------------------------------------------------------------------

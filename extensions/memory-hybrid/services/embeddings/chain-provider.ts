@@ -3,9 +3,9 @@
  */
 
 import { capturePluginError } from "../error-reporter.js";
-import { isConfigError, shouldSuppressEmbeddingError } from "./shared.js";
 import type { EmbeddingProvider } from "./types.js";
 import { AllEmbeddingProvidersFailed } from "./types.js";
+import { shouldSuppressEmbeddingError, isConfigError } from "./shared.js";
 
 /**
  * Tries a list of embedding providers in order; first success wins (no retry of earlier providers).

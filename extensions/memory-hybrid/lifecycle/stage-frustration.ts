@@ -4,8 +4,8 @@
 
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import { capturePluginError } from "../services/error-reporter.js";
-import { buildFrustrationHint, detectFrustration, exportAsImplicitSignals } from "../services/frustration-detector.js";
-import { ToolEffectivenessStore, generateToolHint } from "../services/tool-effectiveness.js";
+import { detectFrustration, buildFrustrationHint, exportAsImplicitSignals } from "../services/frustration-detector.js";
+import { generateToolHint, ToolEffectivenessStore } from "../services/tool-effectiveness.js";
 import type { LifecycleContext, SessionState } from "./types.js";
 
 let cachedToolStore: ToolEffectivenessStore | null = null;

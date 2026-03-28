@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 
 // Intercept node:fs/promises so we can inject fsync errors in individual tests
 // while letting everything else (appendFile, readFile, writeFile, rm) use the
@@ -29,10 +29,10 @@ vi.mock("node:fs/promises", async (importOriginal) => {
   };
 });
 
-import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, rmSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { tmpdir } from "node:os";
+import { randomUUID } from "node:crypto";
 import { _testing } from "../index.js";
 
 const { WriteAheadLog } = _testing;

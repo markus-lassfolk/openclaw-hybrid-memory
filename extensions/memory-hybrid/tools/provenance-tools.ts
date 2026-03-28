@@ -7,16 +7,16 @@
 import { Type } from "@sinclair/typebox";
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 
-import type { EventLog } from "../backends/event-log.js";
 import type { FactsDB } from "../backends/facts-db.js";
+import type { EventLog } from "../backends/event-log.js";
 import type { HybridMemoryConfig } from "../config.js";
-import { extractEventText } from "../services/dream-cycle.js";
 import type {
   ProvenanceEdgeRecord,
   ProvenanceEdgeType,
-  ProvenanceService,
   ProvenanceSourceType,
+  ProvenanceService,
 } from "../services/provenance.js";
+import { extractEventText } from "../services/dream-cycle.js";
 
 export interface PluginContext {
   factsDb: FactsDB;

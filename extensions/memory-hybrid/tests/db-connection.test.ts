@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * Verifies that FactsDB, CredentialsDB, EventLog, and VectorDB auto-reconnect after their
  * underlying connection is closed (e.g. by stop()/SIGUSR1 graceful restart).
@@ -10,12 +9,12 @@
  * or "VectorDB is closed" (LanceDB) on the next call after a restart.
  */
 
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { ApitapStore } from "../backends/apitap-store.js";
+import { tmpdir } from "node:os";
 import { _testing } from "../index.js";
+import { ApitapStore } from "../backends/apitap-store.js";
 import { ToolEffectivenessStore } from "../services/tool-effectiveness.js";
 
 const { FactsDB, CredentialsDB, EventLog, EventBus, VectorDB, LearningsDB, ProposalsDB, WorkflowStore } = _testing;

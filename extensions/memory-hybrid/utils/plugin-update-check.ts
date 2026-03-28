@@ -1,5 +1,5 @@
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import type { UpdateNudgeConfig } from "../config.js";
 import { compareVersions } from "./version-check.js";
 

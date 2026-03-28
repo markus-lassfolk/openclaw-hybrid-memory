@@ -1,11 +1,11 @@
 import { randomUUID } from "node:crypto";
-import type OpenAI from "openai";
+import { chatCompleteWithRetry, LLMRetryError } from "./chat.js";
+import { loadPrompt, fillPrompt } from "../utils/prompt-loader.js";
 import type { FactsDB } from "../backends/facts-db.js";
-import type { IdentityReflectionStore } from "../backends/identity-reflection-store.js";
+import type OpenAI from "openai";
 import type { ScopeFilter } from "../types/memory.js";
-import { fillPrompt, loadPrompt } from "../utils/prompt-loader.js";
-import { LLMRetryError, chatCompleteWithRetry } from "./chat.js";
 import { capturePluginError } from "./error-reporter.js";
+import type { IdentityReflectionStore } from "../backends/identity-reflection-store.js";
 
 export interface IdentityReflectionQuestion {
   key: string;

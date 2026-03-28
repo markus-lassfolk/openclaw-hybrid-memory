@@ -1,7 +1,7 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { runConsolidate } from "../services/consolidation.js";
-import { getCurrentCostFeature } from "../services/cost-context.js";
 import type { MemoryEntry } from "../types/memory.js";
+import { getCurrentCostFeature } from "../services/cost-context.js";
 
 function makeEntry(overrides: Partial<MemoryEntry> = {}): MemoryEntry {
   return {

@@ -1,8 +1,8 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { parseGatewayConfig, resolveSecretRef } from "../config/parsers/core.js";
+import { tmpdir } from "node:os";
+import { resolveSecretRef, parseGatewayConfig } from "../config/parsers/core.js";
 
 let tmpDir: string;
 

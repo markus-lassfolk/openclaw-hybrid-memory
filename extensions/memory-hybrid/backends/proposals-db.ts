@@ -3,12 +3,12 @@
  * Stores LLM-generated suggestions for persona file updates.
  */
 
+import { DatabaseSync } from "node:sqlite";
 import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import { DatabaseSync } from "node:sqlite";
-import { capturePluginError } from "../services/error-reporter.js";
 import { BaseSqliteStore } from "./base-sqlite-store.js";
+import { capturePluginError } from "../services/error-reporter.js";
 
 interface ProposalRow {
   id: string;

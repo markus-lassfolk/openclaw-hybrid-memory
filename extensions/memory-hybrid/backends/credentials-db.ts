@@ -4,15 +4,15 @@
  * values are stored in plaintext; the user may secure data by other means (e.g. filesystem permissions).
  */
 
-import { createCipheriv, createDecipheriv, createHash, randomBytes, scryptSync } from "node:crypto";
+import { DatabaseSync } from "node:sqlite";
+import { createTransaction } from "../utils/sqlite-transaction.js";
+import { createHash, createCipheriv, createDecipheriv, randomBytes, scryptSync } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import { DatabaseSync } from "node:sqlite";
 import type { CredentialType } from "../config.js";
+import { BaseSqliteStore } from "./base-sqlite-store.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { pluginLogger } from "../utils/logger.js";
-import { createTransaction } from "../utils/sqlite-transaction.js";
-import { BaseSqliteStore } from "./base-sqlite-store.js";
 
 /** node:sqlite returns BLOBs as Uint8Array; convert to Buffer for crypto ops. */
 function toBuffer(val: Uint8Array | Buffer): Buffer {

@@ -12,11 +12,11 @@
  * They use the same FTS5 virtual table infrastructure as the production search path.
  */
 
-import { randomUUID } from "node:crypto";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { tmpdir } from "node:os";
+import { randomUUID } from "node:crypto";
 import { _testing } from "../index.js";
 
 const { FactsDB, searchFts, buildFts5Query } = _testing;

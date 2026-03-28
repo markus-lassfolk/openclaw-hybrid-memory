@@ -32,13 +32,13 @@
  *   - Integration: incremental re-cluster reuses cluster IDs when components unchanged
  */
 
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { tmpdir } from "node:os";
 import { _testing } from "../index.js";
-import type { ClusterFactLookup, TopicCluster } from "../services/topic-clusters.js";
 import type { MemoryEntry } from "../types/memory.js";
+import type { ClusterFactLookup, TopicCluster } from "../services/topic-clusters.js";
 
 const { detectClusters, generateClusterLabel, FactsDB } = _testing;
 

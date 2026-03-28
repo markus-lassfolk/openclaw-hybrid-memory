@@ -2,9 +2,9 @@
  * ONNX integration tests for EmbeddingRegistry.
  */
 
-import { describe, expect, it, vi } from "vitest";
-import type { EmbeddingModelConfig } from "../config.js";
+import { describe, it, expect, vi } from "vitest";
 import type { EmbeddingProvider } from "../services/embeddings.js";
+import type { EmbeddingModelConfig } from "../config.js";
 
 vi.mock("../services/embeddings.js", async () => {
   const actual = await vi.importActual<typeof import("../services/embeddings.js")>("../services/embeddings.js");

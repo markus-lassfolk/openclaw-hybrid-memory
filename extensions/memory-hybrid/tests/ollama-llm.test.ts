@@ -2,7 +2,7 @@
  * Tests for Ollama local LLM provider support in hybrid-memory.
  * Covers: provider resolution, health check / graceful fallback, cost tracking ($0), nano-tier classification.
  */
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 
 vi.mock("../services/error-reporter.js", () => ({
   capturePluginError: vi.fn(),
@@ -11,7 +11,7 @@ vi.mock("../services/error-reporter.js", () => ({
 // ─────────────────────────────────────────────────────────────────────────────
 // 1. Model-pricing: Ollama always $0
 // ─────────────────────────────────────────────────────────────────────────────
-import { estimateCost, getModelPricing } from "../services/model-pricing.js";
+import { getModelPricing, estimateCost } from "../services/model-pricing.js";
 
 describe("Ollama cost tracking — $0 for local models", () => {
   it("getModelPricing returns $0 for ollama/qwen3:8b", () => {
@@ -37,11 +37,11 @@ describe("Ollama cost tracking — $0 for local models", () => {
   });
 });
 
-import type OpenAI from "openai";
 // ─────────────────────────────────────────────────────────────────────────────
 // 2. chatCompleteWithRetry: ECONNREFUSED on Ollama falls through to next model
 // ─────────────────────────────────────────────────────────────────────────────
 import { chatCompleteWithRetry } from "../services/chat.js";
+import type OpenAI from "openai";
 
 describe("Ollama graceful fallback — ECONNREFUSED", () => {
   beforeEach(() => {

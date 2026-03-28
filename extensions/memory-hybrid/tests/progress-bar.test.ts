@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, it, expect } from "vitest";
 
 describe("progress bar rendering", () => {
   it("renders progress bar correctly at 0%, 50%, and 100%", () => {

@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * Build HybridMemCliContext from handler context and services.
  * Moves CLI wiring out of index.ts so the plugin entry stays small.
@@ -60,6 +59,7 @@ Commands by category:
   Stats & query
     stats                Show memory statistics (--efficiency for tiers/tokens)
     test                 Run memory diagnostics (structured/semantic/hybrid/auto-recall)
+    model-info [model]   Dimensions for a catalog embedding model, or current config if omitted
     context-audit        Report token usage per injected context source
     search <query>       Hybrid search (vector + SQL)
     lookup <id>          Get fact by ID
@@ -139,6 +139,7 @@ export const HYBRID_MEM_CLI_COMMANDS = [
   "hybrid-mem install",
   "hybrid-mem stats",
   "hybrid-mem test",
+  "hybrid-mem model-info",
   "hybrid-mem context-audit",
   "hybrid-mem compact",
   "hybrid-mem prune",

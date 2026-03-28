@@ -2,11 +2,11 @@
  * Tests for directive extraction.
  */
 
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { describe, it, expect } from "vitest";
+import { runDirectiveExtract, DIRECTIVE_CATEGORIES } from "../services/directive-extract.js";
+import { writeFileSync, mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
-import { DIRECTIVE_CATEGORIES, runDirectiveExtract } from "../services/directive-extract.js";
+import { tmpdir } from "node:os";
 
 describe("directive-extract", () => {
   it("should detect explicit memory requests", () => {

@@ -3,15 +3,15 @@
  * Covers all short-circuit paths in shouldCapture and all category branches in detectCategory.
  */
 
-import { describe, expect, it } from "vitest";
-import { getMemoryTriggers } from "../services/auto-capture.js";
-import { detectCategory, shouldCapture } from "../services/capture-utils.js";
+import { describe, it, expect } from "vitest";
+import { shouldCapture, detectCategory } from "../services/capture-utils.js";
 import {
   getCategoryDecisionRegex,
+  getCategoryPreferenceRegex,
   getCategoryEntityRegex,
   getCategoryFactRegex,
-  getCategoryPreferenceRegex,
 } from "../utils/language-keywords.js";
+import { getMemoryTriggers } from "../services/auto-capture.js";
 
 // ---------------------------------------------------------------------------
 // shouldCapture

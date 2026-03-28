@@ -14,8 +14,8 @@
  */
 
 import { spawn } from "node:child_process";
-import type { HumanizerConfig } from "../config/types/features.js";
 import { capturePluginError } from "./error-reporter.js";
+import type { HumanizerConfig } from "../config/types/features.js";
 
 // ---------------------------------------------------------------------------
 // Public types

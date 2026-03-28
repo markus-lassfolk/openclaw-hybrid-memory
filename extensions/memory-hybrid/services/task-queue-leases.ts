@@ -8,9 +8,9 @@
  * - Separates queue authority from eventual GitHub branch visibility
  */
 
-import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { mkdir, open, readFile, rename, stat, unlink, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import { dirname, join } from "node:path";
 
 const LEASES_FILE = "dispatch-leases.json";
@@ -215,24 +215,16 @@ async function writeRegistry(filePath: string, registry: DispatchLeaseRegistry):
 }
 
 async function tryAcquireLock(lockPath: string): Promise<boolean> {
-  let fh: Awaited<ReturnType<typeof open>> | undefined;
   try {
-    fh = await open(lockPath, "wx");
+    const fh = await open(lockPath, "wx");
     await fh.writeFile(`${process.pid}\n${new Date().toISOString()}\n`, "utf-8");
+    await fh.close();
     return true;
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code !== "EEXIST") {
       throw err;
     }
     return false;
-  } finally {
-    if (fh) {
-      try {
-        await fh.close();
-      } catch {
-        // Ignore close errors to avoid masking earlier failures.
-      }
-    }
   }
 }
 

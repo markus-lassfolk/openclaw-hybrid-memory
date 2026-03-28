@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { runFindDuplicates } from "../services/find-duplicates.js";
 import type { MemoryEntry } from "../types/memory.js";
 

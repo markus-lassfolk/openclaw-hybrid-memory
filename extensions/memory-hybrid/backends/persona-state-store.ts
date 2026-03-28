@@ -5,13 +5,13 @@
  * It stays separate from factual memory, operational rules, and human-reviewed file proposals.
  */
 
+import { DatabaseSync } from "node:sqlite";
 import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import { DatabaseSync } from "node:sqlite";
-import type { IdentityFileType } from "../config/types/agents.js";
-import { uniqueStrings } from "../utils/text.js";
 import { BaseSqliteStore } from "./base-sqlite-store.js";
+import { uniqueStrings } from "../utils/text.js";
+import type { IdentityFileType } from "../config/types/agents.js";
 
 interface PersonaStateRow {
   id: string;

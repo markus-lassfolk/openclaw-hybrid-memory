@@ -3,20 +3,20 @@
  * No LLM calls — pure data collection.
  */
 
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { tmpdir } from "node:os";
 import { EventBus } from "../backends/event-bus.js";
-import type { FactsDB } from "../backends/facts-db.js";
-import { parseSensorSweepConfig } from "../config/parsers/sensors.js";
 import {
-  sweepAll,
-  sweepGitHub,
-  sweepMemoryPatterns,
   sweepSessionHistory,
+  sweepMemoryPatterns,
+  sweepGitHub,
   sweepSystemHealth,
+  sweepAll,
 } from "../services/sensor-sweep.js";
+import { parseSensorSweepConfig } from "../config/parsers/sensors.js";
+import type { FactsDB } from "../backends/facts-db.js";
 
 // ---------------------------------------------------------------------------
 // Helpers

@@ -9,7 +9,7 @@
  * without a real race condition.
  */
 
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { vi, describe, it, expect, beforeEach, afterEach } from "vitest";
 
 // ---------------------------------------------------------------------------
 // Mock node:fs/promises BEFORE any import of passive-observer (vi.mock is
@@ -29,18 +29,18 @@ vi.mock("../services/error-reporter.js", () => ({
   capturePluginError: vi.fn(),
 }));
 
-import { randomUUID } from "node:crypto";
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
-import { open, stat } from "node:fs/promises";
+import { stat, open } from "node:fs/promises";
+import { capturePluginError } from "../services/error-reporter.js";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type OpenAI from "openai";
+import { mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { runPassiveObserver, type PassiveObserverConfig } from "../services/passive-observer.js";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
-import * as chat from "../services/chat.js";
 import type { EmbeddingProvider } from "../services/embeddings.js";
-import { capturePluginError } from "../services/error-reporter.js";
-import { type PassiveObserverConfig, runPassiveObserver } from "../services/passive-observer.js";
+import type OpenAI from "openai";
+import * as chat from "../services/chat.js";
 
 // ---------------------------------------------------------------------------
 // Helpers

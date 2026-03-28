@@ -15,30 +15,30 @@
  */
 
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
+import { homedir } from "node:os";
 
 import type { MemoryCategory } from "../config.js";
-import { getCronModelConfig, getDefaultCronModel, getLLMModelPreference, isValidCategory } from "../config.js";
+import { getCronModelConfig, getLLMModelPreference, getDefaultCronModel, isValidCategory } from "../config.js";
 import { chatCompleteWithRetry, distillBatchTokenLimit, distillMaxOutputTokens } from "../services/chat.js";
-import { capturePluginError } from "../services/error-reporter.js";
-import { gatherIngestFiles } from "../services/ingest-utils.js";
-import { BATCH_STORE_IMPORTANCE, DISTILL_DEDUP_THRESHOLD } from "../utils/constants.js";
-import { tryExtractionFromTemplates } from "../utils/extraction-from-template.js";
+import { loadPrompt, fillPrompt } from "../utils/prompt-loader.js";
+import { estimateTokens, chunkTextByChars } from "../utils/text.js";
 import {
-  getCorrectionSignalRegex,
   getExtractionTemplates,
   getReinforcementSignalRegex,
+  getCorrectionSignalRegex,
   loadUserFeedbackPhrases,
   saveUserFeedbackPhrases,
 } from "../utils/language-keywords.js";
-import { fillPrompt, loadPrompt } from "../utils/prompt-loader.js";
-import { chunkTextByChars, estimateTokens } from "../utils/text.js";
+import { capturePluginError } from "../services/error-reporter.js";
+import { tryExtractionFromTemplates } from "../utils/extraction-from-template.js";
+import { gatherIngestFiles } from "../services/ingest-utils.js";
+import { BATCH_STORE_IMPORTANCE, DISTILL_DEDUP_THRESHOLD } from "../utils/constants.js";
 
-import { gatherSessionFiles } from "./cmd-distill.js";
-import { createProgressReporter } from "./cmd-install.js";
 import type { HandlerContext } from "./handlers.js";
 import type { BackfillCliResult, BackfillCliSink, IngestFilesResult, IngestFilesSink } from "./types.js";
+import { createProgressReporter } from "./cmd-install.js";
+import { gatherSessionFiles } from "./cmd-distill.js";
 
 // ---------------------------------------------------------------------------
 // Module-level constants

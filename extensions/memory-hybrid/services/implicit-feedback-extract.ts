@@ -4,8 +4,8 @@
  * Issue #262 — Phase 1.
  */
 
-import type { ImplicitFeedbackConfig, ImplicitSignalType } from "../config/types/features.js";
 import { capturePluginError } from "./error-reporter.js";
+import type { ImplicitSignalType, ImplicitFeedbackConfig } from "../config/types/features.js";
 
 export interface ImplicitSignal {
   type: ImplicitSignalType;

@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 

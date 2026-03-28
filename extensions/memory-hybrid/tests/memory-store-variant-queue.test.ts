@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * Integration test: memory_store enqueues contextual variant generation (Issue #159).
  *
@@ -8,14 +7,14 @@
  * - When variantQueue is null (disabled), no variants are generated
  */
 
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { tmpdir } from "node:os";
 
-import { _testing } from "../index.js";
-import { ContextualVariantGenerator, VariantGenerationQueue } from "../services/contextual-variants.js";
 import { registerMemoryTools } from "../tools/memory-tools.js";
+import { ContextualVariantGenerator, VariantGenerationQueue } from "../services/contextual-variants.js";
+import { _testing } from "../index.js";
 
 const { FactsDB } = _testing;
 
@@ -140,7 +139,6 @@ describe("memory_store — variant queue integration (Issue #159)", () => {
     registerMemoryTools(
       {
         factsDb: factsDb as never,
-        edictStore: null as any,
         vectorDb: vectorDb as never,
         cfg: cfg as never,
         embeddings: embeddings as never,
@@ -193,7 +191,6 @@ describe("memory_store — variant queue integration (Issue #159)", () => {
     registerMemoryTools(
       {
         factsDb: factsDb as never,
-        edictStore: null as any,
         vectorDb: vectorDb as never,
         cfg: cfg as never,
         embeddings: embeddings as never,
@@ -258,7 +255,6 @@ describe("memory_store — variant queue integration (Issue #159)", () => {
     registerMemoryTools(
       {
         factsDb: factsDb as never,
-        edictStore: null as any,
         vectorDb: vectorDb as never,
         cfg: cfg as never,
         embeddings: embeddings as never,

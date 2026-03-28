@@ -1,18 +1,18 @@
-import { pluginLogger } from "../../utils/logger.js";
 import type {
-  AuthFailureRecallConfig,
-  AutoClassifyConfig,
   AutoRecallConfig,
   AutoRecallInjectionFormat,
-  ContextualVariantsConfig,
-  DocumentGradingConfig,
+  AutoClassifyConfig,
   EntityLookupConfig,
+  RetrievalDirectivesConfig,
+  AuthFailureRecallConfig,
+  RetrievalConfig,
+  SearchConfig,
   QueryExpansionConfig,
   RerankingConfig,
-  RetrievalConfig,
-  RetrievalDirectivesConfig,
-  SearchConfig,
+  ContextualVariantsConfig,
+  DocumentGradingConfig,
 } from "../types/retrieval.js";
+import { pluginLogger } from "../../utils/logger.js";
 
 // Minimum timeout floors (#384): prevent spurious timeouts for slow thinking models like Gemini 2.5 Flash.
 // Exported so tests can reference the canonical values without hardcoding magic numbers.

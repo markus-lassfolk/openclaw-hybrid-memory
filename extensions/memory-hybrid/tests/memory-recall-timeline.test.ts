@@ -1,17 +1,16 @@
-// @ts-nocheck
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { tmpdir } from "node:os";
 
-import { EventLog } from "../backends/event-log.js";
-import { FactsDB } from "../backends/facts-db.js";
-import { NarrativesDB } from "../backends/narratives-db.js";
-import type { VectorDB } from "../backends/vector-db.js";
 import { hybridConfigSchema } from "../config.js";
 import { createPendingLLMWarnings } from "../services/chat.js";
-import type { EmbeddingProvider } from "../services/embeddings.js";
+import { FactsDB } from "../backends/facts-db.js";
+import { EventLog } from "../backends/event-log.js";
+import { NarrativesDB } from "../backends/narratives-db.js";
 import { registerMemoryTools } from "../tools/memory-tools.js";
+import type { VectorDB } from "../backends/vector-db.js";
+import type { EmbeddingProvider } from "../services/embeddings.js";
 
 function makeMockApi() {
   const tools = new Map<string, { execute: (...args: unknown[]) => unknown }>();

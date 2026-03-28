@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * Register hybrid-mem CLI subcommands.
  * Thin orchestrator that delegates to specialized command modules.

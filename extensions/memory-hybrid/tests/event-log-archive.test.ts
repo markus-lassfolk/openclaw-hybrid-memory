@@ -1,8 +1,8 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { mkdtempSync, rmSync, readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { gunzipSync } from "node:zlib";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { EventLog } from "../backends/event-log.js";
 
 let tmpDir: string;

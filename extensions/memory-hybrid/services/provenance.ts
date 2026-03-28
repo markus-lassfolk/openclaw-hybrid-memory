@@ -5,10 +5,10 @@
  * through consolidation events to the original session and conversation turn.
  */
 
-import { randomUUID } from "node:crypto";
+import { DatabaseSync } from "node:sqlite";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import { DatabaseSync } from "node:sqlite";
+import { randomUUID } from "node:crypto";
 import { BaseSqliteStore } from "../backends/base-sqlite-store.js";
 
 // ---------------------------------------------------------------------------

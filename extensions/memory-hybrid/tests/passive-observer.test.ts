@@ -3,22 +3,22 @@
  * Uses mocked LLM calls, storage, and file system to test all core logic paths.
  */
 
-import { randomUUID } from "node:crypto";
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { randomUUID } from "node:crypto";
 import * as chat from "../services/chat.js";
 import {
-  type ExtractedFact,
-  type PassiveObserverConfig,
   extractTextFromJsonlChunk,
-  getCursorsPath,
-  isIdentityFact,
-  loadCursors,
   parseObserverResponse,
-  runPassiveObserver,
+  loadCursors,
   saveCursors,
+  getCursorsPath,
+  runPassiveObserver,
+  isIdentityFact,
+  type PassiveObserverConfig,
+  type ExtractedFact,
 } from "../services/passive-observer.js";
 
 // ---------------------------------------------------------------------------

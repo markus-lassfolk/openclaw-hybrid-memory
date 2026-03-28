@@ -6,10 +6,10 @@
  * still allowing downstream persona proposal generation to consume them.
  */
 
+import { DatabaseSync } from "node:sqlite";
 import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import { DatabaseSync } from "node:sqlite";
 import { BaseSqliteStore } from "./base-sqlite-store.js";
 
 type Durability = "durable" | "temporary";

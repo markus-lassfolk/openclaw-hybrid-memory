@@ -19,7 +19,7 @@
  * - Returns all-null when nothing matches
  */
 
-import { describe, expect, it } from "vitest";
+import { describe, it, expect } from "vitest";
 import { extractStructuredFields } from "../services/fact-extraction.js";
 
 // ---------------------------------------------------------------------------

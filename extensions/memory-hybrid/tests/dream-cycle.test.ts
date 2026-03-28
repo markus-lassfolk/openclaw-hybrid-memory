@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * Dream Cycle tests — Issue #143
  *
@@ -12,21 +11,21 @@
  *  - EventLogConfig parsing via hybridConfigSchema (2 tests: defaults, overrides)
  */
 
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { EventLogEntry } from "../backends/event-log.js";
-import { hybridConfigSchema } from "../config.js";
-import { _testing } from "../index.js";
+import { tmpdir } from "node:os";
 import {
-  type DreamCycleConfig,
   buildDigestSummary,
   extractEventText,
   groupEventsByEntity,
-  runDreamCycle,
   runEpisodicConsolidation,
+  runDreamCycle,
+  type DreamCycleConfig,
 } from "../services/dream-cycle.js";
+import { _testing } from "../index.js";
+import { hybridConfigSchema } from "../config.js";
+import type { EventLogEntry } from "../backends/event-log.js";
 
 const { FactsDB, EventLog } = _testing;
 

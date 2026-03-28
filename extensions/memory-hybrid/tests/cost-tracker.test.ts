@@ -1,7 +1,7 @@
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { DatabaseSync } from "node:sqlite";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { CostTracker } from "../backends/cost-tracker.js";
-import { getCurrentCostFeature, withCostFeature } from "../services/cost-context.js";
+import { withCostFeature, getCurrentCostFeature } from "../services/cost-context.js";
 
 function createInMemoryDb(): DatabaseSync {
   return new DatabaseSync(":memory:");

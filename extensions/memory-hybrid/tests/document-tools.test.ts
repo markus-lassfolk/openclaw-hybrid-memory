@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * Integration tests for memory_ingest_document tool.
  *
@@ -8,12 +7,12 @@
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyFn = (...args: any[]) => any;
 
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { _testing } from "../index.js";
+import { tmpdir } from "node:os";
 import { registerDocumentTools } from "../tools/document-tools.js";
+import { _testing } from "../index.js";
 
 const { FactsDB } = _testing;
 
@@ -146,7 +145,6 @@ describe("memory_ingest_document", () => {
     registerDocumentTools(
       {
         factsDb: factsDb as never,
-        edictStore: null as any,
         vectorDb: makeMockVectorDb() as never,
         cfg: makeCfg() as never,
         embeddings: makeMockEmbeddings() as never,
@@ -170,7 +168,6 @@ describe("memory_ingest_document", () => {
     registerDocumentTools(
       {
         factsDb: factsDb as never,
-        edictStore: null as any,
         vectorDb: makeMockVectorDb() as never,
         cfg: makeCfg() as never,
         embeddings: makeMockEmbeddings() as never,
@@ -191,7 +188,6 @@ describe("memory_ingest_document", () => {
     registerDocumentTools(
       {
         factsDb: factsDb as never,
-        edictStore: null as any,
         vectorDb: makeMockVectorDb() as never,
         cfg: makeCfg() as never,
         embeddings: makeMockEmbeddings() as never,
@@ -213,7 +209,6 @@ describe("memory_ingest_document", () => {
     registerDocumentTools(
       {
         factsDb: factsDb as never,
-        edictStore: null as any,
         vectorDb: makeMockVectorDb() as never,
         cfg: makeCfg({ maxDocumentSize: 1 }) as never, // 1 byte limit
         embeddings: makeMockEmbeddings() as never,
@@ -235,7 +230,6 @@ describe("memory_ingest_document", () => {
     registerDocumentTools(
       {
         factsDb: factsDb as never,
-        edictStore: null as any,
         vectorDb: makeMockVectorDb() as never,
         cfg: makeCfg() as never,
         embeddings: makeMockEmbeddings() as never,
@@ -263,7 +257,6 @@ describe("memory_ingest_document", () => {
     registerDocumentTools(
       {
         factsDb: factsDb as never,
-        edictStore: null as any,
         vectorDb: vectorDb as never,
         cfg: makeCfg() as never,
         embeddings: makeMockEmbeddings() as never,
@@ -291,7 +284,6 @@ describe("memory_ingest_document", () => {
     registerDocumentTools(
       {
         factsDb: factsDb as never,
-        edictStore: null as any,
         vectorDb: makeMockVectorDb() as never,
         cfg: makeCfg() as never,
         embeddings: makeMockEmbeddings() as never,
@@ -323,7 +315,6 @@ describe("memory_ingest_document", () => {
     registerDocumentTools(
       {
         factsDb: factsDb as never,
-        edictStore: null as any,
         vectorDb: makeMockVectorDb() as never,
         cfg: makeCfg() as never,
         embeddings: makeMockEmbeddings() as never,
@@ -347,7 +338,6 @@ describe("memory_ingest_document", () => {
     registerDocumentTools(
       {
         factsDb: factsDb as never,
-        edictStore: null as any,
         vectorDb: makeMockVectorDb() as never,
         cfg: makeCfg({ autoTag: true }) as never,
         embeddings: makeMockEmbeddings() as never,
@@ -384,7 +374,6 @@ describe("memory_ingest_folder", () => {
     registerDocumentTools(
       {
         factsDb: factsDb as never,
-        edictStore: null as any,
         vectorDb: makeMockVectorDb() as never,
         cfg: makeCfg() as never,
         embeddings: makeMockEmbeddings() as never,
@@ -419,7 +408,6 @@ describe("memory_ingest_folder", () => {
     registerDocumentTools(
       {
         factsDb: factsDb as never,
-        edictStore: null as any,
         vectorDb: vectorDb as never,
         cfg: makeCfg() as never,
         embeddings: makeMockEmbeddings() as never,
@@ -449,7 +437,6 @@ describe("hash-based deduplication", () => {
     registerDocumentTools(
       {
         factsDb: factsDb as never,
-        edictStore: null as any,
         vectorDb: makeMockVectorDb() as never,
         cfg: makeCfg() as never,
         embeddings: makeMockEmbeddings() as never,
@@ -484,7 +471,6 @@ describe("hash-based deduplication", () => {
     registerDocumentTools(
       {
         factsDb: factsDb as never,
-        edictStore: null as any,
         vectorDb: makeMockVectorDb() as never,
         cfg: makeCfg() as never,
         embeddings: makeMockEmbeddings() as never,
@@ -515,7 +501,6 @@ describe("hash-based deduplication", () => {
     registerDocumentTools(
       {
         factsDb: factsDb as never,
-        edictStore: null as any,
         vectorDb: makeMockVectorDb() as never,
         cfg: makeCfg() as never,
         embeddings: makeMockEmbeddings() as never,
@@ -549,7 +534,6 @@ describe("LLM vision integration", () => {
     registerDocumentTools(
       {
         factsDb: factsDb as never,
-        edictStore: null as any,
         vectorDb: makeMockVectorDb() as never,
         cfg: makeCfg({ visionEnabled: true, visionModel: "gpt-4o" }) as never,
         embeddings: makeMockEmbeddings() as never,
@@ -583,7 +567,6 @@ describe("LLM vision integration", () => {
     registerDocumentTools(
       {
         factsDb: factsDb as never,
-        edictStore: null as any,
         vectorDb: makeMockVectorDb() as never,
         cfg: makeCfg({ visionEnabled: false }) as never,
         embeddings: makeMockEmbeddings() as never,
@@ -615,7 +598,6 @@ describe("LLM vision integration", () => {
     registerDocumentTools(
       {
         factsDb: factsDb as never,
-        edictStore: null as any,
         vectorDb: makeMockVectorDb() as never,
         cfg: makeCfg({ visionEnabled: true, visionModel: "gpt-4o" }) as never,
         embeddings: makeMockEmbeddings() as never,
@@ -658,7 +640,6 @@ describe("LLM vision integration", () => {
     registerDocumentTools(
       {
         factsDb: factsDb as never,
-        edictStore: null as any,
         vectorDb: makeMockVectorDb() as never,
         cfg: makeCfg({ visionEnabled: true, visionModel: "gpt-4o" }) as never,
         embeddings: makeMockEmbeddings() as never,

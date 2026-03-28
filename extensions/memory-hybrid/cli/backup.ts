@@ -21,10 +21,10 @@
  * Cron automation for scheduled backups should be managed via openclaw.yaml.
  */
 
-import { copyFileSync, cpSync, existsSync, mkdirSync, readdirSync, statSync } from "node:fs";
-import { homedir } from "node:os";
-import { basename, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { existsSync, mkdirSync, cpSync, statSync, readdirSync, copyFileSync } from "node:fs";
+import { join, basename } from "node:path";
+import { homedir } from "node:os";
 import { capturePluginError } from "../services/error-reporter.js";
 
 // ---------------------------------------------------------------------------

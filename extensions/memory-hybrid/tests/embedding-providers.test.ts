@@ -4,27 +4,27 @@
  * All HTTP calls are mocked — no Ollama instance required.
  */
 
-import { promises as fs } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { LLMRetryError } from "../services/chat.js";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
-  AllEmbeddingProvidersFailed,
-  ChainEmbeddingProvider,
-  type EmbeddingConfig,
   Embeddings,
-  FallbackEmbeddingProvider,
   OllamaEmbeddingProvider,
+  FallbackEmbeddingProvider,
+  ChainEmbeddingProvider,
   OnnxEmbeddingProvider,
-  __setOnnxRuntimeLoaderForTests,
-  _resetOllamaCircuitBreakerForTesting,
+  AllEmbeddingProvidersFailed,
   createEmbeddingProvider,
   safeEmbed,
   shouldSuppressEmbeddingError,
+  __setOnnxRuntimeLoaderForTests,
+  _resetOllamaCircuitBreakerForTesting,
+  type EmbeddingConfig,
 } from "../services/embeddings.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import * as glitchtip from "../services/error-reporter.js";
+import { LLMRetryError } from "../services/chat.js";
+import { promises as fs } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 vi.mock("../services/error-reporter.js", () => ({
   capturePluginError: vi.fn(),

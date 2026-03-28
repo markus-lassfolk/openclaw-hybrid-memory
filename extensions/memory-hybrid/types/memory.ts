@@ -2,7 +2,7 @@
  * Shared memory types used by backends and plugin.
  */
 
-import type { DecayClass, MemoryCategory } from "../config.js";
+import type { MemoryCategory, DecayClass } from "../config.js";
 
 // Re-export types that are commonly needed
 export type { MemoryCategory, DecayClass };

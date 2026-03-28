@@ -2,16 +2,16 @@
  * Tests for trajectory learning (Issue #262 — Phase 2).
  */
 
-import { describe, expect, it } from "vitest";
-import type { ConversationTurn } from "../services/implicit-feedback-extract.js";
+import { describe, it, expect } from "vitest";
 import {
-  type FeedbackTrajectory,
-  type TrajectoryTurn,
-  buildTrajectories,
-  classifyTrajectoryOutcome,
   detectTrajectoryBoundaries,
+  classifyTrajectoryOutcome,
   extractTrajectoryLessons,
+  buildTrajectories,
+  type TrajectoryTurn,
+  type FeedbackTrajectory,
 } from "../services/trajectory-tracker.js";
+import type { ConversationTurn } from "../services/implicit-feedback-extract.js";
 
 // ---------------------------------------------------------------------------
 // detectTrajectoryBoundaries

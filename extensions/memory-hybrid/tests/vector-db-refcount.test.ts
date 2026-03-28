@@ -13,11 +13,11 @@
  * Also verifies credentials-pending.json ENOENT handling (issue #10).
  */
 
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
-import { access, mkdir, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, writeFile, access } from "node:fs/promises";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { tmpdir } from "node:os";
 import { _testing } from "../index.js";
 import * as errorReporter from "../services/error-reporter.js";
 

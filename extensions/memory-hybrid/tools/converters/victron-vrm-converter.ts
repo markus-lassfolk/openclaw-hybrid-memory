@@ -6,7 +6,7 @@
  */
 
 import { basename, extname } from "node:path";
-import type { ConversionResult, Converter } from "./index.js";
+import type { Converter, ConversionResult } from "./index.js";
 
 // Known Victron CSV header fragments
 const VICTRON_CSV_HEADERS = [
