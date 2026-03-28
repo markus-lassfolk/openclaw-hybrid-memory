@@ -68,6 +68,9 @@ function openaiEmbeddingClientOpts(
     } else if (isAzureApiManagementGatewayUrl(baseURL) && !isAzureDeploymentPath) {
       // e.g. https://xxx.azure-api.net/resource-name → .../openai/v1 (not bare /v1)
       opts.baseURL = hasOpenAiV1Path ? baseURL : `${baseURL}/openai/v1`;
+    } else if (isAzureApiManagementGatewayUrl(baseURL) && isAzureDeploymentPath) {
+      // APIM gateway with deployment path: use as-is, don't append /v1
+      opts.baseURL = baseURL;
     } else {
       opts.baseURL = baseURL.includes("/v1") ? baseURL : `${baseURL}/v1`;
     }
@@ -89,10 +92,14 @@ function openaiEmbeddingClientOpts(
 }
 
 /** API model id(s) for OpenAI-compatible embeddings: optional Azure deployment name overrides logical `model`. */
-function openAiEmbeddingApiModels(cfg: EmbeddingConfig): string[] {
+function openAiEmbeddingApiModels(cfg: EmbeddingConfig, forFallback: boolean = false): string[] {
   const { model, models, deployment } = cfg;
   if (deployment && deployment.trim().length > 0) {
     return [deployment.trim()];
+  }
+  if (forFallback && !models?.length) {
+    // For fallback paths where primary provider is non-OpenAI, default to a valid OpenAI model
+    return ["text-embedding-3-small"];
   }
   return models?.length ? models : [model];
 }
@@ -141,8 +148,10 @@ export function createEmbeddingProvider(cfg: EmbeddingConfig, onFallback?: (err:
       } else if (name === "openai" && apiKey) {
         try {
           const client = new OpenAI(openaiEmbeddingClientOpts(apiKey, endpoint));
+          // In chain mode, use forFallback=true to get valid OpenAI models when primary is non-OpenAI
+          const chainOpenAiModels = openAiEmbeddingApiModels(cfg, true);
           chain.push(
-            new Embeddings(client, openaiApiModels, chainDimensions, batchSize, azureEmbeddingLogicalModelHint(cfg)),
+            new Embeddings(client, chainOpenAiModels, chainDimensions, batchSize, azureEmbeddingLogicalModelHint(cfg)),
           );
           labels.push("openai");
         } catch (err) {
@@ -181,9 +190,11 @@ export function createEmbeddingProvider(cfg: EmbeddingConfig, onFallback?: (err:
     if (apiKey) {
       const openaiClient = new OpenAI(openaiEmbeddingClientOpts(apiKey, endpoint));
       try {
+        // For Ollama fallback, use forFallback=true to get valid OpenAI models
+        const fallbackModels = openAiEmbeddingApiModels(cfg, true);
         const fallback = new Embeddings(
           openaiClient,
-          openaiApiModels,
+          fallbackModels,
           dimensions,
           batchSize,
           azureEmbeddingLogicalModelHint(cfg),
@@ -225,9 +236,11 @@ export function createEmbeddingProvider(cfg: EmbeddingConfig, onFallback?: (err:
     if (apiKey) {
       const openaiClient = new OpenAI(openaiEmbeddingClientOpts(apiKey, endpoint));
       try {
+        // For ONNX fallback, use forFallback=true to get valid OpenAI models
+        const fallbackModels = openAiEmbeddingApiModels(cfg, true);
         const fallback = new Embeddings(
           openaiClient,
-          openaiApiModels,
+          fallbackModels,
           dimensions,
           batchSize,
           azureEmbeddingLogicalModelHint(cfg),

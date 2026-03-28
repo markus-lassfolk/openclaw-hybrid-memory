@@ -61,6 +61,8 @@ function readProviderBaseUrl(p: { baseURL?: string; baseUrl?: string } | undefin
 function patchEmbeddingEndpointFromGatewayProviders(cfg: HybridMemoryConfig, api: ClawdbotPluginApi): void {
   const ep = cfg.embedding?.endpoint;
   if (typeof ep === "string" && ep.trim().length > 0) return;
+  // Only inherit Azure Foundry endpoint for OpenAI provider
+  if (cfg.embedding?.provider !== "openai") return;
   const gwConfig = api.config as Record<string, unknown> | undefined;
   const gwProviders =
     (gwConfig?.models as Record<string, unknown> | undefined)?.providers ??
