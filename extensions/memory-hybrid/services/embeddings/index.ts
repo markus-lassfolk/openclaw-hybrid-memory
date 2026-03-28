@@ -34,4 +34,4 @@ export { FallbackEmbeddingProvider } from "./fallback-provider.js";
 
 export { ChainEmbeddingProvider } from "./chain-provider.js";
 
-export { createEmbeddingProvider, AZURE_OPENAI_API_VERSION } from "./factory.js";
+export { createEmbeddingProvider } from "./factory.js";
