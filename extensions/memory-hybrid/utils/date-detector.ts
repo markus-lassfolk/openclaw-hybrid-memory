@@ -87,8 +87,7 @@ function extractCandidates(text: string, nowMs: number): number[] {
   // -------------------------------------------------------------------------
   const isoRe = /\b(\d{4})-(\d{2})-(\d{2})(?:T\d{2}:\d{2}(?::\d{2})?)?/g;
   let m: RegExpExecArray | null;
-  m = isoRe.exec(text);
-  while (m !== null) {
+  while ((m = isoRe.exec(text)) !== null) {
     const y = Number.parseInt(m[1]!, 10);
     const moRaw = Number.parseInt(m[2]!, 10);
     const d = Number.parseInt(m[3]!, 10);
