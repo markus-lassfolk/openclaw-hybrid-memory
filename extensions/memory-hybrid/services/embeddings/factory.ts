@@ -133,8 +133,7 @@ export function createEmbeddingProvider(cfg: EmbeddingConfig, onFallback?: (err:
         ? model
         : "nomic-embed-text";
     const googleModel = model && KNOWN_GOOGLE_EMBED_MODELS.has(model) ? model : GOOGLE_EMBED_DEFAULT_MODEL;
-    const openaiChainModels =
-      model && OPENAI_ONLY_EMBED_MODELS.has(model) ? openaiApiModels : ["text-embedding-3-small"];
+    const openaiChainModels = openAiEmbeddingApiModels(cfg, true);
     for (const name of preferredProviders) {
       if (name === "ollama") {
         try {
