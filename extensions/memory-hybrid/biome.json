@@ -49,8 +49,7 @@
       "complexity": {
         "noForEach": "warn",
         "useLiteralKeys": "warn",
-        "useOptionalChain": "warn",
-        "noUselessContinue": "warn"
+        "useOptionalChain": "warn"
       },
       "performance": {
         "noDelete": "warn"
