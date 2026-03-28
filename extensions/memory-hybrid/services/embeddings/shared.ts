@@ -39,6 +39,22 @@ export const OPENAI_ONLY_EMBED_MODELS = new Set([
   "text-embedding-ada-002",
 ]);
 
+/**
+ * True when the embedding base URL targets Azure (resource, APIM gateway, Cognitive Services, Foundry),
+ * not public api.openai.com.
+ */
+export function isAzureOpenAiCompatibleEndpoint(endpoint: string | undefined): boolean {
+  if (typeof endpoint !== "string" || !endpoint.trim()) return false;
+  return /\.azure\.com|\.openai\.azure\.com|\.azure-api\.net|\.cognitiveservices\.azure\.com|\.services\.ai\.azure\.com/i.test(
+    endpoint.trim(),
+  );
+}
+
+/** Display label for logs/CLI: distinguishes Azure-hosted OpenAI-compatible APIs from direct OpenAI. */
+export function formatOpenAiEmbeddingDisplayLabel(model: string, endpoint: string | undefined): string {
+  return isAzureOpenAiCompatibleEndpoint(endpoint) ? `(Azure)OpenAI/${model}` : `OpenAI/${model}`;
+}
+
 /** Max cached embeddings (LRU eviction). Reduces redundant API calls for repeated text. */
 export const EMBEDDING_CACHE_MAX = 500;
 

@@ -17,33 +17,89 @@ import {
   KNOWN_GOOGLE_EMBED_MODELS,
   OPENAI_ONLY_EMBED_MODELS,
 } from "./shared.js";
-import type { EmbeddingConfig, EmbeddingProvider } from "./types.js";
+import { Embeddings } from "./openai-provider.js";
+import { OllamaEmbeddingProvider } from "./ollama-provider.js";
+import { OnnxEmbeddingProvider, isOnnxRuntimeMissingError } from "./onnx-provider.js";
+import { FallbackEmbeddingProvider } from "./fallback-provider.js";
+import { ChainEmbeddingProvider } from "./chain-provider.js";
+import { pluginLogger } from "../../utils/logger.js";
+import { createApimGatewayFetch, isAzureApiManagementGatewayUrl } from "../../utils/apim-gateway-fetch.js";
 
-/** True when the given base URL is an Azure OpenAI / Foundry endpoint (needs api-key header). */
+/** True when the given base URL is an Azure OpenAI / Foundry endpoint (needs api-key header + api-version). */
 function isAzureEmbeddingEndpoint(baseURL: string): boolean {
-  return /\.openai\.azure\.com\/|\.cognitiveservices\.azure\.com\/|\.services\.ai\.azure\.com\//i.test(baseURL);
+  return /\.openai\.azure\.com(?:\/|$)|\.cognitiveservices\.azure\.com(?:\/|$)|\.services\.ai\.azure\.com(?:\/|$)/i.test(
+    baseURL,
+  );
 }
+
+/** Classic Azure OpenAI REST (e.g. `/openai/deployments/...`) uses this query param. `/openai/v1` compat endpoints reject it (400). */
+const AZURE_OPENAI_API_VERSION = "2024-10-21";
 
 /**
  * Build OpenAI client options for the openai embedding provider.
- * When endpoint is set, uses it as baseURL; when it's Azure, adds the api-key header.
- * Azure deployment-style URLs (/openai/deployments/...) must not get /v1 appended.
+ * When endpoint is set, uses it as baseURL; when it's Azure, adds the api-key header and (for non-v1 REST paths) api-version.
+ * Azure resource roots must use /openai/v1 (not bare /v1). Deployment-style URLs (/openai/deployments/...) are left as-is.
  */
 function openaiEmbeddingClientOpts(
   apiKey: string,
   endpoint?: string,
-): { apiKey: string; baseURL?: string; defaultHeaders?: Record<string, string> } {
-  const opts: { apiKey: string; baseURL?: string; defaultHeaders?: Record<string, string> } = { apiKey };
+): {
+  apiKey: string;
+  baseURL?: string;
+  defaultHeaders?: Record<string, string>;
+  defaultQuery?: Record<string, string>;
+  fetch?: typeof globalThis.fetch;
+} {
+  const opts: {
+    apiKey: string;
+    baseURL?: string;
+    defaultHeaders?: Record<string, string>;
+    defaultQuery?: Record<string, string>;
+    fetch?: typeof globalThis.fetch;
+  } = { apiKey };
   if (typeof endpoint === "string" && endpoint.trim().length > 0) {
     const baseURL = endpoint.trim().replace(/\/+$/, "");
     const isAzureDeploymentPath = /\/openai\/deployments\//i.test(baseURL);
-    opts.baseURL =
-      baseURL.includes("/v1") || (isAzureEmbeddingEndpoint(baseURL) && isAzureDeploymentPath)
-        ? baseURL
-        : `${baseURL}/v1`;
-    if (isAzureEmbeddingEndpoint(opts.baseURL)) opts.defaultHeaders = { "api-key": apiKey };
+    const hasOpenAiV1Path = /\/openai\/v1(?:\/|$)/i.test(baseURL);
+    if (hasOpenAiV1Path || (isAzureEmbeddingEndpoint(baseURL) && isAzureDeploymentPath)) {
+      opts.baseURL = baseURL;
+    } else if (isAzureEmbeddingEndpoint(baseURL) && !isAzureDeploymentPath) {
+      opts.baseURL = `${baseURL}/openai/v1`;
+    } else if (isAzureApiManagementGatewayUrl(baseURL) && !isAzureDeploymentPath) {
+      // e.g. https://xxx.azure-api.net/resource-name → .../openai/v1 (not bare /v1)
+      opts.baseURL = hasOpenAiV1Path ? baseURL : `${baseURL}/openai/v1`;
+    } else {
+      opts.baseURL = baseURL.includes("/v1") ? baseURL : `${baseURL}/v1`;
+    }
+    if (isAzureEmbeddingEndpoint(opts.baseURL)) {
+      opts.defaultHeaders = { "api-key": apiKey };
+      const openAiV1Compat = /\/openai\/v1(?:\/|$)/i.test(opts.baseURL);
+      // Foundry / Azure AI: `/openai/v1/*` returns 400 "API version not supported" when `api-version` is present.
+      if (!openAiV1Compat) {
+        opts.defaultQuery = { "api-version": AZURE_OPENAI_API_VERSION };
+      }
+    }
+    // API Management gateway: same api-key auth as Azure resource, but SDK Bearer breaks auth — strip it in fetch.
+    if (opts.baseURL && isAzureApiManagementGatewayUrl(opts.baseURL)) {
+      opts.defaultHeaders = { ...(opts.defaultHeaders ?? {}), "api-key": apiKey };
+      opts.fetch = createApimGatewayFetch(apiKey);
+    }
   }
   return opts;
+}
+
+/** API model id(s) for OpenAI-compatible embeddings: optional Azure deployment name overrides logical `model`. */
+function openAiEmbeddingApiModels(cfg: EmbeddingConfig): string[] {
+  const { model, models, deployment } = cfg;
+  if (deployment && deployment.trim().length > 0) {
+    return [deployment.trim()];
+  }
+  return models?.length ? models : [model];
+}
+
+/** When using Azure `deployment` as the API model id, pass `cfg.model` for dimension limits and `dimensions` param. */
+function azureEmbeddingLogicalModelHint(cfg: EmbeddingConfig): string | undefined {
+  return cfg.deployment && cfg.deployment.trim().length > 0 ? cfg.model : undefined;
 }
 
 /**
@@ -55,11 +111,11 @@ function openaiEmbeddingClientOpts(
  */
 export function createEmbeddingProvider(cfg: EmbeddingConfig, onFallback?: (err: unknown) => void): EmbeddingProvider {
   const { provider, model, apiKey, models, dimensions, endpoint, batchSize, preferredProviders, retryIntervalMs } = cfg;
+  const openaiApiModels = openAiEmbeddingApiModels(cfg);
 
   if (preferredProviders && preferredProviders.length > 1) {
     const chain: EmbeddingProvider[] = [];
     const labels: string[] = [];
-    const openaiModels = models?.length ? models : ["text-embedding-3-small"];
     // When Google is in the chain with an OpenAI-only model name, we use 768 for Google; chain requires same dimensions for all.
     const googleInChainWithOpenAiModel =
       preferredProviders.includes("google") && model && OPENAI_ONLY_EMBED_MODELS.has(model);
@@ -86,14 +142,7 @@ export function createEmbeddingProvider(cfg: EmbeddingConfig, onFallback?: (err:
         try {
           const client = new OpenAI(openaiEmbeddingClientOpts(apiKey, endpoint));
           chain.push(
-            new Embeddings(
-              client,
-              model && ["text-embedding-3-small", "text-embedding-3-large", "text-embedding-ada-002"].includes(model)
-                ? model
-                : openaiModels[0],
-              chainDimensions,
-              batchSize,
-            ),
+            new Embeddings(client, openaiApiModels, chainDimensions, batchSize, azureEmbeddingLogicalModelHint(cfg)),
           );
           labels.push("openai");
         } catch (err) {
@@ -131,9 +180,14 @@ export function createEmbeddingProvider(cfg: EmbeddingConfig, onFallback?: (err:
     // Optional fallback to OpenAI when a key is provided
     if (apiKey) {
       const openaiClient = new OpenAI(openaiEmbeddingClientOpts(apiKey, endpoint));
-      const openaiModels = models?.length ? models : ["text-embedding-3-small"];
       try {
-        const fallback = new Embeddings(openaiClient, openaiModels, dimensions, batchSize);
+        const fallback = new Embeddings(
+          openaiClient,
+          openaiApiModels,
+          dimensions,
+          batchSize,
+          azureEmbeddingLogicalModelHint(cfg),
+        );
         return new FallbackEmbeddingProvider(primary, fallback, onFallback, "ollama", "openai", retryIntervalMs);
       } catch (err) {
         // Fallback creation failed (e.g. Ollama dimensions exceed all OpenAI model limits).
@@ -150,8 +204,7 @@ export function createEmbeddingProvider(cfg: EmbeddingConfig, onFallback?: (err:
   if (provider === "openai") {
     if (!apiKey) throw new Error("OpenAI embedding provider requires embedding.apiKey");
     const openaiClient = new OpenAI(openaiEmbeddingClientOpts(apiKey, endpoint));
-    const openaiModels = models?.length ? models : [model];
-    return new Embeddings(openaiClient, openaiModels, dimensions, batchSize);
+    return new Embeddings(openaiClient, openaiApiModels, dimensions, batchSize, azureEmbeddingLogicalModelHint(cfg));
   }
 
   if (provider === "google") {
@@ -171,9 +224,14 @@ export function createEmbeddingProvider(cfg: EmbeddingConfig, onFallback?: (err:
     const primary = new OnnxEmbeddingProvider({ model, dimensions, batchSize });
     if (apiKey) {
       const openaiClient = new OpenAI(openaiEmbeddingClientOpts(apiKey, endpoint));
-      const openaiModels = models?.length ? models : ["text-embedding-3-small"];
       try {
-        const fallback = new Embeddings(openaiClient, openaiModels, dimensions, batchSize);
+        const fallback = new Embeddings(
+          openaiClient,
+          openaiApiModels,
+          dimensions,
+          batchSize,
+          azureEmbeddingLogicalModelHint(cfg),
+        );
         const onSwitch = (err: unknown) => {
           if (isOnnxRuntimeMissingError(err)) {
             pluginLogger.warn("memory-hybrid: onnxruntime-node not installed; falling back to OpenAI embeddings.");

@@ -515,6 +515,10 @@
             "type": "string",
             "description": "Custom endpoint URL. For Ollama: defaults to 'http://localhost:11434'. For OpenAI-compatible APIs."
           },
+          "deployment": {
+            "type": "string",
+            "description": "Azure OpenAI / API Management: deployment name sent as the API model id when it differs from catalog model (e.g. text-embedding-3-large). Optional when deployment name matches model."
+          },
           "preferredProviders": {
             "type": "array",
             "items": {

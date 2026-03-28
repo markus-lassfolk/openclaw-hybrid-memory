@@ -208,6 +208,16 @@ function isOpenAIModel(model: string): boolean {
   return OPENAI_MODELS.has(model);
 }
 
+/** OpenClaw model providers often use camelCase `baseUrl`; accept both. */
+function readAzureFoundryBaseUrl(
+  providers: Record<string, { baseURL?: string; baseUrl?: string }> | undefined,
+): string | undefined {
+  const af = providers?.["azure-foundry"];
+  if (!af) return undefined;
+  const u = typeof af.baseURL === "string" ? af.baseURL : typeof af.baseUrl === "string" ? af.baseUrl : undefined;
+  return u?.trim() || undefined;
+}
+
 export function parseConfig(value: unknown): HybridMemoryConfig {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new Error("memory-hybrid config required");
@@ -271,12 +281,12 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
   const llmGoogleApiKeyRaw =
     typeof llmProvidersForEmbed?.google?.apiKey === "string" ? llmProvidersForEmbed.google.apiKey.trim() : "";
   const azureFoundryForEmbed = llmProvidersForEmbed?.["azure-foundry"];
+  const azureFoundryBaseForEmbed = readAzureFoundryBaseUrl(llmProvidersForEmbed);
   const hasAzureFoundryForEmbed =
     azureFoundryForEmbed &&
     typeof azureFoundryForEmbed.apiKey === "string" &&
     azureFoundryForEmbed.apiKey.trim().length >= 10 &&
-    typeof azureFoundryForEmbed.baseURL === "string" &&
-    azureFoundryForEmbed.baseURL.trim().length > 0;
+    !!azureFoundryBaseForEmbed;
   // Recognize all SecretRef formats: env:VAR, file:/path, ${VAR} templates, or long literal keys.
   // Template detection uses .includes/${} pair check (no regex → no ReDoS risk).
   const looksLikeSecretRefOrKey = (k: string) =>
@@ -324,14 +334,16 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
   let embeddingEndpointOverride: string | undefined;
   if (embeddingProvider === "openai") {
     const rawEmbedKey = embedding && typeof embedding.apiKey === "string" ? (embedding.apiKey as string).trim() : "";
-    const azureFoundry = (cfg.llm as { providers?: Record<string, { apiKey?: string; baseURL?: string }> } | undefined)
-      ?.providers?.["azure-foundry"];
+    const llmProvidersForOpenAiEmbed = (
+      cfg.llm as { providers?: Record<string, { apiKey?: string; baseURL?: string; baseUrl?: string }> } | undefined
+    )?.providers;
+    const azureFoundry = llmProvidersForOpenAiEmbed?.["azure-foundry"];
+    const azureFoundryBaseUrl = readAzureFoundryBaseUrl(llmProvidersForOpenAiEmbed);
     const hasAzureFoundry =
       azureFoundry &&
       typeof azureFoundry.apiKey === "string" &&
       azureFoundry.apiKey.trim().length >= 10 &&
-      typeof azureFoundry.baseURL === "string" &&
-      azureFoundry.baseURL.trim().length > 0;
+      !!azureFoundryBaseUrl;
 
     if (rawEmbedKey && rawEmbedKey.length > 0) {
       const rawKey = rawEmbedKey;
@@ -367,7 +379,7 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
         );
       }
       resolvedApiKey = resolvedKey;
-      embeddingEndpointOverride = azureFoundry?.baseURL?.trim();
+      embeddingEndpointOverride = azureFoundryBaseUrl;
       pluginLogger.info(
         'memory-hybrid: using llm.providers["azure-foundry"] for embeddings (same API as LLM). Set embedding.endpoint and embedding.apiKey to override.',
       );
@@ -538,7 +550,14 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
     embeddingEndpointOverride ??
     (typeof embedding?.endpoint === "string" && embedding.endpoint.trim().length > 0
       ? embedding.endpoint.trim()
-      : undefined);
+      : undefined) ??
+    readAzureFoundryBaseUrl(
+      (cfg.llm as { providers?: Record<string, { baseURL?: string; baseUrl?: string }> } | undefined)?.providers,
+    );
+  const resolvedDeployment =
+    typeof embedding?.deployment === "string" && embedding.deployment.trim().length > 0
+      ? embedding.deployment.trim()
+      : undefined;
   const resolvedBatchSize =
     typeof embedding?.batchSize === "number" && embedding.batchSize > 0 ? Math.floor(embedding.batchSize) : 50;
 
@@ -705,6 +724,7 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
       apiKey: resolvedApiKey,
       models: embeddingModels,
       dimensions: resolvedDimensions,
+      deployment: resolvedDeployment,
       endpoint: resolvedEndpoint,
       batchSize: resolvedBatchSize,
       preferredProviders: preferredProviders.length > 1 ? preferredProviders : undefined,
