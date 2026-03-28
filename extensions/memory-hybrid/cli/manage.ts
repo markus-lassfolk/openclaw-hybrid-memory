@@ -846,7 +846,8 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
           console.error(
             "For models not in the catalog, set embedding.dimensions in plugin config to the vector size your provider returns.",
           );
-          process.exit(1);
+          process.exitCode = 1;
+          return;
         }
       }),
     );
