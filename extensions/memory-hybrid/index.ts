@@ -332,18 +332,7 @@ function runMemoryHybridRegister(api: ClawdbotPluginApi): void {
     throw err;
   }
 
-  let dbContext: ReturnType<typeof initializeDatabases>;
-  try {
-    dbContext = initializeDatabases(cfg, api);
-  } catch (err) {
-    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-      subsystem: "registration",
-      operation: "plugin-register:init-databases",
-    });
-    throw err;
-  }
-
-  // Clean up old resources immediately after atomic swap to prevent leaks if registration fails (Issue #590)
+  // Clean up old resources before opening new connections to prevent double-opening same paths (Issue #590, #802)
   if (old) {
     // Clear old timer handles to prevent leaks
     if (old.timers.pruneTimer.value) clearInterval(old.timers.pruneTimer.value);
@@ -381,6 +370,17 @@ function runMemoryHybridRegister(api: ClawdbotPluginApi): void {
     });
     old.pythonBridge?.shutdown().catch(() => {});
     runtimeRef.value = null;
+  }
+
+  let dbContext: ReturnType<typeof initializeDatabases>;
+  try {
+    dbContext = initializeDatabases(cfg, api);
+  } catch (err) {
+    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+      subsystem: "registration",
+      operation: "plugin-register:init-databases",
+    });
+    throw err;
   }
 
   const { resolvedSqlitePath, resolvedLancePath } = dbContext;
