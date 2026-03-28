@@ -26,7 +26,7 @@ function truncateText(value, maxChars = DEFAULT_MAX_BODY_CHARS) {
 
 function isBotActor(actor) {
   if (!actor || typeof actor !== 'object') return false;
-  if (actor.type === 'Bot') return true;
+  if (actor.type === 'Bot' || actor.__typename === 'Bot') return true;
   const login = String(actor.login ?? '').trim();
   return BOT_LOGIN_RE.test(login);
 }
