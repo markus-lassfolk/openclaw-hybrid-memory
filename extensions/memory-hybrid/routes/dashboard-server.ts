@@ -21,6 +21,7 @@ import { getDirSize, getFileSizeAsync, readJsonFile } from "../utils/fs.js";
 import { pluginLogger } from "../utils/logger.js";
 import type { AuditStore } from "../backends/audit-store.js";
 import { mergeAgentHealthDashboard, type AgentHealthView } from "../backends/agent-health-store.js";
+import { collectGraphPayload, collectGraphRecallPayload, getGraphExplorerHtml } from "./dashboard-graph.js";
 
 const execFile = promisify(execFileCb);
 
@@ -579,7 +580,10 @@ function getDashboardHtml(): string {
 <body>
 <header>
   <h1>⚡ Mission Control</h1>
-  <span id="last-updated">Loading…</span>
+  <div style="display:flex;align-items:center;gap:14px">
+    <a href="/graph" style="color:var(--muted);text-decoration:none;font-size:12px">Memory graph →</a>
+    <span id="last-updated">Loading…</span>
+  </div>
 </header>
 <main>
   <div class="grid" id="grid">
@@ -867,6 +871,42 @@ export async function createDashboardServer(ctx: DashboardContext, port: number)
     } catch {
       res.writeHead(400, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ error: "invalid request URL" }));
+      return;
+    }
+
+    if (pathname === "/graph" || pathname === "/graph.html") {
+      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-cache" });
+      res.end(getGraphExplorerHtml());
+      return;
+    }
+
+    if (pathname === "/api/graph") {
+      try {
+        const days = Math.min(365, Math.max(1, Number.parseInt(searchParams.get("days") ?? "30", 10) || 30));
+        const maxNodes = Math.min(
+          2000,
+          Math.max(20, Number.parseInt(searchParams.get("maxNodes") ?? "400", 10) || 400),
+        );
+        const body = JSON.stringify(collectGraphPayload(ctx.factsDb, days, maxNodes));
+        res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-cache" });
+        res.end(body);
+      } catch (err: unknown) {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: String(err) }));
+      }
+      return;
+    }
+
+    if (pathname === "/api/graph/recall") {
+      try {
+        const q = searchParams.get("query") ?? searchParams.get("q") ?? "";
+        const body = JSON.stringify(collectGraphRecallPayload(ctx.factsDb, q));
+        res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-cache" });
+        res.end(body);
+      } catch (err: unknown) {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: String(err) }));
+      }
       return;
     }
 
