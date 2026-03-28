@@ -953,25 +953,30 @@ function migrateEpisodesTable(db: DatabaseSync): void {
   const ftsExists = !!ftsInfo;
   const hasOldFtsSchema = ftsInfo?.sql?.includes("content='episodes'") || ftsInfo?.sql?.includes('content="episodes"');
 
-  if (hasOldFtsSchema) {
-    // Drop old triggers and FTS table
-    db.exec("DROP TRIGGER IF EXISTS episodes_fts_ai");
-    db.exec("DROP TRIGGER IF EXISTS episodes_fts_ad");
-    db.exec("DROP TRIGGER IF EXISTS episodes_fts_au");
-    db.exec("DROP TABLE IF EXISTS episodes_fts");
-  }
-
-  db.exec(`
-    CREATE VIRTUAL TABLE IF NOT EXISTS episodes_fts USING fts5(
-      event,
-      context,
-      tokenize='porter unicode61'
-    )
-  `);
-
   // Rebuild FTS index if we dropped the old table or if it was newly created
   if (!ftsExists || hasOldFtsSchema) {
-    db.exec("INSERT INTO episodes_fts(rowid, event, context) SELECT rowid, event, context FROM episodes");
+    // Wrap the entire migration in a transaction so any failure leaves the DB consistent.
+    const migrate = createTransaction(db, () => {
+      if (hasOldFtsSchema) {
+        // Drop old triggers and FTS table
+        db.exec("DROP TRIGGER IF EXISTS episodes_fts_ai");
+        db.exec("DROP TRIGGER IF EXISTS episodes_fts_ad");
+        db.exec("DROP TRIGGER IF EXISTS episodes_fts_au");
+        db.exec("DROP TABLE IF EXISTS episodes_fts");
+      }
+
+      db.exec(`
+        CREATE VIRTUAL TABLE IF NOT EXISTS episodes_fts USING fts5(
+          event,
+          context,
+          tokenize='porter unicode61'
+        )
+      `);
+
+      // Backfill existing episodes into the new FTS index.
+      db.exec("INSERT INTO episodes_fts(rowid, event, context) SELECT rowid, event, context FROM episodes");
+    });
+    migrate();
   }
 
   db.exec(`
