@@ -68,10 +68,9 @@ function patchEmbeddingEndpointFromGatewayProviders(cfg: HybridMemoryConfig, api
   // Only inherit Azure Foundry endpoint for OpenAI provider
   if (cfg.embedding?.provider !== "openai") return;
   const gwConfig = api.config as Record<string, unknown> | undefined;
-  const gwProviders =
-    (gwConfig?.models as Record<string, unknown> | undefined)?.providers ??
+  const gwProviders = ((gwConfig?.models as Record<string, unknown> | undefined)?.providers ??
     (gwConfig?.llm as Record<string, unknown> | undefined)?.providers ??
-    (gwConfig?.providers as Record<string, unknown> | undefined);
+    (gwConfig?.providers as Record<string, unknown> | undefined)) as Record<string, unknown> | undefined;
   const af = gwProviders?.["azure-foundry"] as { baseURL?: string; baseUrl?: string } | undefined;
   const base = readProviderBaseUrl(af);
   if (!base) return;
