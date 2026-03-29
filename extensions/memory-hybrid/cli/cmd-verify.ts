@@ -517,19 +517,18 @@ export async function runVerifyForCli(
   }
   function getDirectApiKey(provider: string): string | undefined {
     const prov = cronCfg.llm?.providers as Record<string, { apiKey?: string }> | undefined;
-    const env = process.env as NodeJS.ProcessEnv;
     if (provider === "openai") {
       // Prefer OPENAI_API_KEY so Azure (embedding) and OpenAI (chat) can use different keys.
       const fromProv = resolveKey(prov?.openai?.apiKey);
       if (fromProv) return fromProv;
-      const fromEnv = env.OPENAI_API_KEY?.trim();
+      const fromEnv = getEnv("OPENAI_API_KEY")?.trim();
       if (fromEnv && fromEnv.length >= 10) return fromEnv;
       return resolveKey(cronCfg.embedding?.apiKey);
     }
     if (provider === "google") {
       const fromProv = resolveKey(prov?.google?.apiKey ?? cronCfg.distill?.apiKey);
       if (fromProv) return fromProv;
-      const fromEnv = env.GOOGLE_API_KEY?.trim();
+      const fromEnv = getEnv("GOOGLE_API_KEY")?.trim();
       if (fromEnv && fromEnv.length >= 10) return fromEnv;
       return undefined;
     }
@@ -538,7 +537,7 @@ export async function runVerifyForCli(
         prov?.anthropic?.apiKey ?? (cronCfg.claude as { apiKey?: string } | undefined)?.apiKey,
       );
       if (fromProv) return fromProv;
-      const fromEnv = env.ANTHROPIC_API_KEY?.trim();
+      const fromEnv = getEnv("ANTHROPIC_API_KEY")?.trim();
       if (fromEnv && fromEnv.length >= 10) return fromEnv;
       return undefined;
     }
@@ -548,7 +547,7 @@ export async function runVerifyForCli(
       (provider === "azure-foundry" || provider === "azure-foundry-responses") &&
       !resolveKey(prov?.[provider]?.apiKey)
     ) {
-      const fromEnv = env.AZURE_OPENAI_API_KEY?.trim();
+      const fromEnv = getEnv("AZURE_OPENAI_API_KEY")?.trim();
       if (fromEnv && fromEnv.length >= 10) return fromEnv;
     }
     return resolveKey(prov?.[provider]?.apiKey);

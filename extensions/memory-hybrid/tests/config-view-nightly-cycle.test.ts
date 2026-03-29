@@ -1,7 +1,7 @@
 // @ts-nocheck
 import { getEnv, setEnv } from "../utils/env-manager.js";
 import * as fs from "node:fs";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { runConfigViewForCli } from "../cli/cmd-config.js";
 import type { HandlerContext } from "../cli/handlers.js";
@@ -55,6 +55,10 @@ function makeCtx(enabled: boolean): HandlerContext {
 }
 
 describe("runConfigViewForCli nightlyCycle output", () => {
+  beforeEach(() => {
+    setEnv("OPENCLAW_CONFIG", "/tmp/test-openclaw-missing.json");
+  });
+
   afterEach(() => {
     setEnv("OPENCLAW_CONFIG", undefined);
     try {

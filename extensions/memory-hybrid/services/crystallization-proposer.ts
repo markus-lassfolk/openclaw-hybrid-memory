@@ -11,6 +11,7 @@ import { getEnv } from "../utils/env-manager.js";
 
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
+import { homedir } from "node:os";
 import type { CrystallizationStore } from "../backends/crystallization-store.js";
 import type { WorkflowStore } from "../backends/workflow-store.js";
 import type { CrystallizationConfig } from "../config/types/features.js";
@@ -184,7 +185,7 @@ export class CrystallizationProposer {
     }
 
     // Determine output path — sanitize skill name to prevent path traversal
-    const outputDir = this.cfg.outputDir.replace(/^~/, getEnv("HOME") ?? "~");
+    const outputDir = this.cfg.outputDir.replace(/^~/, getEnv("HOME") || homedir());
     const safeName = proposal.skillName.replace(/[^a-z0-9_-]/gi, "-").replace(/^\.+/, "");
     const outputPath = `${outputDir}/${safeName}/SKILL.md`;
 

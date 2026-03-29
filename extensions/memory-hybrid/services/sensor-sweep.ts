@@ -66,7 +66,7 @@ interface HAEntity {
 
 async function fetchHa(ha: HomeAssistantSensorConfig, path: string): Promise<Response> {
   const url = `${ha.baseUrl.replace(/\/$/, "")}${path}`;
-  const token = ha.token.startsWith("env:") ? (process.env[ha.token.slice(4)] ?? "") : ha.token;
+  const token = ha.token.startsWith("env:") ? (getEnv(ha.token.slice(4)) ?? "") : ha.token;
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), ha.timeoutMs ?? 10_000);

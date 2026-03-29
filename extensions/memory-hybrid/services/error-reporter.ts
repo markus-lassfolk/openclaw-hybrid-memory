@@ -672,9 +672,10 @@ export async function initErrorReporter(
     return;
   }
 
+  const rawEnvDsn = getEnv("ERROR_REPORTING_DSN");
   const envDsn =
-    typeof getEnv("ERROR_REPORTING_DSN") === "string" && getEnv("ERROR_REPORTING_DSN")!.trim().length > 0
-      ? getEnv("ERROR_REPORTING_DSN")!.trim()
+    typeof rawEnvDsn === "string" && rawEnvDsn.trim().length > 0
+      ? rawEnvDsn.trim()
       : "";
 
   // Resolve DSN based on mode

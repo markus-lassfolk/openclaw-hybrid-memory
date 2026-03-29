@@ -236,17 +236,20 @@ export function getProvidersWithKeys(pluginConfig: CronModelConfig | undefined):
   }
 
   // Env fallbacks so providers show as configured when only env is set (e.g. GOOGLE_API_KEY)
+  const googleKey = getEnv("GOOGLE_API_KEY");
   if (
     !seen.has("google") &&
-    typeof getEnv("GOOGLE_API_KEY") === "string" &&
-    getEnv("GOOGLE_API_KEY")!.trim().length >= 10
+    typeof googleKey === "string" &&
+    googleKey.trim().length >= 10
   ) {
     add("google");
   }
+  
+  const anthropicKey = getEnv("ANTHROPIC_API_KEY");
   if (
     !seen.has("anthropic") &&
-    typeof getEnv("ANTHROPIC_API_KEY") === "string" &&
-    getEnv("ANTHROPIC_API_KEY")!.trim().length >= 10
+    typeof anthropicKey === "string" &&
+    anthropicKey.trim().length >= 10
   ) {
     add("anthropic");
   }
