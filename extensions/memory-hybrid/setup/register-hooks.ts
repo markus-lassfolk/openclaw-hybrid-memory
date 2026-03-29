@@ -163,15 +163,19 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
       ].join("\n");
     };
 
-    // Register a before_prompt_build hook that injects static memory instructions.
-    // Uses prependContext — the only field supported by the current SDK (see TODO above).
-    // The content is built once and cached to minimise per-turn overhead.
-    api.on("before_prompt_build", (): undefined | { prependContext: string } => {
-      if (!staticMemoryInstructions) {
-        staticMemoryInstructions = buildStaticInstructions();
-      }
-      return { prependContext: staticMemoryInstructions };
-    });
+    // Current SDKs only support `prependContext` for injecting additional context into
+    // the prompt build. When a reliable capability signal for `appendSystemContext`
+    // becomes available in the plugin SDK, this hook can be extended to prefer that
+    // field without risking duplicate instructions.
+    api.on(
+      "before_prompt_build",
+      (): undefined | { prependContext: string } => {
+        if (!staticMemoryInstructions) {
+          staticMemoryInstructions = buildStaticInstructions();
+        }
+        return { prependContext: staticMemoryInstructions };
+      },
+    );
   }
 
   // Issue #275 — Compaction Lifecycle Hooks
