@@ -8,7 +8,8 @@ import { dirname } from "node:path";
 import { randomUUID } from "node:crypto";
 
 import type { MemoryCategory, DecayClass } from "../config.js";
-import { TTL_DEFAULTS } from "../config.js";
+import { DECAY_CLASSES, TTL_DEFAULTS } from "../config.js";
+import { isValidCategory } from "../config.js";
 import type {
   MemoryEntry,
   ProcedureEntry,
@@ -57,6 +58,10 @@ export {
   type ReinforcementContext,
 } from "./facts-db/types.js";
 import type { MemoryLinkType, ReinforcementContext, ReinforcementEvent } from "./facts-db/types.js";
+
+/** Allowlisted tier values for dynamic SQL fragments in list()/dashboard filters (#842). */
+const DASHBOARD_TIER_FILTER = new Set<string>(["warm", "hot", "cold"]);
+const DECAY_CLASS_FILTER = new Set<string>(DECAY_CLASSES);
 
 /** A single contradiction record (from the contradictions table). */
 export interface ContradictionRecord {
@@ -2556,9 +2561,15 @@ export class FactsDB extends BaseSqliteStore {
     },
   ): MemoryEntry[] {
     const nowSec = Math.floor(Date.now() / 1000);
+    if (
+      (filters?.category != null && filters.category !== "" && !isValidCategory(filters.category)) ||
+      (filters?.tier != null && filters.tier !== "" && !DASHBOARD_TIER_FILTER.has(filters.tier))
+    ) {
+      return [];
+    }
     const parts: string[] = ["(expires_at IS NULL OR expires_at > ?)", "superseded_at IS NULL"];
     const params: SQLInputValue[] = [nowSec];
-    if (filters?.category != null) {
+    if (filters?.category != null && isValidCategory(filters.category)) {
       parts.push("category = ?");
       params.push(filters.category);
     }
@@ -2574,7 +2585,7 @@ export class FactsDB extends BaseSqliteStore {
       parts.push("source = ?");
       params.push(filters.source);
     }
-    if (filters?.tier != null) {
+    if (filters?.tier != null && DASHBOARD_TIER_FILTER.has(filters.tier)) {
       parts.push("COALESCE(tier, 'warm') = ?");
       params.push(filters.tier);
     }
@@ -2923,18 +2934,26 @@ export class FactsDB extends BaseSqliteStore {
     search?: string;
   }): { facts: Array<Record<string, unknown>>; total: number } {
     const nowSec = Math.floor(Date.now() / 1000);
+    if (
+      (opts.category != null && opts.category !== "" && !isValidCategory(opts.category)) ||
+      (opts.tier != null && opts.tier !== "" && !DASHBOARD_TIER_FILTER.has(opts.tier)) ||
+      (opts.decayClass != null && opts.decayClass !== "" && !DECAY_CLASS_FILTER.has(opts.decayClass))
+    ) {
+      return { facts: [], total: 0 };
+    }
+
     let where = "superseded_at IS NULL AND (expires_at IS NULL OR expires_at > ?)";
     const params: SQLInputValue[] = [nowSec];
 
-    if (opts.category) {
+    if (opts.category && isValidCategory(opts.category)) {
       where += " AND category = ?";
       params.push(opts.category);
     }
-    if (opts.tier) {
+    if (opts.tier && DASHBOARD_TIER_FILTER.has(opts.tier)) {
       where += " AND COALESCE(tier, 'warm') = ?";
       params.push(opts.tier);
     }
-    if (opts.decayClass) {
+    if (opts.decayClass && DECAY_CLASS_FILTER.has(opts.decayClass)) {
       where += " AND COALESCE(decay_class, 'stable') = ?";
       params.push(opts.decayClass);
     }
@@ -5145,40 +5164,42 @@ export class FactsDB extends BaseSqliteStore {
     const tags = input.tags ?? [];
     const relatedFactIds = input.relatedFactIds ?? [];
 
-    this.liveDb
-      .prepare(
-        `INSERT INTO episodes (id, event, outcome, timestamp, duration, context, related_fact_ids, procedure_id, scope, scope_target, agent_id, user_id, session_id, importance, tags, decay_class, created_at, verified_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .run(
-        id,
-        input.event,
-        input.outcome,
-        timestamp,
-        input.duration ?? null,
-        input.context ?? null,
-        relatedFactIds.length > 0 ? JSON.stringify(relatedFactIds) : null,
-        input.procedureId ?? null,
-        scope,
-        scopeTarget,
-        input.agentId ?? null,
-        input.userId ?? null,
-        input.sessionId ?? null,
-        importance,
-        serializeTags(tags),
-        decayClass,
-        nowSec,
-        null,
-      );
-
-    // Link related facts via episode_relations table (not memory_links — episodes are not facts)
-    for (const factId of relatedFactIds) {
+    const tx = createTransaction(this.liveDb, () => {
       this.liveDb
         .prepare(
-          "INSERT INTO episode_relations (id, episode_id, target_id, relation_type, strength, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+          `INSERT INTO episodes (id, event, outcome, timestamp, duration, context, related_fact_ids, procedure_id, scope, scope_target, agent_id, user_id, session_id, importance, tags, decay_class, created_at, verified_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
-        .run(randomUUID(), id, factId, "PART_OF", 0.8, nowSec);
-    }
+        .run(
+          id,
+          input.event,
+          input.outcome,
+          timestamp,
+          input.duration ?? null,
+          input.context ?? null,
+          relatedFactIds.length > 0 ? JSON.stringify(relatedFactIds) : null,
+          input.procedureId ?? null,
+          scope,
+          scopeTarget,
+          input.agentId ?? null,
+          input.userId ?? null,
+          input.sessionId ?? null,
+          importance,
+          serializeTags(tags),
+          decayClass,
+          nowSec,
+          null,
+        );
+
+      for (const factId of relatedFactIds) {
+        this.liveDb
+          .prepare(
+            "INSERT INTO episode_relations (id, episode_id, target_id, relation_type, strength, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+          )
+          .run(randomUUID(), id, factId, "PART_OF", 0.8, nowSec);
+      }
+    });
+    tx();
 
     return {
       id,

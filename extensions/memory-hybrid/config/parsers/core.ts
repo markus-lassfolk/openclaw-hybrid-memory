@@ -166,9 +166,11 @@ export function parseCredentialsConfig(cfg: Record<string, unknown>): Credential
   let credentials: CredentialsConfig;
   if (shouldEnable) {
     const opts = parseCredentialOptions(credRaw);
-    // M1 FIX: Log info message when plaintext mode is chosen explicitly
-    if (!hasValidKey && credRaw?.enabled === true) {
-      pluginLogger.info("Credentials vault enabled (plaintext mode — no encryption key set)");
+    if (!hasValidKey) {
+      pluginLogger.warn(
+        "memory-hybrid: credentials vault is enabled without encryption at rest (set credentials.encryptionKey with 16+ characters, or OPENCLAW_CRED_KEY / env:VAR for a strong key). " +
+          "Until then, stored secrets are written as plaintext in the vault database — restrict filesystem access to that path, or add a key when you are ready.",
+      );
     }
     credentials = {
       enabled: true,

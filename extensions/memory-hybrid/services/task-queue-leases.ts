@@ -130,7 +130,7 @@ function formatAcquireBlockReason(issue: number, lease: DispatchLeaseRecord): st
 function emptyRegistry(): DispatchLeaseRegistry {
   return {
     version: LEASES_SCHEMA_VERSION,
-    leases: {},
+    leases: Object.create(null) as Record<string, DispatchLeaseRecord>,
     events: [],
   };
 }
@@ -141,7 +141,7 @@ function normalizeRegistry(raw: unknown): DispatchLeaseRegistry {
   }
 
   const obj = raw as Partial<DispatchLeaseRegistry>;
-  const leases: Record<string, DispatchLeaseRecord> = {};
+  const leases: Record<string, DispatchLeaseRecord> = Object.create(null) as Record<string, DispatchLeaseRecord>;
   const rawLeases = obj.leases;
   if (rawLeases && typeof rawLeases === "object" && !Array.isArray(rawLeases)) {
     for (const [key, value] of Object.entries(rawLeases)) {
