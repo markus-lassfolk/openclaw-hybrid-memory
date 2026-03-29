@@ -1,0 +1,42 @@
+# After a successful CI run on main, push git tag v<package.json version> if that tag does not
+# exist yet. That triggers the Release workflow (tag push v*), which attaches release notes +
+# CHANGELOG and publishes to npm.
+name: Tag release after CI (main)
+
+on:
+  workflow_run:
+    workflows:
+      - CI
+    types:
+      - completed
+
+jobs:
+  tag-if-needed:
+    name: Push version tag if missing
+    runs-on: ubuntu-latest
+    if: >
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_branch == 'main' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_repository.full_name == github.repository
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          fetch-depth: 0
+
+      - name: Push annotated tag when absent
+        run: |
+          set -euo pipefail
+          VERSION=$(node -p "require('./extensions/memory-hybrid/package.json').version")
+          TAG="v${VERSION}"
+          if [ -n "$(git ls-remote origin "refs/tags/${TAG}")" ]; then
+            echo "Tag ${TAG} already exists on origin — skipping"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "${TAG}" -m "Release ${TAG}"
+          git push origin "${TAG}"

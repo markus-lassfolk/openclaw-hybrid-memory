@@ -1,6 +1,8 @@
-# Release: creates GitHub Release (with docs/RELEASE-NOTES-<version>.md when present) and publishes to npm.
-# - Tag push (v*): run appears under the tag in Actions (change branch filter to "All" or the tag to see it).
+# Release: GitHub Release body = release-notes/release-notes-<version>.md (preferred),
+# docs/RELEASE-NOTES-<version>.md (legacy), plus matching CHANGELOG.md section; publishes to npm.
+# - Tag push (v*): run appears under the tag in Actions (change branch filter to "All" or the tag).
 # - Manual run: Actions → Release → "Run workflow", enter version (e.g. v2026.3.180), use branch main.
+# - After CI succeeds on main, tag-release-after-ci.yml may push v* if missing → triggers this workflow.
 name: Release
 
 on:
@@ -13,8 +15,6 @@ on:
     tags:
       - 'v*'
 
-# Use a distinct group name so the caller does not share a group with the called CI workflow
-# (when called via workflow_call, CI inherits github.workflow = "Release", which would otherwise cause a deadlock)
 concurrency:
   group: release-cd-${{ github.ref }}
   cancel-in-progress: true
@@ -47,26 +47,68 @@ jobs:
           fi
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
-      - name: Prepare release body
+      - name: Build release body (release notes + CHANGELOG)
         id: prep
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
-          if [ -f "docs/RELEASE-NOTES-${{ steps.version.outputs.version }}.md" ]; then
-            echo "has_release_notes=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "has_release_notes=false" >> "$GITHUB_OUTPUT"
-          fi
-      - name: Create GitHub Release (with release notes file)
-        if: steps.prep.outputs.has_release_notes == 'true'
+          python3 <<'PY'
+          import os
+          import pathlib
+          import re
+
+          ver = os.environ["VERSION"]
+          root = pathlib.Path(".")
+          paths = [
+              root / "release-notes" / f"release-notes-{ver}.md",
+              root / "docs" / f"RELEASE-NOTES-{ver}.md",
+          ]
+          base = ""
+          for p in paths:
+              if p.is_file():
+                  base = p.read_text(encoding="utf-8").strip()
+                  break
+
+          section = ""
+          cl = root / "CHANGELOG.md"
+          if cl.is_file():
+              text = cl.read_text(encoding="utf-8")
+              m = re.search(
+                  rf"^## \[{re.escape(ver)}\].*?(?=^## \[|\Z)",
+                  text,
+                  flags=re.MULTILINE | re.DOTALL,
+              )
+              if m:
+                  section = m.group(0).strip()
+
+          parts = []
+          if base:
+              parts.append(base)
+          if section:
+              parts.append(
+                  "---\n\n## Changelog ([Keep a Changelog](https://keepachangelog.com/))\n\n" + section
+              )
+
+          out = pathlib.Path("/tmp/gh-release-body.md")
+          out.write_text("\n\n".join(parts) + "\n" if parts else "", encoding="utf-8")
+
+          gh = os.environ["GITHUB_OUTPUT"]
+          has = "true" if parts else "false"
+          with open(gh, "a", encoding="utf-8") as f:
+              f.write(f"has_body={has}\n")
+          PY
+      - name: Create GitHub Release (combined body)
+        if: steps.prep.outputs.has_body == 'true'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.version.outputs.tag }}
           name: Release ${{ steps.version.outputs.tag }}
-          body_path: docs/RELEASE-NOTES-${{ steps.version.outputs.version }}.md
+          body_path: /tmp/gh-release-body.md
           generate_release_notes: false
           draft: false
           prerelease: false
-      - name: Create GitHub Release (auto-generated notes)
-        if: steps.prep.outputs.has_release_notes != 'true'
+      - name: Create GitHub Release (GitHub-generated notes)
+        if: steps.prep.outputs.has_body != 'true'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.version.outputs.tag }}
@@ -79,7 +121,6 @@ jobs:
     name: Publish to NPM
     needs: [release]
     runs-on: ubuntu-latest
-    # Required for NPM Trusted Publishing (OIDC) - no long-lived tokens needed
     permissions:
       id-token: write
       contents: read
@@ -115,7 +156,6 @@ jobs:
         run: npm ci
       - name: Verify publish
         run: npm run verify:publish
-      # Trusted Publishing: npm CLI uses OIDC token from GitHub; no NPM_TOKEN secret needed
       - name: Publish to NPM
         run: npm publish --provenance --access public
 
