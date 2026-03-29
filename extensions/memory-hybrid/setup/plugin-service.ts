@@ -1,3 +1,4 @@
+import { getEnv } from "../utils/env-manager.js";
 import { dirname, join } from "node:path";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -594,7 +595,7 @@ export function createPluginService(ctx: PluginServiceContext) {
       const WATCHDOG_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
       const watchdogRun = async () => {
         try {
-          await runTaskQueueWatchdog({ repoDir: process.env.OPENCLAW_WORKSPACE ?? process.cwd() }, api.logger);
+          await runTaskQueueWatchdog({ repoDir: getEnv("OPENCLAW_WORKSPACE") ?? process.cwd() }, api.logger);
         } catch (err) {
           api.logger.warn?.(`memory-hybrid: task-queue-watchdog failed (non-fatal): ${err}`);
           capturePluginError(err instanceof Error ? err : new Error(String(err)), {
@@ -618,7 +619,7 @@ export function createPluginService(ctx: PluginServiceContext) {
       const rawVersionFilePath = join(dirname(resolvedSqlitePath), ".last-post-upgrade-version");
       // Expand literal $HOME or leading ~ if the sqlite path wasn't fully resolved before being stored.
       // Both forms can appear when the plugin config is serialized from user input before normalization.
-      const _home = process.env.HOME ?? homedir();
+      const _home = getEnv("HOME") ?? homedir();
       const versionFile = rawVersionFilePath.replace(/\$HOME/g, _home).replace(/^~(?=\/|$)/, _home);
       timers.postUpgradeTimeout.value = setTimeout(() => {
         timers.postUpgradeTimeout.value = null;

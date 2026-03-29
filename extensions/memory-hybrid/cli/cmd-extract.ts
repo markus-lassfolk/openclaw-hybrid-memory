@@ -1,3 +1,4 @@
+import { getEnv } from "../utils/env-manager.js";
 /**
  * Extract CLI Handler Functions
  *
@@ -339,7 +340,7 @@ export async function runExtractReinforcementForCli(
     } else {
       filePaths = getSessionFilePathsSince(sessionDir, days);
     }
-    const workspaceRoot = opts.workspace ?? process.env.OPENCLAW_WORKSPACE ?? join(homedir(), ".openclaw", "workspace");
+    const workspaceRoot = opts.workspace ?? getEnv("OPENCLAW_WORKSPACE") ?? join(homedir(), ".openclaw", "workspace");
 
     // Two-tier pre-filter: use local Ollama to triage sessions before regex scan (Issue #290).
     // NOTE: filePaths (the full candidate set) is preserved for cursor watermarking below so
@@ -824,7 +825,7 @@ export async function runGenerateProposalsForCli(
     if (recentCount + created >= limit) break;
     const targetFile = String(item.targetFile ?? "").trim();
     if (!allowedFiles.includes(targetFile as any)) continue;
-    const workspace = process.env.OPENCLAW_WORKSPACE ?? join(homedir(), ".openclaw", "workspace");
+    const workspace = getEnv("OPENCLAW_WORKSPACE") ?? join(homedir(), ".openclaw", "workspace");
     const snapshot = getFileSnapshot(join(workspace, targetFile));
     let confidence = Number(item.confidence);
     if (!Number.isFinite(confidence)) continue;

@@ -1,3 +1,4 @@
+import { getEnv } from "../utils/env-manager.js";
 /**
  * Sensor Sweep — cron-based data collection writing to the Event Bus.
  * NO LLM calls at sweep time — structured data only.
@@ -8,7 +9,7 @@
  * Issue #236
  */
 
-import { execFile } from "node:child_process";
+import { execFile } from "../utils/process-runner.js";
 import { promisify } from "node:util";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
@@ -65,7 +66,7 @@ interface HAEntity {
 
 async function fetchHa(ha: HomeAssistantSensorConfig, path: string): Promise<Response> {
   const url = `${ha.baseUrl.replace(/\/$/, "")}${path}`;
-  const token = ha.token.startsWith("env:") ? (process.env[ha.token.slice(4)] ?? "") : ha.token;
+  const token = ha.token.startsWith("env:") ? (getEnv(ha.token.slice(4)) ?? "") : ha.token;
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), ha.timeoutMs ?? 10_000);
@@ -173,7 +174,7 @@ interface SessionSummary {
 }
 
 function getSessionDir(): string {
-  return process.env.OPENCLAW_SESSION_DIR ?? join(homedir(), ".openclaw", "sessions");
+  return getEnv("OPENCLAW_SESSION_DIR") ?? join(homedir(), ".openclaw", "sessions");
 }
 
 function extractTopicsFromSession(content: string): string[] {

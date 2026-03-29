@@ -13,7 +13,7 @@
  *  - Never auto-triggers; only responds to explicit agent tool calls
  */
 
-import { spawn, spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "../utils/process-runner.js";
 import { randomBytes } from "node:crypto";
 import type { ApiTapConfig } from "../config/types/features.js";
 

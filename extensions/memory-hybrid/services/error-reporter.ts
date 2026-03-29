@@ -1,3 +1,4 @@
+import { getEnv } from "../utils/env-manager.js";
 import { compareVersions } from "../utils/version-check.js";
 
 export { compareVersions };
@@ -671,10 +672,8 @@ export async function initErrorReporter(
     return;
   }
 
-  const envDsn =
-    typeof process.env.ERROR_REPORTING_DSN === "string" && process.env.ERROR_REPORTING_DSN.trim().length > 0
-      ? process.env.ERROR_REPORTING_DSN.trim()
-      : "";
+  const rawEnvDsn = getEnv("ERROR_REPORTING_DSN");
+  const envDsn = typeof rawEnvDsn === "string" && rawEnvDsn.trim().length > 0 ? rawEnvDsn.trim() : "";
 
   // Resolve DSN based on mode
   let resolvedDsn: string;

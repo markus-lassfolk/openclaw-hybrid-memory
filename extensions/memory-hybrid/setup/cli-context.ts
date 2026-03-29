@@ -1,4 +1,5 @@
 // @ts-nocheck
+import { getEnv } from "../utils/env-manager.js";
 /**
  * Build HybridMemCliContext from handler context and services.
  * Moves CLI wiring out of index.ts so the plugin entry stays small.
@@ -595,7 +596,7 @@ function buildListCommands(
   api: ClawdbotPluginApi,
 ): NonNullable<HybridMemCliContext["listCommands"]> {
   const { factsDb, proposalsDb, cfg, resolvedSqlitePath } = ctx;
-  const workspaceRoot = () => process.env.OPENCLAW_WORKSPACE ?? join(homedir(), ".openclaw", "workspace");
+  const workspaceRoot = () => getEnv("OPENCLAW_WORKSPACE") ?? join(homedir(), ".openclaw", "workspace");
   const reportDir = (workspace?: string) => join(workspace ?? workspaceRoot(), "memory", "reports");
 
   function parseReportProposedSections(content: string): string[] {
@@ -762,7 +763,7 @@ function buildListCommands(
  * Resolves file paths against the workspace root.
  */
 function buildActiveTaskCliContext(handlerCtx: HandlerContext): ActiveTaskContext {
-  const workspaceRoot = process.env.OPENCLAW_WORKSPACE ?? join(homedir(), ".openclaw", "workspace");
+  const workspaceRoot = getEnv("OPENCLAW_WORKSPACE") ?? join(homedir(), ".openclaw", "workspace");
   const { activeTask } = handlerCtx.cfg;
   // Resolve relative paths against workspace root (use isAbsolute for cross-platform support)
   const activeTaskFilePath = isAbsolute(activeTask.filePath)

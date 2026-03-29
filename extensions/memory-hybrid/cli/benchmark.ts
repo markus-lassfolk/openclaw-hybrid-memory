@@ -1,3 +1,4 @@
+import { getEnv } from "../utils/env-manager.js";
 /**
  * CLI: `openclaw benchmark run` — run the shadow evaluation benchmark suite.
  *
@@ -111,7 +112,7 @@ export function registerBenchmarkCommands(mem: Chainable, _ctx: HybridMemCliCont
       const dbPath = (
         typeof cfg.sqlitePath === "string" && cfg.sqlitePath
           ? cfg.sqlitePath
-          : join(process.env.HOME ?? "/home/markus", ".openclaw", "memory", "facts.db")
+          : join(getEnv("HOME") ?? "/home/markus", ".openclaw", "memory", "facts.db")
       ) as string;
 
       await runBenchmarkCommand(

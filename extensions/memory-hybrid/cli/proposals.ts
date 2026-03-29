@@ -1,3 +1,4 @@
+import { getEnv } from "../utils/env-manager.js";
 /**
  * CLI commands for managing persona proposals (human-only operations)
  */
@@ -6,7 +7,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync 
 import { writeFile, mkdir } from "node:fs/promises";
 import { dirname, join, relative } from "node:path";
 import { homedir, tmpdir } from "node:os";
-import { spawnSync } from "node:child_process";
+import { spawnSync } from "../utils/process-runner.js";
 import type { Chainable } from "./shared.js";
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import type { ProposalsDB } from "../backends/proposals-db.js";
@@ -15,7 +16,7 @@ import { capturePluginError } from "../services/error-reporter.js";
 
 /** Resolve a proposal target file (e.g. SOUL.md) against the workspace directory. */
 function resolveProposalTarget(targetFile: string): string {
-  const workspace = process.env.OPENCLAW_WORKSPACE ?? join(homedir(), ".openclaw", "workspace");
+  const workspace = getEnv("OPENCLAW_WORKSPACE") ?? join(homedir(), ".openclaw", "workspace");
   return join(workspace, targetFile);
 }
 import { getFileSnapshot } from "../utils/file-snapshot.js";

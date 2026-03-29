@@ -1,3 +1,4 @@
+import { getEnv } from "../utils/env-manager.js";
 /** @module init-databases — Provider routing, cost instrumentation, and database bootstrap. */
 import { dirname, join } from "node:path";
 import { existsSync, readFileSync, constants } from "node:fs";
@@ -99,10 +100,10 @@ function extractGatewayConfig(cfg: HybridMemoryConfig): {
   gatewayToken: string | undefined;
   gatewayBaseUrl: string | undefined;
 } {
-  const gatewayPortRaw = normalizeResolvedSecretValue(process.env.OPENCLAW_GATEWAY_PORT);
+  const gatewayPortRaw = normalizeResolvedSecretValue(getEnv("OPENCLAW_GATEWAY_PORT"));
   const gatewayPort = gatewayPortRaw ? Number.parseInt(gatewayPortRaw, 10) : undefined;
   const gatewayAuthResolved = (cfg.gateway?.auth as ResolvedGatewayAuthConfig | undefined)?._resolvedToken;
-  const gatewayToken = gatewayAuthResolved ?? normalizeResolvedSecretValue(process.env.OPENCLAW_GATEWAY_TOKEN);
+  const gatewayToken = gatewayAuthResolved ?? normalizeResolvedSecretValue(getEnv("OPENCLAW_GATEWAY_TOKEN"));
   const gatewayBaseUrl =
     gatewayPort && gatewayPort >= 1 && gatewayPort <= 65535 ? `http://127.0.0.1:${gatewayPort}/v1` : undefined;
   return {
@@ -1118,7 +1119,7 @@ export function initializeDatabases(cfg: HybridMemoryConfig, api: ClawdbotPlugin
   const heavyList = Array.isArray(cfg.llm?.heavy) ? cfg.llm.heavy : [];
   const hasAnthropicModel = (list: string[]) => list.some((m) => m.startsWith("anthropic/") || m.startsWith("claude-"));
   if (!prov.anthropic && (hasAnthropicModel(defaultList) || hasAnthropicModel(heavyList))) {
-    const envKey = normalizeResolvedSecretValue(process.env.ANTHROPIC_API_KEY) ?? "";
+    const envKey = normalizeResolvedSecretValue(getEnv("ANTHROPIC_API_KEY")) ?? "";
     if (envKey.length >= 10) {
       prov.anthropic = { apiKey: envKey };
       mergedProviderNames.push("anthropic");

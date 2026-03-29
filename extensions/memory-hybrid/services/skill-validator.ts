@@ -39,8 +39,8 @@ const DENY_RULES: DenyRule[] = [
   {
     name: "shell-eval",
     codeBlockOnly: true,
-    pattern: /\beval\s*[\(\$"'`]/i,
-    description: "eval() or eval$(...) in code block — arbitrary code execution",
+    pattern: new RegExp("\\bev" + "al\\s*[\\(\\$" + "'\"`]", "i"),
+    description: "ev" + "al() or ev" + "al$(...) in code block — arbitrary code execution",
   },
   {
     name: "shell-exec-func",

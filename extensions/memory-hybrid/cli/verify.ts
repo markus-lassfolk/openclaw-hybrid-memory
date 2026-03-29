@@ -1,3 +1,4 @@
+import { getEnv, setEnv } from "../utils/env-manager.js";
 /**
  * CLI commands for verification and installation (verify, install).
  */
@@ -38,7 +39,7 @@ export function registerVerifyCommands(mem: Chainable, ctx: VerifyContext): void
           noEmoji?: boolean;
           reconcile?: boolean;
         }) => {
-          if (opts.noEmoji) process.env.HYBRID_MEM_NO_EMOJI = "1";
+          if (opts.noEmoji) setEnv("HYBRID_MEM_NO_EMOJI", "1");
           try {
             await runVerify(
               { fix: !!opts.fix, logFile: opts.logFile, testLlm: !!opts.testLlm, reconcile: !!opts.reconcile },

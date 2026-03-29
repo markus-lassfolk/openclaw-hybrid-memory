@@ -1,6 +1,7 @@
 // @ts-nocheck
+import { getEnv, setEnv } from "../utils/env-manager.js";
 import * as fs from "node:fs";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { runConfigViewForCli } from "../cli/cmd-config.js";
 import type { HandlerContext } from "../cli/handlers.js";
@@ -54,8 +55,12 @@ function makeCtx(enabled: boolean): HandlerContext {
 }
 
 describe("runConfigViewForCli nightlyCycle output", () => {
+  beforeEach(() => {
+    setEnv("OPENCLAW_CONFIG", "/tmp/test-openclaw-missing.json");
+  });
+
   afterEach(() => {
-    process.env.OPENCLAW_CONFIG = undefined;
+    setEnv("OPENCLAW_CONFIG", undefined);
     try {
       fs.unlinkSync("/tmp/test-openclaw.json");
     } catch {
@@ -80,7 +85,7 @@ describe("runConfigViewForCli nightlyCycle output", () => {
   it("shows effective off and Phase 1 note when file has nightlyCycle.enabled = true but cfg is false", () => {
     const logs: string[] = [];
     // Mock getPluginConfigFromFile by setting env var
-    process.env.OPENCLAW_CONFIG = "/tmp/test-openclaw.json";
+    setEnv("OPENCLAW_CONFIG", "/tmp/test-openclaw.json");
     require("node:fs").writeFileSync(
       "/tmp/test-openclaw.json",
       JSON.stringify({

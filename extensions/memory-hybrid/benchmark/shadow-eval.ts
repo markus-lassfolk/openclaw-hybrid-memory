@@ -1,4 +1,5 @@
 // @ts-nocheck
+import { getEnv } from "../utils/env-manager.js";
 /**
  * Shadow Evaluation Benchmark Framework
  *
@@ -219,7 +220,7 @@ Respond with a JSON object and nothing else:
   try {
     // Dynamically import OpenAI to avoid a hard dependency here
     const { default: OpenAI } = (await import("openai")) as { default: typeof import("openai").default };
-    const apiKey = process.env.OPENAI_API_KEY ?? process.env.GOOGLE_API_KEY ?? undefined;
+    const apiKey = getEnv("OPENAI_API_KEY") ?? getEnv("GOOGLE_API_KEY") ?? undefined;
     if (!apiKey) {
       judgement = "No API key available (set OPENAI_API_KEY or GOOGLE_API_KEY)";
       return { score: 0.5, llmCalls, tokensUsed, judgement };

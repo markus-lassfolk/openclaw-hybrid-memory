@@ -7,7 +7,7 @@
  *   GET /api/status — JSON data for all dashboard sections
  */
 
-import { execFile as execFileCb } from "node:child_process";
+import { execFile as execFileCb } from "../utils/process-runner.js";
 import { existsSync } from "node:fs";
 import { readdir, stat } from "node:fs/promises";
 import { createServer } from "node:http";

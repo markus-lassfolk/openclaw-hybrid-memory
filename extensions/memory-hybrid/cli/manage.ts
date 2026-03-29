@@ -1,3 +1,4 @@
+import { getEnv } from "../utils/env-manager.js";
 /**
  * CLI registration functions for management commands.
  * Extracted from cli/register.ts lines 290-1552.
@@ -6,7 +7,7 @@
 import { existsSync, mkdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { execSync } from "node:child_process";
+import { execSync } from "../utils/process-runner.js";
 import { generateTraceId, buildCouncilSessionKey, buildProvenanceMetadata } from "../utils/provenance.js";
 import { relativeTime } from "./shared.js";
 import { buildAppliedContent, buildUnifiedDiff } from "./proposals.js";
@@ -1563,7 +1564,7 @@ Preserved (P0 — never trimmed, ${result.preserved.length} fact(s)):`);
           createdAt: number;
           evidenceSessions?: string[];
         };
-        const workspace = process.env.OPENCLAW_WORKSPACE ?? join(homedir(), ".openclaw", "workspace");
+        const workspace = getEnv("OPENCLAW_WORKSPACE") ?? join(homedir(), ".openclaw", "workspace");
         const targetPath = join(workspace, proposal.targetFile);
         const includeDiff = !!opts?.diff || !!opts?.json;
         let diffText: string | null = null;

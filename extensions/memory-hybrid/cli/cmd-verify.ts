@@ -1,3 +1,4 @@
+import { getEnv } from "../utils/env-manager.js";
 /**
  * CLI Verify Command Handler
  *
@@ -104,7 +105,7 @@ export async function runVerifyForCli(
   /** Always print tables (embedding + LLM) so they are never suppressed in quiet mode. */
   const tableLog = rawLog;
   const _err = sink.error ?? rawLog;
-  const noEmoji = process.env.HYBRID_MEM_NO_EMOJI === "1";
+  const noEmoji = getEnv("HYBRID_MEM_NO_EMOJI") === "1";
   const OK = noEmoji ? "[OK]" : "✅";
   const FAIL = noEmoji ? "[FAIL]" : "❌";
   const PAUSE = noEmoji ? "[paused]" : "⏸️ ";
@@ -438,8 +439,8 @@ export async function runVerifyForCli(
   const cronCfg = getCronModelConfig(cfg);
   const providersWithKeys = getProvidersWithKeys(cronCfg);
   const authOrder = (cfg as Record<string, unknown>).auth as { order?: Record<string, string[]> } | undefined;
-  const gatewayPort = process.env.OPENCLAW_GATEWAY_PORT;
-  const gatewayToken = process.env.OPENCLAW_GATEWAY_TOKEN;
+  const gatewayPort = getEnv("OPENCLAW_GATEWAY_PORT");
+  const gatewayToken = getEnv("OPENCLAW_GATEWAY_TOKEN");
   const gatewayAvailable = Boolean(
     gatewayPort && Number(gatewayPort) >= 1 && Number(gatewayPort) <= 65535 && gatewayToken,
   );
@@ -516,19 +517,18 @@ export async function runVerifyForCli(
   }
   function getDirectApiKey(provider: string): string | undefined {
     const prov = cronCfg.llm?.providers as Record<string, { apiKey?: string }> | undefined;
-    const env = process.env as NodeJS.ProcessEnv;
     if (provider === "openai") {
       // Prefer OPENAI_API_KEY so Azure (embedding) and OpenAI (chat) can use different keys.
       const fromProv = resolveKey(prov?.openai?.apiKey);
       if (fromProv) return fromProv;
-      const fromEnv = env.OPENAI_API_KEY?.trim();
+      const fromEnv = getEnv("OPENAI_API_KEY")?.trim();
       if (fromEnv && fromEnv.length >= 10) return fromEnv;
       return resolveKey(cronCfg.embedding?.apiKey);
     }
     if (provider === "google") {
       const fromProv = resolveKey(prov?.google?.apiKey ?? cronCfg.distill?.apiKey);
       if (fromProv) return fromProv;
-      const fromEnv = env.GOOGLE_API_KEY?.trim();
+      const fromEnv = getEnv("GOOGLE_API_KEY")?.trim();
       if (fromEnv && fromEnv.length >= 10) return fromEnv;
       return undefined;
     }
@@ -537,7 +537,7 @@ export async function runVerifyForCli(
         prov?.anthropic?.apiKey ?? (cronCfg.claude as { apiKey?: string } | undefined)?.apiKey,
       );
       if (fromProv) return fromProv;
-      const fromEnv = env.ANTHROPIC_API_KEY?.trim();
+      const fromEnv = getEnv("ANTHROPIC_API_KEY")?.trim();
       if (fromEnv && fromEnv.length >= 10) return fromEnv;
       return undefined;
     }
@@ -547,7 +547,7 @@ export async function runVerifyForCli(
       (provider === "azure-foundry" || provider === "azure-foundry-responses") &&
       !resolveKey(prov?.[provider]?.apiKey)
     ) {
-      const fromEnv = env.AZURE_OPENAI_API_KEY?.trim();
+      const fromEnv = getEnv("AZURE_OPENAI_API_KEY")?.trim();
       if (fromEnv && fromEnv.length >= 10) return fromEnv;
     }
     return resolveKey(prov?.[provider]?.apiKey);
