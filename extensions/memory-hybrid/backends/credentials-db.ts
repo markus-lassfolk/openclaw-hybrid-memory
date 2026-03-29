@@ -25,6 +25,9 @@ const CRED_ALGO = "aes-256-gcm";
 const CRED_KDF_VERSION = 2; // v1 = SHA-256 (legacy), v2 = scrypt
 const CRED_KDF_PLAINTEXT = 0; // no encryption (user secures by other means)
 
+/** Log once per vault path: legacy v1 KDF is weak; opening triggers migration to scrypt when possible. */
+const _v1KdfWarnedPaths = new Set<string>();
+
 /** Derive encryption key using scrypt.
  *  v1: legacy SHA-256 (kept for backward compatibility with existing encrypted vaults).
  *  v2: recommended scrypt parameters (N=16384, r=8, p=1).
@@ -188,6 +191,15 @@ export class CredentialsDB extends BaseSqliteStore {
       this.salt = toBuffer(saltRow.value);
       this.key = deriveKey(encryptionKey, this.salt, this.kdfVersion);
       this.password = this.kdfVersion === 1 ? encryptionKey : null;
+    }
+
+    if (this.storesEncryptedValues && this.kdfVersion === 1 && !_v1KdfWarnedPaths.has(dbPath)) {
+      _v1KdfWarnedPaths.add(dbPath);
+      pluginLogger.warn(
+        "memory-hybrid: credentials vault uses legacy key derivation (v1 / SHA-256). This is weak against offline attacks. " +
+          "The vault will migrate to scrypt (v2) automatically after the next successful unlock. " +
+          "Set a strong OPENCLAW_CRED_KEY and restart, or rotate secrets after migration.",
+      );
     }
   }
 

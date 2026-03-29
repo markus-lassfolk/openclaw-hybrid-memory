@@ -651,7 +651,8 @@ describe("hybridConfigSchema.parse", () => {
     expect(result.credentials.encryptionKey).toBe("abcdefghij1234567890");
   });
 
-  it("allows credentials enabled without key (vault plaintext)", () => {
+  it("allows credentials enabled without key (plaintext vault) and logs a security warning", () => {
+    const warnSpy = vi.spyOn(pluginLogger, "warn").mockImplementation(() => {});
     const result = hybridConfigSchema.parse({
       ...validBase,
       credentials: {
@@ -661,9 +662,12 @@ describe("hybridConfigSchema.parse", () => {
     });
     expect(result.credentials.enabled).toBe(true);
     expect(result.credentials.encryptionKey).toBe("");
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("plaintext"));
+    warnSpy.mockRestore();
   });
 
-  it("does not throw for short or unresolved encryption key; uses plaintext vault", () => {
+  it("does not throw for short or unresolved encryption key; uses plaintext vault and warns", () => {
+    const warnSpy = vi.spyOn(pluginLogger, "warn").mockImplementation(() => {});
     const shortKey = hybridConfigSchema.parse({
       ...validBase,
       credentials: { enabled: true, encryptionKey: "short" },
@@ -677,6 +681,8 @@ describe("hybridConfigSchema.parse", () => {
     });
     expect(envMissing.credentials.enabled).toBe(true);
     expect(envMissing.credentials.encryptionKey).toBe("");
+    expect(warnSpy.mock.calls.length).toBeGreaterThanOrEqual(2);
+    warnSpy.mockRestore();
   });
 
   it("errorReporting defaults to opt-out config (enabled+consent=true) when not provided", () => {
