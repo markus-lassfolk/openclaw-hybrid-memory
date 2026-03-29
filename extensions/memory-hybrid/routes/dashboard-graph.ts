@@ -36,7 +36,7 @@ export function collectGraphPayload(factsDb: FactsDB, days: number, maxNodes: nu
   const db = factsDb.getRawDb();
   const rows = db
     .prepare(
-      `SELECT id, text, category, importance, decay_class FROM facts WHERE superseded_at IS NULL AND (expires_at IS NULL OR expires_at > ?) AND created_at >= ? ORDER BY created_at DESC LIMIT ?`,
+      "SELECT id, text, category, importance, decay_class FROM facts WHERE superseded_at IS NULL AND (expires_at IS NULL OR expires_at > ?) AND created_at >= ? ORDER BY created_at DESC LIMIT ?",
     )
     .all(nowSec, cutoff, capped) as Array<{
     id: string;

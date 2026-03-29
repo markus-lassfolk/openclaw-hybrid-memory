@@ -72,6 +72,14 @@ export class VectorDB {
    */
   private schemaValid = true;
   /**
+   * Set to false when lancedb.connect() throws during doInitialize(). When false, all
+   * vector operations (search, store, hasDuplicate, count, delete, optimize) return safe
+   * empty defaults and the plugin runs in FTS5-only fallback mode. Reset to true when
+   * ensureInitialized() runs after a close(), so that a plugin reload / explicit reconnect
+   * can retry the connection.
+   */
+  private lanceDbAvailable = true;
+  /**
    * Tracks whether the semantic query cache table can safely serve vector queries.
    * When false, cache lookups/stores are skipped until the table is rebuilt.
    */
@@ -207,6 +215,10 @@ export class VectorDB {
     if (this.closed) {
       this.logWarn("memory-hybrid: VectorDB was closed; reconnecting...");
       this.closed = false;
+      // Allow a fresh connection attempt after an explicit close/reopen cycle
+      // (e.g., plugin reload). The previous lanceDbAvailable=false may have been
+      // a transient failure; let doInitialize() decide again.
+      this.lanceDbAvailable = true;
       this.table = null;
       // Close any connection that may have been set by a concurrent in-flight doInitialize()
       // that completed after close() ran, to avoid leaking the underlying file handle.
@@ -219,6 +231,17 @@ export class VectorDB {
         this.db = null;
       }
       this.initPromise = null;
+    }
+    // LanceDB was unavailable at the last init attempt (connect() failed). Instead of
+    // silently returning and allowing callers to proceed into a generic "not initialized"
+    // error, fail fast here with a clear message so the original failure context is not
+    // lost. Callers can trigger a fresh attempt by calling close() and re-registering
+    // the plugin (which resets lanceDbAvailable to true).
+    if (!this.lanceDbAvailable) {
+      throw new Error(
+        "LanceDB vector backend is unavailable because a previous initialization attempt failed. " +
+          "Check earlier logs for the LanceDB connection error and restart the plugin to retry.",
+      );
     }
     if (this.table && this.semanticQueryCacheTable) return;
     if (this.initPromise) return this.initPromise;
@@ -244,7 +267,19 @@ export class VectorDB {
     // can still locate the data directory.
     const resolvedPath = isAbsolute(this.dbPath) ? this.dbPath : pathResolve(this.dbPath);
 
-    this.db = await lancedb.connect(resolvedPath);
+    try {
+      this.db = await lancedb.connect(resolvedPath);
+    } catch (connectErr) {
+      // LanceDB is unavailable (e.g., native module failed to load, path is inaccessible,
+      // or the storage backend is not supported on this platform). Log a warning and enter
+      // FTS5-only fallback mode — vector operations will return safe empty defaults until
+      // the plugin is reloaded and doInitialize() succeeds.
+      this.lanceDbAvailable = false;
+      this.logWarn(
+        `memory-hybrid: ⚠️  LanceDB unavailable — entering FTS5-only fallback mode. Vector search and storage are disabled. Error: ${connectErr instanceof Error ? connectErr.message : String(connectErr)}`,
+      );
+      return;
+    }
     // Guard: a concurrent close() may have nulled this.db between the connect() await and here.
     if (!this.db) throw new Error("VectorDB connection lost during initialization (concurrent close).");
     // Guard: plugin re-registration (hot-reload/SIGUSR1) may have called close() concurrently.
@@ -649,7 +684,9 @@ export class VectorDB {
     options: { minSimilarity?: number; ttlMs?: number; filterKey?: string; candidateLimit?: number } = {},
   ): Promise<SemanticQueryCacheEntry | null> {
     try {
+      if (!this.lanceDbAvailable) return null;
       await this.ensureInitialized();
+      if (!this.lanceDbAvailable) return null;
       if (!this.semanticQueryCacheSchemaValid) return null;
       const nowSec = Math.floor(Date.now() / 1000);
       const minSimilarity = options.minSimilarity ?? 0.95;
@@ -732,7 +769,9 @@ export class VectorDB {
     cachedAt?: number;
   }): Promise<void> {
     try {
+      if (!this.lanceDbAvailable) return;
       await this.ensureInitialized();
+      if (!this.lanceDbAvailable) return;
       if (!this.semanticQueryCacheSchemaValid) return;
       const filterKey = entry.filterKey ?? "default";
       await this.getSemanticQueryCacheTable().add([
@@ -783,7 +822,11 @@ export class VectorDB {
     id?: string;
   }): Promise<string> {
     try {
+      if (!this.lanceDbAvailable) return entry.id ?? randomUUID();
       await this.ensureInitialized();
+      // LanceDB unavailable (FTS5-only fallback mode): return the id without storing to
+      // the vector index so callers don't crash. The fact is still in SQLite / FTS5.
+      if (!this.lanceDbAvailable) return entry.id ?? randomUUID();
       // Wait for any in-progress optimization to complete before writing
       if (this.optimizePromise) {
         await this.optimizePromise;
@@ -847,7 +890,9 @@ export class VectorDB {
   async optimize(
     olderThanMs: number = 7 * 24 * 60 * 60 * 1000,
   ): Promise<{ compacted: number; removedFragments: number; freedBytes: number }> {
+    if (!this.lanceDbAvailable) return { compacted: 0, removedFragments: 0, freedBytes: 0 };
     await this.ensureInitialized();
+    if (!this.lanceDbAvailable) return { compacted: 0, removedFragments: 0, freedBytes: 0 };
     // Wait for any in-progress optimization to complete
     if (this.optimizePromise) {
       await this.optimizePromise;
@@ -899,7 +944,10 @@ export class VectorDB {
 
   async search(vector: number[], limit = 5, minScore = 0.3): Promise<SearchResult[]> {
     try {
+      if (!this.lanceDbAvailable) return [];
       await this.ensureInitialized();
+      // LanceDB unavailable (FTS5-only fallback mode): return empty results immediately.
+      if (!this.lanceDbAvailable) return [];
       // Schema was detected as invalid at startup (dim mismatch or no vector column).
       // Return empty results immediately without a GlitchTip report — the issue was
       // already logged once during init (issue #366).
@@ -967,7 +1015,10 @@ export class VectorDB {
 
   async hasDuplicate(vector: number[], threshold = 0.95): Promise<boolean> {
     try {
+      if (!this.lanceDbAvailable) return false;
       await this.ensureInitialized();
+      // LanceDB unavailable (FTS5-only fallback mode): conservatively report no duplicate.
+      if (!this.lanceDbAvailable) return false;
       // Same early-exit as search(): schema was already reported invalid at startup.
       if (!this.schemaValid) return false;
       // Dimension pre-check: silently return false (no duplicate) if the query vector
@@ -1013,7 +1064,9 @@ export class VectorDB {
       return false;
     }
     try {
+      if (!this.lanceDbAvailable) return false;
       await this.ensureInitialized();
+      if (!this.lanceDbAvailable) return false;
       await this.getTable().delete(`id = '${id.toLowerCase()}'`);
       return true;
     } catch (err) {
@@ -1028,7 +1081,9 @@ export class VectorDB {
 
   async count(): Promise<number> {
     const tryCount = async (): Promise<number> => {
+      if (!this.lanceDbAvailable) return 0;
       await this.ensureInitialized();
+      if (!this.lanceDbAvailable) return 0;
       const acquired = this.acquireReader();
       try {
         const t = this.getTable();
@@ -1233,5 +1288,15 @@ export class VectorDB {
    */
   getCloseGeneration(): number {
     return this.closeGeneration;
+  }
+
+  /**
+   * Returns false if lancedb.connect() failed during the last initialization attempt.
+   * When false, the plugin is operating in FTS5-only fallback mode: search() returns [],
+   * store() is a no-op, and all other vector operations return safe empty defaults.
+   * The flag is reset to true when close() is called, so a plugin reload will retry.
+   */
+  isLanceDbAvailable(): boolean {
+    return this.lanceDbAvailable;
   }
 }

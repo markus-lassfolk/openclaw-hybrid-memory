@@ -924,7 +924,7 @@ export async function createDashboardServer(ctx: DashboardContext, port: number)
           res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-cache" });
           res.end(JSON.stringify(payload));
         })
-        .catch((err: unknown) => {
+        .catch((_err: unknown) => {
           res.writeHead(500, { "Content-Type": "application/json" });
           res.end(JSON.stringify({ error: "InternalServerError" }));
         });
@@ -985,7 +985,7 @@ export async function createDashboardServer(ctx: DashboardContext, port: number)
           });
           res.end(body);
         })
-        .catch((err: unknown) => {
+        .catch((_err: unknown) => {
           res.writeHead(500, { "Content-Type": "application/json" });
           res.end(JSON.stringify({ error: "InternalServerError" }));
         });
