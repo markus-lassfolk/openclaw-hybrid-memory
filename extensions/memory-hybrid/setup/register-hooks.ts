@@ -55,7 +55,8 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
       lastProgressiveIndexIds: ctx.lastProgressiveIndexIds,
       restartPendingClearedRef: ctx.restartPendingClearedRef,
       resolvedSqlitePath: ctx.resolvedSqlitePath,
-      walWrite: (operation, data, logger) => ctx.walWrite(ctx.wal, operation, data, logger),
+      walWrite: (operation, data, logger, supersedeTargetId) =>
+        ctx.walWrite(ctx.wal, operation, data, logger, supersedeTargetId),
       walRemove: (id, logger) => ctx.walRemove(ctx.wal, id, logger),
       findSimilarByEmbedding: ctx.findSimilarByEmbedding,
       shouldCapture: ctx.shouldCapture,

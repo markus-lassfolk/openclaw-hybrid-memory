@@ -1088,4 +1088,16 @@ export function runFactsMigrations(db: DatabaseSync): void {
 
   // Episodic memory (#781)
   migrateEpisodesTable(db);
+
+  // Token budget trim: index-backed ordering (Issue #838)
+  migrateTrimBudgetIndex(db);
+}
+
+/** Supports SQL ORDER BY for trimToBudget without full in-memory sort of all facts (Issue #838). */
+function migrateTrimBudgetIndex(db: DatabaseSync): void {
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_facts_trim_budget_order
+    ON facts(superseded_at, importance, created_at, last_accessed)
+    WHERE superseded_at IS NULL
+  `);
 }

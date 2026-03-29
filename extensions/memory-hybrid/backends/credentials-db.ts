@@ -74,20 +74,20 @@ export class CredentialsDB extends BaseSqliteStore {
   private key!: Buffer;
   private kdfVersion!: number;
   private salt!: Buffer;
-  /** When false, values are stored and read as plaintext (no encryption). */
-  private readonly encrypted: boolean;
+  /** When false, values are stored and read as plaintext (no encryption). Mutable when DB metadata overrides key length heuristics. */
+  private storesEncryptedValues: boolean;
   // SECURITY NOTE: Raw password is stored only for lazy migration from legacy SHA-256 to scrypt.
   // Migration is triggered on first successful get() to verify the password is correct before re-encrypting.
   // After migration completes, this field is cleared to minimize exposure in memory.
   private password: string | null;
 
   constructor(dbPath: string, encryptionKey: string) {
-    const encrypted = encryptionKey.length >= 16;
+    const keyLooksEncrypted = encryptionKey.length >= 16;
     mkdirSync(dirname(dbPath), { recursive: true });
     const db = new DatabaseSync(dbPath);
     super(db);
     this.dbPath = dbPath;
-    this.encrypted = encrypted;
+    this.storesEncryptedValues = keyLooksEncrypted;
 
     this.liveDb.exec(`
       CREATE TABLE IF NOT EXISTS vault_meta (
@@ -120,7 +120,7 @@ export class CredentialsDB extends BaseSqliteStore {
       | { value: Uint8Array | Buffer }
       | undefined;
 
-    if (!encrypted) {
+    if (!keyLooksEncrypted) {
       // Plaintext vault: no key derived
       this.kdfVersion = CRED_KDF_PLAINTEXT;
       this.salt = Buffer.alloc(0);
@@ -149,9 +149,8 @@ export class CredentialsDB extends BaseSqliteStore {
 
     // Check if vault is plaintext first (before assuming legacy)
     if (versionRow && versionRow.value != null && toBuffer(versionRow.value)[0] === CRED_KDF_PLAINTEXT) {
-      // C2 FIX: DB is plaintext, override this.encrypted regardless of key length
-      // biome-ignore lint/suspicious/noExplicitAny: encrypted is readonly and must be reassigned after initial assignment
-      (this as any).encrypted = false;
+      // DB metadata says plaintext — never treat as encrypted regardless of key length (Issue #835).
+      this.storesEncryptedValues = false;
       this.kdfVersion = CRED_KDF_PLAINTEXT;
       this.salt = Buffer.alloc(0);
       this.key = Buffer.alloc(0);
@@ -205,7 +204,7 @@ export class CredentialsDB extends BaseSqliteStore {
     expires?: number | null;
   }): CredentialEntry {
     const now = Math.floor(Date.now() / 1000);
-    const stored = this.encrypted ? encryptValue(entry.value, this.key) : Buffer.from(entry.value, "utf8");
+    const stored = this.storesEncryptedValues ? encryptValue(entry.value, this.key) : Buffer.from(entry.value, "utf8");
     this.liveDb
       .prepare(
         `INSERT INTO credentials (service, type, value, url, notes, created, updated, expires)
@@ -240,7 +239,7 @@ export class CredentialsDB extends BaseSqliteStore {
           .get(service) as Record<string, unknown> | undefined);
     if (!row) return null;
     const buf = toBuffer(row.value as Uint8Array | Buffer);
-    const value = this.encrypted ? decryptValue(buf, this.key) : buf.toString("utf8");
+    const value = this.storesEncryptedValues ? decryptValue(buf, this.key) : buf.toString("utf8");
 
     if (this.kdfVersion === 1) {
       try {
@@ -336,7 +335,7 @@ export class CredentialsDB extends BaseSqliteStore {
     }
 
     const now = Math.floor(Date.now() / 1000);
-    const stored = this.encrypted ? encryptValue(entry.value, this.key) : Buffer.from(entry.value, "utf8");
+    const stored = this.storesEncryptedValues ? encryptValue(entry.value, this.key) : Buffer.from(entry.value, "utf8");
     const result = this.liveDb
       .prepare(
         `INSERT INTO credentials (service, type, value, url, notes, created, updated, expires)
@@ -382,7 +381,7 @@ export class CredentialsDB extends BaseSqliteStore {
     >;
     return rows.map((row) => {
       const buf = toBuffer(row.value as Uint8Array | Buffer);
-      const value = this.encrypted ? decryptValue(buf, this.key) : buf.toString("utf8");
+      const value = this.storesEncryptedValues ? decryptValue(buf, this.key) : buf.toString("utf8");
       return {
         service: row.service as string,
         type: row.type as string as CredentialType,

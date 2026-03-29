@@ -268,6 +268,22 @@ describe("hybridConfigSchema.parse", () => {
     ).toThrow(/could not be resolved/);
   });
 
+  it("resolves embedding.apiKey OpenClaw SecretRef object (env source) — Issue #833", () => {
+    vi.stubEnv("TEST_EMBED_OBJ_833", "sk-resolved-key-that-is-long-enough");
+    try {
+      const result = hybridConfigSchema.parse({
+        embedding: {
+          provider: "openai",
+          apiKey: { source: "env", provider: "default", id: "TEST_EMBED_OBJ_833" },
+          model: "text-embedding-3-small",
+        },
+      });
+      expect(result.embedding.apiKey).toBe("sk-resolved-key-that-is-long-enough");
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   it("resolves embedding.apiKey env: SecretRef for non-openai provider fallback (ollama)", () => {
     vi.stubEnv("TEST_EMBED_FALLBACK_KEY_333", "sk-fallback-key-that-is-long-enough");
     try {

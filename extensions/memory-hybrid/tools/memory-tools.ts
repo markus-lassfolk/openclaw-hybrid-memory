@@ -62,6 +62,7 @@ export type BoundWalWriteFn = (
   operation: "store" | "update",
   data: Record<string, unknown>,
   logger: { warn: (msg: string) => void },
+  supersedeTargetId?: string,
 ) => Promise<string>;
 
 export type BoundWalRemoveFn = (id: string, logger: { warn: (msg: string) => void }) => Promise<void>;
@@ -1570,6 +1571,7 @@ export function registerMemoryTools(
                       vector,
                     },
                     api.logger,
+                    classification.targetId,
                   );
 
                   const nowSec = Math.floor(Date.now() / 1000);

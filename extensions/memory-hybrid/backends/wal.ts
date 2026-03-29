@@ -14,6 +14,8 @@ export type WALEntry = {
   id: string;
   timestamp: number;
   operation: "store" | "delete" | "update";
+  /** For operation "update": UUID of the fact row being superseded (Issue #836 replay). */
+  targetId?: string;
   data: {
     text: string;
     category?: string;
@@ -32,14 +34,16 @@ export type WALEntry = {
 const WAL_REMOVE_PREFIX = '{"op":"remove","id":';
 
 export function isWalEntry(obj: unknown): obj is WALEntry {
-  return (
-    typeof obj === "object" &&
-    obj !== null &&
-    "id" in obj &&
-    "timestamp" in obj &&
-    "operation" in obj &&
-    ["store", "delete", "update"].includes((obj as WALEntry).operation)
-  );
+  if (typeof obj !== "object" || obj === null || !("id" in obj) || !("timestamp" in obj) || !("operation" in obj)) {
+    return false;
+  }
+  const op = (obj as WALEntry).operation;
+  if (!["store", "delete", "update"].includes(op)) return false;
+  if ("targetId" in obj && (obj as WALEntry).targetId !== undefined) {
+    const tid = (obj as WALEntry).targetId;
+    if (typeof tid !== "string" || tid.length === 0) return false;
+  }
+  return true;
 }
 
 export class WriteAheadLog {
@@ -238,6 +242,7 @@ export class WriteAheadLog {
 
   private async _clearInternal(): Promise<void> {
     try {
+      // Under writeLock: delete path so empty state is "no file" (tests + readAll ENOENT).
       await rm(this.walPath, { force: true });
       this.activeIds.clear();
     } catch (err) {
