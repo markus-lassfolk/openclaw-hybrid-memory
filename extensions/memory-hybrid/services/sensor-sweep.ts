@@ -34,14 +34,14 @@ import { capturePluginError } from "./error-reporter.js";
 // Types
 // ---------------------------------------------------------------------------
 
-export interface SensorSweepResult {
+interface SensorSweepResult {
   sensor: string;
   eventsWritten: number;
   eventsSkipped: number;
   error?: string;
 }
 
-export interface SweepAllResult {
+interface SweepAllResult {
   sensors: SensorSweepResult[];
   totalWritten: number;
   totalSkipped: number;
@@ -113,7 +113,7 @@ async function fetchAllHaStates(ha: HomeAssistantSensorConfig): Promise<HAEntity
 // Tier 1: Garmin Connect via Home Assistant
 // ---------------------------------------------------------------------------
 
-export async function sweepGarmin(
+async function sweepGarmin(
   bus: EventBus,
   cfg: GarminSensorConfig,
   ha: HomeAssistantSensorConfig,
@@ -533,7 +533,7 @@ export async function sweepGitHub(
 // Tier 2: Home Assistant Anomaly Detection
 // ---------------------------------------------------------------------------
 
-export async function sweepHomeAssistantAnomaly(
+async function sweepHomeAssistantAnomaly(
   bus: EventBus,
   cfg: HomeAssistantAnomalySensorConfig,
   ha: HomeAssistantSensorConfig,
@@ -658,7 +658,7 @@ export async function sweepSystemHealth(
 // Tier 2: Weather
 // ---------------------------------------------------------------------------
 
-export async function sweepWeather(
+async function sweepWeather(
   bus: EventBus,
   cfg: WeatherSensorConfig,
   cooldownHours: number,
@@ -718,7 +718,7 @@ export async function sweepWeather(
 // Tier 2: Yarbo
 // ---------------------------------------------------------------------------
 
-export async function sweepYarbo(
+async function sweepYarbo(
   bus: EventBus,
   cfg: YarboSensorConfig,
   ha: HomeAssistantSensorConfig,
@@ -791,7 +791,7 @@ export async function sweepYarbo(
 // Main sweep runner
 // ---------------------------------------------------------------------------
 
-export interface SweepAllOpts {
+interface SweepAllOpts {
   tier?: 1 | 2 | "all";
   sources?: string[];
   dryRun?: boolean;

@@ -17,7 +17,7 @@ import type { VerificationStore, VerifiedFact } from "./verification-store.js";
 // Types
 // ---------------------------------------------------------------------------
 
-export type VerificationOutcome = "CONFIRMED" | "STALE" | "UNCERTAIN";
+type VerificationOutcome = "CONFIRMED" | "STALE" | "UNCERTAIN";
 
 export interface VerificationCycleResult {
   checked: number;
@@ -27,7 +27,7 @@ export interface VerificationCycleResult {
   errors: number;
 }
 
-export interface ContinuousVerifierOptions {
+interface ContinuousVerifierOptions {
   /** Days between verification cycle runs (default: 30). */
   cycleDays?: number;
   /** Model to use for LLM verification calls (default: 'openai/gpt-4.1-nano'). */

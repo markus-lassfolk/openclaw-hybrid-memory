@@ -41,7 +41,7 @@ export interface OptionalBootstrapServices {
   apitapStore: ApitapStore;
 }
 
-export type OptionalBootstrapInstaller = BootstrapPhaseConfig & {
+type OptionalBootstrapInstaller = BootstrapPhaseConfig & {
   id: string;
   install(context: OptionalBootstrapContext): OptionalBootstrapServices;
 };

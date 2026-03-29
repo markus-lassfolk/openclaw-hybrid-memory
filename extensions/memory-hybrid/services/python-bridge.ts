@@ -21,7 +21,7 @@ import {
 } from "../utils/constants.js";
 import { capturePluginError } from "./error-reporter.js";
 
-export interface ConvertResult {
+interface ConvertResult {
   markdown: string;
   title: string;
 }

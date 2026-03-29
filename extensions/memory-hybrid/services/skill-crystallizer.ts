@@ -13,12 +13,12 @@ import type { CrystallizationConfig } from "../config/types/features.js";
 // Public types
 // ---------------------------------------------------------------------------
 
-export interface CrystallizationInput {
+interface CrystallizationInput {
   patternId: string;
   pattern: WorkflowPattern;
 }
 
-export interface CrystallizationResult {
+interface CrystallizationResult {
   skillName: string;
   skillContent: string;
   /** Resolved output path for the SKILL.md (not yet written to disk — requires approval) */

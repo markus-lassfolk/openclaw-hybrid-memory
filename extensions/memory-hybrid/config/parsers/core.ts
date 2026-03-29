@@ -20,7 +20,7 @@ import type {
 export const DEFAULT_MODEL = "text-embedding-3-small";
 export const DEFAULT_LANCE_PATH = join(homedir(), ".openclaw", "memory", "lancedb");
 export const DEFAULT_SQLITE_PATH = join(homedir(), ".openclaw", "memory", "facts.db");
-export const DEFAULT_EVENT_ARCHIVE_PATH = "~/.openclaw/event-archive";
+const DEFAULT_EVENT_ARCHIVE_PATH = "~/.openclaw/event-archive";
 
 export const EMBEDDING_DIMENSIONS: Record<string, number> = {
   "text-embedding-3-small": 1536,

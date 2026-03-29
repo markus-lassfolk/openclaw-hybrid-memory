@@ -30,7 +30,7 @@ const STALE_SWEEP_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
  * Read all pending task signals from `memory/task-signals/*.json` and apply
  * their status changes to ACTIVE-TASK.md. Called after subagent completes.
  */
-export async function consumePendingTaskSignals(
+async function consumePendingTaskSignals(
   activeTaskPath: string,
   workspaceRoot: string,
   staleMinutes: number,

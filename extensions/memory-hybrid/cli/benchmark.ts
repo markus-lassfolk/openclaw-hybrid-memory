@@ -26,12 +26,12 @@ import {
 // Runner
 // ---------------------------------------------------------------------------
 
-export type BenchmarkRunContext = {
+type BenchmarkRunContext = {
   /** Path to the SQLite database (llm_cost_log lives here) */
   dbPath: string;
 };
 
-export async function runBenchmarkCommand(
+async function runBenchmarkCommand(
   ctx: BenchmarkRunContext,
   options: {
     feature?: string;

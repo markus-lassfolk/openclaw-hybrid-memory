@@ -19,7 +19,7 @@ const ISSUE_STATUSES = ["open", "diagnosed", "fix-attempted", "resolved", "verif
 
 const ISSUE_SEVERITIES = ["low", "medium", "high", "critical"] as const;
 
-export interface IssueToolsContext {
+interface IssueToolsContext {
   issueStore: IssueStore;
   /** Optional config for verbosity-aware output (Issue #282). */
   cfg?: Pick<HybridMemoryConfig, "verbosity">;

@@ -38,7 +38,7 @@ export type PreFilterConfig = {
 };
 
 /** Result of pre-filtering a batch of session files. */
-export type PreFilterResult = {
+type PreFilterResult = {
   /** Paths that the local model flagged as containing extractable content. */
   kept: string[];
   /** Paths the local model classified as not interesting. */

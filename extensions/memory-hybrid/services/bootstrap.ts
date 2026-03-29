@@ -22,7 +22,7 @@ export interface CoreBootstrapServices {
   embeddingRegistry: EmbeddingRegistry;
 }
 
-export type CoreBootstrapInstaller = BootstrapPhaseConfig & {
+type CoreBootstrapInstaller = BootstrapPhaseConfig & {
   id: string;
   install(context: CoreBootstrapContext): CoreBootstrapServices;
 };

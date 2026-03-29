@@ -57,7 +57,7 @@ export interface GraphFactLookup {
 }
 
 /** Options for graph expansion. */
-export interface GraphRetrievalOptions {
+interface GraphRetrievalOptions {
   /** Maximum BFS depth (0 = no expansion, just returns seeds). Default: 2. */
   maxDepth?: number;
   /** Maximum number of expanded (non-seed) results to append. Default: 20. */

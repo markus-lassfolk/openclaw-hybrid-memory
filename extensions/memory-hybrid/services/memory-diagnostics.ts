@@ -6,7 +6,7 @@ import type { EmbeddingProvider } from "./embeddings.js";
 import { capturePluginError } from "./error-reporter.js";
 import { filterByScope, mergeResults } from "./merge-results.js";
 
-export type MemoryDiagnosticsResult = {
+type MemoryDiagnosticsResult = {
   markerId: string;
   markerText: string;
   structured: { ok: boolean; count: number };

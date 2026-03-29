@@ -35,7 +35,7 @@ export interface MigrateEmbeddingsOptions {
   logger?: { info: (msg: string) => void; warn: (msg: string) => void };
 }
 
-export interface MigrateEmbeddingsResult {
+interface MigrateEmbeddingsResult {
   /** Total facts found in SQLite. */
   total: number;
   /** Facts successfully re-embedded and stored in LanceDB. */
@@ -58,7 +58,7 @@ export interface EmbeddingMaintenanceOptions extends MigrateEmbeddingsOptions {
   autoMigrate: boolean;
 }
 
-export interface EmbeddingMaintenanceResult {
+interface EmbeddingMaintenanceResult {
   /** `true` when the recorded provider/model differs from `currentProvider`/`currentModel`. */
   changed: boolean;
   /** `true` when `migrateEmbeddings` was actually invoked this run. */

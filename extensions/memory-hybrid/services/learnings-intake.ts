@@ -28,7 +28,7 @@ import { capturePluginError } from "./error-reporter.js";
 // ---------------------------------------------------------------------------
 
 /** Result of evaluating whether an entry is ready for promotion. */
-export interface PromotionEvaluation {
+interface PromotionEvaluation {
   shouldPromote: boolean;
   /** Suggested target description, e.g. "memory_store(category=technical)" */
   suggestedTarget: string | null;

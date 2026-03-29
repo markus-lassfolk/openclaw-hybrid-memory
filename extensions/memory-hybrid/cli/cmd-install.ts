@@ -43,15 +43,13 @@ export function buildPreFilterConfig(cfg: HybridMemoryConfig): PreFilterConfig {
     maxCharsPerSession: pf?.maxCharsPerSession ?? 2000,
   };
 }
-
 // Re-export preFilterSessions so callers in other handler modules can import from here.
-export { preFilterSessions };
 
 // Shared cron job definitions used by install and verify --fix.
 // Canonical schedule per #86 (7 jobs, non-overlapping). Model is resolved dynamically from user config via getLLMModelPreference.
 // modelTier: "default" = standard LLM, "heavy" = larger context; resolved via getDefaultCronModel at install/verify time.
 // Order: daily 02:00 → daily 02:30 → Sun 03:00 → Sun 04:00 → Sat 04:00 → Sun 10:00 → 1st 05:00.
-export const PLUGIN_JOB_ID_PREFIX = "hybrid-mem:";
+const PLUGIN_JOB_ID_PREFIX = "hybrid-mem:";
 
 /**
  * Minimum run interval guard (in milliseconds) for each job frequency tier.
@@ -59,7 +57,7 @@ export const PLUGIN_JOB_ID_PREFIX = "hybrid-mem:";
  * guard in the message prefix causes it to skip if it already ran within this interval.
  * Guard files are stored persistently in ~/.openclaw/cron/guard/ (issue #305).
  */
-export const MIN_INTERVAL_MS: Record<string, number> = {
+const MIN_INTERVAL_MS: Record<string, number> = {
   daily: 20 * 60 * 60 * 1000, // 20 hours (daily jobs)
   weekly: 5 * 24 * 60 * 60 * 1000, // 5 days (weekly jobs)
   monthly: 25 * 24 * 60 * 60 * 1000, // 25 days (monthly jobs)
@@ -67,7 +65,7 @@ export const MIN_INTERVAL_MS: Record<string, number> = {
 
 // buildGuardPrefix is imported from services/cron-guard.ts (issue #305).
 
-export const MAINTENANCE_CRON_JOBS: Array<
+const MAINTENANCE_CRON_JOBS: Array<
   Record<string, unknown> & { modelTier?: "nano" | "default" | "heavy"; minIntervalMs?: number; featureGate?: string }
 > = [
   // Daily 02:00 | nightly-memory-sweep | prune → distill --days 3 → extract-daily
@@ -212,7 +210,7 @@ function resolveCronJob(
   return { ...rest, model, delivery: { mode: "none" as const } };
 }
 
-export const LEGACY_JOB_MATCHERS: Record<string, (j: Record<string, unknown>) => boolean> = {
+const LEGACY_JOB_MATCHERS: Record<string, (j: Record<string, unknown>) => boolean> = {
   [`${PLUGIN_JOB_ID_PREFIX}nightly-distill`]: (j) =>
     String(j.name ?? "")
       .toLowerCase()

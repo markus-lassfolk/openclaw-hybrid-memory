@@ -11,7 +11,7 @@ import type { FactsDB } from "../backends/facts-db.js";
 import type { VerificationStore } from "../services/verification-store.js";
 import { VerificationError } from "../services/verification-store.js";
 
-export interface PluginContext {
+interface PluginContext {
   factsDb: FactsDB;
   verificationStore: VerificationStore;
 }

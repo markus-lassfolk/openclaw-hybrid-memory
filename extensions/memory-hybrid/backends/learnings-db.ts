@@ -26,13 +26,6 @@ import type {
 import { LEARNING_STATUS_TRANSITIONS } from "../types/learnings-types.js";
 import { BaseSqliteStore } from "./base-sqlite-store.js";
 
-export type {
-  LearningEntry,
-  LearningEntryType,
-  LearningEntryStatus,
-  CreateLearningEntryInput,
-} from "../types/learnings-types.js";
-
 /** TYPE_PREFIX maps entry type → slug prefix character(s). */
 const TYPE_PREFIX: Record<LearningEntryType, string> = {
   error: "ERR",

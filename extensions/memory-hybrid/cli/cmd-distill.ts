@@ -73,7 +73,7 @@ export function gatherSessionFiles(opts: {
 /**
  * Extract text content from session JSONL file
  */
-export function extractTextFromSessionJsonl(filePath: string): string {
+function extractTextFromSessionJsonl(filePath: string): string {
   const lines = readFileSync(filePath, "utf-8").split("\n");
   const parts: string[] = [];
   for (const line of lines) {

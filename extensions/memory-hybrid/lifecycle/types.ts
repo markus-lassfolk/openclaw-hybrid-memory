@@ -104,7 +104,7 @@ export interface RecallResult {
 }
 
 /** Result of injection stage. */
-export interface InjectionResult {
+interface InjectionResult {
   prependContext: string;
 }
 

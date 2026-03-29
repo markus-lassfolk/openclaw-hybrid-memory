@@ -44,13 +44,13 @@ export interface TaskQueueWatchdogConfig {
   checkBranch?: boolean;
 }
 
-export type WatchdogAction =
+type WatchdogAction =
   | "no-current" // No active current.json found
   | "ok" // Entry is healthy, no action needed
   | "cleared" // Stale entry moved to history (will be retried)
   | "quarantined"; // Entry exceeded retry limit; moved to quarantine
 
-export interface WatchdogResult {
+interface WatchdogResult {
   /** What the watchdog decided to do */
   action: WatchdogAction;
   /** Human-readable explanation for the action */

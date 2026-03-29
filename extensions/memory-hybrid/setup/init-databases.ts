@@ -284,7 +284,7 @@ function canonicalizeMiniMaxModelId(bare: string): string {
 export const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
 
 /** Resolved API key with metadata about which configuration source provided it. */
-export type ResolvedApiKey = { value?: string; source: string };
+type ResolvedApiKey = { value?: string; source: string };
 
 /**
  * Centralised API-key resolver for all built-in and custom providers.
@@ -856,13 +856,13 @@ function buildMultiProviderOpenAI(
   }) as OpenAI;
 }
 
-export interface HealthStatus {
+interface HealthStatus {
   embeddingsOk: boolean;
   credentialsVaultOk: boolean;
   lastCheckTime: number;
 }
 
-export interface DatabaseContext {
+interface DatabaseContext {
   factsDb: FactsDB;
   edictStore: EdictStore;
   vectorDb: VectorDB;

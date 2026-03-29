@@ -35,9 +35,9 @@ const _optimizingByPath = new Map<string, boolean>();
 const _optimizeFailuresByPath = new Map<string, number>();
 const SEMANTIC_QUERY_CACHE_MAX_ROWS_PER_FILTER_KEY = 100;
 
-export type VectorDBLogger = { warn: (msg: string) => void };
+type VectorDBLogger = { warn: (msg: string) => void };
 
-export interface SemanticQueryCacheEntry {
+interface SemanticQueryCacheEntry {
   id: string;
   queryText: string;
   factIds: string[];
