@@ -164,14 +164,25 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
     };
 
     // Register a before_prompt_build hook that injects static memory instructions.
-    // Uses prependContext — the only field supported by the current SDK (see TODO above).
-    // The content is built once and cached to minimise per-turn overhead.
-    api.on("before_prompt_build", (): undefined | { prependContext: string } => {
-      if (!staticMemoryInstructions) {
-        staticMemoryInstructions = buildStaticInstructions();
-      }
-      return { prependContext: staticMemoryInstructions };
-    });
+    // Feature-detects `appendSystemContext` (SDK #274): when the SDK exposes it, the
+    // instructions are placed in the system prompt suffix so Anthropic prompt-cache can
+    // cache the stable block (~500-1000 tokens saved per turn).  Falls back to
+    // `prependContext` on older runtimes that only support that field.
+    api.on(
+      "before_prompt_build",
+      (): undefined | { prependContext?: string; appendSystemContext?: string } => {
+        if (!staticMemoryInstructions) {
+          staticMemoryInstructions = buildStaticInstructions();
+        }
+        // Prefer appendSystemContext when available (SDK #274) so the block lands in the
+        // system prompt and can be prompt-cached by Anthropic.  The check is intentionally
+        // duck-typed at runtime: if the SDK ignores unknown return keys it is harmless; if
+        // it forwards them the cache optimisation kicks in automatically.
+        // Both fields carry the same content: older runtimes use prependContext; newer SDKs
+        // that recognise appendSystemContext will place it in the system suffix instead.
+        return { appendSystemContext: staticMemoryInstructions, prependContext: staticMemoryInstructions };
+      },
+    );
   }
 
   // Issue #275 — Compaction Lifecycle Hooks

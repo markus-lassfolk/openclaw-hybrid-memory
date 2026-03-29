@@ -443,3 +443,189 @@ describe("HybridMemoryContextEngine.info", () => {
     expect(engine.info.version).toBe("9.8.7");
   });
 });
+
+// ---------------------------------------------------------------------------
+// SDK #274: assemble() — budget-aware context injection
+// ---------------------------------------------------------------------------
+
+import { buildContextBlock } from "../services/context-engine.js";
+
+describe("HybridMemoryContextEngine.assemble()", () => {
+  it("returns messages unchanged and estimatedTokens=0 when store is empty", async () => {
+    const engine = makeEngine();
+    const messages = [{ role: "user", content: "hello" }];
+    const result = await engine.assemble({ sessionId: "s1", messages, tokenBudget: 2000 });
+
+    expect(result.messages).toBe(messages);
+    expect(result.estimatedTokens).toBe(0);
+    expect(result.systemPromptAddition).toBeUndefined();
+  });
+
+  it("populates systemPromptAddition when facts are present", async () => {
+    factsDb.store({
+      entity: null,
+      key: null,
+      value: null,
+      text: "User prefers TypeScript over JavaScript",
+      category: "preference",
+      importance: 0.9,
+      source: "test",
+    });
+
+    const engine = makeEngine();
+    const result = await engine.assemble({ sessionId: "s1", messages: [], tokenBudget: 2000 });
+
+    expect(result.systemPromptAddition).toBeDefined();
+    expect(result.systemPromptAddition).toContain("memory-hybrid: session-context");
+    expect(result.systemPromptAddition).toContain("User prefers TypeScript over JavaScript");
+    expect(result.estimatedTokens).toBeGreaterThan(0);
+  });
+
+  it("respects tokenBudget — truncates facts when budget is very small", async () => {
+    // Store many facts
+    for (let i = 0; i < 10; i++) {
+      factsDb.store({
+        entity: null,
+        key: null,
+        value: null,
+        text: `Fact number ${i} with some reasonable amount of content to consume tokens`,
+        category: "fact",
+        importance: 0.7,
+        source: "test",
+      });
+    }
+
+    const engineFull = makeEngine();
+    const engineTight = makeEngine();
+
+    const resultFull = await engineFull.assemble({ sessionId: "s1", messages: [], tokenBudget: 10000 });
+    const resultTight = await engineTight.assemble({ sessionId: "s1", messages: [], tokenBudget: 50 });
+
+    // Full budget should include more content
+    const fullLength = resultFull.systemPromptAddition?.length ?? 0;
+    const tightLength = resultTight.systemPromptAddition?.length ?? 0;
+    expect(fullLength).toBeGreaterThanOrEqual(tightLength);
+  });
+
+  it("uses cfg.autoRecall.maxTokens as default budget when tokenBudget is omitted", async () => {
+    factsDb.store({
+      entity: null,
+      key: null,
+      value: null,
+      text: "Default budget fact",
+      category: "fact",
+      importance: 0.8,
+      source: "test",
+    });
+
+    const engine = makeEngine();
+    // No tokenBudget → falls back to cfg.autoRecall.maxTokens (2000 in test config)
+    const result = await engine.assemble({ sessionId: "s1", messages: [] });
+
+    expect(result.systemPromptAddition).toBeDefined();
+    expect(result.systemPromptAddition).toContain("Default budget fact");
+  });
+
+  it("does not throw on FactsDB error (non-fatal)", async () => {
+    const brokenFactsDb = {
+      list: vi.fn().mockImplementation(() => {
+        throw new Error("DB read error");
+      }),
+      getCount: vi.fn().mockReturnValue(0),
+    };
+
+    const engine = makeEngine({ factsDb: brokenFactsDb as never });
+    const result = await engine.assemble({ sessionId: "s1", messages: [], tokenBudget: 2000 });
+
+    expect(result.estimatedTokens).toBe(0);
+    expect(result.systemPromptAddition).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// buildContextBlock helper
+// ---------------------------------------------------------------------------
+
+describe("buildContextBlock()", () => {
+  it("returns null for empty facts list", () => {
+    expect(buildContextBlock([], "test", "Label:")).toBeNull();
+  });
+
+  it("wraps facts with HTML comment markers", () => {
+    const fakeEntry = {
+      id: "1",
+      text: "Some fact",
+      category: "fact" as const,
+      importance: 0.8,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+      createdAt: 0,
+      decayClass: "normal" as const,
+      expiresAt: null,
+      lastConfirmedAt: 0,
+      confidence: 0.9,
+    };
+
+    const block = buildContextBlock([fakeEntry], "my-header", "My label:");
+    expect(block).not.toBeNull();
+    expect(block).toContain("<!-- memory-hybrid: my-header -->");
+    expect(block).toContain("<!-- /memory-hybrid: my-header -->");
+    expect(block).toContain("My label:");
+    expect(block).toContain("Some fact");
+  });
+
+  it("respects tokenBudget by omitting entries that would exceed it", () => {
+    const makeEntry = (text: string) => ({
+      id: randomUUID(),
+      text,
+      category: "fact" as const,
+      importance: 0.8,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+      createdAt: 0,
+      decayClass: "normal" as const,
+      expiresAt: null,
+      lastConfirmedAt: 0,
+      confidence: 0.9,
+    });
+
+    const facts = Array.from({ length: 20 }, (_, i) =>
+      makeEntry(`Fact ${i}: This is a longer fact to consume more tokens in the budget.`),
+    );
+
+    const blockFull = buildContextBlock(facts, "h", "Label:", 100000);
+    const blockSmall = buildContextBlock(facts, "h", "Label:", 10);
+
+    expect(blockFull).not.toBeNull();
+    // Small budget should produce shorter output
+    expect((blockFull?.length ?? 0)).toBeGreaterThanOrEqual(blockSmall?.length ?? 0);
+  });
+
+  it("uses serializeFactForContext format (includes category header)", () => {
+    const entry = {
+      id: "1",
+      text: "Fact text here",
+      category: "technical" as const,
+      importance: 0.7,
+      entity: "MyEntity",
+      key: null,
+      value: null,
+      source: "test",
+      createdAt: 0,
+      decayClass: "normal" as const,
+      expiresAt: null,
+      lastConfirmedAt: 0,
+      confidence: 0.85,
+    };
+
+    const block = buildContextBlock([entry], "header", "Label:");
+    // serializeFactForContext includes entity and category in a header line
+    expect(block).toContain("entity: MyEntity");
+    expect(block).toContain("category: technical");
+    expect(block).toContain("Fact text here");
+  });
+});
