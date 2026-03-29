@@ -418,6 +418,8 @@ export class FactsDB extends BaseSqliteStore {
       this.liveDb.exec(
         `UPDATE facts SET last_accessed_at = strftime('%Y-%m-%dT%H:%M:%SZ', last_accessed, 'unixepoch') WHERE last_accessed IS NOT NULL`,
       );
+      // Partial index (#885): optimizes lookups for non-NULL last_accessed_at. Queries that need rows
+      // WHERE last_accessed_at IS NULL cannot use this index and may use a different query plan.
       this.liveDb.exec(
         "CREATE INDEX IF NOT EXISTS idx_facts_last_accessed_at ON facts(last_accessed_at) WHERE last_accessed_at IS NOT NULL",
       );
