@@ -370,6 +370,7 @@ function runMemoryHybridRegister(api: ClawdbotPluginApi): void {
       learningsDb: old.learningsDb,
       apitapStore: old.apitapStore,
       auditStore: old.auditStore,
+      agentHealthStore: old.agentHealthStore,
     });
     old.pythonBridge?.shutdown().catch(() => {});
     runtimeRef.value = null;

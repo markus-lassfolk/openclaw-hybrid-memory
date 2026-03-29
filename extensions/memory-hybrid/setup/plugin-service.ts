@@ -777,6 +777,9 @@ export function createPluginService(ctx: PluginServiceContext) {
       if (auditStore) {
         auditStore.close();
       }
+      if (agentHealthStore) {
+        agentHealthStore.close();
+      }
     },
   };
 }
