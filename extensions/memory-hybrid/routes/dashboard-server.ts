@@ -891,8 +891,9 @@ export async function createDashboardServer(ctx: DashboardContext, port: number)
         res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-cache" });
         res.end(body);
       } catch (err: unknown) {
+        ctx.logger?.error?.(String(err));
         res.writeHead(500, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: String(err) }));
+        res.end(JSON.stringify({ error: "Internal Server Error" }));
       }
       return;
     }
@@ -904,8 +905,9 @@ export async function createDashboardServer(ctx: DashboardContext, port: number)
         res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-cache" });
         res.end(body);
       } catch (err: unknown) {
+        ctx.logger?.error?.(String(err));
         res.writeHead(500, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: String(err) }));
+        res.end(JSON.stringify({ error: "Internal Server Error" }));
       }
       return;
     }

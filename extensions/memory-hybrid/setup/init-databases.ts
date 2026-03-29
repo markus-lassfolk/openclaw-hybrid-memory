@@ -1703,6 +1703,7 @@ export function closeOldDatabases(context: {
   learningsDb?: import("../backends/learnings-db.js").LearningsDB | null;
   apitapStore?: ApitapStore | null;
   auditStore?: import("../backends/audit-store.js").AuditStore | null;
+  agentHealthStore?: import("../backends/agent-health-store.js").AgentHealthStore | null;
 }): void {
   const {
     factsDb,
@@ -1725,6 +1726,7 @@ export function closeOldDatabases(context: {
     learningsDb,
     apitapStore,
     auditStore,
+    agentHealthStore,
   } = context;
 
   invalidateClusterCache();
@@ -1926,6 +1928,16 @@ export function closeOldDatabases(context: {
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
         operation: "close-databases",
         subsystem: "auditStore",
+      });
+    }
+  }
+  if (agentHealthStore) {
+    try {
+      agentHealthStore.close();
+    } catch (err) {
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        operation: "close-databases",
+        subsystem: "agentHealthStore",
       });
     }
   }
