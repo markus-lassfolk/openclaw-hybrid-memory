@@ -1,4 +1,4 @@
-import { getEnv, setEnv } from "../utils/env-manager.js";
+import { getEnv } from "../utils/env-manager.js";
 /**
  * CLI Verify Command Handler
  *

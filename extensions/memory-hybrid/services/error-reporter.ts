@@ -1,4 +1,4 @@
-import { getEnv, setEnv } from "../utils/env-manager.js";
+import { getEnv } from "../utils/env-manager.js";
 import { compareVersions } from "../utils/version-check.js";
 
 export { compareVersions };
