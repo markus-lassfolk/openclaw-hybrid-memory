@@ -35,17 +35,25 @@ Need help? → [Full Quickstart Guide](docs/QUICKSTART.md)
 
 ---
 
-## ⚙️ Operational Modes
+## ⚙️ Configuration Modes
 
-Hybrid Memory can run entirely local, purely in the cloud, or a mix of both depending on your privacy and budget needs.
+Hybrid Memory comes with four built-in profiles. You can easily switch between them using the CLI:
 
-| Mode | Embedding Provider | Storage | Cloud LLM Cost | Privacy |
-|------|--------------------|---------|----------------|---------|
-| **100% Local** | `ollama` / `onnx` | Local SQLite + LanceDB | **$0.00** (Free) | Ultimate (Air-gapped) |
-| **Hybrid** | `openai` / `google` | Local SQLite + LanceDB | Fractions of a cent | High (Vectors stay local) |
-| **Cloud Fallback** | `ollama` → `openai` | Local SQLite + LanceDB | Free (unless fallback triggers) | High (Graceful degradation) |
+```bash
+openclaw hybrid-mem config-mode <mode>
+```
+
+### The Modes
+
+| Mode | Description | LLM Cost | Key Features |
+|------|-------------|----------|--------------|
+| **`local`** | **100% Air-gapped.** Runs entirely on your machine. Uses local ONNX/Ollama embeddings and local SQLite/LanceDB. | **$0.00** | Basic storage, exact match recall, local semantic search. *Zero cloud LLM calls.* |
+| **`minimal`** | **Fast & Cheap.** Basic cloud integration but turns off expensive background jobs. | **Very Low** | Cloud embeddings, basic cloud routing, no background reflection. |
+| **`enhanced`** | **The Sweet Spot.** (Default). Balances intelligence with cost. | **Low** | Active RAG, background reflection, tool effectiveness tracking. |
+| **`complete`** | **Maximum Intelligence.** Turns on every experimental cognitive feature. | **Medium** | Everything above + deep semantic clustering, self-correction, and autonomous skill crystallization. |
 
 ---
+
 
 ## 🏢 See it in Action
 
