@@ -16,6 +16,7 @@ import type * as cp from "node:child_process";
 export const exec = cpExec;
 export const execSync = cpExecSync;
 export const execFile = cpExecFile;
+export const execFileSync = cpExecFileSync;
 export const spawn = cpSpawn;
 export const spawnSync = cpSpawnSync;
 
