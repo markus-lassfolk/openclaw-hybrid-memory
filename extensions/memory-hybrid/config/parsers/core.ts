@@ -162,29 +162,20 @@ export function parseCredentialsConfig(cfg: Record<string, unknown>): Credential
   }
   const hasValidKey = encryptionKey.length >= 16;
   const shouldEnable = !explicitlyDisabled && (credRaw?.enabled === true || hasValidKey);
-  const allowPlaintextStorage =
-    credRaw?.allowPlaintextStorage === true || process.env.OPENCLAW_CREDENTIALS_PLAINTEXT_OK === "1";
-
-  if (shouldEnable && !hasValidKey && !allowPlaintextStorage) {
-    throw new Error(
-      "credentials.enabled requires a strong encryption key (16+ chars or env:VAR resolving to 16+ chars), " +
-        "or explicit opt-in: set credentials.allowPlaintextStorage: true or OPENCLAW_CREDENTIALS_PLAINTEXT_OK=1 " +
-        "to store credentials on disk without encryption at rest.",
-    );
-  }
 
   let credentials: CredentialsConfig;
   if (shouldEnable) {
     const opts = parseCredentialOptions(credRaw);
-    // M1 FIX: Log info message when plaintext mode is chosen explicitly
-    if (!hasValidKey && credRaw?.enabled === true) {
-      pluginLogger.info("Credentials vault enabled (plaintext mode — no encryption key set)");
+    if (!hasValidKey) {
+      pluginLogger.warn(
+        "memory-hybrid: credentials vault is enabled without encryption at rest (set credentials.encryptionKey with 16+ characters, or OPENCLAW_CRED_KEY / env:VAR for a strong key). " +
+          "Until then, stored secrets are written as plaintext in the vault database — restrict filesystem access to that path, or add a key when you are ready.",
+      );
     }
     credentials = {
       enabled: true,
       store: "sqlite",
       encryptionKey: "",
-      allowPlaintextStorage: allowPlaintextStorage || undefined,
       ...opts,
     };
   } else {

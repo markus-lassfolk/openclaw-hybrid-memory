@@ -651,42 +651,38 @@ describe("hybridConfigSchema.parse", () => {
     expect(result.credentials.encryptionKey).toBe("abcdefghij1234567890");
   });
 
-  it("allows credentials enabled without key (vault plaintext) when explicitly opted in", () => {
+  it("allows credentials enabled without key (plaintext vault) and logs a security warning", () => {
+    const warnSpy = vi.spyOn(pluginLogger, "warn").mockImplementation(() => {});
     const result = hybridConfigSchema.parse({
       ...validBase,
       credentials: {
         enabled: true,
-        allowPlaintextStorage: true,
         // No encryptionKey → vault in plaintext (user secures by other means)
       },
     });
     expect(result.credentials.enabled).toBe(true);
     expect(result.credentials.encryptionKey).toBe("");
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("plaintext"));
+    warnSpy.mockRestore();
   });
 
-  it("rejects credentials enabled without key when plaintext is not opted in", () => {
-    expect(() =>
-      hybridConfigSchema.parse({
-        ...validBase,
-        credentials: { enabled: true },
-      }),
-    ).toThrow(/credentials\.enabled requires/);
-  });
-
-  it("does not throw for short or unresolved encryption key when allowPlaintextStorage is set", () => {
+  it("does not throw for short or unresolved encryption key; uses plaintext vault and warns", () => {
+    const warnSpy = vi.spyOn(pluginLogger, "warn").mockImplementation(() => {});
     const shortKey = hybridConfigSchema.parse({
       ...validBase,
-      credentials: { enabled: true, encryptionKey: "short", allowPlaintextStorage: true },
+      credentials: { enabled: true, encryptionKey: "short" },
     });
     expect(shortKey.credentials.enabled).toBe(true);
     expect(shortKey.credentials.encryptionKey).toBe("");
 
     const envMissing = hybridConfigSchema.parse({
       ...validBase,
-      credentials: { enabled: true, encryptionKey: "env:MISSING_ENV_VAR_XYZ", allowPlaintextStorage: true },
+      credentials: { enabled: true, encryptionKey: "env:MISSING_ENV_VAR_XYZ" },
     });
     expect(envMissing.credentials.enabled).toBe(true);
     expect(envMissing.credentials.encryptionKey).toBe("");
+    expect(warnSpy.mock.calls.length).toBeGreaterThanOrEqual(2);
+    warnSpy.mockRestore();
   });
 
   it("errorReporting defaults to opt-out config (enabled+consent=true) when not provided", () => {

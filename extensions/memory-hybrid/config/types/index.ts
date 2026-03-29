@@ -165,12 +165,6 @@ export type CredentialsConfig = {
   store: "sqlite";
   /** Encryption key: "env:VAR_NAME" resolves from env, or raw string (not recommended) */
   encryptionKey: string;
-  /**
-   * When true, allows opening/creating a vault without encryption at rest (short or missing key).
-   * Without this (and without OPENCLAW_CREDENTIALS_PLAINTEXT_OK=1), enabling credentials without
-   * a 16+ character key is rejected.
-   */
-  allowPlaintextStorage?: boolean;
   /** When enabled, detect credential patterns in conversation and prompt to store (default false) */
   autoDetect?: boolean;
   /** Auto-capture credentials from tool call inputs (default: disabled) */
