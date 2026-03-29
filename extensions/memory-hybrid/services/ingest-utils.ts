@@ -4,7 +4,7 @@
  */
 
 import { existsSync, readdirSync, realpathSync, statSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { join, resolve, sep } from "node:path";
 
 function resolvedWorkspaceRoot(workspaceRoot: string): string {
   try {
@@ -22,7 +22,7 @@ function isPathInsideWorkspace(workspaceRootResolved: string, candidateAbs: stri
   } catch {
     absResolved = resolve(candidateAbs);
   }
-  return absResolved === workspaceRootResolved || absResolved.startsWith(`${workspaceRootResolved}/`);
+  return absResolved === workspaceRootResolved || absResolved.startsWith(`${workspaceRootResolved}${sep}`);
 }
 
 /**

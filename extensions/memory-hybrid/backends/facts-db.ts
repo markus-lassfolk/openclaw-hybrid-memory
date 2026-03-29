@@ -1257,17 +1257,6 @@ export class FactsDB extends BaseSqliteStore {
       .run(MS_THRESHOLD);
   }
 
-  /**
-   * Approximate on-disk size for the facts SQLite DB (main + WAL + SHM). Issue #905.
-   */
-  estimateStorageBytes(): { sqliteBytes: number; walBytes: number; shmBytes: number } {
-    const sz = (p: string) => (existsSync(p) ? (statSync(p).size as number) : 0);
-    return {
-      sqliteBytes: sz(this.dbPath),
-      walBytes: sz(`${this.dbPath}-wal`),
-      shmBytes: sz(`${this.dbPath}-shm`),
-    };
-  }
 
   /** Count of canonical embedding rows (for vector/SQLite reconciliation checks). */
   countCanonicalEmbeddings(): number {

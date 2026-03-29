@@ -277,17 +277,6 @@ export class WriteAheadLog {
     return entries.filter((e) => now - e.timestamp < this.maxAge);
   }
 
-  /**
-   * If the WAL file exceeds `maxBytes`, run `pruneStale()` to drop expired entries and rewrite the file (issue #903).
-   * Best-effort; returns number of entries removed.
-   */
-  async compactIfOversized(maxBytes: number): Promise<number> {
-    if (!existsSync(this.walPath)) return 0;
-    const st = statSync(this.walPath);
-    if (st.size <= maxBytes) return 0;
-    return this.pruneStale();
-  }
-
   async pruneStale(): Promise<number> {
     const prevLock = this.writeLock;
     let releaseLock: () => void;

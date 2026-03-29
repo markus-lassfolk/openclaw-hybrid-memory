@@ -587,6 +587,7 @@ export class VectorDB {
 
     // Reconnect — doInitialize() will create fresh empty tables with the current schema.
     this.closed = false;
+    this.lanceInitFailed = false;
     this.initPromise = null;
     await this.ensureInitialized();
   }
