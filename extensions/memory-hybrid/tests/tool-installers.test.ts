@@ -96,7 +96,7 @@ describe("tool installers", () => {
     await selected.walWrite("store", { foo: "bar" }, logger);
     await selected.walRemove("wal-id", logger);
 
-    expect(walWrite).toHaveBeenCalledWith(wal, "store", { foo: "bar" }, logger);
+    expect(walWrite).toHaveBeenCalledWith(wal, "store", { foo: "bar" }, logger, undefined);
     expect(walRemove).toHaveBeenCalledWith(wal, "wal-id", logger);
     expect(selected.buildToolScopeFilter).toBe(buildToolScopeFilter);
     expect(selected.findSimilarByEmbedding).toBe(findSimilarByEmbedding);

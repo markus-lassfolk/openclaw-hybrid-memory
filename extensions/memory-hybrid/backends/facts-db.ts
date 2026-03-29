@@ -4744,7 +4744,7 @@ export class FactsDB extends BaseSqliteStore {
            AND superseded_at IS NULL
            AND (expires_at IS NULL OR expires_at > ?)
            ${excludeClause}
-         ORDER BY created_at DESC
+         ORDER BY created_at DESC, rowid DESC
          LIMIT 1`,
       )
       .get(...params) as Record<string, unknown> | undefined;
