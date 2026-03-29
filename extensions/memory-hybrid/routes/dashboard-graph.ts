@@ -147,11 +147,17 @@ let sim, svg, link, node, pulse;
 
 async function loadBase() {
   const res = await fetch('/api/graph?days=30&maxNodes=400');
+  if (!res.ok) {
+    throw new Error(`Failed to load graph: ${res.status} ${res.statusText}`);
+  }
   return res.json();
 }
 
 async function loadRecall(q) {
   const res = await fetch('/api/graph/recall?' + new URLSearchParams({ q }));
+  if (!res.ok) {
+    throw new Error(`Failed to load recall graph: ${res.status} ${res.statusText}`);
+  }
   return res.json();
 }
 
@@ -218,16 +224,30 @@ function buildGraph(data) {
 }
 
 (async () => {
-  const data = await loadBase();
-  buildGraph(data);
-  document.getElementById('go').onclick = async () => {
-    const q = document.getElementById('q').value.trim();
-    if (!q) {
-      buildGraph(await loadBase());
-      return;
-    }
-    buildGraph(await loadRecall(q));
-  };
+  try {
+    const data = await loadBase();
+    buildGraph(data);
+    document.getElementById('go').onclick = async () => {
+      const q = document.getElementById('q').value.trim();
+      try {
+        if (!q) {
+          buildGraph(await loadBase());
+          return;
+        }
+        buildGraph(await loadRecall(q));
+      } catch (err) {
+        const el = document.getElementById('detail');
+        el.style.display = 'block';
+        el.style.color = '#ef4444';
+        el.textContent = 'Error: ' + (err.message || String(err));
+      }
+    };
+  } catch (err) {
+    const el = document.getElementById('detail');
+    el.style.display = 'block';
+    el.style.color = '#ef4444';
+    el.textContent = 'Error loading graph: ' + (err.message || String(err));
+  }
 })();
 </script>
 </body>

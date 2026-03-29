@@ -39,7 +39,7 @@ export interface AuditEventRow {
   tokens: number | null;
 }
 
-const SENSITIVE_KEYS = /(api[_-]?key|password|secret|authorization|bearer|cookie|\btoken\b)/i;
+const SENSITIVE_KEYS = /(api[_-]?key|password|secret|authorization|bearer|cookie|token)/i;
 
 function scrubValue(value: unknown, seen: WeakSet<object>): unknown {
   // Primitives (except bigint) are safe and JSON-serializable as-is.
