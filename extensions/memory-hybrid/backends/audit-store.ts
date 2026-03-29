@@ -241,7 +241,7 @@ export class AuditStore extends BaseSqliteStore {
   } {
     const since = Date.now() - 24 * 3600 * 1000;
     const rows = this.liveDb
-      .prepare(`SELECT outcome, agent_id, COUNT(*) as c FROM audit_log WHERE timestamp >= ? GROUP BY outcome, agent_id`)
+      .prepare("SELECT outcome, agent_id, COUNT(*) as c FROM audit_log WHERE timestamp >= ? GROUP BY outcome, agent_id")
       .all(since) as Array<{ outcome: string; agent_id: string; c: number }>;
     let total = 0;
     const byOutcome: Record<AuditOutcome, number> = { success: 0, partial: 0, failed: 0 };

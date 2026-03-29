@@ -61,6 +61,7 @@ export interface PluginServiceContext {
   provenanceService?: ProvenanceService | null;
   costTracker?: import("../backends/cost-tracker.js").CostTracker | null;
   auditStore?: import("../backends/audit-store.js").AuditStore | null;
+  agentHealthStore?: import("../backends/agent-health-store.js").AgentHealthStore | null;
   // Mutable timer refs that will be updated by the start handler
   timers: {
     pruneTimer: { value: ReturnType<typeof setInterval> | null };
@@ -104,6 +105,7 @@ export function createPluginService(ctx: PluginServiceContext) {
     provenanceService,
     costTracker,
     auditStore,
+    agentHealthStore,
   } = ctx;
 
   let observerRunning = false;
@@ -377,6 +379,7 @@ export function createPluginService(ctx: PluginServiceContext) {
               costTracker,
               logger: api.logger,
               auditStore,
+              agentHealthStore,
             },
             cfg.dashboard.port,
           );
@@ -404,9 +407,17 @@ export function createPluginService(ctx: PluginServiceContext) {
               /* non-fatal */
             }
           }
-          if (hardPruned > 0 || softPruned > 0 || edictsPruned > 0 || auditPruned > 0) {
+          let healthPruned = 0;
+          if (agentHealthStore) {
+            try {
+              healthPruned = agentHealthStore.prune(30);
+            } catch {
+              /* non-fatal */
+            }
+          }
+          if (hardPruned > 0 || softPruned > 0 || edictsPruned > 0 || auditPruned > 0 || healthPruned > 0) {
             api.logger.info(
-              `memory-hybrid: periodic prune — ${hardPruned} expired, ${softPruned} decayed, ${edictsPruned} edicts pruned${auditPruned > 0 ? `, ${auditPruned} audit rows` : ""}`,
+              `memory-hybrid: periodic prune — ${hardPruned} expired, ${softPruned} decayed, ${edictsPruned} edicts pruned${auditPruned > 0 ? `, ${auditPruned} audit rows` : ""}${healthPruned > 0 ? `, ${healthPruned} agent-health rows` : ""}`,
             );
           }
         } catch (err) {

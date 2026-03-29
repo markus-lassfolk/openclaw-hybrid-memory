@@ -22,6 +22,7 @@ import type { WriteAheadLog } from "../backends/wal.js";
 import type { HybridMemoryConfig, MemoryCategory } from "../config.js";
 import type { EmbeddingProvider } from "../services/embeddings.js";
 import type { AuditStore } from "../backends/audit-store.js";
+import type { AgentHealthStore } from "../backends/agent-health-store.js";
 
 /** Shared dependency bag passed to every CLI handler. */
 export interface HandlerContext {
@@ -50,6 +51,7 @@ export interface HandlerContext {
   eventBus?: EventBus | null;
   /** Cross-agent audit log (Issue #790). */
   auditStore?: AuditStore | null;
+  agentHealthStore?: AgentHealthStore | null;
 }
 
 // ---------------------------------------------------------------------------

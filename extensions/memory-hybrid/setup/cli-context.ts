@@ -285,6 +285,7 @@ export interface HybridMemCliRegistrationContext {
   eventBus?: import("../backends/event-bus.js").EventBus | null;
   /** Audit log (Issue #790). */
   auditStore?: import("../backends/audit-store.js").AuditStore | null;
+  agentHealthStore?: import("../backends/agent-health-store.js").AgentHealthStore | null;
 }
 
 function buildCliContextServices(ctx: HybridMemCliRegistrationContext, api: ClawdbotPluginApi): CliContextServices {
@@ -857,6 +858,7 @@ export function createHybridMemCliContext(
     activeTask: handlerCtx.cfg.activeTask.enabled ? buildActiveTaskCliContext(handlerCtx) : undefined,
     eventBus: handlerCtx.eventBus ?? null,
     auditStore: handlerCtx.auditStore ?? null,
+    agentHealthStore: handlerCtx.agentHealthStore ?? null,
   };
 }
 
