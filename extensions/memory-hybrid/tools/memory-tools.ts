@@ -56,6 +56,7 @@ import type { AuditStore } from "../backends/audit-store.js";
 import { shouldAutoVerify } from "../services/verification-store.js";
 import type { VariantGenerationQueue } from "../services/contextual-variants.js";
 import { getSessionLogFileSuffix, UUID_REGEX } from "../utils/constants.js";
+import { embedCallWithTimeoutAndRetry } from "../utils/embed-call.js";
 import { formatNarrativeRange, recallNarrativeSummaries } from "../services/narrative-recall.js";
 
 export type BoundWalWriteFn = (
@@ -115,20 +116,6 @@ function hasBoundMemoryToolHelpers(ctx: MemoryToolsContext | LegacyMemoryToolsCo
   return hasAllNewHelpers && !hasLegacyWal;
 }
 
-const EMBED_CALL_TIMEOUT_MS = 120_000;
-
-function withEmbeddingCallTimeout<T>(promise: Promise<T>, label: string): Promise<T> {
-  return Promise.race([
-    promise,
-    new Promise<T>((_, reject) =>
-      setTimeout(
-        () => reject(new Error(`embedding timed out after ${EMBED_CALL_TIMEOUT_MS}ms (${label})`)),
-        EMBED_CALL_TIMEOUT_MS,
-      ),
-    ),
-  ]);
-}
-
 async function storeRegistryEmbeddings({
   factsDb,
   embeddingRegistry,
@@ -160,7 +147,10 @@ async function storeRegistryEmbeddings({
     const models = embeddingRegistry.getModels();
     const tasks = models.map(async (cfg) => ({
       name: cfg.name,
-      vec: await withEmbeddingCallTimeout(embeddingRegistry.embed(text, cfg.name), `${operation}:${cfg.name}`),
+      vec: await embedCallWithTimeoutAndRetry(
+        () => embeddingRegistry.embed(text, cfg.name),
+        `${operation}:${cfg.name}`,
+      ),
     }));
     const settled = await Promise.allSettled(tasks);
     for (const s of settled) {
@@ -175,7 +165,7 @@ async function storeRegistryEmbeddings({
     }
     if (!vector) {
       try {
-        const vec = await withEmbeddingCallTimeout(embeddingRegistry.embed(text), `${operation}:primary`);
+        const vec = await embedCallWithTimeoutAndRetry(() => embeddingRegistry.embed(text), `${operation}:primary`);
         const modelName = embeddings.modelName || embeddingRegistry.getPrimaryModel().name;
         vectors.set(modelName, vec);
       } catch (err) {
@@ -187,7 +177,7 @@ async function storeRegistryEmbeddings({
     }
   } else if (!vector) {
     try {
-      const vec = await withEmbeddingCallTimeout(embeddingRegistry.embed(text), `${operation}:primary`);
+      const vec = await embedCallWithTimeoutAndRetry(() => embeddingRegistry.embed(text), `${operation}:primary`);
       const modelName = embeddings.modelName || embeddingRegistry.getPrimaryModel().name;
       vectors.set(modelName, vec);
     } catch (err) {
@@ -729,7 +719,11 @@ export function registerMemoryTools(
         cfg.queryExpansion?.enabled && cfg.retrieval.strategies.includes("semantic")
           ? new QueryExpander(cfg.queryExpansion, openai)
           : null;
-      const embedFn = queryVector != null ? (text: string) => embeddings.embed(text) : null;
+      const embedFn =
+        queryVector != null
+          ? (text: string) =>
+              embedCallWithTimeoutAndRetry(() => embeddings.embed(text), "memory-tools:rrf-deep-retrieval")
+          : null;
       const rrfOutput = await runExplicitDeepRetrieval(query, queryVector, factsDb.getRawDb(), vectorDb, factsDb, {
         config: rrfConfig,
         policy: explicitPolicy,
@@ -1466,7 +1460,10 @@ export function registerMemoryTools(
               recordActiveStoreProvenance(pointerEntry.id, pointerText);
               try {
                 addOperationBreadcrumb("vector", "store-credential-pointer");
-                const vector = await embeddings.embed(pointerText);
+                const vector = await embedCallWithTimeoutAndRetry(
+                  () => embeddings.embed(pointerText),
+                  "memory-tools:store-credential-pointer",
+                );
                 factsDb.setEmbeddingModel(pointerEntry.id, embeddings.modelName);
                 if (!(await vectorDb.hasDuplicate(vector))) {
                   await vectorDb.store({
@@ -1540,7 +1537,10 @@ export function registerMemoryTools(
           // Generate vector first (needed for WAL and storage)
           let vector: number[] | undefined;
           try {
-            vector = await embeddings.embed(textToStore);
+            vector = await embedCallWithTimeoutAndRetry(
+              () => embeddings.embed(textToStore),
+              "memory-tools:store-embed",
+            );
           } catch (err) {
             if (err instanceof AllEmbeddingProvidersFailed) {
               // Graceful degradation: store the fact without a vector.
@@ -2247,7 +2247,10 @@ export function registerMemoryTools(
             const sqlResults = factsDb.search(query, 5);
             let lanceResults: SearchResult[] = [];
             try {
-              const vector = await embeddings.embed(query);
+              const vector = await embedCallWithTimeoutAndRetry(
+                () => embeddings.embed(query),
+                "memory-tools:forget-vector-search",
+              );
               lanceResults = await vectorDb.search(vector, 5, 0.7);
             } catch (err) {
               // AllEmbeddingProvidersFailed is expected when no providers are configured — don't report to Sentry.

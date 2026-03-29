@@ -104,12 +104,19 @@ export function buildFts5Query(raw: string): string | null {
     return `"${inner}"`;
   }
 
-  // Default: keyword OR search.
+  // Default: keyword OR search (quoted term OR prefix) — aligns with porter-stemmed index (#898).
   const tokens = escapeForFts5(trimmed)
     .split(/\s+/)
     .filter((t) => t.length > 0);
   if (tokens.length === 0) return null;
-  return tokens.map((t) => `"${t}"`).join(" OR ");
+  return tokens
+    .map((t) => {
+      if (/^[a-zA-Z0-9_]+$/.test(t) && t.length >= 3) {
+        return `( "${t}" OR ${t}* )`;
+      }
+      return `"${t}"`;
+    })
+    .join(" OR ");
 }
 
 // ---------------------------------------------------------------------------

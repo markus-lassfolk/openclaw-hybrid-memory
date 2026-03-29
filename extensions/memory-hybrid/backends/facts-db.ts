@@ -31,7 +31,13 @@ import { tryRestrictSqliteDbFileMode } from "../utils/sqlite-file-perms.js";
 import { runFactsMigrations } from "./migrations/facts-migrations.js";
 import { searchFts } from "../services/fts-search.js";
 import { BaseSqliteStore } from "./base-sqlite-store.js";
+import { SupersededTextsCache } from "./facts-db/cache-manager.js";
 import { verifyFts5Support } from "./facts-db/db-connection.js";
+import {
+  buildClassificationFtsOrClause,
+  buildFactsSearchFtsOrClause,
+  fetchSupersededFactTextsLower,
+} from "./facts-db/fact-queries.js";
 import { sanitizeFts5QueryForFacts } from "./facts-db/fts-text.js";
 import {
   batchGetReinforcementEvents as batchGetReinforcementEventsHelper,
@@ -84,10 +90,7 @@ export class FactsDB extends BaseSqliteStore {
   // - Extracted implementation modules under backends/facts-db/ own links/reinforcement/scan-cursor logic.
   private readonly dbPath: string;
   private readonly fuzzyDedupe: boolean;
-  private supersededTextsCache: Set<string> | null = null;
-  private supersededTextsCacheTime = 0;
-  /** Cache TTL for superseded texts to avoid full table scan on every search. Increased to reduce thrashing. */
-  private readonly SUPERSEDED_CACHE_TTL_MS = 5 * 60_000; // 5 minutes
+  private readonly supersededTextsCacheMgr = new SupersededTextsCache(5 * 60_000);
   private knownEntitiesCache: string[] | null = null;
   private knownEntitiesCacheTime = 0;
   /** Cache TTL for known-entity list used by autoLinkEntities on every write. */
@@ -1972,13 +1975,7 @@ export class FactsDB extends BaseSqliteStore {
       diversityWeight = 1.0,
     } = options;
 
-    const sanitized = sanitizeFts5QueryForFacts(query);
-    const safeQuery = sanitized
-      .split(/\s+/)
-      .filter((w) => w.length > 1)
-      .map((w) => `"${w}"`)
-      .join(" OR ");
-
+    const safeQuery = buildFactsSearchFtsOrClause(query);
     if (!safeQuery) return [];
 
     const nowSec = Math.floor(Date.now() / 1000);
@@ -2250,13 +2247,7 @@ export class FactsDB extends BaseSqliteStore {
     if (results.length < limit) {
       const remaining = limit - results.length;
       const seenIds = new Set(results.map((r) => r.id));
-      const sanitized = sanitizeFts5QueryForFacts(text);
-      const words = sanitized
-        .split(/\s+/)
-        .filter((w) => w.length > 2)
-        .slice(0, 5)
-        .map((w) => `"${w}"`)
-        .join(" OR ");
+      const words = buildClassificationFtsOrClause(text);
       if (words) {
         try {
           const rows = this.liveDb
@@ -2631,24 +2622,15 @@ export class FactsDB extends BaseSqliteStore {
     return rows.map((row) => this.rowToEntry(row));
   }
 
-  /** Get texts of superseded facts (for filtering LanceDB results). Cached for 1 minute to avoid repeated queries. */
+  /** Get texts of superseded facts (for filtering LanceDB results). Cached to avoid repeated full scans. */
   getSupersededTexts(): Set<string> {
     const now = Date.now();
-    if (this.supersededTextsCache && now - this.supersededTextsCacheTime < this.SUPERSEDED_CACHE_TTL_MS) {
-      return this.supersededTextsCache;
-    }
-
-    const rows = this.liveDb.prepare("SELECT text FROM facts WHERE superseded_at IS NOT NULL").all() as Array<{
-      text: string;
-    }>;
-    this.supersededTextsCache = new Set(rows.map((r) => r.text.toLowerCase()));
-    this.supersededTextsCacheTime = now;
-    return this.supersededTextsCache;
+    return this.supersededTextsCacheMgr.getSnapshot(now, () => fetchSupersededFactTextsLower(this.liveDb));
   }
 
   /** Invalidate superseded texts cache (called after supersede operations). */
   private invalidateSupersededCache(): void {
-    this.supersededTextsCache = null;
+    this.supersededTextsCacheMgr.invalidate();
   }
 
   count(): number {

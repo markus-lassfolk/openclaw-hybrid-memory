@@ -25,6 +25,29 @@ import { shouldSuppressEmbeddingError } from "./embeddings.js";
 import { expandQueryWithHyde } from "./hyde-helper.js";
 import { DEFAULT_INTERACTIVE_RECALL_POLICY, type InteractiveRecallPolicy } from "./retrieval-mode-policy.js";
 
+async function embedWithAbortRace(
+  embedPromise: Promise<number[]>,
+  signal: AbortSignal,
+  abortMessage: string,
+): Promise<number[]> {
+  let onAbort: (() => void) | undefined;
+  try {
+    return await Promise.race([
+      embedPromise,
+      new Promise<number[]>((_, reject) => {
+        if (signal.aborted) {
+          reject(Object.assign(new Error(abortMessage), { name: "AbortError" }));
+          return;
+        }
+        onAbort = () => reject(Object.assign(new Error(abortMessage), { name: "AbortError" }));
+        signal.addEventListener("abort", onAbort, { once: true });
+      }),
+    ]);
+  } finally {
+    if (onAbort) signal.removeEventListener("abort", onAbort);
+  }
+}
+
 /** Logger subset required by the recall pipeline (avoids importing ClawdbotPluginApi). */
 export interface RecallLogger {
   debug?: (msg: string) => void;
@@ -150,7 +173,11 @@ export async function runRecallPipelineQuery(
         const vector =
           opts?.precomputedVector && textToEmbed === trimmed
             ? opts.precomputedVector
-            : await embeddings.embed(textToEmbed);
+            : await embedWithAbortRace(
+                embeddings.embed(textToEmbed),
+                directiveAbort.signal,
+                `recall pipeline timed out after ${policy.vectorStepTimeoutMs}ms`,
+              );
         stageMs.embed = Date.now() - t0;
         t0 = Date.now();
         let results = await vectorDb.search(vector, limitNum * 2, minScore);
