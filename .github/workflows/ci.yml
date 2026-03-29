@@ -178,6 +178,18 @@ jobs:
       - name: Check formatting
         run: cd extensions/memory-hybrid && npm run format:check
 
+  # Ensures package.json "files" covers all runtime imports (incl. cli → benchmark/).
+  # Vitest always runs in a full checkout; this catches omissions visible only in npm pack.
+  publish-invariants:
+    name: Publish manifest (npm files[])
+    needs: changes
+    if: needs.changes.outputs.code == 'true' || github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: verify-publish invariants
+        run: cd extensions/memory-hybrid && node scripts/verify-publish.cjs
+
   strict-typecheck:
     name: Strict TypeScript Check
     needs: changes
@@ -206,7 +218,6 @@ jobs:
     needs: changes
     if: needs.changes.outputs.code == 'true' || github.event_name == 'pull_request'
     runs-on: ubuntu-latest
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -231,6 +242,8 @@ jobs:
           npm init -y
           npm install "$TARBALL_PATH" --ignore-scripts
           node -e "const pkg = require('./node_modules/openclaw-hybrid-memory/package.json'); console.log('Import OK:', pkg.name, pkg.version)"
+          test -f node_modules/openclaw-hybrid-memory/benchmark/shadow-eval.ts || \
+            { echo 'FAIL: benchmark/shadow-eval.ts missing from npm pack (check package.json files[])'; exit 1; }
 
   lint-arch:
     name: Architectural Lint
@@ -287,6 +300,14 @@ jobs:
 
   test-pass-24:
     name: Test (Node 24)
+    needs: changes
+    if: needs.changes.outputs.code != 'true' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "No code changes detected — required check satisfied"
+
+  publish-invariants-pass:
+    name: Publish manifest (npm files[])
     needs: changes
     if: needs.changes.outputs.code != 'true' && github.event_name != 'pull_request'
     runs-on: ubuntu-latest
