@@ -9,11 +9,14 @@ const MODE_0600 = 0o600;
 
 export function tryRestrictSqliteDbFileMode(dbPath: string): void {
   if (dbPath === ":memory:") return;
-  try {
-    if (existsSync(dbPath)) {
-      chmodSync(dbPath, MODE_0600);
+  const candidates = [dbPath, `${dbPath}-wal`, `${dbPath}-shm`, `${dbPath}-journal`];
+  for (const p of candidates) {
+    try {
+      if (existsSync(p)) {
+        chmodSync(p, MODE_0600);
+      }
+    } catch {
+      // Non-fatal: some environments restrict chmod (e.g. exotic mounts).
     }
-  } catch {
-    // Non-fatal: some environments restrict chmod (e.g. exotic mounts).
   }
 }

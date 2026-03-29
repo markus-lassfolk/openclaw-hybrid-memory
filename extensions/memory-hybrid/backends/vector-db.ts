@@ -178,7 +178,8 @@ export class VectorDB {
     }
   }
 
-  private async ensureInitialized(): Promise<void> {
+  /** Wait for LanceDB (or FTS-only degraded mode). Safe to call from CLI/diagnostics. */
+  async ensureInitialized(): Promise<void> {
     // Await any in-flight init before inspecting state. Without this guard, a caller that
     // arrives while doInitialize() is already running would start a second concurrent
     // doInitialize() — resulting in duplicate connections and a potential connection leak.
@@ -586,6 +587,8 @@ export class VectorDB {
     }
 
     // Reconnect — doInitialize() will create fresh empty tables with the current schema.
+    // Clear degraded-mode flag so ensureInitialized() runs doInitialize() instead of no-op (issue #906).
+    this.lanceInitFailed = false;
     this.closed = false;
     this.lanceInitFailed = false;
     this.initPromise = null;
@@ -673,6 +676,7 @@ export class VectorDB {
   ): Promise<SemanticQueryCacheEntry | null> {
     try {
       await this.ensureInitialized();
+      if (this.lanceInitFailed || !this.semanticQueryCacheTable) return null;
       if (!this.semanticQueryCacheSchemaValid) return null;
       const nowSec = Math.floor(Date.now() / 1000);
       const minSimilarity = options.minSimilarity ?? 0.95;
@@ -756,6 +760,7 @@ export class VectorDB {
   }): Promise<void> {
     try {
       await this.ensureInitialized();
+      if (this.lanceInitFailed || !this.semanticQueryCacheTable) return;
       if (!this.semanticQueryCacheSchemaValid) return;
       const filterKey = entry.filterKey ?? "default";
       await this.getSemanticQueryCacheTable().add([

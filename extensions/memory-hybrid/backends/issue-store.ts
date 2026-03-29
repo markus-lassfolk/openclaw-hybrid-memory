@@ -208,7 +208,9 @@ export class IssueStore extends BaseSqliteStore {
     if (filter?.tags && filter.tags.length > 0) {
       const lower = filter.tags.map((t) => t.toLowerCase());
       query += ` AND EXISTS (
-        SELECT 1 FROM json_each(tags) j
+        SELECT 1 FROM json_each(
+          CASE WHEN json_valid(tags) THEN tags ELSE '[]' END
+        ) j
         WHERE lower(j.value) IN (${lower.map(() => "?").join(", ")})
       )`;
       params.push(...lower);

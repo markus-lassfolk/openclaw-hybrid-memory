@@ -4,7 +4,7 @@
  */
 
 import { existsSync, readdirSync, realpathSync, statSync } from "node:fs";
-import { join, resolve, sep } from "node:path";
+import { isAbsolute, join, relative, resolve } from "node:path";
 
 function resolvedWorkspaceRoot(workspaceRoot: string): string {
   try {
@@ -14,7 +14,7 @@ function resolvedWorkspaceRoot(workspaceRoot: string): string {
   }
 }
 
-/** Reject patterns that escape workspaceRoot after resolve (issue #858). */
+/** Reject paths outside workspaceRoot (issue #858). Works with Windows backslashes and POSIX. */
 function isPathInsideWorkspace(workspaceRootResolved: string, candidateAbs: string): boolean {
   let absResolved: string;
   try {
@@ -22,7 +22,9 @@ function isPathInsideWorkspace(workspaceRootResolved: string, candidateAbs: stri
   } catch {
     absResolved = resolve(candidateAbs);
   }
-  return absResolved === workspaceRootResolved || absResolved.startsWith(`${workspaceRootResolved}${sep}`);
+  const rel = relative(workspaceRootResolved, absResolved);
+  if (rel === "") return true;
+  return !rel.startsWith("..") && !isAbsolute(rel);
 }
 
 /**

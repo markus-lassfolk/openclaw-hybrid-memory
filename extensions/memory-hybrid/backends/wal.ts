@@ -277,6 +277,24 @@ export class WriteAheadLog {
     return entries.filter((e) => now - e.timestamp < this.maxAge);
   }
 
+  /**
+   * If the WAL file exceeds `maxBytes`, run `pruneStale()` to drop expired entries and rewrite the file (issue #903).
+   * Best-effort; returns number of entries removed.
+   */
+  async compactIfOversized(maxBytes: number): Promise<number> {
+    try {
+      if (!existsSync(this.walPath)) return 0;
+      const st = statSync(this.walPath);
+      if (st.size <= maxBytes) return 0;
+      return this.pruneStale();
+    } catch (err) {
+      pluginLogger.info(
+        `memory-hybrid: WAL compactIfOversized size check failed; skipping compaction: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return 0;
+    }
+  }
+
   async pruneStale(): Promise<number> {
     const prevLock = this.writeLock;
     let releaseLock: () => void;
