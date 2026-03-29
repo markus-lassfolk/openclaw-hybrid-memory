@@ -125,12 +125,11 @@ function buildMockDb(
     // BFS expansion
     let frontier = seedFactIds.map((id) => bestPath.get(id)!);
     for (let hop = 1; hop <= maxDepth && frontier.length > 0; hop++) {
-      const nextFrontier: Array<{ hopCount: number; seedId: string; path: Array<unknown>; visited: Set<string> }> = [];
+      const nextFrontier: Array<{ hopCount: number; seedId: string; path: Array<any>; visited: Set<string>; currentId: string }> = [];
 
       for (const current of frontier) {
-        const fromId = current.visited.values().next().value; // Get last visited
-        // Get actual current ID from visited set (last element)
-        const currentId = Array.from(current.visited)[current.visited.size - 1];
+        // Derive current ID from path or seed
+        const currentId = current.path.length > 0 ? current.path[current.path.length - 1].toFactId : current.seedId;
 
         // Traverse outgoing links
         const outLinks = linksFrom[currentId] ?? [];

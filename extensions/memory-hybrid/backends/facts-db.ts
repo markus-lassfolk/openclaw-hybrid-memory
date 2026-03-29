@@ -2496,13 +2496,14 @@ export class FactsDB extends BaseSqliteStore {
   expandGraphWithCTE(
     seedFactIds: string[],
     maxDepth: number,
+    options?: { asOf?: number; scopeFilter?: unknown }
   ): Array<{
     factId: string;
     seedId: string;
     hopCount: number;
     path: string;
   }> {
-    return expandGraphWithCTEHelper(this.liveDb, seedFactIds, maxDepth);
+    return expandGraphWithCTEHelper(this.liveDb, seedFactIds, maxDepth, options);
   }
 
   /** Get facts from the last N days (for reflection). Excludes pattern/rule by default. More efficient than getAll+filter. */

@@ -112,24 +112,30 @@ export function getConnectedFactIds(db: DatabaseSync, factIds: string[], maxDept
 
       UNION
 
-      -- Recursive case: traverse outgoing and incoming links
-      SELECT DISTINCT
-        CASE
-          WHEN ml.source_fact_id = gt.fact_id THEN ml.target_fact_id
-          ELSE ml.source_fact_id
-        END AS fact_id,
+      -- Recursive case (outgoing links)
+      SELECT
+        ml.target_fact_id AS fact_id,
         gt.depth + 1 AS depth
       FROM graph_traversal gt
-      JOIN memory_links ml ON (
-        (ml.source_fact_id = gt.fact_id OR ml.target_fact_id = gt.fact_id)
-        AND ml.link_type != 'CONTRADICTS'
-      )
+      JOIN memory_links ml ON ml.source_fact_id = gt.fact_id
       WHERE gt.depth < ?
+        AND ml.link_type != 'CONTRADICTS'
+
+      UNION
+
+      -- Recursive case (incoming links)
+      SELECT
+        ml.source_fact_id AS fact_id,
+        gt.depth + 1 AS depth
+      FROM graph_traversal gt
+      JOIN memory_links ml ON ml.target_fact_id = gt.fact_id
+      WHERE gt.depth < ?
+        AND ml.link_type != 'CONTRADICTS'
     )
     SELECT DISTINCT fact_id FROM graph_traversal
   `;
 
-  const rows = db.prepare(query).all(JSON.stringify(factIds), maxDepth) as Array<{ fact_id: string }>;
+  const rows = db.prepare(query).all(JSON.stringify(factIds), maxDepth, maxDepth) as Array<{ fact_id: string }>;
   return rows.map((r) => r.fact_id);
 }
 
@@ -146,6 +152,7 @@ export function expandGraphWithCTE(
   db: DatabaseSync,
   seedFactIds: string[],
   maxDepth: number,
+  options?: { asOf?: number; scopeFilter?: any }
 ): Array<{
   factId: string;
   seedId: string;
@@ -159,6 +166,34 @@ export function expandGraphWithCTE(
       hopCount: 0,
       path: "[]",
     }));
+  }
+
+  const asOf = options?.asOf ?? null;
+  const scopeFilter = options?.scopeFilter;
+  let factJoinOut = "";
+  let factWhereOut = "";
+  let factJoinIn = "";
+  let factWhereIn = "";
+  const filterParamsOut: any[] = [];
+  const filterParamsIn: any[] = [];
+
+  if (asOf != null || scopeFilter) {
+    factJoinOut = `JOIN facts f ON f.id = ml.target_fact_id`;
+    factJoinIn = `JOIN facts f ON f.id = ml.source_fact_id`;
+    
+    let baseWhere = "";
+    if (asOf != null) {
+      baseWhere += ` AND COALESCE(f.valid_from, f.created_at) <= ? AND (f.valid_until IS NULL OR f.valid_until > ?)`;
+      filterParamsOut.push(asOf, asOf);
+      filterParamsIn.push(asOf, asOf);
+    }
+    if (scopeFilter && (scopeFilter.userId || scopeFilter.agentId || scopeFilter.sessionId)) {
+      baseWhere += ` AND (f.scope = 'global' OR (f.scope = 'user' AND f.scope_target = ?) OR (f.scope = 'agent' AND f.scope_target = ?) OR (f.scope = 'session' AND f.scope_target = ?))`;
+      filterParamsOut.push(scopeFilter.userId ?? null, scopeFilter.agentId ?? null, scopeFilter.sessionId ?? null);
+      filterParamsIn.push(scopeFilter.userId ?? null, scopeFilter.agentId ?? null, scopeFilter.sessionId ?? null);
+    }
+    factWhereOut = baseWhere;
+    factWhereIn = baseWhere;
   }
 
   // Use recursive CTE to traverse the graph in a single query
@@ -182,12 +217,9 @@ export function expandGraphWithCTE(
 
       UNION ALL
 
-      -- Recursive case: expand from frontier
+      -- Recursive case: expand from frontier (outgoing links)
       SELECT
-        CASE
-          WHEN ml.source_fact_id = ge.fact_id THEN ml.target_fact_id
-          ELSE ml.source_fact_id
-        END AS fact_id,
+        ml.target_fact_id AS fact_id,
         ge.seed_id,
         ge.hop_count + 1 AS hop_count,
         json_insert(
@@ -195,21 +227,49 @@ export function expandGraphWithCTE(
           '$[#]',
           json_object(
             'fromFactId', ge.fact_id,
-            'toFactId', CASE WHEN ml.source_fact_id = ge.fact_id THEN ml.target_fact_id ELSE ml.source_fact_id END,
+            'toFactId', ml.target_fact_id,
             'linkType', ml.link_type,
             'strength', ml.strength
           )
         ) AS path_json,
-        ge.visited_ids || CASE WHEN ml.source_fact_id = ge.fact_id THEN ml.target_fact_id ELSE ml.source_fact_id END || ',' AS visited_ids
+        ge.visited_ids || ml.target_fact_id || ',' AS visited_ids
       FROM graph_expansion ge
-      JOIN memory_links ml ON (
-        (ml.source_fact_id = ge.fact_id OR ml.target_fact_id = ge.fact_id)
-        AND ml.link_type != 'CONTRADICTS'
-      )
+      JOIN memory_links ml ON ml.source_fact_id = ge.fact_id
+      ${factJoinOut}
       WHERE
         ge.hop_count < ?
+        AND ml.link_type != 'CONTRADICTS'
         -- Avoid cycles: only visit each node once per path
-        AND ge.visited_ids NOT LIKE '%,' || CASE WHEN ml.source_fact_id = ge.fact_id THEN ml.target_fact_id ELSE ml.source_fact_id END || ',%'
+        AND ge.visited_ids NOT LIKE '%,' || ml.target_fact_id || ',%'
+        ${factWhereOut}
+
+      UNION ALL
+
+      -- Recursive case: expand from frontier (incoming links)
+      SELECT
+        ml.source_fact_id AS fact_id,
+        ge.seed_id,
+        ge.hop_count + 1 AS hop_count,
+        json_insert(
+          ge.path_json,
+          '$[#]',
+          json_object(
+            'fromFactId', ge.fact_id,
+            'toFactId', ml.source_fact_id,
+            'linkType', ml.link_type,
+            'strength', ml.strength
+          )
+        ) AS path_json,
+        ge.visited_ids || ml.source_fact_id || ',' AS visited_ids
+      FROM graph_expansion ge
+      JOIN memory_links ml ON ml.target_fact_id = ge.fact_id
+      ${factJoinIn}
+      WHERE
+        ge.hop_count < ?
+        AND ml.link_type != 'CONTRADICTS'
+        -- Avoid cycles: only visit each node once per path
+        AND ge.visited_ids NOT LIKE '%,' || ml.source_fact_id || ',%'
+        ${factWhereIn}
     ),
     -- Aggregate to find shortest path to each node
     shortest_paths AS (
@@ -218,7 +278,7 @@ export function expandGraphWithCTE(
         seed_id,
         hop_count,
         path_json,
-        ROW_NUMBER() OVER (PARTITION BY fact_id ORDER BY hop_count ASC, seed_id ASC) AS rn
+        ROW_NUMBER() OVER (PARTITION BY fact_id ORDER BY hop_count ASC) AS rn
       FROM graph_expansion
     )
     SELECT
@@ -231,7 +291,13 @@ export function expandGraphWithCTE(
     ORDER BY hop_count ASC, fact_id ASC
   `;
 
-  const rows = db.prepare(query).all(JSON.stringify(seedFactIds), maxDepth) as Array<{
+  const rows = db.prepare(query).all(
+    JSON.stringify(seedFactIds),
+    maxDepth,
+    ...filterParamsOut,
+    maxDepth,
+    ...filterParamsIn
+  ) as Array<{
     fact_id: string;
     seed_id: string;
     hop_count: number;
