@@ -5,7 +5,12 @@
  * to enforce minimum gateway version requirements at startup.
  */
 
-/** Minimum OpenClaw version required for full feature support (CLI subcommands, SIGUSR1 reload). */
+/**
+ * Minimum OpenClaw **gateway** version we warn below (CLI subcommands, `api.version`, SIGUSR1 reload).
+ * Kept in sync with `package.json` `peerDependencies.openclaw`. This is a soft check (`checkOpenClawVersion` logs a warning; it does not block load).
+ *
+ * CI and local dev resolve a **newer** `openclaw` from npm (see `package-lock.json` → `node_modules/openclaw.version`); run a current 2026.3.x OpenClaw for best parity with features tested in this repo.
+ */
 export const MIN_OPENCLAW_VERSION = "2026.3.8";
 
 /**

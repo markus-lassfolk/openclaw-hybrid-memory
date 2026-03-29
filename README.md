@@ -117,7 +117,8 @@ See [docs/QUICKSTART.md](docs/QUICKSTART.md) for the full walkthrough.
 
 ## Prerequisites
 
-- **OpenClaw v2026.3.8+** (required) — the plugin enforces this minimum version at startup to ensure CLI subcommands and config reloads work.
+- **OpenClaw v2026.3.8+** (minimum — same as plugin `peerDependencies` / startup version check): below this you get a **warning**, not a hard fail; use a **recent 2026.3.x** gateway for features tested in CI (see `extensions/memory-hybrid/package-lock.json` → `node_modules/openclaw` for the resolved dev version).
+- **Node.js `>=22.12.0`** — required by the plugin package `engines` when installing/running the extension.
 - **Embedding access** (required) — for semantic search (auto-recall, store, ingest). Configure `embedding.apiKey` and `embedding.model` (e.g. `text-embedding-3-small`). The plugin will not load without valid embedding config.
 - **Chat/completion access** (optional for basic memory) — required for distillation, reflection, auto-classify, query expansion, and other LLM-backed features. The plugin can call provider APIs **directly** (recommended: configure the **`llm`** block with `nano` / `default` / `heavy` tiers and per-provider API keys) or use gateway-derived models. See [docs/LLM-AND-PROVIDERS.md](docs/LLM-AND-PROVIDERS.md) for tiers and provider setup.
 

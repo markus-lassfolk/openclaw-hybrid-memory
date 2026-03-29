@@ -8,8 +8,8 @@ Part of the [OpenClaw Hybrid Memory](https://github.com/markus-lassfolk/openclaw
 
 ## Requirements
 
-- **Node.js `^20.19.0 || >=22.12.0`** — Node 20.0–20.18 and 22.0–22.11 are **not** supported; npm will reject the install with `EBADENGINE` on those versions.
-- **OpenClaw v2026.3.8+** (required) — the plugin enforces this minimum version at startup to ensure CLI subcommands and config reloads work.
+- **Node.js `>=22.12.0`** — matches `package.json` `engines`; npm may emit `EBADENGINE` on older Node.
+- **OpenClaw (gateway)** — **Minimum v2026.3.8+** (same as npm `peerDependencies` and `MIN_OPENCLAW_VERSION`): below this the plugin **logs a warning** at startup (undefined `api.version`, missing CLI subcommands, or unreliable reload). **Recommended:** run a **current 2026.3.x** OpenClaw; this repo’s `package-lock.json` pins the version used for CI/dev typechecking under `node_modules/openclaw`.
 - **Embedding provider** — Required. The plugin needs an embedding provider to load. Four options:
   - **OpenAI** (default): set `embedding.apiKey` and `embedding.model` (e.g. `text-embedding-3-small`). Requires an OpenAI API key.
   - **Ollama** (local): set `embedding.provider: "ollama"` and `embedding.model` (e.g. `nomic-embed-text`). No API key required — runs fully locally via a local Ollama instance.

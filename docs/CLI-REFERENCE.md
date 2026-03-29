@@ -8,7 +8,7 @@ nav_order: 1
 
 All commands are available via `openclaw hybrid-mem <command>`.
 
-> **Note:** CLI subcommands require OpenClaw v2026.3.8 or later. The plugin enforces this minimum version at startup to ensure commands and config reloads work.
+> **Note:** Below OpenClaw **v2026.3.8** the plugin **warns** at startup (peer + `MIN_OPENCLAW_VERSION`); CLI subcommands and `api.version` may be missing. Prefer a **current 2026.3.x** gateway; CI uses the `openclaw` version in `extensions/memory-hybrid/package-lock.json`.
 
 ---
 
