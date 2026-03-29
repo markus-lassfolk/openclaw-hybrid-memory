@@ -593,7 +593,7 @@ describe("migrateEmbeddings — batch processing", () => {
     expect(embeddings.embedBatch).toHaveBeenCalledTimes(3);
   });
 
-  it("uses default batchSize=50 when not specified", async () => {
+  it("uses default batchSize=40 when not specified", async () => {
     const facts = Array.from({ length: 60 }, (_, i) => makeFact(String(i)));
     const factsDb = makeFactsDB({ getAll: vi.fn().mockReturnValue(facts) });
     const vectorDb = makeVectorDB();
@@ -609,7 +609,7 @@ describe("migrateEmbeddings — batch processing", () => {
       logger: silentLogger(),
     });
 
-    // 60 facts with batchSize=50 → 2 batches
+    // 60 facts with batchSize=40 → 2 batches
     expect(embeddings.embedBatch).toHaveBeenCalledTimes(2);
   });
 });

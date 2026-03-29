@@ -3,6 +3,8 @@
  * Used to reject narrative text, paths, and descriptions from being stored as secrets.
  */
 
+import { CREDENTIAL_TYPES, type CredentialType } from "../config.js";
+
 type ValidationResult = { ok: true } | { ok: false; reason: string };
 
 /** Minimum length for a credential value to be considered valid. */
@@ -184,4 +186,25 @@ export function auditServiceName(service: string): string[] {
     if (tokens.length > CREDENTIAL_SERVICE_MAX_TOKENS) flags.push("service_sentence_like");
   }
   return flags;
+}
+
+/**
+ * Validate a credential row read from SQLite before returning to callers (#900).
+ * Throws if the row is structurally invalid (corrupt DB or manual tampering).
+ */
+export function assertValidCredentialRow(row: {
+  service: string;
+  type: string;
+  created: number;
+  updated: number;
+}): void {
+  if (typeof row.service !== "string" || row.service.trim().length === 0) {
+    throw new Error("memory-hybrid: credentials vault row has invalid service");
+  }
+  if (!CREDENTIAL_TYPES.includes(row.type as CredentialType)) {
+    throw new Error(`memory-hybrid: credentials vault row has invalid type: ${row.type}`);
+  }
+  if (!Number.isFinite(row.created) || !Number.isFinite(row.updated)) {
+    throw new Error("memory-hybrid: credentials vault row has invalid timestamps");
+  }
 }

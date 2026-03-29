@@ -59,6 +59,11 @@ function escapeForFts5(raw: string): string {
  *   so that partial matches still return results.
  * - Advanced FTS5 syntax (AND / OR / NOT / prefix *) is passed through
  *   verbatim when the raw string already contains those operators.
+ *
+ * Note: `facts_fts` uses `tokenize='porter unicode61'`, so indexed terms are stemmed.
+ * Quoted tokens here are not re-stemmed by this builder; very short or inflected
+ * queries may miss stemmed index terms (#898). Prefer user vocabulary that matches
+ * stored text or extend with prefix queries where appropriate.
  */
 export function buildFts5Query(raw: string): string | null {
   const trimmed = raw.trim();

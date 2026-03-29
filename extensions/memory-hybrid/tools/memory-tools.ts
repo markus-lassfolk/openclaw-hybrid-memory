@@ -55,7 +55,7 @@ import type { VerificationStore } from "../services/verification-store.js";
 import type { AuditStore } from "../backends/audit-store.js";
 import { shouldAutoVerify } from "../services/verification-store.js";
 import type { VariantGenerationQueue } from "../services/contextual-variants.js";
-import { UUID_REGEX } from "../utils/constants.js";
+import { getSessionLogFileSuffix, UUID_REGEX } from "../utils/constants.js";
 import { formatNarrativeRange, recallNarrativeSummaries } from "../services/narrative-recall.js";
 
 export type BoundWalWriteFn = (
@@ -115,6 +115,20 @@ function hasBoundMemoryToolHelpers(ctx: MemoryToolsContext | LegacyMemoryToolsCo
   return hasAllNewHelpers && !hasLegacyWal;
 }
 
+const EMBED_CALL_TIMEOUT_MS = 120_000;
+
+function withEmbeddingCallTimeout<T>(promise: Promise<T>, label: string): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) =>
+      setTimeout(
+        () => reject(new Error(`embedding timed out after ${EMBED_CALL_TIMEOUT_MS}ms (${label})`)),
+        EMBED_CALL_TIMEOUT_MS,
+      ),
+    ),
+  ]);
+}
+
 async function storeRegistryEmbeddings({
   factsDb,
   embeddingRegistry,
@@ -146,7 +160,7 @@ async function storeRegistryEmbeddings({
     const models = embeddingRegistry.getModels();
     const tasks = models.map(async (cfg) => ({
       name: cfg.name,
-      vec: await embeddingRegistry.embed(text, cfg.name),
+      vec: await withEmbeddingCallTimeout(embeddingRegistry.embed(text, cfg.name), `${operation}:${cfg.name}`),
     }));
     const settled = await Promise.allSettled(tasks);
     for (const s of settled) {
@@ -161,7 +175,7 @@ async function storeRegistryEmbeddings({
     }
     if (!vector) {
       try {
-        const vec = await embeddingRegistry.embed(text);
+        const vec = await withEmbeddingCallTimeout(embeddingRegistry.embed(text), `${operation}:primary`);
         const modelName = embeddings.modelName || embeddingRegistry.getPrimaryModel().name;
         vectors.set(modelName, vec);
       } catch (err) {
@@ -173,7 +187,7 @@ async function storeRegistryEmbeddings({
     }
   } else if (!vector) {
     try {
-      const vec = await embeddingRegistry.embed(text);
+      const vec = await withEmbeddingCallTimeout(embeddingRegistry.embed(text), `${operation}:primary`);
       const modelName = embeddings.modelName || embeddingRegistry.getPrimaryModel().name;
       vectors.set(modelName, vec);
     } catch (err) {
@@ -341,6 +355,12 @@ export function registerMemoryTools(
               "⚠️ SECURITY: Caller-controlled parameter. In multi-tenant environments, derive from authenticated identity instead. Include session-scoped memories for this session.",
           }),
         ),
+        confirmCrossTenantScope: Type.Optional(
+          Type.Boolean({
+            description:
+              "When multiAgent.trustToolScopeParams is true, set true to confirm intentional cross-tenant scope use of userId/agentId/sessionId (#874).",
+          }),
+        ),
         includeCold: Type.Optional(
           Type.Boolean({
             description: "Set true to include COLD tier (slower / deeper retrieval). Default: false (HOT + WARM only).",
@@ -458,7 +478,7 @@ export function registerMemoryTools(
 
         const lines = summaries.map((summary, index) => {
           const agentDir = currentAgentIdRef.value || "main";
-          const logPath = `~/.openclaw/agents/${agentDir}/sessions/${summary.sessionId}.jsonl`;
+          const logPath = `~/.openclaw/agents/${agentDir}/sessions/${summary.sessionId}${getSessionLogFileSuffix()}`;
           return (
             `${index + 1}. [${summary.source}] ${formatNarrativeRange(summary.periodStart, summary.periodEnd)} ` +
             `(sessionKey: ${summary.sessionId}, sessionLogPath: ${logPath})\n${summary.text}`
@@ -479,7 +499,7 @@ export function registerMemoryTools(
               source: summary.source,
               sessionId: summary.sessionId,
               sessionKey: summary.sessionId,
-              sessionLogPath: `~/.openclaw/agents/${currentAgentIdRef.value || "main"}/sessions/${summary.sessionId}.jsonl`,
+              sessionLogPath: `~/.openclaw/agents/${currentAgentIdRef.value || "main"}/sessions/${summary.sessionId}${getSessionLogFileSuffix()}`,
               periodStart: new Date(summary.periodStart * 1000).toISOString(),
               periodEnd: new Date(summary.periodEnd * 1000).toISOString(),
               tag: summary.tag,
@@ -508,6 +528,7 @@ export function registerMemoryTools(
       userId,
       agentId,
       sessionId,
+      confirmCrossTenantScope,
       expandGraph: expandGraphParam,
       expandDepth: expandDepthParam,
     } = params as {
@@ -522,6 +543,7 @@ export function registerMemoryTools(
       userId?: string;
       agentId?: string;
       sessionId?: string;
+      confirmCrossTenantScope?: boolean;
       expandGraph?: boolean;
       expandDepth?: number;
     };
@@ -533,7 +555,11 @@ export function registerMemoryTools(
     // identity (via autoRecall.scopeFilter config) rather than accepted as tool parameters.
     // Accepting arbitrary scope filters allows users to access other users' private memories.
     // See docs/MEMORY-SCOPING.md "Secure Multi-Tenant Setup" for proper implementation.
-    const scopeFilter = buildToolScopeFilter({ userId, agentId, sessionId }, currentAgentIdRef.value, cfg);
+    const scopeFilter = buildToolScopeFilter(
+      { userId, agentId, sessionId, confirmCrossTenantScope },
+      currentAgentIdRef.value,
+      cfg,
+    );
     const logRecall = (hit: boolean) => {
       const maybeFactsDb = factsDb as { logRecall?: (hit: boolean) => void };
       if (typeof maybeFactsDb.logRecall === "function") {
@@ -970,6 +996,12 @@ export function registerMemoryTools(
               description: "⚠️ SECURITY: Caller-controlled parameter. Filter procedures for specific session.",
             }),
           ),
+          confirmCrossTenantScope: Type.Optional(
+            Type.Boolean({
+              description:
+                "When multiAgent.trustToolScopeParams is true, set true to confirm intentional cross-tenant scope use of userId/agentId/sessionId (#874).",
+            }),
+          ),
         }),
         async execute(_toolCallId: string, params: Record<string, unknown>) {
           try {
@@ -979,12 +1011,14 @@ export function registerMemoryTools(
               agentId,
               userId,
               sessionId,
+              confirmCrossTenantScope,
             } = params as {
               taskDescription: string;
               limit?: number;
               agentId?: string;
               userId?: string;
               sessionId?: string;
+              confirmCrossTenantScope?: boolean;
             };
             const q =
               typeof taskDescription === "string" && taskDescription.trim().length > 0 ? taskDescription.trim() : null;
@@ -996,7 +1030,11 @@ export function registerMemoryTools(
             }
 
             // Build scope filter (same logic as memory_recall)
-            const scopeFilter = buildToolScopeFilter({ userId, agentId, sessionId }, currentAgentIdRef.value, cfg);
+            const scopeFilter = buildToolScopeFilter(
+              { userId, agentId, sessionId, confirmCrossTenantScope },
+              currentAgentIdRef.value,
+              cfg,
+            );
 
             const procedures = factsDb.searchProcedures(
               q,

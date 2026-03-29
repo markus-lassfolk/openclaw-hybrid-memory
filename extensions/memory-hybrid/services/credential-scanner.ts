@@ -57,7 +57,8 @@ export function extractHostFromUrl(url: string): string {
       }
     }
   }
-  return "api"; // Safe default
+  // Explicit sentinel — avoids mis-attributing secrets to a generic "api" bucket (#873).
+  return "__unparsed-host__";
 }
 
 /**

@@ -577,7 +577,7 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
       ? embedding.deployment.trim()
       : undefined;
   const resolvedBatchSize =
-    typeof embedding?.batchSize === "number" && embedding.batchSize > 0 ? Math.floor(embedding.batchSize) : 50;
+    typeof embedding?.batchSize === "number" && embedding.batchSize > 0 ? Math.floor(embedding.batchSize) : 40;
 
   // preferredProviders: explicit list or infer from LLM config (align with failover / Ollama-as-tier)
   const preferredProvidersRaw = embedding?.preferredProviders;

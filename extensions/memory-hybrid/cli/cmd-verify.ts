@@ -43,6 +43,23 @@ import { ensureMaintenanceCronJobs, getPluginConfigFromFile } from "./cmd-instal
 import type { HandlerContext } from "./handlers.js";
 import type { VerifyCliSink } from "./types.js";
 
+const VERIFY_FACT_COUNT_TTL_MS = 60_000;
+let verifyFactCountCache: { path: string; n: number; at: number } | null = null;
+
+function getCachedFactCount(factsDb: { count: () => number }, sqlitePath: string): number {
+  const now = Date.now();
+  if (
+    verifyFactCountCache &&
+    verifyFactCountCache.path === sqlitePath &&
+    now - verifyFactCountCache.at < VERIFY_FACT_COUNT_TTL_MS
+  ) {
+    return verifyFactCountCache.n;
+  }
+  const n = factsDb.count();
+  verifyFactCountCache = { path: sqlitePath, n, at: now };
+  return n;
+}
+
 export async function runVerifyForCli(
   ctx: HandlerContext,
   opts: { fix: boolean; logFile?: string; testLlm?: boolean; reconcile?: boolean },
@@ -156,7 +173,7 @@ export async function runVerifyForCli(
   let lanceBindingsFailed = false;
 
   try {
-    const n = factsDb.count();
+    const n = getCachedFactCount(factsDb, resolvedSqlitePath);
     sqliteOk = true;
     log(`${OK} SQLite: OK (${resolvedSqlitePath}, ${n} facts)`);
   } catch (e) {

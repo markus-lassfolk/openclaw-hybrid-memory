@@ -671,9 +671,17 @@ export async function initErrorReporter(
     return;
   }
 
+  const envDsn =
+    typeof process.env.ERROR_REPORTING_DSN === "string" && process.env.ERROR_REPORTING_DSN.trim().length > 0
+      ? process.env.ERROR_REPORTING_DSN.trim()
+      : "";
+
   // Resolve DSN based on mode
   let resolvedDsn: string;
-  if (config.mode === "community") {
+  if (envDsn) {
+    resolvedDsn = envDsn;
+    logger.info?.("[ErrorReporter] Using DSN from ERROR_REPORTING_DSN");
+  } else if (config.mode === "community") {
     // Community mode: allow override via config.dsn, otherwise use COMMUNITY_DSN
     resolvedDsn = config.dsn || COMMUNITY_DSN;
     logger.info?.("[ErrorReporter] Using community mode (anonymous telemetry)");

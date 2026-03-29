@@ -10,7 +10,12 @@ import type { DecayClass } from "../config.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { pluginLogger } from "../utils/logger.js";
 
+/** Schema version for WAL entry JSON; bump when `data` shape changes (#872). */
+export const WAL_ENTRY_SCHEMA_VERSION = 1;
+
 export type WALEntry = {
+  /** Present on new writes; omitted on legacy lines (treated as version 1). */
+  schemaVersion?: number;
   id: string;
   timestamp: number;
   operation: "store" | "delete" | "update";
@@ -35,6 +40,10 @@ const WAL_REMOVE_PREFIX = '{"op":"remove","id":';
 
 function isWalEntry(obj: unknown): obj is WALEntry {
   if (typeof obj !== "object" || obj === null || !("id" in obj) || !("timestamp" in obj) || !("operation" in obj)) {
+    return false;
+  }
+  const sv = (obj as WALEntry).schemaVersion;
+  if (sv !== undefined && (typeof sv !== "number" || !Number.isFinite(sv) || sv < 1)) {
     return false;
   }
   const op = (obj as WALEntry).operation;

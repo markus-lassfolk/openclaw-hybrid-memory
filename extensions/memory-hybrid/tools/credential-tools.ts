@@ -12,7 +12,7 @@ import { stringEnum } from "../utils/typebox.js";
 import type { CredentialsDB } from "../backends/credentials-db.js";
 import { CREDENTIAL_TYPES, type CredentialType, type HybridMemoryConfig } from "../config.js";
 import { withErrorTracking } from "../utils/error-tracking.js";
-import { SECONDS_PER_DAY } from "../utils/constants.js";
+import { CREDENTIAL_NOTES_MAX_CHARS, CREDENTIAL_URL_MAX_CHARS, SECONDS_PER_DAY } from "../utils/constants.js";
 
 interface PluginContext {
   credentialsDb: CredentialsDB | null;
@@ -48,12 +48,23 @@ export function registerCredentialTools(ctx: PluginContext, api: ClawdbotPluginA
             expires?: number | null;
           };
           if (!credentialsDb) throw new Error("Credentials store not available");
-          withErrorTracking(() => credentialsDb.store({ service, type, value, url, notes, expires }), {
-            subsystem: "credentials",
-            operation: "credential-store",
-            phase: "runtime",
-            backend: "sqlite",
-          })();
+          const urlTrim =
+            typeof url === "string" && url.length > CREDENTIAL_URL_MAX_CHARS
+              ? url.slice(0, CREDENTIAL_URL_MAX_CHARS)
+              : url;
+          const notesTrim =
+            typeof notes === "string" && notes.length > CREDENTIAL_NOTES_MAX_CHARS
+              ? notes.slice(0, CREDENTIAL_NOTES_MAX_CHARS)
+              : notes;
+          withErrorTracking(
+            () => credentialsDb.store({ service, type, value, url: urlTrim, notes: notesTrim, expires }),
+            {
+              subsystem: "credentials",
+              operation: "credential-store",
+              phase: "runtime",
+              backend: "sqlite",
+            },
+          )();
           return {
             content: [{ type: "text", text: `Stored credential for ${service} (${type}).` }],
             details: { service, type },
@@ -96,8 +107,12 @@ export function registerCredentialTools(ctx: PluginContext, api: ClawdbotPluginA
           const warnDays = cfg.credentials.expiryWarningDays ?? 7;
           const nowSec = Math.floor(Date.now() / 1000);
           const expiresSoon = entry.expires != null && entry.expires - nowSec < warnDays * 24 * 3600;
+          const secLeft = entry.expires != null ? entry.expires - nowSec : 0;
+          const daysLeft = secLeft / SECONDS_PER_DAY;
           const expiryWarning = expiresSoon
-            ? ` [WARNING: Expires in ${Math.ceil((entry.expires! - nowSec) / SECONDS_PER_DAY)} days — consider rotating]`
+            ? daysLeft < 1
+              ? ` [WARNING: Expires in ${Math.max(1, Math.ceil(secLeft / 3600))} hours — consider rotating]`
+              : ` [WARNING: Expires in ${Math.ceil(daysLeft)} days — consider rotating]`
             : "";
           return {
             content: [
@@ -111,8 +126,6 @@ export function registerCredentialTools(ctx: PluginContext, api: ClawdbotPluginA
               type: entry.type,
               url: entry.url,
               expires: entry.expires,
-              value: entry.value,
-              sensitiveFields: ["value"],
             },
           };
         },

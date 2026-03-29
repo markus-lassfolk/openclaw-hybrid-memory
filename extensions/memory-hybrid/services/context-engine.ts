@@ -121,7 +121,13 @@ async function extractTextFromSessionFile(sessionFile: string): Promise<string> 
         continue;
       }
       if (!obj || typeof obj !== "object") continue;
-      const msg = (obj as Record<string, unknown>).message as Record<string, unknown> | undefined;
+      const rec = obj as Record<string, unknown>;
+      // Prefer structured outcome hints when present (less fragile than emoji scans — #899).
+      const structuredOutcome = rec.outcome ?? rec.episodeOutcome;
+      if (structuredOutcome === "success" || structuredOutcome === "failure" || structuredOutcome === "partial") {
+        parts.push(`[structured outcome=${structuredOutcome}]`);
+      }
+      const msg = rec.message as Record<string, unknown> | undefined;
       if (!msg || typeof msg !== "object") continue;
       const text = (msg.content as string) || (msg.text as string) || "";
       if (text) parts.push(text);

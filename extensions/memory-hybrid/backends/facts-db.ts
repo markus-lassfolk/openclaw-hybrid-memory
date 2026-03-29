@@ -31,6 +31,8 @@ import { tryRestrictSqliteDbFileMode } from "../utils/sqlite-file-perms.js";
 import { runFactsMigrations } from "./migrations/facts-migrations.js";
 import { searchFts } from "../services/fts-search.js";
 import { BaseSqliteStore } from "./base-sqlite-store.js";
+import { verifyFts5Support } from "./facts-db/db-connection.js";
+import { sanitizeFts5QueryForFacts } from "./facts-db/fts-text.js";
 import {
   batchGetReinforcementEvents as batchGetReinforcementEventsHelper,
   boostConfidence as boostConfidenceHelper,
@@ -91,18 +93,6 @@ export class FactsDB extends BaseSqliteStore {
   /** Cache TTL for known-entity list used by autoLinkEntities on every write. */
   private readonly KNOWN_ENTITIES_CACHE_TTL_MS = 30_000; // 30 seconds
 
-  /**
-   * Sanitize query for FTS5 MATCH operator: strip FTS5 special characters and operators.
-   * Removes: NOT, AND, OR, NEAR (case-insensitive), null bytes, *, :, {, }, (, ), and quotes.
-   */
-  private sanitizeFTS5Query(query: string): string {
-    return query
-      .replace(/\u0000/g, " ")
-      .replace(/['"*(){}:]/g, "")
-      .replace(/\b(NOT|AND|OR|NEAR)\b/gi, "")
-      .trim();
-  }
-
   constructor(dbPath: string, options?: { fuzzyDedupe?: boolean }) {
     mkdirSync(dirname(dbPath), { recursive: true });
     const db = new DatabaseSync(dbPath);
@@ -146,6 +136,8 @@ export class FactsDB extends BaseSqliteStore {
     // NOTE: tags column is added later by migrateFtsTagsSupport() once the facts.tags
     // column exists (via migrateTagsColumn). For brand-new databases the FTS5 starts
     // without tags and is immediately upgraded by the migration sequence.
+    // porter stemmer indexes stemmed forms; user MATCH strings from sanitizeFts5QueryForFacts / fts-search
+    // use quoted tokens — see fts-search buildFts5Query() notes on tokenizer alignment (#898).
     this.liveDb.exec(`
       CREATE VIRTUAL TABLE IF NOT EXISTS facts_fts USING fts5(
         text,
@@ -193,43 +185,9 @@ export class FactsDB extends BaseSqliteStore {
    * hybrid retrieval to silently degrade to vector-only once the FTS strategy
    * starts failing. Probe FTS5 explicitly and fail fast with an actionable error.
    */
+  /** @deprecated Prefer importing `verifyFts5Support` from `./facts-db/db-connection.js` (kept for tests). */
   static verifyFts5Support(db: DatabaseSync): void {
-    let fts5CompileOption = false;
-    try {
-      const row = db.prepare("SELECT sqlite_compileoption_used('ENABLE_FTS5') as fts5").get() as { fts5: number };
-      fts5CompileOption = row.fts5 === 1;
-    } catch {
-      // Best-effort only
-    }
-
-    const probeTable = "temp.memory_hybrid_fts5_probe";
-    try {
-      db.exec(`DROP TABLE IF EXISTS ${probeTable}`);
-      db.exec(`CREATE VIRTUAL TABLE ${probeTable} USING fts5(content)`);
-      db.exec(`DROP TABLE ${probeTable}`);
-    } catch (err) {
-      try {
-        db.exec(`DROP TABLE IF EXISTS ${probeTable}`);
-      } catch {
-        // Best-effort cleanup only.
-      }
-      const reason = err instanceof Error ? err.message : String(err);
-      const finalError = new Error(
-        `memory-hybrid: SQLite FTS5 capability check failed during startup. Hybrid search would silently degrade to vector-only, so plugin initialization is aborted. Use a Node.js/SQLite runtime with FTS5 enabled. Original error: ${reason}`,
-      );
-
-      capturePluginError(finalError, {
-        operation: "startup-fts5-probe",
-        severity: "error",
-        subsystem: "facts",
-        context: {
-          fts5_compileoption: String(fts5CompileOption),
-          fts5_available: "false",
-        },
-      });
-
-      throw finalError;
-    }
+    verifyFts5Support(db);
   }
 
   /** Create reinforcement_log table for per-event context (#259). */
@@ -1414,84 +1372,60 @@ export class FactsDB extends BaseSqliteStore {
     // before the freeze expires
     const adjustedExpiresAt =
       decayFreezeUntil !== null && expiresAt !== null && expiresAt < decayFreezeUntil ? decayFreezeUntil : expiresAt;
-    this.liveDb
-      .prepare(
-        `INSERT INTO facts (id, text, why, category, importance, entity, key, value, source, created_at, decay_class, expires_at, last_confirmed_at, confidence, summary, embedding_model, normalized_hash, source_date, tags, valid_from, valid_until, supersedes_id, tier, scope, scope_target, procedure_type, success_count, last_validated, source_sessions, decay_freeze_until, provenance_session, source_turn, extraction_method, extraction_confidence, preserve_until, preserve_tags)
+    const tx = createTransaction(this.liveDb, () => {
+      this.liveDb
+        .prepare(
+          `INSERT INTO facts (id, text, why, category, importance, entity, key, value, source, created_at, decay_class, expires_at, last_confirmed_at, confidence, summary, embedding_model, normalized_hash, source_date, tags, valid_from, valid_until, supersedes_id, tier, scope, scope_target, procedure_type, success_count, last_validated, source_sessions, decay_freeze_until, provenance_session, source_turn, extraction_method, extraction_confidence, preserve_until, preserve_tags)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .run(
-        id,
-        entry.text,
-        why,
-        entry.category,
-        importance,
-        entry.entity,
-        entry.key,
-        entry.value,
-        entry.source,
-        nowSec,
-        decayClass,
-        adjustedExpiresAt,
-        nowSec,
-        confidence,
-        summary,
-        embeddingModel,
-        normHash,
-        sourceDate,
-        tagsStr,
-        validFrom,
-        validUntil,
-        supersedesId,
-        tier,
-        scope,
-        scopeTarget,
-        procedureType,
-        successCount,
-        lastValidated,
-        sourceSessionsStr,
-        decayFreezeUntil,
-        provenanceSession,
-        sourceTurn,
-        extractionMethod,
-        extractionConfidence,
-        preserveUntil,
-        preserveTagsStr,
-      );
-
-    return {
-      ...entry,
-      id,
-      createdAt: nowSec,
-      decayClass,
-      expiresAt: adjustedExpiresAt,
-      lastConfirmedAt: nowSec,
-      confidence,
-      summary: summary ?? undefined,
-      embeddingModel,
-      sourceDate,
-      scope,
-      scopeTarget: scopeTarget ?? undefined,
-      tags: tags ?? undefined,
-      validFrom,
-      validUntil: validUntil ?? undefined,
-      supersedesId: supersedesId ?? undefined,
-      tier,
-      procedureType: procedureType ?? undefined,
-      successCount,
-      lastValidated: lastValidated ?? undefined,
-      sourceSessions: sourceSessionsRaw ?? undefined,
-      provenanceSession,
-      sourceTurn,
-      extractionMethod,
-      extractionConfidence,
-      preserveUntil: preserveUntil ?? undefined,
-      preserveTags: preserveTags ?? undefined,
-      // normalize to null (not undefined) to match rowToEntry() behaviour
-      decayFreezeUntil: decayFreezeUntil,
-      // #237: access tracking columns start at zero for new facts
-      accessCount: 0,
-      lastAccessedAt: null,
-    };
+        )
+        .run(
+          id,
+          entry.text,
+          why,
+          entry.category,
+          importance,
+          entry.entity,
+          entry.key,
+          entry.value,
+          entry.source,
+          nowSec,
+          decayClass,
+          adjustedExpiresAt,
+          nowSec,
+          confidence,
+          summary,
+          embeddingModel,
+          normHash,
+          sourceDate,
+          tagsStr,
+          validFrom,
+          validUntil,
+          supersedesId,
+          tier,
+          scope,
+          scopeTarget,
+          procedureType,
+          successCount,
+          lastValidated,
+          sourceSessionsStr,
+          decayFreezeUntil,
+          provenanceSession,
+          sourceTurn,
+          extractionMethod,
+          extractionConfidence,
+          preserveUntil,
+          preserveTagsStr,
+        );
+    });
+    tx();
+    if (supersedesId) {
+      this.invalidateSupersededCache();
+    }
+    const loaded = this.getById(id);
+    if (!loaded) {
+      throw new Error(`memory-hybrid: store() failed to read back inserted fact ${id}`);
+    }
+    return loaded;
   }
 
   /** Update recall_count and last_accessed for facts (public for progressive disclosure). Bulk UPDATE to avoid N+1. */
@@ -2038,7 +1972,7 @@ export class FactsDB extends BaseSqliteStore {
       diversityWeight = 1.0,
     } = options;
 
-    const sanitized = this.sanitizeFTS5Query(query);
+    const sanitized = sanitizeFts5QueryForFacts(query);
     const safeQuery = sanitized
       .split(/\s+/)
       .filter((w) => w.length > 1)
@@ -2316,7 +2250,7 @@ export class FactsDB extends BaseSqliteStore {
     if (results.length < limit) {
       const remaining = limit - results.length;
       const seenIds = new Set(results.map((r) => r.id));
-      const sanitized = this.sanitizeFTS5Query(text);
+      const sanitized = sanitizeFts5QueryForFacts(text);
       const words = sanitized
         .split(/\s+/)
         .filter((w) => w.length > 2)
@@ -3891,7 +3825,7 @@ export class FactsDB extends BaseSqliteStore {
 
   /** Find procedure by task_pattern hash or normalized match (for dedupe). */
   findProcedureByTaskPattern(taskPattern: string, limit = 5): ProcedureEntry[] {
-    const sanitized = this.sanitizeFTS5Query(taskPattern);
+    const sanitized = sanitizeFts5QueryForFacts(taskPattern);
     const safeQuery = sanitized
       .split(/\s+/)
       .filter((w) => w.length > 1)
@@ -3926,7 +3860,7 @@ export class FactsDB extends BaseSqliteStore {
     reinforcementBoost = 0.1,
     scopeFilter?: ScopeFilter,
   ): ProcedureEntry[] {
-    const sanitized = this.sanitizeFTS5Query(taskDescription);
+    const sanitized = sanitizeFts5QueryForFacts(taskDescription);
     const safeQuery = sanitized
       .split(/\s+/)
       .filter((w) => w.length > 1)
@@ -4000,7 +3934,7 @@ export class FactsDB extends BaseSqliteStore {
     reinforcementBoost = 0.1,
     scopeFilter?: ScopeFilter,
   ): Array<ProcedureEntry & { relevanceScore: number }> {
-    const sanitized = this.sanitizeFTS5Query(taskDescription);
+    const sanitized = sanitizeFts5QueryForFacts(taskDescription);
     const safeQuery = sanitized
       .split(/\s+/)
       .filter((w) => w.length > 1)
@@ -5378,7 +5312,7 @@ export class FactsDB extends BaseSqliteStore {
 
     // FTS text search on event + context
     if (query?.trim()) {
-      const sanitized = this.sanitizeFTS5Query(query.trim());
+      const sanitized = sanitizeFts5QueryForFacts(query.trim());
       const words = sanitized
         .split(/\s+/)
         .filter((w) => w.length > 1)

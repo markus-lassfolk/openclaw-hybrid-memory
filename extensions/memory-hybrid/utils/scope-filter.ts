@@ -10,21 +10,31 @@ import { addOperationBreadcrumb } from "../services/error-reporter.js";
 import type { ScopeFilter } from "../types/memory.js";
 
 export function buildToolScopeFilter(
-  params: { userId?: string | null; agentId?: string | null; sessionId?: string | null },
+  params: {
+    userId?: string | null;
+    agentId?: string | null;
+    sessionId?: string | null;
+    /** When multiAgent.trustToolScopeParams is true, must be true to apply caller scope (#874). */
+    confirmCrossTenantScope?: boolean;
+  },
   currentAgent: string | null,
   config: {
     multiAgent: { orchestratorId: string; trustToolScopeParams?: boolean };
     autoRecall: { scopeFilter?: ScopeFilter };
   },
 ): ScopeFilter | undefined {
-  const { userId, agentId, sessionId } = params;
+  const { userId, agentId, sessionId, confirmCrossTenantScope } = params;
 
   // Security: Only trust tool params if explicitly enabled in config
   const trustParams = config.multiAgent.trustToolScopeParams === true;
-  if ((userId || agentId || sessionId) && trustParams) {
-    return { userId: userId ?? null, agentId: agentId ?? null, sessionId: sessionId ?? null };
+  const hasScopeParams = Boolean(userId || agentId || sessionId);
+  if (hasScopeParams && trustParams) {
+    if (confirmCrossTenantScope === true) {
+      return { userId: userId ?? null, agentId: agentId ?? null, sessionId: sessionId ?? null };
+    }
+    addOperationBreadcrumb("scope-filter", "cross-tenant-scope-rejected-no-confirmation");
   }
-  if ((userId || agentId || sessionId) && !trustParams) {
+  if (hasScopeParams && !trustParams) {
     // Debug: Log when explicit scope params are ignored for security
     addOperationBreadcrumb("scope-filter", "params-ignored-security");
   }

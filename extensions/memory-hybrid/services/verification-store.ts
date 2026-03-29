@@ -13,6 +13,7 @@ import { expandTilde } from "../utils/path.js";
 import { createTransaction } from "../utils/sqlite-transaction.js";
 import { VAULT_POINTER_PREFIX } from "./auto-capture.js";
 import { capturePluginError } from "./error-reporter.js";
+import { SQLITE_BUSY_TIMEOUT_MS } from "../utils/constants.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -214,7 +215,7 @@ export class VerificationStore {
 
   private applyPragmas(): void {
     this.db.exec("PRAGMA journal_mode = WAL");
-    this.db.exec("PRAGMA busy_timeout = 5000");
+    this.db.exec(`PRAGMA busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
     this.db.exec("PRAGMA synchronous = NORMAL");
   }
 

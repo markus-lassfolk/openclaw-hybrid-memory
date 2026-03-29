@@ -13,18 +13,10 @@ export const GOOGLE_EMBEDDING_BASE_URL = "https://generativelanguage.googleapis.
 
 /**
  * Known Google Gemini embedding models at the OpenAI-compatible endpoint
- * (generativelanguage.googleapis.com/v1beta/openai/). The endpoint expects
- * gemini-embedding-001 (text), gemini-embedding-2-preview (multimodal).
- * text-embedding-004/005 were retired by Google in March 2026 and no longer
- * resolve; gemini-embedding-001 is the current default.
+ * (generativelanguage.googleapis.com/v1beta/openai/). Retired model names are
+ * not listed here — unknown names fall back to GOOGLE_EMBED_DEFAULT_MODEL (#886).
  */
-export const KNOWN_GOOGLE_EMBED_MODELS = new Set([
-  "gemini-embedding-001",
-  "gemini-embedding-2-preview",
-  // Retired aliases — kept for recognition/migration only; do not use for new calls
-  "text-embedding-005",
-  "text-embedding-004",
-]);
+export const KNOWN_GOOGLE_EMBED_MODELS = new Set(["gemini-embedding-001", "gemini-embedding-2-preview"]);
 
 /** Default Google embedding model at the OpenAI-compatible endpoint. */
 export const GOOGLE_EMBED_DEFAULT_MODEL = "gemini-embedding-001";
