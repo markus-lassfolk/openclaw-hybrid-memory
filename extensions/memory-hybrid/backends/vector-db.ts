@@ -1150,12 +1150,7 @@ export class VectorDB {
 
         // eslint-disable-next-line no-constant-condition
         while (true) {
-          const rows = await table
-            .query()
-            .select(["id"])
-            .limit(batchSize)
-            .offset(offset)
-            .toArray();
+          const rows = await table.query().select(["id"]).limit(batchSize).offset(offset).toArray();
 
           if (rows.length === 0) {
             break;

@@ -66,7 +66,7 @@ export interface GraphFactLookup {
   expandGraphWithCTE?(
     seedFactIds: string[],
     maxDepth: number,
-    options?: { asOf?: number; scopeFilter?: unknown }
+    options?: { asOf?: number; scopeFilter?: unknown },
   ): Array<{
     factId: string;
     seedId: string;

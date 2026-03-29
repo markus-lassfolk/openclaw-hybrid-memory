@@ -1114,7 +1114,9 @@ export async function runVerifyForCli(
         const sqliteOrphans = Array.from(sqliteIds).filter((id) => !vectorIdSet.has(id));
 
         if (vectorOrphans.length === 0 && sqliteOrphans.length === 0) {
-          log(`${OK} Reconciliation: SQLite and LanceDB are in sync (${sqliteIds.size} facts, ${vectorIds.length} vectors)`);
+          log(
+            `${OK} Reconciliation: SQLite and LanceDB are in sync (${sqliteIds.size} facts, ${vectorIds.length} vectors)`,
+          );
         } else {
           allOk = false;
           if (vectorOrphans.length > 0) {

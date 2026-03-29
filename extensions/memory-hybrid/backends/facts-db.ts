@@ -2495,7 +2495,7 @@ export class FactsDB extends BaseSqliteStore {
   expandGraphWithCTE(
     seedFactIds: string[],
     maxDepth: number,
-    options?: { asOf?: number; scopeFilter?: unknown }
+    options?: { asOf?: number; scopeFilter?: unknown },
   ): Array<{
     factId: string;
     seedId: string;
@@ -2565,9 +2565,7 @@ export class FactsDB extends BaseSqliteStore {
   getAllIds(): string[] {
     const nowSec = Math.floor(Date.now() / 1000);
     const rows = this.liveDb
-      .prepare(
-        "SELECT id FROM facts WHERE superseded_at IS NULL AND (expires_at IS NULL OR expires_at > ?)",
-      )
+      .prepare("SELECT id FROM facts WHERE superseded_at IS NULL AND (expires_at IS NULL OR expires_at > ?)")
       .all(nowSec) as Array<{ id: string }>;
     return rows.map((row) => row.id);
   }

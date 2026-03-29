@@ -167,15 +167,12 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
     // the prompt build. When a reliable capability signal for `appendSystemContext`
     // becomes available in the plugin SDK, this hook can be extended to prefer that
     // field without risking duplicate instructions.
-    api.on(
-      "before_prompt_build",
-      (): undefined | { prependContext: string } => {
-        if (!staticMemoryInstructions) {
-          staticMemoryInstructions = buildStaticInstructions();
-        }
-        return { prependContext: staticMemoryInstructions };
-      },
-    );
+    api.on("before_prompt_build", (): undefined | { prependContext: string } => {
+      if (!staticMemoryInstructions) {
+        staticMemoryInstructions = buildStaticInstructions();
+      }
+      return { prependContext: staticMemoryInstructions };
+    });
   }
 
   // Issue #275 — Compaction Lifecycle Hooks

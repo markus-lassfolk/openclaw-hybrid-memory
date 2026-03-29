@@ -270,7 +270,7 @@ export function buildContextBlock(
   if (addedFacts === 0) return null;
 
   lines.push(closingLine);
-  
+
   // Ensure the final joined string strictly satisfies the budget
   while (lines.length > 3 && tokenBudget !== undefined && estimateTokenCount(lines.join("\n")) > tokenBudget) {
     lines.splice(lines.length - 2, 1);

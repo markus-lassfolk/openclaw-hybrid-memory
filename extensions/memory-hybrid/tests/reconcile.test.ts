@@ -48,10 +48,7 @@ function storeFactInSqlite(
   return entry.id;
 }
 
-async function storeVectorWithId(
-  vdb: InstanceType<typeof VectorDB>,
-  id: string,
-): Promise<void> {
+async function storeVectorWithId(vdb: InstanceType<typeof VectorDB>, id: string): Promise<void> {
   await vdb.store({ id, text: "A test memory fact", vector: makeVector(), importance: 0.7, category: "fact" });
 }
 
@@ -191,7 +188,13 @@ describe("Reconciliation orphan detection", () => {
   it("detects vector orphans (LanceDB has ID that SQLite does not)", async () => {
     // Store a vector with a synthetic ID that is NOT present in SQLite
     const orphanId = "aaaaaaaa-0000-4000-8000-000000000001";
-    await vectorDb.store({ id: orphanId, text: "orphan vector", vector: makeVector(), importance: 0.5, category: "fact" });
+    await vectorDb.store({
+      id: orphanId,
+      text: "orphan vector",
+      vector: makeVector(),
+      importance: 0.5,
+      category: "fact",
+    });
 
     const sqliteIds = new Set(factsDb.getAllIds());
     const vectorIds = await vectorDb.getAllIds();

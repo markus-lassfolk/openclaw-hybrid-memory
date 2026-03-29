@@ -152,7 +152,7 @@ export function expandGraphWithCTE(
   db: DatabaseSync,
   seedFactIds: string[],
   maxDepth: number,
-  options?: { asOf?: number; scopeFilter?: any }
+  options?: { asOf?: number; scopeFilter?: any },
 ): Array<{
   factId: string;
   seedId: string;
@@ -180,7 +180,7 @@ export function expandGraphWithCTE(
   if (asOf != null || scopeFilter) {
     factJoinOut = `JOIN facts f ON f.id = ml.target_fact_id`;
     factJoinIn = `JOIN facts f ON f.id = ml.source_fact_id`;
-    
+
     let baseWhere = "";
     if (asOf != null) {
       baseWhere += ` AND COALESCE(f.valid_from, f.created_at) <= ? AND (f.valid_until IS NULL OR f.valid_until > ?)`;
@@ -291,13 +291,9 @@ export function expandGraphWithCTE(
     ORDER BY hop_count ASC, fact_id ASC
   `;
 
-  const rows = db.prepare(query).all(
-    JSON.stringify(seedFactIds),
-    maxDepth,
-    ...filterParamsOut,
-    maxDepth,
-    ...filterParamsIn
-  ) as Array<{
+  const rows = db
+    .prepare(query)
+    .all(JSON.stringify(seedFactIds), maxDepth, ...filterParamsOut, maxDepth, ...filterParamsIn) as Array<{
     fact_id: string;
     seed_id: string;
     hop_count: number;

@@ -449,7 +449,6 @@ describe("HybridMemoryContextEngine.info", () => {
 // SDK #274: assemble() — budget-aware context injection
 // ---------------------------------------------------------------------------
 
-
 describe("HybridMemoryContextEngine.assemble()", () => {
   it("returns messages unchanged and estimatedTokens=0 when store is empty", async () => {
     const engine = makeEngine();
@@ -504,16 +503,16 @@ describe("HybridMemoryContextEngine.assemble()", () => {
     // Full budget should include more content
     const fullLength = resultFull.systemPromptAddition?.length ?? 0;
     const tightLength = resultTight.systemPromptAddition?.length ?? 0;
-    
+
     expect(resultFull.systemPromptAddition).toBeDefined();
     expect(resultTight.systemPromptAddition).toBeDefined();
-    
+
     expect(fullLength).toBeGreaterThan(tightLength);
-    
+
     // Check exact enforcement on tight
     const tightTokens = estimateTokenCount(resultTight.systemPromptAddition!);
     expect(tightTokens).toBeLessThanOrEqual(150);
-    
+
     // Verify some facts are missing in tight vs full
     expect(resultFull.systemPromptAddition).toContain("Fact number 9");
     expect(resultTight.systemPromptAddition).not.toContain("Fact number 9");
@@ -614,10 +613,10 @@ describe("buildContextBlock()", () => {
 
     expect(blockFull).not.toBeNull();
     expect(blockSmall).not.toBeNull();
-    
+
     const smallTokens = estimateTokenCount(blockSmall!);
     expect(smallTokens).toBeLessThanOrEqual(50);
-    
+
     // Ensure blockSmall has fewer entries
     expect(blockSmall!.length).toBeLessThan(blockFull!.length);
     expect(blockFull).toContain("Fact 19");
