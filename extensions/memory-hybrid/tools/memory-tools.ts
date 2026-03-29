@@ -361,7 +361,7 @@ export function registerMemoryTools(
           auditAppend({
             agentId: agentIdForAudit(),
             action: "memory_recall",
-            target: null,
+            target: undefined,
             outcome: "failed",
             error: err instanceof Error ? err.message : String(err),
             sessionId: api.context?.sessionId ?? undefined,
@@ -638,7 +638,7 @@ export function registerMemoryTools(
       auditAppend({
         agentId: agentIdForAudit(),
         action: "memory_recall",
-        target: null,
+        target: undefined,
         outcome: "partial",
         durationMs: Date.now() - recallStartedAt,
         sessionId: api.context?.sessionId ?? undefined,
@@ -2005,7 +2005,7 @@ export function registerMemoryTools(
           auditAppend({
             agentId: agentIdForAudit(),
             action: "memory_store",
-            target: null,
+            target: undefined,
             outcome: "failed",
             error: err instanceof Error ? err.message : String(err),
             sessionId: api.context?.sessionId ?? undefined,
