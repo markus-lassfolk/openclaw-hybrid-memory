@@ -2556,6 +2556,23 @@ export class FactsDB extends BaseSqliteStore {
   }
 
   /**
+   * Return all active fact IDs.
+   * Active = not expired and not superseded (same filter as getAll() default).
+   * Keeping this filter in sync with getAll() ensures that the set of IDs
+   * returned here is consistent with what callers expect to be "live" facts.
+   * Used by the reconcile command to detect orphan entries.
+   */
+  getAllIds(): string[] {
+    const nowSec = Math.floor(Date.now() / 1000);
+    const rows = this.liveDb
+      .prepare(
+        "SELECT id FROM facts WHERE superseded_at IS NULL AND (expires_at IS NULL OR expires_at > ?)",
+      )
+      .all(nowSec) as Array<{ id: string }>;
+    return rows.map((row) => row.id);
+  }
+
+  /**
    * Get a batch of non-expired facts (for migration without loading all into memory).
    * Same ordering and filter as getAll; offset/limit applied.
    */

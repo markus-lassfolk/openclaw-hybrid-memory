@@ -45,7 +45,7 @@ import type { VerifyCliSink } from "./types.js";
 
 export async function runVerifyForCli(
   ctx: HandlerContext,
-  opts: { fix: boolean; logFile?: string; testLlm?: boolean },
+  opts: { fix: boolean; logFile?: string; testLlm?: boolean; reconcile?: boolean },
   sink: VerifyCliSink,
 ): Promise<void> {
   const { factsDb, vectorDb, embeddings, cfg, credentialsDb, resolvedSqlitePath, resolvedLancePath, openai } = ctx;
@@ -1094,7 +1094,67 @@ export async function runVerifyForCli(
     log(`\nLog file not found: ${opts.logFile}`);
   }
 
-  const allOk = configOk && sqliteOk && lanceOk && embeddingOk && (!cfg.credentials.enabled || credentialsOk);
+  let allOk = configOk && sqliteOk && lanceOk && embeddingOk && (!cfg.credentials.enabled || credentialsOk);
+
+  // ───── Reconciliation Check ─────
+  if (opts.reconcile) {
+    log("\n───── Vector DB Reconciliation ─────");
+    if (!sqliteOk || !lanceOk) {
+      log(`${FAIL} Reconciliation skipped — both SQLite and LanceDB must be healthy to reconcile.`);
+      allOk = false;
+    } else {
+      try {
+        const sqliteIds = new Set(factsDb.getAllIds());
+        const vectorIds = await vectorDb.getAllIds();
+
+        // Vector orphans: IDs in LanceDB that have no corresponding SQLite fact.
+        const vectorOrphans = vectorIds.filter((id) => !sqliteIds.has(id));
+        // SQLite orphans: active facts in SQLite with no vector in LanceDB.
+        const vectorIdSet = new Set(vectorIds);
+        const sqliteOrphans = Array.from(sqliteIds).filter((id) => !vectorIdSet.has(id));
+
+        if (vectorOrphans.length === 0 && sqliteOrphans.length === 0) {
+          log(`${OK} Reconciliation: SQLite and LanceDB are in sync (${sqliteIds.size} facts, ${vectorIds.length} vectors)`);
+        } else {
+          allOk = false;
+          if (vectorOrphans.length > 0) {
+            log(`${FAIL} Vector orphans (in LanceDB but not SQLite): ${vectorOrphans.length}`);
+            vectorOrphans.slice(0, 10).forEach((id) => log(`  - ${id}`));
+            if (vectorOrphans.length > 10) log(`  … and ${vectorOrphans.length - 10} more`);
+            if (opts.fix) {
+              let deleted = 0;
+              let failed = 0;
+              for (const id of vectorOrphans) {
+                try {
+                  await vectorDb.delete(id);
+                  deleted++;
+                } catch {
+                  failed++;
+                }
+              }
+              log(`  → Deleted ${deleted} orphan vector(s) from LanceDB${failed > 0 ? ` (${failed} failed)` : ""}.`);
+            } else {
+              log(`  → Run with --fix to delete these orphan vectors from LanceDB.`);
+            }
+            issues.push(`${vectorOrphans.length} orphan vector(s) in LanceDB with no matching SQLite fact`);
+          }
+          if (sqliteOrphans.length > 0) {
+            const WARN = noEmoji ? "[WARN]" : "⚠️";
+            log(`${WARN} SQLite orphans (facts in SQLite with no vector): ${sqliteOrphans.length}`);
+            sqliteOrphans.slice(0, 10).forEach((id) => log(`  - ${id}`));
+            if (sqliteOrphans.length > 10) log(`  … and ${sqliteOrphans.length - 10} more`);
+            log(`  → Re-run the plugin or use the re-index command to rebuild missing vectors.`);
+            issues.push(`${sqliteOrphans.length} SQLite fact(s) without corresponding vectors in LanceDB`);
+          }
+        }
+      } catch (e) {
+        log(`${FAIL} Reconciliation: FAIL — ${String(e)}`);
+        allOk = false;
+        capturePluginError(e as Error, { subsystem: "cli", operation: "runVerifyForCli:reconcile" });
+      }
+    }
+  }
+
   if (allOk) {
     log("\nAll checks passed.");
     if (restartPending) {
