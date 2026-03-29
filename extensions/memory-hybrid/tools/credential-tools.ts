@@ -109,11 +109,16 @@ export function registerCredentialTools(ctx: PluginContext, api: ClawdbotPluginA
           const expiresSoon = entry.expires != null && entry.expires - nowSec < warnDays * 24 * 3600;
           const secLeft = entry.expires != null ? entry.expires - nowSec : 0;
           const daysLeft = secLeft / SECONDS_PER_DAY;
-          const expiryWarning = expiresSoon
-            ? daysLeft < 1
-              ? ` [WARNING: Expires in ${Math.max(1, Math.ceil(secLeft / 3600))} hours — consider rotating]`
-              : ` [WARNING: Expires in ${Math.ceil(daysLeft)} days — consider rotating]`
-            : "";
+          let expiryWarning = "";
+          if (expiresSoon) {
+            if (secLeft <= 0) {
+              expiryWarning = " [WARNING: Credential has expired — rotate immediately]";
+            } else if (daysLeft < 1) {
+              expiryWarning = ` [WARNING: Expires in ${Math.ceil(secLeft / 3600)} hours — consider rotating]`;
+            } else {
+              expiryWarning = ` [WARNING: Expires in ${Math.ceil(daysLeft)} days — consider rotating]`;
+            }
+          }
           return {
             content: [
               {
@@ -127,8 +132,8 @@ export function registerCredentialTools(ctx: PluginContext, api: ClawdbotPluginA
               url: entry.url,
               expires: entry.expires,
               value: entry.value,
+              sensitiveFields: ["value"],
             },
-            sensitiveFields: ["value"],
           };
         },
       },
