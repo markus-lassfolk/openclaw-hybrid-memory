@@ -112,7 +112,7 @@ export function buildFts5Query(raw: string): string | null {
   return tokens
     .map((t) => {
       if (/^[a-zA-Z0-9_]+$/.test(t) && t.length >= 3) {
-        return `( "${t}" OR ${t}* )`;
+        return `( "${t}" OR "${t}" * )`;
       }
       return `"${t}"`;
     })

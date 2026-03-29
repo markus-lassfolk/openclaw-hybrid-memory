@@ -31,7 +31,7 @@ export function buildToolScopeFilter(
   if (hasScopeParams && trustParams && confirmCrossTenantScope) {
     return { userId: userId ?? null, agentId: agentId ?? null, sessionId: sessionId ?? null };
   }
-  if (hasScopeParams && !trustParams) {
+  if (hasScopeParams && (!trustParams || !confirmCrossTenantScope)) {
     // Debug: Log when explicit scope params are ignored for security
     addOperationBreadcrumb("scope-filter", "params-ignored-security");
   }
@@ -42,6 +42,10 @@ export function buildToolScopeFilter(
       agentId: currentAgent,
       sessionId: config.autoRecall.scopeFilter?.sessionId ?? null,
     };
+  }
+
+  if (config.autoRecall.scopeFilter) {
+    return config.autoRecall.scopeFilter;
   }
   return undefined;
 }
