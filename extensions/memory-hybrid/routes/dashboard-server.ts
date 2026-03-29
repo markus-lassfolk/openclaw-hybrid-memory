@@ -81,8 +81,14 @@ export interface TaskQueueItem {
   details?: string;
 }
 
-import type { ForgeTaskItem } from "../types/dashboard-types.js";
-export type { ForgeTaskItem };
+export interface ForgeTaskItem {
+  agent?: string;
+  task: string;
+  workdir?: string;
+  pid?: number;
+  started_at?: string;
+  status?: string;
+}
 
 export interface GitActivity {
   prs: Array<{
@@ -865,14 +871,7 @@ export async function createDashboardServer(ctx: DashboardContext, port: number)
   const server = createServer((req, res) => {
     const url = req.url ?? "/";
     const pathname = url.split("?")[0];
-    let searchParams: URLSearchParams;
-    try {
-      searchParams = new URL(url, "http://127.0.0.1").searchParams;
-    } catch {
-      res.writeHead(400, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: "invalid request URL" }));
-      return;
-    }
+    const searchParams = new URL(url, "http://127.0.0.1").searchParams;
 
     if (pathname === "/graph" || pathname === "/graph.html") {
       res.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-cache" });
@@ -891,9 +890,9 @@ export async function createDashboardServer(ctx: DashboardContext, port: number)
         res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-cache" });
         res.end(body);
       } catch (err: unknown) {
-        ctx.logger?.error?.(String(err));
         res.writeHead(500, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: "Internal Server Error" }));
+        pluginLogger.error(`[dashboard-server] /api/graph: ${err instanceof Error ? err.message : String(err)}`);
+        res.end(JSON.stringify({ error: "InternalServerError" }));
       }
       return;
     }
@@ -905,9 +904,9 @@ export async function createDashboardServer(ctx: DashboardContext, port: number)
         res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-cache" });
         res.end(body);
       } catch (err: unknown) {
-        ctx.logger?.error?.(String(err));
         res.writeHead(500, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: "Internal Server Error" }));
+        pluginLogger.error(`[dashboard-server] /api/graph/recall: ${err instanceof Error ? err.message : String(err)}`);
+        res.end(JSON.stringify({ error: "InternalServerError" }));
       }
       return;
     }
@@ -919,9 +918,8 @@ export async function createDashboardServer(ctx: DashboardContext, port: number)
           res.end(JSON.stringify(payload));
         })
         .catch((err: unknown) => {
-          ctx.logger?.error?.(String(err));
           res.writeHead(500, { "Content-Type": "application/json" });
-          res.end(JSON.stringify({ error: "Internal Server Error" }));
+          res.end(JSON.stringify({ error: "InternalServerError" }));
         });
       return;
     }
@@ -932,9 +930,11 @@ export async function createDashboardServer(ctx: DashboardContext, port: number)
         res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-cache" });
         res.end(body);
       } catch (err: unknown) {
-        ctx.logger?.error?.(String(err));
         res.writeHead(500, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: "Internal Server Error" }));
+        pluginLogger.error(
+          `[dashboard-server] /api/audit/summary: ${err instanceof Error ? err.message : String(err)}`,
+        );
+        res.end(JSON.stringify({ error: "InternalServerError" }));
       }
       return;
     }
@@ -950,20 +950,18 @@ export async function createDashboardServer(ctx: DashboardContext, port: number)
         const sinceMs = Date.now() - hours * 3600 * 1000;
         const agentId = searchParams.get("agent") ?? undefined;
         const outcome = searchParams.get("outcome") as "success" | "partial" | "failed" | null;
-        const targetContains = searchParams.get("targetContains") ?? searchParams.get("target") ?? undefined;
         const rows = ctx.auditStore.query({
           sinceMs,
           agentId,
           outcome: outcome === "success" || outcome === "partial" || outcome === "failed" ? outcome : undefined,
-          targetContains,
           limit: 2000,
         });
         res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-cache" });
         res.end(JSON.stringify({ events: rows }));
       } catch (err: unknown) {
-        ctx.logger?.error?.(String(err));
         res.writeHead(500, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: "Internal Server Error" }));
+        pluginLogger.error(`[dashboard-server] /api/audit/events: ${err instanceof Error ? err.message : String(err)}`);
+        res.end(JSON.stringify({ error: "InternalServerError" }));
       }
       return;
     }
@@ -979,9 +977,8 @@ export async function createDashboardServer(ctx: DashboardContext, port: number)
           res.end(body);
         })
         .catch((err: unknown) => {
-          ctx.logger?.error?.(String(err));
           res.writeHead(500, { "Content-Type": "application/json" });
-          res.end(JSON.stringify({ error: "Internal Server Error" }));
+          res.end(JSON.stringify({ error: "InternalServerError" }));
         });
     } else if (pathname === "/" || pathname === "/index.html") {
       res.writeHead(200, {
