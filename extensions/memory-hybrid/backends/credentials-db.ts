@@ -6,6 +6,7 @@
 
 import { createCipheriv, createDecipheriv, createHash, randomBytes, scryptSync } from "node:crypto";
 import { mkdirSync } from "node:fs";
+import { tryRestrictSqliteDbFileMode } from "../utils/sqlite-file-perms.js";
 import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { CredentialType } from "../config.js";
@@ -90,6 +91,7 @@ export class CredentialsDB extends BaseSqliteStore {
     const db = new DatabaseSync(dbPath);
     super(db);
     this.dbPath = dbPath;
+    tryRestrictSqliteDbFileMode(dbPath);
     this.storesEncryptedValues = keyLooksEncrypted;
 
     this.liveDb.exec(`

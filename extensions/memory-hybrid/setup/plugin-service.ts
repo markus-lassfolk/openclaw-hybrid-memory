@@ -355,6 +355,18 @@ export function createPluginService(ctx: PluginServiceContext) {
               operation: "wal-prune-stale",
             });
           }
+          try {
+            const compacted = await wal.compactIfOversized(16 * 1024 * 1024);
+            if (compacted > 0) {
+              api.logger.info(`memory-hybrid: WAL compacted ${compacted} stale entries (oversized file, issue #903)`);
+            }
+          } catch (err) {
+            api.logger.warn(`memory-hybrid: WAL compactIfOversized failed: ${err}`);
+            capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+              subsystem: "plugin-service",
+              operation: "wal-compact-oversized",
+            });
+          }
         }
       }
 

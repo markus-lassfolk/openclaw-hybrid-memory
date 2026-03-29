@@ -46,7 +46,10 @@ export class PythonBridge {
   private restartCount = 0;
   private readonly pythonPath: string;
   private readonly workerPath: string;
-  private starting = false;
+  /** Single-flight startup: concurrent convert() calls await the same promise (issue #907). */
+  private startupPromise: Promise<void> | null = null;
+  /** Persistent failure state: if startup fails after MAX_RETRIES, prevent further attempts. */
+  private startupFailed = false;
 
   constructor(pythonPath = "python3") {
     this.pythonPath = pythonPath;
@@ -134,40 +137,35 @@ export class PythonBridge {
   }
 
   private async ensureStarted(): Promise<void> {
-    if (this.proc && !this.proc.killed) return;
-    if (this.starting) {
-      // Wait for spawn to complete
-      await new Promise<void>((resolve) => {
-        const check = setInterval(() => {
-          if (!this.starting) {
-            clearInterval(check);
-            resolve();
-          }
-        }, 50);
-      });
-      // Verify process actually started
-      if (!this.proc || this.proc.killed) {
-        throw new Error("Python bridge failed to start");
-      }
-      return;
+    if (this.startupFailed) {
+      throw new Error("Python bridge startup previously failed and will not retry");
     }
-    this.starting = true;
-    try {
-      this.spawnProcess();
-      // Health check
-      await this.ping();
-      this.restartCount = 0;
-      this.starting = false;
-    } catch (err) {
-      this.proc?.kill();
-      this.proc = null;
-      this.restartCount++;
-      if (this.restartCount > PYTHON_BRIDGE_MAX_RETRIES) {
-        this.starting = false;
-        throw new Error(`Python bridge failed to start after ${PYTHON_BRIDGE_MAX_RETRIES} retries: ${err}`);
+    if (this.proc && !this.proc.killed) return;
+    if (!this.startupPromise) {
+      this.startupPromise = this.bootstrapWorker().finally(() => {
+        this.startupPromise = null;
+      });
+    }
+    await this.startupPromise;
+  }
+
+  private async bootstrapWorker(): Promise<void> {
+    this.restartCount = 0;
+    while (true) {
+      try {
+        this.spawnProcess();
+        await this.ping();
+        this.restartCount = 0;
+        return;
+      } catch (err) {
+        this.proc?.kill();
+        this.proc = null;
+        this.restartCount++;
+        if (this.restartCount > PYTHON_BRIDGE_MAX_RETRIES) {
+          this.startupFailed = true;
+          throw new Error(`Python bridge failed to start after ${PYTHON_BRIDGE_MAX_RETRIES} retries: ${err}`);
+        }
       }
-      this.starting = false;
-      return this.ensureStarted();
     }
   }
 
@@ -236,6 +234,7 @@ export class PythonBridge {
       this.proc.kill("SIGTERM");
     }
     this.proc = null;
+    this.startupFailed = false;
   }
 
   get isRunning(): boolean {

@@ -156,9 +156,10 @@ async function runRecall(
       return { kind: "degraded", prependContext: `${degradedMarker}\n\n` };
     }
 
-    // Procedural memory
+    // Procedural memory (skip expensive FTS when injection budget is zero — issue #863)
     let procedureBlock = "";
-    if (ctx.cfg.procedures.enabled) {
+    const procMaxTokens = ctx.cfg.procedures.maxInjectionTokens ?? 0;
+    if (ctx.cfg.procedures.enabled && procMaxTokens > 0) {
       const rankedProcs = ctx.factsDb.searchProceduresRanked(
         e.prompt,
         5,

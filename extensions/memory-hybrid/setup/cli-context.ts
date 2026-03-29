@@ -489,7 +489,7 @@ export function registerHybridMemCliWithApi(api: ClawdbotPluginApi, ctx: HybridM
 }
 
 function buildRichStatsExtras(ctx: HandlerContext): NonNullable<HybridMemCliContext["richStatsExtras"]> {
-  const { credentialsDb, proposalsDb, wal, resolvedSqlitePath, resolvedLancePath } = ctx;
+  const { credentialsDb, proposalsDb, wal, factsDb, resolvedSqlitePath, resolvedLancePath } = ctx;
   const memoryDir = dirname(resolvedSqlitePath);
   return {
     getCredentialsCount: () => (credentialsDb ? credentialsDb.list().length : 0),
@@ -556,14 +556,24 @@ function buildRichStatsExtras(ctx: HandlerContext): NonNullable<HybridMemCliCont
         }
       }
       try {
-        if (existsSync(resolvedSqlitePath)) sqliteBytes = statSync(resolvedSqlitePath).size;
+        const est = factsDb.estimateStorageBytes();
+        sqliteBytes = est.sqliteBytes + est.walBytes + est.shmBytes;
       } catch (err) {
         capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-          operation: "stat-check",
+          operation: "facts-storage-estimate",
           severity: "info",
           subsystem: "cli",
         });
-        /* ignore */
+        try {
+          if (existsSync(resolvedSqlitePath)) sqliteBytes = statSync(resolvedSqlitePath).size;
+        } catch (statErr) {
+          capturePluginError(statErr instanceof Error ? statErr : new Error(String(statErr)), {
+            operation: "stat-check",
+            severity: "info",
+            subsystem: "cli",
+          });
+          /* ignore */
+        }
       }
       try {
         if (existsSync(resolvedLancePath)) lanceBytes = await dirSizeAsync(resolvedLancePath);

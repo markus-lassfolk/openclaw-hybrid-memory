@@ -184,7 +184,12 @@ async function storeRegistryEmbeddings({
     }
   }
 
-  if (vectors.size === 0) return;
+  if (vectors.size === 0) {
+    logger.warn(
+      `memory-hybrid: embeddingRegistry produced no vectors for fact ${factId} (${operation}) — caller should treat as embedding failure`,
+    );
+    return;
+  }
   for (const [model, vec] of vectors) {
     try {
       factsDb.storeEmbedding(factId, model, "canonical", vec, vec.length);

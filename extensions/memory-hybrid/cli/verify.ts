@@ -26,7 +26,7 @@ export function registerVerifyCommands(mem: Chainable, ctx: VerifyContext): void
     .option("--test-llm", "Test each configured LLM model with a minimal completion (requires gateway)")
     .option(
       "--reconcile",
-      "Check for orphan entries between SQLite and LanceDB (use with --fix to remove vector orphans)",
+      "Check SQLite ↔ LanceDB consistency (orphans; issue #904). Use --fix to remove vector-side orphans.",
     )
     .option("--no-emoji", "Use plain text indicators instead of emoji (for terminals with poor Unicode support)")
     .action(
@@ -35,8 +35,8 @@ export function registerVerifyCommands(mem: Chainable, ctx: VerifyContext): void
           fix?: boolean;
           logFile?: string;
           testLlm?: boolean;
-          reconcile?: boolean;
           noEmoji?: boolean;
+          reconcile?: boolean;
         }) => {
           if (opts.noEmoji) process.env.HYBRID_MEM_NO_EMOJI = "1";
           try {
