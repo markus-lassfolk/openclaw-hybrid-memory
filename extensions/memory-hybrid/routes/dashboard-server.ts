@@ -7,7 +7,7 @@
  *   GET /api/status — JSON data for all dashboard sections
  */
 
-import { execFile as execFileCb } from "node:child_process";
+import { execFile as execFileCb } from "../utils/process-runner.js";
 import { existsSync } from "node:fs";
 import { readdir, stat } from "node:fs/promises";
 import { createServer } from "node:http";
@@ -18,6 +18,7 @@ import { promisify } from "node:util";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
 import { getDirSize, getFileSizeAsync, readJsonFile } from "../utils/fs.js";
+import { isValidGhRepoArg } from "../utils/gh-repo-arg.js";
 import { pluginLogger } from "../utils/logger.js";
 import type { AuditStore } from "../backends/audit-store.js";
 import { mergeAgentHealthDashboard, type AgentHealthView } from "../backends/agent-health-store.js";
@@ -29,7 +30,7 @@ const execFile = promisify(execFileCb);
 // Types
 // ---------------------------------------------------------------------------
 
-export interface DashboardContext {
+interface DashboardContext {
   factsDb: FactsDB;
   vectorDb: VectorDB;
   resolvedSqlitePath: string;
@@ -46,7 +47,7 @@ export interface DashboardContext {
   agentHealthStore?: import("../backends/agent-health-store.js").AgentHealthStore | null;
 }
 
-export interface MemoryStats {
+interface MemoryStats {
   activeFacts: number;
   expiredFacts: number;
   vectorCount: number;
@@ -55,7 +56,7 @@ export interface MemoryStats {
   totalSizeBytes: number;
 }
 
-export interface CronJobStatus {
+interface CronJobStatus {
   id: string;
   name: string;
   schedule: string;
@@ -69,7 +70,7 @@ export interface CronJobStatus {
   model?: string;
 }
 
-export interface TaskQueueItem {
+interface TaskQueueItem {
   issue?: number;
   title?: string;
   branch?: string;
@@ -81,7 +82,7 @@ export interface TaskQueueItem {
   details?: string;
 }
 
-export interface ForgeTaskItem {
+interface ForgeTaskItem {
   agent?: string;
   task: string;
   workdir?: string;
@@ -90,7 +91,7 @@ export interface ForgeTaskItem {
   status?: string;
 }
 
-export interface GitActivity {
+interface GitActivity {
   prs: Array<{
     number: number;
     title: string;
@@ -108,7 +109,7 @@ export interface GitActivity {
   gitError?: string;
 }
 
-export interface CostRow {
+interface CostRow {
   feature: string;
   calls: number;
   inputTokens: number;
@@ -116,7 +117,7 @@ export interface CostRow {
   estimatedCostUsd: number;
 }
 
-export interface CostStats {
+interface CostStats {
   features: CostRow[];
   totalCalls: number;
   totalInputTokens: number;
@@ -126,13 +127,13 @@ export interface CostStats {
   enabled: boolean;
 }
 
-export interface AgentHealthPayload {
+interface AgentHealthPayload {
   enabled: boolean;
   agents: AgentHealthView[];
   alerts: string[];
 }
 
-export interface AuditSummaryPayload {
+interface AuditSummaryPayload {
   enabled: boolean;
   total24h: number;
   byOutcome: { success: number; partial: number; failed: number };
@@ -146,7 +147,7 @@ export interface AuditSummaryPayload {
   }>;
 }
 
-export interface DashboardStatus {
+interface DashboardStatus {
   generatedAt: string;
   memory: MemoryStats;
   cronJobs: CronJobStatus[];
@@ -319,7 +320,8 @@ export async function collectForgeState(): Promise<ForgeTaskItem[]> {
 
 async function collectGitActivity(repo?: string): Promise<GitActivity> {
   try {
-    const repoArgs = repo ? ["--repo", repo] : [];
+    const safeRepo = repo && isValidGhRepoArg(repo) ? repo : undefined;
+    const repoArgs = safeRepo ? ["--repo", safeRepo] : [];
     const [prResult, issueResult] = await Promise.all([
       execFile("gh", ["pr", "list", "--limit", "10", "--json", "number,title,state,url,createdAt", ...repoArgs], {
         timeout: 8000,
@@ -924,7 +926,7 @@ export async function createDashboardServer(ctx: DashboardContext, port: number)
           res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-cache" });
           res.end(JSON.stringify(payload));
         })
-        .catch((err: unknown) => {
+        .catch((_err: unknown) => {
           res.writeHead(500, { "Content-Type": "application/json" });
           res.end(JSON.stringify({ error: "InternalServerError" }));
         });
@@ -985,7 +987,7 @@ export async function createDashboardServer(ctx: DashboardContext, port: number)
           });
           res.end(body);
         })
-        .catch((err: unknown) => {
+        .catch((_err: unknown) => {
           res.writeHead(500, { "Content-Type": "application/json" });
           res.end(JSON.stringify({ error: "InternalServerError" }));
         });

@@ -4,6 +4,7 @@
  */
 
 import type { OpenAI } from "openai";
+import { DEFAULT_CHAT_TIMEOUT_MS } from "../utils/constants.js";
 import { pluginLogger } from "../utils/logger.js";
 import { withCostFeature } from "./cost-context.js";
 import { capturePluginError } from "./error-reporter.js";
@@ -55,9 +56,6 @@ export function createPendingLLMWarnings(): PendingLLMWarnings {
     },
   };
 }
-
-/** Default timeout for chat completion (prevents indefinite hang if gateway/LLM never responds). */
-const DEFAULT_CHAT_TIMEOUT_MS = 45_000;
 
 /**
  * Unified 404 detection helper.
@@ -134,7 +132,7 @@ export function is403Like(err: unknown): boolean {
  * A 401 is a permanent operator config issue (wrong API key) that will never be resolved by retrying.
  * Exported so other modules can treat 401 as a config error and suppress capturePluginError.
  */
-export function is401Like(err: unknown): boolean {
+function is401Like(err: unknown): boolean {
   if (err && typeof err === "object") {
     const status = (err as { status?: unknown }).status;
     if (status === 401 || status === "401") return true;
@@ -161,7 +159,7 @@ export function is401OrWrapped(err: Error): boolean {
  * message pattern matching. Rate limits are transient — suppress GlitchTip reporting.
  * Exported so embeddings.ts can suppress capturePluginError for 429 errors.
  */
-export function is429Like(err: unknown): boolean {
+function is429Like(err: unknown): boolean {
   if (err && typeof err === "object") {
     const status = (err as { status?: unknown }).status;
     if (status === 429 || status === "429") return true;

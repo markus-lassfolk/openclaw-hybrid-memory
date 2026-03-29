@@ -45,7 +45,7 @@ const STOP_WORDS = new Set([
   "your",
 ]);
 
-export interface RecallNarrativeSummariesOptions {
+interface RecallNarrativeSummariesOptions {
   narrativesDb: NarrativesDB | null;
   eventLog?: EventLog | null;
   query?: string | null;
@@ -57,7 +57,7 @@ export interface RecallNarrativeSummariesOptions {
   maxEventsPerSession?: number;
 }
 
-export interface NarrativeSummaryMatch {
+interface NarrativeSummaryMatch {
   id: string;
   source: "narrative" | "event-log";
   sessionId: string;

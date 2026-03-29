@@ -14,9 +14,9 @@ import type { FactsDB } from "../backends/facts-db.js";
 import type { HybridMemoryConfig } from "../config.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { detectClusters } from "../services/topic-clusters.js";
-import { getDirSizeSync, getFileSize } from "../utils/fs.js";
+import { getDirSize, getFileSizeAsync } from "../utils/fs.js";
 
-export interface HealthPluginContext {
+interface HealthPluginContext {
   factsDb: FactsDB;
   cfg: HybridMemoryConfig;
   resolvedSqlitePath: string;
@@ -24,7 +24,7 @@ export interface HealthPluginContext {
   initialized?: Promise<void>;
 }
 
-export interface HealthReport {
+interface HealthReport {
   totalFacts: number;
   activeFacts: number;
   supersededFacts: number;
@@ -49,12 +49,12 @@ export interface HealthReport {
   generatedAt: string;
 }
 
-export function buildHealthReport(
+export async function buildHealthReport(
   factsDb: FactsDB,
   resolvedSqlitePath: string,
   resolvedLancePath: string,
   cfg?: Pick<HybridMemoryConfig, "clusters">,
-): HealthReport {
+): Promise<HealthReport> {
   const db = factsDb.getRawDb();
   const nowSec = Math.floor(Date.now() / 1000);
 
@@ -217,13 +217,14 @@ export function buildHealthReport(
     .get(nowSec) as { last_at: number | null };
   const lastPruneAt = pruneRow.last_at != null ? new Date(pruneRow.last_at * 1000).toISOString() : null;
 
-  // Storage sizes
-  const sqliteSize = getFileSize(resolvedSqlitePath);
-  // Also count WAL / SHM sidecars
-  const sqliteWalSize = getFileSize(`${resolvedSqlitePath}-wal`);
-  const sqliteShmSize = getFileSize(`${resolvedSqlitePath}-shm`);
+  // Storage sizes (async I/O — avoids sync stat hot-path blocking; Issue #880)
+  const [sqliteSize, sqliteWalSize, sqliteShmSize, lanceSize] = await Promise.all([
+    getFileSizeAsync(resolvedSqlitePath),
+    getFileSizeAsync(`${resolvedSqlitePath}-wal`),
+    getFileSizeAsync(`${resolvedSqlitePath}-shm`),
+    getDirSize(resolvedLancePath),
+  ]);
   const totalSqliteSize = sqliteSize + sqliteWalSize + sqliteShmSize;
-  const lanceSize = getDirSizeSync(resolvedLancePath);
 
   return {
     totalFacts,
@@ -272,7 +273,7 @@ export function registerHealthTools(ctx: HealthPluginContext, api: ClawdbotPlugi
           if (ctx.initialized) {
             await ctx.initialized;
           }
-          const report = buildHealthReport(factsDb, resolvedSqlitePath, resolvedLancePath, cfg);
+          const report = await buildHealthReport(factsDb, resolvedSqlitePath, resolvedLancePath, cfg);
 
           const lines: string[] = [
             `Memory Health Dashboard (${report.generatedAt})`,

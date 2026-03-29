@@ -41,7 +41,7 @@ export interface ReflectionConfig {
   enabled?: boolean;
 }
 
-export interface ReflectionOptions {
+interface ReflectionOptions {
   window: number;
   dryRun: boolean;
   model: string;
@@ -49,19 +49,19 @@ export interface ReflectionOptions {
   fallbackModels?: string[];
 }
 
-export interface ReflectionResult {
+interface ReflectionResult {
   factsAnalyzed: number;
   patternsExtracted: number;
   patternsStored: number;
   window: number;
 }
 
-export interface ReflectionRulesResult {
+interface ReflectionRulesResult {
   rulesExtracted: number;
   rulesStored: number;
 }
 
-export interface ReflectionMetaResult {
+interface ReflectionMetaResult {
   metaExtracted: number;
   metaStored: number;
 }

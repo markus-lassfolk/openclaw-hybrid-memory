@@ -1,4 +1,5 @@
 // @ts-nocheck
+import { getEnv } from "../utils/env-manager.js";
 /**
  * Build HybridMemCliContext from handler context and services.
  * Moves CLI wiring out of index.ts so the plugin entry stays small.
@@ -40,7 +41,7 @@ import { pluginLogger } from "../utils/logger.js";
 import { runPreConsolidationFlush } from "../services/pre-consolidation-flush.js";
 
 /** Help text shown after hybrid-mem commands list */
-export const HYBRID_MEM_HELP_GROUPED = `
+const HYBRID_MEM_HELP_GROUPED = `
 Commands by category:
 
   Setup & installation
@@ -132,7 +133,7 @@ const HYBRID_MEM_HELP_ACTIVE_TASKS = `
     active-tasks add <label> <desc>  Add or update a task entry
 `;
 
-export const HYBRID_MEM_CLI_COMMANDS = [
+const HYBRID_MEM_CLI_COMMANDS = [
   "hybrid-mem",
   "hybrid-mem dashboard",
   "hybrid-mem run-all",
@@ -198,7 +199,7 @@ export const HYBRID_MEM_CLI_COMMANDS = [
 ] as const;
 
 /** Services that are not in cli/handlers (reflection, consolidate, export, etc.) */
-export interface CliContextServices {
+interface CliContextServices {
   runFindDuplicates: (opts: {
     threshold: number;
     includeStructured: boolean;
@@ -489,7 +490,7 @@ export function registerHybridMemCliWithApi(api: ClawdbotPluginApi, ctx: HybridM
 }
 
 function buildRichStatsExtras(ctx: HandlerContext): NonNullable<HybridMemCliContext["richStatsExtras"]> {
-  const { credentialsDb, proposalsDb, wal, resolvedSqlitePath, resolvedLancePath } = ctx;
+  const { credentialsDb, proposalsDb, wal, factsDb, resolvedSqlitePath, resolvedLancePath } = ctx;
   const memoryDir = dirname(resolvedSqlitePath);
   return {
     getCredentialsCount: () => (credentialsDb ? credentialsDb.list().length : 0),
@@ -556,14 +557,24 @@ function buildRichStatsExtras(ctx: HandlerContext): NonNullable<HybridMemCliCont
         }
       }
       try {
-        if (existsSync(resolvedSqlitePath)) sqliteBytes = statSync(resolvedSqlitePath).size;
+        const est = factsDb.estimateStorageBytes();
+        sqliteBytes = est.sqliteBytes + est.walBytes + est.shmBytes;
       } catch (err) {
         capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-          operation: "stat-check",
+          operation: "facts-storage-estimate",
           severity: "info",
           subsystem: "cli",
         });
-        /* ignore */
+        try {
+          if (existsSync(resolvedSqlitePath)) sqliteBytes = statSync(resolvedSqlitePath).size;
+        } catch (statErr) {
+          capturePluginError(statErr instanceof Error ? statErr : new Error(String(statErr)), {
+            operation: "stat-check",
+            severity: "info",
+            subsystem: "cli",
+          });
+          /* ignore */
+        }
       }
       try {
         if (existsSync(resolvedLancePath)) lanceBytes = await dirSizeAsync(resolvedLancePath);
@@ -585,7 +596,7 @@ function buildListCommands(
   api: ClawdbotPluginApi,
 ): NonNullable<HybridMemCliContext["listCommands"]> {
   const { factsDb, proposalsDb, cfg, resolvedSqlitePath } = ctx;
-  const workspaceRoot = () => process.env.OPENCLAW_WORKSPACE ?? join(homedir(), ".openclaw", "workspace");
+  const workspaceRoot = () => getEnv("OPENCLAW_WORKSPACE") ?? join(homedir(), ".openclaw", "workspace");
   const reportDir = (workspace?: string) => join(workspace ?? workspaceRoot(), "memory", "reports");
 
   function parseReportProposedSections(content: string): string[] {
@@ -752,7 +763,7 @@ function buildListCommands(
  * Resolves file paths against the workspace root.
  */
 function buildActiveTaskCliContext(handlerCtx: HandlerContext): ActiveTaskContext {
-  const workspaceRoot = process.env.OPENCLAW_WORKSPACE ?? join(homedir(), ".openclaw", "workspace");
+  const workspaceRoot = getEnv("OPENCLAW_WORKSPACE") ?? join(homedir(), ".openclaw", "workspace");
   const { activeTask } = handlerCtx.cfg;
   // Resolve relative paths against workspace root (use isAbsolute for cross-platform support)
   const activeTaskFilePath = isAbsolute(activeTask.filePath)
@@ -771,7 +782,7 @@ function buildActiveTaskCliContext(handlerCtx: HandlerContext): ActiveTaskContex
  * Build the full CLI context passed to registerHybridMemCli.
  * Uses handlers from cli/handlers.ts and services for reflection/consolidation/export etc.
  */
-export function createHybridMemCliContext(
+function createHybridMemCliContext(
   handlerCtx: HandlerContext,
   api: ClawdbotPluginApi,
   services: CliContextServices,
@@ -863,7 +874,7 @@ export function createHybridMemCliContext(
 }
 
 /** Register hybrid-mem CLI with the program subcommand and help text */
-export function registerCliWithHelp(
+function registerCliWithHelp(
   program: { command: (name: string) => { description: (d: string) => unknown } },
   ctx: HybridMemCliContext,
 ): void {

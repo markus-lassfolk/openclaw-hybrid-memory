@@ -35,7 +35,7 @@ export interface MigrateEmbeddingsOptions {
   logger?: { info: (msg: string) => void; warn: (msg: string) => void };
 }
 
-export interface MigrateEmbeddingsResult {
+interface MigrateEmbeddingsResult {
   /** Total facts found in SQLite. */
   total: number;
   /** Facts successfully re-embedded and stored in LanceDB. */
@@ -58,7 +58,7 @@ export interface EmbeddingMaintenanceOptions extends MigrateEmbeddingsOptions {
   autoMigrate: boolean;
 }
 
-export interface EmbeddingMaintenanceResult {
+interface EmbeddingMaintenanceResult {
   /** `true` when the recorded provider/model differs from `currentProvider`/`currentModel`. */
   changed: boolean;
   /** `true` when `migrateEmbeddings` was actually invoked this run. */
@@ -84,7 +84,7 @@ export interface EmbeddingMaintenanceResult {
  * Progress is emitted after every batch via `onProgress` and logged via `logger`.
  */
 export async function migrateEmbeddings(opts: MigrateEmbeddingsOptions): Promise<MigrateEmbeddingsResult> {
-  const { factsDb, vectorDb, embeddings, batchSize = 50, onProgress, logger } = opts;
+  const { factsDb, vectorDb, embeddings, batchSize = 40, onProgress, logger } = opts;
 
   const log = logger ?? { info: (m: string) => pluginLogger.info(m), warn: (m: string) => pluginLogger.warn(m) };
 

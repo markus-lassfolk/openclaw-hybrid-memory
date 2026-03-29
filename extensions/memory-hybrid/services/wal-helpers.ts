@@ -6,23 +6,44 @@
  */
 
 import { randomUUID } from "node:crypto";
-import type { WriteAheadLog } from "../backends/wal.js";
+import { WAL_ENTRY_SCHEMA_VERSION, type WALEntry, type WriteAheadLog } from "../backends/wal.js";
 import { capturePluginError } from "./error-reporter.js";
 
 const WAL_FAILURE_THRESHOLD = 10;
 let walFailureCount = 0;
 let walDisabled = false;
 
+/** JSON.stringify drops Float32Array as `{}`; normalize before WAL persistence (#896). */
+function normalizeWalPayload(data: Record<string, unknown>): WALEntry["data"] {
+  const d = { ...data } as Record<string, unknown>;
+  const v = d.vector;
+  if (v instanceof Float32Array) {
+    d.vector = Array.from(v);
+  }
+  return d as WALEntry["data"];
+}
+
 export async function walWrite(
   wal: WriteAheadLog | null,
   operation: "store" | "update",
   data: Record<string, unknown>,
   logger: { warn: (msg: string) => void },
+  supersedeTargetId?: string,
 ): Promise<string> {
   const id = randomUUID();
   if (wal && !walDisabled) {
     try {
-      await wal.write({ id, timestamp: Date.now(), operation, data: data as any });
+      const entry: WALEntry = {
+        id,
+        timestamp: Date.now(),
+        schemaVersion: WAL_ENTRY_SCHEMA_VERSION,
+        operation,
+        data: normalizeWalPayload(data),
+      };
+      if (operation === "update" && supersedeTargetId) {
+        entry.targetId = supersedeTargetId;
+      }
+      await wal.write(entry);
       walFailureCount = 0; // Reset on success
     } catch (err) {
       walFailureCount++;

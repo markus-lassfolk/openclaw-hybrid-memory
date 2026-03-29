@@ -95,7 +95,7 @@ export function parseHealthConfig(cfg: Record<string, unknown>): HealthConfig {
   };
 }
 
-export function parseCouncilConfig(cfg: Record<string, unknown>): CouncilConfig {
+function parseCouncilConfig(cfg: Record<string, unknown>): CouncilConfig {
   const councilRaw = (cfg.maintenance as Record<string, unknown> | undefined)?.council as
     | Record<string, unknown>
     | undefined;
@@ -111,7 +111,7 @@ export function parseCouncilConfig(cfg: Record<string, unknown>): CouncilConfig 
   return { provenance, sessionKeyPrefix };
 }
 
-export function parseCronReliabilityConfig(cfg: Record<string, unknown>): CronReliabilityConfig {
+function parseCronReliabilityConfig(cfg: Record<string, unknown>): CronReliabilityConfig {
   const maintenanceRaw = cfg.maintenance as Record<string, unknown> | undefined;
   const reliabilityRaw = maintenanceRaw?.cronReliability as Record<string, unknown> | undefined;
   return {

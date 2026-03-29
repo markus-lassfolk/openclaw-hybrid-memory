@@ -8,9 +8,9 @@ import { DatabaseSync } from "node:sqlite";
 import { BaseSqliteStore } from "./base-sqlite-store.js";
 import type { ForgeTaskItem } from "../types/dashboard-types.js";
 
-export type AgentHealthOutcome = "success" | "partial" | "failed" | "idle";
+type AgentHealthOutcome = "success" | "partial" | "failed" | "idle";
 
-export interface AgentHealthRecord {
+interface AgentHealthRecord {
   agentId: string;
   sessionId: string | null;
   lastSeen: number;
@@ -169,7 +169,7 @@ export function agentHealthDbPathForMemorySqlite(memorySqlitePath: string): stri
   return join(dirname(memorySqlitePath), "agent-health.db");
 }
 
-export const DEFAULT_AGENT_IDS = ["forge", "scholar", "hearth", "warden", "ralph", "builder", "reaver"] as const;
+const DEFAULT_AGENT_IDS = ["forge", "scholar", "hearth", "warden", "ralph", "builder", "reaver"] as const;
 
 function mapForgeStatus(s?: string): AgentHealthOutcome {
   const x = (s ?? "").toLowerCase();
@@ -232,7 +232,7 @@ export function mergeAgentHealthDashboard(forge: ForgeTaskItem[], dbRows: AgentH
   return out;
 }
 
-export function computeHealthView(r: AgentHealthRecord, nowMs: number = Date.now()): AgentHealthView {
+function computeHealthView(r: AgentHealthRecord, nowMs: number = Date.now()): AgentHealthView {
   const age = nowMs - r.lastSeen;
   let status: AgentHealthStatus = "healthy";
   if (r.lastSeen <= 0 || !r.agentId) {

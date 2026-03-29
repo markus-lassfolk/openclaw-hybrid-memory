@@ -10,7 +10,7 @@ import type { PendingLLMWarnings } from "./chat.js";
 import { chatCompleteWithRetry, is404Like, is500Like, isConnectionErrorLike, isOllamaOOM } from "./chat.js";
 import { capturePluginError } from "./error-reporter.js";
 
-export interface HydeOptions {
+interface HydeOptions {
   /** The raw query text to expand. */
   query: string;
   /** Raw config object for getCronModelConfig. */

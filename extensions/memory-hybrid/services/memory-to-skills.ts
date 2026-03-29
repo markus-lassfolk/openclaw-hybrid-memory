@@ -1,1 +1,1 @@
-export const runSkillsSuggest = async () => {};
+const runSkillsSuggest = async () => {};

@@ -31,7 +31,7 @@ import { capturePluginError } from "./error-reporter.js";
 // ---------------------------------------------------------------------------
 
 /** Verdict from Pass 3 verification. */
-export type ExtractionVerdict = "CONFIRMED" | "UNCERTAIN" | "REJECTED";
+type ExtractionVerdict = "CONFIRMED" | "UNCERTAIN" | "REJECTED";
 
 /** A candidate fact produced by Pass 1 or Pass 2. */
 export interface CandidateFact {
@@ -43,7 +43,7 @@ export interface CandidateFact {
 }
 
 /** A fact that survived Pass 3 verification (or when verificationPass is disabled). Named ExtractedFact to avoid collision with verification-store.VerifiedFact. */
-export interface ExtractedFact {
+interface ExtractedFact {
   text: string;
   category: string;
   importance: number;
@@ -57,7 +57,7 @@ export interface ExtractedFact {
   pass: 1 | 2;
 }
 
-export interface MultiPassExtractionResult {
+interface MultiPassExtractionResult {
   facts: ExtractedFact[];
   /** Total candidates from Pass 1. */
   explicitCount: number;
@@ -67,7 +67,7 @@ export interface MultiPassExtractionResult {
   rejectedCount: number;
 }
 
-export interface MultiPassExtractorOptions {
+interface MultiPassExtractorOptions {
   /** Model for Pass 1 explicit extraction (default: 'openai/gpt-4.1-nano'). */
   extractionModel?: string;
   /** Model for Pass 2 implicit extraction (default: 'openai/gpt-4.1-mini'). */

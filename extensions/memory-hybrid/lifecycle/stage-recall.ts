@@ -28,7 +28,7 @@ import {
   resolveInteractiveRecallPolicy,
 } from "../services/retrieval-mode-policy.js";
 
-export const RECALL_STAGE_TIMEOUT_MS = INTERACTIVE_RECALL_STAGE_TIMEOUT_MS;
+const RECALL_STAGE_TIMEOUT_MS = INTERACTIVE_RECALL_STAGE_TIMEOUT_MS;
 
 function clipNarrativeText(text: string, maxChars = 360): string {
   if (text.length <= maxChars) return text;
@@ -156,9 +156,10 @@ async function runRecall(
       return { kind: "degraded", prependContext: `${degradedMarker}\n\n` };
     }
 
-    // Procedural memory
+    // Procedural memory (skip expensive FTS when injection budget is zero — issue #863)
     let procedureBlock = "";
-    if (ctx.cfg.procedures.enabled) {
+    const procMaxTokens = ctx.cfg.procedures.maxInjectionTokens ?? 0;
+    if (ctx.cfg.procedures.enabled && procMaxTokens > 0) {
       const rankedProcs = ctx.factsDb.searchProceduresRanked(
         e.prompt,
         5,

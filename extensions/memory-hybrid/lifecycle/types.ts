@@ -44,6 +44,7 @@ export interface LifecycleContext {
     operation: "store" | "update",
     data: Record<string, unknown>,
     logger: { warn: (msg: string) => void },
+    supersedeTargetId?: string,
   ) => Promise<string>;
   walRemove: (id: string, logger: { warn: (msg: string) => void }) => Promise<void>;
   findSimilarByEmbedding: (
@@ -103,7 +104,7 @@ export interface RecallResult {
 }
 
 /** Result of injection stage. */
-export interface InjectionResult {
+interface InjectionResult {
   prependContext: string;
 }
 

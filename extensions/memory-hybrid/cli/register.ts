@@ -90,7 +90,10 @@ export type HybridMemCliContext = {
   cfg: HybridMemoryConfig;
   runStore: (opts: StoreCliOpts) => Promise<StoreCliResult>;
   runInstall: (opts: { dryRun: boolean }) => Promise<InstallCliResult>;
-  runVerify: (opts: { fix: boolean; logFile?: string; testLlm?: boolean }, sink: VerifyCliSink) => Promise<void>;
+  runVerify: (
+    opts: { fix: boolean; logFile?: string; testLlm?: boolean; reconcile?: boolean },
+    sink: VerifyCliSink,
+  ) => Promise<void>;
   runDistillWindow: (opts: { json: boolean }) => Promise<DistillWindowResult>;
   runRecordDistill: () => Promise<RecordDistillResult>;
   runExtractDaily: (

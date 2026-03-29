@@ -48,16 +48,35 @@ export interface GraphExpandedResult {
   score: number;
 }
 
+/** Internal BFS metadata stored per discovered node. */
+interface NodeMeta {
+  hopCount: number;
+  /** Ordered path from the original seed to this node. */
+  steps: LinkPathStep[];
+  /** factId of the seed that originated this traversal path. */
+  seedId: string;
+}
+
 /** Minimal interface the graph-retrieval service needs from FactsDB. */
 export interface GraphFactLookup {
   getById(id: string, options?: { asOf?: number; scopeFilter?: unknown }): MemoryEntry | null;
   getByIds(ids: string[], options?: { asOf?: number; scopeFilter?: unknown }): Map<string, MemoryEntry>;
   getLinksFrom(factId: string): Array<{ id: string; targetFactId: string; linkType: string; strength: number }>;
   getLinksTo(factId: string): Array<{ id: string; sourceFactId: string; linkType: string; strength: number }>;
+  expandGraphWithCTE?(
+    seedFactIds: string[],
+    maxDepth: number,
+    options?: { asOf?: number; scopeFilter?: unknown },
+  ): Array<{
+    factId: string;
+    seedId: string;
+    hopCount: number;
+    path: string;
+  }>;
 }
 
 /** Options for graph expansion. */
-export interface GraphRetrievalOptions {
+interface GraphRetrievalOptions {
   /** Maximum BFS depth (0 = no expansion, just returns seeds). Default: 2. */
   maxDepth?: number;
   /** Maximum number of expanded (non-seed) results to append. Default: 20. */
@@ -80,19 +99,6 @@ export interface GraphRetrievalOptions {
 export const HOP_SCORE_DECAY: readonly number[] = [1.0, 0.7, 0.5, 0.35];
 
 // ---------------------------------------------------------------------------
-// BFS state types (internal)
-// ---------------------------------------------------------------------------
-
-/** Internal BFS metadata stored per discovered node. */
-interface NodeMeta {
-  hopCount: number;
-  /** Ordered path from the original seed to this node. */
-  steps: LinkPathStep[];
-  /** factId of the seed that originated this traversal path. */
-  seedId: string;
-}
-
-// ---------------------------------------------------------------------------
 // Core expansion function
 // ---------------------------------------------------------------------------
 
@@ -105,6 +111,8 @@ interface NodeMeta {
  *
  * Results are ranked: direct matches appear first (hopCount=0), then 1-hop,
  * then 2-hop, etc., each with a distance-decayed score.
+ *
+ * **Performance:** Uses SQLite recursive CTE instead of iterative BFS to avoid N+1 queries.
  *
  * @param factsDb - FactsDB-compatible interface.
  * @param seedResults - Initial results from semantic/FTS5 search.
@@ -138,129 +146,155 @@ export function expandGraph(
   }
 
   const seedScoreMap = new Map<string, number>(seedResults.map((s) => [s.factId, s.score]));
-
-  // BFS: track discovered nodes by factId → NodeMeta.
-  const nodeMeta = new Map<string, NodeMeta>();
-  for (const s of seedResults) {
-    nodeMeta.set(s.factId, { hopCount: 0, steps: [], seedId: s.factId });
-  }
-
-  // frontier holds the factIds to expand in the next hop.
-  let frontier: string[] = seedResults.map((s) => s.factId);
-
-  /** Only add a candidate if it is visible (scope/asOf) and either new or a better path. */
-  function tryAddNode(
-    candidateId: string,
-    hop: number,
-    steps: LinkPathStep[],
-    seedId: string,
-    nextFrontier: string[],
-    visibleIds: Set<string>,
-  ): void {
-    if (!visibleIds.has(candidateId)) return;
-    const existing = nodeMeta.get(candidateId);
-    const newSeedScore = seedScoreMap.get(seedId) ?? 0;
-    if (!existing) {
-      nodeMeta.set(candidateId, { hopCount: hop, steps, seedId });
-      nextFrontier.push(candidateId);
-      return;
-    }
-    if (hop < existing.hopCount) {
-      nodeMeta.set(candidateId, { hopCount: hop, steps, seedId });
-      nextFrontier.push(candidateId);
-      return;
-    }
-    if (hop === existing.hopCount && newSeedScore > (seedScoreMap.get(existing.seedId) ?? 0)) {
-      nodeMeta.set(candidateId, { hopCount: hop, steps, seedId });
-    }
-  }
-
-  for (let hop = 1; hop <= maxDepth && frontier.length > 0; hop++) {
-    const nextFrontier: string[] = [];
-    const candidateMoves: Array<{
-      candidateId: string;
-      steps: LinkPathStep[];
-      seedId: string;
-    }> = [];
-
-    for (const fromId of frontier) {
-      const fromMeta = nodeMeta.get(fromId)!;
-
-      // --- Outgoing edges: fromId → targetId ---
-      const outLinks = factsDb.getLinksFrom(fromId);
-      for (const link of outLinks) {
-        const steps: LinkPathStep[] = [
-          ...fromMeta.steps,
-          {
-            fromFactId: fromId,
-            toFactId: link.targetFactId,
-            linkType: link.linkType,
-            strength: link.strength,
-          },
-        ];
-        candidateMoves.push({
-          candidateId: link.targetFactId,
-          steps,
-          seedId: fromMeta.seedId,
-        });
-      }
-
-      // --- Incoming edges: sourceId → fromId (we discover sourceId) ---
-      const inLinks = factsDb.getLinksTo(fromId);
-      for (const link of inLinks) {
-        const steps: LinkPathStep[] = [
-          ...fromMeta.steps,
-          {
-            fromFactId: fromId,
-            toFactId: link.sourceFactId,
-            linkType: link.linkType,
-            strength: link.strength,
-          },
-        ];
-        candidateMoves.push({
-          candidateId: link.sourceFactId,
-          steps,
-          seedId: fromMeta.seedId,
-        });
-      }
-    }
-
-    if (candidateMoves.length === 0) {
-      frontier = nextFrontier;
-      continue;
-    }
-
-    const candidateIds = Array.from(new Set(candidateMoves.map((m) => m.candidateId)));
-    const visible = factsDb.getByIds(candidateIds, getByIdOpts);
-    const visibleIds = new Set(visible.keys());
-    for (const move of candidateMoves) {
-      tryAddNode(move.candidateId, hop, move.steps, move.seedId, nextFrontier, visibleIds);
-    }
-
-    frontier = nextFrontier;
-  }
-
-  // Build expanded results (non-seed nodes only).
-  const expandedResults: GraphExpandedResult[] = [];
+  const seedIds = seedResults.map((s) => s.factId);
   const maxSeedScore = Math.max(...seedResults.map((s) => s.score), 0.5);
-  for (const [factId, meta] of nodeMeta) {
-    if (meta.hopCount === 0) continue; // already in directResults
+  const expandedResults: GraphExpandedResult[] = [];
 
-    const entry = factsDb.getById(factId, getByIdOpts);
-    if (!entry) continue;
+  // Use recursive CTE to perform graph expansion in a single query if available
+  if (factsDb.expandGraphWithCTE) {
+    const expansionRows = factsDb.expandGraphWithCTE(seedIds, maxDepth, getByIdOpts);
 
-    const seedScore = seedScoreMap.get(meta.seedId) ?? maxSeedScore;
-    const decay = HOP_SCORE_DECAY[meta.hopCount] ?? HOP_SCORE_DECAY[HOP_SCORE_DECAY.length - 1];
-    const score = seedScore * decay;
+    for (const row of expansionRows) {
+      if (row.hopCount === 0) continue;
 
-    expandedResults.push({
-      factId,
-      entry,
-      expansionSource: "graph",
-      hopCount: meta.hopCount,
-      linkPath: meta.steps,
-      score,
-    });
+      const entry = factsDb.getById(row.factId, getByIdOpts);
+      if (!entry) continue;
+
+      const linkPath: LinkPathStep[] = JSON.parse(row.path);
+      const seedScore = seedScoreMap.get(row.seedId) ?? maxSeedScore;
+      const decay = HOP_SCORE_DECAY[row.hopCount] ?? HOP_SCORE_DECAY[HOP_SCORE_DECAY.length - 1];
+      const score = seedScore * decay;
+
+      expandedResults.push({
+        factId: row.factId,
+        entry,
+        expansionSource: "graph",
+        hopCount: row.hopCount,
+        linkPath,
+        score,
+      });
+    }
+  } else {
+    // Fallback: iterative BFS for custom/mock implementations
+    const nodeMeta = new Map<string, NodeMeta>();
+    for (const s of seedResults) {
+      nodeMeta.set(s.factId, { hopCount: 0, steps: [], seedId: s.factId });
+    }
+
+    let frontier: string[] = [...seedIds];
+
+    function tryAddNode(
+      candidateId: string,
+      hop: number,
+      steps: LinkPathStep[],
+      seedId: string,
+      nextFrontier: string[],
+      visibleIds: Set<string>,
+    ): void {
+      if (!visibleIds.has(candidateId)) return;
+      const existing = nodeMeta.get(candidateId);
+      const newSeedScore = seedScoreMap.get(seedId) ?? 0;
+      if (!existing) {
+        nodeMeta.set(candidateId, { hopCount: hop, steps, seedId });
+        nextFrontier.push(candidateId);
+        return;
+      }
+      if (hop < existing.hopCount) {
+        nodeMeta.set(candidateId, { hopCount: hop, steps, seedId });
+        nextFrontier.push(candidateId);
+        return;
+      }
+      if (hop === existing.hopCount && newSeedScore > (seedScoreMap.get(existing.seedId) ?? 0)) {
+        nodeMeta.set(candidateId, { hopCount: hop, steps, seedId });
+      }
+    }
+
+    for (let hop = 1; hop <= maxDepth && frontier.length > 0; hop++) {
+      const nextFrontier: string[] = [];
+      const candidateMoves: Array<{
+        candidateId: string;
+        steps: LinkPathStep[];
+        seedId: string;
+      }> = [];
+
+      for (const fromId of frontier) {
+        const fromMeta = nodeMeta.get(fromId)!;
+
+        // --- Outgoing edges: fromId → targetId ---
+        const outLinks = factsDb.getLinksFrom(fromId);
+        for (const link of outLinks) {
+          if (link.linkType === "CONTRADICTS") continue;
+          const steps: LinkPathStep[] = [
+            ...fromMeta.steps,
+            {
+              fromFactId: fromId,
+              toFactId: link.targetFactId,
+              linkType: link.linkType,
+              strength: link.strength,
+            },
+          ];
+          candidateMoves.push({
+            candidateId: link.targetFactId,
+            steps,
+            seedId: fromMeta.seedId,
+          });
+        }
+
+        // --- Incoming edges: sourceId → fromId ---
+        const inLinks = factsDb.getLinksTo(fromId);
+        for (const link of inLinks) {
+          if (link.linkType === "CONTRADICTS") continue;
+          const steps: LinkPathStep[] = [
+            ...fromMeta.steps,
+            {
+              fromFactId: fromId,
+              toFactId: link.sourceFactId,
+              linkType: link.linkType,
+              strength: link.strength,
+            },
+          ];
+          candidateMoves.push({
+            candidateId: link.sourceFactId,
+            steps,
+            seedId: fromMeta.seedId,
+          });
+        }
+      }
+
+      if (candidateMoves.length === 0) {
+        frontier = nextFrontier;
+        continue;
+      }
+
+      const candidateIds = Array.from(new Set(candidateMoves.map((m) => m.candidateId)));
+      const visible = factsDb.getByIds(candidateIds, getByIdOpts);
+      const visibleIds = new Set(visible.keys());
+      for (const move of candidateMoves) {
+        tryAddNode(move.candidateId, hop, move.steps, move.seedId, nextFrontier, visibleIds);
+      }
+
+      frontier = nextFrontier;
+    }
+
+    for (const [factId, meta] of nodeMeta) {
+      if (meta.hopCount === 0) continue; // already in directResults
+
+      const entry = factsDb.getById(factId, getByIdOpts);
+      if (!entry) continue;
+
+      const seedScore = seedScoreMap.get(meta.seedId) ?? maxSeedScore;
+      const decay = HOP_SCORE_DECAY[meta.hopCount] ?? HOP_SCORE_DECAY[HOP_SCORE_DECAY.length - 1];
+      const score = seedScore * decay;
+
+      expandedResults.push({
+        factId,
+        entry,
+        expansionSource: "graph",
+        hopCount: meta.hopCount,
+        linkPath: meta.steps,
+        score,
+      });
+    }
   }
 
   // Sort expanded: by hopCount asc, then score desc.

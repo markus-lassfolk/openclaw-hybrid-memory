@@ -19,10 +19,10 @@ import { serializeTags, parseTags } from "../utils/tags.js";
 import { capturePluginError } from "../services/error-reporter.js";
 
 /** TTL modes for edicts */
-export type EdictTtl = "never" | "event" | number;
+type EdictTtl = "never" | "event" | number;
 
 /** An edict entry — verified ground-truth fact */
-export interface EdictEntry {
+interface EdictEntry {
   id: string;
   /** The verified statement of fact */
   text: string;
@@ -43,7 +43,7 @@ export interface EdictEntry {
 }
 
 /** Input for creating a new edict */
-export interface AddEdictInput {
+interface AddEdictInput {
   text: string;
   source?: string;
   tags?: string[];
@@ -52,7 +52,7 @@ export interface AddEdictInput {
 }
 
 /** Input for updating an existing edict */
-export interface UpdateEdictInput {
+interface UpdateEdictInput {
   id: string;
   text?: string;
   source?: string;
@@ -62,19 +62,19 @@ export interface UpdateEdictInput {
 }
 
 /** Options for listing/retrieving edicts */
-export interface ListEdictsOptions {
+interface ListEdictsOptions {
   tags?: string[];
   includeExpired?: boolean;
   limit?: number;
 }
 
 /** Options for getEdicts (extends ListEdictsOptions) */
-export interface GetEdictsOptions extends ListEdictsOptions {
+interface GetEdictsOptions extends ListEdictsOptions {
   format?: "full" | "prompt";
 }
 
 /** Statistics about the edict store */
-export interface EdictStats {
+interface EdictStats {
   total: number;
   byTag: Record<string, number>;
   expired: number;
@@ -88,7 +88,7 @@ function renderEdictLine(edict: EdictEntry): string {
 }
 
 /** Render a list of edicts as a Markdown block for system prompt injection */
-export function renderEdictsForPrompt(edicts: EdictEntry[]): string {
+function renderEdictsForPrompt(edicts: EdictEntry[]): string {
   if (edicts.length === 0) return "";
   const header = "## Verified Ground Truth\n";
   const lines = edicts.map((e) => renderEdictLine(e));

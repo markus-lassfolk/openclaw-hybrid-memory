@@ -1,3 +1,4 @@
+import { getEnv } from "../utils/env-manager.js";
 /**
  * Sensor Sweep — cron-based data collection writing to the Event Bus.
  * NO LLM calls at sweep time — structured data only.
@@ -8,7 +9,7 @@
  * Issue #236
  */
 
-import { execFile } from "node:child_process";
+import { execFile } from "../utils/process-runner.js";
 import { promisify } from "node:util";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
@@ -34,14 +35,14 @@ import { capturePluginError } from "./error-reporter.js";
 // Types
 // ---------------------------------------------------------------------------
 
-export interface SensorSweepResult {
+interface SensorSweepResult {
   sensor: string;
   eventsWritten: number;
   eventsSkipped: number;
   error?: string;
 }
 
-export interface SweepAllResult {
+interface SweepAllResult {
   sensors: SensorSweepResult[];
   totalWritten: number;
   totalSkipped: number;
@@ -65,7 +66,7 @@ interface HAEntity {
 
 async function fetchHa(ha: HomeAssistantSensorConfig, path: string): Promise<Response> {
   const url = `${ha.baseUrl.replace(/\/$/, "")}${path}`;
-  const token = ha.token.startsWith("env:") ? (process.env[ha.token.slice(4)] ?? "") : ha.token;
+  const token = ha.token.startsWith("env:") ? (getEnv(ha.token.slice(4)) ?? "") : ha.token;
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), ha.timeoutMs ?? 10_000);
@@ -113,7 +114,7 @@ async function fetchAllHaStates(ha: HomeAssistantSensorConfig): Promise<HAEntity
 // Tier 1: Garmin Connect via Home Assistant
 // ---------------------------------------------------------------------------
 
-export async function sweepGarmin(
+async function sweepGarmin(
   bus: EventBus,
   cfg: GarminSensorConfig,
   ha: HomeAssistantSensorConfig,
@@ -173,7 +174,7 @@ interface SessionSummary {
 }
 
 function getSessionDir(): string {
-  return process.env.OPENCLAW_SESSION_DIR ?? join(homedir(), ".openclaw", "sessions");
+  return getEnv("OPENCLAW_SESSION_DIR") ?? join(homedir(), ".openclaw", "sessions");
 }
 
 function extractTopicsFromSession(content: string): string[] {
@@ -533,7 +534,7 @@ export async function sweepGitHub(
 // Tier 2: Home Assistant Anomaly Detection
 // ---------------------------------------------------------------------------
 
-export async function sweepHomeAssistantAnomaly(
+async function sweepHomeAssistantAnomaly(
   bus: EventBus,
   cfg: HomeAssistantAnomalySensorConfig,
   ha: HomeAssistantSensorConfig,
@@ -658,7 +659,7 @@ export async function sweepSystemHealth(
 // Tier 2: Weather
 // ---------------------------------------------------------------------------
 
-export async function sweepWeather(
+async function sweepWeather(
   bus: EventBus,
   cfg: WeatherSensorConfig,
   cooldownHours: number,
@@ -718,7 +719,7 @@ export async function sweepWeather(
 // Tier 2: Yarbo
 // ---------------------------------------------------------------------------
 
-export async function sweepYarbo(
+async function sweepYarbo(
   bus: EventBus,
   cfg: YarboSensorConfig,
   ha: HomeAssistantSensorConfig,
@@ -791,7 +792,7 @@ export async function sweepYarbo(
 // Main sweep runner
 // ---------------------------------------------------------------------------
 
-export interface SweepAllOpts {
+interface SweepAllOpts {
   tier?: 1 | 2 | "all";
   sources?: string[];
   dryRun?: boolean;

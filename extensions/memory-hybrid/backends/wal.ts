@@ -3,17 +3,24 @@
  * Append-only NDJSON format; fsync after each write for durability.
  */
 
-import { mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, statSync } from "node:fs";
 import { appendFile, open, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import type { DecayClass } from "../config.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { pluginLogger } from "../utils/logger.js";
 
+/** Schema version for WAL entry JSON; bump when `data` shape changes (#872). */
+export const WAL_ENTRY_SCHEMA_VERSION = 1;
+
 export type WALEntry = {
+  /** Present on new writes; omitted on legacy lines (treated as version 1). */
+  schemaVersion?: number;
   id: string;
   timestamp: number;
   operation: "store" | "delete" | "update";
+  /** For operation "update": UUID of the fact row being superseded (Issue #836 replay). */
+  targetId?: string;
   data: {
     text: string;
     category?: string;
@@ -31,15 +38,21 @@ export type WALEntry = {
 
 const WAL_REMOVE_PREFIX = '{"op":"remove","id":';
 
-export function isWalEntry(obj: unknown): obj is WALEntry {
-  return (
-    typeof obj === "object" &&
-    obj !== null &&
-    "id" in obj &&
-    "timestamp" in obj &&
-    "operation" in obj &&
-    ["store", "delete", "update"].includes((obj as WALEntry).operation)
-  );
+function isWalEntry(obj: unknown): obj is WALEntry {
+  if (typeof obj !== "object" || obj === null || !("id" in obj) || !("timestamp" in obj) || !("operation" in obj)) {
+    return false;
+  }
+  const sv = (obj as WALEntry).schemaVersion;
+  if (sv !== undefined && (typeof sv !== "number" || !Number.isFinite(sv) || sv < 1)) {
+    return false;
+  }
+  const op = (obj as WALEntry).operation;
+  if (!["store", "delete", "update"].includes(op)) return false;
+  if ("targetId" in obj && (obj as WALEntry).targetId !== undefined) {
+    const tid = (obj as WALEntry).targetId;
+    if (typeof tid !== "string" || tid.length === 0) return false;
+  }
+  return true;
 }
 
 export class WriteAheadLog {
@@ -93,14 +106,15 @@ export class WriteAheadLog {
   private async fsyncAfterWrite(): Promise<void> {
     let fh: Awaited<ReturnType<typeof open>> | undefined;
     try {
-      fh = await open(this.walPath, "a");
+      // "a+" read+append so fdatasync works on more filesystems than read-only or append-only edge cases (issue #854).
+      fh = await open(this.walPath, "a+");
       await fh.datasync();
     } catch (err) {
       const code = (err as NodeJS.ErrnoException).code;
       if (code === "EPERM" || code === "EINVAL") {
-        // Some filesystems (e.g. NTFS via WSL2) do not support fsync on a
-        // read-only file descriptor.  The data has already been written by
-        // appendFile / writeFile; skipping fsync here is safe and the
+        // Some filesystems (e.g. NTFS via WSL2) reject fdatasync/fsync on the WAL
+        // or do not fully support POSIX sync semantics. The data has already been
+        // written by appendFile / writeFile; skipping datasync here is safe and the
         // durability guarantee degrades to best-effort on those filesystems.
         if (!this.fsyncWarnEmitted) {
           pluginLogger.warn(
@@ -238,6 +252,7 @@ export class WriteAheadLog {
 
   private async _clearInternal(): Promise<void> {
     try {
+      // Under writeLock: delete path so empty state is "no file" (tests + readAll ENOENT).
       await rm(this.walPath, { force: true });
       this.activeIds.clear();
     } catch (err) {
@@ -269,6 +284,24 @@ export class WriteAheadLog {
     const entries = await this.readAll();
     const now = Date.now();
     return entries.filter((e) => now - e.timestamp < this.maxAge);
+  }
+
+  /**
+   * If the WAL file exceeds `maxBytes`, run `pruneStale()` to drop expired entries and rewrite the file (issue #903).
+   * Best-effort; returns number of entries removed.
+   */
+  async compactIfOversized(maxBytes: number): Promise<number> {
+    try {
+      if (!existsSync(this.walPath)) return 0;
+      const st = statSync(this.walPath);
+      if (st.size <= maxBytes) return 0;
+      return await this.pruneStale();
+    } catch (err) {
+      pluginLogger.info(
+        `memory-hybrid: WAL compactIfOversized size check failed; skipping compaction: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return 0;
+    }
   }
 
   async pruneStale(): Promise<number> {

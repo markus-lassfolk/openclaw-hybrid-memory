@@ -44,7 +44,7 @@ const ONNX_MODEL_SPECS: Record<string, { repo: string; modelFile: string; vocabF
   },
 };
 
-export class OnnxRuntimeMissingError extends Error {
+class OnnxRuntimeMissingError extends Error {
   readonly code = "ONNX_RUNTIME_MISSING";
   constructor(message: string) {
     super(message);

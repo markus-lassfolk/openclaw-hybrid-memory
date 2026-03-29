@@ -1,3 +1,4 @@
+import { getEnv } from "../utils/env-manager.js";
 /**
  * CLI Backfill, Ingest, and Analyze-Feedback-Phrases Handlers
  *
@@ -221,7 +222,7 @@ export async function runBackfillForCli(
   sink: BackfillCliSink,
 ): Promise<BackfillCliResult> {
   const { factsDb, vectorDb, embeddings } = ctx;
-  const workspaceRoot = opts.workspace ?? process.env.OPENCLAW_WORKSPACE ?? join(homedir(), ".openclaw", "workspace");
+  const workspaceRoot = opts.workspace ?? getEnv("OPENCLAW_WORKSPACE") ?? join(homedir(), ".openclaw", "workspace");
   const files = gatherBackfillFiles(workspaceRoot);
   if (files.length === 0) {
     sink.log(`No MEMORY.md or memory/**/*.md under ${workspaceRoot}`);
@@ -550,7 +551,7 @@ export async function runIngestFilesForCli(
   sink: IngestFilesSink,
 ): Promise<IngestFilesResult> {
   const { factsDb, vectorDb, embeddings, openai, cfg } = ctx;
-  const workspaceRoot = opts.workspace ?? process.env.OPENCLAW_WORKSPACE ?? process.cwd();
+  const workspaceRoot = opts.workspace ?? getEnv("OPENCLAW_WORKSPACE") ?? process.cwd();
   const ingestCfg = cfg.ingest;
   const patterns = opts.paths?.length ? opts.paths : ingestCfg?.paths?.length ? ingestCfg.paths : DEFAULT_INGEST_PATHS;
   const chunkSize = ingestCfg?.chunkSize ?? 800;

@@ -55,13 +55,15 @@ import type { VerificationStore } from "../services/verification-store.js";
 import type { AuditStore } from "../backends/audit-store.js";
 import { shouldAutoVerify } from "../services/verification-store.js";
 import type { VariantGenerationQueue } from "../services/contextual-variants.js";
-import { UUID_REGEX } from "../utils/constants.js";
+import { getSessionLogFileSuffix, UUID_REGEX } from "../utils/constants.js";
+import { embedCallWithTimeoutAndRetry } from "../utils/embed-call.js";
 import { formatNarrativeRange, recallNarrativeSummaries } from "../services/narrative-recall.js";
 
 export type BoundWalWriteFn = (
   operation: "store" | "update",
   data: Record<string, unknown>,
   logger: { warn: (msg: string) => void },
+  supersedeTargetId?: string,
 ) => Promise<string>;
 
 export type BoundWalRemoveFn = (id: string, logger: { warn: (msg: string) => void }) => Promise<void>;
@@ -145,7 +147,10 @@ async function storeRegistryEmbeddings({
     const models = embeddingRegistry.getModels();
     const tasks = models.map(async (cfg) => ({
       name: cfg.name,
-      vec: await embeddingRegistry.embed(text, cfg.name),
+      vec: await embedCallWithTimeoutAndRetry(
+        () => embeddingRegistry.embed(text, cfg.name),
+        `${operation}:${cfg.name}`,
+      ),
     }));
     const settled = await Promise.allSettled(tasks);
     for (const s of settled) {
@@ -160,7 +165,7 @@ async function storeRegistryEmbeddings({
     }
     if (!vector) {
       try {
-        const vec = await embeddingRegistry.embed(text);
+        const vec = await embedCallWithTimeoutAndRetry(() => embeddingRegistry.embed(text), `${operation}:primary`);
         const modelName = embeddings.modelName || embeddingRegistry.getPrimaryModel().name;
         vectors.set(modelName, vec);
       } catch (err) {
@@ -172,7 +177,7 @@ async function storeRegistryEmbeddings({
     }
   } else if (!vector) {
     try {
-      const vec = await embeddingRegistry.embed(text);
+      const vec = await embedCallWithTimeoutAndRetry(() => embeddingRegistry.embed(text), `${operation}:primary`);
       const modelName = embeddings.modelName || embeddingRegistry.getPrimaryModel().name;
       vectors.set(modelName, vec);
     } catch (err) {
@@ -183,7 +188,12 @@ async function storeRegistryEmbeddings({
     }
   }
 
-  if (vectors.size === 0) return;
+  if (vectors.size === 0) {
+    logger.warn(
+      `memory-hybrid: embeddingRegistry produced no vectors for fact ${factId} (${operation}) — caller should treat as embedding failure`,
+    );
+    return;
+  }
   for (const [model, vec] of vectors) {
     try {
       factsDb.storeEmbedding(factId, model, "canonical", vec, vec.length);
@@ -335,6 +345,12 @@ export function registerMemoryTools(
               "⚠️ SECURITY: Caller-controlled parameter. In multi-tenant environments, derive from authenticated identity instead. Include session-scoped memories for this session.",
           }),
         ),
+        confirmCrossTenantScope: Type.Optional(
+          Type.Boolean({
+            description:
+              "When multiAgent.trustToolScopeParams is true, set true to confirm intentional cross-tenant scope use of userId/agentId/sessionId (#874).",
+          }),
+        ),
         includeCold: Type.Optional(
           Type.Boolean({
             description: "Set true to include COLD tier (slower / deeper retrieval). Default: false (HOT + WARM only).",
@@ -452,7 +468,7 @@ export function registerMemoryTools(
 
         const lines = summaries.map((summary, index) => {
           const agentDir = currentAgentIdRef.value || "main";
-          const logPath = `~/.openclaw/agents/${agentDir}/sessions/${summary.sessionId}.jsonl`;
+          const logPath = `~/.openclaw/agents/${agentDir}/sessions/${summary.sessionId}${getSessionLogFileSuffix()}`;
           return (
             `${index + 1}. [${summary.source}] ${formatNarrativeRange(summary.periodStart, summary.periodEnd)} ` +
             `(sessionKey: ${summary.sessionId}, sessionLogPath: ${logPath})\n${summary.text}`
@@ -473,7 +489,7 @@ export function registerMemoryTools(
               source: summary.source,
               sessionId: summary.sessionId,
               sessionKey: summary.sessionId,
-              sessionLogPath: `~/.openclaw/agents/${currentAgentIdRef.value || "main"}/sessions/${summary.sessionId}.jsonl`,
+              sessionLogPath: `~/.openclaw/agents/${currentAgentIdRef.value || "main"}/sessions/${summary.sessionId}${getSessionLogFileSuffix()}`,
               periodStart: new Date(summary.periodStart * 1000).toISOString(),
               periodEnd: new Date(summary.periodEnd * 1000).toISOString(),
               tag: summary.tag,
@@ -502,6 +518,7 @@ export function registerMemoryTools(
       userId,
       agentId,
       sessionId,
+      confirmCrossTenantScope,
       expandGraph: expandGraphParam,
       expandDepth: expandDepthParam,
     } = params as {
@@ -516,6 +533,7 @@ export function registerMemoryTools(
       userId?: string;
       agentId?: string;
       sessionId?: string;
+      confirmCrossTenantScope?: boolean;
       expandGraph?: boolean;
       expandDepth?: number;
     };
@@ -527,7 +545,11 @@ export function registerMemoryTools(
     // identity (via autoRecall.scopeFilter config) rather than accepted as tool parameters.
     // Accepting arbitrary scope filters allows users to access other users' private memories.
     // See docs/MEMORY-SCOPING.md "Secure Multi-Tenant Setup" for proper implementation.
-    const scopeFilter = buildToolScopeFilter({ userId, agentId, sessionId }, currentAgentIdRef.value, cfg);
+    const scopeFilter = buildToolScopeFilter(
+      { userId, agentId, sessionId, confirmCrossTenantScope },
+      currentAgentIdRef.value,
+      cfg,
+    );
     const logRecall = (hit: boolean) => {
       const maybeFactsDb = factsDb as { logRecall?: (hit: boolean) => void };
       if (typeof maybeFactsDb.logRecall === "function") {
@@ -697,7 +719,11 @@ export function registerMemoryTools(
         cfg.queryExpansion?.enabled && cfg.retrieval.strategies.includes("semantic")
           ? new QueryExpander(cfg.queryExpansion, openai)
           : null;
-      const embedFn = queryVector != null ? (text: string) => embeddings.embed(text) : null;
+      const embedFn =
+        queryVector != null
+          ? (text: string) =>
+              embedCallWithTimeoutAndRetry(() => embeddings.embed(text), "memory-tools:rrf-deep-retrieval")
+          : null;
       const rrfOutput = await runExplicitDeepRetrieval(query, queryVector, factsDb.getRawDb(), vectorDb, factsDb, {
         config: rrfConfig,
         policy: explicitPolicy,
@@ -964,6 +990,12 @@ export function registerMemoryTools(
               description: "⚠️ SECURITY: Caller-controlled parameter. Filter procedures for specific session.",
             }),
           ),
+          confirmCrossTenantScope: Type.Optional(
+            Type.Boolean({
+              description:
+                "When multiAgent.trustToolScopeParams is true, set true to confirm intentional cross-tenant scope use of userId/agentId/sessionId (#874).",
+            }),
+          ),
         }),
         async execute(_toolCallId: string, params: Record<string, unknown>) {
           try {
@@ -973,12 +1005,14 @@ export function registerMemoryTools(
               agentId,
               userId,
               sessionId,
+              confirmCrossTenantScope,
             } = params as {
               taskDescription: string;
               limit?: number;
               agentId?: string;
               userId?: string;
               sessionId?: string;
+              confirmCrossTenantScope?: boolean;
             };
             const q =
               typeof taskDescription === "string" && taskDescription.trim().length > 0 ? taskDescription.trim() : null;
@@ -990,7 +1024,11 @@ export function registerMemoryTools(
             }
 
             // Build scope filter (same logic as memory_recall)
-            const scopeFilter = buildToolScopeFilter({ userId, agentId, sessionId }, currentAgentIdRef.value, cfg);
+            const scopeFilter = buildToolScopeFilter(
+              { userId, agentId, sessionId, confirmCrossTenantScope },
+              currentAgentIdRef.value,
+              cfg,
+            );
 
             const procedures = factsDb.searchProcedures(
               q,
@@ -1422,7 +1460,10 @@ export function registerMemoryTools(
               recordActiveStoreProvenance(pointerEntry.id, pointerText);
               try {
                 addOperationBreadcrumb("vector", "store-credential-pointer");
-                const vector = await embeddings.embed(pointerText);
+                const vector = await embedCallWithTimeoutAndRetry(
+                  () => embeddings.embed(pointerText),
+                  "memory-tools:store-credential-pointer",
+                );
                 factsDb.setEmbeddingModel(pointerEntry.id, embeddings.modelName);
                 if (!(await vectorDb.hasDuplicate(vector))) {
                   await vectorDb.store({
@@ -1496,7 +1537,10 @@ export function registerMemoryTools(
           // Generate vector first (needed for WAL and storage)
           let vector: number[] | undefined;
           try {
-            vector = await embeddings.embed(textToStore);
+            vector = await embedCallWithTimeoutAndRetry(
+              () => embeddings.embed(textToStore),
+              "memory-tools:store-embed",
+            );
           } catch (err) {
             if (err instanceof AllEmbeddingProvidersFailed) {
               // Graceful degradation: store the fact without a vector.
@@ -1570,6 +1614,7 @@ export function registerMemoryTools(
                       vector,
                     },
                     api.logger,
+                    classification.targetId,
                   );
 
                   const nowSec = Math.floor(Date.now() / 1000);
@@ -2202,7 +2247,10 @@ export function registerMemoryTools(
             const sqlResults = factsDb.search(query, 5);
             let lanceResults: SearchResult[] = [];
             try {
-              const vector = await embeddings.embed(query);
+              const vector = await embedCallWithTimeoutAndRetry(
+                () => embeddings.embed(query),
+                "memory-tools:forget-vector-search",
+              );
               lanceResults = await vectorDb.search(vector, 5, 0.7);
             } catch (err) {
               // AllEmbeddingProvidersFailed is expected when no providers are configured — don't report to Sentry.

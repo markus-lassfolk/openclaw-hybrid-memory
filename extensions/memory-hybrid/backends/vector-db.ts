@@ -10,7 +10,15 @@ import * as lancedb from "@lancedb/lancedb";
 import type { DecayClass, MemoryCategory } from "../config.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import type { SearchResult } from "../types/memory.js";
-import { LANCE_NO_VECTOR_COL_MSG, UUID_REGEX } from "../utils/constants.js";
+import {
+  LANCE_NO_VECTOR_COL_MSG,
+  LANCE_VECTOR_SEARCH_MAX_LIMIT,
+  UUID_REGEX,
+  VECTORDB_INIT_MAX_RETRIES,
+  VECTORDB_INIT_RETRY_DELAY_MS,
+  VECTORDB_OPTIMIZE_FAILURE_WARN_THRESHOLD,
+  VECTORDB_READER_DRAIN_TIMEOUT_MS,
+} from "../utils/constants.js";
 import { pluginLogger } from "../utils/logger.js";
 
 const LANCE_TABLE = "memories";
@@ -26,12 +34,11 @@ const SEMANTIC_QUERY_CACHE_TABLE = "semantic_query_cache";
 const _optimizingByPath = new Map<string, boolean>();
 /** Module-level consecutive optimize-failure counter keyed by dbPath. */
 const _optimizeFailuresByPath = new Map<string, number>();
-const _OPTIMIZE_FAILURE_WARN_THRESHOLD = 3;
 const SEMANTIC_QUERY_CACHE_MAX_ROWS_PER_FILTER_KEY = 100;
 
-export type VectorDBLogger = { warn: (msg: string) => void };
+type VectorDBLogger = { warn: (msg: string) => void };
 
-export interface SemanticQueryCacheEntry {
+interface SemanticQueryCacheEntry {
   id: string;
   queryText: string;
   factIds: string[];
@@ -66,6 +73,14 @@ export class VectorDB {
    */
   private schemaValid = true;
   /**
+   * Set to false when lancedb.connect() throws during doInitialize(). When false, all
+   * vector operations (search, store, hasDuplicate, count, delete, optimize) return safe
+   * empty defaults and the plugin runs in FTS5-only fallback mode. Reset to true when
+   * ensureInitialized() runs after a close(), so that a plugin reload / explicit reconnect
+   * can retry the connection.
+   */
+  private lanceDbAvailable = true;
+  /**
    * Tracks whether the semantic query cache table can safely serve vector queries.
    * When false, cache lookups/stores are skipped until the table is rebuilt.
    */
@@ -75,6 +90,8 @@ export class VectorDB {
    * and abort when it changes, preventing them from running on a closed instance.
    */
   private closeGeneration = 0;
+  /** When true, LanceDB failed to open; vector ops no-op / empty (issue #906 FTS-only degradation). */
+  private lanceInitFailed = false;
   /**
    * When true, this VectorDB is a long-lived singleton connection (set via setPersistent()).
    * removeSession() becomes a safe no-op when persistent — the connection is only closed
@@ -162,13 +179,21 @@ export class VectorDB {
    * being acquired during the critical cleanup window.
    */
   private async waitForReadersToDrain(): Promise<void> {
+    const start = Date.now();
     while ((VectorDB._activeReadersByPath.get(this.dbPath) ?? 0) > 0) {
+      if (Date.now() - start > VECTORDB_READER_DRAIN_TIMEOUT_MS) {
+        this.logWarn(
+          `memory-hybrid: waitForReadersToDrain timed out after ${VECTORDB_READER_DRAIN_TIMEOUT_MS}ms — proceeding with optimize() to avoid indefinite starvation under sustained read load.`,
+        );
+        break;
+      }
       // Yield to the event loop so in-flight readers can finish.
       await new Promise((resolve) => setImmediate(resolve));
     }
   }
 
-  private async ensureInitialized(): Promise<void> {
+  /** Wait for LanceDB (or FTS-only degraded mode). Safe to call from CLI/diagnostics. */
+  async ensureInitialized(): Promise<void> {
     // Await any in-flight init before inspecting state. Without this guard, a caller that
     // arrives while doInitialize() is already running would start a second concurrent
     // doInitialize() — resulting in duplicate connections and a potential connection leak.
@@ -194,6 +219,10 @@ export class VectorDB {
     if (this.closed) {
       this.logWarn("memory-hybrid: VectorDB was closed; reconnecting...");
       this.closed = false;
+      // Allow a fresh connection attempt after an explicit close/reopen cycle
+      // (e.g., plugin reload). Clear both degraded-mode signals so doInitialize() can retry.
+      this.lanceDbAvailable = true;
+      this.lanceInitFailed = false;
       this.table = null;
       // Close any connection that may have been set by a concurrent in-flight doInitialize()
       // that completed after close() ran, to avoid leaking the underlying file handle.
@@ -208,6 +237,7 @@ export class VectorDB {
       this.initPromise = null;
     }
     if (this.table && this.semanticQueryCacheTable) return;
+    if (this.lanceInitFailed) return;
     if (this.initPromise) return this.initPromise;
     this.initPromise = this.doInitialize().catch((err) => {
       capturePluginError(err as Error, {
@@ -215,12 +245,27 @@ export class VectorDB {
         subsystem: "vector",
       });
       this.initPromise = null;
-      throw err;
+      this.lanceDbAvailable = false;
+      this.lanceInitFailed = true;
+      this.schemaValid = false;
+      this.table = null;
+      this.semanticQueryCacheTable = null;
+      this.db = null;
+      this.logWarn(
+        `memory-hybrid: LanceDB unavailable — continuing without vector search (FTS/SQLite still work). ${err instanceof Error ? err.message : String(err)}`,
+      );
     });
     return this.initPromise;
   }
 
+  /** False when LanceDB could not be opened; callers may fall back to keyword/FTS retrieval only. */
+  isLanceAvailable(): boolean {
+    return !this.lanceInitFailed && this.table !== null;
+  }
+
   private async doInitialize(): Promise<void> {
+    this.lanceInitFailed = false;
+    this.lanceDbAvailable = true;
     // Reset schema validity on each (re-)init so a fixed table is detected correctly.
     this.schemaValid = true;
     this.semanticQueryCacheSchemaValid = true;
@@ -231,7 +276,21 @@ export class VectorDB {
     // can still locate the data directory.
     const resolvedPath = isAbsolute(this.dbPath) ? this.dbPath : pathResolve(this.dbPath);
 
-    this.db = await lancedb.connect(resolvedPath);
+    try {
+      this.db = await lancedb.connect(resolvedPath);
+    } catch (connectErr) {
+      // LanceDB is unavailable (e.g., native module failed to load, path is inaccessible,
+      // or the storage backend is not supported on this platform). Log a warning and enter
+      // FTS5-only fallback mode — vector operations will return safe empty defaults until
+      // the plugin is reloaded and doInitialize() succeeds.
+      this.lanceDbAvailable = false;
+      this.lanceInitFailed = true;
+      this.schemaValid = false;
+      this.logWarn(
+        `memory-hybrid: ⚠️  LanceDB unavailable — entering FTS5-only fallback mode. Vector search and storage are disabled. Error: ${connectErr instanceof Error ? connectErr.message : String(connectErr)}`,
+      );
+      return;
+    }
     // Guard: a concurrent close() may have nulled this.db between the connect() await and here.
     if (!this.db) throw new Error("VectorDB connection lost during initialization (concurrent close).");
     // Guard: plugin re-registration (hot-reload/SIGUSR1) may have called close() concurrently.
@@ -497,12 +556,10 @@ export class VectorDB {
     // Retry loop: OpenClaw calls register() multiple times during startup, each time closing
     // the previous VectorDB. After all registrations settle, the final VectorDB initializes
     // successfully. Retrying with a brief delay lets us wait out the startup churn (issue #769).
-    const MAX_RETRIES = 10;
-    const RETRY_DELAY_MS = 500;
     let lastErr: unknown;
-    for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+    for (let attempt = 0; attempt < VECTORDB_INIT_MAX_RETRIES; attempt++) {
       if (attempt > 0) {
-        await new Promise<void>((resolve) => setTimeout(resolve, RETRY_DELAY_MS));
+        await new Promise<void>((resolve) => setTimeout(resolve, VECTORDB_INIT_RETRY_DELAY_MS));
       }
       try {
         await this.ensureInitialized();
@@ -512,14 +569,18 @@ export class VectorDB {
         const msg = err instanceof Error ? err.message : String(err);
         if (msg.includes("initialization aborted") || msg.includes("concurrent re-registration")) {
           this.logWarn(
-            `memory-hybrid: VectorDB init aborted (concurrent re-registration), retrying (${attempt + 1}/${MAX_RETRIES})...`,
+            `memory-hybrid: VectorDB init aborted (concurrent re-registration), retrying (${attempt + 1}/${VECTORDB_INIT_MAX_RETRIES})...`,
           );
           continue;
         }
         throw err;
       }
     }
-    if (this.closed || !this.db) {
+    if (this.closed) {
+      throw lastErr ?? new Error("VectorDB failed to initialize after retries (concurrent re-registration).");
+    }
+    // Prior total Lance init failure leaves db null; we still remove dirs and reconnect below (issue #906).
+    if (!this.db && !this.lanceInitFailed) {
       throw lastErr ?? new Error("VectorDB failed to initialize after retries (concurrent re-registration).");
     }
 
@@ -527,7 +588,7 @@ export class VectorDB {
     // LanceDB 0.27.x dropTable() fails with ENOTEMPTY on non-empty directories,
     // so we close the connection, delete the directory manually, then reconnect (issue #770).
     try {
-      this.db.close();
+      this.db?.close();
     } catch {
       // ignore
     }
@@ -557,6 +618,9 @@ export class VectorDB {
     }
 
     // Reconnect — doInitialize() will create fresh empty tables with the current schema.
+    // Clear degraded-mode flag so ensureInitialized() runs doInitialize() instead of no-op (issue #906).
+    this.lanceInitFailed = false;
+    this.lanceDbAvailable = true;
     this.closed = false;
     this.initPromise = null;
     await this.ensureInitialized();
@@ -629,8 +693,12 @@ export class VectorDB {
 
     if (staleRows.length === 0) return;
 
-    const idList = staleRows.map((row) => `'${this.escapeSqlString(row.id)}'`).join(", ");
-    await table.delete(`id IN (${idList})`);
+    const IN_CHUNK = 500;
+    for (let i = 0; i < staleRows.length; i += IN_CHUNK) {
+      const chunk = staleRows.slice(i, i + IN_CHUNK);
+      const idList = chunk.map((row) => `'${this.escapeSqlString(row.id)}'`).join(", ");
+      await table.delete(`id IN (${idList})`);
+    }
   }
 
   async getSemanticQueryCacheMatch(
@@ -638,13 +706,16 @@ export class VectorDB {
     options: { minSimilarity?: number; ttlMs?: number; filterKey?: string; candidateLimit?: number } = {},
   ): Promise<SemanticQueryCacheEntry | null> {
     try {
+      if (!this.lanceDbAvailable) return null;
       await this.ensureInitialized();
+      if (!this.lanceDbAvailable || this.lanceInitFailed || !this.semanticQueryCacheTable) return null;
       if (!this.semanticQueryCacheSchemaValid) return null;
       const nowSec = Math.floor(Date.now() / 1000);
       const minSimilarity = options.minSimilarity ?? 0.95;
       const ttlSec = Math.max(1, Math.floor((options.ttlMs ?? 5 * 60 * 1000) / 1000));
       const filterKey = options.filterKey ?? "default";
-      const candidateLimit = options.candidateLimit ?? 25;
+      const rawCandidate = options.candidateLimit ?? 25;
+      const candidateLimit = Math.max(1, Math.min(LANCE_VECTOR_SEARCH_MAX_LIMIT, Math.floor(rawCandidate)));
 
       // Dimension pre-check: prevent LanceDB "No vector column found" errors on fallback query mismatch
       if (vector.length !== this.vectorDim) return null;
@@ -721,7 +792,9 @@ export class VectorDB {
     cachedAt?: number;
   }): Promise<void> {
     try {
+      if (!this.lanceDbAvailable) return;
       await this.ensureInitialized();
+      if (!this.lanceDbAvailable || this.lanceInitFailed || !this.semanticQueryCacheTable) return;
       if (!this.semanticQueryCacheSchemaValid) return;
       const filterKey = entry.filterKey ?? "default";
       await this.getSemanticQueryCacheTable().add([
@@ -753,6 +826,14 @@ export class VectorDB {
     }
   }
 
+  /** True when LanceDB/storage reports an id collision (race: delete + re-add between writers). */
+  private isVectorDuplicateIdError(err: unknown): boolean {
+    const e = err as NodeJS.ErrnoException & { code?: string };
+    if (e?.code === "EEXIST") return true;
+    const msg = err instanceof Error ? err.message : String(err);
+    return /EEXIST|already exists|duplicate/i.test(msg);
+  }
+
   /** Store a vector row. If id is provided (e.g. fact id from SQLite), it is used so search returns fact ids for classification. */
   async store(entry: {
     text: string;
@@ -764,14 +845,34 @@ export class VectorDB {
     id?: string;
   }): Promise<string> {
     try {
+      if (!this.lanceDbAvailable) return entry.id ?? randomUUID();
       await this.ensureInitialized();
+      // LanceDB unavailable (FTS5-only fallback mode): return canonical id without storing vectors.
+      if (!this.lanceDbAvailable || this.lanceInitFailed || !this.table) {
+        const rawId = entry.id ?? randomUUID();
+        return entry.id !== undefined && UUID_REGEX.test(entry.id) ? entry.id.toLowerCase() : rawId;
+      }
       // Wait for any in-progress optimization to complete before writing
       if (this.optimizePromise) {
         await this.optimizePromise;
       }
-      const id = entry.id ?? randomUUID();
+      // Canonical lowercase UUID so LanceDB row id matches delete() and EEXIST recovery (#917 review).
+      const rawId = entry.id ?? randomUUID();
+      const id = entry.id !== undefined && UUID_REGEX.test(entry.id) ? entry.id.toLowerCase() : rawId;
       const why = entry.why ?? "";
-      await this.getTable().add([{ ...entry, id, why, createdAt: Math.floor(Date.now() / 1000) }]);
+      const row = { ...entry, id, why, createdAt: Math.floor(Date.now() / 1000) };
+      try {
+        await this.getTable().add([row]);
+      } catch (err) {
+        // Race: concurrent re-index may delete+insert the same fact id; EEXIST must not drop the new vector.
+        if (this.isVectorDuplicateIdError(err) && entry.id && UUID_REGEX.test(entry.id)) {
+          const lid = id;
+          await this.getTable().delete(`id = '${lid}'`);
+          await this.getTable().add([row]);
+        } else {
+          throw err;
+        }
+      }
       this.storeCount++;
       if (!_optimizingByPath.get(this.dbPath) && this.storeCount >= VectorDB.AUTO_OPTIMIZE_INTERVAL) {
         this.storeCount = 0;
@@ -783,7 +884,7 @@ export class VectorDB {
           .catch((err) => {
             const failures = (_optimizeFailuresByPath.get(this.dbPath) ?? 0) + 1;
             _optimizeFailuresByPath.set(this.dbPath, failures);
-            if (failures >= _OPTIMIZE_FAILURE_WARN_THRESHOLD) {
+            if (failures >= VECTORDB_OPTIMIZE_FAILURE_WARN_THRESHOLD) {
               this.logWarn(
                 `memory-hybrid: auto-optimize has failed ${failures} time(s) in a row — ` +
                   `check LanceDB path (${this.dbPath}) for disk space or permission issues. Error: ${err}`,
@@ -814,7 +915,11 @@ export class VectorDB {
   async optimize(
     olderThanMs: number = 7 * 24 * 60 * 60 * 1000,
   ): Promise<{ compacted: number; removedFragments: number; freedBytes: number }> {
+    if (!this.lanceDbAvailable) return { compacted: 0, removedFragments: 0, freedBytes: 0 };
     await this.ensureInitialized();
+    if (!this.lanceDbAvailable || this.lanceInitFailed || !this.table) {
+      return { compacted: 0, removedFragments: 0, freedBytes: 0 };
+    }
     // Wait for any in-progress optimization to complete
     if (this.optimizePromise) {
       await this.optimizePromise;
@@ -866,7 +971,9 @@ export class VectorDB {
 
   async search(vector: number[], limit = 5, minScore = 0.3): Promise<SearchResult[]> {
     try {
+      if (!this.lanceDbAvailable) return [];
       await this.ensureInitialized();
+      if (!this.lanceDbAvailable || this.lanceInitFailed || !this.table) return [];
       // Schema was detected as invalid at startup (dim mismatch or no vector column).
       // Return empty results immediately without a GlitchTip report — the issue was
       // already logged once during init (issue #366).
@@ -876,9 +983,11 @@ export class VectorDB {
       // (e.g. Google/768 dims) produces a vector incompatible with the stored
       // 3072-dim table built with text-embedding-3-large.
       if (vector.length !== this.vectorDim) return [];
+      const rawLimit = Number.isFinite(limit) ? Math.floor(limit) : 5;
+      const safeLimit = Math.max(1, Math.min(LANCE_VECTOR_SEARCH_MAX_LIMIT, rawLimit));
       const acquired = this.acquireReader();
       try {
-        const results = await this.getTable().vectorSearch(vector).limit(limit).toArray();
+        const results = await this.getTable().vectorSearch(vector).limit(safeLimit).toArray();
         return results
           .map((row) => {
             const distance = row._distance ?? 0;
@@ -934,7 +1043,9 @@ export class VectorDB {
 
   async hasDuplicate(vector: number[], threshold = 0.95): Promise<boolean> {
     try {
+      if (!this.lanceDbAvailable) return false;
       await this.ensureInitialized();
+      if (!this.lanceDbAvailable || this.lanceInitFailed || !this.table) return false;
       // Same early-exit as search(): schema was already reported invalid at startup.
       if (!this.schemaValid) return false;
       // Dimension pre-check: silently return false (no duplicate) if the query vector
@@ -980,7 +1091,9 @@ export class VectorDB {
       return false;
     }
     try {
+      if (!this.lanceDbAvailable) return false;
       await this.ensureInitialized();
+      if (!this.lanceDbAvailable || this.lanceInitFailed || !this.table) return false;
       await this.getTable().delete(`id = '${id.toLowerCase()}'`);
       return true;
     } catch (err) {
@@ -995,7 +1108,9 @@ export class VectorDB {
 
   async count(): Promise<number> {
     const tryCount = async (): Promise<number> => {
+      if (!this.lanceDbAvailable) return 0;
       await this.ensureInitialized();
+      if (!this.lanceDbAvailable || this.lanceInitFailed || !this.table) return 0;
       const acquired = this.acquireReader();
       try {
         const t = this.getTable();
@@ -1039,6 +1154,57 @@ export class VectorDB {
       });
       this.logWarn(`memory-hybrid: LanceDB count failed: ${err}`);
       return 0;
+    }
+  }
+
+  /**
+   * Return all fact IDs currently stored in LanceDB.
+   * Used by the reconcile command to detect orphan vectors.
+   * Only UUIDs that pass UUID_REGEX are included (malformed rows are silently skipped).
+   */
+  async getAllIds(): Promise<string[]> {
+    try {
+      if (!this.lanceDbAvailable) return [];
+      await this.ensureInitialized();
+      if (!this.lanceDbAvailable || this.lanceInitFailed || !this.table) return [];
+      if (!this.schemaValid) return [];
+      const acquired = this.acquireReader();
+      try {
+        const table = this.getTable();
+        const ids: string[] = [];
+        const batchSize = 1000;
+        let offset = 0;
+
+        // eslint-disable-next-line no-constant-condition
+        while (true) {
+          const rows = await table.query().select(["id"]).limit(batchSize).offset(offset).toArray();
+
+          if (rows.length === 0) {
+            break;
+          }
+
+          for (const row of rows) {
+            const id = String((row as { id?: unknown }).id ?? "");
+            if (UUID_REGEX.test(id)) {
+              ids.push(id.toLowerCase());
+            }
+          }
+
+          offset += rows.length;
+        }
+
+        return ids;
+      } finally {
+        this.releaseReader(acquired);
+      }
+    } catch (err) {
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        operation: "vector-get-all-ids",
+        severity: "info",
+        subsystem: "vector",
+      });
+      this.logWarn(`memory-hybrid: LanceDB getAllIds failed: ${err}`);
+      return [];
     }
   }
 
@@ -1110,6 +1276,8 @@ export class VectorDB {
   private _doClose(): void {
     this.closed = true;
     this.closeGeneration++;
+    this.lanceInitFailed = false;
+    this.lanceDbAvailable = true;
     this.table = null;
     this.semanticQueryCacheTable = null;
     if (this.db) {
@@ -1146,5 +1314,15 @@ export class VectorDB {
    */
   getCloseGeneration(): number {
     return this.closeGeneration;
+  }
+
+  /**
+   * Returns false if lancedb.connect() failed during the last initialization attempt.
+   * When false, the plugin is operating in FTS5-only fallback mode: search() returns [],
+   * store() is a no-op, and all other vector operations return safe empty defaults.
+   * The flag is reset to true when close() is called, so a plugin reload will retry.
+   */
+  isLanceDbAvailable(): boolean {
+    return this.lanceDbAvailable;
   }
 }

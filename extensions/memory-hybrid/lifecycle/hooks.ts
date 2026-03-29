@@ -1,3 +1,4 @@
+import { getEnv } from "../utils/env-manager.js";
 /**
  * Lifecycle Hooks (Phase 2.3: staged pipeline).
  *
@@ -29,7 +30,7 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
   const sessionState = createSessionState();
   const staleSweepTimer = createStaleSweepTimer(sessionState);
 
-  const workspaceRoot = process.env.OPENCLAW_WORKSPACE ?? join(homedir(), ".openclaw", "workspace");
+  const workspaceRoot = getEnv("OPENCLAW_WORKSPACE") ?? join(homedir(), ".openclaw", "workspace");
   const resolvedActiveTaskPath = isAbsolute(ctx.cfg.activeTask.filePath)
     ? ctx.cfg.activeTask.filePath
     : join(workspaceRoot, ctx.cfg.activeTask.filePath);

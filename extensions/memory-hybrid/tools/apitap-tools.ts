@@ -18,7 +18,7 @@ import type { HybridMemoryConfig } from "../config.js";
 import { ApitapService, isEndpointBlocked, validateUrl } from "../services/apitap-service.js";
 import { capturePluginError } from "../services/error-reporter.js";
 
-export interface ApitapToolsContext {
+interface ApitapToolsContext {
   apitapStore: ApitapStore;
   cfg: HybridMemoryConfig;
 }
