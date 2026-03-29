@@ -244,6 +244,7 @@ import {
 } from "./backends/credentials-db.js";
 import { ProposalsDB, type ProposalEntry } from "./backends/proposals-db.js";
 import { EventLog } from "./backends/event-log.js";
+import { AuditStore, auditDbPathForMemorySqlite } from "./backends/audit-store.js";
 import { EventBus, computeFingerprint } from "./backends/event-bus.js";
 import { IssueStore } from "./backends/issue-store.js";
 import { LearningsDB } from "./backends/learnings-db.js";
@@ -367,6 +368,7 @@ function runMemoryHybridRegister(api: ClawdbotPluginApi): void {
       provenanceService: old.provenanceService,
       learningsDb: old.learningsDb,
       apitapStore: old.apitapStore,
+      auditStore: old.auditStore,
     });
     old.pythonBridge?.shutdown().catch(() => {});
     runtimeRef.value = null;
@@ -469,6 +471,26 @@ function runMemoryHybridRegister(api: ClawdbotPluginApi): void {
   }
 
   // ========================================================================
+  // Audit log (Issue #790)
+  // ========================================================================
+
+  let auditStore: AuditStore | null = null;
+  try {
+    const auditPath = auditDbPathForMemorySqlite(resolvedSqlitePath);
+    if (auditPath) {
+      auditStore = new AuditStore(auditPath);
+      api.logger.info(`memory-hybrid: audit store initialized at ${auditPath}`);
+    }
+  } catch (err) {
+    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+      subsystem: "registration",
+      operation: "plugin-register:audit-store-init",
+      severity: "warning",
+    });
+    auditStore = null;
+  }
+
+  // ========================================================================
   // Build PluginRuntime -- single instance-scoped container for all state
   // ========================================================================
 
@@ -502,6 +524,7 @@ function runMemoryHybridRegister(api: ClawdbotPluginApi): void {
     pythonBridge,
     variantQueue,
     learningsDb,
+    auditStore,
     lifecycleHooksHandle: null, // set after registerLifecycleHooks below
     pendingLLMWarnings: createPendingLLMWarnings(),
     currentAgentIdRef: { value: null },
@@ -555,6 +578,7 @@ function runMemoryHybridRegister(api: ClawdbotPluginApi): void {
     runReflectionMeta,
     pythonBridge: runtime.pythonBridge,
     apitapStore: runtime.apitapStore,
+    auditStore: runtime.auditStore,
   };
 
   // ========================================================================
@@ -593,6 +617,7 @@ function runMemoryHybridRegister(api: ClawdbotPluginApi): void {
       resolvedLancePath: runtime.resolvedLancePath,
       pluginId: PLUGIN_ID,
       detectCategory,
+      auditStore: runtime.auditStore,
     });
   } catch (err) {
     capturePluginError(err instanceof Error ? err : new Error(String(err)), {
@@ -655,6 +680,7 @@ function runMemoryHybridRegister(api: ClawdbotPluginApi): void {
         pythonBridge: runtime.pythonBridge,
         provenanceService: runtime.provenanceService,
         costTracker: runtime.costTracker,
+        auditStore: runtime.auditStore ?? null,
       }),
     );
   } catch (err) {

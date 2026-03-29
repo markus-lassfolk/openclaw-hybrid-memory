@@ -169,6 +169,8 @@ describe("collectStatus", () => {
     expect(status.forge).toBeDefined();
     expect(status.git).toBeDefined();
     expect(status.costs).toBeDefined();
+    expect(status.audit).toBeDefined();
+    expect(typeof status.audit.enabled).toBe("boolean");
   });
 
   it("memory.activeFacts matches factsDb.count()", async () => {

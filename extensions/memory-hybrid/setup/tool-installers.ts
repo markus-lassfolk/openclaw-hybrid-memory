@@ -82,6 +82,7 @@ function selectMemoryCoreToolsContext(ctx: ToolsContext): MemoryToolsContext {
     findSimilarByEmbedding,
     walWrite,
     walRemove,
+    auditStore,
   } = ctx;
 
   return {
@@ -106,6 +107,7 @@ function selectMemoryCoreToolsContext(ctx: ToolsContext): MemoryToolsContext {
     walWrite: (operation, data, logger) => walWrite(wal, operation, data, logger),
     walRemove: (id, logger) => walRemove(wal, id, logger),
     findSimilarByEmbedding,
+    auditStore,
   };
 }
 

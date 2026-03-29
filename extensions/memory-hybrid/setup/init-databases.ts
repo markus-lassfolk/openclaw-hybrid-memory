@@ -1702,6 +1702,7 @@ export function closeOldDatabases(context: {
   provenanceService?: ProvenanceService | null;
   learningsDb?: import("../backends/learnings-db.js").LearningsDB | null;
   apitapStore?: ApitapStore | null;
+  auditStore?: import("../backends/audit-store.js").AuditStore | null;
 }): void {
   const {
     factsDb,
@@ -1723,6 +1724,7 @@ export function closeOldDatabases(context: {
     provenanceService,
     learningsDb,
     apitapStore,
+    auditStore,
   } = context;
 
   invalidateClusterCache();
@@ -1914,6 +1916,16 @@ export function closeOldDatabases(context: {
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
         operation: "close-databases",
         subsystem: "apitapStore",
+      });
+    }
+  }
+  if (auditStore) {
+    try {
+      auditStore.close();
+    } catch (err) {
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        operation: "close-databases",
+        subsystem: "auditStore",
       });
     }
   }

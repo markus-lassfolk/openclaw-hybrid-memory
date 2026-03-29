@@ -41,6 +41,7 @@ import type { EmbeddingRegistry } from "../services/embedding-registry.js";
 import type { LifecycleHooksHandle } from "../setup/register-hooks.js";
 import type { VariantGenerationQueue } from "../services/contextual-variants.js";
 import type { PendingLLMWarnings } from "../services/chat.js";
+import type { AuditStore } from "../backends/audit-store.js";
 
 /** All mutable per-instance state for the memory-hybrid plugin. */
 export interface PluginRuntime {
@@ -79,6 +80,8 @@ export interface PluginRuntime {
   variantQueue: VariantGenerationQueue | null;
   /** Staged intake buffer for errors, lessons, and feature requests (Issue #617). */
   learningsDb: LearningsDB | null;
+  /** Cross-agent audit log (Issue #790). */
+  auditStore: AuditStore | null;
 
   // --- Lifecycle state ---
   /** Handle returned by registerLifecycleHooks; set after hooks are registered, null until then. */

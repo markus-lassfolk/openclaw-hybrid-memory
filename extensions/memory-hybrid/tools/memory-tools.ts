@@ -52,6 +52,7 @@ import { extractTags } from "../utils/tags.js";
 import { parseSourceDate } from "../utils/dates.js";
 import { detectFutureDate } from "../utils/date-detector.js";
 import type { VerificationStore } from "../services/verification-store.js";
+import type { AuditStore } from "../backends/audit-store.js";
 import { shouldAutoVerify } from "../services/verification-store.js";
 import type { VariantGenerationQueue } from "../services/contextual-variants.js";
 import { UUID_REGEX } from "../utils/constants.js";
@@ -87,6 +88,8 @@ export interface MemoryToolsContext {
   walWrite: BoundWalWriteFn;
   walRemove: BoundWalRemoveFn;
   findSimilarByEmbedding: FindSimilarByEmbeddingFn;
+  /** Cross-agent audit trail (Issue #790). */
+  auditStore?: AuditStore | null;
 }
 
 type LegacyMemoryToolsContext = Omit<
@@ -261,7 +264,19 @@ export function registerMemoryTools(
     walWrite,
     walRemove,
     findSimilarByEmbedding,
+    auditStore,
   } = resolvedContext;
+
+  const agentIdForAudit = () => currentAgentIdRef.value || cfg.multiAgent.orchestratorId || "unknown";
+
+  function auditAppend(input: import("../backends/audit-store.js").AuditEventInput): void {
+    if (!auditStore) return;
+    try {
+      auditStore.append(input);
+    } catch {
+      /* non-fatal */
+    }
+  }
 
   api.registerTool(
     {
@@ -343,6 +358,14 @@ export function registerMemoryTools(
         try {
           return await memoryRecallImpl(params);
         } catch (err) {
+          auditAppend({
+            agentId: agentIdForAudit(),
+            action: "memory_recall",
+            target: null,
+            outcome: "failed",
+            error: err instanceof Error ? err.message : String(err),
+            sessionId: api.context?.sessionId ?? undefined,
+          });
           capturePluginError(err instanceof Error ? err : new Error(String(err)), {
             subsystem: "memory",
             operation: "memory-recall",
@@ -466,6 +489,7 @@ export function registerMemoryTools(
 
   // Internal implementation so we can return from the try block
   async function memoryRecallImpl(params: Record<string, unknown>) {
+    const recallStartedAt = Date.now();
     const {
       query: queryParam,
       id: idParam,
@@ -548,6 +572,14 @@ export function registerMemoryTools(
           logRecall(true);
           const text = `[${entry.category}] ${entry.text}`;
           const whyLine = entry.why ? `\nWhy: ${entry.why}` : "";
+          auditAppend({
+            agentId: agentIdForAudit(),
+            action: "memory_recall",
+            target: `memory #${entry.id}`,
+            outcome: "success",
+            durationMs: Date.now() - recallStartedAt,
+            sessionId: api.context?.sessionId ?? undefined,
+          });
           return {
             content: [
               {
@@ -578,6 +610,14 @@ export function registerMemoryTools(
         }
       }
       logRecall(false);
+      auditAppend({
+        agentId: agentIdForAudit(),
+        action: "memory_recall",
+        target: typeof idParam === "number" ? `index ${idParam}` : `id ${idParam}`,
+        outcome: "partial",
+        durationMs: Date.now() - recallStartedAt,
+        sessionId: api.context?.sessionId ?? undefined,
+      });
       return {
         content: [
           {
@@ -595,6 +635,14 @@ export function registerMemoryTools(
     const query = typeof queryParam === "string" && queryParam.trim().length > 0 ? queryParam.trim() : null;
     if (!query) {
       logRecall(false);
+      auditAppend({
+        agentId: agentIdForAudit(),
+        action: "memory_recall",
+        target: null,
+        outcome: "partial",
+        durationMs: Date.now() - recallStartedAt,
+        sessionId: api.context?.sessionId ?? undefined,
+      });
       return {
         content: [
           {
@@ -866,6 +914,16 @@ export function registerMemoryTools(
             }
           : {}),
       };
+    });
+
+    auditAppend({
+      agentId: agentIdForAudit(),
+      action: "memory_recall",
+      target: query ? `query="${query.slice(0, 160)}"` : undefined,
+      outcome: "success",
+      durationMs: Date.now() - recallStartedAt,
+      sessionId: api.context?.sessionId ?? undefined,
+      context: { count: results.length },
     });
 
     return {
@@ -1907,6 +1965,15 @@ export function registerMemoryTools(
             }
           }
 
+          auditAppend({
+            agentId: agentIdForAudit(),
+            action: "memory_store",
+            target: `memory #${entry.id}`,
+            outcome: "success",
+            sessionId: api.context?.sessionId ?? undefined,
+            context: { category },
+          });
+
           return {
             content: [
               {
@@ -1935,6 +2002,14 @@ export function registerMemoryTools(
             },
           };
         } catch (err) {
+          auditAppend({
+            agentId: agentIdForAudit(),
+            action: "memory_store",
+            target: null,
+            outcome: "failed",
+            error: err instanceof Error ? err.message : String(err),
+            sessionId: api.context?.sessionId ?? undefined,
+          });
           capturePluginError(err instanceof Error ? err : new Error(String(err)), {
             subsystem: "memory",
             operation: "memory-store",
