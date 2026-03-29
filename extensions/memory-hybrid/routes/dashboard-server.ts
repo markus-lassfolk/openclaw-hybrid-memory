@@ -18,6 +18,7 @@ import { promisify } from "node:util";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
 import { getDirSize, getFileSizeAsync, readJsonFile } from "../utils/fs.js";
+import { isValidGhRepoArg } from "../utils/gh-repo-arg.js";
 import { pluginLogger } from "../utils/logger.js";
 import type { AuditStore } from "../backends/audit-store.js";
 import { mergeAgentHealthDashboard, type AgentHealthView } from "../backends/agent-health-store.js";
@@ -319,7 +320,8 @@ export async function collectForgeState(): Promise<ForgeTaskItem[]> {
 
 async function collectGitActivity(repo?: string): Promise<GitActivity> {
   try {
-    const repoArgs = repo ? ["--repo", repo] : [];
+    const safeRepo = repo && isValidGhRepoArg(repo) ? repo : undefined;
+    const repoArgs = safeRepo ? ["--repo", safeRepo] : [];
     const [prResult, issueResult] = await Promise.all([
       execFile("gh", ["pr", "list", "--limit", "10", "--json", "number,title,state,url,createdAt", ...repoArgs], {
         timeout: 8000,

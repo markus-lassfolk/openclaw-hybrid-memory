@@ -260,6 +260,9 @@ export function scrubString(input: string): string {
       .replace(/ghp_[A-Za-z0-9]{36}/g, "[REDACTED]") // GitHub PAT
       .replace(/gho_[A-Za-z0-9]{36}/g, "[REDACTED]") // GitHub OAuth
       .replace(/Bearer\s+[\w.-]+/gi, "[REDACTED]")
+      .replace(/Basic\s+[A-Za-z0-9+/=_-]+/gi, "[REDACTED]")
+      .replace(/(?:\?|&)(?:api[_-]?key|token|access_token|password|secret)=[^&\s]+/gi, "[REDACTED]")
+      .replace(/\btoken\s*=\s*[^\s&]+/gi, "token=[REDACTED]")
       // JWT tokens (eyJ...)
       .replace(/eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g, "[REDACTED]")
       // AWS and other cloud credentials
@@ -267,7 +270,7 @@ export function scrubString(input: string): string {
       // Slack tokens
       .replace(/xox[baprs]-[A-Za-z0-9-]{10,}/g, "[REDACTED]") // Slack tokens
       // Private keys
-      .replace(/-----BEGIN .*PRIVATE KEY/g, "[REDACTED]") // Private key headers
+      .replace(/-----BEGIN [^-]*PRIVATE KEY-----/g, "[REDACTED]") // PEM private key blocks
       // Connection strings with embedded passwords (generic + specific)
       .replace(/:\/\/[^\s:@]+:[^\s@]+@[^\s/]+/g, "://[REDACTED]@")
       .replace(/postgres:\/\/[^\s]+/g, "postgres://[REDACTED]")

@@ -73,7 +73,7 @@ export function isStructuredForConsolidation(text: string, entity: string | null
   if (/\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}/.test(text)) return true;
   if (/[\w.-]+@[\w.-]+\.\w+/.test(text)) return true;
   if (/\+\d{10,}/.test(text) || /\b\d{10,}\b/.test(text)) return true;
-  if (/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i.test(text)) return true;
+  if (/(?:[0-9a-f]{8}-){3}[0-9a-f]{12}/i.test(text)) return true;
   const k = (key ?? "").toLowerCase();
   const e = (entity ?? "").toLowerCase();
   if (["email", "phone", "api_key", "ip", "uuid", "password"].some((x) => k.includes(x) || e.includes(x))) return true;

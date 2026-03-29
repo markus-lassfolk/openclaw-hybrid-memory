@@ -80,7 +80,8 @@ export function buildFts5Query(raw: string): string | null {
         sanitizedTokens.push(token);
         continue;
       }
-      if (/^[a-zA-Z0-9_]+$/.test(token)) {
+      // Allow hyphens / dots in terms (e.g. api-key) so AND/OR queries are not stripped to invalid FTS (issue #850).
+      if (/^[a-zA-Z0-9_.-]+$/.test(token)) {
         sanitizedTokens.push(`"${token}"`);
       }
     }

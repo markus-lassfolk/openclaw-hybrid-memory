@@ -884,6 +884,7 @@ export const _testing = {
 
 export { versionInfo } from "./versionInfo.js";
 export { sanitizeMessagesForClaude, type MessageLike } from "./utils/sanitize-messages.js";
+export { getHybridMemoryContextBudgetHint } from "./services/context-budget.js";
 export type { ContradictionRecord } from "./backends/facts-db.js";
 export type { RetrievalPipelineOptions } from "./services/retrieval-orchestrator.js";
 export default memoryHybridPlugin;

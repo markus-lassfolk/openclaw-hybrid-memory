@@ -45,7 +45,7 @@ import type { VerifyCliSink } from "./types.js";
 
 export async function runVerifyForCli(
   ctx: HandlerContext,
-  opts: { fix: boolean; logFile?: string; testLlm?: boolean },
+  opts: { fix: boolean; logFile?: string; testLlm?: boolean; reconcile?: boolean },
   sink: VerifyCliSink,
 ): Promise<void> {
   const { factsDb, vectorDb, embeddings, cfg, credentialsDb, resolvedSqlitePath, resolvedLancePath, openai } = ctx;
@@ -1233,6 +1233,25 @@ export async function runVerifyForCli(
       log(
         "Config file not found. Run 'openclaw hybrid-mem install' to create it with full defaults, then set your API key and restart.",
       );
+    }
+  }
+
+  if (opts.reconcile) {
+    log("\n───── Vector / SQLite consistency (reconcile) ─────");
+    try {
+      await vectorDb.ensureInitialized();
+      const vCount = await vectorDb.count();
+      const embCount = factsDb.countCanonicalEmbeddings();
+      log(`${OK} SQLite canonical embeddings (fact_embeddings): ${embCount}`);
+      const lanceRowsOk = vectorDb.isLanceAvailable();
+      log(`${lanceRowsOk ? OK : PAUSE} LanceDB row count: ${vCount} (lanceAvailable=${lanceRowsOk})`);
+      if (lanceRowsOk && vCount !== embCount) {
+        log(
+          `${FAIL} Drift: fact_embeddings rows (${embCount}) != Lance rows (${vCount}). Consider re-embed or diagnostics.`,
+        );
+      }
+    } catch (e) {
+      log(`${FAIL} Reconcile check failed: ${e}`);
     }
   }
 }

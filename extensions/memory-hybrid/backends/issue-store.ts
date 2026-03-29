@@ -205,29 +205,23 @@ export class IssueStore extends BaseSqliteStore {
       params.push(...filter.severity);
     }
 
+    if (filter?.tags && filter.tags.length > 0) {
+      const lower = filter.tags.map((t) => t.toLowerCase());
+      query += ` AND EXISTS (
+        SELECT 1 FROM json_each(tags) j
+        WHERE lower(j.value) IN (${lower.map(() => "?").join(", ")})
+      )`;
+      params.push(...lower);
+    }
+
     query += " ORDER BY created_at DESC";
-    // When no tag filter, push LIMIT into SQL to avoid loading all rows
-    const hasTagFilter = filter?.tags && filter.tags.length > 0;
-    if (!hasTagFilter && filter?.limit && filter.limit > 0) {
+    if (filter?.limit && filter.limit > 0) {
       query += " LIMIT ?";
       params.push(filter.limit);
     }
 
     const rows = this.liveDb.prepare(query).all(...params) as unknown as IssueRow[];
-    let results = rows.map((r) => this.rowToIssue(r));
-
-    // Tags filtering (JSON array — done in-memory for simplicity)
-    if (filter?.tags && filter.tags.length > 0) {
-      const filterTags = filter.tags.map((t) => t.toLowerCase());
-      results = results.filter((issue) => filterTags.some((ft) => issue.tags.map((t) => t.toLowerCase()).includes(ft)));
-    }
-
-    // Apply limit after all filtering is complete
-    if (filter?.limit && filter.limit > 0) {
-      results = results.slice(0, filter.limit);
-    }
-
-    return results;
+    return rows.map((r) => this.rowToIssue(r));
   }
 
   search(query: string): Issue[] {

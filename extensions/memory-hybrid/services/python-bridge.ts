@@ -45,7 +45,8 @@ export class PythonBridge {
   private restartCount = 0;
   private readonly pythonPath: string;
   private readonly workerPath: string;
-  private starting = false;
+  /** Single-flight startup: concurrent convert() calls await the same promise (issue #907). */
+  private startupPromise: Promise<void> | null = null;
 
   constructor(pythonPath = "python3") {
     this.pythonPath = pythonPath;
@@ -134,39 +135,30 @@ export class PythonBridge {
 
   private async ensureStarted(): Promise<void> {
     if (this.proc && !this.proc.killed) return;
-    if (this.starting) {
-      // Wait for spawn to complete
-      await new Promise<void>((resolve) => {
-        const check = setInterval(() => {
-          if (!this.starting) {
-            clearInterval(check);
-            resolve();
-          }
-        }, 50);
+    if (!this.startupPromise) {
+      this.startupPromise = this.bootstrapWorker().finally(() => {
+        this.startupPromise = null;
       });
-      // Verify process actually started
-      if (!this.proc || this.proc.killed) {
-        throw new Error("Python bridge failed to start");
-      }
-      return;
     }
-    this.starting = true;
-    try {
-      this.spawnProcess();
-      // Health check
-      await this.ping();
-      this.restartCount = 0;
-      this.starting = false;
-    } catch (err) {
-      this.proc?.kill();
-      this.proc = null;
-      this.restartCount++;
-      if (this.restartCount > MAX_RETRIES) {
-        this.starting = false;
-        throw new Error(`Python bridge failed to start after ${MAX_RETRIES} retries: ${err}`);
+    await this.startupPromise;
+  }
+
+  private async bootstrapWorker(): Promise<void> {
+    this.restartCount = 0;
+    while (true) {
+      try {
+        this.spawnProcess();
+        await this.ping();
+        this.restartCount = 0;
+        return;
+      } catch (err) {
+        this.proc?.kill();
+        this.proc = null;
+        this.restartCount++;
+        if (this.restartCount > MAX_RETRIES) {
+          throw new Error(`Python bridge failed to start after ${MAX_RETRIES} retries: ${err}`);
+        }
       }
-      this.starting = false;
-      return this.ensureStarted();
     }
   }
 
