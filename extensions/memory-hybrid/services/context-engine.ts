@@ -248,19 +248,38 @@ export function buildContextBlock(
   if (facts.length === 0) return null;
 
   const lines: string[] = [`<!-- memory-hybrid: ${header} -->`, label];
-  let tokensUsed = estimateTokenCount(lines.join("\n"));
   const closingLine = `<!-- /memory-hybrid: ${header} -->`;
-  const closingTokens = estimateTokenCount(closingLine);
 
-  for (const entry of facts) {
-    const serialized = serializeFactForContext(entry);
-    const entryTokens = estimateTokenCount(serialized);
-    if (tokenBudget !== undefined && tokensUsed + entryTokens + closingTokens > tokenBudget) break;
-    lines.push(serialized);
-    tokensUsed += entryTokens;
+  const baseText = [...lines, closingLine].join("\n");
+  let currentTokens = estimateTokenCount(baseText);
+
+  if (tokenBudget !== undefined && currentTokens > tokenBudget) {
+    return null;
   }
 
+  let addedFacts = 0;
+  for (const entry of facts) {
+    const serialized = serializeFactForContext(entry);
+    const entryTokens = estimateTokenCount("\n" + serialized);
+    if (tokenBudget !== undefined && currentTokens + entryTokens > tokenBudget) break;
+    lines.push(serialized);
+    currentTokens += entryTokens;
+    addedFacts++;
+  }
+
+  if (addedFacts === 0) return null;
+
   lines.push(closingLine);
+  
+  // Ensure the final joined string strictly satisfies the budget
+  while (lines.length > 3 && tokenBudget !== undefined && estimateTokenCount(lines.join("\n")) > tokenBudget) {
+    lines.splice(lines.length - 2, 1);
+  }
+
+  if (lines.length <= 3 && tokenBudget !== undefined && estimateTokenCount(lines.join("\n")) > tokenBudget) {
+    return null;
+  }
+
   return lines.join("\n");
 }
 

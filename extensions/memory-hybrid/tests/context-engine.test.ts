@@ -13,8 +13,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { _testing } from "../index.js";
-import { HybridMemoryContextEngine } from "../services/context-engine.js";
+import { HybridMemoryContextEngine, buildContextBlock } from "../services/context-engine.js";
 import type { ContextEngineOptions } from "../services/context-engine.js";
+import { estimateTokenCount } from "../services/retrieval-orchestrator.js";
 
 const { FactsDB, WriteAheadLog } = _testing;
 
@@ -448,7 +449,6 @@ describe("HybridMemoryContextEngine.info", () => {
 // SDK #274: assemble() — budget-aware context injection
 // ---------------------------------------------------------------------------
 
-import { buildContextBlock } from "../services/context-engine.js";
 
 describe("HybridMemoryContextEngine.assemble()", () => {
   it("returns messages unchanged and estimatedTokens=0 when store is empty", async () => {
@@ -499,12 +499,24 @@ describe("HybridMemoryContextEngine.assemble()", () => {
     const engineTight = makeEngine();
 
     const resultFull = await engineFull.assemble({ sessionId: "s1", messages: [], tokenBudget: 10000 });
-    const resultTight = await engineTight.assemble({ sessionId: "s1", messages: [], tokenBudget: 50 });
+    const resultTight = await engineTight.assemble({ sessionId: "s1", messages: [], tokenBudget: 150 });
 
     // Full budget should include more content
     const fullLength = resultFull.systemPromptAddition?.length ?? 0;
     const tightLength = resultTight.systemPromptAddition?.length ?? 0;
-    expect(fullLength).toBeGreaterThanOrEqual(tightLength);
+    
+    expect(resultFull.systemPromptAddition).toBeDefined();
+    expect(resultTight.systemPromptAddition).toBeDefined();
+    
+    expect(fullLength).toBeGreaterThan(tightLength);
+    
+    // Check exact enforcement on tight
+    const tightTokens = estimateTokenCount(resultTight.systemPromptAddition!);
+    expect(tightTokens).toBeLessThanOrEqual(150);
+    
+    // Verify some facts are missing in tight vs full
+    expect(resultFull.systemPromptAddition).toContain("Fact number 9");
+    expect(resultTight.systemPromptAddition).not.toContain("Fact number 9");
   });
 
   it("uses cfg.autoRecall.maxTokens as default budget when tokenBudget is omitted", async () => {
@@ -598,11 +610,22 @@ describe("buildContextBlock()", () => {
     );
 
     const blockFull = buildContextBlock(facts, "h", "Label:", 100000);
-    const blockSmall = buildContextBlock(facts, "h", "Label:", 10);
+    const blockSmall = buildContextBlock(facts, "h", "Label:", 50);
 
     expect(blockFull).not.toBeNull();
-    // Small budget should produce shorter output
-    expect((blockFull?.length ?? 0)).toBeGreaterThanOrEqual(blockSmall?.length ?? 0);
+    expect(blockSmall).not.toBeNull();
+    
+    const smallTokens = estimateTokenCount(blockSmall!);
+    expect(smallTokens).toBeLessThanOrEqual(50);
+    
+    // Ensure blockSmall has fewer entries
+    expect(blockSmall!.length).toBeLessThan(blockFull!.length);
+    expect(blockFull).toContain("Fact 19");
+    expect(blockSmall).not.toContain("Fact 19");
+
+    // Very tight budget should return null because overhead doesn't fit
+    const blockTiny = buildContextBlock(facts, "h", "Label:", 5);
+    expect(blockTiny).toBeNull();
   });
 
   it("uses serializeFactForContext format (includes category header)", () => {
