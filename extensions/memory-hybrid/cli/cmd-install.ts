@@ -13,7 +13,7 @@
  * - runUpgradeForCli
  */
 
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -380,7 +380,12 @@ export function ensureMaintenanceCronJobs(
       }
     }
   }
-  if (jobsChanged) writeFileSync(cronStorePath, JSON.stringify(store, null, 2), "utf-8");
+  if (jobsChanged) {
+    const payload = JSON.stringify(store, null, 2);
+    const tmpPath = `${cronStorePath}.${process.pid}.${Date.now()}.tmp`;
+    writeFileSync(tmpPath, payload, "utf-8");
+    renameSync(tmpPath, cronStorePath);
+  }
   return { added, normalized };
 }
 

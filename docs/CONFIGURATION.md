@@ -93,6 +93,8 @@ openclaw hybrid-mem config set verbosity silent
 | `store.classifyBeforeWrite` | `false` | When `true`, classify each new fact against similar existing facts (by embedding + entity/key) as ADD, UPDATE, DELETE, or NOOP before storing. Reduces duplicates and stale contradictions. Applies to auto-capture, `memory_store` tool, CLI `hybrid-mem store`, and `extract-daily`. |
 | `store.classifyModel` | `llm.nano[0]` (e.g. `openai/gpt-4.1-nano`) | Chat model used for the classification call (low cost). |
 
+> **Warning — batch and high-volume paths:** Each store can trigger **one LLM classification call** when this is enabled. Large imports (e.g. extract-daily, scripted `hybrid-mem store` loops) therefore perform **one classification API call per fact**, which increases latency, cost, and rate-limit risk. Auto-capture in a single chat turn only evaluates a small number of candidates. For very large batches, consider leaving `classifyBeforeWrite` off for the import run, or plan for throttling; see [CONFLICTING-MEMORIES.md](CONFLICTING-MEMORIES.md#performance-warning-batch-imports-and-classify-before-write) and [openclaw-hybrid-memory#862](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/862).
+
 Example: `"store": { "fuzzyDedupe": false, "classifyBeforeWrite": true, "classifyModel": "openai/gpt-4.1-nano" }`
 
 ### Auto-recall options

@@ -1,6 +1,9 @@
 import { parseConfig } from "./parsers/index.js";
 
-/** Zod-like wrapper used by the plugin object and `register()` config validation. */
+/**
+ * Runtime config validation entry point (issue #866).
+ * Uses the same parser pipeline as plugin registration; throws on invalid hybrid config.
+ */
 export const hybridConfigSchema = {
   parse: parseConfig,
 };

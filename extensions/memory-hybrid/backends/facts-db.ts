@@ -3,7 +3,7 @@
  */
 
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
-import { mkdirSync, readFileSync, existsSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
 import { dirname } from "node:path";
 import { randomUUID } from "node:crypto";
 
@@ -27,6 +27,7 @@ import { estimateTokensForDisplay } from "../utils/text.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { getLanguageKeywordsFilePath } from "../utils/language-keywords.js";
 import { createTransaction } from "../utils/sqlite-transaction.js";
+import { tryRestrictSqliteDbFileMode } from "../utils/sqlite-file-perms.js";
 import { runFactsMigrations } from "./migrations/facts-migrations.js";
 import { searchFts } from "../services/fts-search.js";
 import { BaseSqliteStore } from "./base-sqlite-store.js";
@@ -122,6 +123,7 @@ export class FactsDB extends BaseSqliteStore {
       customPragmas: ["PRAGMA synchronous = NORMAL", "PRAGMA wal_autocheckpoint = 1000"],
     });
     this.dbPath = dbPath;
+    tryRestrictSqliteDbFileMode(dbPath);
     this.fuzzyDedupe = options?.fuzzyDedupe ?? false;
 
     // Create main table
@@ -1255,6 +1257,65 @@ export class FactsDB extends BaseSqliteStore {
       .run(MS_THRESHOLD);
   }
 
+  /** Count of canonical embedding rows (for vector/SQLite reconciliation checks). */
+  countCanonicalEmbeddings(): number {
+    const row = this.liveDb.prepare("SELECT COUNT(*) AS c FROM fact_embeddings WHERE variant = 'canonical'").get() as {
+      c: number;
+    };
+    return Number(row?.c ?? 0);
+  }
+
+  /** Estimate storage bytes for SQLite database and WAL files. */
+  estimateStorageBytes(): { sqliteBytes: number; walBytes: number; shmBytes: number } {
+    let sqliteBytes = 0;
+    let walBytes = 0;
+    let shmBytes = 0;
+
+    try {
+      if (existsSync(this.dbPath)) {
+        sqliteBytes = statSync(this.dbPath).size;
+      }
+    } catch {
+      // Ignore errors reading main db file
+    }
+
+    try {
+      const walPath = `${this.dbPath}-wal`;
+      if (existsSync(walPath)) {
+        walBytes = statSync(walPath).size;
+      }
+    } catch {
+      // Ignore errors reading WAL file
+    }
+
+    try {
+      const shmPath = `${this.dbPath}-shm`;
+      if (existsSync(shmPath)) {
+        shmBytes = statSync(shmPath).size;
+      }
+    } catch {
+      // Ignore errors reading SHM file
+    }
+
+    return { sqliteBytes, walBytes, shmBytes };
+  }
+
+  private validateStoreEntryInput(
+    entry: Omit<MemoryEntry, "id" | "createdAt" | "decayClass" | "expiresAt" | "lastConfirmedAt" | "confidence"> & {
+      category?: MemoryCategory;
+      importance?: number;
+    },
+  ): void {
+    const text = (entry.text ?? "").trim();
+    if (text.length === 0) {
+      throw new Error("memory-hybrid: cannot store empty fact text");
+    }
+    const imp = entry.importance ?? 0.5;
+    if (!Number.isFinite(imp) || imp < 0 || imp > 1) {
+      throw new Error("memory-hybrid: importance must be a number in [0, 1]");
+    }
+  }
+
   store(
     entry: Omit<MemoryEntry, "id" | "createdAt" | "decayClass" | "expiresAt" | "lastConfirmedAt" | "confidence"> & {
       decayClass?: DecayClass;
@@ -1296,6 +1357,7 @@ export class FactsDB extends BaseSqliteStore {
       preserveTags?: string[] | null;
     },
   ): MemoryEntry {
+    this.validateStoreEntryInput(entry);
     if (this.fuzzyDedupe) {
       const existingId = this.getDuplicateIdByNormalizedHash(entry.text);
       if (existingId) {

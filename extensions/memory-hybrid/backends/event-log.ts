@@ -7,7 +7,15 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { createReadStream, createWriteStream, existsSync, mkdirSync, renameSync, unlinkSync } from "node:fs";
+import {
+  copyFileSync,
+  createReadStream,
+  createWriteStream,
+  existsSync,
+  mkdirSync,
+  renameSync,
+  unlinkSync,
+} from "node:fs";
 import { dirname, join } from "node:path";
 import { createInterface } from "node:readline";
 import { DatabaseSync } from "node:sqlite";
@@ -276,7 +284,8 @@ export class EventLog extends BaseSqliteStore {
                 });
                 const backupPath = `${filePath}.corrupted.${Date.now()}`;
                 try {
-                  renameSync(filePath, backupPath);
+                  copyFileSync(filePath, backupPath);
+                  unlinkSync(filePath);
                 } catch (renameErr) {
                   capturePluginError(renameErr instanceof Error ? renameErr : new Error(String(renameErr)), {
                     operation: "backup-corrupted-archive",

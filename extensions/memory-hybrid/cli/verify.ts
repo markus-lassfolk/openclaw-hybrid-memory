@@ -7,7 +7,10 @@ import { type Chainable, withExit } from "./shared.js";
 import type { InstallCliResult, VerifyCliSink } from "./types.js";
 
 export type VerifyContext = {
-  runVerify: (opts: { fix: boolean; logFile?: string; testLlm?: boolean }, sink: VerifyCliSink) => Promise<void>;
+  runVerify: (
+    opts: { fix: boolean; logFile?: string; testLlm?: boolean; reconcile?: boolean },
+    sink: VerifyCliSink,
+  ) => Promise<void>;
   runInstall: (opts: { dryRun: boolean }) => Promise<InstallCliResult>;
   runResetAuthBackoff: () => Promise<void>;
 };
@@ -21,23 +24,32 @@ export function registerVerifyCommands(mem: Chainable, ctx: VerifyContext): void
     .option("--fix", "Print or apply default config for missing items")
     .option("--log-file <path>", "Check this log file for memory-hybrid / cron errors")
     .option("--test-llm", "Test each configured LLM model with a minimal completion (requires gateway)")
+    .option("--reconcile", "Compare SQLite fact_embeddings vs LanceDB row counts (issue #904)")
     .option("--no-emoji", "Use plain text indicators instead of emoji (for terminals with poor Unicode support)")
     .action(
-      withExit(async (opts: { fix?: boolean; logFile?: string; testLlm?: boolean; noEmoji?: boolean }) => {
-        if (opts.noEmoji) process.env.HYBRID_MEM_NO_EMOJI = "1";
-        try {
-          await runVerify(
-            { fix: !!opts.fix, logFile: opts.logFile, testLlm: !!opts.testLlm },
-            { log: (s) => console.log(s), error: (s) => console.error(s) },
-          );
-        } catch (err) {
-          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-            subsystem: "cli",
-            operation: "verify",
-          });
-          throw err;
-        }
-      }),
+      withExit(
+        async (opts: {
+          fix?: boolean;
+          logFile?: string;
+          testLlm?: boolean;
+          noEmoji?: boolean;
+          reconcile?: boolean;
+        }) => {
+          if (opts.noEmoji) process.env.HYBRID_MEM_NO_EMOJI = "1";
+          try {
+            await runVerify(
+              { fix: !!opts.fix, logFile: opts.logFile, testLlm: !!opts.testLlm, reconcile: !!opts.reconcile },
+              { log: (s) => console.log(s), error: (s) => console.error(s) },
+            );
+          } catch (err) {
+            capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+              subsystem: "cli",
+              operation: "verify",
+            });
+            throw err;
+          }
+        },
+      ),
     );
 
   mem
