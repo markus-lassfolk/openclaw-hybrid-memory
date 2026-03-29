@@ -35,6 +35,13 @@ Need help? → [Full Quickstart Guide](docs/QUICKSTART.md)
 
 ---
 
+## 🏢 See it in Action
+
+Curious what this looks like in practice? Check out the **[OpenClaw Personal Assistant Ecosystem](https://github.com/markus-lassfolk/openclaw-personal-assistant)**. It uses `openclaw-hybrid-memory` to build a highly proactive Executive Assistant persona that reads your emails, negotiates your calendar, and actively learns your business priorities over time.
+
+---
+
+
 ## ✨ What You Actually Get
 
 ### 😤 "I already told you that"
