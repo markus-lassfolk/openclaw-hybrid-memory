@@ -2562,6 +2562,12 @@ export class FactsDB extends BaseSqliteStore {
     },
   ): MemoryEntry[] {
     const nowSec = Math.floor(Date.now() / 1000);
+    if (
+      (filters?.category != null && filters.category !== "" && !isValidCategory(filters.category)) ||
+      (filters?.tier != null && filters.tier !== "" && !DASHBOARD_TIER_FILTER.has(filters.tier))
+    ) {
+      return [];
+    }
     const parts: string[] = ["(expires_at IS NULL OR expires_at > ?)", "superseded_at IS NULL"];
     const params: SQLInputValue[] = [nowSec];
     if (filters?.category != null && isValidCategory(filters.category)) {
@@ -2929,6 +2935,14 @@ export class FactsDB extends BaseSqliteStore {
     search?: string;
   }): { facts: Array<Record<string, unknown>>; total: number } {
     const nowSec = Math.floor(Date.now() / 1000);
+    if (
+      (opts.category != null && opts.category !== "" && !isValidCategory(opts.category)) ||
+      (opts.tier != null && opts.tier !== "" && !DASHBOARD_TIER_FILTER.has(opts.tier)) ||
+      (opts.decayClass != null && opts.decayClass !== "" && !DECAY_CLASS_FILTER.has(opts.decayClass))
+    ) {
+      return { facts: [], total: 0 };
+    }
+
     let where = "superseded_at IS NULL AND (expires_at IS NULL OR expires_at > ?)";
     const params: SQLInputValue[] = [nowSec];
 

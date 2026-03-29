@@ -77,12 +77,14 @@ export const EMBEDDING_CACHE_MAX = 500;
  */
 export class AsyncSemaphore {
   private available: number;
+  private readonly capacity: number;
   private readonly waiters: Array<() => void> = [];
 
   constructor(capacity = 1) {
     if (!Number.isInteger(capacity) || capacity < 1) {
       throw new Error(`AsyncSemaphore: capacity must be a positive integer, got ${capacity}`);
     }
+    this.capacity = capacity;
     this.available = capacity;
   }
 
@@ -99,7 +101,7 @@ export class AsyncSemaphore {
       const next = this.waiters.shift();
       next?.();
     } else {
-      this.available++;
+      this.available = Math.min(this.capacity, this.available + 1);
     }
   }
 }

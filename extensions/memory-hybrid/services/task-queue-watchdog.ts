@@ -90,10 +90,6 @@ export interface TaskQueueItem {
 // ---------------------------------------------------------------------------
 
 /**
- * Returns true if the given PID is alive on this system.
- * Uses signal 0 (no-op) — throws ESRCH if no such process.
- */
-/**
  * Returns true when `current` is the same queue task as `stale` for safe replacement of current.json.
  * When pid/started are absent, pid/start equality must not be used (undefined === undefined is always true).
  */
@@ -107,6 +103,10 @@ export function taskQueueItemMatchesStale(current: TaskQueueItem, stale: TaskQue
   );
 }
 
+/**
+ * Returns true if the given PID is alive on this system.
+ * Uses signal 0 (no-op) — throws ESRCH if no such process.
+ */
 export function isPidAlive(pid: number): boolean {
   if (!Number.isInteger(pid) || pid <= 0) return false;
   try {

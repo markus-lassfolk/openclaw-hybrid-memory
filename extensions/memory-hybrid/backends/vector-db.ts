@@ -785,7 +785,9 @@ export class VectorDB {
       if (this.optimizePromise) {
         await this.optimizePromise;
       }
-      const id = entry.id ?? randomUUID();
+      // Canonical lowercase UUID so LanceDB row id matches delete() and EEXIST recovery (#917 review).
+      const rawId = entry.id ?? randomUUID();
+      const id = entry.id !== undefined && UUID_REGEX.test(entry.id) ? entry.id.toLowerCase() : rawId;
       const why = entry.why ?? "";
       const row = { ...entry, id, why, createdAt: Math.floor(Date.now() / 1000) };
       try {
@@ -793,7 +795,7 @@ export class VectorDB {
       } catch (err) {
         // Race: concurrent re-index may delete+insert the same fact id; EEXIST must not drop the new vector.
         if (this.isVectorDuplicateIdError(err) && entry.id && UUID_REGEX.test(entry.id)) {
-          const lid = entry.id.toLowerCase();
+          const lid = id;
           await this.getTable().delete(`id = '${lid}'`);
           await this.getTable().add([row]);
         } else {
