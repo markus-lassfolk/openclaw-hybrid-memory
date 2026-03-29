@@ -48,9 +48,6 @@ export function parseClassificationResponse(content: string, existingFacts: Memo
  * Classify an incoming fact against existing similar facts.
  * Uses a cheap LLM call to determine ADD/UPDATE/DELETE/NOOP.
  * Falls back to ADD on error.
- *
- * Issue #862: For large batch imports, prefer CLI/extract paths that cap concurrency; runtime auto-capture
- * processes at most a few candidates per turn to avoid sequential LLM storms.
  */
 export async function classifyMemoryOperation(
   candidateText: string,
