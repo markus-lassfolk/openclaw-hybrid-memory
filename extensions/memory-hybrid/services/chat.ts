@@ -4,6 +4,7 @@
  */
 
 import type { OpenAI } from "openai";
+import { DEFAULT_CHAT_TIMEOUT_MS } from "../utils/constants.js";
 import { pluginLogger } from "../utils/logger.js";
 import { withCostFeature } from "./cost-context.js";
 import { capturePluginError } from "./error-reporter.js";
@@ -55,9 +56,6 @@ export function createPendingLLMWarnings(): PendingLLMWarnings {
     },
   };
 }
-
-/** Default timeout for chat completion (prevents indefinite hang if gateway/LLM never responds). */
-const DEFAULT_CHAT_TIMEOUT_MS = 45_000;
 
 /**
  * Unified 404 detection helper.
