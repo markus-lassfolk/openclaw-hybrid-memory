@@ -877,8 +877,9 @@ export async function createDashboardServer(ctx: DashboardContext, port: number)
           res.end(JSON.stringify(payload));
         })
         .catch((err: unknown) => {
+          ctx.logger?.error?.(String(err));
           res.writeHead(500, { "Content-Type": "application/json" });
-          res.end(JSON.stringify({ error: String(err) }));
+          res.end(JSON.stringify({ error: "Internal Server Error" }));
         });
       return;
     }
