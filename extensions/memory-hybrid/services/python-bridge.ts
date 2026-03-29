@@ -6,7 +6,7 @@
  *
  * Lifecycle:
  *   - Lazily spawned on first convert() call
- *   - Auto-restarts on crash (up to MAX_RETRIES times)
+ *   - Auto-restarts on crash (up to PYTHON_BRIDGE_MAX_RETRIES times)
  *   - Gracefully shut down via shutdown()
  */
 
@@ -14,11 +14,12 @@ import { type ChildProcessWithoutNullStreams, spawn, spawnSync } from "node:chil
 import { dirname, join } from "node:path";
 import { createInterface } from "node:readline";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import {
+  PYTHON_BRIDGE_MAX_RETRIES,
+  PYTHON_BRIDGE_PING_TIMEOUT_MS,
+  PYTHON_BRIDGE_SHUTDOWN_WAIT_MS,
+} from "../utils/constants.js";
 import { capturePluginError } from "./error-reporter.js";
-
-const MAX_RETRIES = 3;
-const PING_TIMEOUT_MS = 5_000;
-const SHUTDOWN_WAIT_MS = 2_000;
 
 export interface ConvertResult {
   markdown: string;
@@ -161,9 +162,9 @@ export class PythonBridge {
       this.proc?.kill();
       this.proc = null;
       this.restartCount++;
-      if (this.restartCount > MAX_RETRIES) {
+      if (this.restartCount > PYTHON_BRIDGE_MAX_RETRIES) {
         this.starting = false;
-        throw new Error(`Python bridge failed to start after ${MAX_RETRIES} retries: ${err}`);
+        throw new Error(`Python bridge failed to start after ${PYTHON_BRIDGE_MAX_RETRIES} retries: ${err}`);
       }
       this.starting = false;
       return this.ensureStarted();
@@ -188,7 +189,7 @@ export class PythonBridge {
   }
 
   async ping(): Promise<void> {
-    await this.send<{ pong: boolean }>("ping", {}, PING_TIMEOUT_MS);
+    await this.send<{ pong: boolean }>("ping", {}, PYTHON_BRIDGE_PING_TIMEOUT_MS);
   }
 
   private isWorkerError(err: Error): boolean {
@@ -225,8 +226,8 @@ export class PythonBridge {
     if (!this.proc || this.proc.killed) return;
     try {
       await Promise.race([
-        this.send<{ ok: boolean }>("shutdown", {}, SHUTDOWN_WAIT_MS),
-        new Promise<void>((resolve) => setTimeout(resolve, SHUTDOWN_WAIT_MS)),
+        this.send<{ ok: boolean }>("shutdown", {}, PYTHON_BRIDGE_SHUTDOWN_WAIT_MS),
+        new Promise<void>((resolve) => setTimeout(resolve, PYTHON_BRIDGE_SHUTDOWN_WAIT_MS)),
       ]);
     } catch {
       // Ignore errors during shutdown
