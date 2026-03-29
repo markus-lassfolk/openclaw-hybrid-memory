@@ -10,7 +10,14 @@ import * as lancedb from "@lancedb/lancedb";
 import type { DecayClass, MemoryCategory } from "../config.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import type { SearchResult } from "../types/memory.js";
-import { LANCE_NO_VECTOR_COL_MSG, UUID_REGEX } from "../utils/constants.js";
+import {
+  LANCE_NO_VECTOR_COL_MSG,
+  UUID_REGEX,
+  VECTORDB_INIT_MAX_RETRIES,
+  VECTORDB_INIT_RETRY_DELAY_MS,
+  VECTORDB_OPTIMIZE_FAILURE_WARN_THRESHOLD,
+  VECTORDB_READER_DRAIN_TIMEOUT_MS,
+} from "../utils/constants.js";
 import { pluginLogger } from "../utils/logger.js";
 
 const LANCE_TABLE = "memories";
@@ -26,8 +33,6 @@ const SEMANTIC_QUERY_CACHE_TABLE = "semantic_query_cache";
 const _optimizingByPath = new Map<string, boolean>();
 /** Module-level consecutive optimize-failure counter keyed by dbPath. */
 const _optimizeFailuresByPath = new Map<string, number>();
-const _OPTIMIZE_FAILURE_WARN_THRESHOLD = 3;
-const _READER_DRAIN_TIMEOUT_MS = 30_000;
 const SEMANTIC_QUERY_CACHE_MAX_ROWS_PER_FILTER_KEY = 100;
 
 export type VectorDBLogger = { warn: (msg: string) => void };
@@ -165,9 +170,9 @@ export class VectorDB {
   private async waitForReadersToDrain(): Promise<void> {
     const start = Date.now();
     while ((VectorDB._activeReadersByPath.get(this.dbPath) ?? 0) > 0) {
-      if (Date.now() - start > _READER_DRAIN_TIMEOUT_MS) {
+      if (Date.now() - start > VECTORDB_READER_DRAIN_TIMEOUT_MS) {
         this.logWarn(
-          `memory-hybrid: waitForReadersToDrain timed out after ${_READER_DRAIN_TIMEOUT_MS}ms — proceeding with optimize() to avoid indefinite starvation under sustained read load.`,
+          `memory-hybrid: waitForReadersToDrain timed out after ${VECTORDB_READER_DRAIN_TIMEOUT_MS}ms — proceeding with optimize() to avoid indefinite starvation under sustained read load.`,
         );
         break;
       }
@@ -505,12 +510,10 @@ export class VectorDB {
     // Retry loop: OpenClaw calls register() multiple times during startup, each time closing
     // the previous VectorDB. After all registrations settle, the final VectorDB initializes
     // successfully. Retrying with a brief delay lets us wait out the startup churn (issue #769).
-    const MAX_RETRIES = 10;
-    const RETRY_DELAY_MS = 500;
     let lastErr: unknown;
-    for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+    for (let attempt = 0; attempt < VECTORDB_INIT_MAX_RETRIES; attempt++) {
       if (attempt > 0) {
-        await new Promise<void>((resolve) => setTimeout(resolve, RETRY_DELAY_MS));
+        await new Promise<void>((resolve) => setTimeout(resolve, VECTORDB_INIT_RETRY_DELAY_MS));
       }
       try {
         await this.ensureInitialized();
@@ -520,7 +523,7 @@ export class VectorDB {
         const msg = err instanceof Error ? err.message : String(err);
         if (msg.includes("initialization aborted") || msg.includes("concurrent re-registration")) {
           this.logWarn(
-            `memory-hybrid: VectorDB init aborted (concurrent re-registration), retrying (${attempt + 1}/${MAX_RETRIES})...`,
+            `memory-hybrid: VectorDB init aborted (concurrent re-registration), retrying (${attempt + 1}/${VECTORDB_INIT_MAX_RETRIES})...`,
           );
           continue;
         }
@@ -813,7 +816,7 @@ export class VectorDB {
           .catch((err) => {
             const failures = (_optimizeFailuresByPath.get(this.dbPath) ?? 0) + 1;
             _optimizeFailuresByPath.set(this.dbPath, failures);
-            if (failures >= _OPTIMIZE_FAILURE_WARN_THRESHOLD) {
+            if (failures >= VECTORDB_OPTIMIZE_FAILURE_WARN_THRESHOLD) {
               this.logWarn(
                 `memory-hybrid: auto-optimize has failed ${failures} time(s) in a row — ` +
                   `check LanceDB path (${this.dbPath}) for disk space or permission issues. Error: ${err}`,
