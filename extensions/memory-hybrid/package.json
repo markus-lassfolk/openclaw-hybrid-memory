@@ -18,6 +18,7 @@
     "services",
     "tools",
     "utils",
+    "benchmark",
     "types",
     "prompts",
     "scripts",

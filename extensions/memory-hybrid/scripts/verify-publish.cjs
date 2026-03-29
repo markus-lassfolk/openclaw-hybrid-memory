@@ -132,5 +132,36 @@ if (missingOnDisk.length > 0) {
   console.log("OK: all imported files exist on disk");
 }
 
+// 5. Any file under cli/ that imports from ../benchmark/ requires "benchmark" in files
+// (npm pack only ships listed paths; missing benchmark/ breaks hybrid-mem benchmark at runtime.)
+const cliDir = path.join(root, "cli");
+function walkTsFiles(dir) {
+  const out = [];
+  if (!fs.existsSync(dir)) return out;
+  for (const ent of fs.readdirSync(dir, { withFileTypes: true })) {
+    const p = path.join(dir, ent.name);
+    if (ent.isDirectory()) out.push(...walkTsFiles(p));
+    else if (ent.name.endsWith(".ts")) out.push(p);
+  }
+  return out;
+}
+const benchmarkImportRe = /from\s+["']\.\.\/benchmark\//;
+let needsBenchmark = false;
+for (const f of walkTsFiles(cliDir)) {
+  const content = fs.readFileSync(f, "utf8");
+  if (benchmarkImportRe.test(content)) {
+    needsBenchmark = true;
+    break;
+  }
+}
+if (needsBenchmark && !filesEntries.has("benchmark")) {
+  console.error(
+    'FAIL: cli imports from ../benchmark/ but "benchmark" is not listed in package.json files — publish will omit shadow-eval and feature benchmarks',
+  );
+  failed = true;
+} else if (needsBenchmark) {
+  console.log('OK: "benchmark" is listed in package.json files (required by cli)');
+}
+
 if (failed) process.exit(1);
 console.log("verify-publish: all checks passed");

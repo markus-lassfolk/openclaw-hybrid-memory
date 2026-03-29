@@ -8,6 +8,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Fixed
+
+- **npm package:** `benchmark/` is now listed in `package.json` `files` so the published tarball includes `shadow-eval` and feature benchmarks required by `cli/benchmark.ts` (fixes runtime failure `../benchmark/shadow-eval.js` after `openclaw plugins install`).
+
 ---
 
 ## [2026.3.290] - 2026-03-29
