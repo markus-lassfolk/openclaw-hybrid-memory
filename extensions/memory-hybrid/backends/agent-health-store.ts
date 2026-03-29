@@ -3,7 +3,7 @@
  */
 
 import { mkdirSync } from "node:fs";
-import { dirname } from "node:path";
+import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { BaseSqliteStore } from "./base-sqlite-store.js";
 import type { ForgeTaskItem } from "../types/dashboard-types.js";
@@ -166,7 +166,7 @@ export class AgentHealthStore extends BaseSqliteStore {
 
 export function agentHealthDbPathForMemorySqlite(memorySqlitePath: string): string | null {
   if (!memorySqlitePath || memorySqlitePath === ":memory:") return null;
-  return `${dirname(memorySqlitePath)}/agent-health.db`;
+  return join(dirname(memorySqlitePath), "agent-health.db");
 }
 
 export const DEFAULT_AGENT_IDS = ["forge", "scholar", "hearth", "warden", "ralph", "builder", "reaver"] as const;
