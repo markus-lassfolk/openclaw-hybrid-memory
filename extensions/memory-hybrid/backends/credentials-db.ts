@@ -10,6 +10,7 @@ import { tryRestrictSqliteDbFileMode } from "../utils/sqlite-file-perms.js";
 import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { CredentialType } from "../config.js";
+import { assertValidCredentialRow } from "../services/credential-validation.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { pluginLogger } from "../utils/logger.js";
 import { createTransaction } from "../utils/sqlite-transaction.js";
@@ -209,6 +210,10 @@ export class CredentialsDB extends BaseSqliteStore {
     return "credentials";
   }
 
+  /**
+   * Insert or update a credential. On conflict (service, type), `updated` and value fields refresh;
+   * `created` is preserved from the original row — intentional for "same key, rotated secret" flows (#894).
+   */
   store(entry: {
     service: string;
     type: CredentialType;
@@ -268,7 +273,7 @@ export class CredentialsDB extends BaseSqliteStore {
       }
     }
 
-    return {
+    const out = {
       service: row.service as string,
       type: row.type as string as CredentialType,
       value,
@@ -278,6 +283,8 @@ export class CredentialsDB extends BaseSqliteStore {
       updated: row.updated as number,
       expires: (row.expires as number) ?? null,
     };
+    assertValidCredentialRow(out);
+    return out;
   }
 
   /** Migrate legacy SHA-256 vault to scrypt. Called after first successful decryption. */
@@ -393,20 +400,32 @@ export class CredentialsDB extends BaseSqliteStore {
     const rows = this.liveDb.prepare("SELECT * FROM credentials ORDER BY service, type").all() as Array<
       Record<string, unknown>
     >;
-    return rows.map((row) => {
-      const buf = toBuffer(row.value as Uint8Array | Buffer);
-      const value = this.storesEncryptedValues ? decryptValue(buf, this.key) : buf.toString("utf8");
-      return {
-        service: row.service as string,
-        type: row.type as string as CredentialType,
-        value,
-        url: (row.url as string) ?? null,
-        notes: (row.notes as string) ?? null,
-        created: row.created as number,
-        updated: row.updated as number,
-        expires: (row.expires as number) ?? null,
-      };
-    });
+    const out: CredentialEntry[] = [];
+    for (const row of rows) {
+      try {
+        const buf = toBuffer(row.value as Uint8Array | Buffer);
+        const value = this.storesEncryptedValues ? decryptValue(buf, this.key) : buf.toString("utf8");
+        const entry: CredentialEntry = {
+          service: row.service as string,
+          type: row.type as string as CredentialType,
+          value,
+          url: (row.url as string) ?? null,
+          notes: (row.notes as string) ?? null,
+          created: row.created as number,
+          updated: row.updated as number,
+          expires: (row.expires as number) ?? null,
+        };
+        assertValidCredentialRow(entry);
+        out.push(entry);
+      } catch (err) {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+          subsystem: "credentials",
+          operation: "list-all-skip-row",
+          severity: "warning",
+        });
+      }
+    }
+    return out;
   }
 
   list(): Array<{ service: string; type: string; url: string | null; expires: number | null }> {

@@ -4,7 +4,13 @@ import type { NarrativesDB } from "../../backends/narratives-db.js";
 import type { WorkflowStore } from "../../backends/workflow-store.js";
 import { chatCompleteWithRetry } from "../../services/chat.js";
 import { capturePluginError } from "../../services/error-reporter.js";
+import { getSessionLogFileSuffix } from "../../utils/constants.js";
 import { fillPrompt, loadPrompt } from "../../utils/prompt-loader.js";
+
+/** Session transcript basename for `sessionId` (suffix from OPENCLAW_SESSION_LOG_SUFFIX, default .jsonl). */
+export function sessionTranscriptFilename(sessionId: string): string {
+  return `${sessionId}${getSessionLogFileSuffix()}`;
+}
 
 const MAX_EVENTS_FOR_PROMPT = 80;
 const MAX_WORKFLOWS_FOR_PROMPT = 20;
@@ -111,7 +117,9 @@ export async function buildDailyNarrative(params: BuildDailyNarrativeParams): Pr
     });
     // Keep narrative storage bounded.
     narrativesDb.pruneOlderThan(30);
-    logger.info?.(`memory-hybrid: stored session narrative for ${sessionId}`);
+    logger.info?.(
+      `memory-hybrid: stored session narrative for ${sessionId} (transcript file: ${sessionTranscriptFilename(sessionId)})`,
+    );
     return true;
   } catch (err) {
     capturePluginError(err instanceof Error ? err : new Error(String(err)), {

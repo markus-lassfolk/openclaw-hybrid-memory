@@ -165,6 +165,8 @@ export class PythonBridge {
           this.startupFailed = true;
           throw new Error(`Python bridge failed to start after ${PYTHON_BRIDGE_MAX_RETRIES} retries: ${err}`);
         }
+        const backoffMs = Math.min(5000, 200 * 2 ** (this.restartCount - 1));
+        await new Promise((r) => setTimeout(r, backoffMs));
       }
     }
   }

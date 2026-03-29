@@ -53,9 +53,17 @@ export type FindSimilarByEmbeddingFn = (
 
 /** Builds scope filter for tools from user/agent/session and config. */
 export type BuildToolScopeFilterFn = (
-  params: { userId?: string | null; agentId?: string | null; sessionId?: string | null },
+  params: {
+    userId?: string | null;
+    agentId?: string | null;
+    sessionId?: string | null;
+    confirmCrossTenantScope?: boolean;
+  },
   currentAgent: string | null,
-  config: { multiAgent: { orchestratorId: string }; autoRecall: { scopeFilter?: ScopeFilter } },
+  config: {
+    multiAgent: { orchestratorId: string; trustToolScopeParams?: boolean };
+    autoRecall: { scopeFilter?: ScopeFilter };
+  },
 ) => ScopeFilter | undefined;
 
 /**

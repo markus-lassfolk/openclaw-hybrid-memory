@@ -31,6 +31,14 @@ import { tryRestrictSqliteDbFileMode } from "../utils/sqlite-file-perms.js";
 import { runFactsMigrations } from "./migrations/facts-migrations.js";
 import { searchFts } from "../services/fts-search.js";
 import { BaseSqliteStore } from "./base-sqlite-store.js";
+import { SupersededTextsCache } from "./facts-db/cache-manager.js";
+import { verifyFts5Support } from "./facts-db/db-connection.js";
+import {
+  buildClassificationFtsOrClause,
+  buildFactsSearchFtsOrClause,
+  fetchSupersededFactTextsLower,
+} from "./facts-db/fact-queries.js";
+import { sanitizeFts5QueryForFacts } from "./facts-db/fts-text.js";
 import {
   batchGetReinforcementEvents as batchGetReinforcementEventsHelper,
   boostConfidence as boostConfidenceHelper,
@@ -82,26 +90,11 @@ export class FactsDB extends BaseSqliteStore {
   // - Extracted implementation modules under backends/facts-db/ own links/reinforcement/scan-cursor logic.
   private readonly dbPath: string;
   private readonly fuzzyDedupe: boolean;
-  private supersededTextsCache: Set<string> | null = null;
-  private supersededTextsCacheTime = 0;
-  /** Cache TTL for superseded texts to avoid full table scan on every search. Increased to reduce thrashing. */
-  private readonly SUPERSEDED_CACHE_TTL_MS = 5 * 60_000; // 5 minutes
+  private readonly supersededTextsCacheMgr = new SupersededTextsCache(5 * 60_000);
   private knownEntitiesCache: string[] | null = null;
   private knownEntitiesCacheTime = 0;
   /** Cache TTL for known-entity list used by autoLinkEntities on every write. */
   private readonly KNOWN_ENTITIES_CACHE_TTL_MS = 30_000; // 30 seconds
-
-  /**
-   * Sanitize query for FTS5 MATCH operator: strip FTS5 special characters and operators.
-   * Removes: NOT, AND, OR, NEAR (case-insensitive), null bytes, *, :, {, }, (, ), and quotes.
-   */
-  private sanitizeFTS5Query(query: string): string {
-    return query
-      .replace(/\u0000/g, " ")
-      .replace(/['"*(){}:]/g, "")
-      .replace(/\b(NOT|AND|OR|NEAR)\b/gi, "")
-      .trim();
-  }
 
   constructor(dbPath: string, options?: { fuzzyDedupe?: boolean }) {
     mkdirSync(dirname(dbPath), { recursive: true });
@@ -146,6 +139,8 @@ export class FactsDB extends BaseSqliteStore {
     // NOTE: tags column is added later by migrateFtsTagsSupport() once the facts.tags
     // column exists (via migrateTagsColumn). For brand-new databases the FTS5 starts
     // without tags and is immediately upgraded by the migration sequence.
+    // porter stemmer indexes stemmed forms; user MATCH strings from sanitizeFts5QueryForFacts / fts-search
+    // use quoted tokens — see fts-search buildFts5Query() notes on tokenizer alignment (#898).
     this.liveDb.exec(`
       CREATE VIRTUAL TABLE IF NOT EXISTS facts_fts USING fts5(
         text,
@@ -193,43 +188,9 @@ export class FactsDB extends BaseSqliteStore {
    * hybrid retrieval to silently degrade to vector-only once the FTS strategy
    * starts failing. Probe FTS5 explicitly and fail fast with an actionable error.
    */
+  /** @deprecated Prefer importing `verifyFts5Support` from `./facts-db/db-connection.js` (kept for tests). */
   static verifyFts5Support(db: DatabaseSync): void {
-    let fts5CompileOption = false;
-    try {
-      const row = db.prepare("SELECT sqlite_compileoption_used('ENABLE_FTS5') as fts5").get() as { fts5: number };
-      fts5CompileOption = row.fts5 === 1;
-    } catch {
-      // Best-effort only
-    }
-
-    const probeTable = "temp.memory_hybrid_fts5_probe";
-    try {
-      db.exec(`DROP TABLE IF EXISTS ${probeTable}`);
-      db.exec(`CREATE VIRTUAL TABLE ${probeTable} USING fts5(content)`);
-      db.exec(`DROP TABLE ${probeTable}`);
-    } catch (err) {
-      try {
-        db.exec(`DROP TABLE IF EXISTS ${probeTable}`);
-      } catch {
-        // Best-effort cleanup only.
-      }
-      const reason = err instanceof Error ? err.message : String(err);
-      const finalError = new Error(
-        `memory-hybrid: SQLite FTS5 capability check failed during startup. Hybrid search would silently degrade to vector-only, so plugin initialization is aborted. Use a Node.js/SQLite runtime with FTS5 enabled. Original error: ${reason}`,
-      );
-
-      capturePluginError(finalError, {
-        operation: "startup-fts5-probe",
-        severity: "error",
-        subsystem: "facts",
-        context: {
-          fts5_compileoption: String(fts5CompileOption),
-          fts5_available: "false",
-        },
-      });
-
-      throw finalError;
-    }
+    verifyFts5Support(db);
   }
 
   /** Create reinforcement_log table for per-event context (#259). */
@@ -457,6 +418,8 @@ export class FactsDB extends BaseSqliteStore {
       this.liveDb.exec(
         `UPDATE facts SET last_accessed_at = strftime('%Y-%m-%dT%H:%M:%SZ', last_accessed, 'unixepoch') WHERE last_accessed IS NOT NULL`,
       );
+      // Partial index (#885): optimizes lookups for non-NULL last_accessed_at. Queries that need rows
+      // WHERE last_accessed_at IS NULL cannot use this index and may use a different query plan.
       this.liveDb.exec(
         "CREATE INDEX IF NOT EXISTS idx_facts_last_accessed_at ON facts(last_accessed_at) WHERE last_accessed_at IS NOT NULL",
       );
@@ -1414,84 +1377,60 @@ export class FactsDB extends BaseSqliteStore {
     // before the freeze expires
     const adjustedExpiresAt =
       decayFreezeUntil !== null && expiresAt !== null && expiresAt < decayFreezeUntil ? decayFreezeUntil : expiresAt;
-    this.liveDb
-      .prepare(
-        `INSERT INTO facts (id, text, why, category, importance, entity, key, value, source, created_at, decay_class, expires_at, last_confirmed_at, confidence, summary, embedding_model, normalized_hash, source_date, tags, valid_from, valid_until, supersedes_id, tier, scope, scope_target, procedure_type, success_count, last_validated, source_sessions, decay_freeze_until, provenance_session, source_turn, extraction_method, extraction_confidence, preserve_until, preserve_tags)
+    const tx = createTransaction(this.liveDb, () => {
+      this.liveDb
+        .prepare(
+          `INSERT INTO facts (id, text, why, category, importance, entity, key, value, source, created_at, decay_class, expires_at, last_confirmed_at, confidence, summary, embedding_model, normalized_hash, source_date, tags, valid_from, valid_until, supersedes_id, tier, scope, scope_target, procedure_type, success_count, last_validated, source_sessions, decay_freeze_until, provenance_session, source_turn, extraction_method, extraction_confidence, preserve_until, preserve_tags)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .run(
-        id,
-        entry.text,
-        why,
-        entry.category,
-        importance,
-        entry.entity,
-        entry.key,
-        entry.value,
-        entry.source,
-        nowSec,
-        decayClass,
-        adjustedExpiresAt,
-        nowSec,
-        confidence,
-        summary,
-        embeddingModel,
-        normHash,
-        sourceDate,
-        tagsStr,
-        validFrom,
-        validUntil,
-        supersedesId,
-        tier,
-        scope,
-        scopeTarget,
-        procedureType,
-        successCount,
-        lastValidated,
-        sourceSessionsStr,
-        decayFreezeUntil,
-        provenanceSession,
-        sourceTurn,
-        extractionMethod,
-        extractionConfidence,
-        preserveUntil,
-        preserveTagsStr,
-      );
-
-    return {
-      ...entry,
-      id,
-      createdAt: nowSec,
-      decayClass,
-      expiresAt: adjustedExpiresAt,
-      lastConfirmedAt: nowSec,
-      confidence,
-      summary: summary ?? undefined,
-      embeddingModel,
-      sourceDate,
-      scope,
-      scopeTarget: scopeTarget ?? undefined,
-      tags: tags ?? undefined,
-      validFrom,
-      validUntil: validUntil ?? undefined,
-      supersedesId: supersedesId ?? undefined,
-      tier,
-      procedureType: procedureType ?? undefined,
-      successCount,
-      lastValidated: lastValidated ?? undefined,
-      sourceSessions: sourceSessionsRaw ?? undefined,
-      provenanceSession,
-      sourceTurn,
-      extractionMethod,
-      extractionConfidence,
-      preserveUntil: preserveUntil ?? undefined,
-      preserveTags: preserveTags ?? undefined,
-      // normalize to null (not undefined) to match rowToEntry() behaviour
-      decayFreezeUntil: decayFreezeUntil,
-      // #237: access tracking columns start at zero for new facts
-      accessCount: 0,
-      lastAccessedAt: null,
-    };
+        )
+        .run(
+          id,
+          entry.text,
+          why,
+          entry.category,
+          importance,
+          entry.entity,
+          entry.key,
+          entry.value,
+          entry.source,
+          nowSec,
+          decayClass,
+          adjustedExpiresAt,
+          nowSec,
+          confidence,
+          summary,
+          embeddingModel,
+          normHash,
+          sourceDate,
+          tagsStr,
+          validFrom,
+          validUntil,
+          supersedesId,
+          tier,
+          scope,
+          scopeTarget,
+          procedureType,
+          successCount,
+          lastValidated,
+          sourceSessionsStr,
+          decayFreezeUntil,
+          provenanceSession,
+          sourceTurn,
+          extractionMethod,
+          extractionConfidence,
+          preserveUntil,
+          preserveTagsStr,
+        );
+    });
+    tx();
+    if (supersedesId) {
+      this.invalidateSupersededCache();
+    }
+    const loaded = this.getById(id);
+    if (!loaded) {
+      throw new Error(`memory-hybrid: store() failed to read back inserted fact ${id}`);
+    }
+    return loaded;
   }
 
   /** Update recall_count and last_accessed for facts (public for progressive disclosure). Bulk UPDATE to avoid N+1. */
@@ -2038,13 +1977,7 @@ export class FactsDB extends BaseSqliteStore {
       diversityWeight = 1.0,
     } = options;
 
-    const sanitized = this.sanitizeFTS5Query(query);
-    const safeQuery = sanitized
-      .split(/\s+/)
-      .filter((w) => w.length > 1)
-      .map((w) => `"${w}"`)
-      .join(" OR ");
-
+    const safeQuery = buildFactsSearchFtsOrClause(query);
     if (!safeQuery) return [];
 
     const nowSec = Math.floor(Date.now() / 1000);
@@ -2316,13 +2249,7 @@ export class FactsDB extends BaseSqliteStore {
     if (results.length < limit) {
       const remaining = limit - results.length;
       const seenIds = new Set(results.map((r) => r.id));
-      const sanitized = this.sanitizeFTS5Query(text);
-      const words = sanitized
-        .split(/\s+/)
-        .filter((w) => w.length > 2)
-        .slice(0, 5)
-        .map((w) => `"${w}"`)
-        .join(" OR ");
+      const words = buildClassificationFtsOrClause(text);
       if (words) {
         try {
           const rows = this.liveDb
@@ -2697,24 +2624,15 @@ export class FactsDB extends BaseSqliteStore {
     return rows.map((row) => this.rowToEntry(row));
   }
 
-  /** Get texts of superseded facts (for filtering LanceDB results). Cached for 1 minute to avoid repeated queries. */
+  /** Get texts of superseded facts (for filtering LanceDB results). Cached to avoid repeated full scans. */
   getSupersededTexts(): Set<string> {
     const now = Date.now();
-    if (this.supersededTextsCache && now - this.supersededTextsCacheTime < this.SUPERSEDED_CACHE_TTL_MS) {
-      return this.supersededTextsCache;
-    }
-
-    const rows = this.liveDb.prepare("SELECT text FROM facts WHERE superseded_at IS NOT NULL").all() as Array<{
-      text: string;
-    }>;
-    this.supersededTextsCache = new Set(rows.map((r) => r.text.toLowerCase()));
-    this.supersededTextsCacheTime = now;
-    return this.supersededTextsCache;
+    return this.supersededTextsCacheMgr.getSnapshot(now, () => fetchSupersededFactTextsLower(this.liveDb));
   }
 
   /** Invalidate superseded texts cache (called after supersede operations). */
   private invalidateSupersededCache(): void {
-    this.supersededTextsCache = null;
+    this.supersededTextsCacheMgr.invalidate();
   }
 
   count(): number {
@@ -3891,7 +3809,7 @@ export class FactsDB extends BaseSqliteStore {
 
   /** Find procedure by task_pattern hash or normalized match (for dedupe). */
   findProcedureByTaskPattern(taskPattern: string, limit = 5): ProcedureEntry[] {
-    const sanitized = this.sanitizeFTS5Query(taskPattern);
+    const sanitized = sanitizeFts5QueryForFacts(taskPattern);
     const safeQuery = sanitized
       .split(/\s+/)
       .filter((w) => w.length > 1)
@@ -3926,7 +3844,7 @@ export class FactsDB extends BaseSqliteStore {
     reinforcementBoost = 0.1,
     scopeFilter?: ScopeFilter,
   ): ProcedureEntry[] {
-    const sanitized = this.sanitizeFTS5Query(taskDescription);
+    const sanitized = sanitizeFts5QueryForFacts(taskDescription);
     const safeQuery = sanitized
       .split(/\s+/)
       .filter((w) => w.length > 1)
@@ -4000,7 +3918,7 @@ export class FactsDB extends BaseSqliteStore {
     reinforcementBoost = 0.1,
     scopeFilter?: ScopeFilter,
   ): Array<ProcedureEntry & { relevanceScore: number }> {
-    const sanitized = this.sanitizeFTS5Query(taskDescription);
+    const sanitized = sanitizeFts5QueryForFacts(taskDescription);
     const safeQuery = sanitized
       .split(/\s+/)
       .filter((w) => w.length > 1)
@@ -5378,7 +5296,7 @@ export class FactsDB extends BaseSqliteStore {
 
     // FTS text search on event + context
     if (query?.trim()) {
-      const sanitized = this.sanitizeFTS5Query(query.trim());
+      const sanitized = sanitizeFts5QueryForFacts(query.trim());
       const words = sanitized
         .split(/\s+/)
         .filter((w) => w.length > 1)

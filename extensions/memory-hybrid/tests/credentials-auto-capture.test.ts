@@ -330,11 +330,11 @@ describe("council review fixes", () => {
     it("rejects invalid hostnames in extractHostFromUrl", () => {
       // Test with SQL injection attempt
       const result1 = extractHostFromUrl("https://'; DROP TABLE users; --/api");
-      expect(result1).toBe("api"); // Should fall back to safe default
+      expect(result1).toBe("__unparsed-host__");
 
       // Test with path traversal
       const result2 = extractHostFromUrl("https://../../../etc/passwd");
-      expect(result2).toBe("api");
+      expect(result2).toBe("__unparsed-host__");
 
       // Valid hostname should work
       const result3 = extractHostFromUrl("https://api.example.com/path");

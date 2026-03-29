@@ -9,6 +9,7 @@
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import type { DatabaseSync } from "node:sqlite";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -42,6 +43,43 @@ import { ensureMaintenanceCronJobs, getPluginConfigFromFile } from "./cmd-instal
 
 import type { HandlerContext } from "./handlers.js";
 import type { VerifyCliSink } from "./types.js";
+
+const VERIFY_FACT_COUNT_TTL_MS = 5 * 60_000;
+let verifyFactCountCache: { path: string; n: number; at: number } | null = null;
+
+function readApproxFactsRowCount(db: DatabaseSync): number | null {
+  try {
+    const row = db.prepare(`SELECT stat FROM sqlite_stat1 WHERE tbl = 'facts' LIMIT 1`).get() as
+      | { stat: string | number }
+      | undefined;
+    if (row == null || row.stat === undefined || row.stat === null) return null;
+    const statStr = String(row.stat).trim();
+    const firstInt = statStr.split(/\s+/)[0];
+    if (!firstInt) return null;
+    const n = Number.parseInt(firstInt, 10);
+    return Number.isFinite(n) && n >= 0 ? Math.floor(n) : null;
+  } catch {
+    return null;
+  }
+}
+
+function getCachedFactCount(
+  factsDb: { count: () => number; getRawDb: () => DatabaseSync },
+  sqlitePath: string,
+): number {
+  const now = Date.now();
+  if (
+    verifyFactCountCache &&
+    verifyFactCountCache.path === sqlitePath &&
+    now - verifyFactCountCache.at < VERIFY_FACT_COUNT_TTL_MS
+  ) {
+    return verifyFactCountCache.n;
+  }
+  const approx = readApproxFactsRowCount(factsDb.getRawDb());
+  const n = approx != null ? approx : factsDb.count();
+  verifyFactCountCache = { path: sqlitePath, n, at: now };
+  return n;
+}
 
 export async function runVerifyForCli(
   ctx: HandlerContext,
@@ -156,7 +194,7 @@ export async function runVerifyForCli(
   let lanceBindingsFailed = false;
 
   try {
-    const n = factsDb.count();
+    const n = getCachedFactCount(factsDb, resolvedSqlitePath);
     sqliteOk = true;
     log(`${OK} SQLite: OK (${resolvedSqlitePath}, ${n} facts)`);
   } catch (e) {

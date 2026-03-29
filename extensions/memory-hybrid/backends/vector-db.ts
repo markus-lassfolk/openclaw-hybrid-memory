@@ -12,6 +12,7 @@ import { capturePluginError } from "../services/error-reporter.js";
 import type { SearchResult } from "../types/memory.js";
 import {
   LANCE_NO_VECTOR_COL_MSG,
+  LANCE_VECTOR_SEARCH_MAX_LIMIT,
   UUID_REGEX,
   VECTORDB_INIT_MAX_RETRIES,
   VECTORDB_INIT_RETRY_DELAY_MS,
@@ -713,7 +714,8 @@ export class VectorDB {
       const minSimilarity = options.minSimilarity ?? 0.95;
       const ttlSec = Math.max(1, Math.floor((options.ttlMs ?? 5 * 60 * 1000) / 1000));
       const filterKey = options.filterKey ?? "default";
-      const candidateLimit = options.candidateLimit ?? 25;
+      const rawCandidate = options.candidateLimit ?? 25;
+      const candidateLimit = Math.max(1, Math.min(LANCE_VECTOR_SEARCH_MAX_LIMIT, Math.floor(rawCandidate)));
 
       // Dimension pre-check: prevent LanceDB "No vector column found" errors on fallback query mismatch
       if (vector.length !== this.vectorDim) return null;
@@ -981,9 +983,11 @@ export class VectorDB {
       // (e.g. Google/768 dims) produces a vector incompatible with the stored
       // 3072-dim table built with text-embedding-3-large.
       if (vector.length !== this.vectorDim) return [];
+      const rawLimit = Number.isFinite(limit) ? Math.floor(limit) : 5;
+      const safeLimit = Math.max(1, Math.min(LANCE_VECTOR_SEARCH_MAX_LIMIT, rawLimit));
       const acquired = this.acquireReader();
       try {
-        const results = await this.getTable().vectorSearch(vector).limit(limit).toArray();
+        const results = await this.getTable().vectorSearch(vector).limit(safeLimit).toArray();
         return results
           .map((row) => {
             const distance = row._distance ?? 0;

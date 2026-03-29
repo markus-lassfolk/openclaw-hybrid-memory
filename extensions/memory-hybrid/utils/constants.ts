@@ -19,6 +19,8 @@ export const REFLECTION_MAX_FACT_LENGTH = 300;
 export const REFLECTION_MAX_FACTS_PER_CATEGORY = 50;
 /** Max characters for credential notes in vault (truncation). */
 export const CREDENTIAL_NOTES_MAX_CHARS = 500;
+/** Max characters for credential URL metadata (truncation). */
+export const CREDENTIAL_URL_MAX_CHARS = 2000;
 
 /** Max characters for a single fact shown in LLM prompts (classify, consolidate). */
 export const FACT_PREVIEW_MAX_CHARS = 300;
@@ -46,8 +48,8 @@ export const DISTILL_DEDUP_THRESHOLD = 0.85;
 export const REFLECTION_TEMPERATURE = 0.2;
 /** Batch throttle delay (ms) between embedding batches. */
 export const BATCH_THROTTLE_MS = 200;
-/** SQLite busy timeout (ms). */
-export const SQLITE_BUSY_TIMEOUT_MS = 5000;
+/** SQLite busy timeout (ms). Mitigates SQLITE_BUSY under concurrent writers (#875). */
+export const SQLITE_BUSY_TIMEOUT_MS = 30_000;
 /** Seconds per day. */
 export const SECONDS_PER_DAY = 86400;
 
@@ -96,3 +98,13 @@ export const LANCE_NO_VECTOR_COL_MSG = "No vector column found";
 
 /** Timeout (ms) for vectorDB reader drain. */
 export const VECTORDB_READER_DRAIN_TIMEOUT_MS = 30_000;
+
+/** LanceDB semantic search: maximum rows to request from vectorSearch (#882). */
+export const LANCE_VECTOR_SEARCH_MAX_LIMIT = 1000;
+
+/** Default session transcript file suffix (override with OPENCLAW_SESSION_LOG_SUFFIX, e.g. `.jsonl`). */
+export function getSessionLogFileSuffix(): string {
+  const raw = process.env.OPENCLAW_SESSION_LOG_SUFFIX?.trim();
+  if (!raw) return ".jsonl";
+  return raw.startsWith(".") ? raw : `.${raw}`;
+}

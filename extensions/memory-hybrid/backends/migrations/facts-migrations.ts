@@ -870,10 +870,19 @@ function migrateAccessCountAndLastAccessedAt(db: DatabaseSync): void {
     db.exec(
       `UPDATE facts SET last_accessed_at = strftime('%Y-%m-%dT%H:%M:%SZ', last_accessed, 'unixepoch') WHERE last_accessed IS NOT NULL`,
     );
+    // Partial index: optimizes lookups for rows with a non-null last_accessed_at. Queries that filter on
+    // last_accessed_at IS NULL cannot use this index — use last_accessed (epoch) or a full scan (#885).
     db.exec(
       "CREATE INDEX IF NOT EXISTS idx_facts_last_accessed_at ON facts(last_accessed_at) WHERE last_accessed_at IS NOT NULL",
     );
   }
+}
+
+/** Speed up cold-cache reads of superseded fact texts (#888). */
+function migrateSupersededAtLookupIndex(db: DatabaseSync): void {
+  db.exec(
+    "CREATE INDEX IF NOT EXISTS idx_facts_superseded_at_present ON facts(superseded_at) WHERE superseded_at IS NOT NULL",
+  );
 }
 
 // Token-budget tiered trimming (Issue #792)
@@ -1076,6 +1085,7 @@ export function runFactsMigrations(db: DatabaseSync): void {
   // Scan cursors and access salience
   migrateScanCursorsTable(db);
   migrateAccessCountAndLastAccessedAt(db);
+  migrateSupersededAtLookupIndex(db);
 
   // Token-budget tiered trimming (Issue #792)
   migratePreserveColumns(db);
