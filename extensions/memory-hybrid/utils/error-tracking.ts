@@ -8,25 +8,20 @@
 import { capturePluginError } from "../services/error-reporter.js";
 
 /**
- * Context for error tracking - passed to capturePluginError
+ * Context for error tracking - passed to capturePluginError.
+ *
+ * Defined in terms of capturePluginError's second parameter to avoid drift.
  */
-export interface ErrorContext {
-  operation: string;
-  subsystem?: string;
-  configShape?: Record<string, string>;
-  phase?: string;
-  backend?: string;
-  retryAttempt?: number;
-  memoryCount?: number;
-  severity?: string;
-  [key: string]: unknown;
-}
+export type ErrorContext = Parameters<typeof capturePluginError>[1];
 
 /**
  * Wraps a function with error tracking.
  * Catches errors, reports them via capturePluginError, then re-throws.
  *
- * @param fn - The function to wrap (sync or async)
+ * Note: This wrapper is for synchronous functions only. It will not catch
+ * asynchronous rejections. Use `withErrorTrackingAsync` for Promise-returning functions.
+ *
+ * @param fn - The synchronous function to wrap
  * @param context - Error context to pass to capturePluginError
  * @returns Wrapped function with same signature
  *
@@ -35,9 +30,9 @@ export interface ErrorContext {
  *   () => credentialsDb.store({...}),
  *   { subsystem: "credentials", operation: "credential-store", phase: "runtime", backend: "sqlite" }
  * );
- * await safeFn();
+ * safeFn();
  */
-export function withErrorTracking<T>(fn: () => T, context: ErrorContext): () => T {
+export function withErrorTracking<T>(fn: () => T extends Promise<any> ? never : T, context: ErrorContext): () => T {
   return () => {
     try {
       return fn();
