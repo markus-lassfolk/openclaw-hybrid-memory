@@ -185,7 +185,7 @@ function mapForgeStatus(s?: string): AgentHealthOutcome {
 export function mergeAgentHealthDashboard(forge: ForgeTaskItem[], dbRows: AgentHealthRecord[]): AgentHealthView[] {
   const byId = new Map<string, AgentHealthRecord>();
   for (const r of dbRows) {
-    byId.set(r.agentId.toLowerCase(), r);
+    byId.set(r.agentId.toLowerCase(), { ...r, agentId: r.agentId.toLowerCase() });
   }
   for (const f of forge) {
     const id = (f.agent ?? "unknown").toLowerCase();
