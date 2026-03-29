@@ -28,7 +28,7 @@ export function buildToolScopeFilter(
   // Security: Only trust tool params if explicitly enabled in config
   const trustParams = config.multiAgent.trustToolScopeParams === true;
   const hasScopeParams = Boolean(userId || agentId || sessionId);
-  if (hasScopeParams && trustParams) {
+  if (hasScopeParams && trustParams && confirmCrossTenantScope) {
     return { userId: userId ?? null, agentId: agentId ?? null, sessionId: sessionId ?? null };
   }
   if (hasScopeParams && !trustParams) {
