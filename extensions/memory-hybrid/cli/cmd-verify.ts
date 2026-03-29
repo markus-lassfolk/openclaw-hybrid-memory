@@ -49,11 +49,14 @@ let verifyFactCountCache: { path: string; n: number; at: number } | null = null;
 
 function readApproxFactsRowCount(db: DatabaseSync): number | null {
   try {
-    const row = db.prepare(`SELECT stat FROM sqlite_stat1 WHERE tbl = 'facts' AND (idx IS NULL OR idx = '')`).get() as
+    const row = db.prepare(`SELECT stat FROM sqlite_stat1 WHERE tbl = 'facts' LIMIT 1`).get() as
       | { stat: string | number }
       | undefined;
     if (row == null || row.stat === undefined || row.stat === null) return null;
-    const n = typeof row.stat === "number" ? row.stat : Number.parseInt(String(row.stat).trim(), 10);
+    const statStr = String(row.stat).trim();
+    const firstInt = statStr.split(/\s+/)[0];
+    if (!firstInt) return null;
+    const n = Number.parseInt(firstInt, 10);
     return Number.isFinite(n) && n >= 0 ? Math.floor(n) : null;
   } catch {
     return null;
