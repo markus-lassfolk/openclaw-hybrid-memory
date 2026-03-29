@@ -262,7 +262,6 @@ export function scrubString(input: string): string {
       .replace(/Bearer\s+[\w.-]+/gi, "[REDACTED]")
       .replace(/Basic\s+[A-Za-z0-9+/=_-]+/gi, "[REDACTED]")
       .replace(/(?:\?|&)(?:api[_-]?key|token|access_token|password|secret)=[^&\s]+/gi, "[REDACTED]")
-      .replace(/\btoken\s*=\s*[^\s&]+/gi, "token=[REDACTED]")
       // JWT tokens (eyJ...)
       .replace(/eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g, "[REDACTED]")
       // AWS and other cloud credentials

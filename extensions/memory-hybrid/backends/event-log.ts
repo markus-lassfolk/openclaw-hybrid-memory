@@ -284,8 +284,7 @@ export class EventLog extends BaseSqliteStore {
                 });
                 const backupPath = `${filePath}.corrupted.${Date.now()}`;
                 try {
-                  copyFileSync(filePath, backupPath);
-                  unlinkSync(filePath);
+                  renameSync(filePath, backupPath);
                 } catch (renameErr) {
                   capturePluginError(renameErr instanceof Error ? renameErr : new Error(String(renameErr)), {
                     operation: "backup-corrupted-archive",
