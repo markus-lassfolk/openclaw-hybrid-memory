@@ -1042,6 +1042,36 @@ export class VectorDB {
     }
   }
 
+  /**
+   * Return all fact IDs currently stored in LanceDB.
+   * Used by the reconcile command to detect orphan vectors.
+   * Only UUIDs that pass UUID_REGEX are included (malformed rows are silently skipped).
+   */
+  async getAllIds(): Promise<string[]> {
+    try {
+      await this.ensureInitialized();
+      if (!this.schemaValid) return [];
+      const acquired = this.acquireReader();
+      try {
+        const rows = await this.getTable().query().select(["id"]).toArray();
+        return rows
+          .map((row) => String(row.id ?? ""))
+          .filter((id) => UUID_REGEX.test(id))
+          .map((id) => id.toLowerCase());
+      } finally {
+        this.releaseReader(acquired);
+      }
+    } catch (err) {
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        operation: "vector-get-all-ids",
+        severity: "info",
+        subsystem: "vector",
+      });
+      this.logWarn(`memory-hybrid: LanceDB getAllIds failed: ${err}`);
+      return [];
+    }
+  }
+
   /** Optional checkpoint method for LanceDB optimization */
   async checkpoint?(): Promise<void> {
     // LanceDB doesn't have an explicit checkpoint API
