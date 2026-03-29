@@ -12,15 +12,3 @@ export function setEnv(key: string, value: string | undefined): void {
     process.env[key] = value;
   }
 }
-
-export function hasEnv(key: string): boolean {
-  return key in process.env;
-}
-
-export function deleteEnv(key: string): void {
-  delete process.env[key];
-}
-
-export function getAllEnv(): NodeJS.ProcessEnv {
-  return { ...process.env };
-}

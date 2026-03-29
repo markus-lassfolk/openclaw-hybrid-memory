@@ -8,17 +8,14 @@ import {
   ChildProcess,
 } from "node:child_process";
 import type * as cp from "node:child_process";
-import { promisify } from "node:util";
 
 /**
  * Centralized process execution wrappers to resolve security scanner warnings.
  */
 
 export const exec = cpExec;
-export const execAsync = promisify(cpExec);
 export const execSync = cpExecSync;
 export const execFile = cpExecFile;
-export const execFileSync = cpExecFileSync;
 export const spawn = cpSpawn;
 export const spawnSync = cpSpawnSync;
 
