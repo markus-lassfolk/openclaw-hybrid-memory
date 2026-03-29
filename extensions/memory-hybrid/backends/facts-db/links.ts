@@ -154,7 +154,7 @@ export function expandGraphWithCTE(
   db: DatabaseSync,
   seedFactIds: string[],
   maxDepth: number,
-  options?: { asOf?: number; scopeFilter?: any },
+  options?: { asOf?: number; scopeFilter?: { userId?: string; agentId?: string; sessionId?: string } },
 ): Array<{
   factId: string;
   seedId: string;

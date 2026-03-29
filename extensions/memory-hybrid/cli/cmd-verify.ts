@@ -1099,7 +1099,7 @@ export async function runVerifyForCli(
   // ───── Reconciliation Check ─────
   if (opts.reconcile) {
     log("\n───── Vector DB Reconciliation ─────");
-    if (!sqliteOk || !lanceOk) {
+    if (!sqliteOk || !lanceOk || !vectorDb.isLanceDbAvailable()) {
       log(`${FAIL} Reconciliation skipped — both SQLite and LanceDB must be healthy to reconcile.`);
       allOk = false;
     } else {
