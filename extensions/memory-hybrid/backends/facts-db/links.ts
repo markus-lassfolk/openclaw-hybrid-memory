@@ -101,31 +101,147 @@ export function getLinksTo(
 
 export function getConnectedFactIds(db: DatabaseSync, factIds: string[], maxDepth: number): string[] {
   if (factIds.length === 0 || maxDepth < 1) return [...factIds];
-  const seen = new Set<string>(factIds);
-  let frontier = [...factIds];
-  for (let depth = 0; depth < maxDepth && frontier.length > 0; depth++) {
-    const next: string[] = [];
-    for (const id of frontier) {
-      const out = db
-        .prepare(`SELECT target_fact_id FROM memory_links WHERE source_fact_id = ? AND link_type != 'CONTRADICTS'`)
-        .all(id) as Array<{ target_fact_id: string }>;
-      const in_ = db
-        .prepare(`SELECT source_fact_id FROM memory_links WHERE target_fact_id = ? AND link_type != 'CONTRADICTS'`)
-        .all(id) as Array<{ source_fact_id: string }>;
-      for (const r of out) {
-        if (!seen.has(r.target_fact_id)) {
-          seen.add(r.target_fact_id);
-          next.push(r.target_fact_id);
-        }
-      }
-      for (const r of in_) {
-        if (!seen.has(r.source_fact_id)) {
-          seen.add(r.source_fact_id);
-          next.push(r.source_fact_id);
-        }
-      }
-    }
-    frontier = next;
+
+  // Use SQLite's recursive CTE for efficient graph traversal
+  // This replaces the iterative N+1 query pattern with a single query
+  const query = `
+    WITH RECURSIVE graph_traversal(fact_id, depth) AS (
+      -- Base case: start with seed facts at depth 0
+      SELECT value AS fact_id, 0 AS depth
+      FROM json_each(?)
+
+      UNION
+
+      -- Recursive case: traverse outgoing and incoming links
+      SELECT DISTINCT
+        CASE
+          WHEN ml.source_fact_id = gt.fact_id THEN ml.target_fact_id
+          ELSE ml.source_fact_id
+        END AS fact_id,
+        gt.depth + 1 AS depth
+      FROM graph_traversal gt
+      JOIN memory_links ml ON (
+        (ml.source_fact_id = gt.fact_id OR ml.target_fact_id = gt.fact_id)
+        AND ml.link_type != 'CONTRADICTS'
+      )
+      WHERE gt.depth < ?
+    )
+    SELECT DISTINCT fact_id FROM graph_traversal
+  `;
+
+  const rows = db.prepare(query).all(JSON.stringify(factIds), maxDepth) as Array<{ fact_id: string }>;
+  return rows.map((r) => r.fact_id);
+}
+
+/**
+ * Perform graph expansion using a recursive CTE, returning expanded nodes with hop count and path info.
+ * This replaces the iterative N+1 BFS pattern with a single optimized SQL query.
+ *
+ * @param db - The database connection
+ * @param seedFactIds - Array of seed fact IDs to start expansion from
+ * @param maxDepth - Maximum traversal depth
+ * @returns Array of expanded nodes with factId, seedId, hopCount, and path (JSON array of link steps)
+ */
+export function expandGraphWithCTE(
+  db: DatabaseSync,
+  seedFactIds: string[],
+  maxDepth: number,
+): Array<{
+  factId: string;
+  seedId: string;
+  hopCount: number;
+  path: string; // JSON array of link steps
+}> {
+  if (seedFactIds.length === 0 || maxDepth < 1) {
+    return seedFactIds.map((id) => ({
+      factId: id,
+      seedId: id,
+      hopCount: 0,
+      path: "[]",
+    }));
   }
-  return [...seen];
+
+  // Use recursive CTE to traverse the graph in a single query
+  // We track: current node, seed that originated this path, hop count, and JSON path
+  const query = `
+    WITH RECURSIVE graph_expansion(
+      fact_id,
+      seed_id,
+      hop_count,
+      path_json,
+      visited_ids
+    ) AS (
+      -- Base case: seed facts at hop 0
+      SELECT
+        value AS fact_id,
+        value AS seed_id,
+        0 AS hop_count,
+        '[]' AS path_json,
+        ',' || value || ',' AS visited_ids
+      FROM json_each(?)
+
+      UNION ALL
+
+      -- Recursive case: expand from frontier
+      SELECT
+        CASE
+          WHEN ml.source_fact_id = ge.fact_id THEN ml.target_fact_id
+          ELSE ml.source_fact_id
+        END AS fact_id,
+        ge.seed_id,
+        ge.hop_count + 1 AS hop_count,
+        json_insert(
+          ge.path_json,
+          '$[#]',
+          json_object(
+            'fromFactId', ge.fact_id,
+            'toFactId', CASE WHEN ml.source_fact_id = ge.fact_id THEN ml.target_fact_id ELSE ml.source_fact_id END,
+            'linkType', ml.link_type,
+            'strength', ml.strength
+          )
+        ) AS path_json,
+        ge.visited_ids || CASE WHEN ml.source_fact_id = ge.fact_id THEN ml.target_fact_id ELSE ml.source_fact_id END || ',' AS visited_ids
+      FROM graph_expansion ge
+      JOIN memory_links ml ON (
+        (ml.source_fact_id = ge.fact_id OR ml.target_fact_id = ge.fact_id)
+        AND ml.link_type != 'CONTRADICTS'
+      )
+      WHERE
+        ge.hop_count < ?
+        -- Avoid cycles: only visit each node once per path
+        AND ge.visited_ids NOT LIKE '%,' || CASE WHEN ml.source_fact_id = ge.fact_id THEN ml.target_fact_id ELSE ml.source_fact_id END || ',%'
+    ),
+    -- Aggregate to find shortest path to each node
+    shortest_paths AS (
+      SELECT
+        fact_id,
+        seed_id,
+        hop_count,
+        path_json,
+        ROW_NUMBER() OVER (PARTITION BY fact_id ORDER BY hop_count ASC, seed_id ASC) AS rn
+      FROM graph_expansion
+    )
+    SELECT
+      fact_id,
+      seed_id,
+      hop_count,
+      path_json AS path
+    FROM shortest_paths
+    WHERE rn = 1
+    ORDER BY hop_count ASC, fact_id ASC
+  `;
+
+  const rows = db.prepare(query).all(JSON.stringify(seedFactIds), maxDepth) as Array<{
+    fact_id: string;
+    seed_id: string;
+    hop_count: number;
+    path: string;
+  }>;
+
+  return rows.map((r) => ({
+    factId: r.fact_id,
+    seedId: r.seed_id,
+    hopCount: r.hop_count,
+    path: r.path,
+  }));
 }
