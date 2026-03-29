@@ -548,6 +548,19 @@ describe("VectorDB issue #379 — delete() handles malformed UUIDs gracefully", 
     const result = await db.delete(id);
     expect(result).toBe(true);
   });
+
+  it("normalizes uppercase UUID fact ids to lowercase on store (matches delete / LanceDB id)", async () => {
+    const mixedCase = "AAAAAAAA-BBBB-4CCC-8DDD-EEEEEEEEEEEE";
+    const returned = await db.store({
+      text: "uuid case",
+      vector: [0.1, 0.2, 0.3],
+      importance: 0.5,
+      category: "fact",
+      id: mixedCase,
+    });
+    expect(returned).toBe(mixedCase.toLowerCase());
+    expect(await db.delete(mixedCase)).toBe(true);
+  });
 });
 
 // ---------------------------------------------------------------------------
