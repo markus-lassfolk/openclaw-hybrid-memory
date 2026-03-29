@@ -2561,13 +2561,14 @@ export class FactsDB extends BaseSqliteStore {
    * Keeping this filter in sync with getAll() ensures that the set of IDs
    * returned here is consistent with what callers expect to be "live" facts.
    * Used by the reconcile command to detect orphan entries.
+   * IDs are normalized to lowercase to match VectorDB.getAllIds() normalization.
    */
   getAllIds(): string[] {
     const nowSec = Math.floor(Date.now() / 1000);
     const rows = this.liveDb
       .prepare("SELECT id FROM facts WHERE superseded_at IS NULL AND (expires_at IS NULL OR expires_at > ?)")
       .all(nowSec) as Array<{ id: string }>;
-    return rows.map((row) => row.id);
+    return rows.map((row) => row.id.toLowerCase());
   }
 
   /**

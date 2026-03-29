@@ -104,13 +104,15 @@ export function getConnectedFactIds(db: DatabaseSync, factIds: string[], maxDept
 
   // Use SQLite's recursive CTE for efficient graph traversal
   // This replaces the iterative N+1 query pattern with a single query
+  // UNION ALL is used to prevent tuple deduplication during traversal;
+  // final DISTINCT ensures each node appears once in the result
   const query = `
     WITH RECURSIVE graph_traversal(fact_id, depth) AS (
       -- Base case: start with seed facts at depth 0
       SELECT value AS fact_id, 0 AS depth
       FROM json_each(?)
 
-      UNION
+      UNION ALL
 
       -- Recursive case (outgoing links)
       SELECT
@@ -121,7 +123,7 @@ export function getConnectedFactIds(db: DatabaseSync, factIds: string[], maxDept
       WHERE gt.depth < ?
         AND ml.link_type != 'CONTRADICTS'
 
-      UNION
+      UNION ALL
 
       -- Recursive case (incoming links)
       SELECT
