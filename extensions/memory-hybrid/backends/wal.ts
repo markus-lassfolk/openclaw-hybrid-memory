@@ -286,7 +286,7 @@ export class WriteAheadLog {
       if (!existsSync(this.walPath)) return 0;
       const st = statSync(this.walPath);
       if (st.size <= maxBytes) return 0;
-      return this.pruneStale();
+      return await this.pruneStale();
     } catch (err) {
       pluginLogger.info(
         `memory-hybrid: WAL compactIfOversized size check failed; skipping compaction: ${err instanceof Error ? err.message : String(err)}`,
