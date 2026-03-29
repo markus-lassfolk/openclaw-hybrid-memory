@@ -104,7 +104,7 @@ function selectMemoryCoreToolsContext(ctx: ToolsContext): MemoryToolsContext {
     currentAgentIdRef,
     pendingLLMWarnings,
     buildToolScopeFilter,
-    walWrite: (operation, data, logger) => walWrite(wal, operation, data, logger),
+    walWrite: (operation, data, logger, supersedeTargetId) => walWrite(wal, operation, data, logger, supersedeTargetId),
     walRemove: (id, logger) => walRemove(wal, id, logger),
     findSimilarByEmbedding,
     auditStore,

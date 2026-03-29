@@ -1164,7 +1164,7 @@ The document ingestion feature converts files (PDF, DOCX, XLSX, PPTX, HTML, imag
 | `autoTag` | `true` | Automatically add the filename as a tag to all ingested facts |
 | `visionEnabled` | `false` | Use LLM vision for image files (PNG, JPG, etc.) instead of MarkItDown |
 | `visionModel` | (llm.default) | Vision model to use when `visionEnabled` is true |
-| `allowedPaths` | — | Allowlist of absolute directory paths; ingestion is restricted to files under these paths when set |
+| `allowedPaths` | — | **Required** non-empty allowlist of absolute directory paths when document ingestion is enabled; if omitted or empty, all paths are denied (default-safe). |
 
 **Supported file types:** PDF, DOC/DOCX, PPT/PPTX, XLS/XLSX, CSV, TSV, Markdown, TXT, RTF, HTML, JSON, YAML, EPUB, ODF formats, and images (PNG, JPG, GIF, WebP, BMP, TIFF).
 

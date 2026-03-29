@@ -11,6 +11,8 @@ import {
   OPENAI_MODELS,
   resolveEnvVars,
   resolveSecretRef,
+  resolveEmbeddingApiKeyInput,
+  isEmbeddingApiKeyExecSecretRef,
   parseStoreConfig,
   parseWALConfig,
   parseEventLogConfig,
@@ -218,6 +220,14 @@ function readAzureFoundryBaseUrl(
   return u?.trim() || undefined;
 }
 
+/** Normalize embedding.apiKey from string or OpenClaw SecretRef object for parsing (Issue #833). */
+function resolveUserEmbeddingApiKeyRaw(embedding: Record<string, unknown> | undefined): string {
+  if (!embedding?.apiKey) return "";
+  const k = embedding.apiKey;
+  if (typeof k === "string") return k.trim();
+  return resolveEmbeddingApiKeyInput(k)?.trim() ?? "";
+}
+
 export function parseConfig(value: unknown): HybridMemoryConfig {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new Error("memory-hybrid config required");
@@ -301,7 +311,7 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
     );
   } else {
     // Infer provider when omitted: openai if apiKey + OpenAI model; google if no openai/ollama but have google key; else ollama.
-    const rawApiKey = embedding && typeof embedding.apiKey === "string" ? (embedding.apiKey as string).trim() : "";
+    const rawApiKey = resolveUserEmbeddingApiKeyRaw(embedding);
     const hasApiKey =
       rawApiKey &&
       (rawApiKey.startsWith("env:") || rawApiKey.startsWith("file:") || rawApiKey.length >= 10) &&
@@ -333,7 +343,7 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
   let resolvedApiKey: string | undefined;
   let embeddingEndpointOverride: string | undefined;
   if (embeddingProvider === "openai") {
-    const rawEmbedKey = embedding && typeof embedding.apiKey === "string" ? (embedding.apiKey as string).trim() : "";
+    const rawEmbedKey = resolveUserEmbeddingApiKeyRaw(embedding);
     const llmProvidersForOpenAiEmbed = (
       cfg.llm as { providers?: Record<string, { apiKey?: string; baseURL?: string; baseUrl?: string }> } | undefined
     )?.providers;
@@ -384,13 +394,19 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
         'memory-hybrid: using llm.providers["azure-foundry"] for embeddings (same API as LLM). Set embedding.endpoint and embedding.apiKey to override.',
       );
     } else {
+      const ak = embedding?.apiKey;
+      if (isEmbeddingApiKeyExecSecretRef(ak)) {
+        throw new Error(
+          "embedding.apiKey exec SecretRef is not resolved inside the plugin. Use env: or file: string refs, a plaintext string key for development, or ensure the host resolves secrets before plugin load. See Issue #833.",
+        );
+      }
       throw new Error(
         'embedding.apiKey is required. Set it in plugins.entries["openclaw-hybrid-memory"].config.embedding, or configure llm.providers["azure-foundry"] with apiKey and baseURL to use Azure Foundry for embeddings. Run \'openclaw hybrid-mem verify --fix\' for help.',
       );
     }
-  } else if (embedding && typeof embedding.apiKey === "string") {
+  } else if (embedding?.apiKey) {
     // Optional fallback apiKey for ollama/onnx (used for fallback to OpenAI when provider unavailable)
-    const rawKey = (embedding.apiKey as string).trim();
+    const rawKey = resolveUserEmbeddingApiKeyRaw(embedding);
     if (rawKey.startsWith("env:") || rawKey.startsWith("file:")) {
       const resolved = resolveSecretRef(rawKey);
       if (!resolved) {

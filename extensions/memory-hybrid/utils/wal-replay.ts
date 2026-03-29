@@ -89,10 +89,61 @@ export async function replayWalEntries(
           skipped++;
           await wal.remove(entry.id);
         }
+      } else if (entry.operation === "update" && entry.targetId && entry.data?.text) {
+        const targetId = entry.targetId;
+        if (!factsDb.getById(targetId)) {
+          skipped++;
+          await wal.remove(entry.id);
+        } else if (!factsDb.hasDuplicate(entry.data.text as string)) {
+          const stored = factsDb.store({
+            text: entry.data.text as string,
+            category: (entry.data.category as import("../config.js").MemoryCategory) ?? "other",
+            importance: (entry.data.importance as number) ?? 0.5,
+            entity: (entry.data.entity as string | null | undefined) ?? null,
+            key: (entry.data.key as string | null | undefined) ?? null,
+            value: (entry.data.value as string | null | undefined) ?? null,
+            source: (entry.data.source as string) ?? "wal-replay",
+            decayClass: entry.data.decayClass as import("../config.js").DecayClass | undefined,
+            summary: (entry.data.summary as string | null | undefined) ?? null,
+            tags: (entry.data.tags as string[] | undefined) ?? undefined,
+            supersedesId: targetId,
+          });
+          factsDb.supersede(targetId, stored.id);
+          const precomputedVector = entry.data.vector as number[] | undefined;
+          if (vectorDb && precomputedVector && precomputedVector.length > 0) {
+            try {
+              await vectorDb.store({
+                id: stored.id,
+                text: stored.text,
+                vector: precomputedVector,
+                importance: stored.importance,
+                category: stored.category,
+              });
+            } catch {
+              // non-fatal
+            }
+          } else if (vectorDb && embeddings) {
+            try {
+              const vector = await embeddings.embed(stored.text);
+              await vectorDb.store({
+                id: stored.id,
+                text: stored.text,
+                vector: Array.from(vector),
+                importance: stored.importance,
+                category: stored.category,
+              });
+            } catch {
+              // non-fatal
+            }
+          }
+          committed++;
+          await wal.remove(entry.id);
+        } else {
+          skipped++;
+          await wal.remove(entry.id);
+        }
       } else if (entry.operation === "update") {
-        // Skip update operations during replay: WAL entries lack the targetId needed
-        // to properly supersede the old fact, so replaying would create duplicates.
-        // Remove these entries to prevent unbounded WAL growth.
+        // Legacy UPDATE lines without targetId cannot be replayed safely.
         skipped++;
         await wal.remove(entry.id);
       } else if (entry.operation === "delete") {

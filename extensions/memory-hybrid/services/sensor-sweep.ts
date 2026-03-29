@@ -8,7 +8,8 @@
  * Issue #236
  */
 
-import { execFileSync } from "node:child_process";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -371,9 +372,12 @@ interface GitHubIssue {
   updatedAt?: string;
 }
 
-function tryExecFileSync(file: string, args: string[]): string | null {
+const execFileAsync = promisify(execFile);
+
+async function tryExecFile(file: string, args: string[]): Promise<string | null> {
   try {
-    return execFileSync(file, args, { encoding: "utf-8", timeout: 15_000 }).trim();
+    const { stdout } = await execFileAsync(file, args, { encoding: "utf-8", timeout: 15_000 });
+    return stdout.trim();
   } catch {
     return null;
   }
@@ -399,7 +403,7 @@ export async function sweepGitHub(
     const repo = cfg.repo ?? "";
 
     // Check if gh CLI is available
-    const ghCheck = tryExecFileSync("gh", ["--version"]);
+    const ghCheck = await tryExecFile("gh", ["--version"]);
     if (!ghCheck) {
       result.error = "gh CLI not available";
       return result;
@@ -408,7 +412,7 @@ export async function sweepGitHub(
     const repoArgs = cfg.repo ? ["--repo", cfg.repo] : [];
 
     // Open PRs
-    const prOutput = tryExecFileSync("gh", [
+    const prOutput = await tryExecFile("gh", [
       "pr",
       "list",
       ...repoArgs,
@@ -424,7 +428,7 @@ export async function sweepGitHub(
     // Review requests (PRs where we are requested reviewer)
     let reviewRequests: GitHubPR[] = [];
     if (cfg.includeReviewRequests !== false) {
-      const rrOutput = tryExecFileSync("gh", [
+      const rrOutput = await tryExecFile("gh", [
         "pr",
         "list",
         ...repoArgs,
@@ -443,7 +447,14 @@ export async function sweepGitHub(
     // CI failures on open PRs
     const ciFailures: Array<{ pr: number; title: string; url: string }> = [];
     for (const pr of openPrs.slice(0, 5)) {
-      const ciOutput = tryExecFileSync("gh", ["pr", "checks", ...repoArgs, String(pr.number), "--json", "name,bucket"]);
+      const ciOutput = await tryExecFile("gh", [
+        "pr",
+        "checks",
+        ...repoArgs,
+        String(pr.number),
+        "--json",
+        "name,bucket",
+      ]);
       if (ciOutput) {
         try {
           const checks = JSON.parse(ciOutput) as Array<{ name: string; bucket: string }>;
@@ -459,7 +470,7 @@ export async function sweepGitHub(
     // Stale issues
     const staleIssueDays = cfg.staleIssueDays ?? 7;
     const staleCutoff = new Date(Date.now() - staleIssueDays * 24 * 3600 * 1000).toISOString();
-    const issueOutput = tryExecFileSync("gh", [
+    const issueOutput = await tryExecFile("gh", [
       "issue",
       "list",
       ...repoArgs,

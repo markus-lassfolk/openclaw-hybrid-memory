@@ -308,8 +308,6 @@ function migrateProceduresTable(db: DatabaseSync): void {
   db.exec(`
     CREATE VIRTUAL TABLE IF NOT EXISTS procedures_fts USING fts5(
       task_pattern,
-      content=procedures,
-      content_rowid=rowid,
       tokenize='porter unicode61'
     )
   `);
@@ -318,10 +316,10 @@ function migrateProceduresTable(db: DatabaseSync): void {
       INSERT INTO procedures_fts(rowid, task_pattern) VALUES (new.rowid, new.task_pattern);
     END;
     CREATE TRIGGER IF NOT EXISTS procedures_fts_ad AFTER DELETE ON procedures BEGIN
-      INSERT INTO procedures_fts(procedures_fts, rowid, task_pattern) VALUES ('delete', old.rowid, old.task_pattern);
+      DELETE FROM procedures_fts WHERE rowid = old.rowid;
     END;
     CREATE TRIGGER IF NOT EXISTS procedures_fts_au AFTER UPDATE ON procedures BEGIN
-      INSERT INTO procedures_fts(procedures_fts, rowid, task_pattern) VALUES ('delete', old.rowid, old.task_pattern);
+      DELETE FROM procedures_fts WHERE rowid = old.rowid;
       INSERT INTO procedures_fts(rowid, task_pattern) VALUES (new.rowid, new.task_pattern);
     END
   `);
@@ -403,8 +401,6 @@ function migrateFtsTagsSupport(db: DatabaseSync): void {
         why,
         key,
         value,
-        content='facts',
-        content_rowid='rowid',
         tokenize='porter unicode61'
       )
     `);
@@ -417,13 +413,11 @@ function migrateFtsTagsSupport(db: DatabaseSync): void {
       END;
 
       CREATE TRIGGER IF NOT EXISTS facts_ad AFTER DELETE ON facts BEGIN
-        INSERT INTO facts_fts(facts_fts, rowid, text, category, entity, tags, why, key, value)
-        VALUES ('delete', old.rowid, old.text, old.category, old.entity, old.tags, old.why, old.key, old.value);
+        DELETE FROM facts_fts WHERE rowid = old.rowid;
       END;
 
       CREATE TRIGGER IF NOT EXISTS facts_au AFTER UPDATE ON facts BEGIN
-        INSERT INTO facts_fts(facts_fts, rowid, text, category, entity, tags, why, key, value)
-        VALUES ('delete', old.rowid, old.text, old.category, old.entity, old.tags, old.why, old.key, old.value);
+        DELETE FROM facts_fts WHERE rowid = old.rowid;
         INSERT INTO facts_fts(rowid, text, category, entity, tags, why, key, value)
         VALUES (new.rowid, new.text, new.category, new.entity, new.tags, new.why, new.key, new.value);
       END
@@ -1094,4 +1088,16 @@ export function runFactsMigrations(db: DatabaseSync): void {
 
   // Episodic memory (#781)
   migrateEpisodesTable(db);
+
+  // Token budget trim: index-backed ordering (Issue #838)
+  migrateTrimBudgetIndex(db);
+}
+
+/** Supports SQL ORDER BY for trimToBudget without full in-memory sort of all facts (Issue #838). */
+function migrateTrimBudgetIndex(db: DatabaseSync): void {
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_facts_trim_budget_order
+    ON facts(superseded_at, importance, created_at, last_accessed)
+    WHERE superseded_at IS NULL
+  `);
 }

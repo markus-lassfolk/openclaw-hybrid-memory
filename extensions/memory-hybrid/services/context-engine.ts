@@ -22,8 +22,7 @@ import type { HybridMemoryConfig } from "../config.js";
 import type { EmbeddingProvider } from "./embeddings.js";
 import { capturePluginError } from "./error-reporter.js";
 import { runPreConsolidationFlush } from "./pre-consolidation-flush.js";
-import { readFile } from "node:fs/promises";
-import { existsSync } from "node:fs";
+import { access, readFile } from "node:fs/promises";
 
 // ---------------------------------------------------------------------------
 // Auto-capture: outcome phrase patterns for episodic memory (#781)
@@ -103,7 +102,11 @@ const OUTCOME_PATTERNS: Array<{
  * Extract readable text from a session JSONL file for episode scanning.
  */
 async function extractTextFromSessionFile(sessionFile: string): Promise<string> {
-  if (!existsSync(sessionFile)) return "";
+  try {
+    await access(sessionFile);
+  } catch {
+    return "";
+  }
   try {
     const content = await readFile(sessionFile, "utf-8");
     const lines = content.split("\n").filter((l) => l.trim());

@@ -14,6 +14,8 @@ export type WALEntry = {
   id: string;
   timestamp: number;
   operation: "store" | "delete" | "update";
+  /** For operation "update": UUID of the fact row being superseded (Issue #836 replay). */
+  targetId?: string;
   data: {
     text: string;
     category?: string;
@@ -32,14 +34,16 @@ export type WALEntry = {
 const WAL_REMOVE_PREFIX = '{"op":"remove","id":';
 
 export function isWalEntry(obj: unknown): obj is WALEntry {
-  return (
-    typeof obj === "object" &&
-    obj !== null &&
-    "id" in obj &&
-    "timestamp" in obj &&
-    "operation" in obj &&
-    ["store", "delete", "update"].includes((obj as WALEntry).operation)
-  );
+  if (typeof obj !== "object" || obj === null || !("id" in obj) || !("timestamp" in obj) || !("operation" in obj)) {
+    return false;
+  }
+  const op = (obj as WALEntry).operation;
+  if (!["store", "delete", "update"].includes(op)) return false;
+  if ("targetId" in obj && (obj as WALEntry).targetId !== undefined) {
+    const tid = (obj as WALEntry).targetId;
+    if (typeof tid !== "string" || tid.length === 0) return false;
+  }
+  return true;
 }
 
 export class WriteAheadLog {
@@ -93,14 +97,14 @@ export class WriteAheadLog {
   private async fsyncAfterWrite(): Promise<void> {
     let fh: Awaited<ReturnType<typeof open>> | undefined;
     try {
-      fh = await open(this.walPath, "r");
+      fh = await open(this.walPath, "a");
       await fh.datasync();
     } catch (err) {
       const code = (err as NodeJS.ErrnoException).code;
       if (code === "EPERM" || code === "EINVAL") {
-        // Some filesystems (e.g. NTFS via WSL2) do not support fsync on a
-        // read-only file descriptor.  The data has already been written by
-        // appendFile / writeFile; skipping fsync here is safe and the
+        // Some filesystems (e.g. NTFS via WSL2) reject fdatasync/fsync on the WAL
+        // or do not fully support POSIX sync semantics. The data has already been
+        // written by appendFile / writeFile; skipping datasync here is safe and the
         // durability guarantee degrades to best-effort on those filesystems.
         if (!this.fsyncWarnEmitted) {
           pluginLogger.warn(
@@ -238,6 +242,7 @@ export class WriteAheadLog {
 
   private async _clearInternal(): Promise<void> {
     try {
+      // Under writeLock: delete path so empty state is "no file" (tests + readAll ENOENT).
       await rm(this.walPath, { force: true });
       this.activeIds.clear();
     } catch (err) {

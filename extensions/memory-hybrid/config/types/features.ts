@@ -171,7 +171,10 @@ export type DocumentsConfig = {
   visionEnabled: boolean;
   /** Optional vision model (default: resolved from llm.default) */
   visionModel?: string;
-  /** Optional allowlist of absolute directory paths; when set, ingestion only allows files under these paths */
+  /**
+   * Non-empty allowlist of absolute directory paths. When omitted or empty, document ingestion
+   * denies every path (default-safe); configure explicit roots before using ingest tools.
+   */
   allowedPaths?: string[];
 };
 

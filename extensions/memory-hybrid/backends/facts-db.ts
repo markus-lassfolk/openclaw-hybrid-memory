@@ -146,8 +146,6 @@ export class FactsDB extends BaseSqliteStore {
         entity,
         key,
         value,
-        content='facts',
-        content_rowid='rowid',
         tokenize='porter unicode61'
       )
     `);
@@ -160,13 +158,11 @@ export class FactsDB extends BaseSqliteStore {
       END;
 
       CREATE TRIGGER IF NOT EXISTS facts_ad AFTER DELETE ON facts BEGIN
-        INSERT INTO facts_fts(facts_fts, rowid, text, category, entity, key, value)
-        VALUES ('delete', old.rowid, old.text, old.category, old.entity, old.key, old.value);
+        DELETE FROM facts_fts WHERE rowid = old.rowid;
       END;
 
       CREATE TRIGGER IF NOT EXISTS facts_au AFTER UPDATE ON facts BEGIN
-        INSERT INTO facts_fts(facts_fts, rowid, text, category, entity, key, value)
-        VALUES ('delete', old.rowid, old.text, old.category, old.entity, old.key, old.value);
+        DELETE FROM facts_fts WHERE rowid = old.rowid;
         INSERT INTO facts_fts(rowid, text, category, entity, key, value)
         VALUES (new.rowid, new.text, new.category, new.entity, new.key, new.value);
       END
@@ -556,8 +552,6 @@ export class FactsDB extends BaseSqliteStore {
     this.liveDb.exec(`
       CREATE VIRTUAL TABLE IF NOT EXISTS procedures_fts USING fts5(
         task_pattern,
-        content=procedures,
-        content_rowid=rowid,
         tokenize='porter unicode61'
       )
     `);
@@ -566,10 +560,10 @@ export class FactsDB extends BaseSqliteStore {
         INSERT INTO procedures_fts(rowid, task_pattern) VALUES (new.rowid, new.task_pattern);
       END;
       CREATE TRIGGER IF NOT EXISTS procedures_fts_ad AFTER DELETE ON procedures BEGIN
-        INSERT INTO procedures_fts(procedures_fts, rowid, task_pattern) VALUES ('delete', old.rowid, old.task_pattern);
+        DELETE FROM procedures_fts WHERE rowid = old.rowid;
       END;
       CREATE TRIGGER IF NOT EXISTS procedures_fts_au AFTER UPDATE ON procedures BEGIN
-        INSERT INTO procedures_fts(procedures_fts, rowid, task_pattern) VALUES ('delete', old.rowid, old.task_pattern);
+        DELETE FROM procedures_fts WHERE rowid = old.rowid;
         INSERT INTO procedures_fts(rowid, task_pattern) VALUES (new.rowid, new.task_pattern);
       END
     `);
@@ -958,8 +952,6 @@ export class FactsDB extends BaseSqliteStore {
           tags,
           key,
           value,
-          content='facts',
-          content_rowid='rowid',
           tokenize='porter unicode61'
         )
       `);
@@ -972,13 +964,11 @@ export class FactsDB extends BaseSqliteStore {
         END;
 
         CREATE TRIGGER IF NOT EXISTS facts_ad AFTER DELETE ON facts BEGIN
-          INSERT INTO facts_fts(facts_fts, rowid, text, category, entity, tags, key, value)
-          VALUES ('delete', old.rowid, old.text, old.category, old.entity, old.tags, old.key, old.value);
+          DELETE FROM facts_fts WHERE rowid = old.rowid;
         END;
 
         CREATE TRIGGER IF NOT EXISTS facts_au AFTER UPDATE ON facts BEGIN
-          INSERT INTO facts_fts(facts_fts, rowid, text, category, entity, tags, key, value)
-          VALUES ('delete', old.rowid, old.text, old.category, old.entity, old.tags, old.key, old.value);
+          DELETE FROM facts_fts WHERE rowid = old.rowid;
           INSERT INTO facts_fts(rowid, text, category, entity, tags, key, value)
           VALUES (new.rowid, new.text, new.category, new.entity, new.tags, new.key, new.value);
         END
@@ -1705,9 +1695,6 @@ export class FactsDB extends BaseSqliteStore {
     };
 
     const p0: Array<{ id: string; text: string }> = [];
-    const p1: Array<{ id: string; text: string; importance: number }> = [];
-    const p2: Array<{ id: string; text: string; importance: number }> = [];
-    const p3: Array<{ id: string; text: string; importance: number }> = [];
     const preserved: Array<{ id: string; reason: string }> = [];
 
     for (const row of rows) {
@@ -1726,23 +1713,39 @@ export class FactsDB extends BaseSqliteStore {
         if (hasPreserveUntil) reasons.push(`preserveUntil=${row.preserve_until}`);
         if (hasPreserveTags) reasons.push(`preserveTags=${preserveTags.join(",")}`);
         preserved.push({ id: row.id, reason: reasons.join("|") });
-      } else if (row.importance > 0.8 && row.created_at >= p1Cutoff) {
-        p1.push({ id: row.id, text: row.text, importance: row.importance });
-      } else if (row.importance >= 0.5) {
-        p2.push({ id: row.id, text: row.text, importance: row.importance });
-      } else {
-        p3.push({ id: row.id, text: row.text, importance: row.importance });
       }
     }
 
-    // Sort P3 and P2 by importance ASC (trim least-important first)
-    p3.sort((a, b) => a.importance - b.importance);
-    p2.sort((a, b) => a.importance - b.importance);
-    // P1 sorted by importance ASC (trim least-important first within P1)
-    p1.sort((a, b) => a.importance - b.importance);
+    // Trim candidates in DB sort order (P3 → P2 → P1, then importance, then recency — Issue #838).
+    const trimOrderStmt = this.liveDb.prepare(
+      `SELECT f.id, f.text, f.importance,
+              CASE
+                WHEN f.importance < 0.5 THEN 0
+                WHEN f.importance > 0.8 AND f.created_at >= ? THEN 2
+                ELSE 1
+              END AS trim_tier
+       FROM facts f
+       LEFT JOIN verified_facts vf ON vf.fact_id = f.id
+       WHERE f.superseded_at IS NULL
+         AND (f.expires_at IS NULL OR f.expires_at > ?)
+         AND NOT (
+           (',' || COALESCE(f.tags,'') || ',') LIKE '%,edict,%'
+           OR vf.fact_id IS NOT NULL
+           OR (f.preserve_until IS NOT NULL AND f.preserve_until > ?)
+           OR (f.preserve_tags IS NOT NULL AND TRIM(f.preserve_tags) != '' AND f.preserve_tags != '[]')
+         )
+       ORDER BY trim_tier ASC, f.importance ASC, COALESCE(f.last_accessed, f.created_at) ASC, f.id ASC`,
+    );
+    const trimRows = trimOrderStmt.all(p1Cutoff, nowSec, nowSec) as Array<{
+      id: string;
+      text: string;
+      importance: number;
+      trim_tier: number;
+    }>;
 
-    // Calculate current token count (P0 + P1 + P2 + P3)
-    const currentTokens = [...p0, ...p1, ...p2, ...p3].reduce((sum, f) => sum + tokenEstimate(f.text), 0);
+    const p0Tokens = p0.reduce((sum, f) => sum + tokenEstimate(f.text), 0);
+    const trimPoolTokens = trimRows.reduce((sum, r) => sum + tokenEstimate(r.text), 0);
+    const currentTokens = p0Tokens + trimPoolTokens;
 
     if (currentTokens <= tokenBudget) {
       const trimmed: Array<{ id: string; textPreview: string; tier: string; importance: number; tokenCost: number }> =
@@ -1757,12 +1760,14 @@ export class FactsDB extends BaseSqliteStore {
       };
     }
 
-    // Trim from P3 → P2 → P1 until within budget
+    // Trim from P3 → P2 → P1 until within budget (order from SQL above).
     let remainingTokens = currentTokens;
-    const toTrim: Array<{ id: string; text: string; tier: string; importance: number }> = [];
-    for (const f of p3) toTrim.push({ ...f, tier: "P3" });
-    for (const f of p2) toTrim.push({ ...f, tier: "P2" });
-    for (const f of p1) toTrim.push({ ...f, tier: "P1" });
+    const toTrim: Array<{ id: string; text: string; tier: string; importance: number }> = trimRows.map((r) => ({
+      id: r.id,
+      text: r.text,
+      importance: r.importance,
+      tier: r.trim_tier === 0 ? "P3" : r.trim_tier === 1 ? "P2" : "P1",
+    }));
 
     const trimmed: Array<{ id: string; textPreview: string; tier: string; importance: number; tokenCost: number }> = [];
     for (const fact of toTrim) {
@@ -4739,7 +4744,7 @@ export class FactsDB extends BaseSqliteStore {
            AND superseded_at IS NULL
            AND (expires_at IS NULL OR expires_at > ?)
            ${excludeClause}
-         ORDER BY created_at DESC
+         ORDER BY created_at DESC, rowid DESC
          LIMIT 1`,
       )
       .get(...params) as Record<string, unknown> | undefined;
