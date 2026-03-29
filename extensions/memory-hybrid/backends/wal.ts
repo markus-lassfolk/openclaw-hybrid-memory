@@ -98,9 +98,9 @@ export class WriteAheadLog {
     } catch (err) {
       const code = (err as NodeJS.ErrnoException).code;
       if (code === "EPERM" || code === "EINVAL") {
-        // Some filesystems (e.g. NTFS via WSL2) do not support fsync on a
-        // read-only file descriptor.  The data has already been written by
-        // appendFile / writeFile; skipping fsync here is safe and the
+        // Some filesystems (e.g. NTFS via WSL2) reject fdatasync/fsync on the WAL
+        // or do not fully support POSIX sync semantics. The data has already been
+        // written by appendFile / writeFile; skipping datasync here is safe and the
         // durability guarantee degrades to best-effort on those filesystems.
         if (!this.fsyncWarnEmitted) {
           pluginLogger.warn(

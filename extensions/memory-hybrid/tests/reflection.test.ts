@@ -9,7 +9,7 @@ import { runReflection, runReflectionMeta, runReflectionRules } from "../service
 import type { MemoryEntry } from "../types/memory.js";
 import { fillPrompt, loadPrompt } from "../utils/prompt-loader.js";
 
-const { parsePatternsFromReflectionResponse } = _testing;
+const { parsePatternsFromReflectionResponse, dotProductSimilarity } = _testing;
 
 function makeEntry(overrides: Partial<MemoryEntry> = {}): MemoryEntry {
   return {
@@ -29,6 +29,31 @@ function makeEntry(overrides: Partial<MemoryEntry> = {}): MemoryEntry {
     ...overrides,
   };
 }
+
+describe("dotProductSimilarity", () => {
+  it("returns 1 for identical pre-normalized vectors", () => {
+    const v = [1, 0, 0];
+    expect(dotProductSimilarity(v, v)).toBe(1);
+  });
+
+  it("returns 0 for orthogonal pre-normalized vectors", () => {
+    expect(dotProductSimilarity([1, 0, 0], [0, 1, 0])).toBe(0);
+  });
+
+  it("returns -1 for opposite pre-normalized vectors", () => {
+    expect(dotProductSimilarity([1, 0, 0], [-1, 0, 0])).toBe(-1);
+  });
+
+  it("returns 0 when lengths differ", () => {
+    expect(dotProductSimilarity([1, 0], [1, 0, 0])).toBe(0);
+  });
+
+  it("equals cosine similarity for unit vectors", () => {
+    const a = [1 / Math.sqrt(2), 1 / Math.sqrt(2)];
+    const b = [1 / Math.sqrt(2), -1 / Math.sqrt(2)];
+    expect(dotProductSimilarity(a, b)).toBeCloseTo(0, 10);
+  });
+});
 
 describe("parsePatternsFromReflectionResponse", () => {
   it("extracts valid PATTERN: lines", () => {

@@ -12,8 +12,8 @@ vi.mock("node:fs/promises", async (importOriginal) => {
     ...actual,
     open: vi.fn(async (...args: any[]) => {
       const fh = await actualOpen(...(args as Parameters<typeof actualOpen>));
-      // Only intercept the 'r' (read-only) opens used by fsyncAfterWrite.
-      if (args[1] === "r") {
+      // Only intercept append opens used by fsyncAfterWrite (datasync on WAL file).
+      if (args[1] === "a") {
         const origDatasync = fh.datasync.bind(fh);
         (fh as any).datasync = async () => {
           if (fsyncError.value) {
