@@ -14,7 +14,7 @@ import { CREDENTIAL_TYPES, type CredentialType, type HybridMemoryConfig } from "
 import { capturePluginError } from "../services/error-reporter.js";
 import { SECONDS_PER_DAY } from "../utils/constants.js";
 
-export interface PluginContext {
+interface PluginContext {
   credentialsDb: CredentialsDB | null;
   cfg: HybridMemoryConfig;
   api: ClawdbotPluginApi;

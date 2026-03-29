@@ -2,18 +2,18 @@ import type OpenAI from "openai";
 import { chatComplete } from "./chat.js";
 import { extractJsonArray } from "./json-array-parser.js";
 
-export interface GradeableDocument {
+interface GradeableDocument {
   factId: string;
   text: string;
 }
 
-export interface DocumentGrade {
+interface DocumentGrade {
   factId: string;
   answer: "yes" | "no";
   relevant: boolean;
 }
 
-export interface DocumentGraderConfig {
+interface DocumentGraderConfig {
   model?: string;
   timeoutMs?: number;
 }

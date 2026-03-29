@@ -22,9 +22,9 @@ const DEFAULT_LOCK_TIMEOUT_MS = 5000;
 const LOCK_POLL_MS = 50;
 const STALE_LOCK_MS = 2 * 60 * 1000;
 
-export type DispatchLeaseState = "leased" | "running" | "completed" | "failed" | "lease-expired";
+type DispatchLeaseState = "leased" | "running" | "completed" | "failed" | "lease-expired";
 
-export interface DispatchLeaseRecord {
+interface DispatchLeaseRecord {
   issue: number;
   token: string;
   state: DispatchLeaseState;
@@ -53,7 +53,7 @@ interface DispatchLeaseRegistry {
   events: DispatchLeaseEvent[];
 }
 
-export interface AcquireDispatchLeaseInput {
+interface AcquireDispatchLeaseInput {
   stateDir: string;
   issue: number;
   branch?: string;
@@ -62,14 +62,14 @@ export interface AcquireDispatchLeaseInput {
   now?: Date;
 }
 
-export interface AcquireDispatchLeaseResult {
+interface AcquireDispatchLeaseResult {
   acquired: boolean;
   lease?: DispatchLeaseRecord;
   existing?: DispatchLeaseRecord;
   reason?: string;
 }
 
-export interface TransitionDispatchLeaseInput {
+interface TransitionDispatchLeaseInput {
   stateDir: string;
   issue: number;
   token?: string;

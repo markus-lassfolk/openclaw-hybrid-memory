@@ -47,7 +47,7 @@ export interface PersonaStateEntry {
   updatedAt: number;
 }
 
-export interface UpsertPersonaStateInput {
+interface UpsertPersonaStateInput {
   stateKey: string;
   questionKey: string;
   targetFile: IdentityFileType;
@@ -61,7 +61,7 @@ export interface UpsertPersonaStateInput {
   lastSeenAt: number;
 }
 
-export type UpsertPersonaStateResult = {
+type UpsertPersonaStateResult = {
   action: "created" | "updated" | "unchanged";
   entry: PersonaStateEntry;
 };

@@ -449,4 +449,4 @@ async function runAutoClassify(
 // Exports
 // ============================================================================
 
-export { runAutoClassify, runClassifyForCli, normalizeSuggestedLabel, type ClassifyProgressReporter };
+export { runAutoClassify, runClassifyForCli, normalizeSuggestedLabel };

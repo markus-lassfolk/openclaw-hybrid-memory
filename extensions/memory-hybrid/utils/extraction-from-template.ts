@@ -9,7 +9,7 @@ function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-export type ExtractionResult = {
+type ExtractionResult = {
   entity: string | null;
   key: string | null;
   value: string | null;
@@ -21,7 +21,7 @@ type PatternRunner = (text: string) => ExtractionResult | null;
  * Build pattern runners from a language's extraction template.
  * Each runner returns { entity, key, value } or null.
  */
-export function buildExtractionRunners(template: LanguageExtractionTemplate): PatternRunner[] {
+function buildExtractionRunners(template: LanguageExtractionTemplate): PatternRunner[] {
   const runners: PatternRunner[] = [];
 
   if (template.decision && template.decision.verbs.length > 0) {

@@ -21,7 +21,7 @@
  */
 
 /** Logger interface matching api.logger from ClawdbotPluginApi */
-export interface PluginLoggerApi {
+interface PluginLoggerApi {
   info: (msg: string) => void;
   warn: (msg: string) => void;
   error: (msg: string) => void;

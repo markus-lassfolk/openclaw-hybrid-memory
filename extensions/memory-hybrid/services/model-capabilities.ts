@@ -4,7 +4,7 @@
  * Used by chat.ts for distillBatchTokenLimit and distillMaxOutputTokens; can be used for context-audit or config hints.
  */
 
-export interface ModelCapabilities {
+interface ModelCapabilities {
   /** Context window (input + output) in tokens. */
   contextWindow: number;
   /** Max output tokens for a single completion (distill, reflection, etc.). */
@@ -20,7 +20,7 @@ const DEFAULT_CAPABILITIES: ModelCapabilities = {
 };
 
 /** Strip provider prefix (e.g. "google/gemini-2.0-flash" → "gemini-2.0-flash") and lowercase for matching. */
-export function normalizeModelId(model: string): string {
+function normalizeModelId(model: string): string {
   const s = model.trim().toLowerCase();
   const slash = s.indexOf("/");
   return slash >= 0 ? s.slice(slash + 1) : s;
@@ -201,7 +201,7 @@ const CAPABILITIES: Array<{ match: Matcher; cap: ModelCapabilities }> = [
 /**
  * Return capabilities for the given model id (with or without provider prefix), or null if unknown.
  */
-export function getModelCapabilities(model: string): ModelCapabilities | null {
+function getModelCapabilities(model: string): ModelCapabilities | null {
   const normalized = normalizeModelId(model);
   for (const { match, cap } of CAPABILITIES) {
     if (match(normalized)) return cap;
@@ -230,7 +230,7 @@ export function getDistillMaxOutputTokens(model: string): number {
 /**
  * Context window in tokens (for hints or context-audit). Returns 128_000 for unknown models.
  */
-export function getContextWindow(model: string): number {
+function getContextWindow(model: string): number {
   const cap = getModelCapabilities(model);
   return cap?.contextWindow ?? DEFAULT_CAPABILITIES.contextWindow;
 }

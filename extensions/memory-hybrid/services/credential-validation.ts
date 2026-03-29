@@ -3,7 +3,7 @@
  * Used to reject narrative text, paths, and descriptions from being stored as secrets.
  */
 
-export type ValidationResult = { ok: true } | { ok: false; reason: string };
+type ValidationResult = { ok: true } | { ok: false; reason: string };
 
 /** Minimum length for a credential value to be considered valid. */
 export const MIN_CREDENTIAL_VALUE_LENGTH = 8;
@@ -79,7 +79,7 @@ export const CREDENTIAL_SERVICE_MAX_LENGTH = 50;
 export const MAX_SERVICE_NAME_LENGTH = CREDENTIAL_SERVICE_MAX_LENGTH;
 
 /** Max number of dash-separated tokens in service slug (sentence-like). */
-export const CREDENTIAL_SERVICE_MAX_TOKENS = 6;
+const CREDENTIAL_SERVICE_MAX_TOKENS = 6;
 
 /** Known service name variants -> canonical name (for dedup). */
 const SERVICE_NORMALIZE_MAP: Record<string, string> = {

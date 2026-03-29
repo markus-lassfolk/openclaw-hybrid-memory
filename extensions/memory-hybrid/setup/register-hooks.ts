@@ -15,7 +15,7 @@ import { WorkflowTracker } from "../services/workflow-tracker.js";
 import { type MessageLike, sanitizeMessagesForClaude } from "../utils/sanitize-messages.js";
 
 /** Lifecycle hooks receive the stable plugin API (Phase 3). */
-export type HooksContext = MemoryPluginAPI;
+type HooksContext = MemoryPluginAPI;
 
 /** Issue #463: Returned handle for lifecycle hook cleanup. */
 export interface LifecycleHooksHandle {

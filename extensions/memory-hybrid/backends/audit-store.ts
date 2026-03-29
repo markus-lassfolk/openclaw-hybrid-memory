@@ -8,9 +8,9 @@ import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { BaseSqliteStore } from "./base-sqlite-store.js";
 
-export type AuditOutcome = "success" | "partial" | "failed";
+type AuditOutcome = "success" | "partial" | "failed";
 
-export interface AuditEventInput {
+interface AuditEventInput {
   timestamp?: number;
   agentId: string;
   action: string;
@@ -24,7 +24,7 @@ export interface AuditEventInput {
   tokens?: number;
 }
 
-export interface AuditEventRow {
+interface AuditEventRow {
   id: string;
   timestamp: number;
   agentId: string;

@@ -55,7 +55,6 @@ export {
   MEMORY_LINK_TYPES,
   type MemoryLinkType,
   type ReinforcementContext,
-  type ReinforcementEvent,
 } from "./facts-db/types.js";
 import type { MemoryLinkType, ReinforcementContext, ReinforcementEvent } from "./facts-db/types.js";
 

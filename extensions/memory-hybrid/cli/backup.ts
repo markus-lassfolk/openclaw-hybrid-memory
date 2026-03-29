@@ -31,7 +31,7 @@ import { capturePluginError } from "../services/error-reporter.js";
 // Types
 // ---------------------------------------------------------------------------
 
-export type BackupCliResult =
+type BackupCliResult =
   | {
       ok: true;
       backupDir: string;
@@ -42,7 +42,7 @@ export type BackupCliResult =
     }
   | { ok: false; error: string };
 
-export type BackupVerifyResult =
+type BackupVerifyResult =
   | { ok: true; integrityOk: boolean; sqlitePath: string; factCount: number; message: string }
   | { ok: false; error: string };
 
@@ -50,7 +50,7 @@ export type BackupVerifyResult =
 // Context
 // ---------------------------------------------------------------------------
 
-export interface BackupContext {
+interface BackupContext {
   resolvedSqlitePath: string;
   resolvedLancePath: string;
   /** Override default backup destination (~/.openclaw/backups/memory/). */

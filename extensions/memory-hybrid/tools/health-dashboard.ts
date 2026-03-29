@@ -16,7 +16,7 @@ import { capturePluginError } from "../services/error-reporter.js";
 import { detectClusters } from "../services/topic-clusters.js";
 import { getDirSize, getFileSizeAsync } from "../utils/fs.js";
 
-export interface HealthPluginContext {
+interface HealthPluginContext {
   factsDb: FactsDB;
   cfg: HybridMemoryConfig;
   resolvedSqlitePath: string;
@@ -24,7 +24,7 @@ export interface HealthPluginContext {
   initialized?: Promise<void>;
 }
 
-export interface HealthReport {
+interface HealthReport {
   totalFacts: number;
   activeFacts: number;
   supersededFacts: number;

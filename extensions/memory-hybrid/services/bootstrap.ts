@@ -7,14 +7,14 @@ import { buildEmbeddingRegistry, type EmbeddingRegistry } from "./embedding-regi
 import { createEmbeddingProvider, type EmbeddingProvider } from "./embeddings.js";
 import { join, dirname } from "node:path";
 
-export interface CoreBootstrapContext {
+interface CoreBootstrapContext {
   cfg: HybridMemoryConfig;
   api: ClawdbotPluginApi;
   resolvedSqlitePath: string;
   resolvedLancePath: string;
 }
 
-export interface CoreBootstrapServices {
+interface CoreBootstrapServices {
   factsDb: FactsDB;
   edictStore: EdictStore;
   vectorDb: VectorDB;
@@ -22,7 +22,7 @@ export interface CoreBootstrapServices {
   embeddingRegistry: EmbeddingRegistry;
 }
 
-export type CoreBootstrapInstaller = BootstrapPhaseConfig & {
+type CoreBootstrapInstaller = BootstrapPhaseConfig & {
   id: string;
   install(context: CoreBootstrapContext): CoreBootstrapServices;
 };

@@ -17,14 +17,14 @@ import { ProvenanceService } from "./provenance.js";
 import { AliasDB } from "./retrieval-aliases.js";
 import { VerificationStore } from "./verification-store.js";
 
-export interface OptionalBootstrapContext {
+interface OptionalBootstrapContext {
   cfg: HybridMemoryConfig;
   api: ClawdbotPluginApi;
   factsDb: FactsDB;
   resolvedSqlitePath: string;
 }
 
-export interface OptionalBootstrapServices {
+interface OptionalBootstrapServices {
   credentialsDb: CredentialsDB | null;
   wal: WriteAheadLog | null;
   proposalsDb: ProposalsDB | null;
@@ -41,7 +41,7 @@ export interface OptionalBootstrapServices {
   apitapStore: ApitapStore;
 }
 
-export type OptionalBootstrapInstaller = BootstrapPhaseConfig & {
+type OptionalBootstrapInstaller = BootstrapPhaseConfig & {
   id: string;
   install(context: OptionalBootstrapContext): OptionalBootstrapServices;
 };

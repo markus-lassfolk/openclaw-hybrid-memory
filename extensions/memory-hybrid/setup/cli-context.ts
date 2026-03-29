@@ -40,7 +40,7 @@ import { pluginLogger } from "../utils/logger.js";
 import { runPreConsolidationFlush } from "../services/pre-consolidation-flush.js";
 
 /** Help text shown after hybrid-mem commands list */
-export const HYBRID_MEM_HELP_GROUPED = `
+const HYBRID_MEM_HELP_GROUPED = `
 Commands by category:
 
   Setup & installation
@@ -132,7 +132,7 @@ const HYBRID_MEM_HELP_ACTIVE_TASKS = `
     active-tasks add <label> <desc>  Add or update a task entry
 `;
 
-export const HYBRID_MEM_CLI_COMMANDS = [
+const HYBRID_MEM_CLI_COMMANDS = [
   "hybrid-mem",
   "hybrid-mem dashboard",
   "hybrid-mem run-all",
@@ -198,7 +198,7 @@ export const HYBRID_MEM_CLI_COMMANDS = [
 ] as const;
 
 /** Services that are not in cli/handlers (reflection, consolidate, export, etc.) */
-export interface CliContextServices {
+interface CliContextServices {
   runFindDuplicates: (opts: {
     threshold: number;
     includeStructured: boolean;
@@ -259,7 +259,7 @@ export interface CliContextServices {
 }
 
 /** Context passed from plugin register() to wire CLI without pulling all service imports into index. */
-export interface HybridMemCliRegistrationContext {
+interface HybridMemCliRegistrationContext {
   factsDb: HandlerContext["factsDb"];
   vectorDb: HandlerContext["vectorDb"];
   embeddings: HandlerContext["embeddings"];
@@ -771,7 +771,7 @@ function buildActiveTaskCliContext(handlerCtx: HandlerContext): ActiveTaskContex
  * Build the full CLI context passed to registerHybridMemCli.
  * Uses handlers from cli/handlers.ts and services for reflection/consolidation/export etc.
  */
-export function createHybridMemCliContext(
+function createHybridMemCliContext(
   handlerCtx: HandlerContext,
   api: ClawdbotPluginApi,
   services: CliContextServices,
@@ -863,7 +863,7 @@ export function createHybridMemCliContext(
 }
 
 /** Register hybrid-mem CLI with the program subcommand and help text */
-export function registerCliWithHelp(
+function registerCliWithHelp(
   program: { command: (name: string) => { description: (d: string) => unknown } },
   ctx: HybridMemCliContext,
 ): void {

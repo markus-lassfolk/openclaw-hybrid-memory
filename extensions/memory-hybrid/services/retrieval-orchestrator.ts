@@ -48,7 +48,7 @@ import { type ClusterFactLookup, detectClusters } from "./topic-clusters.js";
 // ---------------------------------------------------------------------------
 
 /** Result from the orchestrator, ready for context injection. */
-export interface OrchestratorResult {
+interface OrchestratorResult {
   /** Fused and adjusted results, sorted by finalScore descending. */
   fused: FusedResult[];
   /** Serialized fact strings packed into the token budget, highest scored first. */
@@ -65,7 +65,7 @@ export interface OrchestratorResult {
 // Defaults
 // ---------------------------------------------------------------------------
 
-export interface BuildExplicitSemanticQueryVectorDeps {
+interface BuildExplicitSemanticQueryVectorDeps {
   query: string;
   cfg: Pick<
     import("../config.js").HybridMemoryConfig,
@@ -371,7 +371,7 @@ function runGraphStrategy(
  * Minimal interface for fact lookup during orchestration.
  * Satisfied by FactsDB.
  */
-export interface FactLookup {
+interface FactLookup {
   getById(id: string, options?: { asOf?: number; scopeFilter?: unknown }): MemoryEntry | null;
   /** Optional: check whether a fact has an unresolved CONTRADICTS link targeting it. */
   isContradicted?(factId: string): boolean;

@@ -21,7 +21,7 @@ import type { ApiTapConfig } from "../config/types/features.js";
 // Public types
 // ---------------------------------------------------------------------------
 
-export interface RawCapturedEndpoint {
+interface RawCapturedEndpoint {
   endpoint: string;
   method: string;
   parameters?: Record<string, unknown>;
@@ -29,7 +29,7 @@ export interface RawCapturedEndpoint {
   contentType?: string;
 }
 
-export interface ApitapCaptureResult {
+interface ApitapCaptureResult {
   sessionId: string;
   siteUrl: string;
   endpoints: RawCapturedEndpoint[];
@@ -37,7 +37,7 @@ export interface ApitapCaptureResult {
   error?: string;
 }
 
-export interface SkillScaffold {
+interface SkillScaffold {
   skillName: string;
   description: string;
   endpoint: string;

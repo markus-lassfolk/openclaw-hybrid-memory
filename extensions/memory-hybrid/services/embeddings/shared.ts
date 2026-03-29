@@ -54,7 +54,7 @@ export function isAzureOpenAiResourceEndpoint(endpoint: string | undefined): boo
  * True when the embedding base URL targets Azure (resource, APIM gateway, Cognitive Services, Foundry),
  * not public api.openai.com.
  */
-export function isAzureOpenAiCompatibleEndpoint(endpoint: string | undefined): boolean {
+function isAzureOpenAiCompatibleEndpoint(endpoint: string | undefined): boolean {
   if (typeof endpoint !== "string" || !endpoint.trim()) return false;
   // Use specific Azure AI/OpenAI domains only — `\.azure\.com` alone is too broad and would
   // match unrelated Azure services (portal.azure.com, devops.azure.com, etc.).
@@ -77,8 +77,8 @@ export const EMBEDDING_CACHE_MAX = 500;
  * we clamp inputs to this character ceiling before hitting the API.
  * Overshooting the estimate slightly is harmless; undershooting wastes a round trip.
  */
-export const OPENAI_EMBEDDING_MAX_TOKENS = 8192;
-export const OPENAI_EMBEDDING_MAX_CHARS = OPENAI_EMBEDDING_MAX_TOKENS * 4; // ~32 768 chars
+const OPENAI_EMBEDDING_MAX_TOKENS = 8192;
+const OPENAI_EMBEDDING_MAX_CHARS = OPENAI_EMBEDDING_MAX_TOKENS * 4; // ~32 768 chars
 
 /**
  * Truncate text to fit within the OpenAI embedding token limit.
@@ -91,7 +91,7 @@ export function truncateForEmbedding(text: string): string {
 }
 
 /** Hash text for cache key (prevents large text strings as Map keys). */
-export function hashText(text: string): string {
+function hashText(text: string): string {
   return createHash("sha256").update(text, "utf-8").digest("hex");
 }
 
@@ -100,7 +100,7 @@ export function makeCacheKey(model: string, text: string): string {
 }
 
 /** Returns true when the error is a 404 (model not found) — either directly or wrapped in LLMRetryError. */
-export function is404OrWrapped(err: Error): boolean {
+function is404OrWrapped(err: Error): boolean {
   if (is404Like(err)) return true;
   if (err instanceof LLMRetryError && is404Like(err.cause)) return true;
   return false;
@@ -111,7 +111,7 @@ export function is404OrWrapped(err: Error): boolean {
  * Note: withLLMRetry short-circuits on 403 and rethrows directly, so 403s rarely arrive wrapped,
  * but we handle both forms for robustness.
  */
-export function is403OrWrapped(err: Error): boolean {
+function is403OrWrapped(err: Error): boolean {
   if (is403Like(err)) return true;
   if (err instanceof LLMRetryError && is403Like(err.cause)) return true;
   return false;
@@ -134,7 +134,7 @@ export function isOllamaCircuitBreakerOpen(err: Error): boolean {
  * Ollama is an optional local dependency, so connection-refused / fetch-failed errors from the
  * provider should degrade gracefully to a fallback without reporting GlitchTip noise.
  */
-export function isOllamaConnectionFailure(err: Error): boolean {
+function isOllamaConnectionFailure(err: Error): boolean {
   return err.message.startsWith("Ollama connection failed (");
 }
 

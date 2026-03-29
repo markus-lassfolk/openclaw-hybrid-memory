@@ -25,7 +25,7 @@ import { capturePluginError } from "./error-reporter.js";
 // Public types
 // ---------------------------------------------------------------------------
 
-export interface CrossAgentLearningResult {
+interface CrossAgentLearningResult {
   agentsScanned: number;
   lessonsConsidered: number;
   generalisedStored: number;
@@ -35,7 +35,7 @@ export interface CrossAgentLearningResult {
   newFacts: Array<{ id: string; text: string; agentSources: string[] }>;
 }
 
-export interface AgentLesson {
+interface AgentLesson {
   factId: string;
   agentId: string;
   text: string;

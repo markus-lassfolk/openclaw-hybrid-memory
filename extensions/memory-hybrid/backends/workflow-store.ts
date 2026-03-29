@@ -45,7 +45,7 @@ export interface CreateWorkflowTraceInput {
   sessionId?: string;
 }
 
-export interface WorkflowFilter {
+interface WorkflowFilter {
   goal?: string;
   outcome?: "success" | "failure" | "unknown";
   minToolCount?: number;

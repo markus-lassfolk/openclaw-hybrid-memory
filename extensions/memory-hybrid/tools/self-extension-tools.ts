@@ -17,7 +17,7 @@ import { capturePluginError } from "../services/error-reporter.js";
 import { GapDetector } from "../services/gap-detector.js";
 import { ToolProposer } from "../services/tool-proposer.js";
 
-export interface SelfExtensionToolsContext {
+interface SelfExtensionToolsContext {
   toolProposalStore: ToolProposalStore;
   workflowStore: WorkflowStore;
   cfg: HybridMemoryConfig;

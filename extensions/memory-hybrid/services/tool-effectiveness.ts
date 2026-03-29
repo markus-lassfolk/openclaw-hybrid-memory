@@ -42,7 +42,7 @@ export interface ToolMetrics {
   lastUpdated: number; // epoch seconds
 }
 
-export interface ToolEffectivenessReport {
+interface ToolEffectivenessReport {
   computedAt: number;
   toolsScored: number;
   topTools: ToolMetrics[];
@@ -50,10 +50,8 @@ export interface ToolEffectivenessReport {
   allScores: ToolMetrics[];
   recommendations: string[];
 }
-
 // ToolEffectivenessConfig is imported from ../config/types/features.js
 // Re-export for consumers that import it from this module.
-export type { ToolEffectivenessConfig };
 
 // ---------------------------------------------------------------------------
 // Database schema

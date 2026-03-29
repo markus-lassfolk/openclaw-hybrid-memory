@@ -23,7 +23,7 @@ import { extractJsonArray } from "./json-array-parser.js";
 // Prompt templates
 // ---------------------------------------------------------------------------
 
-export type ContextualVariantType = "contextual-means" | "contextual-search";
+type ContextualVariantType = "contextual-means" | "contextual-search";
 
 const CONTEXTUAL_MEANS_PROMPT_TEMPLATE = `Given this memory fact:
 "{text}"
@@ -156,7 +156,7 @@ export function parseVariantsFromResponse(response: string, maxVariants: number)
 // ---------------------------------------------------------------------------
 
 /** An item waiting for variant generation. */
-export interface VariantQueueItem {
+interface VariantQueueItem {
   factId: string;
   text: string;
   category: string;

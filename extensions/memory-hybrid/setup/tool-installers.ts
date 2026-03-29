@@ -20,7 +20,7 @@ import { registerWorkflowTools } from "../tools/workflow-tools.js";
 
 export type ToolsContext = MemoryPluginAPI;
 
-export type ToolInstaller = BootstrapPhaseConfig & {
+type ToolInstaller = BootstrapPhaseConfig & {
   id: string;
   selectContext(context: ToolsContext, api: ClawdbotPluginApi): unknown;
   install(context: unknown, api: ClawdbotPluginApi): void;

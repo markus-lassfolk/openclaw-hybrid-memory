@@ -16,8 +16,8 @@ import type {
 
 // Minimum timeout floors (#384): prevent spurious timeouts for slow thinking models like Gemini 2.5 Flash.
 // Exported so tests can reference the canonical values without hardcoding magic numbers.
-export const MIN_QE_TIMEOUT_MS = 10_000;
-export const MIN_RERANK_TIMEOUT_MS = 5_000;
+const MIN_QE_TIMEOUT_MS = 10_000;
+const MIN_RERANK_TIMEOUT_MS = 5_000;
 
 export function parseAutoClassifyConfig(cfg: Record<string, unknown>): AutoClassifyConfig {
   const acCfg = cfg.autoClassify as Record<string, unknown> | undefined;

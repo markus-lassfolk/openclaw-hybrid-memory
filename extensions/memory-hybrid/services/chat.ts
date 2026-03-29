@@ -134,7 +134,7 @@ export function is403Like(err: unknown): boolean {
  * A 401 is a permanent operator config issue (wrong API key) that will never be resolved by retrying.
  * Exported so other modules can treat 401 as a config error and suppress capturePluginError.
  */
-export function is401Like(err: unknown): boolean {
+function is401Like(err: unknown): boolean {
   if (err && typeof err === "object") {
     const status = (err as { status?: unknown }).status;
     if (status === 401 || status === "401") return true;
@@ -161,7 +161,7 @@ export function is401OrWrapped(err: Error): boolean {
  * message pattern matching. Rate limits are transient — suppress GlitchTip reporting.
  * Exported so embeddings.ts can suppress capturePluginError for 429 errors.
  */
-export function is429Like(err: unknown): boolean {
+function is429Like(err: unknown): boolean {
   if (err && typeof err === "object") {
     const status = (err as { status?: unknown }).status;
     if (status === 429 || status === "429") return true;

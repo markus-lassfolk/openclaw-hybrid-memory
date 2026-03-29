@@ -16,7 +16,7 @@ import { pluginLogger } from "../utils/logger.js";
 // Types
 // ---------------------------------------------------------------------------
 
-export interface FtsSearchResult {
+interface FtsSearchResult {
   /** UUID of the matching fact in the facts table. */
   factId: string;
   text: string;

@@ -361,7 +361,7 @@ export type LanguageExtractionTemplate = {
   nameIntro?: { verbs: string[] };
 };
 
-export type MergedKeywords = Record<KeywordGroup, string[]>;
+type MergedKeywords = Record<KeywordGroup, string[]>;
 
 let keywordsPath: string | null = null;
 
@@ -388,7 +388,7 @@ export function getUserFeedbackPhrasesPath(): string | null {
   return join(keywordsPath, USER_FEEDBACK_PHRASES_FILE);
 }
 
-export type UserFeedbackPhrases = {
+type UserFeedbackPhrases = {
   reinforcement: string[];
   correction: string[];
   updatedAt?: string;

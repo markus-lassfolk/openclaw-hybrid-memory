@@ -8,7 +8,7 @@ import { estimateTokens } from "../utils/text.js";
 import { buildActiveTaskInjection, buildStaleWarningInjection, readActiveTaskFile } from "./active-task.js";
 import { capturePluginError } from "./error-reporter.js";
 
-export type ContextAuditResult = {
+type ContextAuditResult = {
   autoRecall: { enabled: boolean; budgetTokens: number; hotTokens: number; injectionFormat: string };
   procedures: { enabled: boolean; tokens: number; lines: number };
   activeTasks: { enabled: boolean; tokens: number; count: number; stale: number };

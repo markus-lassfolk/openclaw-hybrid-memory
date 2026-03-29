@@ -360,7 +360,7 @@ export async function runExtractImplicitFeedbackForCli(
 // cross-agent-learning
 // ---------------------------------------------------------------------------
 
-export interface CrossAgentLearningCliResult {
+interface CrossAgentLearningCliResult {
   agentsScanned: number;
   lessonsConsidered: number;
   generalisedStored: number;
@@ -462,7 +462,7 @@ export async function runToolEffectivenessForCli(
 // cost-report
 // ---------------------------------------------------------------------------
 
-export interface CostReportCliOpts {
+interface CostReportCliOpts {
   days?: number;
   model?: boolean;
   feature?: string;

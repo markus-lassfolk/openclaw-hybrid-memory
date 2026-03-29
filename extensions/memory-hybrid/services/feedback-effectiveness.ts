@@ -8,7 +8,7 @@ import type { FactsDB } from "../backends/facts-db.js";
 import type { ClosedLoopConfig } from "../config/types/features.js";
 import { capturePluginError } from "./error-reporter.js";
 
-export interface FeedbackEffectiveness {
+interface FeedbackEffectiveness {
   ruleId: string;
   ruleText: string;
   createdAt: number;
@@ -27,7 +27,7 @@ export interface FeedbackEffectiveness {
   sampleSize: number;
 }
 
-export interface ClosedLoopReport {
+interface ClosedLoopReport {
   measuredAt: number;
   rulesAnalyzed: number;
   deprecated: number;

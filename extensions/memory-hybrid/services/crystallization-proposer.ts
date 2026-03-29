@@ -22,13 +22,13 @@ import { SkillValidator } from "./skill-validator.js";
 // Public types
 // ---------------------------------------------------------------------------
 
-export interface ProposeResult {
+interface ProposeResult {
   proposed: number;
   skipped: number;
   reasons: string[];
 }
 
-export interface ApproveResult {
+interface ApproveResult {
   success: boolean;
   outputPath?: string;
   message: string;

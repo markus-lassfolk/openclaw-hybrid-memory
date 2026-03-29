@@ -11,14 +11,14 @@
  *   4. If no headings exist, fall back to paragraph splitting
  */
 
-export interface DocumentChunk {
+interface DocumentChunk {
   text: string;
   sectionHeading: string | null;
   chunkIndex: number;
   totalChunks: number;
 }
 
-export interface ChunkerOptions {
+interface ChunkerOptions {
   /** Max characters per chunk (default: 2000) */
   chunkSize?: number;
   /** Characters of heading context overlap (default: 200) */

@@ -4,7 +4,7 @@
 
 import type { FactsDB } from "../backends/facts-db.js";
 
-export interface MemoryGraphNode {
+interface MemoryGraphNode {
   id: string;
   label: string;
   category: string;
@@ -12,20 +12,20 @@ export interface MemoryGraphNode {
   decayClass: string;
 }
 
-export interface MemoryGraphEdge {
+interface MemoryGraphEdge {
   source: string;
   target: string;
   link_type: string;
   strength: number;
 }
 
-export interface GraphPayload {
+interface GraphPayload {
   generatedAt: string;
   nodes: MemoryGraphNode[];
   edges: MemoryGraphEdge[];
 }
 
-export interface GraphRecallPayload extends GraphPayload {
+interface GraphRecallPayload extends GraphPayload {
   activated: string[];
 }
 

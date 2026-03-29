@@ -15,7 +15,7 @@
 // Public types
 // ---------------------------------------------------------------------------
 
-export interface ValidationResult {
+interface ValidationResult {
   valid: boolean;
   violations: string[];
 }

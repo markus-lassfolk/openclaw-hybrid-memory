@@ -20,7 +20,7 @@ const MAX_RETRIES = 3;
 const PING_TIMEOUT_MS = 5_000;
 const SHUTDOWN_WAIT_MS = 2_000;
 
-export interface ConvertResult {
+interface ConvertResult {
   markdown: string;
   title: string;
 }
