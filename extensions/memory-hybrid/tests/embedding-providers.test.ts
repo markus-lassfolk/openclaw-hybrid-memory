@@ -25,6 +25,7 @@ import {
 } from "../services/embeddings.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import * as glitchtip from "../services/error-reporter.js";
+import { AsyncSemaphore } from "../services/embeddings/shared.js";
 
 vi.mock("../services/error-reporter.js", () => ({
   capturePluginError: vi.fn(),
@@ -1628,5 +1629,33 @@ describe("#486: safeEmbed suppresses AllEmbeddingProvidersFailed with 429/circui
     const result = await safeEmbed(chain, "test");
     expect(result).toBeNull();
     expect(vi.mocked(capturePluginError)).toHaveBeenCalledOnce();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// AsyncSemaphore (#840 / PR #917 — release must not grow available past capacity)
+// ---------------------------------------------------------------------------
+
+describe("AsyncSemaphore", () => {
+  it("clamps available to capacity when release() is called more times than acquire()", async () => {
+    const s = new AsyncSemaphore(2);
+    await s.acquire();
+    await s.acquire();
+    s.release();
+    s.release();
+    s.release();
+    s.release();
+    await s.acquire();
+    await s.acquire();
+    const third = s.acquire();
+    let progressed = false;
+    third.then(() => {
+      progressed = true;
+    });
+    await new Promise((r) => setImmediate(r));
+    expect(progressed).toBe(false);
+    s.release();
+    await third;
+    expect(progressed).toBe(true);
   });
 });

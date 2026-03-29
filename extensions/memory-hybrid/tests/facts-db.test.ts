@@ -199,6 +199,44 @@ describe("FactsDB.count", () => {
 });
 
 // ---------------------------------------------------------------------------
+// list / listForDashboard — invalid filter values return empty (no silent broadening)
+// ---------------------------------------------------------------------------
+
+describe("FactsDB.list / listForDashboard filter allowlist", () => {
+  beforeEach(() => {
+    db.store({
+      text: "List filter test fact",
+      category: "fact",
+      importance: 0.7,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+    });
+  });
+
+  it("list returns [] when category is not allowlisted", () => {
+    expect(db.list(10, { category: "not-a-valid-category-xyz" })).toEqual([]);
+  });
+
+  it("list returns [] when tier is not allowlisted", () => {
+    expect(db.list(10, { tier: "invalid-tier" })).toEqual([]);
+  });
+
+  it("listForDashboard returns empty facts and total 0 when decayClass is not allowlisted", () => {
+    const r = db.listForDashboard({ limit: 10, offset: 0, decayClass: "not-a-decay" });
+    expect(r.facts).toEqual([]);
+    expect(r.total).toBe(0);
+  });
+
+  it("listForDashboard returns empty when tier is not allowlisted", () => {
+    const r = db.listForDashboard({ limit: 10, offset: 0, tier: "not-warm-hot-or-cold" });
+    expect(r.facts).toEqual([]);
+    expect(r.total).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Delete
 // ---------------------------------------------------------------------------
 

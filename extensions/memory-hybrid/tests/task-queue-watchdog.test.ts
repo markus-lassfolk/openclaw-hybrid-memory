@@ -14,7 +14,28 @@ import {
   isPidAlive,
   isRuntimeExceeded,
   runTaskQueueWatchdog,
+  taskQueueItemMatchesStale,
 } from "../services/task-queue-watchdog.js";
+
+// ---------------------------------------------------------------------------
+// taskQueueItemMatchesStale
+// ---------------------------------------------------------------------------
+
+describe("taskQueueItemMatchesStale", () => {
+  it("matches by pid and started when present (branch not part of identity)", () => {
+    const stale: TaskQueueItem = { pid: 42, started: "2026-01-01T00:00:00.000Z" };
+    expect(taskQueueItemMatchesStale({ ...stale }, stale)).toBe(true);
+    expect(taskQueueItemMatchesStale({ ...stale, branch: "other" }, stale)).toBe(true);
+    expect(taskQueueItemMatchesStale({ pid: 43, started: stale.started }, stale)).toBe(false);
+  });
+
+  it("without pid/started, matches issue, dispatchToken, and branch (not undefined===undefined)", () => {
+    const stale: TaskQueueItem = { issue: 99, dispatchToken: "tok", branch: "feat/x" };
+    expect(taskQueueItemMatchesStale({ ...stale }, stale)).toBe(true);
+    expect(taskQueueItemMatchesStale({ ...stale, issue: 100 }, stale)).toBe(false);
+    expect(taskQueueItemMatchesStale({ issue: 99, dispatchToken: "tok", branch: "feat/y" }, stale)).toBe(false);
+  });
+});
 
 // ---------------------------------------------------------------------------
 // isPidAlive tests
