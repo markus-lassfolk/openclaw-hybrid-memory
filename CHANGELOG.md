@@ -8,40 +8,49 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+---
+
+## [2026.3.290] - 2026-03-29
+
+### Release summary
+
+This release is a large step forward for **structured memory**, **Azure / APIM deployments**, and **operational hardening**. It adds episodic memory, human-gated edicts, procedure outcome tracking, and frequency-based auto-capture; ships Mission Control dashboards (memory graph, agent health, cross-agent audit); improves embedding setup with APIM-aware routing and a new `model-info` CLI; and closes multiple critical-through-low severity issues across FTS5, WAL, LanceDB, credentials, SQLite lifecycle, and recall.
+
 ### Added
 
-- **Episodic Memory (#781):** New first-class `category: "episode"` memory type with structured fields: `event`, `outcome` (`success|failure|partial|unknown`), `timestamp`, `duration`, `context`, `relatedFactIds`, `procedureId`, scope, agent/user/session IDs, importance, tags, and decay class. Episodes are stored in a dedicated `episodes` SQLite table with indexed `outcome` and `timestamp` columns, and mirrored as vectors in LanceDB (same table as facts, filtered by `category="episode"`). Episodes with `outcome="failure"` are auto-boosted to `importance ≥ 0.8` at store time.
-
-- **`memory.record_episode()` tool:** Records an episodic event with structured outcome. Wraps `factsDb.storeEpisode()`. Auto-boosts failures to importance ≥ 0.8.
-
-- **`memory.search_episodes()` tool:** Queries episodes with optional outcome filter, time-range (`since`/`until`), `procedureId` filter, and semantic text search over `event + context`. Returns structured `Episode[]` ordered by timestamp DESC.
-
-- **Auto-capture in session compaction (#781):** During session-end compaction (`context-engine compact`), the session JSONL is scanned for outcome-indicating phrases (`✅ merged`, `❌ failed`, `🔧 fixed`, `⚠️ partial`, `FAILED`, `ERROR`, etc.) and episode records are auto-created for significant events.
-
-- **`FactsDB.episodesCount()` method:** Returns `{ total, success, failure, partial, unknown }` counts for episode statistics.
-
-- **`FactsDB.searchEpisodes()` method:** Supports outcome filter, time range, procedureId, FTS text search, and limit.
-
-- **`FactsDB.storeEpisode()` method:** Inserts episodes with outcome CHECK constraint, indexed columns, and auto-boost for failures.
-
-- **`FactsDB.getEpisode()` / `deleteEpisode()` methods:** Episode CRUD operations.
-
-- **`episodes_fts` FTS5 virtual table:** Semantic search over `event + context` for episodes.
-
-- **`episodes.test.ts` tests:** Full test suite covering episode CRUD, outcome filter, time-range filter, procedureId filter, limit, `episodesCount()`, and importance auto-boost.
+- **Episodic memory (#781):** First-class `category: "episode"` with `event`, `outcome` (`success` \| `failure` \| `partial` \| `unknown`), `timestamp`, `duration`, `context`, `relatedFactIds`, `procedureId`, scope, IDs, importance, tags, and decay. SQLite `episodes` table with indexed `outcome` and `timestamp`; vectors in LanceDB alongside facts (`category="episode"`). Failures auto-boost to `importance ≥ 0.8`.
+- **Episode tools:** `memory.record_episode()`, `memory.search_episodes()` (outcome, time range, `procedureId`, FTS over `event + context`).
+- **Session-end episode auto-capture (#781):** Compaction scans JSONL for outcome phrases (e.g. merged / failed / fixed / partial / ERROR) and creates episode records.
+- **FactsDB episode API:** `storeEpisode`, `getEpisode`, `deleteEpisode`, `searchEpisodes`, `episodesCount`; `episodes_fts` FTS5 table; `episodes.test.ts` coverage.
+- **Edict memory type (#791):** `category: "edict"` for verified ground truth in SQLite `edicts` with TTL (`never` \| `event` \| seconds). Tools: `memory.add_edict`, `list_edicts`, `get_edicts`, `update_edict`, `remove_edict`, `edict_stats`. Injected before issue/narrative/hot blocks; **never trimmed** by token budget. Creation is **propose-only** (`[EDICT CANDIDATE]` on GitHub for human review).
+- **Procedure feedback loop (#782):** `procedure_versions` and `procedure_failures` tables; `procedureFeedback()` on FactsDB; `memory.procedure_feedback()` tool; `memory_recall_procedures` enriched with `lastOutcome`, `successRate`, `avoidanceNotes`; CLI `memory procedure show` / `list`.
+- **Frequency-based auto-save (#784):** `recent_mentions` table; auto-save entities after threshold; vault capture for credentials with hashed dedupe and `host+username+scope` supersession; `FrequencyCaptureConfig` (`mentionThreshold`, `lookbackSessions`, `ttlDays`, etc.).
+- **Mission Control (#788–#790):** Memory graph visualization (#788), Agent Health Dashboard (#789), Cross-agent Audit Trail (#790).
+- **Azure APIM for embeddings (#815):** Gateway auth, deployment override, endpoint auto-inheritance; plugin OpenAI client and `hybrid-mem --test-llm` probe updated (#822, #826).
+- **`hybrid-mem model-info` CLI (#816):** Embedding dimension introspection for operators.
+- **Shadow evaluation benchmark (#787).**
+- **Repository automation:** `issue-verify-and-close` and `pr-merged-trigger` workflows for PR/issue verification.
+- **Facts DB internals (#921):** Modular helpers — `cache-manager`, `db-connection`, `fact-queries`, `fts-text`; shared `utils/embed-call.ts` for embedding calls; expanded `credential-validation`; config schema additions in `openclaw.plugin.json` where applicable.
 
 ### Changed
 
-- **`DEFAULT_MEMORY_CATEGORIES`:** Added `"episode"` as a first-class category alongside `fact`, `preference`, `decision`, etc.
+- **`DEFAULT_MEMORY_CATEGORIES`:** Includes `"episode"` (and edict as a category where defined in types).
+- **`EpisodeEntry` type** in `types/memory.ts` (discriminated `outcome`).
+- **`ProcedureEntry`:** `version`, `lastOutcome`, `successRate`, `avoidanceNotes` from version tracking.
+- **Token-budget trimming (#792):** Tiered trimming with `preserveUntil` / `preserveTags` for finer control over what survives under pressure.
+- **Dependencies:** Audit and reduction (#777); `openclaw` peer/dev bumps (#780, #920); `path-to-regexp` bump (#809).
+- **Imports:** Deprecated OpenClaw plugin-sdk barrel paths replaced with scoped subpaths (#779).
+- **Lint / DX:** Biome rules tightened (off → warn), `organizeImports` disabled (#819); invalid `noUselessContinue` rule removed; retry/timeout constants centralized in `utils/constants.ts` (#910).
 
-- **`EpisodeEntry` type** added to `types/memory.ts` with full discriminated union for `outcome`.
-- **Edict memory type (#791):** New `category: "edict"` for verified ground-truth facts. Separate SQLite `edicts` table with TTL support (never/event/seconds). Six new tools: `memory.add_edict`, `memory.list_edicts`, `memory.get_edicts`, `memory.update_edict`, `memory.remove_edict`, `memory.edict_stats`. Edicts are forced-injected into system prompts before issue/narrative/hot blocks and are **never trimmed** by token budget pressure. Edict creation is **propose-only** — agents suggest via `[EDICT CANDIDATE]` GitHub comment; Markus (human) reviews and creates.
+### Fixed
 
-- **Procedure feedback loop (#782):** New `procedure_versions` and `procedure_failures` SQLite tables track per-version outcomes and individual failure events. New `procedureFeedback()` method on FactsDB handles success and failure feedback — failures bump the version number, create an avoidance note, and automatically create an episode record via `recordEpisode()`. New `memory.procedure_feedback()` tool lets agents record procedure outcomes in context. `memory_recall_procedures` output now includes `lastOutcome`, `successRate`, and `avoidanceNotes` inline so the agent sees historical context before attempting a procedure. New `memory procedure show <id>` CLI command shows all versions, failure history, and avoidance notes for a procedure. `memory procedure list` lists all procedures with version/outcome summary. Procedure entries (`ProcedureEntry` type) now carry `version`, `lastOutcome`, `successRate`, and `avoidanceNotes` fields enriched from the version tracking system.
-
-- **Episodic memory (#781):** New `category: "episode"` first-class memory type for structured event records with explicit outcomes (`success`, `failure`, `partial`, `unknown`) and timestamps. Episodes are stored in a dedicated `episodes` SQLite table with indexed `timestamp` and `outcome` columns, searchable via FTS5. New `memory.record_episode()` tool creates episode records; `memory.search_episodes()` searches with outcome, time-range, and procedure filters. Failures are auto-boosted to importance ≥ 0.8. Session-end auto-capture scans for outcome-indicating phrases (✅, ❌, merged, FAILED, fixed, etc.) and creates episode records automatically.
-
-- **Frequency-based auto-save (#784):** New `recent_mentions` SQLite table tracks entity and credential mentions across sessions for frequency-based auto-capture. When a non-credential entity is mentioned `mentionThreshold`+ times, it's auto-saved as a memory. When a credential is mentioned, it's stored in the vault. Key design: SHA-256 hash of mention text for deduplication (never stores raw credential values); supersession key = `host+username+scope` for multi-credential per host support; configurable TTL purge for stale mention records. New `FrequencyCaptureConfig` with `enabled`, `mentionThreshold`, `lookbackSessions`, `defaultImportance`, `captureCredentials`, and `ttlDays` options. Credential pattern detection supports GitHub PATs, OpenAI keys, JWTs, SSH keys, and more.
+- **SQLite after gateway restart (#783):** Connection reopened correctly after `SIGUSR1` restart.
+- **Migrations & data safety:** Duplicate `migrateEpisodesTable` removed (#801/#804); edict migration duplicate-check / data-loss risk (#808); stronger episodes migration (CHECK constraints, composite indexes, FTS trigger, #817).
+- **Procedure feedback (#798):** `scopeTarget` null handling; double-counting in `procedureFeedback`.
+- **Reliability wave (#909, #917, #918):** FTS5 hardening, WAL improvements, async/GitHub lease handling, safer tools, LanceDB and credential paths, task queue (incl. FD leak on lock, #813), embedding edge cases, security and SQLite hygiene, CLI verify behavior.
+- **Priority-low sweep (#870–#902, #921):** Facts DB refactor and query paths; recall pipeline and memory/credential tools; WAL helpers; vector-db and FTS search; scope filtering; context engine and narratives; error reporter and verification store; Python bridge stdin; plugin API registration edge cases.
+- **Register / task signals / Python stdin (#802, #810, #812, #823).**
+- **CI:** Biome `--max-diagnostics=none` and unsafe write fixes (#805, #806).
 
 ---
 
