@@ -9,7 +9,7 @@
  */
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-type YAMLValue = string | number | boolean | null | unknown[] | Record<string, unknown>;
+export type YAMLValue = string | number | boolean | null | unknown[] | Record<string, unknown>;
 
 interface ParseCtx {
   lines: string[];

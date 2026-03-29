@@ -42,7 +42,7 @@ export interface ToolMetrics {
   lastUpdated: number; // epoch seconds
 }
 
-interface ToolEffectivenessReport {
+export interface ToolEffectivenessReport {
   computedAt: number;
   toolsScored: number;
   topTools: ToolMetrics[];

@@ -11,7 +11,7 @@ import type { WriteAheadLog } from "../backends/wal.js";
 import type { EmbeddingProvider } from "../services/embeddings.js";
 import { capturePluginError } from "../services/error-reporter.js";
 
-interface WalReplayResult {
+export interface WalReplayResult {
   committed: number;
   skipped: number;
 }

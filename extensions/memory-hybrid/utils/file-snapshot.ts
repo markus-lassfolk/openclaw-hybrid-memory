@@ -5,7 +5,7 @@
 import { createHash } from "node:crypto";
 import { readFileSync, statSync } from "node:fs";
 
-type FileSnapshot = {
+export type FileSnapshot = {
   mtimeMs: number;
   hash: string;
 };

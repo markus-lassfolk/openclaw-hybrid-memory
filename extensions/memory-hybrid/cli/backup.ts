@@ -31,7 +31,7 @@ import { capturePluginError } from "../services/error-reporter.js";
 // Types
 // ---------------------------------------------------------------------------
 
-type BackupCliResult =
+export type BackupCliResult =
   | {
       ok: true;
       backupDir: string;
@@ -42,7 +42,7 @@ type BackupCliResult =
     }
   | { ok: false; error: string };
 
-type BackupVerifyResult =
+export type BackupVerifyResult =
   | { ok: true; integrityOk: boolean; sqlitePath: string; factCount: number; message: string }
   | { ok: false; error: string };
 

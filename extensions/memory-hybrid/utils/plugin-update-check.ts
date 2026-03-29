@@ -7,7 +7,7 @@ const DEFAULT_TIMEOUT_MS = 3000;
 const NPM_LATEST_URL = "https://registry.npmjs.org/openclaw-hybrid-memory/latest";
 const GITHUB_LATEST_URL = "https://api.github.com/repos/markus-lassfolk/openclaw-hybrid-memory/releases/latest";
 
-interface LatestPublishedVersion {
+export interface LatestPublishedVersion {
   latestVersion: string | null;
   source: "npm" | "github" | null;
 }
@@ -19,7 +19,7 @@ export interface VersionCheckCacheEntry {
   lastNudgedAt?: string;
 }
 
-interface UpdateNudgeLogger {
+export interface UpdateNudgeLogger {
   info?: (msg: string) => void;
   warn?: (msg: string) => void;
   debug?: (msg: string) => void;

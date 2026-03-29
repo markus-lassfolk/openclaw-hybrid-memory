@@ -259,7 +259,7 @@ interface CliContextServices {
 }
 
 /** Context passed from plugin register() to wire CLI without pulling all service imports into index. */
-interface HybridMemCliRegistrationContext {
+export interface HybridMemCliRegistrationContext {
   factsDb: HandlerContext["factsDb"];
   vectorDb: HandlerContext["vectorDb"];
   embeddings: HandlerContext["embeddings"];

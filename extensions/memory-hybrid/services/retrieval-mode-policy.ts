@@ -1,6 +1,6 @@
 import type { AutoRecallConfig, HybridMemoryConfig, RetrievalConfig } from "../config.js";
 
-type RetrievalMode = "interactive-recall" | "explicit-deep";
+export type RetrievalMode = "interactive-recall" | "explicit-deep";
 
 /** @deprecated Use string literals directly or InteractiveRecallPolicy / ExplicitDeepRetrievalPolicy types */
 export const RETRIEVAL_MODE = {

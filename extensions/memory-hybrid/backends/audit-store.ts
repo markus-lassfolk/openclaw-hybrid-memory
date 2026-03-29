@@ -10,7 +10,7 @@ import { BaseSqliteStore } from "./base-sqlite-store.js";
 
 type AuditOutcome = "success" | "partial" | "failed";
 
-interface AuditEventInput {
+export interface AuditEventInput {
   timestamp?: number;
   agentId: string;
   action: string;
