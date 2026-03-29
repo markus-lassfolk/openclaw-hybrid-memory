@@ -16,6 +16,7 @@ import {
   VECTORDB_INIT_MAX_RETRIES,
   VECTORDB_INIT_RETRY_DELAY_MS,
   VECTORDB_OPTIMIZE_FAILURE_WARN_THRESHOLD,
+  VECTORDB_READER_DRAIN_TIMEOUT_MS,
 } from "../utils/constants.js";
 import { pluginLogger } from "../utils/logger.js";
 
@@ -167,7 +168,14 @@ export class VectorDB {
    * being acquired during the critical cleanup window.
    */
   private async waitForReadersToDrain(): Promise<void> {
+    const start = Date.now();
     while ((VectorDB._activeReadersByPath.get(this.dbPath) ?? 0) > 0) {
+      if (Date.now() - start > VECTORDB_READER_DRAIN_TIMEOUT_MS) {
+        this.logWarn(
+          `memory-hybrid: waitForReadersToDrain timed out after ${VECTORDB_READER_DRAIN_TIMEOUT_MS}ms — proceeding with optimize() to avoid indefinite starvation under sustained read load.`,
+        );
+        break;
+      }
       // Yield to the event loop so in-flight readers can finish.
       await new Promise((resolve) => setImmediate(resolve));
     }
@@ -756,6 +764,14 @@ export class VectorDB {
     }
   }
 
+  /** True when LanceDB/storage reports an id collision (race: delete + re-add between writers). */
+  private isVectorDuplicateIdError(err: unknown): boolean {
+    const e = err as NodeJS.ErrnoException & { code?: string };
+    if (e?.code === "EEXIST") return true;
+    const msg = err instanceof Error ? err.message : String(err);
+    return /EEXIST|already exists|duplicate/i.test(msg);
+  }
+
   /** Store a vector row. If id is provided (e.g. fact id from SQLite), it is used so search returns fact ids for classification. */
   async store(entry: {
     text: string;
@@ -772,9 +788,23 @@ export class VectorDB {
       if (this.optimizePromise) {
         await this.optimizePromise;
       }
-      const id = entry.id ?? randomUUID();
+      // Canonical lowercase UUID so LanceDB row id matches delete() and EEXIST recovery (#917 review).
+      const rawId = entry.id ?? randomUUID();
+      const id = entry.id !== undefined && UUID_REGEX.test(entry.id) ? entry.id.toLowerCase() : rawId;
       const why = entry.why ?? "";
-      await this.getTable().add([{ ...entry, id, why, createdAt: Math.floor(Date.now() / 1000) }]);
+      const row = { ...entry, id, why, createdAt: Math.floor(Date.now() / 1000) };
+      try {
+        await this.getTable().add([row]);
+      } catch (err) {
+        // Race: concurrent re-index may delete+insert the same fact id; EEXIST must not drop the new vector.
+        if (this.isVectorDuplicateIdError(err) && entry.id && UUID_REGEX.test(entry.id)) {
+          const lid = id;
+          await this.getTable().delete(`id = '${lid}'`);
+          await this.getTable().add([row]);
+        } else {
+          throw err;
+        }
+      }
       this.storeCount++;
       if (!_optimizingByPath.get(this.dbPath) && this.storeCount >= VectorDB.AUTO_OPTIMIZE_INTERVAL) {
         this.storeCount = 0;
