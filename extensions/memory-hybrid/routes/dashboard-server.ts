@@ -950,10 +950,12 @@ export async function createDashboardServer(ctx: DashboardContext, port: number)
         const sinceMs = Date.now() - hours * 3600 * 1000;
         const agentId = searchParams.get("agent") ?? undefined;
         const outcome = searchParams.get("outcome") as "success" | "partial" | "failed" | null;
+        const targetContains = searchParams.get("targetContains") ?? searchParams.get("target") ?? undefined;
         const rows = ctx.auditStore.query({
           sinceMs,
           agentId,
           outcome: outcome === "success" || outcome === "partial" || outcome === "failed" ? outcome : undefined,
+          targetContains,
           limit: 2000,
         });
         res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-cache" });
