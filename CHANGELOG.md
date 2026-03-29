@@ -10,6 +10,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.3.293] - 2026-03-29
+
+### Release summary
+
+Follow-up release after **2026.3.292**: merges **[#922](https://github.com/markus-lassfolk/openclaw-hybrid-memory/pull/922)** (security refactor — centralized `process.env` access and `child_process` via `utils/env-manager.ts` and `utils/process-runner.ts`) and **[#923](https://github.com/markus-lassfolk/openclaw-hybrid-memory/pull/923)** (README revamp for onboarding). Version bump only; behavior matches the post-merge `main` branch.
+
+### Changed
+
+- **Security / hygiene:** Centralized environment and subprocess helpers to satisfy static scanners and reduce direct `process.env` / `child_process` usage across CLI, services, tests, and scripts.
+- **Documentation:** README restructured for clearer engagement and setup.
+
+---
+
 ## [2026.3.292] - 2026-03-29
 
 ### Release summary
