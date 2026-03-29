@@ -111,7 +111,7 @@ function createProgressTracker(logger: { info: (msg: string) => void }, label?: 
 }
 
 function isUnderAllowedPaths(realPath: string, allowedPaths?: string[]): boolean {
-  if (!allowedPaths || allowedPaths.length === 0) return true;
+  if (!allowedPaths || allowedPaths.length === 0) return false;
   return allowedPaths.some((root) => {
     try {
       const realRoot = realpathSync.native(resolve(root));

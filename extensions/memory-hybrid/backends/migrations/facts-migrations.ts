@@ -308,8 +308,6 @@ function migrateProceduresTable(db: DatabaseSync): void {
   db.exec(`
     CREATE VIRTUAL TABLE IF NOT EXISTS procedures_fts USING fts5(
       task_pattern,
-      content=procedures,
-      content_rowid=rowid,
       tokenize='porter unicode61'
     )
   `);
@@ -403,8 +401,6 @@ function migrateFtsTagsSupport(db: DatabaseSync): void {
         why,
         key,
         value,
-        content='facts',
-        content_rowid='rowid',
         tokenize='porter unicode61'
       )
     `);

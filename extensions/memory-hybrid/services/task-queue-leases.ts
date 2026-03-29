@@ -145,6 +145,7 @@ function normalizeRegistry(raw: unknown): DispatchLeaseRegistry {
   const rawLeases = obj.leases;
   if (rawLeases && typeof rawLeases === "object" && !Array.isArray(rawLeases)) {
     for (const [key, value] of Object.entries(rawLeases)) {
+      if (key === "__proto__" || key === "constructor" || key === "prototype") continue;
       if (!value || typeof value !== "object" || Array.isArray(value)) continue;
       const lease = value as Partial<DispatchLeaseRecord>;
       if (typeof lease.issue !== "number" || !Number.isInteger(lease.issue)) continue;

@@ -93,7 +93,7 @@ export class WriteAheadLog {
   private async fsyncAfterWrite(): Promise<void> {
     let fh: Awaited<ReturnType<typeof open>> | undefined;
     try {
-      fh = await open(this.walPath, "r");
+      fh = await open(this.walPath, "a");
       await fh.datasync();
     } catch (err) {
       const code = (err as NodeJS.ErrnoException).code;

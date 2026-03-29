@@ -217,10 +217,6 @@ export async function runTaskQueueWatchdog(
     // Non-fatal: watchdog should still function for current.json hygiene.
   }
 
-  if (!existsSync(currentPath)) {
-    return { action: "no-current" };
-  }
-
   const item = await readJsonFile<TaskQueueItem>(currentPath);
   if (!item || typeof item !== "object" || Array.isArray(item)) {
     return { action: "no-current" };

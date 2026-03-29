@@ -146,8 +146,6 @@ export class FactsDB extends BaseSqliteStore {
         entity,
         key,
         value,
-        content='facts',
-        content_rowid='rowid',
         tokenize='porter unicode61'
       )
     `);
@@ -556,8 +554,6 @@ export class FactsDB extends BaseSqliteStore {
     this.liveDb.exec(`
       CREATE VIRTUAL TABLE IF NOT EXISTS procedures_fts USING fts5(
         task_pattern,
-        content=procedures,
-        content_rowid=rowid,
         tokenize='porter unicode61'
       )
     `);
@@ -958,8 +954,6 @@ export class FactsDB extends BaseSqliteStore {
           tags,
           key,
           value,
-          content='facts',
-          content_rowid='rowid',
           tokenize='porter unicode61'
         )
       `);
