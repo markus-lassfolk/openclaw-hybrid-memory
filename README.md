@@ -1,226 +1,220 @@
-# OpenClaw Hybrid Memory
+# 🧠 OpenClaw Hybrid Memory
+
+**An AI that actually remembers you.**
 
 [**Documentation**](https://markus-lassfolk.github.io/openclaw-hybrid-memory/) · [GitHub](https://github.com/markus-lassfolk/openclaw-hybrid-memory)
 
-Your OpenClaw agent forgets everything between sessions. Preferences, decisions, technical context — all gone. You repeat yourself, and the agent can't build on past conversations.
+---
 
-**Hybrid Memory** fixes this. It gives your agent **durable, structured, searchable memory** that persists across sessions, auto-captures what matters, and recalls it when relevant — without you lifting a finger.
+> **You've been here before.** You told your AI assistant something important last week. You mentioned a preference. You made a decision. And now — it's gone. You're starting from zero. Again.
+
+**Hybrid Memory** ends that loop. It's an OpenClaw extension that gives your agent **durable, structured, searchable memory** — so you only have to say something once.
 
 ---
 
-## Why you’ll want this — in plain English
-
-**Short-term:** From day one, the agent stops starting from zero. It pulls in relevant memories before each reply — your preferences, past decisions, project context, and who/what you’ve mentioned — so you don’t have to repeat yourself. It also learns from how you react: when you say “great” or “that was wrong,” it uses that to reinforce or correct what it did, so the next time it leans into what worked and avoids what didn’t.
-
-**Long-term:** The more you use it, the more **personal and tuned** it gets. It learns your wording (praise and frustration), your style, your language, and your recurring topics. It distills old conversations into lasting facts, reflects on patterns, and keeps the right things in context. You get an agent that **remembers you** and gets **better at giving the right context** over time — not a generic bot that forgets after every session.
-
-- **Remembers you** — preferences, decisions, projects, and how you like to work  
-- **Recalls the right stuff** — injects relevant memories automatically so answers are grounded in your history  
-- **Learns from your reactions** — “good job” and “no, do it differently” shape what it reinforces and corrects  
-- **Gets more personal over time** — learns your phrases, your patterns, and keeps improving recall and behavior  
-- **Multilingual** — works in your language; detection and feedback learning adapt to the languages you use (run `build-languages` to add more)
-
-If you want an agent that feels like it knows you and gets better with use, this is the extension for you. The rest of this doc explains how it works under the hood.
-
----
-
-## Why use this? (under the hood)
-
-| Without hybrid memory | With hybrid memory |
-|----------------------|-------------------|
-| Agent forgets everything between sessions | Agent remembers preferences, decisions, facts |
-| You repeat context every time | Auto-recall injects relevant memories each turn |
-| No structured knowledge base | SQLite + FTS5 for instant structured lookups |
-| No semantic search over past conversations | LanceDB vector search finds fuzzy/contextual matches |
-| Manual note-taking in files | Auto-capture from conversations + file-based memory |
-| Stale memories never cleaned up | TTL-based decay automatically expires old facts |
-| No crash protection for memory ops | Write-ahead log ensures nothing is lost |
-
----
-
-## Features
-
-### Core memory system
-- **Event Bus** — internal append-only SQLite table tracking sensor events and telemetry for the Rumination Engine.
-- **Auto-capture** — automatically extracts preferences, decisions, facts, and entities from conversations
-- **Auto-recall** — injects relevant memories into context each turn (configurable token budget)
-- **Dual backend** — SQLite + FTS5 for fast structured lookups; LanceDB for semantic vector search (RRF merge)
-- **Memory tiering** — hot/warm/cold tiers keep the most relevant facts in scope; compaction on session end ([docs/MEMORY-TIERING.md](docs/MEMORY-TIERING.md))
-- **Multi-agent scoping** — global, user, agent, or session scope so specialists and orchestrators share the right memories ([docs/MEMORY-SCOPING.md](docs/MEMORY-SCOPING.md))
-- **Hierarchical files** — `memory/` directory with drill-down files indexed by semantic search (memorySearch)
-- **MEMORY.md index** — lightweight root index loaded every session; detail files loaded on demand
-
-### Intelligence
-- **Auto-classify** — background LLM reclassifies facts into proper categories (7 built-in + custom)
-- **Category discovery** — LLM suggests new categories from your data patterns
-- **Retrieval directives** — targeted recall by entity mention, keywords, task type, or session start (config: `autoRecall.retrievalDirectives`)
-- **Query expansion** — optional LLM-expanded query before embedding for better semantic recall (config: `queryExpansion.enabled`; replaces deprecated HyDE options). Skipped on interactive turns by default (`queryExpansion.skipForInteractiveTurns: true`) to avoid 5–15 s latency spikes; set to `false` to enable on every turn.
-- **Auth failure auto-recall** — reactive memory trigger detects SSH/HTTP/API auth failures and automatically injects credentials ([docs/AUTH-FAILURE-AUTO-RECALL.md](docs/AUTH-FAILURE-AUTO-RECALL.md))
-- **Reflection layer** — synthesizes behavioral patterns and rules from accumulated facts ([docs/REFLECTION.md](docs/REFLECTION.md))
-- **Graph memory** — typed relationships between facts enable zero-LLM recall via graph traversal ([docs/GRAPH-MEMORY.md](docs/GRAPH-MEMORY.md))
-- **Session distillation** — batch-extracts durable facts from old conversation logs ([docs/SESSION-DISTILLATION.md](docs/SESSION-DISTILLATION.md))
-- **Procedural memory** — extracts tool-call procedures from sessions, injects "last time this worked" in recall, auto-generates skills ([docs/PROCEDURAL-MEMORY.md](docs/PROCEDURAL-MEMORY.md))
-- **Workflow crystallization & self-extension** — tool-sequence patterns, skill proposals (`memory_crystallize`), and tool proposals from usage gaps (`memory_propose_tool`); human approval required ([docs/CONFIGURATION.md](docs/CONFIGURATION.md), release notes 2026.3.70)
-- **Sensor Sweep (Event Bus)** — cron-based background data collection (GitHub, HA, System Health) without LLM overhead ([docs/CONFIGURATION.md](docs/CONFIGURATION.md))
-
-### Reliability
-- **Write-ahead log (WAL)** — crash-resilient memory operations with automatic recovery ([docs/WAL-CRASH-RESILIENCE.md](docs/WAL-CRASH-RESILIENCE.md))
-- **Decay & pruning** — TTL-based expiry (permanent / stable / active / session / checkpoint); automatic hourly prune ([docs/DECAY-AND-PRUNING.md](docs/DECAY-AND-PRUNING.md))
-- **Deduplication** — fuzzy text hashing + embedding similarity detection + LLM-powered consolidation
-- **Compaction flush** — saves to both `memory_store` and daily files before context is truncated
-- **Scope promote** — CLI and cron job promote high-importance session-scoped facts to global ([docs/MEMORY-SCOPING.md](docs/MEMORY-SCOPING.md))
-
-### Developer experience
-- **Silent mode** — set `verbosity: "silent"` to suppress all unsolicited memory context injections into prompts, working purely in the background.
-- **Full CLI** — commands for stats, search, classify, consolidate, reflect, dream-cycle, scope promote, verify, install, uninstall, and more ([docs/CLI-REFERENCE.md](docs/CLI-REFERENCE.md))
-- **Mission Control dashboard** — real-time web dashboard at `http://localhost:7700`: memory stats, cron job status, task queue, agent state, GitHub activity, and 7-day LLM cost tracking. Auto-refreshes every 60s. ([docs/CONFIGURATION.md](docs/CONFIGURATION.md#mission-control-dashboard-dashboard))
-- **One-command setup** — `openclaw hybrid-mem install` applies recommended config and **8 maintenance cron jobs** (nightly distill, self-correction, dream-cycle, weekly reflection, extract-procedures, deep-maintenance, persona-proposals, monthly consolidation)
-- **Verify & fix** — `openclaw hybrid-mem verify --fix` diagnoses issues and adds any missing cron jobs
-- **Clean uninstall** — `openclaw hybrid-mem uninstall` reverts to default memory; data kept unless `--clean-all`
-
-### More features (Full mode and opt-in)
-- **Agent and shared memories** — keep facts **agent-scoped** (per persona), **user-scoped** (per user), or **shared (global)** so specialists and orchestrators see the right memories; session-scoped working memory can be promoted to global ([docs/MEMORY-SCOPING.md](docs/MEMORY-SCOPING.md)).
-- **Credential vault** — opt-in storage for API keys, tokens, passwords; encrypted when you set `credentials.encryptionKey`, or plaintext if you enable the vault without a key ([docs/CREDENTIALS.md](docs/CREDENTIALS.md)). In Full mode, when the vault is on, auto-detect and tool-call capture are enabled.
-- **Persona proposals** — agent self-evolution with human approval (proposes identity file changes; human reviews via CLI). **On in Expert and Full.**
-- **Auto-tagging** — regex-inferred topic tags for filtered queries ([docs/AUTO-TAGGING.md](docs/AUTO-TAGGING.md)). **On in Full** (languageKeywords.autoBuild).
-- **Source dates** — optional field when storing: preserve when facts originated, not just when they were stored.
-- **Configuration presets** — `mode: essential | normal | expert | full` (default: **full**) for one-shot feature toggles ([docs/CONFIGURATION-MODES.md](docs/CONFIGURATION-MODES.md)).
-
----
-
-## Quick Start
+## 🚀 Get Running in 30 Seconds
 
 ```bash
 # 1. Install the plugin
 openclaw plugins install openclaw-hybrid-memory
 
-# 2. Apply recommended config (memory slot, compaction prompts, 9 maintenance cron jobs)
+# 2. Apply recommended config (auto-creates 8 maintenance cron jobs)
 openclaw hybrid-mem install
 
-# 3. Configure embedding (required) and optionally LLM preferences in ~/.openclaw/openclaw.json
-#    See docs/LLM-AND-PROVIDERS.md — any provider the OpenClaw gateway supports works.
+# 3. Configure your embedding provider in ~/.openclaw/openclaw.json
+#    See: https://markus-lassfolk.github.io/openclaw-hybrid-memory/docs/LLM-AND-PROVIDERS.html
 
 # 4. Restart and verify
 openclaw gateway stop && openclaw gateway start
 openclaw hybrid-mem verify
 ```
 
-See [docs/QUICKSTART.md](docs/QUICKSTART.md) for the full walkthrough.
+**That's it.** Your agent now remembers you across sessions.
 
-**Other install options:**
-- [Autonomous setup](docs/SETUP-AUTONOMOUS.md) - let an OpenClaw agent install it for you
-- [Manual install](docs/QUICKSTART.md) - copy extension files and configure by hand
-
-**If "plugin not found" blocks install:** Use `npx -y openclaw-hybrid-memory-install` or the [curl installer](https://raw.githubusercontent.com/markus-lassfolk/openclaw-hybrid-memory/main/scripts/install.sh). See [UPGRADE-PLUGIN.md](docs/UPGRADE-PLUGIN.md#when-plugin-not-found-blocks-install).
+Need help? → [Full Quickstart Guide](docs/QUICKSTART.md)
 
 ---
 
-## Prerequisites
+## ⚙️ Configuration Modes
 
-- **OpenClaw v2026.3.8+** (minimum — same as plugin `peerDependencies` / startup version check): below this you get a **warning**, not a hard fail; use a **recent 2026.3.x** gateway for features tested in CI (see `extensions/memory-hybrid/package-lock.json` → `node_modules/openclaw` for the resolved dev version).
-- **Node.js `>=22.12.0`** — required by the plugin package `engines` when installing/running the extension.
-- **Embedding access** (required) — for semantic search (auto-recall, store, ingest). Configure `embedding.apiKey` and `embedding.model` (e.g. `text-embedding-3-small`). The plugin will not load without valid embedding config.
-- **Chat/completion access** (optional for basic memory) — required for distillation, reflection, auto-classify, query expansion, and other LLM-backed features. The plugin can call provider APIs **directly** (recommended: configure the **`llm`** block with `nano` / `default` / `heavy` tiers and per-provider API keys) or use gateway-derived models. See [docs/LLM-AND-PROVIDERS.md](docs/LLM-AND-PROVIDERS.md) for tiers and provider setup.
-
----
-
-## Documentation
-
-### Getting started
-
-| Document | Description |
-|----------|-------------|
-| **[README § Why you'll want this](README.md#why-youll-want-this--in-plain-english)** | Benefits in plain English: why use this, what you get short- and long-term |
-| **[QUICKSTART.md](docs/QUICKSTART.md)** | Install, configure, verify — get running in 10 minutes |
-| **[HOW-IT-WORKS.md](docs/HOW-IT-WORKS.md)** | What happens each turn: auto-recall, auto-capture, background jobs, costs |
-| **[DEEP-DIVE.md](docs/DEEP-DIVE.md)** | Storage internals, search algorithms, tags, links, supersession, deduplication |
-| **[EXAMPLES.md](docs/EXAMPLES.md)** | Real-world recipes: project setup, tuning, tags, backfilling, maintenance routines |
-| **[FAQ.md](docs/FAQ.md)** | Common questions: cost, providers, backups, resets, troubleshooting quick answers |
-
-### Reference
-
-| Document | Description |
-|----------|-------------|
-| **[ARCHITECTURE.md](docs/ARCHITECTURE.md)** | Four-part hybrid architecture, workspace layout, bootstrap files |
-| **[ARCHITECTURE-CENTER.md](docs/ARCHITECTURE-CENTER.md)** | Architecture anchor: core runtime boundary vs adjacent subsystems |
-| **[CONFIGURATION.md](docs/CONFIGURATION.md)** | Full `openclaw.json` reference |
-| **[LLM-AND-PROVIDERS.md](docs/LLM-AND-PROVIDERS.md)** | Prerequisites, what LLMs are used for, gateway routing, `llm` config |
-| **[FEATURES.md](docs/FEATURES.md)** | Categories, decay, tags, auto-classify, source dates; index of [per-feature docs](docs/FEATURES.md#feature-documentation-by-topic) |
-| **[CLI-REFERENCE.md](docs/CLI-REFERENCE.md)** | All `openclaw hybrid-mem` commands by category |
-| **[MEMORY-PROTOCOL.md](docs/MEMORY-PROTOCOL.md)** | Paste-ready AGENTS.md block |
-
-### Operations
-
-| Document | Description |
-|----------|-------------|
-| **[OPERATIONS.md](docs/OPERATIONS.md)** | Background jobs, cron, scripts, upgrading OpenClaw and the plugin |
-| **[UNINSTALL.md](docs/UNINSTALL.md)** | How to uninstall: revert to default memory, optional data removal |
-| **[UPGRADE-OPENCLAW.md](docs/UPGRADE-OPENCLAW.md)** | What to do after every OpenClaw upgrade (native deps, post-upgrade script) |
-| **[UPGRADE-PLUGIN.md](docs/UPGRADE-PLUGIN.md)** | Upgrading the hybrid-memory plugin: NPM/manual, migrations, config |
-| **[BACKUP.md](docs/BACKUP.md)** | What to back up (SQLite, LanceDB, vault, etc.) and how to restore |
-| **[TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)** | Common issues, API key behaviour, diagnostics |
-| **[MAINTENANCE.md](docs/MAINTENANCE.md)** | File hygiene, periodic review |
-
-### Feature deep-dives
-
-| Document | Description |
-|----------|-------------|
-| [MEMORY-TIERING.md](docs/MEMORY-TIERING.md) | Hot/warm/cold tiers, compaction, session-end hooks |
-| [MEMORY-SCOPING.md](docs/MEMORY-SCOPING.md) | Global, user, agent, session scope; multi-agent; scope promote |
-| [PERSONA-PROPOSALS.md](docs/PERSONA-PROPOSALS.md) | Persona proposals: agent self-evolution with human approval |
-| [AUTO-TAGGING.md](docs/AUTO-TAGGING.md) | Auto-tagging: patterns, storage, tag-filtered search and recall |
-| [DECAY-AND-PRUNING.md](docs/DECAY-AND-PRUNING.md) | Decay classes, TTLs, refresh-on-access, hard/soft prune |
-| [CONFLICTING-MEMORIES.md](docs/CONFLICTING-MEMORIES.md) | Conflicting memories: classify-before-write, supersession, bi-temporal |
-| [SEARCH-RRF-INGEST.md](docs/SEARCH-RRF-INGEST.md) | RRF fusion, ingest-files, query expansion (formerly HyDE) |
-| [AUTOMATIC-CATEGORIES.md](docs/AUTOMATIC-CATEGORIES.md) | Automatic category discovery from "other" facts |
-| [DYNAMIC-DERIVED-DATA.md](docs/DYNAMIC-DERIVED-DATA.md) | Index of dynamic/derived data: tags, categories, decay, supersession |
-| [event-log.md](extensions/memory-hybrid/docs/event-log.md) | Episodic event log (Layer 1): passive session capture, Dream Cycle input (#150) |
-
-### Specialized
-
-| Document | Description |
-|----------|-------------|
-| [CREDENTIALS.md](docs/CREDENTIALS.md) | Credential vault (opt-in encrypted store) |
-| [SESSION-DISTILLATION.md](docs/SESSION-DISTILLATION.md) | Extracting facts from session logs |
-| [PROCEDURAL-MEMORY.md](docs/PROCEDURAL-MEMORY.md) | Auto-generated skills from learned tool-call patterns (issue #23) |
-| [GRAPH-MEMORY.md](docs/GRAPH-MEMORY.md) | Graph-based fact linking |
-| [WAL-CRASH-RESILIENCE.md](docs/WAL-CRASH-RESILIENCE.md) | Write-ahead log design |
-| [REFLECTION.md](docs/REFLECTION.md) | Reflection layer (pattern synthesis) |
-| [SETUP-AUTONOMOUS.md](docs/SETUP-AUTONOMOUS.md) | AI-friendly autonomous setup |
-
----
-
-## Persona Proposals (opt-in)
-
-**Agent self-evolution with human approval** - agents propose changes to identity files based on observed patterns; humans review and approve via CLI. Enable with `"personaProposals": { "enabled": true }`. Agent tools: `persona_propose`, `persona_proposals_list`. Human-only CLI: `openclaw proposals review <id> <approve|reject>`, `openclaw proposals apply <id>`.
-
-→ Full doc: [PERSONA-PROPOSALS.md](docs/PERSONA-PROPOSALS.md) (config, safety, workflow).
-
----
-
-## Development
-
-**Pre-commit formatting:** A pre-commit hook runs [Prettier](https://prettier.io/) on staged `extensions/memory-hybrid/**/*.ts` so CI format checks pass. Run **once** from the repo root:
+Hybrid Memory comes with four built-in profiles. You can easily switch between them using the CLI:
 
 ```bash
-npm install
+openclaw hybrid-mem config-mode <mode>
 ```
 
-This installs [husky](https://typicode.github.io/husky/) and [lint-staged](https://github.com/okonet/lint-staged); every `git commit` will format staged TypeScript files before the commit. Plugin code and tests live in `extensions/memory-hybrid/`; run `npm run test`, `npm run lint`, and `npx tsc --noEmit` there.
+### The Modes
+
+| Mode | Description | LLM Cost | Key Features |
+|------|-------------|----------|--------------|
+| **`local`** | **100% Air-gapped.** (Default). Runs entirely on your machine. Uses local ONNX/Ollama embeddings and local SQLite/LanceDB. | **$0.00** | Basic storage, exact match recall, local semantic search. *Zero cloud LLM calls.* |
+| **`minimal`** | **Fast & Cheap.** Basic cloud integration but turns off expensive background jobs. | **Very Low** | Cloud embeddings, basic cloud routing, no background reflection. |
+| **`enhanced`** | **The Sweet Spot.** Balances intelligence with cost. | **Low** | Active RAG, background reflection, tool effectiveness tracking. |
+| **`complete`** | **Maximum Intelligence.** Turns on every experimental cognitive feature. | **Medium** | Everything above + deep semantic clustering, self-correction, and autonomous skill crystallization. |
 
 ---
 
-## Credits & Attribution
+
+## 🏢 See it in Action
+
+Curious what this looks like in practice? Check out the **[OpenClaw Personal Assistant Ecosystem](https://github.com/markus-lassfolk/openclaw-personal-assistant)**. It uses `openclaw-hybrid-memory` to build a highly proactive Executive Assistant persona that reads your emails, negotiates your calendar, and actively learns your business priorities over time.
+
+---
+
+
+## ✨ What You Actually Get
+
+### 😤 "I already told you that"
+
+Never again. Your agent pulls in relevant memories before every reply — your preferences, past decisions, project context, who you are. No repeating yourself. No manually pasting context.
+
+### 🧠 It learns from how you react
+
+When you say "perfect" or "no, do it differently" — it notices. It reinforces what worked and corrects what didn't. Over time, it gets noticeably better at giving you what you actually want.
+
+### 📈 Gets smarter the more you use it
+
+Every session adds to its understanding of you: your phrasing, your style, your recurring topics. After a few weeks, you get an agent that feels like it *knows* you — not a generic bot resetting to zero every time.
+
+### 🔍 Finds what you need, even fuzzy matches
+
+SQLite + FTS5 for instant structured lookups. LanceDB vector search for when you don't quite remember how you phrased something. Both combined via RRF merge so nothing falls through the cracks.
+
+### 💰 Slashes Your Token Costs
+Stop pasting your entire project history and guidelines into every single prompt. By running a local semantic search, Hybrid Memory only injects the strictly relevant context you need for the current turn. Your LLM context windows stay tiny, clean, and cheap.
+
+### ⚡ Runs in the background, no babysitting
+
+Auto-capture. Auto-recall. Background reflection. Memory decay. Cleanup. All automatic — driven by cron jobs you don't have to manage.
+
+---
+
+## 🎯 Core Features at a Glance
+
+| Feature | What it does for you |
+|---------|---------------------|
+| **Auto-Capture** | Extracts preferences, facts, and decisions from conversations automatically |
+| **Auto-Recall** | Injects relevant memories into context every turn — no prompts needed |
+| **Dual Backend** | SQLite + FTS5 for fast lookups; LanceDB for semantic search |
+| **Memory Tiering** | Hot/warm/cold tiers keep the most relevant facts in scope |
+| **Multi-Agent Scoping** | Global, user, agent, or session scope — specialists share what they need |
+| **Background Reflection** | Synthesizes patterns and rules from your accumulated facts |
+| **Auto-Crystallization** | Detects recurring workflows and proposes skills — you approve before anything is written |
+| **Credential Vault** | Encrypted storage for API keys and tokens — auto-injects on auth failures |
+| **Write-Ahead Log** | Crash-resilient memory ops — nothing lost if something breaks |
+| **TTL Decay** | Old facts expire automatically; your memory stays fresh |
+
+For the full feature list → [FEATURES.md](docs/FEATURES.md)
+
+---
+
+## 🏗️ How It Works
+
+```
+You say something
+       ↓
+  Auto-Capture extracts facts, preferences, decisions
+       ↓
+  Stored in SQLite (structured) + LanceDB (vectors)
+       ↓
+  Next turn: Auto-Recall fetches relevant memories
+       ↓
+  Injected into context — your agent responds with full history
+       ↓
+  Background: reflection, decay, consolidation, distillation
+```
+
+See [HOW-IT-WORKS.md](docs/HOW-IT-WORKS.md) for the full walkthrough.
+
+---
+
+## 📋 Prerequisites
+
+- **OpenClaw v2026.3.8+**
+- **Node.js ≥22.12.0**
+- **Embedding provider** (required) — e.g. OpenAI `text-embedding-3-small`, local Ollama, etc.
+- **LLM access** (optional for basic memory; required for distillation, reflection, auto-classify)
+
+See [LLM-AND-PROVIDERS.md](docs/LLM-AND-PROVIDERS.md) for setup.
+
+---
+
+## 📚 Documentation
+
+### Getting Started
+| Guide | What it's for |
+|-------|---------------|
+| **[QUICKSTART.md](docs/QUICKSTART.md)** | Install, configure, and verify — full walkthrough |
+| **[HOW-IT-WORKS.md](docs/HOW-IT-WORKS.md)** | What happens each turn: auto-recall, capture, background jobs, costs |
+| **[EXAMPLES.md](docs/EXAMPLES.md)** | Real-world recipes: project setup, tuning, backfilling, maintenance |
+| **[FAQ.md](docs/FAQ.md)** | Cost, providers, backups, resets, troubleshooting quick answers |
+
+### Reference
+| Doc | What it's for |
+|-----|---------------|
+| **[CONFIGURATION.md](docs/CONFIGURATION.md)** | Full `openclaw.json` reference — every option explained |
+| **[ARCHITECTURE.md](docs/ARCHITECTURE.md)** | Four-part hybrid architecture, workspace layout, bootstrap |
+| **[CLI-REFERENCE.md](docs/CLI-REFERENCE.md)** | All `openclaw hybrid-mem` commands — stats, search, classify, verify, and more |
+| **[MEMORY-PROTOCOL.md](docs/MEMORY-PROTOCOL.md)** | Paste-ready AGENTS.md memory block |
+
+### Operations
+| Doc | What it's for |
+|-----|---------------|
+| **[OPERATIONS.md](docs/OPERATIONS.md)** | Background jobs, cron, scripts, upgrading |
+| **[TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)** | Common issues, diagnostics, API key quirks |
+| **[BACKUP.md](docs/BACKUP.md)** | What to back up and how to restore |
+| **[UNINSTALL.md](docs/UNINSTALL.md)** | Clean uninstall — revert to default memory |
+
+### Deep Dives
+| Topic | Doc |
+|--------|-----|
+| Memory tiering (hot/warm/cold) | [MEMORY-TIERING.md](docs/MEMORY-TIERING.md) |
+| Multi-agent scoping | [MEMORY-SCOPING.md](docs/MEMORY-SCOPING.md) |
+| Graph-based linking | [GRAPH-MEMORY.md](docs/GRAPH-MEMORY.md) |
+| Session distillation | [SESSION-DISTILLATION.md](docs/SESSION-DISTILLATION.md) |
+| Procedural memory / skill proposals | [PROCEDURAL-MEMORY.md](docs/PROCEDURAL-MEMORY.md) |
+| Reflection layer | [REFLECTION.md](docs/REFLECTION.md) |
+| Credential vault | [CREDENTIALS.md](docs/CREDENTIALS.md) |
+| WAL crash resilience | [WAL-CRASH-RESILIENCE.md](docs/WAL-CRASH-RESILIENCE.md) |
+| Decay & pruning | [DECAY-AND-PRUNING.md](docs/DECAY-AND-PRUNING.md) |
+| Persona proposals | [PERSONA-PROPOSALS.md](docs/PERSONA-PROPOSALS.md) |
+
+---
+
+## 🛠️ Common Commands
+
+```bash
+# Verify your installation
+openclaw hybrid-mem verify
+
+# Check memory stats
+openclaw hybrid-mem stats
+
+# Search your memory
+openclaw hybrid-mem search "your query here"
+
+# Run a reflection cycle
+openclaw hybrid-mem reflect
+
+# Uninstall cleanly
+openclaw hybrid-mem uninstall
+```
+
+See [CLI-REFERENCE.md](docs/CLI-REFERENCE.md) for the full command reference.
+
+---
+
+## 👥 Credits & Attribution
 
 ### Clawdboss.ai
 
-**[Give Your Clawdbot Permanent Memory](https://clawdboss.ai/posts/give-your-clawdbot-permanent-memory)** (February 13, 2026)
+[**Give Your Clawdbot Permanent Memory**](https://clawdboss.ai/posts/give-your-clawdbot-permanent-memory) (February 13, 2026)
 
 The memory-hybrid plugin is based on this article's plugin architecture: SQLite + FTS5 for structured facts, LanceDB for semantic vector search, decay tiers with TTL-based expiry, checkpoints, and the dual-backend approach.
 
 ### ucsandman
 
-**[OpenClaw-Hierarchical-Memory-System](https://github.com/ucsandman/OpenClaw-Hierarchical-Memory-System)**
+[**OpenClaw-Hierarchical-Memory-System**](https://github.com/ucsandman/OpenClaw-Hierarchical-Memory-System)
 
 The hierarchical file memory layout (lightweight `MEMORY.md` index + drill-down detail files under `memory/`) originates from this system: the index-plus-detail-files pattern, token-budget math, and the directory structure.
 
