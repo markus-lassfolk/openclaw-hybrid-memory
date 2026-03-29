@@ -1137,7 +1137,9 @@ export class VectorDB {
    */
   async getAllIds(): Promise<string[]> {
     try {
+      if (!this.lanceDbAvailable) return [];
       await this.ensureInitialized();
+      if (!this.lanceDbAvailable) return [];
       if (!this.schemaValid) return [];
       const acquired = this.acquireReader();
       try {
