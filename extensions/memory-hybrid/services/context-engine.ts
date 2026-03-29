@@ -588,7 +588,7 @@ export async function registerHybridContextEngine(opts: ContextEngineOptions): P
   try {
     // Dynamic import for feature detection — avoids hard dependency on the API.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const sdk: any = await import("openclaw/plugin-sdk").catch(() => null);
+    const sdk: any = await import("openclaw/plugin-sdk/core").catch(() => null);
     if (!sdk) {
       opts.logger.debug?.("memory-hybrid: openclaw/plugin-sdk not available; skipping ContextEngine registration");
       return false;
