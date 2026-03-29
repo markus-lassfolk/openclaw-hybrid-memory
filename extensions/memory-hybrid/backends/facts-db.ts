@@ -42,6 +42,7 @@ import {
 import {
   createLink as createLinkHelper,
   createOrStrengthenRelatedLink as createOrStrengthenRelatedLinkHelper,
+  expandGraphWithCTE as expandGraphWithCTEHelper,
   getConnectedFactIds as getConnectedFactIdsHelper,
   getLinksFrom as getLinksFromHelper,
   getLinksTo as getLinksToHelper,
@@ -2481,6 +2482,27 @@ export class FactsDB extends BaseSqliteStore {
    */
   getConnectedFactIds(factIds: string[], maxDepth: number): string[] {
     return getConnectedFactIdsHelper(this.liveDb, factIds, maxDepth);
+  }
+
+  /**
+   * Perform graph expansion using a recursive CTE, returning expanded nodes with hop count and path info.
+   * This is used by graph-retrieval.ts to avoid N+1 query patterns.
+   *
+   * @param seedFactIds - Array of seed fact IDs to start expansion from
+   * @param maxDepth - Maximum traversal depth
+   * @returns Array of expanded nodes with factId, seedId, hopCount, and path (JSON array of link steps)
+   */
+  expandGraphWithCTE(
+    seedFactIds: string[],
+    maxDepth: number,
+    options?: { asOf?: number; scopeFilter?: unknown }
+  ): Array<{
+    factId: string;
+    seedId: string;
+    hopCount: number;
+    path: string;
+  }> {
+    return expandGraphWithCTEHelper(this.liveDb, seedFactIds, maxDepth, options);
   }
 
   /** Get facts from the last N days (for reflection). Excludes pattern/rule by default. More efficient than getAll+filter. */

@@ -92,6 +92,112 @@ function buildMockDb(
   linksTo: Record<string, Array<{ id: string; sourceFactId: string; linkType: string; strength: number }>>,
 ) {
   const entryMap = new Map(entries.map((e) => [e.id, e]));
+
+  // Simulate the recursive CTE expansion
+  const expandGraphWithCTE = (seedFactIds: string[], maxDepth: number) => {
+    if (seedFactIds.length === 0 || maxDepth < 1) {
+      return seedFactIds.map((id) => ({
+        factId: id,
+        seedId: id,
+        hopCount: 0,
+        path: "[]",
+      }));
+    }
+
+    const results: Array<{
+      factId: string;
+      seedId: string;
+      hopCount: number;
+      path: string;
+    }> = [];
+
+    // Track best path to each node
+    const bestPath = new Map<
+      string,
+      { hopCount: number; seedId: string; path: Array<unknown>; visited: Set<string> }
+    >();
+
+    // Initialize seeds
+    for (const seedId of seedFactIds) {
+      bestPath.set(seedId, { hopCount: 0, seedId, path: [], visited: new Set([seedId]) });
+    }
+
+    // BFS expansion
+    let frontier = seedFactIds.map((id) => bestPath.get(id)!);
+    for (let hop = 1; hop <= maxDepth && frontier.length > 0; hop++) {
+      const nextFrontier: Array<{ hopCount: number; seedId: string; path: Array<any>; visited: Set<string>; currentId: string }> = [];
+
+      for (const current of frontier) {
+        // Derive current ID from path or seed
+        const currentId = current.path.length > 0 ? current.path[current.path.length - 1].toFactId : current.seedId;
+
+        // Traverse outgoing links
+        const outLinks = linksFrom[currentId] ?? [];
+        for (const link of outLinks) {
+          if (link.linkType === "CONTRADICTS") continue;
+          if (current.visited.has(link.targetFactId)) continue;
+
+          const existing = bestPath.get(link.targetFactId);
+          if (!existing || hop < existing.hopCount) {
+            const newPath = [
+              ...current.path,
+              {
+                fromFactId: currentId,
+                toFactId: link.targetFactId,
+                linkType: link.linkType,
+                strength: link.strength,
+              },
+            ];
+            const newVisited = new Set([...current.visited, link.targetFactId]);
+            const newNode = { hopCount: hop, seedId: current.seedId, path: newPath, visited: newVisited };
+            bestPath.set(link.targetFactId, newNode);
+            nextFrontier.push(newNode);
+          }
+        }
+
+        // Traverse incoming links
+        const inLinks = linksTo[currentId] ?? [];
+        for (const link of inLinks) {
+          if (link.linkType === "CONTRADICTS") continue;
+          if (current.visited.has(link.sourceFactId)) continue;
+
+          const existing = bestPath.get(link.sourceFactId);
+          if (!existing || hop < existing.hopCount) {
+            const newPath = [
+              ...current.path,
+              {
+                fromFactId: currentId,
+                toFactId: link.sourceFactId,
+                linkType: link.linkType,
+                strength: link.strength,
+              },
+            ];
+            const newVisited = new Set([...current.visited, link.sourceFactId]);
+            const newNode = { hopCount: hop, seedId: current.seedId, path: newPath, visited: newVisited };
+            bestPath.set(link.sourceFactId, newNode);
+            nextFrontier.push(newNode);
+          }
+        }
+      }
+      frontier = nextFrontier;
+    }
+
+    // Convert to result format
+    for (const [factId, node] of bestPath.entries()) {
+      results.push({
+        factId,
+        seedId: node.seedId,
+        hopCount: node.hopCount,
+        path: JSON.stringify(node.path),
+      });
+    }
+
+    // Sort by hopCount, then factId
+    results.sort((a, b) => (a.hopCount !== b.hopCount ? a.hopCount - b.hopCount : a.factId.localeCompare(b.factId)));
+
+    return results;
+  };
+
   return {
     getById: (id: string) => entryMap.get(id) ?? null,
     getByIds: (ids: string[]) => {
@@ -104,6 +210,7 @@ function buildMockDb(
     },
     getLinksFrom: (id: string) => linksFrom[id] ?? [],
     getLinksTo: (id: string) => linksTo[id] ?? [],
+    expandGraphWithCTE,
   };
 }
 
@@ -513,7 +620,8 @@ describe("expandGraph: various link types", () => {
     "PART_OF",
     "CAUSED_BY",
     "DEPENDS_ON",
-    "CONTRADICTS",
+    // CONTRADICTS is intentionally excluded from graph traversal
+    // (see FactsDB.getConnectedFactIds comment)
     "INSTANCE_OF",
     "DERIVED_FROM",
     "SUPERSEDES",
