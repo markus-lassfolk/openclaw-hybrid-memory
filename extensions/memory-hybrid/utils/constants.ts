@@ -1,3 +1,4 @@
+import { getEnv } from "./env-manager.js";
 /**
  * Shared constants to avoid magic numbers across the plugin.
  */
@@ -104,7 +105,7 @@ export const LANCE_VECTOR_SEARCH_MAX_LIMIT = 1000;
 
 /** Default session transcript file suffix (override with OPENCLAW_SESSION_LOG_SUFFIX, e.g. `.jsonl`). */
 export function getSessionLogFileSuffix(): string {
-  const raw = process.env.OPENCLAW_SESSION_LOG_SUFFIX?.trim();
+  const raw = getEnv("OPENCLAW_SESSION_LOG_SUFFIX")?.trim();
   if (!raw) return ".jsonl";
   return raw.startsWith(".") ? raw : `.${raw}`;
 }

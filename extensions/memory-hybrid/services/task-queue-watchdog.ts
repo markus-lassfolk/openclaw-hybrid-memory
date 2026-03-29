@@ -13,7 +13,7 @@
  * Addresses Product Goal 4: Autonomous Maintenance
  */
 
-import { execFile as execFileCb } from "node:child_process";
+import { execFile as execFileCb } from "../utils/process-runner.js";
 import { existsSync } from "node:fs";
 import { mkdir, readdir, unlink, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";

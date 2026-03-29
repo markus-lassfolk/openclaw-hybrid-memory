@@ -1,3 +1,4 @@
+import { getEnv, setEnv } from "../utils/env-manager.js";
 /**
  * Config CLI Handlers
  *
@@ -109,7 +110,7 @@ function getNested(obj: Record<string, unknown>, path: string): unknown {
 export function runConfigViewForCli(ctx: HandlerContext, sink: VerifyCliSink): void {
   const { cfg } = ctx;
   const log = sink.log;
-  const noEmoji = process.env.HYBRID_MEM_NO_EMOJI === "1";
+  const noEmoji = getEnv("HYBRID_MEM_NO_EMOJI") === "1";
   const ON = noEmoji ? "[on]" : "on";
   const OFF = noEmoji ? "[off]" : "off";
   const on = (b: boolean) => (b ? ON : OFF);
@@ -117,7 +118,7 @@ export function runConfigViewForCli(ctx: HandlerContext, sink: VerifyCliSink): v
   // Read raw config from file to bypass migration overrides (like nightlyCycle forced to false in 2026.3.140)
   let rawCfg: Record<string, unknown> = {};
   try {
-    const configPath = process.env.OPENCLAW_CONFIG || join(homedir(), ".openclaw", "openclaw.json");
+    const configPath = getEnv("OPENCLAW_CONFIG") || join(homedir(), ".openclaw", "openclaw.json");
     if (existsSync(configPath)) {
       const out = getPluginConfigFromFile(configPath);
       if ("config" in out) rawCfg = out.config;

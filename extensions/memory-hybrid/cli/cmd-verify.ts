@@ -1,3 +1,4 @@
+import { getEnv, setEnv } from "../utils/env-manager.js";
 /**
  * CLI Verify Command Handler
  *
@@ -104,7 +105,7 @@ export async function runVerifyForCli(
   /** Always print tables (embedding + LLM) so they are never suppressed in quiet mode. */
   const tableLog = rawLog;
   const _err = sink.error ?? rawLog;
-  const noEmoji = process.env.HYBRID_MEM_NO_EMOJI === "1";
+  const noEmoji = getEnv("HYBRID_MEM_NO_EMOJI") === "1";
   const OK = noEmoji ? "[OK]" : "✅";
   const FAIL = noEmoji ? "[FAIL]" : "❌";
   const PAUSE = noEmoji ? "[paused]" : "⏸️ ";
@@ -438,8 +439,8 @@ export async function runVerifyForCli(
   const cronCfg = getCronModelConfig(cfg);
   const providersWithKeys = getProvidersWithKeys(cronCfg);
   const authOrder = (cfg as Record<string, unknown>).auth as { order?: Record<string, string[]> } | undefined;
-  const gatewayPort = process.env.OPENCLAW_GATEWAY_PORT;
-  const gatewayToken = process.env.OPENCLAW_GATEWAY_TOKEN;
+  const gatewayPort = getEnv("OPENCLAW_GATEWAY_PORT");
+  const gatewayToken = getEnv("OPENCLAW_GATEWAY_TOKEN");
   const gatewayAvailable = Boolean(
     gatewayPort && Number(gatewayPort) >= 1 && Number(gatewayPort) <= 65535 && gatewayToken,
   );

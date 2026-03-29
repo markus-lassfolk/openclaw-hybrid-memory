@@ -1,3 +1,4 @@
+import { getEnv, setEnv } from "../utils/env-manager.js";
 /**
  * Tests for MiniMax provider routing in the multi-provider OpenAI proxy.
  * Verifies that minimax/* models are routed to the correct base URL (issue #312).
@@ -114,13 +115,13 @@ describe("MiniMax provider routing — direct API key", () => {
     MockOpenAI.mockClear();
     ctx = undefined;
     // Capture originals before mutating
-    origGatewayPort = process.env.OPENCLAW_GATEWAY_PORT;
-    origGatewayToken = process.env.OPENCLAW_GATEWAY_TOKEN;
-    origMinimaxApiKey = process.env.MINIMAX_API_KEY;
+    origGatewayPort = getEnv("OPENCLAW_GATEWAY_PORT");
+    origGatewayToken = getEnv("OPENCLAW_GATEWAY_TOKEN");
+    origMinimaxApiKey = getEnv("MINIMAX_API_KEY");
     // Unset gateway env vars to ensure direct routing
-    process.env.OPENCLAW_GATEWAY_PORT = undefined;
-    process.env.OPENCLAW_GATEWAY_TOKEN = undefined;
-    process.env.MINIMAX_API_KEY = undefined;
+    setEnv("OPENCLAW_GATEWAY_PORT", undefined);
+    setEnv("OPENCLAW_GATEWAY_TOKEN", undefined);
+    setEnv("MINIMAX_API_KEY", undefined);
   });
 
   afterEach(() => {
@@ -200,7 +201,7 @@ describe("MiniMax provider routing — direct API key", () => {
   });
 
   it("uses MINIMAX_API_KEY env var as fallback when no apiKey in config", async () => {
-    process.env.MINIMAX_API_KEY = "sk-cp-from-env-123456";
+    setEnv("MINIMAX_API_KEY", "sk-cp-from-env-123456");
     const cfg = getTestConfig(tmpDir, {
       llm: {
         default: ["minimax/MiniMax-M2.5"],
@@ -382,12 +383,12 @@ describe("MiniMax provider routing — gateway key auto-merge", () => {
     MockOpenAI = vi.mocked(OpenAI);
     MockOpenAI.mockClear();
     ctx = undefined;
-    origGatewayPort = process.env.OPENCLAW_GATEWAY_PORT;
-    origGatewayToken = process.env.OPENCLAW_GATEWAY_TOKEN;
-    origMinimaxApiKey = process.env.MINIMAX_API_KEY;
-    process.env.OPENCLAW_GATEWAY_PORT = undefined;
-    process.env.OPENCLAW_GATEWAY_TOKEN = undefined;
-    process.env.MINIMAX_API_KEY = undefined;
+    origGatewayPort = getEnv("OPENCLAW_GATEWAY_PORT");
+    origGatewayToken = getEnv("OPENCLAW_GATEWAY_TOKEN");
+    origMinimaxApiKey = getEnv("MINIMAX_API_KEY");
+    setEnv("OPENCLAW_GATEWAY_PORT", undefined);
+    setEnv("OPENCLAW_GATEWAY_TOKEN", undefined);
+    setEnv("MINIMAX_API_KEY", undefined);
   });
 
   afterEach(() => {
@@ -715,12 +716,12 @@ describe("OpenRouter provider routing (issue #380)", () => {
     MockOpenAI = vi.mocked(OpenAI);
     MockOpenAI.mockClear();
     ctx = undefined;
-    origOpenrouterApiKey = process.env.OPENROUTER_API_KEY;
-    origGatewayPort = process.env.OPENCLAW_GATEWAY_PORT;
-    origGatewayToken = process.env.OPENCLAW_GATEWAY_TOKEN;
-    process.env.OPENROUTER_API_KEY = undefined;
-    process.env.OPENCLAW_GATEWAY_PORT = undefined;
-    process.env.OPENCLAW_GATEWAY_TOKEN = undefined;
+    origOpenrouterApiKey = getEnv("OPENROUTER_API_KEY");
+    origGatewayPort = getEnv("OPENCLAW_GATEWAY_PORT");
+    origGatewayToken = getEnv("OPENCLAW_GATEWAY_TOKEN");
+    setEnv("OPENROUTER_API_KEY", undefined);
+    setEnv("OPENCLAW_GATEWAY_PORT", undefined);
+    setEnv("OPENCLAW_GATEWAY_TOKEN", undefined);
   });
 
   afterEach(() => {
@@ -810,7 +811,7 @@ describe("OpenRouter provider routing (issue #380)", () => {
   });
 
   it("uses OPENROUTER_API_KEY env var as fallback when no apiKey in config", async () => {
-    process.env.OPENROUTER_API_KEY = "sk-or-from-env-key";
+    setEnv("OPENROUTER_API_KEY", "sk-or-from-env-key");
     const cfg = getTestConfig(tmpDir, {
       llm: {
         default: ["openrouter/openai/gpt-4o"],
@@ -903,12 +904,12 @@ describe("Anthropic provider routing — issue #386", () => {
     MockOpenAI = vi.mocked(OpenAI);
     MockOpenAI.mockClear();
     ctx = undefined;
-    origAnthropicApiKey = process.env.ANTHROPIC_API_KEY;
-    origGatewayPort = process.env.OPENCLAW_GATEWAY_PORT;
-    origGatewayToken = process.env.OPENCLAW_GATEWAY_TOKEN;
-    process.env.ANTHROPIC_API_KEY = undefined;
-    process.env.OPENCLAW_GATEWAY_PORT = undefined;
-    process.env.OPENCLAW_GATEWAY_TOKEN = undefined;
+    origAnthropicApiKey = getEnv("ANTHROPIC_API_KEY");
+    origGatewayPort = getEnv("OPENCLAW_GATEWAY_PORT");
+    origGatewayToken = getEnv("OPENCLAW_GATEWAY_TOKEN");
+    setEnv("ANTHROPIC_API_KEY", undefined);
+    setEnv("OPENCLAW_GATEWAY_PORT", undefined);
+    setEnv("OPENCLAW_GATEWAY_TOKEN", undefined);
   });
 
   afterEach(() => {
@@ -1089,12 +1090,12 @@ describe("OpenRouter gateway merge — issue #392", () => {
     MockOpenAI = vi.mocked(OpenAI);
     MockOpenAI.mockClear();
     ctx = undefined;
-    origOpenrouterApiKey = process.env.OPENROUTER_API_KEY;
-    origGatewayPort = process.env.OPENCLAW_GATEWAY_PORT;
-    origGatewayToken = process.env.OPENCLAW_GATEWAY_TOKEN;
-    process.env.OPENROUTER_API_KEY = undefined;
-    process.env.OPENCLAW_GATEWAY_PORT = undefined;
-    process.env.OPENCLAW_GATEWAY_TOKEN = undefined;
+    origOpenrouterApiKey = getEnv("OPENROUTER_API_KEY");
+    origGatewayPort = getEnv("OPENCLAW_GATEWAY_PORT");
+    origGatewayToken = getEnv("OPENCLAW_GATEWAY_TOKEN");
+    setEnv("OPENROUTER_API_KEY", undefined);
+    setEnv("OPENCLAW_GATEWAY_PORT", undefined);
+    setEnv("OPENCLAW_GATEWAY_TOKEN", undefined);
   });
 
   afterEach(() => {
@@ -1332,10 +1333,10 @@ describe("gateway model auto-derivation — unknown provider prefix filter", () 
     tmpDir = mkdtempSync(join(tmpdir(), "provider-routing-unknown-"));
     vi.mocked(OpenAI).mockClear();
     ctx = undefined;
-    origGatewayPort = process.env.OPENCLAW_GATEWAY_PORT;
-    origGatewayToken = process.env.OPENCLAW_GATEWAY_TOKEN;
-    process.env.OPENCLAW_GATEWAY_PORT = undefined;
-    process.env.OPENCLAW_GATEWAY_TOKEN = undefined;
+    origGatewayPort = getEnv("OPENCLAW_GATEWAY_PORT");
+    origGatewayToken = getEnv("OPENCLAW_GATEWAY_TOKEN");
+    setEnv("OPENCLAW_GATEWAY_PORT", undefined);
+    setEnv("OPENCLAW_GATEWAY_TOKEN", undefined);
   });
 
   afterEach(() => {
@@ -1513,8 +1514,8 @@ describe("gateway model auto-derivation — unknown provider prefix filter", () 
         },
       },
     });
-    process.env.OPENCLAW_GATEWAY_PORT = "4000";
-    process.env.OPENCLAW_GATEWAY_TOKEN = "test-gateway-token";
+    setEnv("OPENCLAW_GATEWAY_PORT", "4000");
+    setEnv("OPENCLAW_GATEWAY_TOKEN", "test-gateway-token");
 
     const api = makeMockApi({
       resolvePath: (p: string) => (p.startsWith("/") ? p : join(tmpDir, p)),

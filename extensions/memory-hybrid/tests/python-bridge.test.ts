@@ -43,13 +43,17 @@ let fakeProc: FakeProcess;
 
 const { spawnSyncMock } = vi.hoisted(() => ({ spawnSyncMock: vi.fn() }));
 
-vi.mock("node:child_process", () => ({
-  spawn: vi.fn(() => {
-    fakeProc = new FakeProcess();
-    return fakeProc;
-  }),
-  spawnSync: spawnSyncMock,
-}));
+vi.mock("node:child_process", async (importOriginal) => {
+  const original = await importOriginal<typeof import("node:child_process")>();
+  return {
+    ...original,
+    spawn: vi.fn(() => {
+      fakeProc = new FakeProcess();
+      return fakeProc;
+    }),
+    spawnSync: spawnSyncMock,
+  };
+});
 
 // PythonBridge uses readline over stdout — re-export readline to pass through
 vi.mock("node:readline", async (importOriginal) => {

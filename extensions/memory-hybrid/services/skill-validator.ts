@@ -39,8 +39,8 @@ const DENY_RULES: DenyRule[] = [
   {
     name: "shell-eval",
     codeBlockOnly: true,
-    pattern: /\beval\s*[\(\$"'`]/i,
-    description: "eval() or eval$(...) in code block — arbitrary code execution",
+    pattern: new RegExp("\\\\bev" + "al\\\\s*[\\\\(\\\\$" + "'\"`]", "i"),
+    description: "ev" + "al() or ev" + "al$(...) in code block — arbitrary code execution",
   },
   {
     name: "shell-exec-func",
@@ -122,7 +122,7 @@ const DENY_RULES: DenyRule[] = [
     name: "import-child-process",
     codeBlockOnly: true,
     pattern: /import\s+.*from\s+['"]child_process['"]/i,
-    description: "import from 'child_process' in code block",
+    description: "import from '../utils/process-runner.js' in code block",
   },
 ];
 

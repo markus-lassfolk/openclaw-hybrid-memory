@@ -1,3 +1,4 @@
+import { getEnv } from "../utils/env-manager.js";
 /**
  * Crystallization Proposer — orchestrate the full propose→approve→write pipeline (Issue #208).
  *
@@ -183,7 +184,7 @@ export class CrystallizationProposer {
     }
 
     // Determine output path — sanitize skill name to prevent path traversal
-    const outputDir = this.cfg.outputDir.replace(/^~/, process.env.HOME ?? "~");
+    const outputDir = this.cfg.outputDir.replace(/^~/, getEnv("HOME") ?? "~");
     const safeName = proposal.skillName.replace(/[^a-z0-9_-]/gi, "-").replace(/^\.+/, "");
     const outputPath = `${outputDir}/${safeName}/SKILL.md`;
 

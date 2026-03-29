@@ -1,3 +1,4 @@
+import { getEnv } from "./env-manager.js";
 /**
  * Path utilities for memory-hybrid extension.
  */
@@ -22,7 +23,7 @@ export function expandTilde(p: string): string {
  * Use this when reading path values from user configuration files.
  */
 export function expandHomePlaceholders(p: string): string {
-  const home = process.env.HOME ?? homedir();
+  const home = getEnv("HOME") ?? homedir();
   if (p === "$HOME" || p.startsWith("$HOME/")) {
     return home + p.slice("$HOME".length);
   }

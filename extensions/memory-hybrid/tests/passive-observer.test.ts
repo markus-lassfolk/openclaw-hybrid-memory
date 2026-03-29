@@ -1,3 +1,4 @@
+import { getEnv } from "../utils/env-manager.js";
 /**
  * Tests for the passive observer service.
  * Uses mocked LLM calls, storage, and file system to test all core logic paths.
@@ -998,7 +999,7 @@ describe("PassiveObserverConfig defaults via hybridConfigSchema", () => {
 
   it("expands $HOME in passiveObserver.sessionsDir", async () => {
     const { hybridConfigSchema } = await import("../config.js");
-    const home = process.env.HOME ?? require("node:os").homedir();
+    const home = getEnv("HOME") ?? require("node:os").homedir();
     const cfg = hybridConfigSchema.parse({
       embedding: { apiKey: "sk-test-key-12345678", model: "text-embedding-3-small" },
       passiveObserver: { sessionsDir: "$HOME/.openclaw/agents/main/sessions" },
@@ -1018,7 +1019,7 @@ describe("PassiveObserverConfig defaults via hybridConfigSchema", () => {
 
   it("expands $HOME in procedures.sessionsDir", async () => {
     const { hybridConfigSchema } = await import("../config.js");
-    const home = process.env.HOME ?? require("node:os").homedir();
+    const home = getEnv("HOME") ?? require("node:os").homedir();
     const cfg = hybridConfigSchema.parse({
       embedding: { apiKey: "sk-test-key-12345678", model: "text-embedding-3-small" },
       procedures: { sessionsDir: "$HOME/.openclaw/agents/main/sessions" },

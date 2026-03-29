@@ -1,3 +1,4 @@
+import { getEnv } from "../utils/env-manager.js";
 /**
  * Procedural memory: generate SKILL.md + recipe.json from validated procedures.
  */
@@ -43,7 +44,7 @@ export function generateAutoSkills(
   const dryRun = options.dryRun ?? false;
   const basePath = options.skillsAutoPath.startsWith("/")
     ? options.skillsAutoPath
-    : join(process.env.OPENCLAW_WORKSPACE || process.cwd(), options.skillsAutoPath);
+    : join(getEnv("OPENCLAW_WORKSPACE") || process.cwd(), options.skillsAutoPath);
 
   const procedures = factsDb.getProceduresReadyForSkill(options.validationThreshold, maxPerRun);
   const paths: string[] = [];

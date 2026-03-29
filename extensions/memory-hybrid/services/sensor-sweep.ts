@@ -1,3 +1,4 @@
+import { getEnv } from "../utils/env-manager.js";
 /**
  * Sensor Sweep — cron-based data collection writing to the Event Bus.
  * NO LLM calls at sweep time — structured data only.
@@ -8,7 +9,7 @@
  * Issue #236
  */
 
-import { execFile } from "node:child_process";
+import { execFile } from "../utils/process-runner.js";
 import { promisify } from "node:util";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
@@ -173,7 +174,7 @@ interface SessionSummary {
 }
 
 function getSessionDir(): string {
-  return process.env.OPENCLAW_SESSION_DIR ?? join(homedir(), ".openclaw", "sessions");
+  return getEnv("OPENCLAW_SESSION_DIR") ?? join(homedir(), ".openclaw", "sessions");
 }
 
 function extractTopicsFromSession(content: string): string[] {

@@ -1,4 +1,5 @@
 // @ts-nocheck
+import { getEnv, setEnv } from "../utils/env-manager.js";
 /**
  * Dream Cycle tests — Issue #143
  *
@@ -525,8 +526,8 @@ describe("runDreamCycle", () => {
   });
 
   it("writes MEMORY_INDEX.md during the nightly cycle", async () => {
-    const originalWorkspace = process.env.OPENCLAW_WORKSPACE;
-    process.env.OPENCLAW_WORKSPACE = tmpDir;
+    const originalWorkspace = getEnv("OPENCLAW_WORKSPACE");
+    setEnv("OPENCLAW_WORKSPACE", tmpDir);
 
     factsDb.store({
       text: "Use staged deploy validation for the release workflow after smoke tests pass",
@@ -550,8 +551,8 @@ describe("runDreamCycle", () => {
       expect(existsSync(indexPath)).toBe(true);
       expect(readFileSync(indexPath, "utf-8")).toContain("## Recent Decisions");
     } finally {
-      if (originalWorkspace !== undefined) process.env.OPENCLAW_WORKSPACE = originalWorkspace;
-      else process.env.OPENCLAW_WORKSPACE = undefined;
+      if (originalWorkspace !== undefined) setEnv("OPENCLAW_WORKSPACE", originalWorkspace);
+      else setEnv("OPENCLAW_WORKSPACE", undefined);
     }
   });
 
