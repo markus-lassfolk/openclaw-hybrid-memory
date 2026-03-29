@@ -31,6 +31,11 @@ function makeCtx(enabled: boolean): HandlerContext {
     toolEffectiveness: { enabled: true },
     documents: { enabled: true },
     provenance: { enabled: true },
+    workflowTracking: { enabled: false },
+    verification: { enabled: false },
+    aliases: { enabled: false },
+    reranking: { enabled: false },
+    contextualVariants: { enabled: false },
     errorReporting: { enabled: false },
     costTracking: { enabled: true },
     queryExpansion: { enabled: true },
@@ -73,7 +78,7 @@ describe("runConfigViewForCli nightlyCycle output", () => {
     expect(logs.some((l) => l.includes("Nightly dream cycle: off"))).toBe(true);
   });
 
-  it("shows on when raw config has nightlyCycle.enabled = true even if cfg is false", () => {
+  it("shows effective off and Phase 1 note when file has nightlyCycle.enabled = true but cfg is false", () => {
     const logs: string[] = [];
     // Mock getPluginConfigFromFile by setting env var
     setEnv("OPENCLAW_CONFIG", "/tmp/test-openclaw.json");
@@ -92,6 +97,9 @@ describe("runConfigViewForCli nightlyCycle output", () => {
       }),
     );
     runConfigViewForCli(makeCtx(false), { log: (line) => logs.push(line) });
-    expect(logs.some((l) => l.includes("Nightly dream cycle: on"))).toBe(true);
+    const nightlyLine = logs.find((l) => l.includes("Nightly dream cycle:"));
+    expect(nightlyLine).toBeDefined();
+    expect(nightlyLine).toContain("off");
+    expect(nightlyLine).toMatch(/Phase 1|openclaw\.json still has enabled: true/i);
   });
 });
