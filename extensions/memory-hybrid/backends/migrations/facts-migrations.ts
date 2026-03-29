@@ -316,10 +316,10 @@ function migrateProceduresTable(db: DatabaseSync): void {
       INSERT INTO procedures_fts(rowid, task_pattern) VALUES (new.rowid, new.task_pattern);
     END;
     CREATE TRIGGER IF NOT EXISTS procedures_fts_ad AFTER DELETE ON procedures BEGIN
-      INSERT INTO procedures_fts(procedures_fts, rowid, task_pattern) VALUES ('delete', old.rowid, old.task_pattern);
+      DELETE FROM procedures_fts WHERE rowid = old.rowid;
     END;
     CREATE TRIGGER IF NOT EXISTS procedures_fts_au AFTER UPDATE ON procedures BEGIN
-      INSERT INTO procedures_fts(procedures_fts, rowid, task_pattern) VALUES ('delete', old.rowid, old.task_pattern);
+      DELETE FROM procedures_fts WHERE rowid = old.rowid;
       INSERT INTO procedures_fts(rowid, task_pattern) VALUES (new.rowid, new.task_pattern);
     END
   `);

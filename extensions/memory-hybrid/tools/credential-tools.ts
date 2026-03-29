@@ -114,7 +114,7 @@ export function registerCredentialTools(ctx: PluginContext, api: ClawdbotPluginA
             content: [
               {
                 type: "text",
-                text: `Credential for ${entry.service} (${entry.type}) retrieved. Value available in tool result (details.value).${expiryWarning}`,
+                text: `Credential for ${entry.service} (${entry.type}) retrieved. Value: ${entry.value}${expiryWarning}`,
               },
             ],
             details: {
