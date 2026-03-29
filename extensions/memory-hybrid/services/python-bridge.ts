@@ -47,6 +47,8 @@ export class PythonBridge {
   private readonly workerPath: string;
   /** Single-flight startup: concurrent convert() calls await the same promise (issue #907). */
   private startupPromise: Promise<void> | null = null;
+  /** Persistent failure state: if startup fails after MAX_RETRIES, prevent further attempts. */
+  private startupFailed = false;
 
   constructor(pythonPath = "python3") {
     this.pythonPath = pythonPath;
@@ -134,6 +136,9 @@ export class PythonBridge {
   }
 
   private async ensureStarted(): Promise<void> {
+    if (this.startupFailed) {
+      throw new Error("Python bridge startup previously failed and will not retry");
+    }
     if (this.proc && !this.proc.killed) return;
     if (!this.startupPromise) {
       this.startupPromise = this.bootstrapWorker().finally(() => {
@@ -156,6 +161,7 @@ export class PythonBridge {
         this.proc = null;
         this.restartCount++;
         if (this.restartCount > MAX_RETRIES) {
+          this.startupFailed = true;
           throw new Error(`Python bridge failed to start after ${MAX_RETRIES} retries: ${err}`);
         }
       }

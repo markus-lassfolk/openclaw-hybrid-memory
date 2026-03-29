@@ -1257,13 +1257,47 @@ export class FactsDB extends BaseSqliteStore {
       .run(MS_THRESHOLD);
   }
 
-
   /** Count of canonical embedding rows (for vector/SQLite reconciliation checks). */
   countCanonicalEmbeddings(): number {
     const row = this.liveDb.prepare("SELECT COUNT(*) AS c FROM fact_embeddings WHERE variant = 'canonical'").get() as {
       c: number;
     };
     return Number(row?.c ?? 0);
+  }
+
+  /** Estimate storage bytes for SQLite database and WAL files. */
+  estimateStorageBytes(): { sqliteBytes: number; walBytes: number; shmBytes: number } {
+    let sqliteBytes = 0;
+    let walBytes = 0;
+    let shmBytes = 0;
+
+    try {
+      if (existsSync(this.dbPath)) {
+        sqliteBytes = statSync(this.dbPath).size;
+      }
+    } catch {
+      // Ignore errors reading main db file
+    }
+
+    try {
+      const walPath = `${this.dbPath}-wal`;
+      if (existsSync(walPath)) {
+        walBytes = statSync(walPath).size;
+      }
+    } catch {
+      // Ignore errors reading WAL file
+    }
+
+    try {
+      const shmPath = `${this.dbPath}-shm`;
+      if (existsSync(shmPath)) {
+        shmBytes = statSync(shmPath).size;
+      }
+    } catch {
+      // Ignore errors reading SHM file
+    }
+
+    return { sqliteBytes, walBytes, shmBytes };
   }
 
   private validateStoreEntryInput(
