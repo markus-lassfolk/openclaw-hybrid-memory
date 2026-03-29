@@ -235,10 +235,13 @@ jobs:
       - name: Pack and test install
         run: |
           cd extensions/memory-hybrid
-          npm pack
-          TARBALL=$(find . -maxdepth 1 -name "openclaw-hybrid-memory-*.tgz" -printf '%f\n' | head -1)
+          # Avoid picking a stale .tgz from a previous run (find | head -1 is non-deterministic).
+          rm -f openclaw-hybrid-memory-*.tgz
+          TARBALL=$(npm pack 2>&1 | grep '\.tgz$' | tail -1)
+          test -n "$TARBALL" || { echo 'FAIL: npm pack did not report a .tgz filename'; exit 1; }
           TARBALL_PATH="$(pwd)/$TARBALL"
           mkdir -p /tmp/smoke-test && cd /tmp/smoke-test
+          rm -rf node_modules package-lock.json
           npm init -y
           npm install "$TARBALL_PATH" --ignore-scripts
           node -e "const pkg = require('./node_modules/openclaw-hybrid-memory/package.json'); console.log('Import OK:', pkg.name, pkg.version)"
