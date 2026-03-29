@@ -234,6 +234,7 @@ export class PythonBridge {
       this.proc.kill("SIGTERM");
     }
     this.proc = null;
+    this.startupFailed = false;
   }
 
   get isRunning(): boolean {
