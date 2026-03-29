@@ -803,10 +803,16 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
           console.log(`Language keywords: ${languageKeywordsCount}`);
           console.log("");
           console.log(`Graph (links/entities): ${links}/${entities}`);
-          console.log(`Credentials (vaulted): ${credentials}`);
+          console.log(
+            `Credentials (vaulted): ${credentials}${
+              credentials === 0 && !ctx.cfg.credentials.enabled ? " (vault off in effective config; counts stay 0)" : ""
+            }`,
+          );
           const proposalsLine = proposalsAvailable
             ? `Proposals (pending): ${proposalsPending}${proposalsPending === 0 ? " (run generate-proposals to create)" : ""}`
-            : "Proposals (pending): — (persona proposals disabled)";
+            : ctx.cfg.personaProposals.enabled
+              ? "Proposals (pending): — (proposals store unavailable)"
+              : "Proposals (pending): — (persona proposals off in effective config; see hybrid-mem config if file still shows enabled)";
           console.log(proposalsLine);
           console.log(`WAL (pending distill): ${walPending}`);
           console.log("");

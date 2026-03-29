@@ -19,7 +19,11 @@ export {
 export { EMBEDDING_DIMENSIONS, OPENAI_MODELS } from "./parsers/core.js";
 
 // Re-export vectorDimsForModel and parseVerbosityLevel from parsers/index
-export { vectorDimsForModel, parseVerbosityLevel } from "./parsers/index.js";
+export {
+  vectorDimsForModel,
+  parseVerbosityLevel,
+  PHASE1_CORE_ONLY_FORCE_DISABLED_KEYS,
+} from "./parsers/index.js";
 
 import { resolveSecretRef } from "./parsers/core.js";
 // LLM model utilities

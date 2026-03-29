@@ -10,6 +10,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.3.292] - 2026-03-29
+
+### Release summary
+
+CLI clarity release: **`hybrid-mem config`** and **`hybrid-mem stats`** now describe **effective (running) config** for Phase 1 core-only baseline features, so they no longer disagree with each other when `openclaw.json` still has `enabled: true` but the plugin forces options off (plugin ≥2026.3.140). Export **`PHASE1_CORE_ONLY_FORCE_DISABLED_KEYS`** from the config parser so the migration list stays a single source of truth.
+
+### Fixed
+
+- **Config view:** Phase 1–affected optional features show effective on/off; when the file still has `enabled: true`, a short Phase 1 baseline note is shown. Added missing toggles for workflow tracking, verification, retrieval aliases, reranking, and contextual variants. Query expansion (Advanced) gets the same file-vs-effective note when applicable.
+- **Rich stats:** Proposals and credentials lines avoid implying a feature is “broken” when it is off in effective config or the vault is disabled.
+
+### Packaging / install
+
+- **Private testing:** Publish to npm with a non-`latest` dist-tag (for example `npm publish --tag private --otp=…`) so you can install `openclaw-hybrid-memory@private` or pin `2026.3.292` without moving the default `latest` pointer until you are ready.
+
+---
+
 ## [2026.3.291] - 2026-03-29
 
 ### Release summary

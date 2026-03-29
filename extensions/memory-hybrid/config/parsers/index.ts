@@ -154,6 +154,27 @@ function userOverridesPresetValue(userVal: unknown, presetVal: unknown): boolean
 }
 
 /**
+ * Top-level plugin keys forced to `{ enabled: false }` by Phase 1 core-only migration (2026.3.140+).
+ * Exported so CLI config view matches effective runtime config.
+ */
+export const PHASE1_CORE_ONLY_FORCE_DISABLED_KEYS = [
+  "frustrationDetection",
+  "nightlyCycle",
+  "passiveObserver",
+  "workflowTracking",
+  "selfExtension",
+  "crystallization",
+  "verification",
+  "provenance",
+  "aliases",
+  "crossAgentLearning",
+  "reranking",
+  "contextualVariants",
+  "documents",
+  "personaProposals",
+] as const;
+
+/**
  * Phase 1 (2026.3.140+): Force core-only baseline for all installations.
  * Overrides user-set values to establish consistent baseline.
  */
@@ -162,23 +183,7 @@ function applyPhase1CoreOnlyMigration(cfg: Record<string, unknown>): void {
     ...(typeof cfg.queryExpansion === "object" && cfg.queryExpansion !== null ? cfg.queryExpansion : {}),
     enabled: false,
   } as Record<string, unknown>;
-  const forceDisabledKeys = [
-    "frustrationDetection",
-    "nightlyCycle",
-    "passiveObserver",
-    "workflowTracking",
-    "selfExtension",
-    "crystallization",
-    "verification",
-    "provenance",
-    "aliases",
-    "crossAgentLearning",
-    "reranking",
-    "contextualVariants",
-    "documents",
-    "personaProposals",
-  ];
-  for (const key of forceDisabledKeys) {
+  for (const key of PHASE1_CORE_ONLY_FORCE_DISABLED_KEYS) {
     const existing = cfg[key];
     const base =
       typeof existing === "object" && existing !== null && !Array.isArray(existing)
