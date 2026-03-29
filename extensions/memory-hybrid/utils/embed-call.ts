@@ -8,14 +8,17 @@ export const EMBED_CALL_MAX_ATTEMPTS = 3;
 export const EMBED_CALL_BASE_DELAY_MS = 400;
 
 export function embedCallWithTimeout<T>(promise: Promise<T>, label: string): Promise<T> {
+  let timeoutId: NodeJS.Timeout | undefined;
   return Promise.race([
-    promise,
-    new Promise<T>((_, reject) =>
-      setTimeout(
+    promise.finally(() => {
+      if (timeoutId !== undefined) clearTimeout(timeoutId);
+    }),
+    new Promise<T>((_, reject) => {
+      timeoutId = setTimeout(
         () => reject(new Error(`embedding timed out after ${EMBED_CALL_TIMEOUT_MS}ms (${label})`)),
         EMBED_CALL_TIMEOUT_MS,
-      ),
-    ),
+      );
+    }),
   ]);
 }
 
