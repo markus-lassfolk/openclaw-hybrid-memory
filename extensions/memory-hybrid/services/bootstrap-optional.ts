@@ -57,11 +57,15 @@ export const optionalBootstrapInstaller: OptionalBootstrapInstaller = {
       const credPath = join(baseDir, "credentials.db");
       credentialsDb = new CredentialsDB(credPath, cfg.credentials.encryptionKey ?? "");
       const encrypted = (cfg.credentials.encryptionKey?.length ?? 0) >= 16;
-      api.logger.info(
-        encrypted
-          ? `memory-hybrid: credentials vault enabled (encrypted) (${credPath})`
-          : `memory-hybrid: credentials vault enabled (plaintext; secure by other means) (${credPath})`,
-      );
+      if (encrypted) {
+        api.logger.info(`memory-hybrid: credentials vault enabled (encrypted) (${credPath})`);
+      } else {
+        const msg =
+          `memory-hybrid: credentials vault enabled without encryption at rest — ${credPath}. ` +
+          `Set credentials.encryptionKey (16+ chars) or OPENCLAW_CRED_KEY when ready; until then restrict access to this file.`;
+        if (typeof api.logger.warn === "function") api.logger.warn(msg);
+        else api.logger.info(msg);
+      }
     }
 
     let wal: WriteAheadLog | null = null;
