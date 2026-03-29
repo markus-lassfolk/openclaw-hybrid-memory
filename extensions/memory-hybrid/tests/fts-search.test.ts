@@ -637,7 +637,7 @@ describe("buildFts5Query", () => {
 
   it("wraps plain keywords with quoted OR prefix groups (porter-friendly)", () => {
     const q = buildFts5Query("hello world");
-    expect(q).toBe('( "hello" OR "hello" * ) OR ( "world" OR "world" * )');
+    expect(q).toBe('( "hello" OR hello* ) OR ( "world" OR world* )');
   });
 
   it("passes through quoted phrase", () => {
@@ -663,7 +663,7 @@ describe("buildFts5Query", () => {
 
   it("replaces null bytes before quoting terms", () => {
     const q = buildFts5Query("hello\u0000world");
-    expect(q).toBe('( "hello" OR "hello" * ) OR ( "world" OR "world" * )');
+    expect(q).toBe('( "hello" OR hello* ) OR ( "world" OR world* )');
   });
 });
 
