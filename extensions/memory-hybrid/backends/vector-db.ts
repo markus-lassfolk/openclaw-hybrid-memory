@@ -1083,11 +1083,35 @@ export class VectorDB {
       if (!this.schemaValid) return [];
       const acquired = this.acquireReader();
       try {
-        const rows = await this.getTable().query().select(["id"]).toArray();
-        return rows
-          .map((row) => String(row.id ?? ""))
-          .filter((id) => UUID_REGEX.test(id))
-          .map((id) => id.toLowerCase());
+        const table = this.getTable();
+        const ids: string[] = [];
+        const batchSize = 1000;
+        let offset = 0;
+
+        // eslint-disable-next-line no-constant-condition
+        while (true) {
+          const rows = await table
+            .query()
+            .select(["id"])
+            .limit(batchSize)
+            .offset(offset)
+            .toArray();
+
+          if (rows.length === 0) {
+            break;
+          }
+
+          for (const row of rows) {
+            const id = String((row as { id?: unknown }).id ?? "");
+            if (UUID_REGEX.test(id)) {
+              ids.push(id.toLowerCase());
+            }
+          }
+
+          offset += rows.length;
+        }
+
+        return ids;
       } finally {
         this.releaseReader(acquired);
       }

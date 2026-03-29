@@ -104,6 +104,13 @@ describe("VectorDB.getAllIds()", () => {
     }
     expect(ids).toContain(stored.toLowerCase());
   });
+
+  it("skips non-UUID IDs", async () => {
+    const id1 = "not-a-uuid-1234";
+    await vectorDb.store({ id: id1, text: "invalid id fact", vector: makeVector(), importance: 0.5, category: "fact" });
+    const ids = await vectorDb.getAllIds();
+    expect(ids).not.toContain(id1);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -141,6 +148,22 @@ describe("FactsDB.getAllIds()", () => {
     const ids = factsDb.getAllIds();
     expect(ids).not.toContain(id1);
     expect(ids).toContain(entry2.id);
+  });
+
+  it("excludes expired facts", () => {
+    const entry = factsDb.store({
+      text: "expired fact",
+      category: "fact",
+      importance: 0.5,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+      expiresAt: Math.floor(Date.now() / 1000) - 3600,
+      decayClass: "short",
+    });
+    const ids = factsDb.getAllIds();
+    expect(ids).not.toContain(entry.id);
   });
 });
 

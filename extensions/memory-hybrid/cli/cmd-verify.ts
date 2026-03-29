@@ -1094,13 +1094,14 @@ export async function runVerifyForCli(
     log(`\nLog file not found: ${opts.logFile}`);
   }
 
-  const allOk = configOk && sqliteOk && lanceOk && embeddingOk && (!cfg.credentials.enabled || credentialsOk);
+  let allOk = configOk && sqliteOk && lanceOk && embeddingOk && (!cfg.credentials.enabled || credentialsOk);
 
   // ───── Reconciliation Check ─────
   if (opts.reconcile) {
     log("\n───── Vector DB Reconciliation ─────");
     if (!sqliteOk || !lanceOk) {
       log(`${FAIL} Reconciliation skipped — both SQLite and LanceDB must be healthy to reconcile.`);
+      allOk = false;
     } else {
       try {
         const sqliteIds = new Set(factsDb.getAllIds());
@@ -1115,6 +1116,7 @@ export async function runVerifyForCli(
         if (vectorOrphans.length === 0 && sqliteOrphans.length === 0) {
           log(`${OK} Reconciliation: SQLite and LanceDB are in sync (${sqliteIds.size} facts, ${vectorIds.length} vectors)`);
         } else {
+          allOk = false;
           if (vectorOrphans.length > 0) {
             log(`${FAIL} Vector orphans (in LanceDB but not SQLite): ${vectorOrphans.length}`);
             vectorOrphans.slice(0, 10).forEach((id) => log(`  - ${id}`));
@@ -1142,10 +1144,12 @@ export async function runVerifyForCli(
             sqliteOrphans.slice(0, 10).forEach((id) => log(`  - ${id}`));
             if (sqliteOrphans.length > 10) log(`  … and ${sqliteOrphans.length - 10} more`);
             log(`  → Re-run the plugin or use the re-index command to rebuild missing vectors.`);
+            issues.push(`${sqliteOrphans.length} SQLite fact(s) without corresponding vectors in LanceDB`);
           }
         }
       } catch (e) {
         log(`${FAIL} Reconciliation: FAIL — ${String(e)}`);
+        allOk = false;
         capturePluginError(e as Error, { subsystem: "cli", operation: "runVerifyForCli:reconcile" });
       }
     }
