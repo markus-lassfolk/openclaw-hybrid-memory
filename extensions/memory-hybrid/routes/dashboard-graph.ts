@@ -148,15 +148,15 @@ let sim, svg, link, node, pulse;
 async function loadBase() {
   const res = await fetch('/api/graph?days=30&maxNodes=400');
   if (!res.ok) {
-    throw new Error(`Failed to load graph: ${res.status} ${res.statusText}`);
+    throw new Error(\`Failed to load graph: \${res.status} \${res.statusText}\`);
   }
   return res.json();
 }
 
 async function loadRecall(q) {
-  const res = await fetch('/api/graph/recall?' + new URLSearchParams({ q }));
+  const res = await fetch('/api/graph/recall?' + new URLSearchParams({ query: q }));
   if (!res.ok) {
-    throw new Error(`Failed to load recall graph: ${res.status} ${res.statusText}`);
+    throw new Error(\`Failed to load recall graph: \${res.status} \${res.statusText}\`);
   }
   return res.json();
 }
