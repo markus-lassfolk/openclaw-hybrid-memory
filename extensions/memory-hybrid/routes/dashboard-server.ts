@@ -871,7 +871,14 @@ export async function createDashboardServer(ctx: DashboardContext, port: number)
   const server = createServer((req, res) => {
     const url = req.url ?? "/";
     const pathname = url.split("?")[0];
-    const searchParams = new URL(url, "http://127.0.0.1").searchParams;
+    let searchParams: URLSearchParams;
+    try {
+      searchParams = new URL(url, "http://127.0.0.1").searchParams;
+    } catch {
+      res.writeHead(400, { "Content-Type": "text/plain" });
+      res.end("Bad Request");
+      return;
+    }
 
     if (pathname === "/graph" || pathname === "/graph.html") {
       res.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-cache" });
