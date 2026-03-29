@@ -590,7 +590,6 @@ export class VectorDB {
     // Clear degraded-mode flag so ensureInitialized() runs doInitialize() instead of no-op (issue #906).
     this.lanceInitFailed = false;
     this.closed = false;
-    this.lanceInitFailed = false;
     this.initPromise = null;
     await this.ensureInitialized();
   }
