@@ -35,6 +35,18 @@ Need help? → [Full Quickstart Guide](docs/QUICKSTART.md)
 
 ---
 
+## ⚙️ Operational Modes
+
+Hybrid Memory can run entirely local, purely in the cloud, or a mix of both depending on your privacy and budget needs.
+
+| Mode | Embedding Provider | Storage | Cloud LLM Cost | Privacy |
+|------|--------------------|---------|----------------|---------|
+| **100% Local** | `ollama` / `onnx` | Local SQLite + LanceDB | **$0.00** (Free) | Ultimate (Air-gapped) |
+| **Hybrid** | `openai` / `google` | Local SQLite + LanceDB | Fractions of a cent | High (Vectors stay local) |
+| **Cloud Fallback** | `ollama` → `openai` | Local SQLite + LanceDB | Free (unless fallback triggers) | High (Graceful degradation) |
+
+---
+
 ## 🏢 See it in Action
 
 Curious what this looks like in practice? Check out the **[OpenClaw Personal Assistant Ecosystem](https://github.com/markus-lassfolk/openclaw-personal-assistant)**. It uses `openclaw-hybrid-memory` to build a highly proactive Executive Assistant persona that reads your emails, negotiates your calendar, and actively learns your business priorities over time.
@@ -59,6 +71,9 @@ Every session adds to its understanding of you: your phrasing, your style, your 
 ### 🔍 Finds what you need, even fuzzy matches
 
 SQLite + FTS5 for instant structured lookups. LanceDB vector search for when you don't quite remember how you phrased something. Both combined via RRF merge so nothing falls through the cracks.
+
+### 💰 Slashes Your Token Costs
+Stop pasting your entire project history and guidelines into every single prompt. By running a local semantic search, Hybrid Memory only injects the strictly relevant context you need for the current turn. Your LLM context windows stay tiny, clean, and cheap.
 
 ### ⚡ Runs in the background, no babysitting
 
