@@ -39,6 +39,8 @@ import type { HybridMemoryConfig } from "../config.js";
 import { getCronModelConfig, getDefaultCronModel, vectorDimsForModel } from "../config.js";
 import { parseSourceDate } from "../utils/dates.js";
 import { capturePluginError } from "../services/error-reporter.js";
+import { mergeAgentHealthDashboard } from "../backends/agent-health-store.js";
+import { collectForgeState } from "../routes/dashboard-server.js";
 import { withExit, type Chainable } from "./shared.js";
 import { getLanguageKeywordsFilePath } from "../utils/language-keywords.js";
 import { runMemoryDiagnostics } from "../services/memory-diagnostics.js";
@@ -240,6 +242,7 @@ export type ManageContext = {
   runCostReport?: (opts: import("../cli/handlers.js").CostReportCliOpts, sink: { log: (msg: string) => void }) => void;
   pruneCostLog?: (retainDays?: number) => number;
   auditStore?: import("../backends/audit-store.js").AuditStore | null;
+  agentHealthStore?: import("../backends/agent-health-store.js").AgentHealthStore | null;
 };
 
 export function registerManageCommands(mem: Chainable, ctx: ManageContext): void {
@@ -304,9 +307,69 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
     runBackup,
     runBackupVerify,
     auditStore,
+    agentHealthStore,
   } = ctx;
 
   const BACKFILL_DECAY_MARKER = ".backfill-decay-done";
+
+  const agentsCmd = mem.command("agents").description("Multi-agent health (Issue #789)");
+  agentsCmd
+    .command("health")
+    .description("Show per-agent health (SQLite + Forge live state)")
+    .option("--agent <id>", "Filter to a single agent id")
+    .action(
+      withExit(async (opts?: { agent?: string }) => {
+        if (!agentHealthStore) {
+          console.error("Agent health store is not available.");
+          process.exitCode = 1;
+          return;
+        }
+        const forge = await collectForgeState();
+        const views = mergeAgentHealthDashboard(forge, agentHealthStore.listAll());
+        const filter = opts?.agent?.trim().toLowerCase();
+        let any = false;
+        for (const v of views) {
+          if (filter && v.agentId !== filter) continue;
+          any = true;
+          console.log(
+            `${v.agentId}\t${v.status}\tscore=${v.score.toFixed(1)}\tlast=${new Date(v.lastSeen).toISOString()}\t${v.lastTask.slice(0, 120)}`,
+          );
+        }
+        if (!any) {
+          console.log("(no rows)");
+        }
+      }),
+    );
+  agentsCmd
+    .command("activity")
+    .description("Recent audit events for an agent (requires audit log)")
+    .requiredOption("--agent <id>", "Agent id")
+    .option("--hours <n>", "Lookback hours", "24")
+    .action(
+      withExit(async (opts?: { agent?: string; hours?: string }) => {
+        if (!auditStore) {
+          console.error("Audit store is not available.");
+          process.exitCode = 1;
+          return;
+        }
+        const agent = opts?.agent?.trim();
+        if (!agent) {
+          console.error("--agent is required.");
+          process.exitCode = 1;
+          return;
+        }
+        const hours = Math.max(1, Math.min(720, Number.parseInt(String(opts?.hours ?? "24"), 10) || 24));
+        const sinceMs = Date.now() - hours * 3600 * 1000;
+        const rows = auditStore.query({ sinceMs, agentId: agent, limit: 200 });
+        for (const r of rows) {
+          const ts = new Date(r.timestamp).toISOString();
+          console.log(`${ts}\t${r.action}\t${r.outcome}\t${r.target ?? ""}`);
+        }
+        if (rows.length === 0) {
+          console.log("(no events)");
+        }
+      }),
+    );
 
   mem
     .command("audit")

@@ -42,6 +42,7 @@ import type { LifecycleHooksHandle } from "../setup/register-hooks.js";
 import type { VariantGenerationQueue } from "../services/contextual-variants.js";
 import type { PendingLLMWarnings } from "../services/chat.js";
 import type { AuditStore } from "../backends/audit-store.js";
+import type { AgentHealthStore } from "../backends/agent-health-store.js";
 
 /** All mutable per-instance state for the memory-hybrid plugin. */
 export interface PluginRuntime {
@@ -82,6 +83,7 @@ export interface PluginRuntime {
   learningsDb: LearningsDB | null;
   /** Cross-agent audit log (Issue #790). */
   auditStore: AuditStore | null;
+  agentHealthStore: AgentHealthStore | null;
 
   // --- Lifecycle state ---
   /** Handle returned by registerLifecycleHooks; set after hooks are registered, null until then. */

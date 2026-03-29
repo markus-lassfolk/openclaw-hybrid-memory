@@ -171,6 +171,8 @@ describe("collectStatus", () => {
     expect(status.costs).toBeDefined();
     expect(status.audit).toBeDefined();
     expect(typeof status.audit.enabled).toBe("boolean");
+    expect(status.agentHealth).toBeDefined();
+    expect(typeof status.agentHealth.enabled).toBe("boolean");
   });
 
   it("memory.activeFacts matches factsDb.count()", async () => {

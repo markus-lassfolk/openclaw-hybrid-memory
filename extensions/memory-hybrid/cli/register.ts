@@ -295,6 +295,7 @@ export type HybridMemCliContext = {
   runBackupVerify?: () => import("../cli/backup.js").BackupVerifyResult;
   /** Cross-agent audit log (Issue #790). */
   auditStore?: import("../backends/audit-store.js").AuditStore | null;
+  agentHealthStore?: import("../backends/agent-health-store.js").AgentHealthStore | null;
 };
 
 /** Chainable command type (Commander-style). */

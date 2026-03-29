@@ -20,6 +20,7 @@ import type { VectorDB } from "../backends/vector-db.js";
 import { getDirSize, getFileSizeAsync, readJsonFile } from "../utils/fs.js";
 import { pluginLogger } from "../utils/logger.js";
 import type { AuditStore } from "../backends/audit-store.js";
+import { mergeAgentHealthDashboard, type AgentHealthView } from "../backends/agent-health-store.js";
 
 const execFile = promisify(execFileCb);
 
@@ -40,6 +41,8 @@ export interface DashboardContext {
   logger?: { error?: (msg: string) => void };
   /** Cross-agent audit trail (Issue #790). */
   auditStore?: AuditStore | null;
+  /** Per-agent health store (Issue #789). */
+  agentHealthStore?: import("../backends/agent-health-store.js").AgentHealthStore | null;
 }
 
 export interface MemoryStats {
@@ -77,14 +80,8 @@ export interface TaskQueueItem {
   details?: string;
 }
 
-export interface ForgeTaskItem {
-  agent?: string;
-  task: string;
-  workdir?: string;
-  pid?: number;
-  started_at?: string;
-  status?: string;
-}
+import type { ForgeTaskItem } from "../types/dashboard-types.js";
+export type { ForgeTaskItem };
 
 export interface GitActivity {
   prs: Array<{
@@ -122,6 +119,12 @@ export interface CostStats {
   enabled: boolean;
 }
 
+export interface AgentHealthPayload {
+  enabled: boolean;
+  agents: AgentHealthView[];
+  alerts: string[];
+}
+
 export interface AuditSummaryPayload {
   enabled: boolean;
   total24h: number;
@@ -148,6 +151,7 @@ export interface DashboardStatus {
   git: GitActivity;
   costs: CostStats;
   audit: AuditSummaryPayload;
+  agentHealth: AgentHealthPayload;
 }
 
 // ---------------------------------------------------------------------------
@@ -268,7 +272,7 @@ async function collectTaskQueue(): Promise<{
   return { current, history };
 }
 
-async function collectForgeState(): Promise<ForgeTaskItem[]> {
+export async function collectForgeState(): Promise<ForgeTaskItem[]> {
   const forgeDir = join(homedir(), ".openclaw", "workspace", "state", "forge");
   if (!existsSync(forgeDir)) return [];
   try {
@@ -420,6 +424,25 @@ function collectCostStats(ctx: DashboardContext): CostStats {
   }
 }
 
+async function collectAgentHealth(ctx: DashboardContext, forgeState?: ForgeTaskItem[]): Promise<AgentHealthPayload> {
+  if (!ctx.agentHealthStore) {
+    return { enabled: false, agents: [], alerts: [] };
+  }
+  try {
+    const forge = forgeState ?? (await collectForgeState());
+    const db = ctx.agentHealthStore.listAll();
+    const agents = mergeAgentHealthDashboard(forge, db);
+    const alerts: string[] = [];
+    for (const a of agents) {
+      if (a.status === "stale") alerts.push(`${a.agentId}: no activity > 4h — check dispatch`);
+      if (a.status === "degraded") alerts.push(`${a.agentId}: score ${a.score.toFixed(0)} (degraded)`);
+    }
+    return { enabled: true, agents, alerts };
+  } catch {
+    return { enabled: false, agents: [], alerts: [] };
+  }
+}
+
 function collectAuditSummary(ctx: DashboardContext): AuditSummaryPayload {
   if (!ctx.auditStore) {
     return {
@@ -465,6 +488,7 @@ export async function collectStatus(ctx: DashboardContext): Promise<DashboardSta
     collectForgeState(),
     collectGitActivity(ctx.gitRepo),
   ]);
+  const agentHealth = await collectAgentHealth(ctx, forge);
   return {
     generatedAt: new Date().toISOString(),
     memory,
@@ -474,6 +498,7 @@ export async function collectStatus(ctx: DashboardContext): Promise<DashboardSta
     git,
     costs: collectCostStats(ctx),
     audit: collectAuditSummary(ctx),
+    agentHealth,
   };
 }
 
@@ -739,6 +764,31 @@ function renderCosts(c) {
   return html;
 }
 
+function renderAgentHealth(ah) {
+  let html = '<div class="card section-full"><div class="card-title"><span class="icon">🩺</span> Agent Health</div>';
+  if (!ah || !ah.enabled) {
+    html += '<div class="empty">Agent health store unavailable</div></div>';
+    return html;
+  }
+  html += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:8px">';
+  (ah.agents || []).slice(0, 12).forEach(function (a) {
+    const st = String(a.status || 'unknown');
+    const badge = st === 'healthy' ? 'badge-green' : st === 'idle' ? 'badge-muted' : st === 'stale' ? 'badge-yellow' : st === 'degraded' ? 'badge-red' : 'badge-muted';
+    html += '<div class="agent-row" style="flex-direction:column;align-items:flex-start;border:1px solid var(--border);border-radius:6px;padding:8px">';
+    html += '<div style="display:flex;justify-content:space-between;width:100%;align-items:center"><span class="agent-name">' + escHtml(a.agentId) + '</span><span class="badge ' + badge + '">' + escHtml(st) + '</span></div>';
+    html += '<div class="task-meta">score ' + (typeof a.score === 'number' ? a.score.toFixed(1) : '—') + ' · ' + fmtDate(new Date(a.lastSeen).toISOString()) + '</div>';
+    html += '<div class="agent-task">' + escHtml((a.lastTask || '').slice(0, 120)) + '</div></div>';
+  });
+  html += '</div>';
+  if (ah.alerts && ah.alerts.length > 0) {
+    html += '<div style="margin-top:10px;font-size:12px;color:var(--yellow)">';
+    ah.alerts.slice(0, 4).forEach(function (m) { html += '<div>⚠ ' + escHtml(m) + '</div>'; });
+    html += '</div>';
+  }
+  html += '</div>';
+  return html;
+}
+
 function renderAudit(a) {
   let html = '<div class="card section-full"><div class="card-title"><span class="icon">📜</span> Audit Trail (24h)</div>';
   if (!a || !a.enabled) {
@@ -779,6 +829,7 @@ async function refresh() {
       renderCronJobs(data.cronJobs),
       renderGit(data.git),
       renderCosts(data.costs),
+      renderAgentHealth(data.agentHealth),
       renderAudit(data.audit),
     ].join('');
     document.getElementById('last-updated').textContent = 'Updated ' + new Date(data.generatedAt).toLocaleTimeString();
@@ -816,6 +867,19 @@ export async function createDashboardServer(ctx: DashboardContext, port: number)
     } catch {
       res.writeHead(400, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ error: "invalid request URL" }));
+      return;
+    }
+
+    if (pathname === "/api/agents/health") {
+      collectAgentHealth(ctx)
+        .then((payload) => {
+          res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-cache" });
+          res.end(JSON.stringify(payload));
+        })
+        .catch((err: unknown) => {
+          res.writeHead(500, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: String(err) }));
+        });
       return;
     }
 
