@@ -47,9 +47,9 @@ openclaw hybrid-mem config-mode <mode>
 
 | Mode | Description | LLM Cost | Key Features |
 |------|-------------|----------|--------------|
-| **`local`** | **100% Air-gapped.** Runs entirely on your machine. Uses local ONNX/Ollama embeddings and local SQLite/LanceDB. | **$0.00** | Basic storage, exact match recall, local semantic search. *Zero cloud LLM calls.* |
+| **`local`** | **100% Air-gapped.** (Default). Runs entirely on your machine. Uses local ONNX/Ollama embeddings and local SQLite/LanceDB. | **$0.00** | Basic storage, exact match recall, local semantic search. *Zero cloud LLM calls.* |
 | **`minimal`** | **Fast & Cheap.** Basic cloud integration but turns off expensive background jobs. | **Very Low** | Cloud embeddings, basic cloud routing, no background reflection. |
-| **`enhanced`** | **The Sweet Spot.** (Default). Balances intelligence with cost. | **Low** | Active RAG, background reflection, tool effectiveness tracking. |
+| **`enhanced`** | **The Sweet Spot.** Balances intelligence with cost. | **Low** | Active RAG, background reflection, tool effectiveness tracking. |
 | **`complete`** | **Maximum Intelligence.** Turns on every experimental cognitive feature. | **Medium** | Everything above + deep semantic clustering, self-correction, and autonomous skill crystallization. |
 
 ---
