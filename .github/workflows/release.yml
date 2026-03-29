@@ -2,7 +2,8 @@
 # docs/RELEASE-NOTES-<version>.md (legacy), plus matching CHANGELOG.md section; publishes to npm.
 # - Tag push (v*): run appears under the tag in Actions (change branch filter to "All" or the tag).
 # - Manual run: Actions → Release → "Run workflow", enter version (e.g. v2026.3.180), use branch main.
-# - After CI succeeds on main, tag-release-after-ci.yml may push v* if missing → triggers this workflow.
+# - After CI succeeds on main, tag-release-after-ci.yml may push v* if missing, then **workflow_dispatch**
+#   this workflow if the GitHub Release is still missing (token pushes do not trigger `on: push: tags`).
 name: Release
 
 on:

@@ -1,6 +1,9 @@
-# After a successful CI run on main, push git tag v<package.json version> if that tag does not
-# exist yet. That triggers the Release workflow (tag push v*), which attaches release notes +
-# CHANGELOG and publishes to npm.
+# After a successful CI run on main:
+# 1) Push git tag v<package.json version> if missing.
+# 2) If the GitHub Release for that tag is still missing, dispatch the Release workflow.
+#
+# Pushes made with the default GITHUB_TOKEN do not trigger other workflows (including `on: push: tags`),
+# so the Release workflow would never run from the tag push alone. Dispatch fixes that.
 name: Tag release after CI (main)
 
 on:
@@ -21,17 +24,26 @@ jobs:
       github.event.workflow_run.head_repository.full_name == github.repository
     permissions:
       contents: write
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+      tag: ${{ steps.meta.outputs.tag }}
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.workflow_run.head_sha }}
           fetch-depth: 0
 
+      - name: Version and tag metadata
+        id: meta
+        run: |
+          VERSION=$(node -p "require('./extensions/memory-hybrid/package.json').version")
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "tag=v${VERSION}" >> "$GITHUB_OUTPUT"
+
       - name: Push annotated tag when absent
         run: |
           set -euo pipefail
-          VERSION=$(node -p "require('./extensions/memory-hybrid/package.json').version")
-          TAG="v${VERSION}"
+          TAG="${{ steps.meta.outputs.tag }}"
           if [ -n "$(git ls-remote origin "refs/tags/${TAG}")" ]; then
             echo "Tag ${TAG} already exists on origin — skipping"
             exit 0
@@ -40,3 +52,29 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git tag -a "${TAG}" -m "Release ${TAG}"
           git push origin "${TAG}"
+
+  dispatch-release-if-missing:
+    name: Dispatch Release workflow if no GitHub Release
+    needs: [tag-if-needed]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 1
+
+      - name: Dispatch Release when GitHub Release is absent
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="${{ needs.tag-if-needed.outputs.tag }}"
+          if gh release view "${TAG}" --repo "${{ github.repository }}" 2>/dev/null; then
+            echo "GitHub Release ${TAG} already exists — nothing to do"
+            exit 0
+          fi
+          echo "No GitHub Release for ${TAG} — dispatching Release workflow"
+          gh workflow run "Release" --repo "${{ github.repository }}" -f "version=${TAG}" --ref main
