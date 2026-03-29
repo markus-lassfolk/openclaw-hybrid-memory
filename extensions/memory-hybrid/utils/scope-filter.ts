@@ -29,10 +29,7 @@ export function buildToolScopeFilter(
   const trustParams = config.multiAgent.trustToolScopeParams === true;
   const hasScopeParams = Boolean(userId || agentId || sessionId);
   if (hasScopeParams && trustParams) {
-    if (confirmCrossTenantScope === true) {
-      return { userId: userId ?? null, agentId: agentId ?? null, sessionId: sessionId ?? null };
-    }
-    addOperationBreadcrumb("scope-filter", "cross-tenant-scope-rejected-no-confirmation");
+    return { userId: userId ?? null, agentId: agentId ?? null, sessionId: sessionId ?? null };
   }
   if (hasScopeParams && !trustParams) {
     // Debug: Log when explicit scope params are ignored for security
