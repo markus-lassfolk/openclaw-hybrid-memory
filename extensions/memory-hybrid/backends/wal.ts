@@ -33,7 +33,7 @@ export type WALEntry = {
 
 const WAL_REMOVE_PREFIX = '{"op":"remove","id":';
 
-export function isWalEntry(obj: unknown): obj is WALEntry {
+function isWalEntry(obj: unknown): obj is WALEntry {
   if (typeof obj !== "object" || obj === null || !("id" in obj) || !("timestamp" in obj) || !("operation" in obj)) {
     return false;
   }

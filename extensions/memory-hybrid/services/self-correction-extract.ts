@@ -45,7 +45,7 @@ function shouldSkipUserMessage(text: string): boolean {
   return false;
 }
 
-export type RunSelfCorrectionExtractOpts = {
+type RunSelfCorrectionExtractOpts = {
   filePaths: string[];
   correctionRegex: RegExp;
 };

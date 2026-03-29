@@ -19,9 +19,11 @@ import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
 import type { WriteAheadLog } from "../backends/wal.js";
 import type { HybridMemoryConfig } from "../config.js";
+import type { MemoryEntry } from "../types/memory.js";
 import type { EmbeddingProvider } from "./embeddings.js";
 import { capturePluginError } from "./error-reporter.js";
 import { runPreConsolidationFlush } from "./pre-consolidation-flush.js";
+import { estimateTokenCount, serializeFactForContext } from "./retrieval-orchestrator.js";
 import { access, readFile } from "node:fs/promises";
 
 // ---------------------------------------------------------------------------
@@ -220,6 +222,67 @@ export interface ContextEngineOptions {
   pluginVersion?: string;
 }
 
+// ---------------------------------------------------------------------------
+// Context block builder
+// ---------------------------------------------------------------------------
+
+/**
+ * Build a structured memory context block from a list of facts.
+ *
+ * Uses `serializeFactForContext` for each entry (same format as the
+ * retrieval pipeline) and respects the optional `tokenBudget` cap.
+ *
+ * @param facts       - Ordered list of MemoryEntry values, best-first.
+ * @param header      - HTML comment tag used as the opening/closing marker.
+ * @param label       - Human-readable label for the block heading.
+ * @param tokenBudget - Optional max tokens; entries are skipped once the
+ *                      budget is exceeded.
+ * @returns The complete context block string, or `null` when `facts` is empty.
+ */
+export function buildContextBlock(
+  facts: MemoryEntry[],
+  header: string,
+  label: string,
+  tokenBudget?: number,
+): string | null {
+  if (facts.length === 0) return null;
+
+  const lines: string[] = [`<!-- memory-hybrid: ${header} -->`, label];
+  const closingLine = `<!-- /memory-hybrid: ${header} -->`;
+
+  const baseText = [...lines, closingLine].join("\n");
+  let currentTokens = estimateTokenCount(baseText);
+
+  if (tokenBudget !== undefined && currentTokens > tokenBudget) {
+    return null;
+  }
+
+  let addedFacts = 0;
+  for (const entry of facts) {
+    const serialized = serializeFactForContext(entry);
+    const entryTokens = estimateTokenCount("\n" + serialized);
+    if (tokenBudget !== undefined && currentTokens + entryTokens > tokenBudget) break;
+    lines.push(serialized);
+    currentTokens += entryTokens;
+    addedFacts++;
+  }
+
+  if (addedFacts === 0) return null;
+
+  lines.push(closingLine);
+
+  // Ensure the final joined string strictly satisfies the budget
+  while (lines.length > 3 && tokenBudget !== undefined && estimateTokenCount(lines.join("\n")) > tokenBudget) {
+    lines.splice(lines.length - 2, 1);
+  }
+
+  if (lines.length <= 3 && tokenBudget !== undefined && estimateTokenCount(lines.join("\n")) > tokenBudget) {
+    return null;
+  }
+
+  return lines.join("\n");
+}
+
 /**
  * Minimal ContextEngine that integrates hybrid-memory into the OpenClaw
  * context lifecycle. Designed for backward compatibility — every method
@@ -245,17 +308,50 @@ export class HybridMemoryContextEngine implements MinimalContextEngine {
   }
 
   /**
-   * Pass-through: the autoRecall hook already injected relevant memories
-   * via before_agent_start → prependContext.
+   * Budget-aware context assembly.
    *
-   * We return messages as-is; future work can inject a systemPromptAddition
-   * once the ContextEngine is the sole injection point.
+   * Fetches the top-N most recent/important facts and injects them as a
+   * `systemPromptAddition` block so the SDK can place them in the system
+   * prompt. The `tokenBudget` parameter (exposed by SDK #274) caps the
+   * total context size returned; when absent, a conservative 1000-token
+   * default is used.
+   *
+   * The autoRecall hook already handles per-turn injection via
+   * `before_agent_start → prependContext`; this method provides the same
+   * information to the ContextEngine slot so future SDK versions can
+   * manage injection centrally.
    */
   async assemble(params: { sessionId: string; messages: unknown[]; tokenBudget?: number }): Promise<AssembleResult> {
-    return {
-      messages: params.messages,
-      estimatedTokens: 0,
-    };
+    const { factsDb, cfg, logger } = this.opts;
+    const budget = params.tokenBudget ?? cfg.autoRecall?.maxTokens ?? 1000;
+
+    try {
+      const limit = cfg.autoRecall?.limit ?? 10;
+      const facts = factsDb.list(Math.min(limit, 15));
+
+      if (facts.length === 0) {
+        return { messages: params.messages, estimatedTokens: 0 };
+      }
+
+      const block = buildContextBlock(facts, "session-context", "Relevant memories for this session:", budget);
+      if (!block) {
+        return { messages: params.messages, estimatedTokens: 0 };
+      }
+
+      const estimatedTokens = estimateTokenCount(block);
+      logger.debug?.(
+        `memory-hybrid: context-engine assemble — injecting ${facts.length} facts, ~${estimatedTokens} tokens (budget=${budget})`,
+      );
+
+      return {
+        messages: params.messages,
+        estimatedTokens,
+        systemPromptAddition: block,
+      };
+    } catch (err) {
+      logger.warn?.(`memory-hybrid: context-engine assemble failed (non-fatal): ${err}`);
+      return { messages: params.messages, estimatedTokens: 0 };
+    }
   }
 
   /**
@@ -310,19 +406,13 @@ export class HybridMemoryContextEngine implements MinimalContextEngine {
       try {
         sessionFacts = factsDb.getCount();
         topFacts = factsDb.list(8);
-        if (topFacts.length > 0) {
-          const lines: string[] = [
-            "<!-- memory-hybrid: post-compaction memory summary -->",
-            "Key memories retained across compaction:",
-          ];
-          for (const f of topFacts) {
-            const entityPrefix = f.entity ? `[${f.entity}] ` : "";
-            const preview = f.text.length > 150 ? `${f.text.slice(0, 150)}…` : f.text;
-            lines.push(`- ${entityPrefix}${preview}`);
-          }
-          lines.push("<!-- /memory-hybrid: post-compaction memory summary -->");
-          memorySummary = lines.join("\n");
-        }
+        const block = buildContextBlock(
+          topFacts,
+          "post-compaction memory summary",
+          "Key memories retained across compaction:",
+          _params.tokenBudget,
+        );
+        if (block) memorySummary = block;
       } catch {
         // Non-fatal
       }
@@ -377,20 +467,14 @@ export class HybridMemoryContextEngine implements MinimalContextEngine {
         return { rollback: async () => {} };
       }
 
-      const lines = topFacts.map((f) => {
-        const entityPrefix = f.entity ? `[${f.entity}] ` : "";
-        const preview = f.text.length > 200 ? `${f.text.slice(0, 200)}…` : f.text;
-        return `- ${entityPrefix}${preview}`;
-      });
-
       // contextAddition is a non-standard field on the return type — populated so that
       // SDK versions that support it can inject the block; older versions ignore it.
-      const contextAddition = [
-        `<!-- memory-hybrid: parent context injected for subagent ${params.childSessionKey} -->`,
+      // Uses serializeFactForContext for consistent formatting with the retrieval pipeline.
+      const contextAddition = buildContextBlock(
+        topFacts,
+        `parent context injected for subagent ${params.childSessionKey}`,
         `Relevant memories from parent session (${params.parentSessionKey}):`,
-        ...lines,
-        "<!-- /memory-hybrid: parent context -->",
-      ].join("\n");
+      );
 
       logger.debug?.(
         `memory-hybrid: prepareSubagentSpawn — injecting ${topFacts.length} facts for child=${params.childSessionKey}`,
@@ -403,9 +487,10 @@ export class HybridMemoryContextEngine implements MinimalContextEngine {
             `memory-hybrid: prepareSubagentSpawn rollback — no state to revert for child=${params.childSessionKey}`,
           );
         },
-        // Extended field: injected into sub-agent context by SDK ≥ 2026.3.8
-        contextAddition,
-      } as SubagentSpawnPreparation & { contextAddition: string };
+        // Extended field: injected into sub-agent context by SDK ≥ 2026.3.8.
+        // null when buildContextBlock returns null (empty facts list — already guarded above).
+        ...(contextAddition !== null ? { contextAddition } : {}),
+      } as SubagentSpawnPreparation & { contextAddition?: string };
     } catch (err) {
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
         subsystem: "context-engine",

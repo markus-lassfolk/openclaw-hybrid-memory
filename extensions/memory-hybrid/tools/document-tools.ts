@@ -30,7 +30,7 @@ import { extractTags } from "../utils/tags.js";
 import { stringEnum } from "../utils/typebox.js";
 import type { ProvenanceService } from "../services/provenance.js";
 
-export interface DocumentToolsContext {
+interface DocumentToolsContext {
   factsDb: FactsDB;
   vectorDb: VectorDB;
   cfg: HybridMemoryConfig;

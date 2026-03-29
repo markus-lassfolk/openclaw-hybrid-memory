@@ -22,7 +22,7 @@ function ensureUniqueSlug(basePath: string, slug: string): string {
   return candidate;
 }
 
-export type GenerateAutoSkillsOptions = {
+type GenerateAutoSkillsOptions = {
   skillsAutoPath: string;
   validationThreshold: number;
   skillTTLDays: number;

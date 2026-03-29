@@ -22,7 +22,7 @@ import { capturePluginError } from "./error-reporter.js";
 // ---------------------------------------------------------------------------
 
 /** Raw output from `humanizer score --json` */
-export interface HumanizerRawOutput {
+interface HumanizerRawOutput {
   score: number;
   patterns_triggered?: string[];
   category_breakdown?: Record<string, number>;
@@ -32,7 +32,7 @@ export interface HumanizerRawOutput {
 }
 
 /** Parsed, validated result after calling humanizer */
-export interface HumanizerResult {
+interface HumanizerResult {
   score: number;
   patternsTriggered: string[];
   categoryBreakdown: Record<string, number>;

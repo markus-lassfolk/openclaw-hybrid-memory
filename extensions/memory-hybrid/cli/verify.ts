@@ -24,7 +24,10 @@ export function registerVerifyCommands(mem: Chainable, ctx: VerifyContext): void
     .option("--fix", "Print or apply default config for missing items")
     .option("--log-file <path>", "Check this log file for memory-hybrid / cron errors")
     .option("--test-llm", "Test each configured LLM model with a minimal completion (requires gateway)")
-    .option("--reconcile", "Compare SQLite fact_embeddings vs LanceDB row counts (issue #904)")
+    .option(
+      "--reconcile",
+      "Check SQLite ↔ LanceDB consistency (orphans; issue #904). Use --fix to remove vector-side orphans.",
+    )
     .option("--no-emoji", "Use plain text indicators instead of emoji (for terminals with poor Unicode support)")
     .action(
       withExit(

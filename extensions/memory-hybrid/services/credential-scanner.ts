@@ -86,7 +86,7 @@ export function typeFromVarName(varName: string): CredentialType {
  * Credential extraction patterns for tool call inputs.
  * Each pattern has a regex and an extract function.
  */
-export const TOOL_CALL_CREDENTIAL_PATTERNS: Array<{
+const TOOL_CALL_CREDENTIAL_PATTERNS: Array<{
   regex: RegExp;
   extract: (match: RegExpMatchArray, fullText: string) => ToolCallCredential | null;
 }> = [

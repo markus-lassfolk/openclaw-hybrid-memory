@@ -30,7 +30,7 @@ const execFile = promisify(execFileCb);
 // Types
 // ---------------------------------------------------------------------------
 
-export interface DashboardContext {
+interface DashboardContext {
   factsDb: FactsDB;
   vectorDb: VectorDB;
   resolvedSqlitePath: string;
@@ -47,7 +47,7 @@ export interface DashboardContext {
   agentHealthStore?: import("../backends/agent-health-store.js").AgentHealthStore | null;
 }
 
-export interface MemoryStats {
+interface MemoryStats {
   activeFacts: number;
   expiredFacts: number;
   vectorCount: number;
@@ -56,7 +56,7 @@ export interface MemoryStats {
   totalSizeBytes: number;
 }
 
-export interface CronJobStatus {
+interface CronJobStatus {
   id: string;
   name: string;
   schedule: string;
@@ -70,7 +70,7 @@ export interface CronJobStatus {
   model?: string;
 }
 
-export interface TaskQueueItem {
+interface TaskQueueItem {
   issue?: number;
   title?: string;
   branch?: string;
@@ -82,7 +82,7 @@ export interface TaskQueueItem {
   details?: string;
 }
 
-export interface ForgeTaskItem {
+interface ForgeTaskItem {
   agent?: string;
   task: string;
   workdir?: string;
@@ -91,7 +91,7 @@ export interface ForgeTaskItem {
   status?: string;
 }
 
-export interface GitActivity {
+interface GitActivity {
   prs: Array<{
     number: number;
     title: string;
@@ -109,7 +109,7 @@ export interface GitActivity {
   gitError?: string;
 }
 
-export interface CostRow {
+interface CostRow {
   feature: string;
   calls: number;
   inputTokens: number;
@@ -117,7 +117,7 @@ export interface CostRow {
   estimatedCostUsd: number;
 }
 
-export interface CostStats {
+interface CostStats {
   features: CostRow[];
   totalCalls: number;
   totalInputTokens: number;
@@ -127,13 +127,13 @@ export interface CostStats {
   enabled: boolean;
 }
 
-export interface AgentHealthPayload {
+interface AgentHealthPayload {
   enabled: boolean;
   agents: AgentHealthView[];
   alerts: string[];
 }
 
-export interface AuditSummaryPayload {
+interface AuditSummaryPayload {
   enabled: boolean;
   total24h: number;
   byOutcome: { success: number; partial: number; failed: number };
@@ -147,7 +147,7 @@ export interface AuditSummaryPayload {
   }>;
 }
 
-export interface DashboardStatus {
+interface DashboardStatus {
   generatedAt: string;
   memory: MemoryStats;
   cronJobs: CronJobStatus[];
@@ -926,7 +926,7 @@ export async function createDashboardServer(ctx: DashboardContext, port: number)
           res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-cache" });
           res.end(JSON.stringify(payload));
         })
-        .catch((err: unknown) => {
+        .catch((_err: unknown) => {
           res.writeHead(500, { "Content-Type": "application/json" });
           res.end(JSON.stringify({ error: "InternalServerError" }));
         });
@@ -987,7 +987,7 @@ export async function createDashboardServer(ctx: DashboardContext, port: number)
           });
           res.end(body);
         })
-        .catch((err: unknown) => {
+        .catch((_err: unknown) => {
           res.writeHead(500, { "Content-Type": "application/json" });
           res.end(JSON.stringify({ error: "InternalServerError" }));
         });

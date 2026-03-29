@@ -15,7 +15,7 @@ import { pluginLogger } from "../utils/logger.js";
  * otherwise required manual LLM calls or human effort.
  * E.g. self-correction auto-fixing an incident, or auto-classify batching N facts.
  */
-export interface SavingsEntry {
+interface SavingsEntry {
   /** Feature that generated the savings (e.g. 'self-correction', 'auto-classify'). */
   feature: string;
   /** Human-readable description of the action (e.g. 'auto-fixed incident'). */
@@ -28,7 +28,7 @@ export interface SavingsEntry {
   note?: string;
 }
 
-export interface SavingsFeatureRow {
+interface SavingsFeatureRow {
   feature: string;
   /** Number of recordSavings() calls contributing to this feature. */
   entries: number;
@@ -36,7 +36,7 @@ export interface SavingsFeatureRow {
   estimatedSavingUsd: number;
 }
 
-export interface SavingsReport {
+interface SavingsReport {
   features: SavingsFeatureRow[];
   total: {
     entries: number;
@@ -46,7 +46,7 @@ export interface SavingsReport {
   days: number;
 }
 
-export interface CostEntry {
+interface CostEntry {
   feature: string; // e.g. 'auto-classify', 'query-expansion'
   model: string; // e.g. 'openai/gpt-4.1-nano'
   inputTokens: number;
@@ -55,7 +55,7 @@ export interface CostEntry {
   success?: boolean; // default true
 }
 
-export interface FeatureCostRow {
+interface FeatureCostRow {
   feature: string;
   calls: number;
   inputTokens: number;
@@ -63,7 +63,7 @@ export interface FeatureCostRow {
   estimatedCostUsd: number;
 }
 
-export interface ModelBreakdown {
+interface ModelBreakdown {
   model: string;
   calls: number;
   inputTokens: number;
@@ -71,7 +71,7 @@ export interface ModelBreakdown {
   estimatedCostUsd: number;
 }
 
-export interface CostReport {
+interface CostReport {
   features: FeatureCostRow[];
   total: {
     calls: number;

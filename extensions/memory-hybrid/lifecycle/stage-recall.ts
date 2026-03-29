@@ -28,7 +28,7 @@ import {
   resolveInteractiveRecallPolicy,
 } from "../services/retrieval-mode-policy.js";
 
-export const RECALL_STAGE_TIMEOUT_MS = INTERACTIVE_RECALL_STAGE_TIMEOUT_MS;
+const RECALL_STAGE_TIMEOUT_MS = INTERACTIVE_RECALL_STAGE_TIMEOUT_MS;
 
 function clipNarrativeText(text: string, maxChars = 360): string {
   if (text.length <= maxChars) return text;

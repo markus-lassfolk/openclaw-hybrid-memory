@@ -11,10 +11,10 @@ import { stringEnum } from "../utils/typebox.js";
 
 import type { CredentialsDB } from "../backends/credentials-db.js";
 import { CREDENTIAL_TYPES, type CredentialType, type HybridMemoryConfig } from "../config.js";
-import { capturePluginError } from "../services/error-reporter.js";
+import { withErrorTracking } from "../utils/error-tracking.js";
 import { SECONDS_PER_DAY } from "../utils/constants.js";
 
-export interface PluginContext {
+interface PluginContext {
   credentialsDb: CredentialsDB | null;
   cfg: HybridMemoryConfig;
   api: ClawdbotPluginApi;
@@ -48,17 +48,12 @@ export function registerCredentialTools(ctx: PluginContext, api: ClawdbotPluginA
             expires?: number | null;
           };
           if (!credentialsDb) throw new Error("Credentials store not available");
-          try {
-            credentialsDb.store({ service, type, value, url, notes, expires });
-          } catch (err) {
-            capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-              subsystem: "credentials",
-              operation: "credential-store",
-              phase: "runtime",
-              backend: "sqlite",
-            });
-            throw err;
-          }
+          withErrorTracking(() => credentialsDb.store({ service, type, value, url, notes, expires }), {
+            subsystem: "credentials",
+            operation: "credential-store",
+            phase: "runtime",
+            backend: "sqlite",
+          })();
           return {
             content: [{ type: "text", text: `Stored credential for ${service} (${type}).` }],
             details: { service, type },
@@ -81,18 +76,12 @@ export function registerCredentialTools(ctx: PluginContext, api: ClawdbotPluginA
         async execute(_toolCallId: string, params: Record<string, unknown>) {
           const { service, type } = params as { service: string; type?: CredentialType };
           if (!credentialsDb) throw new Error("Credentials store not available");
-          let entry;
-          try {
-            entry = credentialsDb.get(service, type);
-          } catch (err) {
-            capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-              subsystem: "credentials",
-              operation: "credential-get",
-              phase: "runtime",
-              backend: "sqlite",
-            });
-            throw err;
-          }
+          const entry = withErrorTracking(() => credentialsDb.get(service, type), {
+            subsystem: "credentials",
+            operation: "credential-get",
+            phase: "runtime",
+            backend: "sqlite",
+          })();
           if (!entry) {
             return {
               content: [
@@ -140,18 +129,12 @@ export function registerCredentialTools(ctx: PluginContext, api: ClawdbotPluginA
         parameters: Type.Object({}),
         async execute() {
           if (!credentialsDb) throw new Error("Credentials store not available");
-          let items;
-          try {
-            items = credentialsDb.list();
-          } catch (err) {
-            capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-              subsystem: "credentials",
-              operation: "credential-list",
-              phase: "runtime",
-              backend: "sqlite",
-            });
-            throw err;
-          }
+          const items = withErrorTracking(() => credentialsDb.list(), {
+            subsystem: "credentials",
+            operation: "credential-list",
+            phase: "runtime",
+            backend: "sqlite",
+          })();
           if (items.length === 0) {
             return {
               content: [{ type: "text", text: "No credentials stored." }],
@@ -184,18 +167,12 @@ export function registerCredentialTools(ctx: PluginContext, api: ClawdbotPluginA
         async execute(_toolCallId: string, params: Record<string, unknown>) {
           const { service, type } = params as { service: string; type?: CredentialType };
           if (!credentialsDb) throw new Error("Credentials store not available");
-          let deleted;
-          try {
-            deleted = credentialsDb.delete(service, type);
-          } catch (err) {
-            capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-              subsystem: "credentials",
-              operation: "credential-delete",
-              phase: "runtime",
-              backend: "sqlite",
-            });
-            throw err;
-          }
+          const deleted = withErrorTracking(() => credentialsDb.delete(service, type), {
+            subsystem: "credentials",
+            operation: "credential-delete",
+            phase: "runtime",
+            backend: "sqlite",
+          })();
           if (!deleted) {
             return {
               content: [

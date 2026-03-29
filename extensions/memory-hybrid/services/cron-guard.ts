@@ -27,7 +27,7 @@ import { join } from "node:path";
 export const GUARD_SUBDIR = join("cron", "guard");
 
 /** Absolute path of the guard directory. */
-export function getGuardDir(openclawDir?: string): string {
+function getGuardDir(openclawDir?: string): string {
   return join(openclawDir ?? join(homedir(), ".openclaw"), GUARD_SUBDIR);
 }
 

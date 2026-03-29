@@ -31,7 +31,7 @@ export interface VerifiedFact {
   createdAt: string;
 }
 
-export interface IntegrityReport {
+interface IntegrityReport {
   valid: boolean;
   corrupted?: string[];
   checked: number;

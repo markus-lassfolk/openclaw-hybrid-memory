@@ -52,9 +52,9 @@ export interface ExtractedFact {
 }
 
 /** Per-session cursor: tracks byte offset into the session file. */
-export type SessionCursors = Record<string, number>;
+type SessionCursors = Record<string, number>;
 
-export interface ObserverRunResult {
+interface ObserverRunResult {
   sessionsScanned: number;
   chunksProcessed: number;
   factsExtracted: number;
@@ -140,7 +140,7 @@ export function extractTextFromJsonlChunk(chunk: string): string {
 // Cursor management
 // ---------------------------------------------------------------------------
 
-export const DEFAULT_CURSORS_FILENAME = ".passive-observer-cursors.json";
+const DEFAULT_CURSORS_FILENAME = ".passive-observer-cursors.json";
 
 export function getCursorsPath(dbDir: string): string {
   return join(dbDir, DEFAULT_CURSORS_FILENAME);

@@ -14,7 +14,7 @@ import { DatabaseSync } from "node:sqlite";
 
 import { BaseSqliteStore } from "./base-sqlite-store.js";
 
-export interface NarrativeEntry {
+interface NarrativeEntry {
   id: string;
   sessionId: string;
   periodStart: number;
@@ -24,7 +24,7 @@ export interface NarrativeEntry {
   createdAt: number;
 }
 
-export interface StoreNarrativeInput {
+interface StoreNarrativeInput {
   sessionId: string;
   periodStart: number;
   periodEnd: number;

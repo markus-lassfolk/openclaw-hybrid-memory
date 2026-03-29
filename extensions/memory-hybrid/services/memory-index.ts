@@ -21,7 +21,7 @@ const MAX_ENTITIES = 8;
 const MAX_PATTERNS = 5;
 const MAX_OUTPUT_CHARS = 3200;
 
-export interface MemoryIndexOptions {
+interface MemoryIndexOptions {
   workspaceRoot?: string;
   outputPath?: string;
   model?: string;
@@ -29,7 +29,7 @@ export interface MemoryIndexOptions {
   recentWindowDays?: number;
 }
 
-export interface MemoryIndexResult {
+interface MemoryIndexResult {
   path: string;
   content: string;
   usedFallback: boolean;

@@ -16,8 +16,6 @@ import type { CreateIssueInput, Issue, IssueSeverity, IssueStatus } from "../typ
 import { ISSUE_TRANSITIONS } from "../types/issue-types.js";
 import { BaseSqliteStore } from "./base-sqlite-store.js";
 
-export type { Issue, CreateIssueInput, IssueStatus } from "../types/issue-types.js";
-
 interface IssueRow {
   id: string;
   title: string;

@@ -14,7 +14,7 @@ import type { DetectedGap, GapDetector, GapDetectorOptions } from "./gap-detecto
 // Public types
 // ---------------------------------------------------------------------------
 
-export interface ProposeCycleResult {
+interface ProposeCycleResult {
   proposed: number;
   skipped: number;
   reasons: string[];

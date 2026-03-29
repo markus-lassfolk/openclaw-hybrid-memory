@@ -11,7 +11,7 @@ import type { WorkflowStore } from "../backends/workflow-store.js";
 import { extractGoalKeywords } from "../backends/workflow-store.js";
 import { capturePluginError } from "../services/error-reporter.js";
 
-export interface WorkflowToolsContext {
+interface WorkflowToolsContext {
   workflowStore: WorkflowStore;
 }
 

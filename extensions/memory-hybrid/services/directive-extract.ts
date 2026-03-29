@@ -227,7 +227,7 @@ function fallbackExtract(trimmed: string): string {
   return trimmed.slice(0, 200);
 }
 
-export type RunDirectiveExtractOpts = {
+type RunDirectiveExtractOpts = {
   filePaths: string[];
   directiveRegex: RegExp;
 };

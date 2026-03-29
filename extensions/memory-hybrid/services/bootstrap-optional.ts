@@ -41,7 +41,7 @@ export interface OptionalBootstrapServices {
   apitapStore: ApitapStore;
 }
 
-export type OptionalBootstrapInstaller = BootstrapPhaseConfig & {
+type OptionalBootstrapInstaller = BootstrapPhaseConfig & {
   id: string;
   install(context: OptionalBootstrapContext): OptionalBootstrapServices;
 };
@@ -60,9 +60,7 @@ export const optionalBootstrapInstaller: OptionalBootstrapInstaller = {
       if (encrypted) {
         api.logger.info(`memory-hybrid: credentials vault enabled (encrypted) (${credPath})`);
       } else {
-        const msg =
-          `memory-hybrid: credentials vault enabled without encryption at rest — ${credPath}. ` +
-          `Set credentials.encryptionKey (16+ chars) or OPENCLAW_CRED_KEY when ready; until then restrict access to this file.`;
+        const msg = `memory-hybrid: credentials vault enabled without encryption at rest — ${credPath}. Set credentials.encryptionKey (16+ chars) or OPENCLAW_CRED_KEY when ready; until then restrict access to this file.`;
         if (typeof api.logger.warn === "function") api.logger.warn(msg);
         else api.logger.info(msg);
       }

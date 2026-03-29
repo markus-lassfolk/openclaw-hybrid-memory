@@ -13,13 +13,13 @@ import type { IssueStore } from "../backends/issue-store.js";
 import type { IssueStatus, IssueSeverity } from "../types/issue-types.js";
 import type { HybridMemoryConfig } from "../config.js";
 import { isCompactVerbosity } from "../config.js";
-import { capturePluginError } from "../services/error-reporter.js";
+import { withErrorTracking } from "../utils/error-tracking.js";
 
 const ISSUE_STATUSES = ["open", "diagnosed", "fix-attempted", "resolved", "verified", "wont-fix"] as const;
 
 const ISSUE_SEVERITIES = ["low", "medium", "high", "critical"] as const;
 
-export interface IssueToolsContext {
+interface IssueToolsContext {
   issueStore: IssueStore;
   /** Optional config for verbosity-aware output (Issue #282). */
   cfg?: Pick<HybridMemoryConfig, "verbosity">;
@@ -54,28 +54,23 @@ export function registerIssueTools(ctx: IssueToolsContext, api: ClawdbotPluginAp
           tags?: string[];
         };
 
-        try {
-          const issue = issueStore.create({ title, symptoms, severity, tags });
-          const createText = isCompactVerbosity(verbosity)
-            ? `Issue: ${issue.id}.`
-            : `Created issue "${issue.title}" [${issue.id}] (status: ${issue.status}, severity: ${issue.severity})`;
-          return {
-            content: [
-              {
-                type: "text",
-                text: createText,
-              },
-            ],
-            details: issue,
-          };
-        } catch (err) {
-          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-            subsystem: "issues",
-            operation: "issue-create",
-            phase: "runtime",
-          });
-          throw err;
-        }
+        const issue = withErrorTracking(() => issueStore.create({ title, symptoms, severity, tags }), {
+          subsystem: "issues",
+          operation: "issue-create",
+          phase: "runtime",
+        })();
+        const createText = isCompactVerbosity(verbosity)
+          ? `Issue: ${issue.id}.`
+          : `Created issue "${issue.title}" [${issue.id}] (status: ${issue.status}, severity: ${issue.severity})`;
+        return {
+          content: [
+            {
+              type: "text",
+              text: createText,
+            },
+          ],
+          details: issue,
+        };
       },
     },
     { name: "memory_issue_create" },
@@ -108,35 +103,33 @@ export function registerIssueTools(ctx: IssueToolsContext, api: ClawdbotPluginAp
           symptoms?: string[];
         };
 
-        try {
-          let issue;
-          if (status) {
+        const issue = withErrorTracking(
+          () => {
             // Use transition() to validate state machine
-            issue = issueStore.transition(id, status, { rootCause, fix, rollback, symptoms });
-          } else {
-            issue = issueStore.update(id, { rootCause, fix, rollback, symptoms });
-          }
-
-          const updateText = isCompactVerbosity(verbosity)
-            ? `Issue ${issue.id}: ${issue.status}.`
-            : `Updated issue "${issue.title}" [${issue.id}] (status: ${issue.status})`;
-          return {
-            content: [
-              {
-                type: "text",
-                text: updateText,
-              },
-            ],
-            details: issue,
-          };
-        } catch (err) {
-          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+            if (status) {
+              return issueStore.transition(id, status, { rootCause, fix, rollback, symptoms });
+            }
+            return issueStore.update(id, { rootCause, fix, rollback, symptoms });
+          },
+          {
             subsystem: "issues",
             operation: "issue-update",
             phase: "runtime",
-          });
-          throw err;
-        }
+          },
+        )();
+
+        const updateText = isCompactVerbosity(verbosity)
+          ? `Issue ${issue.id}: ${issue.status}.`
+          : `Updated issue "${issue.title}" [${issue.id}] (status: ${issue.status})`;
+        return {
+          content: [
+            {
+              type: "text",
+              text: updateText,
+            },
+          ],
+          details: issue,
+        };
       },
     },
     { name: "memory_issue_update" },
@@ -172,29 +165,22 @@ export function registerIssueTools(ctx: IssueToolsContext, api: ClawdbotPluginAp
           limit?: number;
         };
 
-        try {
-          const issues = issueStore.list({ status, severity, tags, limit });
-          const summary = issues
-            .map((i) => `[${i.id.slice(0, 8)}] ${i.title} — ${i.status} (${i.severity})`)
-            .join("\n");
+        const issues = withErrorTracking(() => issueStore.list({ status, severity, tags, limit }), {
+          subsystem: "issues",
+          operation: "issue-list",
+          phase: "runtime",
+        })();
+        const summary = issues.map((i) => `[${i.id.slice(0, 8)}] ${i.title} — ${i.status} (${i.severity})`).join("\n");
 
-          return {
-            content: [
-              {
-                type: "text",
-                text: issues.length === 0 ? "No issues found." : `${issues.length} issue(s):\n${summary}`,
-              },
-            ],
-            details: issues,
-          };
-        } catch (err) {
-          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-            subsystem: "issues",
-            operation: "issue-list",
-            phase: "runtime",
-          });
-          throw err;
-        }
+        return {
+          content: [
+            {
+              type: "text",
+              text: issues.length === 0 ? "No issues found." : `${issues.length} issue(s):\n${summary}`,
+            },
+          ],
+          details: issues,
+        };
       },
     },
     { name: "memory_issue_list" },
@@ -214,32 +200,25 @@ export function registerIssueTools(ctx: IssueToolsContext, api: ClawdbotPluginAp
       async execute(_toolCallId: string, params: Record<string, unknown>) {
         const { query } = params as { query: string };
 
-        try {
-          const issues = issueStore.search(query);
-          const summary = issues
-            .map((i) => `[${i.id.slice(0, 8)}] ${i.title} — ${i.status} (${i.severity})`)
-            .join("\n");
+        const issues = withErrorTracking(() => issueStore.search(query), {
+          subsystem: "issues",
+          operation: "issue-search",
+          phase: "runtime",
+        })();
+        const summary = issues.map((i) => `[${i.id.slice(0, 8)}] ${i.title} — ${i.status} (${i.severity})`).join("\n");
 
-          return {
-            content: [
-              {
-                type: "text",
-                text:
-                  issues.length === 0
-                    ? `No issues found for query: "${query}"`
-                    : `${issues.length} issue(s) matching "${query}":\n${summary}`,
-              },
-            ],
-            details: issues,
-          };
-        } catch (err) {
-          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-            subsystem: "issues",
-            operation: "issue-search",
-            phase: "runtime",
-          });
-          throw err;
-        }
+        return {
+          content: [
+            {
+              type: "text",
+              text:
+                issues.length === 0
+                  ? `No issues found for query: "${query}"`
+                  : `${issues.length} issue(s) matching "${query}":\n${summary}`,
+            },
+          ],
+          details: issues,
+        };
       },
     },
     { name: "memory_issue_search" },
@@ -261,25 +240,20 @@ export function registerIssueTools(ctx: IssueToolsContext, api: ClawdbotPluginAp
       async execute(_toolCallId: string, params: Record<string, unknown>) {
         const { issueId, factId } = params as { issueId: string; factId: string };
 
-        try {
-          issueStore.linkFact(issueId, factId);
-          return {
-            content: [
-              {
-                type: "text",
-                text: `Linked fact ${factId} to issue ${issueId}.`,
-              },
-            ],
-            details: { issueId, factId },
-          };
-        } catch (err) {
-          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-            subsystem: "issues",
-            operation: "issue-link-fact",
-            phase: "runtime",
-          });
-          throw err;
-        }
+        withErrorTracking(() => issueStore.linkFact(issueId, factId), {
+          subsystem: "issues",
+          operation: "issue-link-fact",
+          phase: "runtime",
+        })();
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Linked fact ${factId} to issue ${issueId}.`,
+            },
+          ],
+          details: { issueId, factId },
+        };
       },
     },
     { name: "memory_issue_link_fact" },

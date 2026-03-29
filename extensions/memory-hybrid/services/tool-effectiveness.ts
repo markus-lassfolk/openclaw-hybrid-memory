@@ -50,10 +50,8 @@ export interface ToolEffectivenessReport {
   allScores: ToolMetrics[];
   recommendations: string[];
 }
-
 // ToolEffectivenessConfig is imported from ../config/types/features.js
 // Re-export for consumers that import it from this module.
-export type { ToolEffectivenessConfig };
 
 // ---------------------------------------------------------------------------
 // Database schema

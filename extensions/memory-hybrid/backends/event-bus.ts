@@ -13,9 +13,9 @@ import type { SQLInputValue } from "node:sqlite";
 import { capturePluginError } from "../services/error-reporter.js";
 import { BaseSqliteStore } from "./base-sqlite-store.js";
 
-export type EventStatus = "raw" | "processed" | "surfaced" | "pushed" | "archived";
+type EventStatus = "raw" | "processed" | "surfaced" | "pushed" | "archived";
 
-export interface MemoryEvent {
+interface MemoryEvent {
   id: number;
   event_type: string;
   source: string;
@@ -27,7 +27,7 @@ export interface MemoryEvent {
   fingerprint: string | null;
 }
 
-export interface QueryFilter {
+interface QueryFilter {
   status?: EventStatus;
   type?: string;
   since?: string;

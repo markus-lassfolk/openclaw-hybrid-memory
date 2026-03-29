@@ -94,7 +94,7 @@ export interface ActiveTaskHandoffRef {
 }
 
 /** Result of parsing ACTIVE-TASK.md */
-export interface ActiveTaskFile {
+interface ActiveTaskFile {
   /** Active (non-Done) tasks */
   active: ActiveTaskEntry[];
   /** Completed tasks (in ## Completed section) */
@@ -615,7 +615,7 @@ export interface TaskSignal {
 export const OCTAVE_TASK_HANDOFF_SCHEMA = "octave/task-handoff@v1";
 
 /** Typed OCTAVE-style handoff artifact persisted to disk. */
-export interface OctaveTaskHandoffArtifact {
+interface OctaveTaskHandoffArtifact {
   /** Schema identifier */
   schema: typeof OCTAVE_TASK_HANDOFF_SCHEMA;
   /** Artifact type */
@@ -855,7 +855,7 @@ export async function deleteSignal(filePath: string): Promise<void> {
 // ---------------------------------------------------------------------------
 
 /** ActiveTaskFile extended with the file's mtime in milliseconds. */
-export interface ActiveTaskFileWithMtime extends ActiveTaskFile {
+interface ActiveTaskFileWithMtime extends ActiveTaskFile {
   /** File modification time in milliseconds since epoch (from fs.stat) */
   mtime: number;
 }
@@ -989,8 +989,6 @@ export async function writeActiveTaskFileGuarded(
   await writeActiveTaskFile(filePath, active, completed);
   return { skipped: false };
 }
-
 // ---------------------------------------------------------------------------
 // Re-exports of types used in other modules
 // ---------------------------------------------------------------------------
-export { ACTIVE_STATUSES };

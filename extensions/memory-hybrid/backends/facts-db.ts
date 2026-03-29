@@ -43,6 +43,7 @@ import {
 import {
   createLink as createLinkHelper,
   createOrStrengthenRelatedLink as createOrStrengthenRelatedLinkHelper,
+  expandGraphWithCTE as expandGraphWithCTEHelper,
   getConnectedFactIds as getConnectedFactIdsHelper,
   getLinksFrom as getLinksFromHelper,
   getLinksTo as getLinksToHelper,
@@ -57,7 +58,6 @@ export {
   MEMORY_LINK_TYPES,
   type MemoryLinkType,
   type ReinforcementContext,
-  type ReinforcementEvent,
 } from "./facts-db/types.js";
 import type { MemoryLinkType, ReinforcementContext, ReinforcementEvent } from "./facts-db/types.js";
 
@@ -2546,6 +2546,27 @@ export class FactsDB extends BaseSqliteStore {
     return getConnectedFactIdsHelper(this.liveDb, factIds, maxDepth);
   }
 
+  /**
+   * Perform graph expansion using a recursive CTE, returning expanded nodes with hop count and path info.
+   * This is used by graph-retrieval.ts to avoid N+1 query patterns.
+   *
+   * @param seedFactIds - Array of seed fact IDs to start expansion from
+   * @param maxDepth - Maximum traversal depth
+   * @returns Array of expanded nodes with factId, seedId, hopCount, and path (JSON array of link steps)
+   */
+  expandGraphWithCTE(
+    seedFactIds: string[],
+    maxDepth: number,
+    options?: { asOf?: number; scopeFilter?: { userId?: string; agentId?: string; sessionId?: string } },
+  ): Array<{
+    factId: string;
+    seedId: string;
+    hopCount: number;
+    path: string;
+  }> {
+    return expandGraphWithCTEHelper(this.liveDb, seedFactIds, maxDepth, options);
+  }
+
   /** Get facts from the last N days (for reflection). Excludes pattern/rule by default. More efficient than getAll+filter. */
   getRecentFacts(days: number, options?: { excludeCategories?: string[] }): MemoryEntry[] {
     const nowSec = Math.floor(Date.now() / 1000);
@@ -2594,6 +2615,22 @@ export class FactsDB extends BaseSqliteStore {
       .prepare(`SELECT COUNT(*) AS count FROM facts WHERE (expires_at IS NULL OR expires_at > ?)${temporalFilter}`)
       .get(nowSec) as { count: number };
     return row?.count ?? 0;
+  }
+
+  /**
+   * Return all active fact IDs.
+   * Active = not expired and not superseded (same filter as getAll() default).
+   * Keeping this filter in sync with getAll() ensures that the set of IDs
+   * returned here is consistent with what callers expect to be "live" facts.
+   * Used by the reconcile command to detect orphan entries.
+   * IDs are normalized to lowercase to match VectorDB.getAllIds() normalization.
+   */
+  getAllIds(): string[] {
+    const nowSec = Math.floor(Date.now() / 1000);
+    const rows = this.liveDb
+      .prepare("SELECT id FROM facts WHERE superseded_at IS NULL AND (expires_at IS NULL OR expires_at > ?)")
+      .all(nowSec) as Array<{ id: string }>;
+    return rows.map((row) => row.id.toLowerCase());
   }
 
   /**
