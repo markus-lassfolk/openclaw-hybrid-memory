@@ -556,7 +556,7 @@ export class VectorDB {
     // LanceDB 0.27.x dropTable() fails with ENOTEMPTY on non-empty directories,
     // so we close the connection, delete the directory manually, then reconnect (issue #770).
     try {
-      this.db.close();
+      this.db?.close();
     } catch {
       // ignore
     }
