@@ -651,11 +651,12 @@ describe("hybridConfigSchema.parse", () => {
     expect(result.credentials.encryptionKey).toBe("abcdefghij1234567890");
   });
 
-  it("allows credentials enabled without key (vault plaintext)", () => {
+  it("allows credentials enabled without key (vault plaintext) when explicitly opted in", () => {
     const result = hybridConfigSchema.parse({
       ...validBase,
       credentials: {
         enabled: true,
+        allowPlaintextStorage: true,
         // No encryptionKey → vault in plaintext (user secures by other means)
       },
     });
@@ -663,17 +664,26 @@ describe("hybridConfigSchema.parse", () => {
     expect(result.credentials.encryptionKey).toBe("");
   });
 
-  it("does not throw for short or unresolved encryption key; uses plaintext vault", () => {
+  it("rejects credentials enabled without key when plaintext is not opted in", () => {
+    expect(() =>
+      hybridConfigSchema.parse({
+        ...validBase,
+        credentials: { enabled: true },
+      }),
+    ).toThrow(/credentials\.enabled requires/);
+  });
+
+  it("does not throw for short or unresolved encryption key when allowPlaintextStorage is set", () => {
     const shortKey = hybridConfigSchema.parse({
       ...validBase,
-      credentials: { enabled: true, encryptionKey: "short" },
+      credentials: { enabled: true, encryptionKey: "short", allowPlaintextStorage: true },
     });
     expect(shortKey.credentials.enabled).toBe(true);
     expect(shortKey.credentials.encryptionKey).toBe("");
 
     const envMissing = hybridConfigSchema.parse({
       ...validBase,
-      credentials: { enabled: true, encryptionKey: "env:MISSING_ENV_VAR_XYZ" },
+      credentials: { enabled: true, encryptionKey: "env:MISSING_ENV_VAR_XYZ", allowPlaintextStorage: true },
     });
     expect(envMissing.credentials.enabled).toBe(true);
     expect(envMissing.credentials.encryptionKey).toBe("");

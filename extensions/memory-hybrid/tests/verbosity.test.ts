@@ -709,7 +709,7 @@ function makeMinimalLifecycleContext(verbosity: VerbosityLevel): LifecycleContex
     embedding: { provider: "ollama", model: "nomic-embed-text", dimensions: 768 },
     verbosity,
     autoRecall: { enabled: true, authFailure: { enabled: true } },
-    credentials: { enabled: true, autoDetect: true },
+    credentials: { enabled: true, autoDetect: true, allowPlaintextStorage: true },
     activeTask: { enabled: true },
     frustrationDetection: { enabled: true },
   });

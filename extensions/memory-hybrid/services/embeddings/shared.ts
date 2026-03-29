@@ -72,6 +72,39 @@ export function formatOpenAiEmbeddingDisplayLabel(model: string, endpoint: strin
 export const EMBEDDING_CACHE_MAX = 500;
 
 /**
+ * Async semaphore (counting mutex). Issue #840: pair every `acquire()` with `try/finally { release() }`
+ * so early returns cannot leak slots and block all subsequent callers.
+ */
+export class AsyncSemaphore {
+  private available: number;
+  private readonly waiters: Array<() => void> = [];
+
+  constructor(capacity = 1) {
+    if (!Number.isInteger(capacity) || capacity < 1) {
+      throw new Error(`AsyncSemaphore: capacity must be a positive integer, got ${capacity}`);
+    }
+    this.available = capacity;
+  }
+
+  async acquire(): Promise<void> {
+    if (this.available > 0) {
+      this.available--;
+      return;
+    }
+    await new Promise<void>((resolve) => this.waiters.push(resolve));
+  }
+
+  release(): void {
+    if (this.waiters.length > 0) {
+      const next = this.waiters.shift();
+      next?.();
+    } else {
+      this.available++;
+    }
+  }
+}
+
+/**
  * OpenAI embedding models have a hard limit of 8192 tokens per input.
  * Using ~4 chars/token heuristic (consistent with estimateTokens in utils/text.ts),
  * we clamp inputs to this character ceiling before hitting the API.

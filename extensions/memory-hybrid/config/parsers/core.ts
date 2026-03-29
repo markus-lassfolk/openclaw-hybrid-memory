@@ -162,6 +162,16 @@ export function parseCredentialsConfig(cfg: Record<string, unknown>): Credential
   }
   const hasValidKey = encryptionKey.length >= 16;
   const shouldEnable = !explicitlyDisabled && (credRaw?.enabled === true || hasValidKey);
+  const allowPlaintextStorage =
+    credRaw?.allowPlaintextStorage === true || process.env.OPENCLAW_CREDENTIALS_PLAINTEXT_OK === "1";
+
+  if (shouldEnable && !hasValidKey && !allowPlaintextStorage) {
+    throw new Error(
+      "credentials.enabled requires a strong encryption key (16+ chars or env:VAR resolving to 16+ chars), " +
+        "or explicit opt-in: set credentials.allowPlaintextStorage: true or OPENCLAW_CREDENTIALS_PLAINTEXT_OK=1 " +
+        "to store credentials on disk without encryption at rest.",
+    );
+  }
 
   let credentials: CredentialsConfig;
   if (shouldEnable) {
@@ -174,6 +184,7 @@ export function parseCredentialsConfig(cfg: Record<string, unknown>): Credential
       enabled: true,
       store: "sqlite",
       encryptionKey: "",
+      allowPlaintextStorage: allowPlaintextStorage || undefined,
       ...opts,
     };
   } else {

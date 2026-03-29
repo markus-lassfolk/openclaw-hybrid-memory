@@ -93,6 +93,20 @@ export interface TaskQueueItem {
  * Returns true if the given PID is alive on this system.
  * Uses signal 0 (no-op) — throws ESRCH if no such process.
  */
+/**
+ * Returns true when `current` is the same queue task as `stale` for safe replacement of current.json.
+ * When pid/started are absent, pid/start equality must not be used (undefined === undefined is always true).
+ */
+export function taskQueueItemMatchesStale(current: TaskQueueItem, stale: TaskQueueItem): boolean {
+  const hasPidOrStarted = stale.pid != null || stale.started != null;
+  if (hasPidOrStarted) {
+    return current.pid === stale.pid && current.started === stale.started;
+  }
+  return (
+    current.issue === stale.issue && current.dispatchToken === stale.dispatchToken && current.branch === stale.branch
+  );
+}
+
 export function isPidAlive(pid: number): boolean {
   if (!Number.isInteger(pid) || pid <= 0) return false;
   try {
@@ -293,13 +307,7 @@ export async function runTaskQueueWatchdog(
   // was written between our initial read and this unlink.
   try {
     const recheck = await readJsonFile<TaskQueueItem>(currentPath);
-    // Guard is only meaningful if we have at least one identity field to compare.
-    // When both pid and started are undefined, the comparison is always true and
-    // provides no protection. In such cases, also check branch to ensure identity.
-    const hasPidOrStarted = item.pid != null || item.started != null;
-    const identityMatches = hasPidOrStarted
-      ? recheck && recheck.pid === item.pid && recheck.started === item.started
-      : recheck && recheck.pid === item.pid && recheck.started === item.started && recheck.branch === item.branch;
+    const identityMatches = recheck != null && taskQueueItemMatchesStale(recheck, item);
     if (identityMatches) {
       await unlink(currentPath);
     }
