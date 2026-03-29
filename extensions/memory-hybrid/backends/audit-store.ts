@@ -14,7 +14,7 @@ export interface AuditEventInput {
   timestamp?: number;
   agentId: string;
   action: string;
-  target?: string;
+  target?: string | null;
   outcome: AuditOutcome;
   durationMs?: number;
   error?: string;
