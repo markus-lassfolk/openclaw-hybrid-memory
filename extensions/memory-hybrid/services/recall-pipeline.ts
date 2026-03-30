@@ -24,6 +24,7 @@ import type { EmbeddingProvider } from "./embeddings.js";
 import { shouldSuppressEmbeddingError } from "./embeddings.js";
 import { expandQueryWithHyde } from "./hyde-helper.js";
 import { DEFAULT_INTERACTIVE_RECALL_POLICY, type InteractiveRecallPolicy } from "./retrieval-mode-policy.js";
+import { yieldEventLoop } from "../utils/event-loop-yield.js";
 
 async function embedWithAbortRace(
   embedPromise: Promise<number[]>,
@@ -130,6 +131,9 @@ export async function runRecallPipelineQuery(
   stageMs.fts = Date.now() - t0;
   sqliteResults = [...sqliteResults, ...ftsResults];
 
+  // FTS + lookup are synchronous SQLite — yield so gateway WebSocket/health can run (#931).
+  await yieldEventLoop();
+
   let lanceResults: SearchResult[] = [];
   const useSemantic = cfg.retrievalStrategies.includes("semantic");
 
@@ -231,6 +235,8 @@ export async function runRecallPipelineQuery(
       }
     }
   }
+
+  await yieldEventLoop();
 
   t0 = Date.now();
   let results = mergeResults(sqliteResults, lanceResults, limitNum, factsDb);

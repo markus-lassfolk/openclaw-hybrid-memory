@@ -18,6 +18,7 @@ import {
 } from "../services/ambient-retrieval.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { formatNarrativeRange, recallNarrativeSummaries } from "../services/narrative-recall.js";
+import { yieldEventLoop } from "../utils/event-loop-yield.js";
 import { withTimeout } from "../utils/timeout.js";
 import { estimateTokens } from "../utils/text.js";
 import { isConsolidatedDerivedFact } from "../utils/consolidation-controls.js";
@@ -63,6 +64,9 @@ async function runRecall(
       sessionState;
 
     api.logger.debug?.(`memory-hybrid: auto-recall start (prompt length ${e.prompt.length})`);
+
+    // Let pending gateway I/O (health RPCs, WebSocket) run before heavy sync work (#931).
+    await yieldEventLoop();
 
     const fmt = ctx.cfg.autoRecall.injectionFormat;
     const isProgressive = fmt === "progressive" || fmt === "progressive_hybrid";
@@ -110,6 +114,7 @@ async function runRecall(
       };
       const degradedLimit = ctx.cfg.autoRecall.limit;
       const trimmed = e.prompt.trim();
+      await yieldEventLoop();
       const ftsOnly = ctx.factsDb.search(trimmed, degradedLimit, recallOpts);
       let hotPart = "";
       if (ctx.cfg.memoryTiering.enabled && ctx.cfg.memoryTiering.hotMaxTokens > 0) {
@@ -218,6 +223,7 @@ async function runRecall(
         procedureBlock = block;
       }
     }
+    await yieldEventLoop();
     const withProcedures = (s: string) => (procedureBlock ? `${procedureBlock}\n${s}` : s);
 
     // HOT block
@@ -232,6 +238,8 @@ async function runRecall(
         hotBlock = `<hot-memories>\n${hotLines.join("\n")}\n</hot-memories>\n\n`;
       }
     }
+
+    await yieldEventLoop();
 
     const recallOpts = {
       tierFilter,
@@ -315,6 +323,7 @@ async function runRecall(
         if (extraQueries.length > 0) {
           const extraResultSets: SearchResult[][] = [candidates];
           for (const q of extraQueries) {
+            await yieldEventLoop();
             try {
               const qResults = await runRecallPipelineQuery(q.text, Math.ceil(limit / 2), pipelineDeps, hydeUsedRef, {
                 entity: q.type === "entity" ? q.entity : undefined,
@@ -397,6 +406,8 @@ async function runRecall(
         });
       }
     }
+
+    await yieldEventLoop();
 
     const promptLower = e.prompt.toLowerCase();
     const { entityLookup } = ctx.cfg.autoRecall;
