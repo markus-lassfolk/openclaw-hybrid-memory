@@ -10,6 +10,7 @@ import {
   is403Like,
   is404Like,
   is500Like,
+  isAbortOrTransientLlmError,
   isConnectionErrorLike,
   isContextLengthError,
   isOllamaOOM,
@@ -1577,5 +1578,25 @@ describe("chatCompleteWithRetry — connection error (#703)", () => {
     await vi.runAllTimersAsync();
     await expectation;
     expect(errorReporter.capturePluginError).not.toHaveBeenCalled();
+  });
+});
+
+describe("isAbortOrTransientLlmError", () => {
+  it("detects Request was aborted", () => {
+    expect(isAbortOrTransientLlmError(new Error("Request was aborted."))).toBe(true);
+  });
+
+  it("detects gateway stopped / unreachable phrasing", () => {
+    expect(isAbortOrTransientLlmError(new Error("gateway client stopped"))).toBe(true);
+    expect(isAbortOrTransientLlmError(new Error("Gateway not reachable. Is it running?"))).toBe(true);
+  });
+
+  it("unwraps LLMRetryError cause", () => {
+    const inner = new Error("Request was aborted.");
+    expect(isAbortOrTransientLlmError(new LLMRetryError("wrap", inner, 1))).toBe(true);
+  });
+
+  it("returns false for arbitrary model failure", () => {
+    expect(isAbortOrTransientLlmError(new Error("model not found"))).toBe(false);
   });
 });

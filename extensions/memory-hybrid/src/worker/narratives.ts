@@ -2,7 +2,7 @@ import type OpenAI from "openai";
 import type { EventLog } from "../../backends/event-log.js";
 import type { NarrativesDB } from "../../backends/narratives-db.js";
 import type { WorkflowStore } from "../../backends/workflow-store.js";
-import { chatCompleteWithRetry } from "../../services/chat.js";
+import { chatCompleteWithRetry, isAbortOrTransientLlmError } from "../../services/chat.js";
 import { capturePluginError } from "../../services/error-reporter.js";
 import { getSessionLogFileSuffix } from "../../utils/constants.js";
 import { fillPrompt, loadPrompt } from "../../utils/prompt-loader.js";
@@ -122,12 +122,20 @@ export async function buildDailyNarrative(params: BuildDailyNarrativeParams): Pr
     );
     return true;
   } catch (err) {
-    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-      subsystem: "narratives",
-      operation: "build-daily-narrative",
-      sessionId,
-    });
-    logger.warn(`memory-hybrid: narrative build failed for ${sessionId}: ${err}`);
+    const transient = isAbortOrTransientLlmError(err);
+    if (!transient) {
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        subsystem: "narratives",
+        operation: "build-daily-narrative",
+        sessionId,
+      });
+    }
+    const detail = err instanceof Error ? err.message : String(err);
+    if (transient) {
+      logger.info?.(`memory-hybrid: narrative skipped (LLM unavailable or aborted) for ${sessionId}: ${detail}`);
+    } else {
+      logger.warn(`memory-hybrid: narrative build failed for ${sessionId}: ${err}`);
+    }
     return false;
   }
 }

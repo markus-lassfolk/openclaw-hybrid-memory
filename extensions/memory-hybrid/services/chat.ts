@@ -465,6 +465,28 @@ export class LLMRetryError extends Error {
 }
 
 /**
+ * True when an LLM call failed for abort, gateway loss, or transport — not plugin logic.
+ * Used by session narrative and similar paths to avoid noisy warns when the gateway stops.
+ */
+export function isAbortOrTransientLlmError(err: unknown): boolean {
+  if (err instanceof LLMRetryError) {
+    return isAbortOrTransientLlmError(err.cause);
+  }
+  if (err && typeof err === "object" && "cause" in err) {
+    const c = (err as { cause?: unknown }).cause;
+    if (c !== undefined && c !== null && isAbortOrTransientLlmError(c)) return true;
+  }
+  if (!(err instanceof Error)) {
+    return isConnectionErrorLike(err);
+  }
+  if (err.name === "AbortError") return true;
+  const msg = err.message;
+  if (/request was aborted|Request was aborted/i.test(msg)) return true;
+  if (/gateway client stopped|gateway not reachable|not reachable\.|is it running/i.test(msg)) return true;
+  return isConnectionErrorLike(err);
+}
+
+/**
  * Retry wrapper for LLM calls with exponential backoff.
  * Retries on failure with increasing delays: 1s, 3s, 9s.
  * On final failure, throws LLMRetryError with attempt number.
