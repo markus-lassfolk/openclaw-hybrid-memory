@@ -104,12 +104,10 @@ export function getConnectedFactIds(db: DatabaseSync, factIds: string[], maxDept
 
   // Use SQLite's recursive CTE for efficient graph traversal
   // This replaces the iterative N+1 query pattern with a single query
-  // UNION ALL is used to prevent tuple deduplication during traversal;
-  // final DISTINCT ensures each node appears once in the result
   const query = `
-    WITH RECURSIVE graph_traversal(fact_id, depth) AS (
+    WITH RECURSIVE graph_traversal(fact_id, depth, visited_ids) AS (
       -- Base case: start with seed facts at depth 0
-      SELECT value AS fact_id, 0 AS depth
+      SELECT value AS fact_id, 0 AS depth, ',' || value || ',' AS visited_ids
       FROM json_each(?)
 
       UNION ALL
@@ -117,22 +115,26 @@ export function getConnectedFactIds(db: DatabaseSync, factIds: string[], maxDept
       -- Recursive case (outgoing links)
       SELECT
         ml.target_fact_id AS fact_id,
-        gt.depth + 1 AS depth
+        gt.depth + 1 AS depth,
+        gt.visited_ids || ml.target_fact_id || ',' AS visited_ids
       FROM graph_traversal gt
       JOIN memory_links ml ON ml.source_fact_id = gt.fact_id
       WHERE gt.depth < ?
         AND ml.link_type != 'CONTRADICTS'
+        AND gt.visited_ids NOT LIKE '%,' || ml.target_fact_id || ',%'
 
       UNION ALL
 
       -- Recursive case (incoming links)
       SELECT
         ml.source_fact_id AS fact_id,
-        gt.depth + 1 AS depth
+        gt.depth + 1 AS depth,
+        gt.visited_ids || ml.source_fact_id || ',' AS visited_ids
       FROM graph_traversal gt
       JOIN memory_links ml ON ml.target_fact_id = gt.fact_id
       WHERE gt.depth < ?
         AND ml.link_type != 'CONTRADICTS'
+        AND gt.visited_ids NOT LIKE '%,' || ml.source_fact_id || ',%'
     )
     SELECT DISTINCT fact_id FROM graph_traversal
   `;
