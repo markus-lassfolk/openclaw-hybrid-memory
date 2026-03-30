@@ -149,7 +149,7 @@ jobs:
           node-version: '24'
           registry-url: 'https://registry.npmjs.org'
       - name: Cache node_modules
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: extensions/memory-hybrid/node_modules
           key: ${{ runner.os }}-node-24-${{ hashFiles('extensions/memory-hybrid/package-lock.json') }}
