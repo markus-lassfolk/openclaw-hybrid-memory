@@ -10,6 +10,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.3.301] - 2026-03-30
+
+### Release summary
+
+Embeddings and narratives hardening: **Azure / deployment** embedding paths and **verify** CLI align with runtime config ([#932](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/932), [#934](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/934)); **daily narrative** LLM calls use a longer timeout and **`chatCompleteWithRetry`** no longer reports wrapped abort/timeout causes to GlitchTip ([#935](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/935), [#936](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/936)); **store-embed** skips GlitchTip for Ollama circuit-breaker and other suppressed embedding errors ([#937](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/937)).
+
+### Fixed
+
+- **Embeddings:** Chain/fallback OpenAI model selection respects Azure deployment names; verify passes `deployment` / `models` / `endpoint` into embedding smoke tests.
+- **Chat / narratives:** `isAbortOrTransientLlmError(finalError)` used for fallback-exhausted reporting so `LLMRetryError` wrapping `Request was aborted` is not treated as unexpected; narrative summary uses **120s** LLM timeout.
+- **Embeddings (tools):** `shouldSuppressEmbeddingError` before `capturePluginError` on store-embed failures.
+
+---
+
 ## [2026.3.300] - 2026-03-30
 
 ### Release summary

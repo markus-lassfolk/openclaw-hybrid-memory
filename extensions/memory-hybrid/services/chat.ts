@@ -413,6 +413,7 @@ export async function chatComplete(opts: {
     const msg = error.message.toLowerCase();
     const isTransient =
       msg.includes("request was aborted") ||
+      msg.includes("operation was aborted") ||
       msg.includes("request timed out") ||
       msg.includes("timed out") ||
       msg.includes("llm request timeout") || // #339: our own timeout message uses "timeout" not "timed out"
@@ -481,7 +482,7 @@ export function isAbortOrTransientLlmError(err: unknown): boolean {
   }
   if (err.name === "AbortError") return true;
   const msg = err.message;
-  if (/request was aborted|Request was aborted/i.test(msg)) return true;
+  if (/request was aborted|Request was aborted|The operation was aborted|operation was aborted/i.test(msg)) return true;
   if (/gateway client stopped|gateway not reachable|not reachable\.|is it running/i.test(msg)) return true;
   return isConnectionErrorLike(err);
 }
@@ -748,10 +749,8 @@ export async function chatCompleteWithRetry(opts: {
   const finalIsOOM = isOllamaOOM(finalError); // #387: OOM is expected when model too large for RAM
   const finalIs429 = is429OrWrapped(finalError); // #397
   const finalIsContextLength = isContextLengthError(finalError); // #488: input too long for model context window
-  const finalIsTimeout = /timed out|llm request timeout|request was aborted|Request was aborted/i.test(
-    finalError.message,
-  );
-  const finalIsConnectionError = isConnectionErrorLike(finalError);
+  /** Unwraps LLMRetryError so "Request was aborted" in the cause is detected (#935, #936). */
+  const finalIsTransientLlm = isAbortOrTransientLlmError(finalError);
 
   // When every model failed because provider keys are missing, queue a user-visible chat warning
   // and skip Sentry (this is a config issue, not a bug).
@@ -777,8 +776,7 @@ export async function chatCompleteWithRetry(opts: {
       !finalIsOOM &&
       !finalIsContextLength && // #488: context window exceeded = config issue, not a bug
       !finalIsUnconfigured &&
-      !finalIsTimeout &&
-      !finalIsConnectionError &&
+      !finalIsTransientLlm &&
       !finalIs403 &&
       !finalIs401 &&
       !finalIs429
@@ -825,10 +823,8 @@ export async function chatCompleteWithRetry(opts: {
       "⚠️ Memory plugin: LLM unauthorized (401) — your API key is invalid or expired. Check provider settings. " +
         "Run: openclaw hybrid-mem verify --test-llm",
     );
-  } else if (finalIsTimeout) {
-    // #339: timeout errors are transient — don't report to GlitchTip
-  } else if (finalIsConnectionError) {
-    // #703: OpenAI SDK "Connection error." / APIConnectionError is transient — don't report to GlitchTip
+  } else if (finalIsTransientLlm) {
+    // #339, #703, #935, #936: abort/timeout/connection (including LLMRetryError-wrapped causes) — don't report
   } else if (finalIs429) {
     // #397: rate limit / usage limit — transient provider error, don't report to GlitchTip
     pendingWarnings?.add(

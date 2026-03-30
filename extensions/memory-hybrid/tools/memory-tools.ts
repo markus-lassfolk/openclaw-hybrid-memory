@@ -19,7 +19,7 @@ import type { EventLog } from "../backends/event-log.js";
 import type { NarrativesDB } from "../backends/narratives-db.js";
 import { categoryToEventType } from "../backends/event-log.js";
 import type { EmbeddingProvider } from "../services/embeddings.js";
-import { AllEmbeddingProvidersFailed } from "../services/embeddings.js";
+import { AllEmbeddingProvidersFailed, shouldSuppressEmbeddingError } from "../services/embeddings.js";
 import type { EmbeddingRegistry } from "../services/embedding-registry.js";
 import { toFloat32Array } from "../services/embedding-registry.js";
 import type { PendingLLMWarnings } from "../services/chat.js";
@@ -1546,6 +1546,9 @@ export function registerMemoryTools(
               // Graceful degradation: store the fact without a vector.
               // The fact is still findable by structured/keyword search.
               api.logger.warn("memory-hybrid: Stored fact without embeddings — all providers unavailable");
+            } else if (shouldSuppressEmbeddingError(err)) {
+              // Ollama circuit breaker, 429, config errors, etc. — expected noise (#937); don't send to GlitchTip.
+              api.logger.warn(`memory-hybrid: embedding skipped (expected): ${err}`);
             } else {
               capturePluginError(err instanceof Error ? err : new Error(String(err)), {
                 subsystem: "embeddings",

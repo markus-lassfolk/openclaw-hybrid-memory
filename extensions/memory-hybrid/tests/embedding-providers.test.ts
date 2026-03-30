@@ -935,6 +935,40 @@ describe("createEmbeddingProvider factory", () => {
     expect(result).toEqual(openaiVec);
     embedSpy.mockRestore();
   });
+
+  it("#932: chain OpenAI arm keeps Azure deployment id in model (forFallback), not text-embedding-3-small", () => {
+    const cfg: EmbeddingConfig = {
+      provider: "openai",
+      model: "my-azure-embedding-deployment",
+      apiKey: "sk-test-1234567890",
+      endpoint: "https://test.openai.azure.com/openai/v1",
+      dimensions: 1536,
+      batchSize: 50,
+      preferredProviders: ["openai", "ollama"],
+    };
+    const provider = createEmbeddingProvider(cfg);
+    expect(provider).toBeInstanceOf(ChainEmbeddingProvider);
+    expect(provider.modelName).toBe("my-azure-embedding-deployment");
+  });
+
+  it("#932: Ollama→OpenAI fallback on Azure still maps nomic to text-embedding-3-small for the OpenAI client", async () => {
+    vi.stubGlobal("fetch", mockOllamaFetchFail("ECONNREFUSED"));
+    const cfg: EmbeddingConfig = {
+      provider: "ollama",
+      model: "nomic-embed-text",
+      apiKey: "sk-test-1234567890",
+      endpoint: "https://test.openai.azure.com/openai/v1",
+      dimensions: 768,
+      batchSize: 50,
+    };
+    const embedSpy = vi.spyOn(Embeddings.prototype, "embed").mockResolvedValue(new Array(768).fill(0.1));
+    const provider = createEmbeddingProvider(cfg);
+    expect(provider.modelName).toBe("nomic-embed-text");
+    await provider.embed("x");
+    expect(embedSpy).toHaveBeenCalled();
+    expect(provider.modelName).toBe("text-embedding-3-small");
+    embedSpy.mockRestore();
+  });
 });
 
 // ---------------------------------------------------------------------------

@@ -368,11 +368,14 @@ export async function runVerifyForCli(
           model: modelForTest,
           dimensions: dimensionsForTest,
           batchSize: cfg.embedding.batchSize ?? 32,
+          ...(typeof cfg.embedding.deployment === "string" && cfg.embedding.deployment.trim()
+            ? { deployment: cfg.embedding.deployment.trim() }
+            : {}),
+          ...(cfg.embedding.models?.length ? { models: cfg.embedding.models } : {}),
           ...(p === "openai" && {
             apiKey: cfg.embedding.apiKey,
-            ...(typeof (cfg.embedding as Record<string, unknown>).endpoint === "string" &&
-            (cfg.embedding as Record<string, unknown>).endpoint
-              ? { endpoint: (cfg.embedding as Record<string, unknown>).endpoint as string }
+            ...(typeof cfg.embedding.endpoint === "string" && cfg.embedding.endpoint.trim()
+              ? { endpoint: cfg.embedding.endpoint.trim() }
               : {}),
           }),
           ...(p === "google" && {

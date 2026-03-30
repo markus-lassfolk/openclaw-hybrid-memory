@@ -75,6 +75,9 @@ export const OLLAMA_COOLDOWN_MS = 5 * 60 * 1000; // 5 minutes
 /** Default timeout for chat completion requests (ms). */
 export const DEFAULT_CHAT_TIMEOUT_MS = 45_000;
 
+/** Daily narrative prompts aggregate many events — allow longer than default chat timeout (#935, #936). */
+export const NARRATIVE_CHAT_TIMEOUT_MS = 120_000;
+
 // VectorDB constants
 /** Threshold for warning about consecutive optimize failures. */
 export const VECTORDB_OPTIMIZE_FAILURE_WARN_THRESHOLD = 3;

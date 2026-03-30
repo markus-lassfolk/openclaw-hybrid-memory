@@ -46,7 +46,7 @@ export function isAzureOpenAiResourceEndpoint(endpoint: string | undefined): boo
  * True when the embedding base URL targets Azure (resource, APIM gateway, Cognitive Services, Foundry),
  * not public api.openai.com.
  */
-function isAzureOpenAiCompatibleEndpoint(endpoint: string | undefined): boolean {
+export function isAzureOpenAiCompatibleEndpoint(endpoint: string | undefined): boolean {
   if (typeof endpoint !== "string" || !endpoint.trim()) return false;
   // Use specific Azure AI/OpenAI domains only — `\.azure\.com` alone is too broad and would
   // match unrelated Azure services (portal.azure.com, devops.azure.com, etc.).

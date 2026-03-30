@@ -1579,6 +1579,28 @@ describe("chatCompleteWithRetry — connection error (#703)", () => {
     await expectation;
     expect(errorReporter.capturePluginError).not.toHaveBeenCalled();
   });
+
+  it("#935 #936: does not report to GlitchTip when retries exhaust on Request was aborted", async () => {
+    const mockOpenai = {
+      chat: {
+        completions: {
+          create: vi.fn().mockRejectedValue(new Error("Request was aborted")),
+        },
+      },
+    } as unknown as import("openai").default;
+
+    const promise = chatCompleteWithRetry({
+      model: "openai/gpt-4o",
+      content: "test",
+      openai: mockOpenai,
+      fallbackModels: [],
+    });
+
+    const expectation = expect(promise).rejects.toThrow("Request was aborted");
+    await vi.runAllTimersAsync();
+    await expectation;
+    expect(errorReporter.capturePluginError).not.toHaveBeenCalled();
+  });
 });
 
 describe("isAbortOrTransientLlmError", () => {

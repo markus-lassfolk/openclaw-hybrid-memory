@@ -4,7 +4,7 @@ import type { NarrativesDB } from "../../backends/narratives-db.js";
 import type { WorkflowStore } from "../../backends/workflow-store.js";
 import { chatCompleteWithRetry, isAbortOrTransientLlmError } from "../../services/chat.js";
 import { capturePluginError } from "../../services/error-reporter.js";
-import { getSessionLogFileSuffix } from "../../utils/constants.js";
+import { getSessionLogFileSuffix, NARRATIVE_CHAT_TIMEOUT_MS } from "../../utils/constants.js";
 import { fillPrompt, loadPrompt } from "../../utils/prompt-loader.js";
 
 /** Session transcript basename for `sessionId` (suffix from OPENCLAW_SESSION_LOG_SUFFIX, default .jsonl). */
@@ -105,6 +105,7 @@ export async function buildDailyNarrative(params: BuildDailyNarrativeParams): Pr
       fallbackModels: fallbackModels ?? [],
       label: "memory-hybrid: narrative-summary",
       feature: "distill",
+      timeoutMs: NARRATIVE_CHAT_TIMEOUT_MS,
     });
     const normalized = normalizeNarrative(raw);
     if (!normalized || normalized === "NO_NARRATIVE") return false;
