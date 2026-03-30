@@ -10,6 +10,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.3.300] - 2026-03-30
+
+### Release summary
+
+Stability and operator-experience release after **2026.3.293**: **CI** install smoke test no longer picks a stale local `.tgz`; **session narratives** treat gateway loss and `Request was aborted` as transient (info log, no GlitchTip) instead of a hard failure.
+
+### Fixed
+
+- **CI:** Install smoke test deletes prior `openclaw-hybrid-memory-*.tgz` and uses the tarball name from `npm pack` output so the wrong pack cannot fail the `benchmark/shadow-eval.ts` check.
+- **Narratives:** `isAbortOrTransientLlmError()` classifies aborts, gateway-down messages, and connection errors; skipped narrative builds log at **info** instead of **warn** for those cases.
+
+---
+
 ## [2026.3.293] - 2026-03-29
 
 ### Release summary
