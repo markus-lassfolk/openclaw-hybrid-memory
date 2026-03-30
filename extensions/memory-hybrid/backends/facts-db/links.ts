@@ -282,7 +282,7 @@ export function expandGraphWithCTE(
         seed_id,
         hop_count,
         path_json,
-        ROW_NUMBER() OVER (PARTITION BY fact_id ORDER BY hop_count ASC) AS rn
+        ROW_NUMBER() OVER (PARTITION BY fact_id, seed_id ORDER BY hop_count ASC) AS rn
       FROM graph_expansion
     )
     SELECT
