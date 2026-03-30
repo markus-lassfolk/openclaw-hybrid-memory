@@ -531,6 +531,9 @@ export class VectorDB {
           // return empty results immediately without spamming GlitchTip (issue #366).
           this.schemaValid = false;
         }
+      } else {
+        // Dimension matches — migrate legacy tables that predate the lineage `why` column.
+        await this.ensureMemoriesWhyColumnIfMissing(table);
       }
     } catch (err) {
       if (tableDropped) {
@@ -539,6 +542,30 @@ export class VectorDB {
       // Non-fatal: schema validation is advisory. search() already catches errors and
       // returns [] on dimension mismatch, so callers are not impacted.
       this.logWarn(`memory-hybrid: LanceDB schema validation failed (non-fatal): ${err}`);
+    }
+  }
+
+  /**
+   * Tables created before lineage tracking lack `why`. Inserts then fail with
+   * "Found field not in schema: why". Add the column in place (nullable UTF-8, existing rows null).
+   */
+  private async ensureMemoriesWhyColumnIfMissing(table: lancedb.Table): Promise<void> {
+    try {
+      const schema = await table.schema();
+      const names = new Set(schema.fields.map((f: { name?: string }) => (typeof f.name === "string" ? f.name : "")));
+      if (names.has("why")) return;
+      this.logWarn(
+        `memory-hybrid: LanceDB table '${LANCE_TABLE}' has no 'why' column (pre-lineage schema) — adding it (empty string for existing rows).`,
+      );
+      // LanceDB 0.27+ expects AddColumnsSql here — Arrow Field triggers "Invalid input type for addColumns".
+      await table.addColumns([{ name: "why", valueSql: "''" }]);
+      // Re-open the table so subsequent add() uses the updated schema (LanceDB 0.27 keeps a stale view otherwise).
+      if (this.db && !this.closed) {
+        this.table = await this.db.openTable(LANCE_TABLE);
+      }
+    } catch (err) {
+      this.logWarn(`memory-hybrid: could not add 'why' column to LanceDB: ${err}`);
+      this.schemaValid = false;
     }
   }
 

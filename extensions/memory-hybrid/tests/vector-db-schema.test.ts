@@ -128,6 +128,49 @@ describe("VectorDB startup schema validation (issue #128)", () => {
   });
 });
 
+describe("VectorDB legacy schema — missing why column (lineage migration)", () => {
+  let tmpDir: string;
+  let lanceDir: string;
+  const dim = CORRECT_DIM;
+
+  beforeEach(async () => {
+    tmpDir = mkdtempSync(join(tmpdir(), "vector-why-mig-"));
+    lanceDir = join(tmpDir, "lance");
+    const db = await lancedb.connect(lanceDir);
+    await db.createTable("memories", [
+      {
+        id: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+        text: "legacy row",
+        vector: new Array(dim).fill(0.1),
+        importance: 0.5,
+        category: "fact",
+        createdAt: Math.floor(Date.now() / 1000),
+      },
+    ]);
+    await db.close();
+  });
+
+  afterEach(() => {
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("adds why on open so store() does not fail with field not in schema", async () => {
+    const warns: string[] = [];
+    const vdb = new VectorDB(lanceDir, dim);
+    vdb.setLogger({ warn: (msg) => warns.push(msg) });
+    await expect(
+      vdb.store({
+        text: "__diag__",
+        vector: new Array(dim).fill(0.2),
+        importance: 0.5,
+        category: "fact",
+      }),
+    ).resolves.toBeDefined();
+    expect(warns.some((w) => w.includes("why") && w.includes("pre-lineage"))).toBe(true);
+    vdb.close();
+  });
+});
+
 describe("VectorDB auto-repair on dimension mismatch (issue #128)", () => {
   let tmpDir: string;
   let lanceDir: string;
