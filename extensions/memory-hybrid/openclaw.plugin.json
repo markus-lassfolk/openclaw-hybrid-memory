@@ -101,7 +101,15 @@
     },
     "autoRecall.entityLookup": {
       "label": "Auto-Recall entity lookup",
-      "help": "When prompt mentions an entity from the list, merge lookup(entity) facts into candidates (4.1)"
+      "help": "When the prompt mentions an entity, merge lookup(entity) facts. If `entities` is empty and `autoFromFacts` is true (default), names come from DISTINCT entity on stored facts (capped by maxAutoEntities)."
+    },
+    "autoRecall.entityLookup.autoFromFacts": {
+      "label": "Entity lookup: auto from facts DB",
+      "help": "When true (default) and `entities` is empty, use distinct `entity` values from the facts table (up to maxAutoEntities). Set false to require an explicit `entities` list."
+    },
+    "autoRecall.entityLookup.maxAutoEntities": {
+      "label": "Entity lookup: max auto names",
+      "help": "Cap for auto-loaded entity names from the DB (default 500, max 2000)."
     },
     "autoRecall.retrievalDirectives.enabled": {
       "label": "Retrieval directives",
@@ -609,6 +617,16 @@
                   },
                   "maxFactsPerEntity": {
                     "type": "number"
+                  },
+                  "autoFromFacts": {
+                    "type": "boolean",
+                    "description": "When true (default) and entities is empty, load names from DISTINCT entity on facts (capped by maxAutoEntities)."
+                  },
+                  "maxAutoEntities": {
+                    "type": "number",
+                    "minimum": 1,
+                    "maximum": 2000,
+                    "description": "Max distinct entity names when using autoFromFacts (default 500)."
                   }
                 }
               },

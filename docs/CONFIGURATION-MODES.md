@@ -109,6 +109,8 @@ Below, **✓** = enabled by preset, **—** = disabled by preset, **opt** = opti
 | selfCorrection.semanticDedup | — | — | ✓ | ✓ |
 | selfCorrection.applyToolsByDefault | — | — | ✓ | ✓ |
 | autoRecall.entityLookup | — | — | ✓ | ✓ |
+| autoRecall.entityLookup.autoFromFacts | — | — | (default true) | (default true) |
+| autoRecall.entityLookup.maxAutoEntities | — | — | (default 500, max 2000) | (default 500, max 2000) |
 | autoRecall.authFailure | — | ✓ | ✓ | ✓ |
 | queryExpansion.enabled | — | — | — | ✓ |
 | ingest (paths) | — | ✓ | ✓ | ✓ |
@@ -138,6 +140,7 @@ Below, **✓** = enabled by preset, **—** = disabled by preset, **opt** = opti
 - **opt**: Credentials vault is on only when `credentials.encryptionKey` is set (or env). In Enhanced/Complete, `autoDetect` and `autoCapture.toolCalls` apply when the vault is enabled.
 - **personaProposals.autoApply**: Never set by any preset (always **—**). When enabled, approved persona proposals are applied to identity files without human review. **Opt-in only** — no mode turns this on by default.
 - **Minimal** uses only nano/flash-tier models for distill, auto-classify, and ingest to keep cost very low. **Local** uses no external LLM (FTS-only recall).
+- **autoRecall.entityLookup** (Enhanced/Complete): With `entityLookup.enabled` true, if **`entities` is empty or omitted** and **`autoFromFacts`** is true (default), names come from distinct non-null `entity` values on active facts (`FactsDb.getKnownEntities()`), sorted deterministically and capped by **`maxAutoEntities`** (default 500, hard max 2000). Set **`autoFromFacts`** to `false` for the legacy behavior: no entity-centric merge or `entityMentioned` directives until you set an explicit **`entities`** list. If **`entities`** is non-empty, only that list is used. Run `openclaw hybrid-mem config` to see whether the resolved source is `auto from facts (cap N)` or `N configured name(s)`.
 - **Advanced / opt-in** (workflowTracking, nightlyCycle, passiveObserver, extraction, selfExtension, crystallization, verification, provenance, aliases, crossAgentLearning, reranking, contextualVariants) are **off** for Local and Minimal; **Enhanced** and **Complete** enable them by preset. **documents** is Complete-only (requires Python/MarkItDown). Users on Local/Minimal can enable any of these explicitly via config or `openclaw hybrid-mem config-set <key>.enabled true`.
 - **personaProposals.autoApply** is `false` in **all** presets — it is never set automatically. Enable it only if you want the agent to modify identity files without human review. See [PERSONA-PROPOSALS.md](PERSONA-PROPOSALS.md) for risks and the audit trail.
 
@@ -174,6 +177,10 @@ And you set:
 ```
 
 The final result is `["project"]` (your value), **not** `["user", "owner", "project"]`. This applies to all array config fields (e.g., `ingest.paths`, `autoRecall.authFailure.patterns`).
+
+### Empty `entities` and auto-from-facts
+
+If you enable entity lookup but omit **`entities`** (or set `"entities": []`), the plugin uses **`autoRecall.entityLookup.autoFromFacts`** (default `true`) to load names from stored facts, up to **`maxAutoEntities`**. To require a manual list and avoid that until configured, set `"autoFromFacts": false`.
 
 ---
 

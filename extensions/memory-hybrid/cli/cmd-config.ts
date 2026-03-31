@@ -199,7 +199,17 @@ export function runConfigViewForCli(ctx: HandlerContext, sink: VerifyCliSink): v
     }`,
   );
   log(`  Retrieval directives: ${on(cfg.autoRecall.retrievalDirectives?.enabled ?? false)}`);
-  log(`  Entity lookup: ${on(cfg.autoRecall.entityLookup.enabled)}`);
+  const el = cfg.autoRecall.entityLookup;
+  const entityNames = Array.isArray(el?.entities) ? el.entities : [];
+  const autoFromFacts = el?.autoFromFacts !== false;
+  const maxAutoEntities = typeof el?.maxAutoEntities === "number" && el.maxAutoEntities > 0 ? el.maxAutoEntities : 500;
+  const entitySrc =
+    entityNames.length > 0
+      ? `${entityNames.length} configured name(s)`
+      : autoFromFacts
+        ? `auto from facts (cap ${maxAutoEntities})`
+        : "manual list empty (auto off)";
+  log(`  Entity lookup: ${on(el?.enabled ?? false)} — ${entitySrc}`);
   log("");
 
   log("To change a setting: openclaw hybrid-mem config-set <key> <value>");

@@ -859,6 +859,39 @@ describe("hybridConfigSchema.parse", () => {
     expect(result.autoRecall.entityLookup.enabled).toBe(true);
     expect(result.autoRecall.entityLookup.entities).toEqual(["user", "owner"]);
     expect(result.autoRecall.entityLookup.maxFactsPerEntity).toBe(3);
+    expect(result.autoRecall.entityLookup.autoFromFacts).toBe(true);
+    expect(result.autoRecall.entityLookup.maxAutoEntities).toBe(500);
+  });
+
+  it("parses entity lookup autoFromFacts false and maxAutoEntities clamp", () => {
+    const result = hybridConfigSchema.parse({
+      ...validBase,
+      autoRecall: {
+        entityLookup: {
+          enabled: true,
+          entities: [],
+          autoFromFacts: false,
+          maxAutoEntities: 9999,
+        },
+      },
+    });
+    expect(result.autoRecall.entityLookup.enabled).toBe(true);
+    expect(result.autoRecall.entityLookup.entities).toEqual([]);
+    expect(result.autoRecall.entityLookup.autoFromFacts).toBe(false);
+    expect(result.autoRecall.entityLookup.maxAutoEntities).toBe(2000);
+  });
+
+  it("clamps fractional maxAutoEntities to minimum 1", () => {
+    const result = hybridConfigSchema.parse({
+      ...validBase,
+      autoRecall: {
+        entityLookup: {
+          enabled: true,
+          maxAutoEntities: 0.5,
+        },
+      },
+    });
+    expect(result.autoRecall.entityLookup.maxAutoEntities).toBe(1);
   });
 
   it("parses progressive disclosure config", () => {
