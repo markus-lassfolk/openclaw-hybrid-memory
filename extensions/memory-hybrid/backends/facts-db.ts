@@ -2985,8 +2985,8 @@ export class FactsDB extends BaseSqliteStore {
         )
         .get(base.id) as { total_succ: number; total_fail: number };
 
-      const totalSuccess = versionCounts.total_succ;
-      const totalFailure = versionCounts.total_fail;
+      const totalSuccess = versionCounts.total_succ + base.successCount;
+      const totalFailure = versionCounts.total_fail + base.failureCount;
       const total = totalSuccess + totalFailure;
       const successRate = total > 0 ? totalSuccess / total : 0;
 
@@ -3112,12 +3112,27 @@ export class FactsDB extends BaseSqliteStore {
           .run(randomUUID(), input.procedureId, nowSec);
       }
 
+      // Get aggregated counts from version table (source of truth for confidence calculation)
+      const versionCounts = this.liveDb
+        .prepare(
+          `SELECT COALESCE(SUM(success_count), 0) as total_succ,
+                  COALESCE(SUM(failure_count), 0) as total_fail
+             FROM procedure_versions
+             WHERE procedure_id = ?`,
+        )
+        .get(input.procedureId) as { total_succ: number; total_fail: number };
+
       // Update procedure record (do NOT bump success_count — version table is the source of truth for counts)
       this.liveDb
         .prepare(
           `UPDATE procedures SET last_validated = ?, confidence = ?, procedure_type = 'positive', updated_at = ? WHERE id = ?`,
         )
-        .run(nowSec, Math.max(0.1, Math.min(0.95, 0.5 + 0.1 * (proc.successCount + 1 - proc.failureCount))), nowSec, input.procedureId);
+        .run(
+          nowSec,
+          Math.max(0.1, Math.min(0.95, 0.5 + 0.1 * (versionCounts.total_succ - versionCounts.total_fail))),
+          nowSec,
+          input.procedureId,
+        );
     } else {
       // Failure: insert new version record (one version per failure event) and failure record
       const latestVer = this.liveDb
@@ -3178,12 +3193,27 @@ export class FactsDB extends BaseSqliteStore {
           input.failedAtStep ?? null,
         );
 
+      // Get aggregated counts from version table (source of truth for confidence calculation)
+      const versionCounts = this.liveDb
+        .prepare(
+          `SELECT COALESCE(SUM(success_count), 0) as total_succ,
+                  COALESCE(SUM(failure_count), 0) as total_fail
+             FROM procedure_versions
+             WHERE procedure_id = ?`,
+        )
+        .get(input.procedureId) as { total_succ: number; total_fail: number };
+
       // Update procedure record (do NOT bump failure_count — version table is the source of truth for counts)
       this.liveDb
         .prepare(
           `UPDATE procedures SET last_failed = ?, confidence = ?, procedure_type = 'negative', updated_at = ? WHERE id = ?`,
         )
-        .run(nowSec, Math.max(0.1, Math.min(0.95, 0.5 + 0.1 * (proc.successCount - (proc.failureCount + 1)))), nowSec, input.procedureId);
+        .run(
+          nowSec,
+          Math.max(0.1, Math.min(0.95, 0.5 + 0.1 * (versionCounts.total_succ - versionCounts.total_fail))),
+          nowSec,
+          input.procedureId,
+        );
 
       // Create an episode record for this failure
       const eventText =

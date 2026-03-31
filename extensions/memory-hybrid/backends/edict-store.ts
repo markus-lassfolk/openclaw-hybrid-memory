@@ -113,10 +113,6 @@ export class EdictStore {
     this._isReady = true;
   }
 
-  isReady(): boolean {
-    return this._isReady;
-  }
-
   /** Run all schema migrations. Idempotent — safe to call on existing databases. */
   private runMigrations(): void {
     this.db.exec(`
@@ -221,33 +217,33 @@ export class EdictStore {
   list(options: ListEdictsOptions = {}): EdictEntry[] {
     if (!this._isReady) return [];
     try {
-    const { tags, includeExpired = false, limit = 100 } = options;
-    const nowSec = Math.floor(Date.now() / 1000);
-    const parts: string[] = [];
-    const params: SQLInputValue[] = [];
+      const { tags, includeExpired = false, limit = 100 } = options;
+      const nowSec = Math.floor(Date.now() / 1000);
+      const parts: string[] = [];
+      const params: SQLInputValue[] = [];
 
-    if (!includeExpired) {
-      parts.push(
-        `(ttl = 'never') OR (ttl = 'event' AND (expires_at IS NULL OR expires_at > datetime(?))) OR (CAST(ttl AS INTEGER) > 0 AND created_at + CAST(ttl AS INTEGER) > ?)`,
-      );
-      params.push(new Date().toISOString(), nowSec);
-    }
-
-    if (tags && tags.length > 0) {
-      for (const tag of tags) {
-        parts.push(`(',' || COALESCE(tags, '') || ',') LIKE ?`);
-        params.push(`%,${escapeLikePattern(tag.toLowerCase())},%`);
+      if (!includeExpired) {
+        parts.push(
+          `(ttl = 'never') OR (ttl = 'event' AND (expires_at IS NULL OR expires_at > datetime(?))) OR (CAST(ttl AS INTEGER) > 0 AND created_at + CAST(ttl AS INTEGER) > ?)`,
+        );
+        params.push(new Date().toISOString(), nowSec);
       }
-    }
 
-    const where = parts.length > 0 ? `WHERE ${parts.join(" AND ")}` : "";
-    params.push(limit);
+      if (tags && tags.length > 0) {
+        for (const tag of tags) {
+          parts.push(`(',' || COALESCE(tags, '') || ',') LIKE ?`);
+          params.push(`%,${escapeLikePattern(tag.toLowerCase())},%`);
+        }
+      }
 
-    const rows = this.db
-      .prepare(`SELECT * FROM edicts ${where} ORDER BY created_at DESC LIMIT ?`)
-      .all(...params) as Array<Record<string, unknown>>;
+      const where = parts.length > 0 ? `WHERE ${parts.join(" AND ")}` : "";
+      params.push(limit);
 
-    return rows.map((r) => this.rowToEntry(r));
+      const rows = this.db
+        .prepare(`SELECT * FROM edicts ${where} ORDER BY created_at DESC LIMIT ?`)
+        .all(...params) as Array<Record<string, unknown>>;
+
+      return rows.map((r) => this.rowToEntry(r));
     } catch (err) {
       capturePluginError(err, { context: "EdictStore.list" });
       return [];
