@@ -17,7 +17,7 @@ import type { WriteAheadLog } from "../backends/wal.js";
 import type { EmbeddingProvider } from "../services/embeddings.js";
 import type { EmbeddingRegistry } from "../services/embedding-registry.js";
 import type { HybridMemoryConfig, LLMProviderConfig, CredentialType, ResolvedGatewayAuthConfig } from "../config.js";
-import { is403QuotaOrRateLimitLike, UnconfiguredProviderError } from "../services/chat.js";
+import { is403QuotaOrRateLimitLike, is429OrWrapped, UnconfiguredProviderError } from "../services/chat.js";
 import { hasOAuthProfiles } from "../utils/auth.js";
 import {
   isOAuthInBackoff,
@@ -1423,9 +1423,10 @@ export function initializeDatabases(cfg: HybridMemoryConfig, api: ClawdbotPlugin
           : azure404
             ? 'Azure OpenAI embeddings use the deployment name as the API model id. In plugins.entries["openclaw-hybrid-memory"].config.embedding set "deployment" to the exact embedding deployment name from Azure Portal (Resource → Model deployments), or rename the deployment to match embedding.model. Ensure embedding.endpoint is the resource URL (e.g. …/openai/v1). Run \'openclaw hybrid-mem verify\' for details.'
             : "Set a valid embedding.apiKey in plugin config and ensure the model is accessible. Run 'openclaw hybrid-mem verify' for details.";
-      const logEmbFailure = shouldSuppressEmbeddingError(asErr) ? api.logger.warn : api.logger.error;
+      // Warn only for transient quota/rate-limit; keep error for bad keys, wrong model, geo 403, etc. (#941 review).
+      const logEmbFailure = quota403 || is429OrWrapped(asErr) ? api.logger.warn : api.logger.error;
       logEmbFailure(
-        `memory-hybrid: ⚠️  EMBEDDING CHECK FAILED (provider=${cfg.embedding.provider}) — ${String(e)}. ` +
+        `[embedding-init] memory-hybrid: ⚠️  EMBEDDING CHECK FAILED (provider=${cfg.embedding.provider}) — ${String(e)}. ` +
           `Plugin will continue but semantic search will not work. ${hint}`,
       );
     }

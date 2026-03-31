@@ -76,8 +76,13 @@ export class VectorDB {
    * Reason code from the last search() call that returned empty results early.
    * Used by diagnostics (hybrid-mem test) to report actionable failure reasons.
    * Reset on each search() call; null when search completed normally (issue #939/#940).
+   *
+   * Documented values: `vector_dim_mismatch`, `lance_unavailable` (incl. Lance init failure),
+   * `schema_invalid`, `lance_error`.
    */
   private lastSearchFailReason: string | null = null;
+  /** Log vector dimension mismatch at most once per instance to avoid recall-loop log spam (#941 review). */
+  private vectorDimMismatchLogged = false;
   /**
    * Set to false when lancedb.connect() throws during doInitialize(). When false, all
    * vector operations (search, store, hasDuplicate, count, delete, optimize) return safe
@@ -1010,7 +1015,8 @@ export class VectorDB {
       }
       await this.ensureInitialized();
       if (!this.lanceDbAvailable || this.lanceInitFailed || !this.table) {
-        this.lastSearchFailReason = this.lanceInitFailed ? "lance_init_failed" : "lance_unavailable";
+        // Single code for operators: init failure and "DB not ready" both mean no vector search (#941).
+        this.lastSearchFailReason = "lance_unavailable";
         return [];
       }
       if (!this.schemaValid) {
@@ -1019,10 +1025,14 @@ export class VectorDB {
       }
       if (vector.length !== this.vectorDim) {
         this.lastSearchFailReason = "vector_dim_mismatch";
-        this.logWarn(
-          `memory-hybrid: vector dimension mismatch — embedding produced ${vector.length}-dim vector but LanceDB table expects ${this.vectorDim}-dim. ` +
-            `Check embedding.preferredProviders and embedding.dimensions in plugin config. Run 'openclaw hybrid-mem verify' for details.`,
-        );
+        if (!this.vectorDimMismatchLogged) {
+          this.vectorDimMismatchLogged = true;
+          this.logWarn(
+            `memory-hybrid: vector dimension mismatch — embedding produced ${vector.length}-dim vector but LanceDB table expects ${this.vectorDim}-dim. ` +
+              `Check embedding.preferredProviders and embedding.dimensions in plugin config. Run 'openclaw hybrid-mem verify' for details. ` +
+              `(Further mismatches in this session are silent; fix config and re-index.)`,
+          );
+        }
         return [];
       }
       this.lastSearchFailReason = null;
