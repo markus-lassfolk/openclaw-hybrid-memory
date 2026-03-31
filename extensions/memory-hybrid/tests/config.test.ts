@@ -863,6 +863,24 @@ describe("hybridConfigSchema.parse", () => {
     expect(result.autoRecall.entityLookup.maxAutoEntities).toBe(500);
   });
 
+  it("parses entity lookup autoFromFacts false and maxAutoEntities clamp", () => {
+    const result = hybridConfigSchema.parse({
+      ...validBase,
+      autoRecall: {
+        entityLookup: {
+          enabled: true,
+          entities: [],
+          autoFromFacts: false,
+          maxAutoEntities: 9999,
+        },
+      },
+    });
+    expect(result.autoRecall.entityLookup.enabled).toBe(true);
+    expect(result.autoRecall.entityLookup.entities).toEqual([]);
+    expect(result.autoRecall.entityLookup.autoFromFacts).toBe(false);
+    expect(result.autoRecall.entityLookup.maxAutoEntities).toBe(2000);
+  });
+
   it("parses progressive disclosure config", () => {
     const result = hybridConfigSchema.parse({
       ...validBase,

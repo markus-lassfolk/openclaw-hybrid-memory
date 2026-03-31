@@ -115,7 +115,9 @@ Example: `"store": { "fuzzyDedupe": false, "classifyBeforeWrite": true, "classif
     "entityLookup": {
       "enabled": false,
       "entities": ["user", "owner"],
-      "maxFactsPerEntity": 2
+      "maxFactsPerEntity": 2,
+      "autoFromFacts": true,
+      "maxAutoEntities": 500
     },
     "summaryThreshold": 300,
     "summaryMaxChars": 80,
@@ -140,6 +142,10 @@ Example: `"store": { "fuzzyDedupe": false, "classifyBeforeWrite": true, "classif
 | `preferLongTerm` | `false` | Boost permanent (×1.2) and stable (×1.1) facts |
 | `useImportanceRecency` | `false` | Combine relevance with importance and recency |
 | `entityLookup.enabled` | `false` | Merge entity lookup facts when prompt mentions an entity |
+| `entityLookup.entities` | `[]` | Entity names to match in the prompt (case-insensitive substring). If **non-empty**, only this list is used |
+| `entityLookup.maxFactsPerEntity` | `2` | Max facts merged per matched entity |
+| `entityLookup.autoFromFacts` | `true` | When `entities` is empty or omitted, load names from distinct non-null `entity` on active facts (`getKnownEntities()`), sorted and capped by `maxAutoEntities`. Set `false` for legacy behavior: no entity merge or `entityMentioned` directives until you set `entities` explicitly |
+| `entityLookup.maxAutoEntities` | `500` (hard max `2000`) | Cap on auto-loaded entity names when `autoFromFacts` is true |
 | `summaryThreshold` | `300` | Facts longer than this get a stored summary |
 | `summaryMaxChars` | `80` | Max chars for the summary |
 | `useSummaryInInjection` | `true` | Use summary in injection to save tokens |
@@ -178,7 +184,7 @@ Besides semantic auto-recall, you can trigger **targeted recall** by entity ment
 | Key | Default | Description |
 |-----|---------|-------------|
 | `enabled` | `true` when `autoRecall` is object | Enable retrieval directives (entity/keyword/task-type/session-start) |
-| `entityMentioned` | `true` | When the prompt mentions an entity from entity lookup list, run targeted recall for that entity |
+| `entityMentioned` | `true` | When the prompt mentions an entity from the effective entity lookup list (configured `entities` or auto-from-facts when enabled), run targeted recall for that entity |
 | `keywords` | `[]` | Case-insensitive keyword triggers; when prompt contains one, run targeted recall |
 | `taskTypes` | `{}` | Map task type → keyword list; matched task type triggers recall with those keywords |
 | `sessionStart` | `false` | Run a one-time targeted recall when a new session starts |
