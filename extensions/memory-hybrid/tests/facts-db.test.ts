@@ -2343,7 +2343,8 @@ describe("FactsDB search reinforcement ranking", () => {
     });
     db.reinforceFact(a.id, "Perfect!");
 
-    const results = db.search("auth API", 10, { reinforcementBoost: 0.2 });
+    // diversityWeight 0: full reinforcement boost (diversity from #259 would dampen boost with few events)
+    const results = db.search("auth API", 10, { reinforcementBoost: 0.2, diversityWeight: 0 });
     expect(results.length).toBeGreaterThanOrEqual(2);
     const ids = results.map((r) => r.entry.id);
     expect(ids).toContain(a.id);
