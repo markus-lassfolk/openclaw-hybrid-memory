@@ -20,6 +20,10 @@ concurrency:
   group: release-cd-${{ github.ref }}
   cancel-in-progress: true
 
+# softprops/action-gh-release@v2 still declares node20; opt into Node 24 runtime until upstream ships a new major.
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   ci:
     uses: ./.github/workflows/ci.yml
