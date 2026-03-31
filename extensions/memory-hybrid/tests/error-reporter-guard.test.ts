@@ -1,3 +1,4 @@
+import { getEnv, setEnv } from "../utils/env-manager.js";
 /**
  * Test suite specifically for UnconfiguredProviderError guard behavior.
  * Uses vi.stubGlobal to mock native fetch so we can verify whether events
@@ -29,7 +30,7 @@ describe("UnconfiguredProviderError guard with mocked fetch", () => {
 
   beforeEach(() => {
     mockFetch.mockClear();
-    process.env.OPENCLAW_NODE_NAME = undefined;
+    setEnv("OPENCLAW_NODE_NAME", undefined);
   });
 
   afterAll(() => {
@@ -56,7 +57,7 @@ describe("UnconfiguredProviderError guard with mocked fetch", () => {
   it("capturePluginError includes runtime node and agent tags for filtering", async () => {
     const { initErrorReporter, capturePluginError, flushErrorReporter } = await import("../services/error-reporter.js");
 
-    process.env.OPENCLAW_NODE_NAME = "Maeve";
+    setEnv("OPENCLAW_NODE_NAME", "Maeve");
     await initErrorReporter(
       {
         enabled: true,

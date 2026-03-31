@@ -1,3 +1,4 @@
+import { getEnv, setEnv } from "../utils/env-manager.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   CREDENTIAL_TYPES,
@@ -260,12 +261,28 @@ describe("hybridConfigSchema.parse", () => {
   });
 
   it("throws when embedding.apiKey env: SecretRef references an unset env var", () => {
-    process.env.TEST_EMBED_KEY_UNSET_333 = undefined;
+    setEnv("TEST_EMBED_KEY_UNSET_333", undefined);
     expect(() =>
       hybridConfigSchema.parse({
         embedding: { provider: "openai", apiKey: "env:TEST_EMBED_KEY_UNSET_333", model: "text-embedding-3-small" },
       }),
     ).toThrow(/could not be resolved/);
+  });
+
+  it("resolves embedding.apiKey OpenClaw SecretRef object (env source) — Issue #833", () => {
+    vi.stubEnv("TEST_EMBED_OBJ_833", "sk-resolved-key-that-is-long-enough");
+    try {
+      const result = hybridConfigSchema.parse({
+        embedding: {
+          provider: "openai",
+          apiKey: { source: "env", provider: "default", id: "TEST_EMBED_OBJ_833" },
+          model: "text-embedding-3-small",
+        },
+      });
+      expect(result.embedding.apiKey).toBe("sk-resolved-key-that-is-long-enough");
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   it("resolves embedding.apiKey env: SecretRef for non-openai provider fallback (ollama)", () => {
@@ -324,7 +341,7 @@ describe("hybridConfigSchema.parse", () => {
 
   // Finding 3: unresolvable SecretRef in fallback path warns instead of silently dropping
   it("warns when fallback embedding.apiKey SecretRef cannot be resolved", () => {
-    process.env.TEST_EMBED_FALLBACK_UNSET_333 = undefined;
+    setEnv("TEST_EMBED_FALLBACK_UNSET_333", undefined);
     const warnSpy = vi.spyOn(pluginLogger, "warn").mockImplementation(() => {});
     try {
       const result = hybridConfigSchema.parse({
@@ -635,7 +652,8 @@ describe("hybridConfigSchema.parse", () => {
     expect(result.credentials.encryptionKey).toBe("abcdefghij1234567890");
   });
 
-  it("allows credentials enabled without key (vault plaintext)", () => {
+  it("allows credentials enabled without key (plaintext vault) and logs a security warning", () => {
+    const warnSpy = vi.spyOn(pluginLogger, "warn").mockImplementation(() => {});
     const result = hybridConfigSchema.parse({
       ...validBase,
       credentials: {
@@ -645,9 +663,12 @@ describe("hybridConfigSchema.parse", () => {
     });
     expect(result.credentials.enabled).toBe(true);
     expect(result.credentials.encryptionKey).toBe("");
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("plaintext"));
+    warnSpy.mockRestore();
   });
 
-  it("does not throw for short or unresolved encryption key; uses plaintext vault", () => {
+  it("does not throw for short or unresolved encryption key; uses plaintext vault and warns", () => {
+    const warnSpy = vi.spyOn(pluginLogger, "warn").mockImplementation(() => {});
     const shortKey = hybridConfigSchema.parse({
       ...validBase,
       credentials: { enabled: true, encryptionKey: "short" },
@@ -661,6 +682,8 @@ describe("hybridConfigSchema.parse", () => {
     });
     expect(envMissing.credentials.enabled).toBe(true);
     expect(envMissing.credentials.encryptionKey).toBe("");
+    expect(warnSpy.mock.calls.length).toBeGreaterThanOrEqual(2);
+    warnSpy.mockRestore();
   });
 
   it("errorReporting defaults to opt-out config (enabled+consent=true) when not provided", () => {
@@ -836,6 +859,39 @@ describe("hybridConfigSchema.parse", () => {
     expect(result.autoRecall.entityLookup.enabled).toBe(true);
     expect(result.autoRecall.entityLookup.entities).toEqual(["user", "owner"]);
     expect(result.autoRecall.entityLookup.maxFactsPerEntity).toBe(3);
+    expect(result.autoRecall.entityLookup.autoFromFacts).toBe(true);
+    expect(result.autoRecall.entityLookup.maxAutoEntities).toBe(500);
+  });
+
+  it("parses entity lookup autoFromFacts false and maxAutoEntities clamp", () => {
+    const result = hybridConfigSchema.parse({
+      ...validBase,
+      autoRecall: {
+        entityLookup: {
+          enabled: true,
+          entities: [],
+          autoFromFacts: false,
+          maxAutoEntities: 9999,
+        },
+      },
+    });
+    expect(result.autoRecall.entityLookup.enabled).toBe(true);
+    expect(result.autoRecall.entityLookup.entities).toEqual([]);
+    expect(result.autoRecall.entityLookup.autoFromFacts).toBe(false);
+    expect(result.autoRecall.entityLookup.maxAutoEntities).toBe(2000);
+  });
+
+  it("clamps fractional maxAutoEntities to minimum 1", () => {
+    const result = hybridConfigSchema.parse({
+      ...validBase,
+      autoRecall: {
+        entityLookup: {
+          enabled: true,
+          maxAutoEntities: 0.5,
+        },
+      },
+    });
+    expect(result.autoRecall.entityLookup.maxAutoEntities).toBe(1);
   });
 
   it("parses progressive disclosure config", () => {
@@ -920,7 +976,7 @@ describe("hybridConfigSchema.parse", () => {
   });
 
   it("throws when distill.apiKey env: SecretRef for google embedding references an unset env var (Issue #344)", () => {
-    process.env.TEST_GEMINI_KEY_UNSET_344 = undefined;
+    setEnv("TEST_GEMINI_KEY_UNSET_344", undefined);
     expect(() =>
       hybridConfigSchema.parse({
         embedding: { provider: "google", model: "text-embedding-004", dimensions: 768 },
@@ -965,7 +1021,7 @@ describe("hybridConfigSchema.parse", () => {
   });
 
   it("throws when distill.apiKey ${VAR} template references an unset env var (Issue #373)", () => {
-    process.env.TEST_GEMINI_TMPL_UNSET_373 = undefined;
+    setEnv("TEST_GEMINI_TMPL_UNSET_373", undefined);
     expect(() =>
       hybridConfigSchema.parse({
         embedding: { provider: "google", model: "text-embedding-004", dimensions: 768 },
@@ -1642,7 +1698,7 @@ describe("hybridConfigSchema.parse", () => {
     });
 
     it("mode enhanced: enables reflection, classifyBeforeWrite, graph.autoLink, credential sub-options when vault on", () => {
-      process.env.OPENCLAW_CRED_KEY = "a-long-secret-key-at-least-16-chars";
+      setEnv("OPENCLAW_CRED_KEY", "a-long-secret-key-at-least-16-chars");
       try {
         const result = hybridConfigSchema.parse({
           ...validBase,
@@ -1660,7 +1716,7 @@ describe("hybridConfigSchema.parse", () => {
         expect(result.credentials.autoDetect).toBe(false);
         expect(result.credentials.autoCapture?.toolCalls).toBe(true);
       } finally {
-        process.env.OPENCLAW_CRED_KEY = undefined;
+        setEnv("OPENCLAW_CRED_KEY", undefined);
       }
     });
 

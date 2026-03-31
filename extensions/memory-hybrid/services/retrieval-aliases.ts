@@ -24,14 +24,14 @@ import { capturePluginError } from "./error-reporter.js";
 // ---------------------------------------------------------------------------
 
 /** A single alias row (without embedding). */
-export interface AliasRow {
+interface AliasRow {
   id: string;
   factId: string;
   aliasText: string;
 }
 
 /** A search result from alias embeddings. */
-export interface AliasSearchResult {
+interface AliasSearchResult {
   factId: string;
   score: number;
 }

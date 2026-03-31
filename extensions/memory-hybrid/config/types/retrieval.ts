@@ -18,6 +18,13 @@ export type EntityLookupConfig = {
   enabled: boolean;
   entities: string[]; // e.g. ["user", "owner", "decision"]; prompt matched case-insensitively
   maxFactsPerEntity: number; // max facts to merge per matched entity (default 2)
+  /**
+   * When `entities` is empty, load names from the facts table (`SELECT DISTINCT entity`).
+   * Default true. Set false to require an explicit `entities` list (legacy no-op when empty).
+   */
+  autoFromFacts: boolean;
+  /** Max distinct entity names to consider when using autoFromFacts (default 500, max 2000). */
+  maxAutoEntities: number;
 };
 
 /** Auto-recall on authentication failures (reactive memory trigger) */

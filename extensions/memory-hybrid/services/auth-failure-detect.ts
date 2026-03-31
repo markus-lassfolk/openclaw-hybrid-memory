@@ -35,7 +35,7 @@ export const DEFAULT_AUTH_FAILURE_PATTERNS: AuthFailurePattern[] = [
   { regex: /invalid.*(credentials|token|key)/i, type: "api", hint: "Invalid credentials" },
 ];
 
-export type AuthFailureDetection = {
+type AuthFailureDetection = {
   detected: boolean;
   type?: "ssh" | "http" | "api" | "generic";
   hint?: string;

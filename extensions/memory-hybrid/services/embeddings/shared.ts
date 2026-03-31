@@ -3,7 +3,15 @@
  */
 
 import { createHash } from "node:crypto";
-import { LLMRetryError, is401OrWrapped, is403Like, is404Like, is429OrWrapped, is500OrWrapped } from "../chat.js";
+import {
+  LLMRetryError,
+  is401OrWrapped,
+  is403Like,
+  is403QuotaOrRateLimitLike,
+  is404Like,
+  is429OrWrapped,
+  is500OrWrapped,
+} from "../chat.js";
 import { capturePluginError } from "../error-reporter.js";
 import type { EmbeddingProvider } from "./types.js";
 import { AllEmbeddingProvidersFailed } from "./types.js";
@@ -13,18 +21,10 @@ export const GOOGLE_EMBEDDING_BASE_URL = "https://generativelanguage.googleapis.
 
 /**
  * Known Google Gemini embedding models at the OpenAI-compatible endpoint
- * (generativelanguage.googleapis.com/v1beta/openai/). The endpoint expects
- * gemini-embedding-001 (text), gemini-embedding-2-preview (multimodal).
- * text-embedding-004/005 were retired by Google in March 2026 and no longer
- * resolve; gemini-embedding-001 is the current default.
+ * (generativelanguage.googleapis.com/v1beta/openai/). Retired model names are
+ * not listed here — unknown names fall back to GOOGLE_EMBED_DEFAULT_MODEL (#886).
  */
-export const KNOWN_GOOGLE_EMBED_MODELS = new Set([
-  "gemini-embedding-001",
-  "gemini-embedding-2-preview",
-  // Retired aliases — kept for recognition/migration only; do not use for new calls
-  "text-embedding-005",
-  "text-embedding-004",
-]);
+export const KNOWN_GOOGLE_EMBED_MODELS = new Set(["gemini-embedding-001", "gemini-embedding-2-preview"]);
 
 /** Default Google embedding model at the OpenAI-compatible endpoint. */
 export const GOOGLE_EMBED_DEFAULT_MODEL = "gemini-embedding-001";
@@ -72,13 +72,48 @@ export function formatOpenAiEmbeddingDisplayLabel(model: string, endpoint: strin
 export const EMBEDDING_CACHE_MAX = 500;
 
 /**
+ * Async semaphore (counting mutex). Issue #840: pair every `acquire()` with `try/finally { release() }`
+ * so early returns cannot leak slots and block all subsequent callers.
+ */
+export class AsyncSemaphore {
+  private available: number;
+  private readonly capacity: number;
+  private readonly waiters: Array<() => void> = [];
+
+  constructor(capacity = 1) {
+    if (!Number.isInteger(capacity) || capacity < 1) {
+      throw new Error(`AsyncSemaphore: capacity must be a positive integer, got ${capacity}`);
+    }
+    this.capacity = capacity;
+    this.available = capacity;
+  }
+
+  async acquire(): Promise<void> {
+    if (this.available > 0) {
+      this.available--;
+      return;
+    }
+    await new Promise<void>((resolve) => this.waiters.push(resolve));
+  }
+
+  release(): void {
+    if (this.waiters.length > 0) {
+      const next = this.waiters.shift();
+      next?.();
+    } else {
+      this.available = Math.min(this.capacity, this.available + 1);
+    }
+  }
+}
+
+/**
  * OpenAI embedding models have a hard limit of 8192 tokens per input.
  * Using ~4 chars/token heuristic (consistent with estimateTokens in utils/text.ts),
  * we clamp inputs to this character ceiling before hitting the API.
  * Overshooting the estimate slightly is harmless; undershooting wastes a round trip.
  */
-export const OPENAI_EMBEDDING_MAX_TOKENS = 8192;
-export const OPENAI_EMBEDDING_MAX_CHARS = OPENAI_EMBEDDING_MAX_TOKENS * 4; // ~32 768 chars
+const OPENAI_EMBEDDING_MAX_TOKENS = 8192;
+const OPENAI_EMBEDDING_MAX_CHARS = OPENAI_EMBEDDING_MAX_TOKENS * 4; // ~32 768 chars
 
 /**
  * Truncate text to fit within the OpenAI embedding token limit.
@@ -91,7 +126,7 @@ export function truncateForEmbedding(text: string): string {
 }
 
 /** Hash text for cache key (prevents large text strings as Map keys). */
-export function hashText(text: string): string {
+function hashText(text: string): string {
   return createHash("sha256").update(text, "utf-8").digest("hex");
 }
 
@@ -100,7 +135,7 @@ export function makeCacheKey(model: string, text: string): string {
 }
 
 /** Returns true when the error is a 404 (model not found) — either directly or wrapped in LLMRetryError. */
-export function is404OrWrapped(err: Error): boolean {
+function is404OrWrapped(err: Error): boolean {
   if (is404Like(err)) return true;
   if (err instanceof LLMRetryError && is404Like(err.cause)) return true;
   return false;
@@ -111,7 +146,7 @@ export function is404OrWrapped(err: Error): boolean {
  * Note: withLLMRetry short-circuits on 403 and rethrows directly, so 403s rarely arrive wrapped,
  * but we handle both forms for robustness.
  */
-export function is403OrWrapped(err: Error): boolean {
+function is403OrWrapped(err: Error): boolean {
   if (is403Like(err)) return true;
   if (err instanceof LLMRetryError && is403Like(err.cause)) return true;
   return false;
@@ -134,7 +169,7 @@ export function isOllamaCircuitBreakerOpen(err: Error): boolean {
  * Ollama is an optional local dependency, so connection-refused / fetch-failed errors from the
  * provider should degrade gracefully to a fallback without reporting GlitchTip noise.
  */
-export function isOllamaConnectionFailure(err: Error): boolean {
+function isOllamaConnectionFailure(err: Error): boolean {
   return err.message.startsWith("Ollama connection failed (");
 }
 
@@ -149,6 +184,7 @@ export function shouldSuppressEmbeddingError(err: unknown): boolean {
   if (!(err instanceof Error)) return false;
   if (
     isConfigError(err) ||
+    is403QuotaOrRateLimitLike(err) ||
     is429OrWrapped(err) ||
     is500OrWrapped(err) ||
     isOllamaCircuitBreakerOpen(err) ||
@@ -161,6 +197,7 @@ export function shouldSuppressEmbeddingError(err: unknown): boolean {
     return err.causes.every(
       (c) =>
         isConfigError(c) ||
+        is403QuotaOrRateLimitLike(c) ||
         is429OrWrapped(c) ||
         is500OrWrapped(c) ||
         isOllamaCircuitBreakerOpen(c) ||

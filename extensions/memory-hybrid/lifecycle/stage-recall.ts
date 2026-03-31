@@ -18,6 +18,8 @@ import {
 } from "../services/ambient-retrieval.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { formatNarrativeRange, recallNarrativeSummaries } from "../services/narrative-recall.js";
+import { yieldEventLoop } from "../utils/event-loop-yield.js";
+import { resolveEntityLookupNames } from "../utils/entity-lookup-resolve.js";
 import { withTimeout } from "../utils/timeout.js";
 import { estimateTokens } from "../utils/text.js";
 import { isConsolidatedDerivedFact } from "../utils/consolidation-controls.js";
@@ -28,7 +30,7 @@ import {
   resolveInteractiveRecallPolicy,
 } from "../services/retrieval-mode-policy.js";
 
-export const RECALL_STAGE_TIMEOUT_MS = INTERACTIVE_RECALL_STAGE_TIMEOUT_MS;
+const RECALL_STAGE_TIMEOUT_MS = INTERACTIVE_RECALL_STAGE_TIMEOUT_MS;
 
 function clipNarrativeText(text: string, maxChars = 360): string {
   if (text.length <= maxChars) return text;
@@ -63,6 +65,9 @@ async function runRecall(
       sessionState;
 
     api.logger.debug?.(`memory-hybrid: auto-recall start (prompt length ${e.prompt.length})`);
+
+    // Let pending gateway I/O (health RPCs, WebSocket) run before heavy sync work (#931).
+    await yieldEventLoop();
 
     const fmt = ctx.cfg.autoRecall.injectionFormat;
     const isProgressive = fmt === "progressive" || fmt === "progressive_hybrid";
@@ -110,6 +115,7 @@ async function runRecall(
       };
       const degradedLimit = ctx.cfg.autoRecall.limit;
       const trimmed = e.prompt.trim();
+      await yieldEventLoop();
       const ftsOnly = ctx.factsDb.search(trimmed, degradedLimit, recallOpts);
       let hotPart = "";
       if (ctx.cfg.memoryTiering.enabled && ctx.cfg.memoryTiering.hotMaxTokens > 0) {
@@ -156,9 +162,10 @@ async function runRecall(
       return { kind: "degraded", prependContext: `${degradedMarker}\n\n` };
     }
 
-    // Procedural memory
+    // Procedural memory (skip expensive FTS when injection budget is zero — issue #863)
     let procedureBlock = "";
-    if (ctx.cfg.procedures.enabled) {
+    const procMaxTokens = ctx.cfg.procedures.maxInjectionTokens ?? 0;
+    if (ctx.cfg.procedures.enabled && procMaxTokens > 0) {
       const rankedProcs = ctx.factsDb.searchProceduresRanked(
         e.prompt,
         5,
@@ -217,6 +224,7 @@ async function runRecall(
         procedureBlock = block;
       }
     }
+    await yieldEventLoop();
     const withProcedures = (s: string) => (procedureBlock ? `${procedureBlock}\n${s}` : s);
 
     // HOT block
@@ -231,6 +239,8 @@ async function runRecall(
         hotBlock = `<hot-memories>\n${hotLines.join("\n")}\n</hot-memories>\n\n`;
       }
     }
+
+    await yieldEventLoop();
 
     const recallOpts = {
       tierFilter,
@@ -314,6 +324,7 @@ async function runRecall(
         if (extraQueries.length > 0) {
           const extraResultSets: SearchResult[][] = [candidates];
           for (const q of extraQueries) {
+            await yieldEventLoop();
             try {
               const qResults = await runRecallPipelineQuery(q.text, Math.ceil(limit / 2), pipelineDeps, hydeUsedRef, {
                 entity: q.type === "entity" ? q.entity : undefined,
@@ -397,30 +408,35 @@ async function runRecall(
       }
     }
 
+    await yieldEventLoop();
+
     const promptLower = e.prompt.toLowerCase();
     const { entityLookup } = ctx.cfg.autoRecall;
-    if (entityLookup.enabled && entityLookup.entities.length > 0) {
-      const seenIds = new Set(candidates.map((c) => c.entry.id));
-      for (const entity of entityLookup.entities) {
-        if (!promptLower.includes(entity.toLowerCase())) continue;
-        const entityResults = ctx.factsDb
-          .lookup(entity, undefined, undefined, { scopeFilter })
-          .slice(0, entityLookup.maxFactsPerEntity);
-        for (const r of entityResults) {
-          if (!seenIds.has(r.entry.id)) {
-            seenIds.add(r.entry.id);
-            candidates.push(r);
+    if (entityLookup.enabled) {
+      const entityLookupNames = resolveEntityLookupNames(entityLookup, ctx.factsDb);
+      if (entityLookupNames.length > 0) {
+        const seenIds = new Set(candidates.map((c) => c.entry.id));
+        for (const entity of entityLookupNames) {
+          if (!promptLower.includes(entity.toLowerCase())) continue;
+          const entityResults = ctx.factsDb
+            .lookup(entity, undefined, undefined, { scopeFilter })
+            .slice(0, entityLookup.maxFactsPerEntity);
+          for (const r of entityResults) {
+            if (!seenIds.has(r.entry.id)) {
+              seenIds.add(r.entry.id);
+              candidates.push(r);
+            }
           }
         }
+        candidates.sort((a, b) => {
+          const s = b.score - a.score;
+          if (s !== 0) return s;
+          const da = a.entry.sourceDate ?? a.entry.createdAt;
+          const db = b.entry.sourceDate ?? b.entry.createdAt;
+          return db - da;
+        });
+        candidates = candidates.slice(0, limit);
       }
-      candidates.sort((a, b) => {
-        const s = b.score - a.score;
-        if (s !== 0) return s;
-        const da = a.entry.sourceDate ?? a.entry.createdAt;
-        const db = b.entry.sourceDate ?? b.entry.createdAt;
-        return db - da;
-      });
-      candidates = candidates.slice(0, limit);
     }
 
     const directivesCfg = ctx.cfg.autoRecall.retrievalDirectives;
@@ -449,19 +465,22 @@ async function runRecall(
 
     if (directivesCfg.enabled) {
       try {
-        if (directivesCfg.entityMentioned && entityLookup.enabled && entityLookup.entities.length > 0) {
-          for (const entity of entityLookup.entities) {
-            if (!promptLower.includes(entity.toLowerCase())) continue;
-            if (!canRunDirective()) break;
-            const results = await runRecallPipelineQuery(entity, directiveLimit, pipelineDeps, hydeUsedRef, {
-              entity,
-              hydeLabel: "HyDE",
-              errorPrefix: "directive-",
-              limitHydeOnce: true,
-              policy: interactivePolicy,
-            });
-            directiveCalls += 1;
-            addDirectiveResults(results, `entity:${entity}`);
+        if (directivesCfg.entityMentioned && entityLookup.enabled) {
+          const entityLookupNames = resolveEntityLookupNames(entityLookup, ctx.factsDb);
+          if (entityLookupNames.length > 0) {
+            for (const entity of entityLookupNames) {
+              if (!promptLower.includes(entity.toLowerCase())) continue;
+              if (!canRunDirective()) break;
+              const results = await runRecallPipelineQuery(entity, directiveLimit, pipelineDeps, hydeUsedRef, {
+                entity,
+                hydeLabel: "HyDE",
+                errorPrefix: "directive-",
+                limitHydeOnce: true,
+                policy: interactivePolicy,
+              });
+              directiveCalls += 1;
+              addDirectiveResults(results, `entity:${entity}`);
+            }
           }
         }
         if (directivesCfg.keywords.length > 0) {

@@ -10,6 +10,7 @@ import type { VectorDB } from "../backends/vector-db.js";
 import { pluginLogger } from "../utils/logger.js";
 import type { EmbeddingProvider } from "./embeddings.js";
 import { shouldSuppressEmbeddingError } from "./embeddings.js";
+import { is429OrWrapped, is403QuotaOrRateLimitLike } from "./chat.js";
 import { capturePluginError } from "./error-reporter.js";
 
 // ---------------------------------------------------------------------------
@@ -26,6 +27,11 @@ export interface MigrateEmbeddingsOptions {
   /** Number of facts to embed per API call (default: 50). */
   batchSize?: number;
   /**
+   * Delay between batches in milliseconds. Spreads load to avoid 429/403 throttling
+   * on Azure and other rate-limited providers. Default: 0 (no delay).
+   */
+  delayMsBetweenBatches?: number;
+  /**
    * Progress callback fired after each batch.
    * @param completed  Facts processed so far (embedded or skipped).
    * @param total      Total facts in SQLite.
@@ -35,7 +41,7 @@ export interface MigrateEmbeddingsOptions {
   logger?: { info: (msg: string) => void; warn: (msg: string) => void };
 }
 
-export interface MigrateEmbeddingsResult {
+interface MigrateEmbeddingsResult {
   /** Total facts found in SQLite. */
   total: number;
   /** Facts successfully re-embedded and stored in LanceDB. */
@@ -58,7 +64,7 @@ export interface EmbeddingMaintenanceOptions extends MigrateEmbeddingsOptions {
   autoMigrate: boolean;
 }
 
-export interface EmbeddingMaintenanceResult {
+interface EmbeddingMaintenanceResult {
   /** `true` when the recorded provider/model differs from `currentProvider`/`currentModel`. */
   changed: boolean;
   /** `true` when `migrateEmbeddings` was actually invoked this run. */
@@ -84,7 +90,7 @@ export interface EmbeddingMaintenanceResult {
  * Progress is emitted after every batch via `onProgress` and logged via `logger`.
  */
 export async function migrateEmbeddings(opts: MigrateEmbeddingsOptions): Promise<MigrateEmbeddingsResult> {
-  const { factsDb, vectorDb, embeddings, batchSize = 50, onProgress, logger } = opts;
+  const { factsDb, vectorDb, embeddings, batchSize = 40, delayMsBetweenBatches = 0, onProgress, logger } = opts;
 
   const log = logger ?? { info: (m: string) => pluginLogger.info(m), warn: (m: string) => pluginLogger.warn(m) };
 
@@ -137,33 +143,55 @@ export async function migrateEmbeddings(opts: MigrateEmbeddingsOptions): Promise
       const batchResult = await embeddings.embedBatch(texts);
       vectors = batchResult;
     } catch (batchErr) {
-      // AllEmbeddingProvidersFailed is expected when all providers are unavailable — don't report (#486)
       if (!shouldSuppressEmbeddingError(batchErr)) {
         capturePluginError(batchErr instanceof Error ? batchErr : new Error(String(batchErr)), {
           subsystem: "embeddings",
           operation: "migration-embed-batch",
         });
       }
-      log.warn(
-        `memory-hybrid: embedding-migration: batch embed failed at offset ${offset} — falling back to per-fact embeds: ${batchErr}`,
-      );
-      vectors = await Promise.all(
-        batch.map(async (fact) => {
-          try {
-            return await embeddings.embed(fact.text);
-          } catch (err) {
-            // AllEmbeddingProvidersFailed is expected when all providers are unavailable — don't report (#486)
-            if (!shouldSuppressEmbeddingError(err)) {
-              capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-                subsystem: "embeddings",
-                operation: "migration-embed-single",
-              });
-            }
-            errors.push(`fact ${fact.id}: embed failed — ${String(err)}`);
-            return null;
+      const batchAsErr = batchErr instanceof Error ? batchErr : new Error(String(batchErr));
+      const isRateLimit = is429OrWrapped(batchAsErr) || is403QuotaOrRateLimitLike(batchErr);
+
+      if (isRateLimit) {
+        // Back off before per-fact fallback to avoid amplifying RPM pressure (#940 §3).
+        const backoffMs = delayMsBetweenBatches > 0 ? delayMsBetweenBatches * 3 : 5_000;
+        log.warn(
+          `memory-hybrid: embedding-migration: batch rate-limited at offset ${offset} — backing off ${backoffMs}ms before per-fact fallback`,
+        );
+        await new Promise((r) => setTimeout(r, backoffMs));
+      } else {
+        log.warn(
+          `memory-hybrid: embedding-migration: batch embed failed at offset ${offset} — falling back to per-fact embeds: ${batchErr}`,
+        );
+      }
+
+      // Per-fact fallback: sequential with delay when rate-limited (prevents RPM storm).
+      vectors = [];
+      for (const fact of batch) {
+        try {
+          vectors.push(await embeddings.embed(fact.text));
+        } catch (err) {
+          if (!shouldSuppressEmbeddingError(err)) {
+            capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+              subsystem: "embeddings",
+              operation: "migration-embed-single",
+            });
           }
-        }),
-      );
+          const singleAsErr = err instanceof Error ? err : new Error(String(err));
+          if (is429OrWrapped(singleAsErr) || is403QuotaOrRateLimitLike(err)) {
+            const singleBackoff = delayMsBetweenBatches > 0 ? delayMsBetweenBatches * 2 : 3_000;
+            log.warn(
+              `memory-hybrid: embedding-migration: per-fact rate-limited for ${fact.id} — backing off ${singleBackoff}ms`,
+            );
+            await new Promise((r) => setTimeout(r, singleBackoff));
+          }
+          errors.push(`fact ${fact.id}: embed failed — ${String(err)}`);
+          vectors.push(null);
+        }
+        if (isRateLimit && delayMsBetweenBatches > 0) {
+          await new Promise((r) => setTimeout(r, delayMsBetweenBatches));
+        }
+      }
     }
 
     for (let j = 0; j < batch.length; j++) {
@@ -218,6 +246,11 @@ export async function migrateEmbeddings(opts: MigrateEmbeddingsOptions): Promise
         `memory-hybrid: embedding-migration: ${offset}/${total} processed ` +
           `(${migrated} migrated, ${errors.length} errors)`,
       );
+    }
+
+    // Inter-batch throttle to stay under provider rate limits (Azure/OpenAI).
+    if (delayMsBetweenBatches > 0 && offset < total) {
+      await new Promise((r) => setTimeout(r, delayMsBetweenBatches));
     }
   }
 

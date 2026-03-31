@@ -1,3 +1,4 @@
+import { getEnv, setEnv } from "../utils/env-manager.js";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -17,15 +18,15 @@ describe("memory index", () => {
   beforeEach(() => {
     tmpDir = mkdtempSync(join(tmpdir(), "memory-index-test-"));
     factsDb = new FactsDB(join(tmpDir, "facts.db"));
-    originalWorkspace = process.env.OPENCLAW_WORKSPACE;
-    process.env.OPENCLAW_WORKSPACE = tmpDir;
+    originalWorkspace = getEnv("OPENCLAW_WORKSPACE");
+    setEnv("OPENCLAW_WORKSPACE", tmpDir);
   });
 
   afterEach(() => {
     factsDb.close();
     rmSync(tmpDir, { recursive: true, force: true });
-    if (originalWorkspace !== undefined) process.env.OPENCLAW_WORKSPACE = originalWorkspace;
-    else process.env.OPENCLAW_WORKSPACE = undefined;
+    if (originalWorkspace !== undefined) setEnv("OPENCLAW_WORKSPACE", originalWorkspace);
+    else setEnv("OPENCLAW_WORKSPACE", undefined);
   });
 
   it("builds a compact awareness snapshot from clusters, decisions, entities, and patterns", () => {

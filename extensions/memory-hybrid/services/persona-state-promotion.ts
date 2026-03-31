@@ -29,7 +29,7 @@ const INSIGHT_STOPWORDS = new Set([
   "with",
 ]);
 
-export interface PersonaPromotionCandidate {
+interface PersonaPromotionCandidate {
   stateKey: string;
   questionKey: string;
   targetFile: IdentityFileType;
@@ -43,7 +43,7 @@ export interface PersonaPromotionCandidate {
   lastSeenAt: number;
 }
 
-export interface PersonaPromotionResult {
+interface PersonaPromotionResult {
   reflectionsReviewed: number;
   durableReflections: number;
   candidatesFound: number;
@@ -53,7 +53,7 @@ export interface PersonaPromotionResult {
   entries: PersonaStateEntry[];
 }
 
-export function normalizePersonaInsight(text: string): string {
+function normalizePersonaInsight(text: string): string {
   return text
     .trim()
     .toLowerCase()
@@ -109,7 +109,7 @@ export function calculatePersonaInsightSimilarity(left: string, right: string): 
   return Math.max(tokenSimilarity, bigramSimilarity);
 }
 
-export function inferPersonaTargetFile(questionKey: string, insight: string): IdentityFileType {
+function inferPersonaTargetFile(questionKey: string, insight: string): IdentityFileType {
   const combined = `${questionKey} ${insight}`.toLowerCase();
   if (/\b(name|identity|avatar|creature|role|vibe|species|origin)\b/.test(combined)) {
     return "IDENTITY.md";

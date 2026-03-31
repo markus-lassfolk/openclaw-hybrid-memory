@@ -11,6 +11,7 @@ import {
   GOOGLE_EMBED_DEFAULT_MODEL,
   KNOWN_GOOGLE_EMBED_MODELS,
   OPENAI_ONLY_EMBED_MODELS,
+  isAzureOpenAiCompatibleEndpoint,
   isAzureOpenAiResourceEndpoint,
 } from "./shared.js";
 import { Embeddings } from "./openai-provider.js";
@@ -84,6 +85,24 @@ function openaiEmbeddingClientOpts(
   return opts;
 }
 
+/** Local/Ollama/ONNX embedding ids — never use as OpenAI/Azure `model` when falling back from Ollama/ONNX (#932). */
+function isLocalOnlyEmbeddingModelId(model: string | undefined): boolean {
+  if (!model) return false;
+  switch (model) {
+    case "nomic-embed-text":
+    case "mxbai-embed-large":
+    case "bge-m3":
+    case "bge-large":
+    case "bge-small-en-v1.5":
+    case "snowflake-arctic-embed":
+    case "all-minilm":
+    case "all-MiniLM-L6-v2":
+      return true;
+    default:
+      return false;
+  }
+}
+
 /** API model id(s) for OpenAI-compatible embeddings: optional Azure deployment name overrides logical `model`. */
 function openAiEmbeddingApiModels(cfg: EmbeddingConfig, forFallback = false): string[] {
   const { model, models, deployment } = cfg;
@@ -93,6 +112,12 @@ function openAiEmbeddingApiModels(cfg: EmbeddingConfig, forFallback = false): st
   if (forFallback && !models?.length) {
     if (model && OPENAI_ONLY_EMBED_MODELS.has(model)) {
       return [model];
+    }
+    // Fallback path used for chain OpenAI arm and Ollama/ONNX→OpenAI fallback. Azure deployment names
+    // are often not in OPENAI_ONLY_EMBED_MODELS; do not substitute text-embedding-3-small (#932).
+    const m = typeof model === "string" ? model.trim() : "";
+    if (m && isAzureOpenAiCompatibleEndpoint(cfg.endpoint) && !isLocalOnlyEmbeddingModelId(m)) {
+      return [m];
     }
     return ["text-embedding-3-small"];
   }
@@ -122,6 +147,14 @@ export function createEmbeddingProvider(cfg: EmbeddingConfig, onFallback?: (err:
     const googleInChainWithOpenAiModel =
       preferredProviders.includes("google") && model && OPENAI_ONLY_EMBED_MODELS.has(model);
     const chainDimensions = googleInChainWithOpenAiModel ? GOOGLE_EMBED_DEFAULT_DIMENSIONS : dimensions;
+    if (googleInChainWithOpenAiModel && dimensions && dimensions !== GOOGLE_EMBED_DEFAULT_DIMENSIONS) {
+      pluginLogger.warn(
+        `memory-hybrid: embedding chain includes Google with OpenAI model '${model}' — ` +
+          `forcing dimensions to ${GOOGLE_EMBED_DEFAULT_DIMENSIONS} (Google default) instead of ${dimensions}. ` +
+          `Set embedding.preferredProviders: ["openai"] to use ${dimensions}-dim OpenAI-only embeddings, ` +
+          `or set embedding.dimensions: ${GOOGLE_EMBED_DEFAULT_DIMENSIONS} to acknowledge the Google chain dimensions.`,
+      );
+    }
     const ollamaModel =
       model && !["text-embedding-3-small", "text-embedding-3-large", "text-embedding-ada-002"].includes(model)
         ? model

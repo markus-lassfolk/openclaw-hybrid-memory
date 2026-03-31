@@ -1,3 +1,4 @@
+import { getEnv } from "../utils/env-manager.js";
 /**
  * Tests for workflow crystallization — Issue #208.
  * Covers: CrystallizationStore, PatternDetector, SkillCrystallizer,
@@ -439,7 +440,7 @@ describe("SkillCrystallizer.crystallize", () => {
   });
 
   it("expands ~ in outputDir", () => {
-    const homeDir = process.env.HOME ?? "/root";
+    const homeDir = getEnv("HOME") ?? "/root";
     const cfg = { ...DEFAULT_CRYSTALLIZATION_CFG, outputDir: "~/.openclaw/workspace/skills/auto" };
     const crystallizer = new SkillCrystallizer(cfg);
     const pattern = {

@@ -1,3 +1,4 @@
+import { getEnv } from "../utils/env-manager.js";
 /** @module init-databases — Provider routing, cost instrumentation, and database bootstrap. */
 import { dirname, join } from "node:path";
 import { existsSync, readFileSync, constants } from "node:fs";
@@ -16,7 +17,7 @@ import type { WriteAheadLog } from "../backends/wal.js";
 import type { EmbeddingProvider } from "../services/embeddings.js";
 import type { EmbeddingRegistry } from "../services/embedding-registry.js";
 import type { HybridMemoryConfig, LLMProviderConfig, CredentialType, ResolvedGatewayAuthConfig } from "../config.js";
-import { UnconfiguredProviderError } from "../services/chat.js";
+import { is403QuotaOrRateLimitLike, is429OrWrapped, UnconfiguredProviderError } from "../services/chat.js";
 import { hasOAuthProfiles } from "../utils/auth.js";
 import {
   isOAuthInBackoff,
@@ -43,7 +44,11 @@ import { createApimGatewayFetch, isAzureApiManagementGatewayUrl } from "../utils
 import type { ApitapStore } from "../backends/apitap-store.js";
 import { isNanoModel, isHeavyModel, isLightModel } from "../utils/model-tier.js";
 import { installCoreBootstrapServices, installOptionalBootstrapServices } from "../services/index.js";
-import { formatOpenAiEmbeddingDisplayLabel, isAzureOpenAiResourceEndpoint } from "../services/embeddings/shared.js";
+import {
+  formatOpenAiEmbeddingDisplayLabel,
+  isAzureOpenAiResourceEndpoint,
+  shouldSuppressEmbeddingError,
+} from "../services/embeddings/shared.js";
 
 /**
  * Normalize baseURL vs baseUrl (OpenClaw config uses camelCase `baseUrl`; SDK uses `baseURL`).
@@ -99,10 +104,10 @@ function extractGatewayConfig(cfg: HybridMemoryConfig): {
   gatewayToken: string | undefined;
   gatewayBaseUrl: string | undefined;
 } {
-  const gatewayPortRaw = normalizeResolvedSecretValue(process.env.OPENCLAW_GATEWAY_PORT);
+  const gatewayPortRaw = normalizeResolvedSecretValue(getEnv("OPENCLAW_GATEWAY_PORT"));
   const gatewayPort = gatewayPortRaw ? Number.parseInt(gatewayPortRaw, 10) : undefined;
   const gatewayAuthResolved = (cfg.gateway?.auth as ResolvedGatewayAuthConfig | undefined)?._resolvedToken;
-  const gatewayToken = gatewayAuthResolved ?? normalizeResolvedSecretValue(process.env.OPENCLAW_GATEWAY_TOKEN);
+  const gatewayToken = gatewayAuthResolved ?? normalizeResolvedSecretValue(getEnv("OPENCLAW_GATEWAY_TOKEN"));
   const gatewayBaseUrl =
     gatewayPort && gatewayPort >= 1 && gatewayPort <= 65535 ? `http://127.0.0.1:${gatewayPort}/v1` : undefined;
   return {
@@ -284,7 +289,7 @@ function canonicalizeMiniMaxModelId(bare: string): string {
 export const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
 
 /** Resolved API key with metadata about which configuration source provided it. */
-export type ResolvedApiKey = { value?: string; source: string };
+type ResolvedApiKey = { value?: string; source: string };
 
 /**
  * Centralised API-key resolver for all built-in and custom providers.
@@ -856,13 +861,13 @@ function buildMultiProviderOpenAI(
   }) as OpenAI;
 }
 
-export interface HealthStatus {
+interface HealthStatus {
   embeddingsOk: boolean;
   credentialsVaultOk: boolean;
   lastCheckTime: number;
 }
 
-export interface DatabaseContext {
+interface DatabaseContext {
   factsDb: FactsDB;
   edictStore: EdictStore;
   vectorDb: VectorDB;
@@ -1118,7 +1123,7 @@ export function initializeDatabases(cfg: HybridMemoryConfig, api: ClawdbotPlugin
   const heavyList = Array.isArray(cfg.llm?.heavy) ? cfg.llm.heavy : [];
   const hasAnthropicModel = (list: string[]) => list.some((m) => m.startsWith("anthropic/") || m.startsWith("claude-"));
   if (!prov.anthropic && (hasAnthropicModel(defaultList) || hasAnthropicModel(heavyList))) {
-    const envKey = normalizeResolvedSecretValue(process.env.ANTHROPIC_API_KEY) ?? "";
+    const envKey = normalizeResolvedSecretValue(getEnv("ANTHROPIC_API_KEY")) ?? "";
     if (envKey.length >= 10) {
       prov.anthropic = { apiKey: envKey };
       mergedProviderNames.push("anthropic");
@@ -1396,25 +1401,32 @@ export function initializeDatabases(cfg: HybridMemoryConfig, api: ClawdbotPlugin
           : `memory-hybrid: embedding check OK (provider=${effectiveProvider}, model=${modelForLog})`,
       );
     } catch (e) {
-      capturePluginError(e instanceof Error ? e : new Error(String(e)), {
-        subsystem: "embeddings",
-        operation: "init-verify",
-        phase: "initialization",
-        backend: cfg.embedding.provider,
-      });
+      const asErr = e instanceof Error ? e : new Error(String(e));
+      if (!shouldSuppressEmbeddingError(asErr)) {
+        capturePluginError(asErr, {
+          subsystem: "embeddings",
+          operation: "init-verify",
+          phase: "initialization",
+          backend: cfg.embedding.provider,
+        });
+      }
       const errText = String(e);
+      const quota403 = is403QuotaOrRateLimitLike(e);
       const azure404 =
         typeof cfg.embedding.endpoint === "string" &&
         /\.openai\.azure\.com/i.test(cfg.embedding.endpoint) &&
         (/404|not found/i.test(errText) || /Model not found/i.test(errText));
-      const hint =
-        cfg.embedding.provider === "ollama"
+      const hint = quota403
+        ? "The provider returned 403 with quota/rate-limit signals (e.g. remaining-tokens=0, Retry-After). Wait for the window to reset or raise quota; your key may still be valid. Run 'openclaw hybrid-mem verify' for details."
+        : cfg.embedding.provider === "ollama"
           ? `Ensure Ollama is running at ${cfg.embedding.endpoint ?? "http://localhost:11434"} and model '${cfg.embedding.model}' is pulled. Run 'openclaw hybrid-mem verify' for details.`
           : azure404
             ? 'Azure OpenAI embeddings use the deployment name as the API model id. In plugins.entries["openclaw-hybrid-memory"].config.embedding set "deployment" to the exact embedding deployment name from Azure Portal (Resource → Model deployments), or rename the deployment to match embedding.model. Ensure embedding.endpoint is the resource URL (e.g. …/openai/v1). Run \'openclaw hybrid-mem verify\' for details.'
             : "Set a valid embedding.apiKey in plugin config and ensure the model is accessible. Run 'openclaw hybrid-mem verify' for details.";
-      api.logger.error(
-        `memory-hybrid: ⚠️  EMBEDDING CHECK FAILED (provider=${cfg.embedding.provider}) — ${String(e)}. ` +
+      // Warn only for transient quota/rate-limit; keep error for bad keys, wrong model, geo 403, etc. (#941 review).
+      const logEmbFailure = quota403 || is429OrWrapped(asErr) ? api.logger.warn : api.logger.error;
+      logEmbFailure(
+        `[embedding-init] memory-hybrid: ⚠️  EMBEDDING CHECK FAILED (provider=${cfg.embedding.provider}) — ${String(e)}. ` +
           `Plugin will continue but semantic search will not work. ${hint}`,
       );
     }

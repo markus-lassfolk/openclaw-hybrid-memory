@@ -17,9 +17,9 @@ import { BaseSqliteStore } from "./base-sqlite-store.js";
 // Public types
 // ---------------------------------------------------------------------------
 
-export type CrystallizationStatus = "pending" | "approved" | "rejected";
+type CrystallizationStatus = "pending" | "approved" | "rejected";
 
-export interface CrystallizationProposal {
+interface CrystallizationProposal {
   id: string;
   patternId: string;
   skillName: string;
@@ -35,14 +35,14 @@ export interface CrystallizationProposal {
   updatedAt: string;
 }
 
-export interface CreateProposalInput {
+interface CreateProposalInput {
   patternId: string;
   skillName: string;
   skillContent: string;
   patternSnapshot: string;
 }
 
-export interface ProposalFilter {
+interface ProposalFilter {
   status?: CrystallizationStatus;
   skillName?: string;
   limit?: number;

@@ -1,3 +1,4 @@
+import { getEnv } from "../utils/env-manager.js";
 /**
  * CLI registration functions for management commands.
  * Extracted from cli/register.ts lines 290-1552.
@@ -6,7 +7,7 @@
 import { existsSync, mkdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { execSync } from "node:child_process";
+import { execSync } from "../utils/process-runner.js";
 import { generateTraceId, buildCouncilSessionKey, buildProvenanceMetadata } from "../utils/provenance.js";
 import { relativeTime } from "./shared.js";
 import { buildAppliedContent, buildUnifiedDiff } from "./proposals.js";
@@ -803,10 +804,16 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
           console.log(`Language keywords: ${languageKeywordsCount}`);
           console.log("");
           console.log(`Graph (links/entities): ${links}/${entities}`);
-          console.log(`Credentials (vaulted): ${credentials}`);
+          console.log(
+            `Credentials (vaulted): ${credentials}${
+              credentials === 0 && !ctx.cfg.credentials.enabled ? " (vault off in effective config; counts stay 0)" : ""
+            }`,
+          );
           const proposalsLine = proposalsAvailable
             ? `Proposals (pending): ${proposalsPending}${proposalsPending === 0 ? " (run generate-proposals to create)" : ""}`
-            : "Proposals (pending): — (persona proposals disabled)";
+            : ctx.cfg.personaProposals.enabled
+              ? "Proposals (pending): — (proposals store unavailable)"
+              : "Proposals (pending): — (persona proposals off in effective config; see hybrid-mem config if file still shows enabled)";
           console.log(proposalsLine);
           console.log(`WAL (pending distill): ${walPending}`);
           console.log("");
@@ -1557,7 +1564,7 @@ Preserved (P0 — never trimmed, ${result.preserved.length} fact(s)):`);
           createdAt: number;
           evidenceSessions?: string[];
         };
-        const workspace = process.env.OPENCLAW_WORKSPACE ?? join(homedir(), ".openclaw", "workspace");
+        const workspace = getEnv("OPENCLAW_WORKSPACE") ?? join(homedir(), ".openclaw", "workspace");
         const targetPath = join(workspace, proposal.targetFile);
         const includeDiff = !!opts?.diff || !!opts?.json;
         let diffText: string | null = null;

@@ -338,6 +338,7 @@ async function runCapture(
                         vector,
                       },
                       api.logger,
+                      classification.targetId,
                     );
                     const nowSec = Math.floor(Date.now() / 1000);
                     const newEntry = ctx.factsDb.store({

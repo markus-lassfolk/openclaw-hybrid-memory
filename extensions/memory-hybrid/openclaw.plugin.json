@@ -1,7 +1,7 @@
 {
   "id": "openclaw-hybrid-memory",
   "kind": "memory",
-  "version": "2026.3.260",
+  "version": "2026.3.310",
   "uiHints": {
     "embedding.provider": {
       "label": "Embedding Provider",
@@ -40,6 +40,12 @@
       "label": "ONNX Dimensions",
       "placeholder": "384",
       "help": "Embedding output dimensions for the ONNX model",
+      "advanced": true
+    },
+    "embedding.batchSize": {
+      "label": "Embedding batch size",
+      "placeholder": "40",
+      "help": "Facts per batch when running embedding backfill/migration. If omitted, the config parser defaults to 40 (#901). Provider-specific batch limits (OpenAI, Ollama, ONNX) still apply inside each provider.",
       "advanced": true
     },
     "mode": {
@@ -95,7 +101,15 @@
     },
     "autoRecall.entityLookup": {
       "label": "Auto-Recall entity lookup",
-      "help": "When prompt mentions an entity from the list, merge lookup(entity) facts into candidates (4.1)"
+      "help": "When the prompt mentions an entity, merge lookup(entity) facts. If `entities` is empty and `autoFromFacts` is true (default), names come from DISTINCT entity on stored facts (capped by maxAutoEntities)."
+    },
+    "autoRecall.entityLookup.autoFromFacts": {
+      "label": "Entity lookup: auto from facts DB",
+      "help": "When true (default) and `entities` is empty, use distinct `entity` values from the facts table (up to maxAutoEntities). Set false to require an explicit `entities` list."
+    },
+    "autoRecall.entityLookup.maxAutoEntities": {
+      "label": "Entity lookup: max auto names",
+      "help": "Cap for auto-loaded entity names from the DB (default 500, max 2000)."
     },
     "autoRecall.retrievalDirectives.enabled": {
       "label": "Retrieval directives",
@@ -526,6 +540,10 @@
               "enum": ["openai", "google", "ollama"]
             },
             "description": "Explicit ordered list of embedding providers to use. When set, only listed providers are tried (in order); auto-inference from available API keys is skipped. Use [\"openai\"] to pin to Azure/OpenAI only and prevent Google from being auto-added as a fallback when GEMINI_API_KEY is also set. Mixing providers with different vector dimensions is not supported \u2014 ensure all listed providers produce the same dimensions as your stored vectors."
+          },
+          "batchSize": {
+            "type": "number",
+            "description": "Batch size for embedding migration/backfill (facts per batch). When omitted, the config parser uses 40."
           }
         }
       },
@@ -599,6 +617,16 @@
                   },
                   "maxFactsPerEntity": {
                     "type": "number"
+                  },
+                  "autoFromFacts": {
+                    "type": "boolean",
+                    "description": "When true (default) and entities is empty, load names from DISTINCT entity on facts (capped by maxAutoEntities)."
+                  },
+                  "maxAutoEntities": {
+                    "type": "number",
+                    "minimum": 1,
+                    "maximum": 2000,
+                    "description": "Max distinct entity names when using autoFromFacts (default 500)."
                   }
                 }
               },

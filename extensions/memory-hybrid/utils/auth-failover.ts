@@ -10,7 +10,7 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 const DEFAULT_BACKOFF_MINUTES = [5, 30, 60, 120, 240];
 const DEFAULT_RESET_AFTER_HOURS = 24;
 
-export type AuthFailoverOptions = {
+type AuthFailoverOptions = {
   /** Backoff delays in minutes per level (0-indexed). Default [5, 30, 60, 120, 240]. */
   backoffScheduleMinutes?: number[];
   /** Reset backoff levels after this many hours. Default 24. */
@@ -19,7 +19,7 @@ export type AuthFailoverOptions = {
   statePath?: string;
 };
 
-export type AuthFailoverState = {
+type AuthFailoverState = {
   lastResetTs: number;
   providers: Record<string, { backoffUntil: number; level: number }>;
 };
@@ -94,7 +94,7 @@ export function recordOAuthFailure(provider: string, options: AuthFailoverOption
  * Clear backoff for a provider (e.g. after manual reset or success).
  * If statePath is set, loads and saves; otherwise no-op for persistence.
  */
-export function clearOAuthBackoff(provider: string, options: AuthFailoverOptions = {}): void {
+function clearOAuthBackoff(provider: string, options: AuthFailoverOptions = {}): void {
   const statePath = options.statePath;
   if (!statePath) return;
   const state = loadState(statePath);

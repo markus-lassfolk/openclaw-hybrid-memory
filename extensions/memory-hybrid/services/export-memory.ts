@@ -8,7 +8,7 @@ import { dirname, join } from "node:path";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { MemoryEntry } from "../types/memory.js";
 
-export type ExportOpts = {
+type ExportOpts = {
   /** Output directory (must exist or be creatable). */
   outputPath: string;
   /** Exclude credential pointer facts (entity "Credentials"). Default true. */
@@ -21,7 +21,7 @@ export type ExportOpts = {
   mode?: "replace" | "additive";
 };
 
-export type ExportResult = {
+type ExportResult = {
   factsExported: number;
   proceduresExported: number;
   filesWritten: number;

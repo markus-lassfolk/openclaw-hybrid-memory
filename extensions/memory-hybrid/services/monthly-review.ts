@@ -3,7 +3,7 @@ import type { FactsDB } from "../backends/facts-db.js";
 import { chatComplete } from "./chat.js";
 import { capturePluginError } from "./error-reporter.js";
 
-export interface MonthlyReviewReport {
+interface MonthlyReviewReport {
   generatedAt: string; // ISO date
   coverageAnalysis: {
     totalFacts: number;

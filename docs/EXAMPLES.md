@@ -137,6 +137,24 @@ Lower `minScore`, increase `limit`, enable entity lookup:
 }
 ```
 
+### Problem: entity lookup without maintaining a static entity list
+
+With `entityLookup.enabled` true, leave `entities` empty (or omit it). Default `autoFromFacts: true` loads entity names from stored facts (distinct `entity` column), sorted and capped by `maxAutoEntities` (default 500, max 2000). Use `openclaw hybrid-mem config` to confirm the resolved source (`auto from facts (cap N)`). Set `autoFromFacts: false` if you want no entity lookup until you define `entities` explicitly.
+
+```json
+{
+  "autoRecall": {
+    "enabled": true,
+    "entityLookup": {
+      "enabled": true,
+      "entities": [],
+      "maxFactsPerEntity": 3,
+      "maxAutoEntities": 800
+    }
+  }
+}
+```
+
 ### Problem: context too full from memories
 
 Use shorter injection format and summaries:

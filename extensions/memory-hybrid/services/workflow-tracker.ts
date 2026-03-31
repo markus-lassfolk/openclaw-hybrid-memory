@@ -17,7 +17,7 @@ import { extractGoalKeywords } from "../backends/workflow-store.js";
 import type { WorkflowTrackingConfig } from "../config/types/features.js";
 import { capturePluginError } from "./error-reporter.js";
 
-export interface SessionBuffer {
+interface SessionBuffer {
   sessionId: string;
   toolCalls: string[];
   startedAt: number;

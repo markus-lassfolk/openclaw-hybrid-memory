@@ -18,7 +18,7 @@ import type {
   ProvenanceSourceType,
 } from "../services/provenance.js";
 
-export interface PluginContext {
+interface PluginContext {
   factsDb: FactsDB;
   eventLog: EventLog | null;
   provenanceService: ProvenanceService;

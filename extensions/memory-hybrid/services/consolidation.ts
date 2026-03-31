@@ -22,7 +22,7 @@ import { capturePluginError } from "./error-reporter.js";
 import type { ProvenanceService } from "./provenance.js";
 import { dotProductSimilarity, normalizeVector } from "./reflection.js";
 
-export interface ConsolidateOptions {
+interface ConsolidateOptions {
   threshold: number;
   includeStructured: boolean;
   dryRun: boolean;
@@ -30,7 +30,7 @@ export interface ConsolidateOptions {
   model: string;
 }
 
-export interface ConsolidateResult {
+interface ConsolidateResult {
   clustersFound: number;
   merged: number;
   deleted: number;

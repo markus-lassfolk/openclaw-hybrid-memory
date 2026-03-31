@@ -16,7 +16,7 @@ import { pluginLogger } from "../utils/logger.js";
 // Types
 // ---------------------------------------------------------------------------
 
-export interface FtsSearchResult {
+interface FtsSearchResult {
   /** UUID of the matching fact in the facts table. */
   factId: string;
   text: string;
@@ -59,6 +59,11 @@ function escapeForFts5(raw: string): string {
  *   so that partial matches still return results.
  * - Advanced FTS5 syntax (AND / OR / NOT / prefix *) is passed through
  *   verbatim when the raw string already contains those operators.
+ *
+ * Note: `facts_fts` uses `tokenize='porter unicode61'`, so indexed terms are stemmed.
+ * Quoted tokens here are not re-stemmed by this builder; very short or inflected
+ * queries may miss stemmed index terms (#898). Prefer user vocabulary that matches
+ * stored text or extend with prefix queries where appropriate.
  */
 export function buildFts5Query(raw: string): string | null {
   const trimmed = raw.trim();
@@ -80,7 +85,8 @@ export function buildFts5Query(raw: string): string | null {
         sanitizedTokens.push(token);
         continue;
       }
-      if (/^[a-zA-Z0-9_]+$/.test(token)) {
+      // Allow hyphens / dots in terms (e.g. api-key) so AND/OR queries are not stripped to invalid FTS (issue #850).
+      if (/^[a-zA-Z0-9_.-]+$/.test(token)) {
         sanitizedTokens.push(`"${token}"`);
       }
     }
@@ -98,12 +104,19 @@ export function buildFts5Query(raw: string): string | null {
     return `"${inner}"`;
   }
 
-  // Default: keyword OR search.
+  // Default: keyword OR search (quoted term OR prefix) — aligns with porter-stemmed index (#898).
   const tokens = escapeForFts5(trimmed)
     .split(/\s+/)
     .filter((t) => t.length > 0);
   if (tokens.length === 0) return null;
-  return tokens.map((t) => `"${t}"`).join(" OR ");
+  return tokens
+    .map((t) => {
+      if (/^[a-zA-Z0-9_]+$/.test(t) && t.length >= 3) {
+        return `( "${t}" OR ${t}* )`;
+      }
+      return `"${t}"`;
+    })
+    .join(" OR ");
 }
 
 // ---------------------------------------------------------------------------

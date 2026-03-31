@@ -93,6 +93,8 @@ openclaw hybrid-mem config set verbosity silent
 | `store.classifyBeforeWrite` | `false` | When `true`, classify each new fact against similar existing facts (by embedding + entity/key) as ADD, UPDATE, DELETE, or NOOP before storing. Reduces duplicates and stale contradictions. Applies to auto-capture, `memory_store` tool, CLI `hybrid-mem store`, and `extract-daily`. |
 | `store.classifyModel` | `llm.nano[0]` (e.g. `openai/gpt-4.1-nano`) | Chat model used for the classification call (low cost). |
 
+> **Warning — batch and high-volume paths:** Each store can trigger **one LLM classification call** when this is enabled. Large imports (e.g. extract-daily, scripted `hybrid-mem store` loops) therefore perform **one classification API call per fact**, which increases latency, cost, and rate-limit risk. Auto-capture in a single chat turn only evaluates a small number of candidates. For very large batches, consider leaving `classifyBeforeWrite` off for the import run, or plan for throttling; see [CONFLICTING-MEMORIES.md](CONFLICTING-MEMORIES.md#performance-warning-batch-imports-and-classify-before-write) and [openclaw-hybrid-memory#862](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/862).
+
 Example: `"store": { "fuzzyDedupe": false, "classifyBeforeWrite": true, "classifyModel": "openai/gpt-4.1-nano" }`
 
 ### Auto-recall options
@@ -113,7 +115,9 @@ Example: `"store": { "fuzzyDedupe": false, "classifyBeforeWrite": true, "classif
     "entityLookup": {
       "enabled": false,
       "entities": ["user", "owner"],
-      "maxFactsPerEntity": 2
+      "maxFactsPerEntity": 2,
+      "autoFromFacts": true,
+      "maxAutoEntities": 500
     },
     "summaryThreshold": 300,
     "summaryMaxChars": 80,
@@ -138,6 +142,10 @@ Example: `"store": { "fuzzyDedupe": false, "classifyBeforeWrite": true, "classif
 | `preferLongTerm` | `false` | Boost permanent (×1.2) and stable (×1.1) facts |
 | `useImportanceRecency` | `false` | Combine relevance with importance and recency |
 | `entityLookup.enabled` | `false` | Merge entity lookup facts when prompt mentions an entity |
+| `entityLookup.entities` | `[]` | Entity names to match in the prompt (case-insensitive substring). If **non-empty**, only this list is used |
+| `entityLookup.maxFactsPerEntity` | `2` | Max facts merged per matched entity |
+| `entityLookup.autoFromFacts` | `true` | When `entities` is empty or omitted, load names from distinct non-null `entity` on active facts (`getKnownEntities()`), sorted and capped by `maxAutoEntities`. Set `false` for legacy behavior: no entity merge or `entityMentioned` directives until you set `entities` explicitly |
+| `entityLookup.maxAutoEntities` | `500` (hard max `2000`) | Cap on auto-loaded entity names when `autoFromFacts` is true |
 | `summaryThreshold` | `300` | Facts longer than this get a stored summary |
 | `summaryMaxChars` | `80` | Max chars for the summary |
 | `useSummaryInInjection` | `true` | Use summary in injection to save tokens |
@@ -176,7 +184,7 @@ Besides semantic auto-recall, you can trigger **targeted recall** by entity ment
 | Key | Default | Description |
 |-----|---------|-------------|
 | `enabled` | `true` when `autoRecall` is object | Enable retrieval directives (entity/keyword/task-type/session-start) |
-| `entityMentioned` | `true` | When the prompt mentions an entity from entity lookup list, run targeted recall for that entity |
+| `entityMentioned` | `true` | When the prompt mentions an entity from the effective entity lookup list (configured `entities` or auto-from-facts when enabled), run targeted recall for that entity |
 | `keywords` | `[]` | Case-insensitive keyword triggers; when prompt contains one, run targeted recall |
 | `taskTypes` | `{}` | Map task type → keyword list; matched task type triggers recall with those keywords |
 | `sessionStart` | `false` | Run a one-time targeted recall when a new session starts |
@@ -1164,7 +1172,7 @@ The document ingestion feature converts files (PDF, DOCX, XLSX, PPTX, HTML, imag
 | `autoTag` | `true` | Automatically add the filename as a tag to all ingested facts |
 | `visionEnabled` | `false` | Use LLM vision for image files (PNG, JPG, etc.) instead of MarkItDown |
 | `visionModel` | (llm.default) | Vision model to use when `visionEnabled` is true |
-| `allowedPaths` | — | Allowlist of absolute directory paths; ingestion is restricted to files under these paths when set |
+| `allowedPaths` | — | **Required** non-empty allowlist of absolute directory paths when document ingestion is enabled; if omitted or empty, all paths are denied (default-safe). |
 
 **Supported file types:** PDF, DOC/DOCX, PPT/PPTX, XLS/XLSX, CSV, TSV, Markdown, TXT, RTF, HTML, JSON, YAML, EPUB, ODF formats, and images (PNG, JPG, GIF, WebP, BMP, TIFF).
 

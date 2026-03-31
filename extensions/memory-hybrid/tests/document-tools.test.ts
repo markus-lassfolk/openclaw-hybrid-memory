@@ -84,8 +84,12 @@ function makeCfg(
     maxDocumentSize: number;
     visionEnabled: boolean;
     visionModel: string;
+    allowedPaths: string[];
   }> = {},
+  /** Directory that test files live under; required because documents.allowedPaths default-denies when unset. */
+  testRoot?: string,
 ) {
+  const allowedPaths = overrides.allowedPaths ?? (testRoot ? [testRoot] : undefined);
   return {
     documents: {
       enabled: true,
@@ -96,6 +100,7 @@ function makeCfg(
       autoTag: overrides.autoTag ?? true,
       visionEnabled: overrides.visionEnabled ?? false,
       visionModel: overrides.visionModel,
+      ...(allowedPaths !== undefined ? { allowedPaths } : {}),
     },
     // Minimal categories for stringEnum
     categories: ["fact", "preference", "decision", "technical", "other"],
@@ -148,7 +153,7 @@ describe("memory_ingest_document", () => {
         factsDb: factsDb as never,
         edictStore: null as any,
         vectorDb: makeMockVectorDb() as never,
-        cfg: makeCfg() as never,
+        cfg: makeCfg({}, tmpDir) as never,
         embeddings: makeMockEmbeddings() as never,
         openai: {} as never,
         pythonBridge: bridge as never,
@@ -172,7 +177,7 @@ describe("memory_ingest_document", () => {
         factsDb: factsDb as never,
         edictStore: null as any,
         vectorDb: makeMockVectorDb() as never,
-        cfg: makeCfg() as never,
+        cfg: makeCfg({}, tmpDir) as never,
         embeddings: makeMockEmbeddings() as never,
         openai: {} as never,
         pythonBridge: makeMockBridge() as never,
@@ -184,6 +189,25 @@ describe("memory_ingest_document", () => {
     expect(result.details.error).toBe("path_not_absolute");
   });
 
+  it("rejects paths when allowedPaths is empty (default-deny)", async () => {
+    const api = makeMockApi();
+    registerDocumentTools(
+      {
+        factsDb: factsDb as never,
+        edictStore: null as any,
+        vectorDb: makeMockVectorDb() as never,
+        cfg: makeCfg({ allowedPaths: [] }, tmpDir) as never,
+        embeddings: makeMockEmbeddings() as never,
+        openai: {} as never,
+        pythonBridge: makeMockBridge() as never,
+      },
+      api as never,
+    );
+    const tool = api.getTool("memory_ingest_document");
+    const result = await (tool?.execute as AnyFn)("tc-deny", { path: testFilePath });
+    expect(result.details.error).toBe("path_not_allowed");
+  });
+
   it("returns error when file does not exist", async () => {
     const api = makeMockApi();
     const bridge = makeMockBridge();
@@ -193,7 +217,7 @@ describe("memory_ingest_document", () => {
         factsDb: factsDb as never,
         edictStore: null as any,
         vectorDb: makeMockVectorDb() as never,
-        cfg: makeCfg() as never,
+        cfg: makeCfg({}, tmpDir) as never,
         embeddings: makeMockEmbeddings() as never,
         openai: {} as never,
         pythonBridge: bridge as never,
@@ -215,7 +239,7 @@ describe("memory_ingest_document", () => {
         factsDb: factsDb as never,
         edictStore: null as any,
         vectorDb: makeMockVectorDb() as never,
-        cfg: makeCfg({ maxDocumentSize: 1 }) as never, // 1 byte limit
+        cfg: makeCfg({ maxDocumentSize: 1 }, tmpDir) as never, // 1 byte limit
         embeddings: makeMockEmbeddings() as never,
         openai: {} as never,
         pythonBridge: bridge as never,
@@ -237,7 +261,7 @@ describe("memory_ingest_document", () => {
         factsDb: factsDb as never,
         edictStore: null as any,
         vectorDb: makeMockVectorDb() as never,
-        cfg: makeCfg() as never,
+        cfg: makeCfg({}, tmpDir) as never,
         embeddings: makeMockEmbeddings() as never,
         openai: {} as never,
         pythonBridge: bridge as never,
@@ -265,7 +289,7 @@ describe("memory_ingest_document", () => {
         factsDb: factsDb as never,
         edictStore: null as any,
         vectorDb: vectorDb as never,
-        cfg: makeCfg() as never,
+        cfg: makeCfg({}, tmpDir) as never,
         embeddings: makeMockEmbeddings() as never,
         openai: {} as never,
         pythonBridge: bridge as never,
@@ -293,7 +317,7 @@ describe("memory_ingest_document", () => {
         factsDb: factsDb as never,
         edictStore: null as any,
         vectorDb: makeMockVectorDb() as never,
-        cfg: makeCfg() as never,
+        cfg: makeCfg({}, tmpDir) as never,
         embeddings: makeMockEmbeddings() as never,
         openai: {} as never,
         pythonBridge: bridge as never,
@@ -325,7 +349,7 @@ describe("memory_ingest_document", () => {
         factsDb: factsDb as never,
         edictStore: null as any,
         vectorDb: makeMockVectorDb() as never,
-        cfg: makeCfg() as never,
+        cfg: makeCfg({}, tmpDir) as never,
         embeddings: makeMockEmbeddings() as never,
         openai: {} as never,
         pythonBridge: bridge as never,
@@ -349,7 +373,7 @@ describe("memory_ingest_document", () => {
         factsDb: factsDb as never,
         edictStore: null as any,
         vectorDb: makeMockVectorDb() as never,
-        cfg: makeCfg({ autoTag: true }) as never,
+        cfg: makeCfg({ autoTag: true }, tmpDir) as never,
         embeddings: makeMockEmbeddings() as never,
         openai: {} as never,
         pythonBridge: bridge as never,
@@ -386,7 +410,7 @@ describe("memory_ingest_folder", () => {
         factsDb: factsDb as never,
         edictStore: null as any,
         vectorDb: makeMockVectorDb() as never,
-        cfg: makeCfg() as never,
+        cfg: makeCfg({}, tmpDir) as never,
         embeddings: makeMockEmbeddings() as never,
         openai: {} as never,
         pythonBridge: bridge as never,
@@ -421,7 +445,7 @@ describe("memory_ingest_folder", () => {
         factsDb: factsDb as never,
         edictStore: null as any,
         vectorDb: vectorDb as never,
-        cfg: makeCfg() as never,
+        cfg: makeCfg({}, tmpDir) as never,
         embeddings: makeMockEmbeddings() as never,
         openai: {} as never,
         pythonBridge: bridge as never,
@@ -451,7 +475,7 @@ describe("hash-based deduplication", () => {
         factsDb: factsDb as never,
         edictStore: null as any,
         vectorDb: makeMockVectorDb() as never,
-        cfg: makeCfg() as never,
+        cfg: makeCfg({}, tmpDir) as never,
         embeddings: makeMockEmbeddings() as never,
         openai: {} as never,
         pythonBridge: bridge as never,
@@ -486,7 +510,7 @@ describe("hash-based deduplication", () => {
         factsDb: factsDb as never,
         edictStore: null as any,
         vectorDb: makeMockVectorDb() as never,
-        cfg: makeCfg() as never,
+        cfg: makeCfg({}, tmpDir) as never,
         embeddings: makeMockEmbeddings() as never,
         openai: {} as never,
         pythonBridge: bridge as never,
@@ -517,7 +541,7 @@ describe("hash-based deduplication", () => {
         factsDb: factsDb as never,
         edictStore: null as any,
         vectorDb: makeMockVectorDb() as never,
-        cfg: makeCfg() as never,
+        cfg: makeCfg({}, tmpDir) as never,
         embeddings: makeMockEmbeddings() as never,
         openai: {} as never,
         pythonBridge: bridge as never,
@@ -551,7 +575,7 @@ describe("LLM vision integration", () => {
         factsDb: factsDb as never,
         edictStore: null as any,
         vectorDb: makeMockVectorDb() as never,
-        cfg: makeCfg({ visionEnabled: true, visionModel: "gpt-4o" }) as never,
+        cfg: makeCfg({ visionEnabled: true, visionModel: "gpt-4o" }, tmpDir) as never,
         embeddings: makeMockEmbeddings() as never,
         openai: mockOpenAI as never,
         pythonBridge: bridge as never,
@@ -585,7 +609,7 @@ describe("LLM vision integration", () => {
         factsDb: factsDb as never,
         edictStore: null as any,
         vectorDb: makeMockVectorDb() as never,
-        cfg: makeCfg({ visionEnabled: false }) as never,
+        cfg: makeCfg({ visionEnabled: false }, tmpDir) as never,
         embeddings: makeMockEmbeddings() as never,
         openai: mockOpenAI as never,
         pythonBridge: bridge as never,
@@ -617,7 +641,7 @@ describe("LLM vision integration", () => {
         factsDb: factsDb as never,
         edictStore: null as any,
         vectorDb: makeMockVectorDb() as never,
-        cfg: makeCfg({ visionEnabled: true, visionModel: "gpt-4o" }) as never,
+        cfg: makeCfg({ visionEnabled: true, visionModel: "gpt-4o" }, tmpDir) as never,
         embeddings: makeMockEmbeddings() as never,
         openai: mockOpenAI as never,
         pythonBridge: makeMockBridge() as never,
@@ -634,10 +658,9 @@ describe("LLM vision integration", () => {
     expect(result.details.action).toBe("ingested");
     expect(result.details.storedCount).toBeGreaterThanOrEqual(1);
 
-    // The stored fact's text should contain the vision description
-    const storedFacts = factsDb.search(description.slice(0, 20));
-    // At least one fact must contain the vision description
-    const found = storedFacts.some((r: { entry: { text: string } }) => r.entry.text.includes("CPU at 42%"));
+    // The stored fact's text should contain the vision description (use getAll to avoid FTS + access-refresh path)
+    const storedFacts = factsDb.getAll();
+    const found = storedFacts.some((entry) => entry.text.includes("CPU at 42%"));
     expect(found).toBe(true);
   });
 
@@ -660,7 +683,7 @@ describe("LLM vision integration", () => {
         factsDb: factsDb as never,
         edictStore: null as any,
         vectorDb: makeMockVectorDb() as never,
-        cfg: makeCfg({ visionEnabled: true, visionModel: "gpt-4o" }) as never,
+        cfg: makeCfg({ visionEnabled: true, visionModel: "gpt-4o" }, tmpDir) as never,
         embeddings: makeMockEmbeddings() as never,
         openai: mockOpenAI as never,
         pythonBridge: bridgeThatThrows as never,

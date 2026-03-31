@@ -1,3 +1,4 @@
+import { getEnv } from "../utils/env-manager.js";
 /**
  * CLI Verify Command Handler
  *
@@ -9,6 +10,7 @@
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import type { DatabaseSync } from "node:sqlite";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -43,9 +45,46 @@ import { ensureMaintenanceCronJobs, getPluginConfigFromFile } from "./cmd-instal
 import type { HandlerContext } from "./handlers.js";
 import type { VerifyCliSink } from "./types.js";
 
+const VERIFY_FACT_COUNT_TTL_MS = 5 * 60_000;
+let verifyFactCountCache: { path: string; n: number; at: number } | null = null;
+
+function readApproxFactsRowCount(db: DatabaseSync): number | null {
+  try {
+    const row = db.prepare(`SELECT stat FROM sqlite_stat1 WHERE tbl = 'facts' LIMIT 1`).get() as
+      | { stat: string | number }
+      | undefined;
+    if (row == null || row.stat === undefined || row.stat === null) return null;
+    const statStr = String(row.stat).trim();
+    const firstInt = statStr.split(/\s+/)[0];
+    if (!firstInt) return null;
+    const n = Number.parseInt(firstInt, 10);
+    return Number.isFinite(n) && n >= 0 ? Math.floor(n) : null;
+  } catch {
+    return null;
+  }
+}
+
+function getCachedFactCount(
+  factsDb: { count: () => number; getRawDb: () => DatabaseSync },
+  sqlitePath: string,
+): number {
+  const now = Date.now();
+  if (
+    verifyFactCountCache &&
+    verifyFactCountCache.path === sqlitePath &&
+    now - verifyFactCountCache.at < VERIFY_FACT_COUNT_TTL_MS
+  ) {
+    return verifyFactCountCache.n;
+  }
+  const approx = readApproxFactsRowCount(factsDb.getRawDb());
+  const n = approx != null ? approx : factsDb.count();
+  verifyFactCountCache = { path: sqlitePath, n, at: now };
+  return n;
+}
+
 export async function runVerifyForCli(
   ctx: HandlerContext,
-  opts: { fix: boolean; logFile?: string; testLlm?: boolean },
+  opts: { fix: boolean; logFile?: string; testLlm?: boolean; reconcile?: boolean },
   sink: VerifyCliSink,
 ): Promise<void> {
   const { factsDb, vectorDb, embeddings, cfg, credentialsDb, resolvedSqlitePath, resolvedLancePath, openai } = ctx;
@@ -66,7 +105,7 @@ export async function runVerifyForCli(
   /** Always print tables (embedding + LLM) so they are never suppressed in quiet mode. */
   const tableLog = rawLog;
   const _err = sink.error ?? rawLog;
-  const noEmoji = process.env.HYBRID_MEM_NO_EMOJI === "1";
+  const noEmoji = getEnv("HYBRID_MEM_NO_EMOJI") === "1";
   const OK = noEmoji ? "[OK]" : "✅";
   const FAIL = noEmoji ? "[FAIL]" : "❌";
   const PAUSE = noEmoji ? "[paused]" : "⏸️ ";
@@ -78,6 +117,8 @@ export async function runVerifyForCli(
   let sqliteOk = false;
   let lanceOk = false;
   let embeddingOk = false;
+  /** False when probe vector length ≠ Lance expected dim or Lance schema invalid for vectors. */
+  let embeddingAlignmentOk = true;
   const loadBlocking: string[] = [];
 
   log("\n───── Infrastructure ─────");
@@ -156,7 +197,7 @@ export async function runVerifyForCli(
   let lanceBindingsFailed = false;
 
   try {
-    const n = factsDb.count();
+    const n = getCachedFactCount(factsDb, resolvedSqlitePath);
     sqliteOk = true;
     log(`${OK} SQLite: OK (${resolvedSqlitePath}, ${n} facts)`);
   } catch (e) {
@@ -329,11 +370,14 @@ export async function runVerifyForCli(
           model: modelForTest,
           dimensions: dimensionsForTest,
           batchSize: cfg.embedding.batchSize ?? 32,
+          ...(typeof cfg.embedding.deployment === "string" && cfg.embedding.deployment.trim()
+            ? { deployment: cfg.embedding.deployment.trim() }
+            : {}),
+          ...(cfg.embedding.models?.length ? { models: cfg.embedding.models } : {}),
           ...(p === "openai" && {
             apiKey: cfg.embedding.apiKey,
-            ...(typeof (cfg.embedding as Record<string, unknown>).endpoint === "string" &&
-            (cfg.embedding as Record<string, unknown>).endpoint
-              ? { endpoint: (cfg.embedding as Record<string, unknown>).endpoint as string }
+            ...(typeof cfg.embedding.endpoint === "string" && cfg.embedding.endpoint.trim()
+              ? { endpoint: cfg.embedding.endpoint.trim() }
               : {}),
           }),
           ...(p === "google" && {
@@ -395,13 +439,99 @@ export async function runVerifyForCli(
       : "  Embeddings: no working provider — see fixes below if listed.",
   );
 
+  // ───── Embedding ↔ Lance alignment (dimensions) ─────
+  tableLog("\n───── Embedding ↔ vector store (dimensions) ─────");
+  if (!sqliteOk || !lanceOk || !vectorDb.isLanceDbAvailable()) {
+    const WARN = noEmoji ? "[WARN]" : "⚠️";
+    tableLog(
+      `${WARN}  Skipped — SQLite and LanceDB must be healthy to compare embedding size vs index. Fix errors above, then re-run verify.`,
+    );
+  } else {
+    try {
+      await vectorDb.ensureInitialized();
+      const providerDims = embeddings.dimensions;
+      const lanceDims = vectorDb.getVectorDim();
+      const configDims = cfg.embedding.dimensions;
+      const schemaOk = vectorDb.isMemoriesVectorSchemaValid();
+      tableLog(`  Active embedding provider: ${providerDims} dimensions (model: ${embeddings.modelName})`);
+      tableLog(`  Config embedding.dimensions: ${configDims ?? "(default from model/catalog)"}`);
+      tableLog(`  LanceDB (this process): expects ${lanceDims}-dim vectors`);
+      if (configDims !== undefined && configDims !== providerDims) {
+        const WARN = noEmoji ? "[WARN]" : "⚠️";
+        tableLog(
+          `${WARN}  Config embedding.dimensions (${configDims}) differs from runtime provider (${providerDims}) — runtime size is used for the index.`,
+        );
+      }
+      if (!schemaOk) {
+        embeddingAlignmentOk = false;
+        log(
+          `${FAIL} Lance memories table: schema not valid for vector search (missing vector column or on-disk dimension mismatch).`,
+        );
+        log(
+          `  Fix: Set embedding.model / embedding.dimensions to match the table you need, enable vector.autoRepair=true to rebuild the empty table, or remove the LanceDB directory and restart. Then run: openclaw hybrid-mem re-index`,
+        );
+        issues.push("LanceDB memories table schema invalid for vectors (dimension mismatch or missing column)");
+        fixes.push(
+          "Align embedding.model and embedding.dimensions with your Lance table, or delete the LanceDB data directory and re-index. See plugin config vector.autoRepair.",
+        );
+      } else {
+        const probeText = "openclaw hybrid-mem verify dimension probe";
+        const probeVec = await embeddings.embed(probeText);
+        const probeLen = probeVec.length;
+        tableLog(`  Probe embedding: API returned ${probeLen}-dim vector`);
+        if (probeLen !== providerDims) {
+          const WARN = noEmoji ? "[WARN]" : "⚠️";
+          tableLog(
+            `${WARN}  Provider reports ${providerDims} dimensions but probe returned ${probeLen} — using probe length as truth for this run.`,
+          );
+        }
+        if (probeLen === lanceDims) {
+          log(`${OK} Embedding ↔ Lance: OK (${probeLen} dimensions; index matches API output)`);
+        } else {
+          embeddingAlignmentOk = false;
+          log(
+            `${FAIL} Embedding ↔ Lance: MISMATCH — API returned ${probeLen} dimensions but LanceDB expects ${lanceDims}-dim vectors. Semantic search will return no results until fixed.`,
+          );
+          log(
+            `  What to do: (1) Set embedding.model to the model you want as primary (same output size as your index).`,
+          );
+          log(`  (2) Set embedding.dimensions to that size if it differs from the catalog default.`);
+          log(
+            `  (3) If you use a provider chain, set embedding.preferredProviders so only providers with the same vector size are listed (e.g. ["openai"] only).`,
+          );
+          log(
+            `  (4) Run: openclaw hybrid-mem re-index — rebuilds vectors from SQLite with the current embedding config.`,
+          );
+          issues.push(
+            `Embedding dimension mismatch: API probe ${probeLen} vs Lance index ${lanceDims} (provider.dimensions=${providerDims})`,
+          );
+          fixes.push(
+            'Match embedding model/dimensions to the LanceDB vector width, then run `openclaw hybrid-mem re-index`. Prefer embedding.preferredProviders: ["openai"] if a Google key accidentally forced a different chain size.',
+          );
+        }
+      }
+    } catch (e) {
+      embeddingAlignmentOk = false;
+      const msg = e instanceof Error ? e.message : String(e);
+      log(`${FAIL} Embedding ↔ Lance: check failed — ${msg}`);
+      issues.push(`Embedding alignment probe failed: ${msg}`);
+      fixes.push(
+        "Ensure embedding credentials and model are valid, then re-run verify. If you changed embedding settings, run `openclaw hybrid-mem re-index` after fixing config.",
+      );
+      capturePluginError(e instanceof Error ? e : new Error(String(e)), {
+        subsystem: "cli",
+        operation: "runVerifyForCli:embedding-alignment",
+      });
+    }
+  }
+
   // ───── LLM / models table: one row per model from llm.nano / llm.default / llm.heavy; auth + source ─────
   tableLog("\n───── LLM / Models (from llm.nano, llm.default, llm.heavy) ─────");
   const cronCfg = getCronModelConfig(cfg);
   const providersWithKeys = getProvidersWithKeys(cronCfg);
   const authOrder = (cfg as Record<string, unknown>).auth as { order?: Record<string, string[]> } | undefined;
-  const gatewayPort = process.env.OPENCLAW_GATEWAY_PORT;
-  const gatewayToken = process.env.OPENCLAW_GATEWAY_TOKEN;
+  const gatewayPort = getEnv("OPENCLAW_GATEWAY_PORT");
+  const gatewayToken = getEnv("OPENCLAW_GATEWAY_TOKEN");
   const gatewayAvailable = Boolean(
     gatewayPort && Number(gatewayPort) >= 1 && Number(gatewayPort) <= 65535 && gatewayToken,
   );
@@ -478,19 +608,18 @@ export async function runVerifyForCli(
   }
   function getDirectApiKey(provider: string): string | undefined {
     const prov = cronCfg.llm?.providers as Record<string, { apiKey?: string }> | undefined;
-    const env = process.env as NodeJS.ProcessEnv;
     if (provider === "openai") {
       // Prefer OPENAI_API_KEY so Azure (embedding) and OpenAI (chat) can use different keys.
       const fromProv = resolveKey(prov?.openai?.apiKey);
       if (fromProv) return fromProv;
-      const fromEnv = env.OPENAI_API_KEY?.trim();
+      const fromEnv = getEnv("OPENAI_API_KEY")?.trim();
       if (fromEnv && fromEnv.length >= 10) return fromEnv;
       return resolveKey(cronCfg.embedding?.apiKey);
     }
     if (provider === "google") {
       const fromProv = resolveKey(prov?.google?.apiKey ?? cronCfg.distill?.apiKey);
       if (fromProv) return fromProv;
-      const fromEnv = env.GOOGLE_API_KEY?.trim();
+      const fromEnv = getEnv("GOOGLE_API_KEY")?.trim();
       if (fromEnv && fromEnv.length >= 10) return fromEnv;
       return undefined;
     }
@@ -499,7 +628,7 @@ export async function runVerifyForCli(
         prov?.anthropic?.apiKey ?? (cronCfg.claude as { apiKey?: string } | undefined)?.apiKey,
       );
       if (fromProv) return fromProv;
-      const fromEnv = env.ANTHROPIC_API_KEY?.trim();
+      const fromEnv = getEnv("ANTHROPIC_API_KEY")?.trim();
       if (fromEnv && fromEnv.length >= 10) return fromEnv;
       return undefined;
     }
@@ -509,7 +638,7 @@ export async function runVerifyForCli(
       (provider === "azure-foundry" || provider === "azure-foundry-responses") &&
       !resolveKey(prov?.[provider]?.apiKey)
     ) {
-      const fromEnv = env.AZURE_OPENAI_API_KEY?.trim();
+      const fromEnv = getEnv("AZURE_OPENAI_API_KEY")?.trim();
       if (fromEnv && fromEnv.length >= 10) return fromEnv;
     }
     return resolveKey(prov?.[provider]?.apiKey);
@@ -1094,7 +1223,75 @@ export async function runVerifyForCli(
     log(`\nLog file not found: ${opts.logFile}`);
   }
 
-  const allOk = configOk && sqliteOk && lanceOk && embeddingOk && (!cfg.credentials.enabled || credentialsOk);
+  let allOk =
+    configOk &&
+    sqliteOk &&
+    lanceOk &&
+    embeddingOk &&
+    embeddingAlignmentOk &&
+    (!cfg.credentials.enabled || credentialsOk);
+
+  // ───── Reconciliation Check ─────
+  if (opts.reconcile) {
+    log("\n───── Vector DB Reconciliation ─────");
+    if (!sqliteOk || !lanceOk || !vectorDb.isLanceDbAvailable()) {
+      log(`${FAIL} Reconciliation skipped — both SQLite and LanceDB must be healthy to reconcile.`);
+      allOk = false;
+    } else {
+      try {
+        const sqliteIds = new Set(factsDb.getAllIds());
+        const vectorIds = await vectorDb.getAllIds();
+
+        // Vector orphans: IDs in LanceDB that have no corresponding SQLite fact.
+        const vectorOrphans = vectorIds.filter((id) => !sqliteIds.has(id));
+        // SQLite orphans: active facts in SQLite with no vector in LanceDB.
+        const vectorIdSet = new Set(vectorIds);
+        const sqliteOrphans = Array.from(sqliteIds).filter((id) => !vectorIdSet.has(id));
+
+        if (vectorOrphans.length === 0 && sqliteOrphans.length === 0) {
+          log(
+            `${OK} Reconciliation: SQLite and LanceDB are in sync (${sqliteIds.size} facts, ${vectorIds.length} vectors)`,
+          );
+        } else {
+          allOk = false;
+          if (vectorOrphans.length > 0) {
+            log(`${FAIL} Vector orphans (in LanceDB but not SQLite): ${vectorOrphans.length}`);
+            vectorOrphans.slice(0, 10).forEach((id) => log(`  - ${id}`));
+            if (vectorOrphans.length > 10) log(`  … and ${vectorOrphans.length - 10} more`);
+            if (opts.fix) {
+              let deleted = 0;
+              let failed = 0;
+              for (const id of vectorOrphans) {
+                try {
+                  await vectorDb.delete(id);
+                  deleted++;
+                } catch {
+                  failed++;
+                }
+              }
+              log(`  → Deleted ${deleted} orphan vector(s) from LanceDB${failed > 0 ? ` (${failed} failed)` : ""}.`);
+            } else {
+              log(`  → Run with --fix to delete these orphan vectors from LanceDB.`);
+            }
+            issues.push(`${vectorOrphans.length} orphan vector(s) in LanceDB with no matching SQLite fact`);
+          }
+          if (sqliteOrphans.length > 0) {
+            const WARN = noEmoji ? "[WARN]" : "⚠️";
+            log(`${WARN} SQLite orphans (facts in SQLite with no vector): ${sqliteOrphans.length}`);
+            sqliteOrphans.slice(0, 10).forEach((id) => log(`  - ${id}`));
+            if (sqliteOrphans.length > 10) log(`  … and ${sqliteOrphans.length - 10} more`);
+            log(`  → Re-run the plugin or use the re-index command to rebuild missing vectors.`);
+            issues.push(`${sqliteOrphans.length} SQLite fact(s) without corresponding vectors in LanceDB`);
+          }
+        }
+      } catch (e) {
+        log(`${FAIL} Reconciliation: FAIL — ${String(e)}`);
+        allOk = false;
+        capturePluginError(e as Error, { subsystem: "cli", operation: "runVerifyForCli:reconcile" });
+      }
+    }
+  }
+
   if (allOk) {
     log("\nAll checks passed.");
     if (restartPending) {
@@ -1233,6 +1430,25 @@ export async function runVerifyForCli(
       log(
         "Config file not found. Run 'openclaw hybrid-mem install' to create it with full defaults, then set your API key and restart.",
       );
+    }
+  }
+
+  if (opts.reconcile) {
+    log("\n───── Vector / SQLite consistency (reconcile) ─────");
+    try {
+      await vectorDb.ensureInitialized();
+      const vCount = await vectorDb.count();
+      const embCount = factsDb.countCanonicalEmbeddings();
+      log(`${OK} SQLite canonical embeddings (fact_embeddings): ${embCount}`);
+      const lanceRowsOk = vectorDb.isLanceAvailable();
+      log(`${lanceRowsOk ? OK : PAUSE} LanceDB row count: ${vCount} (lanceAvailable=${lanceRowsOk})`);
+      if (lanceRowsOk && vCount !== embCount) {
+        log(
+          `${FAIL} Drift: fact_embeddings rows (${embCount}) != Lance rows (${vCount}). Consider re-embed or diagnostics.`,
+        );
+      }
+    } catch (e) {
+      log(`${FAIL} Reconcile check failed: ${e}`);
     }
   }
 }

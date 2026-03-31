@@ -6,21 +6,22 @@
  *
  * Lifecycle:
  *   - Lazily spawned on first convert() call
- *   - Auto-restarts on crash (up to MAX_RETRIES times)
+ *   - Auto-restarts on crash (up to PYTHON_BRIDGE_MAX_RETRIES times)
  *   - Gracefully shut down via shutdown()
  */
 
-import { type ChildProcessWithoutNullStreams, spawn, spawnSync } from "node:child_process";
+import { type ChildProcessWithoutNullStreams, spawn, spawnSync } from "../utils/process-runner.js";
 import { dirname, join } from "node:path";
 import { createInterface } from "node:readline";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import {
+  PYTHON_BRIDGE_MAX_RETRIES,
+  PYTHON_BRIDGE_PING_TIMEOUT_MS,
+  PYTHON_BRIDGE_SHUTDOWN_WAIT_MS,
+} from "../utils/constants.js";
 import { capturePluginError } from "./error-reporter.js";
 
-const MAX_RETRIES = 3;
-const PING_TIMEOUT_MS = 5_000;
-const SHUTDOWN_WAIT_MS = 2_000;
-
-export interface ConvertResult {
+interface ConvertResult {
   markdown: string;
   title: string;
 }
@@ -45,7 +46,10 @@ export class PythonBridge {
   private restartCount = 0;
   private readonly pythonPath: string;
   private readonly workerPath: string;
-  private starting = false;
+  /** Single-flight startup: concurrent convert() calls await the same promise (issue #907). */
+  private startupPromise: Promise<void> | null = null;
+  /** Persistent failure state: if startup fails after MAX_RETRIES, prevent further attempts. */
+  private startupFailed = false;
 
   constructor(pythonPath = "python3") {
     this.pythonPath = pythonPath;
@@ -133,40 +137,37 @@ export class PythonBridge {
   }
 
   private async ensureStarted(): Promise<void> {
-    if (this.proc && !this.proc.killed) return;
-    if (this.starting) {
-      // Wait for spawn to complete
-      await new Promise<void>((resolve) => {
-        const check = setInterval(() => {
-          if (!this.starting) {
-            clearInterval(check);
-            resolve();
-          }
-        }, 50);
-      });
-      // Verify process actually started
-      if (!this.proc || this.proc.killed) {
-        throw new Error("Python bridge failed to start");
-      }
-      return;
+    if (this.startupFailed) {
+      throw new Error("Python bridge startup previously failed and will not retry");
     }
-    this.starting = true;
-    try {
-      this.spawnProcess();
-      // Health check
-      await this.ping();
-      this.restartCount = 0;
-      this.starting = false;
-    } catch (err) {
-      this.proc?.kill();
-      this.proc = null;
-      this.restartCount++;
-      if (this.restartCount > MAX_RETRIES) {
-        this.starting = false;
-        throw new Error(`Python bridge failed to start after ${MAX_RETRIES} retries: ${err}`);
+    if (this.proc && !this.proc.killed) return;
+    if (!this.startupPromise) {
+      this.startupPromise = this.bootstrapWorker().finally(() => {
+        this.startupPromise = null;
+      });
+    }
+    await this.startupPromise;
+  }
+
+  private async bootstrapWorker(): Promise<void> {
+    this.restartCount = 0;
+    while (true) {
+      try {
+        this.spawnProcess();
+        await this.ping();
+        this.restartCount = 0;
+        return;
+      } catch (err) {
+        this.proc?.kill();
+        this.proc = null;
+        this.restartCount++;
+        if (this.restartCount > PYTHON_BRIDGE_MAX_RETRIES) {
+          this.startupFailed = true;
+          throw new Error(`Python bridge failed to start after ${PYTHON_BRIDGE_MAX_RETRIES} retries: ${err}`);
+        }
+        const backoffMs = Math.min(5000, 200 * 2 ** (this.restartCount - 1));
+        await new Promise((r) => setTimeout(r, backoffMs));
       }
-      this.starting = false;
-      return this.ensureStarted();
     }
   }
 
@@ -188,7 +189,7 @@ export class PythonBridge {
   }
 
   async ping(): Promise<void> {
-    await this.send<{ pong: boolean }>("ping", {}, PING_TIMEOUT_MS);
+    await this.send<{ pong: boolean }>("ping", {}, PYTHON_BRIDGE_PING_TIMEOUT_MS);
   }
 
   private isWorkerError(err: Error): boolean {
@@ -225,8 +226,8 @@ export class PythonBridge {
     if (!this.proc || this.proc.killed) return;
     try {
       await Promise.race([
-        this.send<{ ok: boolean }>("shutdown", {}, SHUTDOWN_WAIT_MS),
-        new Promise<void>((resolve) => setTimeout(resolve, SHUTDOWN_WAIT_MS)),
+        this.send<{ ok: boolean }>("shutdown", {}, PYTHON_BRIDGE_SHUTDOWN_WAIT_MS),
+        new Promise<void>((resolve) => setTimeout(resolve, PYTHON_BRIDGE_SHUTDOWN_WAIT_MS)),
       ]);
     } catch {
       // Ignore errors during shutdown
@@ -235,6 +236,7 @@ export class PythonBridge {
       this.proc.kill("SIGTERM");
     }
     this.proc = null;
+    this.startupFailed = false;
   }
 
   get isRunning(): boolean {

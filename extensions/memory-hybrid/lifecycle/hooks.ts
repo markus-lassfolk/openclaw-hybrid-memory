@@ -1,3 +1,4 @@
+import { getEnv } from "../utils/env-manager.js";
 /**
  * Lifecycle Hooks (Phase 2.3: staged pipeline).
  *
@@ -21,6 +22,7 @@ import { registerFrustrationHandlers } from "./stage-frustration.js";
 import { createSessionState } from "./session-state.js";
 import type { LifecycleContext, SessionState } from "./types.js";
 import { capturePluginError } from "../services/error-reporter.js";
+import { isAbortOrTransientLlmError } from "../services/chat.js";
 import { buildDailyNarrative } from "../src/worker/narratives.js";
 
 export type { LifecycleContext } from "./types.js";
@@ -29,7 +31,7 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
   const sessionState = createSessionState();
   const staleSweepTimer = createStaleSweepTimer(sessionState);
 
-  const workspaceRoot = process.env.OPENCLAW_WORKSPACE ?? join(homedir(), ".openclaw", "workspace");
+  const workspaceRoot = getEnv("OPENCLAW_WORKSPACE") ?? join(homedir(), ".openclaw", "workspace");
   const resolvedActiveTaskPath = isAbsolute(ctx.cfg.activeTask.filePath)
     ? ctx.cfg.activeTask.filePath
     : join(workspaceRoot, ctx.cfg.activeTask.filePath);
@@ -154,12 +156,20 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
           fallbackModels: [],
         });
       } catch (err) {
-        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-          subsystem: "narratives",
-          operation: "agent-end-build-narrative",
-          sessionId,
-        });
-        api.logger.warn(`memory-hybrid: session narrative build failed: ${String(err)}`);
+        const transient = isAbortOrTransientLlmError(err);
+        if (!transient) {
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+            subsystem: "narratives",
+            operation: "agent-end-build-narrative",
+            sessionId,
+          });
+        }
+        const detail = err instanceof Error ? err.message : String(err);
+        if (transient) {
+          api.logger.info?.(`memory-hybrid: session narrative skipped (LLM unavailable or aborted): ${detail}`);
+        } else {
+          api.logger.warn(`memory-hybrid: session narrative build failed: ${String(err)}`);
+        }
       }
     });
   };

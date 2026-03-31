@@ -16,6 +16,9 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   changes:
     name: Detect Changes
@@ -23,8 +26,8 @@ jobs:
     outputs:
       code: ${{ github.event_name == 'workflow_call' && 'true' || steps.filter.outputs.code }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: dorny/paths-filter@v3
+      - uses: actions/checkout@v6
+      - uses: dorny/paths-filter@v4
         id: filter
         if: github.event_name != 'workflow_call'
         with:
@@ -44,12 +47,12 @@ jobs:
       matrix:
         node-version: [22, 24]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
         with:
           node-version: ${{ matrix.node-version }}
       - name: Cache node_modules
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: extensions/memory-hybrid/node_modules
           key: ${{ runner.os }}-node-${{ matrix.node-version }}-${{ hashFiles('extensions/memory-hybrid/package-lock.json') }}
@@ -69,12 +72,12 @@ jobs:
       matrix:
         node-version: [22, 24]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
         with:
           node-version: ${{ matrix.node-version }}
       - name: Cache node_modules
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: extensions/memory-hybrid/node_modules
           key: ${{ runner.os }}-node-${{ matrix.node-version }}-${{ hashFiles('extensions/memory-hybrid/package-lock.json') }}
@@ -94,12 +97,12 @@ jobs:
       matrix:
         node-version: [22, 24]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
         with:
           node-version: ${{ matrix.node-version }}
       - name: Cache node_modules
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: extensions/memory-hybrid/node_modules
           key: ${{ runner.os }}-node-${{ matrix.node-version }}-${{ hashFiles('extensions/memory-hybrid/package-lock.json') }}
@@ -116,12 +119,12 @@ jobs:
     if: needs.changes.outputs.code == 'true' || github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
         with:
           node-version: 22
       - name: Cache node_modules
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: extensions/memory-hybrid/node_modules
           key: ${{ runner.os }}-node-22-${{ hashFiles('extensions/memory-hybrid/package-lock.json') }}
@@ -132,7 +135,7 @@ jobs:
       - name: Run tests with coverage
         run: cd extensions/memory-hybrid && npm run test:coverage
       - name: Upload coverage report
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: coverage-report
           path: extensions/memory-hybrid/coverage/
@@ -145,12 +148,12 @@ jobs:
     runs-on: ubuntu-latest
     continue-on-error: true
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
         with:
           node-version: 22
       - name: Cache node_modules
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: extensions/memory-hybrid/node_modules
           key: ${{ runner.os }}-node-22-${{ hashFiles('extensions/memory-hybrid/package-lock.json') }}
@@ -167,16 +170,28 @@ jobs:
     if: needs.changes.outputs.code == 'true' || github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: 22
       - name: Install dependencies
         run: cd extensions/memory-hybrid && npm ci
       - name: Check formatting
         run: cd extensions/memory-hybrid && npm run format:check
+
+  # Ensures package.json "files" covers all runtime imports (incl. cli → benchmark/).
+  # Vitest always runs in a full checkout; this catches omissions visible only in npm pack.
+  publish-invariants:
+    name: Publish manifest (npm files[])
+    needs: changes
+    if: needs.changes.outputs.code == 'true' || github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: verify-publish invariants
+        run: cd extensions/memory-hybrid && node scripts/verify-publish.cjs
 
   strict-typecheck:
     name: Strict TypeScript Check
@@ -185,12 +200,12 @@ jobs:
     runs-on: ubuntu-latest
     continue-on-error: true
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
         with:
           node-version: 22
       - name: Cache node_modules
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: extensions/memory-hybrid/node_modules
           key: ${{ runner.os }}-node-22-${{ hashFiles('extensions/memory-hybrid/package-lock.json') }}
@@ -206,14 +221,13 @@ jobs:
     needs: changes
     if: needs.changes.outputs.code == 'true' || github.event_name == 'pull_request'
     runs-on: ubuntu-latest
-    continue-on-error: true
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
         with:
           node-version: 22
       - name: Cache node_modules
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: extensions/memory-hybrid/node_modules
           key: ${{ runner.os }}-node-22-${{ hashFiles('extensions/memory-hybrid/package-lock.json') }}
@@ -224,13 +238,18 @@ jobs:
       - name: Pack and test install
         run: |
           cd extensions/memory-hybrid
-          npm pack
-          TARBALL=$(find . -maxdepth 1 -name "openclaw-hybrid-memory-*.tgz" -printf '%f\n' | head -1)
+          # Avoid picking a stale .tgz from a previous run (find | head -1 is non-deterministic).
+          rm -f openclaw-hybrid-memory-*.tgz
+          TARBALL=$(npm pack 2>&1 | grep '\.tgz$' | tail -1)
+          test -n "$TARBALL" || { echo 'FAIL: npm pack did not report a .tgz filename'; exit 1; }
           TARBALL_PATH="$(pwd)/$TARBALL"
           mkdir -p /tmp/smoke-test && cd /tmp/smoke-test
+          rm -rf node_modules package-lock.json
           npm init -y
           npm install "$TARBALL_PATH" --ignore-scripts
           node -e "const pkg = require('./node_modules/openclaw-hybrid-memory/package.json'); console.log('Import OK:', pkg.name, pkg.version)"
+          test -f node_modules/openclaw-hybrid-memory/benchmark/shadow-eval.ts || \
+            { echo 'FAIL: benchmark/shadow-eval.ts missing from npm pack (check package.json files[])'; exit 1; }
 
   lint-arch:
     name: Architectural Lint
@@ -239,7 +258,7 @@ jobs:
     runs-on: ubuntu-latest
     continue-on-error: true
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Run architectural lint
         run: cd extensions/memory-hybrid && npm run lint:arch
 
@@ -287,6 +306,14 @@ jobs:
 
   test-pass-24:
     name: Test (Node 24)
+    needs: changes
+    if: needs.changes.outputs.code != 'true' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "No code changes detected — required check satisfied"
+
+  publish-invariants-pass:
+    name: Publish manifest (npm files[])
     needs: changes
     if: needs.changes.outputs.code != 'true' && github.event_name != 'pull_request'
     runs-on: ubuntu-latest

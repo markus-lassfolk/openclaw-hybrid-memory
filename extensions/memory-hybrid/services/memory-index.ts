@@ -1,3 +1,4 @@
+import { getEnv } from "../utils/env-manager.js";
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type OpenAI from "openai";
@@ -21,7 +22,7 @@ const MAX_ENTITIES = 8;
 const MAX_PATTERNS = 5;
 const MAX_OUTPUT_CHARS = 3200;
 
-export interface MemoryIndexOptions {
+interface MemoryIndexOptions {
   workspaceRoot?: string;
   outputPath?: string;
   model?: string;
@@ -29,7 +30,7 @@ export interface MemoryIndexOptions {
   recentWindowDays?: number;
 }
 
-export interface MemoryIndexResult {
+interface MemoryIndexResult {
   path: string;
   content: string;
   usedFallback: boolean;
@@ -285,7 +286,7 @@ async function synthesizeMemoryIndex(
 
 function resolveOutputPath(options: Pick<MemoryIndexOptions, "workspaceRoot" | "outputPath">): string {
   if (options.outputPath) return options.outputPath;
-  const workspaceRoot = options.workspaceRoot ?? process.env.OPENCLAW_WORKSPACE ?? process.cwd();
+  const workspaceRoot = options.workspaceRoot ?? getEnv("OPENCLAW_WORKSPACE") ?? process.cwd();
   return join(workspaceRoot, "MEMORY_INDEX.md");
 }
 

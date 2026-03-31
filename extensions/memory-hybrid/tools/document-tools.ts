@@ -30,7 +30,7 @@ import { extractTags } from "../utils/tags.js";
 import { stringEnum } from "../utils/typebox.js";
 import type { ProvenanceService } from "../services/provenance.js";
 
-export interface DocumentToolsContext {
+interface DocumentToolsContext {
   factsDb: FactsDB;
   vectorDb: VectorDB;
   cfg: HybridMemoryConfig;
@@ -111,7 +111,7 @@ function createProgressTracker(logger: { info: (msg: string) => void }, label?: 
 }
 
 function isUnderAllowedPaths(realPath: string, allowedPaths?: string[]): boolean {
-  if (!allowedPaths || allowedPaths.length === 0) return true;
+  if (!allowedPaths || allowedPaths.length === 0) return false;
   return allowedPaths.some((root) => {
     try {
       const realRoot = realpathSync.native(resolve(root));

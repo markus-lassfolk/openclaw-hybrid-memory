@@ -1,3 +1,4 @@
+import { getEnv } from "../utils/env-manager.js";
 import { compareVersions } from "../utils/version-check.js";
 
 export { compareVersions };
@@ -260,6 +261,8 @@ export function scrubString(input: string): string {
       .replace(/ghp_[A-Za-z0-9]{36}/g, "[REDACTED]") // GitHub PAT
       .replace(/gho_[A-Za-z0-9]{36}/g, "[REDACTED]") // GitHub OAuth
       .replace(/Bearer\s+[\w.-]+/gi, "[REDACTED]")
+      .replace(/Basic\s+[A-Za-z0-9+/=_-]+/gi, "[REDACTED]")
+      .replace(/(?:\?|&)(?:api[_-]?key|token|access_token|password|secret)=[^&\s]+/gi, "[REDACTED]")
       // JWT tokens (eyJ...)
       .replace(/eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g, "[REDACTED]")
       // AWS and other cloud credentials
@@ -267,7 +270,7 @@ export function scrubString(input: string): string {
       // Slack tokens
       .replace(/xox[baprs]-[A-Za-z0-9-]{10,}/g, "[REDACTED]") // Slack tokens
       // Private keys
-      .replace(/-----BEGIN .*PRIVATE KEY/g, "[REDACTED]") // Private key headers
+      .replace(/-----BEGIN [^-]*PRIVATE KEY-----/g, "[REDACTED]") // PEM private key blocks
       // Connection strings with embedded passwords (generic + specific)
       .replace(/:\/\/[^\s:@]+:[^\s@]+@[^\s/]+/g, "://[REDACTED]@")
       .replace(/postgres:\/\/[^\s]+/g, "postgres://[REDACTED]")
@@ -669,9 +672,15 @@ export async function initErrorReporter(
     return;
   }
 
+  const rawEnvDsn = getEnv("ERROR_REPORTING_DSN");
+  const envDsn = typeof rawEnvDsn === "string" && rawEnvDsn.trim().length > 0 ? rawEnvDsn.trim() : "";
+
   // Resolve DSN based on mode
   let resolvedDsn: string;
-  if (config.mode === "community") {
+  if (envDsn) {
+    resolvedDsn = envDsn;
+    logger.info?.("[ErrorReporter] Using DSN from ERROR_REPORTING_DSN");
+  } else if (config.mode === "community") {
     // Community mode: allow override via config.dsn, otherwise use COMMUNITY_DSN
     resolvedDsn = config.dsn || COMMUNITY_DSN;
     logger.info?.("[ErrorReporter] Using community mode (anonymous telemetry)");

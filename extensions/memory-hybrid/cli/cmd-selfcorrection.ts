@@ -1,3 +1,4 @@
+import { getEnv } from "../utils/env-manager.js";
 /**
  * Self-Correction CLI Handlers
  *
@@ -123,7 +124,7 @@ export async function runSelfCorrectionRunForCli(
   }
 
   try {
-    const workspaceRoot = opts.workspace ?? process.env.OPENCLAW_WORKSPACE ?? join(homedir(), ".openclaw", "workspace");
+    const workspaceRoot = opts.workspace ?? getEnv("OPENCLAW_WORKSPACE") ?? join(homedir(), ".openclaw", "workspace");
     const scCfg = cfg.selfCorrection ?? DEFAULT_SELF_CORRECTION;
     const reportDir = join(workspaceRoot, "memory", "reports");
     const today = new Date().toISOString().slice(0, 10);

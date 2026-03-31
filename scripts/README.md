@@ -121,7 +121,7 @@ Use this when the gateway is **not** run as a systemd (or launchd) service: e.g.
 
 **Behaviour:**
 
-- **Health check:** `openclaw gateway probe` (no systemd).
+- **Health check:** `openclaw gateway probe` (no systemd). If you use **`openclaw gateway status`** in other scripts, note the default **10s** RPC timeout can fail during gateway warm-up (many plugins / hybrid-memory DB open) — use **`--timeout 45000`** (or 30s+) and retries; see [TROUBLESHOOTING.md § RPC health probe timeout](../docs/TROUBLESHOOTING.md#rpc-health-probe-timeout-openclaw-gateway-status).
 - **If healthy:** Optionally stamp current config as a new last-good snapshot (keeps 3 most recent).
 - **If not healthy:** Kill anything on the gateway port, start `openclaw gateway run` in the background, wait, probe. If that fails (e.g. bad config), restore each of the 3 good snapshots (newest first), start gateway, probe, until one works.
 
