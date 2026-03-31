@@ -3122,6 +3122,10 @@ export class FactsDB extends BaseSqliteStore {
         )
         .get(input.procedureId) as { total_succ: number; total_fail: number };
 
+      // Include historical counts from procedure table (pre-version tracking)
+      const totalSuccess = versionCounts.total_succ + proc.successCount;
+      const totalFailure = versionCounts.total_fail + proc.failureCount;
+
       // Update procedure record (do NOT bump success_count — version table is the source of truth for counts)
       this.liveDb
         .prepare(
@@ -3129,7 +3133,7 @@ export class FactsDB extends BaseSqliteStore {
         )
         .run(
           nowSec,
-          Math.max(0.1, Math.min(0.95, 0.5 + 0.1 * (versionCounts.total_succ - versionCounts.total_fail))),
+          Math.max(0.1, Math.min(0.95, 0.5 + 0.1 * (totalSuccess - totalFailure))),
           nowSec,
           input.procedureId,
         );
@@ -3203,6 +3207,10 @@ export class FactsDB extends BaseSqliteStore {
         )
         .get(input.procedureId) as { total_succ: number; total_fail: number };
 
+      // Include historical counts from procedure table (pre-version tracking)
+      const totalSuccess = versionCounts.total_succ + proc.successCount;
+      const totalFailure = versionCounts.total_fail + proc.failureCount;
+
       // Update procedure record (do NOT bump failure_count — version table is the source of truth for counts)
       this.liveDb
         .prepare(
@@ -3210,7 +3218,7 @@ export class FactsDB extends BaseSqliteStore {
         )
         .run(
           nowSec,
-          Math.max(0.1, Math.min(0.95, 0.5 + 0.1 * (versionCounts.total_succ - versionCounts.total_fail))),
+          Math.max(0.1, Math.min(0.95, 0.5 + 0.1 * (totalSuccess - totalFailure))),
           nowSec,
           input.procedureId,
         );
