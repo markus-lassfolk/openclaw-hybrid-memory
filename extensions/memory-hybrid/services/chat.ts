@@ -349,10 +349,60 @@ export function isOllamaOOM(err: unknown): boolean {
 }
 
 /**
- * Try to parse a Retry-After delay (in ms) from an API error.
- * Returns undefined when the header is absent or unparseable.
+ * Parse OpenAI `x-ratelimit-reset-*` values: Go-style durations (`6m0s`, `1s`, `500ms`),
+ * not plain integer seconds. See OpenAI rate-limits docs (table: x-ratelimit-reset-tokens sample `6m0s`).
+ * https://platform.openai.com/docs/guides/rate-limits — `Number.parseInt` on these strings is wrong (#941 review).
  */
-function parseRetryAfterMs(err: unknown): number | undefined {
+export function parseGoDurationToMs(input: string): number | undefined {
+  const s = input.trim();
+  if (!s) return undefined;
+  let totalMs = 0;
+  let matched = false;
+  const re = /(\d+(?:\.\d+)?)\s*(ns|us|µs|ms|s|m|h)/gi;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(s)) !== null) {
+    matched = true;
+    const val = Number.parseFloat(m[1]);
+    if (Number.isNaN(val)) continue;
+    const u = m[2].toLowerCase();
+    if (u === "ns") totalMs += val / 1e6;
+    else if (u === "us" || u === "µs") totalMs += val / 1e3;
+    else if (u === "ms") totalMs += val;
+    else if (u === "s") totalMs += val * 1000;
+    else if (u === "m") totalMs += val * 60 * 1000;
+    else if (u === "h") totalMs += val * 60 * 60 * 1000;
+  }
+  if (matched) return Math.max(0, Math.ceil(totalMs));
+  return undefined;
+}
+
+/**
+ * If `value` is a Unix time (seconds or ms since epoch), return ms until that instant.
+ * Some gateways send reset time as epoch, not delay — do not confuse with delta-seconds.
+ */
+function delayMsUntilUnixEpoch(value: string): number | undefined {
+  const trimmed = value.trim();
+  if (!/^\d+$/.test(trimmed)) return undefined;
+  const n = Number.parseInt(trimmed, 10);
+  if (Number.isNaN(n) || n <= 0) return undefined;
+  // 10-digit seconds since epoch (e.g. 1735689600)
+  if (trimmed.length >= 10 && trimmed.length <= 11 && n >= 1_000_000_000 && n < 100_000_000_000) {
+    return Math.max(0, n * 1000 - Date.now());
+  }
+  // 13+ digit milliseconds since epoch
+  if (trimmed.length >= 13 && n >= 1_000_000_000_000) {
+    return Math.max(0, n - Date.now());
+  }
+  return undefined;
+}
+
+/**
+ * Try to parse a Retry-After delay (in ms) from an API error.
+ * Prefers `Retry-After` (RFC 7231: delta-seconds or HTTP-date), then OpenAI
+ * `x-ratelimit-reset-*` (Go durations), then epoch-style reset times some gateways send.
+ * Exported for unit tests.
+ */
+export function parseRetryAfterMs(err: unknown): number | undefined {
   if (!err || typeof err !== "object") return undefined;
   const headers =
     (err as { response?: { headers?: Record<string, string> }; headers?: Record<string, string> }).response?.headers ??
@@ -371,17 +421,29 @@ function parseRetryAfterMs(err: unknown): number | undefined {
           }
           return undefined;
         };
-  const raw =
-    get("retry-after") ?? get("Retry-After") ?? get("x-ratelimit-reset-tokens") ?? get("x-ratelimit-reset-requests");
-  if (raw) {
-    const secs = Number.parseInt(raw, 10);
-    if (!Number.isNaN(secs) && secs > 0) return secs * 1000;
-    const date = Date.parse(raw);
+
+  const retryAfter = get("retry-after") ?? get("Retry-After");
+  if (retryAfter) {
+    const secs = Number.parseInt(retryAfter, 10);
+    if (!Number.isNaN(secs) && secs > 0 && /^\s*\d+\s*$/.test(retryAfter)) return secs * 1000;
+    const date = Date.parse(retryAfter);
     if (!Number.isNaN(date)) return Math.max(0, date - Date.now());
   }
-  // Azure quota exhaustion: remaining-tokens=0 with no retry-after → use a default backoff
+
+  const resetTokens = get("x-ratelimit-reset-tokens") ?? get("x-ratelimit-reset-requests");
+  if (resetTokens) {
+    const go = parseGoDurationToMs(resetTokens);
+    if (go !== undefined) return go;
+    const epochDelay = delayMsUntilUnixEpoch(resetTokens);
+    if (epochDelay !== undefined) return epochDelay;
+    const secs = Number.parseInt(resetTokens, 10);
+    if (!Number.isNaN(secs) && secs > 0) return secs * 1000;
+  }
+
+  // Azure quota exhaustion: remaining-tokens=0 with no usable reset hint → default backoff
   const remaining = get("remaining-tokens") ?? get("Remaining-Tokens");
-  if (remaining === "0" && !raw) return 10_000;
+  const hadResetHint = Boolean(retryAfter || resetTokens);
+  if (remaining === "0" && !hadResetHint) return 10_000;
   return undefined;
 }
 

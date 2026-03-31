@@ -15,6 +15,8 @@ import {
   isConnectionErrorLike,
   isContextLengthError,
   isOllamaOOM,
+  parseGoDurationToMs,
+  parseRetryAfterMs,
   withLLMRetry,
 } from "../services/chat.js";
 
@@ -465,6 +467,33 @@ describe("is403QuotaOrRateLimitLike", () => {
     });
     expect(is403QuotaOrRateLimitLike(err)).toBe(true);
     expect(is403Like(err)).toBe(false);
+  });
+});
+
+describe("parseGoDurationToMs / parseRetryAfterMs (OpenAI x-ratelimit-reset-* #941)", () => {
+  it("parses OpenAI-documented Go durations (not integer seconds)", () => {
+    expect(parseGoDurationToMs("6m0s")).toBe(360_000);
+    expect(parseGoDurationToMs("1s")).toBe(1000);
+    expect(parseGoDurationToMs("500ms")).toBe(500);
+  });
+
+  it("uses x-ratelimit-reset-tokens as duration, not parseInt(6m0s)===6 seconds", () => {
+    const err = { headers: { "x-ratelimit-reset-tokens": "6m0s" } };
+    expect(parseRetryAfterMs(err)).toBe(360_000);
+  });
+
+  it("prefers Retry-After over x-ratelimit-reset when both present", () => {
+    const err = {
+      headers: {
+        "retry-after": "5",
+        "x-ratelimit-reset-tokens": "6m0s",
+      },
+    };
+    expect(parseRetryAfterMs(err)).toBe(5000);
+  });
+
+  it("parses plain retry-after seconds only when the value is all digits", () => {
+    expect(parseRetryAfterMs({ headers: { "retry-after": "1282" } })).toBe(1_282_000);
   });
 });
 
