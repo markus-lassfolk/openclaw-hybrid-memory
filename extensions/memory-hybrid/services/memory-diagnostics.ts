@@ -79,7 +79,7 @@ export async function runMemoryDiagnostics(opts: {
     if (!semanticOk && semanticFailReason) {
       const dimInfo =
         semanticFailReason === "vector_dim_mismatch"
-          ? ` (embedding=${vector.length}, lance=${vectorDb["vectorDim"]})`
+          ? ` (embedding=${vector.length}, lance=${vectorDb.getVectorDim()})`
           : "";
       capturePluginError(new Error(`Semantic search diagnostic failed: ${semanticFailReason}${dimInfo}`), {
         subsystem: "diagnostics",

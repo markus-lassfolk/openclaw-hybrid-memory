@@ -1365,6 +1365,19 @@ export class VectorDB {
     return this.lastSearchFailReason;
   }
 
+  /** Vector width this instance was configured for (matches the Lance `memories` table after init/repair). */
+  getVectorDim(): number {
+    return this.vectorDim;
+  }
+
+  /**
+   * False when validateOrRepairSchema() found no vector column or a dimension mismatch without auto-repair.
+   * When false, vector search returns empty results until the table is fixed or re-indexed.
+   */
+  isMemoriesVectorSchemaValid(): boolean {
+    return this.schemaValid;
+  }
+
   /**
    * Returns false if lancedb.connect() failed during the last initialization attempt.
    * When false, the plugin is operating in FTS5-only fallback mode: search() returns [],
