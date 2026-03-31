@@ -344,11 +344,16 @@ export function parseLLMConfig(cfg: Record<string, unknown>): LLMConfig | undefi
                 `memory-hybrid: Provider '${k}' has an invalid API key (looks like a placeholder) — skipping`,
               );
             }
+            // Accept both camelCase `baseUrl` (OpenClaw convention) and kebab-case `baseURL`.
+            // OpenClaw `openclaw.json` uses `baseUrl` under `models.providers.*`.
+            const baseURLRaw =
+              (typeof pv.baseURL === "string" && pv.baseURL.trim().length > 0 ? pv.baseURL.trim() : undefined) ??
+              (typeof pv.baseUrl === "string" && pv.baseUrl.trim().length > 0 ? pv.baseUrl.trim() : undefined);
             return [
               k.toLowerCase(),
               {
                 apiKey: validKey,
-                baseURL: typeof pv.baseURL === "string" && pv.baseURL.trim().length > 0 ? pv.baseURL.trim() : undefined,
+                baseURL: baseURLRaw,
               } as LLMProviderConfig,
             ];
           }),
