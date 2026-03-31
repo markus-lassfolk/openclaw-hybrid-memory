@@ -5,15 +5,20 @@
 
 import { mkdirSync } from "node:fs";
 import { appendFile, open, readFile, rm, writeFile } from "node:fs/promises";
+import { existsSync, statSync } from "node:fs";
 import { dirname } from "node:path";
 import type { DecayClass } from "../config.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { pluginLogger } from "../utils/logger.js";
 
+export const WAL_ENTRY_SCHEMA_VERSION = 1;
+
 export type WALEntry = {
+  schemaVersion?: number;
   id: string;
   timestamp: number;
   operation: "store" | "delete" | "update";
+  targetId?: string;
   data: {
     text: string;
     category?: string;
@@ -32,14 +37,26 @@ export type WALEntry = {
 const WAL_REMOVE_PREFIX = '{"op":"remove","id":';
 
 export function isWalEntry(obj: unknown): obj is WALEntry {
-  return (
-    typeof obj === "object" &&
-    obj !== null &&
-    "id" in obj &&
-    "timestamp" in obj &&
-    "operation" in obj &&
-    ["store", "delete", "update"].includes((obj as WALEntry).operation)
-  );
+  if (
+    typeof obj !== "object" ||
+    obj === null ||
+    !("id" in obj) ||
+    !("timestamp" in obj) ||
+    !("operation" in obj)
+  ) {
+    return false;
+  }
+  const sv = (obj as WALEntry).schemaVersion;
+  if (sv !== undefined && (typeof sv !== "number" || !Number.isFinite(sv) || sv < 1)) {
+    return false;
+  }
+  const op = (obj as WALEntry).operation;
+  if (!["store", "delete", "update"].includes(op)) return false;
+  if ("targetId" in obj && (obj as WALEntry).targetId !== undefined) {
+    const tid = (obj as WALEntry).targetId;
+    if (typeof tid !== "string" || tid.length === 0) return false;
+  }
+  return true;
 }
 
 export class WriteAheadLog {
@@ -302,6 +319,20 @@ export class WriteAheadLog {
     } finally {
       // biome-ignore lint/style/noNonNullAssertion: Synchronous
       releaseLock!();
+    }
+  }
+
+  async compactIfOversized(maxBytes: number): Promise<number> {
+    try {
+      if (!existsSync(this.walPath)) return 0;
+      const st = statSync(this.walPath);
+      if (st.size <= maxBytes) return 0;
+      return await this.pruneStale();
+    } catch (err) {
+      pluginLogger.info(
+        `memory-hybrid: WAL compactIfOversized size check failed; skipping compaction: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return 0;
     }
   }
 }

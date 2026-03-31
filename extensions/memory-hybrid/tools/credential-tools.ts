@@ -12,7 +12,7 @@ import { stringEnum } from "../utils/typebox.js";
 import type { CredentialsDB } from "../backends/credentials-db.js";
 import { CREDENTIAL_TYPES, type CredentialType, type HybridMemoryConfig } from "../config.js";
 import { capturePluginError } from "../services/error-reporter.js";
-import { SECONDS_PER_DAY } from "../utils/constants.js";
+import { CREDENTIAL_NOTES_MAX_CHARS, CREDENTIAL_URL_MAX_CHARS, SECONDS_PER_DAY } from "../utils/constants.js";
 
 export interface PluginContext {
   credentialsDb: CredentialsDB | null;
@@ -48,8 +48,16 @@ export function registerCredentialTools(ctx: PluginContext, api: ClawdbotPluginA
             expires?: number | null;
           };
           if (!credentialsDb) throw new Error("Credentials store not available");
+          const urlTrim =
+            typeof url === "string" && url.length > CREDENTIAL_URL_MAX_CHARS
+              ? url.slice(0, CREDENTIAL_URL_MAX_CHARS)
+              : url;
+          const notesTrim =
+            typeof notes === "string" && notes.length > CREDENTIAL_NOTES_MAX_CHARS
+              ? notes.slice(0, CREDENTIAL_NOTES_MAX_CHARS)
+              : notes;
           try {
-            credentialsDb.store({ service, type, value, url, notes, expires });
+            credentialsDb.store({ service, type, value, url: urlTrim, notes: notesTrim, expires });
           } catch (err) {
             capturePluginError(err instanceof Error ? err : new Error(String(err)), {
               subsystem: "credentials",
