@@ -2985,8 +2985,13 @@ export class FactsDB extends BaseSqliteStore {
         )
         .get(base.id) as { total_succ: number; total_fail: number };
 
-      const totalSuccess = versionCounts.total_succ + base.successCount;
-      const totalFailure = versionCounts.total_fail + base.failureCount;
+      // Include historical counts from procedure table only if this is the first version record
+      // (to avoid double-counting for procedures that already had version records before migration)
+      const isFirstVersionRecord =
+        (versionCounts.total_succ === 1 && versionCounts.total_fail === 0) ||
+        (versionCounts.total_succ === 0 && versionCounts.total_fail === 1);
+      const totalSuccess = versionCounts.total_succ + (isFirstVersionRecord ? base.successCount : 0);
+      const totalFailure = versionCounts.total_fail + (isFirstVersionRecord ? base.failureCount : 0);
       const total = totalSuccess + totalFailure;
       const successRate = total > 0 ? totalSuccess / total : 0;
 
@@ -3122,9 +3127,11 @@ export class FactsDB extends BaseSqliteStore {
         )
         .get(input.procedureId) as { total_succ: number; total_fail: number };
 
-      // Include historical counts from procedure table (pre-version tracking)
-      const totalSuccess = versionCounts.total_succ + proc.successCount;
-      const totalFailure = versionCounts.total_fail + proc.failureCount;
+      // Include historical counts from procedure table only if this is the first version record
+      // (to avoid double-counting for procedures that already had version records before migration)
+      const isFirstVersionRecord = versionCounts.total_succ === 1 && versionCounts.total_fail === 0;
+      const totalSuccess = versionCounts.total_succ + (isFirstVersionRecord ? proc.successCount : 0);
+      const totalFailure = versionCounts.total_fail + (isFirstVersionRecord ? proc.failureCount : 0);
 
       // Update procedure record (do NOT bump success_count — version table is the source of truth for counts)
       this.liveDb
@@ -3207,9 +3214,11 @@ export class FactsDB extends BaseSqliteStore {
         )
         .get(input.procedureId) as { total_succ: number; total_fail: number };
 
-      // Include historical counts from procedure table (pre-version tracking)
-      const totalSuccess = versionCounts.total_succ + proc.successCount;
-      const totalFailure = versionCounts.total_fail + proc.failureCount;
+      // Include historical counts from procedure table only if this is the first version record
+      // (to avoid double-counting for procedures that already had version records before migration)
+      const isFirstVersionRecord = versionCounts.total_succ === 0 && versionCounts.total_fail === 1;
+      const totalSuccess = versionCounts.total_succ + (isFirstVersionRecord ? proc.successCount : 0);
+      const totalFailure = versionCounts.total_fail + (isFirstVersionRecord ? proc.failureCount : 0);
 
       // Update procedure record (do NOT bump failure_count — version table is the source of truth for counts)
       this.liveDb
