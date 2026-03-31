@@ -881,6 +881,19 @@ describe("hybridConfigSchema.parse", () => {
     expect(result.autoRecall.entityLookup.maxAutoEntities).toBe(2000);
   });
 
+  it("clamps fractional maxAutoEntities to minimum 1", () => {
+    const result = hybridConfigSchema.parse({
+      ...validBase,
+      autoRecall: {
+        entityLookup: {
+          enabled: true,
+          maxAutoEntities: 0.5,
+        },
+      },
+    });
+    expect(result.autoRecall.entityLookup.maxAutoEntities).toBe(1);
+  });
+
   it("parses progressive disclosure config", () => {
     const result = hybridConfigSchema.parse({
       ...validBase,
