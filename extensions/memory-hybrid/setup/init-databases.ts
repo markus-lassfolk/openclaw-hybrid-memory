@@ -607,8 +607,9 @@ function buildMultiProviderOpenAI(
       if (!apiKey) throw new UnconfiguredProviderError("anthropic", trimmed);
       let baseURL = providerCfg?.baseURL ?? ANTHROPIC_BASE_URL;
       // Normalize: ensure Anthropic baseURL ends with /v1 for OpenAI-compatible chat endpoint (issue #950)
+      baseURL = baseURL.replace(/\/+$/, "");
       if (!baseURL.endsWith("/v1")) {
-        baseURL = baseURL.replace(/\/$/, "") + "/v1";
+        baseURL = baseURL + "/v1";
       }
       // Anthropic's OpenAI-compatible endpoints require anthropic-version header
       return {
