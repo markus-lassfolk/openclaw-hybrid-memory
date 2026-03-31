@@ -88,6 +88,21 @@ export function is404Like(err: unknown): boolean {
   return false;
 }
 
+type HeaderBag = Headers | Record<string, string | undefined>;
+
+function getHeaderCaseInsensitive(headers: HeaderBag, key: string): string | undefined {
+  const asHeaders = headers as Partial<Headers>;
+  if (typeof asHeaders.get === "function") {
+    return asHeaders.get(key) ?? undefined;
+  }
+  const record = headers as Record<string, string | undefined>;
+  const target = key.toLowerCase();
+  for (const existing of Object.keys(record)) {
+    if (existing.toLowerCase() === target) return record[existing];
+  }
+  return undefined;
+}
+
 /**
  * Some gateways (incl. Azure OpenAI / APIM) return **403** with `retry-after` and/or
  * `remaining-tokens: 0` when quota is exhausted — not the same as geo/billing "forbidden".
@@ -100,19 +115,9 @@ export function is403QuotaOrRateLimitLike(err: unknown): boolean {
   if (e.status !== 403 && e.status !== "403") return false;
   const h = e.headers;
   if (!h || typeof h !== "object") return false;
-  const get =
-    typeof (h as Headers).get === "function"
-      ? (k: string) => (h as Headers).get(k)
-      : (k: string) => {
-          const o = h as Record<string, string | undefined>;
-          const lower = k.toLowerCase();
-          for (const key of Object.keys(o)) {
-            if (key.toLowerCase() === lower) return o[key];
-          }
-          return undefined;
-        };
-  const retryAfter = get("retry-after") ?? get("Retry-After");
-  const remaining = get("remaining-tokens") ?? get("Remaining-Tokens");
+  const headers = h as HeaderBag;
+  const retryAfter = getHeaderCaseInsensitive(headers, "retry-after");
+  const remaining = getHeaderCaseInsensitive(headers, "remaining-tokens");
   if (retryAfter != null && String(retryAfter).trim() !== "") return true;
   if (remaining === "0") return true;
   return false;
@@ -405,25 +410,11 @@ function delayMsUntilUnixEpoch(value: string): number | undefined {
 export function parseRetryAfterMs(err: unknown): number | undefined {
   if (!err || typeof err !== "object") return undefined;
   const headers =
-    (err as { response?: { headers?: Record<string, string> }; headers?: Record<string, string> }).response?.headers ??
-    (err as { headers?: Record<string, string> }).headers;
+    (err as { response?: { headers?: HeaderBag }; headers?: HeaderBag }).response?.headers ??
+    (err as { headers?: HeaderBag }).headers;
   if (!headers) return undefined;
-  // Normalize header access: support both Headers object (.get()) and plain Record.
-  // Azure may send plain `retry-after` / `remaining-tokens` (no x-ratelimit-* prefix).
-  const asHeaders = headers as unknown as Headers;
-  const get =
-    typeof asHeaders.get === "function"
-      ? (k: string) => asHeaders.get(k)
-      : (k: string) => {
-          const o = headers as Record<string, string | undefined>;
-          const lower = k.toLowerCase();
-          for (const key of Object.keys(o)) {
-            if (key.toLowerCase() === lower) return o[key];
-          }
-          return undefined;
-        };
 
-  const retryAfter = get("retry-after") ?? get("Retry-After");
+  const retryAfter = getHeaderCaseInsensitive(headers, "retry-after");
   if (retryAfter) {
     const secs = Number.parseInt(retryAfter, 10);
     if (!Number.isNaN(secs) && secs > 0 && /^\s*\d+\s*$/.test(retryAfter)) return secs * 1000;
@@ -431,7 +422,9 @@ export function parseRetryAfterMs(err: unknown): number | undefined {
     if (!Number.isNaN(date)) return Math.max(0, date - Date.now());
   }
 
-  const resetTokens = get("x-ratelimit-reset-tokens") ?? get("x-ratelimit-reset-requests");
+  const resetTokens =
+    getHeaderCaseInsensitive(headers, "x-ratelimit-reset-tokens") ??
+    getHeaderCaseInsensitive(headers, "x-ratelimit-reset-requests");
   if (resetTokens) {
     const go = parseGoDurationToMs(resetTokens);
     if (go !== undefined) return go;
@@ -442,7 +435,7 @@ export function parseRetryAfterMs(err: unknown): number | undefined {
   }
 
   // Azure quota exhaustion: remaining-tokens=0 with no usable reset hint → default backoff
-  const remaining = get("remaining-tokens") ?? get("Remaining-Tokens");
+  const remaining = getHeaderCaseInsensitive(headers, "remaining-tokens");
   const hadResetHint = Boolean(retryAfter || resetTokens);
   if (remaining === "0" && !hadResetHint) return 10_000;
   return undefined;
