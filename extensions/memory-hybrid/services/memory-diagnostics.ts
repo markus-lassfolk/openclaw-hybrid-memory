@@ -10,7 +10,7 @@ type MemoryDiagnosticsResult = {
   markerId: string;
   markerText: string;
   structured: { ok: boolean; count: number };
-  semantic: { ok: boolean; count: number };
+  semantic: { ok: boolean; count: number; failReason?: string };
   hybrid: { ok: boolean; count: number };
   autoRecall: { ok: boolean; count: number };
 };
@@ -56,17 +56,34 @@ export async function runMemoryDiagnostics(opts: {
     });
 
     let semanticResults: SearchResult[] = [];
+    let semanticFailReason: string | undefined;
     try {
       semanticResults = await vectorDb.search(vector, 5, minScore);
+      if (semanticResults.length === 0) {
+        semanticFailReason = vectorDb.getLastSearchFailReason() ?? undefined;
+      }
       semanticResults = filterByScope(
         semanticResults,
         (id, opts) => factsDb.getById(id, opts),
         scopeFilter ?? undefined,
       );
     } catch (err) {
+      semanticFailReason = "search_exception";
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
         subsystem: "diagnostics",
         operation: "semantic-search",
+      });
+    }
+
+    const semanticOk = semanticResults.some((r) => r.entry.id === entry.id);
+    if (!semanticOk && semanticFailReason) {
+      const dimInfo =
+        semanticFailReason === "vector_dim_mismatch"
+          ? ` (embedding=${vector.length}, lance=${vectorDb["vectorDim"]})`
+          : "";
+      capturePluginError(new Error(`Semantic search diagnostic failed: ${semanticFailReason}${dimInfo}`), {
+        subsystem: "diagnostics",
+        operation: "semantic-search-reason",
       });
     }
 
@@ -77,7 +94,11 @@ export async function runMemoryDiagnostics(opts: {
       markerId: entry.id,
       markerText,
       structured: { ok: structuredResults.some((r) => r.entry.id === entry.id), count: structuredResults.length },
-      semantic: { ok: semanticResults.some((r) => r.entry.id === entry.id), count: semanticResults.length },
+      semantic: {
+        ok: semanticOk,
+        count: semanticResults.length,
+        ...(semanticFailReason ? { failReason: semanticFailReason } : {}),
+      },
       hybrid: { ok: hybridResults.some((r) => r.entry.id === entry.id), count: hybridResults.length },
       autoRecall: { ok: autoRecallResults.some((r) => r.entry.id === entry.id), count: autoRecallResults.length },
     };

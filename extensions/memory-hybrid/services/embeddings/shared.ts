@@ -3,7 +3,15 @@
  */
 
 import { createHash } from "node:crypto";
-import { LLMRetryError, is401OrWrapped, is403Like, is404Like, is429OrWrapped, is500OrWrapped } from "../chat.js";
+import {
+  LLMRetryError,
+  is401OrWrapped,
+  is403Like,
+  is403QuotaOrRateLimitLike,
+  is404Like,
+  is429OrWrapped,
+  is500OrWrapped,
+} from "../chat.js";
 import { capturePluginError } from "../error-reporter.js";
 import type { EmbeddingProvider } from "./types.js";
 import { AllEmbeddingProvidersFailed } from "./types.js";
@@ -176,6 +184,7 @@ export function shouldSuppressEmbeddingError(err: unknown): boolean {
   if (!(err instanceof Error)) return false;
   if (
     isConfigError(err) ||
+    is403QuotaOrRateLimitLike(err) ||
     is429OrWrapped(err) ||
     is500OrWrapped(err) ||
     isOllamaCircuitBreakerOpen(err) ||
@@ -188,6 +197,7 @@ export function shouldSuppressEmbeddingError(err: unknown): boolean {
     return err.causes.every(
       (c) =>
         isConfigError(c) ||
+        is403QuotaOrRateLimitLike(c) ||
         is429OrWrapped(c) ||
         is500OrWrapped(c) ||
         isOllamaCircuitBreakerOpen(c) ||
