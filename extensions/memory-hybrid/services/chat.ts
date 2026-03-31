@@ -410,9 +410,10 @@ export function parseRetryAfterMs(err: unknown): number | undefined {
   if (!headers) return undefined;
   // Normalize header access: support both Headers object (.get()) and plain Record.
   // Azure may send plain `retry-after` / `remaining-tokens` (no x-ratelimit-* prefix).
+  const asHeaders = headers as unknown as Headers;
   const get =
-    typeof (headers as Headers).get === "function"
-      ? (k: string) => (headers as Headers).get(k)
+    typeof asHeaders.get === "function"
+      ? (k: string) => asHeaders.get(k)
       : (k: string) => {
           const o = headers as Record<string, string | undefined>;
           const lower = k.toLowerCase();
