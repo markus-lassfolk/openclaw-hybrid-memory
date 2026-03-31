@@ -413,13 +413,11 @@ function migrateFtsTagsSupport(db: DatabaseSync): void {
       END;
 
       CREATE TRIGGER IF NOT EXISTS facts_ad AFTER DELETE ON facts BEGIN
-        INSERT INTO facts_fts(facts_fts, rowid, text, category, entity, tags, why, key, value)
-        VALUES ('delete', old.rowid, old.text, old.category, old.entity, old.tags, old.why, old.key, old.value);
+        DELETE FROM facts_fts WHERE rowid = old.rowid;
       END;
 
       CREATE TRIGGER IF NOT EXISTS facts_au AFTER UPDATE ON facts BEGIN
-        INSERT INTO facts_fts(facts_fts, rowid, text, category, entity, tags, why, key, value)
-        VALUES ('delete', old.rowid, old.text, old.category, old.entity, old.tags, old.why, old.key, old.value);
+        DELETE FROM facts_fts WHERE rowid = old.rowid;
         INSERT INTO facts_fts(rowid, text, category, entity, tags, why, key, value)
         VALUES (new.rowid, new.text, new.category, new.entity, new.tags, new.why, new.key, new.value);
       END
