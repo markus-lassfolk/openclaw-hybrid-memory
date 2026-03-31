@@ -859,6 +859,8 @@ describe("hybridConfigSchema.parse", () => {
     expect(result.autoRecall.entityLookup.enabled).toBe(true);
     expect(result.autoRecall.entityLookup.entities).toEqual(["user", "owner"]);
     expect(result.autoRecall.entityLookup.maxFactsPerEntity).toBe(3);
+    expect(result.autoRecall.entityLookup.autoFromFacts).toBe(true);
+    expect(result.autoRecall.entityLookup.maxAutoEntities).toBe(500);
   });
 
   it("parses progressive disclosure config", () => {

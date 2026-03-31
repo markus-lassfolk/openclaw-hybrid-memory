@@ -19,6 +19,7 @@ import {
 import { capturePluginError } from "../services/error-reporter.js";
 import { formatNarrativeRange, recallNarrativeSummaries } from "../services/narrative-recall.js";
 import { yieldEventLoop } from "../utils/event-loop-yield.js";
+import { resolveEntityLookupNames } from "../utils/entity-lookup-resolve.js";
 import { withTimeout } from "../utils/timeout.js";
 import { estimateTokens } from "../utils/text.js";
 import { isConsolidatedDerivedFact } from "../utils/consolidation-controls.js";
@@ -411,9 +412,10 @@ async function runRecall(
 
     const promptLower = e.prompt.toLowerCase();
     const { entityLookup } = ctx.cfg.autoRecall;
-    if (entityLookup.enabled && entityLookup.entities.length > 0) {
+    const entityLookupNames = resolveEntityLookupNames(entityLookup, ctx.factsDb);
+    if (entityLookup.enabled && entityLookupNames.length > 0) {
       const seenIds = new Set(candidates.map((c) => c.entry.id));
-      for (const entity of entityLookup.entities) {
+      for (const entity of entityLookupNames) {
         if (!promptLower.includes(entity.toLowerCase())) continue;
         const entityResults = ctx.factsDb
           .lookup(entity, undefined, undefined, { scopeFilter })
@@ -461,8 +463,8 @@ async function runRecall(
 
     if (directivesCfg.enabled) {
       try {
-        if (directivesCfg.entityMentioned && entityLookup.enabled && entityLookup.entities.length > 0) {
-          for (const entity of entityLookup.entities) {
+        if (directivesCfg.entityMentioned && entityLookup.enabled && entityLookupNames.length > 0) {
+          for (const entity of entityLookupNames) {
             if (!promptLower.includes(entity.toLowerCase())) continue;
             if (!canRunDirective()) break;
             const results = await runRecallPipelineQuery(entity, directiveLimit, pipelineDeps, hydeUsedRef, {
