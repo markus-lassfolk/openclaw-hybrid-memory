@@ -52,7 +52,7 @@ export function parseAutoRecallConfig(cfg: Record<string, unknown>): AutoRecallC
     const entityLookupRaw = ar.entityLookup as Record<string, unknown> | undefined;
     const maxAutoRaw =
       typeof entityLookupRaw?.maxAutoEntities === "number" && entityLookupRaw.maxAutoEntities > 0
-        ? Math.floor(entityLookupRaw.maxAutoEntities)
+        ? Math.max(1, Math.floor(entityLookupRaw.maxAutoEntities))
         : 500;
     const entityLookup: EntityLookupConfig = {
       enabled: entityLookupRaw?.enabled === true,

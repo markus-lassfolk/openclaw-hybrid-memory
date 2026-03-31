@@ -202,8 +202,7 @@ export function runConfigViewForCli(ctx: HandlerContext, sink: VerifyCliSink): v
   const el = cfg.autoRecall.entityLookup;
   const entityNames = Array.isArray(el?.entities) ? el.entities : [];
   const autoFromFacts = el?.autoFromFacts !== false;
-  const maxAutoEntities =
-    typeof el?.maxAutoEntities === "number" && el.maxAutoEntities > 0 ? el.maxAutoEntities : 500;
+  const maxAutoEntities = typeof el?.maxAutoEntities === "number" && el.maxAutoEntities > 0 ? el.maxAutoEntities : 500;
   const entitySrc =
     entityNames.length > 0
       ? `${entityNames.length} configured name(s)`

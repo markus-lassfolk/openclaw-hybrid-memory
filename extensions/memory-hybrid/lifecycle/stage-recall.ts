@@ -412,29 +412,31 @@ async function runRecall(
 
     const promptLower = e.prompt.toLowerCase();
     const { entityLookup } = ctx.cfg.autoRecall;
-    const entityLookupNames = resolveEntityLookupNames(entityLookup, ctx.factsDb);
-    if (entityLookup.enabled && entityLookupNames.length > 0) {
-      const seenIds = new Set(candidates.map((c) => c.entry.id));
-      for (const entity of entityLookupNames) {
-        if (!promptLower.includes(entity.toLowerCase())) continue;
-        const entityResults = ctx.factsDb
-          .lookup(entity, undefined, undefined, { scopeFilter })
-          .slice(0, entityLookup.maxFactsPerEntity);
-        for (const r of entityResults) {
-          if (!seenIds.has(r.entry.id)) {
-            seenIds.add(r.entry.id);
-            candidates.push(r);
+    if (entityLookup.enabled) {
+      const entityLookupNames = resolveEntityLookupNames(entityLookup, ctx.factsDb);
+      if (entityLookupNames.length > 0) {
+        const seenIds = new Set(candidates.map((c) => c.entry.id));
+        for (const entity of entityLookupNames) {
+          if (!promptLower.includes(entity.toLowerCase())) continue;
+          const entityResults = ctx.factsDb
+            .lookup(entity, undefined, undefined, { scopeFilter })
+            .slice(0, entityLookup.maxFactsPerEntity);
+          for (const r of entityResults) {
+            if (!seenIds.has(r.entry.id)) {
+              seenIds.add(r.entry.id);
+              candidates.push(r);
+            }
           }
         }
+        candidates.sort((a, b) => {
+          const s = b.score - a.score;
+          if (s !== 0) return s;
+          const da = a.entry.sourceDate ?? a.entry.createdAt;
+          const db = b.entry.sourceDate ?? b.entry.createdAt;
+          return db - da;
+        });
+        candidates = candidates.slice(0, limit);
       }
-      candidates.sort((a, b) => {
-        const s = b.score - a.score;
-        if (s !== 0) return s;
-        const da = a.entry.sourceDate ?? a.entry.createdAt;
-        const db = b.entry.sourceDate ?? b.entry.createdAt;
-        return db - da;
-      });
-      candidates = candidates.slice(0, limit);
     }
 
     const directivesCfg = ctx.cfg.autoRecall.retrievalDirectives;
@@ -463,19 +465,22 @@ async function runRecall(
 
     if (directivesCfg.enabled) {
       try {
-        if (directivesCfg.entityMentioned && entityLookup.enabled && entityLookupNames.length > 0) {
-          for (const entity of entityLookupNames) {
-            if (!promptLower.includes(entity.toLowerCase())) continue;
-            if (!canRunDirective()) break;
-            const results = await runRecallPipelineQuery(entity, directiveLimit, pipelineDeps, hydeUsedRef, {
-              entity,
-              hydeLabel: "HyDE",
-              errorPrefix: "directive-",
-              limitHydeOnce: true,
-              policy: interactivePolicy,
-            });
-            directiveCalls += 1;
-            addDirectiveResults(results, `entity:${entity}`);
+        if (directivesCfg.entityMentioned && entityLookup.enabled) {
+          const entityLookupNames = resolveEntityLookupNames(entityLookup, ctx.factsDb);
+          if (entityLookupNames.length > 0) {
+            for (const entity of entityLookupNames) {
+              if (!promptLower.includes(entity.toLowerCase())) continue;
+              if (!canRunDirective()) break;
+              const results = await runRecallPipelineQuery(entity, directiveLimit, pipelineDeps, hydeUsedRef, {
+                entity,
+                hydeLabel: "HyDE",
+                errorPrefix: "directive-",
+                limitHydeOnce: true,
+                policy: interactivePolicy,
+              });
+              directiveCalls += 1;
+              addDirectiveResults(results, `entity:${entity}`);
+            }
           }
         }
         if (directivesCfg.keywords.length > 0) {
