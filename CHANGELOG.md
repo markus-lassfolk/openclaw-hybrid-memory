@@ -8,9 +8,36 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+No changes yet.
+
+---
+
+## [2026.3.310] - 2026-03-31
+
+### Release summary
+
+Reliability and upgrade-safety release after **2026.3.300**: improves recall responsiveness, hardens embedding and chat/network edge cases, auto-migrates older LanceDB tables missing the `why` column, documents safer RPC health-check timeouts, and refreshes CI/dependency tooling.
+
+### Added
+
+- **LanceDB compatibility migration:** Startup now detects legacy vector tables that predate provenance support and backfills a nullable `why` column automatically before reads/writes continue.
+
+### Changed
+
+- **Dependency and CI maintenance:** Updated GitHub Actions (`cache`, `stale`, `github-script`, `setup-node`, `labeler`) and refreshed dev dependency lock state (`extensions/memory-hybrid/package-lock.json`) to keep pipelines current.
+- **Chat header parsing internals:** Deduplicated case-insensitive header lookup paths in retry-after handling for simpler, safer request metadata parsing.
+
+### Fixed
+
+- **Recall latency / responsiveness ([#931](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/931)):** Auto-recall now yields back to the event loop while processing memory candidates to avoid blocking under heavier recall workloads.
+- **Embeddings and verification alignment ([#932](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/932), [#934](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/934), [#941](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/941)):** Dimension mismatch checks and fallback behavior were hardened across vector search, diagnostics, bootstrap, migration, and verify tooling so provider/model transitions fail less often and with clearer behavior.
+- **Narratives / transient error handling ([#935](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/935), [#936](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/936)):** Daily narrative generation and chat retry paths better classify abort/timeout-family failures as transient, reducing noisy hard-failure reporting.
+- **Store-embed error reporting noise ([#937](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/937)):** Expected embedding failures (including circuit-breaker scenarios) are filtered before plugin error reporting.
+- **Type safety in retry-after parsing:** Resolved `TS2352` cast risk when handling `Headers` in `parseRetryAfterMs`.
+
 ### Documentation
 
-- **Gateway health:** Document default **10s** RPC probe timeout on `openclaw gateway status`, warm-up false positives, and **`--timeout 45000`** (or 30s+) for scripts and dashboards ([#938](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/938)).
+- **Gateway health operations ([#938](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/938)):** Added operator guidance for default **10s** RPC probe timeout, warm-up false positives, and use of **`--timeout 45000`** (or 30s+) in scripts/dashboards.
 
 ---
 
@@ -1004,7 +1031,10 @@ Major feature release including procedural memory, directive extraction, reinfor
 
 ---
 
-[Unreleased]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.3.250...HEAD
+[Unreleased]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.3.310...HEAD
+[2026.3.310]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.3.301...v2026.3.310
+[2026.3.301]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.3.300...v2026.3.301
+[2026.3.300]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.3.293...v2026.3.300
 [2026.3.250]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.3.181...v2026.3.250
 [2026.3.181]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/releases/tag/v2026.3.181
 [2026.3.180]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/releases/tag/v2026.3.180
