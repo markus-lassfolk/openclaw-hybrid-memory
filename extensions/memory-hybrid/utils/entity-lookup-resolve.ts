@@ -16,5 +16,10 @@ export function resolveEntityLookupNames(
   if (!entityLookup.autoFromFacts) return [];
   const raw = factsDb.getKnownEntities?.() ?? [];
   const filtered = raw.filter((e) => typeof e === "string" && e.trim().length > 0);
-  return filtered.slice(0, entityLookup.maxAutoEntities);
+  // Stable order before capping so the same DB always yields the same subset under maxAutoEntities
+  // (SQL DISTINCT without ORDER BY is not guaranteed deterministic).
+  const sorted = [...filtered].sort((a, b) =>
+    a.trim().localeCompare(b.trim(), undefined, { sensitivity: "base", numeric: true }),
+  );
+  return sorted.slice(0, entityLookup.maxAutoEntities);
 }
