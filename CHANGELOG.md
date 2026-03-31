@@ -8,6 +8,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Documentation
+
+- **Gateway health:** Document default **10s** RPC probe timeout on `openclaw gateway status`, warm-up false positives, and **`--timeout 45000`** (or 30s+) for scripts and dashboards ([#938](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/938)).
+
 ---
 
 ## [2026.3.301] - 2026-03-30

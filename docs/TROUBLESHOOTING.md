@@ -139,9 +139,35 @@ If you see **"FATAL ERROR: Reached heap limit Allocation failed - JavaScript hea
 
 ---
 
+## RPC health probe timeout (openclaw gateway status)
+
+**Symptom:** `openclaw gateway status` reports an **RPC probe** failure (timeout), often clustered **early** after gateway start or upgrade, while **systemd** still shows the service as active and **127.0.0.1:18789** is listening. The next sample may show **RPC probe: ok**.
+
+**Cause:** The OpenClaw CLI defaults to **`--timeout 10000`** (10 seconds) for the WebSocket RPC health check. During **warm-up** — plugin load, hybrid-memory opening SQLite/LanceDB, “Warm-up: launch agents can take a few seconds” — the gateway may not complete an RPC round-trip within 10s. That is **probe sensitivity**, not necessarily a crashed or unhealthy process.
+
+**Misleading line:** The status command may also print **"Port 18789 is already in use"** when the probe path is unhappy, even though the same PID is legitimately bound to the port. For **real** port conflicts (stale process, socat, TIME_WAIT), see [Port not releasing](#port-not-releasing-gateway-port-18789-already-in-use) below.
+
+**What to do**
+
+1. **Scripts and dashboards:** Use a longer RPC timeout when polling health, for example:
+   ```bash
+   openclaw gateway status --timeout 45000
+   ```
+   **`30000`** or higher is reasonable when many plugins or large hybrid-memory stores are cold-starting.
+
+2. **Resilience:** Prefer **retries with backoff** before counting a failure (e.g. **3 attempts** with **~8 seconds** between attempts), especially in post-upgrade stability scripts.
+
+3. **Optional (advanced):** If profiling shows long **synchronous** work on the gateway main thread delaying RPC, consider deferring non-critical bootstrap upstream; this is rarely needed once timeouts are set sensibly.
+
+**Reference:** [Issue #938](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/938).
+
+---
+
 ## Port not releasing (gateway port 18789 already in use)
 
 When the gateway exits (crash, OOM, or `gateway stop`) the port can stay in use so the next start fails with **"Port 18789 is already in use"** or **"another gateway instance is already listening"**. Common causes and what to do:
+
+**Note:** If you see **"Port 18789 is already in use"** or an RPC probe failure only **while** running `openclaw gateway status` (especially within the first minute after start), check [RPC health probe timeout](#rpc-health-probe-timeout-openclaw-gateway-status) first — the default **10s** probe window can fail during warm-up even when the process is healthy.
 
 ### Why the port may not release
 

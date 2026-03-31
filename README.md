@@ -161,7 +161,7 @@ See [LLM-AND-PROVIDERS.md](docs/LLM-AND-PROVIDERS.md) for setup.
 | Doc | What it's for |
 |-----|---------------|
 | **[OPERATIONS.md](docs/OPERATIONS.md)** | Background jobs, cron, scripts, upgrading |
-| **[TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)** | Common issues, diagnostics, API key quirks |
+| **[TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)** | Common issues, diagnostics, API key quirks, [gateway RPC probe timeouts](docs/TROUBLESHOOTING.md#rpc-health-probe-timeout-openclaw-gateway-status) during warm-up (`openclaw gateway status`) |
 | **[BACKUP.md](docs/BACKUP.md)** | What to back up and how to restore |
 | **[UNINSTALL.md](docs/UNINSTALL.md)** | Clean uninstall — revert to default memory |
 
