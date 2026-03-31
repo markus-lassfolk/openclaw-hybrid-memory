@@ -20,6 +20,32 @@ openclaw hybrid-mem stats         # show fact/vector counts
 
 ---
 
+## Embedding vs LanceDB dimension mismatch
+
+**Symptoms:** `openclaw hybrid-mem verify` reports a **FAIL** for embedding ↔ LanceDB alignment; `hybrid-mem test` shows semantic search failing with a reason such as `vector_dim_mismatch`; semantic recall feels empty even though facts exist.
+
+**Typical cause:** The embedding provider chain or model was inferred or changed (e.g. a Google key influenced `preferredProviders` while you intended OpenAI-only) so vectors are produced at one width (e.g. 768) while the Lance table was created at another (e.g. 3072). See [#939](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/939) and the fix in [#941](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/941).
+
+**What to do:**
+
+1. Align `embedding.provider`, `embedding.model` / `embedding.models`, and `embedding.dimensions` with the table you need; set `embedding.preferredProviders` explicitly if you use multiple keys.
+2. Run **`openclaw hybrid-mem verify`** again — it performs a **live embedding call** to confirm dimensions.
+3. If the table was built with the wrong model, run **`openclaw hybrid-mem re-index`** after config is correct (or enable `vector.autoRepair` only if you understand it will rebuild the vector table).
+
+**Note:** Older installs might have passed verify even when semantic search was silently broken. Newer versions fail verify on mismatch so automation can catch it.
+
+---
+
+## Azure / APIM rate limits during bulk re-index
+
+**Symptoms:** 429 or quota-style **403** (with `retry-after` / `remaining-tokens`) while running **`openclaw hybrid-mem re-index`** or large backfills on Azure OpenAI / API Management.
+
+**Context:** Gateways may send rate-limit hints on **`retry-after`**, **`remaining-tokens`**, or **`x-ratelimit-reset-*`** headers; field behavior is summarized in [#940](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/940). The plugin backs off and, on batch failure, can fall back to **sequential** per-fact embedding to avoid storms.
+
+**What to do:** Reduce batch pressure: lower **`--batch-size`** on `re-index`, wait for quota reset, or raise quota. Inter-batch throttling for the migration engine is tracked for a future CLI flag — see [#942](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/942). As a starting point when you still hit limits, try spacing batches by **~2000ms** once exposed, or run re-index during a quiet window.
+
+---
+
 ## OpenClaw: `Invalid config … plugins.entries.memory-hybrid: Unrecognized key: "llm"`
 
 **Cause:** `llm` (and all other memory-hybrid settings) must live **inside** the plugin entry’s **`config`** object. If `llm` is a **sibling** of `config` under `plugins.entries`, OpenClaw rejects it.

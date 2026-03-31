@@ -238,7 +238,9 @@ Issues are listed as **load-blocking** (prevent OpenClaw from loading) or **othe
 `--fix` applies safe fixes: missing embedding block, memory directory, and optional jobs. Adds any missing maintenance cron jobs to `~/.openclaw/cron/jobs.json` (see [Maintenance cron jobs](#maintenance-cron-jobs)); does not re-enable jobs you disabled.
 `--log-file <path>` scans the file for memory-hybrid or cron errors.
 
-**Exit codes (for scripting):** `0` = all checks passed, no restart needed; `1` = issues found (see output); `2` = all checks passed but **restart pending** (config was changed via `config-mode`/`config-set`; restart gateway for changes to take effect).
+**Embedding ↔ LanceDB alignment:** Verify includes a check that the **live embedding API** output dimension matches the LanceDB table width (see [#941](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/941)). That implies **one real embedding request** during verify (API usage / quota), even when everything else is healthy. If the probe reports a different width than the configured provider dimension, follow the on-screen steps before relying on semantic search.
+
+**Exit codes (for scripting):** `0` = all checks passed, no restart needed; `1` = issues found (see output); `2` = all checks passed but **restart pending** (config was changed via `config-mode`/`config-set`; restart gateway for changes to take effect). A **dimension mismatch** between embeddings and LanceDB counts as failure (`1`) so scripts and monitors can detect silent semantic-search breakage. After fixing `embedding.*` / `vector.*`, run `openclaw hybrid-mem re-index` if vectors were built with the wrong model. See [Troubleshooting — dimension mismatch](TROUBLESHOOTING.md#embedding-vs-lancedb-dimension-mismatch).
 
 ---
 

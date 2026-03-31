@@ -79,6 +79,10 @@ export class VectorDB {
    *
    * Documented values: `vector_dim_mismatch`, `lance_unavailable` (incl. Lance init failure),
    * `schema_invalid`, `lance_error`.
+   *
+   * **Concurrency:** One field per VectorDB instance; overlapping async `search()` calls can
+   * leave the value from whichever early-return finished last — fine for the usual singleton
+   * plugin; do not treat as strict per-request correlation. See [#946](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/946).
    */
   private lastSearchFailReason: string | null = null;
   /** Log vector dimension mismatch at most once per instance to avoid recall-loop log spam (#941 review). */

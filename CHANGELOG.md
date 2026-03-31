@@ -38,6 +38,7 @@ Reliability and upgrade-safety release after **2026.3.300**: improves recall res
 ### Documentation
 
 - **Gateway health operations ([#938](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/938)):** Added operator guidance for default **10s** RPC probe timeout, warm-up false positives, and use of **`--timeout 45000`** (or 30s+) in scripts/dashboards.
+- **Verify and dimension troubleshooting ([#941](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/941)):** [CLI-REFERENCE.md](docs/CLI-REFERENCE.md) now documents the verify embedding probe, alignment exit code, and link to troubleshooting; [TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) adds sections on LanceDB dimension mismatch and Azure re-index throttling. Follow-ups: [#942](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/942)–[#946](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/946).
 
 ---
 

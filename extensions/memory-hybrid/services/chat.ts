@@ -107,6 +107,10 @@ function getHeaderCaseInsensitive(headers: HeaderBag, key: string): string | und
  * Some gateways (incl. Azure OpenAI / APIM) return **403** with `retry-after` and/or
  * `remaining-tokens: 0` when quota is exhausted — not the same as geo/billing "forbidden".
  * Treat like rate limit for messaging and GlitchTip suppression (#init-verify noise).
+ *
+ * **Assumption:** A future provider could theoretically send `retry-after` on a 403 for a
+ * non-quota reason; today we key off the same signals Azure uses. Revisit if a provider
+ * misclassifies geo/credential 403s with these headers.
  */
 export function is403QuotaOrRateLimitLike(err: unknown): boolean {
   if (err instanceof LLMRetryError) return is403QuotaOrRateLimitLike(err.cause);
@@ -406,6 +410,10 @@ function delayMsUntilUnixEpoch(value: string): number | undefined {
  * Prefers `Retry-After` (RFC 7231: delta-seconds or HTTP-date), then OpenAI
  * `x-ratelimit-reset-*` (Go durations), then epoch-style reset times some gateways send.
  * Exported for unit tests.
+ *
+ * **Azure / APIM field report:** Some paths return plain `retry-after` / `remaining-tokens`
+ * without `x-ratelimit-*` names; header keys are read case-insensitively (Headers or plain record).
+ * Operator context: issue [#940](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/940).
  */
 export function parseRetryAfterMs(err: unknown): number | undefined {
   if (!err || typeof err !== "object") return undefined;

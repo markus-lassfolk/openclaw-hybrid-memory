@@ -30,6 +30,12 @@ Version **2026.3.310** includes all updates shipped after **2026.3.300**. This r
   - vector DB safety checks and diagnostics.
 - Practical impact: fewer “mismatch surprise” failures after provider/model/config changes and clearer operational behavior when fallbacks trigger.
 
+**Operator notes**
+
+- **`openclaw hybrid-mem verify`** now treats **embedding width ↔ LanceDB** misalignment as a **failed** check (non-zero exit), and performs a **live embedding request** to confirm runtime dimensions (expect one embedding API call per verify run for that probe).
+- Installs that were previously “green” but semantically broken may start **failing verify** until config and Lance vectors are aligned — that is intentional so monitors and scripts can detect the condition. Fix config, then run **`openclaw hybrid-mem re-index`** when the vector table was built under the wrong model.
+- **Follow-up work** from post-merge review is tracked as separate issues (no blockers for this release): [#942](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/942) (CLI throttle knob for re-index), [#943](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/943) (shared rate-limit module), [#944](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/944) (validate dimensions before VectorDB), [#945](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/945) (grep-friendly quota logs), [#946](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/946) (lastSearchFailReason concurrency docs).
+
 ### 3) Chat/narrative transient failure classification
 
 - Retry and narrative handling was refined so timeout/abort-family failures are treated as expected transient conditions where appropriate ([#935](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/935), [#936](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/936)).
@@ -48,6 +54,9 @@ Version **2026.3.310** includes all updates shipped after **2026.3.300**. This r
 ### 6) Documentation and operations guidance
 
 - Added explicit docs for RPC health probe timeout behavior and warm-up false positives, including recommended `--timeout 45000` (or 30s+) usage in scripts and dashboards ([#938](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/938)).
+- **[CLI reference](https://github.com/markus-lassfolk/openclaw-hybrid-memory/blob/main/docs/CLI-REFERENCE.md):** `verify` documents the embedding probe, alignment failure exit code, and links to troubleshooting.
+- **[Troubleshooting](https://github.com/markus-lassfolk/openclaw-hybrid-memory/blob/main/docs/TROUBLESHOOTING.md):** New sections on **embedding vs LanceDB dimension mismatch** and **Azure/APIM rate limits during re-index** (with pointers to [#939](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/939)–[#941](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/941), [#940](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/940), and follow-up [#942](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/942)).
+- **Source comments:** `parseRetryAfterMs` / quota-403 classification reference issue [#940](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/940); `VectorDB` documents `lastSearchFailReason` concurrency semantics (see [#946](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/946)).
 
 ### 7) CI/dependency maintenance updates
 
