@@ -655,7 +655,7 @@ export async function runVerifyForCli(
     const provEntry = (cronCfg.llm?.providers as Record<string, { baseURL?: string; baseUrl?: string }> | undefined)?.[
       provider
     ];
-    const baseURL =
+    let baseURL =
       (typeof provEntry?.baseURL === "string" && provEntry.baseURL.trim() ? provEntry.baseURL.trim() : undefined) ??
       (typeof provEntry?.baseUrl === "string" && provEntry.baseUrl.trim() ? provEntry.baseUrl.trim() : undefined) ??
       VERIFY_LLM_BASE_URLS[provider];
