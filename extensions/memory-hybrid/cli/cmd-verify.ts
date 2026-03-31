@@ -117,6 +117,8 @@ export async function runVerifyForCli(
   let sqliteOk = false;
   let lanceOk = false;
   let embeddingOk = false;
+  /** False when probe vector length ≠ Lance expected dim or Lance schema invalid for vectors. */
+  let embeddingAlignmentOk = true;
   const loadBlocking: string[] = [];
 
   log("\n───── Infrastructure ─────");
@@ -436,6 +438,92 @@ export async function runVerifyForCli(
       ? "  Embeddings: OK — at least one provider has credentials."
       : "  Embeddings: no working provider — see fixes below if listed.",
   );
+
+  // ───── Embedding ↔ Lance alignment (dimensions) ─────
+  tableLog("\n───── Embedding ↔ vector store (dimensions) ─────");
+  if (!sqliteOk || !lanceOk || !vectorDb.isLanceDbAvailable()) {
+    const WARN = noEmoji ? "[WARN]" : "⚠️";
+    tableLog(
+      `${WARN}  Skipped — SQLite and LanceDB must be healthy to compare embedding size vs index. Fix errors above, then re-run verify.`,
+    );
+  } else {
+    try {
+      await vectorDb.ensureInitialized();
+      const providerDims = embeddings.dimensions;
+      const lanceDims = vectorDb.getVectorDim();
+      const configDims = cfg.embedding.dimensions;
+      const schemaOk = vectorDb.isMemoriesVectorSchemaValid();
+      tableLog(`  Active embedding provider: ${providerDims} dimensions (model: ${embeddings.modelName})`);
+      tableLog(`  Config embedding.dimensions: ${configDims ?? "(default from model/catalog)"}`);
+      tableLog(`  LanceDB (this process): expects ${lanceDims}-dim vectors`);
+      if (configDims !== undefined && configDims !== providerDims) {
+        const WARN = noEmoji ? "[WARN]" : "⚠️";
+        tableLog(
+          `${WARN}  Config embedding.dimensions (${configDims}) differs from runtime provider (${providerDims}) — runtime size is used for the index.`,
+        );
+      }
+      if (!schemaOk) {
+        embeddingAlignmentOk = false;
+        log(
+          `${FAIL} Lance memories table: schema not valid for vector search (missing vector column or on-disk dimension mismatch).`,
+        );
+        log(
+          `  Fix: Set embedding.model / embedding.dimensions to match the table you need, enable vector.autoRepair=true to rebuild the empty table, or remove the LanceDB directory and restart. Then run: openclaw hybrid-mem re-index`,
+        );
+        issues.push("LanceDB memories table schema invalid for vectors (dimension mismatch or missing column)");
+        fixes.push(
+          "Align embedding.model and embedding.dimensions with your Lance table, or delete the LanceDB data directory and re-index. See plugin config vector.autoRepair.",
+        );
+      } else {
+        const probeText = "openclaw hybrid-mem verify dimension probe";
+        const probeVec = await embeddings.embed(probeText);
+        const probeLen = probeVec.length;
+        tableLog(`  Probe embedding: API returned ${probeLen}-dim vector`);
+        if (probeLen !== providerDims) {
+          const WARN = noEmoji ? "[WARN]" : "⚠️";
+          tableLog(
+            `${WARN}  Provider reports ${providerDims} dimensions but probe returned ${probeLen} — using probe length as truth for this run.`,
+          );
+        }
+        if (probeLen === lanceDims) {
+          log(`${OK} Embedding ↔ Lance: OK (${probeLen} dimensions; index matches API output)`);
+        } else {
+          embeddingAlignmentOk = false;
+          log(
+            `${FAIL} Embedding ↔ Lance: MISMATCH — API returned ${probeLen} dimensions but LanceDB expects ${lanceDims}-dim vectors. Semantic search will return no results until fixed.`,
+          );
+          log(
+            `  What to do: (1) Set embedding.model to the model you want as primary (same output size as your index).`,
+          );
+          log(`  (2) Set embedding.dimensions to that size if it differs from the catalog default.`);
+          log(
+            `  (3) If you use a provider chain, set embedding.preferredProviders so only providers with the same vector size are listed (e.g. ["openai"] only).`,
+          );
+          log(
+            `  (4) Run: openclaw hybrid-mem re-index — rebuilds vectors from SQLite with the current embedding config.`,
+          );
+          issues.push(
+            `Embedding dimension mismatch: API probe ${probeLen} vs Lance index ${lanceDims} (provider.dimensions=${providerDims})`,
+          );
+          fixes.push(
+            'Match embedding model/dimensions to the LanceDB vector width, then run `openclaw hybrid-mem re-index`. Prefer embedding.preferredProviders: ["openai"] if a Google key accidentally forced a different chain size.',
+          );
+        }
+      }
+    } catch (e) {
+      embeddingAlignmentOk = false;
+      const msg = e instanceof Error ? e.message : String(e);
+      log(`${FAIL} Embedding ↔ Lance: check failed — ${msg}`);
+      issues.push(`Embedding alignment probe failed: ${msg}`);
+      fixes.push(
+        "Ensure embedding credentials and model are valid, then re-run verify. If you changed embedding settings, run `openclaw hybrid-mem re-index` after fixing config.",
+      );
+      capturePluginError(e instanceof Error ? e : new Error(String(e)), {
+        subsystem: "cli",
+        operation: "runVerifyForCli:embedding-alignment",
+      });
+    }
+  }
 
   // ───── LLM / models table: one row per model from llm.nano / llm.default / llm.heavy; auth + source ─────
   tableLog("\n───── LLM / Models (from llm.nano, llm.default, llm.heavy) ─────");
@@ -1135,7 +1223,13 @@ export async function runVerifyForCli(
     log(`\nLog file not found: ${opts.logFile}`);
   }
 
-  let allOk = configOk && sqliteOk && lanceOk && embeddingOk && (!cfg.credentials.enabled || credentialsOk);
+  let allOk =
+    configOk &&
+    sqliteOk &&
+    lanceOk &&
+    embeddingOk &&
+    embeddingAlignmentOk &&
+    (!cfg.credentials.enabled || credentialsOk);
 
   // ───── Reconciliation Check ─────
   if (opts.reconcile) {

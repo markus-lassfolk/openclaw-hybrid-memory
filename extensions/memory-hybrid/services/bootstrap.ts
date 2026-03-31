@@ -58,14 +58,30 @@ export const coreBootstrapInstaller: CoreBootstrapInstaller = {
     const edictStorePath = join(dirname(resolvedSqlitePath), "edicts.db");
     const edictStore = new EdictStore(edictStorePath);
 
-    const vectorDb = new VectorDB(resolvedLancePath, cfg.embedding.dimensions, cfg.vector.autoRepair);
-    vectorDb.setLogger(api.logger);
-
+    // Instantiate EmbeddingProvider FIRST so VectorDB always uses the actual runtime
+    // dimensions. When a ChainEmbeddingProvider is active (e.g. Google in chain with
+    // OpenAI model), the chain may output different dimensions (768) than the catalog
+    // model dimensions (3072). Using cfg.embedding.dimensions directly caused a silent
+    // mismatch where VectorDB.search() returned [] on every query. Issue #939.
     const embeddings = createEmbeddingProvider(cfg.embedding, (err) => {
       api.logger.warn(
         `memory-hybrid: ${cfg.embedding.provider} embedding unavailable (${err}), switching to OpenAI fallback`,
       );
     });
+
+    const effectiveDimensions = embeddings.dimensions;
+    if (effectiveDimensions !== cfg.embedding.dimensions) {
+      api.logger.warn(
+        `memory-hybrid: embedding provider dimensions (${effectiveDimensions}) differ from config dimensions (${cfg.embedding.dimensions}). ` +
+          `Using provider dimensions (${effectiveDimensions}) for LanceDB. ` +
+          `To silence this warning, set embedding.dimensions: ${effectiveDimensions} in plugin config, ` +
+          `or set embedding.preferredProviders explicitly to control which providers are used.`,
+      );
+    }
+
+    const vectorDb = new VectorDB(resolvedLancePath, effectiveDimensions, cfg.vector.autoRepair);
+    vectorDb.setLogger(api.logger);
+
     const embeddingRegistry = buildEmbeddingRegistry(
       embeddings,
       cfg.embedding.model,

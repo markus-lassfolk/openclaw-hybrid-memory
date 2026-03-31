@@ -603,7 +603,11 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
     const hasOllamaInLlm = llmLists.some((list) => list.some((m) => typeof m === "string" && m.startsWith("ollama/")));
     if (hasOllamaInLlm || embeddingProvider === "ollama") inferred.push("ollama");
     if (resolvedApiKey && resolvedApiKey.length >= 10) inferred.push("openai");
-    if (hasGoogleKey) inferred.push("google");
+    // Only add google to the embedding chain when the embedding provider IS google.
+    // A Google LLM key (distill/llm.providers.google) should NOT activate the embedding
+    // chain — doing so forces 768-dim vectors which silently break LanceDB tables built
+    // for the configured OpenAI model dimensions (e.g. 3072). Issue #939.
+    if (hasGoogleKey && embeddingProvider === "google") inferred.push("google");
     preferredProviders = inferred.length > 0 ? inferred : ["ollama", "openai"];
   }
   // Resolve env:/file: SecretRef format for the Google API key (Issue #344 — parallel to #333 for embedding.apiKey).

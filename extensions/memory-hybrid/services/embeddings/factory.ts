@@ -147,6 +147,14 @@ export function createEmbeddingProvider(cfg: EmbeddingConfig, onFallback?: (err:
     const googleInChainWithOpenAiModel =
       preferredProviders.includes("google") && model && OPENAI_ONLY_EMBED_MODELS.has(model);
     const chainDimensions = googleInChainWithOpenAiModel ? GOOGLE_EMBED_DEFAULT_DIMENSIONS : dimensions;
+    if (googleInChainWithOpenAiModel && dimensions && dimensions !== GOOGLE_EMBED_DEFAULT_DIMENSIONS) {
+      pluginLogger.warn(
+        `memory-hybrid: embedding chain includes Google with OpenAI model '${model}' — ` +
+          `forcing dimensions to ${GOOGLE_EMBED_DEFAULT_DIMENSIONS} (Google default) instead of ${dimensions}. ` +
+          `Set embedding.preferredProviders: ["openai"] to use ${dimensions}-dim OpenAI-only embeddings, ` +
+          `or set embedding.dimensions: ${GOOGLE_EMBED_DEFAULT_DIMENSIONS} to acknowledge the Google chain dimensions.`,
+      );
+    }
     const ollamaModel =
       model && !["text-embedding-3-small", "text-embedding-3-large", "text-embedding-ada-002"].includes(model)
         ? model

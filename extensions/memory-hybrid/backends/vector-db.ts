@@ -73,6 +73,17 @@ export class VectorDB {
    */
   private schemaValid = true;
   /**
+   * Reason code from the last search() call that returned empty results early.
+   * Used by diagnostics (hybrid-mem test) to report actionable failure reasons.
+   * Reset on each search() call; null when search completed normally (issue #939/#940).
+   *
+   * Documented values: `vector_dim_mismatch`, `lance_unavailable` (incl. Lance init failure),
+   * `schema_invalid`, `lance_error`.
+   */
+  private lastSearchFailReason: string | null = null;
+  /** Log vector dimension mismatch at most once per instance to avoid recall-loop log spam (#941 review). */
+  private vectorDimMismatchLogged = false;
+  /**
    * Set to false when lancedb.connect() throws during doInitialize(). When false, all
    * vector operations (search, store, hasDuplicate, count, delete, optimize) return safe
    * empty defaults and the plugin runs in FTS5-only fallback mode. Reset to true when
@@ -998,18 +1009,33 @@ export class VectorDB {
 
   async search(vector: number[], limit = 5, minScore = 0.3): Promise<SearchResult[]> {
     try {
-      if (!this.lanceDbAvailable) return [];
+      if (!this.lanceDbAvailable) {
+        this.lastSearchFailReason = "lance_unavailable";
+        return [];
+      }
       await this.ensureInitialized();
-      if (!this.lanceDbAvailable || this.lanceInitFailed || !this.table) return [];
-      // Schema was detected as invalid at startup (dim mismatch or no vector column).
-      // Return empty results immediately without a GlitchTip report — the issue was
-      // already logged once during init (issue #366).
-      if (!this.schemaValid) return [];
-      // Dimension pre-check: silently skip query if the vector dim doesn't match the
-      // table dim. This prevents a LanceDB error when the embedding fallback chain
-      // (e.g. Google/768 dims) produces a vector incompatible with the stored
-      // 3072-dim table built with text-embedding-3-large.
-      if (vector.length !== this.vectorDim) return [];
+      if (!this.lanceDbAvailable || this.lanceInitFailed || !this.table) {
+        // Single code for operators: init failure and "DB not ready" both mean no vector search (#941).
+        this.lastSearchFailReason = "lance_unavailable";
+        return [];
+      }
+      if (!this.schemaValid) {
+        this.lastSearchFailReason = "schema_invalid";
+        return [];
+      }
+      if (vector.length !== this.vectorDim) {
+        this.lastSearchFailReason = "vector_dim_mismatch";
+        if (!this.vectorDimMismatchLogged) {
+          this.vectorDimMismatchLogged = true;
+          this.logWarn(
+            `memory-hybrid: vector dimension mismatch — embedding produced ${vector.length}-dim vector but LanceDB table expects ${this.vectorDim}-dim. ` +
+              `Check embedding.preferredProviders and embedding.dimensions in plugin config. Run 'openclaw hybrid-mem verify' for details. ` +
+              `(Further mismatches in this session are silent; fix config and re-index.)`,
+          );
+        }
+        return [];
+      }
+      this.lastSearchFailReason = null;
       const rawLimit = Number.isFinite(limit) ? Math.floor(limit) : 5;
       const safeLimit = Math.max(1, Math.min(LANCE_VECTOR_SEARCH_MAX_LIMIT, rawLimit));
       const acquired = this.acquireReader();
@@ -1063,6 +1089,7 @@ export class VectorDB {
           subsystem: "vector",
         });
       }
+      this.lastSearchFailReason = "lance_error";
       this.logWarn(`memory-hybrid: LanceDB search failed: ${err}`);
       return [];
     }
@@ -1341,6 +1368,24 @@ export class VectorDB {
    */
   getCloseGeneration(): number {
     return this.closeGeneration;
+  }
+
+  /** Returns the reason code from the last search() that returned early, or null if search completed normally. */
+  getLastSearchFailReason(): string | null {
+    return this.lastSearchFailReason;
+  }
+
+  /** Vector width this instance was configured for (matches the Lance `memories` table after init/repair). */
+  getVectorDim(): number {
+    return this.vectorDim;
+  }
+
+  /**
+   * False when validateOrRepairSchema() found no vector column or a dimension mismatch without auto-repair.
+   * When false, vector search returns empty results until the table is fixed or re-indexed.
+   */
+  isMemoriesVectorSchemaValid(): boolean {
+    return this.schemaValid;
   }
 
   /**

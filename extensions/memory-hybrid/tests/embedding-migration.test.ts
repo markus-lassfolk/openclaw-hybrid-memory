@@ -613,3 +613,91 @@ describe("migrateEmbeddings — batch processing", () => {
     expect(embeddings.embedBatch).toHaveBeenCalledTimes(2);
   });
 });
+
+// ---------------------------------------------------------------------------
+// migrateEmbeddings — rate-limit handling (#940)
+// ---------------------------------------------------------------------------
+
+describe("migrateEmbeddings — rate-limit handling (#940)", () => {
+  it("falls back to sequential per-fact embeds on batch 429 (not parallel)", async () => {
+    const facts = [makeFact("r1"), makeFact("r2"), makeFact("r3")];
+    const factsDb = makeFactsDB({ getAll: vi.fn().mockReturnValue(facts) });
+    const vectorDb = makeVectorDB();
+    const vec = Array(1536).fill(0.5);
+
+    const embedOrder: string[] = [];
+    const embeddings = makeEmbeddings(1536, {
+      embedBatch: vi.fn().mockRejectedValue(Object.assign(new Error("429 Too Many Requests"), { status: 429 })),
+      embed: vi.fn().mockImplementation(async (text: string) => {
+        embedOrder.push(text);
+        return vec;
+      }),
+    });
+
+    const result = await migrateEmbeddings({
+      factsDb: factsDb as any,
+      edictStore: null as any,
+      vectorDb: vectorDb as any,
+      embeddings: embeddings as any,
+      delayMsBetweenBatches: 1,
+      logger: silentLogger(),
+    });
+
+    expect(result.migrated).toBe(3);
+    expect(embeddings.embed).toHaveBeenCalledTimes(3);
+    expect(embedOrder).toEqual(["fact r1", "fact r2", "fact r3"]);
+  }, 15_000);
+
+  it("uses delayMsBetweenBatches to throttle batch processing", async () => {
+    const facts = Array.from({ length: 4 }, (_, i) => makeFact(String(i)));
+    const factsDb = makeFactsDB({ getAll: vi.fn().mockReturnValue(facts) });
+    const vectorDb = makeVectorDB();
+    const embeddings = makeEmbeddings(384, {
+      embedBatch: vi.fn().mockImplementation(async (texts: string[]) => texts.map(() => Array(384).fill(0.1))),
+    });
+
+    const result = await migrateEmbeddings({
+      factsDb: factsDb as any,
+      edictStore: null as any,
+      vectorDb: vectorDb as any,
+      embeddings: embeddings as any,
+      batchSize: 2,
+      delayMsBetweenBatches: 10,
+      logger: silentLogger(),
+    });
+
+    expect(result.total).toBe(4);
+    expect(result.migrated).toBe(4);
+    expect(embeddings.embedBatch).toHaveBeenCalledTimes(2);
+  });
+
+  it("backs off on quota 403 (remaining-tokens: 0) before per-fact fallback", async () => {
+    const facts = [makeFact("q1")];
+    const factsDb = makeFactsDB({ getAll: vi.fn().mockReturnValue(facts) });
+    const vectorDb = makeVectorDB();
+    const vec = Array(1536).fill(0.5);
+
+    const embeddings = makeEmbeddings(1536, {
+      embedBatch: vi.fn().mockRejectedValue(
+        Object.assign(new Error("403 status code (no body)"), {
+          status: 403,
+          headers: { "remaining-tokens": "0" },
+        }),
+      ),
+      embed: vi.fn().mockResolvedValue(vec),
+    });
+
+    const logger = silentLogger();
+    const result = await migrateEmbeddings({
+      factsDb: factsDb as any,
+      edictStore: null as any,
+      vectorDb: vectorDb as any,
+      embeddings: embeddings as any,
+      delayMsBetweenBatches: 1,
+      logger,
+    });
+
+    expect(result.migrated).toBe(1);
+    expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining("batch rate-limited"));
+  }, 15_000);
+});
