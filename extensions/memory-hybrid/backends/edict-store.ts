@@ -103,13 +103,18 @@ function escapeLikePattern(s: string): string {
 export class EdictStore {
   private readonly dbPath: string;
   private readonly db: DatabaseSync;
+  private _isReady = false;
 
   constructor(dbPath: string) {
     mkdirSync(dirname(dbPath), { recursive: true });
     this.dbPath = dbPath;
     this.db = new DatabaseSync(dbPath);
-    this.db.open();
     this.runMigrations();
+    this._isReady = true;
+  }
+
+  isReady(): boolean {
+    return this._isReady;
   }
 
   /** Run all schema migrations. Idempotent — safe to call on existing databases. */
@@ -214,6 +219,8 @@ export class EdictStore {
 
   /** List edicts, optionally filtered by tags */
   list(options: ListEdictsOptions = {}): EdictEntry[] {
+    if (!this._isReady) return [];
+    try {
     const { tags, includeExpired = false, limit = 100 } = options;
     const nowSec = Math.floor(Date.now() / 1000);
     const parts: string[] = [];
@@ -241,14 +248,24 @@ export class EdictStore {
       .all(...params) as Array<Record<string, unknown>>;
 
     return rows.map((r) => this.rowToEntry(r));
+    } catch (err) {
+      capturePluginError(err, { context: "EdictStore.list" });
+      return [];
+    }
   }
 
   /** Get all non-expired edicts, optionally filtered by tags */
   getEdicts(options: GetEdictsOptions = {}): { edicts: EdictEntry[]; renderForPrompt: string } {
-    const { tags, format = "prompt", limit = 100 } = options;
-    const edicts = this.list({ tags, includeExpired: false, limit });
-    const renderForPrompt = format === "prompt" ? renderEdictsForPrompt(edicts) : "";
-    return { edicts, renderForPrompt };
+    if (!this._isReady) return { edicts: [], renderForPrompt: "" };
+    try {
+      const { tags, format = "prompt", limit = 100 } = options;
+      const edicts = this.list({ tags, includeExpired: false, limit });
+      const renderForPrompt = format === "prompt" ? renderEdictsForPrompt(edicts) : "";
+      return { edicts, renderForPrompt };
+    } catch (err) {
+      capturePluginError(err, { context: "EdictStore.getEdicts" });
+      return { edicts: [], renderForPrompt: "" };
+    }
   }
 
   /** Update an existing edict. Returns the updated edict or null if not found. */
