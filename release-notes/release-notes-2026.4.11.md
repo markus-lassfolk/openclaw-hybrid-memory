@@ -1,11 +1,11 @@
-# Release Notes — OpenClaw Hybrid Memory 2026.4.101
+# Release Notes — OpenClaw Hybrid Memory 2026.4.11
 
 **Date:** 2026-04-01  
 **Previous baseline:** 2026.4.10
 
 ## Summary
 
-**2026.4.101** is a **patch** release focused on **interactive recall latency** (SQLite FTS on large `facts.db`) and **agent identity** on routed channels (e.g. WhatsApp).
+**2026.4.11** is a **patch** release focused on **interactive recall latency** (SQLite FTS on large `facts.db`) and **agent identity** on routed channels (e.g. WhatsApp).
 
 ### What changed
 
@@ -18,7 +18,7 @@
 ## Upgrade
 
 ```bash
-npm install -g openclaw-hybrid-memory@2026.4.101
+npm install -g openclaw-hybrid-memory@2026.4.11
 ```
 
 Restart the gateway after upgrading.
