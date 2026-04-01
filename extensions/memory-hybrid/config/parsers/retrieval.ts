@@ -122,6 +122,13 @@ export function parseAutoRecallConfig(cfg: Record<string, unknown>): AutoRecallC
       typeof ar.progressivePinnedRecallCount === "number" && ar.progressivePinnedRecallCount >= 0
         ? Math.floor(ar.progressivePinnedRecallCount)
         : 3;
+    const VALID_ENRICHMENT = ["fast", "balanced", "full"] as const;
+    const interactiveEnrichmentRaw = ar.interactiveEnrichment;
+    const interactiveEnrichment =
+      typeof interactiveEnrichmentRaw === "string" &&
+      (VALID_ENRICHMENT as readonly string[]).includes(interactiveEnrichmentRaw)
+        ? (interactiveEnrichmentRaw as (typeof VALID_ENRICHMENT)[number])
+        : "balanced";
     const scopeFilterRaw = ar.scopeFilter as Record<string, unknown> | undefined;
     const scopeFilter =
       scopeFilterRaw && typeof scopeFilterRaw === "object" && !Array.isArray(scopeFilterRaw)
@@ -184,6 +191,7 @@ export function parseAutoRecallConfig(cfg: Record<string, unknown>): AutoRecallC
         typeof ar.degradationMaxLatencyMs === "number" && ar.degradationMaxLatencyMs >= 0
           ? Math.floor(ar.degradationMaxLatencyMs)
           : 5000,
+      interactiveEnrichment,
     };
   }
   return {
@@ -222,6 +230,7 @@ export function parseAutoRecallConfig(cfg: Record<string, unknown>): AutoRecallC
       maxRecallsPerTarget: 1,
       includeVaultHints: true,
     },
+    interactiveEnrichment: "balanced",
   };
 }
 

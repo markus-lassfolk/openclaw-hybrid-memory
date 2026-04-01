@@ -51,6 +51,11 @@ export const REFLECTION_TEMPERATURE = 0.2;
 export const BATCH_THROTTLE_MS = 200;
 /** SQLite busy timeout (ms). Mitigates SQLITE_BUSY under concurrent writers (#875). */
 export const SQLITE_BUSY_TIMEOUT_MS = 30_000;
+/**
+ * Max OR-joined FTS terms for `FactsDB.search` interactive fast path.
+ * Long prompts expand to huge MATCH expressions; capping keeps FTS5 work bounded (WhatsApp / gateway latency).
+ */
+export const INTERACTIVE_FTS_MAX_OR_TERMS = 16;
 /** Seconds per day. */
 export const SECONDS_PER_DAY = 86400;
 

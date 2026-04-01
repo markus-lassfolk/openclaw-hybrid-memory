@@ -188,6 +188,7 @@ describe("hybridConfigSchema.parse", () => {
     expect(result.embedding.model).toBe("text-embedding-3-small");
     expect(result.autoCapture).toBe(true);
     expect(result.autoRecall.enabled).toBe(true);
+    expect(result.autoRecall.interactiveEnrichment).toBe("fast"); // default mode local preset
   });
 
   it("parses retrieval directives config", () => {
@@ -538,6 +539,7 @@ describe("hybridConfigSchema.parse", () => {
       ...validBase,
       autoRecall: {
         enabled: true,
+        interactiveEnrichment: "balanced",
         maxTokens: 500,
         injectionFormat: "short",
         limit: 10,
@@ -548,6 +550,18 @@ describe("hybridConfigSchema.parse", () => {
     expect(result.autoRecall.injectionFormat).toBe("short");
     expect(result.autoRecall.limit).toBe(10);
     expect(result.autoRecall.minScore).toBe(0.5);
+    expect(result.autoRecall.interactiveEnrichment).toBe("balanced");
+  });
+
+  it("parses autoRecall.interactiveEnrichment", () => {
+    const result = hybridConfigSchema.parse({
+      ...validBase,
+      autoRecall: {
+        enabled: true,
+        interactiveEnrichment: "fast",
+      },
+    });
+    expect(result.autoRecall.interactiveEnrichment).toBe("fast");
   });
 
   it("parses autoRecall.scopeFilter", () => {
@@ -636,8 +650,20 @@ describe("hybridConfigSchema.parse", () => {
     expect(result.wal.maxAge).toBe(5 * 60 * 1000);
   });
 
-  it("credentials disabled by default", () => {
+  it("credentials vault on by default (local preset enables manager)", () => {
+    const warnSpy = vi.spyOn(pluginLogger, "warn").mockImplementation(() => {});
     const result = hybridConfigSchema.parse(validBase);
+    expect(result.credentials.enabled).toBe(true);
+    expect(result.credentials.encryptionKey).toBe("");
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("plaintext"));
+    warnSpy.mockRestore();
+  });
+
+  it("credentials can be disabled explicitly", () => {
+    const result = hybridConfigSchema.parse({
+      ...validBase,
+      credentials: { enabled: false },
+    });
     expect(result.credentials.enabled).toBe(false);
   });
 
@@ -1669,7 +1695,7 @@ describe("hybridConfigSchema.parse", () => {
       expect(result.graph.enabled).toBe(false);
       expect(result.procedures.enabled).toBe(false);
       expect(result.reflection.enabled).toBe(false);
-      expect(result.credentials.enabled).toBe(false);
+      expect(result.credentials.enabled).toBe(true);
       expect(result.autoCapture).toBe(true);
       expect(result.autoRecall.enabled).toBe(true);
       expect(result.wal.enabled).toBe(true);
@@ -1690,7 +1716,7 @@ describe("hybridConfigSchema.parse", () => {
       expect(result.graph.enabled).toBe(true);
       expect(result.procedures.enabled).toBe(true);
       expect(result.reflection.enabled).toBe(false);
-      expect(result.credentials.enabled).toBe(false);
+      expect(result.credentials.enabled).toBe(true);
       expect(result.graph.autoLink).toBe(false);
       expect(result.store.classifyBeforeWrite).toBe(false);
       expect(result.distill?.extractionModelTier).toBe("default");
@@ -1730,6 +1756,7 @@ describe("hybridConfigSchema.parse", () => {
       expect(result.queryExpansion.enabled).toBe(false);
       expect(result.search?.hydeEnabled).toBeFalsy();
       expect(result.ingest?.paths).toEqual(["skills/**/*.md", "TOOLS.md", "AGENTS.md"]);
+      expect(result.autoRecall.interactiveEnrichment).toBe("fast");
     });
 
     it("user overrides win over preset (mode local + graph.enabled true); mode becomes Custom for verify", () => {

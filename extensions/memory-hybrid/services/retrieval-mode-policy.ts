@@ -19,6 +19,8 @@ export interface InteractiveRecallPolicy {
   degradationMaxLatencyMs: number;
   allowHyde: boolean;
   allowAmbientMultiQuery: boolean;
+  /** Resolved from `autoRecall.interactiveEnrichment` (default balanced). */
+  interactiveEnrichment: "fast" | "balanced" | "full";
   notes: string[];
 }
 
@@ -37,8 +39,10 @@ export interface ExplicitDeepRetrievalPolicy {
   notes: string[];
 }
 
-export const INTERACTIVE_RECALL_STAGE_TIMEOUT_MS = 35_000;
-const INTERACTIVE_RECALL_VECTOR_TIMEOUT_MS = 30_000;
+/** Wall-clock cap for the whole interactive recall stage (abort + return when exceeded). */
+export const INTERACTIVE_RECALL_STAGE_TIMEOUT_MS = 32_000;
+/** Per-vector-step cap (HyDE + embed + Lance) inside `runRecallPipelineQuery`. Kept below stage timeout to leave slack for FTS, ambient, directives. */
+const INTERACTIVE_RECALL_VECTOR_TIMEOUT_MS = 26_000;
 const DEFAULT_INTERACTIVE_RECALL_DEGRADATION_QUEUE_DEPTH = 10;
 const DEFAULT_INTERACTIVE_RECALL_DEGRADATION_MAX_LATENCY_MS = 5_000;
 
@@ -60,6 +64,7 @@ export const DEFAULT_INTERACTIVE_RECALL_POLICY: InteractiveRecallPolicy = {
   degradationMaxLatencyMs: DEFAULT_INTERACTIVE_RECALL_DEGRADATION_MAX_LATENCY_MS,
   allowHyde: false,
   allowAmbientMultiQuery: true,
+  interactiveEnrichment: "balanced",
   notes: [
     "Owns the hot path for chat turns.",
     "Falls back to bounded FTS-only/HOT recall under pressure.",
@@ -72,8 +77,22 @@ export function resolveInteractiveRecallPolicy(
   queryExpansion?: { enabled: boolean; skipForInteractiveTurns: boolean },
   retrieval?: { ambientBudgetTokens: number },
 ): InteractiveRecallPolicy {
-  // When queryExpansion.skipForInteractiveTurns is false, allow HyDE on interactive turns
-  const allowHyde = queryExpansion?.enabled === true && queryExpansion.skipForInteractiveTurns !== true;
+  const enrichment = cfg.interactiveEnrichment ?? "balanced";
+
+  // Baseline (balanced): HyDE on interactive turns only when QE is on and skipForInteractiveTurns is not true.
+  let allowHyde = queryExpansion?.enabled === true && queryExpansion.skipForInteractiveTurns !== true;
+  // Historically true whenever auto-recall is on; ambient multi-query still requires ambient.enabled && multiQuery in stage-recall.
+  let allowAmbientMultiQuery = cfg.enabled === true;
+
+  if (enrichment === "fast") {
+    allowHyde = false;
+    allowAmbientMultiQuery = false;
+  } else if (enrichment === "full") {
+    // HyDE whenever query expansion is enabled; ignore skipForInteractiveTurns for the hot path.
+    allowHyde = queryExpansion?.enabled === true;
+    allowAmbientMultiQuery = cfg.enabled === true;
+  }
+
   // Enforce retrieval.ambientBudgetTokens as a hard total-token cap.
   // autoRecall.maxTokens is a user preference; ambientBudgetTokens is the architectural
   // ceiling — the injected context must not exceed either.
@@ -83,8 +102,9 @@ export function resolveInteractiveRecallPolicy(
     contextBudgetTokens,
     degradationQueueDepth: cfg.degradationQueueDepth ?? DEFAULT_INTERACTIVE_RECALL_DEGRADATION_QUEUE_DEPTH,
     degradationMaxLatencyMs: cfg.degradationMaxLatencyMs ?? DEFAULT_INTERACTIVE_RECALL_DEGRADATION_MAX_LATENCY_MS,
-    allowAmbientMultiQuery: cfg.enabled === true,
+    allowAmbientMultiQuery,
     allowHyde,
+    interactiveEnrichment: enrichment,
   };
 }
 

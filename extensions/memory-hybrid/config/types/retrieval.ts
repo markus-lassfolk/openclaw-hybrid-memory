@@ -89,6 +89,13 @@ export type AutoRecallConfig = {
   degradationQueueDepth?: number;
   /** Phase 2.1: Hard degradation. When recall latency (ms) exceeds this value, use FTS-only + HOT and set degraded. 0 = disabled. Default 5000. */
   degradationMaxLatencyMs?: number;
+  /**
+   * Single control for **interactive** chat-turn recall cost/latency (HyDE + ambient multi-query).
+   * - **fast** — No HyDE on the hot path, no extra ambient `runRecallPipelineQuery` calls (lowest latency/cost; still runs main FTS+vector recall when semantic is enabled).
+   * - **balanced** (default) — Respects `queryExpansion.skipForInteractiveTurns` and `ambient.enabled` / `ambient.multiQuery` as today.
+   * - **full** — When `queryExpansion.enabled`, runs HyDE on interactive turns regardless of `skipForInteractiveTurns`; allows ambient multi-query when `autoRecall.enabled` and ambient is configured.
+   */
+  interactiveEnrichment?: "fast" | "balanced" | "full";
 };
 
 /** Multi-strategy retrieval pipeline configuration (Issue #152: RRF scoring pipeline). */

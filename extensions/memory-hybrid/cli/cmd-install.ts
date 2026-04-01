@@ -25,6 +25,11 @@ import { capturePluginError } from "../services/error-reporter.js";
 import { type PreFilterConfig, preFilterSessions } from "../services/session-pre-filter.js";
 import { resetAllBackoff } from "../utils/auth-failover.js";
 import { PLUGIN_ID } from "../utils/constants.js";
+import {
+  extractCronStoreJobModel,
+  readAgentsPrimaryModelFromOpenclawJsonPath,
+  setCronStoreJobModelFields,
+} from "../utils/openclaw-agent-defaults.js";
 import type { HandlerContext } from "./handlers.js";
 import type { InstallCliResult, UninstallCliResult, UpgradeCliResult } from "./types.js";
 
@@ -191,6 +196,21 @@ const MAINTENANCE_CRON_JOBS: Array<
   },
 ];
 
+/**
+ * When `agents.defaults.model.primary` is set, use it for maintenance cron `model` so agent-bound
+ * runs match `resolveLiveSessionModelSelection` (OpenClaw #963 / hybrid-memory #963). Otherwise
+ * use tier defaults from plugin LLM config.
+ */
+function resolveCronJobModel(
+  tier: "nano" | "default" | "heavy",
+  pluginConfig: CronModelConfig | undefined,
+  agentPrimary: string | undefined,
+): string {
+  const trimmed = agentPrimary?.trim();
+  if (trimmed) return trimmed;
+  return getDefaultCronModel(pluginConfig, tier);
+}
+
 /** Resolve model for a cron job def and return a job record suitable for the store (has model, no modelTier).
  * Strips the top-level `channel` field (maintenance jobs don't need user delivery) and sets delivery.mode = "none"
  * so the job runner never tries to send a WhatsApp/channel notification for plugin-internal jobs.
@@ -198,10 +218,11 @@ const MAINTENANCE_CRON_JOBS: Array<
 function resolveCronJob(
   def: Record<string, unknown> & { modelTier?: "nano" | "default" | "heavy"; minIntervalMs?: number },
   pluginConfig: CronModelConfig | undefined,
+  agentPrimary: string | undefined,
 ): Record<string, unknown> {
   const { modelTier, channel: _channel, minIntervalMs, featureGate: _featureGate, ...rest } = def;
   const tier = modelTier ?? "default";
-  const model = getDefaultCronModel(pluginConfig, tier);
+  const model = resolveCronJobModel(tier, pluginConfig, agentPrimary);
   // Prepend guard prefix to message if minIntervalMs is set (issue #304)
   if (minIntervalMs && typeof rest.message === "string") {
     const jobName = (typeof rest.name === "string" ? rest.name : "unknown").replace(/\s+/g, "-");
@@ -255,6 +276,8 @@ export function ensureMaintenanceCronJobs(
   } = options;
   const added: string[] = [];
   const normalized: string[] = [];
+  const openclawConfigPath = join(openclawDir, "openclaw.json");
+  const agentPrimary = readAgentsPrimaryModelFromOpenclawJsonPath(openclawConfigPath);
   const cronDir = join(openclawDir, "cron");
   const cronStorePath = join(cronDir, "jobs.json");
   mkdirSync(cronDir, { recursive: true });
@@ -295,7 +318,7 @@ export function ensureMaintenanceCronJobs(
       jobsChanged = true;
     }
     if (!existing) {
-      const job = resolveCronJob(def, pluginConfig) as Record<string, unknown>;
+      const job = resolveCronJob(def, pluginConfig, agentPrimary) as Record<string, unknown>;
       if (scheduleExpr) job.schedule = { kind: "cron", expr: scheduleExpr };
       if (messageOverrides?.[id]) job.message = messageOverrides[id];
       jobsArr.push(job);
@@ -369,6 +392,18 @@ export function ensureMaintenanceCronJobs(
                 if (!normalized.includes(name)) normalized.push(name);
               }
             }
+          }
+        }
+        // Issue #963: keep stored job model aligned with agents.defaults.model.primary when set,
+        // so agentTurn + agentId sessions do not throw LiveSessionModelSwitchError.
+        if (agentPrimary?.trim()) {
+          const tier = (def.modelTier ?? "default") as "nano" | "default" | "heavy";
+          const desired = resolveCronJobModel(tier, pluginConfig, agentPrimary);
+          const current = extractCronStoreJobModel(existing);
+          if (current !== desired) {
+            setCronStoreJobModelFields(existing, desired);
+            jobsChanged = true;
+            if (!normalized.includes(name)) normalized.push(name);
           }
         }
       }

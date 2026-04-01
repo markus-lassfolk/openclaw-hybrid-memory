@@ -25,6 +25,7 @@ import { applyConsolidationRetrievalControls } from "../utils/consolidation-cont
 import { computeDynamicSalience } from "../utils/salience.js";
 import { estimateTokensForDisplay } from "../utils/text.js";
 import { capturePluginError } from "../services/error-reporter.js";
+import { INTERACTIVE_FTS_MAX_OR_TERMS } from "../utils/constants.js";
 import { getLanguageKeywordsFilePath } from "../utils/language-keywords.js";
 import { createTransaction } from "../utils/sqlite-transaction.js";
 import { tryRestrictSqliteDbFileMode } from "../utils/sqlite-file-perms.js";
@@ -1964,6 +1965,11 @@ export class FactsDB extends BaseSqliteStore {
       reinforcementBoost?: number;
       /** Weight applied to diversity score when calculating effective boost (default: 1.0). */
       diversityWeight?: number;
+      /**
+       * Interactive auto-recall hot path: cap FTS OR-term explosion and avoid loading full fact rows
+       * until top matches are chosen (reduces WhatsApp/gateway stalls from huge MATCH + wide SELECT f.*).
+       */
+      interactiveFtsFastPath?: boolean;
     } = {},
   ): SearchResult[] {
     const {
@@ -1975,9 +1981,12 @@ export class FactsDB extends BaseSqliteStore {
       scopeFilter,
       reinforcementBoost = 0.1,
       diversityWeight = 1.0,
+      interactiveFtsFastPath = false,
     } = options;
 
-    const safeQuery = buildFactsSearchFtsOrClause(query);
+    const safeQuery = interactiveFtsFastPath
+      ? buildFactsSearchFtsOrClause(query, { maxOrTerms: INTERACTIVE_FTS_MAX_OR_TERMS })
+      : buildFactsSearchFtsOrClause(query);
     if (!safeQuery) return [];
 
     const nowSec = Math.floor(Date.now() / 1000);
@@ -1993,9 +2002,70 @@ export class FactsDB extends BaseSqliteStore {
     const tierFilterClause = tierFilter === "warm" ? "AND (f.tier IS NULL OR f.tier = 'warm' OR f.tier = 'hot')" : "";
     const { clause: scopeFilterClauseStr, params: scopeParams } = this.scopeFilterClause(scopeFilter);
 
-    const rows = this.liveDb
-      .prepare(
-        `SELECT f.*, bm25(facts_fts) as fts_score,
+    const decayWindowSec = 7 * 24 * 3600;
+    const paramBag: Record<string, SQLInputValue> = {
+      "@query": safeQuery,
+      "@now": nowSec,
+      ...(asOf != null ? { "@asOf": asOf } : {}),
+      "@limit": limit * 2,
+      "@decay_window": decayWindowSec,
+      ...(tagPattern ? { "@tagPattern": tagPattern } : {}),
+      ...scopeParams,
+    };
+
+    let rows: Array<Record<string, unknown>>;
+
+    if (interactiveFtsFastPath) {
+      // node:sqlite rejects named parameters not referenced by the prepared SQL — omit @decay_window for the narrow query.
+      const narrowParamBag: Record<string, SQLInputValue> = {
+        "@query": safeQuery,
+        "@now": nowSec,
+        ...(asOf != null ? { "@asOf": asOf } : {}),
+        "@limit": limit * 2,
+        ...(tagPattern ? { "@tagPattern": tagPattern } : {}),
+        ...scopeParams,
+      };
+      const narrowSql = `SELECT f.id AS id, fts.rank AS fts_score
+         FROM facts f
+         JOIN facts_fts fts ON f.rowid = fts.rowid
+         WHERE facts_fts MATCH @query
+           ${expiryFilter}
+           ${temporalFilter}
+           ${tagFilter}
+           ${tierFilterClause}
+           ${scopeFilterClauseStr}
+         ORDER BY fts.rank
+         LIMIT @limit`;
+      const narrowRows = this.liveDb.prepare(narrowSql).all(narrowParamBag) as Array<{ id: string; fts_score: number }>;
+      if (narrowRows.length === 0) return [];
+      const ids = narrowRows.map((r) => r.id);
+      const ftsById = new Map(narrowRows.map((r) => [r.id, r.fts_score]));
+      const placeholders = ids.map(() => "?").join(",");
+      const fullRows = this.liveDb.prepare(`SELECT * FROM facts WHERE id IN (${placeholders})`).all(...ids) as Array<
+        Record<string, unknown>
+      >;
+      const byId = new Map(fullRows.map((r) => [r.id as string, r]));
+      const decayWindow = decayWindowSec;
+      rows = [];
+      for (const id of ids) {
+        const row = byId.get(id);
+        if (!row) continue;
+        const expiresAt = row.expires_at as number | null | undefined;
+        let freshness: number;
+        if (expiresAt == null) freshness = 1.0;
+        else if (expiresAt <= nowSec) freshness = 0.0;
+        else freshness = Math.min(1.0, (expiresAt - nowSec) / decayWindow);
+        rows.push({
+          ...row,
+          fts_score: ftsById.get(id) as number,
+          freshness,
+        });
+      }
+      if (rows.length === 0) return [];
+    } else {
+      rows = this.liveDb
+        .prepare(
+          `SELECT f.*, bm25(facts_fts) as fts_score,
            CASE
              WHEN f.expires_at IS NULL THEN 1.0
              WHEN f.expires_at <= @now THEN 0.0
@@ -2011,16 +2081,9 @@ export class FactsDB extends BaseSqliteStore {
            ${scopeFilterClauseStr}
          ORDER BY bm25(facts_fts)
          LIMIT @limit`,
-      )
-      .all({
-        "@query": safeQuery,
-        "@now": nowSec,
-        ...(asOf != null ? { "@asOf": asOf } : {}),
-        "@limit": limit * 2,
-        "@decay_window": 7 * 24 * 3600,
-        ...(tagPattern ? { "@tagPattern": tagPattern } : {}),
-        ...scopeParams,
-      }) as Array<Record<string, unknown>>;
+        )
+        .all(paramBag) as Array<Record<string, unknown>>;
+    }
 
     if (rows.length === 0) return [];
 

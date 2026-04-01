@@ -11,6 +11,7 @@ import { capturePluginError } from "../services/error-reporter.js";
 import { withTimeout } from "../utils/timeout.js";
 import type { LifecycleContext, SessionState } from "./types.js";
 import { pluginLogger } from "../utils/logger.js";
+import { resolveAgentIdFromHookEvent } from "./resolve-agent-id.js";
 
 const SETUP_TIMEOUT_MS = 5000;
 
@@ -50,8 +51,7 @@ async function runSetup(
     }
   }
 
-  const e = event as { prompt?: string; agentId?: string; session?: { agentId?: string } };
-  const detectedAgentId = e.agentId || e.session?.agentId || api.context?.agentId;
+  const detectedAgentId = resolveAgentIdFromHookEvent(event, api);
   if (detectedAgentId) {
     currentAgentIdRef.value = detectedAgentId;
     api.logger.debug?.(`memory-hybrid: Detected agentId: ${detectedAgentId}`);

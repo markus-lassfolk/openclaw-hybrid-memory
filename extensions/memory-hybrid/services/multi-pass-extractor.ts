@@ -24,6 +24,7 @@
 
 import type OpenAI from "openai";
 import { chatComplete } from "./chat.js";
+import { CostFeature } from "./cost-feature-labels.js";
 import { capturePluginError } from "./error-reporter.js";
 
 // ---------------------------------------------------------------------------
@@ -225,6 +226,7 @@ export class MultiPassExtractor {
         temperature: 0,
         openai: this.openai,
         timeoutMs: this.timeoutMs,
+        feature: CostFeature.multiPassExtractorPass1,
       });
       return parseCandidateFacts(response, 1);
     } catch (err) {
@@ -245,6 +247,7 @@ export class MultiPassExtractor {
         temperature: 0.2,
         openai: this.openai,
         timeoutMs: this.timeoutMs,
+        feature: CostFeature.multiPassExtractorPass2,
       });
       return parseCandidateFacts(response, 2);
     } catch (err) {
@@ -265,6 +268,7 @@ export class MultiPassExtractor {
         temperature: 0,
         openai: this.openai,
         timeoutMs: this.timeoutMs,
+        feature: CostFeature.multiPassExtractorPass3,
       });
       return parseVerdict(response);
     } catch (err) {

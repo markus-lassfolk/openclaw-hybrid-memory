@@ -70,6 +70,8 @@ export interface RecallSearchOpts {
   scopeFilter: ScopeFilter | undefined;
   reinforcementBoost: number;
   diversityWeight: number;
+  /** Passed to `FactsDB.search` — bounded FTS + two-phase fetch on interactive recall. */
+  interactiveFtsFastPath?: boolean;
 }
 
 /** All explicit dependencies consumed by `runRecallPipelineQuery`. */

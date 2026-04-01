@@ -14,6 +14,22 @@ import {
 } from "./shared.js";
 import type { EmbeddingProvider } from "./types.js";
 
+/** Validate OpenAI-style embedding payload before indexing (#969). */
+function vectorFromEmbeddingResponse(
+  resp: { data?: Array<{ embedding?: number[]; index?: number } | undefined> | undefined },
+  model: string,
+  context: "embed" | "embedBatch",
+): number[] {
+  const row0 = resp?.data?.[0];
+  const emb = row0?.embedding;
+  if (!emb || !Array.isArray(emb)) {
+    throw new Error(
+      `Embedding response missing data[0].embedding (${context}, model=${model}, hasData=${Boolean(resp?.data?.length)})`,
+    );
+  }
+  return emb;
+}
+
 /**
  * OpenAI-based embedding provider.
  * Uses a cache, supports model preference lists (try in order on failure).
@@ -117,7 +133,7 @@ export class Embeddings implements EmbeddingProvider {
               }),
             { maxRetries: 2 },
           );
-          const vector = resp.data[0].embedding;
+          const vector = vectorFromEmbeddingResponse(resp, model, "embed");
           if (this.cache.size >= EMBEDDING_CACHE_MAX) {
             const firstKey = this.cache.keys().next().value;
             if (firstKey !== undefined) this.cache.delete(firstKey);
@@ -213,10 +229,31 @@ export class Embeddings implements EmbeddingProvider {
           }
         }
         if (resp !== undefined && succeededModel !== undefined) {
-          if (resp.data.length !== batch.length) {
-            throw new Error(`OpenAI embed returned ${resp.data.length} embeddings for ${batch.length} inputs`);
+          if (!resp.data || !Array.isArray(resp.data) || resp.data.length !== batch.length) {
+            throw new Error(
+              `Embedding response missing or wrong-length data[] (embedBatch, model=${succeededModel}, got=${resp.data?.length ?? 0}, expected=${batch.length})`,
+            );
           }
-          const sorted = resp.data.sort((a, b) => a.index - b.index).map((item) => item.embedding);
+          const data = resp.data;
+          for (let rowIdx = 0; rowIdx < data.length; rowIdx++) {
+            const row = data[rowIdx];
+            if (!row || typeof row.index !== "number") {
+              throw new Error(
+                `Embedding response contained row with missing or non-numeric index (embedBatch, model=${succeededModel}, row=${rowIdx})`,
+              );
+            }
+          }
+          const sorted = data
+            .sort((a, b) => (a?.index ?? 0) - (b?.index ?? 0))
+            .map((item) => {
+              const emb = item?.embedding;
+              if (!emb || !Array.isArray(emb)) {
+                throw new Error(
+                  `Embedding response missing embedding for batch row (embedBatch, model=${succeededModel}, index=${item?.index ?? "?"})`,
+                );
+              }
+              return emb;
+            });
           // Write fresh vectors into the cache keyed by the model that succeeded (#589)
           for (let j = 0; j < batch.length; j++) {
             if (this.cache.size >= EMBEDDING_CACHE_MAX) {

@@ -103,13 +103,24 @@ function escapeLikePattern(s: string): string {
 export class EdictStore {
   private readonly dbPath: string;
   private readonly db: DatabaseSync;
+  /** Set true only after `runMigrations()` completes successfully (issue #964 / #953). */
+  private _isReady = false;
 
   constructor(dbPath: string) {
     mkdirSync(dirname(dbPath), { recursive: true });
     this.dbPath = dbPath;
     this.db = new DatabaseSync(dbPath);
 
-    this.runMigrations();
+    try {
+      this.runMigrations();
+      this._isReady = true;
+    } catch (err) {
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        subsystem: "edict-store",
+        operation: "runMigrations",
+      });
+      this._isReady = false;
+    }
   }
 
   /** Run all schema migrations. Idempotent — safe to call on existing databases. */
@@ -214,41 +225,61 @@ export class EdictStore {
 
   /** List edicts, optionally filtered by tags */
   list(options: ListEdictsOptions = {}): EdictEntry[] {
-    const { tags, includeExpired = false, limit = 100 } = options;
-    const nowSec = Math.floor(Date.now() / 1000);
-    const parts: string[] = [];
-    const params: SQLInputValue[] = [];
+    if (!this._isReady) return [];
+    try {
+      const { tags, includeExpired = false, limit = 100 } = options;
+      const nowSec = Math.floor(Date.now() / 1000);
+      const parts: string[] = [];
+      const params: SQLInputValue[] = [];
 
-    if (!includeExpired) {
-      parts.push(
-        `(ttl = 'never') OR (ttl = 'event' AND (expires_at IS NULL OR expires_at > datetime(?))) OR (CAST(ttl AS INTEGER) > 0 AND created_at + CAST(ttl AS INTEGER) > ?)`,
-      );
-      params.push(new Date().toISOString(), nowSec);
-    }
-
-    if (tags && tags.length > 0) {
-      for (const tag of tags) {
-        parts.push(`(',' || COALESCE(tags, '') || ',') LIKE ?`);
-        params.push(`%,${escapeLikePattern(tag.toLowerCase())},%`);
+      if (!includeExpired) {
+        parts.push(
+          `(ttl = 'never') OR (ttl = 'event' AND (expires_at IS NULL OR expires_at > datetime(?))) OR (CAST(ttl AS INTEGER) > 0 AND created_at + CAST(ttl AS INTEGER) > ?)`,
+        );
+        params.push(new Date().toISOString(), nowSec);
       }
+
+      if (tags && tags.length > 0) {
+        for (const tag of tags) {
+          parts.push(`(',' || COALESCE(tags, '') || ',') LIKE ?`);
+          params.push(`%,${escapeLikePattern(tag.toLowerCase())},%`);
+        }
+      }
+
+      const where = parts.length > 0 ? `WHERE ${parts.join(" AND ")}` : "";
+      params.push(limit);
+
+      const rows = this.db
+        .prepare(`SELECT * FROM edicts ${where} ORDER BY created_at DESC LIMIT ?`)
+        .all(...params) as Array<Record<string, unknown>>;
+
+      return rows.map((r) => this.rowToEntry(r));
+    } catch (err) {
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        subsystem: "edict-store",
+        operation: "list",
+      });
+      return [];
     }
-
-    const where = parts.length > 0 ? `WHERE ${parts.join(" AND ")}` : "";
-    params.push(limit);
-
-    const rows = this.db
-      .prepare(`SELECT * FROM edicts ${where} ORDER BY created_at DESC LIMIT ?`)
-      .all(...params) as Array<Record<string, unknown>>;
-
-    return rows.map((r) => this.rowToEntry(r));
   }
 
   /** Get all non-expired edicts, optionally filtered by tags */
   getEdicts(options: GetEdictsOptions = {}): { edicts: EdictEntry[]; renderForPrompt: string } {
-    const { tags, format = "prompt", limit = 100 } = options;
-    const edicts = this.list({ tags, includeExpired: false, limit });
-    const renderForPrompt = format === "prompt" ? renderEdictsForPrompt(edicts) : "";
-    return { edicts, renderForPrompt };
+    if (!this._isReady) {
+      return { edicts: [], renderForPrompt: "" };
+    }
+    try {
+      const { tags, format = "prompt", limit = 100 } = options;
+      const edicts = this.list({ tags, includeExpired: false, limit });
+      const renderForPrompt = format === "prompt" ? renderEdictsForPrompt(edicts) : "";
+      return { edicts, renderForPrompt };
+    } catch (err) {
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        subsystem: "edict-store",
+        operation: "getEdicts",
+      });
+      return { edicts: [], renderForPrompt: "" };
+    }
   }
 
   /** Update an existing edict. Returns the updated edict or null if not found. */

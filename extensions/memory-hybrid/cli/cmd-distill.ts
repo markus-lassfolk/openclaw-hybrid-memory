@@ -15,6 +15,7 @@ import { isValidCategory } from "../config.js";
 import type { MemoryCategory } from "../config.js";
 import { VAULT_POINTER_PREFIX, isCredentialLike, tryParseCredentialForVault } from "../services/auto-capture.js";
 import { chatCompleteWithRetry, distillBatchTokenLimit, distillMaxOutputTokens } from "../services/chat.js";
+import { CostFeature } from "../services/cost-feature-labels.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { preFilterSessions } from "../services/session-pre-filter.js";
 import { BATCH_STORE_IMPORTANCE, DISTILL_DEDUP_THRESHOLD } from "../utils/constants.js";
@@ -329,6 +330,7 @@ export async function runDistillForCli(
           openai,
           fallbackModels: distillFallbacks,
           label: `memory-hybrid: distill batch ${b + 1}/${batches.length}`,
+          feature: CostFeature.distillCli,
         });
         const lines = content.split("\n").filter((l) => l.trim());
         for (const line of lines) {

@@ -33,6 +33,8 @@ openclaw gateway stop && openclaw gateway start
 openclaw hybrid-mem verify
 ```
 
+`verify` also warns if **`hybrid-mem:*` cron job models** disagree with **`agents.defaults.model.primary`** by provider family — mismatches can cause **`LiveSessionModelSwitchError`** on isolated runs ([issue #965](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/965), [SESSION-DISTILLATION.md § Align maintenance cron](../docs/SESSION-DISTILLATION.md#align-maintenance-cron-model-with-your-agent-default-965)).
+
 See [docs/UPGRADE-PLUGIN.md](../docs/UPGRADE-PLUGIN.md#using-npm-only-recommended).
 
 ---

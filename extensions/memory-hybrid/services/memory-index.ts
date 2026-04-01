@@ -13,6 +13,7 @@ import {
   isConnectionErrorLike,
   isOllamaOOM,
 } from "./chat.js";
+import { CostFeature } from "./cost-feature-labels.js";
 import { capturePluginError } from "./error-reporter.js";
 import { detectClusters } from "./topic-clusters.js";
 
@@ -260,7 +261,7 @@ async function synthesizeMemoryIndex(
       openai,
       fallbackModels: options.fallbackModels ?? [],
       label: "memory-hybrid: memory-index",
-      feature: "reflection",
+      feature: CostFeature.memoryIndex,
     });
     return sanitizeIndexMarkdown(response);
   } catch (err) {

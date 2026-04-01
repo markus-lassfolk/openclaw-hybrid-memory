@@ -12,6 +12,63 @@ No changes yet.
 
 ---
 
+## [2026.4.12] - 2026-04-01
+
+### Release summary
+
+Version bump to **2026.4.12** (package, plugin manifest, standalone installer, and release metadata).
+
+---
+
+## [2026.4.11] - 2026-04-01
+
+### Release summary
+
+Patch after **2026.4.10**: **interactive FTS fast path** on `FactsDB.search()` (auto-recall) — caps OR-term explosion and two-phase id fetch to reduce gateway stalls on large `facts.db`; **centralized agent id resolution** from hook events (`resolveAgentIdFromHookEvent`) for routed channels; **docs** [INTERACTIVE-RECALL-LATENCY.md](docs/INTERACTIVE-RECALL-LATENCY.md).
+
+### Added
+
+- **`FactsDB.search(..., { interactiveFtsFastPath: true })`** — used from interactive auto-recall; constant **`INTERACTIVE_FTS_MAX_OR_TERMS`**.
+- **`lifecycle/resolve-agent-id.ts`** — `resolveAgentIdFromHookEvent()`; **`stage-setup`** uses it for `currentAgentIdRef`.
+
+### Documentation
+
+- **[INTERACTIVE-RECALL-LATENCY.md](docs/INTERACTIVE-RECALL-LATENCY.md)** — why interactive FTS can report very long wall times; `agentId` / OpenClaw context.
+
+---
+
+## [2026.4.10] - 2026-04-01
+
+### Release summary
+
+Follow-up to **2026.3.310** with **bounded interactive auto-recall**, a single **`autoRecall.interactiveEnrichment`** control, **OpenClaw hook alignment ([#966](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/966))**, **entity auto-lookup from facts ([#952](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/952))**, clearer **mode / Phase 1 documentation**, **operator guidance for recall timing logs**, and **CI** updates for current GitHub Actions runners.
+
+### Added
+
+- **`autoRecall.interactiveEnrichment`** (`"fast"` \| `"balanced"` \| `"full"`): one setting couples interactive-turn HyDE (when query expansion allows) and ambient multi-query behavior. **`fast`** turns both off for shorter, more predictable chat-turn recall; mode presets default to **`fast`** where auto-recall is on. Schema and labels in `openclaw.plugin.json`; see [CONFIGURATION.md](docs/CONFIGURATION.md).
+- **Regression test** [`extensions/memory-hybrid/tests/config-presets-doc-sync.test.ts`](extensions/memory-hybrid/tests/config-presets-doc-sync.test.ts): asserts `PRESET_OVERRIDES` and post-parse Phase 1 behavior stay aligned with [CONFIGURATION-MODES.md](docs/CONFIGURATION-MODES.md).
+- **Entity lookup from the fact store when your list is empty** ([#952](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/952)):** `autoFromFacts` (default `true`) and `maxAutoEntities` (default 500, max 2000) resolve names via `FactsDb.getKnownEntities()` for merge and retrieval directives; deterministic sort before capping. Docs: [CONFIGURATION.md](docs/CONFIGURATION.md), [CONFIGURATION-MODES.md](docs/CONFIGURATION-MODES.md), [EXAMPLES.md](docs/EXAMPLES.md). Tests: `entity-lookup-resolve.test.ts`.
+
+### Changed
+
+- **Interactive recall stage** (`lifecycle/stage-recall.ts`): **~32s** wall-clock cap via `AbortController` + race; inner `runRecall` respects **`AbortSignal`** at await boundaries so **`recallInFlightRef`** always decrements. Vector step budget remains **~26s** in policy ([`retrieval-mode-policy.ts`](extensions/memory-hybrid/services/retrieval-mode-policy.ts)); aligns with [TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) timeout guidance.
+- **Lifecycle hooks ([#966](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/966)):** Subagent lifecycle uses OpenClaw’s **`subagent_spawned`** / **`subagent_ended`** events with tolerant payload shapes; **`before_consolidation`** is **not** registered (not a core hook — avoids noisy no-ops). WAL flush before compaction stays on **`before_compaction`** only.
+- **Mode presets** (`config/utils.ts`): presets that enable auto-recall set **`interactiveEnrichment: "fast"`** for consistent latency/cost behavior.
+- **CI:** `actions/checkout@v6`, `dorny/paths-filter@v4`, and Node **24**-oriented JavaScript action defaults (`FORCE_JAVASCRIPT_ACTIONS_TO_NODE24` in [`.github/workflows/ci.yml`](.github/workflows/ci.yml)).
+
+### Fixed
+
+- **Tests:** Stabilized reinforcement ranking case when **`diversityWeight`** is 0 (`facts-db` tests).
+- **CI:** `plugin-service-startup` version-check test uses a mock **npm** version safely above the current release so the “published newer than local” branch still runs after each version bump.
+
+### Documentation
+
+- **[CONFIGURATION-MODES.md](docs/CONFIGURATION-MODES.md):** Preset intent vs **Phase 1** overrides; feature matrix aligned with **`PRESET_OVERRIDES`**; link to preset sync test.
+- **[TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md):** New section **“Interpreting recall pipeline timing logs (debug)”** — `OPENCLAW_LOG_LEVEL=debug`, FTS/ embed/vector/merge meanings, timeout vs FTS-heavy paths, **`recall degraded`**, fair A/B testing tips.
+- **[CONFIGURATION.md](docs/CONFIGURATION.md):** `interactiveEnrichment` documented alongside auto-recall settings.
+
+---
+
 ## [2026.3.310] - 2026-03-31
 
 ### Release summary
@@ -120,11 +177,11 @@ This release is a large step forward for **structured memory**, **Azure / APIM d
 ### Added
 
 - **Episodic memory (#781):** First-class `category: "episode"` with `event`, `outcome` (`success` \| `failure` \| `partial` \| `unknown`), `timestamp`, `duration`, `context`, `relatedFactIds`, `procedureId`, scope, IDs, importance, tags, and decay. SQLite `episodes` table with indexed `outcome` and `timestamp`; vectors in LanceDB alongside facts (`category="episode"`). Failures auto-boost to `importance ≥ 0.8`.
-- **Episode tools:** `memory.record_episode()`, `memory.search_episodes()` (outcome, time range, `procedureId`, FTS over `event + context`).
+- **Episode tools:** `memory_record_episode()`, `memory_search_episodes()` (outcome, time range, `procedureId`, FTS over `event + context`).
 - **Session-end episode auto-capture (#781):** Compaction scans JSONL for outcome phrases (e.g. merged / failed / fixed / partial / ERROR) and creates episode records.
 - **FactsDB episode API:** `storeEpisode`, `getEpisode`, `deleteEpisode`, `searchEpisodes`, `episodesCount`; `episodes_fts` FTS5 table; `episodes.test.ts` coverage.
-- **Edict memory type (#791):** `category: "edict"` for verified ground truth in SQLite `edicts` with TTL (`never` \| `event` \| seconds). Tools: `memory.add_edict`, `list_edicts`, `get_edicts`, `update_edict`, `remove_edict`, `edict_stats`. Injected before issue/narrative/hot blocks; **never trimmed** by token budget. Creation is **propose-only** (`[EDICT CANDIDATE]` on GitHub for human review).
-- **Procedure feedback loop (#782):** `procedure_versions` and `procedure_failures` tables; `procedureFeedback()` on FactsDB; `memory.procedure_feedback()` tool; `memory_recall_procedures` enriched with `lastOutcome`, `successRate`, `avoidanceNotes`; CLI `memory procedure show` / `list`.
+- **Edict memory type (#791):** `category: "edict"` for verified ground truth in SQLite `edicts` with TTL (`never` \| `event` \| seconds). Tools: `memory_add_edict`, `memory_list_edicts`, `memory_get_edicts`, `memory_update_edict`, `memory_remove_edict`, `memory_edict_stats`. Injected before issue/narrative/hot blocks; **never trimmed** by token budget. Creation is **propose-only** (`[EDICT CANDIDATE]` on GitHub for human review).
+- **Procedure feedback loop (#782):** `procedure_versions` and `procedure_failures` tables; `procedureFeedback()` on FactsDB; `memory_procedure_feedback()` tool; `memory_recall_procedures` enriched with `lastOutcome`, `successRate`, `avoidanceNotes`; CLI `memory procedure show` / `list`.
 - **Frequency-based auto-save (#784):** `recent_mentions` table; auto-save entities after threshold; vault capture for credentials with hashed dedupe and `host+username+scope` supersession; `FrequencyCaptureConfig` (`mentionThreshold`, `lookbackSessions`, `ttlDays`, etc.).
 - **Mission Control (#788–#790):** Memory graph visualization (#788), Agent Health Dashboard (#789), Cross-agent Audit Trail (#790).
 - **Azure APIM for embeddings (#815):** Gateway auth, deployment override, endpoint auto-inheritance; plugin OpenAI client and `hybrid-mem --test-llm` probe updated (#822, #826).
@@ -1032,7 +1089,10 @@ Major feature release including procedural memory, directive extraction, reinfor
 
 ---
 
-[Unreleased]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.3.310...HEAD
+[Unreleased]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.4.12...HEAD
+[2026.4.12]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.4.11...v2026.4.12
+[2026.4.11]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.4.10...v2026.4.11
+[2026.4.10]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.3.310...v2026.4.10
 [2026.3.310]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.3.301...v2026.3.310
 [2026.3.301]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.3.300...v2026.3.301
 [2026.3.300]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.3.293...v2026.3.300
