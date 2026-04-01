@@ -26,6 +26,7 @@ import {
 } from "../config.js";
 import { resolveSecretRef } from "../config/parsers/core.js";
 import { chatComplete } from "../services/chat.js";
+import { CostFeature } from "../services/cost-feature-labels.js";
 import {
   AZURE_OPENAI_API_VERSION,
   type EmbeddingConfig,
@@ -40,6 +41,11 @@ import { formatOpenAiEmbeddingDisplayLabel } from "../services/embeddings/shared
 import { relativeTime } from "./shared.js";
 import { createApimGatewayFetch, isAzureApiManagementGatewayUrl } from "../utils/apim-gateway-fetch.js";
 import { PLUGIN_ID, getRestartPendingPath } from "../utils/constants.js";
+import { inferModelProviderPrefix } from "../utils/model-provider-family.js";
+import {
+  extractCronStoreJobModel,
+  readAgentsPrimaryModelFromOpenclawJsonRoot,
+} from "../utils/openclaw-agent-defaults.js";
 import { ensureMaintenanceCronJobs, getPluginConfigFromFile } from "./cmd-install.js";
 
 import type { HandlerContext } from "./handlers.js";
@@ -736,6 +742,7 @@ export async function runVerifyForCli(
             content: "Reply with exactly: OK",
             maxTokens: 10,
             openai: oauthClient,
+            feature: CostFeature.verifyCliLlm,
           });
           oauthResult = true;
         } catch (e) {
@@ -774,6 +781,7 @@ export async function runVerifyForCli(
                 content: "Reply with exactly: OK",
                 maxTokens: 10,
                 openai: directClient,
+                feature: CostFeature.verifyCliLlm,
               });
               apiResult = true;
             } catch (e) {
@@ -1199,6 +1207,53 @@ export async function runVerifyForCli(
     for (const [_key, job] of unknownJobs) {
       formatJobStatus(job, job.name, "    ", log);
     }
+  }
+
+  // Issue #965 — isolated hybrid-mem cron runs must not request a different provider family than
+  // agents.defaults.model.primary or OpenClaw may throw LiveSessionModelSwitchError.
+  try {
+    if (existsSync(defaultConfigPath) && existsSync(cronStorePath)) {
+      const root = JSON.parse(readFileSync(defaultConfigPath, "utf-8")) as Record<string, unknown>;
+      const agentPrimary = readAgentsPrimaryModelFromOpenclawJsonRoot(root);
+      if (agentPrimary) {
+        const agentFam = inferModelProviderPrefix(agentPrimary);
+        const rawStore = readFileSync(cronStorePath, "utf-8");
+        const store = JSON.parse(rawStore) as { jobs?: unknown[] };
+        const jobs = Array.isArray(store.jobs) ? store.jobs : [];
+        const WARN = noEmoji ? "[WARN]" : "⚠️";
+        for (const j of jobs) {
+          if (typeof j !== "object" || j === null) continue;
+          const job = j as Record<string, unknown>;
+          const pid = String(job.pluginJobId ?? job.id ?? "");
+          if (!pid.startsWith("hybrid-mem:")) continue;
+          const jobModel = extractCronStoreJobModel(job);
+          if (!jobModel) continue;
+          const jobFam = inferModelProviderPrefix(jobModel);
+          if (jobFam && agentFam && jobFam !== agentFam) {
+            log(
+              `\n${WARN} Cron vs agent model (issue #965): ${pid} uses "${jobModel}" (${jobFam}) but agents.defaults.model.primary is "${agentPrimary}" (${agentFam}). Isolated jobs can fail with LiveSessionModelSwitchError. Align provider families, or run \`openclaw hybrid-mem verify --fix\` after changing the agent default to refresh job models. See docs/SESSION-DISTILLATION.md (Align maintenance cron model).`,
+            );
+          }
+        }
+        const llm = cfg.llm as { _source?: string; default?: string[] } | undefined;
+        if (
+          llm &&
+          llm._source !== "gateway" &&
+          Array.isArray(llm.default) &&
+          llm.default.length > 0 &&
+          typeof llm.default[0] === "string"
+        ) {
+          const first = llm.default[0];
+          if (inferModelProviderPrefix(first) !== agentFam) {
+            log(
+              `\n${WARN} Plugin llm.default[0] ("${first}") differs from agents.defaults.model.primary ("${agentPrimary}") by provider family. Consider aligning them so maintenance and chat use consistent routing.`,
+            );
+          }
+        }
+      }
+    }
+  } catch (e) {
+    capturePluginError(e as Error, { subsystem: "cli", operation: "runVerifyForCli:cron-model-alignment" });
   }
 
   log(

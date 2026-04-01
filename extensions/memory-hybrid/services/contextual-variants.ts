@@ -16,6 +16,7 @@
 import type OpenAI from "openai";
 import type { ContextualVariantsConfig } from "../config.js";
 import { chatComplete } from "./chat.js";
+import { CostFeature } from "./cost-feature-labels.js";
 import { capturePluginError } from "./error-reporter.js";
 import { extractJsonArray } from "./json-array-parser.js";
 
@@ -108,6 +109,7 @@ export class ContextualVariantGenerator {
         maxTokens: 300,
         openai: this.openai,
         timeoutMs: 15_000,
+        feature: CostFeature.contextualVariants,
       });
 
       const maxVariants = variantType === "contextual-search" ? 5 : this.config.maxVariantsPerFact;

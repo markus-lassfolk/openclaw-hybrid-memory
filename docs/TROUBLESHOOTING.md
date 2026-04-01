@@ -18,6 +18,14 @@ openclaw hybrid-mem verify --fix  # apply safe auto-fixes
 openclaw hybrid-mem stats         # show fact/vector counts
 ```
 
+### `LiveSessionModelSwitchError` on maintenance crons
+
+**Symptoms:** A scheduled **`hybrid-mem:*`** job fails; logs mention **`LiveSessionModelSwitchError`** or “live session model switch”.
+
+**Cause:** The job’s stored **`model`** (under `~/.openclaw/cron/jobs.json`) uses a different **provider family** than **`agents.defaults.model.primary`** (compare the segment before the first `/`, e.g. `azure-foundry` vs `google` vs `minimax`). Isolated runs can reuse a session tied to the agent default.
+
+**Fix:** Align the primary chat model and every maintenance cron model on the same provider family, then run **`openclaw hybrid-mem verify --fix`** so jobs pick up updated models. **`openclaw hybrid-mem verify`** warns when it detects this mismatch. See [SESSION-DISTILLATION.md](SESSION-DISTILLATION.md) (section *Align maintenance cron `model` with your agent default*) and [issue #965](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/965).
+
 ---
 
 ## Interpreting recall pipeline timing logs (debug)

@@ -16,6 +16,7 @@ import { createReadStream } from "node:fs";
 import { createInterface } from "node:readline";
 import OpenAI from "openai";
 import { chatComplete, isConnectionErrorLike, isContextLengthError } from "./chat.js";
+import { CostFeature } from "./cost-feature-labels.js";
 import { capturePluginError } from "./error-reporter.js";
 
 /** Configuration for local LLM pre-filtering. */
@@ -176,6 +177,7 @@ async function classifySession(sample: string, config: PreFilterConfig, ollamaCl
     maxTokens: 512, // extra budget for thinking-model <think> preamble before YES/NO
     openai: ollamaClient,
     timeoutMs: 20_000,
+    feature: CostFeature.sessionPreFilter,
   });
 
   // For thinking models: extract only the text after the final </think> tag.

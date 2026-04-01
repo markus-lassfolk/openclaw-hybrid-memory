@@ -23,6 +23,7 @@ import {
 } from "../config.js";
 import { VAULT_POINTER_PREFIX, isCredentialLike, tryParseCredentialForVault } from "../services/auto-capture.js";
 import { chatCompleteWithRetry, distillMaxOutputTokens } from "../services/chat.js";
+import { CostFeature } from "../services/cost-feature-labels.js";
 import { classifyMemoryOperation } from "../services/classification.js";
 import { type DirectiveExtractResult, runDirectiveExtract } from "../services/directive-extract.js";
 import { capturePluginError } from "../services/error-reporter.js";
@@ -410,6 +411,7 @@ export async function runExtractReinforcementForCli(
           openai,
           fallbackModels,
           label: "memory-hybrid: reinforcement analyze",
+          feature: CostFeature.extractReinforcement,
         });
         const jsonMatch = content.match(/\[[\s\S]*\]/);
         if (jsonMatch) {
@@ -775,6 +777,7 @@ export async function runGenerateProposalsForCli(
       openai,
       fallbackModels,
       label: "memory-hybrid: generate-proposals",
+      feature: CostFeature.generateProposals,
     });
   } catch (err) {
     const errMsg = err instanceof Error ? err.message : String(err);

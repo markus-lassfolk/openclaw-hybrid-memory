@@ -1,6 +1,7 @@
 import type OpenAI from "openai";
 import type { FactsDB } from "../backends/facts-db.js";
 import { chatComplete } from "./chat.js";
+import { CostFeature } from "./cost-feature-labels.js";
 import { capturePluginError } from "./error-reporter.js";
 
 interface MonthlyReviewReport {
@@ -148,6 +149,7 @@ export class MonthlyReviewService {
         content: `${RECOMMENDATION_PROMPT}\n\nStatistics:\n${JSON.stringify(statsPayload, null, 2)}`,
         temperature: 0.3,
         openai: this.openai,
+        feature: CostFeature.monthlyReviewRecommendations,
       });
       recommendations = parseLines(response).slice(0, 10);
     } catch (err) {
@@ -165,6 +167,7 @@ export class MonthlyReviewService {
         content: `Given this knowledge base statistics, list 3-8 uncovered domains (short labels). Return one per line with no numbering or bullets.\n\nStatistics:\n${JSON.stringify(statsPayload, null, 2)}`,
         temperature: 0.2,
         openai: this.openai,
+        feature: CostFeature.monthlyReviewUncoveredDomains,
       });
       uncoveredDomains = parseLines(response).slice(0, 10);
     } catch (err) {

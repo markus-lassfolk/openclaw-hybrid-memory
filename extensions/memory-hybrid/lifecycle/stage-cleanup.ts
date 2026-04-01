@@ -22,6 +22,11 @@ import {
   type PendingTaskSignal,
 } from "../services/active-task.js";
 import type { LifecycleContext, SessionState } from "./types.js";
+import {
+  findActiveTaskForSubagentEnd,
+  subagentEndedIsSuccess,
+  type SubagentEndedEvent,
+} from "../utils/subagent-ended-utils.js";
 
 const STALE_SESSION_TTL_MS = 30 * 60 * 1000; // 30 minutes
 const STALE_SWEEP_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
@@ -36,27 +41,6 @@ type SubagentSpawnedEvent = {
   agentId?: string;
   runId?: string;
 };
-
-/** OpenClaw core dispatch shapes — see issue #966 / runSubagentEnded */
-type SubagentEndedEvent = {
-  targetSessionKey?: string;
-  sessionKey?: string;
-  label?: string;
-  success?: boolean;
-  outcome?: string;
-  error?: string;
-  reason?: string;
-  runId?: string;
-};
-
-function subagentEndedIsSuccess(ev: SubagentEndedEvent): boolean {
-  if (typeof ev.success === "boolean") return ev.success;
-  const o = (ev.outcome ?? "").toLowerCase();
-  if (!o) return true;
-  if (["error", "timeout", "killed", "failed", "failure"].includes(o)) return false;
-  if (["success", "completed", "ok", "done"].includes(o)) return true;
-  return true;
-}
 
 /**
  * Read all pending task signals from `memory/task-signals/*.json` and apply
@@ -366,9 +350,9 @@ export function registerCleanupHandlers(
   api.on("subagent_ended", async (event: unknown) => {
     try {
       const ev = event as SubagentEndedEvent;
-      const label = ev.label ?? ev.targetSessionKey ?? ev.sessionKey;
       const staleMinutes = parseDuration(ctx.cfg.activeTask.staleThreshold);
-      if (!label) {
+      const targetKey = ev.targetSessionKey ?? ev.sessionKey;
+      if (!ev.label && !targetKey) {
         await consumePendingTaskSignals(
           resolvedActiveTaskPath,
           workspaceRoot,
@@ -391,7 +375,7 @@ export function registerCleanupHandlers(
         return;
       }
 
-      const existingTask = taskFile.active.find((t) => t.label === label);
+      const existingTask = findActiveTaskForSubagentEnd(taskFile.active, ev);
       if (!existingTask) {
         await consumePendingTaskSignals(
           resolvedActiveTaskPath,
@@ -403,11 +387,12 @@ export function registerCleanupHandlers(
         return;
       }
 
+      const taskLabel = existingTask.label;
       const now = new Date().toISOString();
       const newStatus = subagentEndedIsSuccess(ev) ? "Done" : "Failed";
 
       if (newStatus === "Done") {
-        const { updated, completed } = completeTask(taskFile.active, label);
+        const { updated, completed } = completeTask(taskFile.active, taskLabel);
         if (completed) {
           const writeResult = await writeActiveTaskFileGuarded(
             resolvedActiveTaskPath,
@@ -425,7 +410,7 @@ export function registerCleanupHandlers(
               await flushCompletedTaskToMemory(completed, memoryDir).catch(() => {});
             }
             api.logger.info?.(
-              `memory-hybrid: auto-checkpoint — updated task [${label}] to ${newStatus} on subagent_ended`,
+              `memory-hybrid: auto-checkpoint — updated task [${taskLabel}] to ${newStatus} on subagent_ended`,
             );
           }
         }
@@ -450,7 +435,7 @@ export function registerCleanupHandlers(
           );
         } else {
           api.logger.info?.(
-            `memory-hybrid: auto-checkpoint — updated task [${label}] to ${newStatus} on subagent_ended`,
+            `memory-hybrid: auto-checkpoint — updated task [${taskLabel}] to ${newStatus} on subagent_ended`,
           );
         }
       }

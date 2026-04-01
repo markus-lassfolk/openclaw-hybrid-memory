@@ -43,7 +43,7 @@ Or with npm directly: `npm i openclaw-hybrid-memory` in your OpenClaw extensions
 
 **2. Configure.** Set your OpenAI API key and enable the plugin. Easiest: run `openclaw hybrid-mem install` to merge full defaults (memory slot, compaction prompts, nightly session-distillation job) into `~/.openclaw/openclaw.json`, then set `plugins.entries["openclaw-hybrid-memory"].config.embedding.apiKey` to your key.
 
-**3. Restart the gateway** and run **`openclaw hybrid-mem verify [--fix]`** to confirm SQLite, LanceDB, and the embedding API. Use `--fix` to add any missing config (e.g. embedding block, nightly job).
+**3. Restart the gateway** and run **`openclaw hybrid-mem verify [--fix]`** to confirm SQLite, LanceDB, and the embedding API. Use `--fix` to add any missing config (e.g. embedding block, nightly job). Verify also warns if **`hybrid-mem:*` cron job models** disagree with **`agents.defaults.model.primary`** (avoids **`LiveSessionModelSwitchError`** on isolated runs — see [SESSION-DISTILLATION.md](../../docs/SESSION-DISTILLATION.md) § *Align maintenance cron `model` with your agent default*).
 
 **More options:** [Quick Start](https://github.com/markus-lassfolk/openclaw-hybrid-memory/blob/main/docs/QUICKSTART.md) and [Configuration](https://github.com/markus-lassfolk/openclaw-hybrid-memory/blob/main/docs/CONFIGURATION.md) (manual config merge, from-source install).
 
