@@ -15,9 +15,13 @@ export function fetchSupersededFactTextsLower(db: DatabaseSync): string[] {
  * OR-joined quoted FTS terms (+ optional prefix terms) for classification-style lookups (#898 alignment with porter).
  */
 /** Broader OR clause for `FactsDB.search()` (min term length 1, all tokens, porter prefix). */
-export function buildFactsSearchFtsOrClause(query: string): string | null {
+export function buildFactsSearchFtsOrClause(query: string, options?: { maxOrTerms?: number }): string | null {
   const sanitized = sanitizeFts5QueryForFacts(query);
-  const terms = sanitized.split(/\s+/).filter((w) => w.length > 1);
+  let terms = sanitized.split(/\s+/).filter((w) => w.length > 1);
+  const cap = options?.maxOrTerms;
+  if (cap !== undefined && cap > 0 && terms.length > cap) {
+    terms = terms.slice(0, cap);
+  }
   if (terms.length === 0) return null;
   const parts = terms.map((w) => {
     if (/^[a-zA-Z0-9_]+$/.test(w) && w.length >= 3) {

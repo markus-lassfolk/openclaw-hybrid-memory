@@ -141,6 +141,7 @@ async function runRecall(
         scopeFilter,
         reinforcementBoost: ctx.cfg.distill?.reinforcementBoost ?? 0.1,
         diversityWeight: ctx.cfg.reinforcement?.diversityWeight ?? 1.0,
+        interactiveFtsFastPath: true,
       };
       const degradedLimit = ctx.cfg.autoRecall.limit;
       const trimmed = e.prompt.trim();
@@ -277,6 +278,7 @@ async function runRecall(
       scopeFilter,
       reinforcementBoost: ctx.cfg.distill?.reinforcementBoost ?? 0.1,
       diversityWeight: ctx.cfg.reinforcement?.diversityWeight ?? 1.0,
+      interactiveFtsFastPath: true,
     };
     const hydeUsedRef = { value: false };
     const pipelineDeps: RecallPipelineDeps = {

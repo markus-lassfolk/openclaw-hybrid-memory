@@ -37,6 +37,7 @@ describe("PRESET_OVERRIDES (config/utils.ts) — invariants for CONFIGURATION-MO
     expect(ar.interactiveEnrichment).toBe("fast");
     expect((ar.entityLookup as { enabled: boolean }).enabled).toBe(false);
     expect((ar.authFailure as { enabled: boolean }).enabled).toBe(false);
+    expect(p.credentials).toEqual({ enabled: true });
   });
 
   it("minimal: graph/procedures on, reflection off, entity lookup off, authFailure on", () => {
@@ -48,6 +49,7 @@ describe("PRESET_OVERRIDES (config/utils.ts) — invariants for CONFIGURATION-MO
     expect((ar.entityLookup as { enabled: boolean }).enabled).toBe(false);
     expect((ar.authFailure as { enabled: boolean }).enabled).toBe(true);
     expect(ar.interactiveEnrichment).toBe("fast");
+    expect(p.credentials).toEqual({ enabled: true });
   });
 
   it("enhanced + complete: advanced opt-ins off in preset (opt-in via user config)", () => {

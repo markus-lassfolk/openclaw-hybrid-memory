@@ -650,8 +650,20 @@ describe("hybridConfigSchema.parse", () => {
     expect(result.wal.maxAge).toBe(5 * 60 * 1000);
   });
 
-  it("credentials disabled by default", () => {
+  it("credentials vault on by default (local preset enables manager)", () => {
+    const warnSpy = vi.spyOn(pluginLogger, "warn").mockImplementation(() => {});
     const result = hybridConfigSchema.parse(validBase);
+    expect(result.credentials.enabled).toBe(true);
+    expect(result.credentials.encryptionKey).toBe("");
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("plaintext"));
+    warnSpy.mockRestore();
+  });
+
+  it("credentials can be disabled explicitly", () => {
+    const result = hybridConfigSchema.parse({
+      ...validBase,
+      credentials: { enabled: false },
+    });
     expect(result.credentials.enabled).toBe(false);
   });
 
@@ -1683,7 +1695,7 @@ describe("hybridConfigSchema.parse", () => {
       expect(result.graph.enabled).toBe(false);
       expect(result.procedures.enabled).toBe(false);
       expect(result.reflection.enabled).toBe(false);
-      expect(result.credentials.enabled).toBe(false);
+      expect(result.credentials.enabled).toBe(true);
       expect(result.autoCapture).toBe(true);
       expect(result.autoRecall.enabled).toBe(true);
       expect(result.wal.enabled).toBe(true);
@@ -1704,7 +1716,7 @@ describe("hybridConfigSchema.parse", () => {
       expect(result.graph.enabled).toBe(true);
       expect(result.procedures.enabled).toBe(true);
       expect(result.reflection.enabled).toBe(false);
-      expect(result.credentials.enabled).toBe(false);
+      expect(result.credentials.enabled).toBe(true);
       expect(result.graph.autoLink).toBe(false);
       expect(result.store.classifyBeforeWrite).toBe(false);
       expect(result.distill?.extractionModelTier).toBe("default");

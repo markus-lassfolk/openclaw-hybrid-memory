@@ -33,6 +33,8 @@ export function isValidCategory(cat: string): boolean {
 export const PRESET_OVERRIDES: Record<ConfigMode, Record<string, unknown>> = {
   local: {
     autoCapture: true,
+    /** Credentials vault on; set `credentials.encryptionKey` (16+ chars or env:VAR) for encryption at rest. */
+    credentials: { enabled: true },
     autoRecall: {
       enabled: true,
       interactiveEnrichment: "fast",
@@ -56,6 +58,7 @@ export const PRESET_OVERRIDES: Record<ConfigMode, Record<string, unknown>> = {
   /** Minimal: nano for auto-classify, default (flash) for distill — good value at low cost. Ingest paths on so occasional ingest-files gets facts. */
   minimal: {
     autoCapture: true,
+    credentials: { enabled: true },
     autoRecall: {
       enabled: true,
       interactiveEnrichment: "fast",

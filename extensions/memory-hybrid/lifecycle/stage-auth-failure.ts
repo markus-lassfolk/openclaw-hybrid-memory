@@ -96,6 +96,7 @@ export function registerAuthFailureRecall(
         scopeFilter,
         reinforcementBoost: ctx.cfg.distill?.reinforcementBoost ?? 0.1,
         diversityWeight: ctx.cfg.reinforcement?.diversityWeight ?? 1.0,
+        interactiveFtsFastPath: true,
       });
       const vector = await ctx.embeddings.embed(query);
       let lanceResults = await ctx.vectorDb.search(vector, 5, 0.3);

@@ -323,6 +323,22 @@ describe("FactsDB.search", () => {
     expect(results.length).toBeLessThanOrEqual(3);
   });
 
+  it("interactiveFtsFastPath returns FTS results (two-phase id fetch)", () => {
+    db.store({
+      text: "Unique marker for interactiveFtsFastPath",
+      category: "fact",
+      importance: 0.7,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+    });
+    const fast = db.search("Unique marker", 5, { interactiveFtsFastPath: true });
+    expect(fast.length).toBeGreaterThan(0);
+    expect(fast[0].entry.text).toContain("Unique marker");
+    expect(fast[0].backend).toBe("sqlite");
+  });
+
   it("filters expired facts by default", () => {
     db.store({
       text: "Expired fact about testing",

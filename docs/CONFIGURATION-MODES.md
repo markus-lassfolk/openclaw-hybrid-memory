@@ -65,16 +65,16 @@ This gives good value at low cost. For even lower cost or fully offline use, use
 
 ## Credentials vault and credential capture
 
-- **Encrypted credentials vault** (`credentials.enabled`): Stores API keys, tokens, passwords in an encrypted SQLite vault instead of in plain facts. Requires `credentials.encryptionKey` (or `env:OPENCLAW_CRED_KEY`).
+- **Encrypted credentials vault** (`credentials.enabled`): Stores API keys, tokens, passwords in a SQLite vault (encrypted when a key is configured). **Local** and **Minimal** presets set **`credentials.enabled: true`** so the vault is on; add **`credentials.encryptionKey`** (16+ chars, or `env:VAR`) for encryption at rest. Without a key, the plugin warns and stores secrets in plaintext in the vault DB — restrict filesystem access or add a key.
 
   | Mode    | Vault default | Note |
   |---------|----------------|------|
-  | Local   | Off  | No vault; use env vars for secrets if needed. |
-  | Minimal | Off  | Opt-in: set encryption key to enable. |
-  | Enhanced | On (if key set) | Preset turns vault on when key is present. |
+  | Local   | On | Preset enables vault; encryption requires `credentials.encryptionKey` (or env). |
+  | Minimal | On | Same as Local. |
+  | Enhanced | On (if key set) | Preset does not set `enabled: true`; vault turns on when a valid encryption key is present. |
   | Complete | On (if key set) | Same as Enhanced. |
 
-  Vault encryption is **not** set by presets alone; you must provide **`credentials.encryptionKey`** (or env). **`credentials.autoDetect`** is forced **off** by Phase 1 until you set it in config.
+  **`credentials.autoDetect`** is forced **off** by Phase 1 until you set it in config (even when Enhanced/Complete presets list `autoDetect: true`).
 
 - **Credentials auto-detect** (`credentials.autoDetect`): Detects credential-like content in conversation and prompts to store in the vault. Presets may set **`autoDetect: true`** for Enhanced/Complete, but **Phase 1 (≥ 2026.3.140)** forces **`autoDetect: false`** until you opt in explicitly.
 
@@ -82,7 +82,7 @@ This gives good value at low cost. For even lower cost or fully offline use, use
 
   | Mode     | credentials.autoCapture.toolCalls |
   |----------|-----------------------------------|
-  | Local    | Off (vault off)                   |
+  | Local    | Off                               |
   | Minimal  | Off                               |
   | Enhanced | On (when vault enabled)           |
   | Complete | On (when vault enabled)           |
@@ -104,7 +104,7 @@ Below, **✓** = enabled by preset, **—** = disabled by preset, **opt** = opti
 | store.fuzzyDedupe | ✓ | — | ✓ | ✓ |
 | store.classifyBeforeWrite | — | — | ✓ | ✓ |
 | **Credentials** |
-| credentials (vault) | — | opt | opt | opt |
+| credentials (vault) | ✓ | ✓ | opt | opt |
 | credentials.autoDetect | — | — | ✓ | ✓ |
 | credentials.autoCapture.toolCalls | — | — | ✓ | ✓ |
 | **Graph** |
@@ -155,7 +155,7 @@ Below, **✓** = enabled by preset, **—** = disabled by preset, **opt** = opti
 
 **Notes:**
 
-- **opt**: Credentials vault is on only when `credentials.encryptionKey` is set (or env). In Enhanced/Complete, `autoDetect` and `autoCapture.toolCalls` apply when the vault is enabled.
+- **opt** (Enhanced/Complete vault): Vault is on when `credentials.encryptionKey` resolves to a valid key (or you set `credentials.enabled: true`). In Enhanced/Complete, `autoDetect` and `autoCapture.toolCalls` apply when the vault is enabled. **Local/Minimal** turn the vault on in the preset without requiring a key (use a key for encryption).
 - **personaProposals.autoApply**: Never set by any preset (always **—**). When enabled, approved persona proposals are applied to identity files without human review. **Opt-in only** — no mode turns this on by default.
 - **Minimal** uses only nano/flash-tier models for distill, auto-classify, and ingest to keep cost very low. **Local** uses no external LLM (FTS-only recall).
 - **autoRecall.entityLookup** (Enhanced/Complete): With `entityLookup.enabled` true, if **`entities` is empty or omitted** and **`autoFromFacts`** is true (default), names come from distinct non-null `entity` values on active facts (`FactsDb.getKnownEntities()`), sorted deterministically and capped by **`maxAutoEntities`** (default 500, hard max 2000). Set **`autoFromFacts`** to `false` for the legacy behavior: no entity-centric merge or `entityMentioned` directives until you set an explicit **`entities`** list. If **`entities`** is non-empty, only that list is used. Run `openclaw hybrid-mem config` to see whether the resolved source is `auto from facts (cap N)` or `N configured name(s)`.

@@ -12,6 +12,23 @@ No changes yet.
 
 ---
 
+## [2026.4.101] - 2026-04-01
+
+### Release summary
+
+Patch after **2026.4.10**: **interactive FTS fast path** on `FactsDB.search()` (auto-recall) — caps OR-term explosion and two-phase id fetch to reduce gateway stalls on large `facts.db`; **centralized agent id resolution** from hook events (`resolveAgentIdFromHookEvent`) for routed channels; **docs** [INTERACTIVE-RECALL-LATENCY.md](docs/INTERACTIVE-RECALL-LATENCY.md).
+
+### Added
+
+- **`FactsDB.search(..., { interactiveFtsFastPath: true })`** — used from interactive auto-recall; constant **`INTERACTIVE_FTS_MAX_OR_TERMS`**.
+- **`lifecycle/resolve-agent-id.ts`** — `resolveAgentIdFromHookEvent()`; **`stage-setup`** uses it for `currentAgentIdRef`.
+
+### Documentation
+
+- **[INTERACTIVE-RECALL-LATENCY.md](docs/INTERACTIVE-RECALL-LATENCY.md)** — why interactive FTS can report very long wall times; `agentId` / OpenClaw context.
+
+---
+
 ## [2026.4.10] - 2026-04-01
 
 ### Release summary
@@ -1064,7 +1081,8 @@ Major feature release including procedural memory, directive extraction, reinfor
 
 ---
 
-[Unreleased]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.4.10...HEAD
+[Unreleased]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.4.101...HEAD
+[2026.4.101]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.4.10...v2026.4.101
 [2026.4.10]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.3.310...v2026.4.10
 [2026.3.310]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.3.301...v2026.3.310
 [2026.3.301]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.3.300...v2026.3.301

@@ -1,7 +1,7 @@
 {
   "id": "openclaw-hybrid-memory",
   "kind": "memory",
-  "version": "2026.4.10",
+  "version": "2026.4.101",
   "uiHints": {
     "embedding.provider": {
       "label": "Embedding Provider",
@@ -382,6 +382,10 @@
     "graph.useInRecall": {
       "label": "Use in recall",
       "help": "Enable graph traversal in memory_recall (default true)"
+    },
+    "graph.strengthenOnRecall": {
+      "label": "Strengthen on recall",
+      "help": "When true, strengthen RELATED_TO links between facts recalled together (default false; Phase 1 baseline off)"
     },
     "procedures.enabled": {
       "label": "Procedural memory",
@@ -1151,6 +1155,10 @@
           "useInRecall": {
             "type": "boolean",
             "description": "Enable graph traversal in memory_recall (default: true)"
+          },
+          "strengthenOnRecall": {
+            "type": "boolean",
+            "description": "Strengthen RELATED_TO links when facts are recalled together (default: false)"
           }
         },
         "description": "Graph-based spreading activation: typed relationships for zero-LLM recall"
