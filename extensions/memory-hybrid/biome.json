@@ -1,7 +1,7 @@
 {
   "$schema": "https://biomejs.dev/schemas/1.9.4/schema.json",
   "files": {
-    "includes": ["**/*.ts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.json", "**/*.cjs", "**/*.mjs"]
+    "include": ["**/*.ts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.json", "**/*.cjs", "**/*.mjs"]
   },
   "formatter": {
     "enabled": true,
@@ -57,7 +57,7 @@
   },
   "overrides": [
     {
-      "includes": ["cli/**", "tests/**", "utils/logger.ts"],
+      "include": ["cli/**", "tests/**", "utils/logger.ts"],
       "linter": {
         "rules": {
           "suspicious": {

@@ -13,7 +13,7 @@ vi.mock("node:fs/promises", async (importOriginal) => {
     open: vi.fn(async (...args: any[]) => {
       const fh = await actualOpen(...(args as Parameters<typeof actualOpen>));
       // Intercept append-mode opens used by fsyncAfterWrite.
-      if (args[1] === "r" || args[1] === "a") {
+      if (args[1] === "r" || args[1] === "a" || args[1] === "a+") {
         const origDatasync = fh.datasync.bind(fh);
         (fh as any).datasync = async () => {
           if (fsyncError.value) {

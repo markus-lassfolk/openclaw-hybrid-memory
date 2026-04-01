@@ -37,13 +37,7 @@ export type WALEntry = {
 const WAL_REMOVE_PREFIX = '{"op":"remove","id":';
 
 export function isWalEntry(obj: unknown): obj is WALEntry {
-  if (
-    typeof obj !== "object" ||
-    obj === null ||
-    !("id" in obj) ||
-    !("timestamp" in obj) ||
-    !("operation" in obj)
-  ) {
+  if (typeof obj !== "object" || obj === null || !("id" in obj) || !("timestamp" in obj) || !("operation" in obj)) {
     return false;
   }
   const sv = (obj as WALEntry).schemaVersion;
@@ -110,14 +104,15 @@ export class WriteAheadLog {
   private async fsyncAfterWrite(): Promise<void> {
     let fh: Awaited<ReturnType<typeof open>> | undefined;
     try {
-      fh = await open(this.walPath, "a");
+      // "a+" read+append so fdatasync works on more filesystems than read-only or append-only edge cases (issue #854).
+      fh = await open(this.walPath, "a+");
       await fh.datasync();
     } catch (err) {
       const code = (err as NodeJS.ErrnoException).code;
       if (code === "EPERM" || code === "EINVAL") {
-        // Some filesystems (e.g. NTFS via WSL2) do not support fsync on a
-        // read-only file descriptor.  The data has already been written by
-        // appendFile / writeFile; skipping fsync here is safe and the
+        // Some filesystems (e.g. NTFS via WSL2) reject fdatasync/fsync on the WAL
+        // or do not fully support POSIX sync semantics. The data has already been
+        // written by appendFile / writeFile; skipping datasync here is safe and the
         // durability guarantee degrades to best-effort on those filesystems.
         if (!this.fsyncWarnEmitted) {
           pluginLogger.warn(
