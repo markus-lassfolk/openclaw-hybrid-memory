@@ -12,6 +12,14 @@ No changes yet.
 
 ---
 
+## [2026.4.12] - 2026-04-01
+
+### Release summary
+
+Version bump to **2026.4.12** (package, plugin manifest, standalone installer, and release metadata).
+
+---
+
 ## [2026.4.11] - 2026-04-01
 
 ### Release summary
@@ -1081,7 +1089,8 @@ Major feature release including procedural memory, directive extraction, reinfor
 
 ---
 
-[Unreleased]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.4.11...HEAD
+[Unreleased]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.4.12...HEAD
+[2026.4.12]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.4.11...v2026.4.12
 [2026.4.11]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.4.10...v2026.4.11
 [2026.4.10]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.3.310...v2026.4.10
 [2026.3.310]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.3.301...v2026.3.310
