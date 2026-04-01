@@ -20,7 +20,7 @@ If you are upgrading from **2026.3.260**, you should expect new SQLite migration
 
 Agents can record structured **episodes**: short event summaries with an explicit **outcome** (`success`, `failure`, `partial`, or `unknown`), timestamps, optional links to procedures and related facts, and normal memory metadata (scope, importance, decay). Failures are automatically treated as more important so they surface in recall.
 
-- **Tools:** `memory.record_episode` and `memory.search_episodes` (filter by outcome, time range, procedure, and text).
+- **Tools:** `memory_record_episode` and `memory_search_episodes` (filter by outcome, time range, procedure, and text).
 - **Automation:** When a session is compacted, the plugin scans recent session text for common outcome phrases and can create episodes without extra tool calls.
 
 This makes long-running agents much better at answering “what have we tried before?” and “what usually breaks?”
@@ -33,7 +33,7 @@ This makes long-running agents much better at answering “what have we tried be
 
 ### Procedure feedback — learn from real runs
 
-Procedures now carry **version history** and **failure notes**. Agents can call `memory.procedure_feedback` after a run; failures bump version metadata, record avoidance hints, and can spawn a linked episode. Recall of procedures includes **last outcome**, **success rate**, and **avoidance notes** so the model sees history before repeating a bad playbook.
+Procedures now carry **version history** and **failure notes**. Agents can call `memory_procedure_feedback` after a run; failures bump version metadata, record avoidance hints, and can spawn a linked episode. Recall of procedures includes **last outcome**, **success rate**, and **avoidance notes** so the model sees history before repeating a bad playbook.
 
 CLI additions: `memory procedure show <id>` and richer `memory procedure list`.
 
