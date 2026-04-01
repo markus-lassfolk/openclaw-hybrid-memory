@@ -105,6 +105,13 @@ describe("Embeddings (OpenAI) implements EmbeddingProvider interface", () => {
     expect(result).toEqual(vec);
   });
 
+  it("#969: embed() throws a descriptive error when response.data is empty (not TypeError on data[0])", async () => {
+    const mockCreate = vi.fn().mockResolvedValue({ data: [] });
+    const client = { embeddings: { create: mockCreate } } as unknown as import("openai").default;
+    const provider = new Embeddings(client, "text-embedding-3-small", 3);
+    await expect(provider.embed("hello")).rejects.toThrow(/missing data\[0\]\.embedding/i);
+  });
+
   it("embedBatch() returns correct number of results", async () => {
     const vec = [0.5, 0.6];
     const client = makeMockOpenAI(vec);
@@ -114,6 +121,13 @@ describe("Embeddings (OpenAI) implements EmbeddingProvider interface", () => {
     expect(results[0]).toEqual(vec);
     expect(results[1]).toEqual(vec);
     expect(results[2]).toEqual(vec);
+  });
+
+  it("#969: embedBatch() throws when data[] length mismatches inputs", async () => {
+    const mockCreate = vi.fn().mockResolvedValue({ data: [{ index: 0, embedding: [0.1, 0.2] }] });
+    const client = { embeddings: { create: mockCreate } } as unknown as import("openai").default;
+    const provider = new Embeddings(client, "text-embedding-3-small", 2);
+    await expect(provider.embedBatch(["a", "b"])).rejects.toThrow(/wrong-length data/i);
   });
 
   it("embedBatch() makes a single batched API call (not N calls)", async () => {

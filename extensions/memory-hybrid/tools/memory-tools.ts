@@ -2352,10 +2352,10 @@ export function registerMemoryTools(
   // Episodic Memory tools (#781)
   // ---------------------------------------------------------------------------
 
-  /** memory.record_episode — store a structured event with explicit outcome. */
+  /** memory_record_episode — store a structured event with explicit outcome. */
   api.registerTool(
     {
-      name: "memory.record_episode",
+      name: "memory_record_episode",
       description:
         "Record a structured episodic memory: a significant event with an explicit outcome (success/failure/partial/unknown), timestamp, and optional context. Use after deployments, migrations, incidents, or other notable events to build a queryable history of what happened and how it turned out.",
       parameters: Type.Object({
@@ -2429,13 +2429,13 @@ export function registerMemoryTools(
         }
       },
     },
-    { name: "memory.record_episode" },
+    { name: "memory_record_episode" },
   );
 
-  /** memory.search_episodes — search structured episodic memories with filters. */
+  /** memory_search_episodes — search structured episodic memories with filters. */
   api.registerTool(
     {
-      name: "memory.search_episodes",
+      name: "memory_search_episodes",
       description:
         "Search episodic memories — structured records of events with outcomes and timestamps. Filter by outcome (success/failure/partial/unknown), time range, or procedure. Returns events ordered by most recent first.",
       parameters: Type.Object({
@@ -2491,17 +2491,17 @@ export function registerMemoryTools(
         }
       },
     },
-    { name: "memory.search_episodes" },
+    { name: "memory_search_episodes" },
   );
 
   // ---------------------------------------------------------------------------
   // Edict tools — verified ground-truth facts with forced prompt injection (#791)
   // ---------------------------------------------------------------------------
 
-  /** memory.add_edict — create a verified ground-truth fact (human-only; agents propose via GitHub). */
+  /** memory_add_edict — create a verified ground-truth fact (human-only; agents propose via GitHub). */
   api.registerTool(
     {
-      name: "memory.add_edict",
+      name: "memory_add_edict",
       label: "Add Edict",
       description:
         "Add a verified ground-truth fact (edict) to memory. Edicts are always injected verbatim into system prompts — the agent does NOT reason about them.\n\n" +
@@ -2579,13 +2579,13 @@ export function registerMemoryTools(
         }
       },
     },
-    { name: "memory.add_edict" },
+    { name: "memory_add_edict" },
   );
 
-  /** memory.list_edicts — list edicts, optionally filtered by tags. */
+  /** memory_list_edicts — list edicts, optionally filtered by tags. */
   api.registerTool(
     {
-      name: "memory.list_edicts",
+      name: "memory_list_edicts",
       label: "List Edicts",
       description: "List all non-expired edicts, optionally filtered by tags.",
       parameters: Type.Object({
@@ -2625,13 +2625,13 @@ export function registerMemoryTools(
         }
       },
     },
-    { name: "memory.list_edicts" },
+    { name: "memory_list_edicts" },
   );
 
-  /** memory.get_edicts — get edicts formatted for system prompt injection. */
+  /** memory_get_edicts — get edicts formatted for system prompt injection. */
   api.registerTool(
     {
-      name: "memory.get_edicts",
+      name: "memory_get_edicts",
       label: "Get Edicts for Prompt",
       description:
         "Get all non-expired edicts as a pre-formatted Markdown block for system prompt injection. " +
@@ -2667,13 +2667,13 @@ export function registerMemoryTools(
         }
       },
     },
-    { name: "memory.get_edicts" },
+    { name: "memory_get_edicts" },
   );
 
-  /** memory.update_edict — update an existing edict's text, tags, source, or expiry. */
+  /** memory_update_edict — update an existing edict's text, tags, source, or expiry. */
   api.registerTool(
     {
-      name: "memory.update_edict",
+      name: "memory_update_edict",
       label: "Update Edict",
       description: "Update the text, tags, source, or expiry of an existing edict.",
       parameters: Type.Object({
@@ -2737,13 +2737,13 @@ export function registerMemoryTools(
         }
       },
     },
-    { name: "memory.update_edict" },
+    { name: "memory_update_edict" },
   );
 
-  /** memory.remove_edict — delete an edict by id. */
+  /** memory_remove_edict — delete an edict by id. */
   api.registerTool(
     {
-      name: "memory.remove_edict",
+      name: "memory_remove_edict",
       label: "Remove Edict",
       description: "Delete an edict from memory by its id.",
       parameters: Type.Object({
@@ -2772,13 +2772,13 @@ export function registerMemoryTools(
         }
       },
     },
-    { name: "memory.remove_edict" },
+    { name: "memory_remove_edict" },
   );
 
-  /** memory.edict_stats — get statistics about the edict store. */
+  /** memory_edict_stats — get statistics about the edict store. */
   api.registerTool(
     {
-      name: "memory.edict_stats",
+      name: "memory_edict_stats",
       label: "Edict Stats",
       description: "Get statistics about the edict store: total, by-tag counts, expired, and expiring soon.",
       parameters: Type.Object({}),
@@ -2809,6 +2809,6 @@ export function registerMemoryTools(
         }
       },
     },
-    { name: "memory.edict_stats" },
+    { name: "memory_edict_stats" },
   );
 }

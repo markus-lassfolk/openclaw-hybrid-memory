@@ -15,6 +15,7 @@ import { basename, join } from "node:path";
 import type { ReinforcementContext } from "../backends/facts-db.js";
 import { getCronModelConfig, getDefaultCronModel, getLLMModelPreference, isCompactVerbosity } from "../config.js";
 import { chatCompleteWithRetry } from "../services/chat.js";
+import { CostFeature } from "../services/cost-feature-labels.js";
 import { runCrossAgentLearning } from "../services/cross-agent-learning.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { getEffectivenessReport, runClosedLoopAnalysis } from "../services/feedback-effectiveness.js";
@@ -246,6 +247,7 @@ export async function runExtractImplicitFeedbackForCli(
                     openai,
                     fallbackModels,
                     label: "memory-hybrid: trajectory-analyze",
+                    feature: CostFeature.trajectoryAnalyze,
                   });
                 };
                 const llmAnalysis = await analyzeTrajectoriesWithLLM(traj, prompt, chatFn);

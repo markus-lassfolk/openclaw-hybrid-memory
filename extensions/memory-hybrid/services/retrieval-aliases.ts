@@ -15,6 +15,7 @@ import type { AliasesConfig } from "../config.js";
 import { LANCE_NO_VECTOR_COL_MSG, UUID_REGEX } from "../utils/constants.js";
 import { pluginLogger } from "../utils/logger.js";
 import { chatComplete } from "./chat.js";
+import { CostFeature } from "./cost-feature-labels.js";
 import type { EmbeddingProvider } from "./embeddings.js";
 import { shouldSuppressEmbeddingError } from "./embeddings.js";
 import { capturePluginError } from "./error-reporter.js";
@@ -381,6 +382,7 @@ export async function generateAliases(
       content: prompt,
       temperature: 0.7,
       openai,
+      feature: CostFeature.retrievalAliases,
     });
     const lines = response
       .split("\n")

@@ -15,6 +15,7 @@
 import type OpenAI from "openai";
 import type { QueryExpansionConfig } from "../config.js";
 import { chatComplete } from "./chat.js";
+import { CostFeature } from "./cost-feature-labels.js";
 import { extractJsonArray } from "./json-array-parser.js";
 
 // ---------------------------------------------------------------------------
@@ -184,6 +185,7 @@ export class QueryExpander {
         maxTokens: 300,
         openai: this.openai,
         timeoutMs: this.config.timeoutMs,
+        feature: CostFeature.queryExpansion,
       });
 
       const variants = parseExpansionsFromResponse(response, this.config.maxVariants);

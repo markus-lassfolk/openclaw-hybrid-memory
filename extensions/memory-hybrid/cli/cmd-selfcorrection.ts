@@ -16,6 +16,7 @@ import { dirname, join } from "node:path";
 
 import { getCronModelConfig, getDefaultCronModel, getLLMModelPreference } from "../config.js";
 import { chatCompleteWithRetry, distillMaxOutputTokens } from "../services/chat.js";
+import { CostFeature } from "../services/cost-feature-labels.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { type CorrectionIncident, runSelfCorrectionExtract } from "../services/self-correction-extract.js";
 import { preFilterSessions } from "../services/session-pre-filter.js";
@@ -238,6 +239,7 @@ export async function runSelfCorrectionRunForCli(
           openai,
           fallbackModels: scFallbackModels,
           label: "memory-hybrid: self-correction analyze",
+          feature: CostFeature.selfCorrectionAnalyze,
         });
       }
       const jsonMatch = content.match(/\[[\s\S]*\]/);
@@ -376,6 +378,7 @@ export async function runSelfCorrectionRunForCli(
             openai,
             fallbackModels: scFallbackModels,
             label: "memory-hybrid: self-correction rewrite-tools",
+            feature: CostFeature.selfCorrectionRewriteTools,
           });
           const cleaned = rewritten
             .trim()

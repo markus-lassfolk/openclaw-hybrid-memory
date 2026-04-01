@@ -24,6 +24,7 @@ import type { MemoryCategory, ReinforcementConfig } from "../config.js";
 import { fillPrompt, loadPrompt } from "../utils/prompt-loader.js";
 import { chunkTextByChars } from "../utils/text.js";
 import { LLMRetryError, chatCompleteWithRetry } from "./chat.js";
+import { CostFeature } from "./cost-feature-labels.js";
 import type { EmbeddingProvider } from "./embeddings.js";
 import { shouldSuppressEmbeddingError } from "./embeddings.js";
 import { capturePluginError } from "./error-reporter.js";
@@ -496,6 +497,7 @@ export async function runPassiveObserver(
           openai,
           fallbackModels: opts.fallbackModels ?? [],
           label: "memory-hybrid: passive-observer",
+          feature: CostFeature.passiveObserver,
         });
       } catch (err) {
         logger.warn(`memory-hybrid: passive-observer — LLM failed for session ${sessionId}: ${err}`);

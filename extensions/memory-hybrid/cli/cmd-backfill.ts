@@ -22,6 +22,7 @@ import { basename, dirname, join } from "node:path";
 import type { MemoryCategory } from "../config.js";
 import { getCronModelConfig, getDefaultCronModel, getLLMModelPreference, isValidCategory } from "../config.js";
 import { chatCompleteWithRetry, distillBatchTokenLimit, distillMaxOutputTokens } from "../services/chat.js";
+import { CostFeature } from "../services/cost-feature-labels.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { gatherIngestFiles } from "../services/ingest-utils.js";
 import { BATCH_STORE_IMPORTANCE, DISTILL_DEDUP_THRESHOLD } from "../utils/constants.js";
@@ -374,6 +375,7 @@ export async function runAnalyzeFeedbackPhrasesForCli(
           openai,
           fallbackModels: nanoPref.length > 1 ? nanoPref.slice(1) : undefined,
           label: "memory-hybrid: feedback-phrases sentiment",
+          feature: CostFeature.backfillSentiment,
         });
         const lines = (content ?? "").split(/\r?\n/).map((l) => l.trim().toLowerCase());
         if (lines.length < batch.length) {
@@ -619,6 +621,7 @@ export async function runIngestFilesForCli(
         openai,
         fallbackModels: ingestFallbacks,
         label: `memory-hybrid: ingest-files batch ${b + 1}/${batches.length}`,
+        feature: CostFeature.backfillIngest,
       });
       const lines = content.split("\n").filter((l) => l.trim());
       for (const line of lines) {

@@ -1,5 +1,6 @@
 import type OpenAI from "openai";
 import { chatComplete } from "./chat.js";
+import { CostFeature } from "./cost-feature-labels.js";
 import { extractJsonArray } from "./json-array-parser.js";
 
 interface GradeableDocument {
@@ -66,6 +67,7 @@ export class DocumentGrader {
         maxTokens: 250,
         openai: this.openai,
         timeoutMs: this.config.timeoutMs,
+        feature: CostFeature.documentGrader,
       });
 
       const answers = parseGrades(response, docs.length);
@@ -88,6 +90,7 @@ export class DocumentGrader {
         maxTokens: 80,
         openai: this.openai,
         timeoutMs: this.config.timeoutMs,
+        feature: CostFeature.documentGraderQueryRewrite,
       });
 
       const rewritten =

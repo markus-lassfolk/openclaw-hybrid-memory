@@ -263,6 +263,14 @@ Update `run-stats.md` with:
 
 For automated incremental distillation, add a scheduled job that runs at 02:00 local time.
 
+### Align maintenance cron `model` with your agent default ([#965](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/965))
+
+Jobs installed by `openclaw hybrid-mem install` or `openclaw hybrid-mem verify --fix` are stored under `~/.openclaw/cron/jobs.json` with ids like `hybrid-mem:nightly-distill`. Each job includes a **`model`** field (or `payload.model`, depending on OpenClaw version). When **`agents.defaults.model.primary`** is set in `openclaw.json`, the plugin uses **that** as the job model (instead of tier defaults from `llm.*`) so it matches OpenClaw’s agent-bound live session ([#963](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/963)). If primary is not set, models still come from `llm.default` / `llm.heavy` / `llm.nano` per job tier.
+
+**Isolated** scheduled runs may reuse a live session that follows **`agents.defaults.model.primary`** when an `agentId` is set. If the job’s model uses a **different provider family** than your primary chat model (compare the segment **before** the first `/`, e.g. `azure-foundry` vs `google` vs `minimax`), the gateway can fail with **`LiveSessionModelSwitchError`** instead of running the job.
+
+**What to do:** Set `agents.defaults.model.primary`, then run **`openclaw hybrid-mem verify --fix`** so stored job models sync to that primary. Keep primary and every `hybrid-mem:*` job’s stored model on the **same provider family**. **`openclaw hybrid-mem verify`** warns when it detects a mismatch ([#965](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/965)).
+
 **Note:** OpenClaw's config schema does not accept a top-level `"jobs"` key in `openclaw.json`. Use one of:
 
 - **OpenClaw's cron/scheduled jobs** — If your OpenClaw version supports it, add the job via the OpenClaw UI or the cron store (e.g. `~/.openclaw/cron/jobs.json`). See OpenClaw's documentation for the correct format and location.

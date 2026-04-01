@@ -10,6 +10,7 @@
 import type OpenAI from "openai";
 import type { FactsDB } from "../backends/facts-db.js";
 import { chatComplete } from "./chat.js";
+import { CostFeature } from "./cost-feature-labels.js";
 import { capturePluginError } from "./error-reporter.js";
 import type { VerificationStore, VerifiedFact } from "./verification-store.js";
 
@@ -114,6 +115,7 @@ export class ContinuousVerifier {
       maxTokens: 256,
       openai: this.openai,
       timeoutMs: this.timeoutMs,
+      feature: CostFeature.continuousVerifier,
     });
     return parseVerificationOutcome(response);
   }
