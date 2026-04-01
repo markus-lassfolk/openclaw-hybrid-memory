@@ -91,7 +91,7 @@ export abstract class BaseSqliteStore {
           operation: `${operation}:reopen-failed`,
           severity: "warning",
         });
-        throw err;
+        throw openErr instanceof Error ? openErr : new Error(String(openErr));
       }
       this._dbOpen = true;
       this.applyPragmas();

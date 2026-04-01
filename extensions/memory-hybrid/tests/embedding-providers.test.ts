@@ -48,7 +48,7 @@ beforeEach(() => {
 function makeMockOpenAI(vector: number[]): import("openai").default {
   const mockCreate = vi.fn().mockImplementation((params: { input: string | string[] }) => {
     const count = Array.isArray(params.input) ? params.input.length : 1;
-    return Promise.resolve({ data: Array.from({ length: count }, () => ({ embedding: vector })) });
+    return Promise.resolve({ data: Array.from({ length: count }, (_, i) => ({ index: i, embedding: vector })) });
   });
   return {
     embeddings: { create: mockCreate },

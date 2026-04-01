@@ -234,8 +234,17 @@ export class Embeddings implements EmbeddingProvider {
               `Embedding response missing or wrong-length data[] (embedBatch, model=${succeededModel}, got=${resp.data?.length ?? 0}, expected=${batch.length})`,
             );
           }
-          const sorted = resp.data
-            .sort((a, b) => (a.index ?? 0) - (b.index ?? 0))
+          const data = resp.data;
+          for (let rowIdx = 0; rowIdx < data.length; rowIdx++) {
+            const row = data[rowIdx];
+            if (!row || typeof row.index !== "number") {
+              throw new Error(
+                `Embedding response contained row with missing or non-numeric index (embedBatch, model=${succeededModel}, row=${rowIdx})`,
+              );
+            }
+          }
+          const sorted = data
+            .sort((a, b) => (a?.index ?? 0) - (b?.index ?? 0))
             .map((item) => {
               const emb = item?.embedding;
               if (!emb || !Array.isArray(emb)) {

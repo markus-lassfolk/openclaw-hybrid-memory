@@ -123,7 +123,7 @@ export function registerWorkflowTools(ctx: WorkflowToolsContext, api: ClawdbotPl
             details: [],
           };
         }
-        throw err;
+        throw e;
       }
     },
   });
