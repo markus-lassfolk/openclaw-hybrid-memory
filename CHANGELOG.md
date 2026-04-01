@@ -34,6 +34,7 @@ Follow-up to **2026.3.310** with **bounded interactive auto-recall**, a single *
 ### Fixed
 
 - **Tests:** Stabilized reinforcement ranking case when **`diversityWeight`** is 0 (`facts-db` tests).
+- **CI:** `plugin-service-startup` version-check test uses a mock **npm** version safely above the current release so the “published newer than local” branch still runs after each version bump.
 
 ### Documentation
 
