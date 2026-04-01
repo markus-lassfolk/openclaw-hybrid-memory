@@ -257,31 +257,8 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
     api.logger.debug?.(`memory-hybrid: before_compaction hook not available (${err})`);
   }
 
-  try {
-    api.on("before_consolidation", async (event: unknown) => {
-      const ev = event as {
-        candidateCount?: number;
-        source?: string;
-        sessionFile?: string;
-      };
-
-      await runPreConsolidationFlush(
-        { wal: ctx.wal, factsDb: ctx.factsDb, vectorDb: ctx.vectorDb, embeddings: ctx.embeddings },
-        api.logger,
-        "before_consolidation",
-      );
-
-      api.logger.info?.(
-        `memory-hybrid: before_consolidation — candidates=${ev.candidateCount ?? "?"} source=${ev.source ?? "?"}`,
-      );
-    });
-  } catch (err) {
-    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-      subsystem: "lifecycle",
-      operation: "register-before_consolidation",
-    });
-    api.logger.debug?.(`memory-hybrid: before_consolidation hook not available (${err})`);
-  }
+  // Issue #966: Do not register `before_consolidation` — it is not in OpenClaw's PLUGIN_HOOK_NAMES (ignored + noisy).
+  // WAL flush before compaction-style work is handled solely by `before_compaction` above (runPreConsolidationFlush).
 
   try {
     api.on("after_compaction", async (event: unknown): Promise<undefined | { prependContext: string }> => {

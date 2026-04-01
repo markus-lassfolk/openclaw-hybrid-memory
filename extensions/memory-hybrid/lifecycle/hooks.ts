@@ -2,7 +2,7 @@ import { getEnv } from "../utils/env-manager.js";
 /**
  * Lifecycle Hooks (Phase 2.3: staged pipeline).
  *
- * Dispatcher: registers before_agent_start, agent_end, subagent, and frustration handlers.
+ * Dispatcher: registers before_agent_start, agent_end, and frustration handlers (subagent hooks: stage-cleanup).
  * All stage logic lives in stage-*.ts and session-state.ts; this file stays <200 lines.
  */
 

@@ -188,6 +188,7 @@ describe("hybridConfigSchema.parse", () => {
     expect(result.embedding.model).toBe("text-embedding-3-small");
     expect(result.autoCapture).toBe(true);
     expect(result.autoRecall.enabled).toBe(true);
+    expect(result.autoRecall.interactiveEnrichment).toBe("fast"); // default mode local preset
   });
 
   it("parses retrieval directives config", () => {
@@ -538,6 +539,7 @@ describe("hybridConfigSchema.parse", () => {
       ...validBase,
       autoRecall: {
         enabled: true,
+        interactiveEnrichment: "balanced",
         maxTokens: 500,
         injectionFormat: "short",
         limit: 10,
@@ -548,6 +550,18 @@ describe("hybridConfigSchema.parse", () => {
     expect(result.autoRecall.injectionFormat).toBe("short");
     expect(result.autoRecall.limit).toBe(10);
     expect(result.autoRecall.minScore).toBe(0.5);
+    expect(result.autoRecall.interactiveEnrichment).toBe("balanced");
+  });
+
+  it("parses autoRecall.interactiveEnrichment", () => {
+    const result = hybridConfigSchema.parse({
+      ...validBase,
+      autoRecall: {
+        enabled: true,
+        interactiveEnrichment: "fast",
+      },
+    });
+    expect(result.autoRecall.interactiveEnrichment).toBe("fast");
   });
 
   it("parses autoRecall.scopeFilter", () => {
@@ -1730,6 +1744,7 @@ describe("hybridConfigSchema.parse", () => {
       expect(result.queryExpansion.enabled).toBe(false);
       expect(result.search?.hydeEnabled).toBeFalsy();
       expect(result.ingest?.paths).toEqual(["skills/**/*.md", "TOOLS.md", "AGENTS.md"]);
+      expect(result.autoRecall.interactiveEnrichment).toBe("fast");
     });
 
     it("user overrides win over preset (mode local + graph.enabled true); mode becomes Custom for verify", () => {

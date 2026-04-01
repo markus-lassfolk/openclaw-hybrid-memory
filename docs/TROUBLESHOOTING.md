@@ -20,6 +20,31 @@ openclaw hybrid-mem stats         # show fact/vector counts
 
 ---
 
+## Interpreting recall pipeline timing logs (debug)
+
+To see per-stage recall timings in gateway (and optionally CLI) logs, set **`OPENCLAW_LOG_LEVEL=debug`** for that run. OpenClaw treats this as overriding `logging.level` / `logging.consoleLevel` for a single process.
+
+**What you get:** a **`logger.debug`** line from `runRecallPipelineQuery` in [`extensions/memory-hybrid/services/recall-pipeline.ts`](../extensions/memory-hybrid/services/recall-pipeline.ts), shaped like:
+
+`memory-hybrid: interactive-recall timing (ms) — FTS: …, embed: …, vector: …, merge: …, total: …`
+
+| Field | Meaning |
+|--------|--------|
+| **FTS** | Wall time for SQLite FTS (and entity lookup if used) on the recall query — synchronous work in the Node process. |
+| **embed** | From the start of the vector step through **HyDE (if enabled) plus embedding** — not FTS. Zero when `retrieval.strategies` has no `semantic`. |
+| **vector** | Lance vector search only (after the embedding vector is ready). |
+| **merge** | Merging / fusion of FTS and vector hits. |
+
+If the semantic path **exceeds the vector-step budget**, you see a **warn** such as **`memory-hybrid: interactive-recall timed out after …ms, using FTS-only recall`**. The cap is `vectorStepTimeoutMs` in the interactive policy (currently **~26s** in source; older installs may still log **30000ms**). The pipeline may then emit **another** timing line for the FTS-only follow-up — **large FTS with small `embed` + `vector` on a later line** usually means the bottleneck was **timeout + FTS-heavy or degraded path**, not Lance/embed in isolation.
+
+**Other signals:** **`memory-hybrid: recall degraded (latency …ms > …ms)`** means the latency budget forced FTS-only + HOT-style degradation (see `lifecycle/stage-injection.ts` / `stage-recall.ts`).
+
+**Splitting wall time:** Compare recall **`total`** in the timing line to the **LLM completion** duration in OpenClaw logs (e.g. `durationMs` on the chat completion). A **very large session** (hundreds of messages, hundreds of thousands of history characters) can dominate **model** time even when embed/vector are modest.
+
+**Fair A/B tests:** For cleaner comparisons, turn off heavy channels (e.g. WhatsApp) or use a **minimal** gateway config, and run **two** agent turns per mode so a cold first run does not dominate.
+
+---
+
 ## Embedding vs LanceDB dimension mismatch
 
 **Symptoms:** `openclaw hybrid-mem verify` reports a **FAIL** for embedding ↔ LanceDB alignment; `hybrid-mem test` shows semantic search failing with a reason such as `vector_dim_mismatch`; semantic recall feels empty even though facts exist.
@@ -418,7 +443,7 @@ Inspect OpenClaw (or gateway) logs for errors when you send a message. Look for:
 
 When **nothing relevant appears** (no timeout, no errors) but the agent still doesn't respond, the turn may be **stuck** in the plugin's `before_agent_start` (e.g. waiting on the gateway/LLM for query expansion or embeddings). As of recent plugin versions:
 
-- You should see **`memory-hybrid: auto-recall start (prompt length N)`** when a message is processed. If you see that and never see a follow-up (e.g. "injecting N memories" or "vector step timed out"), the process is hanging inside auto-recall (query expansion, embedding, or vector search). The plugin applies timeouts (query expansion: 5-25s, vector step: 30s, chatComplete: 45s); if the gateway never responds, you should see a **timeout** log after that period.
+- You should see **`memory-hybrid: auto-recall start (prompt length N)`** when a message is processed. If you see that and never see a follow-up (e.g. "injecting N memories" or "vector step timed out"), the process is hanging inside auto-recall (query expansion, embedding, or vector search). The plugin applies timeouts (query expansion: 5–25s, vector step: ~26s, whole recall stage: ~32s, chatComplete: 45s); if the gateway never responds, you should see a **timeout** log after that period.
 - **Temporarily disable auto-recall** (`autoRecall.enabled: false`) or **query expansion** (`queryExpansion.enabled: false`) and restart the gateway. If the agent starts responding, the hang was in that path (often gateway/LLM not responding). Re-enable after fixing the gateway or model config.
 
 Log location depends on your OpenClaw setup (often under `~/.openclaw/` or wherever the gateway is run).
@@ -449,7 +474,7 @@ This means the nano-tier LLM used for query expansion is failing - e.g. provider
 - **Fix:** Check which model is being used: `openclaw hybrid-mem verify` shows `queryExpansion.model` (or nano tier). Run `openclaw hybrid-mem verify --test-llm` to confirm it is reachable.
 - Add fallback models to `llm.nano` or explicitly set `queryExpansion.model` to a reliable model.
 - Set `queryExpansion.enabled: false` to disable query expansion if you want zero per-turn LLM calls.
-- **Log noise:** You see at most one "query expansion failed" (or legacy "HyDE generation failed") per turn. If the auto-recall vector step times out (30s), expansion is aborted silently (only "vector step timed out, using FTS-only recall" appears).
+- **Log noise:** You see at most one "query expansion failed" (or legacy "HyDE generation failed") per turn. If the auto-recall vector step times out (~26s), expansion is aborted silently (only "vector step timed out, using FTS-only recall" appears).
 
 ### 8. "400/404 model not found" from verify --test-llm
 

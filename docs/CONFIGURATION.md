@@ -99,12 +99,23 @@ Example: `"store": { "fuzzyDedupe": false, "classifyBeforeWrite": true, "classif
 
 ### Auto-recall options
 
+**Interactive enrichment:** Use a single field **`autoRecall.interactiveEnrichment`** so you do not have to mentally combine `queryExpansion.skipForInteractiveTurns` and `ambient.multiQuery`:
+
+| Value | Meaning |
+|--------|---------|
+| **`fast`** | Lowest latency and API cost on chat turns: **no HyDE** on the interactive path and **no ambient multi-query** (extra `runRecallPipelineQuery` calls). Main FTS + vector recall still runs when `retrieval.strategies` includes `semantic`. |
+| **`balanced`** (default) | Current behavior: respects **`queryExpansion.skipForInteractiveTurns`** (default `true`) and **`ambient.enabled`** / **`ambient.multiQuery`**. |
+| **`full`** | Richest: **HyDE** on interactive turns whenever **`queryExpansion.enabled`** is true (ignores **`skipForInteractiveTurns`** for the hot path), and allows the **ambient multi-query** path when `ambient` is configured. |
+
+Set **`interactiveEnrichment`** to **`fast`** for stable, cost-effective defaults; use **`full`** only when you accept higher latency and LLM spend.
+
 `autoRecall` can be `true` (defaults) or an object:
 
 ```json
 {
   "autoRecall": {
     "enabled": true,
+    "interactiveEnrichment": "fast",
     "maxTokens": 800,
     "maxPerMemoryChars": 0,
     "injectionFormat": "full",
@@ -155,6 +166,7 @@ Example: `"store": { "fuzzyDedupe": false, "classifyBeforeWrite": true, "classif
 | `progressiveIndexMaxTokens` | `300` when progressive | Token cap for the index block in progressive mode |
 | `progressiveGroupByCategory` | `false` | Group index lines by category for readability |
 | `progressivePinnedRecallCount` | `3` | In `progressive_hybrid`: facts with recallCount ≥ this or permanent decay are injected in full |
+| `interactiveEnrichment` | `balanced` | `fast` \| `balanced` \| `full` — unified control for HyDE + ambient multi-query on interactive turns; see table above |
 | `scopeFilter` | (none) | Multi-user: restrict auto-recall to global + matching scopes. `{ "userId": "alice", "agentId": "support-bot", "sessionId": "sess-xyz" }` — omit any to not filter by that dimension. See [MEMORY-SCOPING.md](MEMORY-SCOPING.md). |
 
 ### Retrieval directives

@@ -511,16 +511,15 @@ export class HybridMemoryContextEngine implements MinimalContextEngine {
    * Post-subagent cleanup: capture any session-scoped facts created by the sub-agent
    * and promote them to the appropriate scope.
    *
-   * Guard against double-processing: the subagent_ended hook in lifecycle/hooks.ts
-   * handles the primary fact capture pipeline. This method provides a lightweight
-   * secondary pass scoped to the ContextEngine lifecycle, and only runs on
-   * OpenClaw ≥ 2026.3.8. If a fact is already in the store it will be skipped
-   * by the hasDuplicate check.
+   * Guard against double-processing: OpenClaw's typed **`subagent_ended`** hook
+   * (`lifecycle/stage-cleanup.ts`) only performs ACTIVE-TASK.md checkpointing — not fact capture.
+   * This method provides a lightweight ContextEngine callback; primary fact capture is the
+   * child session's **agent_end** autoCapture path. If a fact is already in the store it will be
+   * skipped by the hasDuplicate check when that pipeline exists.
    *
    * NOTE: The current SDK interface does not pass the sub-agent's result text here.
-   * Full result-text capture is handled by the lifecycle/hooks.ts subagent_ended handler.
-   * When the SDK interface is extended to include result text, this method should parse
-   * it using the existing autoCapture logic (see lifecycle/hooks.ts agent_end handler).
+   * When the SDK exposes result text, parse it using the existing autoCapture logic
+   * (see lifecycle/hooks.ts agent_end handler).
    */
   async onSubagentEnded(params: { childSessionKey: string; reason: string }): Promise<void> {
     const { factsDb, logger } = this.opts;
@@ -556,7 +555,7 @@ export class HybridMemoryContextEngine implements MinimalContextEngine {
       // Until then, all sub-agent fact capture is delegated to:
       //   (a) The child session's own agent_end autoCapture hook (primary path — runs
       //       inside the child's session and writes directly to the shared FactsDB)
-      //   (b) The subagent_end hook in lifecycle/hooks.ts (active-task checkpoint only)
+      //   (b) The typed subagent_ended hook in lifecycle/stage-cleanup.ts (ACTIVE-TASK.md only; issue #966)
     } catch (err) {
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
         subsystem: "context-engine",

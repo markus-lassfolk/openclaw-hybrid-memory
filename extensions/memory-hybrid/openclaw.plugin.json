@@ -1,7 +1,7 @@
 {
   "id": "openclaw-hybrid-memory",
   "kind": "memory",
-  "version": "2026.3.310",
+  "version": "2026.4.10",
   "uiHints": {
     "embedding.provider": {
       "label": "Embedding Provider",
@@ -175,6 +175,10 @@
     "autoRecall.progressivePinnedRecallCount": {
       "label": "Progressive pinned recall count",
       "help": "In progressive_hybrid: facts with recallCount >= this or permanent decay are injected in full (default 3)"
+    },
+    "autoRecall.interactiveEnrichment": {
+      "label": "Interactive recall enrichment",
+      "help": "Single knob for chat-turn cost/latency: fast = no HyDE + no ambient multi-query; balanced (default) = respect queryExpansion.skipForInteractiveTurns and ambient.*; full = HyDE when query expansion is on + ambient multi-query path when ambient is configured."
     },
     "autoRecall.authFailure.enabled": {
       "label": "Auth failure auto-recall",
@@ -682,6 +686,11 @@
               },
               "summarizeModel": {
                 "type": "string"
+              },
+              "interactiveEnrichment": {
+                "type": "string",
+                "enum": ["fast", "balanced", "full"],
+                "description": "Unified control for interactive auto-recall: fast = lowest latency/cost (no HyDE, no ambient multi-query); balanced = default; full = richer (HyDE + ambient multi when configured)."
               },
               "authFailure": {
                 "type": "object",

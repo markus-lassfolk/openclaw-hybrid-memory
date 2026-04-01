@@ -1,6 +1,6 @@
 /**
  * Lifecycle stage: Cleanup (Phase 2.3).
- * Subagent_start/subagent_end handlers, stale session sweep timer, dispose.
+ * OpenClaw typed hooks **subagent_spawned** / **subagent_ended** (issue #966), stale session sweep timer, dispose.
  * Exports: consumePendingTaskSignals, registerCleanupHandlers, createStaleSweepTimer, getDispose.
  */
 
@@ -25,6 +25,38 @@ import type { LifecycleContext, SessionState } from "./types.js";
 
 const STALE_SESSION_TTL_MS = 30 * 60 * 1000; // 30 minutes
 const STALE_SWEEP_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
+
+/** OpenClaw core dispatch shapes — see issue #966 / runSubagentSpawned */
+type SubagentSpawnedEvent = {
+  childSessionKey?: string;
+  /** Legacy / alternate field names from older handlers */
+  sessionKey?: string;
+  label?: string;
+  task?: string;
+  agentId?: string;
+  runId?: string;
+};
+
+/** OpenClaw core dispatch shapes — see issue #966 / runSubagentEnded */
+type SubagentEndedEvent = {
+  targetSessionKey?: string;
+  sessionKey?: string;
+  label?: string;
+  success?: boolean;
+  outcome?: string;
+  error?: string;
+  reason?: string;
+  runId?: string;
+};
+
+function subagentEndedIsSuccess(ev: SubagentEndedEvent): boolean {
+  if (typeof ev.success === "boolean") return ev.success;
+  const o = (ev.outcome ?? "").toLowerCase();
+  if (!o) return true;
+  if (["error", "timeout", "killed", "failed", "failure"].includes(o)) return false;
+  if (["success", "completed", "ok", "done"].includes(o)) return true;
+  return true;
+}
 
 /**
  * Read all pending task signals from `memory/task-signals/*.json` and apply
@@ -276,7 +308,8 @@ export function getDispose(timerRef: ReturnType<typeof setInterval> | null, sess
 }
 
 /**
- * Register subagent_start and subagent_end handlers (active-task checkpoint + signal consumption).
+ * Register **subagent_spawned** and **subagent_ended** handlers (active-task checkpoint + signal consumption).
+ * Hook names must match OpenClaw `PLUGIN_HOOK_NAMES` (issue #966).
  */
 export function registerCleanupHandlers(
   api: ClawdbotPluginApi,
@@ -287,11 +320,12 @@ export function registerCleanupHandlers(
 ): void {
   if (!ctx.cfg.activeTask.enabled || !ctx.cfg.activeTask.autoCheckpoint) return;
 
-  api.on("subagent_start", async (event: unknown) => {
+  api.on("subagent_spawned", async (event: unknown) => {
     try {
-      const ev = event as { sessionKey?: string; label?: string; task?: string; agentId?: string };
-      const label = ev.label ?? ev.sessionKey ?? `subagent-${Date.now()}`;
-      const description = ev.task ?? `Subagent task (session: ${ev.sessionKey ?? "unknown"})`;
+      const ev = event as SubagentSpawnedEvent;
+      const childOrSession = ev.childSessionKey ?? ev.sessionKey;
+      const label = ev.label ?? childOrSession ?? `subagent-${Date.now()}`;
+      const description = ev.task ?? `Subagent task (session: ${childOrSession ?? "unknown"})`;
       const taskFile = await readActiveTaskFile(
         resolvedActiveTaskPath,
         parseDuration(ctx.cfg.activeTask.staleThreshold),
@@ -304,7 +338,7 @@ export function registerCleanupHandlers(
         label,
         description,
         status: "In progress",
-        subagent: ev.sessionKey,
+        subagent: childOrSession,
         started: existing?.started ?? now,
         updated: now,
       };
@@ -316,23 +350,23 @@ export function registerCleanupHandlers(
         api.context?.sessionKey,
       );
       if (writeResult.skipped) {
-        api.logger.debug?.(`memory-hybrid: skipped ACTIVE-TASK.md write in subagent_start: ${writeResult.reason}`);
+        api.logger.debug?.(`memory-hybrid: skipped ACTIVE-TASK.md write in subagent_spawned: ${writeResult.reason}`);
       } else {
         api.logger.info?.(`memory-hybrid: auto-checkpoint — created active task [${label}] for subagent spawn`);
       }
     } catch (err) {
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-        operation: "active-task-subagent-start",
+        operation: "active-task-subagent-spawned",
         subsystem: "active-task",
       });
-      api.logger.debug?.(`memory-hybrid: active task auto-checkpoint on subagent_start failed: ${err}`);
+      api.logger.debug?.(`memory-hybrid: active task auto-checkpoint on subagent_spawned failed: ${err}`);
     }
   });
 
-  api.on("subagent_end", async (event: unknown) => {
+  api.on("subagent_ended", async (event: unknown) => {
     try {
-      const ev = event as { sessionKey?: string; label?: string; success?: boolean; error?: string };
-      const label = ev.label ?? ev.sessionKey;
+      const ev = event as SubagentEndedEvent;
+      const label = ev.label ?? ev.targetSessionKey ?? ev.sessionKey;
       const staleMinutes = parseDuration(ctx.cfg.activeTask.staleThreshold);
       if (!label) {
         await consumePendingTaskSignals(
@@ -370,7 +404,7 @@ export function registerCleanupHandlers(
       }
 
       const now = new Date().toISOString();
-      const newStatus = ev.success === false ? "Failed" : "Done";
+      const newStatus = subagentEndedIsSuccess(ev) ? "Done" : "Failed";
 
       if (newStatus === "Done") {
         const { updated, completed } = completeTask(taskFile.active, label);
@@ -383,7 +417,7 @@ export function registerCleanupHandlers(
           );
           if (writeResult.skipped) {
             api.logger.debug?.(
-              `memory-hybrid: skipped ACTIVE-TASK.md write in subagent_end (Done): ${writeResult.reason}`,
+              `memory-hybrid: skipped ACTIVE-TASK.md write in subagent_ended (Done): ${writeResult.reason}`,
             );
           } else {
             if (ctx.cfg.activeTask.flushOnComplete) {
@@ -391,16 +425,17 @@ export function registerCleanupHandlers(
               await flushCompletedTaskToMemory(completed, memoryDir).catch(() => {});
             }
             api.logger.info?.(
-              `memory-hybrid: auto-checkpoint — updated task [${label}] to ${newStatus} on subagent_end`,
+              `memory-hybrid: auto-checkpoint — updated task [${label}] to ${newStatus} on subagent_ended`,
             );
           }
         }
       } else {
+        const errHint = ev.error ?? ev.reason;
         const updatedEntry: ActiveTaskEntry = {
           ...existingTask,
           status: "Failed",
           updated: now,
-          next: ev.error ? `Fix: ${ev.error.slice(0, 100)}` : existingTask.next,
+          next: errHint ? `Fix: ${String(errHint).slice(0, 100)}` : existingTask.next,
         };
         const updated = upsertTask(taskFile.active, updatedEntry);
         const writeResult = await writeActiveTaskFileGuarded(
@@ -411,10 +446,12 @@ export function registerCleanupHandlers(
         );
         if (writeResult.skipped) {
           api.logger.debug?.(
-            `memory-hybrid: skipped ACTIVE-TASK.md write in subagent_end (Failed): ${writeResult.reason}`,
+            `memory-hybrid: skipped ACTIVE-TASK.md write in subagent_ended (Failed): ${writeResult.reason}`,
           );
         } else {
-          api.logger.info?.(`memory-hybrid: auto-checkpoint — updated task [${label}] to ${newStatus} on subagent_end`);
+          api.logger.info?.(
+            `memory-hybrid: auto-checkpoint — updated task [${label}] to ${newStatus} on subagent_ended`,
+          );
         }
       }
 
@@ -427,10 +464,10 @@ export function registerCleanupHandlers(
       );
     } catch (err) {
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-        operation: "active-task-subagent-end",
+        operation: "active-task-subagent-ended",
         subsystem: "active-task",
       });
-      api.logger.debug?.(`memory-hybrid: active task auto-checkpoint on subagent_end failed: ${err}`);
+      api.logger.debug?.(`memory-hybrid: active task auto-checkpoint on subagent_ended failed: ${err}`);
     }
   });
 }

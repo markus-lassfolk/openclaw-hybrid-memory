@@ -3,7 +3,7 @@
  * Owns the interactive recall path for chat turns.
  * Runs the bounded recall pipeline: degradation check, FTS+vector, ambient, directives,
  * entity lookup, scoring. Returns either degraded/empty prependContext or RecallResult for injection.
- * Config: autoRecall.enabled. Timeout: 35s.
+ * Config: autoRecall.enabled. Stage wall-clock: INTERACTIVE_RECALL_STAGE_TIMEOUT_MS (abort).
  */
 
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
@@ -20,7 +20,6 @@ import { capturePluginError } from "../services/error-reporter.js";
 import { formatNarrativeRange, recallNarrativeSummaries } from "../services/narrative-recall.js";
 import { yieldEventLoop } from "../utils/event-loop-yield.js";
 import { resolveEntityLookupNames } from "../utils/entity-lookup-resolve.js";
-import { withTimeout } from "../utils/timeout.js";
 import { estimateTokens } from "../utils/text.js";
 import { isConsolidatedDerivedFact } from "../utils/consolidation-controls.js";
 import type { LifecycleContext, RecallResult, RecallStageResult, SessionState } from "./types.js";
@@ -31,6 +30,14 @@ import {
 } from "../services/retrieval-mode-policy.js";
 
 const RECALL_STAGE_TIMEOUT_MS = INTERACTIVE_RECALL_STAGE_TIMEOUT_MS;
+
+function emptyRecallStage(): RecallStageResult {
+  return { kind: "empty", prependContext: undefined };
+}
+
+function recallAborted(signal: AbortSignal | undefined): boolean {
+  return signal?.aborted === true;
+}
 
 function clipNarrativeText(text: string, maxChars = 360): string {
   if (text.length <= maxChars) return text;
@@ -43,7 +50,22 @@ export async function runRecallStage(
   ctx: LifecycleContext,
   sessionState: SessionState,
 ): Promise<RecallStageResult | null> {
-  return withTimeout(RECALL_STAGE_TIMEOUT_MS, () => runRecall(event, api, ctx, sessionState));
+  const ac = new AbortController();
+  const { signal } = ac;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      runRecall(event, api, ctx, sessionState, signal),
+      new Promise<RecallStageResult | null>((resolve) => {
+        timer = setTimeout(() => {
+          ac.abort();
+          resolve(null);
+        }, RECALL_STAGE_TIMEOUT_MS);
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
 }
 
 async function runRecall(
@@ -51,6 +73,7 @@ async function runRecall(
   api: ClawdbotPluginApi,
   ctx: LifecycleContext,
   sessionState: SessionState,
+  signal?: AbortSignal,
 ): Promise<RecallStageResult> {
   const e = event as { prompt?: string };
   if (!e.prompt || e.prompt.length < 5) {
@@ -60,6 +83,8 @@ async function runRecall(
   ctx.recallInFlightRef.value++;
   const recallStartMs = Date.now();
   try {
+    if (recallAborted(signal)) return emptyRecallStage();
+
     const { currentAgentIdRef } = ctx;
     const { resolveSessionKey, ambientSeenFactsMap, ambientLastEmbeddingMap, pruneSessionMaps, sessionStartSeen } =
       sessionState;
@@ -68,6 +93,7 @@ async function runRecall(
 
     // Let pending gateway I/O (health RPCs, WebSocket) run before heavy sync work (#931).
     await yieldEventLoop();
+    if (recallAborted(signal)) return emptyRecallStage();
 
     const fmt = ctx.cfg.autoRecall.injectionFormat;
     const isProgressive = fmt === "progressive" || fmt === "progressive_hybrid";
@@ -102,6 +128,9 @@ async function runRecall(
       ctx.cfg.autoRecall,
       ctx.cfg.queryExpansion,
       ctx.cfg.retrieval,
+    );
+    api.logger.debug?.(
+      `memory-hybrid: interactive enrichment=${interactivePolicy.interactiveEnrichment} (HyDE=${interactivePolicy.allowHyde}, ambientMulti=${interactivePolicy.allowAmbientMultiQuery})`,
     );
     const { degradationQueueDepth, degradationMaxLatencyMs } = interactivePolicy;
     const forceDegraded = degradationQueueDepth > 0 && ctx.recallInFlightRef.value > degradationQueueDepth;
@@ -241,6 +270,7 @@ async function runRecall(
     }
 
     await yieldEventLoop();
+    if (recallAborted(signal)) return emptyRecallStage();
 
     const recallOpts = {
       tierFilter,
@@ -283,6 +313,8 @@ async function runRecall(
     const ambientSeenFacts = ambientSeenFactsMap.get(sessionScopeKey)!;
     const ambientLastEmbedding = ambientLastEmbeddingMap.get(sessionScopeKey) ?? null;
 
+    if (recallAborted(signal)) return emptyRecallStage();
+
     let promptEmbedding: number[] | null = null;
     if (
       interactivePolicy.allowAmbientMultiQuery &&
@@ -297,12 +329,16 @@ async function runRecall(
       }
     }
 
+    if (recallAborted(signal)) return emptyRecallStage();
+
     let candidates = await runRecallPipelineQuery(e.prompt, limit, pipelineDeps, hydeUsedRef, {
       hydeLabel: "HyDE",
       errorPrefix: "auto-recall-",
       precomputedVector: promptEmbedding ?? undefined,
       policy: interactivePolicy,
     });
+
+    if (recallAborted(signal)) return emptyRecallStage();
 
     if (interactivePolicy.allowAmbientMultiQuery && ambientCfg.enabled && ambientCfg.multiQuery) {
       try {
@@ -324,6 +360,7 @@ async function runRecall(
         if (extraQueries.length > 0) {
           const extraResultSets: SearchResult[][] = [candidates];
           for (const q of extraQueries) {
+            if (recallAborted(signal)) return emptyRecallStage();
             await yieldEventLoop();
             try {
               const qResults = await runRecallPipelineQuery(q.text, Math.ceil(limit / 2), pipelineDeps, hydeUsedRef, {
@@ -409,6 +446,7 @@ async function runRecall(
     }
 
     await yieldEventLoop();
+    if (recallAborted(signal)) return emptyRecallStage();
 
     const promptLower = e.prompt.toLowerCase();
     const { entityLookup } = ctx.cfg.autoRecall;
@@ -465,10 +503,12 @@ async function runRecall(
 
     if (directivesCfg.enabled) {
       try {
+        if (recallAborted(signal)) return emptyRecallStage();
         if (directivesCfg.entityMentioned && entityLookup.enabled) {
           const entityLookupNames = resolveEntityLookupNames(entityLookup, ctx.factsDb);
           if (entityLookupNames.length > 0) {
             for (const entity of entityLookupNames) {
+              if (recallAborted(signal)) return emptyRecallStage();
               if (!promptLower.includes(entity.toLowerCase())) continue;
               if (!canRunDirective()) break;
               const results = await runRecallPipelineQuery(entity, directiveLimit, pipelineDeps, hydeUsedRef, {
@@ -485,6 +525,7 @@ async function runRecall(
         }
         if (directivesCfg.keywords.length > 0) {
           for (const keyword of directivesCfg.keywords) {
+            if (recallAborted(signal)) return emptyRecallStage();
             if (!promptLower.includes(keyword.toLowerCase())) continue;
             if (!canRunDirective()) break;
             const results = await runRecallPipelineQuery(keyword, directiveLimit, pipelineDeps, hydeUsedRef, {
@@ -498,6 +539,7 @@ async function runRecall(
           }
         }
         for (const [taskType, triggers] of Object.entries(directivesCfg.taskTypes)) {
+          if (recallAborted(signal)) return emptyRecallStage();
           const hit = triggers.some((t) => promptLower.includes(t.toLowerCase()));
           if (!hit || !canRunDirective()) continue;
           const results = await runRecallPipelineQuery(taskType, directiveLimit, pipelineDeps, hydeUsedRef, {
@@ -510,6 +552,7 @@ async function runRecall(
           addDirectiveResults(results, `taskType:${taskType}`);
         }
         if (directivesCfg.sessionStart) {
+          if (recallAborted(signal)) return emptyRecallStage();
           const sessionKey = resolveSessionKey(e, api) ?? currentAgentIdRef.value ?? "default";
           if (!sessionStartSeen.has(sessionKey) && canRunDirective()) {
             const results = await runRecallPipelineQuery("session start", directiveLimit, pipelineDeps, hydeUsedRef, {

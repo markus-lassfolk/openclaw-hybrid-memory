@@ -12,6 +12,37 @@ No changes yet.
 
 ---
 
+## [2026.4.10] - 2026-04-01
+
+### Release summary
+
+Follow-up to **2026.3.310** with **bounded interactive auto-recall**, a single **`autoRecall.interactiveEnrichment`** control, **OpenClaw hook alignment ([#966](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/966))**, **entity auto-lookup from facts ([#952](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/952))**, clearer **mode / Phase 1 documentation**, **operator guidance for recall timing logs**, and **CI** updates for current GitHub Actions runners.
+
+### Added
+
+- **`autoRecall.interactiveEnrichment`** (`"fast"` \| `"balanced"` \| `"full"`): one setting couples interactive-turn HyDE (when query expansion allows) and ambient multi-query behavior. **`fast`** turns both off for shorter, more predictable chat-turn recall; mode presets default to **`fast`** where auto-recall is on. Schema and labels in `openclaw.plugin.json`; see [CONFIGURATION.md](docs/CONFIGURATION.md).
+- **Regression test** [`extensions/memory-hybrid/tests/config-presets-doc-sync.test.ts`](extensions/memory-hybrid/tests/config-presets-doc-sync.test.ts): asserts `PRESET_OVERRIDES` and post-parse Phase 1 behavior stay aligned with [CONFIGURATION-MODES.md](docs/CONFIGURATION-MODES.md).
+- **Entity lookup from the fact store when your list is empty** ([#952](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/952)):** `autoFromFacts` (default `true`) and `maxAutoEntities` (default 500, max 2000) resolve names via `FactsDb.getKnownEntities()` for merge and retrieval directives; deterministic sort before capping. Docs: [CONFIGURATION.md](docs/CONFIGURATION.md), [CONFIGURATION-MODES.md](docs/CONFIGURATION-MODES.md), [EXAMPLES.md](docs/EXAMPLES.md). Tests: `entity-lookup-resolve.test.ts`.
+
+### Changed
+
+- **Interactive recall stage** (`lifecycle/stage-recall.ts`): **~32s** wall-clock cap via `AbortController` + race; inner `runRecall` respects **`AbortSignal`** at await boundaries so **`recallInFlightRef`** always decrements. Vector step budget remains **~26s** in policy ([`retrieval-mode-policy.ts`](extensions/memory-hybrid/services/retrieval-mode-policy.ts)); aligns with [TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) timeout guidance.
+- **Lifecycle hooks ([#966](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/966)):** Subagent lifecycle uses OpenClaw’s **`subagent_spawned`** / **`subagent_ended`** events with tolerant payload shapes; **`before_consolidation`** is **not** registered (not a core hook — avoids noisy no-ops). WAL flush before compaction stays on **`before_compaction`** only.
+- **Mode presets** (`config/utils.ts`): presets that enable auto-recall set **`interactiveEnrichment: "fast"`** for consistent latency/cost behavior.
+- **CI:** `actions/checkout@v6`, `dorny/paths-filter@v4`, and Node **24**-oriented JavaScript action defaults (`FORCE_JAVASCRIPT_ACTIONS_TO_NODE24` in [`.github/workflows/ci.yml`](.github/workflows/ci.yml)).
+
+### Fixed
+
+- **Tests:** Stabilized reinforcement ranking case when **`diversityWeight`** is 0 (`facts-db` tests).
+
+### Documentation
+
+- **[CONFIGURATION-MODES.md](docs/CONFIGURATION-MODES.md):** Preset intent vs **Phase 1** overrides; feature matrix aligned with **`PRESET_OVERRIDES`**; link to preset sync test.
+- **[TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md):** New section **“Interpreting recall pipeline timing logs (debug)”** — `OPENCLAW_LOG_LEVEL=debug`, FTS/ embed/vector/merge meanings, timeout vs FTS-heavy paths, **`recall degraded`**, fair A/B testing tips.
+- **[CONFIGURATION.md](docs/CONFIGURATION.md):** `interactiveEnrichment` documented alongside auto-recall settings.
+
+---
+
 ## [2026.3.310] - 2026-03-31
 
 ### Release summary
@@ -1032,7 +1063,8 @@ Major feature release including procedural memory, directive extraction, reinfor
 
 ---
 
-[Unreleased]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.3.310...HEAD
+[Unreleased]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.4.10...HEAD
+[2026.4.10]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.3.310...v2026.4.10
 [2026.3.310]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.3.301...v2026.3.310
 [2026.3.301]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.3.300...v2026.3.301
 [2026.3.300]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.3.293...v2026.3.300
