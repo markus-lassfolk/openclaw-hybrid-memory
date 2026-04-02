@@ -41,7 +41,7 @@ Outdated installs now check the latest published plugin version in the backgroun
 
 Or with npm directly: `npm i openclaw-hybrid-memory` in your OpenClaw extensions folder if you manage it yourself.
 
-**Manual install from a `.tgz`:** npm packages never ship `node_modules`; after `tar -xzf` you must run **`npm install --omit=dev`** or **`npm ci`**. The published artifact includes **`npm-shrinkwrap.json`** (npm strips `package-lock.json` from published tarballs by design; `npm ci` uses the shrinkwrap the same way). Let the command finish—**`postinstall`** installs and rebuilds **`@lancedb/lancedb`** for your platform.
+**Manual install from a `.tgz`:** npm packages never ship `node_modules`; after `tar -xzf` you must run **`npm install --omit=dev`** or **`npm ci --omit=dev`** (plain `npm ci` also installs devDependencies). The published artifact includes **`npm-shrinkwrap.json`** (npm strips `package-lock.json` from published tarballs by design; `npm ci` uses the shrinkwrap the same way). Let the command finish—**`postinstall`** installs and rebuilds **`@lancedb/lancedb`** for your platform.
 
 **2. Configure.** Set your OpenAI API key and enable the plugin. Easiest: run `openclaw hybrid-mem install` to merge full defaults (memory slot, compaction prompts, nightly session-distillation job) into `~/.openclaw/openclaw.json`, then set `plugins.entries["openclaw-hybrid-memory"].config.embedding.apiKey` to your key.
 

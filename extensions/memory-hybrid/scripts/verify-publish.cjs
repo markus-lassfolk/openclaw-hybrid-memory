@@ -5,9 +5,8 @@
  * included in package.json "files" and exist on disk.
  */
 const fs = require("node:fs");
-const os = require("node:os");
 const path = require("node:path");
-const { execFileSync, execSync } = require("node:child_process");
+const { execFileSync } = require("node:child_process");
 
 const root = path.resolve(__dirname, "..");
 const pkgPath = path.join(root, "package.json");
@@ -88,37 +87,45 @@ if (!shrinkwrapFilesListed) {
 
 let packIncludesShrinkwrap = false;
 let packCheckErrored = false;
-const tmpPack = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-verify-pack-"));
+const npmCmd = process.platform === "win32" ? "npm.cmd" : "npm";
 try {
-  execSync(`npm pack --pack-destination "${tmpPack}" --silent`, {
-    cwd: root,
-    encoding: "utf8",
-    stdio: ["ignore", "pipe", "inherit"],
-  });
-  const tgz = fs.readdirSync(tmpPack).find((f) => f.endsWith(".tgz"));
-  if (!tgz) throw new Error("npm pack did not produce a .tgz file");
-  const list = execFileSync("tar", ["tzf", path.join(tmpPack, tgz)], {
-    encoding: "utf8",
-  });
-  packIncludesShrinkwrap = list.includes("package/npm-shrinkwrap.json");
+  const stdout = execFileSync(
+    npmCmd,
+    ["pack", "--dry-run", "--json", "--silent"],
+    {
+      cwd: root,
+      encoding: "utf8",
+      maxBuffer: 16 * 1024 * 1024,
+    },
+  );
+  const jsonStart = stdout.indexOf("[");
+  const jsonEnd = stdout.lastIndexOf("]") + 1;
+  if (jsonStart < 0 || jsonEnd <= jsonStart) {
+    throw new Error("npm pack --dry-run --json did not return a JSON array");
+  }
+  const packRows = JSON.parse(stdout.slice(jsonStart, jsonEnd));
+  const first = packRows[0];
+  const files = Array.isArray(first?.files)
+    ? first.files.map((f) => (typeof f === "string" ? f : f.path)).filter(Boolean)
+    : [];
+  packIncludesShrinkwrap = files.includes("npm-shrinkwrap.json");
 } catch (e) {
+  const message = e instanceof Error ? e.message : String(e);
   console.error(
-    "FAIL: could not verify packed tarball contains package/npm-shrinkwrap.json:",
-    e.message,
+    "FAIL: could not verify packed file list includes npm-shrinkwrap.json:",
+    message,
   );
   failed = true;
   packCheckErrored = true;
-} finally {
-  fs.rmSync(tmpPack, { recursive: true, force: true });
 }
 if (!packIncludesShrinkwrap && !packCheckErrored) {
   console.error(
-    "FAIL: published .tgz must include package/npm-shrinkwrap.json — without it, npm ci / npm install after extract cannot resolve deps (e.g. @lancedb/lancedb)",
+    "FAIL: published pack must list npm-shrinkwrap.json — without it, npm ci / npm install after extract cannot resolve deps (e.g. @lancedb/lancedb)",
   );
   failed = true;
 } else if (packIncludesShrinkwrap) {
   console.log(
-    "OK: packed tarball contains npm-shrinkwrap.json (npm omits package-lock.json from publishes by design)",
+    "OK: npm pack --dry-run lists npm-shrinkwrap.json (npm omits package-lock.json from publishes by design)",
   );
 }
 
