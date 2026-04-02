@@ -591,9 +591,16 @@
                 "enum": ["full", "short", "minimal", "progressive", "progressive_hybrid"]
               },
               "recallTiming": {
-                "type": "string",
-                "enum": ["off", "basic", "verbose"],
-                "description": "Structured recall timing logs: off=disabled, basic=completed events only, verbose=started+completed with timestamps."
+                "oneOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "string",
+                    "enum": ["off", "basic", "verbose"]
+                  }
+                ],
+                "description": "Structured recall timing logs: false/off=disabled, true/basic=completed events only, verbose=started+completed with timestamps."
               },
               "progressiveMaxCandidates": {
                 "type": "number"

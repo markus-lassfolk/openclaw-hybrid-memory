@@ -90,12 +90,16 @@ async function runRecall(
     op: "auto-recall-stage",
   });
   const recallStageStartedAt = recallTiming.phaseStarted("recall_stage_run", { prompt_chars: e.prompt.length });
+  let recallStageCompleted = false;
+  let recallStageFields: Record<string, string | number | boolean> | undefined;
   const completeStage = (result: RecallStageResult): RecallStageResult => {
-    recallTiming.phaseCompleted("recall_stage_run", recallStageStartedAt, {
+    recallStageFields = {
       result_kind: result.kind,
       candidate_count: result.kind === "full" ? result.result.candidates.length : 0,
       degraded: result.kind === "degraded",
-    });
+    };
+    recallTiming.phaseCompleted("recall_stage_run", recallStageStartedAt, recallStageFields);
+    recallStageCompleted = true;
     return result;
   };
   const recallSpan = recallTiming.span;
@@ -760,6 +764,15 @@ async function runRecall(
       ambientSeenFacts: ambientCfg.enabled && ambientCfg.multiQuery ? ambientSeenFacts : null,
     };
     return completeStage({ kind: "full", result });
+  } catch (err) {
+    if (!recallStageCompleted) {
+      recallTiming.phaseCompleted("recall_stage_run", recallStageStartedAt, {
+        ...(recallStageFields ?? {}),
+        status: "error",
+      });
+      recallStageCompleted = true;
+    }
+    throw err;
   } finally {
     ctx.recallInFlightRef.value--;
   }
