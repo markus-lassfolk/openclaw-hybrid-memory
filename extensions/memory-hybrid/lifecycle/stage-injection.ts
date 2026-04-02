@@ -8,6 +8,7 @@
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import { getCronModelConfig, getDefaultCronModel } from "../config.js";
 import { capturePluginError } from "../services/error-reporter.js";
+import { createRecallSpan, createRecallTimingLogger } from "../services/recall-timing.js";
 import { estimateTokens, estimateTokensForDisplay, formatProgressiveIndexLine } from "../utils/text.js";
 import { withTimeout } from "../utils/timeout.js";
 import type { LifecycleContext, RecallResult } from "./types.js";
@@ -69,6 +70,13 @@ async function runInjection(
   api: ClawdbotPluginApi,
   ctx: LifecycleContext,
 ): Promise<{ prependContext: string } | undefined> {
+  const recallTiming = createRecallTimingLogger({
+    logger: api.logger,
+    mode: ctx.cfg.autoRecall.recallTiming ?? "off",
+    span: recallResult.recallSpan || createRecallSpan("recall-injection"),
+    op: "auto-recall-injection",
+  });
+
   const wrapRecalledContext = (content: string): string =>
     content ? `<recalled-context>\n${content}\n</recalled-context>` : "";
 
@@ -303,6 +311,9 @@ async function runInjection(
   let memoryContext = lines.join("\n");
 
   if (summarizeWhenOverBudget && lines.length < candidates.length) {
+    const summarizeStartedAt = recallTiming.phaseStarted("injection_summarize", {
+      candidate_count: candidates.length,
+    });
     const fullBullets = candidates
       .map((x) => {
         let text = useSummaryInInjection && x.entry.summary ? x.entry.summary : x.entry.text;
@@ -337,6 +348,15 @@ async function runInjection(
         memoryContext = summary;
         usedTokens = estimateTokens(header + memoryContext + footer);
         api.logger.info?.(`memory-hybrid: over budget — injected LLM summary (~${usedTokens} tokens)`);
+        recallTiming.phaseCompleted("injection_summarize", summarizeStartedAt, {
+          status: "ok",
+          summary_chars: summary.length,
+        });
+      } else {
+        recallTiming.phaseCompleted("injection_summarize", summarizeStartedAt, {
+          status: "empty",
+          summary_chars: 0,
+        });
       }
     } catch (err) {
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
@@ -344,6 +364,7 @@ async function runInjection(
         subsystem: "auto-recall",
       });
       api.logger.warn(`memory-hybrid: summarize-when-over-budget failed: ${err}`);
+      recallTiming.phaseCompleted("injection_summarize", summarizeStartedAt, { status: "error" });
     }
   }
 

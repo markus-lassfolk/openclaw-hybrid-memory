@@ -138,6 +138,31 @@ Installing at this level means Node's module resolution finds it by traversing u
 
 Then set `embedding.provider: "onnx"` in your plugin config. Models are auto-downloaded from HuggingFace on first use. `onnxruntime-node` is not listed as a dependency of this package — it is a ~513 MB optional native binary that most users do not need. The plugin detects its absence and shows a clear error if you configure the `onnx` provider without installing it.
 
+## Recall Timing Diagnostics
+
+Set `autoRecall.recallTiming` to:
+
+- `off` (default): no structured recall timing events
+- `basic`: completed events with duration/counters
+- `verbose`: started+completed events plus ISO timestamps
+
+Example:
+
+```json
+"autoRecall": {
+  "enabled": true,
+  "recallTiming": "basic"
+}
+```
+
+Operator workflow:
+
+```bash
+openclaw logs --follow | rg 'memory-hybrid: recall span='
+```
+
+The recall logs include a shared `span` plus `phase`, `event`, `duration_ms`, and counts (for example `hits`, `fts_rows`, `merged_rows`) so you can attribute latency across FTS, embedding, LanceDB/vector search, merge, and stage-level orchestration.
+
 ## Credits
 
 Based on the design in **[Give Your Clawdbot Permanent Memory](https://clawdboss.ai/posts/give-your-clawdbot-permanent-memory)** (Clawdboss.ai). The plugin has since been extended with auto-capture, auto-recall, decay/TTL, auto-classify, token caps, consolidation, verify/uninstall CLI, and more — see the [repo README](../../README.md) and [docs/](../../docs/).

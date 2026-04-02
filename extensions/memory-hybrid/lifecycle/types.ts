@@ -86,6 +86,7 @@ export interface RecallResult {
   hotBlock: string;
   procedureBlock: string;
   withProcedures: (s: string) => string;
+  recallSpan: string;
   recallStartMs: number;
   degradationMaxLatencyMs: number;
   injectionFormat: "full" | "short" | "minimal" | "progressive" | "progressive_hybrid";

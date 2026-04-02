@@ -23,6 +23,7 @@ import { computeDynamicSalience } from "../utils/salience.js";
 import type { EmbeddingProvider } from "./embeddings.js";
 import { shouldSuppressEmbeddingError } from "./embeddings.js";
 import { expandQueryWithHyde } from "./hyde-helper.js";
+import { createRecallSpan, createRecallTimingLogger } from "./recall-timing.js";
 import { DEFAULT_INTERACTIVE_RECALL_POLICY, type InteractiveRecallPolicy } from "./retrieval-mode-policy.js";
 import { yieldEventLoop } from "../utils/event-loop-yield.js";
 
@@ -60,6 +61,7 @@ export interface RecallPipelineCfg {
   queryExpansion: QueryExpansionConfig;
   retrievalStrategies: Array<"semantic" | "fts5" | "graph">;
   memoryTieringEnabled: boolean;
+  recallTiming?: "off" | "basic" | "verbose";
   /** Passed through to getCronModelConfig/getLLMModelPreference — the raw cfg object. */
   rawCfg: Parameters<typeof getCronModelConfig>[0];
 }
@@ -111,6 +113,8 @@ export async function runRecallPipelineQuery(
     limitHydeOnce?: boolean;
     precomputedVector?: number[];
     policy?: InteractiveRecallPolicy;
+    timingSpan?: string;
+    timingOp?: string;
   },
 ): Promise<SearchResult[]> {
   const { factsDb, vectorDb, embeddings, openai, cfg, recallOpts, minScore, pendingLLMWarnings, logger } = deps;
@@ -120,37 +124,60 @@ export async function runRecallPipelineQuery(
   const trimmed = query.trim();
   if (!trimmed) return [];
 
-  const stageMs = { fts: 0, embed: 0, vector: 0, merge: 0 };
-  let t0 = Date.now();
+  const useSemantic = cfg.retrievalStrategies.includes("semantic");
+  const recallTiming = createRecallTimingLogger({
+    logger,
+    mode: cfg.recallTiming ?? "off",
+    span: opts?.timingSpan ?? createRecallSpan("recall"),
+    op: opts?.timingOp ?? `${opts?.errorPrefix ?? policy.mode}-pipeline`,
+  });
+  const runStartedAt = recallTiming.phaseStarted("pipeline_run", {
+    query_chars: trimmed.length,
+    limit: limitNum,
+    semantic_enabled: useSemantic,
+  });
 
+  const stageMs = { fts: 0, embed: 0, vector: 0, merge: 0 };
+
+  const ftsStartedAt = recallTiming.phaseStarted("fts_search", { limit: limitNum });
+  let t0 = Date.now();
   let sqliteResults: SearchResult[] = [];
+  let entityLookupRows = 0;
   if (opts?.entity) {
-    sqliteResults = factsDb
+    const entityResults = factsDb
       .lookup(opts.entity, undefined, undefined, { scopeFilter: recallOpts.scopeFilter })
       .slice(0, limitNum);
+    entityLookupRows = entityResults.length;
+    sqliteResults = entityResults;
   }
   const ftsResults = factsDb.search(trimmed, limitNum, recallOpts);
   stageMs.fts = Date.now() - t0;
   sqliteResults = [...sqliteResults, ...ftsResults];
+  recallTiming.phaseCompleted("fts_search", ftsStartedAt, {
+    fts_rows: ftsResults.length,
+    entity_lookup_rows: entityLookupRows,
+    sqlite_rows: sqliteResults.length,
+  });
 
   // FTS + lookup are synchronous SQLite — yield so gateway WebSocket/health can run (#931).
   await yieldEventLoop();
 
   let lanceResults: SearchResult[] = [];
-  const useSemantic = cfg.retrievalStrategies.includes("semantic");
 
   if (useSemantic) {
+    const vectorStepStartedAt = recallTiming.phaseStarted("vector_step");
+    let vectorStepStatus = "ok";
     const directiveAbort = new AbortController();
     try {
       const vectorStepPromise = (async (): Promise<SearchResult[]> => {
         let textToEmbed = trimmed;
         const allowHyde =
           policy.allowHyde && cfg.queryExpansion.enabled && (!opts?.limitHydeOnce || !hydeUsedRef.value);
-        t0 = Date.now();
 
         if (allowHyde) {
           if (opts?.limitHydeOnce) hydeUsedRef.value = true;
           if (!directiveAbort.signal.aborted) {
+            const hydeStartedAt = recallTiming.phaseStarted("hyde_generation");
             textToEmbed = await expandQueryWithHyde({
               query: trimmed,
               rawCfg: cfg.rawCfg,
@@ -164,6 +191,10 @@ export async function runRecallPipelineQuery(
               subsystem: "auto-recall",
               operation: `${opts?.errorPrefix ?? ""}hyde-generation`,
             });
+            recallTiming.phaseCompleted("hyde_generation", hydeStartedAt, {
+              input_chars: trimmed.length,
+              output_chars: textToEmbed.length,
+            });
           }
         }
 
@@ -176,8 +207,13 @@ export async function runRecallPipelineQuery(
           throw abortError;
         }
 
+        const usePrecomputedVector = Boolean(opts?.precomputedVector) && textToEmbed === trimmed;
+        const embedStartedAt = recallTiming.phaseStarted("embed_query", {
+          precomputed_vector: usePrecomputedVector,
+        });
+        t0 = Date.now();
         const vector =
-          opts?.precomputedVector && textToEmbed === trimmed
+          usePrecomputedVector
             ? opts.precomputedVector
             : await embedWithAbortRace(
                 embeddings.embed(textToEmbed),
@@ -185,10 +221,19 @@ export async function runRecallPipelineQuery(
                 `recall pipeline timed out after ${policy.vectorStepTimeoutMs}ms`,
               );
         stageMs.embed = Date.now() - t0;
+        recallTiming.phaseCompleted("embed_query", embedStartedAt, {
+          precomputed_vector: usePrecomputedVector,
+          input_chars: textToEmbed.length,
+        });
+
+        const vectorStartedAt = recallTiming.phaseStarted("lancedb_search", {
+          limit: limitNum * 2,
+          min_score: minScore,
+        });
         t0 = Date.now();
-        let results = await vectorDb.search(vector, limitNum * 2, minScore);
+        const rawResults = await vectorDb.search(vector, limitNum * 2, minScore);
         stageMs.vector = Date.now() - t0;
-        results = filterByScope(results, (id, o) => factsDb.getById(id, o), recallOpts.scopeFilter);
+        let results = filterByScope(rawResults, (id, o) => factsDb.getById(id, o), recallOpts.scopeFilter);
         results = results.map((r) => {
           const fullEntry = factsDb.getById(r.entry.id);
           if (fullEntry) {
@@ -197,6 +242,10 @@ export async function runRecallPipelineQuery(
             return { ...r, entry: fullEntry, score: controlledScore };
           }
           return r;
+        });
+        recallTiming.phaseCompleted("lancedb_search", vectorStartedAt, {
+          raw_hits: rawResults.length,
+          hits: results.length,
         });
         return results;
       })();
@@ -224,6 +273,7 @@ export async function runRecallPipelineQuery(
       }
     } catch (err) {
       const isTimeout = err instanceof Error && err.message.includes("timed out");
+      vectorStepStatus = isTimeout ? "timeout" : "error";
       if (isTimeout) logger.warn(`memory-hybrid: ${err.message}, using FTS-only recall`);
       else {
         if (!shouldSuppressEmbeddingError(err)) {
@@ -235,14 +285,25 @@ export async function runRecallPipelineQuery(
         }
         logger.warn(`memory-hybrid: ${opts?.errorPrefix ?? ""}vector recall failed: ${err}`);
       }
+    } finally {
+      recallTiming.phaseCompleted("vector_step", vectorStepStartedAt, {
+        status: vectorStepStatus,
+        hits: lanceResults.length,
+      });
     }
   }
 
   await yieldEventLoop();
 
+  const mergeStartedAt = recallTiming.phaseStarted("merge_results");
   t0 = Date.now();
   let results = mergeResults(sqliteResults, lanceResults, limitNum, factsDb);
   stageMs.merge = Date.now() - t0;
+  recallTiming.phaseCompleted("merge_results", mergeStartedAt, {
+    sqlite_rows: sqliteResults.length,
+    vector_hits: lanceResults.length,
+    merged_rows: results.length,
+  });
 
   if (cfg.memoryTieringEnabled && results.length > 0) {
     results = results
@@ -256,6 +317,16 @@ export async function runRecallPipelineQuery(
   logger.debug?.(
     `memory-hybrid: ${policy.mode} timing (ms) — FTS: ${stageMs.fts}, embed: ${stageMs.embed}, vector: ${stageMs.vector}, merge: ${stageMs.merge}, total: ${stageMs.fts + stageMs.embed + stageMs.vector + stageMs.merge}`,
   );
+  recallTiming.phaseCompleted("pipeline_run", runStartedAt, {
+    fts_ms: stageMs.fts,
+    embed_ms: stageMs.embed,
+    vector_ms: stageMs.vector,
+    merge_ms: stageMs.merge,
+    total_ms: stageMs.fts + stageMs.embed + stageMs.vector + stageMs.merge,
+    fts_rows: ftsResults.length,
+    vector_hits: lanceResults.length,
+    merged_rows: results.length,
+  });
 
   return results;
 }

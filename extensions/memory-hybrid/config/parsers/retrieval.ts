@@ -129,6 +129,17 @@ export function parseAutoRecallConfig(cfg: Record<string, unknown>): AutoRecallC
       (VALID_ENRICHMENT as readonly string[]).includes(interactiveEnrichmentRaw)
         ? (interactiveEnrichmentRaw as (typeof VALID_ENRICHMENT)[number])
         : "balanced";
+    const VALID_RECALL_TIMING = ["off", "basic", "verbose"] as const;
+    const recallTimingRaw = ar.recallTiming;
+    const recallTiming =
+      recallTimingRaw === true
+        ? "basic"
+        : recallTimingRaw === false
+          ? "off"
+          : typeof recallTimingRaw === "string" &&
+              (VALID_RECALL_TIMING as readonly string[]).includes(recallTimingRaw)
+            ? (recallTimingRaw as (typeof VALID_RECALL_TIMING)[number])
+            : "off";
     const scopeFilterRaw = ar.scopeFilter as Record<string, unknown> | undefined;
     const scopeFilter =
       scopeFilterRaw && typeof scopeFilterRaw === "object" && !Array.isArray(scopeFilterRaw)
@@ -162,6 +173,7 @@ export function parseAutoRecallConfig(cfg: Record<string, unknown>): AutoRecallC
     };
     return {
       enabled: ar.enabled !== false,
+      recallTiming,
       maxTokens: typeof ar.maxTokens === "number" && ar.maxTokens > 0 ? ar.maxTokens : 800,
       maxPerMemoryChars:
         typeof ar.maxPerMemoryChars === "number" && ar.maxPerMemoryChars >= 0 ? ar.maxPerMemoryChars : 0,
@@ -196,6 +208,7 @@ export function parseAutoRecallConfig(cfg: Record<string, unknown>): AutoRecallC
   }
   return {
     enabled: arRaw !== false,
+    recallTiming: "off",
     maxTokens: 800,
     maxPerMemoryChars: 0,
     injectionFormat: "full",
