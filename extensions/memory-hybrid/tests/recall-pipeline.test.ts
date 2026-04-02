@@ -761,6 +761,63 @@ describe("runRecallPipelineQuery — skipForInteractiveTurns (#581)", () => {
   });
 });
 
+describe("runRecallPipelineQuery — structured recall timing logs", () => {
+  it("emits completed phase logs with duration and hit counts in basic mode", async () => {
+    const deps = makeDeps({
+      cfg: {
+        queryExpansion: {
+          enabled: false,
+          maxVariants: 4,
+          cacheSize: 100,
+          timeoutMs: 15_000,
+          skipForInteractiveTurns: true,
+        },
+        retrievalStrategies: ["semantic", "fts5"],
+        memoryTieringEnabled: false,
+        recallTiming: "basic",
+        rawCfg: { llm: undefined } as unknown as RecallPipelineDeps["cfg"]["rawCfg"],
+      },
+    });
+    (deps.factsDb.search as ReturnType<typeof vi.fn>).mockReturnValue([makeSearchResult("fts-1")]);
+    (deps.vectorDb.search as ReturnType<typeof vi.fn>).mockResolvedValue([makeSearchResult("vec-1")]);
+    (deps.factsDb.getById as ReturnType<typeof vi.fn>).mockImplementation((id: string) =>
+      id === "vec-1" ? makeEntry("vec-1") : null,
+    );
+
+    await runRecallPipelineQuery("timing test", 5, deps, { value: false }, { timingSpan: "span-123", timingOp: "op" });
+
+    const debugCalls = vi.mocked(deps.logger.debug).mock.calls.map(([line]) => line);
+    expect(debugCalls.some((line) => line.includes("recall span=span-123 phase=lancedb_search"))).toBe(true);
+    expect(debugCalls.some((line) => line.includes("phase=lancedb_search") && line.includes("hits=1"))).toBe(true);
+    expect(debugCalls.some((line) => line.includes("phase=fts_search") && line.includes("duration_ms="))).toBe(true);
+  });
+
+  it("emits started events and timestamps in verbose mode", async () => {
+    const deps = makeDeps({
+      cfg: {
+        queryExpansion: {
+          enabled: false,
+          maxVariants: 4,
+          cacheSize: 100,
+          timeoutMs: 15_000,
+          skipForInteractiveTurns: true,
+        },
+        retrievalStrategies: ["fts5"],
+        memoryTieringEnabled: false,
+        recallTiming: "verbose",
+        rawCfg: { llm: undefined } as unknown as RecallPipelineDeps["cfg"]["rawCfg"],
+      },
+    });
+    (deps.factsDb.search as ReturnType<typeof vi.fn>).mockReturnValue([makeSearchResult("fts-1")]);
+
+    await runRecallPipelineQuery("verbose timing", 3, deps, { value: false }, { timingSpan: "span-v", timingOp: "op" });
+
+    const debugCalls = vi.mocked(deps.logger.debug).mock.calls.map(([line]) => line);
+    expect(debugCalls.some((line) => line.includes("phase=pipeline_run") && line.includes("event=started"))).toBe(true);
+    expect(debugCalls.some((line) => line.includes("event=started") && line.includes("ts="))).toBe(true);
+  });
+});
+
 describe("runRecallPipelineQuery — retrieval mode policy (#639)", () => {
   beforeEach(() => {
     vi.spyOn(chatModule, "chatCompleteWithRetry").mockResolvedValue("HyDE generated text");

@@ -564,6 +564,25 @@ describe("hybridConfigSchema.parse", () => {
     expect(result.autoRecall.interactiveEnrichment).toBe("fast");
   });
 
+  it("parses autoRecall.recallTiming", () => {
+    const verbose = hybridConfigSchema.parse({
+      ...validBase,
+      autoRecall: {
+        enabled: true,
+        recallTiming: "verbose",
+      },
+    });
+    expect(verbose.autoRecall.recallTiming).toBe("verbose");
+
+    const bool = hybridConfigSchema.parse({
+      ...validBase,
+      autoRecall: {
+        recallTiming: true,
+      },
+    });
+    expect(bool.autoRecall.recallTiming).toBe("basic");
+  });
+
   it("parses autoRecall.scopeFilter", () => {
     const result = hybridConfigSchema.parse({
       ...validBase,

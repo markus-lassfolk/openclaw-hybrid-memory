@@ -58,6 +58,8 @@ export type RetrievalDirectivesConfig = {
 /** Auto-recall: enable/disable plus token cap, format, limit, minScore, preferLongTerm, importance/recency, entity lookup, summary, progressive options */
 export type AutoRecallConfig = {
   enabled: boolean;
+  /** Recall timing logs: off = disabled, basic = completed events only, verbose = started+completed with timestamps. */
+  recallTiming?: "off" | "basic" | "verbose";
   maxTokens: number;
   maxPerMemoryChars: number;
   injectionFormat: AutoRecallInjectionFormat;
