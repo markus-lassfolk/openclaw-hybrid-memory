@@ -15,6 +15,7 @@ All commands are available via `openclaw hybrid-mem <command>`.
 **Tip: Verbosity level**
 CLI output is controlled by the config `verbosity` setting (`silent`, `quiet`, `normal`, `verbose`). You can change it with `openclaw hybrid-mem config-set verbosity silent`.
 
+**Agent tools (LLM):** Commands below are **CLI** entry points. Tools the agent invokes through the gateway use **underscore** names only (`memory_store`, `memory_recall`, …), with no `.` in the tool id — required by providers such as Anthropic. See [CONFIGURATION.md § Agent tool names](CONFIGURATION.md#agent-tool-names).
 
 ## Commands by category
 
@@ -235,7 +236,7 @@ This adds:
 
 Issues are listed as **load-blocking** (prevent OpenClaw from loading) or **other**, with **fixes for each**.
 
-`--fix` applies safe fixes: missing embedding block, memory directory, and optional jobs. Adds any missing maintenance cron jobs to `~/.openclaw/cron/jobs.json` (see [Maintenance cron jobs](#maintenance-cron-jobs)); does not re-enable jobs you disabled.
+`--fix` applies safe fixes: missing embedding block, memory directory, and optional jobs. Adds any missing maintenance cron jobs to `~/.openclaw/cron/jobs.json` (see [Maintenance cron jobs](#maintenance-cron-jobs)); does not re-enable jobs you disabled. It also normalizes isolated `hybrid-mem:*` jobs by removing an explicit top-level `sessionKey` so they use OpenClaw's default per-job session key (`cron:<jobId>`).
 `--log-file <path>` scans the file for memory-hybrid or cron errors.
 
 **Embedding ↔ LanceDB alignment:** Verify includes a check that the **live embedding API** output dimension matches the LanceDB table width (see [#941](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/941)). That implies **one real embedding request** during verify (API usage / quota), even when everything else is healthy. If the probe reports a different width than the configured provider dimension, follow the on-screen steps before relying on semantic search.
@@ -333,6 +334,7 @@ Steps through pending persona proposals and the latest correction report. For ea
 - **Install:** Adds any missing jobs (does not change existing jobs or re-enable disabled ones).
 - **Verify --fix:** Adds any missing jobs and can normalize schedule/pluginJobId; does not re-enable disabled jobs by default.
 - Jobs are identified by **pluginJobId** so upgrades can add new jobs without duplicating.
+- For isolated maintenance jobs, do **not** set `sessionKey` to `agent:main:main` (or any interactive chat session key). Leave `sessionKey` unset so OpenClaw uses isolated per-job keys (`cron:<jobId>`), avoiding main-session contention.
 
 **Feature-gating:** When a feature is disabled in config, the corresponding CLI command exits 0 without doing work. Leave all jobs defined; they no-op when e.g. `procedures.enabled` or `reflection.enabled` is false. See [MAINTENANCE-TASKS-MATRIX.md](MAINTENANCE-TASKS-MATRIX.md) for full context.
 

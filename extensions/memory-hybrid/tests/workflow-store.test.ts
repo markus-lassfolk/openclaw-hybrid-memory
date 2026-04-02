@@ -576,7 +576,7 @@ describe("parseWorkflowTrackingConfig", () => {
         goalExtractionModel: "google/gemini-2.0-flash",
       },
     });
-    expect(cfg.workflowTracking.enabled).toBe(false); // 2026.3.140 baseline
+    expect(cfg.workflowTracking.enabled).toBe(true);
     expect(cfg.workflowTracking.maxTracesPerDay).toBe(200);
     expect(cfg.workflowTracking.retentionDays).toBe(30);
     expect(cfg.workflowTracking.goalExtractionModel).toBe("google/gemini-2.0-flash");

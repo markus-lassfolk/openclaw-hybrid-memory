@@ -115,7 +115,7 @@ export function runConfigViewForCli(ctx: HandlerContext, sink: VerifyCliSink): v
   const OFF = noEmoji ? "[off]" : "off";
   const on = (b: boolean) => (b ? ON : OFF);
 
-  // Read raw config from file to bypass migration overrides (like nightlyCycle forced to false in 2026.3.140)
+  // Read raw config from file for keys where we show file vs parsed (optional toggles)
   let rawCfg: Record<string, unknown> = {};
   try {
     const configPath = getEnv("OPENCLAW_CONFIG") || join(homedir(), ".openclaw", "openclaw.json");
@@ -134,25 +134,6 @@ export function runConfigViewForCli(ctx: HandlerContext, sink: VerifyCliSink): v
     return parsedVal;
   };
 
-  /** True only when openclaw.json explicitly sets enabled: true (for override notes). */
-  const rawFileExplicitlyEnabled = (key: string): boolean => {
-    const block = rawCfg[key];
-    return (
-      !!block &&
-      typeof block === "object" &&
-      "enabled" in (block as Record<string, unknown>) &&
-      Boolean((block as Record<string, unknown>).enabled)
-    );
-  };
-
-  const phase1BaselineNote =
-    " — openclaw.json still has enabled: true; Phase 1 core-only baseline (plugin ≥2026.3.140) forces off";
-
-  /** Effective on/off for Phase 1 keys; file-only display + note when JSON disagrees (matches runtime). */
-  const logPhase1Optional = (key: string, label: string, effective: boolean) => {
-    log(`  ${label}: ${on(effective)}${rawFileExplicitlyEnabled(key) && !effective ? phase1BaselineNote : ""}`);
-  };
-
   const modeLabel = cfg.mode && cfg.mode !== "custom" ? cfg.mode.charAt(0).toUpperCase() + cfg.mode.slice(1) : "Custom";
   log(`Memory mode: ${modeLabel}`);
   log(`Verbosity: ${cfg.verbosity ?? "normal"}`);
@@ -169,35 +150,31 @@ export function runConfigViewForCli(ctx: HandlerContext, sink: VerifyCliSink): v
   log("");
 
   log("Optional features");
-  logPhase1Optional("nightlyCycle", "Nightly dream cycle", cfg.nightlyCycle?.enabled ?? false);
-  logPhase1Optional("passiveObserver", "Passive observer", cfg.passiveObserver?.enabled ?? false);
+  log(`  Nightly dream cycle: ${on(cfg.nightlyCycle?.enabled ?? false)}`);
+  log(`  Passive observer: ${on(cfg.passiveObserver?.enabled ?? false)}`);
   log(`  Reflection (patterns/rules): ${on(rawEnabled("reflection", cfg.reflection.enabled))}`);
-  logPhase1Optional("personaProposals", "Persona proposals", cfg.personaProposals.enabled);
+  log(`  Persona proposals: ${on(cfg.personaProposals.enabled)}`);
   log(`  Self-correction: ${on(rawEnabled("selfCorrection", !!cfg.selfCorrection))}`);
-  logPhase1Optional("selfExtension", "Self-extension (tool proposals)", cfg.selfExtension?.enabled ?? false);
-  logPhase1Optional("crystallization", "Crystallization (skill proposals)", cfg.crystallization?.enabled ?? false);
+  log(`  Self-extension (tool proposals): ${on(cfg.selfExtension?.enabled ?? false)}`);
+  log(`  Crystallization (skill proposals): ${on(cfg.crystallization?.enabled ?? false)}`);
   log(`  Extraction (multi-pass): ${on(rawEnabled("extraction", !!cfg.extraction?.extractionPasses))}`);
   log(`  Active task (ACTIVE-TASK.md): ${on(rawEnabled("activeTask", cfg.activeTask.enabled))}`);
-  logPhase1Optional("frustrationDetection", "Frustration detection", cfg.frustrationDetection.enabled);
-  logPhase1Optional("crossAgentLearning", "Cross-agent learning", cfg.crossAgentLearning.enabled);
+  log(`  Frustration detection: ${on(cfg.frustrationDetection.enabled)}`);
+  log(`  Cross-agent learning: ${on(cfg.crossAgentLearning.enabled)}`);
   log(`  Tool effectiveness: ${on(rawEnabled("toolEffectiveness", cfg.toolEffectiveness.enabled))}`);
-  logPhase1Optional("workflowTracking", "Workflow tracking", cfg.workflowTracking.enabled);
-  logPhase1Optional("documents", "Documents (MarkItDown)", cfg.documents.enabled);
-  logPhase1Optional("provenance", "Provenance", cfg.provenance.enabled);
-  logPhase1Optional("verification", "Verification store", cfg.verification.enabled);
-  logPhase1Optional("aliases", "Retrieval aliases", cfg.aliases.enabled);
-  logPhase1Optional("reranking", "Query reranking", cfg.reranking.enabled);
-  logPhase1Optional("contextualVariants", "Contextual variants (index-time)", cfg.contextualVariants.enabled);
+  log(`  Workflow tracking: ${on(cfg.workflowTracking.enabled)}`);
+  log(`  Documents (MarkItDown): ${on(cfg.documents.enabled)}`);
+  log(`  Provenance: ${on(cfg.provenance.enabled)}`);
+  log(`  Verification store: ${on(cfg.verification.enabled)}`);
+  log(`  Retrieval aliases: ${on(cfg.aliases.enabled)}`);
+  log(`  Query reranking: ${on(cfg.reranking.enabled)}`);
+  log(`  Contextual variants (index-time): ${on(cfg.contextualVariants.enabled)}`);
   log(`  Error reporting: ${on(rawEnabled("errorReporting", cfg.errorReporting?.enabled ?? false))}`);
   log(`  Cost tracking: ${on(rawEnabled("costTracking", cfg.costTracking?.enabled ?? false))}`);
   log("");
 
   log("Advanced");
-  log(
-    `  Query expansion: ${on(cfg.queryExpansion.enabled)}${
-      rawFileExplicitlyEnabled("queryExpansion") && !cfg.queryExpansion.enabled ? phase1BaselineNote : ""
-    }`,
-  );
+  log(`  Query expansion: ${on(cfg.queryExpansion.enabled)}`);
   log(`  Retrieval directives: ${on(cfg.autoRecall.retrievalDirectives?.enabled ?? false)}`);
   const el = cfg.autoRecall.entityLookup;
   const entityNames = Array.isArray(el?.entities) ? el.entities : [];

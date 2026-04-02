@@ -263,13 +263,13 @@ Update `run-stats.md` with:
 
 For automated incremental distillation, add a scheduled job that runs at 02:00 local time.
 
-### Align maintenance cron `model` with your agent default ([#965](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/965))
+### Maintenance cron session isolation and model alignment ([#977](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/977), [#965](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/965))
 
-Jobs installed by `openclaw hybrid-mem install` or `openclaw hybrid-mem verify --fix` are stored under `~/.openclaw/cron/jobs.json` with ids like `hybrid-mem:nightly-distill`. Each job includes a **`model`** field (or `payload.model`, depending on OpenClaw version). When **`agents.defaults.model.primary`** is set in `openclaw.json`, the plugin uses **that** as the job model (instead of tier defaults from `llm.*`) so it matches OpenClaw’s agent-bound live session ([#963](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/963)). If primary is not set, models still come from `llm.default` / `llm.heavy` / `llm.nano` per job tier.
+Jobs installed by `openclaw hybrid-mem install` or `openclaw hybrid-mem verify --fix` are stored under `~/.openclaw/cron/jobs.json` with ids like `hybrid-mem:nightly-distill`.
 
-**Isolated** scheduled runs may reuse a live session that follows **`agents.defaults.model.primary`** when an `agentId` is set. If the job’s model uses a **different provider family** than your primary chat model (compare the segment **before** the first `/`, e.g. `azure-foundry` vs `google` vs `minimax`), the gateway can fail with **`LiveSessionModelSwitchError`** instead of running the job.
+For isolated maintenance jobs, do **not** set `sessionKey` to `agent:main:main` (or any interactive session key). Leave `sessionKey` unset so OpenClaw resolves a per-job isolated key (`cron:<jobId>`). This avoids sharing the main transcript row with live chat and prevents session-store model contention. `openclaw hybrid-mem verify --fix` now normalizes isolated `hybrid-mem:*` rows by removing an explicit top-level `sessionKey`.
 
-**What to do:** Set `agents.defaults.model.primary`, then run **`openclaw hybrid-mem verify --fix`** so stored job models sync to that primary. Keep primary and every `hybrid-mem:*` job’s stored model on the **same provider family**. **`openclaw hybrid-mem verify`** warns when it detects a mismatch ([#965](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/965)).
+Each job also includes a **`model`** field (or `payload.model`, depending on OpenClaw version). When `agents.defaults.model.primary` is set, the plugin aligns maintenance job models to that primary value (issue #965) to avoid provider-family mismatch errors. If `agents.defaults.model.primary` is not set, models fall back to `llm.default` / `llm.heavy` / `llm.nano` per job tier.
 
 **Note:** OpenClaw's config schema does not accept a top-level `"jobs"` key in `openclaw.json`. Use one of:
 

@@ -2435,16 +2435,6 @@ export function registerMemoryTools(
       },
       { name: "memory_record_episode" },
     );
-    // Backward-compatible alias: supports callers still using the pre-2026.4 dotted tool name.
-    api.registerTool(
-      {
-        name: "memory.record_episode",
-        description: _recordEpisodeDesc,
-        parameters: _recordEpisodeParams,
-        execute: _execRecordEpisode,
-      },
-      { name: "memory.record_episode" },
-    );
   }
 
   /** memory_search_episodes — search structured episodic memories with filters. */
@@ -2511,16 +2501,6 @@ export function registerMemoryTools(
         execute: _execSearchEpisodes,
       },
       { name: "memory_search_episodes" },
-    );
-    // Backward-compatible alias: supports callers still using the pre-2026.4 dotted tool name.
-    api.registerTool(
-      {
-        name: "memory.search_episodes",
-        description: _searchEpisodesDesc,
-        parameters: _searchEpisodesParams,
-        execute: _execSearchEpisodes,
-      },
-      { name: "memory.search_episodes" },
     );
   }
 
@@ -2616,17 +2596,6 @@ export function registerMemoryTools(
       },
       { name: "memory_add_edict" },
     );
-    // Backward-compatible alias: supports callers still using the pre-2026.4 dotted tool name.
-    api.registerTool(
-      {
-        name: "memory.add_edict",
-        label: _addEdictLabel,
-        description: _addEdictDesc,
-        parameters: _addEdictParams,
-        execute: _execAddEdict,
-      },
-      { name: "memory.add_edict" },
-    );
   }
 
   /** memory_list_edicts — list edicts, optionally filtered by tags. */
@@ -2679,17 +2648,6 @@ export function registerMemoryTools(
       },
       { name: "memory_list_edicts" },
     );
-    // Backward-compatible alias: supports callers still using the pre-2026.4 dotted tool name.
-    api.registerTool(
-      {
-        name: "memory.list_edicts",
-        label: _listEdictsLabel,
-        description: _listEdictsDesc,
-        parameters: _listEdictsParams,
-        execute: _execListEdicts,
-      },
-      { name: "memory.list_edicts" },
-    );
   }
 
   /** memory_get_edicts — get edicts formatted for system prompt injection. */
@@ -2737,17 +2695,6 @@ export function registerMemoryTools(
         execute: _execGetEdicts,
       },
       { name: "memory_get_edicts" },
-    );
-    // Backward-compatible alias: supports callers still using the pre-2026.4 dotted tool name.
-    api.registerTool(
-      {
-        name: "memory.get_edicts",
-        label: _getEdictsLabel,
-        description: _getEdictsDesc,
-        parameters: _getEdictsParams,
-        execute: _execGetEdicts,
-      },
-      { name: "memory.get_edicts" },
     );
   }
 
@@ -2825,17 +2772,6 @@ export function registerMemoryTools(
       },
       { name: "memory_update_edict" },
     );
-    // Backward-compatible alias: supports callers still using the pre-2026.4 dotted tool name.
-    api.registerTool(
-      {
-        name: "memory.update_edict",
-        label: _updateEdictLabel,
-        description: _updateEdictDesc,
-        parameters: _updateEdictParams,
-        execute: _execUpdateEdict,
-      },
-      { name: "memory.update_edict" },
-    );
   }
 
   /** memory_remove_edict — delete an edict by id. */
@@ -2876,17 +2812,6 @@ export function registerMemoryTools(
         execute: _execRemoveEdict,
       },
       { name: "memory_remove_edict" },
-    );
-    // Backward-compatible alias: supports callers still using the pre-2026.4 dotted tool name.
-    api.registerTool(
-      {
-        name: "memory.remove_edict",
-        label: _removeEdictLabel,
-        description: _removeEdictDesc,
-        parameters: _removeEdictParams,
-        execute: _execRemoveEdict,
-      },
-      { name: "memory.remove_edict" },
     );
   }
 
@@ -2930,17 +2855,6 @@ export function registerMemoryTools(
         execute: _execEdictStats,
       },
       { name: "memory_edict_stats" },
-    );
-    // Backward-compatible alias: supports callers still using the pre-2026.4 dotted tool name.
-    api.registerTool(
-      {
-        name: "memory.edict_stats",
-        label: _edictStatsLabel,
-        description: _edictStatsDesc,
-        parameters: _edictStatsParams,
-        execute: _execEdictStats,
-      },
-      { name: "memory.edict_stats" },
     );
   }
 }

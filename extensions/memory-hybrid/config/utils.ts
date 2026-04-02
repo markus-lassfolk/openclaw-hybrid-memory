@@ -144,7 +144,7 @@ export const PRESET_OVERRIDES: Record<ConfigMode, Record<string, unknown>> = {
       autoRewriteTools: false,
       analyzeViaSpawn: false,
     },
-    // queryExpansion not set in preset — defaults to disabled; set explicitly to enable (Phase 1).
+    // queryExpansion not set in preset — defaults to disabled; set explicitly to enable.
     ingest: { paths: ["skills/**/*.md", "TOOLS.md", "AGENTS.md"] },
     distill: { extractDirectives: true, extractReinforcement: true, extractionModelTier: "default" },
     frustrationDetection: { enabled: false },

@@ -16,6 +16,9 @@ const DRY_RUN = process.argv.includes("--dry-run");
 
 function deepMerge(target, source, skipKeys = ["_comment"]) {
   for (const key of Object.keys(source)) {
+    if (key === "__proto__" || key === "constructor" || key === "prototype") {
+      continue;
+    }
     if (skipKeys.includes(key)) continue;
     const srcVal = source[key];
     const tgtVal = target[key];
