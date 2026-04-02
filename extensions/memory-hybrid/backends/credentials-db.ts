@@ -32,7 +32,8 @@ const _v1KdfWarnedPaths = new Set<string>();
 
 /** v1 only: legacy SHA-256 KDF (weak). Existing vaults cannot be decrypted with another KDF. */
 function deriveKeyV1Legacy(password: string): Buffer {
-  // codeql[js/insufficient-password-hash]: Intentional legacy v1 on-disk format; v2 uses deriveKeyV2 (scrypt).
+  // codeql[js/insufficient-password-hash]
+  // Legacy v1 on-disk format only; new vaults use deriveKeyV2 (scrypt). Changing this breaks existing vaults.
   return createHash("sha256").update(password, "utf8").digest();
 }
 
@@ -44,6 +45,8 @@ function deriveKeyV2(password: string, salt: Buffer): Buffer {
 /** Dispatch v1 (legacy) vs v2 (scrypt). Prefer deriveKeyV2 for new material when version is known. */
 function deriveKey(password: string, salt: Buffer, version: number = CRED_KDF_VERSION): Buffer {
   if (version === 1) {
+    // codeql[js/insufficient-password-hash]
+    // Password only flows to the intentional legacy KDF above; v2 uses scrypt.
     return deriveKeyV1Legacy(password);
   }
   return deriveKeyV2(password, salt);
