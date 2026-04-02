@@ -332,6 +332,15 @@ describe("WorkflowStore.getPatterns", () => {
     const patterns = store.getPatterns({ limit: 1 });
     expect(patterns.length).toBeLessThanOrEqual(1);
   });
+
+  it("reopens and returns results when native DB handle was unexpectedly closed", () => {
+    const db = (store as any).db as import("node:sqlite").DatabaseSync;
+    db.close();
+
+    expect(() => store.getPatterns()).not.toThrow();
+    const patterns = store.getPatterns();
+    expect(Array.isArray(patterns)).toBe(true);
+  });
 });
 
 describe("WorkflowStore.prune", () => {
