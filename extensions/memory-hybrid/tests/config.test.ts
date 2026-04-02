@@ -1458,7 +1458,7 @@ describe("hybridConfigSchema.parse", () => {
     expect(result.ingest?.overlap).toBe(100);
   });
 
-  it("parses optional search config (HyDE) — 2026.3.140 baseline forces queryExpansion off", () => {
+  it("parses optional search config (HyDE) — legacy hydeEnabled enables queryExpansion", () => {
     const result = hybridConfigSchema.parse({
       ...validBase,
       search: {
@@ -1469,38 +1469,38 @@ describe("hybridConfigSchema.parse", () => {
     expect(result.search).toBeDefined();
     expect(result.search?.hydeEnabled).toBe(true);
     expect(result.search?.hydeModel).toBe("gpt-4o-mini");
-    expect(result.queryExpansion.enabled).toBe(false);
+    expect(result.queryExpansion.enabled).toBe(true);
   });
 
-  it("parses search with hydeEnabled true and no hydeModel — 2026.3.140 baseline forces queryExpansion off", () => {
+  it("parses search with hydeEnabled true and no hydeModel — queryExpansion enabled via legacy flag", () => {
     const result = hybridConfigSchema.parse({
       ...validBase,
       search: { hydeEnabled: true },
     });
     expect(result.search).toBeDefined();
     expect(result.search?.hydeEnabled).toBe(true);
-    expect(result.queryExpansion.enabled).toBe(false);
+    expect(result.queryExpansion.enabled).toBe(true);
   });
 
-  it("migration shim (#160): 2026.3.140 baseline overrides queryExpansion.enabled=true to false", () => {
+  it("migration shim (#160): explicit queryExpansion.enabled=true is honored", () => {
     const result = hybridConfigSchema.parse({
       ...validBase,
       queryExpansion: { enabled: true, model: "openai/gpt-4.1-nano" },
     });
-    expect(result.queryExpansion.enabled).toBe(false);
+    expect(result.queryExpansion.enabled).toBe(true);
     expect(result.search).toBeUndefined();
   });
 
-  it("migration shim (#160): 2026.3.140 baseline overrides both search.hydeEnabled and queryExpansion to disabled", () => {
+  it("migration shim (#160): queryExpansion config wins when both legacy search and queryExpansion set", () => {
     const result = hybridConfigSchema.parse({
       ...validBase,
       search: { hydeEnabled: true, hydeModel: "old-model" },
       queryExpansion: { enabled: true, model: "new-model" },
     });
-    expect(result.queryExpansion.enabled).toBe(false);
+    expect(result.queryExpansion.enabled).toBe(true);
   });
 
-  it("migration shim (#160): queryExpansion disabled by default when no mode (Phase 1; local preset)", () => {
+  it("migration shim (#160): queryExpansion disabled by default when no mode (local preset)", () => {
     const result = hybridConfigSchema.parse({ ...validBase });
     expect(result.queryExpansion.enabled).toBe(false);
   });
@@ -1517,28 +1517,28 @@ describe("hybridConfigSchema.parse", () => {
     expect(result.queryExpansion.model).toBeUndefined();
   });
 
-  it("migration shim (#160): 2026.3.140 baseline overrides queryExpansion.enabled=true to false", () => {
+  it("migration shim (#160): queryExpansion.enabled true with legacy search.hydeEnabled", () => {
     const result = hybridConfigSchema.parse({
       ...validBase,
       search: { hydeEnabled: true, hydeModel: "legacy-hyde-model" },
       queryExpansion: { enabled: true },
     });
-    expect(result.queryExpansion.enabled).toBe(false);
+    expect(result.queryExpansion.enabled).toBe(true);
   });
-  it("queryExpansion.timeoutMs (#384): 2026.3.140 baseline enabled false, user timeout preserved and floored", () => {
+  it("queryExpansion.timeoutMs (#384): enabled true, user timeout below floor is raised", () => {
     const result = hybridConfigSchema.parse({
       ...validBase,
       queryExpansion: { enabled: true, timeoutMs: 5000 },
     });
-    expect(result.queryExpansion.enabled).toBe(false);
+    expect(result.queryExpansion.enabled).toBe(true);
     expect(result.queryExpansion.timeoutMs).toBe(10000); // parser floor MIN_QE_TIMEOUT_MS
   });
-  it("queryExpansion.timeoutMs (#384): 2026.3.140 baseline enabled false, user timeout preserved", () => {
+  it("queryExpansion.timeoutMs (#384): enabled true, user timeout preserved above floor", () => {
     const result = hybridConfigSchema.parse({
       ...validBase,
       queryExpansion: { enabled: true, timeoutMs: 20000 },
     });
-    expect(result.queryExpansion.enabled).toBe(false);
+    expect(result.queryExpansion.enabled).toBe(true);
     expect(result.queryExpansion.timeoutMs).toBe(20000);
   });
   it("queryExpansion.timeoutMs (#384): defaults to 15000ms when not configured", () => {
@@ -1546,39 +1546,39 @@ describe("hybridConfigSchema.parse", () => {
       ...validBase,
       queryExpansion: { enabled: true },
     });
-    expect(result.queryExpansion.enabled).toBe(false);
+    expect(result.queryExpansion.enabled).toBe(true);
     expect(result.queryExpansion.timeoutMs).toBe(15000);
   });
-  it("reranking.timeoutMs (#384): 2026.3.140 baseline enabled false, user timeout floored", () => {
+  it("reranking.timeoutMs (#384): enabled true, user timeout below floor is raised", () => {
     const result = hybridConfigSchema.parse({
       ...validBase,
       reranking: { enabled: true, timeoutMs: 1000 },
     });
-    expect(result.reranking.enabled).toBe(false);
+    expect(result.reranking.enabled).toBe(true);
     expect(result.reranking.timeoutMs).toBe(5000); // parser floor MIN_RERANK_TIMEOUT_MS
   });
-  it("reranking.timeoutMs (#384): 2026.3.140 baseline enabled false, user timeout preserved", () => {
+  it("reranking.timeoutMs (#384): enabled true, user timeout preserved above floor", () => {
     const result = hybridConfigSchema.parse({
       ...validBase,
       reranking: { enabled: true, timeoutMs: 15000 },
     });
-    expect(result.reranking.enabled).toBe(false);
+    expect(result.reranking.enabled).toBe(true);
     expect(result.reranking.timeoutMs).toBe(15000);
   });
-  it("queryExpansion.timeoutMs (#384): 2026.3.140 baseline enabled false, floor value preserved", () => {
+  it("queryExpansion.timeoutMs (#384): enabled true, floor value preserved at minimum", () => {
     const result = hybridConfigSchema.parse({
       ...validBase,
       queryExpansion: { enabled: true, timeoutMs: 10000 },
     });
-    expect(result.queryExpansion.enabled).toBe(false);
+    expect(result.queryExpansion.enabled).toBe(true);
     expect(result.queryExpansion.timeoutMs).toBe(10000);
   });
-  it("reranking.timeoutMs (#384): 2026.3.140 baseline enabled false, floor value preserved", () => {
+  it("reranking.timeoutMs (#384): enabled true, floor value preserved at minimum", () => {
     const result = hybridConfigSchema.parse({
       ...validBase,
       reranking: { enabled: true, timeoutMs: 5000 },
     });
-    expect(result.reranking.enabled).toBe(false);
+    expect(result.reranking.enabled).toBe(true);
     expect(result.reranking.timeoutMs).toBe(5000);
   });
   it("reranking.timeoutMs (#384): defaults to 10000ms when omitted", () => {
@@ -1586,39 +1586,39 @@ describe("hybridConfigSchema.parse", () => {
       ...validBase,
       reranking: { enabled: true },
     });
-    expect(result.reranking.enabled).toBe(false);
+    expect(result.reranking.enabled).toBe(true);
     expect(result.reranking.timeoutMs).toBe(10000);
   });
-  it("queryExpansion.timeoutMs (#384): 2026.3.140 baseline timeoutMs 0 bypasses floor (undefined)", () => {
+  it("queryExpansion.timeoutMs (#384): timeoutMs 0 bypasses floor (undefined)", () => {
     const result = hybridConfigSchema.parse({
       ...validBase,
       queryExpansion: { enabled: true, timeoutMs: 0 },
     });
-    expect(result.queryExpansion.enabled).toBe(false);
+    expect(result.queryExpansion.enabled).toBe(true);
     expect(result.queryExpansion.timeoutMs).toBeUndefined();
   });
-  it("reranking.timeoutMs (#384): 2026.3.140 baseline timeoutMs 0 bypasses floor (undefined)", () => {
+  it("reranking.timeoutMs (#384): timeoutMs 0 bypasses floor (undefined)", () => {
     const result = hybridConfigSchema.parse({
       ...validBase,
       reranking: { enabled: true, timeoutMs: 0 },
     });
-    expect(result.reranking.enabled).toBe(false);
+    expect(result.reranking.enabled).toBe(true);
     expect(result.reranking.timeoutMs).toBeUndefined();
   });
-  it("queryExpansion.timeoutMs (#384): 2026.3.140 baseline Infinity coerced to default", () => {
+  it("queryExpansion.timeoutMs (#384): Infinity coerced to default", () => {
     const result = hybridConfigSchema.parse({
       ...validBase,
       queryExpansion: { enabled: true, timeoutMs: Number.POSITIVE_INFINITY },
     });
-    expect(result.queryExpansion.enabled).toBe(false);
+    expect(result.queryExpansion.enabled).toBe(true);
     expect(result.queryExpansion.timeoutMs).toBe(15000); // parser uses default when not finite
   });
-  it("reranking.timeoutMs (#384): 2026.3.140 baseline Infinity coerced to default", () => {
+  it("reranking.timeoutMs (#384): Infinity coerced to default", () => {
     const result = hybridConfigSchema.parse({
       ...validBase,
       reranking: { enabled: true, timeoutMs: Number.POSITIVE_INFINITY },
     });
-    expect(result.reranking.enabled).toBe(false);
+    expect(result.reranking.enabled).toBe(true);
     expect(result.reranking.timeoutMs).toBe(10000); // parser uses default when not finite
   });
   it("multiAgent defaults to orchestratorId='main' and defaultStoreScope='global' (backward compatible)", () => {
@@ -1738,21 +1738,19 @@ describe("hybridConfigSchema.parse", () => {
         expect(result.store.classifyBeforeWrite).toBe(true);
         expect(result.graph.autoLink).toBe(true);
         expect(result.credentials.enabled).toBe(true);
-        // Phase 1: credentials.autoDetect forced off (opt-in); user must set explicitly to enable
-        expect(result.credentials.autoDetect).toBe(false);
+        expect(result.credentials.autoDetect).toBe(true);
         expect(result.credentials.autoCapture?.toolCalls).toBe(true);
       } finally {
         setEnv("OPENCLAW_CRED_KEY", undefined);
       }
     });
 
-    it("mode complete: queryExpansion off by default (Phase 1); ingest paths set", () => {
+    it("mode complete: queryExpansion off by default in preset; ingest paths set", () => {
       const result = hybridConfigSchema.parse({
         ...validBase,
         mode: "complete" as ConfigMode,
       });
       expect(result.mode).toBe("complete");
-      // Phase 1: complete preset no longer enables query expansion by default
       expect(result.queryExpansion.enabled).toBe(false);
       expect(result.search?.hydeEnabled).toBeFalsy();
       expect(result.ingest?.paths).toEqual(["skills/**/*.md", "TOOLS.md", "AGENTS.md"]);

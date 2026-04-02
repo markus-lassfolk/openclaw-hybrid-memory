@@ -623,7 +623,9 @@ function getPluginEntryConfig(root: Record<string, unknown>): Record<string, unk
 }
 
 /**
- * Install plugin configuration and cron jobs
+ * Install plugin configuration and cron jobs.
+ * `buildInstallDefaults()` includes `mode: "local"`; `deepMerge` only fills missing keys,
+ * so an existing `plugins.entries[pluginId].config.mode` is never overwritten on re-install.
  */
 export function runInstallForCli(opts: { dryRun: boolean }): InstallCliResult {
   const openclawDir = join(homedir(), ".openclaw");

@@ -684,7 +684,7 @@ describe("parseCrystallizationConfig", () => {
         pruneUnusedDays: 60,
       },
     });
-    expect(cfg.crystallization.enabled).toBe(false); // 2026.3.140 migration forces core-only baseline
+    expect(cfg.crystallization.enabled).toBe(true);
     expect(cfg.crystallization.minUsageCount).toBe(10);
     expect(cfg.crystallization.minSuccessRate).toBe(0.8);
     expect(cfg.crystallization.autoApprove).toBe(false);
