@@ -74,10 +74,14 @@ describe("ensureMaintenanceCronJobs sessionKey normalization (#977)", () => {
     const jobs = readJobs(openclawDir);
     const target = jobs.find((j) => j.pluginJobId === "hybrid-mem:self-correction-analysis");
     expect(target).toBeTruthy();
+    const payload =
+      target && typeof target.payload === "object" && target.payload !== null
+        ? (target.payload as Record<string, unknown>)
+        : {};
     // Simulate payload-level isolation (used by some OpenClaw versions)
     target!.isolated = false;
     target!.sessionTarget = "shared";
-    target!.payload = { ...target!.payload, sessionTarget: "isolated" as const, isolated: true as const };
+    target!.payload = { ...payload, sessionTarget: "isolated" as const, isolated: true as const };
     target!.sessionKey = "agent:main:main";
     writeJobs(openclawDir, jobs);
 
