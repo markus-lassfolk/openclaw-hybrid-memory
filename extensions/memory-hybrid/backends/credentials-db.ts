@@ -30,20 +30,26 @@ const CRED_KDF_PLAINTEXT = 0; // no encryption (user secures by other means)
 /** Log once per vault path: legacy v1 KDF is weak; opening triggers migration to scrypt when possible. */
 const _v1KdfWarnedPaths = new Set<string>();
 
-/** Derive encryption key using scrypt.
- *  v1: legacy SHA-256 (kept for backward compatibility with existing encrypted vaults).
- *  v2: recommended scrypt parameters (N=16384, r=8, p=1).
- */
+/** v1 only: legacy SHA-256 KDF (weak). Existing vaults cannot be decrypted with another KDF. */
+function deriveKeyV1Legacy(password: string): Buffer {
+  // codeql[js/insufficient-password-hash]
+  // Legacy v1 on-disk format only; new vaults use deriveKeyV2 (scrypt). Changing this breaks existing vaults.
+  return createHash("sha256").update(password, "utf8").digest();
+}
+
+/** v2: scrypt (N=16384, r=8, p=1). */
+function deriveKeyV2(password: string, salt: Buffer): Buffer {
+  return scryptSync(password, salt, 32, { N: 16384, r: 8, p: 1 });
+}
+
+/** Dispatch v1 (legacy) vs v2 (scrypt). Prefer deriveKeyV2 for new material when version is known. */
 function deriveKey(password: string, salt: Buffer, version: number = CRED_KDF_VERSION): Buffer {
   if (version === 1) {
-    // lgtm[js/insufficient-password-hash]
-    // Legacy SHA-256 KDF (weak, kept for backward compatibility with existing encrypted vaults).
-    // New vaults use v2 with scrypt. Existing v1 vaults encrypted with SHA-256 cannot be
-    // decrypted with a different KDF, so we must preserve this for backward compatibility.
-    return createHash("sha256").update(password, "utf8").digest();
+    // codeql[js/insufficient-password-hash]
+    // Password only flows to the intentional legacy KDF above; v2 uses scrypt.
+    return deriveKeyV1Legacy(password);
   }
-  // v2: scrypt with recommended parameters (N=16384, r=8, p=1)
-  return scryptSync(password, salt, 32, { N: 16384, r: 8, p: 1 });
+  return deriveKeyV2(password, salt);
 }
 
 function encryptValue(plaintext: string, key: Buffer): Buffer {
@@ -296,9 +302,9 @@ export class CredentialsDB extends BaseSqliteStore {
     // Fetch all credentials (will be decrypted with old key)
     const rows = this.liveDb.prepare("SELECT * FROM credentials").all() as Array<Record<string, unknown>>;
 
-    // Generate new salt and derive new key with scrypt
+    // Generate new salt and derive new key with scrypt (avoid deriveKey dispatcher so static analysis sees only scrypt here)
     this.salt = randomBytes(32);
-    const newKey = deriveKey(this.password, this.salt, CRED_KDF_VERSION);
+    const newKey = deriveKeyV2(this.password, this.salt);
 
     // Wrap all mutations in a transaction to prevent partial migration
     const migrate = createTransaction(this.liveDb, () => {

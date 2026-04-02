@@ -1,14 +1,13 @@
 /**
  * Guardrail: keep `docs/CONFIGURATION-MODES.md` aligned with:
  * - `PRESET_OVERRIDES` in `config/utils.ts`
- * - Phase 1 migration in `config/parsers/index.ts` (`PHASE1_CORE_ONLY_FORCE_DISABLED_KEYS`, queryExpansion, credentials.autoDetect, graph.strengthenOnRecall)
+ * - Post-parse effective config from `hybridConfigSchema` (preset merge + user overrides; no forced migration)
  *
- * When you change presets or Phase 1, update the doc and extend these tests.
+ * When you change presets, update the doc and extend these tests.
  */
 import { describe, expect, it } from "vitest";
 import { hybridConfigSchema } from "../config.js";
 import type { ConfigMode } from "../config.js";
-import { PHASE1_CORE_ONLY_FORCE_DISABLED_KEYS } from "../config/parsers/index.js";
 import { PRESET_OVERRIDES } from "../config/utils.js";
 
 const validEmbedding = {
@@ -79,29 +78,21 @@ describe("PRESET_OVERRIDES (config/utils.ts) — invariants for CONFIGURATION-MO
     expect(PRESET_OVERRIDES.enhanced.verbosity).toBe("normal");
     expect(PRESET_OVERRIDES.complete.verbosity).toBe("verbose");
   });
+
+  it("enhanced + complete: credentials preset enables autoDetect", () => {
+    expect(PRESET_OVERRIDES.enhanced.credentials).toMatchObject({ autoDetect: true });
+    expect(PRESET_OVERRIDES.complete.credentials).toMatchObject({ autoDetect: true });
+  });
 });
 
-describe("parseConfig effective config — Phase 1 + presets (CONFIGURATION-MODES.md)", () => {
-  it("forces queryExpansion off and Phase-1 keys off for every mode", () => {
+describe("parseConfig effective config — presets (CONFIGURATION-MODES.md)", () => {
+  it("preset defaults: queryExpansion off by default; graph.strengthenOnRecall false in minimal+ presets", () => {
     const modes: ConfigMode[] = ["local", "minimal", "enhanced", "complete"];
     for (const mode of modes) {
       const r = parseMode(mode);
       expect(r.queryExpansion.enabled, `mode=${mode}`).toBe(false);
-      for (const key of PHASE1_CORE_ONLY_FORCE_DISABLED_KEYS) {
-        const section = r[key as keyof typeof r] as { enabled?: boolean } | undefined;
-        expect(section?.enabled, `${mode}.${key}.enabled`).toBe(false);
-      }
       expect(r.graph?.strengthenOnRecall, `mode=${mode}`).toBe(false);
     }
-  });
-
-  it("credentials.autoDetect forced false after Phase 1 (enhanced with vault)", () => {
-    const r = hybridConfigSchema.parse({
-      ...validEmbedding,
-      mode: "enhanced",
-      credentials: { encryptionKey: "env:OPENCLAW_CRED_KEY" },
-    });
-    expect(r.credentials?.autoDetect).toBe(false);
   });
 
   it("local: FTS-only and autoClassify off after parse", () => {

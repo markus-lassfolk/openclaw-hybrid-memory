@@ -41,9 +41,11 @@ Outdated installs now check the latest published plugin version in the backgroun
 
 Or with npm directly: `npm i openclaw-hybrid-memory` in your OpenClaw extensions folder if you manage it yourself.
 
+**Manual install from a `.tgz`:** npm packages never ship `node_modules`; after `tar -xzf` you must run **`npm install --omit=dev`** or **`npm ci --omit=dev`** (plain `npm ci` also installs devDependencies). The published artifact includes **`npm-shrinkwrap.json`** (npm strips `package-lock.json` from published tarballs by design; `npm ci` uses the shrinkwrap the same way). Let the command finish—**`postinstall`** installs and rebuilds **`@lancedb/lancedb`** for your platform.
+
 **2. Configure.** Set your OpenAI API key and enable the plugin. Easiest: run `openclaw hybrid-mem install` to merge full defaults (memory slot, compaction prompts, nightly session-distillation job) into `~/.openclaw/openclaw.json`, then set `plugins.entries["openclaw-hybrid-memory"].config.embedding.apiKey` to your key.
 
-**3. Restart the gateway** and run **`openclaw hybrid-mem verify [--fix]`** to confirm SQLite, LanceDB, and the embedding API. Use `--fix` to add any missing config (e.g. embedding block, nightly job). Verify also warns if **`hybrid-mem:*` cron job models** disagree with **`agents.defaults.model.primary`** (avoids **`LiveSessionModelSwitchError`** on isolated runs — see [SESSION-DISTILLATION.md](../../docs/SESSION-DISTILLATION.md) § *Align maintenance cron `model` with your agent default*).
+**3. Restart the gateway** and run **`openclaw hybrid-mem verify [--fix]`** to confirm SQLite, LanceDB, and the embedding API. Use `--fix` to add any missing config (e.g. embedding block, nightly job) and to normalize isolated `hybrid-mem:*` cron jobs by removing explicit top-level `sessionKey` values so OpenClaw uses per-job `cron:<jobId>` session isolation. Verify also warns if **`hybrid-mem:*` cron job models** disagree with **`agents.defaults.model.primary`** (see [SESSION-DISTILLATION.md](../../docs/SESSION-DISTILLATION.md) § *Maintenance cron session isolation and model alignment*).
 
 **More options:** [Quick Start](https://github.com/markus-lassfolk/openclaw-hybrid-memory/blob/main/docs/QUICKSTART.md) and [Configuration](https://github.com/markus-lassfolk/openclaw-hybrid-memory/blob/main/docs/CONFIGURATION.md) (manual config merge, from-source install).
 
@@ -58,6 +60,10 @@ Or with npm directly: `npm i openclaw-hybrid-memory` in your OpenClaw extensions
 | `versionInfo.ts` | Plugin and memory-manager version metadata |
 | `backends/event-bus.ts` | Event Bus — append-only `memory_events` SQLite table for sensor → Rumination Engine pipeline |
 | `tools/dashboard-routes.ts` | Dashboard HTTP route registration — registers all `/plugins/memory-dashboard/*` routes with consistent auth (Issue #279) |
+
+## Agent tool names
+
+Every tool this plugin registers uses **underscore** names (for example `memory_store`, `memory_recall`, `memory_record_episode`). LLM providers that validate tool definitions (notably **Anthropic**) require names to match `^[a-zA-Z0-9_-]{1,128}$` — **periods are not allowed**. Do not document or prompt for dotted aliases such as `memory.store`; they are not valid in those APIs.
 
 ## Event Bus
 

@@ -6,6 +6,7 @@
  */
 const fs = require("node:fs");
 const path = require("node:path");
+const { execFileSync } = require("node:child_process");
 
 const root = path.resolve(__dirname, "..");
 const pkgPath = path.join(root, "package.json");
@@ -58,6 +59,8 @@ const hasShrinkwrapClean = pkg.scripts?.postpack?.includes(
   "manage-shrinkwrap.cjs clean",
 );
 
+// npm intentionally omits package-lock.json from published tarballs; we ship
+// npm-shrinkwrap.json (generated in prepack from package-lock.json) for npm ci / install.
 if (!shrinkwrapFilesListed) {
   console.error(
     'FAIL: npm-shrinkwrap.json missing from package.json "files" - published package will resolve deps loosely during upgrade',
@@ -80,6 +83,55 @@ if (!shrinkwrapFilesListed) {
   failed = true;
 } else {
   console.log("OK: npm-shrinkwrap.json is generated only for pack/publish");
+}
+
+let packIncludesShrinkwrap = false;
+let packCheckErrored = false;
+/** Resolve npm without relying on shell: true (Windows: npm lives beside node.exe). */
+function npmExecutable() {
+  if (process.platform !== "win32") return "npm";
+  const candidate = path.join(path.dirname(process.execPath), "npm.cmd");
+  return fs.existsSync(candidate) ? candidate : "npm.cmd";
+}
+try {
+  const stdout = execFileSync(
+    npmExecutable(),
+    ["pack", "--dry-run", "--json", "--silent"],
+    {
+      cwd: root,
+      encoding: "utf8",
+      maxBuffer: 16 * 1024 * 1024,
+    },
+  );
+  const jsonStart = stdout.indexOf("[");
+  const jsonEnd = stdout.lastIndexOf("]") + 1;
+  if (jsonStart < 0 || jsonEnd <= jsonStart) {
+    throw new Error("npm pack --dry-run --json did not return a JSON array");
+  }
+  const packRows = JSON.parse(stdout.slice(jsonStart, jsonEnd));
+  const first = packRows[0];
+  const files = Array.isArray(first?.files)
+    ? first.files.map((f) => (typeof f === "string" ? f : f.path)).filter(Boolean)
+    : [];
+  packIncludesShrinkwrap = files.includes("npm-shrinkwrap.json");
+} catch (e) {
+  const message = e instanceof Error ? e.message : String(e);
+  console.error(
+    "FAIL: could not verify packed file list includes npm-shrinkwrap.json:",
+    message,
+  );
+  failed = true;
+  packCheckErrored = true;
+}
+if (!packIncludesShrinkwrap && !packCheckErrored) {
+  console.error(
+    "FAIL: published pack must list npm-shrinkwrap.json — without it, npm ci / npm install after extract cannot resolve deps (e.g. @lancedb/lancedb)",
+  );
+  failed = true;
+} else if (packIncludesShrinkwrap) {
+  console.log(
+    "OK: npm pack --dry-run lists npm-shrinkwrap.json (npm omits package-lock.json from publishes by design)",
+  );
 }
 
 // 2. Collect relative imports from index.ts (from "./foo.js" or './bar/baz.js')

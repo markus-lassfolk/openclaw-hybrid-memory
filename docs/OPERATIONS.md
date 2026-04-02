@@ -38,6 +38,8 @@ These are **not** required for core functionality but enhance the system for lon
 
 After adding jobs, the gateway will pick them up on next start (or according to your host’s job reload behavior). No plugin restart needed for cron store changes in many setups.
 
+For isolated `hybrid-mem:*` jobs, do **not** set `sessionKey` to `agent:main:main` (or any interactive session key). Leave `sessionKey` unset so OpenClaw resolves per-job isolated keys (`cron:<jobId>`). `verify --fix` strips bad top-level `sessionKey` values for isolated hybrid-mem jobs.
+
 ### Nightly session distillation
 
 Extracts durable facts from old conversation logs. Recommended if you want to capture knowledge from sessions where auto-capture missed things.

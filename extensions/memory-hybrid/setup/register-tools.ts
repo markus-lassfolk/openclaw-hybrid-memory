@@ -12,6 +12,9 @@ import { toolInstallers, type ToolsContext } from "./tool-installers.js";
 /**
  * Register all plugin tools with the OpenClaw API.
  * Calls tool registration modules in the correct order.
+ *
+ * Tool `name` strings must satisfy provider schemas (e.g. Anthropic:
+ * `^[a-zA-Z0-9_-]{1,128}$` — letters, digits, underscore, hyphen only; no dots).
  */
 export function registerTools(ctx: ToolsContext, api: ClawdbotPluginApi): void {
   for (const installer of toolInstallers) {
