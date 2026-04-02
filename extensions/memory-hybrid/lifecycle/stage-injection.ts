@@ -73,7 +73,7 @@ async function runInjection(
   const recallTiming = createRecallTimingLogger({
     logger: api.logger,
     mode: ctx.cfg.autoRecall.recallTiming ?? "off",
-    span: recallResult.recallSpan || createRecallSpan("recall-injection"),
+    span: r.recallSpan || createRecallSpan("recall-injection"),
     op: "auto-recall-injection",
   });
 
