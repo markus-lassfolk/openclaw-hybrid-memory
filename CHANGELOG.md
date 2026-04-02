@@ -8,6 +8,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+No changes yet.
+
+---
+
+## [2026.4.21] - 2026-04-21
+
+### Release summary
+
+Version **2026.4.21** — Anthropic-compliant tool registration (underscore-only `memory_*` tools; removed dotted `memory.*` aliases from the published tool list), documentation and issue templates for provider tool-name rules, hardened `verify-publish.cjs` shrinkwrap check (`npm pack --dry-run --json`), and README guidance for manual `.tgz` installs (`npm ci --omit=dev`). Bumps package, plugin manifest, standalone installer, and release metadata.
+
 ### Documentation
 
 - Clarified that **agent tool names** use underscores only and must match provider rules (e.g. Anthropic `^[a-zA-Z0-9_-]{1,128}$`); documented in the plugin README, [CONFIGURATION.md](docs/CONFIGURATION.md), and [TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md). Issue templates updated so examples do not suggest dotted tool names.
@@ -1103,7 +1113,8 @@ Major feature release including procedural memory, directive extraction, reinfor
 
 ---
 
-[Unreleased]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.4.20...HEAD
+[Unreleased]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.4.21...HEAD
+[2026.4.21]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.4.20...v2026.4.21
 [2026.4.20]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.4.12...v2026.4.20
 [2026.4.12]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.4.11...v2026.4.12
 [2026.4.11]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.4.10...v2026.4.11

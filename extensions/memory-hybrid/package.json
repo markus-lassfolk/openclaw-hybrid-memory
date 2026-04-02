@@ -1,6 +1,6 @@
 {
   "name": "openclaw-hybrid-memory",
-  "version": "2026.4.20",
+  "version": "2026.4.21",
   "type": "module",
   "description": "Give your OpenClaw agent lasting memory: structured facts, semantic search, auto-capture & recall, decay, optional credential vault. Part of Hybrid Memory v3.",
   "files": [
@@ -31,7 +31,14 @@
     "type": "git",
     "url": "git+https://github.com/markus-lassfolk/openclaw-hybrid-memory.git"
   },
-  "keywords": ["openclaw", "plugin", "memory", "sqlite", "lancedb", "embeddings"],
+  "keywords": [
+    "openclaw",
+    "plugin",
+    "memory",
+    "sqlite",
+    "lancedb",
+    "embeddings"
+  ],
   "peerDependencies": {
     "@sinclair/typebox": "^0.34.48",
     "openai": "^6.16.0",
@@ -45,7 +52,9 @@
     "onnxruntime-node": "^1.20.0"
   },
   "openclaw": {
-    "extensions": ["./index.ts"]
+    "extensions": [
+      "./index.ts"
+    ]
   },
   "scripts": {
     "test": "vitest run",
