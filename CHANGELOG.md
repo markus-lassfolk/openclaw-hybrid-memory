@@ -14,7 +14,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Fixed
 
-- **`verify-publish.cjs`:** Shrinkwrap check uses `npm pack --dry-run --json` (via `execFileSync`, no shell string) and no longer depends on `tar` or a temp `.tgz`; catch blocks format unknown errors safely. README manual-install line documents **`npm ci --omit=dev`** for production installs.
+- **`verify-publish.cjs`:** Shrinkwrap check uses `npm pack --dry-run --json` (via `execFileSync` without `shell: true`; on Windows resolves `npm.cmd` next to `process.execPath`) and no longer depends on `tar` or a temp `.tgz`; catch blocks format unknown errors safely. README manual-install line documents **`npm ci --omit=dev`** for production installs.
 
 ---
 

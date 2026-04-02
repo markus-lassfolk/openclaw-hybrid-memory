@@ -87,16 +87,20 @@ if (!shrinkwrapFilesListed) {
 
 let packIncludesShrinkwrap = false;
 let packCheckErrored = false;
-const npmCmd = process.platform === "win32" ? "npm.cmd" : "npm";
+/** Resolve npm without relying on shell: true (Windows: npm lives beside node.exe). */
+function npmExecutable() {
+  if (process.platform !== "win32") return "npm";
+  const candidate = path.join(path.dirname(process.execPath), "npm.cmd");
+  return fs.existsSync(candidate) ? candidate : "npm.cmd";
+}
 try {
   const stdout = execFileSync(
-    npmCmd,
+    npmExecutable(),
     ["pack", "--dry-run", "--json", "--silent"],
     {
       cwd: root,
       encoding: "utf8",
       maxBuffer: 16 * 1024 * 1024,
-      shell: true,
     },
   );
   const jsonStart = stdout.indexOf("[");
