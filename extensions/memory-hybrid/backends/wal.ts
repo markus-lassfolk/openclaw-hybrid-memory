@@ -3,23 +3,21 @@
  * Append-only NDJSON format; fsync after each write for durability.
  */
 
-import { existsSync, mkdirSync, statSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { appendFile, open, readFile, rm, writeFile } from "node:fs/promises";
+import { existsSync, statSync } from "node:fs";
 import { dirname } from "node:path";
 import type { DecayClass } from "../config.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { pluginLogger } from "../utils/logger.js";
 
-/** Schema version for WAL entry JSON; bump when `data` shape changes (#872). */
 export const WAL_ENTRY_SCHEMA_VERSION = 1;
 
 export type WALEntry = {
-  /** Present on new writes; omitted on legacy lines (treated as version 1). */
   schemaVersion?: number;
   id: string;
   timestamp: number;
   operation: "store" | "delete" | "update";
-  /** For operation "update": UUID of the fact row being superseded (Issue #836 replay). */
   targetId?: string;
   data: {
     text: string;
@@ -38,7 +36,7 @@ export type WALEntry = {
 
 const WAL_REMOVE_PREFIX = '{"op":"remove","id":';
 
-function isWalEntry(obj: unknown): obj is WALEntry {
+export function isWalEntry(obj: unknown): obj is WALEntry {
   if (typeof obj !== "object" || obj === null || !("id" in obj) || !("timestamp" in obj) || !("operation" in obj)) {
     return false;
   }
@@ -252,7 +250,6 @@ export class WriteAheadLog {
 
   private async _clearInternal(): Promise<void> {
     try {
-      // Under writeLock: delete path so empty state is "no file" (tests + readAll ENOENT).
       await rm(this.walPath, { force: true });
       this.activeIds.clear();
     } catch (err) {
@@ -286,24 +283,6 @@ export class WriteAheadLog {
     return entries.filter((e) => now - e.timestamp < this.maxAge);
   }
 
-  /**
-   * If the WAL file exceeds `maxBytes`, run `pruneStale()` to drop expired entries and rewrite the file (issue #903).
-   * Best-effort; returns number of entries removed.
-   */
-  async compactIfOversized(maxBytes: number): Promise<number> {
-    try {
-      if (!existsSync(this.walPath)) return 0;
-      const st = statSync(this.walPath);
-      if (st.size <= maxBytes) return 0;
-      return await this.pruneStale();
-    } catch (err) {
-      pluginLogger.info(
-        `memory-hybrid: WAL compactIfOversized size check failed; skipping compaction: ${err instanceof Error ? err.message : String(err)}`,
-      );
-      return 0;
-    }
-  }
-
   async pruneStale(): Promise<number> {
     const prevLock = this.writeLock;
     let releaseLock: () => void;
@@ -335,6 +314,20 @@ export class WriteAheadLog {
     } finally {
       // biome-ignore lint/style/noNonNullAssertion: Synchronous
       releaseLock!();
+    }
+  }
+
+  async compactIfOversized(maxBytes: number): Promise<number> {
+    try {
+      if (!existsSync(this.walPath)) return 0;
+      const st = statSync(this.walPath);
+      if (st.size <= maxBytes) return 0;
+      return await this.pruneStale();
+    } catch (err) {
+      pluginLogger.info(
+        `memory-hybrid: WAL compactIfOversized size check failed; skipping compaction: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return 0;
     }
   }
 }
