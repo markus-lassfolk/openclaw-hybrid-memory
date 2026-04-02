@@ -1,7 +1,19 @@
 {
   "$schema": "https://biomejs.dev/schemas/1.9.4/schema.json",
   "files": {
-    "include": ["**/*.ts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.json", "**/*.cjs", "**/*.mjs"]
+    "include": ["**/*.ts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.json", "**/*.cjs", "**/*.mjs"],
+    "ignore": [
+      "dist/**",
+      "node_modules/**",
+      "scripts/**",
+      "coverage/**",
+      "**/*.tgz",
+      "**/*.bak",
+      "**/*.txt",
+      "**/*.log",
+      "VERSION",
+      "tsconfig*.json"
+    ]
   },
   "formatter": {
     "enabled": true,
@@ -36,6 +48,7 @@
       },
       "style": {
         "useConst": "warn",
+        "noVar": "off",
         "noNonNullAssertion": "warn",
         "noParameterAssign": "warn",
         "noUnusedTemplateLiteral": "warn",
