@@ -136,8 +136,7 @@ export function parseAutoRecallConfig(cfg: Record<string, unknown>): AutoRecallC
         ? "basic"
         : recallTimingRaw === false
           ? "off"
-          : typeof recallTimingRaw === "string" &&
-              (VALID_RECALL_TIMING as readonly string[]).includes(recallTimingRaw)
+          : typeof recallTimingRaw === "string" && (VALID_RECALL_TIMING as readonly string[]).includes(recallTimingRaw)
             ? (recallTimingRaw as (typeof VALID_RECALL_TIMING)[number])
             : "off";
     const scopeFilterRaw = ar.scopeFilter as Record<string, unknown> | undefined;

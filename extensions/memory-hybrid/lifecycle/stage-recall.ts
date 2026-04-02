@@ -561,31 +561,27 @@ async function runRecall(
     }
 
     const directivesStartedAt = recallTiming.phaseStarted("directives_loop");
+    const abortDirectives = () => {
+      recallTiming.phaseCompleted("directives_loop", directivesStartedAt, {
+        enabled: directivesCfg.enabled,
+        calls: directiveCalls,
+        matches: directiveMatches.length,
+        candidates: candidates.length,
+        aborted: true,
+      });
+      return completeStage(emptyRecallStage());
+    };
     if (directivesCfg.enabled) {
       try {
         if (recallAborted(signal)) {
-          recallTiming.phaseCompleted("directives_loop", directivesStartedAt, {
-            enabled: directivesCfg.enabled,
-            calls: directiveCalls,
-            matches: directiveMatches.length,
-            candidates: candidates.length,
-            aborted: true,
-          });
-          return completeStage(emptyRecallStage());
+          return abortDirectives();
         }
         if (directivesCfg.entityMentioned && entityLookup.enabled) {
           const entityLookupNames = resolveEntityLookupNames(entityLookup, ctx.factsDb);
           if (entityLookupNames.length > 0) {
             for (const entity of entityLookupNames) {
               if (recallAborted(signal)) {
-                recallTiming.phaseCompleted("directives_loop", directivesStartedAt, {
-                  enabled: directivesCfg.enabled,
-                  calls: directiveCalls,
-                  matches: directiveMatches.length,
-                  candidates: candidates.length,
-                  aborted: true,
-                });
-                return completeStage(emptyRecallStage());
+                return abortDirectives();
               }
               if (!promptLower.includes(entity.toLowerCase())) continue;
               if (!canRunDirective()) break;
@@ -606,14 +602,7 @@ async function runRecall(
         if (directivesCfg.keywords.length > 0) {
           for (const keyword of directivesCfg.keywords) {
             if (recallAborted(signal)) {
-              recallTiming.phaseCompleted("directives_loop", directivesStartedAt, {
-                enabled: directivesCfg.enabled,
-                calls: directiveCalls,
-                matches: directiveMatches.length,
-                candidates: candidates.length,
-                aborted: true,
-              });
-              return completeStage(emptyRecallStage());
+              return abortDirectives();
             }
             if (!promptLower.includes(keyword.toLowerCase())) continue;
             if (!canRunDirective()) break;
@@ -631,14 +620,7 @@ async function runRecall(
         }
         for (const [taskType, triggers] of Object.entries(directivesCfg.taskTypes)) {
           if (recallAborted(signal)) {
-            recallTiming.phaseCompleted("directives_loop", directivesStartedAt, {
-              enabled: directivesCfg.enabled,
-              calls: directiveCalls,
-              matches: directiveMatches.length,
-              candidates: candidates.length,
-              aborted: true,
-            });
-            return completeStage(emptyRecallStage());
+            return abortDirectives();
           }
           const hit = triggers.some((t) => promptLower.includes(t.toLowerCase()));
           if (!hit || !canRunDirective()) continue;
@@ -655,14 +637,7 @@ async function runRecall(
         }
         if (directivesCfg.sessionStart) {
           if (recallAborted(signal)) {
-            recallTiming.phaseCompleted("directives_loop", directivesStartedAt, {
-              enabled: directivesCfg.enabled,
-              calls: directiveCalls,
-              matches: directiveMatches.length,
-              candidates: candidates.length,
-              aborted: true,
-            });
-            return completeStage(emptyRecallStage());
+            return abortDirectives();
           }
           const sessionKey = resolveSessionKey(e, api) ?? currentAgentIdRef.value ?? "default";
           if (!sessionStartSeen.has(sessionKey) && canRunDirective()) {

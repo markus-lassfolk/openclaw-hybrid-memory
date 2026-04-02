@@ -174,6 +174,7 @@ export async function runRecallPipelineQuery(
         const allowHyde =
           policy.allowHyde && cfg.queryExpansion.enabled && (!opts?.limitHydeOnce || !hydeUsedRef.value);
 
+        t0 = Date.now();
         if (allowHyde) {
           if (opts?.limitHydeOnce) hydeUsedRef.value = true;
           if (!directiveAbort.signal.aborted) {
@@ -211,15 +212,13 @@ export async function runRecallPipelineQuery(
         const embedStartedAt = recallTiming.phaseStarted("embed_query", {
           precomputed_vector: usePrecomputedVector,
         });
-        t0 = Date.now();
-        const vector =
-          usePrecomputedVector
-            ? opts.precomputedVector
-            : await embedWithAbortRace(
-                embeddings.embed(textToEmbed),
-                directiveAbort.signal,
-                `recall pipeline timed out after ${policy.vectorStepTimeoutMs}ms`,
-              );
+        const vector = usePrecomputedVector
+          ? opts.precomputedVector
+          : await embedWithAbortRace(
+              embeddings.embed(textToEmbed),
+              directiveAbort.signal,
+              `recall pipeline timed out after ${policy.vectorStepTimeoutMs}ms`,
+            );
         stageMs.embed = Date.now() - t0;
         recallTiming.phaseCompleted("embed_query", embedStartedAt, {
           precomputed_vector: usePrecomputedVector,

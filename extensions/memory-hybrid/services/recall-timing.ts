@@ -39,11 +39,7 @@ export function createRecallTimingLogger(args: {
 }): RecallTimingLogger {
   const { logger, mode, span, op, subsystem = "recall" } = args;
 
-  function event(
-    phase: string,
-    eventType: "started" | "completed",
-    fields?: Record<string, RecallTimingValue>,
-  ): void {
+  function event(phase: string, eventType: "started" | "completed", fields?: Record<string, RecallTimingValue>): void {
     if (mode === "off") return;
     if (eventType === "started" && mode !== "verbose") return;
     const parts = [

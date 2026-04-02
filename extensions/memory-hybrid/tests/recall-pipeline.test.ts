@@ -813,9 +813,7 @@ describe("runRecallPipelineQuery — structured recall timing logs", () => {
     await runRecallPipelineQuery("verbose timing", 3, deps, { value: false }, { timingSpan: "span-v", timingOp: "op" });
 
     const debugCalls = vi.mocked(deps.logger.debug).mock.calls.map(([line]) => line);
-    expect(debugCalls.some((line) => line.includes("phase=pipeline_run") && line.includes("event=started"))).toBe(
-      true,
-    );
+    expect(debugCalls.some((line) => line.includes("phase=pipeline_run") && line.includes("event=started"))).toBe(true);
     expect(debugCalls.some((line) => line.includes("event=started") && line.includes("ts="))).toBe(true);
   });
 });
