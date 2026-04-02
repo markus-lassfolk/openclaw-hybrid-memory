@@ -147,6 +147,14 @@ describe("memory tools embedding registry wiring", () => {
     expect(names).toContain("memory_update_edict");
     expect(names).toContain("memory_remove_edict");
     expect(names).toContain("memory_edict_stats");
+    expect(names).not.toContain("memory.record_episode");
+    expect(names).not.toContain("memory.search_episodes");
+    expect(names).not.toContain("memory.add_edict");
+    expect(names).not.toContain("memory.list_edicts");
+    expect(names).not.toContain("memory.get_edicts");
+    expect(names).not.toContain("memory.update_edict");
+    expect(names).not.toContain("memory.remove_edict");
+    expect(names).not.toContain("memory.edict_stats");
     expect(names.every((name) => /^[a-zA-Z0-9_-]{1,64}$/.test(name))).toBe(true);
   });
 
