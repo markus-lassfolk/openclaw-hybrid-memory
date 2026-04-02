@@ -1,6 +1,6 @@
 # Configuration Modes
 
-**Regression tests:** `extensions/memory-hybrid/tests/config-presets-doc-sync.test.ts` asserts `PRESET_OVERRIDES` and post-parse (Phase 1) behavior match this document. Update that file when you change presets or Phase 1.
+**Regression tests:** `extensions/memory-hybrid/tests/config-presets-doc-sync.test.ts` asserts `PRESET_OVERRIDES` and post-parse effective config match this document. Update that file when you change presets.
 
 You can set a **mode** in plugin config to apply a preset of feature toggles. **If you don't set `mode`, the default is `local`** (cost-safety: no external LLM, FTS-only). Set `minimal`, `enhanced`, or `complete` to enable LLM and richer features.
 
@@ -27,7 +27,7 @@ Valid values: **`local`** | **`minimal`** | **`enhanced`** | **`complete`**. Def
 
 ## What each mode does
 
-The table below is the **intent** of each preset in code (`PRESET_OVERRIDES` in `extensions/memory-hybrid/config/utils.ts`). See **Phase 1 baseline** (subsection below) for features that are **always** overridden at parse time on current plugin versions.
+The table below is the **intent** of each preset in code (`PRESET_OVERRIDES` in `extensions/memory-hybrid/config/utils.ts`). User-supplied keys **override** the preset after merge (nothing is silently forced off at parse time).
 
 | Mode | Best for | Description |
 |------|----------|-------------|
@@ -37,16 +37,9 @@ The table below is the **intent** of each preset in code (`PRESET_OVERRIDES` in 
 | **Local** | No external LLM | Auto-capture and auto-recall with **`retrieval.strategies`: `["fts5"]` only**. **`autoClassify`**, graph, procedures, reflection off. **`verbosity`: `quiet`**. Ideal for offline / Pi-style setups. |
 | **Custom** | Your own mix | Reported when your config does not match any preset (you changed at least one preset-controlled toggle). Your explicit settings are used. |
 
-### Phase 1 baseline
+### Effective config after parse
 
-After preset merge, **`applyPhase1CoreOnlyMigration`** in `extensions/memory-hybrid/config/parsers/index.ts` runs on current releases. It **always** sets:
-
-- **`queryExpansion.enabled`** → `false` (all modes; opt in explicitly to enable HyDE / expansion).
-- **`credentials.autoDetect`** → `false` (opt in explicitly).
-- **`graph.strengthenOnRecall`** → `false`.
-- For each key in **`PHASE1_CORE_ONLY_FORCE_DISABLED_KEYS`** (e.g. `frustrationDetection`, `nightlyCycle`, `passiveObserver`, `workflowTracking`, `selfExtension`, `crystallization`, `verification`, `provenance`, `aliases`, `crossAgentLearning`, `reranking`, `contextualVariants`, `documents`, `personaProposals`), the effective config keeps **`enabled: false`** unless you later override after parse (same intent as the presets: advanced features are opt-in).
-
-So **`openclaw hybrid-mem config`** may show query expansion and several “advanced” features off even for **`mode: "complete"`** — that matches the **code**, not an older marketing blurb about “everything on.”
+The parser applies the **mode preset**, then your **explicit overrides**. Optional modules (query expansion, workflow tracking, dream cycle, verification, etc.) follow the **preset defaults** unless you set them in `openclaw.json`. For **`mode: "complete"`**, several advanced features remain **off** in the preset by design; enable any of them explicitly if you want them.
 
 To reduce API or compute usage, set `"mode": "minimal"` or `"mode": "local"` in your plugin config.
 
@@ -74,9 +67,7 @@ This gives good value at low cost. For even lower cost or fully offline use, use
   | Enhanced | On (if key set) | Preset does not set `enabled: true`; vault turns on when a valid encryption key is present. |
   | Complete | On (if key set) | Same as Enhanced. |
 
-  **`credentials.autoDetect`** is forced **off** by Phase 1 until you set it in config (even when Enhanced/Complete presets list `autoDetect: true`).
-
-- **Credentials auto-detect** (`credentials.autoDetect`): Detects credential-like content in conversation and prompts to store in the vault. Presets may set **`autoDetect: true`** for Enhanced/Complete, but **Phase 1 (≥ 2026.3.140)** forces **`autoDetect: false`** until you opt in explicitly.
+- **Credentials auto-detect** (`credentials.autoDetect`): Detects credential-like content in conversation and prompts to store in the vault. **Enhanced** and **Complete** presets set **`autoDetect: true`** when merged; you can override with an explicit `credentials.autoDetect` value in config.
 
 - **Credentials capture from tool I/O** (`credentials.autoCapture.toolCalls`): Scans **tool call inputs and outputs** for credential patterns and stores them in the vault. **Local and Minimal** leave it off; **Enhanced and Complete** enable it when the vault is on (you can still turn it on manually in Local/Minimal).
 

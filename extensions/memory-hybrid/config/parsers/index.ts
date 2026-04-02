@@ -1,6 +1,4 @@
 import { setMemoryCategories, getMemoryCategories, PRESET_OVERRIDES } from "../utils.js";
-import { versionInfo } from "../../versionInfo.js";
-import { isVersionAtLeast } from "../../utils/version-check.js";
 import type { HybridMemoryConfig, EmbeddingModelConfig, ConfigMode } from "../types/index.js";
 import { pluginLogger } from "../../utils/logger.js";
 import {
@@ -153,55 +151,6 @@ function userOverridesPresetValue(userVal: unknown, presetVal: unknown): boolean
   return !deepEqual(userVal, presetVal);
 }
 
-/**
- * Top-level plugin keys forced to `{ enabled: false }` by Phase 1 core-only migration (2026.3.140+).
- * Exported so CLI config view matches effective runtime config.
- */
-export const PHASE1_CORE_ONLY_FORCE_DISABLED_KEYS = [
-  "frustrationDetection",
-  "nightlyCycle",
-  "passiveObserver",
-  "workflowTracking",
-  "selfExtension",
-  "crystallization",
-  "verification",
-  "provenance",
-  "aliases",
-  "crossAgentLearning",
-  "reranking",
-  "contextualVariants",
-  "documents",
-  "personaProposals",
-] as const;
-
-/**
- * Phase 1 (2026.3.140+): Force core-only baseline for all installations.
- * Overrides user-set values to establish consistent baseline.
- */
-function applyPhase1CoreOnlyMigration(cfg: Record<string, unknown>): void {
-  cfg.queryExpansion = {
-    ...(typeof cfg.queryExpansion === "object" && cfg.queryExpansion !== null ? cfg.queryExpansion : {}),
-    enabled: false,
-  } as Record<string, unknown>;
-  for (const key of PHASE1_CORE_ONLY_FORCE_DISABLED_KEYS) {
-    const existing = cfg[key];
-    const base =
-      typeof existing === "object" && existing !== null && !Array.isArray(existing)
-        ? (existing as Record<string, unknown>)
-        : {};
-    (cfg as Record<string, unknown>)[key] = { ...base, enabled: false };
-  }
-  const g = cfg.graph as Record<string, unknown> | undefined;
-  if (g && typeof g === "object") {
-    cfg.graph = { ...g, strengthenOnRecall: false };
-  }
-  // Credential auto-detect: make opt-in (recommendations §2 resolution)
-  const cred = cfg.credentials as Record<string, unknown> | undefined;
-  if (cred && typeof cred === "object") {
-    cfg.credentials = { ...cred, autoDetect: false };
-  }
-}
-
 export function vectorDimsForModel(model: string, fallback?: number): number {
   const dims = EMBEDDING_DIMENSIONS[model];
   if (!dims) {
@@ -272,10 +221,6 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
   userRaw.mode = undefined;
   cfg = deepMergePreset(preset, cfg) as Record<string, unknown>;
   cfg.mode = undefined;
-  // Phase 1 (2026.3.140+): force core-only baseline for all installations (overrides user-set values too)
-  if (isVersionAtLeast(versionInfo.pluginVersion, "2026.3.140")) {
-    applyPhase1CoreOnlyMigration(cfg);
-  }
   // Only "Custom" when user explicitly set a preset key to a different value (not when they only add e.g. embedding or credentials.encryptionKey)
   for (const key of Object.keys(preset)) {
     if (!(key in userRaw)) continue;

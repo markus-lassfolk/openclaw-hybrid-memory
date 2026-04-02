@@ -231,6 +231,13 @@ function resolveCronJob(
   return { ...rest, model, delivery: { mode: "none" as const } };
 }
 
+function hasIsolatedCronSessionTarget(job: Record<string, unknown>): boolean {
+  if (job.sessionTarget === "isolated" || job.isolated === true) return true;
+  const payload = job.payload as Record<string, unknown> | undefined;
+  if (!payload) return false;
+  return payload.sessionTarget === "isolated" || payload.isolated === true;
+}
+
 const LEGACY_JOB_MATCHERS: Record<string, (j: Record<string, unknown>) => boolean> = {
   [`${PLUGIN_JOB_ID_PREFIX}nightly-distill`]: (j) =>
     String(j.name ?? "")
@@ -345,6 +352,17 @@ export function ensureMaintenanceCronJobs(
         }
         if (!existing.pluginJobId) {
           existing.pluginJobId = id;
+          jobsChanged = true;
+          if (!normalized.includes(name)) normalized.push(name);
+        }
+        if (
+          id.startsWith(PLUGIN_JOB_ID_PREFIX) &&
+          hasIsolatedCronSessionTarget(existing) &&
+          Object.prototype.hasOwnProperty.call(existing, "sessionKey")
+        ) {
+          // Issue #977: plugin maintenance jobs must not pin an interactive session.
+          // Omit sessionKey so OpenClaw uses isolated default session key: cron:<jobId>.
+          delete existing.sessionKey;
           jobsChanged = true;
           if (!normalized.includes(name)) normalized.push(name);
         }
@@ -605,7 +623,9 @@ function getPluginEntryConfig(root: Record<string, unknown>): Record<string, unk
 }
 
 /**
- * Install plugin configuration and cron jobs
+ * Install plugin configuration and cron jobs.
+ * `buildInstallDefaults()` includes `mode: "local"`; `deepMerge` only fills missing keys,
+ * so an existing `plugins.entries[pluginId].config.mode` is never overwritten on re-install.
  */
 export function runInstallForCli(opts: { dryRun: boolean }): InstallCliResult {
   const openclawDir = join(homedir(), ".openclaw");

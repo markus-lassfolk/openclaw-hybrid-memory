@@ -16,15 +16,18 @@ import type { EmbeddingProvider } from "./types.js";
 
 /** Validate OpenAI-style embedding payload before indexing (#969). */
 function vectorFromEmbeddingResponse(
-  resp: { data?: Array<{ embedding?: number[]; index?: number } | undefined> | undefined },
+  resp: unknown,
+  provider: string,
+  endpoint: string,
   model: string,
   context: "embed" | "embedBatch",
 ): number[] {
-  const row0 = resp?.data?.[0];
+  const data = (resp as { data?: unknown } | undefined)?.data;
+  const row0 = Array.isArray(data) ? (data[0] as { embedding?: number[] } | undefined) : undefined;
   const emb = row0?.embedding;
   if (!emb || !Array.isArray(emb)) {
     throw new Error(
-      `Embedding response missing data[0].embedding (${context}, model=${model}, hasData=${Boolean(resp?.data?.length)})`,
+      `Embedding response missing data[0].embedding (${context}, provider=${provider}, endpoint=${endpoint}, model=${model}, hasData=${Boolean(Array.isArray(data) && data.length > 0)})`,
     );
   }
   return emb;
@@ -35,8 +38,10 @@ function vectorFromEmbeddingResponse(
  * Uses a cache, supports model preference lists (try in order on failure).
  */
 export class Embeddings implements EmbeddingProvider {
+  private readonly providerName = "openai-compatible";
   private client: OpenAI;
   private cache = new Map<string, number[]>();
+  private readonly endpoint: string;
   /** Ordered list: try first model, on failure try next (all must produce same vector dimension). */
   private readonly models: string[];
   /**
@@ -58,6 +63,8 @@ export class Embeddings implements EmbeddingProvider {
     logicalModelForEmbedding?: string,
   ) {
     this.client = typeof clientOrApiKey === "string" ? new OpenAI({ apiKey: clientOrApiKey }) : clientOrApiKey;
+    const maybeClient = this.client as unknown as { baseURL?: string; _options?: { baseURL?: string } };
+    this.endpoint = maybeClient.baseURL ?? maybeClient._options?.baseURL ?? "default";
     this.models = Array.isArray(modelOrModels) ? modelOrModels : [modelOrModels];
     if (this.models.length === 0) throw new Error("Embeddings requires at least one model");
     this.logicalModelForEmbedding = logicalModelForEmbedding;
@@ -133,7 +140,7 @@ export class Embeddings implements EmbeddingProvider {
               }),
             { maxRetries: 2 },
           );
-          const vector = vectorFromEmbeddingResponse(resp, model, "embed");
+          const vector = vectorFromEmbeddingResponse(resp, this.providerName, this.endpoint, model, "embed");
           if (this.cache.size >= EMBEDDING_CACHE_MAX) {
             const firstKey = this.cache.keys().next().value;
             if (firstKey !== undefined) this.cache.delete(firstKey);
@@ -231,7 +238,7 @@ export class Embeddings implements EmbeddingProvider {
         if (resp !== undefined && succeededModel !== undefined) {
           if (!resp.data || !Array.isArray(resp.data) || resp.data.length !== batch.length) {
             throw new Error(
-              `Embedding response missing or wrong-length data[] (embedBatch, model=${succeededModel}, got=${resp.data?.length ?? 0}, expected=${batch.length})`,
+              `Embedding response missing or wrong-length data[] (embedBatch, provider=${this.providerName}, endpoint=${this.endpoint}, model=${succeededModel}, got=${resp.data?.length ?? 0}, expected=${batch.length})`,
             );
           }
           const data = resp.data;
@@ -239,7 +246,7 @@ export class Embeddings implements EmbeddingProvider {
             const row = data[rowIdx];
             if (!row || typeof row.index !== "number") {
               throw new Error(
-                `Embedding response contained row with missing or non-numeric index (embedBatch, model=${succeededModel}, row=${rowIdx})`,
+                `Embedding response contained row with missing or non-numeric index (embedBatch, provider=${this.providerName}, endpoint=${this.endpoint}, model=${succeededModel}, row=${rowIdx})`,
               );
             }
           }
@@ -249,7 +256,7 @@ export class Embeddings implements EmbeddingProvider {
               const emb = item?.embedding;
               if (!emb || !Array.isArray(emb)) {
                 throw new Error(
-                  `Embedding response missing embedding for batch row (embedBatch, model=${succeededModel}, index=${item?.index ?? "?"})`,
+                  `Embedding response missing embedding for batch row (embedBatch, provider=${this.providerName}, endpoint=${this.endpoint}, model=${succeededModel}, index=${item?.index ?? "?"})`,
                 );
               }
               return emb;

@@ -532,7 +532,7 @@ describe("Advanced features e2e", () => {
       clusters: { enabled: true, minClusterSize: 2, refreshIntervalDays: 0, labelModel: null },
       gaps: { enabled: true, similarityThreshold: 0.8 },
     });
-    // 2026.3.140 migration forces verification off; override so advanced e2e tests can exercise the feature
+    // Ensure verification is on for advanced e2e tests
     cfg.verification!.enabled = true;
     factsDb = new FactsDB(sqlitePath, { fuzzyDedupe: false });
     vectorDb = new VectorDB(lancePath, EMBEDDING_DIM, false);
