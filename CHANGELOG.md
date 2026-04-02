@@ -8,7 +8,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
-No changes yet.
+### Documentation
+
+- Clarified that **agent tool names** use underscores only and must match provider rules (e.g. Anthropic `^[a-zA-Z0-9_-]{1,128}$`); documented in the plugin README, [CONFIGURATION.md](docs/CONFIGURATION.md), and [TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md). Issue templates updated so examples do not suggest dotted tool names.
+
+### Fixed
+
+- **`verify-publish.cjs`:** Shrinkwrap check uses `npm pack --dry-run --json` (via `execFileSync` without `shell: true`; on Windows resolves `npm.cmd` next to `process.execPath`) and no longer depends on `tar` or a temp `.tgz`; catch blocks format unknown errors safely. README manual-install line documents **`npm ci --omit=dev`** for production installs.
 
 ---
 

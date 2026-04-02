@@ -18,6 +18,16 @@ openclaw hybrid-mem verify --fix  # apply safe auto-fixes
 openclaw hybrid-mem stats         # show fact/vector counts
 ```
 
+### Anthropic: `tools.*.custom.name` / pattern validation (400)
+
+**Symptoms:** API error such as `tools.33.custom.name: String should match pattern '^[a-zA-Z0-9_-]{1,128}$'`, or similar for another index.
+
+**Cause:** A tool in the request uses a **name** that is not allowed by the provider schema. Dotted names (for example `memory.record_episode`) are invalid for Anthropic even if they look like a namespace.
+
+**Fix:** Ensure every tool registered for the session uses only **letters, digits, underscores, and hyphens** — matching this plugin’s public names (`memory_store`, `memory_recall`, `memory_record_episode`, …). This plugin does not register dotted tool names. If you see this after a custom fork or merged tool list, search for `name:` values in tool registration that still contain `.`.
+
+**Note:** “Sanitize on retry” in logs refers to **message** / tool-*call* repair (for example pairing `tool_use` with `tool_result`), not to rewriting tool **definitions** in the request.
+
 ### `LiveSessionModelSwitchError` on maintenance crons
 
 **Symptoms:** A scheduled **`hybrid-mem:*`** job fails; logs mention **`LiveSessionModelSwitchError`** or “live session model switch”.
