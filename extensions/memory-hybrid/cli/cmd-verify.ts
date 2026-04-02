@@ -655,11 +655,18 @@ export async function runVerifyForCli(
     const provEntry = (cronCfg.llm?.providers as Record<string, { baseURL?: string; baseUrl?: string }> | undefined)?.[
       provider
     ];
-    const baseURL =
+    let baseURL =
       (typeof provEntry?.baseURL === "string" && provEntry.baseURL.trim() ? provEntry.baseURL.trim() : undefined) ??
       (typeof provEntry?.baseUrl === "string" && provEntry.baseUrl.trim() ? provEntry.baseUrl.trim() : undefined) ??
       VERIFY_LLM_BASE_URLS[provider];
     if (!baseURL) return undefined;
+    // Anthropic's OpenAI-compatible chat endpoint requires /v1 suffix; normalize host-only baseURL (issue #950).
+    if (provider === "anthropic") {
+      baseURL = baseURL.replace(/\/+$/, "");
+      if (!baseURL.endsWith("/v1")) {
+        baseURL = baseURL + "/v1";
+      }
+    }
     const opts: {
       apiKey: string;
       baseURL: string;
