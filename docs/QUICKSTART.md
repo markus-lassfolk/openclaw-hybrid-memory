@@ -78,6 +78,8 @@ Then set your **embedding** config (required) and optionally **LLM** preferences
 # Or use env: e.g. embedding.apiKey = "env:OPENAI_API_KEY"
 ```
 
+If you run isolated maintenance jobs (`hybrid-mem:*` in `~/.openclaw/cron/jobs.json`), keep `agents.defaults.model.primary` and each job `model`/`payload.model` on the same provider family (for example `azure-foundry/...` for both). Mixed families (for example `minimax/...` primary with `google/...` cron model) can fail with `LiveSessionModelSwitchError`. After changing primary, run `openclaw hybrid-mem verify --fix` to refresh job models.
+
 For manual configuration and all options (including `llm` and legacy `distill`), see [CONFIGURATION.md](CONFIGURATION.md) and [LLM-AND-PROVIDERS.md](LLM-AND-PROVIDERS.md).
 
 ---
