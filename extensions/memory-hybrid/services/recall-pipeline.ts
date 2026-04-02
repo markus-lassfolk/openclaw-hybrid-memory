@@ -208,12 +208,13 @@ export async function runRecallPipelineQuery(
           throw abortError;
         }
 
-        const usePrecomputedVector = Boolean(opts?.precomputedVector) && textToEmbed === trimmed;
+        const _precomputedVector = opts?.precomputedVector;
+        const usePrecomputedVector = Boolean(_precomputedVector) && textToEmbed === trimmed;
         const embedStartedAt = recallTiming.phaseStarted("embed_query", {
           precomputed_vector: usePrecomputedVector,
         });
         const vector = usePrecomputedVector
-          ? opts.precomputedVector
+          ? _precomputedVector as number[]
           : await embedWithAbortRace(
               embeddings.embed(textToEmbed),
               directiveAbort.signal,
