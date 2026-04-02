@@ -144,6 +144,7 @@ export function registerCredentialTools(ctx: PluginContext, api: ClawdbotPluginA
               type: entry.type,
               url: entry.url,
               expires: entry.expires,
+              sensitiveFields: ["value"],
             },
           };
         },
