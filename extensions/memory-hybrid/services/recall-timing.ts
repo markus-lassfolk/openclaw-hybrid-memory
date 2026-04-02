@@ -65,7 +65,7 @@ export function createRecallTimingLogger(args: {
     },
     phaseCompleted(phase, startedAtMs, fields) {
       const durationMs = Math.max(0, Date.now() - startedAtMs);
-      event(phase, "completed", { duration_ms: durationMs, ...fields });
+      event(phase, "completed", { ...fields, duration_ms: durationMs });
       return durationMs;
     },
     event,
