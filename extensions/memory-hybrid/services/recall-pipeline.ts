@@ -214,7 +214,7 @@ export async function runRecallPipelineQuery(
           precomputed_vector: usePrecomputedVector,
         });
         const vector = usePrecomputedVector
-          ? _precomputedVector as number[]
+          ? (_precomputedVector as number[])
           : await embedWithAbortRace(
               embeddings.embed(textToEmbed),
               directiveAbort.signal,
