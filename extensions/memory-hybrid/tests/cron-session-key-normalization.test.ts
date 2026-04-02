@@ -67,6 +67,25 @@ describe("ensureMaintenanceCronJobs sessionKey normalization (#977)", () => {
     expect(fixed).not.toHaveProperty("sessionKey");
   });
 
+  it("removes top-level sessionKey for isolated hybrid-mem jobs using payload.sessionTarget=isolated", () => {
+    const openclawDir = newOpenclawDir();
+    seedMaintenanceJobs(openclawDir);
+
+    const jobs = readJobs(openclawDir);
+    const target = jobs.find((j) => j.pluginJobId === "hybrid-mem:self-correction-analysis");
+    expect(target).toBeTruthy();
+    // Simulate payload-level isolation (used by some OpenClaw versions)
+    target!.payload = { ...target!.payload, sessionTarget: "isolated" as const, isolated: true as const };
+    target!.sessionKey = "agent:main:main";
+    writeJobs(openclawDir, jobs);
+
+    ensureMaintenanceCronJobs(openclawDir, undefined, { normalizeExisting: true });
+
+    const after = readJobs(openclawDir);
+    const fixed = after.find((j) => j.pluginJobId === "hybrid-mem:self-correction-analysis");
+    expect(fixed).toBeTruthy();
+    expect(fixed).not.toHaveProperty("sessionKey");
+  });
   it("removes top-level sessionKey for isolated hybrid-mem jobs using legacy isolated=true", () => {
     const openclawDir = newOpenclawDir();
     seedMaintenanceJobs(openclawDir);

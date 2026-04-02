@@ -269,7 +269,7 @@ Jobs installed by `openclaw hybrid-mem install` or `openclaw hybrid-mem verify -
 
 For isolated maintenance jobs, do **not** set `sessionKey` to `agent:main:main` (or any interactive session key). Leave `sessionKey` unset so OpenClaw resolves a per-job isolated key (`cron:<jobId>`). This avoids sharing the main transcript row with live chat and prevents session-store model contention. `openclaw hybrid-mem verify --fix` now normalizes isolated `hybrid-mem:*` rows by removing an explicit top-level `sessionKey`.
 
-Each job also includes a **`model`** field (or `payload.model`, depending on OpenClaw version). The plugin may align maintenance models with `agents.defaults.model.primary` (issue #965) to avoid provider-family mismatch errors. If primary is not set, models come from `llm.default` / `llm.heavy` / `llm.nano` per job tier.
+Each job also includes a **`model`** field (or `payload.model`, depending on OpenClaw version). When `agents.defaults.model.primary` is set, the plugin aligns maintenance job models to that primary value (issue #965) to avoid provider-family mismatch errors. If `agents.defaults.model.primary` is not set, models fall back to `llm.default` / `llm.heavy` / `llm.nano` per job tier.
 
 **Note:** OpenClaw's config schema does not accept a top-level `"jobs"` key in `openclaw.json`. Use one of:
 
