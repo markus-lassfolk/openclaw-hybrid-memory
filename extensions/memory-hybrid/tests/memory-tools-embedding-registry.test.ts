@@ -45,6 +45,9 @@ function makeMockApi() {
     getTool(name: string) {
       return tools.get(name);
     },
+    getToolNames() {
+      return [...tools.keys()];
+    },
     logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
     context: { sessionId: "test-session" },
   };
@@ -106,6 +109,55 @@ afterEach(() => {
 // ---------------------------------------------------------------------------
 
 describe("memory tools embedding registry wiring", () => {
+  it("registers provider-safe episodic and edict tool names (no dots)", () => {
+    const api = makeMockApi();
+    const embeddings = makeMockEmbeddings();
+    const embeddingRegistry = buildEmbeddingRegistry(embeddings, embeddings.modelName, []);
+    const cfg = makeCfg();
+    const vectorDb = makeMockVectorDb();
+
+    registerMemoryTools(
+      {
+        factsDb,
+        vectorDb,
+        cfg,
+        embeddings,
+        embeddingRegistry,
+        openai: {} as never,
+        wal: null,
+        credentialsDb: null,
+        eventLog: null,
+        lastProgressiveIndexIds: [],
+        currentAgentIdRef: { value: null },
+        pendingLLMWarnings: createPendingLLMWarnings(),
+      },
+      api as never,
+      noopScopeFilter as never,
+      walWrite,
+      walRemove,
+      findSimilarByEmbedding as never,
+    );
+
+    const names = api.getToolNames();
+    expect(names).toContain("memory_record_episode");
+    expect(names).toContain("memory_search_episodes");
+    expect(names).toContain("memory_add_edict");
+    expect(names).toContain("memory_list_edicts");
+    expect(names).toContain("memory_get_edicts");
+    expect(names).toContain("memory_update_edict");
+    expect(names).toContain("memory_remove_edict");
+    expect(names).toContain("memory_edict_stats");
+    expect(names).not.toContain("memory.record_episode");
+    expect(names).not.toContain("memory.search_episodes");
+    expect(names).not.toContain("memory.add_edict");
+    expect(names).not.toContain("memory.list_edicts");
+    expect(names).not.toContain("memory.get_edicts");
+    expect(names).not.toContain("memory.update_edict");
+    expect(names).not.toContain("memory.remove_edict");
+    expect(names).not.toContain("memory.edict_stats");
+    expect(names.every((name) => /^[a-zA-Z0-9_-]{1,64}$/.test(name))).toBe(true);
+  });
+
   it("passes embeddingRegistry to runRetrievalPipeline", async () => {
     const api = makeMockApi();
     const embeddings = makeMockEmbeddings();
