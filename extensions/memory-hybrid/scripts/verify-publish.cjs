@@ -87,6 +87,7 @@ if (!shrinkwrapFilesListed) {
 }
 
 let packIncludesShrinkwrap = false;
+let packCheckErrored = false;
 const tmpPack = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-verify-pack-"));
 try {
   execSync(`npm pack --pack-destination "${tmpPack}" --silent`, {
@@ -106,10 +107,11 @@ try {
     e.message,
   );
   failed = true;
+  packCheckErrored = true;
 } finally {
   fs.rmSync(tmpPack, { recursive: true, force: true });
 }
-if (!packIncludesShrinkwrap && !failed) {
+if (!packIncludesShrinkwrap && !packCheckErrored) {
   console.error(
     "FAIL: published .tgz must include package/npm-shrinkwrap.json — without it, npm ci / npm install after extract cannot resolve deps (e.g. @lancedb/lancedb)",
   );
