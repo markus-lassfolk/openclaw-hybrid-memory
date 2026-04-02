@@ -19,6 +19,13 @@ concurrency:
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
+# Least-privilege default for the GITHUB_TOKEN (explicit jobs may override).
+# actions:write — required for actions/cache and actions/upload-artifact when permissions are explicit.
+permissions:
+  actions: write
+  contents: read
+  pull-requests: read
+
 jobs:
   changes:
     name: Detect Changes
