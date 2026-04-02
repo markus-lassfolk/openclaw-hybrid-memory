@@ -132,11 +132,7 @@ describe("runVerifyForCli - model alignment warnings (issue #965)", () => {
     });
     const { runVerifyForCli } = await import("../cli/handlers.js");
     const lines: string[] = [];
-    await runVerifyForCli(
-      buildCtx("azure-foundry/gpt-5.4") as never,
-      { fix: false },
-      { log: (m) => lines.push(m) },
-    );
+    await runVerifyForCli(buildCtx("azure-foundry/gpt-5.4") as never, { fix: false }, { log: (m) => lines.push(m) });
     const out = lines.join("\n");
 
     expect(out).not.toContain("Cron vs agent model (issue #965)");
