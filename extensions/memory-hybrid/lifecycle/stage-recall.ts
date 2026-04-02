@@ -390,7 +390,13 @@ async function runRecall(
         if (extraQueries.length > 0) {
           const extraResultSets: SearchResult[][] = [candidates];
           for (const q of extraQueries) {
-            if (recallAborted(signal)) return completeStage(emptyRecallStage());
+            if (recallAborted(signal)) {
+              recallTiming.phaseCompleted("ambient_multi_query", ambientStartedAt, {
+                status: "aborted",
+                queries_run: ambientQueriesRun,
+              });
+              return completeStage(emptyRecallStage());
+            }
             await yieldEventLoop();
             try {
               const qResults = await runRecallPipelineQuery(q.text, Math.ceil(limit / 2), pipelineDeps, hydeUsedRef, {
@@ -557,12 +563,30 @@ async function runRecall(
     const directivesStartedAt = recallTiming.phaseStarted("directives_loop");
     if (directivesCfg.enabled) {
       try {
-        if (recallAborted(signal)) return completeStage(emptyRecallStage());
+        if (recallAborted(signal)) {
+          recallTiming.phaseCompleted("directives_loop", directivesStartedAt, {
+            enabled: directivesCfg.enabled,
+            calls: directiveCalls,
+            matches: directiveMatches.length,
+            candidates: candidates.length,
+            aborted: true,
+          });
+          return completeStage(emptyRecallStage());
+        }
         if (directivesCfg.entityMentioned && entityLookup.enabled) {
           const entityLookupNames = resolveEntityLookupNames(entityLookup, ctx.factsDb);
           if (entityLookupNames.length > 0) {
             for (const entity of entityLookupNames) {
-              if (recallAborted(signal)) return completeStage(emptyRecallStage());
+              if (recallAborted(signal)) {
+                recallTiming.phaseCompleted("directives_loop", directivesStartedAt, {
+                  enabled: directivesCfg.enabled,
+                  calls: directiveCalls,
+                  matches: directiveMatches.length,
+                  candidates: candidates.length,
+                  aborted: true,
+                });
+                return completeStage(emptyRecallStage());
+              }
               if (!promptLower.includes(entity.toLowerCase())) continue;
               if (!canRunDirective()) break;
               const results = await runRecallPipelineQuery(entity, directiveLimit, pipelineDeps, hydeUsedRef, {
@@ -581,7 +605,16 @@ async function runRecall(
         }
         if (directivesCfg.keywords.length > 0) {
           for (const keyword of directivesCfg.keywords) {
-            if (recallAborted(signal)) return completeStage(emptyRecallStage());
+            if (recallAborted(signal)) {
+              recallTiming.phaseCompleted("directives_loop", directivesStartedAt, {
+                enabled: directivesCfg.enabled,
+                calls: directiveCalls,
+                matches: directiveMatches.length,
+                candidates: candidates.length,
+                aborted: true,
+              });
+              return completeStage(emptyRecallStage());
+            }
             if (!promptLower.includes(keyword.toLowerCase())) continue;
             if (!canRunDirective()) break;
             const results = await runRecallPipelineQuery(keyword, directiveLimit, pipelineDeps, hydeUsedRef, {
@@ -597,7 +630,16 @@ async function runRecall(
           }
         }
         for (const [taskType, triggers] of Object.entries(directivesCfg.taskTypes)) {
-          if (recallAborted(signal)) return completeStage(emptyRecallStage());
+          if (recallAborted(signal)) {
+            recallTiming.phaseCompleted("directives_loop", directivesStartedAt, {
+              enabled: directivesCfg.enabled,
+              calls: directiveCalls,
+              matches: directiveMatches.length,
+              candidates: candidates.length,
+              aborted: true,
+            });
+            return completeStage(emptyRecallStage());
+          }
           const hit = triggers.some((t) => promptLower.includes(t.toLowerCase()));
           if (!hit || !canRunDirective()) continue;
           const results = await runRecallPipelineQuery(taskType, directiveLimit, pipelineDeps, hydeUsedRef, {
@@ -612,7 +654,16 @@ async function runRecall(
           addDirectiveResults(results, `taskType:${taskType}`);
         }
         if (directivesCfg.sessionStart) {
-          if (recallAborted(signal)) return completeStage(emptyRecallStage());
+          if (recallAborted(signal)) {
+            recallTiming.phaseCompleted("directives_loop", directivesStartedAt, {
+              enabled: directivesCfg.enabled,
+              calls: directiveCalls,
+              matches: directiveMatches.length,
+              candidates: candidates.length,
+              aborted: true,
+            });
+            return completeStage(emptyRecallStage());
+          }
           const sessionKey = resolveSessionKey(e, api) ?? currentAgentIdRef.value ?? "default";
           if (!sessionStartSeen.has(sessionKey) && canRunDirective()) {
             const results = await runRecallPipelineQuery("session start", directiveLimit, pipelineDeps, hydeUsedRef, {
