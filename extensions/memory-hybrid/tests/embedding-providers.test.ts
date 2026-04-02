@@ -112,6 +112,56 @@ describe("Embeddings (OpenAI) implements EmbeddingProvider interface", () => {
     await expect(provider.embed("hello")).rejects.toThrow(/missing data\[0\]\.embedding/i);
   });
 
+  it("#969: embed() throws a descriptive error when response has no data field", async () => {
+    const mockCreate = vi.fn().mockResolvedValue({});
+    const client = {
+      baseURL: "https://embeds.example.test/v1",
+      embeddings: { create: mockCreate },
+    } as unknown as import("openai").default;
+    const provider = new Embeddings(client, "text-embedding-3-small", 3);
+    let thrown: unknown;
+    try {
+      await provider.embed("hello");
+    } catch (err) {
+      thrown = err;
+    }
+    const message = thrown instanceof Error ? thrown.message : String(thrown);
+    expect(message).toMatch(/missing data\[0\]\.embedding/i);
+    expect(message).toMatch(/provider=openai-compatible/i);
+    expect(message).toMatch(/endpoint=https:\/\/embeds\.example\.test\/v1/i);
+    expect(message).toMatch(/model=text-embedding-3-small/i);
+    expect(message).not.toMatch(/Cannot read properties of undefined/i);
+  });
+
+  it("#969: embed() throws a descriptive error when response is undefined", async () => {
+    const mockCreate = vi.fn().mockResolvedValue(undefined);
+    const client = { embeddings: { create: mockCreate } } as unknown as import("openai").default;
+    const provider = new Embeddings(client, "text-embedding-3-small", 3);
+    await expect(provider.embed("hello")).rejects.toThrow(/missing data\[0\]\.embedding/i);
+  });
+
+  it("#969: embed() preserves a structured terminal error after fallback exhaustion", async () => {
+    const mockCreate = vi.fn().mockImplementation((params: { model: string }) => {
+      if (params.model === "text-embedding-3-small") {
+        return Promise.reject(Object.assign(new Error("upstream 404 from primary"), { status: 404 }));
+      }
+      return Promise.resolve({});
+    });
+    const client = { embeddings: { create: mockCreate } } as unknown as import("openai").default;
+    const provider = new Embeddings(client, ["text-embedding-3-small", "text-embedding-3-large"], 3);
+
+    let thrown: unknown;
+    try {
+      await provider.embed("hello");
+    } catch (err) {
+      thrown = err;
+    }
+    const message = thrown instanceof Error ? thrown.message : String(thrown);
+    expect(message).toMatch(/missing data\[0\]\.embedding/i);
+    expect(message).toMatch(/model=text-embedding-3-large/i);
+    expect(message).not.toMatch(/Cannot read properties of undefined/i);
+  });
+
   it("embedBatch() returns correct number of results", async () => {
     const vec = [0.5, 0.6];
     const client = makeMockOpenAI(vec);
