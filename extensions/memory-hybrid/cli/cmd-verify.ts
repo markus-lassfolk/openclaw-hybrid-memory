@@ -1231,7 +1231,7 @@ export async function runVerifyForCli(
           const jobFam = inferModelProviderPrefix(jobModel);
           if (jobFam && agentFam && jobFam !== agentFam) {
             log(
-              `\n${WARN} Cron vs agent model (issue #965): ${pid} uses "${jobModel}" (${jobFam}) but agents.defaults.model.primary is "${agentPrimary}" (${agentFam}). Isolated jobs can fail with LiveSessionModelSwitchError. Align provider families, or run \`openclaw hybrid-mem verify --fix\` after changing the agent default to refresh job models. See docs/SESSION-DISTILLATION.md (Align maintenance cron model).`,
+              `\n${WARN} Cron vs agent model (issue #965): ${pid} uses "${jobModel}" (${jobFam}) but agents.defaults.model.primary is "${agentPrimary}" (${agentFam}). Isolated jobs can fail with LiveSessionModelSwitchError. Align provider families, or run \`openclaw hybrid-mem verify --fix\` after changing the agent default to refresh job models. See docs/SESSION-DISTILLATION.md (Maintenance cron session isolation and model alignment).`,
             );
           }
         }
