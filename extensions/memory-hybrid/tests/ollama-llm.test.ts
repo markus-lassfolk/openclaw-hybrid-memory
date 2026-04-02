@@ -2,7 +2,7 @@
  * Tests for Ollama local LLM provider support in hybrid-memory.
  * Covers: provider resolution, health check / graceful fallback, cost tracking ($0), nano-tier classification.
  */
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../services/error-reporter.js", () => ({
   capturePluginError: vi.fn(),
@@ -11,7 +11,7 @@ vi.mock("../services/error-reporter.js", () => ({
 // ─────────────────────────────────────────────────────────────────────────────
 // 1. Model-pricing: Ollama always $0
 // ─────────────────────────────────────────────────────────────────────────────
-import { getModelPricing, estimateCost } from "../services/model-pricing.js";
+import { estimateCost, getModelPricing } from "../services/model-pricing.js";
 
 describe("Ollama cost tracking — $0 for local models", () => {
   it("getModelPricing returns $0 for ollama/qwen3:8b", () => {
@@ -37,11 +37,11 @@ describe("Ollama cost tracking — $0 for local models", () => {
   });
 });
 
+import type OpenAI from "openai";
 // ─────────────────────────────────────────────────────────────────────────────
 // 2. chatCompleteWithRetry: ECONNREFUSED on Ollama falls through to next model
 // ─────────────────────────────────────────────────────────────────────────────
 import { chatCompleteWithRetry } from "../services/chat.js";
-import type OpenAI from "openai";
 
 describe("Ollama graceful fallback — ECONNREFUSED", () => {
   beforeEach(() => {
@@ -173,5 +173,97 @@ describe("parseLLMConfig — localAutoStart", () => {
     const result = parseLLMConfig(cfg);
     expect(result).toBeDefined();
     expect(result?.localAutoStart).toBe(true);
+  });
+});
+
+describe("parseLLMConfig — provider baseURL / baseUrl", () => {
+  it("accepts camelCase `baseUrl` in provider config (OpenClaw convention)", () => {
+    const cfg = {
+      llm: {
+        providers: {
+          "azure-foundry": {
+            apiKey: "test-key",
+            baseUrl: "https://my-foundry.openai.azure.com",
+          },
+        },
+      },
+    };
+    const result = parseLLMConfig(cfg);
+    expect(result?.providers?.["azure-foundry"]?.baseURL).toBe("https://my-foundry.openai.azure.com");
+  });
+
+  it("accepts kebab-case `baseURL` in provider config", () => {
+    const cfg = {
+      llm: {
+        providers: {
+          "azure-foundry": {
+            apiKey: "test-key",
+            baseURL: "https://my-foundry.openai.azure.com",
+          },
+        },
+      },
+    };
+    const result = parseLLMConfig(cfg);
+    expect(result?.providers?.["azure-foundry"]?.baseURL).toBe("https://my-foundry.openai.azure.com");
+  });
+
+  it("prefers kebab-case `baseURL` over camelCase `baseUrl` when both are set", () => {
+    const cfg = {
+      llm: {
+        providers: {
+          "azure-foundry": {
+            apiKey: "test-key",
+            baseURL: "https://kebab.example.com",
+            baseUrl: "https://camel.example.com",
+          },
+        },
+      },
+    };
+    const result = parseLLMConfig(cfg);
+    expect(result?.providers?.["azure-foundry"]?.baseURL).toBe("https://kebab.example.com");
+  });
+
+  it("strips whitespace from baseUrl and baseURL", () => {
+    const cfg = {
+      llm: {
+        providers: {
+          "azure-foundry": {
+            apiKey: "test-key",
+            baseUrl: "  https://spaces.example.com  ",
+          },
+        },
+      },
+    };
+    const result = parseLLMConfig(cfg);
+    expect(result?.providers?.["azure-foundry"]?.baseURL).toBe("https://spaces.example.com");
+  });
+
+  it("returns undefined baseURL when neither baseUrl nor baseURL is set", () => {
+    const cfg = {
+      llm: {
+        providers: {
+          "azure-foundry": {
+            apiKey: "test-key",
+          },
+        },
+      },
+    };
+    const result = parseLLMConfig(cfg);
+    expect(result?.providers?.["azure-foundry"]?.baseURL).toBeUndefined();
+  });
+
+  it("returns undefined baseURL when baseUrl is an empty string", () => {
+    const cfg = {
+      llm: {
+        providers: {
+          "azure-foundry": {
+            apiKey: "test-key",
+            baseUrl: "   ",
+          },
+        },
+      },
+    };
+    const result = parseLLMConfig(cfg);
+    expect(result?.providers?.["azure-foundry"]?.baseURL).toBeUndefined();
   });
 });

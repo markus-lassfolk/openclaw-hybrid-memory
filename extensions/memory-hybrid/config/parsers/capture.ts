@@ -1,16 +1,16 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { DEFAULT_IDENTITY_REFLECTION_QUESTIONS } from "../../services/identity-reflection.js";
 import { expandHomePlaceholders } from "../../utils/path.js";
 import type {
-  PassiveObserverConfig,
-  ReflectionConfig,
-  IdentityReflectionConfig,
-  IdentityPromotionConfig,
-  ProceduresConfig,
   ExtractionConfig,
   ExtractionPreFilterConfig,
+  IdentityPromotionConfig,
+  IdentityReflectionConfig,
+  PassiveObserverConfig,
+  ProceduresConfig,
+  ReflectionConfig,
 } from "../types/capture.js";
-import { DEFAULT_IDENTITY_REFLECTION_QUESTIONS } from "../../services/identity-reflection.js";
 
 export function parsePassiveObserverConfig(cfg: Record<string, unknown>): PassiveObserverConfig {
   const observerRaw = cfg.passiveObserver as Record<string, unknown> | undefined;
@@ -141,7 +141,7 @@ export function parseProceduresConfig(cfg: Record<string, unknown>): ProceduresC
     requireApprovalForPromote: proceduresRaw?.requireApprovalForPromote !== false,
     maxInjectionTokens:
       typeof proceduresRaw?.maxInjectionTokens === "number" &&
-      proceduresRaw.maxInjectionTokens > 0 &&
+      proceduresRaw.maxInjectionTokens >= 0 &&
       Number.isFinite(proceduresRaw.maxInjectionTokens)
         ? Math.floor(proceduresRaw.maxInjectionTokens)
         : 500,

@@ -2,12 +2,12 @@
  * Tests for issue lifecycle tool registrations (Issue #137).
  */
 
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
-import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { registerIssueTools } from "../tools/issue-tools.js";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { _testing } from "../index.js";
+import { registerIssueTools } from "../tools/issue-tools.js";
 
 const { IssueStore } = _testing;
 

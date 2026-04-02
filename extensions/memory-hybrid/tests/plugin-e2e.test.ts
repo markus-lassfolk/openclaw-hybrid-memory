@@ -7,17 +7,17 @@
  * - No surprises: expected response shapes and persistence across tool calls
  */
 
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
-import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import memoryHybridPlugin from "../index.js";
-import { registerTools } from "../setup/register-tools.js";
-import { initializeDatabases, closeOldDatabases } from "../setup/init-databases.js";
-import { hybridConfigSchema } from "../config.js";
-import { _testing } from "../index.js";
 import { IssueStore } from "../backends/issue-store.js";
+import { hybridConfigSchema } from "../config.js";
+import memoryHybridPlugin from "../index.js";
+import { _testing } from "../index.js";
+import { closeOldDatabases, initializeDatabases } from "../setup/init-databases.js";
+import { registerTools } from "../setup/register-tools.js";
 
 const { FactsDB, VectorDB, findSimilarByEmbedding, VerificationStore } = _testing;
 
@@ -341,6 +341,7 @@ describe("Init-databases e2e", () => {
     expect(() =>
       closeOldDatabases({
         factsDb: ctx.factsDb,
+        edictStore: null as any,
         vectorDb: ctx.vectorDb,
         credentialsDb: ctx.credentialsDb,
         proposalsDb: ctx.proposalsDb,
@@ -531,7 +532,7 @@ describe("Advanced features e2e", () => {
       clusters: { enabled: true, minClusterSize: 2, refreshIntervalDays: 0, labelModel: null },
       gaps: { enabled: true, similarityThreshold: 0.8 },
     });
-    // 2026.3.140 migration forces verification off; override so advanced e2e tests can exercise the feature
+    // Ensure verification is on for advanced e2e tests
     cfg.verification!.enabled = true;
     factsDb = new FactsDB(sqlitePath, { fuzzyDedupe: false });
     vectorDb = new VectorDB(lancePath, EMBEDDING_DIM, false);

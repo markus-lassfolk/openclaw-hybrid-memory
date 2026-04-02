@@ -9,21 +9,45 @@
  * Engineering Goal 4: Testability (simple stubs, no live API keys)
  */
 
+import type OpenAI from "openai";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
-import type { EmbeddingProvider } from "./embeddings.js";
-import type OpenAI from "openai";
-import type { SearchResult, ScopeFilter } from "../types/memory.js";
 import type { QueryExpansionConfig } from "../config.js";
 import type { getCronModelConfig } from "../config.js";
 import type { PendingLLMWarnings } from "../services/chat.js";
-import { shouldSuppressEmbeddingError } from "./embeddings.js";
-import { mergeResults, filterByScope } from "../services/merge-results.js";
-import { computeDynamicSalience } from "../utils/salience.js";
-import { applyConsolidationRetrievalControls } from "../utils/consolidation-controls.js";
 import { capturePluginError } from "../services/error-reporter.js";
-import { DEFAULT_INTERACTIVE_RECALL_POLICY, type InteractiveRecallPolicy } from "./retrieval-mode-policy.js";
+import { filterByScope, mergeResults } from "../services/merge-results.js";
+import type { ScopeFilter, SearchResult } from "../types/memory.js";
+import { applyConsolidationRetrievalControls } from "../utils/consolidation-controls.js";
+import { computeDynamicSalience } from "../utils/salience.js";
+import type { EmbeddingProvider } from "./embeddings.js";
+import { shouldSuppressEmbeddingError } from "./embeddings.js";
 import { expandQueryWithHyde } from "./hyde-helper.js";
+import { DEFAULT_INTERACTIVE_RECALL_POLICY, type InteractiveRecallPolicy } from "./retrieval-mode-policy.js";
+import { yieldEventLoop } from "../utils/event-loop-yield.js";
+
+async function embedWithAbortRace(
+  embedPromise: Promise<number[]>,
+  signal: AbortSignal,
+  abortMessage: string,
+): Promise<number[]> {
+  let onAbort: (() => void) | undefined;
+  try {
+    return await Promise.race([
+      embedPromise,
+      new Promise<number[]>((_, reject) => {
+        if (signal.aborted) {
+          reject(Object.assign(new Error(abortMessage), { name: "AbortError" }));
+          return;
+        }
+        onAbort = () => reject(Object.assign(new Error(abortMessage), { name: "AbortError" }));
+        signal.addEventListener("abort", onAbort, { once: true });
+      }),
+    ]);
+  } finally {
+    if (onAbort) signal.removeEventListener("abort", onAbort);
+  }
+}
 
 /** Logger subset required by the recall pipeline (avoids importing ClawdbotPluginApi). */
 export interface RecallLogger {
@@ -46,6 +70,8 @@ export interface RecallSearchOpts {
   scopeFilter: ScopeFilter | undefined;
   reinforcementBoost: number;
   diversityWeight: number;
+  /** Passed to `FactsDB.search` — bounded FTS + two-phase fetch on interactive recall. */
+  interactiveFtsFastPath?: boolean;
 }
 
 /** All explicit dependencies consumed by `runRecallPipelineQuery`. */
@@ -107,6 +133,9 @@ export async function runRecallPipelineQuery(
   stageMs.fts = Date.now() - t0;
   sqliteResults = [...sqliteResults, ...ftsResults];
 
+  // FTS + lookup are synchronous SQLite — yield so gateway WebSocket/health can run (#931).
+  await yieldEventLoop();
+
   let lanceResults: SearchResult[] = [];
   const useSemantic = cfg.retrievalStrategies.includes("semantic");
 
@@ -150,7 +179,11 @@ export async function runRecallPipelineQuery(
         const vector =
           opts?.precomputedVector && textToEmbed === trimmed
             ? opts.precomputedVector
-            : await embeddings.embed(textToEmbed);
+            : await embedWithAbortRace(
+                embeddings.embed(textToEmbed),
+                directiveAbort.signal,
+                `recall pipeline timed out after ${policy.vectorStepTimeoutMs}ms`,
+              );
         stageMs.embed = Date.now() - t0;
         t0 = Date.now();
         let results = await vectorDb.search(vector, limitNum * 2, minScore);
@@ -204,6 +237,8 @@ export async function runRecallPipelineQuery(
       }
     }
   }
+
+  await yieldEventLoop();
 
   t0 = Date.now();
   let results = mergeResults(sqliteResults, lanceResults, limitNum, factsDb);

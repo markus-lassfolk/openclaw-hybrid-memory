@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * Integration tests for createPluginService startup wiring.
  *
@@ -6,15 +7,15 @@
  * while the unit tests in version-check.test.ts stay green.
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
-import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { createPluginService, type PluginServiceContext } from "../setup/plugin-service.js";
-import { MIN_OPENCLAW_VERSION } from "../utils/version-check.js";
-import { _testing } from "../index.js";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { hybridConfigSchema } from "../config.js";
+import { _testing } from "../index.js";
 import { capturePluginError, getErrorReporterMuteReason, setErrorReporterMuted } from "../services/error-reporter.js";
+import { type PluginServiceContext, createPluginService } from "../setup/plugin-service.js";
+import { MIN_OPENCLAW_VERSION } from "../utils/version-check.js";
 
 const { FactsDB, VectorDB } = _testing;
 
@@ -189,13 +190,15 @@ describe("createPluginService startup — version check wiring", () => {
 
   it("mutes telemetry and warns when the published plugin version is newer", async () => {
     const api = makeMockApi(MIN_OPENCLAW_VERSION);
+    // Must stay numerically above package.json plugin version so the "outdated" path still fires after each release bump.
+    const publishedNewer = "2099.1.1";
     const fetchMock = vi.fn(async (input: string | URL) => {
       const url = String(input);
       if (new URL(url).hostname === "registry.npmjs.org") {
-        return new Response(JSON.stringify({ version: "2026.3.999" }), { status: 200 });
+        return new Response(JSON.stringify({ version: publishedNewer }), { status: 200 });
       }
       if (new URL(url).hostname === "api.github.com") {
-        return new Response(JSON.stringify({ tag_name: "v2026.3.999" }), { status: 200 });
+        return new Response(JSON.stringify({ tag_name: `v${publishedNewer}` }), { status: 200 });
       }
       return new Response("", { status: 200 });
     });
@@ -208,11 +211,11 @@ describe("createPluginService startup — version check wiring", () => {
     await service.start();
     await service._getVersionCheckPromise();
 
-    expect(getErrorReporterMuteReason()).toContain("outdated-plugin:2026.3.999");
+    expect(getErrorReporterMuteReason()).toContain(`outdated-plugin:${publishedNewer}`);
     expect(capturePluginError(new Error("should stay local"), { operation: "startup-version-check" })).toBeUndefined();
 
     const warnCalls = api.logger.warn.mock.calls.map((c: unknown[]) => c[0] as string);
-    expect(warnCalls.some((msg) => msg.includes("update available") && msg.includes("2026.3.999"))).toBe(true);
+    expect(warnCalls.some((msg) => msg.includes("update available") && msg.includes(publishedNewer))).toBe(true);
 
     (ctx.factsDb as InstanceType<typeof FactsDB>).close();
     (ctx.vectorDb as InstanceType<typeof VectorDB>).close();

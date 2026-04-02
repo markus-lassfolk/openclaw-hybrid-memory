@@ -7,18 +7,22 @@
  *   GET /api/status — JSON data for all dashboard sections
  */
 
-import { createServer } from "node:http";
-import type { Server } from "node:http";
+import { execFile as execFileCb } from "../utils/process-runner.js";
 import { existsSync } from "node:fs";
 import { readdir, stat } from "node:fs/promises";
-import { join } from "node:path";
+import { createServer } from "node:http";
+import type { Server } from "node:http";
 import { homedir } from "node:os";
-import { execFile as execFileCb } from "node:child_process";
+import { join } from "node:path";
 import { promisify } from "node:util";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
 import { getDirSize, getFileSizeAsync, readJsonFile } from "../utils/fs.js";
+import { isValidGhRepoArg } from "../utils/gh-repo-arg.js";
 import { pluginLogger } from "../utils/logger.js";
+import type { AuditStore } from "../backends/audit-store.js";
+import { mergeAgentHealthDashboard, type AgentHealthView } from "../backends/agent-health-store.js";
+import { collectGraphPayload, collectGraphRecallPayload, getGraphExplorerHtml } from "./dashboard-graph.js";
 
 const execFile = promisify(execFileCb);
 
@@ -26,7 +30,7 @@ const execFile = promisify(execFileCb);
 // Types
 // ---------------------------------------------------------------------------
 
-export interface DashboardContext {
+interface DashboardContext {
   factsDb: FactsDB;
   vectorDb: VectorDB;
   resolvedSqlitePath: string;
@@ -37,9 +41,13 @@ export interface DashboardContext {
   costTracker?: import("../backends/cost-tracker.js").CostTracker | null;
   /** Optional logger for structured logging of server errors */
   logger?: { error?: (msg: string) => void };
+  /** Cross-agent audit trail (Issue #790). */
+  auditStore?: AuditStore | null;
+  /** Per-agent health store (Issue #789). */
+  agentHealthStore?: import("../backends/agent-health-store.js").AgentHealthStore | null;
 }
 
-export interface MemoryStats {
+interface MemoryStats {
   activeFacts: number;
   expiredFacts: number;
   vectorCount: number;
@@ -48,7 +56,7 @@ export interface MemoryStats {
   totalSizeBytes: number;
 }
 
-export interface CronJobStatus {
+interface CronJobStatus {
   id: string;
   name: string;
   schedule: string;
@@ -62,7 +70,7 @@ export interface CronJobStatus {
   model?: string;
 }
 
-export interface TaskQueueItem {
+interface TaskQueueItem {
   issue?: number;
   title?: string;
   branch?: string;
@@ -74,7 +82,7 @@ export interface TaskQueueItem {
   details?: string;
 }
 
-export interface ForgeTaskItem {
+interface ForgeTaskItem {
   agent?: string;
   task: string;
   workdir?: string;
@@ -83,7 +91,7 @@ export interface ForgeTaskItem {
   status?: string;
 }
 
-export interface GitActivity {
+interface GitActivity {
   prs: Array<{
     number: number;
     title: string;
@@ -101,7 +109,7 @@ export interface GitActivity {
   gitError?: string;
 }
 
-export interface CostRow {
+interface CostRow {
   feature: string;
   calls: number;
   inputTokens: number;
@@ -109,7 +117,7 @@ export interface CostRow {
   estimatedCostUsd: number;
 }
 
-export interface CostStats {
+interface CostStats {
   features: CostRow[];
   totalCalls: number;
   totalInputTokens: number;
@@ -119,7 +127,27 @@ export interface CostStats {
   enabled: boolean;
 }
 
-export interface DashboardStatus {
+interface AgentHealthPayload {
+  enabled: boolean;
+  agents: AgentHealthView[];
+  alerts: string[];
+}
+
+interface AuditSummaryPayload {
+  enabled: boolean;
+  total24h: number;
+  byOutcome: { success: number; partial: number; failed: number };
+  byAgent: Record<string, number>;
+  recentFailures: Array<{
+    timestamp: number;
+    agentId: string;
+    action: string;
+    target: string | null;
+    error: string | null;
+  }>;
+}
+
+interface DashboardStatus {
   generatedAt: string;
   memory: MemoryStats;
   cronJobs: CronJobStatus[];
@@ -130,6 +158,8 @@ export interface DashboardStatus {
   forge: ForgeTaskItem[];
   git: GitActivity;
   costs: CostStats;
+  audit: AuditSummaryPayload;
+  agentHealth: AgentHealthPayload;
 }
 
 // ---------------------------------------------------------------------------
@@ -250,7 +280,7 @@ async function collectTaskQueue(): Promise<{
   return { current, history };
 }
 
-async function collectForgeState(): Promise<ForgeTaskItem[]> {
+export async function collectForgeState(): Promise<ForgeTaskItem[]> {
   const forgeDir = join(homedir(), ".openclaw", "workspace", "state", "forge");
   if (!existsSync(forgeDir)) return [];
   try {
@@ -290,7 +320,8 @@ async function collectForgeState(): Promise<ForgeTaskItem[]> {
 
 async function collectGitActivity(repo?: string): Promise<GitActivity> {
   try {
-    const repoArgs = repo ? ["--repo", repo] : [];
+    const safeRepo = repo && isValidGhRepoArg(repo) ? repo : undefined;
+    const repoArgs = safeRepo ? ["--repo", safeRepo] : [];
     const [prResult, issueResult] = await Promise.all([
       execFile("gh", ["pr", "list", "--limit", "10", "--json", "number,title,state,url,createdAt", ...repoArgs], {
         timeout: 8000,
@@ -402,6 +433,62 @@ function collectCostStats(ctx: DashboardContext): CostStats {
   }
 }
 
+async function collectAgentHealth(ctx: DashboardContext, forgeState?: ForgeTaskItem[]): Promise<AgentHealthPayload> {
+  if (!ctx.agentHealthStore) {
+    return { enabled: false, agents: [], alerts: [] };
+  }
+  try {
+    const forge = forgeState ?? (await collectForgeState());
+    const db = ctx.agentHealthStore.listAll();
+    const agents = mergeAgentHealthDashboard(forge, db);
+    const alerts: string[] = [];
+    for (const a of agents) {
+      if (a.status === "stale") alerts.push(`${a.agentId}: no activity > 4h — check dispatch`);
+      if (a.status === "degraded") alerts.push(`${a.agentId}: score ${a.score.toFixed(0)} (degraded)`);
+    }
+    return { enabled: true, agents, alerts };
+  } catch {
+    return { enabled: false, agents: [], alerts: [] };
+  }
+}
+
+function collectAuditSummary(ctx: DashboardContext): AuditSummaryPayload {
+  if (!ctx.auditStore) {
+    return {
+      enabled: false,
+      total24h: 0,
+      byOutcome: { success: 0, partial: 0, failed: 0 },
+      byAgent: {},
+      recentFailures: [],
+    };
+  }
+  try {
+    const s = ctx.auditStore.summary24h();
+    const failed = ctx.auditStore.query({ sinceMs: Date.now() - 24 * 3600 * 1000, outcome: "failed", limit: 8 });
+    return {
+      enabled: true,
+      total24h: s.total,
+      byOutcome: s.byOutcome,
+      byAgent: s.byAgent,
+      recentFailures: failed.map((r) => ({
+        timestamp: r.timestamp,
+        agentId: r.agentId,
+        action: r.action,
+        target: r.target,
+        error: r.error,
+      })),
+    };
+  } catch {
+    return {
+      enabled: false,
+      total24h: 0,
+      byOutcome: { success: 0, partial: 0, failed: 0 },
+      byAgent: {},
+      recentFailures: [],
+    };
+  }
+}
+
 export async function collectStatus(ctx: DashboardContext): Promise<DashboardStatus> {
   const [memory, cronJobs, taskQueue, forge, git] = await Promise.all([
     collectMemoryStats(ctx),
@@ -410,6 +497,7 @@ export async function collectStatus(ctx: DashboardContext): Promise<DashboardSta
     collectForgeState(),
     collectGitActivity(ctx.gitRepo),
   ]);
+  const agentHealth = await collectAgentHealth(ctx, forge);
   return {
     generatedAt: new Date().toISOString(),
     memory,
@@ -418,6 +506,8 @@ export async function collectStatus(ctx: DashboardContext): Promise<DashboardSta
     forge,
     git,
     costs: collectCostStats(ctx),
+    audit: collectAuditSummary(ctx),
+    agentHealth,
   };
 }
 
@@ -498,7 +588,10 @@ function getDashboardHtml(): string {
 <body>
 <header>
   <h1>⚡ Mission Control</h1>
-  <span id="last-updated">Loading…</span>
+  <div style="display:flex;align-items:center;gap:14px">
+    <a href="/graph" style="color:var(--muted);text-decoration:none;font-size:12px">Memory graph →</a>
+    <span id="last-updated">Loading…</span>
+  </div>
 </header>
 <main>
   <div class="grid" id="grid">
@@ -683,6 +776,56 @@ function renderCosts(c) {
   return html;
 }
 
+function renderAgentHealth(ah) {
+  let html = '<div class="card section-full"><div class="card-title"><span class="icon">🩺</span> Agent Health</div>';
+  if (!ah || !ah.enabled) {
+    html += '<div class="empty">Agent health store unavailable</div></div>';
+    return html;
+  }
+  html += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:8px">';
+  (ah.agents || []).slice(0, 12).forEach(function (a) {
+    const st = String(a.status || 'unknown');
+    const badge = st === 'healthy' ? 'badge-green' : st === 'idle' ? 'badge-muted' : st === 'stale' ? 'badge-yellow' : st === 'degraded' ? 'badge-red' : 'badge-muted';
+    html += '<div class="agent-row" style="flex-direction:column;align-items:flex-start;border:1px solid var(--border);border-radius:6px;padding:8px">';
+    html += '<div style="display:flex;justify-content:space-between;width:100%;align-items:center"><span class="agent-name">' + escHtml(a.agentId) + '</span><span class="badge ' + badge + '">' + escHtml(st) + '</span></div>';
+    html += '<div class="task-meta">score ' + (typeof a.score === 'number' ? a.score.toFixed(1) : '—') + ' · ' + fmtDate(new Date(a.lastSeen).toISOString()) + '</div>';
+    html += '<div class="agent-task">' + escHtml((a.lastTask || '').slice(0, 120)) + '</div></div>';
+  });
+  html += '</div>';
+  if (ah.alerts && ah.alerts.length > 0) {
+    html += '<div style="margin-top:10px;font-size:12px;color:var(--yellow)">';
+    ah.alerts.slice(0, 4).forEach(function (m) { html += '<div>⚠ ' + escHtml(m) + '</div>'; });
+    html += '</div>';
+  }
+  html += '</div>';
+  return html;
+}
+
+function renderAudit(a) {
+  let html = '<div class="card section-full"><div class="card-title"><span class="icon">📜</span> Audit Trail (24h)</div>';
+  if (!a || !a.enabled) {
+    html += '<div class="empty">Audit log unavailable</div></div>';
+    return html;
+  }
+  html += \`<div class="stat-row"><span class="stat-label">Total events</span><span class="stat-value">\${a.total24h.toLocaleString()}</span></div>\`;
+  html += \`<div class="stat-row"><span class="stat-label">Outcomes</span><span class="stat-value">ok \${a.byOutcome.success} · partial \${a.byOutcome.partial} · failed \${a.byOutcome.failed}</span></div>\`;
+  const agents = Object.entries(a.byAgent || {}).sort((x,y) => y[1] - x[1]).slice(0, 8);
+  if (agents.length > 0) {
+    html += '<div style="margin-top:8px;font-size:11px;color:var(--muted)">By agent</div>';
+    agents.forEach(([name, cnt]) => {
+      html += \`<div class="stat-row"><span class="stat-label">\${escHtml(name)}</span><span class="stat-value">\${cnt}</span></div>\`;
+    });
+  }
+  if (a.recentFailures && a.recentFailures.length > 0) {
+    html += '<div style="margin-top:8px;font-size:11px;color:var(--red)">Recent failures</div>';
+    a.recentFailures.slice(0, 5).forEach(f => {
+      html += \`<div class="task-row"><div class="task-title" style="font-size:12px">\${escHtml(f.agentId)} / \${escHtml(f.action)}</div><div class="task-meta">\${escHtml(f.target || '')} \${f.error ? escHtml(f.error.slice(0,120)) : ''}</div></div>\`;
+    });
+  }
+  html += '</div>';
+  return html;
+}
+
 async function refresh() {
   try {
     const res = await fetch('/api/status');
@@ -698,6 +841,8 @@ async function refresh() {
       renderCronJobs(data.cronJobs),
       renderGit(data.git),
       renderCosts(data.costs),
+      renderAgentHealth(data.agentHealth),
+      renderAudit(data.audit),
     ].join('');
     document.getElementById('last-updated').textContent = 'Updated ' + new Date(data.generatedAt).toLocaleTimeString();
   } catch (err) {
@@ -728,6 +873,109 @@ export async function createDashboardServer(ctx: DashboardContext, port: number)
   const server = createServer((req, res) => {
     const url = req.url ?? "/";
     const pathname = url.split("?")[0];
+    let searchParams: URLSearchParams;
+    try {
+      searchParams = new URL(url, "http://127.0.0.1").searchParams;
+    } catch {
+      res.writeHead(400, { "Content-Type": "text/plain" });
+      res.end("Bad Request");
+      return;
+    }
+
+    if (pathname === "/graph" || pathname === "/graph.html") {
+      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-cache" });
+      res.end(getGraphExplorerHtml());
+      return;
+    }
+
+    if (pathname === "/api/graph") {
+      try {
+        const days = Math.min(365, Math.max(1, Number.parseInt(searchParams.get("days") ?? "30", 10) || 30));
+        const maxNodes = Math.min(
+          2000,
+          Math.max(20, Number.parseInt(searchParams.get("maxNodes") ?? "400", 10) || 400),
+        );
+        const body = JSON.stringify(collectGraphPayload(ctx.factsDb, days, maxNodes));
+        res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-cache" });
+        res.end(body);
+      } catch (err: unknown) {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        pluginLogger.error(`[dashboard-server] /api/graph: ${err instanceof Error ? err.message : String(err)}`);
+        res.end(JSON.stringify({ error: "InternalServerError" }));
+      }
+      return;
+    }
+
+    if (pathname === "/api/graph/recall") {
+      try {
+        const q = searchParams.get("query") ?? searchParams.get("q") ?? "";
+        const body = JSON.stringify(collectGraphRecallPayload(ctx.factsDb, q));
+        res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-cache" });
+        res.end(body);
+      } catch (err: unknown) {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        pluginLogger.error(`[dashboard-server] /api/graph/recall: ${err instanceof Error ? err.message : String(err)}`);
+        res.end(JSON.stringify({ error: "InternalServerError" }));
+      }
+      return;
+    }
+
+    if (pathname === "/api/agents/health") {
+      collectAgentHealth(ctx)
+        .then((payload) => {
+          res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-cache" });
+          res.end(JSON.stringify(payload));
+        })
+        .catch((_err: unknown) => {
+          res.writeHead(500, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "InternalServerError" }));
+        });
+      return;
+    }
+
+    if (pathname === "/api/audit/summary") {
+      try {
+        const body = JSON.stringify(collectAuditSummary(ctx));
+        res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-cache" });
+        res.end(body);
+      } catch (err: unknown) {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        pluginLogger.error(
+          `[dashboard-server] /api/audit/summary: ${err instanceof Error ? err.message : String(err)}`,
+        );
+        res.end(JSON.stringify({ error: "InternalServerError" }));
+      }
+      return;
+    }
+
+    if (pathname === "/api/audit/events") {
+      if (!ctx.auditStore) {
+        res.writeHead(503, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "audit store unavailable" }));
+        return;
+      }
+      try {
+        const hours = Math.min(720, Math.max(1, Number.parseInt(searchParams.get("hours") ?? "24", 10) || 24));
+        const sinceMs = Date.now() - hours * 3600 * 1000;
+        const agentId = searchParams.get("agent") ?? undefined;
+        const outcome = searchParams.get("outcome") as "success" | "partial" | "failed" | null;
+        const targetContains = searchParams.get("targetContains") ?? searchParams.get("target") ?? undefined;
+        const rows = ctx.auditStore.query({
+          sinceMs,
+          agentId,
+          outcome: outcome === "success" || outcome === "partial" || outcome === "failed" ? outcome : undefined,
+          targetContains,
+          limit: 2000,
+        });
+        res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-cache" });
+        res.end(JSON.stringify({ events: rows }));
+      } catch (err: unknown) {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        pluginLogger.error(`[dashboard-server] /api/audit/events: ${err instanceof Error ? err.message : String(err)}`);
+        res.end(JSON.stringify({ error: "InternalServerError" }));
+      }
+      return;
+    }
 
     if (pathname === "/api/status") {
       collectStatus(ctx)
@@ -739,9 +987,9 @@ export async function createDashboardServer(ctx: DashboardContext, port: number)
           });
           res.end(body);
         })
-        .catch((err: unknown) => {
+        .catch((_err: unknown) => {
           res.writeHead(500, { "Content-Type": "application/json" });
-          res.end(JSON.stringify({ error: String(err) }));
+          res.end(JSON.stringify({ error: "InternalServerError" }));
         });
     } else if (pathname === "/" || pathname === "/index.html") {
       res.writeHead(200, {
@@ -790,7 +1038,7 @@ export async function createDashboardServer(ctx: DashboardContext, port: number)
 
   // Install permanent error handler now that the server is bound.
   server.on("error", (err: NodeJS.ErrnoException) => {
-    const errMsg = err instanceof Error ? `${err.message}\n${err.stack ?? ""}` : String(err);
+    const errMsg = err instanceof Error ? err.message : String(err);
     if (ctx.logger?.error) {
       ctx.logger.error(`[dashboard-server] Server error: ${errMsg}`);
     } else {

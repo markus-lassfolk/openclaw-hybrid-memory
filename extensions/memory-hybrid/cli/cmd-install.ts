@@ -13,20 +13,25 @@
  * - runUpgradeForCli
  */
 
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { homedir } from "node:os";
 
 import type { HybridMemoryConfig } from "../config.js";
-import { getDefaultCronModel, getCronModelConfig, type CronModelConfig } from "../config.js";
+import { type CronModelConfig, getCronModelConfig, getDefaultCronModel } from "../config.js";
+import { buildGuardPrefix } from "../services/cron-guard.js";
 import { capturePluginError } from "../services/error-reporter.js";
+import { type PreFilterConfig, preFilterSessions } from "../services/session-pre-filter.js";
 import { resetAllBackoff } from "../utils/auth-failover.js";
 import { PLUGIN_ID } from "../utils/constants.js";
-import { buildGuardPrefix } from "../services/cron-guard.js";
-import { preFilterSessions, type PreFilterConfig } from "../services/session-pre-filter.js";
-import type { InstallCliResult, UninstallCliResult, UpgradeCliResult } from "./types.js";
+import {
+  extractCronStoreJobModel,
+  readAgentsPrimaryModelFromOpenclawJsonPath,
+  setCronStoreJobModelFields,
+} from "../utils/openclaw-agent-defaults.js";
 import type { HandlerContext } from "./handlers.js";
+import type { InstallCliResult, UninstallCliResult, UpgradeCliResult } from "./types.js";
 
 /**
  * Build a PreFilterConfig from the plugin config.
@@ -43,15 +48,13 @@ export function buildPreFilterConfig(cfg: HybridMemoryConfig): PreFilterConfig {
     maxCharsPerSession: pf?.maxCharsPerSession ?? 2000,
   };
 }
-
 // Re-export preFilterSessions so callers in other handler modules can import from here.
-export { preFilterSessions };
 
 // Shared cron job definitions used by install and verify --fix.
 // Canonical schedule per #86 (7 jobs, non-overlapping). Model is resolved dynamically from user config via getLLMModelPreference.
 // modelTier: "default" = standard LLM, "heavy" = larger context; resolved via getDefaultCronModel at install/verify time.
 // Order: daily 02:00 → daily 02:30 → Sun 03:00 → Sun 04:00 → Sat 04:00 → Sun 10:00 → 1st 05:00.
-export const PLUGIN_JOB_ID_PREFIX = "hybrid-mem:";
+const PLUGIN_JOB_ID_PREFIX = "hybrid-mem:";
 
 /**
  * Minimum run interval guard (in milliseconds) for each job frequency tier.
@@ -59,7 +62,7 @@ export const PLUGIN_JOB_ID_PREFIX = "hybrid-mem:";
  * guard in the message prefix causes it to skip if it already ran within this interval.
  * Guard files are stored persistently in ~/.openclaw/cron/guard/ (issue #305).
  */
-export const MIN_INTERVAL_MS: Record<string, number> = {
+const MIN_INTERVAL_MS: Record<string, number> = {
   daily: 20 * 60 * 60 * 1000, // 20 hours (daily jobs)
   weekly: 5 * 24 * 60 * 60 * 1000, // 5 days (weekly jobs)
   monthly: 25 * 24 * 60 * 60 * 1000, // 25 days (monthly jobs)
@@ -67,7 +70,7 @@ export const MIN_INTERVAL_MS: Record<string, number> = {
 
 // buildGuardPrefix is imported from services/cron-guard.ts (issue #305).
 
-export const MAINTENANCE_CRON_JOBS: Array<
+const MAINTENANCE_CRON_JOBS: Array<
   Record<string, unknown> & { modelTier?: "nano" | "default" | "heavy"; minIntervalMs?: number; featureGate?: string }
 > = [
   // Daily 02:00 | nightly-memory-sweep | prune → distill --days 3 → extract-daily
@@ -193,6 +196,21 @@ export const MAINTENANCE_CRON_JOBS: Array<
   },
 ];
 
+/**
+ * When `agents.defaults.model.primary` is set, use it for maintenance cron `model` so agent-bound
+ * runs match `resolveLiveSessionModelSelection` (OpenClaw #963 / hybrid-memory #963). Otherwise
+ * use tier defaults from plugin LLM config.
+ */
+function resolveCronJobModel(
+  tier: "nano" | "default" | "heavy",
+  pluginConfig: CronModelConfig | undefined,
+  agentPrimary: string | undefined,
+): string {
+  const trimmed = agentPrimary?.trim();
+  if (trimmed) return trimmed;
+  return getDefaultCronModel(pluginConfig, tier);
+}
+
 /** Resolve model for a cron job def and return a job record suitable for the store (has model, no modelTier).
  * Strips the top-level `channel` field (maintenance jobs don't need user delivery) and sets delivery.mode = "none"
  * so the job runner never tries to send a WhatsApp/channel notification for plugin-internal jobs.
@@ -200,10 +218,11 @@ export const MAINTENANCE_CRON_JOBS: Array<
 function resolveCronJob(
   def: Record<string, unknown> & { modelTier?: "nano" | "default" | "heavy"; minIntervalMs?: number },
   pluginConfig: CronModelConfig | undefined,
+  agentPrimary: string | undefined,
 ): Record<string, unknown> {
   const { modelTier, channel: _channel, minIntervalMs, featureGate: _featureGate, ...rest } = def;
   const tier = modelTier ?? "default";
-  const model = getDefaultCronModel(pluginConfig, tier);
+  const model = resolveCronJobModel(tier, pluginConfig, agentPrimary);
   // Prepend guard prefix to message if minIntervalMs is set (issue #304)
   if (minIntervalMs && typeof rest.message === "string") {
     const jobName = (typeof rest.name === "string" ? rest.name : "unknown").replace(/\s+/g, "-");
@@ -212,7 +231,14 @@ function resolveCronJob(
   return { ...rest, model, delivery: { mode: "none" as const } };
 }
 
-export const LEGACY_JOB_MATCHERS: Record<string, (j: Record<string, unknown>) => boolean> = {
+function hasIsolatedCronSessionTarget(job: Record<string, unknown>): boolean {
+  if (job.sessionTarget === "isolated" || job.isolated === true) return true;
+  const payload = job.payload as Record<string, unknown> | undefined;
+  if (!payload) return false;
+  return payload.sessionTarget === "isolated" || payload.isolated === true;
+}
+
+const LEGACY_JOB_MATCHERS: Record<string, (j: Record<string, unknown>) => boolean> = {
   [`${PLUGIN_JOB_ID_PREFIX}nightly-distill`]: (j) =>
     String(j.name ?? "")
       .toLowerCase()
@@ -257,6 +283,8 @@ export function ensureMaintenanceCronJobs(
   } = options;
   const added: string[] = [];
   const normalized: string[] = [];
+  const openclawConfigPath = join(openclawDir, "openclaw.json");
+  const agentPrimary = readAgentsPrimaryModelFromOpenclawJsonPath(openclawConfigPath);
   const cronDir = join(openclawDir, "cron");
   const cronStorePath = join(cronDir, "jobs.json");
   mkdirSync(cronDir, { recursive: true });
@@ -297,7 +325,7 @@ export function ensureMaintenanceCronJobs(
       jobsChanged = true;
     }
     if (!existing) {
-      const job = resolveCronJob(def, pluginConfig) as Record<string, unknown>;
+      const job = resolveCronJob(def, pluginConfig, agentPrimary) as Record<string, unknown>;
       if (scheduleExpr) job.schedule = { kind: "cron", expr: scheduleExpr };
       if (messageOverrides?.[id]) job.message = messageOverrides[id];
       jobsArr.push(job);
@@ -324,6 +352,17 @@ export function ensureMaintenanceCronJobs(
         }
         if (!existing.pluginJobId) {
           existing.pluginJobId = id;
+          jobsChanged = true;
+          if (!normalized.includes(name)) normalized.push(name);
+        }
+        if (
+          id.startsWith(PLUGIN_JOB_ID_PREFIX) &&
+          hasIsolatedCronSessionTarget(existing) &&
+          Object.prototype.hasOwnProperty.call(existing, "sessionKey")
+        ) {
+          // Issue #977: plugin maintenance jobs must not pin an interactive session.
+          // Omit sessionKey so OpenClaw uses isolated default session key: cron:<jobId>.
+          delete existing.sessionKey;
           jobsChanged = true;
           if (!normalized.includes(name)) normalized.push(name);
         }
@@ -373,6 +412,18 @@ export function ensureMaintenanceCronJobs(
             }
           }
         }
+        // Issue #963: keep stored job model aligned with agents.defaults.model.primary when set,
+        // so agentTurn + agentId sessions do not throw LiveSessionModelSwitchError.
+        if (agentPrimary?.trim()) {
+          const tier = (def.modelTier ?? "default") as "nano" | "default" | "heavy";
+          const desired = resolveCronJobModel(tier, pluginConfig, agentPrimary);
+          const current = extractCronStoreJobModel(existing);
+          if (current !== desired) {
+            setCronStoreJobModelFields(existing, desired);
+            jobsChanged = true;
+            if (!normalized.includes(name)) normalized.push(name);
+          }
+        }
       }
       if (reEnableDisabled && existing.enabled === false) {
         existing.enabled = true;
@@ -380,7 +431,12 @@ export function ensureMaintenanceCronJobs(
       }
     }
   }
-  if (jobsChanged) writeFileSync(cronStorePath, JSON.stringify(store, null, 2), "utf-8");
+  if (jobsChanged) {
+    const payload = JSON.stringify(store, null, 2);
+    const tmpPath = `${cronStorePath}.${process.pid}.${Date.now()}.tmp`;
+    writeFileSync(tmpPath, payload, "utf-8");
+    renameSync(tmpPath, cronStorePath);
+  }
   return { added, normalized };
 }
 
@@ -567,7 +623,9 @@ function getPluginEntryConfig(root: Record<string, unknown>): Record<string, unk
 }
 
 /**
- * Install plugin configuration and cron jobs
+ * Install plugin configuration and cron jobs.
+ * `buildInstallDefaults()` includes `mode: "local"`; `deepMerge` only fills missing keys,
+ * so an existing `plugins.entries[pluginId].config.mode` is never overwritten on re-install.
  */
 export function runInstallForCli(opts: { dryRun: boolean }): InstallCliResult {
   const openclawDir = join(homedir(), ".openclaw");

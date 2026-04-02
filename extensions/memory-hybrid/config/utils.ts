@@ -33,7 +33,14 @@ export function isValidCategory(cat: string): boolean {
 export const PRESET_OVERRIDES: Record<ConfigMode, Record<string, unknown>> = {
   local: {
     autoCapture: true,
-    autoRecall: { enabled: true, entityLookup: { enabled: false }, authFailure: { enabled: false } },
+    /** Credentials vault on; set `credentials.encryptionKey` (16+ chars or env:VAR) for encryption at rest. */
+    credentials: { enabled: true },
+    autoRecall: {
+      enabled: true,
+      interactiveEnrichment: "fast",
+      entityLookup: { enabled: false },
+      authFailure: { enabled: false },
+    },
     autoClassify: { enabled: false, suggestCategories: false },
     store: { fuzzyDedupe: true, classifyBeforeWrite: false },
     graph: { enabled: false },
@@ -51,7 +58,13 @@ export const PRESET_OVERRIDES: Record<ConfigMode, Record<string, unknown>> = {
   /** Minimal: nano for auto-classify, default (flash) for distill — good value at low cost. Ingest paths on so occasional ingest-files gets facts. */
   minimal: {
     autoCapture: true,
-    autoRecall: { enabled: true, entityLookup: { enabled: false }, authFailure: { enabled: true } },
+    credentials: { enabled: true },
+    autoRecall: {
+      enabled: true,
+      interactiveEnrichment: "fast",
+      entityLookup: { enabled: false },
+      authFailure: { enabled: true },
+    },
     autoClassify: { enabled: true, suggestCategories: true },
     store: { fuzzyDedupe: false, classifyBeforeWrite: false },
     graph: { enabled: true, autoLink: false, useInRecall: true, strengthenOnRecall: false },
@@ -67,7 +80,12 @@ export const PRESET_OVERRIDES: Record<ConfigMode, Record<string, unknown>> = {
   },
   enhanced: {
     autoCapture: true,
-    autoRecall: { enabled: true, entityLookup: { enabled: true }, authFailure: { enabled: true } },
+    autoRecall: {
+      enabled: true,
+      interactiveEnrichment: "fast",
+      entityLookup: { enabled: true },
+      authFailure: { enabled: true },
+    },
     autoClassify: { enabled: true, suggestCategories: true },
     credentials: { autoDetect: true, autoCapture: { toolCalls: true } },
     store: { fuzzyDedupe: true, classifyBeforeWrite: true },
@@ -104,7 +122,12 @@ export const PRESET_OVERRIDES: Record<ConfigMode, Record<string, unknown>> = {
   },
   complete: {
     autoCapture: true,
-    autoRecall: { enabled: true, entityLookup: { enabled: true }, authFailure: { enabled: true } },
+    autoRecall: {
+      enabled: true,
+      interactiveEnrichment: "fast",
+      entityLookup: { enabled: true },
+      authFailure: { enabled: true },
+    },
     autoClassify: { enabled: true, suggestCategories: true },
     credentials: { autoDetect: true, autoCapture: { toolCalls: true } },
     store: { fuzzyDedupe: true, classifyBeforeWrite: true },
@@ -121,7 +144,7 @@ export const PRESET_OVERRIDES: Record<ConfigMode, Record<string, unknown>> = {
       autoRewriteTools: false,
       analyzeViaSpawn: false,
     },
-    // queryExpansion not set in preset — defaults to disabled; set explicitly to enable (Phase 1).
+    // queryExpansion not set in preset — defaults to disabled; set explicitly to enable.
     ingest: { paths: ["skills/**/*.md", "TOOLS.md", "AGENTS.md"] },
     distill: { extractDirectives: true, extractReinforcement: true, extractionModelTier: "default" },
     frustrationDetection: { enabled: false },

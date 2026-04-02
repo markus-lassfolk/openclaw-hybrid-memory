@@ -1,13 +1,14 @@
+import { getEnv } from "../utils/env-manager.js";
 /**
  * Tests for workflow crystallization — Issue #208.
  * Covers: CrystallizationStore, PatternDetector, SkillCrystallizer,
  *         SkillValidator, CrystallizationProposer, config parsing.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, rmSync, existsSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { _testing } from "../index.js";
 
 const {
@@ -439,7 +440,7 @@ describe("SkillCrystallizer.crystallize", () => {
   });
 
   it("expands ~ in outputDir", () => {
-    const homeDir = process.env.HOME ?? "/root";
+    const homeDir = getEnv("HOME") ?? "/root";
     const cfg = { ...DEFAULT_CRYSTALLIZATION_CFG, outputDir: "~/.openclaw/workspace/skills/auto" };
     const crystallizer = new SkillCrystallizer(cfg);
     const pattern = {
@@ -683,7 +684,7 @@ describe("parseCrystallizationConfig", () => {
         pruneUnusedDays: 60,
       },
     });
-    expect(cfg.crystallization.enabled).toBe(false); // 2026.3.140 migration forces core-only baseline
+    expect(cfg.crystallization.enabled).toBe(true);
     expect(cfg.crystallization.minUsageCount).toBe(10);
     expect(cfg.crystallization.minSuccessRate).toBe(0.8);
     expect(cfg.crystallization.autoApprove).toBe(false);

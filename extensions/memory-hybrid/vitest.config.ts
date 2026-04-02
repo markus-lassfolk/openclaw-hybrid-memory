@@ -1,13 +1,13 @@
-import { defineConfig, coverageConfigDefaults } from "vitest/config";
-import { resolve, dirname } from "node:path";
+import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { coverageConfigDefaults, defineConfig } from "vitest/config";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 export default defineConfig({
   resolve: {
     alias: {
-      "openclaw/plugin-sdk": resolve(__dirname, "tests/__mocks__/openclaw-plugin-sdk.ts"),
+      "openclaw/plugin-sdk/core": resolve(__dirname, "tests/__mocks__/openclaw-plugin-sdk.ts"),
     },
   },
   test: {

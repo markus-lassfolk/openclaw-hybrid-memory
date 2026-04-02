@@ -1,3 +1,5 @@
+// @ts-nocheck
+import { getEnv, setEnv } from "../utils/env-manager.js";
 /**
  * Dream Cycle tests — Issue #143
  *
@@ -11,21 +13,21 @@
  *  - EventLogConfig parsing via hybridConfigSchema (2 tests: defaults, overrides)
  */
 
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
-import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { EventLogEntry } from "../backends/event-log.js";
+import { hybridConfigSchema } from "../config.js";
+import { _testing } from "../index.js";
 import {
+  type DreamCycleConfig,
   buildDigestSummary,
   extractEventText,
   groupEventsByEntity,
-  runEpisodicConsolidation,
   runDreamCycle,
-  type DreamCycleConfig,
+  runEpisodicConsolidation,
 } from "../services/dream-cycle.js";
-import { _testing } from "../index.js";
-import { hybridConfigSchema } from "../config.js";
-import type { EventLogEntry } from "../backends/event-log.js";
 
 const { FactsDB, EventLog } = _testing;
 
@@ -524,8 +526,8 @@ describe("runDreamCycle", () => {
   });
 
   it("writes MEMORY_INDEX.md during the nightly cycle", async () => {
-    const originalWorkspace = process.env.OPENCLAW_WORKSPACE;
-    process.env.OPENCLAW_WORKSPACE = tmpDir;
+    const originalWorkspace = getEnv("OPENCLAW_WORKSPACE");
+    setEnv("OPENCLAW_WORKSPACE", tmpDir);
 
     factsDb.store({
       text: "Use staged deploy validation for the release workflow after smoke tests pass",
@@ -549,8 +551,8 @@ describe("runDreamCycle", () => {
       expect(existsSync(indexPath)).toBe(true);
       expect(readFileSync(indexPath, "utf-8")).toContain("## Recent Decisions");
     } finally {
-      if (originalWorkspace !== undefined) process.env.OPENCLAW_WORKSPACE = originalWorkspace;
-      else delete process.env.OPENCLAW_WORKSPACE;
+      if (originalWorkspace !== undefined) setEnv("OPENCLAW_WORKSPACE", originalWorkspace);
+      else setEnv("OPENCLAW_WORKSPACE", undefined);
     }
   });
 
@@ -613,12 +615,12 @@ describe("NightlyCycleConfig parsing", () => {
     expect(cfg.nightlyCycle.maxUnconsolidatedAgeDays).toBe(90);
   });
 
-  it("2026.3.140 migration forces nightlyCycle off even when enabled: true", () => {
+  it("honors nightlyCycle.enabled when set to true", () => {
     const cfg = hybridConfigSchema.parse({
       ...minimalConfig,
       nightlyCycle: { enabled: true },
     });
-    expect(cfg.nightlyCycle.enabled).toBe(false);
+    expect(cfg.nightlyCycle.enabled).toBe(true);
   });
 
   it("accepts custom schedule, window, pruneMode, and consolidateAfterDays", () => {

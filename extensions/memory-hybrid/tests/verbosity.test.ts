@@ -17,8 +17,8 @@
  * - silent mode: agent_end credential auto-detect does not register in silent mode
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { rmSync } from "node:fs";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { hybridConfigSchema, parseVerbosityLevel } from "../config.js";
 import type { VerbosityLevel } from "../config.js";
 import { createLifecycleHooks } from "../lifecycle/hooks.js";
@@ -199,8 +199,13 @@ describe("runVerifyForCli — quiet-mode sink filtering", () => {
       vectorDb: {
         checkHealth: () => Promise.resolve({ ok: true, rowCount: 0 }),
         count: () => Promise.resolve(0),
+        isLanceDbAvailable: () => true,
+        ensureInitialized: () => Promise.resolve(),
+        getVectorDim: () => 768,
+        isMemoriesVectorSchemaValid: () => true,
       },
       embeddings: {
+        dimensions: 768,
         embed: () => Promise.resolve(new Float32Array(768)),
         modelName: "nomic-embed-text",
       },
@@ -225,8 +230,10 @@ describe("runVerifyForCli — quiet-mode sink filtering", () => {
     // Decorative headers are suppressed except for the Embedding and LLM table section headers,
     // which are always shown (tableLog) so the full tables are visible even in quiet mode.
     const headerLines = lines.filter((l) => /^─{3,}/.test(l.trimStart()));
-    const tableSectionHeaders = headerLines.filter((l) => l.includes("Embeddings Tests") || l.includes("LLM / Models"));
-    expect(headerLines.length).toBeLessThanOrEqual(2);
+    const tableSectionHeaders = headerLines.filter(
+      (l) => l.includes("Embeddings Tests") || l.includes("Embedding ↔ vector store") || l.includes("LLM / Models"),
+    );
+    expect(headerLines.length).toBeLessThanOrEqual(3);
     expect(headerLines).toEqual(tableSectionHeaders);
   });
 
@@ -248,8 +255,16 @@ describe("runVerifyForCli — quiet-mode sink filtering", () => {
       vectorDb: {
         checkHealth: () => Promise.resolve({ ok: false, error: "lance error" }),
         count: () => Promise.resolve(0),
+        isLanceDbAvailable: () => true,
+        ensureInitialized: () => Promise.resolve(),
+        getVectorDim: () => 1536,
+        isMemoriesVectorSchemaValid: () => true,
       },
-      embeddings: { embed: () => Promise.reject(new Error("no key")), modelName: "x" },
+      embeddings: {
+        dimensions: 1536,
+        embed: () => Promise.reject(new Error("no key")),
+        modelName: "x",
+      },
       credentialsDb: null,
       resolvedSqlitePath: ":memory:",
       resolvedLancePath: "/tmp/test-lance",
@@ -288,6 +303,7 @@ describe("runConfigSetForCli — verbosity", () => {
     const ctx = {
       cfg,
       factsDb: {},
+      edictStore: null as any,
       vectorDb: {},
       embeddings: {},
       credentialsDb: null,
@@ -610,6 +626,7 @@ describe("runCostReportForCli — compact=true when verbosity=quiet", () => {
     const ctx = {
       cfg,
       factsDb: {},
+      edictStore: null as any,
       vectorDb: {},
       embeddings: {},
       credentialsDb: null,
@@ -640,6 +657,7 @@ describe("runCostReportForCli — compact=true when verbosity=quiet", () => {
     const ctx = {
       cfg,
       factsDb: {},
+      edictStore: null as any,
       vectorDb: {},
       embeddings: {},
       credentialsDb: null,
@@ -724,6 +742,7 @@ function makeMinimalLifecycleContext(verbosity: VerbosityLevel): LifecycleContex
     resolvedSqlitePath: "/tmp/test.sqlite",
     vectorDb: { open: vi.fn(), close: vi.fn() } as unknown as LifecycleContext["vectorDb"],
     factsDb: {} as unknown as LifecycleContext["factsDb"],
+    edictStore: null as any,
     embeddings: {} as unknown as LifecycleContext["embeddings"],
     openai: {} as unknown as LifecycleContext["openai"],
     issueStore: null,

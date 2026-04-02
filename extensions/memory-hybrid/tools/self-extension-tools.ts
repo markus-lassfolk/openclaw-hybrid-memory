@@ -13,11 +13,11 @@ import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import type { ToolProposalStore } from "../backends/tool-proposal-store.js";
 import type { WorkflowStore } from "../backends/workflow-store.js";
 import type { HybridMemoryConfig } from "../config.js";
+import { capturePluginError } from "../services/error-reporter.js";
 import { GapDetector } from "../services/gap-detector.js";
 import { ToolProposer } from "../services/tool-proposer.js";
-import { capturePluginError } from "../services/error-reporter.js";
 
-export interface SelfExtensionToolsContext {
+interface SelfExtensionToolsContext {
   toolProposalStore: ToolProposalStore;
   workflowStore: WorkflowStore;
   cfg: HybridMemoryConfig;

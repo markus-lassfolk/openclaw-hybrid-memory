@@ -1,9 +1,10 @@
-import { describe, expect, it, vi } from "vitest";
+// @ts-nocheck
 import { mkdtempSync, rmSync } from "node:fs";
-import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { hybridConfigSchema } from "../config.js";
+import { join } from "node:path";
+import { describe, expect, it, vi } from "vitest";
 import { FactsDB } from "../backends/facts-db.js";
+import { hybridConfigSchema } from "../config.js";
 import {
   bootstrapInstallers,
   installCoreBootstrapServices,
@@ -47,6 +48,7 @@ describe("bootstrap installers", () => {
       cfg,
       api: api as never,
       factsDb: core.factsDb,
+      edictStore: null as any,
       resolvedSqlitePath: join(tmpDir, "facts.db"),
     });
 

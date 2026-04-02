@@ -232,6 +232,8 @@ This means a freshly installed plugin works with whatever models you have config
 
 **If your only model is heavy (e.g. Claude Opus):** The plugin detects when the gateway list is heavy-only and **prepends a cheap fallback** (`gpt-4.1-nano`, `gemini-2.5-flash-lite`, `claude-3-5-haiku`) to the default and nano tiers. That way maintenance tasks (classify, summarize, cron job runner, etc.) try a cheaper model first instead of running hundreds of tasks as Opus. Set **`llm.default`** and **`llm.nano`** explicitly in plugin config if you want to override. After upgrading, run **`openclaw hybrid-mem verify --fix`** so stored cron job models are re-resolved from the updated tiers.
 
+**Isolated maintenance crons:** Jobs under `hybrid-mem:*` store a per-job **`model`**. For isolated runs, that model’s **provider family** (the segment before `/`) should match **`agents.defaults.model.primary`**; otherwise the gateway may throw **`LiveSessionModelSwitchError`**. Align them and run **`openclaw hybrid-mem verify --fix`**; **`openclaw hybrid-mem verify`** warns on mismatch. See [SESSION-DISTILLATION.md](SESSION-DISTILLATION.md) and [issue #965](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/965).
+
 ---
 
 ## Provider API keys

@@ -7,8 +7,8 @@
  */
 
 import { createHash } from "node:crypto";
-import type { WorkflowStore, WorkflowPattern } from "../backends/workflow-store.js";
 import type { CrystallizationStore } from "../backends/crystallization-store.js";
+import type { WorkflowPattern, WorkflowStore } from "../backends/workflow-store.js";
 import type { CrystallizationConfig } from "../config/types/features.js";
 import { capturePluginError } from "./error-reporter.js";
 
@@ -16,7 +16,7 @@ import { capturePluginError } from "./error-reporter.js";
 // Public types
 // ---------------------------------------------------------------------------
 
-export interface CrystallizationCandidate {
+interface CrystallizationCandidate {
   /** Stable hash of the tool sequence used as a pattern identifier */
   patternId: string;
   pattern: WorkflowPattern;

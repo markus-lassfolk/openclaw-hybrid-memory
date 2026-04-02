@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // Intercept node:fs/promises so we can inject fsync errors in individual tests
 // while letting everything else (appendFile, readFile, writeFile, rm) use the
@@ -12,8 +12,8 @@ vi.mock("node:fs/promises", async (importOriginal) => {
     ...actual,
     open: vi.fn(async (...args: any[]) => {
       const fh = await actualOpen(...(args as Parameters<typeof actualOpen>));
-      // Only intercept the 'r' (read-only) opens used by fsyncAfterWrite.
-      if (args[1] === "r") {
+      // Intercept append-mode opens used by fsyncAfterWrite.
+      if (args[1] === "r" || args[1] === "a" || args[1] === "a+") {
         const origDatasync = fh.datasync.bind(fh);
         (fh as any).datasync = async () => {
           if (fsyncError.value) {
@@ -29,10 +29,10 @@ vi.mock("node:fs/promises", async (importOriginal) => {
   };
 });
 
-import { mkdirSync, rmSync, existsSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { _testing } from "../index.js";
 
 const { WriteAheadLog } = _testing;

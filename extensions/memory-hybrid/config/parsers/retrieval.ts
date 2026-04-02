@@ -1,18 +1,18 @@
+import { pluginLogger } from "../../utils/logger.js";
 import type {
+  AuthFailureRecallConfig,
+  AutoClassifyConfig,
   AutoRecallConfig,
   AutoRecallInjectionFormat,
-  AutoClassifyConfig,
-  EntityLookupConfig,
-  RetrievalDirectivesConfig,
-  AuthFailureRecallConfig,
-  RetrievalConfig,
-  SearchConfig,
-  QueryExpansionConfig,
-  RerankingConfig,
   ContextualVariantsConfig,
   DocumentGradingConfig,
+  EntityLookupConfig,
+  QueryExpansionConfig,
+  RerankingConfig,
+  RetrievalConfig,
+  RetrievalDirectivesConfig,
+  SearchConfig,
 } from "../types/retrieval.js";
-import { pluginLogger } from "../../utils/logger.js";
 
 // Minimum timeout floors (#384): prevent spurious timeouts for slow thinking models like Gemini 2.5 Flash.
 // Exported so tests can reference the canonical values without hardcoding magic numbers.
@@ -50,6 +50,10 @@ export function parseAutoRecallConfig(cfg: Record<string, unknown>): AutoRecallC
     const preferLongTerm = ar.preferLongTerm === true;
     const useImportanceRecency = ar.useImportanceRecency === true;
     const entityLookupRaw = ar.entityLookup as Record<string, unknown> | undefined;
+    const maxAutoRaw =
+      typeof entityLookupRaw?.maxAutoEntities === "number" && entityLookupRaw.maxAutoEntities > 0
+        ? Math.max(1, Math.floor(entityLookupRaw.maxAutoEntities))
+        : 500;
     const entityLookup: EntityLookupConfig = {
       enabled: entityLookupRaw?.enabled === true,
       entities: Array.isArray(entityLookupRaw?.entities)
@@ -59,6 +63,8 @@ export function parseAutoRecallConfig(cfg: Record<string, unknown>): AutoRecallC
         typeof entityLookupRaw?.maxFactsPerEntity === "number" && entityLookupRaw.maxFactsPerEntity > 0
           ? Math.floor(entityLookupRaw.maxFactsPerEntity)
           : 2,
+      autoFromFacts: entityLookupRaw?.autoFromFacts !== false,
+      maxAutoEntities: Math.min(2000, maxAutoRaw),
     };
     const summaryThreshold =
       typeof ar.summaryThreshold === "number" && ar.summaryThreshold >= 0 ? ar.summaryThreshold : 300;
@@ -116,6 +122,13 @@ export function parseAutoRecallConfig(cfg: Record<string, unknown>): AutoRecallC
       typeof ar.progressivePinnedRecallCount === "number" && ar.progressivePinnedRecallCount >= 0
         ? Math.floor(ar.progressivePinnedRecallCount)
         : 3;
+    const VALID_ENRICHMENT = ["fast", "balanced", "full"] as const;
+    const interactiveEnrichmentRaw = ar.interactiveEnrichment;
+    const interactiveEnrichment =
+      typeof interactiveEnrichmentRaw === "string" &&
+      (VALID_ENRICHMENT as readonly string[]).includes(interactiveEnrichmentRaw)
+        ? (interactiveEnrichmentRaw as (typeof VALID_ENRICHMENT)[number])
+        : "balanced";
     const scopeFilterRaw = ar.scopeFilter as Record<string, unknown> | undefined;
     const scopeFilter =
       scopeFilterRaw && typeof scopeFilterRaw === "object" && !Array.isArray(scopeFilterRaw)
@@ -178,6 +191,7 @@ export function parseAutoRecallConfig(cfg: Record<string, unknown>): AutoRecallC
         typeof ar.degradationMaxLatencyMs === "number" && ar.degradationMaxLatencyMs >= 0
           ? Math.floor(ar.degradationMaxLatencyMs)
           : 5000,
+      interactiveEnrichment,
     };
   }
   return {
@@ -189,7 +203,7 @@ export function parseAutoRecallConfig(cfg: Record<string, unknown>): AutoRecallC
     minScore: 0.3,
     preferLongTerm: false,
     useImportanceRecency: false,
-    entityLookup: { enabled: false, entities: [], maxFactsPerEntity: 2 },
+    entityLookup: { enabled: false, entities: [], maxFactsPerEntity: 2, autoFromFacts: true, maxAutoEntities: 500 },
     retrievalDirectives: {
       enabled: true,
       entityMentioned: true,
@@ -216,6 +230,7 @@ export function parseAutoRecallConfig(cfg: Record<string, unknown>): AutoRecallC
       maxRecallsPerTarget: 1,
       includeVaultHints: true,
     },
+    interactiveEnrichment: "balanced",
   };
 }
 

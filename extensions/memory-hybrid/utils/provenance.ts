@@ -24,7 +24,7 @@ import type { CouncilProvenanceMode } from "../config/types/maintenance.js";
  *   - X-Session-Key: the derived session key for this council member session
  *   - X-Parent-Session: the orchestrator session that spawned this review
  */
-export type ProvenanceHeaders = Record<string, string>;
+type ProvenanceHeaders = Record<string, string>;
 
 /**
  * Generate ACP provenance headers for a council member session.

@@ -1,3 +1,4 @@
+import { getEnv } from "../utils/env-manager.js";
 /**
  * CLI: `openclaw benchmark run` — run the shadow evaluation benchmark suite.
  *
@@ -26,12 +27,12 @@ import {
 // Runner
 // ---------------------------------------------------------------------------
 
-export type BenchmarkRunContext = {
+type BenchmarkRunContext = {
   /** Path to the SQLite database (llm_cost_log lives here) */
   dbPath: string;
 };
 
-export async function runBenchmarkCommand(
+async function runBenchmarkCommand(
   ctx: BenchmarkRunContext,
   options: {
     feature?: string;
@@ -42,7 +43,14 @@ export async function runBenchmarkCommand(
     judgeModel?: string;
   },
 ): Promise<{ results: BenchmarkResult[] }> {
-  const { feature, accuracy = false, shadow = false, format = "text", iterations = 100, judgeModel = "openai/gpt-4.1-nano" } = options;
+  const {
+    feature,
+    accuracy = false,
+    shadow = false,
+    format = "text",
+    iterations = 100,
+    judgeModel = "openai/gpt-4.1-nano",
+  } = options;
 
   if (!existsSync(ctx.dbPath)) {
     throw new Error(`Database not found at: ${ctx.dbPath}. Run 'openclaw verify' first to set up the database.`);
@@ -86,13 +94,8 @@ export async function runBenchmarkCommand(
 // CLI registration
 // ---------------------------------------------------------------------------
 
-export function registerBenchmarkCommands(
-  mem: Chainable,
-  _ctx: HybridMemCliContext,
-): void {
-  const benchmark = mem
-    .command("benchmark")
-    .description("Shadow evaluation benchmarks for hybrid-memory features");
+export function registerBenchmarkCommands(mem: Chainable, _ctx: HybridMemCliContext): void {
+  const benchmark = mem.command("benchmark").description("Shadow evaluation benchmarks for hybrid-memory features");
 
   benchmark
     .command("run")
@@ -106,9 +109,11 @@ export function registerBenchmarkCommands(
     .action(async (opts: Record<string, string | boolean | undefined>) => {
       // Resolve dbPath from HybridMemoryConfig
       const cfg = (_ctx.cfg ?? {}) as Record<string, unknown>;
-      const dbPath = (typeof cfg.sqlitePath === "string" && cfg.sqlitePath
+      const dbPath = (
+        typeof cfg.sqlitePath === "string" && cfg.sqlitePath
           ? cfg.sqlitePath
-          : join(process.env.HOME ?? "/home/markus", ".openclaw", "memory", "facts.db")) as string;
+          : join(getEnv("HOME") ?? "/home/markus", ".openclaw", "memory", "facts.db")
+      ) as string;
 
       await runBenchmarkCommand(
         { dbPath },
@@ -117,7 +122,7 @@ export function registerBenchmarkCommands(
           accuracy: opts.accuracy === "true",
           shadow: opts.shadow === "true",
           format: (opts.format === "json" ? "json" : "text") as "text" | "json",
-          iterations: typeof opts.iterations === "string" ? parseInt(opts.iterations, 10) : 100,
+          iterations: typeof opts.iterations === "string" ? Number.parseInt(opts.iterations, 10) : 100,
           judgeModel: typeof opts["judge-model"] === "string" ? opts["judge-model"] : "openai/gpt-4.1-nano",
         },
       );

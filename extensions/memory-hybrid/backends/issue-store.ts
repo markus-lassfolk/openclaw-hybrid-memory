@@ -5,18 +5,16 @@
  * machine transitions.
  */
 
-import { DatabaseSync } from "node:sqlite";
-import type { SQLInputValue } from "node:sqlite";
 import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
+import { DatabaseSync } from "node:sqlite";
+import type { SQLInputValue } from "node:sqlite";
 
-import { BaseSqliteStore } from "./base-sqlite-store.js";
 import { capturePluginError } from "../services/error-reporter.js";
-import type { Issue, CreateIssueInput, IssueStatus, IssueSeverity } from "../types/issue-types.js";
+import type { CreateIssueInput, Issue, IssueSeverity, IssueStatus } from "../types/issue-types.js";
 import { ISSUE_TRANSITIONS } from "../types/issue-types.js";
-
-export type { Issue, CreateIssueInput, IssueStatus } from "../types/issue-types.js";
+import { BaseSqliteStore } from "./base-sqlite-store.js";
 
 interface IssueRow {
   id: string;
@@ -93,7 +91,7 @@ export class IssueStore extends BaseSqliteStore {
         now,
       );
 
-    return this.get(id)!;
+    return this.get(id) as Issue;
   }
 
   get(id: string): Issue | null {
@@ -162,7 +160,7 @@ export class IssueStore extends BaseSqliteStore {
     params.push(id);
     this.liveDb.prepare(`UPDATE issues SET ${sets.join(", ")} WHERE id = ?`).run(...params);
 
-    return this.get(id)!;
+    return this.get(id) as Issue;
   }
 
   transition(id: string, newStatus: IssueStatus, data?: Partial<Issue>): Issue {
@@ -205,29 +203,25 @@ export class IssueStore extends BaseSqliteStore {
       params.push(...filter.severity);
     }
 
+    if (filter?.tags && filter.tags.length > 0) {
+      const lower = filter.tags.map((t) => t.toLowerCase());
+      query += ` AND EXISTS (
+        SELECT 1 FROM json_each(
+          CASE WHEN json_valid(tags) THEN tags ELSE '[]' END
+        ) j
+        WHERE lower(j.value) IN (${lower.map(() => "?").join(", ")})
+      )`;
+      params.push(...lower);
+    }
+
     query += " ORDER BY created_at DESC";
-    // When no tag filter, push LIMIT into SQL to avoid loading all rows
-    const hasTagFilter = filter?.tags && filter.tags.length > 0;
-    if (!hasTagFilter && filter?.limit && filter.limit > 0) {
+    if (filter?.limit && filter.limit > 0) {
       query += " LIMIT ?";
       params.push(filter.limit);
     }
 
     const rows = this.liveDb.prepare(query).all(...params) as unknown as IssueRow[];
-    let results = rows.map((r) => this.rowToIssue(r));
-
-    // Tags filtering (JSON array — done in-memory for simplicity)
-    if (filter?.tags && filter.tags.length > 0) {
-      const filterTags = filter.tags.map((t) => t.toLowerCase());
-      results = results.filter((issue) => filterTags.some((ft) => issue.tags.map((t) => t.toLowerCase()).includes(ft)));
-    }
-
-    // Apply limit after all filtering is complete
-    if (filter?.limit && filter.limit > 0) {
-      results = results.slice(0, filter.limit);
-    }
-
-    return results;
+    return rows.map((r) => this.rowToIssue(r));
   }
 
   search(query: string): Issue[] {

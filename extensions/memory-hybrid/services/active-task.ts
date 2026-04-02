@@ -21,12 +21,28 @@
  */
 
 import { existsSync } from "node:fs";
-import { readFile, writeFile, mkdir, readdir, unlink, stat, realpath } from "node:fs/promises";
+import { readFile, writeFile, mkdir, readdir, rename, unlink, stat, realpath } from "node:fs/promises";
 import { dirname, join, resolve, relative, isAbsolute } from "node:path";
 import { randomUUID, createHash } from "node:crypto";
 import { formatDuration } from "../utils/duration.js";
 import { pluginLogger } from "../utils/logger.js";
 import { stableStringify } from "../utils/stable-stringify.js";
+
+/**
+ * Unparseable or invalid signal files (and abandoned atomic-write temp files) older than this are
+ * deleted to prevent unbounded accumulation (issue #812). Exported for tests.
+ */
+export const STALE_CORRUPT_SIGNAL_MS = 5 * 60 * 1000;
+
+async function tryDeleteStaleCorruptSignalFile(filePath: string): Promise<void> {
+  try {
+    const s = await stat(filePath);
+    if (Date.now() - s.mtimeMs <= STALE_CORRUPT_SIGNAL_MS) return;
+    await unlink(filePath);
+  } catch {
+    // ENOENT or other — ignore
+  }
+}
 
 /** Valid task statuses */
 export const ACTIVE_TASK_STATUSES = ["In progress", "Waiting", "Stalled", "Failed", "Done"] as const;
@@ -78,7 +94,7 @@ export interface ActiveTaskHandoffRef {
 }
 
 /** Result of parsing ACTIVE-TASK.md */
-export interface ActiveTaskFile {
+interface ActiveTaskFile {
   /** Active (non-Done) tasks */
   active: ActiveTaskEntry[];
   /** Completed tasks (in ## Completed section) */
@@ -599,7 +615,7 @@ export interface TaskSignal {
 export const OCTAVE_TASK_HANDOFF_SCHEMA = "octave/task-handoff@v1";
 
 /** Typed OCTAVE-style handoff artifact persisted to disk. */
-export interface OctaveTaskHandoffArtifact {
+interface OctaveTaskHandoffArtifact {
   /** Schema identifier */
   schema: typeof OCTAVE_TASK_HANDOFF_SCHEMA;
   /** Artifact type */
@@ -731,7 +747,14 @@ export async function writeTaskSignal(label: string, signal: TaskSignal, memoryD
   const suffix = randomUUID().replace(/-/g, "").slice(0, 8);
   const filePath = join(signalsDir, `${safeLabel}-${timestamp}-${suffix}.json`);
   const artifact = createOctaveTaskHandoffArtifact(signal);
-  await writeFile(filePath, JSON.stringify(artifact, null, 2), "utf-8");
+  const tmpPath = `${filePath}.tmp-${process.pid}-${Date.now()}`;
+  try {
+    await writeFile(tmpPath, JSON.stringify(artifact, null, 2), "utf-8");
+    await rename(tmpPath, filePath);
+  } catch (err) {
+    await unlink(tmpPath).catch(() => {});
+    throw err;
+  }
   return filePath;
 }
 
@@ -756,6 +779,13 @@ export async function readPendingSignals(memoryDir: string): Promise<PendingTask
 
   const resolvedSignalsDir = await realpath(signalsDir);
   const signals: PendingTaskSignal[] = [];
+
+  // Orphaned atomic-write temps (crash after writeFile, before rename) — same age rule as corrupt JSON.
+  for (const file of files) {
+    if (!file.includes(".json.tmp-")) continue;
+    await tryDeleteStaleCorruptSignalFile(join(signalsDir, file));
+  }
+
   for (const file of files) {
     if (!file.endsWith(".json")) continue;
     const filePath = join(signalsDir, file);
@@ -771,7 +801,13 @@ export async function readPendingSignals(memoryDir: string): Promise<PendingTask
     }
     try {
       const raw = await readFile(resolvedFilePath, "utf-8");
-      const parsed = JSON.parse(raw) as unknown;
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(raw);
+      } catch {
+        await tryDeleteStaleCorruptSignalFile(resolvedFilePath);
+        continue;
+      }
       const validatedArtifact = validateOctaveTaskHandoffArtifact(parsed);
       if (validatedArtifact.valid) {
         const handoff = toHandoffRefFromArtifact(validatedArtifact.artifact);
@@ -783,12 +819,17 @@ export async function readPendingSignals(memoryDir: string): Promise<PendingTask
         continue;
       }
       // Backward compatibility: legacy signal format without OCTAVE envelope.
-      if (!isTaskSignal(parsed)) continue;
+      if (!isTaskSignal(parsed)) {
+        await tryDeleteStaleCorruptSignalFile(resolvedFilePath);
+        continue;
+      }
       signals.push({
         ...parsed,
         _filePath: resolvedFilePath,
       });
-    } catch {}
+    } catch {
+      // Ignore transient read errors (race with delete, etc.)
+    }
   }
 
   return signals;
@@ -814,7 +855,7 @@ export async function deleteSignal(filePath: string): Promise<void> {
 // ---------------------------------------------------------------------------
 
 /** ActiveTaskFile extended with the file's mtime in milliseconds. */
-export interface ActiveTaskFileWithMtime extends ActiveTaskFile {
+interface ActiveTaskFileWithMtime extends ActiveTaskFile {
   /** File modification time in milliseconds since epoch (from fs.stat) */
   mtime: number;
 }
@@ -948,8 +989,6 @@ export async function writeActiveTaskFileGuarded(
   await writeActiveTaskFile(filePath, active, completed);
   return { skipped: false };
 }
-
 // ---------------------------------------------------------------------------
 // Re-exports of types used in other modules
 // ---------------------------------------------------------------------------
-export { ACTIVE_STATUSES };

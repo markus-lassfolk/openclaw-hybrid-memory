@@ -6,26 +6,27 @@
  */
 
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
-import { basename, dirname, join } from "node:path";
 import { homedir } from "node:os";
+import { basename, dirname, join } from "node:path";
 
 import type { HybridMemoryConfig } from "../config.js";
-import { getCronModelConfig, getLLMModelPreference, getDefaultCronModel } from "../config.js";
+import { getCronModelConfig, getDefaultCronModel, getLLMModelPreference } from "../config.js";
 import { isValidCategory } from "../config.js";
 import type { MemoryCategory } from "../config.js";
+import { VAULT_POINTER_PREFIX, isCredentialLike, tryParseCredentialForVault } from "../services/auto-capture.js";
 import { chatCompleteWithRetry, distillBatchTokenLimit, distillMaxOutputTokens } from "../services/chat.js";
-import { loadPrompt } from "../utils/prompt-loader.js";
-import { estimateTokens, chunkSessionText } from "../utils/text.js";
-import { extractTags } from "../utils/tags.js";
+import { CostFeature } from "../services/cost-feature-labels.js";
 import { capturePluginError } from "../services/error-reporter.js";
-import { isCredentialLike, tryParseCredentialForVault, VAULT_POINTER_PREFIX } from "../services/auto-capture.js";
 import { preFilterSessions } from "../services/session-pre-filter.js";
 import { BATCH_STORE_IMPORTANCE, DISTILL_DEDUP_THRESHOLD } from "../utils/constants.js";
-import type { DistillWindowResult, RecordDistillResult, DistillCliResult, DistillCliSink } from "./types.js";
-import type { HandlerContext } from "./handlers.js";
-import { buildPreFilterConfig, createProgressReporter } from "./cmd-install.js";
-import { acquireScanSlot, clearScanLock } from "./shared.js";
+import { loadPrompt } from "../utils/prompt-loader.js";
+import { extractTags } from "../utils/tags.js";
+import { chunkSessionText, estimateTokens } from "../utils/text.js";
 import { getMaxMtime } from "./cmd-extract.js";
+import { buildPreFilterConfig, createProgressReporter } from "./cmd-install.js";
+import type { HandlerContext } from "./handlers.js";
+import { acquireScanSlot, clearScanLock } from "./shared.js";
+import type { DistillCliResult, DistillCliSink, DistillWindowResult, RecordDistillResult } from "./types.js";
 
 // Constants used only by distill functions
 const FULL_DISTILL_MAX_DAYS = 90;
@@ -73,7 +74,7 @@ export function gatherSessionFiles(opts: {
 /**
  * Extract text content from session JSONL file
  */
-export function extractTextFromSessionJsonl(filePath: string): string {
+function extractTextFromSessionJsonl(filePath: string): string {
   const lines = readFileSync(filePath, "utf-8").split("\n");
   const parts: string[] = [];
   for (const line of lines) {
@@ -329,6 +330,7 @@ export async function runDistillForCli(
           openai,
           fallbackModels: distillFallbacks,
           label: `memory-hybrid: distill batch ${b + 1}/${batches.length}`,
+          feature: CostFeature.distillCli,
         });
         const lines = content.split("\n").filter((l) => l.trim());
         for (const line of lines) {

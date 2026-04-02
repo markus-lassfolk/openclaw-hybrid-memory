@@ -10,17 +10,19 @@
  */
 
 import type OpenAI from "openai";
-import type { MemoryCategory, HybridMemoryConfig } from "../config.js";
-import type { FactsDB } from "../backends/facts-db.js";
-import type { VectorDB } from "../backends/vector-db.js";
-import type { EmbeddingProvider } from "../services/embeddings.js";
+import type { CostTracker } from "../backends/cost-tracker.js";
 import type { CredentialsDB } from "../backends/credentials-db.js";
+import type { EventBus } from "../backends/event-bus.js";
+import type { FactsDB } from "../backends/facts-db.js";
 import type { IdentityReflectionStore } from "../backends/identity-reflection-store.js";
-import type { WriteAheadLog } from "../backends/wal.js";
 import type { PersonaStateStore } from "../backends/persona-state-store.js";
 import type { ProposalsDB } from "../backends/proposals-db.js";
-import type { CostTracker } from "../backends/cost-tracker.js";
-import type { EventBus } from "../backends/event-bus.js";
+import type { VectorDB } from "../backends/vector-db.js";
+import type { WriteAheadLog } from "../backends/wal.js";
+import type { HybridMemoryConfig, MemoryCategory } from "../config.js";
+import type { EmbeddingProvider } from "../services/embeddings.js";
+import type { AuditStore } from "../backends/audit-store.js";
+import type { AgentHealthStore } from "../backends/agent-health-store.js";
 
 /** Shared dependency bag passed to every CLI handler. */
 export interface HandlerContext {
@@ -47,6 +49,9 @@ export interface HandlerContext {
   costTracker?: CostTracker | null;
   /** Event Bus for sensor sweep (Issue #236). */
   eventBus?: EventBus | null;
+  /** Cross-agent audit log (Issue #790). */
+  auditStore?: AuditStore | null;
+  agentHealthStore?: AgentHealthStore | null;
 }
 
 // ---------------------------------------------------------------------------

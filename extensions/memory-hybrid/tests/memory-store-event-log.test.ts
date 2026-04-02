@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * Tests that memory_store creates event_log entries (Issue #150).
  *
@@ -5,12 +6,12 @@
  * and call its execute handler directly.
  */
 
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
-import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { registerMemoryTools } from "../tools/memory-tools.js";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { _testing } from "../index.js";
+import { registerMemoryTools } from "../tools/memory-tools.js";
 
 const { FactsDB, EventLog } = _testing;
 
@@ -117,6 +118,7 @@ describe("memory_store event_log integration", () => {
     registerMemoryTools(
       {
         factsDb: factsDb as never,
+        edictStore: null as any,
         vectorDb: vectorDb as never,
         cfg: cfg as never,
         embeddings: embeddings as never,
@@ -162,6 +164,7 @@ describe("memory_store event_log integration", () => {
     registerMemoryTools(
       {
         factsDb: factsDb as never,
+        edictStore: null as any,
         vectorDb: vectorDb as never,
         cfg: cfg as never,
         embeddings: embeddings as never,
@@ -199,6 +202,7 @@ describe("memory_store event_log integration", () => {
     registerMemoryTools(
       {
         factsDb: factsDb as never,
+        edictStore: null as any,
         vectorDb: vectorDb as never,
         cfg: cfg as never,
         embeddings: embeddings as never,

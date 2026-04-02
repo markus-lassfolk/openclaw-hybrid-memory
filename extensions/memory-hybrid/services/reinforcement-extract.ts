@@ -8,7 +8,7 @@
 import { open } from "node:fs/promises";
 import { basename } from "node:path";
 import { getReinforcementCategoryRegexes } from "../utils/language-keywords.js";
-import { extractMessageText, truncate, timestampFromFilename } from "../utils/text.js";
+import { extractMessageText, timestampFromFilename, truncate } from "../utils/text.js";
 import { capturePluginError } from "./error-reporter.js";
 
 export type ReinforcementIncident = {
@@ -171,7 +171,7 @@ function calculateReinforcementConfidence(userText: string, agentText: string): 
   return Math.max(0, Math.min(1.0, confidence));
 }
 
-export type RunReinforcementExtractOpts = {
+type RunReinforcementExtractOpts = {
   filePaths: string[];
   reinforcementRegex: RegExp;
 };

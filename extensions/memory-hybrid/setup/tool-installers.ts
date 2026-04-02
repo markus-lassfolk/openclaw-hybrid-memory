@@ -1,26 +1,26 @@
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import type { MemoryPluginAPI } from "../api/memory-plugin-api.js";
 import type { BootstrapPhaseConfig } from "../config.js";
-import { capturePluginError } from "../services/error-reporter.js";
 import { orderByBootstrapPhase } from "../services/bootstrap-priority.js";
+import { capturePluginError } from "../services/error-reporter.js";
+import { registerApitapTools } from "../tools/apitap-tools.js";
 import { registerCredentialTools } from "../tools/credential-tools.js";
 import { registerCrystallizationTools } from "../tools/crystallization-tools.js";
-import { registerDashboardHttpRoutes, type DashboardRoutesContext } from "../tools/dashboard-routes.js";
+import { type DashboardRoutesContext, registerDashboardHttpRoutes } from "../tools/dashboard-routes.js";
 import { registerDocumentTools } from "../tools/document-tools.js";
-import { registerGraphTools, type PluginContext as GraphToolsContext } from "../tools/graph-tools.js";
+import { type PluginContext as GraphToolsContext, registerGraphTools } from "../tools/graph-tools.js";
 import { registerIssueTools } from "../tools/issue-tools.js";
-import { registerMemoryTools, type MemoryToolsContext } from "../tools/memory-tools.js";
-import { registerPersonaTools, type PluginContext as PersonaToolsContext } from "../tools/persona-tools.js";
+import { type MemoryToolsContext, registerMemoryTools } from "../tools/memory-tools.js";
+import { type PluginContext as PersonaToolsContext, registerPersonaTools } from "../tools/persona-tools.js";
 import { registerProvenanceTools } from "../tools/provenance-tools.js";
 import { registerSelfExtensionTools } from "../tools/self-extension-tools.js";
-import { registerApitapTools } from "../tools/apitap-tools.js";
-import { registerUtilityTools, type PluginContext as UtilityToolsContext } from "../tools/utility-tools.js";
+import { type PluginContext as UtilityToolsContext, registerUtilityTools } from "../tools/utility-tools.js";
 import { registerVerificationTools } from "../tools/verification-tools.js";
 import { registerWorkflowTools } from "../tools/workflow-tools.js";
 
 export type ToolsContext = MemoryPluginAPI;
 
-export type ToolInstaller = BootstrapPhaseConfig & {
+type ToolInstaller = BootstrapPhaseConfig & {
   id: string;
   selectContext(context: ToolsContext, api: ClawdbotPluginApi): unknown;
   install(context: unknown, api: ClawdbotPluginApi): void;
@@ -82,6 +82,7 @@ function selectMemoryCoreToolsContext(ctx: ToolsContext): MemoryToolsContext {
     findSimilarByEmbedding,
     walWrite,
     walRemove,
+    auditStore,
   } = ctx;
 
   return {
@@ -103,9 +104,10 @@ function selectMemoryCoreToolsContext(ctx: ToolsContext): MemoryToolsContext {
     currentAgentIdRef,
     pendingLLMWarnings,
     buildToolScopeFilter,
-    walWrite: (operation, data, logger) => walWrite(wal, operation, data, logger),
+    walWrite: (operation, data, logger, supersedeTargetId) => walWrite(wal, operation, data, logger, supersedeTargetId),
     walRemove: (id, logger) => walRemove(wal, id, logger),
     findSimilarByEmbedding,
+    auditStore,
   };
 }
 

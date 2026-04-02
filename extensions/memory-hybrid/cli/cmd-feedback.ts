@@ -9,27 +9,28 @@
  */
 
 import { readFileSync } from "node:fs";
-import { basename, join } from "node:path";
 import { homedir } from "node:os";
+import { basename, join } from "node:path";
 
-import { getCronModelConfig, getDefaultCronModel, getLLMModelPreference, isCompactVerbosity } from "../config.js";
 import type { ReinforcementContext } from "../backends/facts-db.js";
-import { capturePluginError } from "../services/error-reporter.js";
-import { extractImplicitSignals, parseSessionTurns } from "../services/implicit-feedback-extract.js";
-import { buildTrajectories, serializeTrajectory, analyzeTrajectoriesWithLLM } from "../services/trajectory-tracker.js";
-import { runClosedLoopAnalysis, getEffectivenessReport } from "../services/feedback-effectiveness.js";
+import { getCronModelConfig, getDefaultCronModel, getLLMModelPreference, isCompactVerbosity } from "../config.js";
+import { chatCompleteWithRetry } from "../services/chat.js";
+import { CostFeature } from "../services/cost-feature-labels.js";
 import { runCrossAgentLearning } from "../services/cross-agent-learning.js";
+import { capturePluginError } from "../services/error-reporter.js";
+import { getEffectivenessReport, runClosedLoopAnalysis } from "../services/feedback-effectiveness.js";
+import { extractImplicitSignals, parseSessionTurns } from "../services/implicit-feedback-extract.js";
+import { getModeCostEstimates } from "../services/model-pricing.js";
 import {
+  ToolEffectivenessStore,
   computeToolEffectiveness,
   formatToolEffectivenessReport,
-  ToolEffectivenessStore,
   generateMonthlyReport,
 } from "../services/tool-effectiveness.js";
-import { getModeCostEstimates } from "../services/model-pricing.js";
-import { chatCompleteWithRetry } from "../services/chat.js";
+import { analyzeTrajectoriesWithLLM, buildTrajectories, serializeTrajectory } from "../services/trajectory-tracker.js";
 import { loadPrompt } from "../utils/prompt-loader.js";
-import type { HandlerContext } from "./handlers.js";
 import { getSessionFilePathsSince } from "./cmd-extract.js";
+import type { HandlerContext } from "./handlers.js";
 
 // ---------------------------------------------------------------------------
 // extract-implicit-feedback
@@ -246,6 +247,7 @@ export async function runExtractImplicitFeedbackForCli(
                     openai,
                     fallbackModels,
                     label: "memory-hybrid: trajectory-analyze",
+                    feature: CostFeature.trajectoryAnalyze,
                   });
                 };
                 const llmAnalysis = await analyzeTrajectoriesWithLLM(traj, prompt, chatFn);

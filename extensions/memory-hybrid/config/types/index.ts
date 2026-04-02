@@ -400,6 +400,8 @@ export type HybridMemoryConfig = {
     models?: string[];
     /** Vector dimensions for this model (required for ollama/onnx; auto-resolved for known openai models). */
     dimensions: number;
+    /** Azure OpenAI: embedding deployment name (must match Azure Portal). When set, used as the API model id; `model` still resolves dimensions. */
+    deployment?: string;
     /** Ollama endpoint URL (default: http://localhost:11434). Only used when provider='ollama'. */
     endpoint?: string;
     /** Number of texts to embed per batch call (default: 50). */

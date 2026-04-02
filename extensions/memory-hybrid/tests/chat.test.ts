@@ -1,19 +1,23 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
-  chatComplete,
-  distillBatchTokenLimit,
-  distillMaxOutputTokens,
-  withLLMRetry,
   LLMRetryError,
+  UnconfiguredProviderError,
+  chatComplete,
   chatCompleteWithRetry,
   createPendingLLMWarnings,
-  is404Like,
+  distillBatchTokenLimit,
+  distillMaxOutputTokens,
   is403Like,
+  is403QuotaOrRateLimitLike,
+  is404Like,
   is500Like,
+  isAbortOrTransientLlmError,
   isConnectionErrorLike,
-  isOllamaOOM,
   isContextLengthError,
-  UnconfiguredProviderError,
+  isOllamaOOM,
+  parseGoDurationToMs,
+  parseRetryAfterMs,
+  withLLMRetry,
 } from "../services/chat.js";
 
 vi.mock("../services/error-reporter.js", () => ({
@@ -415,6 +419,120 @@ describe("is403Like", () => {
     expect(is403Like(new Error("401 Unauthorized"))).toBe(false);
     expect(is403Like(new Error("404 Not Found"))).toBe(false);
     expect(is403Like(new Error("500 Internal Server Error"))).toBe(false);
+  });
+});
+
+describe("is403QuotaOrRateLimitLike", () => {
+  it("detects 403 with Retry-After and excludes from is403Like (geo)", () => {
+    const err = Object.assign(new Error("403 status code (no body)"), {
+      status: 403,
+      headers: new Headers({ "retry-after": "1282" }),
+    });
+    expect(is403QuotaOrRateLimitLike(err)).toBe(true);
+    expect(is403Like(err)).toBe(false);
+  });
+
+  it("detects 403 with remaining-tokens: 0", () => {
+    const err = Object.assign(new Error("Forbidden"), {
+      status: 403,
+      headers: new Headers({ "remaining-tokens": "0" }),
+    });
+    expect(is403QuotaOrRateLimitLike(err)).toBe(true);
+    expect(is403Like(err)).toBe(false);
+  });
+
+  it("unwraps LLMRetryError so wrapped quota 403 is not classified as geo 403", () => {
+    const cause = Object.assign(new Error("403 status code (no body)"), {
+      status: 403,
+      headers: new Headers({ "retry-after": "60", "remaining-tokens": "0" }),
+    });
+    const wrapped = new LLMRetryError(`Failed after 4 attempts: ${cause.message}`, cause, 4);
+    expect(is403QuotaOrRateLimitLike(wrapped)).toBe(true);
+    expect(is403Like(wrapped)).toBe(false);
+  });
+
+  it("detects Azure-style remaining-tokens: 0 via plain Record headers (#940)", () => {
+    const err = Object.assign(new Error("Forbidden"), {
+      status: 403,
+      headers: { "remaining-tokens": "0" } as Record<string, string>,
+    });
+    expect(is403QuotaOrRateLimitLike(err)).toBe(true);
+    expect(is403Like(err)).toBe(false);
+  });
+
+  it("detects Azure retry-after via plain Record headers (#940)", () => {
+    const err = Object.assign(new Error("Forbidden"), {
+      status: 403,
+      headers: { "retry-after": "30" } as Record<string, string>,
+    });
+    expect(is403QuotaOrRateLimitLike(err)).toBe(true);
+    expect(is403Like(err)).toBe(false);
+  });
+});
+
+describe("parseGoDurationToMs / parseRetryAfterMs (OpenAI x-ratelimit-reset-* #941)", () => {
+  it("parses OpenAI-documented Go durations (not integer seconds)", () => {
+    expect(parseGoDurationToMs("6m0s")).toBe(360_000);
+    expect(parseGoDurationToMs("1s")).toBe(1000);
+    expect(parseGoDurationToMs("500ms")).toBe(500);
+  });
+
+  it("uses x-ratelimit-reset-tokens as duration, not parseInt(6m0s)===6 seconds", () => {
+    const err = { headers: { "x-ratelimit-reset-tokens": "6m0s" } };
+    expect(parseRetryAfterMs(err)).toBe(360_000);
+  });
+
+  it("prefers Retry-After over x-ratelimit-reset when both present", () => {
+    const err = {
+      headers: {
+        "retry-after": "5",
+        "x-ratelimit-reset-tokens": "6m0s",
+      },
+    };
+    expect(parseRetryAfterMs(err)).toBe(5000);
+  });
+
+  it("parses plain retry-after seconds only when the value is all digits", () => {
+    expect(parseRetryAfterMs({ headers: { "retry-after": "1282" } })).toBe(1_282_000);
+  });
+});
+
+describe("withLLMRetry — quota 403 retries (#940)", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("retries on quota 403 (remaining-tokens: 0) and succeeds on later attempt", async () => {
+    let attempt = 0;
+    const fn = vi.fn().mockImplementation(async () => {
+      attempt++;
+      if (attempt <= 2) {
+        throw Object.assign(new Error("403 status code (no body)"), {
+          status: 403,
+          headers: { "remaining-tokens": "0", "retry-after": "1" },
+        });
+      }
+      return "success";
+    });
+
+    const promise = withLLMRetry(fn);
+    await vi.advanceTimersByTimeAsync(5000);
+    await vi.advanceTimersByTimeAsync(5000);
+    const result = await promise;
+    expect(result).toBe("success");
+    expect(fn).toHaveBeenCalledTimes(3);
+  });
+
+  it("does NOT retry on geo 403 (no retry-after/remaining-tokens headers)", async () => {
+    const fn = vi.fn().mockRejectedValue(Object.assign(new Error("403 Forbidden"), { status: 403 }));
+
+    await expect(withLLMRetry(fn)).rejects.toThrow("403 Forbidden");
+    expect(fn).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -1577,5 +1695,47 @@ describe("chatCompleteWithRetry — connection error (#703)", () => {
     await vi.runAllTimersAsync();
     await expectation;
     expect(errorReporter.capturePluginError).not.toHaveBeenCalled();
+  });
+
+  it("#935 #936: does not report to GlitchTip when retries exhaust on Request was aborted", async () => {
+    const mockOpenai = {
+      chat: {
+        completions: {
+          create: vi.fn().mockRejectedValue(new Error("Request was aborted")),
+        },
+      },
+    } as unknown as import("openai").default;
+
+    const promise = chatCompleteWithRetry({
+      model: "openai/gpt-4o",
+      content: "test",
+      openai: mockOpenai,
+      fallbackModels: [],
+    });
+
+    const expectation = expect(promise).rejects.toThrow("Request was aborted");
+    await vi.runAllTimersAsync();
+    await expectation;
+    expect(errorReporter.capturePluginError).not.toHaveBeenCalled();
+  });
+});
+
+describe("isAbortOrTransientLlmError", () => {
+  it("detects Request was aborted", () => {
+    expect(isAbortOrTransientLlmError(new Error("Request was aborted."))).toBe(true);
+  });
+
+  it("detects gateway stopped / unreachable phrasing", () => {
+    expect(isAbortOrTransientLlmError(new Error("gateway client stopped"))).toBe(true);
+    expect(isAbortOrTransientLlmError(new Error("Gateway not reachable. Is it running?"))).toBe(true);
+  });
+
+  it("unwraps LLMRetryError cause", () => {
+    const inner = new Error("Request was aborted.");
+    expect(isAbortOrTransientLlmError(new LLMRetryError("wrap", inner, 1))).toBe(true);
+  });
+
+  it("returns false for arbitrary model failure", () => {
+    expect(isAbortOrTransientLlmError(new Error("model not found"))).toBe(false);
   });
 });

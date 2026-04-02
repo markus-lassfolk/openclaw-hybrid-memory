@@ -4,27 +4,28 @@
  * All HTTP calls are mocked — no Ollama instance required.
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import {
-  Embeddings,
-  OllamaEmbeddingProvider,
-  FallbackEmbeddingProvider,
-  ChainEmbeddingProvider,
-  OnnxEmbeddingProvider,
-  AllEmbeddingProvidersFailed,
-  createEmbeddingProvider,
-  safeEmbed,
-  shouldSuppressEmbeddingError,
-  __setOnnxRuntimeLoaderForTests,
-  _resetOllamaCircuitBreakerForTesting,
-  type EmbeddingConfig,
-} from "../services/embeddings.js";
-import { capturePluginError } from "../services/error-reporter.js";
-import * as glitchtip from "../services/error-reporter.js";
-import { LLMRetryError } from "../services/chat.js";
 import { promises as fs } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { LLMRetryError } from "../services/chat.js";
+import {
+  AllEmbeddingProvidersFailed,
+  ChainEmbeddingProvider,
+  type EmbeddingConfig,
+  Embeddings,
+  FallbackEmbeddingProvider,
+  OllamaEmbeddingProvider,
+  OnnxEmbeddingProvider,
+  __setOnnxRuntimeLoaderForTests,
+  _resetOllamaCircuitBreakerForTesting,
+  createEmbeddingProvider,
+  safeEmbed,
+  shouldSuppressEmbeddingError,
+} from "../services/embeddings.js";
+import { capturePluginError } from "../services/error-reporter.js";
+import * as glitchtip from "../services/error-reporter.js";
+import { AsyncSemaphore } from "../services/embeddings/shared.js";
 
 vi.mock("../services/error-reporter.js", () => ({
   capturePluginError: vi.fn(),
@@ -47,7 +48,7 @@ beforeEach(() => {
 function makeMockOpenAI(vector: number[]): import("openai").default {
   const mockCreate = vi.fn().mockImplementation((params: { input: string | string[] }) => {
     const count = Array.isArray(params.input) ? params.input.length : 1;
-    return Promise.resolve({ data: Array.from({ length: count }, () => ({ embedding: vector })) });
+    return Promise.resolve({ data: Array.from({ length: count }, (_, i) => ({ index: i, embedding: vector })) });
   });
   return {
     embeddings: { create: mockCreate },
@@ -104,6 +105,63 @@ describe("Embeddings (OpenAI) implements EmbeddingProvider interface", () => {
     expect(result).toEqual(vec);
   });
 
+  it("#969: embed() throws a descriptive error when response.data is empty (not TypeError on data[0])", async () => {
+    const mockCreate = vi.fn().mockResolvedValue({ data: [] });
+    const client = { embeddings: { create: mockCreate } } as unknown as import("openai").default;
+    const provider = new Embeddings(client, "text-embedding-3-small", 3);
+    await expect(provider.embed("hello")).rejects.toThrow(/missing data\[0\]\.embedding/i);
+  });
+
+  it("#969: embed() throws a descriptive error when response has no data field", async () => {
+    const mockCreate = vi.fn().mockResolvedValue({});
+    const client = {
+      baseURL: "https://embeds.example.test/v1",
+      embeddings: { create: mockCreate },
+    } as unknown as import("openai").default;
+    const provider = new Embeddings(client, "text-embedding-3-small", 3);
+    let thrown: unknown;
+    try {
+      await provider.embed("hello");
+    } catch (err) {
+      thrown = err;
+    }
+    const message = thrown instanceof Error ? thrown.message : String(thrown);
+    expect(message).toMatch(/missing data\[0\]\.embedding/i);
+    expect(message).toMatch(/provider=openai-compatible/i);
+    expect(message).toMatch(/endpoint=https:\/\/embeds\.example\.test\/v1/i);
+    expect(message).toMatch(/model=text-embedding-3-small/i);
+    expect(message).not.toMatch(/Cannot read properties of undefined/i);
+  });
+
+  it("#969: embed() throws a descriptive error when response is undefined", async () => {
+    const mockCreate = vi.fn().mockResolvedValue(undefined);
+    const client = { embeddings: { create: mockCreate } } as unknown as import("openai").default;
+    const provider = new Embeddings(client, "text-embedding-3-small", 3);
+    await expect(provider.embed("hello")).rejects.toThrow(/missing data\[0\]\.embedding/i);
+  });
+
+  it("#969: embed() preserves a structured terminal error after fallback exhaustion", async () => {
+    const mockCreate = vi.fn().mockImplementation((params: { model: string }) => {
+      if (params.model === "text-embedding-3-small") {
+        return Promise.reject(Object.assign(new Error("upstream 404 from primary"), { status: 404 }));
+      }
+      return Promise.resolve({});
+    });
+    const client = { embeddings: { create: mockCreate } } as unknown as import("openai").default;
+    const provider = new Embeddings(client, ["text-embedding-3-small", "text-embedding-3-large"], 3);
+
+    let thrown: unknown;
+    try {
+      await provider.embed("hello");
+    } catch (err) {
+      thrown = err;
+    }
+    const message = thrown instanceof Error ? thrown.message : String(thrown);
+    expect(message).toMatch(/missing data\[0\]\.embedding/i);
+    expect(message).toMatch(/model=text-embedding-3-large/i);
+    expect(message).not.toMatch(/Cannot read properties of undefined/i);
+  });
+
   it("embedBatch() returns correct number of results", async () => {
     const vec = [0.5, 0.6];
     const client = makeMockOpenAI(vec);
@@ -113,6 +171,13 @@ describe("Embeddings (OpenAI) implements EmbeddingProvider interface", () => {
     expect(results[0]).toEqual(vec);
     expect(results[1]).toEqual(vec);
     expect(results[2]).toEqual(vec);
+  });
+
+  it("#969: embedBatch() throws when data[] length mismatches inputs", async () => {
+    const mockCreate = vi.fn().mockResolvedValue({ data: [{ index: 0, embedding: [0.1, 0.2] }] });
+    const client = { embeddings: { create: mockCreate } } as unknown as import("openai").default;
+    const provider = new Embeddings(client, "text-embedding-3-small", 2);
+    await expect(provider.embedBatch(["a", "b"])).rejects.toThrow(/wrong-length data/i);
   });
 
   it("embedBatch() makes a single batched API call (not N calls)", async () => {
@@ -934,6 +999,40 @@ describe("createEmbeddingProvider factory", () => {
     expect(result).toEqual(openaiVec);
     embedSpy.mockRestore();
   });
+
+  it("#932: chain OpenAI arm keeps Azure deployment id in model (forFallback), not text-embedding-3-small", () => {
+    const cfg: EmbeddingConfig = {
+      provider: "openai",
+      model: "my-azure-embedding-deployment",
+      apiKey: "sk-test-1234567890",
+      endpoint: "https://test.openai.azure.com/openai/v1",
+      dimensions: 1536,
+      batchSize: 50,
+      preferredProviders: ["openai", "ollama"],
+    };
+    const provider = createEmbeddingProvider(cfg);
+    expect(provider).toBeInstanceOf(ChainEmbeddingProvider);
+    expect(provider.modelName).toBe("my-azure-embedding-deployment");
+  });
+
+  it("#932: Ollama→OpenAI fallback on Azure still maps nomic to text-embedding-3-small for the OpenAI client", async () => {
+    vi.stubGlobal("fetch", mockOllamaFetchFail("ECONNREFUSED"));
+    const cfg: EmbeddingConfig = {
+      provider: "ollama",
+      model: "nomic-embed-text",
+      apiKey: "sk-test-1234567890",
+      endpoint: "https://test.openai.azure.com/openai/v1",
+      dimensions: 768,
+      batchSize: 50,
+    };
+    const embedSpy = vi.spyOn(Embeddings.prototype, "embed").mockResolvedValue(new Array(768).fill(0.1));
+    const provider = createEmbeddingProvider(cfg);
+    expect(provider.modelName).toBe("nomic-embed-text");
+    await provider.embed("x");
+    expect(embedSpy).toHaveBeenCalled();
+    expect(provider.modelName).toBe("text-embedding-3-small");
+    embedSpy.mockRestore();
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -1628,5 +1727,33 @@ describe("#486: safeEmbed suppresses AllEmbeddingProvidersFailed with 429/circui
     const result = await safeEmbed(chain, "test");
     expect(result).toBeNull();
     expect(vi.mocked(capturePluginError)).toHaveBeenCalledOnce();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// AsyncSemaphore (#840 / PR #917 — release must not grow available past capacity)
+// ---------------------------------------------------------------------------
+
+describe("AsyncSemaphore", () => {
+  it("clamps available to capacity when release() is called more times than acquire()", async () => {
+    const s = new AsyncSemaphore(2);
+    await s.acquire();
+    await s.acquire();
+    s.release();
+    s.release();
+    s.release();
+    s.release();
+    await s.acquire();
+    await s.acquire();
+    const third = s.acquire();
+    let progressed = false;
+    third.then(() => {
+      progressed = true;
+    });
+    await new Promise((r) => setImmediate(r));
+    expect(progressed).toBe(false);
+    s.release();
+    await third;
+    expect(progressed).toBe(true);
   });
 });

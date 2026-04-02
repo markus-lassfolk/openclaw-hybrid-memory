@@ -13,16 +13,16 @@
  *   "humanizer_score: 0.73, patterns: ['great_question','happy_to_help'], model: sonnet, skill: weather"
  */
 
-import { spawn } from "node:child_process";
-import { capturePluginError } from "./error-reporter.js";
+import { spawn } from "../utils/process-runner.js";
 import type { HumanizerConfig } from "../config/types/features.js";
+import { capturePluginError } from "./error-reporter.js";
 
 // ---------------------------------------------------------------------------
 // Public types
 // ---------------------------------------------------------------------------
 
 /** Raw output from `humanizer score --json` */
-export interface HumanizerRawOutput {
+interface HumanizerRawOutput {
   score: number;
   patterns_triggered?: string[];
   category_breakdown?: Record<string, number>;
@@ -32,7 +32,7 @@ export interface HumanizerRawOutput {
 }
 
 /** Parsed, validated result after calling humanizer */
-export interface HumanizerResult {
+interface HumanizerResult {
   score: number;
   patternsTriggered: string[];
   categoryBreakdown: Record<string, number>;

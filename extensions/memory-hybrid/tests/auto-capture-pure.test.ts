@@ -4,16 +4,16 @@
  * isCredentialLike, and tryParseCredentialForVault without live API keys or DBs.
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
 import {
+  SENSITIVE_PATTERNS,
+  type TryParseCredentialOptions,
+  VAULT_POINTER_PREFIX,
   detectCredentialPatterns,
   extractCredentialMatch,
   inferServiceFromText,
   isCredentialLike,
   tryParseCredentialForVault,
-  SENSITIVE_PATTERNS,
-  VAULT_POINTER_PREFIX,
-  type TryParseCredentialOptions,
 } from "../services/auto-capture.js";
 import { MAX_SERVICE_NAME_LENGTH } from "../services/credential-validation.js";
 

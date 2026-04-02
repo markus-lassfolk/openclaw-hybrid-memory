@@ -2,10 +2,10 @@
  * Dynamic Salience Scoring tests
  */
 
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { computeDynamicSalience } from "../utils/salience.js";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { MemoryEntry } from "../types/memory.js";
 import { SECONDS_PER_DAY } from "../utils/constants.js";
+import { computeDynamicSalience } from "../utils/salience.js";
 
 describe("computeDynamicSalience", () => {
   const nowSec = Math.floor(Date.now() / 1000);

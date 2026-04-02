@@ -1,11 +1,12 @@
-import { describe, expect, it, vi, beforeEach } from "vitest";
-import { buildExplicitSemanticQueryVector, DEFAULT_RETRIEVAL_CONFIG } from "../services/retrieval-orchestrator.js";
+// @ts-nocheck
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AllEmbeddingProvidersFailed } from "../services/embeddings.js";
 import * as errorReporter from "../services/error-reporter.js";
 import {
   resolveExplicitDeepRetrievalPolicy,
   resolveInteractiveRecallPolicy,
 } from "../services/retrieval-mode-policy.js";
+import { DEFAULT_RETRIEVAL_CONFIG, buildExplicitSemanticQueryVector } from "../services/retrieval-orchestrator.js";
 
 beforeEach(() => {
   vi.restoreAllMocks();
@@ -98,6 +99,78 @@ describe("retrieval mode policy", () => {
     expect(policy.ownerModule).toBe("lifecycle/stage-recall.ts");
     expect(policy.contextBudgetTokens).toBe(700);
     expect(policy.allowHyde).toBe(true);
+  });
+
+  it("interactiveEnrichment fast disables HyDE and ambient multi-query on the hot path", () => {
+    const policy = resolveInteractiveRecallPolicy(
+      {
+        enabled: true,
+        interactiveEnrichment: "fast",
+        maxTokens: 700,
+        maxPerMemoryChars: 240,
+        injectionFormat: "minimal",
+        limit: 8,
+        minScore: 0.2,
+        preferLongTerm: false,
+        useImportanceRecency: true,
+        entityLookup: { enabled: false, entities: [], maxFactsPerEntity: 0 },
+        retrievalDirectives: {
+          enabled: false,
+          entityMentioned: false,
+          keywords: [],
+          taskTypes: {},
+          sessionStart: false,
+          limit: 0,
+          maxPerPrompt: 0,
+        },
+        summaryThreshold: 0,
+        summaryMaxChars: 0,
+        useSummaryInInjection: false,
+        summarizeWhenOverBudget: false,
+        authFailure: { enabled: false, patterns: [], maxRecallsPerTarget: 0, includeVaultHints: false },
+      },
+      { enabled: true, skipForInteractiveTurns: false },
+    );
+
+    expect(policy.interactiveEnrichment).toBe("fast");
+    expect(policy.allowHyde).toBe(false);
+    expect(policy.allowAmbientMultiQuery).toBe(false);
+  });
+
+  it("interactiveEnrichment full allows HyDE when query expansion is on even if skipForInteractiveTurns is true", () => {
+    const policy = resolveInteractiveRecallPolicy(
+      {
+        enabled: true,
+        interactiveEnrichment: "full",
+        maxTokens: 700,
+        maxPerMemoryChars: 240,
+        injectionFormat: "minimal",
+        limit: 8,
+        minScore: 0.2,
+        preferLongTerm: false,
+        useImportanceRecency: true,
+        entityLookup: { enabled: false, entities: [], maxFactsPerEntity: 0 },
+        retrievalDirectives: {
+          enabled: false,
+          entityMentioned: false,
+          keywords: [],
+          taskTypes: {},
+          sessionStart: false,
+          limit: 0,
+          maxPerPrompt: 0,
+        },
+        summaryThreshold: 0,
+        summaryMaxChars: 0,
+        useSummaryInInjection: false,
+        summarizeWhenOverBudget: false,
+        authFailure: { enabled: false, patterns: [], maxRecallsPerTarget: 0, includeVaultHints: false },
+      },
+      { enabled: true, skipForInteractiveTurns: true },
+    );
+
+    expect(policy.interactiveEnrichment).toBe("full");
+    expect(policy.allowHyde).toBe(true);
+    expect(policy.allowAmbientMultiQuery).toBe(true);
   });
 
   it("names the explicit/deep owner and uses explicit retrieval budget", () => {

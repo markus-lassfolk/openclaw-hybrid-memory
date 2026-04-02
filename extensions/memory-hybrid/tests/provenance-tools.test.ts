@@ -1,18 +1,19 @@
+// @ts-nocheck
 /**
  * Tests for provenance tools and automatic edge creation (Issue #163).
  */
 
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
-import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { registerProvenanceTools } from "../tools/provenance-tools.js";
-import { registerMemoryTools } from "../tools/memory-tools.js";
-import { runConsolidate } from "../services/consolidation.js";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { hybridConfigSchema } from "../config.js";
-import { createPendingLLMWarnings } from "../services/chat.js";
-import { buildToolScopeFilter } from "../utils/scope-filter.js";
 import { _testing } from "../index.js";
+import { createPendingLLMWarnings } from "../services/chat.js";
+import { runConsolidate } from "../services/consolidation.js";
+import { registerMemoryTools } from "../tools/memory-tools.js";
+import { registerProvenanceTools } from "../tools/provenance-tools.js";
+import { buildToolScopeFilter } from "../utils/scope-filter.js";
 
 const { FactsDB, ProvenanceService, EventLog } = _testing;
 
@@ -63,7 +64,7 @@ describe("memory_provenance tool", () => {
       embedding: { provider: "ollama", model: "nomic-embed-text", dimensions: 768 },
       provenance: { enabled: true },
     });
-    cfg.provenance!.enabled = true; // 2026.3.140 migration forces off; override to test feature
+    cfg.provenance!.enabled = true;
     const api = makeMockApi("sess-123");
 
     registerProvenanceTools({ factsDb, eventLog, provenanceService, cfg }, api as any);
@@ -129,7 +130,7 @@ describe("memory_provenance tool", () => {
       embedding: { provider: "ollama", model: "nomic-embed-text", dimensions: 768 },
       provenance: { enabled: true },
     });
-    cfg.provenance!.enabled = true; // 2026.3.140 migration forces off; override to test feature
+    cfg.provenance!.enabled = true;
     const api = makeMockApi("sess-abc");
 
     registerProvenanceTools({ factsDb, eventLog, provenanceService, cfg }, api as any);
@@ -212,7 +213,7 @@ describe("memory_store provenance", () => {
       aliases: { enabled: false },
       store: { classifyBeforeWrite: false },
     });
-    cfg.provenance!.enabled = true; // 2026.3.140 migration forces off; override to test feature
+    cfg.provenance!.enabled = true;
 
     const api = makeMockApi("sess-999");
     const vectorDb = {

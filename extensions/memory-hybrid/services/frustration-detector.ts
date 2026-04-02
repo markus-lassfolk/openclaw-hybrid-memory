@@ -19,7 +19,7 @@ export type { FrustrationDetectionConfig };
 // Signal type definitions
 // ---------------------------------------------------------------------------
 
-export type FrustrationSignalType =
+type FrustrationSignalType =
   | "short_reply"
   | "imperative_tone"
   | "repeated_instruction"
@@ -30,7 +30,7 @@ export type FrustrationSignalType =
   | "reduced_context"
   | "emoji_shift";
 
-export interface FrustrationTrigger {
+interface FrustrationTrigger {
   /** Turn index (0-based within window) at which the signal fired. */
   turn: number;
   /** The signal type that triggered. */
@@ -41,13 +41,13 @@ export interface FrustrationTrigger {
   text: string;
 }
 
-export interface StyleAdaptation {
+interface StyleAdaptation {
   action: "none" | "simplify" | "be_direct" | "acknowledge_struggle" | "ask_clarification";
   reasoning: string;
   priority: number; // 0-3; 0 = no action
 }
 
-export interface FrustrationState {
+interface FrustrationState {
   /** Frustration level 0-1. */
   level: number;
   /** Whether level is rising, falling, or stable vs previous calculation. */
@@ -483,7 +483,7 @@ export function buildFrustrationHint(state: FrustrationState, cfg?: FrustrationD
 // Implicit signal export (feeds into #262 implicit feedback pipeline)
 // ---------------------------------------------------------------------------
 
-export interface FrustrationAsImplicitSignal {
+interface FrustrationAsImplicitSignal {
   type: FrustrationSignalType;
   confidence: number;
   polarity: "negative";

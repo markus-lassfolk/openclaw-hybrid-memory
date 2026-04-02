@@ -1,26 +1,26 @@
+import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { readFileSync } from "node:fs";
-import type { StoreConfig, WALConfig, EventLogConfig, PathConfig } from "../types/core.js";
-import type {
-  CredentialsConfig,
-  CredentialAutoCaptureConfig,
-  VectorConfig,
-  ActiveTaskConfig,
-  SelfCorrectionConfig,
-  LLMConfig,
-  LLMProviderConfig,
-  GatewayConfig,
-  ResolvedGatewayAuthConfig,
-  AuthOrderConfig,
-} from "../types/index.js";
 import { parseDuration } from "../../utils/duration.js";
 import { pluginLogger } from "../../utils/logger.js";
+import type { EventLogConfig, PathConfig, StoreConfig, WALConfig } from "../types/core.js";
+import type {
+  ActiveTaskConfig,
+  AuthOrderConfig,
+  CredentialAutoCaptureConfig,
+  CredentialsConfig,
+  GatewayConfig,
+  LLMConfig,
+  LLMProviderConfig,
+  ResolvedGatewayAuthConfig,
+  SelfCorrectionConfig,
+  VectorConfig,
+} from "../types/index.js";
 
 export const DEFAULT_MODEL = "text-embedding-3-small";
 export const DEFAULT_LANCE_PATH = join(homedir(), ".openclaw", "memory", "lancedb");
 export const DEFAULT_SQLITE_PATH = join(homedir(), ".openclaw", "memory", "facts.db");
-export const DEFAULT_EVENT_ARCHIVE_PATH = "~/.openclaw/event-archive";
+const DEFAULT_EVENT_ARCHIVE_PATH = "~/.openclaw/event-archive";
 
 export const EMBEDDING_DIMENSIONS: Record<string, number> = {
   "text-embedding-3-small": 1536,
@@ -166,9 +166,11 @@ export function parseCredentialsConfig(cfg: Record<string, unknown>): Credential
   let credentials: CredentialsConfig;
   if (shouldEnable) {
     const opts = parseCredentialOptions(credRaw);
-    // M1 FIX: Log info message when plaintext mode is chosen explicitly
-    if (!hasValidKey && credRaw?.enabled === true) {
-      pluginLogger.info("Credentials vault enabled (plaintext mode — no encryption key set)");
+    if (!hasValidKey) {
+      pluginLogger.warn(
+        "memory-hybrid: credentials vault is enabled without encryption at rest (set credentials.encryptionKey with 16+ characters, or OPENCLAW_CRED_KEY / env:VAR for a strong key). " +
+          "Until then, stored secrets are written as plaintext in the vault database — restrict filesystem access to that path, or add a key when you are ready.",
+      );
     }
     credentials = {
       enabled: true,
@@ -344,11 +346,16 @@ export function parseLLMConfig(cfg: Record<string, unknown>): LLMConfig | undefi
                 `memory-hybrid: Provider '${k}' has an invalid API key (looks like a placeholder) — skipping`,
               );
             }
+            // Accept both camelCase `baseUrl` (OpenClaw convention) and kebab-case `baseURL`.
+            // OpenClaw `openclaw.json` uses `baseUrl` under `models.providers.*`.
+            const baseURLRaw =
+              (typeof pv.baseURL === "string" && pv.baseURL.trim().length > 0 ? pv.baseURL.trim() : undefined) ??
+              (typeof pv.baseUrl === "string" && pv.baseUrl.trim().length > 0 ? pv.baseUrl.trim() : undefined);
             return [
               k.toLowerCase(),
               {
                 apiKey: validKey,
-                baseURL: typeof pv.baseURL === "string" && pv.baseURL.trim().length > 0 ? pv.baseURL.trim() : undefined,
+                baseURL: baseURLRaw,
               } as LLMProviderConfig,
             ];
           }),
@@ -433,6 +440,52 @@ export function resolveSecretRef(value: string): string | undefined {
     }
   }
   return v;
+}
+
+/** Matches OpenClaw `isSecretRef` / SecretRef object shape (openclaw/plugin-sdk config types). */
+function isOpenClawSecretRefObject(
+  raw: unknown,
+): raw is { source: "env" | "file" | "exec"; provider: string; id: string } {
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return false;
+  if (Object.keys(raw as object).length !== 3) return false;
+  const o = raw as Record<string, unknown>;
+  return (
+    (o.source === "env" || o.source === "file" || o.source === "exec") &&
+    typeof o.provider === "string" &&
+    o.provider.trim().length > 0 &&
+    typeof o.id === "string" &&
+    o.id.trim().length > 0
+  );
+}
+
+/**
+ * Resolve `embedding.apiKey` from either a string (env:/file:/templates) or an OpenClaw SecretRef object (Issue #833).
+ * `source: "exec"` refs are only available when the host resolves secrets; unresolved here → undefined.
+ */
+export function resolveEmbeddingApiKeyInput(raw: unknown): string | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  if (typeof raw === "string") return resolveSecretRef(raw);
+  if (!isOpenClawSecretRefObject(raw)) return undefined;
+  const ref = raw;
+  if (ref.source === "env") {
+    return normalizeResolvedSecretValue(process.env[ref.id]);
+  }
+  if (ref.source === "file") {
+    if (ref.id.startsWith("/") || ref.id.startsWith("./")) {
+      try {
+        const contents = readFileSync(ref.id, "utf-8").trim();
+        return contents || undefined;
+      } catch {
+        return undefined;
+      }
+    }
+    return undefined;
+  }
+  return undefined;
+}
+
+export function isEmbeddingApiKeyExecSecretRef(raw: unknown): boolean {
+  return isOpenClawSecretRefObject(raw) && raw.source === "exec";
 }
 
 /**

@@ -16,7 +16,7 @@ import type { HybridMemoryConfig } from "../config.js";
 import { CrystallizationProposer } from "../services/crystallization-proposer.js";
 import { capturePluginError } from "../services/error-reporter.js";
 
-export interface CrystallizationToolsContext {
+interface CrystallizationToolsContext {
   crystallizationStore: CrystallizationStore;
   workflowStore: WorkflowStore;
   cfg: HybridMemoryConfig;

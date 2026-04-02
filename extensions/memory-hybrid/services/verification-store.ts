@@ -5,14 +5,15 @@
  * and protection against silent decay or corruption.
  */
 
-import { DatabaseSync } from "node:sqlite";
-import { createTransaction } from "../utils/sqlite-transaction.js";
-import { mkdirSync, appendFileSync } from "node:fs";
+import { createHash, randomUUID } from "node:crypto";
+import { appendFileSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import { randomUUID, createHash } from "node:crypto";
-import { capturePluginError } from "./error-reporter.js";
+import { DatabaseSync } from "node:sqlite";
 import { expandTilde } from "../utils/path.js";
+import { createTransaction } from "../utils/sqlite-transaction.js";
 import { VAULT_POINTER_PREFIX } from "./auto-capture.js";
+import { capturePluginError } from "./error-reporter.js";
+import { SQLITE_BUSY_TIMEOUT_MS } from "../utils/constants.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -31,7 +32,7 @@ export interface VerifiedFact {
   createdAt: string;
 }
 
-export interface IntegrityReport {
+interface IntegrityReport {
   valid: boolean;
   corrupted?: string[];
   checked: number;
@@ -214,7 +215,7 @@ export class VerificationStore {
 
   private applyPragmas(): void {
     this.db.exec("PRAGMA journal_mode = WAL");
-    this.db.exec("PRAGMA busy_timeout = 5000");
+    this.db.exec(`PRAGMA busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
     this.db.exec("PRAGMA synchronous = NORMAL");
   }
 

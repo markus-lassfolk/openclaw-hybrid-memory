@@ -1,3 +1,4 @@
+import { getEnv } from "../utils/env-manager.js";
 /**
  * Skill Crystallizer — generate SKILL.md files from workflow patterns (Issue #208).
  *
@@ -6,6 +7,7 @@
  * when the pattern is composed entirely of exec calls.
  */
 
+import { homedir } from "node:os";
 import type { WorkflowPattern } from "../backends/workflow-store.js";
 import type { CrystallizationConfig } from "../config/types/features.js";
 
@@ -13,12 +15,12 @@ import type { CrystallizationConfig } from "../config/types/features.js";
 // Public types
 // ---------------------------------------------------------------------------
 
-export interface CrystallizationInput {
+interface CrystallizationInput {
   patternId: string;
   pattern: WorkflowPattern;
 }
 
-export interface CrystallizationResult {
+interface CrystallizationResult {
   skillName: string;
   skillContent: string;
   /** Resolved output path for the SKILL.md (not yet written to disk — requires approval) */
@@ -136,7 +138,7 @@ export class SkillCrystallizer {
     const skillContent = buildSkillContent(skillName, pattern, patternId, createdAt);
 
     // Resolve output directory (expand ~ for home dir)
-    const outputDir = this.cfg.outputDir.replace(/^~/, process.env.HOME ?? "~");
+    const outputDir = this.cfg.outputDir.replace(/^~/, getEnv("HOME") || homedir());
     const proposedOutputPath = `${outputDir}/${skillName}/SKILL.md`;
 
     // Generate shell script for exec-only sequences

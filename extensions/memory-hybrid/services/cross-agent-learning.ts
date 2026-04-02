@@ -12,20 +12,20 @@
  *  6. Return a report.
  */
 
-import type { FactsDB } from "../backends/facts-db.js";
-import type { MemoryEntry } from "../types/memory.js";
-import type { CrossAgentLearningConfig } from "../config/types/features.js";
-import { chatCompleteWithRetry } from "./chat.js";
-import { loadPrompt as loadPromptSync, fillPrompt } from "../utils/prompt-loader.js";
-import { capturePluginError } from "./error-reporter.js";
-import { parseTags, serializeTags } from "../utils/tags.js";
 import type OpenAI from "openai";
+import type { FactsDB } from "../backends/facts-db.js";
+import type { CrossAgentLearningConfig } from "../config/types/features.js";
+import type { MemoryEntry } from "../types/memory.js";
+import { fillPrompt, loadPrompt as loadPromptSync } from "../utils/prompt-loader.js";
+import { parseTags, serializeTags } from "../utils/tags.js";
+import { chatCompleteWithRetry } from "./chat.js";
+import { capturePluginError } from "./error-reporter.js";
 
 // ---------------------------------------------------------------------------
 // Public types
 // ---------------------------------------------------------------------------
 
-export interface CrossAgentLearningResult {
+interface CrossAgentLearningResult {
   agentsScanned: number;
   lessonsConsidered: number;
   generalisedStored: number;
@@ -35,7 +35,7 @@ export interface CrossAgentLearningResult {
   newFacts: Array<{ id: string; text: string; agentSources: string[] }>;
 }
 
-export interface AgentLesson {
+interface AgentLesson {
   factId: string;
   agentId: string;
   text: string;

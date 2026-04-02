@@ -1,3 +1,4 @@
+import { getEnv } from "../utils/env-manager.js";
 /**
  * Sensor Sweep — cron-based data collection writing to the Event Bus.
  * NO LLM calls at sweep time — structured data only.
@@ -8,39 +9,40 @@
  * Issue #236
  */
 
-import { execFileSync } from "node:child_process";
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { execFile } from "../utils/process-runner.js";
+import { promisify } from "node:util";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
+import { join } from "node:path";
 import { type EventBus, computeFingerprint } from "../backends/event-bus.js";
-import { capturePluginError } from "./error-reporter.js";
-import { stableStringify } from "../utils/stable-stringify.js";
+import type { FactsDB } from "../backends/facts-db.js";
 import type {
-  SensorSweepConfig,
-  HomeAssistantSensorConfig,
   GarminSensorConfig,
-  SessionHistorySensorConfig,
-  MemoryPatternsSensorConfig,
   GitHubSensorConfig,
   HomeAssistantAnomalySensorConfig,
+  HomeAssistantSensorConfig,
+  MemoryPatternsSensorConfig,
+  SensorSweepConfig,
+  SessionHistorySensorConfig,
   SystemHealthSensorConfig,
   WeatherSensorConfig,
   YarboSensorConfig,
 } from "../config/types/sensors.js";
-import type { FactsDB } from "../backends/facts-db.js";
+import { stableStringify } from "../utils/stable-stringify.js";
+import { capturePluginError } from "./error-reporter.js";
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
-export interface SensorSweepResult {
+interface SensorSweepResult {
   sensor: string;
   eventsWritten: number;
   eventsSkipped: number;
   error?: string;
 }
 
-export interface SweepAllResult {
+interface SweepAllResult {
   sensors: SensorSweepResult[];
   totalWritten: number;
   totalSkipped: number;
@@ -64,7 +66,7 @@ interface HAEntity {
 
 async function fetchHa(ha: HomeAssistantSensorConfig, path: string): Promise<Response> {
   const url = `${ha.baseUrl.replace(/\/$/, "")}${path}`;
-  const token = ha.token.startsWith("env:") ? (process.env[ha.token.slice(4)] ?? "") : ha.token;
+  const token = ha.token.startsWith("env:") ? (getEnv(ha.token.slice(4)) ?? "") : ha.token;
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), ha.timeoutMs ?? 10_000);
@@ -112,7 +114,7 @@ async function fetchAllHaStates(ha: HomeAssistantSensorConfig): Promise<HAEntity
 // Tier 1: Garmin Connect via Home Assistant
 // ---------------------------------------------------------------------------
 
-export async function sweepGarmin(
+async function sweepGarmin(
   bus: EventBus,
   cfg: GarminSensorConfig,
   ha: HomeAssistantSensorConfig,
@@ -172,7 +174,7 @@ interface SessionSummary {
 }
 
 function getSessionDir(): string {
-  return process.env.OPENCLAW_SESSION_DIR ?? join(homedir(), ".openclaw", "sessions");
+  return getEnv("OPENCLAW_SESSION_DIR") ?? join(homedir(), ".openclaw", "sessions");
 }
 
 function extractTopicsFromSession(content: string): string[] {
@@ -371,9 +373,12 @@ interface GitHubIssue {
   updatedAt?: string;
 }
 
-function tryExecFileSync(file: string, args: string[]): string | null {
+const execFileAsync = promisify(execFile);
+
+async function tryExecFile(file: string, args: string[]): Promise<string | null> {
   try {
-    return execFileSync(file, args, { encoding: "utf-8", timeout: 15_000 }).trim();
+    const { stdout } = await execFileAsync(file, args, { encoding: "utf-8", timeout: 15_000 });
+    return stdout.trim();
   } catch {
     return null;
   }
@@ -399,7 +404,7 @@ export async function sweepGitHub(
     const repo = cfg.repo ?? "";
 
     // Check if gh CLI is available
-    const ghCheck = tryExecFileSync("gh", ["--version"]);
+    const ghCheck = await tryExecFile("gh", ["--version"]);
     if (!ghCheck) {
       result.error = "gh CLI not available";
       return result;
@@ -408,7 +413,7 @@ export async function sweepGitHub(
     const repoArgs = cfg.repo ? ["--repo", cfg.repo] : [];
 
     // Open PRs
-    const prOutput = tryExecFileSync("gh", [
+    const prOutput = await tryExecFile("gh", [
       "pr",
       "list",
       ...repoArgs,
@@ -424,7 +429,7 @@ export async function sweepGitHub(
     // Review requests (PRs where we are requested reviewer)
     let reviewRequests: GitHubPR[] = [];
     if (cfg.includeReviewRequests !== false) {
-      const rrOutput = tryExecFileSync("gh", [
+      const rrOutput = await tryExecFile("gh", [
         "pr",
         "list",
         ...repoArgs,
@@ -443,7 +448,14 @@ export async function sweepGitHub(
     // CI failures on open PRs
     const ciFailures: Array<{ pr: number; title: string; url: string }> = [];
     for (const pr of openPrs.slice(0, 5)) {
-      const ciOutput = tryExecFileSync("gh", ["pr", "checks", ...repoArgs, String(pr.number), "--json", "name,bucket"]);
+      const ciOutput = await tryExecFile("gh", [
+        "pr",
+        "checks",
+        ...repoArgs,
+        String(pr.number),
+        "--json",
+        "name,bucket",
+      ]);
       if (ciOutput) {
         try {
           const checks = JSON.parse(ciOutput) as Array<{ name: string; bucket: string }>;
@@ -459,7 +471,7 @@ export async function sweepGitHub(
     // Stale issues
     const staleIssueDays = cfg.staleIssueDays ?? 7;
     const staleCutoff = new Date(Date.now() - staleIssueDays * 24 * 3600 * 1000).toISOString();
-    const issueOutput = tryExecFileSync("gh", [
+    const issueOutput = await tryExecFile("gh", [
       "issue",
       "list",
       ...repoArgs,
@@ -522,7 +534,7 @@ export async function sweepGitHub(
 // Tier 2: Home Assistant Anomaly Detection
 // ---------------------------------------------------------------------------
 
-export async function sweepHomeAssistantAnomaly(
+async function sweepHomeAssistantAnomaly(
   bus: EventBus,
   cfg: HomeAssistantAnomalySensorConfig,
   ha: HomeAssistantSensorConfig,
@@ -647,7 +659,7 @@ export async function sweepSystemHealth(
 // Tier 2: Weather
 // ---------------------------------------------------------------------------
 
-export async function sweepWeather(
+async function sweepWeather(
   bus: EventBus,
   cfg: WeatherSensorConfig,
   cooldownHours: number,
@@ -707,7 +719,7 @@ export async function sweepWeather(
 // Tier 2: Yarbo
 // ---------------------------------------------------------------------------
 
-export async function sweepYarbo(
+async function sweepYarbo(
   bus: EventBus,
   cfg: YarboSensorConfig,
   ha: HomeAssistantSensorConfig,
@@ -780,7 +792,7 @@ export async function sweepYarbo(
 // Main sweep runner
 // ---------------------------------------------------------------------------
 
-export interface SweepAllOpts {
+interface SweepAllOpts {
   tier?: 1 | 2 | "all";
   sources?: string[];
   dryRun?: boolean;

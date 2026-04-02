@@ -1,14 +1,15 @@
+import { getEnv } from "../utils/env-manager.js";
 import { existsSync, readFileSync } from "node:fs";
-import { join, isAbsolute } from "node:path";
 import { homedir } from "node:os";
-import type { HybridMemoryConfig } from "../config.js";
+import { isAbsolute, join } from "node:path";
 import type { FactsDB } from "../backends/facts-db.js";
-import { estimateTokens } from "../utils/text.js";
+import type { HybridMemoryConfig } from "../config.js";
 import { parseDuration } from "../utils/duration.js";
-import { readActiveTaskFile, buildActiveTaskInjection, buildStaleWarningInjection } from "./active-task.js";
+import { estimateTokens } from "../utils/text.js";
+import { buildActiveTaskInjection, buildStaleWarningInjection, readActiveTaskFile } from "./active-task.js";
 import { capturePluginError } from "./error-reporter.js";
 
-export type ContextAuditResult = {
+type ContextAuditResult = {
   autoRecall: { enabled: boolean; budgetTokens: number; hotTokens: number; injectionFormat: string };
   procedures: { enabled: boolean; tokens: number; lines: number };
   activeTasks: { enabled: boolean; tokens: number; count: number; stale: number };
@@ -33,8 +34,7 @@ export async function runContextAudit(opts: {
   workspaceRoot?: string;
 }): Promise<ContextAuditResult> {
   const { cfg, factsDb } = opts;
-  const workspaceRoot =
-    opts.workspaceRoot ?? process.env.OPENCLAW_WORKSPACE ?? join(homedir(), ".openclaw", "workspace");
+  const workspaceRoot = opts.workspaceRoot ?? getEnv("OPENCLAW_WORKSPACE") ?? join(homedir(), ".openclaw", "workspace");
 
   const workspaceFiles: Array<{ file: string; tokens: number }> = [];
   for (const file of DEFAULT_BOOTSTRAP_FILES) {

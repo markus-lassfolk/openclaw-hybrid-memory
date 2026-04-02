@@ -6,19 +6,19 @@
  * and idioms per language.
  */
 
-import type OpenAI from "openai";
-import { writeFileSync, mkdirSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import type OpenAI from "openai";
 import {
   ENGLISH_KEYWORDS,
-  buildMergedFromTranslations,
-  type LanguageKeywordsFile,
-  type LanguageExtractionTemplate,
   type KeywordGroup,
+  type LanguageExtractionTemplate,
+  type LanguageKeywordsFile,
+  buildMergedFromTranslations,
   clearKeywordCache,
 } from "../utils/language-keywords.js";
 import { capturePluginError } from "./error-reporter.js";
-import { KEYWORD_GROUP_INTENTS, STRUCTURAL_TRIGGER_INTENTS, EXTRACTION_INTENTS } from "./intent-template.js";
+import { EXTRACTION_INTENTS, KEYWORD_GROUP_INTENTS, STRUCTURAL_TRIGGER_INTENTS } from "./intent-template.js";
 
 const LANG_FILE_NAME = ".language-keywords.json";
 const MAX_SAMPLES = 50;
@@ -26,7 +26,7 @@ const CHARS_PER_SAMPLE = 400;
 
 const KEYWORD_GROUPS = Object.keys(ENGLISH_KEYWORDS) as KeywordGroup[];
 
-export type BuildLanguageKeywordsResult =
+type BuildLanguageKeywordsResult =
   | {
       ok: true;
       path: string;
@@ -60,7 +60,7 @@ export function collectSamplesFromFacts(
 /**
  * Ask LLM to detect the 3 most common languages in the samples. Returns ISO 639-1 codes (e.g. en, sv, de).
  */
-export async function detectTopLanguages(samples: string[], openai: OpenAI, model: string): Promise<string[]> {
+async function detectTopLanguages(samples: string[], openai: OpenAI, model: string): Promise<string[]> {
   if (samples.length === 0) return [];
   const block = samples
     .slice(0, 30)
@@ -225,7 +225,7 @@ function normalizeExtraction(raw: unknown): LanguageExtractionTemplate | null {
  * Ask LLM to produce intent-based natural equivalents for each language (keywords,
  * structural trigger phrases, extraction building blocks). Uses English as template of intents.
  */
-export async function generateIntentBasedLanguages(
+async function generateIntentBasedLanguages(
   langCodes: string[],
   openai: OpenAI,
   model: string,
@@ -306,7 +306,7 @@ export async function generateIntentBasedLanguages(
 /**
  * Legacy: translate keywords literally (same order as English). Kept for backward compatibility.
  */
-export async function translateKeywordsToLanguages(
+async function translateKeywordsToLanguages(
   langCodes: string[],
   openai: OpenAI,
   model: string,

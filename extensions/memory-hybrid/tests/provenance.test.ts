@@ -1,9 +1,9 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
-import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { _testing } from "../index.js";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { hybridConfigSchema } from "../config.js";
+import { _testing } from "../index.js";
 
 const { ProvenanceService } = _testing;
 
@@ -409,7 +409,7 @@ describe("ProvenanceService.prune", () => {
 // ---------------------------------------------------------------------------
 
 describe("ProvenanceConfig defaults in config parsing", () => {
-  it("2026.3.140 baseline forces provenance.enabled to false", () => {
+  it("defaults provenance.enabled to false when omitted", () => {
     const cfg = hybridConfigSchema.parse({
       embedding: { provider: "ollama", model: "nomic-embed-text", dimensions: 768 },
     });
@@ -423,12 +423,12 @@ describe("ProvenanceConfig defaults in config parsing", () => {
     expect(cfg.provenance.retentionDays).toBe(365);
   });
 
-  it("2026.3.140 baseline overrides provenance.enabled to false", () => {
+  it("honors provenance.enabled when set to true", () => {
     const cfg = hybridConfigSchema.parse({
       embedding: { provider: "ollama", model: "nomic-embed-text", dimensions: 768 },
       provenance: { enabled: true },
     });
-    expect(cfg.provenance.enabled).toBe(false);
+    expect(cfg.provenance.enabled).toBe(true);
   });
 
   it("parses custom retentionDays from config", () => {

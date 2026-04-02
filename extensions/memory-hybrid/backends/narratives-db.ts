@@ -6,14 +6,15 @@
  * of duplicating canonical fact content.
  */
 
-import { DatabaseSync } from "node:sqlite";
 import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
+import { tryRestrictSqliteDbFileMode } from "../utils/sqlite-file-perms.js";
 import { dirname } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 
 import { BaseSqliteStore } from "./base-sqlite-store.js";
 
-export interface NarrativeEntry {
+interface NarrativeEntry {
   id: string;
   sessionId: string;
   periodStart: number;
@@ -23,7 +24,7 @@ export interface NarrativeEntry {
   createdAt: number;
 }
 
-export interface StoreNarrativeInput {
+interface StoreNarrativeInput {
   sessionId: string;
   periodStart: number;
   periodEnd: number;
@@ -46,6 +47,7 @@ export class NarrativesDB extends BaseSqliteStore {
     mkdirSync(dirname(dbPath), { recursive: true });
     const db = new DatabaseSync(dbPath);
     super(db);
+    tryRestrictSqliteDbFileMode(dbPath);
 
     this.liveDb.exec(`
       CREATE TABLE IF NOT EXISTS narratives (

@@ -38,6 +38,8 @@ These are **not** required for core functionality but enhance the system for lon
 
 After adding jobs, the gateway will pick them up on next start (or according to your host’s job reload behavior). No plugin restart needed for cron store changes in many setups.
 
+For isolated `hybrid-mem:*` jobs, do **not** set `sessionKey` to `agent:main:main` (or any interactive session key). Leave `sessionKey` unset so OpenClaw resolves per-job isolated keys (`cron:<jobId>`). `verify --fix` strips bad top-level `sessionKey` values for isolated hybrid-mem jobs.
+
 ### Nightly session distillation
 
 Extracts durable facts from old conversation logs. Recommended if you want to capture knowledge from sessions where auto-capture missed things.
@@ -301,6 +303,20 @@ These are optional but recommended for long-running systems:
 | Upgrade scripts | `~/.openclaw/scripts/` | Copy from repo `scripts/` |
 
 For **what to back up** and how to restore, see [BACKUP.md](BACKUP.md).
+
+---
+
+## Gateway health polling (`openclaw gateway status`)
+
+When you **poll** `/ monitor` the gateway with `openclaw gateway status`, the CLI uses a **default `--timeout` of 10000 ms** (10s) for the WebSocket RPC probe. During **warm-up** (plugins loading, hybrid-memory databases opening), a single sample can exceed that window and report a probe failure even though the process is healthy.
+
+**Recommended for scripts and dashboards:** use a longer timeout, for example:
+
+```bash
+openclaw gateway status --timeout 45000
+```
+
+**Retry** before treating a failure as real (e.g. 3 attempts with ~8s between samples). Full context and the misleading **"Port 18789 is already in use"** line when the probe path is unhappy: [TROUBLESHOOTING.md § RPC health probe timeout](TROUBLESHOOTING.md#rpc-health-probe-timeout-openclaw-gateway-status) ([#938](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/938)).
 
 ---
 

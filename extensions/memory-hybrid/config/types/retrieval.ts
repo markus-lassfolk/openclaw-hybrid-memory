@@ -18,6 +18,13 @@ export type EntityLookupConfig = {
   enabled: boolean;
   entities: string[]; // e.g. ["user", "owner", "decision"]; prompt matched case-insensitively
   maxFactsPerEntity: number; // max facts to merge per matched entity (default 2)
+  /**
+   * When `entities` is empty, load names from the facts table (`SELECT DISTINCT entity`).
+   * Default true. Set false to require an explicit `entities` list (legacy no-op when empty).
+   */
+  autoFromFacts: boolean;
+  /** Max distinct entity names to consider when using autoFromFacts (default 500, max 2000). */
+  maxAutoEntities: number;
 };
 
 /** Auto-recall on authentication failures (reactive memory trigger) */
@@ -82,6 +89,13 @@ export type AutoRecallConfig = {
   degradationQueueDepth?: number;
   /** Phase 2.1: Hard degradation. When recall latency (ms) exceeds this value, use FTS-only + HOT and set degraded. 0 = disabled. Default 5000. */
   degradationMaxLatencyMs?: number;
+  /**
+   * Single control for **interactive** chat-turn recall cost/latency (HyDE + ambient multi-query).
+   * - **fast** — No HyDE on the hot path, no extra ambient `runRecallPipelineQuery` calls (lowest latency/cost; still runs main FTS+vector recall when semantic is enabled).
+   * - **balanced** (default) — Respects `queryExpansion.skipForInteractiveTurns` and `ambient.enabled` / `ambient.multiQuery` as today.
+   * - **full** — When `queryExpansion.enabled`, runs HyDE on interactive turns regardless of `skipForInteractiveTurns`; allows ambient multi-query when `autoRecall.enabled` and ambient is configured.
+   */
+  interactiveEnrichment?: "fast" | "balanced" | "full";
 };
 
 /** Multi-strategy retrieval pipeline configuration (Issue #152: RRF scoring pipeline). */

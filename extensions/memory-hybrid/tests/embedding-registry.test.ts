@@ -4,11 +4,11 @@
  * All provider calls are mocked — no Ollama/OpenAI required.
  */
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
-import { EmbeddingRegistry, buildEmbeddingRegistry } from "../services/embedding-registry.js";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { hybridConfigSchema } from "../config.js";
-import type { EmbeddingProvider } from "../services/embeddings.js";
 import type { EmbeddingModelConfig } from "../config.js";
+import { EmbeddingRegistry, buildEmbeddingRegistry } from "../services/embedding-registry.js";
+import type { EmbeddingProvider } from "../services/embeddings.js";
 
 // ---------------------------------------------------------------------------
 // Mock helpers

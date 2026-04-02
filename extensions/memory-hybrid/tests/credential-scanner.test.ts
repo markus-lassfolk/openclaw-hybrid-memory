@@ -6,7 +6,7 @@
  * ### extractHostFromUrl
  * - Valid URLs return the hostname component.
  * - Invalid URLs fall back to regex extraction.
- * - Hostile inputs (path traversal, consecutive dots) return safe default "api".
+ * - Hostile inputs (path traversal, consecutive dots) return sentinel "__unparsed-host__".
  *
  * ### slugify
  * - Lowercases, replaces spaces/underscores with dashes, strips non-alphanumeric.
@@ -29,12 +29,12 @@
  * - Multiple patterns in same text each yield a separate result.
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
 import {
+  extractCredentialsFromToolCalls,
   extractHostFromUrl,
   slugify,
   typeFromVarName,
-  extractCredentialsFromToolCalls,
 } from "../services/credential-scanner.js";
 
 // ---------------------------------------------------------------------------
@@ -50,13 +50,13 @@ describe("extractHostFromUrl", () => {
     expect(extractHostFromUrl("http://github.com/user/repo")).toBe("github.com");
   });
 
-  it("returns 'api' safe default for completely invalid URL", () => {
-    expect(extractHostFromUrl("not-a-url-at-all")).toBe("api");
+  it("returns sentinel for completely invalid URL", () => {
+    expect(extractHostFromUrl("not-a-url-at-all")).toBe("__unparsed-host__");
   });
 
   it("rejects hostname with consecutive dots", () => {
     // URL constructor will reject this, fallback regex also rejects ..
-    expect(extractHostFromUrl("https://api..evil.com/path")).toBe("api");
+    expect(extractHostFromUrl("https://api..evil.com/path")).toBe("__unparsed-host__");
   });
 
   it("returns hostname for subdomain URLs", () => {

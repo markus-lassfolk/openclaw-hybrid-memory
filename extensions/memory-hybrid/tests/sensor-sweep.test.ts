@@ -1,22 +1,23 @@
+import { getEnv, setEnv } from "../utils/env-manager.js";
 /**
  * Tests for sensor sweep service (Issue #236).
  * No LLM calls — pure data collection.
  */
 
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { EventBus } from "../backends/event-bus.js";
-import {
-  sweepSessionHistory,
-  sweepMemoryPatterns,
-  sweepGitHub,
-  sweepSystemHealth,
-  sweepAll,
-} from "../services/sensor-sweep.js";
-import { parseSensorSweepConfig } from "../config/parsers/sensors.js";
 import type { FactsDB } from "../backends/facts-db.js";
+import { parseSensorSweepConfig } from "../config/parsers/sensors.js";
+import {
+  sweepAll,
+  sweepGitHub,
+  sweepMemoryPatterns,
+  sweepSessionHistory,
+  sweepSystemHealth,
+} from "../services/sensor-sweep.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -168,7 +169,7 @@ describe("sweepSessionHistory", () => {
     ].join("\n");
     writeFileSync(join(sessionDir, "session-abc.jsonl"), sessionData);
 
-    process.env.OPENCLAW_SESSION_DIR = sessionDir;
+    setEnv("OPENCLAW_SESSION_DIR", sessionDir);
     try {
       const cfg = { enabled: true, recentSessions: 5, importance: 0.5 };
       const result = await sweepSessionHistory(bus, cfg, 0);
@@ -184,7 +185,7 @@ describe("sweepSessionHistory", () => {
         expect(Array.isArray(payload.sessions)).toBe(true);
       }
     } finally {
-      delete process.env.OPENCLAW_SESSION_DIR;
+      setEnv("OPENCLAW_SESSION_DIR", undefined);
     }
   });
 
@@ -196,7 +197,7 @@ describe("sweepSessionHistory", () => {
       JSON.stringify({ message: "hello world", timestamp: new Date().toISOString() }),
     );
 
-    process.env.OPENCLAW_SESSION_DIR = sessionDir;
+    setEnv("OPENCLAW_SESSION_DIR", sessionDir);
     try {
       const cfg = { enabled: true, recentSessions: 5, importance: 0.5 };
       // First sweep: should write
@@ -208,7 +209,7 @@ describe("sweepSessionHistory", () => {
       const events = bus.queryEvents({ type: "sensor.session-history" });
       expect(events.length).toBeLessThanOrEqual(1);
     } finally {
-      delete process.env.OPENCLAW_SESSION_DIR;
+      setEnv("OPENCLAW_SESSION_DIR", undefined);
     }
   });
 });
@@ -318,8 +319,8 @@ describe("sweepMemoryPatterns", () => {
 describe("sweepGitHub", () => {
   it("returns error when gh CLI is not available", async () => {
     // Override PATH to make gh unavailable
-    const originalPath = process.env.PATH;
-    process.env.PATH = "/nonexistent";
+    const originalPath = getEnv("PATH");
+    setEnv("PATH", "/nonexistent");
     try {
       const cfg = { enabled: true, importance: 0.7, includeReviewRequests: false, staleIssueDays: 7 };
       const result = await sweepGitHub(bus, cfg, 0);
@@ -329,14 +330,14 @@ describe("sweepGitHub", () => {
         expect(result.error).toContain("gh");
       }
     } finally {
-      process.env.PATH = originalPath;
+      setEnv("PATH", originalPath);
     }
   });
 
   it("stores fingerprint for dedup", async () => {
     // Mock gh availability check to fail so we get consistent behavior
-    const originalPath = process.env.PATH;
-    process.env.PATH = "/nonexistent";
+    const originalPath = getEnv("PATH");
+    setEnv("PATH", "/nonexistent");
     try {
       const cfg = { enabled: true, importance: 0.7, includeReviewRequests: false, staleIssueDays: 7 };
       await sweepGitHub(bus, cfg, 24);
@@ -347,7 +348,7 @@ describe("sweepGitHub", () => {
       expect(events.length).toBeLessThanOrEqual(1);
       void r2;
     } finally {
-      process.env.PATH = originalPath;
+      setEnv("PATH", originalPath);
     }
   });
 });
@@ -409,7 +410,7 @@ describe("sweepAll", () => {
       join(sessionDir, "test.jsonl"),
       JSON.stringify({ message: "hello", timestamp: new Date().toISOString() }),
     );
-    process.env.OPENCLAW_SESSION_DIR = sessionDir;
+    setEnv("OPENCLAW_SESSION_DIR", sessionDir);
 
     try {
       const cfg = parseSensorSweepConfig({
@@ -429,7 +430,7 @@ describe("sweepAll", () => {
       expect(sensorNames).toContain("session-history");
       expect(sensorNames).toContain("memory-patterns");
     } finally {
-      delete process.env.OPENCLAW_SESSION_DIR;
+      setEnv("OPENCLAW_SESSION_DIR", undefined);
     }
   });
 

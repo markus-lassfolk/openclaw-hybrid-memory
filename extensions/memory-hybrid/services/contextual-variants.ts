@@ -14,16 +14,17 @@
  */
 
 import type OpenAI from "openai";
-import { chatComplete } from "./chat.js";
-import { capturePluginError } from "./error-reporter.js";
 import type { ContextualVariantsConfig } from "../config.js";
+import { chatComplete } from "./chat.js";
+import { CostFeature } from "./cost-feature-labels.js";
+import { capturePluginError } from "./error-reporter.js";
 import { extractJsonArray } from "./json-array-parser.js";
 
 // ---------------------------------------------------------------------------
 // Prompt templates
 // ---------------------------------------------------------------------------
 
-export type ContextualVariantType = "contextual-means" | "contextual-search";
+type ContextualVariantType = "contextual-means" | "contextual-search";
 
 const CONTEXTUAL_MEANS_PROMPT_TEMPLATE = `Given this memory fact:
 "{text}"
@@ -108,6 +109,7 @@ export class ContextualVariantGenerator {
         maxTokens: 300,
         openai: this.openai,
         timeoutMs: 15_000,
+        feature: CostFeature.contextualVariants,
       });
 
       const maxVariants = variantType === "contextual-search" ? 5 : this.config.maxVariantsPerFact;
@@ -156,7 +158,7 @@ export function parseVariantsFromResponse(response: string, maxVariants: number)
 // ---------------------------------------------------------------------------
 
 /** An item waiting for variant generation. */
-export interface VariantQueueItem {
+interface VariantQueueItem {
   factId: string;
   text: string;
   category: string;

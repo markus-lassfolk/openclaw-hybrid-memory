@@ -1,6 +1,4 @@
 import { setMemoryCategories, getMemoryCategories, PRESET_OVERRIDES } from "../utils.js";
-import { versionInfo } from "../../versionInfo.js";
-import { isVersionAtLeast } from "../../utils/version-check.js";
 import type { HybridMemoryConfig, EmbeddingModelConfig, ConfigMode } from "../types/index.js";
 import { pluginLogger } from "../../utils/logger.js";
 import {
@@ -11,6 +9,8 @@ import {
   OPENAI_MODELS,
   resolveEnvVars,
   resolveSecretRef,
+  resolveEmbeddingApiKeyInput,
+  isEmbeddingApiKeyExecSecretRef,
   parseStoreConfig,
   parseWALConfig,
   parseEventLogConfig,
@@ -151,50 +151,6 @@ function userOverridesPresetValue(userVal: unknown, presetVal: unknown): boolean
   return !deepEqual(userVal, presetVal);
 }
 
-/**
- * Phase 1 (2026.3.140+): Force core-only baseline for all installations.
- * Overrides user-set values to establish consistent baseline.
- */
-function applyPhase1CoreOnlyMigration(cfg: Record<string, unknown>): void {
-  cfg.queryExpansion = {
-    ...(typeof cfg.queryExpansion === "object" && cfg.queryExpansion !== null ? cfg.queryExpansion : {}),
-    enabled: false,
-  } as Record<string, unknown>;
-  const forceDisabledKeys = [
-    "frustrationDetection",
-    "nightlyCycle",
-    "passiveObserver",
-    "workflowTracking",
-    "selfExtension",
-    "crystallization",
-    "verification",
-    "provenance",
-    "aliases",
-    "crossAgentLearning",
-    "reranking",
-    "contextualVariants",
-    "documents",
-    "personaProposals",
-  ];
-  for (const key of forceDisabledKeys) {
-    const existing = cfg[key];
-    const base =
-      typeof existing === "object" && existing !== null && !Array.isArray(existing)
-        ? (existing as Record<string, unknown>)
-        : {};
-    (cfg as Record<string, unknown>)[key] = { ...base, enabled: false };
-  }
-  const g = cfg.graph as Record<string, unknown> | undefined;
-  if (g && typeof g === "object") {
-    cfg.graph = { ...g, strengthenOnRecall: false };
-  }
-  // Credential auto-detect: make opt-in (recommendations §2 resolution)
-  const cred = cfg.credentials as Record<string, unknown> | undefined;
-  if (cred && typeof cred === "object") {
-    cfg.credentials = { ...cred, autoDetect: false };
-  }
-}
-
 export function vectorDimsForModel(model: string, fallback?: number): number {
   const dims = EMBEDDING_DIMENSIONS[model];
   if (!dims) {
@@ -206,6 +162,24 @@ export function vectorDimsForModel(model: string, fallback?: number): number {
 
 function isOpenAIModel(model: string): boolean {
   return OPENAI_MODELS.has(model);
+}
+
+/** OpenClaw model providers often use camelCase `baseUrl`; accept both. */
+function readAzureFoundryBaseUrl(
+  providers: Record<string, { baseURL?: string; baseUrl?: string }> | undefined,
+): string | undefined {
+  const af = providers?.["azure-foundry"];
+  if (!af) return undefined;
+  const u = typeof af.baseURL === "string" ? af.baseURL : typeof af.baseUrl === "string" ? af.baseUrl : undefined;
+  return u?.trim() || undefined;
+}
+
+/** Normalize embedding.apiKey from string or OpenClaw SecretRef object for parsing (Issue #833). */
+function resolveUserEmbeddingApiKeyRaw(embedding: Record<string, unknown> | undefined): string {
+  if (!embedding?.apiKey) return "";
+  const k = embedding.apiKey;
+  if (typeof k === "string") return k.trim();
+  return resolveEmbeddingApiKeyInput(k)?.trim() ?? "";
 }
 
 export function parseConfig(value: unknown): HybridMemoryConfig {
@@ -247,10 +221,6 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
   userRaw.mode = undefined;
   cfg = deepMergePreset(preset, cfg) as Record<string, unknown>;
   cfg.mode = undefined;
-  // Phase 1 (2026.3.140+): force core-only baseline for all installations (overrides user-set values too)
-  if (isVersionAtLeast(versionInfo.pluginVersion, "2026.3.140")) {
-    applyPhase1CoreOnlyMigration(cfg);
-  }
   // Only "Custom" when user explicitly set a preset key to a different value (not when they only add e.g. embedding or credentials.encryptionKey)
   for (const key of Object.keys(preset)) {
     if (!(key in userRaw)) continue;
@@ -271,12 +241,12 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
   const llmGoogleApiKeyRaw =
     typeof llmProvidersForEmbed?.google?.apiKey === "string" ? llmProvidersForEmbed.google.apiKey.trim() : "";
   const azureFoundryForEmbed = llmProvidersForEmbed?.["azure-foundry"];
+  const azureFoundryBaseForEmbed = readAzureFoundryBaseUrl(llmProvidersForEmbed);
   const hasAzureFoundryForEmbed =
     azureFoundryForEmbed &&
     typeof azureFoundryForEmbed.apiKey === "string" &&
     azureFoundryForEmbed.apiKey.trim().length >= 10 &&
-    typeof azureFoundryForEmbed.baseURL === "string" &&
-    azureFoundryForEmbed.baseURL.trim().length > 0;
+    !!azureFoundryBaseForEmbed;
   // Recognize all SecretRef formats: env:VAR, file:/path, ${VAR} templates, or long literal keys.
   // Template detection uses .includes/${} pair check (no regex → no ReDoS risk).
   const looksLikeSecretRefOrKey = (k: string) =>
@@ -291,7 +261,7 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
     );
   } else {
     // Infer provider when omitted: openai if apiKey + OpenAI model; google if no openai/ollama but have google key; else ollama.
-    const rawApiKey = embedding && typeof embedding.apiKey === "string" ? (embedding.apiKey as string).trim() : "";
+    const rawApiKey = resolveUserEmbeddingApiKeyRaw(embedding);
     const hasApiKey =
       rawApiKey &&
       (rawApiKey.startsWith("env:") || rawApiKey.startsWith("file:") || rawApiKey.length >= 10) &&
@@ -323,15 +293,17 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
   let resolvedApiKey: string | undefined;
   let embeddingEndpointOverride: string | undefined;
   if (embeddingProvider === "openai") {
-    const rawEmbedKey = embedding && typeof embedding.apiKey === "string" ? (embedding.apiKey as string).trim() : "";
-    const azureFoundry = (cfg.llm as { providers?: Record<string, { apiKey?: string; baseURL?: string }> } | undefined)
-      ?.providers?.["azure-foundry"];
+    const rawEmbedKey = resolveUserEmbeddingApiKeyRaw(embedding);
+    const llmProvidersForOpenAiEmbed = (
+      cfg.llm as { providers?: Record<string, { apiKey?: string; baseURL?: string; baseUrl?: string }> } | undefined
+    )?.providers;
+    const azureFoundry = llmProvidersForOpenAiEmbed?.["azure-foundry"];
+    const azureFoundryBaseUrl = readAzureFoundryBaseUrl(llmProvidersForOpenAiEmbed);
     const hasAzureFoundry =
       azureFoundry &&
       typeof azureFoundry.apiKey === "string" &&
       azureFoundry.apiKey.trim().length >= 10 &&
-      typeof azureFoundry.baseURL === "string" &&
-      azureFoundry.baseURL.trim().length > 0;
+      !!azureFoundryBaseUrl;
 
     if (rawEmbedKey && rawEmbedKey.length > 0) {
       const rawKey = rawEmbedKey;
@@ -367,18 +339,24 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
         );
       }
       resolvedApiKey = resolvedKey;
-      embeddingEndpointOverride = azureFoundry?.baseURL?.trim();
+      embeddingEndpointOverride = azureFoundryBaseUrl;
       pluginLogger.info(
         'memory-hybrid: using llm.providers["azure-foundry"] for embeddings (same API as LLM). Set embedding.endpoint and embedding.apiKey to override.',
       );
     } else {
+      const ak = embedding?.apiKey;
+      if (isEmbeddingApiKeyExecSecretRef(ak)) {
+        throw new Error(
+          "embedding.apiKey exec SecretRef is not resolved inside the plugin. Use env: or file: string refs, a plaintext string key for development, or ensure the host resolves secrets before plugin load. See Issue #833.",
+        );
+      }
       throw new Error(
         'embedding.apiKey is required. Set it in plugins.entries["openclaw-hybrid-memory"].config.embedding, or configure llm.providers["azure-foundry"] with apiKey and baseURL to use Azure Foundry for embeddings. Run \'openclaw hybrid-mem verify --fix\' for help.',
       );
     }
-  } else if (embedding && typeof embedding.apiKey === "string") {
+  } else if (embedding?.apiKey) {
     // Optional fallback apiKey for ollama/onnx (used for fallback to OpenAI when provider unavailable)
-    const rawKey = (embedding.apiKey as string).trim();
+    const rawKey = resolveUserEmbeddingApiKeyRaw(embedding);
     if (rawKey.startsWith("env:") || rawKey.startsWith("file:")) {
       const resolved = resolveSecretRef(rawKey);
       if (!resolved) {
@@ -538,9 +516,18 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
     embeddingEndpointOverride ??
     (typeof embedding?.endpoint === "string" && embedding.endpoint.trim().length > 0
       ? embedding.endpoint.trim()
+      : undefined) ??
+    (embeddingProvider === "openai"
+      ? readAzureFoundryBaseUrl(
+          (cfg.llm as { providers?: Record<string, { baseURL?: string; baseUrl?: string }> } | undefined)?.providers,
+        )
       : undefined);
+  const resolvedDeployment =
+    typeof embedding?.deployment === "string" && embedding.deployment.trim().length > 0
+      ? embedding.deployment.trim()
+      : undefined;
   const resolvedBatchSize =
-    typeof embedding?.batchSize === "number" && embedding.batchSize > 0 ? Math.floor(embedding.batchSize) : 50;
+    typeof embedding?.batchSize === "number" && embedding.batchSize > 0 ? Math.floor(embedding.batchSize) : 40;
 
   // preferredProviders: explicit list or infer from LLM config (align with failover / Ollama-as-tier)
   const preferredProvidersRaw = embedding?.preferredProviders;
@@ -561,7 +548,11 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
     const hasOllamaInLlm = llmLists.some((list) => list.some((m) => typeof m === "string" && m.startsWith("ollama/")));
     if (hasOllamaInLlm || embeddingProvider === "ollama") inferred.push("ollama");
     if (resolvedApiKey && resolvedApiKey.length >= 10) inferred.push("openai");
-    if (hasGoogleKey) inferred.push("google");
+    // Only add google to the embedding chain when the embedding provider IS google.
+    // A Google LLM key (distill/llm.providers.google) should NOT activate the embedding
+    // chain — doing so forces 768-dim vectors which silently break LanceDB tables built
+    // for the configured OpenAI model dimensions (e.g. 3072). Issue #939.
+    if (hasGoogleKey && embeddingProvider === "google") inferred.push("google");
     preferredProviders = inferred.length > 0 ? inferred : ["ollama", "openai"];
   }
   // Resolve env:/file: SecretRef format for the Google API key (Issue #344 — parallel to #333 for embedding.apiKey).
@@ -705,6 +696,7 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
       apiKey: resolvedApiKey,
       models: embeddingModels,
       dimensions: resolvedDimensions,
+      deployment: resolvedDeployment,
       endpoint: resolvedEndpoint,
       batchSize: resolvedBatchSize,
       preferredProviders: preferredProviders.length > 1 ? preferredProviders : undefined,

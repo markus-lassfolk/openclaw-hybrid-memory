@@ -12,13 +12,13 @@
  *   - Config overrides: windowSize, decayRate, signalWeights, injectionThreshold
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
 import {
-  detectFrustration,
-  buildFrustrationHint,
-  exportAsImplicitSignals,
   type FrustrationConversationTurn,
   type FrustrationDetectionConfig,
+  buildFrustrationHint,
+  detectFrustration,
+  exportAsImplicitSignals,
 } from "../services/frustration-detector.js";
 
 // ---------------------------------------------------------------------------

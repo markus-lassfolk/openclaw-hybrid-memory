@@ -1,3 +1,4 @@
+import { getEnv, setEnv } from "../utils/env-manager.js";
 /**
  * Tests for MiniMax provider routing in the multi-provider OpenAI proxy.
  * Verifies that minimax/* models are routed to the correct base URL (issue #312).
@@ -44,8 +45,8 @@ import { hybridConfigSchema } from "../config.js";
 
 /** Restore an env var to its original value, or delete it if it was originally unset. */
 function restoreEnv(key: string, orig: string | undefined): void {
-  if (orig !== undefined) process.env[key] = orig;
-  else delete process.env[key];
+  if (orig !== undefined) setEnv(key, orig);
+  else setEnv(key, undefined);
 }
 
 // ---------------------------------------------------------------------------
@@ -113,13 +114,13 @@ describe("MiniMax provider routing — direct API key", () => {
     MockOpenAI.mockClear();
     ctx = undefined;
     // Capture originals before mutating
-    origGatewayPort = process.env.OPENCLAW_GATEWAY_PORT;
-    origGatewayToken = process.env.OPENCLAW_GATEWAY_TOKEN;
-    origMinimaxApiKey = process.env.MINIMAX_API_KEY;
+    origGatewayPort = getEnv("OPENCLAW_GATEWAY_PORT");
+    origGatewayToken = getEnv("OPENCLAW_GATEWAY_TOKEN");
+    origMinimaxApiKey = getEnv("MINIMAX_API_KEY");
     // Unset gateway env vars to ensure direct routing
-    delete process.env.OPENCLAW_GATEWAY_PORT;
-    delete process.env.OPENCLAW_GATEWAY_TOKEN;
-    delete process.env.MINIMAX_API_KEY;
+    setEnv("OPENCLAW_GATEWAY_PORT", undefined);
+    setEnv("OPENCLAW_GATEWAY_TOKEN", undefined);
+    setEnv("MINIMAX_API_KEY", undefined);
   });
 
   afterEach(() => {
@@ -199,7 +200,7 @@ describe("MiniMax provider routing — direct API key", () => {
   });
 
   it("uses MINIMAX_API_KEY env var as fallback when no apiKey in config", async () => {
-    process.env.MINIMAX_API_KEY = "sk-cp-from-env-123456";
+    setEnv("MINIMAX_API_KEY", "sk-cp-from-env-123456");
     const cfg = getTestConfig(tmpDir, {
       llm: {
         default: ["minimax/MiniMax-M2.5"],
@@ -381,12 +382,12 @@ describe("MiniMax provider routing — gateway key auto-merge", () => {
     MockOpenAI = vi.mocked(OpenAI);
     MockOpenAI.mockClear();
     ctx = undefined;
-    origGatewayPort = process.env.OPENCLAW_GATEWAY_PORT;
-    origGatewayToken = process.env.OPENCLAW_GATEWAY_TOKEN;
-    origMinimaxApiKey = process.env.MINIMAX_API_KEY;
-    delete process.env.OPENCLAW_GATEWAY_PORT;
-    delete process.env.OPENCLAW_GATEWAY_TOKEN;
-    delete process.env.MINIMAX_API_KEY;
+    origGatewayPort = getEnv("OPENCLAW_GATEWAY_PORT");
+    origGatewayToken = getEnv("OPENCLAW_GATEWAY_TOKEN");
+    origMinimaxApiKey = getEnv("MINIMAX_API_KEY");
+    setEnv("OPENCLAW_GATEWAY_PORT", undefined);
+    setEnv("OPENCLAW_GATEWAY_TOKEN", undefined);
+    setEnv("MINIMAX_API_KEY", undefined);
   });
 
   afterEach(() => {
@@ -714,12 +715,12 @@ describe("OpenRouter provider routing (issue #380)", () => {
     MockOpenAI = vi.mocked(OpenAI);
     MockOpenAI.mockClear();
     ctx = undefined;
-    origOpenrouterApiKey = process.env.OPENROUTER_API_KEY;
-    origGatewayPort = process.env.OPENCLAW_GATEWAY_PORT;
-    origGatewayToken = process.env.OPENCLAW_GATEWAY_TOKEN;
-    delete process.env.OPENROUTER_API_KEY;
-    delete process.env.OPENCLAW_GATEWAY_PORT;
-    delete process.env.OPENCLAW_GATEWAY_TOKEN;
+    origOpenrouterApiKey = getEnv("OPENROUTER_API_KEY");
+    origGatewayPort = getEnv("OPENCLAW_GATEWAY_PORT");
+    origGatewayToken = getEnv("OPENCLAW_GATEWAY_TOKEN");
+    setEnv("OPENROUTER_API_KEY", undefined);
+    setEnv("OPENCLAW_GATEWAY_PORT", undefined);
+    setEnv("OPENCLAW_GATEWAY_TOKEN", undefined);
   });
 
   afterEach(() => {
@@ -809,7 +810,7 @@ describe("OpenRouter provider routing (issue #380)", () => {
   });
 
   it("uses OPENROUTER_API_KEY env var as fallback when no apiKey in config", async () => {
-    process.env.OPENROUTER_API_KEY = "sk-or-from-env-key";
+    setEnv("OPENROUTER_API_KEY", "sk-or-from-env-key");
     const cfg = getTestConfig(tmpDir, {
       llm: {
         default: ["openrouter/openai/gpt-4o"],
@@ -902,12 +903,12 @@ describe("Anthropic provider routing — issue #386", () => {
     MockOpenAI = vi.mocked(OpenAI);
     MockOpenAI.mockClear();
     ctx = undefined;
-    origAnthropicApiKey = process.env.ANTHROPIC_API_KEY;
-    origGatewayPort = process.env.OPENCLAW_GATEWAY_PORT;
-    origGatewayToken = process.env.OPENCLAW_GATEWAY_TOKEN;
-    delete process.env.ANTHROPIC_API_KEY;
-    delete process.env.OPENCLAW_GATEWAY_PORT;
-    delete process.env.OPENCLAW_GATEWAY_TOKEN;
+    origAnthropicApiKey = getEnv("ANTHROPIC_API_KEY");
+    origGatewayPort = getEnv("OPENCLAW_GATEWAY_PORT");
+    origGatewayToken = getEnv("OPENCLAW_GATEWAY_TOKEN");
+    setEnv("ANTHROPIC_API_KEY", undefined);
+    setEnv("OPENCLAW_GATEWAY_PORT", undefined);
+    setEnv("OPENCLAW_GATEWAY_TOKEN", undefined);
   });
 
   afterEach(() => {
@@ -1088,12 +1089,12 @@ describe("OpenRouter gateway merge — issue #392", () => {
     MockOpenAI = vi.mocked(OpenAI);
     MockOpenAI.mockClear();
     ctx = undefined;
-    origOpenrouterApiKey = process.env.OPENROUTER_API_KEY;
-    origGatewayPort = process.env.OPENCLAW_GATEWAY_PORT;
-    origGatewayToken = process.env.OPENCLAW_GATEWAY_TOKEN;
-    delete process.env.OPENROUTER_API_KEY;
-    delete process.env.OPENCLAW_GATEWAY_PORT;
-    delete process.env.OPENCLAW_GATEWAY_TOKEN;
+    origOpenrouterApiKey = getEnv("OPENROUTER_API_KEY");
+    origGatewayPort = getEnv("OPENCLAW_GATEWAY_PORT");
+    origGatewayToken = getEnv("OPENCLAW_GATEWAY_TOKEN");
+    setEnv("OPENROUTER_API_KEY", undefined);
+    setEnv("OPENCLAW_GATEWAY_PORT", undefined);
+    setEnv("OPENCLAW_GATEWAY_TOKEN", undefined);
   });
 
   afterEach(() => {
@@ -1254,6 +1255,70 @@ describe("OpenRouter gateway merge — issue #392", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Azure APIM provider routing
+// ---------------------------------------------------------------------------
+
+describe("Azure APIM provider routing", () => {
+  let tmpDir: string;
+  let MockOpenAI: ReturnType<typeof vi.fn>;
+  let ctx: ReturnType<typeof initializeDatabases> | undefined;
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), "openclaw-test-"));
+    // Retrieve the mock constructor to check arguments.
+    MockOpenAI = vi.mocked(OpenAI);
+    MockOpenAI.mockClear();
+  });
+
+  afterEach(() => {
+    if (ctx) closeOldDatabases(ctx);
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("sets up APIM gateway fetch and api-key header for *.azure-api.net base URLs", async () => {
+    const APIM_BASE_URL = "https://my-gateway.azure-api.net/openai";
+    const cfg = getTestConfig(tmpDir, {
+      llm: {
+        providers: {
+          "azure-foundry": {
+            apiKey: "sk-apim-gateway-key",
+            baseURL: APIM_BASE_URL,
+          },
+        },
+        default: ["azure-foundry/gpt-4o"],
+      },
+    });
+
+    const api = makeMockApi({
+      resolvePath: (p: string) => (p.startsWith("/") ? p : join(tmpDir, p)),
+    });
+
+    ctx = initializeDatabases(cfg, api as never);
+
+    await ctx.openai.chat.completions.create({
+      model: "azure-foundry/gpt-4o",
+      messages: [{ role: "user", content: "hello" }],
+    });
+
+    const apimCall = MockOpenAI.mock.calls.find(
+      ([args]) => (args as Record<string, unknown>)?.baseURL === APIM_BASE_URL,
+    );
+    expect(apimCall).toBeDefined();
+
+    const args = apimCall?.[0] as {
+      apiKey: string;
+      baseURL?: string;
+      defaultHeaders?: Record<string, string>;
+      fetch?: typeof globalThis.fetch;
+    };
+    expect(args.baseURL).toBe(APIM_BASE_URL);
+    expect(args.apiKey).toBe("sk-apim-gateway-key");
+    expect(args.defaultHeaders).toEqual({ "api-key": "sk-apim-gateway-key" });
+    expect(args.fetch).toBeInstanceOf(Function);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Gateway model auto-derivation — unknown provider prefix filter (issue #487)
 // ---------------------------------------------------------------------------
 
@@ -1267,10 +1332,10 @@ describe("gateway model auto-derivation — unknown provider prefix filter", () 
     tmpDir = mkdtempSync(join(tmpdir(), "provider-routing-unknown-"));
     vi.mocked(OpenAI).mockClear();
     ctx = undefined;
-    origGatewayPort = process.env.OPENCLAW_GATEWAY_PORT;
-    origGatewayToken = process.env.OPENCLAW_GATEWAY_TOKEN;
-    delete process.env.OPENCLAW_GATEWAY_PORT;
-    delete process.env.OPENCLAW_GATEWAY_TOKEN;
+    origGatewayPort = getEnv("OPENCLAW_GATEWAY_PORT");
+    origGatewayToken = getEnv("OPENCLAW_GATEWAY_TOKEN");
+    setEnv("OPENCLAW_GATEWAY_PORT", undefined);
+    setEnv("OPENCLAW_GATEWAY_TOKEN", undefined);
   });
 
   afterEach(() => {
@@ -1448,8 +1513,8 @@ describe("gateway model auto-derivation — unknown provider prefix filter", () 
         },
       },
     });
-    process.env.OPENCLAW_GATEWAY_PORT = "4000";
-    process.env.OPENCLAW_GATEWAY_TOKEN = "test-gateway-token";
+    setEnv("OPENCLAW_GATEWAY_PORT", "4000");
+    setEnv("OPENCLAW_GATEWAY_TOKEN", "test-gateway-token");
 
     const api = makeMockApi({
       resolvePath: (p: string) => (p.startsWith("/") ? p : join(tmpDir, p)),

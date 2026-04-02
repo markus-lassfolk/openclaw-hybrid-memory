@@ -1,3 +1,4 @@
+import { getEnv } from "../utils/env-manager.js";
 // Re-export all types
 export * from "./types/index.js";
 
@@ -21,9 +22,9 @@ export { EMBEDDING_DIMENSIONS, OPENAI_MODELS } from "./parsers/core.js";
 // Re-export vectorDimsForModel and parseVerbosityLevel from parsers/index
 export { vectorDimsForModel, parseVerbosityLevel } from "./parsers/index.js";
 
+import { resolveSecretRef } from "./parsers/core.js";
 // LLM model utilities
 import type { CronModelConfig, CronModelTier, HybridMemoryConfig } from "./types/index.js";
-import { resolveSecretRef } from "./parsers/core.js";
 
 const OPENAI_NANO_CRON_MODEL = "openai/gpt-4.1-nano";
 const OPENAI_DEFAULT_CRON_MODEL = "openai/gpt-4.1-mini";
@@ -231,18 +232,13 @@ export function getProvidersWithKeys(pluginConfig: CronModelConfig | undefined):
   }
 
   // Env fallbacks so providers show as configured when only env is set (e.g. GOOGLE_API_KEY)
-  if (
-    !seen.has("google") &&
-    typeof process.env.GOOGLE_API_KEY === "string" &&
-    process.env.GOOGLE_API_KEY.trim().length >= 10
-  ) {
+  const googleKey = getEnv("GOOGLE_API_KEY");
+  if (!seen.has("google") && typeof googleKey === "string" && googleKey.trim().length >= 10) {
     add("google");
   }
-  if (
-    !seen.has("anthropic") &&
-    typeof process.env.ANTHROPIC_API_KEY === "string" &&
-    process.env.ANTHROPIC_API_KEY.trim().length >= 10
-  ) {
+
+  const anthropicKey = getEnv("ANTHROPIC_API_KEY");
+  if (!seen.has("anthropic") && typeof anthropicKey === "string" && anthropicKey.trim().length >= 10) {
     add("anthropic");
   }
 

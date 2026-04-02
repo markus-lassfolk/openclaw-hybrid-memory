@@ -2,19 +2,40 @@
  * Tests for the Task Queue Watchdog — Issue #631
  */
 
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { mkdtemp, rm, writeFile, mkdir, readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { acquireDispatchLease, getDispatchLease } from "../services/task-queue-leases.js";
 import {
-  isPidAlive,
-  isRuntimeExceeded,
-  getActiveWorktreeBranches,
-  runTaskQueueWatchdog,
   type TaskQueueItem,
   type TaskQueueWatchdogConfig,
+  getActiveWorktreeBranches,
+  isPidAlive,
+  isRuntimeExceeded,
+  runTaskQueueWatchdog,
+  taskQueueItemMatchesStale,
 } from "../services/task-queue-watchdog.js";
+
+// ---------------------------------------------------------------------------
+// taskQueueItemMatchesStale
+// ---------------------------------------------------------------------------
+
+describe("taskQueueItemMatchesStale", () => {
+  it("matches by pid and started when present (branch not part of identity)", () => {
+    const stale: TaskQueueItem = { pid: 42, started: "2026-01-01T00:00:00.000Z" };
+    expect(taskQueueItemMatchesStale({ ...stale }, stale)).toBe(true);
+    expect(taskQueueItemMatchesStale({ ...stale, branch: "other" }, stale)).toBe(true);
+    expect(taskQueueItemMatchesStale({ pid: 43, started: stale.started }, stale)).toBe(false);
+  });
+
+  it("without pid/started, matches issue, dispatchToken, and branch (not undefined===undefined)", () => {
+    const stale: TaskQueueItem = { issue: 99, dispatchToken: "tok", branch: "feat/x" };
+    expect(taskQueueItemMatchesStale({ ...stale }, stale)).toBe(true);
+    expect(taskQueueItemMatchesStale({ ...stale, issue: 100 }, stale)).toBe(false);
+    expect(taskQueueItemMatchesStale({ issue: 99, dispatchToken: "tok", branch: "feat/y" }, stale)).toBe(false);
+  });
+});
 
 // ---------------------------------------------------------------------------
 // isPidAlive tests

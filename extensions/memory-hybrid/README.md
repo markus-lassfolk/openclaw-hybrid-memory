@@ -8,15 +8,15 @@ Part of the [OpenClaw Hybrid Memory](https://github.com/markus-lassfolk/openclaw
 
 ## Requirements
 
-- **Node.js `^20.19.0 || >=22.12.0`** — Node 20.0–20.18 and 22.0–22.11 are **not** supported; npm will reject the install with `EBADENGINE` on those versions.
-- **OpenClaw v2026.3.8+** (required) — the plugin enforces this minimum version at startup to ensure CLI subcommands and config reloads work.
+- **Node.js `>=22.12.0`** — matches `package.json` `engines`; npm may emit `EBADENGINE` on older Node.
+- **OpenClaw (gateway)** — **Minimum v2026.3.8+** (same as npm `peerDependencies` and `MIN_OPENCLAW_VERSION`): below this the plugin **logs a warning** at startup (undefined `api.version`, missing CLI subcommands, or unreliable reload). **Recommended:** run a **current 2026.3.x** OpenClaw; this repo’s `package-lock.json` pins the version used for CI/dev typechecking under `node_modules/openclaw`.
 - **Embedding provider** — Required. The plugin needs an embedding provider to load. Four options:
   - **OpenAI** (default): set `embedding.apiKey` and `embedding.model` (e.g. `text-embedding-3-small`). Requires an OpenAI API key.
   - **Ollama** (local): set `embedding.provider: "ollama"` and `embedding.model` (e.g. `nomic-embed-text`). No API key required — runs fully locally via a local Ollama instance.
   - **ONNX** (local): set `embedding.provider: "onnx"` and `embedding.model` (e.g. `all-MiniLM-L6-v2`). Fully local; models auto-downloaded from HuggingFace. Requires `onnxruntime-node` (`npm i onnxruntime-node`).
   - **Google** (Gemini API): set `embedding.provider: "google"`, `embedding.model: "text-embedding-004"`, `embedding.dimensions: 768`, and `llm.providers.google.apiKey`.
   
-  Use `embedding.preferredProviders` (e.g. `["ollama", "openai"]`) for automatic ordered failover between providers. Optional features (auto-classify, summarize, consolidate, **memory classification**) use a chat model (e.g. `gpt-4o-mini`). With `store.classifyBeforeWrite: true`, new facts are classified as ADD/UPDATE/DELETE/NOOP against similar existing facts before storing; reduces duplicates and stale contradictions. Applies to the `memory_store` tool, auto-capture, CLI `hybrid-mem store`, and `extract-daily`. **Maintenance cron jobs and self-correction spawn** use a model chosen from your config (Gemini / OpenAI / Claude)—no hardcoded model names. See [CONFIGURATION.md](../../docs/CONFIGURATION.md) and [LLM-AND-PROVIDERS.md](../../docs/LLM-AND-PROVIDERS.md#embedding-providers) and [TROUBLESHOOTING.md](../../docs/TROUBLESHOOTING.md).
+  Use `embedding.preferredProviders` (e.g. `["ollama", "openai"]`) for automatic ordered failover between providers. Optional features (auto-classify, summarize, consolidate, **memory classification**) use a chat model (e.g. `gpt-4o-mini`). With `store.classifyBeforeWrite: true`, new facts are classified as ADD/UPDATE/DELETE/NOOP against similar existing facts before storing; reduces duplicates and stale contradictions. Applies to the `memory_store` tool, auto-capture, CLI `hybrid-mem store`, and `extract-daily`. **Large batch imports:** each fact can trigger one LLM classification call—see the warning in [CONFIGURATION.md](../../docs/CONFIGURATION.md#auto-capture-and-auto-recall) and [CONFLICTING-MEMORIES.md](../../docs/CONFLICTING-MEMORIES.md#performance-warning-batch-imports-and-classify-before-write). **Maintenance cron jobs and self-correction spawn** use a model chosen from your config (Gemini / OpenAI / Claude)—no hardcoded model names. See [CONFIGURATION.md](../../docs/CONFIGURATION.md) and [LLM-AND-PROVIDERS.md](../../docs/LLM-AND-PROVIDERS.md#embedding-providers) and [TROUBLESHOOTING.md](../../docs/TROUBLESHOOTING.md).
 - **Build tools** for `@lancedb/lancedb`: C++ toolchain (e.g. `build-essential` on Linux, Visual Studio Build Tools on Windows), Python 3.
 
 ## Installation
@@ -41,9 +41,11 @@ Outdated installs now check the latest published plugin version in the backgroun
 
 Or with npm directly: `npm i openclaw-hybrid-memory` in your OpenClaw extensions folder if you manage it yourself.
 
+**Manual install from a `.tgz`:** npm packages never ship `node_modules`; after `tar -xzf` you must run **`npm install --omit=dev`** or **`npm ci --omit=dev`** (plain `npm ci` also installs devDependencies). The published artifact includes **`npm-shrinkwrap.json`** (npm strips `package-lock.json` from published tarballs by design; `npm ci` uses the shrinkwrap the same way). Let the command finish—**`postinstall`** installs and rebuilds **`@lancedb/lancedb`** for your platform.
+
 **2. Configure.** Set your OpenAI API key and enable the plugin. Easiest: run `openclaw hybrid-mem install` to merge full defaults (memory slot, compaction prompts, nightly session-distillation job) into `~/.openclaw/openclaw.json`, then set `plugins.entries["openclaw-hybrid-memory"].config.embedding.apiKey` to your key.
 
-**3. Restart the gateway** and run **`openclaw hybrid-mem verify [--fix]`** to confirm SQLite, LanceDB, and the embedding API. Use `--fix` to add any missing config (e.g. embedding block, nightly job).
+**3. Restart the gateway** and run **`openclaw hybrid-mem verify [--fix]`** to confirm SQLite, LanceDB, and the embedding API. Use `--fix` to add any missing config (e.g. embedding block, nightly job) and to normalize isolated `hybrid-mem:*` cron jobs by removing explicit top-level `sessionKey` values so OpenClaw uses per-job `cron:<jobId>` session isolation. Verify also warns if **`hybrid-mem:*` cron job models** disagree with **`agents.defaults.model.primary`** (see [SESSION-DISTILLATION.md](../../docs/SESSION-DISTILLATION.md) § *Maintenance cron session isolation and model alignment*).
 
 **More options:** [Quick Start](https://github.com/markus-lassfolk/openclaw-hybrid-memory/blob/main/docs/QUICKSTART.md) and [Configuration](https://github.com/markus-lassfolk/openclaw-hybrid-memory/blob/main/docs/CONFIGURATION.md) (manual config merge, from-source install).
 
@@ -58,6 +60,10 @@ Or with npm directly: `npm i openclaw-hybrid-memory` in your OpenClaw extensions
 | `versionInfo.ts` | Plugin and memory-manager version metadata |
 | `backends/event-bus.ts` | Event Bus — append-only `memory_events` SQLite table for sensor → Rumination Engine pipeline |
 | `tools/dashboard-routes.ts` | Dashboard HTTP route registration — registers all `/plugins/memory-dashboard/*` routes with consistent auth (Issue #279) |
+
+## Agent tool names
+
+Every tool this plugin registers uses **underscore** names (for example `memory_store`, `memory_recall`, `memory_record_episode`). LLM providers that validate tool definitions (notably **Anthropic**) require names to match `^[a-zA-Z0-9_-]{1,128}$` — **periods are not allowed**. Do not document or prompt for dotted aliases such as `memory.store`; they are not valid in those APIs.
 
 ## Event Bus
 

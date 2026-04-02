@@ -12,43 +12,43 @@
 
 import type { DatabaseSync } from "node:sqlite";
 import type { VectorDB } from "../backends/vector-db.js";
+import type { ClustersConfig, RerankingConfig, RetrievalConfig } from "../config.js";
 import type { MemoryEntry, SearchResult } from "../types/memory.js";
-import { searchFts } from "./fts-search.js";
-import {
-  fuseResults,
-  applyPostRrfAdjustments,
-  RRF_K_DEFAULT,
-  type RankedResult,
-  type FusedResult,
-  type FactMetadata,
-} from "./rrf-fusion.js";
-import type { RetrievalConfig, ClustersConfig, RerankingConfig } from "../config.js";
-import { rerankResults, type ScoredFact } from "./reranker.js";
-import type { QueryExpander } from "./query-expander.js";
-import { searchAliasStrategy, type AliasDB } from "./retrieval-aliases.js";
-import { detectClusters, type ClusterFactLookup } from "./topic-clusters.js";
-import { expandGraph, type GraphFactLookup } from "./graph-retrieval.js";
+import { stableStringify } from "../utils/stable-stringify.js";
+import { DocumentGrader } from "./document-grader.js";
 import type { EmbeddingRegistry } from "./embedding-registry.js";
+import { shouldSuppressEmbeddingError } from "./embeddings.js";
+import { capturePluginError } from "./error-reporter.js";
+import { searchFts } from "./fts-search.js";
+import { type GraphFactLookup, expandGraph } from "./graph-retrieval.js";
+import { expandQueryWithHyde } from "./hyde-helper.js";
+import type { QueryExpander } from "./query-expander.js";
+import { type QueryValidationResult, validateQueryForMemoryLookup } from "./query-validator.js";
+import { type ScoredFact, rerankResults } from "./reranker.js";
+import { type AliasDB, searchAliasStrategy } from "./retrieval-aliases.js";
 import {
-  resolveExplicitDeepRetrievalPolicy,
-  resolveInteractiveRecallPolicy,
   DEFAULT_INTERACTIVE_RECALL_POLICY,
   type ExplicitDeepRetrievalPolicy,
   type InteractiveRecallPolicy,
+  resolveExplicitDeepRetrievalPolicy,
+  resolveInteractiveRecallPolicy,
 } from "./retrieval-mode-policy.js";
-import { expandQueryWithHyde } from "./hyde-helper.js";
-import { capturePluginError } from "./error-reporter.js";
-import { validateQueryForMemoryLookup, type QueryValidationResult } from "./query-validator.js";
-import { shouldSuppressEmbeddingError } from "./embeddings.js";
-import { DocumentGrader } from "./document-grader.js";
-import { stableStringify } from "../utils/stable-stringify.js";
+import {
+  type FactMetadata,
+  type FusedResult,
+  RRF_K_DEFAULT,
+  type RankedResult,
+  applyPostRrfAdjustments,
+  fuseResults,
+} from "./rrf-fusion.js";
+import { type ClusterFactLookup, detectClusters } from "./topic-clusters.js";
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
 /** Result from the orchestrator, ready for context injection. */
-export interface OrchestratorResult {
+interface OrchestratorResult {
   /** Fused and adjusted results, sorted by finalScore descending. */
   fused: FusedResult[];
   /** Serialized fact strings packed into the token budget, highest scored first. */
@@ -65,7 +65,7 @@ export interface OrchestratorResult {
 // Defaults
 // ---------------------------------------------------------------------------
 
-export interface BuildExplicitSemanticQueryVectorDeps {
+interface BuildExplicitSemanticQueryVectorDeps {
   query: string;
   cfg: Pick<
     import("../config.js").HybridMemoryConfig,
@@ -371,7 +371,7 @@ function runGraphStrategy(
  * Minimal interface for fact lookup during orchestration.
  * Satisfied by FactsDB.
  */
-export interface FactLookup {
+interface FactLookup {
   getById(id: string, options?: { asOf?: number; scopeFilter?: unknown }): MemoryEntry | null;
   /** Optional: check whether a fact has an unresolved CONTRADICTS link targeting it. */
   isContradicted?(factId: string): boolean;

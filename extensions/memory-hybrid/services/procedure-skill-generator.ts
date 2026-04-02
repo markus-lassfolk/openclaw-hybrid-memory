@@ -1,3 +1,4 @@
+import { getEnv } from "../utils/env-manager.js";
 /**
  * Procedural memory: generate SKILL.md + recipe.json from validated procedures.
  */
@@ -5,10 +6,10 @@
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { FactsDB } from "../backends/facts-db.js";
-import type { ProcedureEntry } from "../types/memory.js";
 import type { GenerateAutoSkillsResult } from "../cli/register.js";
-import { capturePluginError } from "./error-reporter.js";
+import type { ProcedureEntry } from "../types/memory.js";
 import { slugifyForSkill } from "../utils/text.js";
+import { capturePluginError } from "./error-reporter.js";
 
 const MAX_SKILLS_PER_RUN = 10;
 
@@ -22,7 +23,7 @@ function ensureUniqueSlug(basePath: string, slug: string): string {
   return candidate;
 }
 
-export type GenerateAutoSkillsOptions = {
+type GenerateAutoSkillsOptions = {
   skillsAutoPath: string;
   validationThreshold: number;
   skillTTLDays: number;
@@ -43,7 +44,7 @@ export function generateAutoSkills(
   const dryRun = options.dryRun ?? false;
   const basePath = options.skillsAutoPath.startsWith("/")
     ? options.skillsAutoPath
-    : join(process.env.OPENCLAW_WORKSPACE || process.cwd(), options.skillsAutoPath);
+    : join(getEnv("OPENCLAW_WORKSPACE") || process.cwd(), options.skillsAutoPath);
 
   const procedures = factsDb.getProceduresReadyForSkill(options.validationThreshold, maxPerRun);
   const paths: string[] = [];

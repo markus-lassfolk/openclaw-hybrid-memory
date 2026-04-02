@@ -10,28 +10,21 @@
  *  - Testability: single constructor arg, no global state.
  */
 
-import { DatabaseSync } from "node:sqlite";
-import type { SQLInputValue } from "node:sqlite";
 import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
+import { DatabaseSync } from "node:sqlite";
+import type { SQLInputValue } from "node:sqlite";
 
-import { BaseSqliteStore } from "./base-sqlite-store.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import type {
-  LearningEntry,
-  LearningEntryType,
-  LearningEntryStatus,
   CreateLearningEntryInput,
+  LearningEntry,
+  LearningEntryStatus,
+  LearningEntryType,
 } from "../types/learnings-types.js";
 import { LEARNING_STATUS_TRANSITIONS } from "../types/learnings-types.js";
-
-export type {
-  LearningEntry,
-  LearningEntryType,
-  LearningEntryStatus,
-  CreateLearningEntryInput,
-} from "../types/learnings-types.js";
+import { BaseSqliteStore } from "./base-sqlite-store.js";
 
 /** TYPE_PREFIX maps entry type → slug prefix character(s). */
 const TYPE_PREFIX: Record<LearningEntryType, string> = {

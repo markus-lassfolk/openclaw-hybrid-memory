@@ -1,11 +1,11 @@
 import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
 import type { WriteAheadLog } from "../backends/wal.js";
+import { replayWalEntries } from "../utils/wal-replay.js";
 import type { EmbeddingProvider } from "./embeddings.js";
 import { capturePluginError } from "./error-reporter.js";
-import { replayWalEntries } from "../utils/wal-replay.js";
 
-export interface PreConsolidationFlushDeps {
+interface PreConsolidationFlushDeps {
   wal: WriteAheadLog | null;
   factsDb: FactsDB;
   vectorDb: VectorDB;

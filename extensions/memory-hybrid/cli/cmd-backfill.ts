@@ -1,3 +1,4 @@
+import { getEnv } from "../utils/env-manager.js";
 /**
  * CLI Backfill, Ingest, and Analyze-Feedback-Phrases Handlers
  *
@@ -15,30 +16,31 @@
  */
 
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
-import { basename, dirname, join } from "node:path";
 import { homedir } from "node:os";
+import { basename, dirname, join } from "node:path";
 
 import type { MemoryCategory } from "../config.js";
-import { getCronModelConfig, getLLMModelPreference, getDefaultCronModel, isValidCategory } from "../config.js";
+import { getCronModelConfig, getDefaultCronModel, getLLMModelPreference, isValidCategory } from "../config.js";
 import { chatCompleteWithRetry, distillBatchTokenLimit, distillMaxOutputTokens } from "../services/chat.js";
-import { loadPrompt, fillPrompt } from "../utils/prompt-loader.js";
-import { estimateTokens, chunkTextByChars } from "../utils/text.js";
+import { CostFeature } from "../services/cost-feature-labels.js";
+import { capturePluginError } from "../services/error-reporter.js";
+import { gatherIngestFiles } from "../services/ingest-utils.js";
+import { BATCH_STORE_IMPORTANCE, DISTILL_DEDUP_THRESHOLD } from "../utils/constants.js";
+import { tryExtractionFromTemplates } from "../utils/extraction-from-template.js";
 import {
+  getCorrectionSignalRegex,
   getExtractionTemplates,
   getReinforcementSignalRegex,
-  getCorrectionSignalRegex,
   loadUserFeedbackPhrases,
   saveUserFeedbackPhrases,
 } from "../utils/language-keywords.js";
-import { capturePluginError } from "../services/error-reporter.js";
-import { tryExtractionFromTemplates } from "../utils/extraction-from-template.js";
-import { gatherIngestFiles } from "../services/ingest-utils.js";
-import { BATCH_STORE_IMPORTANCE, DISTILL_DEDUP_THRESHOLD } from "../utils/constants.js";
+import { fillPrompt, loadPrompt } from "../utils/prompt-loader.js";
+import { chunkTextByChars, estimateTokens } from "../utils/text.js";
 
+import { gatherSessionFiles } from "./cmd-distill.js";
+import { createProgressReporter } from "./cmd-install.js";
 import type { HandlerContext } from "./handlers.js";
 import type { BackfillCliResult, BackfillCliSink, IngestFilesResult, IngestFilesSink } from "./types.js";
-import { createProgressReporter } from "./cmd-install.js";
-import { gatherSessionFiles } from "./cmd-distill.js";
 
 // ---------------------------------------------------------------------------
 // Module-level constants
@@ -221,7 +223,7 @@ export async function runBackfillForCli(
   sink: BackfillCliSink,
 ): Promise<BackfillCliResult> {
   const { factsDb, vectorDb, embeddings } = ctx;
-  const workspaceRoot = opts.workspace ?? process.env.OPENCLAW_WORKSPACE ?? join(homedir(), ".openclaw", "workspace");
+  const workspaceRoot = opts.workspace ?? getEnv("OPENCLAW_WORKSPACE") ?? join(homedir(), ".openclaw", "workspace");
   const files = gatherBackfillFiles(workspaceRoot);
   if (files.length === 0) {
     sink.log(`No MEMORY.md or memory/**/*.md under ${workspaceRoot}`);
@@ -373,6 +375,7 @@ export async function runAnalyzeFeedbackPhrasesForCli(
           openai,
           fallbackModels: nanoPref.length > 1 ? nanoPref.slice(1) : undefined,
           label: "memory-hybrid: feedback-phrases sentiment",
+          feature: CostFeature.backfillSentiment,
         });
         const lines = (content ?? "").split(/\r?\n/).map((l) => l.trim().toLowerCase());
         if (lines.length < batch.length) {
@@ -550,7 +553,7 @@ export async function runIngestFilesForCli(
   sink: IngestFilesSink,
 ): Promise<IngestFilesResult> {
   const { factsDb, vectorDb, embeddings, openai, cfg } = ctx;
-  const workspaceRoot = opts.workspace ?? process.env.OPENCLAW_WORKSPACE ?? process.cwd();
+  const workspaceRoot = opts.workspace ?? getEnv("OPENCLAW_WORKSPACE") ?? process.cwd();
   const ingestCfg = cfg.ingest;
   const patterns = opts.paths?.length ? opts.paths : ingestCfg?.paths?.length ? ingestCfg.paths : DEFAULT_INGEST_PATHS;
   const chunkSize = ingestCfg?.chunkSize ?? 800;
@@ -618,6 +621,7 @@ export async function runIngestFilesForCli(
         openai,
         fallbackModels: ingestFallbacks,
         label: `memory-hybrid: ingest-files batch ${b + 1}/${batches.length}`,
+        feature: CostFeature.backfillIngest,
       });
       const lines = content.split("\n").filter((l) => l.trim());
       for (const line of lines) {

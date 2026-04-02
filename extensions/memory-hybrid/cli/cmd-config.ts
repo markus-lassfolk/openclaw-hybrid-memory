@@ -1,3 +1,4 @@
+import { getEnv } from "../utils/env-manager.js";
 /**
  * Config CLI Handlers
  *
@@ -109,15 +110,15 @@ function getNested(obj: Record<string, unknown>, path: string): unknown {
 export function runConfigViewForCli(ctx: HandlerContext, sink: VerifyCliSink): void {
   const { cfg } = ctx;
   const log = sink.log;
-  const noEmoji = process.env.HYBRID_MEM_NO_EMOJI === "1";
+  const noEmoji = getEnv("HYBRID_MEM_NO_EMOJI") === "1";
   const ON = noEmoji ? "[on]" : "on";
   const OFF = noEmoji ? "[off]" : "off";
   const on = (b: boolean) => (b ? ON : OFF);
 
-  // Read raw config from file to bypass migration overrides (like nightlyCycle forced to false in 2026.3.140)
+  // Read raw config from file for keys where we show file vs parsed (optional toggles)
   let rawCfg: Record<string, unknown> = {};
   try {
-    const configPath = process.env.OPENCLAW_CONFIG || join(homedir(), ".openclaw", "openclaw.json");
+    const configPath = getEnv("OPENCLAW_CONFIG") || join(homedir(), ".openclaw", "openclaw.json");
     if (existsSync(configPath)) {
       const out = getPluginConfigFromFile(configPath);
       if ("config" in out) rawCfg = out.config;
@@ -149,22 +150,25 @@ export function runConfigViewForCli(ctx: HandlerContext, sink: VerifyCliSink): v
   log("");
 
   log("Optional features");
-  log(`  Nightly dream cycle: ${on(rawEnabled("nightlyCycle", cfg.nightlyCycle?.enabled ?? false))}`);
-  log(`  Passive observer: ${on(rawEnabled("passiveObserver", cfg.passiveObserver?.enabled ?? false))}`);
+  log(`  Nightly dream cycle: ${on(cfg.nightlyCycle?.enabled ?? false)}`);
+  log(`  Passive observer: ${on(cfg.passiveObserver?.enabled ?? false)}`);
   log(`  Reflection (patterns/rules): ${on(rawEnabled("reflection", cfg.reflection.enabled))}`);
-  log(`  Persona proposals: ${on(rawEnabled("personaProposals", cfg.personaProposals.enabled))}`);
+  log(`  Persona proposals: ${on(cfg.personaProposals.enabled)}`);
   log(`  Self-correction: ${on(rawEnabled("selfCorrection", !!cfg.selfCorrection))}`);
-  log(`  Self-extension (tool proposals): ${on(rawEnabled("selfExtension", cfg.selfExtension?.enabled ?? false))}`);
-  log(
-    `  Crystallization (skill proposals): ${on(rawEnabled("crystallization", cfg.crystallization?.enabled ?? false))}`,
-  );
+  log(`  Self-extension (tool proposals): ${on(cfg.selfExtension?.enabled ?? false)}`);
+  log(`  Crystallization (skill proposals): ${on(cfg.crystallization?.enabled ?? false)}`);
   log(`  Extraction (multi-pass): ${on(rawEnabled("extraction", !!cfg.extraction?.extractionPasses))}`);
   log(`  Active task (ACTIVE-TASK.md): ${on(rawEnabled("activeTask", cfg.activeTask.enabled))}`);
-  log(`  Frustration detection: ${on(rawEnabled("frustrationDetection", cfg.frustrationDetection.enabled))}`);
-  log(`  Cross-agent learning: ${on(rawEnabled("crossAgentLearning", cfg.crossAgentLearning.enabled))}`);
+  log(`  Frustration detection: ${on(cfg.frustrationDetection.enabled)}`);
+  log(`  Cross-agent learning: ${on(cfg.crossAgentLearning.enabled)}`);
   log(`  Tool effectiveness: ${on(rawEnabled("toolEffectiveness", cfg.toolEffectiveness.enabled))}`);
-  log(`  Documents (MarkItDown): ${on(rawEnabled("documents", cfg.documents.enabled))}`);
-  log(`  Provenance: ${on(rawEnabled("provenance", cfg.provenance.enabled))}`);
+  log(`  Workflow tracking: ${on(cfg.workflowTracking.enabled)}`);
+  log(`  Documents (MarkItDown): ${on(cfg.documents.enabled)}`);
+  log(`  Provenance: ${on(cfg.provenance.enabled)}`);
+  log(`  Verification store: ${on(cfg.verification.enabled)}`);
+  log(`  Retrieval aliases: ${on(cfg.aliases.enabled)}`);
+  log(`  Query reranking: ${on(cfg.reranking.enabled)}`);
+  log(`  Contextual variants (index-time): ${on(cfg.contextualVariants.enabled)}`);
   log(`  Error reporting: ${on(rawEnabled("errorReporting", cfg.errorReporting?.enabled ?? false))}`);
   log(`  Cost tracking: ${on(rawEnabled("costTracking", cfg.costTracking?.enabled ?? false))}`);
   log("");
@@ -172,7 +176,17 @@ export function runConfigViewForCli(ctx: HandlerContext, sink: VerifyCliSink): v
   log("Advanced");
   log(`  Query expansion: ${on(cfg.queryExpansion.enabled)}`);
   log(`  Retrieval directives: ${on(cfg.autoRecall.retrievalDirectives?.enabled ?? false)}`);
-  log(`  Entity lookup: ${on(cfg.autoRecall.entityLookup.enabled)}`);
+  const el = cfg.autoRecall.entityLookup;
+  const entityNames = Array.isArray(el?.entities) ? el.entities : [];
+  const autoFromFacts = el?.autoFromFacts !== false;
+  const maxAutoEntities = typeof el?.maxAutoEntities === "number" && el.maxAutoEntities > 0 ? el.maxAutoEntities : 500;
+  const entitySrc =
+    entityNames.length > 0
+      ? `${entityNames.length} configured name(s)`
+      : autoFromFacts
+        ? `auto from facts (cap ${maxAutoEntities})`
+        : "manual list empty (auto off)";
+  log(`  Entity lookup: ${on(el?.enabled ?? false)} — ${entitySrc}`);
   log("");
 
   log("To change a setting: openclaw hybrid-mem config-set <key> <value>");

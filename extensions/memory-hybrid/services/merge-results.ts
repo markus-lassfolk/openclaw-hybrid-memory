@@ -7,18 +7,18 @@
  * naturally float to the top. Default k=60 (standard constant).
  */
 
-import type { SearchResult, ScopeFilter } from "../types/memory.js";
+import type { ScopeFilter, SearchResult } from "../types/memory.js";
 
 /** RRF constant (default 60). Higher k = less penalty for lower ranks. */
 export const RRF_K_DEFAULT = 60;
 
 /** Optional provider for superseded fact texts (e.g. FactsDB). */
-export interface SupersededProvider {
+interface SupersededProvider {
   getSupersededTexts(): Set<string>;
 }
 
 /** Optional merge options (RRF k constant). */
-export interface MergeOptions {
+interface MergeOptions {
   /** RRF constant for rank fusion (default 60) */
   k?: number;
 }

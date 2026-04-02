@@ -1,8 +1,8 @@
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 
-export type CaptureOrigin = "interactive" | "system" | "cron";
+type CaptureOrigin = "interactive" | "system" | "cron";
 
-export interface CaptureProvenance {
+interface CaptureProvenance {
   origin: CaptureOrigin;
   messageChannel: string | null;
   sessionId: string | null;

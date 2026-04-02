@@ -6,8 +6,8 @@
  */
 
 import { basename } from "node:path";
-import type { Converter, ConversionResult } from "./index.js";
 import { parseYaml } from "../../utils/yaml-parser.js";
+import type { ConversionResult, Converter } from "./index.js";
 
 /**
  * Replace !secret directives with [REDACTED] before parsing.

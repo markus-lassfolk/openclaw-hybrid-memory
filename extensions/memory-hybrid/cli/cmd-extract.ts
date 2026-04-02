@@ -1,3 +1,4 @@
+import { getEnv } from "../utils/env-manager.js";
 /**
  * Extract CLI Handler Functions
  *
@@ -9,50 +10,51 @@
  */
 
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
-import { join } from "node:path";
 import { homedir } from "node:os";
+import { join } from "node:path";
 
-import type { MemoryCategory, HybridMemoryConfig } from "../config.js";
+import type { ReinforcementContext } from "../backends/facts-db.js";
+import type { HybridMemoryConfig, MemoryCategory } from "../config.js";
 import {
   getCronModelConfig,
-  getLLMModelPreference,
   getDefaultCronModel,
+  getLLMModelPreference,
   resolveReflectionModelAndFallbacks,
 } from "../config.js";
+import { VAULT_POINTER_PREFIX, isCredentialLike, tryParseCredentialForVault } from "../services/auto-capture.js";
 import { chatCompleteWithRetry, distillMaxOutputTokens } from "../services/chat.js";
-import { extractProceduresFromSessions } from "../services/procedure-extractor.js";
-import { generateAutoSkills } from "../services/procedure-skill-generator.js";
+import { CostFeature } from "../services/cost-feature-labels.js";
+import { classifyMemoryOperation } from "../services/classification.js";
+import { type DirectiveExtractResult, runDirectiveExtract } from "../services/directive-extract.js";
+import { capturePluginError } from "../services/error-reporter.js";
+import { extractStructuredFields } from "../services/fact-extraction.js";
 import { runIdentityReflection } from "../services/identity-reflection.js";
 import {
   buildPersonaStateInsightsBlock,
   promotePersonaStateFromReflections,
 } from "../services/persona-state-promotion.js";
-import { loadPrompt, fillPrompt } from "../utils/prompt-loader.js";
-import { extractTags } from "../utils/tags.js";
-import { getDirectiveSignalRegex, getReinforcementSignalRegex } from "../utils/language-keywords.js";
-import { capturePluginError } from "../services/error-reporter.js";
-import { insertRulesUnderSection } from "../services/tools-md-section.js";
-import { runDirectiveExtract, type DirectiveExtractResult } from "../services/directive-extract.js";
-import { runReinforcementExtract, type ReinforcementExtractResult } from "../services/reinforcement-extract.js";
-import type { ReinforcementContext } from "../backends/facts-db.js";
+import { extractProceduresFromSessions } from "../services/procedure-extractor.js";
+import { generateAutoSkills } from "../services/procedure-skill-generator.js";
+import { type ReinforcementExtractResult, runReinforcementExtract } from "../services/reinforcement-extract.js";
 import { preFilterSessions } from "../services/session-pre-filter.js";
-import { isCredentialLike, tryParseCredentialForVault, VAULT_POINTER_PREFIX } from "../services/auto-capture.js";
+import { insertRulesUnderSection } from "../services/tools-md-section.js";
 import { findSimilarByEmbedding } from "../services/vector-search.js";
-import { classifyMemoryOperation } from "../services/classification.js";
-import { extractStructuredFields } from "../services/fact-extraction.js";
+import { BATCH_STORE_IMPORTANCE, CLI_STORE_IMPORTANCE } from "../utils/constants.js";
 import { getFileSnapshot } from "../utils/file-snapshot.js";
-import { CLI_STORE_IMPORTANCE, BATCH_STORE_IMPORTANCE } from "../utils/constants.js";
+import { getDirectiveSignalRegex, getReinforcementSignalRegex } from "../utils/language-keywords.js";
+import { fillPrompt, loadPrompt } from "../utils/prompt-loader.js";
+import { extractTags } from "../utils/tags.js";
+import { buildPreFilterConfig } from "./cmd-install.js";
+import { inferTargetFile } from "./cmd-store.js";
+import type { HandlerContext } from "./handlers.js";
 import { capProposalConfidence } from "./proposals.js";
+import { acquireScanSlot, clearScanLock } from "./shared.js";
 import type {
-  ExtractProceduresResult,
-  GenerateAutoSkillsResult,
   ExtractDailyResult,
   ExtractDailySink,
+  ExtractProceduresResult,
+  GenerateAutoSkillsResult,
 } from "./types.js";
-import type { HandlerContext } from "./handlers.js";
-import { inferTargetFile } from "./cmd-store.js";
-import { buildPreFilterConfig } from "./cmd-install.js";
-import { acquireScanSlot, clearScanLock } from "./shared.js";
 
 /**
  * Returns session .jsonl file paths modified within the last `days` days,
@@ -339,7 +341,7 @@ export async function runExtractReinforcementForCli(
     } else {
       filePaths = getSessionFilePathsSince(sessionDir, days);
     }
-    const workspaceRoot = opts.workspace ?? process.env.OPENCLAW_WORKSPACE ?? join(homedir(), ".openclaw", "workspace");
+    const workspaceRoot = opts.workspace ?? getEnv("OPENCLAW_WORKSPACE") ?? join(homedir(), ".openclaw", "workspace");
 
     // Two-tier pre-filter: use local Ollama to triage sessions before regex scan (Issue #290).
     // NOTE: filePaths (the full candidate set) is preserved for cursor watermarking below so
@@ -409,6 +411,7 @@ export async function runExtractReinforcementForCli(
           openai,
           fallbackModels,
           label: "memory-hybrid: reinforcement analyze",
+          feature: CostFeature.extractReinforcement,
         });
         const jsonMatch = content.match(/\[[\s\S]*\]/);
         if (jsonMatch) {
@@ -774,6 +777,7 @@ export async function runGenerateProposalsForCli(
       openai,
       fallbackModels,
       label: "memory-hybrid: generate-proposals",
+      feature: CostFeature.generateProposals,
     });
   } catch (err) {
     const errMsg = err instanceof Error ? err.message : String(err);
@@ -824,7 +828,7 @@ export async function runGenerateProposalsForCli(
     if (recentCount + created >= limit) break;
     const targetFile = String(item.targetFile ?? "").trim();
     if (!allowedFiles.includes(targetFile as any)) continue;
-    const workspace = process.env.OPENCLAW_WORKSPACE ?? join(homedir(), ".openclaw", "workspace");
+    const workspace = getEnv("OPENCLAW_WORKSPACE") ?? join(homedir(), ".openclaw", "workspace");
     const snapshot = getFileSnapshot(join(workspace, targetFile));
     let confidence = Number(item.confidence);
     if (!Number.isFinite(confidence)) continue;

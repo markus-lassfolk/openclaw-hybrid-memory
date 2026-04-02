@@ -6,7 +6,7 @@
 
 import { readFileSync } from "node:fs";
 import { basename } from "node:path";
-import { extractMessageText, truncate, timestampFromFilename } from "../utils/text.js";
+import { extractMessageText, timestampFromFilename, truncate } from "../utils/text.js";
 import { capturePluginError } from "./error-reporter.js";
 
 export type CorrectionIncident = {
@@ -45,7 +45,7 @@ function shouldSkipUserMessage(text: string): boolean {
   return false;
 }
 
-export type RunSelfCorrectionExtractOpts = {
+type RunSelfCorrectionExtractOpts = {
   filePaths: string[];
   correctionRegex: RegExp;
 };

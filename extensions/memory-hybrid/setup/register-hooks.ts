@@ -8,14 +8,14 @@
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import type { MemoryPluginAPI } from "../api/memory-plugin-api.js";
 import { getMemoryCategories } from "../config.js";
-import { createLifecycleHooks, type LifecycleContext } from "../lifecycle/hooks.js";
+import { type LifecycleContext, createLifecycleHooks } from "../lifecycle/hooks.js";
 import { capturePluginError } from "../services/error-reporter.js";
-import { sanitizeMessagesForClaude, type MessageLike } from "../utils/sanitize-messages.js";
 import { runPreConsolidationFlush } from "../services/pre-consolidation-flush.js";
 import { WorkflowTracker } from "../services/workflow-tracker.js";
+import { type MessageLike, sanitizeMessagesForClaude } from "../utils/sanitize-messages.js";
 
 /** Lifecycle hooks receive the stable plugin API (Phase 3). */
-export type HooksContext = MemoryPluginAPI;
+type HooksContext = MemoryPluginAPI;
 
 /** Issue #463: Returned handle for lifecycle hook cleanup. */
 export interface LifecycleHooksHandle {
@@ -55,7 +55,8 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
       lastProgressiveIndexIds: ctx.lastProgressiveIndexIds,
       restartPendingClearedRef: ctx.restartPendingClearedRef,
       resolvedSqlitePath: ctx.resolvedSqlitePath,
-      walWrite: (operation, data, logger) => ctx.walWrite(ctx.wal, operation, data, logger),
+      walWrite: (operation, data, logger, supersedeTargetId) =>
+        ctx.walWrite(ctx.wal, operation, data, logger, supersedeTargetId),
       walRemove: (id, logger) => ctx.walRemove(ctx.wal, id, logger),
       findSimilarByEmbedding: ctx.findSimilarByEmbedding,
       shouldCapture: ctx.shouldCapture,
@@ -162,9 +163,10 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
       ].join("\n");
     };
 
-    // Register a before_prompt_build hook that injects static memory instructions.
-    // Uses prependContext — the only field supported by the current SDK (see TODO above).
-    // The content is built once and cached to minimise per-turn overhead.
+    // Current SDKs only support `prependContext` for injecting additional context into
+    // the prompt build. When a reliable capability signal for `appendSystemContext`
+    // becomes available in the plugin SDK, this hook can be extended to prefer that
+    // field without risking duplicate instructions.
     api.on("before_prompt_build", (): undefined | { prependContext: string } => {
       if (!staticMemoryInstructions) {
         staticMemoryInstructions = buildStaticInstructions();
@@ -232,8 +234,8 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
         );
 
         if (pinnedFacts.length > 0) {
-          injectedContext += `\n<!-- Pinned Session Constraints / Memories -->\n`;
-          injectedContext += pinnedFacts.map((f) => `- ${f.entry.summary || f.entry.text}`).join("\n") + "\n";
+          injectedContext += "\n<!-- Pinned Session Constraints / Memories -->\n";
+          injectedContext += `${pinnedFacts.map((f) => `- ${f.entry.summary || f.entry.text}`).join("\n")}\n`;
         }
       } catch (err) {
         api.logger.debug?.(`memory-hybrid: failed to fetch pinned facts for pre-compaction: ${err}`);
@@ -255,31 +257,8 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
     api.logger.debug?.(`memory-hybrid: before_compaction hook not available (${err})`);
   }
 
-  try {
-    api.on("before_consolidation", async (event: unknown) => {
-      const ev = event as {
-        candidateCount?: number;
-        source?: string;
-        sessionFile?: string;
-      };
-
-      await runPreConsolidationFlush(
-        { wal: ctx.wal, factsDb: ctx.factsDb, vectorDb: ctx.vectorDb, embeddings: ctx.embeddings },
-        api.logger,
-        "before_consolidation",
-      );
-
-      api.logger.info?.(
-        `memory-hybrid: before_consolidation — candidates=${ev.candidateCount ?? "?"} source=${ev.source ?? "?"}`,
-      );
-    });
-  } catch (err) {
-    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-      subsystem: "lifecycle",
-      operation: "register-before_consolidation",
-    });
-    api.logger.debug?.(`memory-hybrid: before_consolidation hook not available (${err})`);
-  }
+  // Issue #966: Do not register `before_consolidation` — it is not in OpenClaw's PLUGIN_HOOK_NAMES (ignored + noisy).
+  // WAL flush before compaction-style work is handled solely by `before_compaction` above (runPreConsolidationFlush).
 
   try {
     api.on("after_compaction", async (event: unknown): Promise<undefined | { prependContext: string }> => {

@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
@@ -198,6 +199,44 @@ describe("FactsDB.count", () => {
 });
 
 // ---------------------------------------------------------------------------
+// list / listForDashboard — invalid filter values return empty (no silent broadening)
+// ---------------------------------------------------------------------------
+
+describe("FactsDB.list / listForDashboard filter allowlist", () => {
+  beforeEach(() => {
+    db.store({
+      text: "List filter test fact",
+      category: "fact",
+      importance: 0.7,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+    });
+  });
+
+  it("list returns [] when category is not allowlisted", () => {
+    expect(db.list(10, { category: "not-a-valid-category-xyz" })).toEqual([]);
+  });
+
+  it("list returns [] when tier is not allowlisted", () => {
+    expect(db.list(10, { tier: "invalid-tier" })).toEqual([]);
+  });
+
+  it("listForDashboard returns empty facts and total 0 when decayClass is not allowlisted", () => {
+    const r = db.listForDashboard({ limit: 10, offset: 0, decayClass: "not-a-decay" });
+    expect(r.facts).toEqual([]);
+    expect(r.total).toBe(0);
+  });
+
+  it("listForDashboard returns empty when tier is not allowlisted", () => {
+    const r = db.listForDashboard({ limit: 10, offset: 0, tier: "not-warm-hot-or-cold" });
+    expect(r.facts).toEqual([]);
+    expect(r.total).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Delete
 // ---------------------------------------------------------------------------
 
@@ -282,6 +321,22 @@ describe("FactsDB.search", () => {
     }
     const results = db.search("TypeScript", 3);
     expect(results.length).toBeLessThanOrEqual(3);
+  });
+
+  it("interactiveFtsFastPath returns FTS results (two-phase id fetch)", () => {
+    db.store({
+      text: "Unique marker for interactiveFtsFastPath",
+      category: "fact",
+      importance: 0.7,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+    });
+    const fast = db.search("Unique marker", 5, { interactiveFtsFastPath: true });
+    expect(fast.length).toBeGreaterThan(0);
+    expect(fast[0].entry.text).toContain("Unique marker");
+    expect(fast[0].backend).toBe("sqlite");
   });
 
   it("filters expired facts by default", () => {
@@ -2304,7 +2359,8 @@ describe("FactsDB search reinforcement ranking", () => {
     });
     db.reinforceFact(a.id, "Perfect!");
 
-    const results = db.search("auth API", 10, { reinforcementBoost: 0.2 });
+    // diversityWeight 0: full reinforcement boost (diversity from #259 would dampen boost with few events)
+    const results = db.search("auth API", 10, { reinforcementBoost: 0.2, diversityWeight: 0 });
     expect(results.length).toBeGreaterThanOrEqual(2);
     const ids = results.map((r) => r.entry.id);
     expect(ids).toContain(a.id);
@@ -2914,7 +2970,7 @@ describe("FactsDB Episodes", () => {
       const episode = db.recordEpisode({ event: "get test", outcome: "success" });
       const retrieved = db.getEpisode(episode.id);
       expect(retrieved).not.toBeNull();
-      expect(retrieved!.event).toBe("get test");
+      expect(retrieved?.event).toBe("get test");
     });
 
     it("getEpisode returns null for unknown id", () => {

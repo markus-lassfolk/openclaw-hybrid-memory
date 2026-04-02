@@ -8,15 +8,231 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+No changes yet.
+
+---
+
+## [2026.4.21] - 2026-04-21
+
+### Release summary
+
+Version **2026.4.21** — Anthropic-compliant tool registration (underscore-only `memory_*` tools; removed dotted `memory.*` aliases from the published tool list), documentation and issue templates for provider tool-name rules, hardened `verify-publish.cjs` shrinkwrap check (`npm pack --dry-run --json`), and README guidance for manual `.tgz` installs (`npm ci --omit=dev`). Bumps package, plugin manifest, standalone installer, and release metadata.
+
+### Documentation
+
+- Clarified that **agent tool names** use underscores only and must match provider rules (e.g. Anthropic `^[a-zA-Z0-9_-]{1,128}$`); documented in the plugin README, [CONFIGURATION.md](docs/CONFIGURATION.md), and [TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md). Issue templates updated so examples do not suggest dotted tool names.
+
+### Fixed
+
+- **`verify-publish.cjs`:** Shrinkwrap check uses `npm pack --dry-run --json` (via `execFileSync` without `shell: true`; on Windows resolves `npm.cmd` next to `process.execPath`) and no longer depends on `tar` or a temp `.tgz`; catch blocks format unknown errors safely. README manual-install line documents **`npm ci --omit=dev`** for production installs.
+
+---
+
+## [2026.4.20] - 2026-04-02
+
+### Release summary
+
+Version bump to **2026.4.20** (package, plugin manifest, standalone installer, and release metadata).
+
+---
+
+## [2026.4.12] - 2026-04-01
+
+### Release summary
+
+Version bump to **2026.4.12** (package, plugin manifest, standalone installer, and release metadata).
+
+---
+
+## [2026.4.11] - 2026-04-01
+
+### Release summary
+
+Patch after **2026.4.10**: **interactive FTS fast path** on `FactsDB.search()` (auto-recall) — caps OR-term explosion and two-phase id fetch to reduce gateway stalls on large `facts.db`; **centralized agent id resolution** from hook events (`resolveAgentIdFromHookEvent`) for routed channels; **docs** [INTERACTIVE-RECALL-LATENCY.md](docs/INTERACTIVE-RECALL-LATENCY.md).
+
 ### Added
 
-- **Edict memory type (#791):** New `category: "edict"` for verified ground-truth facts. Separate SQLite `edicts` table with TTL support (never/event/seconds). Six new tools: `memory.add_edict`, `memory.list_edicts`, `memory.get_edicts`, `memory.update_edict`, `memory.remove_edict`, `memory.edict_stats`. Edicts are forced-injected into system prompts before issue/narrative/hot blocks and are **never trimmed** by token budget pressure. Edict creation is **propose-only** — agents suggest via `[EDICT CANDIDATE]` GitHub comment; Markus (human) reviews and creates.
+- **`FactsDB.search(..., { interactiveFtsFastPath: true })`** — used from interactive auto-recall; constant **`INTERACTIVE_FTS_MAX_OR_TERMS`**.
+- **`lifecycle/resolve-agent-id.ts`** — `resolveAgentIdFromHookEvent()`; **`stage-setup`** uses it for `currentAgentIdRef`.
 
-- **Procedure feedback loop (#782):** New `procedure_versions` and `procedure_failures` SQLite tables track per-version outcomes and individual failure events. New `procedureFeedback()` method on FactsDB handles success and failure feedback — failures bump the version number, create an avoidance note, and automatically create an episode record via `recordEpisode()`. New `memory.procedure_feedback()` tool lets agents record procedure outcomes in context. `memory_recall_procedures` output now includes `lastOutcome`, `successRate`, and `avoidanceNotes` inline so the agent sees historical context before attempting a procedure. New `memory procedure show <id>` CLI command shows all versions, failure history, and avoidance notes for a procedure. `memory procedure list` lists all procedures with version/outcome summary. Procedure entries (`ProcedureEntry` type) now carry `version`, `lastOutcome`, `successRate`, and `avoidanceNotes` fields enriched from the version tracking system.
+### Documentation
 
-- **Episodic memory (#781):** New `category: "episode"` first-class memory type for structured event records with explicit outcomes (`success`, `failure`, `partial`, `unknown`) and timestamps. Episodes are stored in a dedicated `episodes` SQLite table with indexed `timestamp` and `outcome` columns, searchable via FTS5. New `memory.record_episode()` tool creates episode records; `memory.search_episodes()` searches with outcome, time-range, and procedure filters. Failures are auto-boosted to importance ≥ 0.8. Session-end auto-capture scans for outcome-indicating phrases (✅, ❌, merged, FAILED, fixed, etc.) and creates episode records automatically.
+- **[INTERACTIVE-RECALL-LATENCY.md](docs/INTERACTIVE-RECALL-LATENCY.md)** — why interactive FTS can report very long wall times; `agentId` / OpenClaw context.
 
-- **Frequency-based auto-save (#784):** New `recent_mentions` SQLite table tracks entity and credential mentions across sessions for frequency-based auto-capture. When a non-credential entity is mentioned `mentionThreshold`+ times, it's auto-saved as a memory. When a credential is mentioned, it's stored in the vault. Key design: SHA-256 hash of mention text for deduplication (never stores raw credential values); supersession key = `host+username+scope` for multi-credential per host support; configurable TTL purge for stale mention records. New `FrequencyCaptureConfig` with `enabled`, `mentionThreshold`, `lookbackSessions`, `defaultImportance`, `captureCredentials`, and `ttlDays` options. Credential pattern detection supports GitHub PATs, OpenAI keys, JWTs, SSH keys, and more.
+---
+
+## [2026.4.10] - 2026-04-01
+
+### Release summary
+
+Follow-up to **2026.3.310** with **bounded interactive auto-recall**, a single **`autoRecall.interactiveEnrichment`** control, **OpenClaw hook alignment ([#966](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/966))**, **entity auto-lookup from facts ([#952](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/952))**, clearer **mode / Phase 1 documentation**, **operator guidance for recall timing logs**, and **CI** updates for current GitHub Actions runners.
+
+### Added
+
+- **`autoRecall.interactiveEnrichment`** (`"fast"` \| `"balanced"` \| `"full"`): one setting couples interactive-turn HyDE (when query expansion allows) and ambient multi-query behavior. **`fast`** turns both off for shorter, more predictable chat-turn recall; mode presets default to **`fast`** where auto-recall is on. Schema and labels in `openclaw.plugin.json`; see [CONFIGURATION.md](docs/CONFIGURATION.md).
+- **Regression test** [`extensions/memory-hybrid/tests/config-presets-doc-sync.test.ts`](extensions/memory-hybrid/tests/config-presets-doc-sync.test.ts): asserts `PRESET_OVERRIDES` and post-parse Phase 1 behavior stay aligned with [CONFIGURATION-MODES.md](docs/CONFIGURATION-MODES.md).
+- **Entity lookup from the fact store when your list is empty** ([#952](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/952)):** `autoFromFacts` (default `true`) and `maxAutoEntities` (default 500, max 2000) resolve names via `FactsDb.getKnownEntities()` for merge and retrieval directives; deterministic sort before capping. Docs: [CONFIGURATION.md](docs/CONFIGURATION.md), [CONFIGURATION-MODES.md](docs/CONFIGURATION-MODES.md), [EXAMPLES.md](docs/EXAMPLES.md). Tests: `entity-lookup-resolve.test.ts`.
+
+### Changed
+
+- **Interactive recall stage** (`lifecycle/stage-recall.ts`): **~32s** wall-clock cap via `AbortController` + race; inner `runRecall` respects **`AbortSignal`** at await boundaries so **`recallInFlightRef`** always decrements. Vector step budget remains **~26s** in policy ([`retrieval-mode-policy.ts`](extensions/memory-hybrid/services/retrieval-mode-policy.ts)); aligns with [TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) timeout guidance.
+- **Lifecycle hooks ([#966](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/966)):** Subagent lifecycle uses OpenClaw’s **`subagent_spawned`** / **`subagent_ended`** events with tolerant payload shapes; **`before_consolidation`** is **not** registered (not a core hook — avoids noisy no-ops). WAL flush before compaction stays on **`before_compaction`** only.
+- **Mode presets** (`config/utils.ts`): presets that enable auto-recall set **`interactiveEnrichment: "fast"`** for consistent latency/cost behavior.
+- **CI:** `actions/checkout@v6`, `dorny/paths-filter@v4`, and Node **24**-oriented JavaScript action defaults (`FORCE_JAVASCRIPT_ACTIONS_TO_NODE24` in [`.github/workflows/ci.yml`](.github/workflows/ci.yml)).
+
+### Fixed
+
+- **Tests:** Stabilized reinforcement ranking case when **`diversityWeight`** is 0 (`facts-db` tests).
+- **CI:** `plugin-service-startup` version-check test uses a mock **npm** version safely above the current release so the “published newer than local” branch still runs after each version bump.
+
+### Documentation
+
+- **[CONFIGURATION-MODES.md](docs/CONFIGURATION-MODES.md):** Preset intent vs **Phase 1** overrides; feature matrix aligned with **`PRESET_OVERRIDES`**; link to preset sync test.
+- **[TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md):** New section **“Interpreting recall pipeline timing logs (debug)”** — `OPENCLAW_LOG_LEVEL=debug`, FTS/ embed/vector/merge meanings, timeout vs FTS-heavy paths, **`recall degraded`**, fair A/B testing tips.
+- **[CONFIGURATION.md](docs/CONFIGURATION.md):** `interactiveEnrichment` documented alongside auto-recall settings.
+
+---
+
+## [2026.3.310] - 2026-03-31
+
+### Release summary
+
+Reliability and upgrade-safety release after **2026.3.300**: improves recall responsiveness, hardens embedding and chat/network edge cases, auto-migrates older LanceDB tables missing the `why` column, documents safer RPC health-check timeouts, and refreshes CI/dependency tooling.
+
+### Added
+
+- **LanceDB compatibility migration:** Startup now detects legacy vector tables that predate provenance support and backfills a nullable `why` column automatically before reads/writes continue.
+
+### Changed
+
+- **Dependency and CI maintenance:** Updated GitHub Actions (`cache`, `stale`, `github-script`, `setup-node`, `labeler`) and refreshed dev dependency lock state (`extensions/memory-hybrid/package-lock.json`) to keep pipelines current.
+- **Chat header parsing internals:** Deduplicated case-insensitive header lookup paths in retry-after handling for simpler, safer request metadata parsing.
+
+### Fixed
+
+- **Recall latency / responsiveness ([#931](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/931)):** Auto-recall now yields back to the event loop while processing memory candidates to avoid blocking under heavier recall workloads.
+- **Embeddings and verification alignment ([#932](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/932), [#934](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/934), [#941](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/941)):** Dimension mismatch checks and fallback behavior were hardened across vector search, diagnostics, bootstrap, migration, and verify tooling so provider/model transitions fail less often and with clearer behavior.
+- **Narratives / transient error handling ([#935](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/935), [#936](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/936)):** Daily narrative generation and chat retry paths better classify abort/timeout-family failures as transient, reducing noisy hard-failure reporting.
+- **Store-embed error reporting noise ([#937](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/937)):** Expected embedding failures (including circuit-breaker scenarios) are filtered before plugin error reporting.
+- **Type safety in retry-after parsing:** Resolved `TS2352` cast risk when handling `Headers` in `parseRetryAfterMs`.
+
+### Documentation
+
+- **Gateway health operations ([#938](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/938)):** Added operator guidance for default **10s** RPC probe timeout, warm-up false positives, and use of **`--timeout 45000`** (or 30s+) in scripts/dashboards.
+- **Verify and dimension troubleshooting ([#941](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/941)):** [CLI-REFERENCE.md](docs/CLI-REFERENCE.md) now documents the verify embedding probe, alignment exit code, and link to troubleshooting; [TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) adds sections on LanceDB dimension mismatch and Azure re-index throttling. Follow-ups: [#942](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/942)–[#946](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/946).
+
+---
+
+## [2026.3.301] - 2026-03-30
+
+### Release summary
+
+Embeddings and narratives hardening: **Azure / deployment** embedding paths and **verify** CLI align with runtime config ([#932](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/932), [#934](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/934)); **daily narrative** LLM calls use a longer timeout and **`chatCompleteWithRetry`** no longer reports wrapped abort/timeout causes to GlitchTip ([#935](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/935), [#936](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/936)); **store-embed** skips GlitchTip for Ollama circuit-breaker and other suppressed embedding errors ([#937](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/937)).
+
+### Fixed
+
+- **Embeddings:** Chain/fallback OpenAI model selection respects Azure deployment names; verify passes `deployment` / `models` / `endpoint` into embedding smoke tests.
+- **Chat / narratives:** `isAbortOrTransientLlmError(finalError)` used for fallback-exhausted reporting so `LLMRetryError` wrapping `Request was aborted` is not treated as unexpected; narrative summary uses **120s** LLM timeout.
+- **Embeddings (tools):** `shouldSuppressEmbeddingError` before `capturePluginError` on store-embed failures.
+
+---
+
+## [2026.3.300] - 2026-03-30
+
+### Release summary
+
+Stability and operator-experience release after **2026.3.293**: **CI** install smoke test no longer picks a stale local `.tgz`; **session narratives** treat gateway loss and `Request was aborted` as transient (info log, no GlitchTip) instead of a hard failure.
+
+### Fixed
+
+- **CI:** Install smoke test deletes prior `openclaw-hybrid-memory-*.tgz` and uses the tarball name from `npm pack` output so the wrong pack cannot fail the `benchmark/shadow-eval.ts` check.
+- **Narratives:** `isAbortOrTransientLlmError()` classifies aborts, gateway-down messages, and connection errors; skipped narrative builds log at **info** instead of **warn** for those cases.
+
+---
+
+## [2026.3.293] - 2026-03-29
+
+### Release summary
+
+Follow-up release after **2026.3.292**: merges **[#922](https://github.com/markus-lassfolk/openclaw-hybrid-memory/pull/922)** (security refactor — centralized `process.env` access and `child_process` via `utils/env-manager.ts` and `utils/process-runner.ts`) and **[#923](https://github.com/markus-lassfolk/openclaw-hybrid-memory/pull/923)** (README revamp for onboarding). Version bump only; behavior matches the post-merge `main` branch.
+
+### Changed
+
+- **Security / hygiene:** Centralized environment and subprocess helpers to satisfy static scanners and reduce direct `process.env` / `child_process` usage across CLI, services, tests, and scripts.
+- **Documentation:** README restructured for clearer engagement and setup.
+
+---
+
+## [2026.3.292] - 2026-03-29
+
+### Release summary
+
+CLI clarity release: **`hybrid-mem config`** and **`hybrid-mem stats`** now describe **effective (running) config** for Phase 1 core-only baseline features, so they no longer disagree with each other when `openclaw.json` still has `enabled: true` but the plugin forces options off (plugin ≥2026.3.140). Export **`PHASE1_CORE_ONLY_FORCE_DISABLED_KEYS`** from the config parser so the migration list stays a single source of truth.
+
+### Fixed
+
+- **Config view:** Phase 1–affected optional features show effective on/off; when the file still has `enabled: true`, a short Phase 1 baseline note is shown. Added missing toggles for workflow tracking, verification, retrieval aliases, reranking, and contextual variants. Query expansion (Advanced) gets the same file-vs-effective note when applicable.
+- **Rich stats:** Proposals and credentials lines avoid implying a feature is “broken” when it is off in effective config or the vault is disabled.
+
+### Packaging / install
+
+- **Private testing:** Publish to npm with a non-`latest` dist-tag (for example `npm publish --tag private --otp=…`) so you can install `openclaw-hybrid-memory@private` or pin `2026.3.292` without moving the default `latest` pointer until you are ready.
+
+---
+
+## [2026.3.291] - 2026-03-29
+
+### Release summary
+
+Packaging-only release: the npm tarball includes `benchmark/` (shadow-eval / `hybrid-mem benchmark`). **Feature list unchanged** from [2026.3.290](#20263290---2026-03-29).
+
+### Fixed
+
+- **npm package:** `benchmark/` listed in `package.json` `files` so installs include `benchmark/shadow-eval` and feature benchmarks required by `cli/benchmark.ts`.
+
+---
+
+## [2026.3.290] - 2026-03-29
+
+### Release summary
+
+This release is a large step forward for **structured memory**, **Azure / APIM deployments**, and **operational hardening**. It adds episodic memory, human-gated edicts, procedure outcome tracking, and frequency-based auto-capture; ships Mission Control dashboards (memory graph, agent health, cross-agent audit); improves embedding setup with APIM-aware routing and a new `model-info` CLI; and closes multiple critical-through-low severity issues across FTS5, WAL, LanceDB, credentials, SQLite lifecycle, and recall.
+
+### Added
+
+- **Episodic memory (#781):** First-class `category: "episode"` with `event`, `outcome` (`success` \| `failure` \| `partial` \| `unknown`), `timestamp`, `duration`, `context`, `relatedFactIds`, `procedureId`, scope, IDs, importance, tags, and decay. SQLite `episodes` table with indexed `outcome` and `timestamp`; vectors in LanceDB alongside facts (`category="episode"`). Failures auto-boost to `importance ≥ 0.8`.
+- **Episode tools:** `memory_record_episode()`, `memory_search_episodes()` (outcome, time range, `procedureId`, FTS over `event + context`).
+- **Session-end episode auto-capture (#781):** Compaction scans JSONL for outcome phrases (e.g. merged / failed / fixed / partial / ERROR) and creates episode records.
+- **FactsDB episode API:** `storeEpisode`, `getEpisode`, `deleteEpisode`, `searchEpisodes`, `episodesCount`; `episodes_fts` FTS5 table; `episodes.test.ts` coverage.
+- **Edict memory type (#791):** `category: "edict"` for verified ground truth in SQLite `edicts` with TTL (`never` \| `event` \| seconds). Tools: `memory_add_edict`, `memory_list_edicts`, `memory_get_edicts`, `memory_update_edict`, `memory_remove_edict`, `memory_edict_stats`. Injected before issue/narrative/hot blocks; **never trimmed** by token budget. Creation is **propose-only** (`[EDICT CANDIDATE]` on GitHub for human review).
+- **Procedure feedback loop (#782):** `procedure_versions` and `procedure_failures` tables; `procedureFeedback()` on FactsDB; `memory_procedure_feedback()` tool; `memory_recall_procedures` enriched with `lastOutcome`, `successRate`, `avoidanceNotes`; CLI `memory procedure show` / `list`.
+- **Frequency-based auto-save (#784):** `recent_mentions` table; auto-save entities after threshold; vault capture for credentials with hashed dedupe and `host+username+scope` supersession; `FrequencyCaptureConfig` (`mentionThreshold`, `lookbackSessions`, `ttlDays`, etc.).
+- **Mission Control (#788–#790):** Memory graph visualization (#788), Agent Health Dashboard (#789), Cross-agent Audit Trail (#790).
+- **Azure APIM for embeddings (#815):** Gateway auth, deployment override, endpoint auto-inheritance; plugin OpenAI client and `hybrid-mem --test-llm` probe updated (#822, #826).
+- **`hybrid-mem model-info` CLI (#816):** Embedding dimension introspection for operators.
+- **Shadow evaluation benchmark (#787).**
+- **Repository automation:** `issue-verify-and-close` and `pr-merged-trigger` workflows for PR/issue verification.
+- **Facts DB internals (#921):** Modular helpers — `cache-manager`, `db-connection`, `fact-queries`, `fts-text`; shared `utils/embed-call.ts` for embedding calls; expanded `credential-validation`; config schema additions in `openclaw.plugin.json` where applicable.
+
+### Changed
+
+- **`DEFAULT_MEMORY_CATEGORIES`:** Includes `"episode"` (and edict as a category where defined in types).
+- **`EpisodeEntry` type** in `types/memory.ts` (discriminated `outcome`).
+- **`ProcedureEntry`:** `version`, `lastOutcome`, `successRate`, `avoidanceNotes` from version tracking.
+- **Token-budget trimming (#792):** Tiered trimming with `preserveUntil` / `preserveTags` for finer control over what survives under pressure.
+- **Dependencies:** Audit and reduction (#777); `openclaw` peer/dev bumps (#780, #920); `path-to-regexp` bump (#809).
+- **Imports:** Deprecated OpenClaw plugin-sdk barrel paths replaced with scoped subpaths (#779).
+- **Lint / DX:** Biome rules tightened (off → warn), `organizeImports` disabled (#819); invalid `noUselessContinue` rule removed; retry/timeout constants centralized in `utils/constants.ts` (#910).
+
+### Fixed
+
+- **SQLite after gateway restart (#783):** Connection reopened correctly after `SIGUSR1` restart.
+- **Migrations & data safety:** Duplicate `migrateEpisodesTable` removed (#801/#804); edict migration duplicate-check / data-loss risk (#808); stronger episodes migration (CHECK constraints, composite indexes, FTS trigger, #817).
+- **Procedure feedback (#798):** `scopeTarget` null handling; double-counting in `procedureFeedback`.
+- **Reliability wave (#909, #917, #918):** FTS5 hardening, WAL improvements, async/GitHub lease handling, safer tools, LanceDB and credential paths, task queue (incl. FD leak on lock, #813), embedding edge cases, security and SQLite hygiene, CLI verify behavior.
+- **Priority-low sweep (#870–#902, #921):** Facts DB refactor and query paths; recall pipeline and memory/credential tools; WAL helpers; vector-db and FTS search; scope filtering; context engine and narratives; error reporter and verification store; Python bridge stdin; plugin API registration edge cases.
+- **Register / task signals / Python stdin (#802, #810, #812, #823).**
+- **CI:** Biome `--max-diagnostics=none` and unsafe write fixes (#805, #806).
 
 ---
 
@@ -897,7 +1113,15 @@ Major feature release including procedural memory, directive extraction, reinfor
 
 ---
 
-[Unreleased]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.3.250...HEAD
+[Unreleased]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.4.21...HEAD
+[2026.4.21]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.4.20...v2026.4.21
+[2026.4.20]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.4.12...v2026.4.20
+[2026.4.12]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.4.11...v2026.4.12
+[2026.4.11]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.4.10...v2026.4.11
+[2026.4.10]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.3.310...v2026.4.10
+[2026.3.310]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.3.301...v2026.3.310
+[2026.3.301]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.3.300...v2026.3.301
+[2026.3.300]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.3.293...v2026.3.300
 [2026.3.250]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.3.181...v2026.3.250
 [2026.3.181]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/releases/tag/v2026.3.181
 [2026.3.180]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/releases/tag/v2026.3.180

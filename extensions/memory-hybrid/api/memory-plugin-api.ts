@@ -25,6 +25,8 @@ import type { ToolProposalStore } from "../backends/tool-proposal-store.js";
 import type { EmbeddingProvider } from "../services/embeddings.js";
 import type { EmbeddingRegistry } from "../services/embedding-registry.js";
 import type { PendingLLMWarnings } from "../services/chat.js";
+import type { AuditStore } from "../backends/audit-store.js";
+import type { AgentHealthStore } from "../backends/agent-health-store.js";
 import type { AliasDB } from "../services/retrieval-aliases.js";
 import type { ProvenanceService } from "../services/provenance.js";
 import type { VerificationStore } from "../services/verification-store.js";
@@ -51,9 +53,17 @@ export type FindSimilarByEmbeddingFn = (
 
 /** Builds scope filter for tools from user/agent/session and config. */
 export type BuildToolScopeFilterFn = (
-  params: { userId?: string | null; agentId?: string | null; sessionId?: string | null },
+  params: {
+    userId?: string | null;
+    agentId?: string | null;
+    sessionId?: string | null;
+    confirmCrossTenantScope?: boolean;
+  },
   currentAgent: string | null,
-  config: { multiAgent: { orchestratorId: string }; autoRecall: { scopeFilter?: ScopeFilter } },
+  config: {
+    multiAgent: { orchestratorId: string; trustToolScopeParams?: boolean };
+    autoRecall: { scopeFilter?: ScopeFilter };
+  },
 ) => ScopeFilter | undefined;
 
 /**
@@ -90,6 +100,10 @@ export interface MemoryPluginAPI {
   variantQueue: VariantGenerationQueue | null;
   pythonBridge: PythonBridge | null;
   apitapStore: ApitapStore | null;
+  /** Cross-agent audit trail (Issue #790); null when memory DB is :memory:. */
+  auditStore: AuditStore | null;
+  /** Per-agent health snapshots (Issue #789). */
+  agentHealthStore: AgentHealthStore | null;
 
   // --- Refs (lifecycle / degradation) ---
   restartPendingClearedRef: { value: boolean };

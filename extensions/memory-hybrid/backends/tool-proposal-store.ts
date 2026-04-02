@@ -7,11 +7,11 @@
  * Schema follows IssueStore / CrystallizationStore conventions.
  */
 
-import { DatabaseSync } from "node:sqlite";
-import type { SQLInputValue } from "node:sqlite";
 import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
+import { DatabaseSync } from "node:sqlite";
+import type { SQLInputValue } from "node:sqlite";
 
 import { BaseSqliteStore } from "./base-sqlite-store.js";
 
@@ -36,7 +36,7 @@ export interface ToolProposal {
   updatedAt: string;
 }
 
-export interface CreateToolProposalInput {
+interface CreateToolProposalInput {
   name: string;
   description: string;
   parameters: string;
@@ -45,7 +45,7 @@ export interface CreateToolProposalInput {
   implementationHint: string;
 }
 
-export interface ToolProposalFilter {
+interface ToolProposalFilter {
   status?: ToolProposalStatus;
   name?: string;
   limit?: number;

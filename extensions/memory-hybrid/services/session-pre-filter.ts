@@ -12,10 +12,11 @@
  * (e.g. "qwen3:8b/no_think") to disable chain-of-thought and get faster, shorter responses.
  */
 
-import OpenAI from "openai";
 import { createReadStream } from "node:fs";
 import { createInterface } from "node:readline";
+import OpenAI from "openai";
 import { chatComplete, isConnectionErrorLike, isContextLengthError } from "./chat.js";
+import { CostFeature } from "./cost-feature-labels.js";
 import { capturePluginError } from "./error-reporter.js";
 
 /** Configuration for local LLM pre-filtering. */
@@ -38,7 +39,7 @@ export type PreFilterConfig = {
 };
 
 /** Result of pre-filtering a batch of session files. */
-export type PreFilterResult = {
+type PreFilterResult = {
   /** Paths that the local model flagged as containing extractable content. */
   kept: string[];
   /** Paths the local model classified as not interesting. */
@@ -176,6 +177,7 @@ async function classifySession(sample: string, config: PreFilterConfig, ollamaCl
     maxTokens: 512, // extra budget for thinking-model <think> preamble before YES/NO
     openai: ollamaClient,
     timeoutMs: 20_000,
+    feature: CostFeature.sessionPreFilter,
   });
 
   // For thinking models: extract only the text after the final </think> tag.

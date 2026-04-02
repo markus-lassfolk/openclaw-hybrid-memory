@@ -10,18 +10,16 @@ const require = createRequire(import.meta.url);
 const pkg = require("./package.json") as { version: string };
 
 /** Plugin release version (from package.json). Bump on each release. */
-export const pluginVersion: string = pkg.version;
+const pluginVersion: string = pkg.version;
 
 /** Memory Manager spec version — matches docs/hybrid-memory-manager-v3.md "Version: X.Y". */
-export const memoryManagerVersion = "3.0";
+const memoryManagerVersion = "3.0";
 
 /** Schema version for SQLite/LanceDB. Bump when adding migrations or breaking schema changes. */
-export const schemaVersion = 3;
+const schemaVersion = 3;
 
 export const versionInfo = {
   pluginVersion,
   memoryManagerVersion,
   schemaVersion,
 } as const;
-
-export default versionInfo;

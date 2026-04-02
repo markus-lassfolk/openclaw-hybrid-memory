@@ -9,7 +9,7 @@
 import { readFileSync } from "node:fs";
 import { basename } from "node:path";
 import { getDirectiveCategoryRegexes } from "../utils/language-keywords.js";
-import { extractMessageText, truncate, timestampFromFilename } from "../utils/text.js";
+import { extractMessageText, timestampFromFilename, truncate } from "../utils/text.js";
 import { capturePluginError } from "./error-reporter.js";
 
 /** 10 directive categories (can overlap — a message may have multiple types). */
@@ -227,7 +227,7 @@ function fallbackExtract(trimmed: string): string {
   return trimmed.slice(0, 200);
 }
 
-export type RunDirectiveExtractOpts = {
+type RunDirectiveExtractOpts = {
   filePaths: string[];
   directiveRegex: RegExp;
 };

@@ -5,11 +5,11 @@
  * workflow patterns. Human approval is required before any skill is written to disk.
  */
 
-import { DatabaseSync } from "node:sqlite";
-import type { SQLInputValue } from "node:sqlite";
 import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
+import { DatabaseSync } from "node:sqlite";
+import type { SQLInputValue } from "node:sqlite";
 
 import { BaseSqliteStore } from "./base-sqlite-store.js";
 
@@ -17,9 +17,9 @@ import { BaseSqliteStore } from "./base-sqlite-store.js";
 // Public types
 // ---------------------------------------------------------------------------
 
-export type CrystallizationStatus = "pending" | "approved" | "rejected";
+type CrystallizationStatus = "pending" | "approved" | "rejected";
 
-export interface CrystallizationProposal {
+interface CrystallizationProposal {
   id: string;
   patternId: string;
   skillName: string;
@@ -35,14 +35,14 @@ export interface CrystallizationProposal {
   updatedAt: string;
 }
 
-export interface CreateProposalInput {
+interface CreateProposalInput {
   patternId: string;
   skillName: string;
   skillContent: string;
   patternSnapshot: string;
 }
 
-export interface ProposalFilter {
+interface ProposalFilter {
   status?: CrystallizationStatus;
   skillName?: string;
   limit?: number;

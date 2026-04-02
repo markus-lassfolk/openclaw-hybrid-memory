@@ -12,10 +12,10 @@
  */
 
 import type { DatabaseSync } from "node:sqlite";
-import { SQLITE_BUSY_TIMEOUT_MS } from "../utils/constants.js";
 import { capturePluginError } from "../services/error-reporter.js";
+import { SQLITE_BUSY_TIMEOUT_MS } from "../utils/constants.js";
 
-export interface BaseSqliteStoreOptions {
+interface BaseSqliteStoreOptions {
   /** Enable foreign key constraints (default: false). */
   foreignKeys?: boolean;
   /** Additional custom pragmas to apply on open/reopen. */
@@ -61,6 +61,42 @@ export abstract class BaseSqliteStore {
       this.applyPragmas();
     }
     return this.db;
+  }
+
+  /**
+   * Run a synchronous DB operation; if the native handle was closed while `_dbOpen` stayed true
+   * (lifecycle race, external close), reopen once and retry (#968).
+   */
+  protected runSqliteOp<T>(operation: string, fn: () => T): T {
+    try {
+      return fn();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (!/not open|connection is not open|The database connection is not open/i.test(msg)) {
+        throw err;
+      }
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        subsystem: this.getSubsystemName(),
+        operation,
+        phase: "sqlite-reconnect",
+        severity: "info",
+      });
+      this._dbOpen = false;
+      this._closed = false;
+      try {
+        this.db.open();
+      } catch (openErr) {
+        capturePluginError(openErr instanceof Error ? openErr : new Error(String(openErr)), {
+          subsystem: this.getSubsystemName(),
+          operation: `${operation}:reopen-failed`,
+          severity: "warning",
+        });
+        throw openErr instanceof Error ? openErr : new Error(String(openErr));
+      }
+      this._dbOpen = true;
+      this.applyPragmas();
+      return fn();
+    }
   }
 
   isOpen(): boolean {

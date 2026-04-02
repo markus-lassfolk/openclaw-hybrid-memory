@@ -2,14 +2,14 @@
  * File system utilities
  */
 
-import { statSync, readdirSync } from "node:fs";
-import { readdir, stat, readFile } from "node:fs/promises";
+import { readdirSync, statSync } from "node:fs";
+import { readFile, readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
 
 /**
  * Returns the byte size of a file, or 0 if it cannot be read.
  */
-export function getFileSize(filePath: string): number {
+function getFileSize(filePath: string): number {
   try {
     return statSync(filePath).size;
   } catch {
@@ -33,7 +33,7 @@ export async function getFileSizeAsync(filePath: string): Promise<number> {
  * @param dirPath - Path to the directory
  * @returns Total size in bytes, or 0 if the directory cannot be read
  */
-export function getDirSizeSync(dirPath: string): number {
+function getDirSizeSync(dirPath: string): number {
   try {
     const entries = readdirSync(dirPath, { withFileTypes: true });
     let total = 0;

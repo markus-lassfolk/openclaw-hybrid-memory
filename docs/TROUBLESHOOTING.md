@@ -18,6 +18,75 @@ openclaw hybrid-mem verify --fix  # apply safe auto-fixes
 openclaw hybrid-mem stats         # show fact/vector counts
 ```
 
+### Anthropic: `tools.*.custom.name` / pattern validation (400)
+
+**Symptoms:** API error such as `tools.33.custom.name: String should match pattern '^[a-zA-Z0-9_-]{1,128}$'`, or similar for another index.
+
+**Cause:** A tool in the request uses a **name** that is not allowed by the provider schema. Dotted names (for example `memory.record_episode`) are invalid for Anthropic even if they look like a namespace.
+
+**Fix:** Ensure every tool registered for the session uses only **letters, digits, underscores, and hyphens** — matching this plugin’s public names (`memory_store`, `memory_recall`, `memory_record_episode`, …). This plugin does not register dotted tool names. If you see this after a custom fork or merged tool list, search for `name:` values in tool registration that still contain `.`.
+
+**Note:** “Sanitize on retry” in logs refers to **message** / tool-*call* repair (for example pairing `tool_use` with `tool_result`), not to rewriting tool **definitions** in the request.
+
+### `LiveSessionModelSwitchError` on maintenance crons
+
+**Symptoms:** A scheduled **`hybrid-mem:*`** job fails; logs mention **`LiveSessionModelSwitchError`** or “live session model switch”.
+
+**Cause:** The job’s stored **`model`** (under `~/.openclaw/cron/jobs.json`) uses a different **provider family** than **`agents.defaults.model.primary`** (compare the segment before the first `/`, e.g. `azure-foundry` vs `google` vs `minimax`). Isolated runs can reuse a session tied to the agent default.
+
+**Fix:** Align the primary chat model and every maintenance cron model on the same provider family, then run **`openclaw hybrid-mem verify --fix`** so jobs pick up updated models. **`openclaw hybrid-mem verify`** warns when it detects this mismatch. See [SESSION-DISTILLATION.md](SESSION-DISTILLATION.md) (section *Align maintenance cron `model` with your agent default*) and [issue #965](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/965).
+
+---
+
+## Interpreting recall pipeline timing logs (debug)
+
+To see per-stage recall timings in gateway (and optionally CLI) logs, set **`OPENCLAW_LOG_LEVEL=debug`** for that run. OpenClaw treats this as overriding `logging.level` / `logging.consoleLevel` for a single process.
+
+**What you get:** a **`logger.debug`** line from `runRecallPipelineQuery` in [`extensions/memory-hybrid/services/recall-pipeline.ts`](../extensions/memory-hybrid/services/recall-pipeline.ts), shaped like:
+
+`memory-hybrid: interactive-recall timing (ms) — FTS: …, embed: …, vector: …, merge: …, total: …`
+
+| Field | Meaning |
+|--------|--------|
+| **FTS** | Wall time for SQLite FTS (and entity lookup if used) on the recall query — synchronous work in the Node process. |
+| **embed** | From the start of the vector step through **HyDE (if enabled) plus embedding** — not FTS. Zero when `retrieval.strategies` has no `semantic`. |
+| **vector** | Lance vector search only (after the embedding vector is ready). |
+| **merge** | Merging / fusion of FTS and vector hits. |
+
+If the semantic path **exceeds the vector-step budget**, you see a **warn** such as **`memory-hybrid: interactive-recall timed out after …ms, using FTS-only recall`**. The cap is `vectorStepTimeoutMs` in the interactive policy (currently **~26s** in source; older installs may still log **30000ms**). The pipeline may then emit **another** timing line for the FTS-only follow-up — **large FTS with small `embed` + `vector` on a later line** usually means the bottleneck was **timeout + FTS-heavy or degraded path**, not Lance/embed in isolation.
+
+**Other signals:** **`memory-hybrid: recall degraded (latency …ms > …ms)`** means the latency budget forced FTS-only + HOT-style degradation (see `lifecycle/stage-injection.ts` / `stage-recall.ts`).
+
+**Splitting wall time:** Compare recall **`total`** in the timing line to the **LLM completion** duration in OpenClaw logs (e.g. `durationMs` on the chat completion). A **very large session** (hundreds of messages, hundreds of thousands of history characters) can dominate **model** time even when embed/vector are modest.
+
+**Fair A/B tests:** For cleaner comparisons, turn off heavy channels (e.g. WhatsApp) or use a **minimal** gateway config, and run **two** agent turns per mode so a cold first run does not dominate.
+
+---
+
+## Embedding vs LanceDB dimension mismatch
+
+**Symptoms:** `openclaw hybrid-mem verify` reports a **FAIL** for embedding ↔ LanceDB alignment; `hybrid-mem test` shows semantic search failing with a reason such as `vector_dim_mismatch`; semantic recall feels empty even though facts exist.
+
+**Typical cause:** The embedding provider chain or model was inferred or changed (e.g. a Google key influenced `preferredProviders` while you intended OpenAI-only) so vectors are produced at one width (e.g. 768) while the Lance table was created at another (e.g. 3072). See [#939](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/939) and the fix in [#941](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/941).
+
+**What to do:**
+
+1. Align `embedding.provider`, `embedding.model` / `embedding.models`, and `embedding.dimensions` with the table you need; set `embedding.preferredProviders` explicitly if you use multiple keys.
+2. Run **`openclaw hybrid-mem verify`** again — it performs a **live embedding call** to confirm dimensions.
+3. If the table was built with the wrong model, run **`openclaw hybrid-mem re-index`** after config is correct (or enable `vector.autoRepair` only if you understand it will rebuild the vector table).
+
+**Note:** Older installs might have passed verify even when semantic search was silently broken. Newer versions fail verify on mismatch so automation can catch it.
+
+---
+
+## Azure / APIM rate limits during bulk re-index
+
+**Symptoms:** 429 or quota-style **403** (with `retry-after` / `remaining-tokens`) while running **`openclaw hybrid-mem re-index`** or large backfills on Azure OpenAI / API Management.
+
+**Context:** Gateways may send rate-limit hints on **`retry-after`**, **`remaining-tokens`**, or **`x-ratelimit-reset-*`** headers; field behavior is summarized in [#940](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/940). The plugin backs off and, on batch failure, can fall back to **sequential** per-fact embedding to avoid storms.
+
+**What to do:** Reduce batch pressure: lower **`--batch-size`** on `re-index`, wait for quota reset, or raise quota. Inter-batch throttling for the migration engine is tracked for a future CLI flag — see [#942](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/942). As a starting point when you still hit limits, try spacing batches by **~2000ms** once exposed, or run re-index during a quiet window.
+
 ---
 
 ## OpenClaw: `Invalid config … plugins.entries.memory-hybrid: Unrecognized key: "llm"`
@@ -139,9 +208,35 @@ If you see **"FATAL ERROR: Reached heap limit Allocation failed - JavaScript hea
 
 ---
 
+## RPC health probe timeout (openclaw gateway status)
+
+**Symptom:** `openclaw gateway status` reports an **RPC probe** failure (timeout), often clustered **early** after gateway start or upgrade, while **systemd** still shows the service as active and **127.0.0.1:18789** is listening. The next sample may show **RPC probe: ok**.
+
+**Cause:** The OpenClaw CLI defaults to **`--timeout 10000`** (10 seconds) for the WebSocket RPC health check. During **warm-up** — plugin load, hybrid-memory opening SQLite/LanceDB, “Warm-up: launch agents can take a few seconds” — the gateway may not complete an RPC round-trip within 10s. That is **probe sensitivity**, not necessarily a crashed or unhealthy process.
+
+**Misleading line:** The status command may also print **"Port 18789 is already in use"** when the probe path is unhappy, even though the same PID is legitimately bound to the port. For **real** port conflicts (stale process, socat, TIME_WAIT), see [Port not releasing](#port-not-releasing-gateway-port-18789-already-in-use) below.
+
+**What to do**
+
+1. **Scripts and dashboards:** Use a longer RPC timeout when polling health, for example:
+   ```bash
+   openclaw gateway status --timeout 45000
+   ```
+   **`30000`** or higher is reasonable when many plugins or large hybrid-memory stores are cold-starting.
+
+2. **Resilience:** Prefer **retries with backoff** before counting a failure (e.g. **3 attempts** with **~8 seconds** between attempts), especially in post-upgrade stability scripts.
+
+3. **Optional (advanced):** If profiling shows long **synchronous** work on the gateway main thread delaying RPC, consider deferring non-critical bootstrap upstream; this is rarely needed once timeouts are set sensibly.
+
+**Reference:** [Issue #938](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/938).
+
+---
+
 ## Port not releasing (gateway port 18789 already in use)
 
 When the gateway exits (crash, OOM, or `gateway stop`) the port can stay in use so the next start fails with **"Port 18789 is already in use"** or **"another gateway instance is already listening"**. Common causes and what to do:
+
+**Note:** If you see **"Port 18789 is already in use"** or an RPC probe failure only **while** running `openclaw gateway status` (especially within the first minute after start), check [RPC health probe timeout](#rpc-health-probe-timeout-openclaw-gateway-status) first — the default **10s** probe window can fail during warm-up even when the process is healthy.
 
 ### Why the port may not release
 
@@ -366,7 +461,7 @@ Inspect OpenClaw (or gateway) logs for errors when you send a message. Look for:
 
 When **nothing relevant appears** (no timeout, no errors) but the agent still doesn't respond, the turn may be **stuck** in the plugin's `before_agent_start` (e.g. waiting on the gateway/LLM for query expansion or embeddings). As of recent plugin versions:
 
-- You should see **`memory-hybrid: auto-recall start (prompt length N)`** when a message is processed. If you see that and never see a follow-up (e.g. "injecting N memories" or "vector step timed out"), the process is hanging inside auto-recall (query expansion, embedding, or vector search). The plugin applies timeouts (query expansion: 5-25s, vector step: 30s, chatComplete: 45s); if the gateway never responds, you should see a **timeout** log after that period.
+- You should see **`memory-hybrid: auto-recall start (prompt length N)`** when a message is processed. If you see that and never see a follow-up (e.g. "injecting N memories" or "vector step timed out"), the process is hanging inside auto-recall (query expansion, embedding, or vector search). The plugin applies timeouts (query expansion: 5–25s, vector step: ~26s, whole recall stage: ~32s, chatComplete: 45s); if the gateway never responds, you should see a **timeout** log after that period.
 - **Temporarily disable auto-recall** (`autoRecall.enabled: false`) or **query expansion** (`queryExpansion.enabled: false`) and restart the gateway. If the agent starts responding, the hang was in that path (often gateway/LLM not responding). Re-enable after fixing the gateway or model config.
 
 Log location depends on your OpenClaw setup (often under `~/.openclaw/` or wherever the gateway is run).
@@ -397,7 +492,7 @@ This means the nano-tier LLM used for query expansion is failing - e.g. provider
 - **Fix:** Check which model is being used: `openclaw hybrid-mem verify` shows `queryExpansion.model` (or nano tier). Run `openclaw hybrid-mem verify --test-llm` to confirm it is reachable.
 - Add fallback models to `llm.nano` or explicitly set `queryExpansion.model` to a reliable model.
 - Set `queryExpansion.enabled: false` to disable query expansion if you want zero per-turn LLM calls.
-- **Log noise:** You see at most one "query expansion failed" (or legacy "HyDE generation failed") per turn. If the auto-recall vector step times out (30s), expansion is aborted silently (only "vector step timed out, using FTS-only recall" appears).
+- **Log noise:** You see at most one "query expansion failed" (or legacy "HyDE generation failed") per turn. If the auto-recall vector step times out (~26s), expansion is aborted silently (only "vector step timed out, using FTS-only recall" appears).
 
 ### 8. "400/404 model not found" from verify --test-llm
 

@@ -5,12 +5,13 @@
  */
 
 import type OpenAI from "openai";
-import type { PendingLLMWarnings } from "./chat.js";
-import { chatCompleteWithRetry, is500Like, is404Like, isOllamaOOM, isConnectionErrorLike } from "./chat.js";
-import { capturePluginError } from "./error-reporter.js";
 import { getCronModelConfig, getLLMModelPreference } from "../config.js";
+import type { PendingLLMWarnings } from "./chat.js";
+import { chatCompleteWithRetry, is404Like, is500Like, isConnectionErrorLike, isOllamaOOM } from "./chat.js";
+import { CostFeature } from "./cost-feature-labels.js";
+import { capturePluginError } from "./error-reporter.js";
 
-export interface HydeOptions {
+interface HydeOptions {
   /** The raw query text to expand. */
   query: string;
   /** Raw config object for getCronModelConfig. */
@@ -59,6 +60,7 @@ Output only the statement, no preamble.`,
       timeoutMs: opts.timeoutMs,
       signal: opts.signal,
       pendingWarnings: opts.pendingWarnings,
+      feature: CostFeature.hyde,
     });
     const hydeText = hydeContent.trim();
     if (hydeText.length > 10) {

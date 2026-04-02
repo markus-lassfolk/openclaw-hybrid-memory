@@ -9,7 +9,7 @@
  * and registerConverter() to add them back.
  */
 
-import { extname, basename } from "node:path";
+import { basename, extname } from "node:path";
 
 export interface ConversionResult {
   markdown: string;

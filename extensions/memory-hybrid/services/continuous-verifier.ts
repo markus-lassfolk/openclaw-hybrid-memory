@@ -8,16 +8,17 @@
  */
 
 import type OpenAI from "openai";
+import type { FactsDB } from "../backends/facts-db.js";
 import { chatComplete } from "./chat.js";
+import { CostFeature } from "./cost-feature-labels.js";
 import { capturePluginError } from "./error-reporter.js";
 import type { VerificationStore, VerifiedFact } from "./verification-store.js";
-import type { FactsDB } from "../backends/facts-db.js";
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
-export type VerificationOutcome = "CONFIRMED" | "STALE" | "UNCERTAIN";
+type VerificationOutcome = "CONFIRMED" | "STALE" | "UNCERTAIN";
 
 export interface VerificationCycleResult {
   checked: number;
@@ -27,7 +28,7 @@ export interface VerificationCycleResult {
   errors: number;
 }
 
-export interface ContinuousVerifierOptions {
+interface ContinuousVerifierOptions {
   /** Days between verification cycle runs (default: 30). */
   cycleDays?: number;
   /** Model to use for LLM verification calls (default: 'openai/gpt-4.1-nano'). */
@@ -114,6 +115,7 @@ export class ContinuousVerifier {
       maxTokens: 256,
       openai: this.openai,
       timeoutMs: this.timeoutMs,
+      feature: CostFeature.continuousVerifier,
     });
     return parseVerificationOutcome(response);
   }

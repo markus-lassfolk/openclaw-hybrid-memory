@@ -1,3 +1,4 @@
+import { getEnv } from "../utils/env-manager.js";
 /**
  * Self-Correction CLI Handlers
  *
@@ -10,24 +11,25 @@
  */
 
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
 import { homedir } from "node:os";
+import { dirname, join } from "node:path";
 
 import { getCronModelConfig, getDefaultCronModel, getLLMModelPreference } from "../config.js";
-import type { SelfCorrectionExtractResult, SelfCorrectionRunResult } from "./types.js";
 import { chatCompleteWithRetry, distillMaxOutputTokens } from "../services/chat.js";
-import { runSelfCorrectionExtract, type CorrectionIncident } from "../services/self-correction-extract.js";
+import { CostFeature } from "../services/cost-feature-labels.js";
 import { capturePluginError } from "../services/error-reporter.js";
-import { getCorrectionSignalRegex } from "../utils/language-keywords.js";
-import { loadPrompt, fillPrompt } from "../utils/prompt-loader.js";
-import { insertRulesUnderSection } from "../services/tools-md-section.js";
+import { type CorrectionIncident, runSelfCorrectionExtract } from "../services/self-correction-extract.js";
 import { preFilterSessions } from "../services/session-pre-filter.js";
+import { insertRulesUnderSection } from "../services/tools-md-section.js";
 import { CLI_STORE_IMPORTANCE } from "../utils/constants.js";
-import type { HandlerContext } from "./handlers.js";
+import { getCorrectionSignalRegex } from "../utils/language-keywords.js";
+import { fillPrompt, loadPrompt } from "../utils/prompt-loader.js";
 import { gatherSessionFiles } from "./cmd-distill.js";
 import { buildPreFilterConfig } from "./cmd-install.js";
 import { inferTargetFile } from "./cmd-store.js";
+import type { HandlerContext } from "./handlers.js";
 import { acquireScanSlot, clearScanLock } from "./shared.js";
+import type { SelfCorrectionExtractResult, SelfCorrectionRunResult } from "./types.js";
 
 // ---------------------------------------------------------------------------
 // Module-level constants (self-correction-specific)
@@ -123,7 +125,7 @@ export async function runSelfCorrectionRunForCli(
   }
 
   try {
-    const workspaceRoot = opts.workspace ?? process.env.OPENCLAW_WORKSPACE ?? join(homedir(), ".openclaw", "workspace");
+    const workspaceRoot = opts.workspace ?? getEnv("OPENCLAW_WORKSPACE") ?? join(homedir(), ".openclaw", "workspace");
     const scCfg = cfg.selfCorrection ?? DEFAULT_SELF_CORRECTION;
     const reportDir = join(workspaceRoot, "memory", "reports");
     const today = new Date().toISOString().slice(0, 10);
@@ -237,6 +239,7 @@ export async function runSelfCorrectionRunForCli(
           openai,
           fallbackModels: scFallbackModels,
           label: "memory-hybrid: self-correction analyze",
+          feature: CostFeature.selfCorrectionAnalyze,
         });
       }
       const jsonMatch = content.match(/\[[\s\S]*\]/);
@@ -375,6 +378,7 @@ export async function runSelfCorrectionRunForCli(
             openai,
             fallbackModels: scFallbackModels,
             label: "memory-hybrid: self-correction rewrite-tools",
+            feature: CostFeature.selfCorrectionRewriteTools,
           });
           const cleaned = rewritten
             .trim()

@@ -1,3 +1,4 @@
+import { getEnv } from "../utils/env-manager.js";
 import { dirname, join } from "node:path";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -60,6 +61,8 @@ export interface PluginServiceContext {
   pythonBridge?: import("../services/python-bridge.js").PythonBridge | null;
   provenanceService?: ProvenanceService | null;
   costTracker?: import("../backends/cost-tracker.js").CostTracker | null;
+  auditStore?: import("../backends/audit-store.js").AuditStore | null;
+  agentHealthStore?: import("../backends/agent-health-store.js").AgentHealthStore | null;
   // Mutable timer refs that will be updated by the start handler
   timers: {
     pruneTimer: { value: ReturnType<typeof setInterval> | null };
@@ -102,6 +105,8 @@ export function createPluginService(ctx: PluginServiceContext) {
     timers,
     provenanceService,
     costTracker,
+    auditStore,
+    agentHealthStore,
   } = ctx;
 
   let observerRunning = false;
@@ -351,6 +356,18 @@ export function createPluginService(ctx: PluginServiceContext) {
               operation: "wal-prune-stale",
             });
           }
+          try {
+            const compacted = await wal.compactIfOversized(16 * 1024 * 1024);
+            if (compacted > 0) {
+              api.logger.info(`memory-hybrid: WAL compacted ${compacted} stale entries (oversized file, issue #903)`);
+            }
+          } catch (err) {
+            api.logger.warn(`memory-hybrid: WAL compactIfOversized failed: ${err}`);
+            capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+              subsystem: "plugin-service",
+              operation: "wal-compact-oversized",
+            });
+          }
         }
       }
 
@@ -374,6 +391,8 @@ export function createPluginService(ctx: PluginServiceContext) {
               gitRepo: cfg.dashboard.gitRepo,
               costTracker,
               logger: api.logger,
+              auditStore,
+              agentHealthStore,
             },
             cfg.dashboard.port,
           );
@@ -393,9 +412,25 @@ export function createPluginService(ctx: PluginServiceContext) {
           const hardPruned = factsDb.pruneExpired();
           const softPruned = factsDb.decayConfidence();
           const edictsPruned = edictStore.pruneExpired();
-          if (hardPruned > 0 || softPruned > 0 || edictsPruned > 0) {
+          let auditPruned = 0;
+          if (auditStore) {
+            try {
+              auditPruned = auditStore.prune(90);
+            } catch {
+              /* non-fatal */
+            }
+          }
+          let healthPruned = 0;
+          if (agentHealthStore) {
+            try {
+              healthPruned = agentHealthStore.prune(30);
+            } catch {
+              /* non-fatal */
+            }
+          }
+          if (hardPruned > 0 || softPruned > 0 || edictsPruned > 0 || auditPruned > 0 || healthPruned > 0) {
             api.logger.info(
-              `memory-hybrid: periodic prune — ${hardPruned} expired, ${softPruned} decayed, ${edictsPruned} edicts pruned`,
+              `memory-hybrid: periodic prune — ${hardPruned} expired, ${softPruned} decayed, ${edictsPruned} edicts pruned${auditPruned > 0 ? `, ${auditPruned} audit rows` : ""}${healthPruned > 0 ? `, ${healthPruned} agent-health rows` : ""}`,
             );
           }
         } catch (err) {
@@ -560,7 +595,7 @@ export function createPluginService(ctx: PluginServiceContext) {
       const WATCHDOG_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
       const watchdogRun = async () => {
         try {
-          await runTaskQueueWatchdog({ repoDir: process.env.OPENCLAW_WORKSPACE ?? process.cwd() }, api.logger);
+          await runTaskQueueWatchdog({ repoDir: getEnv("OPENCLAW_WORKSPACE") ?? process.cwd() }, api.logger);
         } catch (err) {
           api.logger.warn?.(`memory-hybrid: task-queue-watchdog failed (non-fatal): ${err}`);
           capturePluginError(err instanceof Error ? err : new Error(String(err)), {
@@ -584,7 +619,7 @@ export function createPluginService(ctx: PluginServiceContext) {
       const rawVersionFilePath = join(dirname(resolvedSqlitePath), ".last-post-upgrade-version");
       // Expand literal $HOME or leading ~ if the sqlite path wasn't fully resolved before being stored.
       // Both forms can appear when the plugin config is serialized from user input before normalization.
-      const _home = process.env.HOME ?? homedir();
+      const _home = getEnv("HOME") ?? homedir();
       const versionFile = rawVersionFilePath.replace(/\$HOME/g, _home).replace(/^~(?=\/|$)/, _home);
       timers.postUpgradeTimeout.value = setTimeout(() => {
         timers.postUpgradeTimeout.value = null;
@@ -751,6 +786,12 @@ export function createPluginService(ctx: PluginServiceContext) {
       }
       if (proposalsDb) {
         proposalsDb.close();
+      }
+      if (auditStore) {
+        auditStore.close();
+      }
+      if (agentHealthStore) {
+        agentHealthStore.close();
       }
     },
   };

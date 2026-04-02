@@ -5,14 +5,14 @@
  * Includes optional category discovery (grouping by free-form labels).
  */
 
-import type OpenAI from "openai";
-import { dirname } from "node:path";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { dirname } from "node:path";
+import type OpenAI from "openai";
 import type { FactsDB } from "../backends/facts-db.js";
-import { getMemoryCategories, setMemoryCategories, isValidCategory } from "../config.js";
-import { loadPrompt, fillPrompt } from "../utils/prompt-loader.js";
+import { getMemoryCategories, isValidCategory, setMemoryCategories } from "../config.js";
+import { fillPrompt, loadPrompt } from "../utils/prompt-loader.js";
+import { is404Like, is500Like, isConnectionErrorLike, isOllamaOOM } from "./chat.js";
 import { capturePluginError } from "./error-reporter.js";
-import { is500Like, is404Like, isOllamaOOM, isConnectionErrorLike } from "./chat.js";
 
 /** Minimum "other" facts before category discovery kicks in. */
 const MIN_OTHER_FOR_DISCOVERY = 15;
@@ -449,4 +449,4 @@ async function runAutoClassify(
 // Exports
 // ============================================================================
 
-export { runAutoClassify, runClassifyForCli, normalizeSuggestedLabel, type ClassifyProgressReporter };
+export { runAutoClassify, runClassifyForCli, normalizeSuggestedLabel };

@@ -19,10 +19,10 @@ import { serializeTags, parseTags } from "../utils/tags.js";
 import { capturePluginError } from "../services/error-reporter.js";
 
 /** TTL modes for edicts */
-export type EdictTtl = "never" | "event" | number;
+type EdictTtl = "never" | "event" | number;
 
 /** An edict entry — verified ground-truth fact */
-export interface EdictEntry {
+interface EdictEntry {
   id: string;
   /** The verified statement of fact */
   text: string;
@@ -43,7 +43,7 @@ export interface EdictEntry {
 }
 
 /** Input for creating a new edict */
-export interface AddEdictInput {
+interface AddEdictInput {
   text: string;
   source?: string;
   tags?: string[];
@@ -52,7 +52,7 @@ export interface AddEdictInput {
 }
 
 /** Input for updating an existing edict */
-export interface UpdateEdictInput {
+interface UpdateEdictInput {
   id: string;
   text?: string;
   source?: string;
@@ -62,19 +62,19 @@ export interface UpdateEdictInput {
 }
 
 /** Options for listing/retrieving edicts */
-export interface ListEdictsOptions {
+interface ListEdictsOptions {
   tags?: string[];
   includeExpired?: boolean;
   limit?: number;
 }
 
 /** Options for getEdicts (extends ListEdictsOptions) */
-export interface GetEdictsOptions extends ListEdictsOptions {
+interface GetEdictsOptions extends ListEdictsOptions {
   format?: "full" | "prompt";
 }
 
 /** Statistics about the edict store */
-export interface EdictStats {
+interface EdictStats {
   total: number;
   byTag: Record<string, number>;
   expired: number;
@@ -88,11 +88,11 @@ function renderEdictLine(edict: EdictEntry): string {
 }
 
 /** Render a list of edicts as a Markdown block for system prompt injection */
-export function renderEdictsForPrompt(edicts: EdictEntry[]): string {
+function renderEdictsForPrompt(edicts: EdictEntry[]): string {
   if (edicts.length === 0) return "";
   const header = "## Verified Ground Truth\n";
   const lines = edicts.map((e) => renderEdictLine(e));
-  return header + lines.join("\n") + "\n";
+  return `${header + lines.join("\n")}\n`;
 }
 
 /** Escape a string for safe use as a SQLite LIKE pattern */
@@ -103,14 +103,24 @@ function escapeLikePattern(s: string): string {
 export class EdictStore {
   private readonly dbPath: string;
   private readonly db: DatabaseSync;
+  /** Set true only after `runMigrations()` completes successfully (issue #964 / #953). */
   private _isReady = false;
 
   constructor(dbPath: string) {
     mkdirSync(dirname(dbPath), { recursive: true });
     this.dbPath = dbPath;
     this.db = new DatabaseSync(dbPath);
-    this.runMigrations();
-    this._isReady = true;
+
+    try {
+      this.runMigrations();
+      this._isReady = true;
+    } catch (err) {
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        subsystem: "edict-store",
+        operation: "runMigrations",
+      });
+      this._isReady = false;
+    }
   }
 
   /** Run all schema migrations. Idempotent — safe to call on existing databases. */
@@ -245,21 +255,29 @@ export class EdictStore {
 
       return rows.map((r) => this.rowToEntry(r));
     } catch (err) {
-      capturePluginError(err, { context: "EdictStore.list" });
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        subsystem: "edict-store",
+        operation: "list",
+      });
       return [];
     }
   }
 
   /** Get all non-expired edicts, optionally filtered by tags */
   getEdicts(options: GetEdictsOptions = {}): { edicts: EdictEntry[]; renderForPrompt: string } {
-    if (!this._isReady) return { edicts: [], renderForPrompt: "" };
+    if (!this._isReady) {
+      return { edicts: [], renderForPrompt: "" };
+    }
     try {
       const { tags, format = "prompt", limit = 100 } = options;
       const edicts = this.list({ tags, includeExpired: false, limit });
       const renderForPrompt = format === "prompt" ? renderEdictsForPrompt(edicts) : "";
       return { edicts, renderForPrompt };
     } catch (err) {
-      capturePluginError(err, { context: "EdictStore.getEdicts" });
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        subsystem: "edict-store",
+        operation: "getEdicts",
+      });
       return { edicts: [], renderForPrompt: "" };
     }
   }
@@ -279,7 +297,7 @@ export class EdictStore {
     const tagsStr = tags.length > 0 ? serializeTags(tags) : null;
 
     this.db
-      .prepare(`UPDATE edicts SET text = ?, source = ?, expires_at = ?, ttl = ?, tags = ?, updated_at = ? WHERE id = ?`)
+      .prepare("UPDATE edicts SET text = ?, source = ?, expires_at = ?, ttl = ?, tags = ?, updated_at = ? WHERE id = ?")
       .run(text, source ?? null, expiresAt ?? null, ttlStr, tagsStr, nowSec, input.id);
 
     return {

@@ -1,24 +1,25 @@
+import { getEnv } from "../utils/env-manager.js";
 /**
  * Tests for the passive observer service.
  * Uses mocked LLM calls, storage, and file system to test all core logic paths.
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { randomUUID } from "node:crypto";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { mkdirSync, writeFileSync, rmSync } from "node:fs";
-import { randomUUID } from "node:crypto";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as chat from "../services/chat.js";
 import {
-  extractTextFromJsonlChunk,
-  parseObserverResponse,
-  loadCursors,
-  saveCursors,
-  getCursorsPath,
-  runPassiveObserver,
-  isIdentityFact,
-  type PassiveObserverConfig,
   type ExtractedFact,
+  type PassiveObserverConfig,
+  extractTextFromJsonlChunk,
+  getCursorsPath,
+  isIdentityFact,
+  loadCursors,
+  parseObserverResponse,
+  runPassiveObserver,
+  saveCursors,
 } from "../services/passive-observer.js";
 
 // ---------------------------------------------------------------------------
@@ -936,7 +937,7 @@ describe("PassiveObserverConfig defaults via hybridConfigSchema", () => {
     expect(cfg.passiveObserver.sessionsDir).toBeUndefined();
   });
 
-  it("parses passiveObserver config (2026.3.140 migration forces enabled: false)", async () => {
+  it("parses passiveObserver config with enabled true", async () => {
     const { hybridConfigSchema } = await import("../config.js");
     const cfg = hybridConfigSchema.parse({
       embedding: { apiKey: "sk-test-key-12345678", model: "text-embedding-3-small" },
@@ -950,7 +951,7 @@ describe("PassiveObserverConfig defaults via hybridConfigSchema", () => {
         sessionsDir: "/tmp/sessions",
       },
     });
-    expect(cfg.passiveObserver.enabled).toBe(false);
+    expect(cfg.passiveObserver.enabled).toBe(true);
     expect(cfg.passiveObserver.intervalMinutes).toBe(30);
     expect(cfg.passiveObserver.model).toBe("google/gemini-2.5-flash");
     expect(cfg.passiveObserver.maxCharsPerChunk).toBe(4000);
@@ -998,7 +999,7 @@ describe("PassiveObserverConfig defaults via hybridConfigSchema", () => {
 
   it("expands $HOME in passiveObserver.sessionsDir", async () => {
     const { hybridConfigSchema } = await import("../config.js");
-    const home = process.env.HOME ?? require("node:os").homedir();
+    const home = getEnv("HOME") ?? require("node:os").homedir();
     const cfg = hybridConfigSchema.parse({
       embedding: { apiKey: "sk-test-key-12345678", model: "text-embedding-3-small" },
       passiveObserver: { sessionsDir: "$HOME/.openclaw/agents/main/sessions" },
@@ -1018,7 +1019,7 @@ describe("PassiveObserverConfig defaults via hybridConfigSchema", () => {
 
   it("expands $HOME in procedures.sessionsDir", async () => {
     const { hybridConfigSchema } = await import("../config.js");
-    const home = process.env.HOME ?? require("node:os").homedir();
+    const home = getEnv("HOME") ?? require("node:os").homedir();
     const cfg = hybridConfigSchema.parse({
       embedding: { apiKey: "sk-test-key-12345678", model: "text-embedding-3-small" },
       procedures: { sessionsDir: "$HOME/.openclaw/agents/main/sessions" },

@@ -1,5 +1,7 @@
 # Configuration Modes
 
+**Regression tests:** `extensions/memory-hybrid/tests/config-presets-doc-sync.test.ts` asserts `PRESET_OVERRIDES` and post-parse effective config match this document. Update that file when you change presets.
+
 You can set a **mode** in plugin config to apply a preset of feature toggles. **If you don't set `mode`, the default is `local`** (cost-safety: no external LLM, FTS-only). Set `minimal`, `enhanced`, or `complete` to enable LLM and richer features.
 
 ```json
@@ -25,13 +27,19 @@ Valid values: **`local`** | **`minimal`** | **`enhanced`** | **`complete`**. Def
 
 ## What each mode does
 
+The table below is the **intent** of each preset in code (`PRESET_OVERRIDES` in `extensions/memory-hybrid/config/utils.ts`). User-supplied keys **override** the preset after merge (nothing is silently forced off at parse time).
+
 | Mode | Best for | Description |
 |------|----------|-------------|
-| **Complete** | **Full experience (opt-in)** | Everything enabled: capture, recall, classification, graph, procedures, reflection, tiering, persona proposals, self-correction, query expansion, ingest, dream-cycle, passive observer, workflow tracking, tool/skill proposals, verification, provenance, documents, aliases, cross-agent learning, reranking, contextual variants. Credentials vault and tool I/O capture on when vault is configured. Highest capability and API use. |
-| **Enhanced** | Like Complete with slightly less | Same as Complete but no query expansion and no documents (no MarkItDown-based doc ingestion). Includes ingest, verification, provenance, aliases, cross-agent learning, reranking, contextual variants, dream-cycle, passive observer, workflow tracking, tool/skill proposals. Good if you want most features but want to trim a few. |
-| **Minimal** | Low cost, nano/flash only | Balanced: capture, recall, auto-classify, graph, procedures, ingest (run ingest-files when you want to seed from docs); no reflection, no persona proposals, no credential capture from tool I/O. **All LLM use (distill, auto-classify, ingest) is restricted to nano or flash-tier models** to keep cost very low. Credentials vault off unless you set an encryption key. |
-| **Local** | No external LLM | Only core memory: auto-capture and auto-recall with **FTS-only** retrieval. No embeddings, no classification, graph, procedures, or reflection. Zero external API calls — local SQLite + files only. Ideal for Raspberry Pi or fully offline setups. |
-| **Custom** | Your own mix | Reported when your config does not match any preset (you changed at least one toggle). Your explicit settings are used. |
+| **Complete** | Rich defaults, verbose logging | Same **preset toggles** as Enhanced (see matrix), plus **`verbosity`: `verbose`**. Does **not** turn on query expansion, workflow tracking, dream-cycle, documents, etc. by default — those stay off in the preset; enable them explicitly in config if you want them. |
+| **Enhanced** | Step up from Minimal | Adds entity lookup on recall, credential auto-capture hooks (when vault is configured), **`store.classifyBeforeWrite`**, **`graph.autoLink`**, reflection, self-correction. Advanced opt-ins (workflow tracking, nightly cycle, documents, reranking, …) remain **off** in the preset unless you enable them. |
+| **Minimal** | Low cost, nano/flash only | Balanced: capture, recall, auto-classify, graph, procedures, ingest paths; no reflection; **`entityLookup`** off; **`authFailure`** recall on. **All LLM use (distill, auto-classify, ingest) is restricted to nano or flash-tier models** to keep cost very low. Credentials vault off unless you set an encryption key. |
+| **Local** | No external LLM | Auto-capture and auto-recall with **`retrieval.strategies`: `["fts5"]` only**. **`autoClassify`**, graph, procedures, reflection off. **`verbosity`: `quiet`**. Ideal for offline / Pi-style setups. |
+| **Custom** | Your own mix | Reported when your config does not match any preset (you changed at least one preset-controlled toggle). Your explicit settings are used. |
+
+### Effective config after parse
+
+The parser applies the **mode preset**, then your **explicit overrides**. Optional modules (query expansion, workflow tracking, dream cycle, verification, etc.) follow the **preset defaults** unless you set them in `openclaw.json`. For **`mode: "complete"`**, several advanced features remain **off** in the preset by design; enable any of them explicitly if you want them.
 
 To reduce API or compute usage, set `"mode": "minimal"` or `"mode": "local"` in your plugin config.
 
@@ -50,22 +58,22 @@ This gives good value at low cost. For even lower cost or fully offline use, use
 
 ## Credentials vault and credential capture
 
-- **Encrypted credentials vault** (`credentials.enabled`): Stores API keys, tokens, passwords in an encrypted SQLite vault instead of in plain facts. Requires `credentials.encryptionKey` (or `env:OPENCLAW_CRED_KEY`).
+- **Encrypted credentials vault** (`credentials.enabled`): Stores API keys, tokens, passwords in a SQLite vault (encrypted when a key is configured). **Local** and **Minimal** presets set **`credentials.enabled: true`** so the vault is on; add **`credentials.encryptionKey`** (16+ chars, or `env:VAR`) for encryption at rest. Without a key, the plugin warns and stores secrets in plaintext in the vault DB — restrict filesystem access or add a key.
 
   | Mode    | Vault default | Note |
   |---------|----------------|------|
-  | Local   | Off  | No vault; use env vars for secrets if needed. |
-  | Minimal | Off  | Opt-in: set encryption key to enable. |
-  | Enhanced | On (if key set) | Preset turns vault on when key is present. |
+  | Local   | On | Preset enables vault; encryption requires `credentials.encryptionKey` (or env). |
+  | Minimal | On | Same as Local. |
+  | Enhanced | On (if key set) | Preset does not set `enabled: true`; vault turns on when a valid encryption key is present. |
   | Complete | On (if key set) | Same as Enhanced. |
 
-- **Credentials auto-detect** (`credentials.autoDetect`): Detects credential-like content in conversation and prompts to store in the vault. **Enhanced / Complete** enable this when the vault is on.
+- **Credentials auto-detect** (`credentials.autoDetect`): Detects credential-like content in conversation and prompts to store in the vault. **Enhanced** and **Complete** presets set **`autoDetect: true`** when merged; you can override with an explicit `credentials.autoDetect` value in config.
 
 - **Credentials capture from tool I/O** (`credentials.autoCapture.toolCalls`): Scans **tool call inputs and outputs** for credential patterns and stores them in the vault. **Local and Minimal** leave it off; **Enhanced and Complete** enable it when the vault is on (you can still turn it on manually in Local/Minimal).
 
   | Mode     | credentials.autoCapture.toolCalls |
   |----------|-----------------------------------|
-  | Local    | Off (vault off)                   |
+  | Local    | Off                               |
   | Minimal  | Off                               |
   | Enhanced | On (when vault enabled)           |
   | Complete | On (when vault enabled)           |
@@ -87,7 +95,7 @@ Below, **✓** = enabled by preset, **—** = disabled by preset, **opt** = opti
 | store.fuzzyDedupe | ✓ | — | ✓ | ✓ |
 | store.classifyBeforeWrite | — | — | ✓ | ✓ |
 | **Credentials** |
-| credentials (vault) | — | opt | opt | opt |
+| credentials (vault) | ✓ | ✓ | opt | opt |
 | credentials.autoDetect | — | — | ✓ | ✓ |
 | credentials.autoCapture.toolCalls | — | — | ✓ | ✓ |
 | **Graph** |
@@ -101,7 +109,7 @@ Below, **✓** = enabled by preset, **—** = disabled by preset, **opt** = opti
 | reflection | — | — | ✓ | ✓ |
 | wal | ✓ | ✓ | ✓ | ✓ |
 | languageKeywords.autoBuild | — | ✓ | ✓ | ✓ |
-| personaProposals | — | — | ✓ | ✓ |
+| personaProposals (preset) | — | — | — | — |
 | personaProposals.autoApply | — | — | — | — |
 | memoryTiering | — | ✓ | ✓ | ✓ |
 | memoryTiering.compactionOnSessionEnd | — | ✓ | ✓ | ✓ |
@@ -109,36 +117,40 @@ Below, **✓** = enabled by preset, **—** = disabled by preset, **opt** = opti
 | selfCorrection.semanticDedup | — | — | ✓ | ✓ |
 | selfCorrection.applyToolsByDefault | — | — | ✓ | ✓ |
 | autoRecall.entityLookup | — | — | ✓ | ✓ |
+| autoRecall.entityLookup.autoFromFacts | — | — | (default true) | (default true) |
+| autoRecall.entityLookup.maxAutoEntities | — | — | (default 500, max 2000) | (default 500, max 2000) |
 | autoRecall.authFailure | — | ✓ | ✓ | ✓ |
-| queryExpansion.enabled | — | — | — | ✓ |
+| autoRecall.interactiveEnrichment | fast | fast | fast | fast |
+| queryExpansion.enabled | — | — | — | — |
 | ingest (paths) | — | ✓ | ✓ | ✓ |
 | distill.extractDirectives | ✓ | ✓ | ✓ | ✓ |
 | distill.extractReinforcement | — | ✓ | ✓ | ✓ |
 | distill.extractionModelTier | — | **default (flash)** | default | default |
 | errorReporting | — | — | opt | opt |
-| **Advanced / opt-in** |
-| workflowTracking | — | — | ✓ | ✓ |
-| nightlyCycle (dream-cycle) | — | — | ✓ | ✓ |
-| passiveObserver | — | — | ✓ | ✓ |
-| extraction (multi-pass) | — | — | ✓ | ✓ |
-| selfExtension (tool proposals) | — | — | ✓ | ✓ |
-| crystallization (skill proposals) | — | — | ✓ | ✓ |
+| **Advanced / opt-in** (preset: off unless noted) |
+| workflowTracking | — | — | — | — |
+| nightlyCycle (dream-cycle) | — | — | — | — |
+| passiveObserver | — | — | — | — |
+| extraction (`extractionPasses` etc.) | — | — | ✓ | ✓ |
+| selfExtension (tool proposals) | — | — | — | — |
+| crystallization (skill proposals) | — | — | — | — |
 | **Verification / provenance / retrieval** |
-| verification | — | — | ✓ | ✓ |
-| provenance | — | — | ✓ | ✓ |
-| documents | — | — | — | ✓ |
-| aliases | — | — | ✓ | ✓ |
-| crossAgentLearning | — | — | ✓ | ✓ |
-| reranking | — | — | ✓ | ✓ |
-| contextualVariants | — | — | ✓ | ✓ |
+| verification | — | — | — | — |
+| provenance | — | — | — | — |
+| documents | — | — | — | — |
+| aliases | — | — | — | — |
+| crossAgentLearning | — | — | — | — |
+| reranking | — | — | — | — |
+| contextualVariants | — | — | — | — |
 | **Verbosity level** | quiet | normal | normal | verbose |
 
 **Notes:**
 
-- **opt**: Credentials vault is on only when `credentials.encryptionKey` is set (or env). In Enhanced/Complete, `autoDetect` and `autoCapture.toolCalls` apply when the vault is enabled.
+- **opt** (Enhanced/Complete vault): Vault is on when `credentials.encryptionKey` resolves to a valid key (or you set `credentials.enabled: true`). In Enhanced/Complete, `autoDetect` and `autoCapture.toolCalls` apply when the vault is enabled. **Local/Minimal** turn the vault on in the preset without requiring a key (use a key for encryption).
 - **personaProposals.autoApply**: Never set by any preset (always **—**). When enabled, approved persona proposals are applied to identity files without human review. **Opt-in only** — no mode turns this on by default.
 - **Minimal** uses only nano/flash-tier models for distill, auto-classify, and ingest to keep cost very low. **Local** uses no external LLM (FTS-only recall).
-- **Advanced / opt-in** (workflowTracking, nightlyCycle, passiveObserver, extraction, selfExtension, crystallization, verification, provenance, aliases, crossAgentLearning, reranking, contextualVariants) are **off** for Local and Minimal; **Enhanced** and **Complete** enable them by preset. **documents** is Complete-only (requires Python/MarkItDown). Users on Local/Minimal can enable any of these explicitly via config or `openclaw hybrid-mem config-set <key>.enabled true`.
+- **autoRecall.entityLookup** (Enhanced/Complete): With `entityLookup.enabled` true, if **`entities` is empty or omitted** and **`autoFromFacts`** is true (default), names come from distinct non-null `entity` values on active facts (`FactsDb.getKnownEntities()`), sorted deterministically and capped by **`maxAutoEntities`** (default 500, hard max 2000). Set **`autoFromFacts`** to `false` for the legacy behavior: no entity-centric merge or `entityMentioned` directives until you set an explicit **`entities`** list. If **`entities`** is non-empty, only that list is used. Run `openclaw hybrid-mem config` to see whether the resolved source is `auto from facts (cap N)` or `N configured name(s)`.
+- **Advanced / opt-in:** In **`PRESET_OVERRIDES`**, workflow tracking, dream-cycle, passive observer, verification, provenance, documents, aliases, cross-agent learning, reranking, contextual variants, self-extension, and crystallization are **`enabled: false`** for **Enhanced** and **Complete** (opt-in only). **`extraction.extractionPasses`** is `true` in those presets (multi-pass extraction flags). **Phase 1** (see above) keeps the same “off unless you opt in” behavior for the disabled keys. Users can enable any feature explicitly via config.
 - **personaProposals.autoApply** is `false` in **all** presets — it is never set automatically. Enable it only if you want the agent to modify identity files without human review. See [PERSONA-PROPOSALS.md](PERSONA-PROPOSALS.md) for risks and the audit trail.
 
 ---
@@ -175,9 +187,14 @@ And you set:
 
 The final result is `["project"]` (your value), **not** `["user", "owner", "project"]`. This applies to all array config fields (e.g., `ingest.paths`, `autoRecall.authFailure.patterns`).
 
+### Empty `entities` and auto-from-facts
+
+If you enable entity lookup but omit **`entities`** (or set `"entities": []`), the plugin uses **`autoRecall.entityLookup.autoFromFacts`** (default `true`) to load names from stored facts, up to **`maxAutoEntities`**. To require a manual list and avoid that until configured, set `"autoFromFacts": false`.
+
 ---
 
 ## See also
 
+- [tests/config-presets-doc-sync.test.ts](../extensions/memory-hybrid/tests/config-presets-doc-sync.test.ts) — preset + Phase 1 guardrails (run with `npm test` in `extensions/memory-hybrid`).
 - [CONFIGURATION.md](CONFIGURATION.md) — Full config reference.
 - [CREDENTIALS.md](CREDENTIALS.md) — Vault setup, migration, and credential capture from tool I/O.

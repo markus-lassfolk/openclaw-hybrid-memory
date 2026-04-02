@@ -2,11 +2,11 @@
  * Tests for reinforcement extraction.
  */
 
-import { describe, it, expect } from "vitest";
-import { runReinforcementExtract } from "../services/reinforcement-extract.js";
-import { writeFileSync, mkdtempSync, rmSync } from "node:fs";
-import { join } from "node:path";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { describe, expect, it } from "vitest";
+import { runReinforcementExtract } from "../services/reinforcement-extract.js";
 
 describe("reinforcement-extract", () => {
   it("should detect explicit praise", async () => {

@@ -8,8 +8,8 @@
  */
 
 import type { CredentialType } from "../config.js";
-import { capturePluginError } from "./error-reporter.js";
 import { validateAndNormalizeServiceName, validateCredentialValue } from "./credential-validation.js";
+import { capturePluginError } from "./error-reporter.js";
 
 export type ToolCallCredential = {
   service: string; // e.g., "ssh://user@host", "github", "api.example.com"
@@ -57,7 +57,8 @@ export function extractHostFromUrl(url: string): string {
       }
     }
   }
-  return "api"; // Safe default
+  // Explicit sentinel — avoids mis-attributing secrets to a generic "api" bucket (#873).
+  return "__unparsed-host__";
 }
 
 /**
@@ -86,7 +87,7 @@ export function typeFromVarName(varName: string): CredentialType {
  * Credential extraction patterns for tool call inputs.
  * Each pattern has a regex and an extract function.
  */
-export const TOOL_CALL_CREDENTIAL_PATTERNS: Array<{
+const TOOL_CALL_CREDENTIAL_PATTERNS: Array<{
   regex: RegExp;
   extract: (match: RegExpMatchArray, fullText: string) => ToolCallCredential | null;
 }> = [

@@ -16,10 +16,11 @@ vi.mock("../services/error-reporter.js", () => ({
   capturePluginError: vi.fn(),
 }));
 
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
-import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
+import * as lancedb from "@lancedb/lancedb";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { _testing } from "../index.js";
 import * as errorReporter from "../services/error-reporter.js";
 
@@ -124,6 +125,49 @@ describe("VectorDB startup schema validation (issue #128)", () => {
     const mismatchWarn = warns.find((w) => w.includes("dimension mismatch"));
     expect(mismatchWarn).toBeUndefined();
     db.close();
+  });
+});
+
+describe("VectorDB legacy schema — missing why column (lineage migration)", () => {
+  let tmpDir: string;
+  let lanceDir: string;
+  const dim = CORRECT_DIM;
+
+  beforeEach(async () => {
+    tmpDir = mkdtempSync(join(tmpdir(), "vector-why-mig-"));
+    lanceDir = join(tmpDir, "lance");
+    const db = await lancedb.connect(lanceDir);
+    await db.createTable("memories", [
+      {
+        id: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+        text: "legacy row",
+        vector: new Array(dim).fill(0.1),
+        importance: 0.5,
+        category: "fact",
+        createdAt: Math.floor(Date.now() / 1000),
+      },
+    ]);
+    await db.close();
+  });
+
+  afterEach(() => {
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("adds why on open so store() does not fail with field not in schema", async () => {
+    const warns: string[] = [];
+    const vdb = new VectorDB(lanceDir, dim);
+    vdb.setLogger({ warn: (msg) => warns.push(msg) });
+    await expect(
+      vdb.store({
+        text: "__diag__",
+        vector: new Array(dim).fill(0.2),
+        importance: 0.5,
+        category: "fact",
+      }),
+    ).resolves.toBeDefined();
+    expect(warns.some((w) => w.includes("why") && w.includes("pre-lineage"))).toBe(true);
+    vdb.close();
   });
 });
 
@@ -546,5 +590,123 @@ describe("VectorDB issue #379 — delete() handles malformed UUIDs gracefully", 
     });
     const result = await db.delete(id);
     expect(result).toBe(true);
+  });
+
+  it("normalizes uppercase UUID fact ids to lowercase on store (matches delete / LanceDB id)", async () => {
+    const mixedCase = "AAAAAAAA-BBBB-4CCC-8DDD-EEEEEEEEEEEE";
+    const returned = await db.store({
+      text: "uuid case",
+      vector: [0.1, 0.2, 0.3],
+      importance: 0.5,
+      category: "fact",
+      id: mixedCase,
+    });
+    expect(returned).toBe(mixedCase.toLowerCase());
+    expect(await db.delete(mixedCase)).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// VectorDB graceful degradation — FTS5-only fallback when lancedb.connect() fails
+// Issue: "If LanceDB fails to open, the plugin becomes unusable."
+// ---------------------------------------------------------------------------
+
+describe("VectorDB graceful degradation — FTS5-only fallback when lancedb.connect() fails", () => {
+  const DIM = 3;
+  const CONNECT_ERROR = new Error("LanceDB connection refused: simulated failure");
+  let connectSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    connectSpy = vi.spyOn(lancedb, "connect").mockRejectedValue(CONNECT_ERROR);
+  });
+
+  afterEach(() => {
+    connectSpy.mockRestore();
+  });
+
+  it("isLanceDbAvailable() returns false after a connect failure", async () => {
+    const db = new VectorDB("/tmp/test-lance", DIM);
+    await db.count();
+    expect(db.isLanceDbAvailable()).toBe(false);
+  });
+
+  it("logs a warning on connect failure", async () => {
+    const db = new VectorDB("/tmp/test-lance", DIM);
+    const warns: string[] = [];
+    db.setLogger({ warn: (msg) => warns.push(msg) });
+    await db.count();
+    expect(warns.some((w) => w.includes("FTS5-only") || w.includes("unavailable"))).toBe(true);
+  });
+
+  it("search() returns [] without calling capturePluginError when LanceDB unavailable", async () => {
+    const db = new VectorDB("/tmp/test-lance", DIM);
+    const results = await db.search(new Array(DIM).fill(0.1), 5, 0);
+    expect(results).toHaveLength(0);
+    expect(vi.mocked(errorReporter.capturePluginError)).not.toHaveBeenCalled();
+  });
+
+  it("hasDuplicate() returns false without calling capturePluginError when LanceDB unavailable", async () => {
+    const db = new VectorDB("/tmp/test-lance", DIM);
+    const result = await db.hasDuplicate(new Array(DIM).fill(0.1));
+    expect(result).toBe(false);
+    expect(vi.mocked(errorReporter.capturePluginError)).not.toHaveBeenCalled();
+  });
+
+  it("store() returns an id without throwing when LanceDB unavailable", async () => {
+    const db = new VectorDB("/tmp/test-lance", DIM);
+    const id = await db.store({
+      text: "test fact",
+      vector: new Array(DIM).fill(0.1),
+      importance: 0.8,
+      category: "fact",
+    });
+    expect(typeof id).toBe("string");
+    expect(id.length).toBeGreaterThan(0);
+  });
+
+  it("store() with an explicit id returns that id when LanceDB unavailable", async () => {
+    const db = new VectorDB("/tmp/test-lance", DIM);
+    const explicitId = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
+    const id = await db.store({
+      text: "test fact",
+      vector: new Array(DIM).fill(0.1),
+      importance: 0.8,
+      category: "fact",
+      id: explicitId,
+    });
+    expect(id).toBe(explicitId);
+  });
+
+  it("count() returns 0 when LanceDB unavailable", async () => {
+    const db = new VectorDB("/tmp/test-lance", DIM);
+    const result = await db.count();
+    expect(result).toBe(0);
+  });
+
+  it("delete() returns false when LanceDB unavailable", async () => {
+    const db = new VectorDB("/tmp/test-lance", DIM);
+    const result = await db.delete("aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee");
+    expect(result).toBe(false);
+  });
+
+  it("optimize() returns zero stats when LanceDB unavailable", async () => {
+    const db = new VectorDB("/tmp/test-lance", DIM);
+    const stats = await db.optimize();
+    expect(stats).toEqual({ compacted: 0, removedFragments: 0, freedBytes: 0 });
+  });
+
+  it("does not retry lancedb.connect() on every call (only once per session)", async () => {
+    const db = new VectorDB("/tmp/test-lance", DIM);
+    const warns: string[] = [];
+    db.setLogger({ warn: (msg) => warns.push(msg) });
+    // Three separate calls — connect should only be attempted once
+    await db.search(new Array(DIM).fill(0.1), 5, 0);
+    await db.search(new Array(DIM).fill(0.2), 5, 0);
+    await db.count();
+    const unavailableWarns = warns.filter((w) => w.includes("FTS5-only") || w.includes("unavailable"));
+    expect(unavailableWarns).toHaveLength(1);
+    // connect() is also only called once despite three operation calls
+    expect(connectSpy).toHaveBeenCalledTimes(1);
   });
 });

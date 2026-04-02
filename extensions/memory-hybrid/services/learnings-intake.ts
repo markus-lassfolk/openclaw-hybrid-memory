@@ -19,16 +19,16 @@
  *  - Rock-Solid Stability: every code path uses capturePluginError.
  */
 
-import { capturePluginError } from "./error-reporter.js";
 import type { LearningsDB } from "../backends/learnings-db.js";
-import type { LearningEntry, LearningEntryType, CreateLearningEntryInput } from "../types/learnings-types.js";
+import type { CreateLearningEntryInput, LearningEntry, LearningEntryType } from "../types/learnings-types.js";
+import { capturePluginError } from "./error-reporter.js";
 
 // ---------------------------------------------------------------------------
 // Promotion evaluation
 // ---------------------------------------------------------------------------
 
 /** Result of evaluating whether an entry is ready for promotion. */
-export interface PromotionEvaluation {
+interface PromotionEvaluation {
   shouldPromote: boolean;
   /** Suggested target description, e.g. "memory_store(category=technical)" */
   suggestedTarget: string | null;

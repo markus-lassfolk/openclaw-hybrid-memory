@@ -28,10 +28,10 @@ export { Embeddings } from "./openai-provider.js";
 
 export { OllamaEmbeddingProvider, _resetOllamaCircuitBreakerForTesting } from "./ollama-provider.js";
 
-export { OnnxEmbeddingProvider, isOnnxRuntimeMissingError, __setOnnxRuntimeLoaderForTests } from "./onnx-provider.js";
+export { OnnxEmbeddingProvider, __setOnnxRuntimeLoaderForTests } from "./onnx-provider.js";
 
 export { FallbackEmbeddingProvider } from "./fallback-provider.js";
 
 export { ChainEmbeddingProvider } from "./chain-provider.js";
 
-export { createEmbeddingProvider } from "./factory.js";
+export { createEmbeddingProvider, AZURE_OPENAI_API_VERSION } from "./factory.js";

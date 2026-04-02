@@ -7,11 +7,11 @@
  * Schema follows IssueStore / ToolProposalStore conventions.
  */
 
-import { DatabaseSync } from "node:sqlite";
-import type { SQLInputValue } from "node:sqlite";
 import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
+import { DatabaseSync } from "node:sqlite";
+import type { SQLInputValue } from "node:sqlite";
 
 import { BaseSqliteStore } from "./base-sqlite-store.js";
 
@@ -19,9 +19,9 @@ import { BaseSqliteStore } from "./base-sqlite-store.js";
 // Public types
 // ---------------------------------------------------------------------------
 
-export type ApitapEndpointStatus = "pending" | "reviewed" | "accepted" | "rejected";
+type ApitapEndpointStatus = "pending" | "reviewed" | "accepted" | "rejected";
 
-export interface ApitapEndpoint {
+interface ApitapEndpoint {
   id: string;
   /** Original site URL that was captured. */
   siteUrl: string;
@@ -46,7 +46,7 @@ export interface ApitapEndpoint {
   updatedAt: string;
 }
 
-export interface CreateApitapEndpointInput {
+interface CreateApitapEndpointInput {
   siteUrl: string;
   endpoint: string;
   method: string;
@@ -63,7 +63,7 @@ export interface CreateApitapEndpointInput {
   endpointTtlDays?: number;
 }
 
-export interface ApitapEndpointFilter {
+interface ApitapEndpointFilter {
   siteUrl?: string;
   sessionId?: string;
   status?: ApitapEndpointStatus;

@@ -4,8 +4,8 @@
  */
 
 import type { FactsDB } from "../backends/facts-db.js";
-import type { ProcedureStep } from "../types/memory.js";
 import type { ExtractProceduresResult } from "../cli/register.js";
+import type { ProcedureStep } from "../types/memory.js";
 import { capturePluginError } from "./error-reporter.js";
 
 export type ParsedSession = {
@@ -72,7 +72,7 @@ function looksLikeFailure(content: unknown): boolean {
 }
 
 /** Reason a session was skipped (when includeSkipReason is true). */
-export type ParseSkipReason = "no_task_intent" | "fewer_than_2_steps";
+type ParseSkipReason = "no_task_intent" | "fewer_than_2_steps";
 
 /** Parse one session JSONL file content. Returns null if no tool calls or invalid. */
 export function parseSessionJsonl(
@@ -226,7 +226,7 @@ export function minimalRecipe(steps: ProcedureStep[]): ProcedureStep[] {
   });
 }
 
-export type ExtractProceduresOptions = {
+type ExtractProceduresOptions = {
   minSteps?: number;
   sessionDir?: string;
   filePaths?: string[];

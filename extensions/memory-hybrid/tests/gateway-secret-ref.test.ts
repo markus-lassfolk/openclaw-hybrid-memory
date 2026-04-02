@@ -1,8 +1,9 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
-import { join } from "node:path";
+import { getEnv, setEnv } from "../utils/env-manager.js";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { resolveSecretRef, parseGatewayConfig } from "../config/parsers/core.js";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { parseGatewayConfig, resolveSecretRef } from "../config/parsers/core.js";
 
 let tmpDir: string;
 
@@ -37,7 +38,7 @@ describe("resolveSecretRef", () => {
   });
 
   it("returns undefined when env var is not set", () => {
-    delete process.env.TEST_GW_TOKEN_UNSET_278;
+    setEnv("TEST_GW_TOKEN_UNSET_278", undefined);
     expect(resolveSecretRef("env:TEST_GW_TOKEN_UNSET_278")).toBeUndefined();
   });
 
@@ -91,7 +92,7 @@ describe("resolveSecretRef", () => {
   });
 
   it("returns undefined when ${VAR} template references unset env var", () => {
-    delete process.env.TEST_VAR_UNSET;
+    setEnv("TEST_VAR_UNSET", undefined);
     expect(resolveSecretRef("${TEST_VAR_UNSET}")).toBeUndefined();
   });
 
@@ -161,7 +162,7 @@ describe("parseGatewayConfig", () => {
   });
 
   it("sets _resolvedToken to undefined when SecretRef cannot be resolved", () => {
-    delete process.env.UNSET_GW_TOKEN_278;
+    setEnv("UNSET_GW_TOKEN_278", undefined);
     const result = parseGatewayConfig({ gateway: { auth: { token: "env:UNSET_GW_TOKEN_278" } } });
     // The config is still returned (SecretRef string is valid), but resolved value is undefined
     expect(result?.auth?.token).toBe("env:UNSET_GW_TOKEN_278");

@@ -8,9 +8,9 @@
  * - Separates queue authority from eventual GitHub branch visibility
  */
 
+import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { mkdir, open, readFile, rename, stat, unlink, writeFile } from "node:fs/promises";
-import { randomUUID } from "node:crypto";
 import { dirname, join } from "node:path";
 
 const LEASES_FILE = "dispatch-leases.json";
@@ -22,9 +22,9 @@ const DEFAULT_LOCK_TIMEOUT_MS = 5000;
 const LOCK_POLL_MS = 50;
 const STALE_LOCK_MS = 2 * 60 * 1000;
 
-export type DispatchLeaseState = "leased" | "running" | "completed" | "failed" | "lease-expired";
+type DispatchLeaseState = "leased" | "running" | "completed" | "failed" | "lease-expired";
 
-export interface DispatchLeaseRecord {
+interface DispatchLeaseRecord {
   issue: number;
   token: string;
   state: DispatchLeaseState;
@@ -53,7 +53,7 @@ interface DispatchLeaseRegistry {
   events: DispatchLeaseEvent[];
 }
 
-export interface AcquireDispatchLeaseInput {
+interface AcquireDispatchLeaseInput {
   stateDir: string;
   issue: number;
   branch?: string;
@@ -62,14 +62,14 @@ export interface AcquireDispatchLeaseInput {
   now?: Date;
 }
 
-export interface AcquireDispatchLeaseResult {
+interface AcquireDispatchLeaseResult {
   acquired: boolean;
   lease?: DispatchLeaseRecord;
   existing?: DispatchLeaseRecord;
   reason?: string;
 }
 
-export interface TransitionDispatchLeaseInput {
+interface TransitionDispatchLeaseInput {
   stateDir: string;
   issue: number;
   token?: string;
@@ -130,7 +130,7 @@ function formatAcquireBlockReason(issue: number, lease: DispatchLeaseRecord): st
 function emptyRegistry(): DispatchLeaseRegistry {
   return {
     version: LEASES_SCHEMA_VERSION,
-    leases: {},
+    leases: Object.create(null) as Record<string, DispatchLeaseRecord>,
     events: [],
   };
 }
@@ -141,10 +141,11 @@ function normalizeRegistry(raw: unknown): DispatchLeaseRegistry {
   }
 
   const obj = raw as Partial<DispatchLeaseRegistry>;
-  const leases: Record<string, DispatchLeaseRecord> = {};
+  const leases: Record<string, DispatchLeaseRecord> = Object.create(null) as Record<string, DispatchLeaseRecord>;
   const rawLeases = obj.leases;
   if (rawLeases && typeof rawLeases === "object" && !Array.isArray(rawLeases)) {
     for (const [key, value] of Object.entries(rawLeases)) {
+      if (key === "__proto__" || key === "constructor" || key === "prototype") continue;
       if (!value || typeof value !== "object" || Array.isArray(value)) continue;
       const lease = value as Partial<DispatchLeaseRecord>;
       if (typeof lease.issue !== "number" || !Number.isInteger(lease.issue)) continue;
@@ -215,16 +216,24 @@ async function writeRegistry(filePath: string, registry: DispatchLeaseRegistry):
 }
 
 async function tryAcquireLock(lockPath: string): Promise<boolean> {
+  let fh: Awaited<ReturnType<typeof open>> | undefined;
   try {
-    const fh = await open(lockPath, "wx");
+    fh = await open(lockPath, "wx");
     await fh.writeFile(`${process.pid}\n${new Date().toISOString()}\n`, "utf-8");
-    await fh.close();
     return true;
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code !== "EEXIST") {
       throw err;
     }
     return false;
+  } finally {
+    if (fh) {
+      try {
+        await fh.close();
+      } catch {
+        // Ignore close errors to avoid masking earlier failures.
+      }
+    }
   }
 }
 

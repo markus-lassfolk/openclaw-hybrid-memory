@@ -8,14 +8,14 @@
  * UUIDs for primary keys, ISO-8601 timestamps.
  */
 
-import { DatabaseSync } from "node:sqlite";
-import type { SQLInputValue } from "node:sqlite";
 import { createHash, randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
+import { DatabaseSync } from "node:sqlite";
+import type { SQLInputValue } from "node:sqlite";
 
-import { BaseSqliteStore } from "./base-sqlite-store.js";
 import { capturePluginError } from "../services/error-reporter.js";
+import { BaseSqliteStore } from "./base-sqlite-store.js";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -45,7 +45,7 @@ export interface CreateWorkflowTraceInput {
   sessionId?: string;
 }
 
-export interface WorkflowFilter {
+interface WorkflowFilter {
   goal?: string;
   outcome?: "success" | "failure" | "unknown";
   minToolCount?: number;
@@ -207,24 +207,26 @@ export class WorkflowStore extends BaseSqliteStore {
     const durationMs = Math.round(input.durationMs ?? 0);
     const sessionId = input.sessionId ?? "";
 
-    this.liveDb
-      .prepare(
-        `INSERT INTO workflow_traces
+    this.runSqliteOp("record", () => {
+      this.liveDb
+        .prepare(
+          `INSERT INTO workflow_traces
            (id, goal, goal_keywords, tool_sequence, args_hash, outcome, tool_count, duration_ms, session_id, created_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .run(
-        id,
-        input.goal,
-        JSON.stringify(keywords),
-        JSON.stringify(input.toolSequence),
-        argsHash,
-        outcome,
-        toolCount,
-        durationMs,
-        sessionId,
-        now,
-      );
+        )
+        .run(
+          id,
+          input.goal,
+          JSON.stringify(keywords),
+          JSON.stringify(input.toolSequence),
+          argsHash,
+          outcome,
+          toolCount,
+          durationMs,
+          sessionId,
+          now,
+        );
+    });
 
     // biome-ignore lint/style/noNonNullAssertion: Known to exist
     return this.getById(id)!;
@@ -235,11 +237,13 @@ export class WorkflowStore extends BaseSqliteStore {
   // -------------------------------------------------------------------------
 
   getById(id: string): WorkflowTrace | null {
-    const row = this.liveDb.prepare("SELECT * FROM workflow_traces WHERE id = ?").get(id) as
-      | Record<string, unknown>
-      | undefined;
-    if (!row) return null;
-    return this.rowToTrace(row);
+    return this.runSqliteOp("getById", () => {
+      const row = this.liveDb.prepare("SELECT * FROM workflow_traces WHERE id = ?").get(id) as
+        | Record<string, unknown>
+        | undefined;
+      if (!row) return null;
+      return this.rowToTrace(row);
+    });
   }
 
   // -------------------------------------------------------------------------
@@ -247,49 +251,51 @@ export class WorkflowStore extends BaseSqliteStore {
   // -------------------------------------------------------------------------
 
   list(filter?: WorkflowFilter): WorkflowTrace[] {
-    let query = "SELECT * FROM workflow_traces WHERE 1=1";
-    const params: SQLInputValue[] = [];
+    return this.runSqliteOp("list", () => {
+      let query = "SELECT * FROM workflow_traces WHERE 1=1";
+      const params: SQLInputValue[] = [];
 
-    if (filter?.outcome) {
-      query += " AND outcome = ?";
-      params.push(filter.outcome);
-    }
-    if (filter?.sessionId) {
-      query += " AND session_id = ?";
-      params.push(filter.sessionId);
-    }
-    if (filter?.minToolCount !== undefined) {
-      query += " AND tool_count >= ?";
-      params.push(filter.minToolCount);
-    }
-    if (filter?.maxToolCount !== undefined) {
-      query += " AND tool_count <= ?";
-      params.push(filter.maxToolCount);
-    }
-
-    query += " ORDER BY created_at DESC";
-
-    if (!filter?.goal && filter?.limit && filter.limit > 0) {
-      query += " LIMIT ?";
-      params.push(filter.limit);
-    }
-
-    const rows = this.liveDb.prepare(query).all(...params) as Record<string, unknown>[];
-    let results = rows.map((r) => this.rowToTrace(r));
-
-    // Keyword filter (in-memory, JSON blob)
-    if (filter?.goal) {
-      const keywords = extractGoalKeywords(filter.goal);
-      if (keywords.length > 0) {
-        results = results.filter((t) => keywords.some((kw) => t.goalKeywords.includes(kw)));
+      if (filter?.outcome) {
+        query += " AND outcome = ?";
+        params.push(filter.outcome);
       }
-    }
+      if (filter?.sessionId) {
+        query += " AND session_id = ?";
+        params.push(filter.sessionId);
+      }
+      if (filter?.minToolCount !== undefined) {
+        query += " AND tool_count >= ?";
+        params.push(filter.minToolCount);
+      }
+      if (filter?.maxToolCount !== undefined) {
+        query += " AND tool_count <= ?";
+        params.push(filter.maxToolCount);
+      }
 
-    if (filter?.limit && filter.limit > 0) {
-      results = results.slice(0, filter.limit);
-    }
+      query += " ORDER BY created_at DESC";
 
-    return results;
+      if (!filter?.goal && filter?.limit && filter.limit > 0) {
+        query += " LIMIT ?";
+        params.push(filter.limit);
+      }
+
+      const rows = this.liveDb.prepare(query).all(...params) as Record<string, unknown>[];
+      let results = rows.map((r) => this.rowToTrace(r));
+
+      // Keyword filter (in-memory, JSON blob)
+      if (filter?.goal) {
+        const keywords = extractGoalKeywords(filter.goal);
+        if (keywords.length > 0) {
+          results = results.filter((t) => keywords.some((kw) => t.goalKeywords.includes(kw)));
+        }
+      }
+
+      if (filter?.limit && filter.limit > 0) {
+        results = results.slice(0, filter.limit);
+      }
+
+      return results;
+    });
   }
 
   // -------------------------------------------------------------------------
@@ -298,15 +304,17 @@ export class WorkflowStore extends BaseSqliteStore {
 
   getByGoal(keywords: string[], limit = 20): WorkflowTrace[] {
     if (keywords.length === 0) return [];
-    // Retrieve candidates via LIKE search on the JSON blob and filter in JS
-    const candidates = this.liveDb
-      .prepare("SELECT * FROM workflow_traces ORDER BY created_at DESC LIMIT 500")
-      .all() as Record<string, unknown>[];
+    return this.runSqliteOp("getByGoal", () => {
+      // Retrieve candidates via LIKE search on the JSON blob and filter in JS
+      const candidates = this.liveDb
+        .prepare("SELECT * FROM workflow_traces ORDER BY created_at DESC LIMIT 500")
+        .all() as Record<string, unknown>[];
 
-    const kwSet = new Set(keywords.map((k) => k.toLowerCase()));
-    const matched = candidates.map((r) => this.rowToTrace(r)).filter((t) => t.goalKeywords.some((k) => kwSet.has(k)));
+      const kwSet = new Set(keywords.map((k) => k.toLowerCase()));
+      const matched = candidates.map((r) => this.rowToTrace(r)).filter((t) => t.goalKeywords.some((k) => kwSet.has(k)));
 
-    return matched.slice(0, limit);
+      return matched.slice(0, limit);
+    });
   }
 
   // -------------------------------------------------------------------------
@@ -314,28 +322,30 @@ export class WorkflowStore extends BaseSqliteStore {
   // -------------------------------------------------------------------------
 
   getSuccessRate(toolSequence: string[], similarityThreshold = 0.8): number {
-    const allRows = this.liveDb.prepare("SELECT tool_sequence, outcome FROM workflow_traces").all() as {
-      tool_sequence: string;
-      outcome: string;
-    }[];
+    return this.runSqliteOp("getSuccessRate", () => {
+      const allRows = this.liveDb.prepare("SELECT tool_sequence, outcome FROM workflow_traces").all() as {
+        tool_sequence: string;
+        outcome: string;
+      }[];
 
-    let total = 0;
-    let successes = 0;
+      let total = 0;
+      let successes = 0;
 
-    for (const row of allRows) {
-      let seq: string[];
-      try {
-        seq = JSON.parse(row.tool_sequence) as string[];
-      } catch {
-        continue;
+      for (const row of allRows) {
+        let seq: string[];
+        try {
+          seq = JSON.parse(row.tool_sequence) as string[];
+        } catch {
+          continue;
+        }
+        if (sequenceSimilarity(toolSequence, seq) >= similarityThreshold) {
+          total++;
+          if (row.outcome === "success") successes++;
+        }
       }
-      if (sequenceSimilarity(toolSequence, seq) >= similarityThreshold) {
-        total++;
-        if (row.outcome === "success") successes++;
-      }
-    }
 
-    return total === 0 ? 0 : successes / total;
+      return total === 0 ? 0 : successes / total;
+    });
   }
 
   // -------------------------------------------------------------------------
@@ -343,77 +353,79 @@ export class WorkflowStore extends BaseSqliteStore {
   // -------------------------------------------------------------------------
 
   getPatterns(options?: { minSuccessRate?: number; similarityThreshold?: number; limit?: number }): WorkflowPattern[] {
-    const threshold = options?.similarityThreshold ?? 0.8;
-    const allRows = this.liveDb
-      .prepare("SELECT goal, tool_sequence, outcome, duration_ms FROM workflow_traces ORDER BY created_at DESC")
-      .all() as { goal: string; tool_sequence: string; outcome: string; duration_ms: number }[];
+    return this.runSqliteOp("getPatterns", () => {
+      const threshold = options?.similarityThreshold ?? 0.8;
+      const allRows = this.liveDb
+        .prepare("SELECT goal, tool_sequence, outcome, duration_ms FROM workflow_traces ORDER BY created_at DESC")
+        .all() as { goal: string; tool_sequence: string; outcome: string; duration_ms: number }[];
 
-    // Cluster by similarity
-    const clusters: {
-      representative: string[];
-      goals: string[];
-      outcomes: string[];
-      durations: number[];
-    }[] = [];
+      // Cluster by similarity
+      const clusters: {
+        representative: string[];
+        goals: string[];
+        outcomes: string[];
+        durations: number[];
+      }[] = [];
 
-    for (const row of allRows) {
-      let seq: string[];
-      try {
-        seq = JSON.parse(row.tool_sequence) as string[];
-      } catch {
-        continue;
-      }
+      for (const row of allRows) {
+        let seq: string[];
+        try {
+          seq = JSON.parse(row.tool_sequence) as string[];
+        } catch {
+          continue;
+        }
 
-      // Find an existing cluster this sequence belongs to
-      let found = false;
-      for (const cluster of clusters) {
-        if (sequenceSimilarity(seq, cluster.representative) >= threshold) {
-          cluster.goals.push(row.goal);
-          cluster.outcomes.push(row.outcome);
-          cluster.durations.push(row.duration_ms);
-          found = true;
-          break;
+        // Find an existing cluster this sequence belongs to
+        let found = false;
+        for (const cluster of clusters) {
+          if (sequenceSimilarity(seq, cluster.representative) >= threshold) {
+            cluster.goals.push(row.goal);
+            cluster.outcomes.push(row.outcome);
+            cluster.durations.push(row.duration_ms);
+            found = true;
+            break;
+          }
+        }
+        if (!found) {
+          clusters.push({
+            representative: seq,
+            goals: [row.goal],
+            outcomes: [row.outcome],
+            durations: [row.duration_ms],
+          });
         }
       }
-      if (!found) {
-        clusters.push({
-          representative: seq,
-          goals: [row.goal],
-          outcomes: [row.outcome],
-          durations: [row.duration_ms],
-        });
-      }
-    }
 
-    const patterns: WorkflowPattern[] = clusters.map((c) => {
-      const totalCount = c.outcomes.length;
-      const successCount = c.outcomes.filter((o) => o === "success").length;
-      const failureCount = c.outcomes.filter((o) => o === "failure").length;
-      const successRate = totalCount > 0 ? successCount / totalCount : 0;
-      const avgDurationMs = c.durations.length > 0 ? c.durations.reduce((a, b) => a + b, 0) / c.durations.length : 0;
-      // Deduplicate example goals
-      const uniqueGoals = [...new Set(c.goals)].slice(0, 3);
+      const patterns: WorkflowPattern[] = clusters.map((c) => {
+        const totalCount = c.outcomes.length;
+        const successCount = c.outcomes.filter((o) => o === "success").length;
+        const failureCount = c.outcomes.filter((o) => o === "failure").length;
+        const successRate = totalCount > 0 ? successCount / totalCount : 0;
+        const avgDurationMs = c.durations.length > 0 ? c.durations.reduce((a, b) => a + b, 0) / c.durations.length : 0;
+        // Deduplicate example goals
+        const uniqueGoals = [...new Set(c.goals)].slice(0, 3);
 
-      return {
-        toolSequence: c.representative,
-        totalCount,
-        successCount,
-        failureCount,
-        successRate,
-        avgDurationMs: Math.round(avgDurationMs),
-        exampleGoals: uniqueGoals,
-      };
+        return {
+          toolSequence: c.representative,
+          totalCount,
+          successCount,
+          failureCount,
+          successRate,
+          avgDurationMs: Math.round(avgDurationMs),
+          exampleGoals: uniqueGoals,
+        };
+      });
+
+      // Filter by min success rate
+      const minRate = options?.minSuccessRate ?? 0;
+      const filtered = patterns.filter((p) => p.successRate >= minRate);
+
+      // Sort by total count desc
+      filtered.sort((a, b) => b.totalCount - a.totalCount);
+
+      const limit = options?.limit ?? 20;
+      return filtered.slice(0, limit);
     });
-
-    // Filter by min success rate
-    const minRate = options?.minSuccessRate ?? 0;
-    const filtered = patterns.filter((p) => p.successRate >= minRate);
-
-    // Sort by total count desc
-    filtered.sort((a, b) => b.totalCount - a.totalCount);
-
-    const limit = options?.limit ?? 20;
-    return filtered.slice(0, limit);
   }
 
   // -------------------------------------------------------------------------
@@ -421,9 +433,11 @@ export class WorkflowStore extends BaseSqliteStore {
   // -------------------------------------------------------------------------
 
   prune(olderThanDays: number): number {
-    const cutoff = new Date(Date.now() - olderThanDays * 24 * 60 * 60 * 1000).toISOString();
-    const result = this.liveDb.prepare("DELETE FROM workflow_traces WHERE created_at < ?").run(cutoff);
-    return Number(result.changes);
+    return this.runSqliteOp("prune", () => {
+      const cutoff = new Date(Date.now() - olderThanDays * 24 * 60 * 60 * 1000).toISOString();
+      const result = this.liveDb.prepare("DELETE FROM workflow_traces WHERE created_at < ?").run(cutoff);
+      return Number(result.changes);
+    });
   }
 
   // -------------------------------------------------------------------------
@@ -431,8 +445,10 @@ export class WorkflowStore extends BaseSqliteStore {
   // -------------------------------------------------------------------------
 
   count(): number {
-    const row = this.liveDb.prepare("SELECT COUNT(*) as n FROM workflow_traces").get() as { n: number };
-    return row.n;
+    return this.runSqliteOp("count", () => {
+      const row = this.liveDb.prepare("SELECT COUNT(*) as n FROM workflow_traces").get() as { n: number };
+      return row.n;
+    });
   }
 
   // -------------------------------------------------------------------------

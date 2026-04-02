@@ -19,7 +19,7 @@ import type { EventLog } from "../backends/event-log.js";
 import type { NarrativesDB } from "../backends/narratives-db.js";
 import { categoryToEventType } from "../backends/event-log.js";
 import type { EmbeddingProvider } from "../services/embeddings.js";
-import { AllEmbeddingProvidersFailed } from "../services/embeddings.js";
+import { AllEmbeddingProvidersFailed, shouldSuppressEmbeddingError } from "../services/embeddings.js";
 import type { EmbeddingRegistry } from "../services/embedding-registry.js";
 import { toFloat32Array } from "../services/embedding-registry.js";
 import type { PendingLLMWarnings } from "../services/chat.js";
@@ -52,15 +52,18 @@ import { extractTags } from "../utils/tags.js";
 import { parseSourceDate } from "../utils/dates.js";
 import { detectFutureDate } from "../utils/date-detector.js";
 import type { VerificationStore } from "../services/verification-store.js";
+import type { AuditStore } from "../backends/audit-store.js";
 import { shouldAutoVerify } from "../services/verification-store.js";
 import type { VariantGenerationQueue } from "../services/contextual-variants.js";
-import { UUID_REGEX } from "../utils/constants.js";
+import { getSessionLogFileSuffix, UUID_REGEX } from "../utils/constants.js";
+import { embedCallWithTimeoutAndRetry } from "../utils/embed-call.js";
 import { formatNarrativeRange, recallNarrativeSummaries } from "../services/narrative-recall.js";
 
 export type BoundWalWriteFn = (
   operation: "store" | "update",
   data: Record<string, unknown>,
   logger: { warn: (msg: string) => void },
+  supersedeTargetId?: string,
 ) => Promise<string>;
 
 export type BoundWalRemoveFn = (id: string, logger: { warn: (msg: string) => void }) => Promise<void>;
@@ -87,6 +90,8 @@ export interface MemoryToolsContext {
   walWrite: BoundWalWriteFn;
   walRemove: BoundWalRemoveFn;
   findSimilarByEmbedding: FindSimilarByEmbeddingFn;
+  /** Cross-agent audit trail (Issue #790). */
+  auditStore?: AuditStore | null;
 }
 
 type LegacyMemoryToolsContext = Omit<
@@ -142,7 +147,10 @@ async function storeRegistryEmbeddings({
     const models = embeddingRegistry.getModels();
     const tasks = models.map(async (cfg) => ({
       name: cfg.name,
-      vec: await embeddingRegistry.embed(text, cfg.name),
+      vec: await embedCallWithTimeoutAndRetry(
+        () => embeddingRegistry.embed(text, cfg.name),
+        `${operation}:${cfg.name}`,
+      ),
     }));
     const settled = await Promise.allSettled(tasks);
     for (const s of settled) {
@@ -157,7 +165,7 @@ async function storeRegistryEmbeddings({
     }
     if (!vector) {
       try {
-        const vec = await embeddingRegistry.embed(text);
+        const vec = await embedCallWithTimeoutAndRetry(() => embeddingRegistry.embed(text), `${operation}:primary`);
         const modelName = embeddings.modelName || embeddingRegistry.getPrimaryModel().name;
         vectors.set(modelName, vec);
       } catch (err) {
@@ -169,7 +177,7 @@ async function storeRegistryEmbeddings({
     }
   } else if (!vector) {
     try {
-      const vec = await embeddingRegistry.embed(text);
+      const vec = await embedCallWithTimeoutAndRetry(() => embeddingRegistry.embed(text), `${operation}:primary`);
       const modelName = embeddings.modelName || embeddingRegistry.getPrimaryModel().name;
       vectors.set(modelName, vec);
     } catch (err) {
@@ -180,7 +188,12 @@ async function storeRegistryEmbeddings({
     }
   }
 
-  if (vectors.size === 0) return;
+  if (vectors.size === 0) {
+    logger.warn(
+      `memory-hybrid: embeddingRegistry produced no vectors for fact ${factId} (${operation}) — caller should treat as embedding failure`,
+    );
+    return;
+  }
   for (const [model, vec] of vectors) {
     try {
       factsDb.storeEmbedding(factId, model, "canonical", vec, vec.length);
@@ -261,7 +274,19 @@ export function registerMemoryTools(
     walWrite,
     walRemove,
     findSimilarByEmbedding,
+    auditStore,
   } = resolvedContext;
+
+  const agentIdForAudit = () => currentAgentIdRef.value || cfg.multiAgent.orchestratorId || "unknown";
+
+  function auditAppend(input: import("../backends/audit-store.js").AuditEventInput): void {
+    if (!auditStore) return;
+    try {
+      auditStore.append(input);
+    } catch {
+      /* non-fatal */
+    }
+  }
 
   api.registerTool(
     {
@@ -320,6 +345,12 @@ export function registerMemoryTools(
               "⚠️ SECURITY: Caller-controlled parameter. In multi-tenant environments, derive from authenticated identity instead. Include session-scoped memories for this session.",
           }),
         ),
+        confirmCrossTenantScope: Type.Optional(
+          Type.Boolean({
+            description:
+              "When multiAgent.trustToolScopeParams is true, set true to confirm intentional cross-tenant scope use of userId/agentId/sessionId (#874).",
+          }),
+        ),
         includeCold: Type.Optional(
           Type.Boolean({
             description: "Set true to include COLD tier (slower / deeper retrieval). Default: false (HOT + WARM only).",
@@ -343,6 +374,14 @@ export function registerMemoryTools(
         try {
           return await memoryRecallImpl(params);
         } catch (err) {
+          auditAppend({
+            agentId: agentIdForAudit(),
+            action: "memory_recall",
+            target: undefined,
+            outcome: "failed",
+            error: err instanceof Error ? err.message : String(err),
+            sessionId: api.context?.sessionId ?? undefined,
+          });
           capturePluginError(err instanceof Error ? err : new Error(String(err)), {
             subsystem: "memory",
             operation: "memory-recall",
@@ -429,7 +468,7 @@ export function registerMemoryTools(
 
         const lines = summaries.map((summary, index) => {
           const agentDir = currentAgentIdRef.value || "main";
-          const logPath = `~/.openclaw/agents/${agentDir}/sessions/${summary.sessionId}.jsonl`;
+          const logPath = `~/.openclaw/agents/${agentDir}/sessions/${summary.sessionId}${getSessionLogFileSuffix()}`;
           return (
             `${index + 1}. [${summary.source}] ${formatNarrativeRange(summary.periodStart, summary.periodEnd)} ` +
             `(sessionKey: ${summary.sessionId}, sessionLogPath: ${logPath})\n${summary.text}`
@@ -450,7 +489,7 @@ export function registerMemoryTools(
               source: summary.source,
               sessionId: summary.sessionId,
               sessionKey: summary.sessionId,
-              sessionLogPath: `~/.openclaw/agents/${currentAgentIdRef.value || "main"}/sessions/${summary.sessionId}.jsonl`,
+              sessionLogPath: `~/.openclaw/agents/${currentAgentIdRef.value || "main"}/sessions/${summary.sessionId}${getSessionLogFileSuffix()}`,
               periodStart: new Date(summary.periodStart * 1000).toISOString(),
               periodEnd: new Date(summary.periodEnd * 1000).toISOString(),
               tag: summary.tag,
@@ -466,6 +505,7 @@ export function registerMemoryTools(
 
   // Internal implementation so we can return from the try block
   async function memoryRecallImpl(params: Record<string, unknown>) {
+    const recallStartedAt = Date.now();
     const {
       query: queryParam,
       id: idParam,
@@ -478,6 +518,7 @@ export function registerMemoryTools(
       userId,
       agentId,
       sessionId,
+      confirmCrossTenantScope,
       expandGraph: expandGraphParam,
       expandDepth: expandDepthParam,
     } = params as {
@@ -492,6 +533,7 @@ export function registerMemoryTools(
       userId?: string;
       agentId?: string;
       sessionId?: string;
+      confirmCrossTenantScope?: boolean;
       expandGraph?: boolean;
       expandDepth?: number;
     };
@@ -503,7 +545,11 @@ export function registerMemoryTools(
     // identity (via autoRecall.scopeFilter config) rather than accepted as tool parameters.
     // Accepting arbitrary scope filters allows users to access other users' private memories.
     // See docs/MEMORY-SCOPING.md "Secure Multi-Tenant Setup" for proper implementation.
-    const scopeFilter = buildToolScopeFilter({ userId, agentId, sessionId }, currentAgentIdRef.value, cfg);
+    const scopeFilter = buildToolScopeFilter(
+      { userId, agentId, sessionId, confirmCrossTenantScope },
+      currentAgentIdRef.value,
+      cfg,
+    );
     const logRecall = (hit: boolean) => {
       const maybeFactsDb = factsDb as { logRecall?: (hit: boolean) => void };
       if (typeof maybeFactsDb.logRecall === "function") {
@@ -548,6 +594,14 @@ export function registerMemoryTools(
           logRecall(true);
           const text = `[${entry.category}] ${entry.text}`;
           const whyLine = entry.why ? `\nWhy: ${entry.why}` : "";
+          auditAppend({
+            agentId: agentIdForAudit(),
+            action: "memory_recall",
+            target: `memory #${entry.id}`,
+            outcome: "success",
+            durationMs: Date.now() - recallStartedAt,
+            sessionId: api.context?.sessionId ?? undefined,
+          });
           return {
             content: [
               {
@@ -578,6 +632,14 @@ export function registerMemoryTools(
         }
       }
       logRecall(false);
+      auditAppend({
+        agentId: agentIdForAudit(),
+        action: "memory_recall",
+        target: typeof idParam === "number" ? `index ${idParam}` : `id ${idParam}`,
+        outcome: "partial",
+        durationMs: Date.now() - recallStartedAt,
+        sessionId: api.context?.sessionId ?? undefined,
+      });
       return {
         content: [
           {
@@ -595,6 +657,14 @@ export function registerMemoryTools(
     const query = typeof queryParam === "string" && queryParam.trim().length > 0 ? queryParam.trim() : null;
     if (!query) {
       logRecall(false);
+      auditAppend({
+        agentId: agentIdForAudit(),
+        action: "memory_recall",
+        target: undefined,
+        outcome: "partial",
+        durationMs: Date.now() - recallStartedAt,
+        sessionId: api.context?.sessionId ?? undefined,
+      });
       return {
         content: [
           {
@@ -649,7 +719,11 @@ export function registerMemoryTools(
         cfg.queryExpansion?.enabled && cfg.retrieval.strategies.includes("semantic")
           ? new QueryExpander(cfg.queryExpansion, openai)
           : null;
-      const embedFn = queryVector != null ? (text: string) => embeddings.embed(text) : null;
+      const embedFn =
+        queryVector != null
+          ? (text: string) =>
+              embedCallWithTimeoutAndRetry(() => embeddings.embed(text), "memory-tools:rrf-deep-retrieval")
+          : null;
       const rrfOutput = await runExplicitDeepRetrieval(query, queryVector, factsDb.getRawDb(), vectorDb, factsDb, {
         config: rrfConfig,
         policy: explicitPolicy,
@@ -868,6 +942,16 @@ export function registerMemoryTools(
       };
     });
 
+    auditAppend({
+      agentId: agentIdForAudit(),
+      action: "memory_recall",
+      target: query ? `query="${query.slice(0, 160)}"` : undefined,
+      outcome: "success",
+      durationMs: Date.now() - recallStartedAt,
+      sessionId: api.context?.sessionId ?? undefined,
+      context: { count: results.length },
+    });
+
     return {
       content: [
         {
@@ -906,6 +990,12 @@ export function registerMemoryTools(
               description: "⚠️ SECURITY: Caller-controlled parameter. Filter procedures for specific session.",
             }),
           ),
+          confirmCrossTenantScope: Type.Optional(
+            Type.Boolean({
+              description:
+                "When multiAgent.trustToolScopeParams is true, set true to confirm intentional cross-tenant scope use of userId/agentId/sessionId (#874).",
+            }),
+          ),
         }),
         async execute(_toolCallId: string, params: Record<string, unknown>) {
           try {
@@ -915,12 +1005,14 @@ export function registerMemoryTools(
               agentId,
               userId,
               sessionId,
+              confirmCrossTenantScope,
             } = params as {
               taskDescription: string;
               limit?: number;
               agentId?: string;
               userId?: string;
               sessionId?: string;
+              confirmCrossTenantScope?: boolean;
             };
             const q =
               typeof taskDescription === "string" && taskDescription.trim().length > 0 ? taskDescription.trim() : null;
@@ -932,7 +1024,11 @@ export function registerMemoryTools(
             }
 
             // Build scope filter (same logic as memory_recall)
-            const scopeFilter = buildToolScopeFilter({ userId, agentId, sessionId }, currentAgentIdRef.value, cfg);
+            const scopeFilter = buildToolScopeFilter(
+              { userId, agentId, sessionId, confirmCrossTenantScope },
+              currentAgentIdRef.value,
+              cfg,
+            );
 
             const procedures = factsDb.searchProcedures(
               q,
@@ -1364,7 +1460,10 @@ export function registerMemoryTools(
               recordActiveStoreProvenance(pointerEntry.id, pointerText);
               try {
                 addOperationBreadcrumb("vector", "store-credential-pointer");
-                const vector = await embeddings.embed(pointerText);
+                const vector = await embedCallWithTimeoutAndRetry(
+                  () => embeddings.embed(pointerText),
+                  "memory-tools:store-credential-pointer",
+                );
                 factsDb.setEmbeddingModel(pointerEntry.id, embeddings.modelName);
                 if (!(await vectorDb.hasDuplicate(vector))) {
                   await vectorDb.store({
@@ -1438,12 +1537,18 @@ export function registerMemoryTools(
           // Generate vector first (needed for WAL and storage)
           let vector: number[] | undefined;
           try {
-            vector = await embeddings.embed(textToStore);
+            vector = await embedCallWithTimeoutAndRetry(
+              () => embeddings.embed(textToStore),
+              "memory-tools:store-embed",
+            );
           } catch (err) {
             if (err instanceof AllEmbeddingProvidersFailed) {
               // Graceful degradation: store the fact without a vector.
               // The fact is still findable by structured/keyword search.
               api.logger.warn("memory-hybrid: Stored fact without embeddings — all providers unavailable");
+            } else if (shouldSuppressEmbeddingError(err)) {
+              // Ollama circuit breaker, 429, config errors, etc. — expected noise (#937); don't send to GlitchTip.
+              api.logger.warn(`memory-hybrid: embedding skipped (expected): ${err}`);
             } else {
               capturePluginError(err instanceof Error ? err : new Error(String(err)), {
                 subsystem: "embeddings",
@@ -1512,6 +1617,7 @@ export function registerMemoryTools(
                       vector,
                     },
                     api.logger,
+                    classification.targetId,
                   );
 
                   const nowSec = Math.floor(Date.now() / 1000);
@@ -1907,6 +2013,15 @@ export function registerMemoryTools(
             }
           }
 
+          auditAppend({
+            agentId: agentIdForAudit(),
+            action: "memory_store",
+            target: `memory #${entry.id}`,
+            outcome: "success",
+            sessionId: api.context?.sessionId ?? undefined,
+            context: { category },
+          });
+
           return {
             content: [
               {
@@ -1935,6 +2050,14 @@ export function registerMemoryTools(
             },
           };
         } catch (err) {
+          auditAppend({
+            agentId: agentIdForAudit(),
+            action: "memory_store",
+            target: undefined,
+            outcome: "failed",
+            error: err instanceof Error ? err.message : String(err),
+            sessionId: api.context?.sessionId ?? undefined,
+          });
           capturePluginError(err instanceof Error ? err : new Error(String(err)), {
             subsystem: "memory",
             operation: "memory-store",
@@ -2127,7 +2250,10 @@ export function registerMemoryTools(
             const sqlResults = factsDb.search(query, 5);
             let lanceResults: SearchResult[] = [];
             try {
-              const vector = await embeddings.embed(query);
+              const vector = await embedCallWithTimeoutAndRetry(
+                () => embeddings.embed(query),
+                "memory-tools:forget-vector-search",
+              );
               lanceResults = await vectorDb.search(vector, 5, 0.7);
             } catch (err) {
               // AllEmbeddingProvidersFailed is expected when no providers are configured — don't report to Sentry.
@@ -2226,463 +2352,509 @@ export function registerMemoryTools(
   // Episodic Memory tools (#781)
   // ---------------------------------------------------------------------------
 
-  /** memory.record_episode — store a structured event with explicit outcome. */
-  api.registerTool(
-    {
-      name: "memory.record_episode",
-      description:
-        "Record a structured episodic memory: a significant event with an explicit outcome (success/failure/partial/unknown), timestamp, and optional context. Use after deployments, migrations, incidents, or other notable events to build a queryable history of what happened and how it turned out.",
-      parameters: Type.Object({
-        event: Type.String({ description: "What happened (e.g. 'deployed openclaw to production')." }),
-        outcome: stringEnum(["success", "failure", "partial", "unknown"] as const, {
-          description: "Outcome of the event.",
+  /** memory_record_episode — store a structured event with explicit outcome. */
+  {
+    const _recordEpisodeParams = Type.Object({
+      event: Type.String({ description: "What happened (e.g. 'deployed openclaw to production')." }),
+      outcome: stringEnum(["success", "failure", "partial", "unknown"] as const, {
+        description: "Outcome of the event.",
+      }),
+      timestamp: Type.Optional(
+        Type.Number({ description: "Unix epoch seconds when the event occurred. Defaults to now." }),
+      ),
+      duration: Type.Optional(
+        Type.Number({ description: "Duration in milliseconds (e.g. how long a deployment took)." }),
+      ),
+      context: Type.Optional(Type.String({ description: "Context: environment state, what led up to it, etc." })),
+      relatedFactIds: Type.Optional(
+        Type.Array(Type.String(), { description: "IDs of related memory facts to link to this episode." }),
+      ),
+      procedureId: Type.Optional(
+        Type.String({ description: "ID of the procedure that triggered this episode, if any." }),
+      ),
+      importance: Type.Optional(
+        Type.Number({ description: "Importance 0–1 (default 0.5). Failures are auto-boosted to ≥0.8." }),
+      ),
+      tags: Type.Optional(Type.Array(Type.String(), { description: "Topic tags for filtering." })),
+      scope: Type.Optional(
+        stringEnum(["global", "user", "agent", "session"] as const, {
+          description: "Memory scope. Default: global.",
         }),
-        timestamp: Type.Optional(
-          Type.Number({ description: "Unix epoch seconds when the event occurred. Defaults to now." }),
-        ),
-        duration: Type.Optional(
-          Type.Number({ description: "Duration in milliseconds (e.g. how long a deployment took)." }),
-        ),
-        context: Type.Optional(Type.String({ description: "Context: environment state, what led up to it, etc." })),
-        relatedFactIds: Type.Optional(
-          Type.Array(Type.String(), { description: "IDs of related memory facts to link to this episode." }),
-        ),
-        procedureId: Type.Optional(
-          Type.String({ description: "ID of the procedure that triggered this episode, if any." }),
-        ),
-        importance: Type.Optional(
-          Type.Number({ description: "Importance 0–1 (default 0.5). Failures are auto-boosted to ≥0.8." }),
-        ),
-        tags: Type.Optional(Type.Array(Type.String(), { description: "Topic tags for filtering." })),
-        scope: Type.Optional(
-          stringEnum(["global", "user", "agent", "session"] as const, {
-            description: "Memory scope. Default: global.",
-          }),
-        ),
-        agentId: Type.Optional(Type.String()),
-        userId: Type.Optional(Type.String()),
-        sessionId: Type.Optional(Type.String()),
-      }),
-      async execute(_toolCallId: string, params: Record<string, unknown>) {
-        try {
-          const scopeFilter = buildToolScopeFilter({}, currentAgentIdRef.value, cfg);
-          const episode = ctx.factsDb.recordEpisode({
-            event: params.event as string,
-            outcome: params.outcome as EpisodeOutcome,
-            timestamp: params.timestamp as number | undefined,
-            duration: params.duration as number | undefined,
-            context: params.context as string | undefined,
-            relatedFactIds: params.relatedFactIds as string[] | undefined,
-            procedureId: params.procedureId as string | undefined,
-            importance: params.importance as number | undefined,
-            tags: params.tags as string[] | undefined,
-            decayClass: "normal",
-            scope: params.scope as "global" | "user" | "agent" | "session" | undefined,
-            scopeTarget: scopeFilter?.sessionId ?? scopeFilter?.userId ?? scopeFilter?.agentId ?? null,
-            agentId: (params.agentId as string | undefined) ?? scopeFilter?.agentId ?? undefined,
-            userId: (params.userId as string | undefined) ?? scopeFilter?.userId ?? undefined,
-            sessionId: (params.sessionId as string | undefined) ?? scopeFilter?.sessionId ?? undefined,
-          });
+      ),
+      agentId: Type.Optional(Type.String()),
+      userId: Type.Optional(Type.String()),
+      sessionId: Type.Optional(Type.String()),
+    });
+    const _recordEpisodeDesc =
+      "Record a structured episodic memory: a significant event with an explicit outcome (success/failure/partial/unknown), timestamp, and optional context. Use after deployments, migrations, incidents, or other notable events to build a queryable history of what happened and how it turned out.";
+    const _execRecordEpisode = async (_toolCallId: string, params: Record<string, unknown>) => {
+      try {
+        const scopeFilter = buildToolScopeFilter({}, currentAgentIdRef.value, cfg);
+        const episode = ctx.factsDb.recordEpisode({
+          event: params.event as string,
+          outcome: params.outcome as EpisodeOutcome,
+          timestamp: params.timestamp as number | undefined,
+          duration: params.duration as number | undefined,
+          context: params.context as string | undefined,
+          relatedFactIds: params.relatedFactIds as string[] | undefined,
+          procedureId: params.procedureId as string | undefined,
+          importance: params.importance as number | undefined,
+          tags: params.tags as string[] | undefined,
+          decayClass: "normal",
+          scope: params.scope as "global" | "user" | "agent" | "session" | undefined,
+          scopeTarget: scopeFilter?.sessionId ?? scopeFilter?.userId ?? scopeFilter?.agentId ?? null,
+          agentId: (params.agentId as string | undefined) ?? scopeFilter?.agentId ?? undefined,
+          userId: (params.userId as string | undefined) ?? scopeFilter?.userId ?? undefined,
+          sessionId: (params.sessionId as string | undefined) ?? scopeFilter?.sessionId ?? undefined,
+        });
 
-          return {
-            content: [
-              {
-                type: "text",
-                text: `Episode recorded: [${episode.outcome}] "${episode.event}" at ${new Date(episode.timestamp * 1000).toISOString()} (id: ${episode.id})`,
-              },
-            ],
-            details: { episode },
-          };
-        } catch (err) {
-          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-            subsystem: "memory",
-            operation: "record_episode",
-            phase: "runtime",
-          });
-          throw err;
-        }
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Episode recorded: [${episode.outcome}] "${episode.event}" at ${new Date(episode.timestamp * 1000).toISOString()} (id: ${episode.id})`,
+            },
+          ],
+          details: { episode },
+        };
+      } catch (err) {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+          subsystem: "memory",
+          operation: "record_episode",
+          phase: "runtime",
+        });
+        throw err;
+      }
+    };
+    api.registerTool(
+      {
+        name: "memory_record_episode",
+        description: _recordEpisodeDesc,
+        parameters: _recordEpisodeParams,
+        execute: _execRecordEpisode,
       },
-    },
-    { name: "memory.record_episode" },
-  );
+      { name: "memory_record_episode" },
+    );
+  }
 
-  /** memory.search_episodes — search structured episodic memories with filters. */
-  api.registerTool(
-    {
-      name: "memory.search_episodes",
-      description:
-        "Search episodic memories — structured records of events with outcomes and timestamps. Filter by outcome (success/failure/partial/unknown), time range, or procedure. Returns events ordered by most recent first.",
-      parameters: Type.Object({
-        query: Type.Optional(Type.String({ description: "Full-text search over event and context fields." })),
-        outcome: Type.Optional(Type.Array(stringEnum(["success", "failure", "partial", "unknown"] as const))),
-        since: Type.Optional(Type.Number({ description: "Unix epoch seconds — only events after this time." })),
-        until: Type.Optional(Type.Number({ description: "Unix epoch seconds — only events before this time." })),
-        procedureId: Type.Optional(Type.String({ description: "Filter to episodes linked to a specific procedure." })),
-        limit: Type.Optional(Type.Number({ description: "Max results to return (default 50, max 200)." })),
-      }),
-      async execute(_toolCallId: string, params: Record<string, unknown>) {
-        try {
-          const scopeFilter = buildToolScopeFilter({}, currentAgentIdRef.value, cfg);
-          const episodes = ctx.factsDb.searchEpisodes({
-            query: params.query as string | undefined,
-            outcome: params.outcome as EpisodeOutcome[] | undefined,
-            since: params.since as number | undefined,
-            until: params.until as number | undefined,
-            procedureId: params.procedureId as string | undefined,
-            limit: Math.min((params.limit as number | undefined) ?? 50, 200),
-            scopeFilter,
-          });
+  /** memory_search_episodes — search structured episodic memories with filters. */
+  {
+    const _searchEpisodesParams = Type.Object({
+      query: Type.Optional(Type.String({ description: "Full-text search over event and context fields." })),
+      outcome: Type.Optional(Type.Array(stringEnum(["success", "failure", "partial", "unknown"] as const))),
+      since: Type.Optional(Type.Number({ description: "Unix epoch seconds — only events after this time." })),
+      until: Type.Optional(Type.Number({ description: "Unix epoch seconds — only events before this time." })),
+      procedureId: Type.Optional(Type.String({ description: "Filter to episodes linked to a specific procedure." })),
+      limit: Type.Optional(Type.Number({ description: "Max results to return (default 50, max 200)." })),
+    });
+    const _searchEpisodesDesc =
+      "Search episodic memories — structured records of events with outcomes and timestamps. Filter by outcome (success/failure/partial/unknown), time range, or procedure. Returns events ordered by most recent first.";
+    const _execSearchEpisodes = async (_toolCallId: string, params: Record<string, unknown>) => {
+      try {
+        const scopeFilter = buildToolScopeFilter({}, currentAgentIdRef.value, cfg);
+        const episodes = ctx.factsDb.searchEpisodes({
+          query: params.query as string | undefined,
+          outcome: params.outcome as EpisodeOutcome[] | undefined,
+          since: params.since as number | undefined,
+          until: params.until as number | undefined,
+          procedureId: params.procedureId as string | undefined,
+          limit: Math.min((params.limit as number | undefined) ?? 50, 200),
+          scopeFilter,
+        });
 
-          if (episodes.length === 0) {
-            return {
-              content: [{ type: "text", text: "No episodes found matching the criteria." }],
-              details: { found: 0, episodes: [] },
-            };
-          }
-
-          const lines = episodes.map((e) => {
-            const ts = new Date(e.timestamp * 1000).toLocaleString();
-            const tagStr = e.tags.length > 0 ? ` #${e.tags.join(" #")}` : "";
-            return `- [${e.outcome}] ${ts}: ${e.event}${tagStr} (id: ${e.id})`;
-          });
-
+        if (episodes.length === 0) {
           return {
-            content: [
-              {
-                type: "text",
-                text: `Found ${episodes.length} episode(s):\n${lines.join("\n")}`,
-              },
-            ],
-            details: { found: episodes.length, episodes },
+            content: [{ type: "text", text: "No episodes found matching the criteria." }],
+            details: { found: 0, episodes: [] },
           };
-        } catch (err) {
-          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-            subsystem: "memory",
-            operation: "search_episodes",
-            phase: "runtime",
-          });
-          throw err;
         }
+
+        const lines = episodes.map((e) => {
+          const ts = new Date(e.timestamp * 1000).toLocaleString();
+          const tagStr = e.tags.length > 0 ? ` #${e.tags.join(" #")}` : "";
+          return `- [${e.outcome}] ${ts}: ${e.event}${tagStr} (id: ${e.id})`;
+        });
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Found ${episodes.length} episode(s):\n${lines.join("\n")}`,
+            },
+          ],
+          details: { found: episodes.length, episodes },
+        };
+      } catch (err) {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+          subsystem: "memory",
+          operation: "search_episodes",
+          phase: "runtime",
+        });
+        throw err;
+      }
+    };
+    api.registerTool(
+      {
+        name: "memory_search_episodes",
+        description: _searchEpisodesDesc,
+        parameters: _searchEpisodesParams,
+        execute: _execSearchEpisodes,
       },
-    },
-    { name: "memory.search_episodes" },
-  );
+      { name: "memory_search_episodes" },
+    );
+  }
 
   // ---------------------------------------------------------------------------
   // Edict tools — verified ground-truth facts with forced prompt injection (#791)
   // ---------------------------------------------------------------------------
 
-  /** memory.add_edict — create a verified ground-truth fact (human-only; agents propose via GitHub). */
-  api.registerTool(
-    {
-      name: "memory.add_edict",
-      label: "Add Edict",
-      description:
-        "Add a verified ground-truth fact (edict) to memory. Edicts are always injected verbatim into system prompts — the agent does NOT reason about them.\n\n" +
-        'NOTE: Agents should NOT create edicts directly. To propose an edict, add a GitHub comment: [EDICT CANDIDATE] text="..." reason="..." tags=[...]. ' +
-        "Only Markus (the human) should use this tool directly.",
-      parameters: Type.Object({
-        text: Type.String({ description: "The verified statement of fact to store" }),
-        source: Type.Optional(
-          Type.String({
-            description: "Who or what verified this edict (e.g. 'human:markus', 'ops:runbook')",
-          }),
-        ),
-        tags: Type.Optional(
-          Type.Array(Type.String(), { description: "Labels for filtering (e.g. ['operations', 'ssh'])" }),
-        ),
-        ttl: Type.Optional(
-          Type.String({
-            description: "TTL mode: 'never' (permanent), 'event' (use expiresAt date), or seconds as number",
-          }),
-        ),
-        expiresAt: Type.Optional(
-          Type.String({
-            description: "ISO 8601 date when this edict expires (for ttl='event')",
-          }),
-        ),
-      }),
-      async execute(_toolCallId: string, params: Record<string, unknown>) {
-        try {
-          const { text, source, tags, ttl, expiresAt } = params as {
-            text: string;
-            source?: string;
-            tags?: string[];
-            ttl?: string;
-            expiresAt?: string;
-          };
+  /** memory_add_edict — create a verified ground-truth fact (human-only; agents propose via GitHub). */
+  {
+    const _addEdictLabel = "Add Edict";
+    const _addEdictParams = Type.Object({
+      text: Type.String({ description: "The verified statement of fact to store" }),
+      source: Type.Optional(
+        Type.String({
+          description: "Who or what verified this edict (e.g. 'human:markus', 'ops:runbook')",
+        }),
+      ),
+      tags: Type.Optional(
+        Type.Array(Type.String(), { description: "Labels for filtering (e.g. ['operations', 'ssh'])" }),
+      ),
+      ttl: Type.Optional(
+        Type.String({
+          description: "TTL mode: 'never' (permanent), 'event' (use expiresAt date), or seconds as number",
+        }),
+      ),
+      expiresAt: Type.Optional(
+        Type.String({
+          description: "ISO 8601 date when this edict expires (for ttl='event')",
+        }),
+      ),
+    });
+    const _addEdictDesc =
+      "Add a verified ground-truth fact (edict) to memory. Edicts are always injected verbatim into system prompts — the agent does NOT reason about them.\n\n" +
+      'NOTE: Agents should NOT create edicts directly. To propose an edict, add a GitHub comment: [EDICT CANDIDATE] text="..." reason="..." tags=[...]. ' +
+      "Only Markus (the human) should use this tool directly.";
+    const _execAddEdict = async (_toolCallId: string, params: Record<string, unknown>) => {
+      try {
+        const { text, source, tags, ttl, expiresAt } = params as {
+          text: string;
+          source?: string;
+          tags?: string[];
+          ttl?: string;
+          expiresAt?: string;
+        };
 
-          if (!text || text.trim().length === 0) {
-            return {
-              content: [{ type: "text", text: "Provide the 'text' parameter: the verified statement to store." }],
-              details: { error: "missing_text" },
-            };
-          }
-
-          let ttlValue: "never" | "event" | number = "never";
-          if (ttl === "event") {
-            ttlValue = "event";
-          } else if (ttl !== undefined && !isNaN(Number(ttl))) {
-            ttlValue = Number(ttl);
-          }
-
-          const edict = edictStore.add({
-            text: text.trim(),
-            source,
-            tags,
-            ttl: ttlValue,
-            expiresAt,
-          });
-
+        if (!text || text.trim().length === 0) {
           return {
-            content: [
-              {
-                type: "text",
-                text: `Edict added: \"${edict.text.slice(0, 80)}${edict.text.length > 80 ? "..." : ""}\" (id: ${edict.id})`,
-              },
-            ],
-            details: { edict },
+            content: [{ type: "text", text: "Provide the 'text' parameter: the verified statement to store." }],
+            details: { error: "missing_text" },
           };
-        } catch (err) {
-          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-            subsystem: "memory",
-            operation: "add_edict",
-            phase: "runtime",
-          });
-          throw err;
         }
-      },
-    },
-    { name: "memory.add_edict" },
-  );
 
-  /** memory.list_edicts — list edicts, optionally filtered by tags. */
-  api.registerTool(
-    {
-      name: "memory.list_edicts",
-      label: "List Edicts",
-      description: "List all non-expired edicts, optionally filtered by tags.",
-      parameters: Type.Object({
-        tags: Type.Optional(Type.Array(Type.String(), { description: "Filter to edicts with any of these tags" })),
-        limit: Type.Optional(Type.Number({ description: "Max results (default 100)" })),
-      }),
-      async execute(_toolCallId: string, params: Record<string, unknown>) {
-        try {
-          const { tags, limit } = params as { tags?: string[]; limit?: number };
-          const edicts = edictStore.list({ tags, limit });
-          if (edicts.length === 0) {
-            return {
-              content: [{ type: "text", text: "No edicts found." }],
-              details: { count: 0, edicts: [] },
-            };
-          }
-          const lines = edicts.map((e) => {
-            const tagStr = e.tags.length > 0 ? `[${e.tags[0]}] ` : "";
-            return `- ${tagStr}${e.text}${e.expiresAt ? ` (expires: ${e.expiresAt})` : ""} (id: ${e.id})`;
-          });
+        let ttlValue: "never" | "event" | number = "never";
+        if (ttl === "event") {
+          ttlValue = "event";
+        } else if (ttl !== undefined && !Number.isNaN(Number(ttl))) {
+          ttlValue = Number(ttl);
+        }
+
+        const edict = edictStore.add({
+          text: text.trim(),
+          source,
+          tags,
+          ttl: ttlValue,
+          expiresAt,
+        });
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Edict added: \"${edict.text.slice(0, 80)}${edict.text.length > 80 ? "..." : ""}\" (id: ${edict.id})`,
+            },
+          ],
+          details: { edict },
+        };
+      } catch (err) {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+          subsystem: "memory",
+          operation: "add_edict",
+          phase: "runtime",
+        });
+        throw err;
+      }
+    };
+    api.registerTool(
+      {
+        name: "memory_add_edict",
+        label: _addEdictLabel,
+        description: _addEdictDesc,
+        parameters: _addEdictParams,
+        execute: _execAddEdict,
+      },
+      { name: "memory_add_edict" },
+    );
+  }
+
+  /** memory_list_edicts — list edicts, optionally filtered by tags. */
+  {
+    const _listEdictsLabel = "List Edicts";
+    const _listEdictsParams = Type.Object({
+      tags: Type.Optional(Type.Array(Type.String(), { description: "Filter to edicts with any of these tags" })),
+      limit: Type.Optional(Type.Number({ description: "Max results (default 100)" })),
+    });
+    const _listEdictsDesc = "List all non-expired edicts, optionally filtered by tags.";
+    const _execListEdicts = async (_toolCallId: string, params: Record<string, unknown>) => {
+      try {
+        const { tags, limit } = params as { tags?: string[]; limit?: number };
+        const edicts = edictStore.list({ tags, limit });
+        if (edicts.length === 0) {
           return {
-            content: [
-              {
-                type: "text",
-                text: `Edicts (${edicts.length}):\n${lines.join("\n")}`,
-              },
-            ],
-            details: { count: edicts.length, edicts },
+            content: [{ type: "text", text: "No edicts found." }],
+            details: { count: 0, edicts: [] },
           };
-        } catch (err) {
-          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-            subsystem: "memory",
-            operation: "list_edicts",
-            phase: "runtime",
-          });
-          throw err;
         }
+        const lines = edicts.map((e) => {
+          const tagStr = e.tags.length > 0 ? `[${e.tags[0]}] ` : "";
+          return `- ${tagStr}${e.text}${e.expiresAt ? ` (expires: ${e.expiresAt})` : ""} (id: ${e.id})`;
+        });
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Edicts (${edicts.length}):\n${lines.join("\n")}`,
+            },
+          ],
+          details: { count: edicts.length, edicts },
+        };
+      } catch (err) {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+          subsystem: "memory",
+          operation: "list_edicts",
+          phase: "runtime",
+        });
+        throw err;
+      }
+    };
+    api.registerTool(
+      {
+        name: "memory_list_edicts",
+        label: _listEdictsLabel,
+        description: _listEdictsDesc,
+        parameters: _listEdictsParams,
+        execute: _execListEdicts,
       },
-    },
-    { name: "memory.list_edicts" },
-  );
+      { name: "memory_list_edicts" },
+    );
+  }
 
-  /** memory.get_edicts — get edicts formatted for system prompt injection. */
-  api.registerTool(
-    {
-      name: "memory.get_edicts",
-      label: "Get Edicts for Prompt",
-      description:
-        "Get all non-expired edicts as a pre-formatted Markdown block for system prompt injection. " +
-        "This is called automatically during context compaction — prefer using this tool when you need edicts explicitly.",
-      parameters: Type.Object({
-        tags: Type.Optional(Type.Array(Type.String(), { description: "Filter to edicts with any of these tags" })),
-        format: Type.Optional(
-          Type.String({ description: "Output format: 'prompt' (Markdown block, default) or 'full' (structured)" }),
-        ),
-        limit: Type.Optional(Type.Number({ description: "Max results (default 100)" })),
-      }),
-      async execute(_toolCallId: string, params: Record<string, unknown>) {
-        try {
-          const { tags, format, limit } = params as { tags?: string[]; format?: string; limit?: number };
-          const result = edictStore.getEdicts({ tags, format: format as "prompt" | "full", limit });
-          if (result.edicts.length === 0) {
-            return {
-              content: [{ type: "text", text: "No edicts found." }],
-              details: { count: 0, edicts: [], renderForPrompt: "" },
-            };
-          }
+  /** memory_get_edicts — get edicts formatted for system prompt injection. */
+  {
+    const _getEdictsLabel = "Get Edicts for Prompt";
+    const _getEdictsParams = Type.Object({
+      tags: Type.Optional(Type.Array(Type.String(), { description: "Filter to edicts with any of these tags" })),
+      format: Type.Optional(
+        Type.String({ description: "Output format: 'prompt' (Markdown block, default) or 'full' (structured)" }),
+      ),
+      limit: Type.Optional(Type.Number({ description: "Max results (default 100)" })),
+    });
+    const _getEdictsDesc =
+      "Get all non-expired edicts as a pre-formatted Markdown block for system prompt injection. " +
+      "This is called automatically during context compaction — prefer using this tool when you need edicts explicitly.";
+    const _execGetEdicts = async (_toolCallId: string, params: Record<string, unknown>) => {
+      try {
+        const { tags, format, limit } = params as { tags?: string[]; format?: string; limit?: number };
+        const result = edictStore.getEdicts({ tags, format: format as "prompt" | "full", limit });
+        if (result.edicts.length === 0) {
           return {
-            content: [{ type: "text", text: result.renderForPrompt || JSON.stringify(result.edicts, null, 2) }],
-            details: { count: result.edicts.length, edicts: result.edicts, renderForPrompt: result.renderForPrompt },
+            content: [{ type: "text", text: "No edicts found." }],
+            details: { count: 0, edicts: [], renderForPrompt: "" },
           };
-        } catch (err) {
-          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-            subsystem: "memory",
-            operation: "get_edicts",
-            phase: "runtime",
-          });
-          throw err;
         }
+        return {
+          content: [{ type: "text", text: result.renderForPrompt || JSON.stringify(result.edicts, null, 2) }],
+          details: { count: result.edicts.length, edicts: result.edicts, renderForPrompt: result.renderForPrompt },
+        };
+      } catch (err) {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+          subsystem: "memory",
+          operation: "get_edicts",
+          phase: "runtime",
+        });
+        throw err;
+      }
+    };
+    api.registerTool(
+      {
+        name: "memory_get_edicts",
+        label: _getEdictsLabel,
+        description: _getEdictsDesc,
+        parameters: _getEdictsParams,
+        execute: _execGetEdicts,
       },
-    },
-    { name: "memory.get_edicts" },
-  );
+      { name: "memory_get_edicts" },
+    );
+  }
 
-  /** memory.update_edict — update an existing edict's text, tags, source, or expiry. */
-  api.registerTool(
-    {
-      name: "memory.update_edict",
-      label: "Update Edict",
-      description: "Update the text, tags, source, or expiry of an existing edict.",
-      parameters: Type.Object({
-        id: Type.String({ description: "The edict id to update" }),
-        text: Type.Optional(Type.String({ description: "New verified statement text" })),
-        source: Type.Optional(Type.String({ description: "New or updated source" })),
-        tags: Type.Optional(Type.Array(Type.String(), { description: "Replacement tags array" })),
-        ttl: Type.Optional(Type.String({ description: "New TTL mode: 'never', 'event', or seconds as number" })),
-        expiresAt: Type.Optional(Type.String({ description: "ISO 8601 expiry date for ttl='event'" })),
-      }),
-      async execute(_toolCallId: string, params: Record<string, unknown>) {
-        try {
-          const { id, text, source, tags, ttl, expiresAt } = params as {
-            id: string;
-            text?: string;
-            source?: string;
-            tags?: string[];
-            ttl?: string;
-            expiresAt?: string;
-          };
+  /** memory_update_edict — update an existing edict's text, tags, source, or expiry. */
+  {
+    const _updateEdictLabel = "Update Edict";
+    const _updateEdictParams = Type.Object({
+      id: Type.String({ description: "The edict id to update" }),
+      text: Type.Optional(Type.String({ description: "New verified statement text" })),
+      source: Type.Optional(Type.String({ description: "New or updated source" })),
+      tags: Type.Optional(Type.Array(Type.String(), { description: "Replacement tags array" })),
+      ttl: Type.Optional(Type.String({ description: "New TTL mode: 'never', 'event', or seconds as number" })),
+      expiresAt: Type.Optional(Type.String({ description: "ISO 8601 expiry date for ttl='event'" })),
+    });
+    const _updateEdictDesc = "Update the text, tags, source, or expiry of an existing edict.";
+    const _execUpdateEdict = async (_toolCallId: string, params: Record<string, unknown>) => {
+      try {
+        const { id, text, source, tags, ttl, expiresAt } = params as {
+          id: string;
+          text?: string;
+          source?: string;
+          tags?: string[];
+          ttl?: string;
+          expiresAt?: string;
+        };
 
-          let ttlValue: "never" | "event" | number | undefined;
-          if (ttl !== undefined) {
-            if (ttl === "event") ttlValue = "event";
-            else if (!isNaN(Number(ttl))) ttlValue = Number(ttl);
-            else ttlValue = "never";
-          }
+        let ttlValue: "never" | "event" | number | undefined;
+        if (ttl !== undefined) {
+          if (ttl === "event") ttlValue = "event";
+          else if (!Number.isNaN(Number(ttl))) ttlValue = Number(ttl);
+          else ttlValue = "never";
+        }
 
-          const updated = edictStore.update({
-            id,
-            text,
-            source,
-            tags,
-            ttl: ttlValue,
-            expiresAt,
-          });
+        const updated = edictStore.update({
+          id,
+          text,
+          source,
+          tags,
+          ttl: ttlValue,
+          expiresAt,
+        });
 
-          if (!updated) {
-            return {
-              content: [{ type: "text", text: `Edict not found: ${id}` }],
-              details: { error: "not_found" },
-            };
-          }
-
+        if (!updated) {
           return {
-            content: [
-              {
-                type: "text",
-                text: `Edict updated: \"${updated.text.slice(0, 80)}${updated.text.length > 80 ? "..." : ""}\" (id: ${updated.id})`,
-              },
-            ],
-            details: { edict: updated },
+            content: [{ type: "text", text: `Edict not found: ${id}` }],
+            details: { error: "not_found" },
           };
-        } catch (err) {
-          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-            subsystem: "memory",
-            operation: "update_edict",
-            phase: "runtime",
-          });
-          throw err;
         }
-      },
-    },
-    { name: "memory.update_edict" },
-  );
 
-  /** memory.remove_edict — delete an edict by id. */
-  api.registerTool(
-    {
-      name: "memory.remove_edict",
-      label: "Remove Edict",
-      description: "Delete an edict from memory by its id.",
-      parameters: Type.Object({
-        id: Type.String({ description: "The edict id to delete" }),
-      }),
-      async execute(_toolCallId: string, params: Record<string, unknown>) {
-        try {
-          const { id } = params as { id: string };
-          const removed = edictStore.remove(id);
-          return {
-            content: [
-              {
-                type: "text",
-                text: removed ? `Edict removed: ${id}` : `Edict not found: ${id}`,
-              },
-            ],
-            details: { removed },
-          };
-        } catch (err) {
-          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-            subsystem: "memory",
-            operation: "remove_edict",
-            phase: "runtime",
-          });
-          throw err;
-        }
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Edict updated: \"${updated.text.slice(0, 80)}${updated.text.length > 80 ? "..." : ""}\" (id: ${updated.id})`,
+            },
+          ],
+          details: { edict: updated },
+        };
+      } catch (err) {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+          subsystem: "memory",
+          operation: "update_edict",
+          phase: "runtime",
+        });
+        throw err;
+      }
+    };
+    api.registerTool(
+      {
+        name: "memory_update_edict",
+        label: _updateEdictLabel,
+        description: _updateEdictDesc,
+        parameters: _updateEdictParams,
+        execute: _execUpdateEdict,
       },
-    },
-    { name: "memory.remove_edict" },
-  );
+      { name: "memory_update_edict" },
+    );
+  }
 
-  /** memory.edict_stats — get statistics about the edict store. */
-  api.registerTool(
-    {
-      name: "memory.edict_stats",
-      label: "Edict Stats",
-      description: "Get statistics about the edict store: total, by-tag counts, expired, and expiring soon.",
-      parameters: Type.Object({}),
-      async execute(_toolCallId: string) {
-        try {
-          const stats = edictStore.stats();
-          const lines = [
-            `Total edicts: ${stats.total}`,
-            `Expired: ${stats.expired}`,
-            `Expiring in 7 days: ${stats.expiringIn7Days}`,
-            `By tag: ${
-              Object.entries(stats.byTag)
-                .map(([k, v]) => `${k}=${v}`)
-                .join(", ") || "none"
-            }`,
-          ];
-          return {
-            content: [{ type: "text", text: lines.join("\n") }],
-            details: stats,
-          };
-        } catch (err) {
-          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-            subsystem: "memory",
-            operation: "edict_stats",
-            phase: "runtime",
-          });
-          throw err;
-        }
+  /** memory_remove_edict — delete an edict by id. */
+  {
+    const _removeEdictLabel = "Remove Edict";
+    const _removeEdictParams = Type.Object({
+      id: Type.String({ description: "The edict id to delete" }),
+    });
+    const _removeEdictDesc = "Delete an edict from memory by its id.";
+    const _execRemoveEdict = async (_toolCallId: string, params: Record<string, unknown>) => {
+      try {
+        const { id } = params as { id: string };
+        const removed = edictStore.remove(id);
+        return {
+          content: [
+            {
+              type: "text",
+              text: removed ? `Edict removed: ${id}` : `Edict not found: ${id}`,
+            },
+          ],
+          details: { removed },
+        };
+      } catch (err) {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+          subsystem: "memory",
+          operation: "remove_edict",
+          phase: "runtime",
+        });
+        throw err;
+      }
+    };
+    api.registerTool(
+      {
+        name: "memory_remove_edict",
+        label: _removeEdictLabel,
+        description: _removeEdictDesc,
+        parameters: _removeEdictParams,
+        execute: _execRemoveEdict,
       },
-    },
-    { name: "memory.edict_stats" },
-  );
+      { name: "memory_remove_edict" },
+    );
+  }
+
+  /** memory_edict_stats — get statistics about the edict store. */
+  {
+    const _edictStatsLabel = "Edict Stats";
+    const _edictStatsParams = Type.Object({});
+    const _edictStatsDesc = "Get statistics about the edict store: total, by-tag counts, expired, and expiring soon.";
+    const _execEdictStats = async (_toolCallId: string) => {
+      try {
+        const stats = edictStore.stats();
+        const lines = [
+          `Total edicts: ${stats.total}`,
+          `Expired: ${stats.expired}`,
+          `Expiring in 7 days: ${stats.expiringIn7Days}`,
+          `By tag: ${
+            Object.entries(stats.byTag)
+              .map(([k, v]) => `${k}=${v}`)
+              .join(", ") || "none"
+          }`,
+        ];
+        return {
+          content: [{ type: "text", text: lines.join("\n") }],
+          details: stats,
+        };
+      } catch (err) {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+          subsystem: "memory",
+          operation: "edict_stats",
+          phase: "runtime",
+        });
+        throw err;
+      }
+    };
+    api.registerTool(
+      {
+        name: "memory_edict_stats",
+        label: _edictStatsLabel,
+        description: _edictStatsDesc,
+        parameters: _edictStatsParams,
+        execute: _execEdictStats,
+      },
+      { name: "memory_edict_stats" },
+    );
+  }
 }

@@ -92,7 +92,7 @@ The reports called out **overlapping recall features** causing delays, lag, and 
 - **Prompt blocks** — max 3: one `<recalled-context>`, optional `<active-task>`, one optional warning.
 
 **Still on by preset (user can turn off):**
-- **Entity lookup** — enhanced/complete presets set `autoRecall.entityLookup.enabled: true`. Local/minimal keep it off.
+- **Entity lookup** — enhanced/complete presets set `autoRecall.entityLookup.enabled: true`. Local/minimal keep it off. When `entities` is empty, default `autoFromFacts` loads distinct entity names from the facts DB (capped); see [CONFIGURATION-MODES.md](CONFIGURATION-MODES.md).
 - **Graph in recall** — minimal+ have `graph.useInRecall: true` (zero-LLM expansion from seeds).
 - **Procedures** — minimal+ have procedures enabled (but capped).
 - **HOT tier** — minimal+ have memory tiering (bounded by `hotMaxTokens`).

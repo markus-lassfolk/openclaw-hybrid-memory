@@ -1,3 +1,4 @@
+import { getEnv } from "../utils/env-manager.js";
 /**
  * CLI registration functions for management commands.
  * Extracted from cli/register.ts lines 290-1552.
@@ -6,7 +7,7 @@
 import { existsSync, mkdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { execSync } from "node:child_process";
+import { execSync } from "../utils/process-runner.js";
 import { generateTraceId, buildCouncilSessionKey, buildProvenanceMetadata } from "../utils/provenance.js";
 import { relativeTime } from "./shared.js";
 import { buildAppliedContent, buildUnifiedDiff } from "./proposals.js";
@@ -36,9 +37,11 @@ import type { SearchResult } from "../types/memory.js";
 import { mergeResults, filterByScope } from "../services/merge-results.js";
 import type { ScopeFilter } from "../types/memory.js";
 import type { HybridMemoryConfig } from "../config.js";
-import { getCronModelConfig, getDefaultCronModel } from "../config.js";
+import { getCronModelConfig, getDefaultCronModel, vectorDimsForModel } from "../config.js";
 import { parseSourceDate } from "../utils/dates.js";
 import { capturePluginError } from "../services/error-reporter.js";
+import { mergeAgentHealthDashboard } from "../backends/agent-health-store.js";
+import { collectForgeState } from "../routes/dashboard-server.js";
 import { withExit, type Chainable } from "./shared.js";
 import { getLanguageKeywordsFilePath } from "../utils/language-keywords.js";
 import { runMemoryDiagnostics } from "../services/memory-diagnostics.js";
@@ -239,6 +242,8 @@ export type ManageContext = {
   runToolEffectiveness?: (opts?: { verbose?: boolean }) => Promise<string>;
   runCostReport?: (opts: import("../cli/handlers.js").CostReportCliOpts, sink: { log: (msg: string) => void }) => void;
   pruneCostLog?: (retainDays?: number) => number;
+  auditStore?: import("../backends/audit-store.js").AuditStore | null;
+  agentHealthStore?: import("../backends/agent-health-store.js").AgentHealthStore | null;
 };
 
 export function registerManageCommands(mem: Chainable, ctx: ManageContext): void {
@@ -302,9 +307,149 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
     resolvedLancePath,
     runBackup,
     runBackupVerify,
+    auditStore,
+    agentHealthStore,
   } = ctx;
 
   const BACKFILL_DECAY_MARKER = ".backfill-decay-done";
+
+  const agentsCmd = mem.command("agents").description("Multi-agent health (Issue #789)");
+  agentsCmd
+    .command("health")
+    .description("Show per-agent health (SQLite + Forge live state)")
+    .option("--agent <id>", "Filter to a single agent id")
+    .action(
+      withExit(async (opts?: { agent?: string }) => {
+        if (!agentHealthStore) {
+          console.error("Agent health store is not available.");
+          process.exitCode = 1;
+          return;
+        }
+        const forge = await collectForgeState();
+        const views = mergeAgentHealthDashboard(forge, agentHealthStore.listAll());
+        const filter = opts?.agent?.trim().toLowerCase();
+        let any = false;
+        for (const v of views) {
+          if (filter && v.agentId !== filter) continue;
+          any = true;
+          console.log(
+            `${v.agentId}\t${v.status}\tscore=${v.score.toFixed(1)}\tlast=${new Date(v.lastSeen).toISOString()}\t${v.lastTask.slice(0, 120)}`,
+          );
+        }
+        if (!any) {
+          console.log("(no rows)");
+        }
+      }),
+    );
+  agentsCmd
+    .command("activity")
+    .description("Recent audit events for an agent (requires audit log)")
+    .requiredOption("--agent <id>", "Agent id")
+    .option("--hours <n>", "Lookback hours", "24")
+    .action(
+      withExit(async (opts?: { agent?: string; hours?: string }) => {
+        if (!auditStore) {
+          console.error("Audit store is not available.");
+          process.exitCode = 1;
+          return;
+        }
+        const agent = opts?.agent?.trim();
+        if (!agent) {
+          console.error("--agent is required.");
+          process.exitCode = 1;
+          return;
+        }
+        const hours = Math.max(1, Math.min(720, Number.parseInt(String(opts?.hours ?? "24"), 10) || 24));
+        const sinceMs = Date.now() - hours * 3600 * 1000;
+        const rows = auditStore.query({ sinceMs, agentId: agent, limit: 200 });
+        for (const r of rows) {
+          const ts = new Date(r.timestamp).toISOString();
+          console.log(`${ts}\t${r.action}\t${r.outcome}\t${r.target ?? ""}`);
+        }
+        if (rows.length === 0) {
+          console.log("(no events)");
+        }
+      }),
+    );
+
+  mem
+    .command("audit")
+    .description("Cross-agent audit trail (Issue #790): query logged memory operations")
+    .option("--hours <n>", "Look back window in hours", "24")
+    .option("--agent <id>", "Filter by agent id")
+    .option("--outcome <o>", "Filter: success, partial, or failed")
+    .option("--target <t>", "Substring match on target field")
+    .option("--format <f>", "Output: lines, summary, or timeline", "lines")
+    .action(
+      withExit(
+        async (opts?: {
+          hours?: string;
+          agent?: string;
+          outcome?: string;
+          target?: string;
+          format?: string;
+        }) => {
+          if (!auditStore) {
+            console.error("Audit store is not available (e.g. in-memory tests or missing DB path).");
+            process.exitCode = 1;
+            return;
+          }
+          const hours = Math.max(1, Math.min(720, Number.parseInt(String(opts?.hours ?? "24"), 10) || 24));
+          const sinceMs = Date.now() - hours * 3600 * 1000;
+          const outcome =
+            opts?.outcome === "success" || opts?.outcome === "partial" || opts?.outcome === "failed"
+              ? opts.outcome
+              : undefined;
+          const fmt = (opts?.format ?? "lines").toLowerCase();
+          const rows = auditStore.query({
+            sinceMs,
+            agentId: opts?.agent?.trim() || undefined,
+            outcome,
+            targetContains: opts?.target?.trim() || undefined,
+            limit: fmt === "summary" ? 5000 : 500,
+          });
+          if (fmt === "summary") {
+            let total = 0;
+            const byOutcome: Record<string, number> = { success: 0, partial: 0, failed: 0 };
+            const byAgent: Record<string, number> = {};
+            for (const r of rows) {
+              total++;
+              byOutcome[r.outcome] = (byOutcome[r.outcome] ?? 0) + 1;
+              byAgent[r.agentId] = (byAgent[r.agentId] ?? 0) + 1;
+            }
+            console.log(`Audit (last ${hours}h, filtered): total=${total}`);
+            console.log(`  success=${byOutcome.success} partial=${byOutcome.partial} failed=${byOutcome.failed}`);
+            for (const [a, c] of Object.entries(byAgent).sort((x, y) => y[1] - x[1])) {
+              console.log(`  ${a}: ${c}`);
+            }
+            return;
+          }
+          if (fmt === "timeline") {
+            const byHour = new Map<string, number>();
+            for (const r of rows) {
+              const d = new Date(r.timestamp);
+              const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")} ${String(d.getHours()).padStart(2, "0")}:00`;
+              byHour.set(key, (byHour.get(key) ?? 0) + 1);
+            }
+            const keys = [...byHour.keys()].sort();
+            for (const k of keys) {
+              console.log(`${k}  ${"█".repeat(Math.min(40, byHour.get(k) ?? 0))} (${byHour.get(k)})`);
+            }
+            return;
+          }
+          for (const r of rows) {
+            const ts = new Date(r.timestamp).toISOString().replace("T", " ").slice(0, 19);
+            const dur = r.durationMs != null ? ` [${r.durationMs}ms]` : "";
+            const tgt = r.target ? ` ${r.target}` : "";
+            const err = r.error ? ` err=${r.error.slice(0, 80)}` : "";
+            console.log(`${ts} ${r.agentId} ${r.action} ${r.outcome}${tgt}${dur}${err}`);
+          }
+          if (rows.length === 0) {
+            console.log("(no events in window)");
+          }
+        },
+      ),
+    );
 
   mem
     .command("run-all")
@@ -659,10 +804,16 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
           console.log(`Language keywords: ${languageKeywordsCount}`);
           console.log("");
           console.log(`Graph (links/entities): ${links}/${entities}`);
-          console.log(`Credentials (vaulted): ${credentials}`);
+          console.log(
+            `Credentials (vaulted): ${credentials}${
+              credentials === 0 && !ctx.cfg.credentials.enabled ? " (vault off in effective config; counts stay 0)" : ""
+            }`,
+          );
           const proposalsLine = proposalsAvailable
             ? `Proposals (pending): ${proposalsPending}${proposalsPending === 0 ? " (run generate-proposals to create)" : ""}`
-            : "Proposals (pending): — (persona proposals disabled)";
+            : ctx.cfg.personaProposals.enabled
+              ? "Proposals (pending): — (proposals store unavailable)"
+              : "Proposals (pending): — (persona proposals off in effective config; see hybrid-mem config if file still shows enabled)";
           console.log(proposalsLine);
           console.log(`WAL (pending distill): ${walPending}`);
           console.log("");
@@ -797,6 +948,58 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
         console.log(`Semantic search: ${icon(result.semantic.ok)} (${result.semantic.count} result(s))`);
         console.log(`Hybrid search: ${icon(result.hybrid.ok)} (${result.hybrid.count} result(s))`);
         console.log(`Auto-recall: ${icon(result.autoRecall.ok)} (${result.autoRecall.count} candidate(s))`);
+      }),
+    );
+
+  mem
+    .command("model-info [model]")
+    .description(
+      "Show vector dimensions for a built-in embedding model name, or print current embedding config when [model] is omitted",
+    )
+    .action(
+      withExit(async (modelArg?: string) => {
+        const name = typeof modelArg === "string" ? modelArg.trim() : "";
+        if (!name) {
+          const emb = cfg.embedding;
+          console.log("=== Current embedding config ===");
+          console.log(`Provider: ${emb.provider}`);
+          console.log(`Model: ${emb.model}`);
+          if (emb.models && emb.models.length > 0) {
+            console.log(`Models (multi): ${emb.models.join(", ")}`);
+          }
+          console.log(`Dimensions (resolved in config): ${emb.dimensions}`);
+          try {
+            const catalog = vectorDimsForModel(emb.model);
+            if (catalog === emb.dimensions) {
+              console.log(`Catalog dimensions for '${emb.model}': ${catalog} (matches config)`);
+            } else {
+              console.log(
+                `Catalog dimensions for '${emb.model}': ${catalog} (config uses ${emb.dimensions} — may be intentional)`,
+              );
+            }
+          } catch {
+            console.log(
+              `Model '${emb.model}' is not in the built-in catalog; dimensions are taken from config (${emb.dimensions}).`,
+            );
+            console.log(
+              "For custom Ollama/ONNX models, set embedding.dimensions to the vector size your model outputs.",
+            );
+          }
+          return;
+        }
+        try {
+          const dims = vectorDimsForModel(name);
+          console.log(`Model: ${name}`);
+          console.log(`Vector dimensions: ${dims}`);
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          console.error(`error: ${msg}`);
+          console.error(
+            "For models not in the catalog, set embedding.dimensions in plugin config to the vector size your provider returns.",
+          );
+          process.exitCode = 1;
+          return;
+        }
       }),
     );
 
@@ -1092,6 +1295,179 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
       }),
     );
 
+  // ---- Token-budget tiered trimming (Issue #792) ----
+  const budget = mem.command("budget").description("Token budget status and tiered trimming simulation");
+  budget
+    .command("show")
+    .description("Show current token budget status and overflow")
+    .action(
+      withExit(async () => {
+        try {
+          const status = factsDb.getTokenBudgetStatus();
+          const fmt = (n: number) => n.toLocaleString();
+          console.log("Token Budget Report");
+          console.log(
+            `  Budget:  ${fmt(status.budget)} tokens (approx ${fmt(Math.round(status.budget * 3.8))} chars @ 3.8 chars/token)`,
+          );
+          console.log(
+            `  Used:    ${fmt(status.totalTokens)} tokens (approx ${fmt(Math.round(status.totalTokens * 3.8))} chars)`,
+          );
+          console.log(`  Overflow: ${fmt(status.overflow)} tokens`);
+          console.log(`
+By Tier:`);
+          console.log(
+            `  P0 (never trim):  ${fmt(status.byTier.p0)} tokens  (${status.factCount.p0} facts) — edicts, verified, preserveUntil, preserveTags`,
+          );
+          console.log(
+            `  P1 (trim last):   ${fmt(status.byTier.p1)} tokens  (${status.factCount.p1} facts) — importance >0.8, recent <1h`,
+          );
+          console.log(
+            `  P2 (trim middle): ${fmt(status.byTier.p2)} tokens  (${status.factCount.p2} facts) — importance 0.5-0.8`,
+          );
+          console.log(
+            `  P3 (trim first):  ${fmt(status.byTier.p3)} tokens  (${status.factCount.p3} facts) — importance <0.5`,
+          );
+          if (status.overflow > 0) {
+            console.log(`
+⚠️  Budget exceeded by ${fmt(status.overflow)} tokens. Run 'memory budget simulate' to see what would be trimmed.`);
+          }
+        } catch (err) {
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+            subsystem: "cli",
+            operation: "budget-show",
+          });
+          throw err;
+        }
+      }),
+    );
+  budget
+    .command("simulate")
+    .description("Simulate tiered trimming to stay within budget")
+    .option(
+      "--budget <n>",
+      "Token budget override (default: 80% of 32k context)",
+      String(Math.ceil((32_000 * 0.8) / 3.8)),
+    )
+    .action(
+      withExit(async (opts?: { budget?: string }) => {
+        try {
+          const DEFAULT_BUDGET = Math.ceil((32_000 * 0.8) / 3.8);
+          const budgetVal = Number.parseInt(opts?.budget ?? String(DEFAULT_BUDGET), 10);
+          const result = factsDb.trimToBudget(budgetVal, true);
+          const fmt = (n: number) => n.toLocaleString();
+          console.log(`Budget Simulation (budget=${fmt(budgetVal)} tokens)`);
+          console.log(`  Before: ${fmt(result.beforeTokens)} tokens`);
+          console.log(`  After:  ${fmt(result.afterTokens)} tokens`);
+          console.log(`  Would trim ${result.trimmed.length} fact(s):`);
+          if (result.trimmed.length === 0) {
+            console.log("    (nothing to trim — within budget)");
+          } else {
+            for (const t of result.trimmed) {
+              console.log(
+                `  [${t.tier}] importance=${t.importance.toFixed(2)} tokens=${fmt(t.tokenCost)} — "${t.textPreview}"`,
+              );
+            }
+          }
+          console.log(`
+Preserved (P0 — never trimmed, ${result.preserved.length} fact(s)):`);
+          if (result.preserved.length === 0) {
+            console.log("    (none)");
+          } else {
+            for (const p of result.preserved.slice(0, 20)) {
+              console.log(`  ${p.id} — ${p.reason}`);
+            }
+            if (result.preserved.length > 20) {
+              console.log(`  ... and ${result.preserved.length - 20} more`);
+            }
+          }
+        } catch (err) {
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+            subsystem: "cli",
+            operation: "budget-simulate",
+          });
+          throw err;
+        }
+      }),
+    );
+
+  mem
+    .command("preserve")
+    .description("Force-preserve a fact from tiered trimming. Run without options to show current preserve status.")
+    .option("--until <epoch>", "Preserve until epoch seconds, 'never' to clear, or shorthand like '1y' (default: 1y)")
+    .option("-t, --tag <tag>", "Add a preserve tag (can be repeated)")
+    .action(
+      withExit(async (id: string, opts?: { until?: string; tag?: string | null }) => {
+        try {
+          const fact = factsDb.get(id);
+          if (!fact) {
+            console.log(`Fact not found: ${id}`);
+            process.exitCode = 1;
+            return;
+          }
+          const nowSec = Math.floor(Date.now() / 1000);
+          const YEAR_SEC = 365 * 24 * 3600;
+
+          let untilSec: number | null = null;
+          const untilRaw = opts?.until;
+          if (untilRaw && untilRaw !== "never") {
+            const shorthandMatch = untilRaw.match(/^(\d+)([yYmMdD])$/);
+            if (shorthandMatch) {
+              const val = Number.parseInt(shorthandMatch[1]!, 10);
+              const unit = shorthandMatch[2]?.toLowerCase();
+              if (unit === "y") untilSec = nowSec + val * YEAR_SEC;
+              else if (unit === "d") untilSec = nowSec + val * 86400;
+              else if (unit === "m") untilSec = nowSec + val * 30 * 86400;
+            } else {
+              const parsed = Number.parseInt(untilRaw, 10);
+              if (Number.isNaN(parsed) || parsed <= nowSec) {
+                console.error(
+                  `error: --until must be epoch seconds in the future, 'never', or shorthand like '1y'. Got: ${untilRaw}`,
+                );
+                process.exitCode = 1;
+                return;
+              }
+              untilSec = parsed;
+            }
+          } else if (untilRaw === "never") {
+            untilSec = null;
+          } else {
+            untilSec = nowSec + YEAR_SEC;
+          }
+
+          const addedTags: string[] = [];
+          if (opts?.tag) {
+            const tagVal = opts.tag;
+            if (Array.isArray(tagVal)) {
+              addedTags.push(...tagVal.map(String));
+            } else {
+              addedTags.push(String(tagVal));
+            }
+          }
+
+          factsDb.setPreserveUntil(id, untilSec);
+          if (addedTags.length > 0) {
+            factsDb.setPreserveTags(id, addedTags, "add");
+          }
+          const final = factsDb.getById(id);
+          const preview = fact.text.length > 80 ? `${fact.text.slice(0, 80)}…` : fact.text;
+          console.log(`Preserved: "${preview}"`);
+          const untilStr = final?.preserveUntil != null ? new Date(final.preserveUntil! * 1000).toISOString() : "null";
+          console.log(`  preserveUntil: ${untilStr}`);
+          console.log(`  preserveTags:  ${(final?.preserveTags ?? []).join(", ") || "(none)"}`);
+          const tags = (fact.tags ?? []).map(String);
+          if (tags.includes("edict")) {
+            console.log(`  note: fact already has 'edict' tag — already P0 (never trimmed)`);
+          }
+        } catch (err) {
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+            subsystem: "cli",
+            operation: "preserve",
+          });
+          throw err;
+        }
+      }),
+    );
+
   const proposals = mem.command("proposals").description("Manage persona-driven proposals");
   const proposalStatusValues = ["pending", "approved", "rejected", "applied"] as const;
   proposals
@@ -1188,7 +1564,7 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
           createdAt: number;
           evidenceSessions?: string[];
         };
-        const workspace = process.env.OPENCLAW_WORKSPACE ?? join(homedir(), ".openclaw", "workspace");
+        const workspace = getEnv("OPENCLAW_WORKSPACE") ?? join(homedir(), ".openclaw", "workspace");
         const targetPath = join(workspace, proposal.targetFile);
         const includeDiff = !!opts?.diff || !!opts?.json;
         let diffText: string | null = null;
@@ -2602,7 +2978,7 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
         console.log(`  Last Failed:   ${proc.lastFailed ? new Date(proc.lastFailed * 1000).toISOString() : "never"}`);
 
         if (proc.avoidanceNotes && proc.avoidanceNotes.length > 0) {
-          console.log(`\n  Avoidance notes (all versions):`);
+          console.log("\n  Avoidance notes (all versions):");
           for (const note of proc.avoidanceNotes) {
             console.log(`    - ${note}`);
           }
@@ -2632,7 +3008,7 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
             console.log(`    [${when}] v${f.versionNumber}${step}: ${f.context ?? "(no context)"}`);
           }
         } else {
-          console.log(`\n  No failures recorded.`);
+          console.log("\n  No failures recorded.");
         }
       }),
     );

@@ -13,15 +13,15 @@
  * Addresses Product Goal 4: Autonomous Maintenance
  */
 
+import { execFile as execFileCb } from "../utils/process-runner.js";
 import { existsSync } from "node:fs";
-import { writeFile, readdir, mkdir, unlink } from "node:fs/promises";
-import { join, dirname } from "node:path";
+import { mkdir, readdir, unlink, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { execFile as execFileCb } from "node:child_process";
+import { dirname, join } from "node:path";
 import { promisify } from "node:util";
+import { readJsonFile } from "../utils/fs.js";
 import { capturePluginError } from "./error-reporter.js";
 import { expireDispatchLeases, transitionDispatchLease } from "./task-queue-leases.js";
-import { readJsonFile } from "../utils/fs.js";
 
 const execFile = promisify(execFileCb);
 
@@ -44,13 +44,13 @@ export interface TaskQueueWatchdogConfig {
   checkBranch?: boolean;
 }
 
-export type WatchdogAction =
+type WatchdogAction =
   | "no-current" // No active current.json found
   | "ok" // Entry is healthy, no action needed
   | "cleared" // Stale entry moved to history (will be retried)
   | "quarantined"; // Entry exceeded retry limit; moved to quarantine
 
-export interface WatchdogResult {
+interface WatchdogResult {
   /** What the watchdog decided to do */
   action: WatchdogAction;
   /** Human-readable explanation for the action */
@@ -88,6 +88,20 @@ export interface TaskQueueItem {
 // ---------------------------------------------------------------------------
 // Internal helpers (exported for testing)
 // ---------------------------------------------------------------------------
+
+/**
+ * Returns true when `current` is the same queue task as `stale` for safe replacement of current.json.
+ * When pid/started are absent, pid/start equality must not be used (undefined === undefined is always true).
+ */
+export function taskQueueItemMatchesStale(current: TaskQueueItem, stale: TaskQueueItem): boolean {
+  const hasPidOrStarted = stale.pid != null || stale.started != null;
+  if (hasPidOrStarted) {
+    return current.pid === stale.pid && current.started === stale.started;
+  }
+  return (
+    current.issue === stale.issue && current.dispatchToken === stale.dispatchToken && current.branch === stale.branch
+  );
+}
 
 /**
  * Returns true if the given PID is alive on this system.
@@ -217,10 +231,6 @@ export async function runTaskQueueWatchdog(
     // Non-fatal: watchdog should still function for current.json hygiene.
   }
 
-  if (!existsSync(currentPath)) {
-    return { action: "no-current" };
-  }
-
   const item = await readJsonFile<TaskQueueItem>(currentPath);
   if (!item || typeof item !== "object" || Array.isArray(item)) {
     return { action: "no-current" };
@@ -297,13 +307,7 @@ export async function runTaskQueueWatchdog(
   // was written between our initial read and this unlink.
   try {
     const recheck = await readJsonFile<TaskQueueItem>(currentPath);
-    // Guard is only meaningful if we have at least one identity field to compare.
-    // When both pid and started are undefined, the comparison is always true and
-    // provides no protection. In such cases, also check branch to ensure identity.
-    const hasPidOrStarted = item.pid != null || item.started != null;
-    const identityMatches = hasPidOrStarted
-      ? recheck && recheck.pid === item.pid && recheck.started === item.started
-      : recheck && recheck.pid === item.pid && recheck.started === item.started && recheck.branch === item.branch;
+    const identityMatches = recheck != null && taskQueueItemMatchesStale(recheck, item);
     if (identityMatches) {
       await unlink(currentPath);
     }

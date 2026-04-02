@@ -5,18 +5,18 @@
 
 import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
+import { isStructuredForConsolidation } from "./consolidation.js";
 import type { EmbeddingProvider } from "./embeddings.js";
 import { shouldSuppressEmbeddingError } from "./embeddings.js";
 import { capturePluginError } from "./error-reporter.js";
-import { isStructuredForConsolidation } from "./consolidation.js";
 
-export interface FindDuplicatesOptions {
+interface FindDuplicatesOptions {
   threshold: number;
   includeStructured: boolean;
   limit: number;
 }
 
-export interface FindDuplicatesResult {
+interface FindDuplicatesResult {
   pairs: Array<{ idA: string; idB: string; score: number; textA: string; textB: string }>;
   candidatesCount: number;
   skippedStructured: number;

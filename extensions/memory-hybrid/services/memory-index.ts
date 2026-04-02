@@ -1,19 +1,21 @@
+import { getEnv } from "../utils/env-manager.js";
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type OpenAI from "openai";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { MemoryEntry } from "../types/memory.js";
-import { detectClusters } from "./topic-clusters.js";
-import { loadPrompt, fillPrompt } from "../utils/prompt-loader.js";
-import { capturePluginError } from "./error-reporter.js";
+import { fillPrompt, loadPrompt } from "../utils/prompt-loader.js";
 import {
-  chatCompleteWithRetry,
   LLMRetryError,
-  is500Like,
+  chatCompleteWithRetry,
   is404Like,
-  isOllamaOOM,
+  is500Like,
   isConnectionErrorLike,
+  isOllamaOOM,
 } from "./chat.js";
+import { CostFeature } from "./cost-feature-labels.js";
+import { capturePluginError } from "./error-reporter.js";
+import { detectClusters } from "./topic-clusters.js";
 
 const MAX_CLUSTERS = 5;
 const MAX_DECISIONS = 5;
@@ -21,7 +23,7 @@ const MAX_ENTITIES = 8;
 const MAX_PATTERNS = 5;
 const MAX_OUTPUT_CHARS = 3200;
 
-export interface MemoryIndexOptions {
+interface MemoryIndexOptions {
   workspaceRoot?: string;
   outputPath?: string;
   model?: string;
@@ -29,7 +31,7 @@ export interface MemoryIndexOptions {
   recentWindowDays?: number;
 }
 
-export interface MemoryIndexResult {
+interface MemoryIndexResult {
   path: string;
   content: string;
   usedFallback: boolean;
@@ -259,7 +261,7 @@ async function synthesizeMemoryIndex(
       openai,
       fallbackModels: options.fallbackModels ?? [],
       label: "memory-hybrid: memory-index",
-      feature: "reflection",
+      feature: CostFeature.memoryIndex,
     });
     return sanitizeIndexMarkdown(response);
   } catch (err) {
@@ -285,7 +287,7 @@ async function synthesizeMemoryIndex(
 
 function resolveOutputPath(options: Pick<MemoryIndexOptions, "workspaceRoot" | "outputPath">): string {
   if (options.outputPath) return options.outputPath;
-  const workspaceRoot = options.workspaceRoot ?? process.env.OPENCLAW_WORKSPACE ?? process.cwd();
+  const workspaceRoot = options.workspaceRoot ?? getEnv("OPENCLAW_WORKSPACE") ?? process.cwd();
   return join(workspaceRoot, "MEMORY_INDEX.md");
 }
 

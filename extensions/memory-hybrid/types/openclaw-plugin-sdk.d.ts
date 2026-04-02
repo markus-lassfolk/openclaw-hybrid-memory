@@ -10,8 +10,8 @@ declare module "openclaw/plugin-sdk/core" {
   export type ClawdbotPluginApi = _OpenClawPluginApi;
 }
 
-// Also keep the barrel augmentation for backwards-compat (e.g. dynamic imports via import("openclaw/plugin-sdk"))
-declare module "openclaw/plugin-sdk" {
+// Also keep the barrel augmentation for backwards-compat (e.g. dynamic imports via import("openclaw/plugin-sdk/core"))
+declare module "openclaw/plugin-sdk/core" {
   import type { OpenClawPluginApi as _OpenClawPluginApi } from "../plugins/types.js";
   export type ClawdbotPluginApi = _OpenClawPluginApi;
 }

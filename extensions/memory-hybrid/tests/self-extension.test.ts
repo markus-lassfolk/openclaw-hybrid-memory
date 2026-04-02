@@ -4,10 +4,10 @@
  *         proposal lifecycle, config parsing.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
-import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { _testing } from "../index.js";
 
 const { ToolProposalStore, WorkflowStore, GapDetector, ToolProposer, computeGapId, deriveToolNameFromSequence } =
@@ -597,7 +597,7 @@ describe("Config parsing — selfExtension", () => {
         maxProposals: 10,
       },
     });
-    expect(parsed.selfExtension.enabled).toBe(false); // 2026.3.140 baseline
+    expect(parsed.selfExtension.enabled).toBe(true);
     expect(parsed.selfExtension.minGapFrequency).toBe(5);
     expect(parsed.selfExtension.minToolSavings).toBe(3);
     expect(parsed.selfExtension.maxProposals).toBe(10);

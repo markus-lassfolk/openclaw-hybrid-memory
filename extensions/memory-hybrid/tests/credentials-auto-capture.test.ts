@@ -3,13 +3,13 @@
  * Covers extractCredentialsFromToolCalls() pattern extraction and vault storage integration.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
-import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { extractCredentialsFromToolCalls, extractHostFromUrl, slugify } from "../services/credential-scanner.js";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { CredentialsDB } from "../backends/credentials-db.js";
 import { shouldCapture } from "../services/capture-utils.js";
+import { extractCredentialsFromToolCalls, extractHostFromUrl, slugify } from "../services/credential-scanner.js";
 
 // Note: extractCredentialsFromToolCalls moved to credential-scanner service
 
@@ -330,11 +330,11 @@ describe("council review fixes", () => {
     it("rejects invalid hostnames in extractHostFromUrl", () => {
       // Test with SQL injection attempt
       const result1 = extractHostFromUrl("https://'; DROP TABLE users; --/api");
-      expect(result1).toBe("api"); // Should fall back to safe default
+      expect(result1).toBe("__unparsed-host__");
 
       // Test with path traversal
       const result2 = extractHostFromUrl("https://../../../etc/passwd");
-      expect(result2).toBe("api");
+      expect(result2).toBe("__unparsed-host__");
 
       // Valid hostname should work
       const result3 = extractHostFromUrl("https://api.example.com/path");
