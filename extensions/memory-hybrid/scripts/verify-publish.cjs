@@ -5,7 +5,9 @@
  * included in package.json "files" and exist on disk.
  */
 const fs = require("node:fs");
+const os = require("node:os");
 const path = require("node:path");
+const { execFileSync, execSync } = require("node:child_process");
 
 const root = path.resolve(__dirname, "..");
 const pkgPath = path.join(root, "package.json");
@@ -58,6 +60,8 @@ const hasShrinkwrapClean = pkg.scripts?.postpack?.includes(
   "manage-shrinkwrap.cjs clean",
 );
 
+// npm intentionally omits package-lock.json from published tarballs; we ship
+// npm-shrinkwrap.json (generated in prepack from package-lock.json) for npm ci / install.
 if (!shrinkwrapFilesListed) {
   console.error(
     'FAIL: npm-shrinkwrap.json missing from package.json "files" - published package will resolve deps loosely during upgrade',
@@ -80,6 +84,40 @@ if (!shrinkwrapFilesListed) {
   failed = true;
 } else {
   console.log("OK: npm-shrinkwrap.json is generated only for pack/publish");
+}
+
+let packIncludesShrinkwrap = false;
+const tmpPack = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-verify-pack-"));
+try {
+  execSync(`npm pack --pack-destination "${tmpPack}" --silent`, {
+    cwd: root,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "inherit"],
+  });
+  const tgz = fs.readdirSync(tmpPack).find((f) => f.endsWith(".tgz"));
+  if (!tgz) throw new Error("npm pack did not produce a .tgz file");
+  const list = execFileSync("tar", ["tzf", path.join(tmpPack, tgz)], {
+    encoding: "utf8",
+  });
+  packIncludesShrinkwrap = list.includes("package/npm-shrinkwrap.json");
+} catch (e) {
+  console.error(
+    "FAIL: could not verify packed tarball contains package/npm-shrinkwrap.json:",
+    e.message,
+  );
+  failed = true;
+} finally {
+  fs.rmSync(tmpPack, { recursive: true, force: true });
+}
+if (!packIncludesShrinkwrap && !failed) {
+  console.error(
+    "FAIL: published .tgz must include package/npm-shrinkwrap.json — without it, npm ci / npm install after extract cannot resolve deps (e.g. @lancedb/lancedb)",
+  );
+  failed = true;
+} else if (packIncludesShrinkwrap) {
+  console.log(
+    "OK: packed tarball contains npm-shrinkwrap.json (npm omits package-lock.json from publishes by design)",
+  );
 }
 
 // 2. Collect relative imports from index.ts (from "./foo.js" or './bar/baz.js')

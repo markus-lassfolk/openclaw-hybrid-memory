@@ -15,6 +15,7 @@ All commands are available via `openclaw hybrid-mem <command>`.
 **Tip: Verbosity level**
 CLI output is controlled by the config `verbosity` setting (`silent`, `quiet`, `normal`, `verbose`). You can change it with `openclaw hybrid-mem config-set verbosity silent`.
 
+**Agent tools (LLM):** Commands below are **CLI** entry points. Tools the agent invokes through the gateway use **underscore** names only (`memory_store`, `memory_recall`, …), with no `.` in the tool id — required by providers such as Anthropic. See [CONFIGURATION.md § Agent tool names](CONFIGURATION.md#agent-tool-names).
 
 ## Commands by category
 
