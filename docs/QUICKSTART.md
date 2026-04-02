@@ -166,3 +166,4 @@ Restart the gateway after backfill so memorySearch re-indexes.
 - [CLI-REFERENCE.md](CLI-REFERENCE.md) - All CLI commands
 - [OPERATIONS.md](OPERATIONS.md) - Background jobs, scripts, upgrades
 - [TROUBLESHOOTING.md](TROUBLESHOOTING.md) - Common issues and fixes
+
