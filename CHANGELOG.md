@@ -10,6 +10,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.4.32] - 2026-04-03
+
+### Release summary
+
+Version **2026.4.32** adds **ACTIVE-TASK.md** session reconciliation when OpenClaw session transcripts are missing ([#978](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/978), [#981](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/981)), a **task-queue** idle `current.json` placeholder and CLI helpers ([#983](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/983)), and follow-up **CI / review** hardening (Biome `import type`, bootstrap FTS5 test spy, direct path checks before `readdir` for session lookup). Bumps the npm package, `openclaw.plugin.json`, and the standalone installer.
+
+### Added
+
+- **`openclaw hybrid-mem active-tasks reconcile`** (and `--dry-run`); plugin runs reconcile after the task-queue watchdog when active-task is enabled.
+- **`openclaw hybrid-mem task-queue-status`** / **`task-queue-touch`**; watchdog writes an idle `state/task-queue/current.json` sentinel when missing (exclusive create).
+
+### Changed
+
+- **`ACTIVE-TASK.md`:** Parse **`Session:`** into subagent when **`Subagent:`** is absent; complete orphan **In progress** rows when no session JSONL is found.
+
+### Fixed
+
+- **Lint:** `facts-db-layer2` uses `import type` for `DatabaseSync` (Biome `useImportType`).
+- **Tests:** Bootstrap FTS5 test spies `verifyFts5Support` on `db-connection` (matches `FactsDB` constructor).
+
+---
+
 ## [2026.4.31] - 2026-04-03
 
 ### Release summary
@@ -1162,7 +1184,8 @@ Major feature release including procedural memory, directive extraction, reinfor
 
 ---
 
-[Unreleased]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.4.31...HEAD
+[Unreleased]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.4.32...HEAD
+[2026.4.32]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.4.31...v2026.4.32
 [2026.4.31]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.4.30...v2026.4.31
 [2026.4.30]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.4.21...v2026.4.30
 [2026.4.21]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.4.20...v2026.4.21
