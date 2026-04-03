@@ -213,7 +213,7 @@ export function initializeDatabases(cfg: HybridMemoryConfig, api: ClawdbotPlugin
       if (hasOAuthProfiles(authOrder?.[prefix], prefix) && gatewayBaseUrl && gatewayToken) return true;
       if (ROUTABLE_BUILTIN_PROVIDERS.has(prefix) || Object.hasOwn(pluginProviders, prefix)) return true;
       // Read-only env var check: safe even with user-supplied prefix since we only read env vars.
-      // Mirrors resolveClient()'s <PREFIX>_API_KEY fallback (see resolveClient in setup/resolve-client.ts).
+      // Mirrors resolveClient()'s <PREFIX>_API_KEY fallback (see resolveClient in setup/provider-router.ts).
       const envKey = process.env[`${prefix.toUpperCase()}_API_KEY`];
       return Boolean(envKey?.trim());
     };

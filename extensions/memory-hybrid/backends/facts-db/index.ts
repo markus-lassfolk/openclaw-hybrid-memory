@@ -7,4 +7,5 @@ export {
   MEMORY_LINK_TYPES,
   type MemoryLinkType,
   type ReinforcementContext,
+  type ReinforcementEvent,
 } from "./types.js";

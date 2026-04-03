@@ -55,8 +55,8 @@ export function patchEmbeddingEndpointFromGatewayProviders(cfg: HybridMemoryConf
 
 /**
  * Provider prefixes that resolveClient() handles natively without explicit llm.providers config.
- * Keep in sync with the built-in provider cases in resolveClient() (setup/resolve-client.ts).
- * If resolveClient adds a new built-in provider, add it here too.
+ * Keep in sync with the built-in provider cases in resolveClient() in this file.
+ * If resolveClient() adds a new built-in provider, add it here too.
  */
 export const ROUTABLE_BUILTIN_PROVIDERS = new Set(["google", "openai", "anthropic", "ollama", "openrouter", "minimax"]);
 
