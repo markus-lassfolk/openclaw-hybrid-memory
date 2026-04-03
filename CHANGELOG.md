@@ -8,6 +8,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- **`scripts/task-queue.sh`:** Task queue runner for cron/autonomous jobs — `touch` / `status` via `openclaw hybrid-mem`, optional **`run`** with `flock`, PID in `current.json`, history archive, idle restore ([#1000](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/1000)).
+
 ---
 
 ## [2026.4.32] - 2026-04-03

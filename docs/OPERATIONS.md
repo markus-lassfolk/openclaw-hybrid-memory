@@ -184,6 +184,25 @@ NODE_PATH="$EXT_DIR/node_modules" node scripts/backfill-memory.mjs --dry-run
 | `OPENCLAW_WORKSPACE` | `~/.openclaw/workspace` | Workspace root to scan for memory files |
 | `OPENCLAW_EXTENSION_DIR` | Auto-detected | Extension dir for loading deps |
 
+### Task queue runner (`scripts/task-queue.sh`)
+
+Cron and autonomous jobs (for example strategic-thinking) need a stable **`state/task-queue/current.json`** so prompts and dashboards see queue state. The plugin’s gateway watchdog can create an idle placeholder, but hosts that run jobs **without** the gateway still need a runner. This script delegates **`touch`** and **`status`** to **`openclaw hybrid-mem task-queue-touch`** / **`task-queue-status`**, and implements **`run`** so a shell command gets a proper lifecycle: claim the queue (after `flock`), write **`current.json`** with the child **PID**, move the finished entry under **`history/`**, then restore the idle placeholder. Concurrent mutating runs are skipped via **`flock`** (exit **0** for `touch` when another instance holds the lock; exit **2** for `run` so callers know work did not start). See [issue #1000](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/1000).
+
+**Setup:** copy from the repo and mark executable: `cp scripts/task-queue.sh ~/.openclaw/scripts/ && chmod +x ~/.openclaw/scripts/task-queue.sh`.
+
+```bash
+# Ensure idle current.json exists (e.g. every 10 minutes)
+*/10 * * * * OPENCLAW_HOME=$HOME/.openclaw $HOME/.openclaw/scripts/task-queue.sh touch >>$HOME/.openclaw/logs/task-queue.log 2>&1
+
+# JSON for prompts (same as hybrid-mem task-queue-status)
+$HOME/.openclaw/scripts/task-queue.sh status
+
+# Wrap a job (PID recorded; history on exit)
+$HOME/.openclaw/scripts/task-queue.sh run --title "Strategic thinking" --issue 1000 -- your-command.sh
+```
+
+**Environment:** `OPENCLAW_HOME` (default `~/.openclaw`), `TASK_QUEUE_STATE_DIR` (optional override for `state/task-queue`), `OPENCLAW_CMD` (default `openclaw`), `TASK_QUEUE_LOCKFILE` (default `/tmp/openclaw-task-queue.lock`).
+
 ### Session distillation scripts
 
 Located in `scripts/distill-sessions/`. See [SESSION-DISTILLATION.md](SESSION-DISTILLATION.md) for full details.
