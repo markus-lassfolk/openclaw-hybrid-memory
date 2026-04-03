@@ -263,7 +263,7 @@ export function getOrganizationByKeyOrName(db: DatabaseSync, query: string): Org
     | Record<string, unknown>
     | undefined;
   if (byKey) return rowToOrg(byKey);
-  const like = `%${nk.replace(/%/g, "\\%")}%`;
+  const like = `%${nk.replace(/%/g, "\\%").replace(/_/g, "\\_")}%`;
   const byName = db
     .prepare(
       "SELECT * FROM organizations WHERE canonical_key LIKE ? ESCAPE '\\' ORDER BY length(display_name) ASC LIMIT 1",

@@ -1991,9 +1991,7 @@ export function registerMemoryTools(
             const enrichModel = getDefaultCronModel(getCronModelConfig(cfg), "nano");
             void extractEntityMentionsWithLlm(textToStore, openai, enrichModel)
               .then(({ mentions, detectedLang }) => {
-                if (mentions.length > 0) {
-                  factsDb.applyEntityEnrichment(entry.id, mentions, detectedLang);
-                }
+                factsDb.applyEntityEnrichment(entry.id, mentions, detectedLang);
               })
               .catch((err) => {
                 api.logger.warn?.(`memory-hybrid: entity enrichment failed: ${err}`);

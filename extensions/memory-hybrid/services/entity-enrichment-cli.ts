@@ -27,8 +27,8 @@ export async function runEntityEnrichmentForCli(
     const f = factsDb.getById(id);
     if (!f?.text) continue;
     const { mentions, detectedLang } = await extractEntityMentionsWithLlm(f.text, openai, model);
+    factsDb.applyEntityEnrichment(id, mentions, detectedLang);
     if (mentions.length > 0) {
-      factsDb.applyEntityEnrichment(id, mentions, detectedLang);
       factsEnriched++;
     }
   }
