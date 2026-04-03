@@ -13,7 +13,7 @@
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import { resolveSessionKeyFromHookEvent } from "./session-state.js";
 
-const SESSION_KEY_LOG_MAX = 120;
+const SESSION_KEY_TRUNCATE_MAX = 120;
 
 function nonEmptyString(v: unknown): string | null {
   if (typeof v !== "string") return null;
@@ -21,9 +21,9 @@ function nonEmptyString(v: unknown): string | null {
   return t.length > 0 ? t : null;
 }
 
-function formatSessionKeyForLog(sessionKey: string): string {
-  if (sessionKey.length <= SESSION_KEY_LOG_MAX) return sessionKey;
-  return `${sessionKey.slice(0, SESSION_KEY_LOG_MAX - 3)}...`;
+export function formatSessionKeyTruncated(sessionKey: string): string {
+  if (sessionKey.length <= SESSION_KEY_TRUNCATE_MAX) return sessionKey;
+  return `${sessionKey.slice(0, SESSION_KEY_TRUNCATE_MAX - 3)}...`;
 }
 
 /**
@@ -72,7 +72,7 @@ export function resolveAgentIdFromHookEvent(event: unknown, api: ClawdbotPluginA
   const fromSessionKey = sessionKey ? tryParseAgentIdFromOpenClawSessionKey(sessionKey) : null;
   if (fromSessionKey && sessionKey) {
     api.logger?.debug?.(
-      `memory-hybrid: Resolved agentId "${fromSessionKey}" from session key pattern (${formatSessionKeyForLog(sessionKey)})`,
+      `memory-hybrid: Resolved agentId "${fromSessionKey}" from session key pattern (${formatSessionKeyTruncated(sessionKey)})`,
     );
   }
   return fromSessionKey;

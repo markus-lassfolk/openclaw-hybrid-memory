@@ -11,15 +11,10 @@ import { capturePluginError } from "../services/error-reporter.js";
 import { withTimeout } from "../utils/timeout.js";
 import type { LifecycleContext, SessionState } from "./types.js";
 import { pluginLogger } from "../utils/logger.js";
-import { resolveAgentIdFromHookEvent } from "./resolve-agent-id.js";
+import { resolveAgentIdFromHookEvent, formatSessionKeyTruncated } from "./resolve-agent-id.js";
 
 const SETUP_TIMEOUT_MS = 5000;
-const SESSION_KEY_DEBUG_MAX = 120;
 
-function formatSessionKeyForDebug(sessionKey: string): string {
-  if (sessionKey.length <= SESSION_KEY_DEBUG_MAX) return sessionKey;
-  return `${sessionKey.slice(0, SESSION_KEY_DEBUG_MAX - 3)}...`;
-}
 
 export function runSetupStage(
   event: unknown,
@@ -65,7 +60,7 @@ async function runSetup(
     const sk = resolveSessionKey(event, api);
     api.logger.debug?.(
       sk
-        ? `memory-hybrid: Agent detection failed — no structured agentId and session key did not yield one (${formatSessionKeyForDebug(sk)}); falling back to orchestrator`
+        ? `memory-hybrid: Agent detection failed — no structured agentId and session key did not yield one (${formatSessionKeyTruncated(sk)}); falling back to orchestrator`
         : "memory-hybrid: Agent detection failed — no agentId in event payload or api.context and no session key; falling back to orchestrator",
     );
     currentAgentIdRef.value = currentAgentIdRef.value || ctx.cfg.multiAgent.orchestratorId;
