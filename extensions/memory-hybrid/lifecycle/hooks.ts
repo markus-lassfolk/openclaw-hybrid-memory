@@ -137,16 +137,14 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
           capturePluginError(err instanceof Error ? err : new Error(String(err)), {
             subsystem: "workflow-tracking",
             operation: "agent-end-track-workflow",
-            sessionId:
-              sessionState.resolveSessionKey(event, api, hookCtx) ?? ctx.currentAgentIdRef.value ?? "default",
+            sessionId: sessionState.resolveSessionKey(event, api, hookCtx) ?? ctx.currentAgentIdRef.value ?? "default",
           });
           api.logger.warn(`memory-hybrid: workflow tracking failed: ${String(err)}`);
         }
       }
 
       await runCaptureStage(event, api, ctx, sessionState, hookCtx);
-      const sessionId =
-        sessionState.resolveSessionKey(event, api, hookCtx) ?? ctx.currentAgentIdRef.value ?? "default";
+      const sessionId = sessionState.resolveSessionKey(event, api, hookCtx) ?? ctx.currentAgentIdRef.value ?? "default";
       try {
         await buildDailyNarrative({
           sessionId,

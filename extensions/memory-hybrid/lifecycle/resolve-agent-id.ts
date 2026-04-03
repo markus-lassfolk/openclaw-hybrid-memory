@@ -58,7 +58,6 @@ export function resolveAgentIdFromHookEvent(
   const activeAgent = session?.activeAgent;
 
   const explicit =
-    nonEmptyString(hookAgentCtx?.agentId) ??
     nonEmptyString(ev.agentId) ??
     nonEmptyString(session?.agentId) ??
     nonEmptyString(session?.agent) ??
@@ -70,6 +69,7 @@ export function resolveAgentIdFromHookEvent(
       : null) ??
     nonEmptyString(run?.agentId) ??
     nonEmptyString(payloadCtx?.agentId) ??
+    nonEmptyString(hookAgentCtx?.agentId) ??
     nonEmptyString(api.context?.agentId);
 
   if (explicit) return explicit;

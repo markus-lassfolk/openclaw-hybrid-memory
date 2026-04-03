@@ -116,9 +116,7 @@ export async function runCaptureStage(
   sessionState: SessionState,
   hookAgentCtx?: HookAgentContextSlice,
 ): Promise<void> {
-  await withTimeout(CAPTURE_STAGE_TIMEOUT_MS, () =>
-    runCapture(event, api, ctx, sessionState, hookAgentCtx),
-  );
+  await withTimeout(CAPTURE_STAGE_TIMEOUT_MS, () => runCapture(event, api, ctx, sessionState, hookAgentCtx));
 }
 
 async function runCapture(

@@ -22,9 +22,7 @@ export function runSetupStage(
   sessionState: SessionState,
   hookAgentCtx?: HookAgentContextSlice,
 ): Promise<void> {
-  return withTimeout(SETUP_TIMEOUT_MS, () => runSetup(event, api, ctx, sessionState, hookAgentCtx)).then(
-    () => {},
-  );
+  return withTimeout(SETUP_TIMEOUT_MS, () => runSetup(event, api, ctx, sessionState, hookAgentCtx)).then(() => {});
 }
 
 async function runSetup(
