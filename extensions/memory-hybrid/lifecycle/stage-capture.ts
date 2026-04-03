@@ -20,8 +20,8 @@ import {
   getAutoCaptureExtractionMethod,
   resolveCaptureProvenance,
 } from "../services/capture-provenance.js";
-import { classifyMemoryOperation } from "../services/classification.js";
-import type { EpisodeOutcome } from "../types/memory.js";
+import { type MemoryClassification, classifyMemoryOperationsBatch } from "../services/classification.js";
+import type { EpisodeOutcome, MemoryEntry } from "../types/memory.js";
 import { extractCredentialsFromToolCalls } from "../services/credential-scanner.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { isOllamaCircuitBreakerOpen } from "../services/embeddings.js";
@@ -265,6 +265,20 @@ async function runCapture(
         : [];
       if (toCapture.length > 0) {
         let stored = 0;
+        const classifyModel = ctx.cfg.store.classifyModel ?? getDefaultCronModel(getCronModelConfig(ctx.cfg), "nano");
+        const classifyMicroBatch = Math.min(10, ctx.cfg.autoClassify?.batchSize ?? 10);
+
+        type CapturePrepared = {
+          candidate: (typeof toCapture)[number];
+          textToStore: string;
+          category: MemoryCategory;
+          extracted: ReturnType<typeof extractStructuredFields>;
+          summary: string | undefined;
+          vector: number[] | undefined;
+          similarFacts: MemoryEntry[];
+        };
+
+        const prepared: CapturePrepared[] = [];
         for (const candidate of toCapture.slice(0, 3)) {
           let textToStore = candidate.text;
           textToStore = truncateForStorage(textToStore, ctx.cfg.captureMaxChars);
@@ -291,22 +305,44 @@ async function runCapture(
               api.logger.warn(`memory-hybrid: auto-capture embedding failed: ${err}`);
             }
           }
+          let similarFacts: MemoryEntry[] = [];
           if (ctx.cfg.store.classifyBeforeWrite) {
-            let similarFacts = vector ? await ctx.findSimilarByEmbedding(ctx.vectorDb, ctx.factsDb, vector, 3) : [];
+            similarFacts = vector ? await ctx.findSimilarByEmbedding(ctx.vectorDb, ctx.factsDb, vector, 3) : [];
             if (similarFacts.length === 0) {
               similarFacts = ctx.factsDb.findSimilarForClassification(textToStore, extracted.entity, extracted.key, 3);
             }
+          }
+          prepared.push({ candidate, textToStore, category, extracted, summary, vector, similarFacts });
+        }
+
+        const classificationByIndex = new Map<number, MemoryClassification>();
+        if (ctx.cfg.store.classifyBeforeWrite) {
+          const withSimilar = prepared
+            .map((p, i) => (p.similarFacts.length > 0 ? i : -1))
+            .filter((i): i is number => i >= 0);
+          for (let s = 0; s < withSimilar.length; s += classifyMicroBatch) {
+            const idxs = withSimilar.slice(s, s + classifyMicroBatch);
+            const inputs = idxs.map((pi) => ({
+              candidateText: prepared[pi].textToStore,
+              candidateEntity: prepared[pi].extracted.entity,
+              candidateKey: prepared[pi].extracted.key,
+              existingFacts: prepared[pi].similarFacts,
+            }));
+            const outs = await classifyMemoryOperationsBatch(inputs, ctx.openai, classifyModel, api.logger);
+            idxs.forEach((pi, j) => classificationByIndex.set(pi, outs[j]));
+          }
+        }
+
+        for (let pi = 0; pi < prepared.length; pi++) {
+          const { candidate, textToStore, category, extracted, summary, vector, similarFacts } = prepared[pi];
+          if (ctx.cfg.store.classifyBeforeWrite) {
             if (similarFacts.length > 0) {
               try {
-                const classification = await classifyMemoryOperation(
-                  textToStore,
-                  extracted.entity,
-                  extracted.key,
-                  similarFacts,
-                  ctx.openai,
-                  ctx.cfg.store.classifyModel ?? getDefaultCronModel(getCronModelConfig(ctx.cfg), "nano"),
-                  api.logger,
-                );
+                const classification = classificationByIndex.get(pi);
+                if (!classification) {
+                  api.logger.warn?.(`memory-hybrid: auto-capture missing batch classification for index ${pi}`);
+                  continue;
+                }
                 if (classification.action === "NOOP") continue;
                 if (classification.action === "DELETE" && classification.targetId) {
                   ctx.factsDb.supersede(classification.targetId, null);

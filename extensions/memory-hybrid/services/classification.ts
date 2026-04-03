@@ -49,19 +49,12 @@ export function parseClassificationResponse(content: string, existingFacts: Memo
  * Uses a cheap LLM call to determine ADD/UPDATE/DELETE/NOOP.
  * Falls back to ADD on error.
  */
-export async function classifyMemoryOperation(
+function buildClassifyPromptParts(
   candidateText: string,
   candidateEntity: string | null,
   candidateKey: string | null,
   existingFacts: MemoryEntry[],
-  openai: OpenAI,
-  model: string,
-  logger: { warn: (msg: string) => void },
-): Promise<MemoryClassification> {
-  if (existingFacts.length === 0) {
-    return { action: "ADD", reason: "no similar facts found" };
-  }
-
+): { prompt: string } {
   const existingLines = existingFacts
     .slice(0, 5)
     .map(
@@ -77,6 +70,23 @@ export async function classifyMemoryOperation(
     KEY_LINE: candidateKey ? `\nKey: ${candidateKey}` : "",
     EXISTING_FACTS: existingLines,
   });
+  return { prompt };
+}
+
+export async function classifyMemoryOperation(
+  candidateText: string,
+  candidateEntity: string | null,
+  candidateKey: string | null,
+  existingFacts: MemoryEntry[],
+  openai: OpenAI,
+  model: string,
+  logger: { warn: (msg: string) => void },
+): Promise<MemoryClassification> {
+  if (existingFacts.length === 0) {
+    return { action: "ADD", reason: "no similar facts found" };
+  }
+
+  const { prompt } = buildClassifyPromptParts(candidateText, candidateEntity, candidateKey, existingFacts);
 
   try {
     const { withLLMRetry } = await import("./chat.js");
@@ -100,5 +110,131 @@ export async function classifyMemoryOperation(
     });
     logger.warn(`memory-hybrid: classify operation failed: ${err}`);
     return { action: "ADD", reason: "classification failed; defaulting to ADD" };
+  }
+}
+
+/** One candidate for {@link classifyMemoryOperationsBatch} (#862). */
+export type ClassifyMemoryOperationInput = {
+  candidateText: string;
+  candidateEntity: string | null;
+  candidateKey: string | null;
+  existingFacts: MemoryEntry[];
+};
+
+function parseBatchClassificationRow(row: unknown, existingFacts: MemoryEntry[]): MemoryClassification {
+  if (!row || typeof row !== "object") {
+    return { action: "ADD", reason: "invalid batch row" };
+  }
+  const r = row as Record<string, unknown>;
+  const action = typeof r.action === "string" ? r.action.toUpperCase() : "";
+  const targetId = typeof r.targetId === "string" && r.targetId.trim() ? r.targetId.trim() : undefined;
+  const reason = typeof r.reason === "string" ? r.reason.trim() : "batch classification";
+  if (action === "ADD" || action === "NOOP") {
+    return { action: action as MemoryClassification["action"], reason };
+  }
+  if (action === "UPDATE" || action === "DELETE") {
+    if (!targetId) {
+      return { action: "ADD", reason: `batch: missing targetId for ${action}` };
+    }
+    const validTarget = existingFacts.find((f) => f.id === targetId);
+    if (!validTarget) {
+      return { action: "ADD", reason: `batch: unknown targetId ${targetId}` };
+    }
+    return { action: action as MemoryClassification["action"], targetId, reason };
+  }
+  return { action: "ADD", reason: `batch: unknown action ${action}` };
+}
+
+/**
+ * Classify multiple store candidates in one LLM call when each has similar facts (#862).
+ * Falls back to sequential {@link classifyMemoryOperation} if parsing fails or length mismatches.
+ */
+export async function classifyMemoryOperationsBatch(
+  items: ClassifyMemoryOperationInput[],
+  openai: OpenAI,
+  model: string,
+  logger: { warn: (msg: string) => void },
+): Promise<MemoryClassification[]> {
+  if (items.length === 0) return [];
+  if (items.length === 1) {
+    const one = items[0];
+    return [
+      await classifyMemoryOperation(
+        one.candidateText,
+        one.candidateEntity,
+        one.candidateKey,
+        one.existingFacts,
+        openai,
+        model,
+        logger,
+      ),
+    ];
+  }
+
+  const blocks = items.map((it, idx) => {
+    const { prompt } = buildClassifyPromptParts(
+      it.candidateText,
+      it.candidateEntity,
+      it.candidateKey,
+      it.existingFacts,
+    );
+    return `### Candidate ${idx}\n${prompt}`;
+  });
+
+  const header = `You will classify ${items.length} independent memory store candidates. For EACH candidate, apply the same rules as in the block (ADD / UPDATE id / DELETE id / NOOP).
+
+Respond with ONLY a JSON array of exactly ${items.length} objects in order (index 0 = first candidate). Each object must be:
+{"action":"ADD"|"UPDATE"|"DELETE"|"NOOP","targetId":string|null,"reason":string}
+For UPDATE or DELETE, targetId must be one of the existing fact ids listed under that candidate. For ADD or NOOP use null for targetId.
+
+`;
+
+  const fullPrompt = `${header}\n${blocks.join("\n\n")}`;
+
+  try {
+    const { withLLMRetry } = await import("./chat.js");
+    const resp = await withLLMRetry(
+      () =>
+        openai.chat.completions.create({
+          model,
+          messages: [{ role: "user", content: fullPrompt }],
+          temperature: 0,
+          max_tokens: Math.min(800, 80 * items.length),
+        }),
+      { maxRetries: 2 },
+    );
+    const raw = (resp.choices[0]?.message?.content ?? "").trim();
+    const jsonMatch = raw.match(/\[[\s\S]*\]/);
+    if (!jsonMatch) throw new Error("no JSON array in batch classify response");
+    const parsed: unknown = JSON.parse(jsonMatch[0]);
+    if (!Array.isArray(parsed) || parsed.length !== items.length) {
+      throw new Error(
+        `batch classify expected ${items.length} results, got ${Array.isArray(parsed) ? parsed.length : "non-array"}`,
+      );
+    }
+    return items.map((it, i) => parseBatchClassificationRow(parsed[i], it.existingFacts));
+  } catch (err) {
+    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+      operation: "classify-memory-operations-batch",
+      subsystem: "openai",
+      model,
+      severity: "info",
+    });
+    logger.warn(`memory-hybrid: batch classify failed (${err}); falling back to sequential calls`);
+    const out: MemoryClassification[] = [];
+    for (const it of items) {
+      out.push(
+        await classifyMemoryOperation(
+          it.candidateText,
+          it.candidateEntity,
+          it.candidateKey,
+          it.existingFacts,
+          openai,
+          model,
+          logger,
+        ),
+      );
+    }
+    return out;
   }
 }
