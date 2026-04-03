@@ -24,3 +24,19 @@ export {
   type ReinforcementContext,
   type ReinforcementEvent,
 } from "./types.js";
+export { rowToMemoryEntry } from "./row-mapper.js";
+export {
+  deleteFact,
+  getDuplicateIdByNormalizedHash,
+  hasDuplicateText,
+  refreshAccessedFacts,
+  storeFact,
+  type StoreFactInput,
+  validateStoreEntryInput,
+} from "./crud.js";
+export {
+  findByIdPrefix,
+  getSupersededTextsSnapshot,
+  lookupFacts,
+  searchFacts,
+} from "./search.js";

@@ -22,16 +22,22 @@ import type {
   SearchResult,
 } from "../types/memory.js";
 import { applyConsolidationRetrievalControls } from "../utils/consolidation-controls.js";
-import { INTERACTIVE_FTS_MAX_OR_TERMS } from "../utils/constants.js";
 import { calculateExpiry, classifyDecay } from "../utils/decay.js";
 import { getLanguageKeywordsFilePath } from "../utils/language-keywords.js";
 import { computeDynamicSalience } from "../utils/salience.js";
 import { tryRestrictSqliteDbFileMode } from "../utils/sqlite-file-perms.js";
 import { createTransaction } from "../utils/sqlite-transaction.js";
-import { normalizedHash, parseTags, serializeTags } from "../utils/tags.js";
+import { parseTags, serializeTags } from "../utils/tags.js";
 import { estimateTokensForDisplay } from "../utils/text.js";
 import { BaseSqliteStore } from "./base-sqlite-store.js";
 import { SupersededTextsCache } from "./facts-db/cache-manager.js";
+import {
+  type StoreFactInput,
+  deleteFact,
+  hasDuplicateText,
+  refreshAccessedFacts as refreshAccessedFactsImpl,
+  storeFact,
+} from "./facts-db/crud.js";
 import { verifyFts5Support } from "./facts-db/db-connection.js";
 import {
   type ContactRow,
@@ -43,11 +49,7 @@ import {
   getOrganizationByKeyOrName as lookupOrganizationByKeyOrName,
   replaceFactEntityMentions,
 } from "./facts-db/entity-layer.js";
-import {
-  buildClassificationFtsOrClause,
-  buildFactsSearchFtsOrClause,
-  fetchSupersededFactTextsLower,
-} from "./facts-db/fact-queries.js";
+import { buildClassificationFtsOrClause } from "./facts-db/fact-queries.js";
 import { sanitizeFts5QueryForFacts } from "./facts-db/fts-text.js";
 import {
   createLink as createLinkHelper,
@@ -59,20 +61,25 @@ import {
   strengthenRelatedLinksBatch as strengthenRelatedLinksBatchHelper,
 } from "./facts-db/links.js";
 import {
-  batchGetReinforcementEvents as batchGetReinforcementEventsHelper,
   boostConfidence as boostConfidenceHelper,
   calculateDiversityScore as calculateDiversityScoreHelper,
-  computeDiversityFromEvents as computeDiversityFromEventsHelper,
   getReinforcementEvents as getReinforcementEventsHelper,
   reinforceFact as reinforceFactHelper,
   reinforceProcedure as reinforceProcedureHelper,
 } from "./facts-db/reinforcement.js";
+import { rowToMemoryEntry } from "./facts-db/row-mapper.js";
 import {
   getScanCursor as getScanCursorHelper,
   migrateScanCursorsTable as migrateScanCursorsTableHelper,
   updateScanCursor as updateScanCursorHelper,
 } from "./facts-db/scan-cursors.js";
 import { scopeFilterClauseNamed, scopeFilterClausePositional } from "./facts-db/scope-sql.js";
+import {
+  findByIdPrefix as findByIdPrefixImpl,
+  getSupersededTextsSnapshot,
+  lookupFacts,
+  searchFacts,
+} from "./facts-db/search.js";
 import {
   DASHBOARD_TIER_FILTER,
   DECAY_CLASS_FILTER,
@@ -225,7 +232,11 @@ export class FactsDB extends BaseSqliteStore {
   }
 
   /** Return the cursor for the given scan type, or null if never run. */
-  getScanCursor(scanType: string): { lastSessionTs: number; lastRunAt: number; sessionsProcessed: number } | null {
+  getScanCursor(scanType: string): {
+    lastSessionTs: number;
+    lastRunAt: number;
+    sessionsProcessed: number;
+  } | null {
     return getScanCursorHelper(this.liveDb, scanType);
   }
 
@@ -248,7 +259,12 @@ export class FactsDB extends BaseSqliteStore {
     return storeVariantImpl(this.liveDb, factId, variantType, variantText);
   }
 
-  getVariants(factId: string): Array<{ id: number; variantType: string; variantText: string; createdAt: string }> {
+  getVariants(factId: string): Array<{
+    id: number;
+    variantType: string;
+    variantText: string;
+    createdAt: string;
+  }> {
     return getVariantsImpl(this.liveDb, factId);
   }
 
@@ -285,218 +301,31 @@ export class FactsDB extends BaseSqliteStore {
     return countCanonicalEmbeddingsImpl(this.liveDb);
   }
 
-  estimateStorageBytes(): { sqliteBytes: number; walBytes: number; shmBytes: number } {
+  estimateStorageBytes(): {
+    sqliteBytes: number;
+    walBytes: number;
+    shmBytes: number;
+  } {
     return estimateStorageBytesOnDisk(this.dbPath);
   }
 
-  private validateStoreEntryInput(
-    entry: Omit<MemoryEntry, "id" | "createdAt" | "decayClass" | "expiresAt" | "lastConfirmedAt" | "confidence"> & {
-      category?: MemoryCategory;
-      importance?: number;
-    },
-  ): void {
-    const text = (entry.text ?? "").trim();
-    if (text.length === 0) {
-      throw new Error("memory-hybrid: cannot store empty fact text");
-    }
-    const imp = entry.importance ?? 0.5;
-    if (!Number.isFinite(imp) || imp < 0 || imp > 1) {
-      throw new Error("memory-hybrid: importance must be a number in [0, 1]");
-    }
-  }
-
-  store(
-    entry: Omit<MemoryEntry, "id" | "createdAt" | "decayClass" | "expiresAt" | "lastConfirmedAt" | "confidence"> & {
-      decayClass?: DecayClass;
-      expiresAt?: number | null;
-      confidence?: number;
-      summary?: string | null;
-      sourceDate?: number | null;
-      tags?: string[] | null;
-      /** When this fact became true (epoch sec). Defaults to sourceDate ?? now. */
-      validFrom?: number | null;
-      /** When this fact stopped being true (epoch sec). Usually null for new facts. */
-      validUntil?: number | null;
-      /** Id of the fact this one supersedes. */
-      supersedesId?: string | null;
-      /** Procedural memory: fact as procedure summary. */
-      procedureType?: "positive" | "negative" | null;
-      successCount?: number;
-      lastValidated?: number | null;
-      sourceSessions?: string | null;
-      /** Embedding model used to generate this fact's vector (if any). */
-      embeddingModel?: string | null;
-      /** Memory scope — global, user, agent, or session. Default global. */
-      scope?: "global" | "user" | "agent" | "session";
-      /** Scope target (userId, agentId, or sessionId). Required when scope is user/agent/session. */
-      scopeTarget?: string | null;
-      /** Future-date freeze: epoch seconds until which confidence decay is paused (#144). */
-      decayFreezeUntil?: number | null;
-      /** Provenance: session id associated with extraction or store. */
-      provenanceSession?: string | null;
-      /** Provenance: conversation turn number (if known). */
-      sourceTurn?: number | null;
-      /** Provenance: extraction method (active/passive/consolidation/reflection). */
-      extractionMethod?: string | null;
-      /** Provenance: extraction confidence (0-1). */
-      extractionConfidence?: number | null;
-      /** Force-preservation: epoch seconds until which this fact MUST NOT be trimmed. */
-      preserveUntil?: number | null;
-      /** Force-preservation tags that block trimming regardless of importance tier. */
-      preserveTags?: string[] | null;
-    },
-  ): MemoryEntry {
-    this.validateStoreEntryInput(entry);
-    if (this.fuzzyDedupe) {
-      const existingId = this.getDuplicateIdByNormalizedHash(entry.text);
-      if (existingId) {
-        const existing = this.getById(existingId);
-        if (existing) return existing;
-      }
-    }
-
-    const id = randomUUID();
-    const nowSec = Math.floor(Date.now() / 1000);
-
-    const decayClass = entry.decayClass || classifyDecay(entry.entity, entry.key, entry.value, entry.text);
-    const expiresAt = entry.expiresAt !== undefined ? entry.expiresAt : calculateExpiry(decayClass, nowSec);
-    const importance = entry.importance ?? 0.5;
-    const why = entry.why ?? null;
-    const confidence = entry.confidence ?? 1.0;
-    const summary = entry.summary ?? null;
-    const embeddingModel = entry.embeddingModel ?? null;
-    const normHash = normalizedHash(entry.text);
-    const sourceDate = entry.sourceDate ?? null;
-    const tags = entry.tags ?? null;
-    const tagsStr = tags ? serializeTags(tags) : null;
-    const validFrom = entry.validFrom ?? sourceDate ?? nowSec;
-    const validUntil = entry.validUntil ?? null;
-    const supersedesId = entry.supersedesId ?? null;
-    const scope = entry.scope ?? "global";
-    const scopeTarget = scope === "global" ? null : (entry.scopeTarget ?? null);
-    if (scope !== "global" && !scopeTarget) {
-      throw new Error(`scopeTarget required for non-global scope: ${scope}`);
-    }
-    const procedureType = entry.procedureType ?? null;
-    const successCount = entry.successCount ?? 0;
-    const lastValidated = entry.lastValidated ?? null;
-    const sourceSessionsRaw = entry.sourceSessions ?? null;
-    const sourceSessionsStr =
-      sourceSessionsRaw == null
-        ? null
-        : typeof sourceSessionsRaw === "string"
-          ? sourceSessionsRaw
-          : JSON.stringify(sourceSessionsRaw);
-    const provenanceSession = entry.provenanceSession ?? null;
-    const sourceTurn = entry.sourceTurn ?? null;
-    const extractionMethod = entry.extractionMethod ?? null;
-    const extractionConfidence = entry.extractionConfidence !== undefined ? entry.extractionConfidence : null;
-    const preserveUntil = entry.preserveUntil ?? null;
-    const preserveTags = entry.preserveTags ?? null;
-    const preserveTagsStr = preserveTags ? JSON.stringify(preserveTags) : null;
-
-    const tier: MemoryTier = (entry as { tier?: MemoryTier }).tier ?? "warm";
-    // Fix #2: guard against NaN/non-finite values passed in from external callers
-    const rawFreeze = (entry as { decayFreezeUntil?: number | null }).decayFreezeUntil ?? null;
-    const decayFreezeUntil = rawFreeze !== null && Number.isFinite(rawFreeze) ? rawFreeze : null;
-    // Fix #1: ensure expires_at covers the full freeze period so the fact is not pruned
-    // before the freeze expires
-    const adjustedExpiresAt =
-      decayFreezeUntil !== null && expiresAt !== null && expiresAt < decayFreezeUntil ? decayFreezeUntil : expiresAt;
-    const tx = createTransaction(this.liveDb, () => {
-      this.liveDb
-        .prepare(
-          `INSERT INTO facts (id, text, why, category, importance, entity, key, value, source, created_at, decay_class, expires_at, last_confirmed_at, confidence, summary, embedding_model, normalized_hash, source_date, tags, valid_from, valid_until, supersedes_id, tier, scope, scope_target, procedure_type, success_count, last_validated, source_sessions, decay_freeze_until, provenance_session, source_turn, extraction_method, extraction_confidence, preserve_until, preserve_tags)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        )
-        .run(
-          id,
-          entry.text,
-          why,
-          entry.category,
-          importance,
-          entry.entity,
-          entry.key,
-          entry.value,
-          entry.source,
-          nowSec,
-          decayClass,
-          adjustedExpiresAt,
-          nowSec,
-          confidence,
-          summary,
-          embeddingModel,
-          normHash,
-          sourceDate,
-          tagsStr,
-          validFrom,
-          validUntil,
-          supersedesId,
-          tier,
-          scope,
-          scopeTarget,
-          procedureType,
-          successCount,
-          lastValidated,
-          sourceSessionsStr,
-          decayFreezeUntil,
-          provenanceSession,
-          sourceTurn,
-          extractionMethod,
-          extractionConfidence,
-          preserveUntil,
-          preserveTagsStr,
-        );
-    });
-    tx();
-    if (supersedesId) {
-      this.invalidateSupersededCache();
-    }
-    const loaded = this.getById(id);
-    if (!loaded) {
-      throw new Error(`memory-hybrid: store() failed to read back inserted fact ${id}`);
-    }
-    return loaded;
+  store(entry: StoreFactInput): MemoryEntry {
+    return storeFact(
+      {
+        db: this.liveDb,
+        fuzzyDedupe: this.fuzzyDedupe,
+        getById: (id) => this.getById(id),
+        invalidateSupersededCache: () => {
+          this.supersededTextsCacheMgr.invalidate();
+        },
+      },
+      entry,
+    );
   }
 
   /** Update recall_count and last_accessed for facts (public for progressive disclosure). Bulk UPDATE to avoid N+1. */
   refreshAccessedFacts(ids: string[]): void {
-    if (ids.length === 0) return;
-    const nowSec = Math.floor(Date.now() / 1000);
-    const BATCH_SIZE = 500; // SQLite variable limit
-
-    const tx = createTransaction(this.liveDb, () => {
-      for (let i = 0; i < ids.length; i += BATCH_SIZE) {
-        const batch = ids.slice(i, i + BATCH_SIZE);
-        const placeholders = batch.map(() => "?").join(",");
-
-        // Extend TTL for stable/active/durable/normal facts that were just accessed
-        this.liveDb
-          .prepare(
-            `UPDATE facts SET last_confirmed_at = ?, expires_at = CASE decay_class WHEN 'stable' THEN ? + ? WHEN 'active' THEN ? + ? WHEN 'durable' THEN ? + ? WHEN 'normal' THEN ? + ? ELSE expires_at END WHERE id IN (${placeholders}) AND decay_class IN ('stable', 'active', 'durable', 'normal')`,
-          )
-          .run(
-            nowSec,
-            nowSec,
-            TTL_DEFAULTS.stable,
-            nowSec,
-            TTL_DEFAULTS.active,
-            nowSec,
-            TTL_DEFAULTS.durable,
-            nowSec,
-            TTL_DEFAULTS.normal,
-            ...batch,
-          );
-
-        // Bump recall_count, last_accessed, access_count, and last_accessed_at for all
-        this.liveDb
-          .prepare(
-            `UPDATE facts SET recall_count = recall_count + 1, last_accessed = ?, access_count = access_count + 1, last_accessed_at = strftime('%Y-%m-%dT%H:%M:%SZ', ?, 'unixepoch') WHERE id IN (${placeholders})`,
-          )
-          .run(nowSec, nowSec, ...batch);
-      }
-    });
-    tx();
+    refreshAccessedFactsImpl(this.liveDb, ids);
   }
 
   /** Record a memory_recall invocation outcome for hit-rate tracking (Issue #148). */
@@ -555,7 +384,7 @@ export class FactsDB extends BaseSqliteStore {
     let usedTokens = 0;
     for (const row of hotRows) {
       if (usedTokens >= maxTokens) break;
-      const entry = this.rowToEntry(row);
+      const entry = rowToMemoryEntry(row);
       const tokens = estimateTokensForDisplay(entry.summary || entry.text);
       if (usedTokens + tokens > maxTokens) {
         // Skip oversized entry and continue scanning for smaller facts that might fit
@@ -574,7 +403,11 @@ export class FactsDB extends BaseSqliteStore {
   }
 
   /** Compaction — migrate facts between tiers. Completed tasks -> COLD, inactive preferences -> WARM, active blockers -> HOT. */
-  runCompaction(opts: { inactivePreferenceDays: number; hotMaxTokens: number; hotMaxFacts: number }): {
+  runCompaction(opts: {
+    inactivePreferenceDays: number;
+    hotMaxTokens: number;
+    hotMaxFacts: number;
+  }): {
     hot: number;
     warm: number;
     cold: number;
@@ -623,7 +456,11 @@ export class FactsDB extends BaseSqliteStore {
          AND (',' || COALESCE(tags,'') || ',') LIKE '%,blocker,%'
          AND (tier IS NULL OR tier != 'hot')`,
       )
-      .all(nowSec) as Array<{ id: string; text: string; summary: string | null }>;
+      .all(nowSec) as Array<{
+      id: string;
+      text: string;
+      summary: string | null;
+    }>;
     let hotTokens = 0;
     const hotIds: string[] = [];
     for (const row of blockerRows) {
@@ -680,7 +517,13 @@ export class FactsDB extends BaseSqliteStore {
     budget: number;
     beforeTokens: number;
     afterTokens: number;
-    trimmed: Array<{ id: string; textPreview: string; tier: string; importance: number; tokenCost: number }>;
+    trimmed: Array<{
+      id: string;
+      textPreview: string;
+      tier: string;
+      importance: number;
+      tokenCost: number;
+    }>;
     preserved: Array<{ id: string; reason: string }>;
     error?: string;
   } {
@@ -780,8 +623,13 @@ export class FactsDB extends BaseSqliteStore {
     const currentTokens = p0Tokens + trimPoolTokens;
 
     if (currentTokens <= tokenBudget) {
-      const trimmed: Array<{ id: string; textPreview: string; tier: string; importance: number; tokenCost: number }> =
-        [];
+      const trimmed: Array<{
+        id: string;
+        textPreview: string;
+        tier: string;
+        importance: number;
+        tokenCost: number;
+      }> = [];
       return {
         simulate,
         budget: tokenBudget,
@@ -794,14 +642,25 @@ export class FactsDB extends BaseSqliteStore {
 
     // Trim from P3 → P2 → P1 until within budget (order from SQL above).
     let remainingTokens = currentTokens;
-    const toTrim: Array<{ id: string; text: string; tier: string; importance: number }> = trimRows.map((r) => ({
+    const toTrim: Array<{
+      id: string;
+      text: string;
+      tier: string;
+      importance: number;
+    }> = trimRows.map((r) => ({
       id: r.id,
       text: r.text,
       importance: r.importance,
       tier: r.trim_tier === 0 ? "P3" : r.trim_tier === 1 ? "P2" : "P1",
     }));
 
-    const trimmed: Array<{ id: string; textPreview: string; tier: string; importance: number; tokenCost: number }> = [];
+    const trimmed: Array<{
+      id: string;
+      textPreview: string;
+      tier: string;
+      importance: number;
+      tokenCost: number;
+    }> = [];
     for (const fact of toTrim) {
       if (remainingTokens <= tokenBudget) break;
       const cost = tokenEstimate(fact.text);
@@ -970,7 +829,13 @@ export class FactsDB extends BaseSqliteStore {
     }
 
     const totalTokens = byTier.p0 + byTier.p1 + byTier.p2 + byTier.p3;
-    return { totalTokens, budget, overflow: Math.max(0, totalTokens - budget), byTier, factCount };
+    return {
+      totalTokens,
+      budget,
+      overflow: Math.max(0, totalTokens - budget),
+      byTier,
+      factCount,
+    };
   }
 
   search(
@@ -997,290 +862,37 @@ export class FactsDB extends BaseSqliteStore {
       interactiveFtsFastPath?: boolean;
     } = {},
   ): SearchResult[] {
-    const {
-      includeExpired = false,
-      tag,
-      includeSuperseded = false,
-      asOf,
-      tierFilter = "warm",
-      scopeFilter,
-      reinforcementBoost = 0.1,
-      diversityWeight = 1.0,
-      interactiveFtsFastPath = false,
-    } = options;
-
-    const safeQuery = interactiveFtsFastPath
-      ? buildFactsSearchFtsOrClause(query, { maxOrTerms: INTERACTIVE_FTS_MAX_OR_TERMS })
-      : buildFactsSearchFtsOrClause(query);
-    if (!safeQuery) return [];
-
-    const nowSec = Math.floor(Date.now() / 1000);
-    const expiryFilter = includeExpired ? "" : "AND (f.expires_at IS NULL OR f.expires_at > @now)";
-    const temporalFilter =
-      asOf != null
-        ? "AND f.valid_from <= @asOf AND (f.valid_until IS NULL OR f.valid_until > @asOf)"
-        : includeSuperseded
-          ? ""
-          : "AND f.superseded_at IS NULL";
-    const tagFilter = tag?.trim() ? "AND (',' || COALESCE(f.tags,'') || ',') LIKE @tagPattern" : "";
-    const tagPattern = tag?.trim() ? `%,${tag.toLowerCase().trim()},%` : null;
-    const tierFilterClause = tierFilter === "warm" ? "AND (f.tier IS NULL OR f.tier = 'warm' OR f.tier = 'hot')" : "";
-    const { clause: scopeFilterClauseStr, params: scopeParams } = scopeFilterClauseNamed(scopeFilter);
-
-    const decayWindowSec = 7 * 24 * 3600;
-    const paramBag: Record<string, SQLInputValue> = {
-      "@query": safeQuery,
-      "@now": nowSec,
-      ...(asOf != null ? { "@asOf": asOf } : {}),
-      "@limit": limit * 2,
-      "@decay_window": decayWindowSec,
-      ...(tagPattern ? { "@tagPattern": tagPattern } : {}),
-      ...scopeParams,
-    };
-
-    let rows: Array<Record<string, unknown>>;
-
-    if (interactiveFtsFastPath) {
-      // node:sqlite rejects named parameters not referenced by the prepared SQL — omit @decay_window for the narrow query.
-      const narrowParamBag: Record<string, SQLInputValue> = {
-        "@query": safeQuery,
-        "@now": nowSec,
-        ...(asOf != null ? { "@asOf": asOf } : {}),
-        "@limit": limit * 2,
-        ...(tagPattern ? { "@tagPattern": tagPattern } : {}),
-        ...scopeParams,
-      };
-      const narrowSql = `SELECT f.id AS id, fts.rank AS fts_score
-         FROM facts f
-         JOIN facts_fts fts ON f.rowid = fts.rowid
-         WHERE facts_fts MATCH @query
-           ${expiryFilter}
-           ${temporalFilter}
-           ${tagFilter}
-           ${tierFilterClause}
-           ${scopeFilterClauseStr}
-         ORDER BY fts.rank
-         LIMIT @limit`;
-      const narrowRows = this.liveDb.prepare(narrowSql).all(narrowParamBag) as Array<{ id: string; fts_score: number }>;
-      if (narrowRows.length === 0) return [];
-      const ids = narrowRows.map((r) => r.id);
-      const ftsById = new Map(narrowRows.map((r) => [r.id, r.fts_score]));
-      const placeholders = ids.map(() => "?").join(",");
-      const fullRows = this.liveDb.prepare(`SELECT * FROM facts WHERE id IN (${placeholders})`).all(...ids) as Array<
-        Record<string, unknown>
-      >;
-      const byId = new Map(fullRows.map((r) => [r.id as string, r]));
-      const decayWindow = decayWindowSec;
-      rows = [];
-      for (const id of ids) {
-        const row = byId.get(id);
-        if (!row) continue;
-        const expiresAt = row.expires_at as number | null | undefined;
-        let freshness: number;
-        if (expiresAt == null) freshness = 1.0;
-        else if (expiresAt <= nowSec) freshness = 0.0;
-        else freshness = Math.min(1.0, (expiresAt - nowSec) / decayWindow);
-        rows.push({
-          ...row,
-          fts_score: ftsById.get(id) as number,
-          freshness,
-        });
-      }
-      if (rows.length === 0) return [];
-    } else {
-      rows = this.liveDb
-        .prepare(
-          `SELECT f.*, bm25(facts_fts) as fts_score,
-           CASE
-             WHEN f.expires_at IS NULL THEN 1.0
-             WHEN f.expires_at <= @now THEN 0.0
-             ELSE MIN(1.0, CAST(f.expires_at - @now AS REAL) / CAST(@decay_window AS REAL))
-           END AS freshness
-         FROM facts f
-         JOIN facts_fts fts ON f.rowid = fts.rowid
-         WHERE facts_fts MATCH @query
-           ${expiryFilter}
-           ${temporalFilter}
-           ${tagFilter}
-           ${tierFilterClause}
-           ${scopeFilterClauseStr}
-         ORDER BY bm25(facts_fts)
-         LIMIT @limit`,
-        )
-        .all(paramBag) as Array<Record<string, unknown>>;
-    }
-
-    if (rows.length === 0) return [];
-
-    const minScore = Math.min(...rows.map((r) => r.fts_score as number));
-    const maxScore = Math.max(...rows.map((r) => r.fts_score as number));
-    const range = maxScore - minScore || 1;
-
-    // Batch-fetch reinforcement events for all reinforced facts to avoid N+1 queries
-    const reinforcedFactIds = rows
-      .filter((row) => ((row.reinforced_count as number) || 0) > 0)
-      .map((row) => row.id as string);
-    const eventsByFactId = this.batchGetReinforcementEvents(reinforcedFactIds);
-
-    const results = rows.map((row) => {
-      const rawScore = 1 - ((row.fts_score as number) - minScore) / range;
-      const bm25Score = Number.isNaN(rawScore) ? 0.8 : rawScore;
-      const freshness = (row.freshness as number) || 1.0;
-      const confidence = (row.confidence as number) || 1.0;
-      const reinforcedCount = (row.reinforced_count as number) || 0;
-      // Add reinforcement boost when fact has been praised, weighted by diversity
-      let reinforcement = 0;
-      if (reinforcedCount > 0) {
-        const events = eventsByFactId.get(row.id as string) || [];
-        if (events.length === 0) {
-          // No events tracked (trackContext was false or events evicted): use full boost
-          reinforcement = reinforcementBoost;
-        } else {
-          // Calculate diversity score and weight boost: high diversity = higher boost
-          const diversityScore = FactsDB.computeDiversityFromEvents(events);
-          reinforcement = reinforcementBoost * (1 - diversityWeight + diversityWeight * diversityScore);
-        }
-      }
-      const composite = Math.min(1.0, bm25Score * 0.6 + freshness * 0.25 + confidence * 0.15 + reinforcement);
-      const entry = this.rowToEntry(row);
-      // Apply dynamic salience (access boost + time decay)
-      const salienceScore = computeDynamicSalience(composite, entry);
-      const controlledScore = applyConsolidationRetrievalControls(salienceScore, entry);
-
-      return {
-        entry,
-        score: controlledScore,
-        backend: "sqlite" as const,
-      };
-    });
-
-    results.sort((a, b) => {
-      const s = b.score - a.score;
-      if (s !== 0) return s;
-      const da = a.entry.sourceDate ?? a.entry.createdAt;
-      const db = b.entry.sourceDate ?? b.entry.createdAt;
-      return db - da;
-    });
-    const topResults = results.slice(0, limit);
-
-    this.refreshAccessedFacts(topResults.map((r) => r.entry.id));
-
-    return topResults;
+    return searchFacts(this.liveDb, query, limit, options);
   }
 
   lookup(
     entity: string,
     key?: string,
     tag?: string,
-    options?: { includeSuperseded?: boolean; asOf?: number; scopeFilter?: ScopeFilter | null; limit?: number },
+    options?: {
+      includeSuperseded?: boolean;
+      asOf?: number;
+      scopeFilter?: ScopeFilter | null;
+      limit?: number;
+    },
   ): SearchResult[] {
-    const nowSec = Math.floor(Date.now() / 1000);
-    const { includeSuperseded = false, asOf, scopeFilter } = options ?? {};
-    const limit = typeof options?.limit === "number" && options.limit > 0 ? Math.floor(options.limit) : null;
-    const temporalFilter =
-      asOf != null
-        ? " AND valid_from <= ? AND (valid_until IS NULL OR valid_until > ?)"
-        : includeSuperseded
-          ? ""
-          : " AND superseded_at IS NULL";
-    const tagFilter = tag?.trim() ? " AND (',' || COALESCE(tags,'') || ',') LIKE ?" : "";
-    const tagParam = tag?.trim() ? `%,${tag.toLowerCase().trim()},%` : null;
-    const { clause: scopeClause, params: scopeParamsArr } = scopeFilterClausePositional(scopeFilter);
-    const limitClause = limit ? " LIMIT ?" : "";
-
-    const base = key
-      ? `SELECT * FROM facts WHERE lower(entity) = lower(?) AND lower(key) = lower(?) AND (expires_at IS NULL OR expires_at > ?)${temporalFilter}${tagFilter}${scopeClause} ORDER BY confidence DESC, COALESCE(source_date, created_at) DESC${limitClause}`
-      : `SELECT * FROM facts WHERE lower(entity) = lower(?) AND (expires_at IS NULL OR expires_at > ?)${temporalFilter}${tagFilter}${scopeClause} ORDER BY confidence DESC, COALESCE(source_date, created_at) DESC${limitClause}`;
-
-    const params = key
-      ? tagParam !== null
-        ? asOf != null
-          ? [...[entity, key, nowSec, asOf, asOf, tagParam], ...scopeParamsArr]
-          : [...[entity, key, nowSec, tagParam], ...scopeParamsArr]
-        : asOf != null
-          ? [...[entity, key, nowSec, asOf, asOf], ...scopeParamsArr]
-          : [...[entity, key, nowSec], ...scopeParamsArr]
-      : tagParam !== null
-        ? asOf != null
-          ? [...[entity, nowSec, asOf, asOf, tagParam], ...scopeParamsArr]
-          : [...[entity, nowSec, tagParam], ...scopeParamsArr]
-        : asOf != null
-          ? [...[entity, nowSec, asOf, asOf], ...scopeParamsArr]
-          : [...[entity, nowSec], ...scopeParamsArr];
-    const finalParams = limit ? [...params, limit] : params;
-    const rows = this.liveDb.prepare(base).all(...finalParams) as Array<Record<string, unknown>>;
-
-    const results = rows.map((row) => {
-      const entry = this.rowToEntry(row);
-      const baseScore = (row.confidence as number) || 1.0;
-      // Apply dynamic salience (access boost + time decay)
-      const salienceScore = computeDynamicSalience(baseScore, entry);
-      const controlledScore = applyConsolidationRetrievalControls(salienceScore, entry);
-      return {
-        entry,
-        score: controlledScore,
-        backend: "sqlite" as const,
-      };
-    });
-
-    this.refreshAccessedFacts(results.map((r) => r.entry.id));
-
-    return results;
+    return lookupFacts(this.liveDb, entity, key, tag, options);
   }
 
   /** Find a fact ID by prefix (for truncated ID resolution).
    * Returns { id } for unique match, { ambiguous, count } for multiple, or null for no match.
    * Requires at least 4 hex chars to prevent full-table scans and reduce ambiguity. */
   findByIdPrefix(prefix: string): { id: string } | { ambiguous: true; count: number } | null {
-    if (!prefix || prefix.length < 4) return null;
-    // Only allow hex characters (UUIDs are hex + dashes, but truncated prefixes are hex-only)
-    if (!/^[0-9a-f]+$/i.test(prefix)) return null;
-    // Insert dashes at UUID positions to match stored format: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
-    let pattern = prefix.toLowerCase();
-    if (prefix.length > 8 && !prefix.includes("-")) {
-      const parts: string[] = [];
-      parts.push(pattern.slice(0, 8));
-      if (pattern.length > 8) parts.push(pattern.slice(8, 12));
-      if (pattern.length > 12) parts.push(pattern.slice(12, 16));
-      if (pattern.length > 16) parts.push(pattern.slice(16, 20));
-      if (pattern.length > 20) parts.push(pattern.slice(20));
-      pattern = parts.join("-");
-    }
-    const rows = this.liveDb.prepare(`SELECT id FROM facts WHERE id LIKE ? || '%' LIMIT 3`).all(pattern) as Array<{
-      id: string;
-    }>;
-    if (rows.length === 0) return null;
-    if (rows.length === 1) return { id: rows[0].id };
-    return { ambiguous: true, count: rows.length >= 3 ? 3 : rows.length };
+    return findByIdPrefixImpl(this.liveDb, prefix);
   }
 
   delete(id: string): boolean {
-    // Explicitly clean up contradictions (defense-in-depth; ON DELETE CASCADE on facts also handles this,
-    // but explicit cleanup ensures correctness regardless of FK enforcement state at the call site).
-    this.liveDb.prepare("DELETE FROM contradictions WHERE fact_id_new = ? OR fact_id_old = ?").run(id, id);
-    // Manually clean up links where this fact is the target, except DERIVED_FROM links
-    // (DERIVED_FROM links are preserved for provenance tracking even after source facts are deleted)
-    this.liveDb.prepare(`DELETE FROM memory_links WHERE target_fact_id = ? AND link_type != 'DERIVED_FROM'`).run(id);
-
-    const result = this.liveDb.prepare("DELETE FROM facts WHERE id = ?").run(id);
-    return result.changes > 0;
+    return deleteFact(this.liveDb, id);
   }
 
   /** Exact or (if fuzzyDedupe) normalized-text duplicate. */
   hasDuplicate(text: string): boolean {
-    const exact = this.liveDb.prepare("SELECT id FROM facts WHERE text = ? LIMIT 1").get(text);
-    if (exact) return true;
-    if (this.fuzzyDedupe && this.getDuplicateIdByNormalizedHash(text) !== null) return true;
-    return false;
-  }
-
-  /** Id of an existing fact with same normalized text, or null. Used when store.fuzzyDedupe is true. */
-  private getDuplicateIdByNormalizedHash(text: string): string | null {
-    const hash = normalizedHash(text);
-    const row = this.liveDb.prepare("SELECT id FROM facts WHERE normalized_hash = ? LIMIT 1").get(hash) as
-      | { id: string }
-      | undefined;
-    return row?.id ?? null;
+    return hasDuplicateText(this.liveDb, this.fuzzyDedupe, text);
   }
 
   /** Mark a fact as superseded by a new fact. Sets superseded_at, superseded_by, and valid_until (bi-temporal). */
@@ -1310,7 +922,7 @@ export class FactsDB extends BaseSqliteStore {
         )
         .all(entity, key, nowSec, limit) as Array<Record<string, unknown>>;
       for (const row of rows) {
-        results.push(this.rowToEntry(row));
+        results.push(rowToMemoryEntry(row));
       }
     }
 
@@ -1324,7 +936,7 @@ export class FactsDB extends BaseSqliteStore {
         )
         .all(entity, nowSec, remaining + results.length) as Array<Record<string, unknown>>;
       for (const row of rows) {
-        const entry = this.rowToEntry(row);
+        const entry = rowToMemoryEntry(row);
         if (!seenIds.has(entry.id)) {
           results.push(entry);
           seenIds.add(entry.id);
@@ -1346,7 +958,7 @@ export class FactsDB extends BaseSqliteStore {
             )
             .all(words, nowSec, remaining + results.length) as Array<Record<string, unknown>>;
           for (const row of rows) {
-            const entry = this.rowToEntry(row);
+            const entry = rowToMemoryEntry(row);
             if (!seenIds.has(entry.id)) {
               results.push(entry);
               seenIds.add(entry.id);
@@ -1367,83 +979,14 @@ export class FactsDB extends BaseSqliteStore {
     return results.slice(0, limit);
   }
 
-  /** Convert a raw SQLite row to MemoryEntry. */
-  private rowToEntry(row: Record<string, unknown>): MemoryEntry {
-    return {
-      id: row.id as string,
-      text: row.text as string,
-      why: (row.why as string) ?? null,
-      category: row.category as MemoryCategory,
-      importance: row.importance as number,
-      entity: (row.entity as string) || null,
-      key: (row.key as string) || null,
-      value: (row.value as string) || null,
-      source: row.source as string,
-      createdAt: row.created_at as number,
-      sourceDate: (row.source_date as number) ?? undefined,
-      tags: parseTags(row.tags as string | null),
-      decayClass: (row.decay_class as DecayClass) || "stable",
-      expiresAt: (row.expires_at as number) || null,
-      lastConfirmedAt: (row.last_confirmed_at as number) || 0,
-      confidence: (row.confidence as number) || 1.0,
-      summary: (row.summary as string) || undefined,
-      recallCount: (row.recall_count as number) || 0,
-      lastAccessed: (row.last_accessed as number) || null,
-      accessCount: (row.access_count as number) || 0,
-      lastAccessedAt: (row.last_accessed_at as string) || null,
-      supersededAt: (row.superseded_at as number) || null,
-      supersededBy: (row.superseded_by as string) || null,
-      validFrom: (row.valid_from as number) ?? undefined,
-      validUntil: (row.valid_until as number) ?? undefined,
-      supersedesId: (row.supersedes_id as string) ?? undefined,
-      tier: (row.tier as MemoryTier) ?? undefined,
-      scope: (row.scope as "global" | "user" | "agent" | "session") ?? "global",
-      scopeTarget: (row.scope_target as string) || null,
-      procedureType: (row.procedure_type as "positive" | "negative") ?? undefined,
-      successCount: (row.success_count as number) ?? undefined,
-      lastValidated: (row.last_validated as number) ?? undefined,
-      sourceSessions: (row.source_sessions as string) ?? undefined,
-      embeddingModel: (row.embedding_model as string) ?? null,
-      provenanceSession: (row.provenance_session as string) ?? null,
-      sourceTurn: (row.source_turn as number) ?? null,
-      extractionMethod: (row.extraction_method as string) ?? null,
-      extractionConfidence: (row.extraction_confidence as number) ?? null,
-      reinforcedCount: (row.reinforced_count as number) ?? 0,
-      lastReinforcedAt: (row.last_reinforced_at as number) ?? null,
-      reinforcedQuotes: (() => {
-        const raw = row.reinforced_quotes as string | null;
-        if (!raw) return null;
-        try {
-          const parsed = JSON.parse(raw);
-          return Array.isArray(parsed) ? parsed.filter((q): q is string => typeof q === "string") : null;
-        } catch (err) {
-          capturePluginError(err as Error, {
-            operation: "json-parse-quotes",
-            severity: "info",
-            subsystem: "facts",
-          });
-          return null;
-        }
-      })(),
-      decayFreezeUntil: (row.decay_freeze_until as number) ?? null,
-      preserveUntil: (row.preserve_until as number) ?? null,
-      preserveTags: (() => {
-        const raw = row.preserve_tags as string | null;
-        if (!raw) return null;
-        try {
-          const parsed = JSON.parse(raw);
-          return Array.isArray(parsed) ? parsed.filter((q): q is string => typeof q === "string") : null;
-        } catch {
-          return null;
-        }
-      })(),
-    };
-  }
-
   /** For consolidation (2.4): fetch facts with id, text, category, entity, key. Order by created_at DESC. Excludes superseded. */
-  getFactsForConsolidation(
-    limit: number,
-  ): Array<{ id: string; text: string; category: string; entity: string | null; key: string | null }> {
+  getFactsForConsolidation(limit: number): Array<{
+    id: string;
+    text: string;
+    category: string;
+    entity: string | null;
+    key: string | null;
+  }> {
     const nowSec = Math.floor(Date.now() / 1000);
     const rows = this.liveDb
       .prepare(
@@ -1498,7 +1041,7 @@ export class FactsDB extends BaseSqliteStore {
   getById(id: string, options?: { asOf?: number; scopeFilter?: ScopeFilter | null }): MemoryEntry | null {
     const row = this.liveDb.prepare("SELECT * FROM facts WHERE id = ?").get(id) as Record<string, unknown> | undefined;
     if (!row) return null;
-    const entry = this.rowToEntry(row);
+    const entry = rowToMemoryEntry(row);
     return this.applyLookupFilters(entry, options);
   }
 
@@ -1517,7 +1060,7 @@ export class FactsDB extends BaseSqliteStore {
         Record<string, unknown>
       >;
       for (const row of rows) {
-        const entry = this.rowToEntry(row);
+        const entry = rowToMemoryEntry(row);
         const filtered = this.applyLookupFilters(entry, options);
         if (filtered) result.set(filtered.id, filtered);
       }
@@ -1544,12 +1087,22 @@ export class FactsDB extends BaseSqliteStore {
   }
 
   /** Get links from a fact (outgoing). */
-  getLinksFrom(factId: string): Array<{ id: string; targetFactId: string; linkType: string; strength: number }> {
+  getLinksFrom(factId: string): Array<{
+    id: string;
+    targetFactId: string;
+    linkType: string;
+    strength: number;
+  }> {
     return getLinksFromHelper(this.liveDb, factId);
   }
 
   /** Get links to a fact (incoming). */
-  getLinksTo(factId: string): Array<{ id: string; sourceFactId: string; linkType: string; strength: number }> {
+  getLinksTo(factId: string): Array<{
+    id: string;
+    sourceFactId: string;
+    linkType: string;
+    strength: number;
+  }> {
     return getLinksToHelper(this.liveDb, factId);
   }
 
@@ -1572,7 +1125,10 @@ export class FactsDB extends BaseSqliteStore {
   expandGraphWithCTE(
     seedFactIds: string[],
     maxDepth: number,
-    options?: { asOf?: number; scopeFilter?: { userId?: string; agentId?: string; sessionId?: string } },
+    options?: {
+      asOf?: number;
+      scopeFilter?: { userId?: string; agentId?: string; sessionId?: string };
+    },
   ): Array<{
     factId: string;
     seedId: string;
@@ -1596,11 +1152,15 @@ export class FactsDB extends BaseSqliteStore {
          ORDER BY COALESCE(source_date, created_at) DESC`,
       )
       .all(nowSec, windowStartSec, ...exclude) as Array<Record<string, unknown>>;
-    return rows.map((row) => this.rowToEntry(row));
+    return rows.map((row) => rowToMemoryEntry(row));
   }
 
   /** Get all non-expired facts (for reflection). Optional point-in-time / include superseded. Optional scope filter. */
-  getAll(options?: { includeSuperseded?: boolean; asOf?: number; scopeFilter?: ScopeFilter | null }): MemoryEntry[] {
+  getAll(options?: {
+    includeSuperseded?: boolean;
+    asOf?: number;
+    scopeFilter?: ScopeFilter | null;
+  }): MemoryEntry[] {
     const nowSec = Math.floor(Date.now() / 1000);
     const { includeSuperseded = false, asOf, scopeFilter } = options ?? {};
     const temporalFilter =
@@ -1616,7 +1176,7 @@ export class FactsDB extends BaseSqliteStore {
         `SELECT * FROM facts WHERE (expires_at IS NULL OR expires_at > ?)${temporalFilter}${scopeClause} ORDER BY created_at DESC`,
       )
       .all(...params) as Array<Record<string, unknown>>;
-    return rows.map((row) => this.rowToEntry(row));
+    return rows.map((row) => rowToMemoryEntry(row));
   }
 
   /**
@@ -1661,7 +1221,7 @@ export class FactsDB extends BaseSqliteStore {
         `SELECT * FROM facts WHERE (expires_at IS NULL OR expires_at > ?)${temporalFilter} ORDER BY created_at DESC LIMIT ? OFFSET ?`,
       )
       .all(nowSec, limit, offset) as Array<Record<string, unknown>>;
-    return rows.map((row) => this.rowToEntry(row));
+    return rows.map((row) => rowToMemoryEntry(row));
   }
 
   /** List recent facts with optional filters (for CLI list command). Order: created_at DESC. */
@@ -1709,13 +1269,12 @@ export class FactsDB extends BaseSqliteStore {
     const rows = this.liveDb
       .prepare(`SELECT * FROM facts WHERE ${where} ORDER BY COALESCE(source_date, created_at) DESC LIMIT ?`)
       .all(...params) as Array<Record<string, unknown>>;
-    return rows.map((row) => this.rowToEntry(row));
+    return rows.map((row) => rowToMemoryEntry(row));
   }
 
   /** Get texts of superseded facts (for filtering LanceDB results). Cached to avoid repeated full scans. */
   getSupersededTexts(): Set<string> {
-    const now = Date.now();
-    return this.supersededTextsCacheMgr.getSnapshot(now, () => fetchSupersededFactTextsLower(this.liveDb));
+    return getSupersededTextsSnapshot(this.supersededTextsCacheMgr, this.liveDb);
   }
 
   /** Invalidate superseded texts cache (called after supersede operations). */
@@ -1860,7 +1419,11 @@ export class FactsDB extends BaseSqliteStore {
     id: string,
     quoteSnippet: string,
     context?: ReinforcementContext,
-    opts?: { trackContext?: boolean; maxEventsPerFact?: number; boostAmount?: number },
+    opts?: {
+      trackContext?: boolean;
+      maxEventsPerFact?: number;
+      boostAmount?: number;
+    },
   ): boolean {
     return reinforceFactHelper(this.liveDb, id, quoteSnippet, context, opts);
   }
@@ -1870,23 +1433,6 @@ export class FactsDB extends BaseSqliteStore {
    */
   getReinforcementEvents(factId: string): ReinforcementEvent[] {
     return getReinforcementEventsHelper(this.liveDb, factId);
-  }
-
-  /**
-   * Compute diversity score from reinforcement events.
-   * Filters out null/empty query snippets (treats them as fully diverse).
-   * Returns 1.0 if no valid snippets exist, otherwise unique stems / valid snippet count.
-   */
-  private static computeDiversityFromEvents(events: ReinforcementEvent[]): number {
-    return computeDiversityFromEventsHelper(events);
-  }
-
-  /**
-   * Batch-fetch reinforcement events for multiple facts in a single query.
-   * Returns a Map<factId, ReinforcementEvent[]> for efficient lookup.
-   */
-  private batchGetReinforcementEvents(factIds: string[]): Map<string, ReinforcementEvent[]> {
-    return batchGetReinforcementEventsHelper(this.liveDb, factIds);
   }
 
   /**
@@ -2008,9 +1554,12 @@ export class FactsDB extends BaseSqliteStore {
   }
 
   /** Snapshot of top procedures for context-audit (sorted by confidence). */
-  getProceduresForAudit(
-    limit = 5,
-  ): Array<{ taskPattern: string; recipeJson: string; procedureType: "positive" | "negative"; confidence: number }> {
+  getProceduresForAudit(limit = 5): Array<{
+    taskPattern: string;
+    recipeJson: string;
+    procedureType: "positive" | "negative";
+    confidence: number;
+  }> {
     try {
       const rows = this.liveDb
         .prepare(
@@ -2178,7 +1727,13 @@ export class FactsDB extends BaseSqliteStore {
   backfillDecayClasses(): Record<string, number> {
     const rows = this.liveDb
       .prepare(`SELECT rowid, entity, key, value, text FROM facts WHERE decay_class = 'stable'`)
-      .all() as Array<{ rowid: number; entity: string; key: string; value: string; text: string }>;
+      .all() as Array<{
+      rowid: number;
+      entity: string;
+      key: string;
+      value: string;
+      text: string;
+    }>;
 
     const nowSec = Math.floor(Date.now() / 1000);
     const update = this.liveDb.prepare("UPDATE facts SET decay_class = ?, expires_at = ? WHERE rowid = ?");
@@ -2201,7 +1756,7 @@ export class FactsDB extends BaseSqliteStore {
     const rows = this.liveDb
       .prepare("SELECT * FROM facts WHERE category = ? ORDER BY created_at DESC")
       .all(category) as Array<Record<string, unknown>>;
-    return rows.map((row) => this.rowToEntry(row));
+    return rows.map((row) => rowToMemoryEntry(row));
   }
 
   /** List non-superseded facts by category (for CLI list command). */
@@ -2211,7 +1766,7 @@ export class FactsDB extends BaseSqliteStore {
         "SELECT * FROM facts WHERE category = ? AND (superseded_at IS NULL) ORDER BY COALESCE(source_date, created_at) DESC LIMIT ?",
       )
       .all(category, limit) as Array<Record<string, unknown>>;
-    return rows.map((row) => this.rowToEntry(row));
+    return rows.map((row) => rowToMemoryEntry(row));
   }
 
   /** List directive facts (source LIKE 'directive:%'), non-superseded, by created_at DESC. */
@@ -2221,7 +1776,7 @@ export class FactsDB extends BaseSqliteStore {
         `SELECT * FROM facts WHERE source LIKE 'directive:%' AND (superseded_at IS NULL) ORDER BY created_at DESC LIMIT ?`,
       )
       .all(limit) as Array<Record<string, unknown>>;
-    return rows.map((row) => this.rowToEntry(row));
+    return rows.map((row) => rowToMemoryEntry(row));
   }
 
   updateCategory(id: string, category: string): boolean {
@@ -3156,7 +2711,10 @@ export class FactsDB extends BaseSqliteStore {
   }
 
   /** Get reflection statistics */
-  statsReflection(): { reflectionPatternsCount: number; reflectionRulesCount: number } {
+  statsReflection(): {
+    reflectionPatternsCount: number;
+    reflectionRulesCount: number;
+  } {
     const patternsRow = this.liveDb
       .prepare(
         `SELECT COUNT(*) as count FROM facts WHERE superseded_at IS NULL AND source = 'reflection' AND category = 'pattern'`,
@@ -3252,12 +2810,20 @@ export class FactsDB extends BaseSqliteStore {
   }
 
   /** Get statistics by scope */
-  scopeStats(): Array<{ scope: string; scopeTarget: string | null; count: number }> {
+  scopeStats(): Array<{
+    scope: string;
+    scopeTarget: string | null;
+    count: number;
+  }> {
     const rows = this.liveDb
       .prepare(
         "SELECT scope, scope_target as scopeTarget, COUNT(*) as count FROM facts WHERE scope IS NOT NULL GROUP BY scope, scope_target",
       )
-      .all() as Array<{ scope: string; scopeTarget: string | null; count: number }>;
+      .all() as Array<{
+      scope: string;
+      scopeTarget: string | null;
+      count: number;
+    }>;
     return rows;
   }
 
@@ -3312,7 +2878,7 @@ export class FactsDB extends BaseSqliteStore {
            AND (expires_at IS NULL OR expires_at > ?)`,
       )
       .all(minImportance, thresholdSec, nowSec) as Record<string, unknown>[];
-    return rows.map((r) => this.rowToEntry(r));
+    return rows.map((r) => rowToMemoryEntry(r));
   }
 
   // ============================================================================
@@ -3407,7 +2973,7 @@ export class FactsDB extends BaseSqliteStore {
          ORDER BY created_at DESC`,
       )
       .all(...baseParams, ...scopeParams) as Array<Record<string, unknown>>;
-    return rows.map((r) => this.rowToEntry(r));
+    return rows.map((r) => rowToMemoryEntry(r));
   }
 
   /**
@@ -3563,12 +3129,28 @@ export class FactsDB extends BaseSqliteStore {
    * explicit user store).  Ambiguous cases are returned for future LLM resolution.
    */
   resolveContradictions(): {
-    autoResolved: Array<{ contradictionId: string; factIdNew: string; factIdOld: string }>;
-    ambiguous: Array<{ contradictionId: string; factIdNew: string; factIdOld: string }>;
+    autoResolved: Array<{
+      contradictionId: string;
+      factIdNew: string;
+      factIdOld: string;
+    }>;
+    ambiguous: Array<{
+      contradictionId: string;
+      factIdNew: string;
+      factIdOld: string;
+    }>;
   } {
     const unresolved = this.getContradictions();
-    const autoResolved: Array<{ contradictionId: string; factIdNew: string; factIdOld: string }> = [];
-    const ambiguous: Array<{ contradictionId: string; factIdNew: string; factIdOld: string }> = [];
+    const autoResolved: Array<{
+      contradictionId: string;
+      factIdNew: string;
+      factIdOld: string;
+    }> = [];
+    const ambiguous: Array<{
+      contradictionId: string;
+      factIdNew: string;
+      factIdOld: string;
+    }> = [];
 
     for (const c of unresolved) {
       const newFact = this.getById(c.factIdNew);
@@ -3577,7 +3159,11 @@ export class FactsDB extends BaseSqliteStore {
       if (!newFact && !oldFact) {
         // Both facts deleted — resolve as superseded, nothing further to do
         this.resolveContradiction(c.id, "superseded");
-        autoResolved.push({ contradictionId: c.id, factIdNew: c.factIdNew, factIdOld: c.factIdOld });
+        autoResolved.push({
+          contradictionId: c.id,
+          factIdNew: c.factIdNew,
+          factIdOld: c.factIdOld,
+        });
         continue;
       }
 
@@ -3589,14 +3175,22 @@ export class FactsDB extends BaseSqliteStore {
             .prepare("UPDATE facts SET confidence = ? WHERE id = ?")
             .run(c.oldFactOriginalConfidence, c.factIdOld);
         }
-        autoResolved.push({ contradictionId: c.id, factIdNew: c.factIdNew, factIdOld: c.factIdOld });
+        autoResolved.push({
+          contradictionId: c.id,
+          factIdNew: c.factIdNew,
+          factIdOld: c.factIdOld,
+        });
         continue;
       }
 
       if (newFact && !oldFact) {
         // Old fact was deleted; new fact is authoritative — supersede
         this.resolveContradiction(c.id, "superseded");
-        autoResolved.push({ contradictionId: c.id, factIdNew: c.factIdNew, factIdOld: c.factIdOld });
+        autoResolved.push({
+          contradictionId: c.id,
+          factIdNew: c.factIdNew,
+          factIdOld: c.factIdOld,
+        });
         continue;
       }
 
@@ -3613,9 +3207,17 @@ export class FactsDB extends BaseSqliteStore {
       if (newIsNewer && newIsHigherConf && newIsFromUser) {
         this.resolveContradiction(c.id, "superseded");
         this.supersede(c.factIdOld, c.factIdNew);
-        autoResolved.push({ contradictionId: c.id, factIdNew: c.factIdNew, factIdOld: c.factIdOld });
+        autoResolved.push({
+          contradictionId: c.id,
+          factIdNew: c.factIdNew,
+          factIdOld: c.factIdOld,
+        });
       } else {
-        ambiguous.push({ contradictionId: c.id, factIdNew: c.factIdNew, factIdOld: c.factIdOld });
+        ambiguous.push({
+          contradictionId: c.id,
+          factIdNew: c.factIdNew,
+          factIdOld: c.factIdOld,
+        });
       }
     }
 
@@ -3724,7 +3326,7 @@ export class FactsDB extends BaseSqliteStore {
          LIMIT 1`,
       )
       .get(...params) as Record<string, unknown> | undefined;
-    return row ? this.rowToEntry(row) : null;
+    return row ? rowToMemoryEntry(row) : null;
   }
 
   /**
@@ -3852,7 +3454,7 @@ export class FactsDB extends BaseSqliteStore {
         .all(newFactId, nowSec, `%,${escapedSessionId},%`, `%"${escapedSessionId}"%`) as Array<Record<string, unknown>>;
 
       for (const row of recentRows) {
-        const coEntry = this.rowToEntry(row);
+        const coEntry = rowToMemoryEntry(row);
         // Skip if already linked
         const existing = this.liveDb
           .prepare(
@@ -3901,7 +3503,7 @@ export class FactsDB extends BaseSqliteStore {
       // cannot meaningfully supersede an existing value.
       if (newVal !== null) {
         for (const row of conflicting) {
-          const oldFact = this.rowToEntry(row);
+          const oldFact = rowToMemoryEntry(row);
           // Only create SUPERSEDES edge when value actually differs
           if (oldFact.value !== null && newVal.toLowerCase() === oldFact.value.toLowerCase()) continue;
 
@@ -3984,10 +3586,20 @@ export class FactsDB extends BaseSqliteStore {
   /**
    * Get edges with link_type and strength for dashboard graph (optionally limited).
    */
-  getAllEdges(limit = 5000): Array<{ source: string; target: string; link_type: string; strength: number }> {
+  getAllEdges(limit = 5000): Array<{
+    source: string;
+    target: string;
+    link_type: string;
+    strength: number;
+  }> {
     const rows = this.liveDb
       .prepare("SELECT source_fact_id, target_fact_id, link_type, strength FROM memory_links LIMIT ?")
-      .all(limit) as Array<{ source_fact_id: string; target_fact_id: string; link_type: string; strength: number }>;
+      .all(limit) as Array<{
+      source_fact_id: string;
+      target_fact_id: string;
+      link_type: string;
+      strength: number;
+    }>;
     return rows.map((r) => ({
       source: r.source_fact_id,
       target: r.target_fact_id,
@@ -4031,10 +3643,22 @@ export class FactsDB extends BaseSqliteStore {
   }
 
   /** Get all stored clusters (without member IDs). Sorted by fact_count desc. */
-  getClusters(): Array<{ id: string; label: string; factCount: number; createdAt: number; updatedAt: number }> {
+  getClusters(): Array<{
+    id: string;
+    label: string;
+    factCount: number;
+    createdAt: number;
+    updatedAt: number;
+  }> {
     const rows = this.liveDb
       .prepare("SELECT id, label, fact_count, created_at, updated_at FROM clusters ORDER BY fact_count DESC")
-      .all() as Array<{ id: string; label: string; fact_count: number; created_at: number; updated_at: number }>;
+      .all() as Array<{
+      id: string;
+      label: string;
+      fact_count: number;
+      created_at: number;
+      updated_at: number;
+    }>;
     return rows.map((r) => ({
       id: r.id,
       label: r.label,
