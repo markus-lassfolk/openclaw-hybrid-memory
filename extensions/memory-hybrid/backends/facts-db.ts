@@ -81,9 +81,34 @@ import {
   searchFacts,
 } from "./facts-db/search.js";
 import {
+  confirmFact as confirmFactImpl,
+  decayConfidence as decayConfidenceImpl,
+  logRecall as logRecallImpl,
+  promoteScope as promoteScopeImpl,
+  pruneExpired as pruneExpiredImpl,
+  pruneRecallLog as pruneRecallLogImpl,
+  pruneSessionScope as pruneSessionScopeImpl,
+  restoreCheckpoint as restoreCheckpointImpl,
+  runCompaction as runCompactionImpl,
+  saveCheckpoint as saveCheckpointImpl,
+  setFactTier,
+  setPreserveTags as setPreserveTagsImpl,
+  setPreserveUntil as setPreserveUntilImpl,
+  trimToBudget as trimToBudgetImpl,
+} from "./facts-db/maintenance.js";
+import {
   DASHBOARD_TIER_FILTER,
   DECAY_CLASS_FILTER,
+  countExpiredFacts as countExpiredFactsImpl,
+  countFacts as countFactsImpl,
+  directivesCount as directivesCountImpl,
+  entityCount as entityCountImpl,
+  estimateStoredTokens as estimateStoredTokensImpl,
+  estimateStoredTokensByTier as estimateStoredTokensByTierImpl,
+  getTokenBudgetStatus as getTokenBudgetStatusImpl,
+  linksCount as linksCountImpl,
   listForDashboard as listForDashboardImpl,
+  metaPatternsCount as metaPatternsCountImpl,
   statsBreakdownByCategory as statsBreakdownByCategoryImpl,
   statsBreakdownByDecayClass as statsBreakdownByDecayClassImpl,
   statsBreakdownBySource as statsBreakdownBySourceImpl,
@@ -330,15 +355,12 @@ export class FactsDB extends BaseSqliteStore {
 
   /** Record a memory_recall invocation outcome for hit-rate tracking (Issue #148). */
   logRecall(hit: boolean, occurredAtSec?: number): void {
-    const id = randomUUID();
-    const nowSec = occurredAtSec ?? Math.floor(Date.now() / 1000);
-    this.liveDb.prepare("INSERT INTO recall_log (id, occurred_at, hit) VALUES (?, ?, ?)").run(id, nowSec, hit ? 1 : 0);
+    logRecallImpl(this.liveDb, hit, occurredAtSec);
   }
 
   /** Prune recall_log entries older than N days to prevent unbounded growth (Issue #148). */
   pruneRecallLog(olderThanDays = 30): number {
-    const cutoff = Math.floor(Date.now() / 1000) - olderThanDays * 24 * 3600;
-    return Number(this.liveDb.prepare("DELETE FROM recall_log WHERE occurred_at < ?").run(cutoff).changes ?? 0);
+    return pruneRecallLogImpl(this.liveDb, olderThanDays);
   }
 
   /** Read the last stored embedding provider+model metadata (Issue #153). */
@@ -398,8 +420,7 @@ export class FactsDB extends BaseSqliteStore {
 
   /** Set a fact's tier. */
   setTier(id: string, tier: MemoryTier): boolean {
-    const result = this.liveDb.prepare("UPDATE facts SET tier = ? WHERE id = ?").run(tier, id);
-    return result.changes > 0;
+    return setFactTier(this.liveDb, id, tier);
   }
 
   /** Compaction — migrate facts between tiers. Completed tasks -> COLD, inactive preferences -> WARM, active blockers -> HOT. */
@@ -412,82 +433,7 @@ export class FactsDB extends BaseSqliteStore {
     warm: number;
     cold: number;
   } {
-    const nowSec = Math.floor(Date.now() / 1000);
-    const inactiveCutoff = nowSec - opts.inactivePreferenceDays * 86400;
-    const counts = { hot: 0, warm: 0, cold: 0 };
-
-    // 1) Completed tasks -> COLD (decision category or tag 'task')
-    const taskRows = this.liveDb
-      .prepare(
-        `SELECT id FROM facts WHERE superseded_at IS NULL AND (expires_at IS NULL OR expires_at > ?)
-         AND (category = 'decision' OR (',' || COALESCE(tags,'') || ',') LIKE '%,task,%')
-         AND (tier IS NULL OR tier != 'cold')`,
-      )
-      .all(nowSec) as Array<{ id: string }>;
-    for (const { id } of taskRows) {
-      if (this.setTier(id, "cold")) counts.cold++;
-    }
-
-    // 2) Inactive preferences -> WARM (preference + not accessed recently)
-    const prefRows = this.liveDb
-      .prepare(
-        `SELECT id FROM facts WHERE superseded_at IS NULL AND (expires_at IS NULL OR expires_at > ?)
-         AND category = 'preference' AND COALESCE(last_accessed, last_confirmed_at, created_at) < ?
-         AND tier = 'hot'`,
-      )
-      .all(nowSec, inactiveCutoff) as Array<{ id: string }>;
-    for (const { id } of prefRows) {
-      if (this.setTier(id, "warm")) counts.warm++;
-    }
-
-    // 2b) Collect existing HOT facts with blocker tag (avoid N+1 in step 4)
-    const existingHotBlockerRows = this.liveDb
-      .prepare(
-        `SELECT id FROM facts WHERE tier = 'hot' AND superseded_at IS NULL AND (expires_at IS NULL OR expires_at > ?)
-         AND (',' || COALESCE(tags,'') || ',') LIKE '%,blocker,%'`,
-      )
-      .all(nowSec) as Array<{ id: string }>;
-    const allBlockerIdSet = new Set(existingHotBlockerRows.map((r) => r.id));
-
-    // 3) Active blockers -> HOT (tag 'blocker'); cap HOT tier by hotMaxFacts and hotMaxTokens
-    const blockerRows = this.liveDb
-      .prepare(
-        `SELECT id, text, summary FROM facts WHERE superseded_at IS NULL AND (expires_at IS NULL OR expires_at > ?)
-         AND (',' || COALESCE(tags,'') || ',') LIKE '%,blocker,%'
-         AND (tier IS NULL OR tier != 'hot')`,
-      )
-      .all(nowSec) as Array<{
-      id: string;
-      text: string;
-      summary: string | null;
-    }>;
-    let hotTokens = 0;
-    const hotIds: string[] = [];
-    for (const row of blockerRows) {
-      if (hotIds.length >= opts.hotMaxFacts) break;
-      const len = (row.summary || row.text).length;
-      const tokens = Math.ceil(len / 4);
-      if (hotTokens + tokens > opts.hotMaxTokens) continue;
-      hotTokens += tokens;
-      hotIds.push(row.id);
-    }
-    for (const id of hotIds) {
-      allBlockerIdSet.add(id);
-      if (this.setTier(id, "hot")) counts.hot++;
-    }
-
-    // 4) Demote HOT facts that are not blockers (so HOT stays small)
-    const hotRows = this.liveDb
-      .prepare(
-        `SELECT id FROM facts WHERE tier = 'hot' AND superseded_at IS NULL AND (expires_at IS NULL OR expires_at > ?)`,
-      )
-      .all(nowSec) as Array<{ id: string }>;
-    for (const { id } of hotRows) {
-      if (allBlockerIdSet.has(id)) continue;
-      if (this.setTier(id, "warm")) counts.warm++;
-    }
-
-    return counts;
+    return runCompactionImpl(this.liveDb, opts);
   }
 
   /**
@@ -527,181 +473,7 @@ export class FactsDB extends BaseSqliteStore {
     preserved: Array<{ id: string; reason: string }>;
     error?: string;
   } {
-    const nowSec = Math.floor(Date.now() / 1000);
-    const HOUR_SEC = 3600;
-    const p1Cutoff = nowSec - HOUR_SEC;
-    const tokenEstimate = (text: string): number => Math.ceil(text.length / 3.8);
-
-    // Fetch all non-superseded, non-expired facts with their verified status.
-    const rows = this.liveDb
-      .prepare(
-        `SELECT f.id, f.text, f.importance, f.created_at, f.preserve_until, f.preserve_tags,
-                f.confidence, f.tags,
-                vf.fact_id IS NOT NULL AS is_verified
-         FROM facts f
-         LEFT JOIN verified_facts vf ON vf.fact_id = f.id
-         WHERE f.superseded_at IS NULL
-           AND (f.expires_at IS NULL OR f.expires_at > ?)`,
-      )
-      .all(nowSec) as Array<{
-      id: string;
-      text: string;
-      importance: number;
-      created_at: number;
-      preserve_until: number | null;
-      preserve_tags: string | null;
-      confidence: number;
-      tags: string | null;
-      is_verified: number;
-    }>;
-
-    const parsePreserveTags = (raw: string | null): string[] => {
-      if (!raw) return [];
-      try {
-        const parsed = JSON.parse(raw);
-        return Array.isArray(parsed) ? parsed.filter((q): q is string => typeof q === "string") : [];
-      } catch {
-        return [];
-      }
-    };
-
-    const hasTag = (tagsStr: string | null, tag: string): boolean => {
-      return parseTags(tagsStr).includes(tag.toLowerCase().trim());
-    };
-
-    const p0: Array<{ id: string; text: string }> = [];
-    const preserved: Array<{ id: string; reason: string }> = [];
-
-    for (const row of rows) {
-      const preserveTags = parsePreserveTags(row.preserve_tags);
-      const tagsStr = row.tags;
-      const isEdict = hasTag(tagsStr, "edict");
-      const isVerified = row.is_verified === 1;
-      const hasPreserveUntil = row.preserve_until != null && row.preserve_until > nowSec;
-      const hasPreserveTags = preserveTags.length > 0;
-
-      if (isEdict || isVerified || hasPreserveUntil || hasPreserveTags) {
-        p0.push({ id: row.id, text: row.text });
-        const reasons: string[] = [];
-        if (isEdict) reasons.push("edict");
-        if (isVerified) reasons.push("verified");
-        if (hasPreserveUntil) reasons.push(`preserveUntil=${row.preserve_until}`);
-        if (hasPreserveTags) reasons.push(`preserveTags=${preserveTags.join(",")}`);
-        preserved.push({ id: row.id, reason: reasons.join("|") });
-      }
-    }
-
-    // Trim candidates in DB sort order (P3 → P2 → P1, then importance, then recency — Issue #838).
-    const trimOrderStmt = this.liveDb.prepare(
-      `SELECT f.id, f.text, f.importance,
-              CASE
-                WHEN f.importance < 0.5 THEN 0
-                WHEN f.importance > 0.8 AND f.created_at >= ? THEN 2
-                ELSE 1
-              END AS trim_tier
-       FROM facts f
-       LEFT JOIN verified_facts vf ON vf.fact_id = f.id
-       WHERE f.superseded_at IS NULL
-         AND (f.expires_at IS NULL OR f.expires_at > ?)
-         AND NOT (
-           (',' || COALESCE(f.tags,'') || ',') LIKE '%,edict,%'
-           OR vf.fact_id IS NOT NULL
-           OR (f.preserve_until IS NOT NULL AND f.preserve_until > ?)
-           OR (f.preserve_tags IS NOT NULL AND TRIM(f.preserve_tags) != '' AND f.preserve_tags != '[]')
-         )
-       ORDER BY trim_tier ASC, f.importance ASC, COALESCE(f.last_accessed, f.created_at) ASC, f.id ASC`,
-    );
-    const trimRows = trimOrderStmt.all(p1Cutoff, nowSec, nowSec) as Array<{
-      id: string;
-      text: string;
-      importance: number;
-      trim_tier: number;
-    }>;
-
-    const p0Tokens = p0.reduce((sum, f) => sum + tokenEstimate(f.text), 0);
-    const trimPoolTokens = trimRows.reduce((sum, r) => sum + tokenEstimate(r.text), 0);
-    const currentTokens = p0Tokens + trimPoolTokens;
-
-    if (currentTokens <= tokenBudget) {
-      const trimmed: Array<{
-        id: string;
-        textPreview: string;
-        tier: string;
-        importance: number;
-        tokenCost: number;
-      }> = [];
-      return {
-        simulate,
-        budget: tokenBudget,
-        beforeTokens: currentTokens,
-        afterTokens: simulate ? currentTokens : currentTokens,
-        trimmed,
-        preserved,
-      };
-    }
-
-    // Trim from P3 → P2 → P1 until within budget (order from SQL above).
-    let remainingTokens = currentTokens;
-    const toTrim: Array<{
-      id: string;
-      text: string;
-      tier: string;
-      importance: number;
-    }> = trimRows.map((r) => ({
-      id: r.id,
-      text: r.text,
-      importance: r.importance,
-      tier: r.trim_tier === 0 ? "P3" : r.trim_tier === 1 ? "P2" : "P1",
-    }));
-
-    const trimmed: Array<{
-      id: string;
-      textPreview: string;
-      tier: string;
-      importance: number;
-      tokenCost: number;
-    }> = [];
-    for (const fact of toTrim) {
-      if (remainingTokens <= tokenBudget) break;
-      const cost = tokenEstimate(fact.text);
-      remainingTokens -= cost;
-      const preview = fact.text.length > 80 ? `${fact.text.slice(0, 80)}…` : fact.text;
-      trimmed.push({
-        id: fact.id,
-        textPreview: preview,
-        tier: fact.tier,
-        importance: fact.importance,
-        tokenCost: cost,
-      });
-      if (!simulate) {
-        this.liveDb.prepare("UPDATE facts SET superseded_at = ? WHERE id = ?").run(nowSec, fact.id);
-        this.liveDb
-          .prepare(
-            `INSERT INTO trim_metrics (trimmed_at, fact_id, fact_text_preview, tier, importance, preserve_until, token_cost, budget_before, budget_after)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          )
-          .run(
-            nowSec,
-            fact.id,
-            fact.text.slice(0, 200),
-            fact.tier,
-            fact.importance,
-            null,
-            cost,
-            currentTokens,
-            tokenBudget,
-          );
-      }
-    }
-
-    return {
-      simulate,
-      budget: tokenBudget,
-      beforeTokens: currentTokens,
-      afterTokens: remainingTokens,
-      trimmed,
-      preserved,
-    };
+    return trimToBudgetImpl(this.liveDb, tokenBudget, simulate);
   }
 
   /**
@@ -710,12 +482,7 @@ export class FactsDB extends BaseSqliteStore {
    * Returns the updated MemoryEntry or null if not found.
    */
   setPreserveUntil(id: string, untilSec: number | null): MemoryEntry | null {
-    const nowSec = Math.floor(Date.now() / 1000);
-    if (untilSec !== null && untilSec <= nowSec) {
-      throw new Error(`preserve_until must be in the future or null. Got: ${untilSec}`);
-    }
-    this.liveDb.prepare("UPDATE facts SET preserve_until = ? WHERE id = ?").run(untilSec, id);
-    return this.getById(id);
+    return setPreserveUntilImpl(this.liveDb, (i) => this.getById(i), id, untilSec);
   }
 
   /**
@@ -726,24 +493,7 @@ export class FactsDB extends BaseSqliteStore {
    * Returns the updated MemoryEntry or null if not found.
    */
   setPreserveTags(id: string, tags: string[], mode: "set" | "add" | "remove"): MemoryEntry | null {
-    const fact = this.getById(id);
-    if (!fact) return null;
-    const existing = fact.preserveTags ?? [];
-    let next: string[];
-    if (mode === "set") {
-      next = [...new Set(tags.map((t) => t.toLowerCase().trim()))];
-    } else if (mode === "add") {
-      const s = new Set(existing);
-      for (const t of tags) s.add(t.toLowerCase().trim());
-      next = [...s];
-    } else {
-      const s = new Set(existing);
-      for (const t of tags) s.delete(t.toLowerCase().trim());
-      next = [...s];
-    }
-    const preserveTagsStr = next.length > 0 ? JSON.stringify(next) : null;
-    this.liveDb.prepare("UPDATE facts SET preserve_tags = ? WHERE id = ?").run(preserveTagsStr, id);
-    return this.getById(id);
+    return setPreserveTagsImpl(this.liveDb, (i) => this.getById(i), id, tags, mode);
   }
 
   /**
@@ -757,85 +507,7 @@ export class FactsDB extends BaseSqliteStore {
     byTier: { p0: number; p1: number; p2: number; p3: number };
     factCount: { p0: number; p1: number; p2: number; p3: number };
   } {
-    const nowSec = Math.floor(Date.now() / 1000);
-    const HOUR_SEC = 3600;
-    const p1Cutoff = nowSec - HOUR_SEC;
-    const tokenEstimate = (text: string): number => Math.ceil(text.length / 3.8);
-    const DEFAULT_BUDGET = Math.ceil((32_000 * 0.8) / 3.8);
-    const budget = DEFAULT_BUDGET;
-
-    const rows = this.liveDb
-      .prepare(
-        `SELECT f.id, f.text, f.importance, f.created_at, f.preserve_until, f.preserve_tags,
-                f.confidence, f.tags,
-                vf.fact_id IS NOT NULL AS is_verified
-         FROM facts f
-         LEFT JOIN verified_facts vf ON vf.fact_id = f.id
-         WHERE f.superseded_at IS NULL
-           AND (f.expires_at IS NULL OR f.expires_at > ?)`,
-      )
-      .all(nowSec) as Array<{
-      id: string;
-      text: string;
-      importance: number;
-      created_at: number;
-      preserve_until: number | null;
-      preserve_tags: string | null;
-      confidence: number;
-      tags: string | null;
-      is_verified: number;
-    }>;
-
-    const parsePreserveTags = (raw: string | null): string[] => {
-      if (!raw) return [];
-      try {
-        const parsed = JSON.parse(raw);
-        return Array.isArray(parsed) ? parsed.filter((q): q is string => typeof q === "string") : [];
-      } catch {
-        return [];
-      }
-    };
-
-    const hasTag = (tagsStr: string | null, tag: string): boolean => {
-      return parseTags(tagsStr).includes(tag.toLowerCase().trim());
-    };
-
-    const byTier = { p0: 0, p1: 0, p2: 0, p3: 0 };
-    const factCount = { p0: 0, p1: 0, p2: 0, p3: 0 };
-
-    for (const row of rows) {
-      const preserveTags = parsePreserveTags(row.preserve_tags);
-      const tagsStr = row.tags;
-      const isEdict = hasTag(tagsStr, "edict");
-      const isVerified = row.is_verified === 1;
-      const hasPreserveUntil = row.preserve_until != null && row.preserve_until > nowSec;
-      const hasPreserveTags = preserveTags.length > 0;
-
-      const tokens = tokenEstimate(row.text);
-
-      if (isEdict || isVerified || hasPreserveUntil || hasPreserveTags) {
-        byTier.p0 += tokens;
-        factCount.p0++;
-      } else if (row.importance > 0.8 && row.created_at >= p1Cutoff) {
-        byTier.p1 += tokens;
-        factCount.p1++;
-      } else if (row.importance >= 0.5) {
-        byTier.p2 += tokens;
-        factCount.p2++;
-      } else {
-        byTier.p3 += tokens;
-        factCount.p3++;
-      }
-    }
-
-    const totalTokens = byTier.p0 + byTier.p1 + byTier.p2 + byTier.p3;
-    return {
-      totalTokens,
-      budget,
-      overflow: Math.max(0, totalTokens - budget),
-      byTier,
-      factCount,
-    };
+    return getTokenBudgetStatusImpl(this.liveDb);
   }
 
   search(
@@ -1283,54 +955,16 @@ export class FactsDB extends BaseSqliteStore {
   }
 
   count(): number {
-    const row = this.liveDb.prepare("SELECT COUNT(*) as cnt FROM facts").get() as Record<string, number>;
-    return row.cnt;
+    return countFactsImpl(this.liveDb);
   }
 
   pruneExpired(): number {
-    const nowSec = Math.floor(Date.now() / 1000);
-    // Clean up links where deleted facts are targets (except DERIVED_FROM)
-    this.liveDb
-      .prepare(
-        `DELETE FROM memory_links
-         WHERE target_fact_id IN (
-           SELECT id FROM facts WHERE expires_at IS NOT NULL AND expires_at < @now
-             AND (decay_freeze_until IS NULL OR decay_freeze_until <= @now)
-             AND id NOT IN (SELECT fact_id FROM verified_facts)
-         )
-         AND link_type != 'DERIVED_FROM'`,
-      )
-      .run({ "@now": nowSec });
-    const result = this.liveDb
-      .prepare(
-        `DELETE FROM facts WHERE expires_at IS NOT NULL AND expires_at < @now
-                AND (decay_freeze_until IS NULL OR decay_freeze_until <= @now)
-                AND id NOT IN (SELECT fact_id FROM verified_facts)`,
-      )
-      .run({ "@now": nowSec });
-    return Number(result.changes ?? 0);
+    return pruneExpiredImpl(this.liveDb);
   }
 
   /** Prune session-scoped memories for a given session (cleared on session end). Returns count deleted. */
   pruneSessionScope(sessionId: string): number {
-    // Clean up links where deleted facts are targets (except DERIVED_FROM)
-    this.liveDb
-      .prepare(
-        `DELETE FROM memory_links
-         WHERE target_fact_id IN (
-           SELECT id FROM facts WHERE scope = 'session' AND scope_target = ?
-             AND id NOT IN (SELECT fact_id FROM verified_facts)
-         )
-         AND link_type != 'DERIVED_FROM'`,
-      )
-      .run(sessionId);
-    const result = this.liveDb
-      .prepare(
-        `DELETE FROM facts WHERE scope = 'session' AND scope_target = ?
-                AND id NOT IN (SELECT fact_id FROM verified_facts)`,
-      )
-      .run(sessionId);
-    return Number(result.changes ?? 0);
+    return pruneSessionScopeImpl(this.liveDb, sessionId);
   }
 
   /** Promote a fact's scope (e.g. session → global or agent). Returns true if updated. */
@@ -1339,64 +973,15 @@ export class FactsDB extends BaseSqliteStore {
     newScope: "global" | "user" | "agent" | "session",
     newScopeTarget: string | null,
   ): boolean {
-    const scopeTarget = newScope === "global" ? null : newScopeTarget;
-    const result = this.liveDb
-      .prepare("UPDATE facts SET scope = ?, scope_target = ? WHERE id = ?")
-      .run(newScope, scopeTarget, factId);
-    return result.changes > 0;
+    return promoteScopeImpl(this.liveDb, factId, newScope, newScopeTarget);
   }
 
   decayConfidence(): number {
-    const nowSec = Math.floor(Date.now() / 1000);
-
-    this.liveDb
-      .prepare(
-        `UPDATE facts
-         SET confidence = confidence * 0.5
-         WHERE expires_at IS NOT NULL
-           AND expires_at > @now
-           AND last_confirmed_at IS NOT NULL
-           AND (@now - last_confirmed_at) > (expires_at - last_confirmed_at) * 0.75
-           AND confidence > 0.1
-           AND (decay_freeze_until IS NULL OR decay_freeze_until <= @now)
-           AND id NOT IN (SELECT fact_id FROM verified_facts)`,
-      )
-      .run({ "@now": nowSec });
-
-    // Clean up links where deleted facts are targets (except DERIVED_FROM)
-    this.liveDb
-      .prepare(
-        `DELETE FROM memory_links
-         WHERE target_fact_id IN (
-           SELECT id FROM facts WHERE confidence < 0.1
-             AND (decay_freeze_until IS NULL OR decay_freeze_until <= @now)
-             AND id NOT IN (SELECT fact_id FROM verified_facts)
-         )
-         AND link_type != 'DERIVED_FROM'`,
-      )
-      .run({ "@now": nowSec });
-    const result = this.liveDb
-      .prepare(
-        `DELETE FROM facts WHERE confidence < 0.1
-                AND (decay_freeze_until IS NULL OR decay_freeze_until <= @now)
-                AND id NOT IN (SELECT fact_id FROM verified_facts)`,
-      )
-      .run({ "@now": nowSec });
-    return Number(result.changes ?? 0);
+    return decayConfidenceImpl(this.liveDb);
   }
 
   confirmFact(id: string): boolean {
-    const nowSec = Math.floor(Date.now() / 1000);
-    const row = this.liveDb.prepare("SELECT decay_class FROM facts WHERE id = ?").get(id) as
-      | { decay_class: DecayClass }
-      | undefined;
-    if (!row) return false;
-
-    const newExpiry = calculateExpiry(row.decay_class, nowSec);
-    this.liveDb
-      .prepare("UPDATE facts SET confidence = 1.0, last_confirmed_at = ?, expires_at = ? WHERE id = ?")
-      .run(nowSec, newExpiry, id);
-    return true;
+    return confirmFactImpl(this.liveDb, id);
   }
 
   /**
@@ -1460,21 +1045,7 @@ export class FactsDB extends BaseSqliteStore {
     expectedOutcome?: string;
     workingFiles?: string[];
   }): string {
-    const data = JSON.stringify({
-      ...context,
-      savedAt: new Date().toISOString(),
-    });
-
-    return this.store({
-      text: data,
-      category: "other" as MemoryCategory,
-      importance: 0.9,
-      entity: "system",
-      key: `checkpoint:${Date.now()}`,
-      value: context.intent.slice(0, 100),
-      source: "checkpoint",
-      decayClass: "checkpoint",
-    }).id;
+    return saveCheckpointImpl((entry) => this.store(entry), context);
   }
 
   restoreCheckpoint(): {
@@ -1485,27 +1056,7 @@ export class FactsDB extends BaseSqliteStore {
     workingFiles?: string[];
     savedAt: string;
   } | null {
-    const nowSec = Math.floor(Date.now() / 1000);
-    const row = this.liveDb
-      .prepare(
-        `SELECT id, text FROM facts
-         WHERE entity = 'system' AND key LIKE 'checkpoint:%'
-           AND (expires_at IS NULL OR expires_at > ?)
-         ORDER BY created_at DESC LIMIT 1`,
-      )
-      .get(nowSec) as { id: string; text: string } | undefined;
-
-    if (!row) return null;
-    try {
-      return { id: row.id, ...JSON.parse(row.text) };
-    } catch (err) {
-      capturePluginError(err as Error, {
-        operation: "json-parse-checkpoint",
-        severity: "info",
-        subsystem: "facts",
-      });
-      return null;
-    }
+    return restoreCheckpointImpl(this.liveDb);
   }
 
   statsBreakdown(): Record<string, number> {
@@ -1641,87 +1192,36 @@ export class FactsDB extends BaseSqliteStore {
 
   /** Count of rows in memory_links (graph connections). Returns 0 if table does not exist. */
   linksCount(): number {
-    try {
-      const row = this.liveDb.prepare("SELECT COUNT(*) as cnt FROM memory_links").get() as { cnt: number };
-      return row?.cnt ?? 0;
-    } catch (err) {
-      capturePluginError(err as Error, {
-        operation: "count-links",
-        severity: "info",
-        subsystem: "facts",
-      });
-      return 0;
-    }
+    return linksCountImpl(this.liveDb);
   }
 
   /** Count of facts with source LIKE 'directive:%' (extracted directives). */
   directivesCount(): number {
-    const row = this.liveDb
-      .prepare(`SELECT COUNT(*) as cnt FROM facts WHERE superseded_at IS NULL AND source LIKE 'directive:%'`)
-      .get() as { cnt: number };
-    return row?.cnt ?? 0;
+    return directivesCountImpl(this.liveDb);
   }
 
   /** Count of facts with category = 'pattern' and tag 'meta' (meta-patterns). */
   metaPatternsCount(): number {
-    try {
-      const row = this.liveDb
-        .prepare(
-          `SELECT COUNT(*) as cnt FROM facts WHERE superseded_at IS NULL AND category = 'pattern' AND (',' || COALESCE(tags,'') || ',') LIKE '%,meta,%'`,
-        )
-        .get() as { cnt: number };
-      return row?.cnt ?? 0;
-    } catch (err) {
-      capturePluginError(err as Error, {
-        operation: "count-meta-patterns",
-        severity: "info",
-        subsystem: "facts",
-      });
-      return 0;
-    }
+    return metaPatternsCountImpl(this.liveDb);
   }
 
   /** Distinct entity count (non-null, non-empty entity values). */
   entityCount(): number {
-    const row = this.liveDb
-      .prepare(
-        `SELECT COUNT(DISTINCT entity) as cnt FROM facts WHERE superseded_at IS NULL AND entity IS NOT NULL AND entity != ''`,
-      )
-      .get() as { cnt: number };
-    return row?.cnt ?? 0;
+    return entityCountImpl(this.liveDb);
   }
 
   /** Estimated total tokens stored (summary or text) for non-superseded facts. Uses same heuristic as auto-recall. */
   estimateStoredTokens(): number {
-    const rows = this.liveDb.prepare("SELECT summary, text FROM facts WHERE superseded_at IS NULL").all() as Array<{
-      summary: string | null;
-      text: string;
-    }>;
-    return rows.reduce((sum, r) => sum + estimateTokensForDisplay(r.summary || r.text), 0);
+    return estimateStoredTokensImpl(this.liveDb);
   }
 
   /** Estimated tokens by tier (hot/warm/cold) for non-superseded facts. */
   estimateStoredTokensByTier(): { hot: number; warm: number; cold: number } {
-    const rows = this.liveDb
-      .prepare(`SELECT COALESCE(tier, 'warm') as tier, summary, text FROM facts WHERE superseded_at IS NULL`)
-      .all() as Array<{ tier: string; summary: string | null; text: string }>;
-    const out = { hot: 0, warm: 0, cold: 0 };
-    for (const r of rows) {
-      const tok = estimateTokensForDisplay(r.summary || r.text);
-      const t = r.tier || "warm";
-      if (t === "hot") out.hot += tok;
-      else if (t === "cold") out.cold += tok;
-      else out.warm += tok;
-    }
-    return out;
+    return estimateStoredTokensByTierImpl(this.liveDb);
   }
 
   countExpired(): number {
-    const nowSec = Math.floor(Date.now() / 1000);
-    const row = this.liveDb
-      .prepare("SELECT COUNT(*) as cnt FROM facts WHERE expires_at IS NOT NULL AND expires_at < ?")
-      .get(nowSec) as { cnt: number };
-    return row.cnt;
+    return countExpiredFactsImpl(this.liveDb);
   }
 
   backfillDecayClasses(): Record<string, number> {

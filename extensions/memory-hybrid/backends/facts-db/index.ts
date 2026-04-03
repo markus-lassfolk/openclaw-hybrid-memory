@@ -40,3 +40,30 @@ export {
   lookupFacts,
   searchFacts,
 } from "./search.js";
+export {
+  confirmFact,
+  decayConfidence,
+  logRecall,
+  promoteScope,
+  pruneExpired,
+  pruneRecallLog,
+  pruneSessionScope,
+  restoreCheckpoint,
+  runCompaction,
+  saveCheckpoint,
+  setFactTier,
+  setPreserveTags,
+  setPreserveUntil,
+  trimToBudget,
+} from "./maintenance.js";
+export {
+  countExpiredFacts,
+  countFacts,
+  directivesCount,
+  entityCount,
+  estimateStoredTokens,
+  estimateStoredTokensByTier,
+  getTokenBudgetStatus,
+  linksCount,
+  metaPatternsCount,
+} from "./stats.js";

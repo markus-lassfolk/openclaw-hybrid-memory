@@ -6,7 +6,10 @@ import type { DatabaseSync } from "node:sqlite";
 
 import { DECAY_CLASSES } from "../../config.js";
 import { isValidCategory } from "../../config.js";
+import { capturePluginError } from "../../services/error-reporter.js";
 import { searchFts } from "../../services/fts-search.js";
+import { parseTags } from "../../utils/tags.js";
+import { estimateTokensForDisplay } from "../../utils/text.js";
 
 /** Allowlisted tier values for dynamic SQL fragments in list()/dashboard filters (#842). */
 export const DASHBOARD_TIER_FILTER = new Set<string>(["warm", "hot", "cold"]);
@@ -196,4 +199,182 @@ export function uniqueMemoryCategories(db: DatabaseSync): string[] {
     .prepare("SELECT DISTINCT category FROM facts WHERE superseded_at IS NULL ORDER BY category")
     .all() as Array<{ category: string }>;
   return rows.map((r) => r.category || "other");
+}
+
+export function countFacts(db: DatabaseSync): number {
+  const row = db.prepare("SELECT COUNT(*) as cnt FROM facts").get() as Record<string, number>;
+  return row.cnt;
+}
+
+export function countExpiredFacts(db: DatabaseSync): number {
+  const nowSec = Math.floor(Date.now() / 1000);
+  const row = db
+    .prepare("SELECT COUNT(*) as cnt FROM facts WHERE expires_at IS NOT NULL AND expires_at < ?")
+    .get(nowSec) as {
+    cnt: number;
+  };
+  return row.cnt;
+}
+
+export function estimateStoredTokens(db: DatabaseSync): number {
+  const rows = db.prepare("SELECT summary, text FROM facts WHERE superseded_at IS NULL").all() as Array<{
+    summary: string | null;
+    text: string;
+  }>;
+  return rows.reduce((sum, r) => sum + estimateTokensForDisplay(r.summary || r.text), 0);
+}
+
+export function estimateStoredTokensByTier(db: DatabaseSync): {
+  hot: number;
+  warm: number;
+  cold: number;
+} {
+  const rows = db
+    .prepare(`SELECT COALESCE(tier, 'warm') as tier, summary, text FROM facts WHERE superseded_at IS NULL`)
+    .all() as Array<{ tier: string; summary: string | null; text: string }>;
+  const out = { hot: 0, warm: 0, cold: 0 };
+  for (const r of rows) {
+    const tok = estimateTokensForDisplay(r.summary || r.text);
+    const t = r.tier || "warm";
+    if (t === "hot") out.hot += tok;
+    else if (t === "cold") out.cold += tok;
+    else out.warm += tok;
+  }
+  return out;
+}
+
+export function linksCount(db: DatabaseSync): number {
+  try {
+    const row = db.prepare("SELECT COUNT(*) as cnt FROM memory_links").get() as { cnt: number };
+    return row?.cnt ?? 0;
+  } catch (err) {
+    capturePluginError(err as Error, {
+      operation: "count-links",
+      severity: "info",
+      subsystem: "facts",
+    });
+    return 0;
+  }
+}
+
+export function directivesCount(db: DatabaseSync): number {
+  const row = db
+    .prepare(`SELECT COUNT(*) as cnt FROM facts WHERE superseded_at IS NULL AND source LIKE 'directive:%'`)
+    .get() as { cnt: number };
+  return row?.cnt ?? 0;
+}
+
+export function metaPatternsCount(db: DatabaseSync): number {
+  try {
+    const row = db
+      .prepare(
+        `SELECT COUNT(*) as cnt FROM facts WHERE superseded_at IS NULL AND category = 'pattern' AND (',' || COALESCE(tags,'') || ',') LIKE '%,meta,%'`,
+      )
+      .get() as { cnt: number };
+    return row?.cnt ?? 0;
+  } catch (err) {
+    capturePluginError(err as Error, {
+      operation: "count-meta-patterns",
+      severity: "info",
+      subsystem: "facts",
+    });
+    return 0;
+  }
+}
+
+export function entityCount(db: DatabaseSync): number {
+  const row = db
+    .prepare(
+      `SELECT COUNT(DISTINCT entity) as cnt FROM facts WHERE superseded_at IS NULL AND entity IS NOT NULL AND entity != ''`,
+    )
+    .get() as { cnt: number };
+  return row?.cnt ?? 0;
+}
+
+export function getTokenBudgetStatus(db: DatabaseSync): {
+  totalTokens: number;
+  budget: number;
+  overflow: number;
+  byTier: { p0: number; p1: number; p2: number; p3: number };
+  factCount: { p0: number; p1: number; p2: number; p3: number };
+} {
+  const nowSec = Math.floor(Date.now() / 1000);
+  const HOUR_SEC = 3600;
+  const p1Cutoff = nowSec - HOUR_SEC;
+  const tokenEstimate = (text: string): number => Math.ceil(text.length / 3.8);
+  const DEFAULT_BUDGET = Math.ceil((32_000 * 0.8) / 3.8);
+  const budget = DEFAULT_BUDGET;
+
+  const rows = db
+    .prepare(
+      `SELECT f.id, f.text, f.importance, f.created_at, f.preserve_until, f.preserve_tags,
+                f.confidence, f.tags,
+                vf.fact_id IS NOT NULL AS is_verified
+         FROM facts f
+         LEFT JOIN verified_facts vf ON vf.fact_id = f.id
+         WHERE f.superseded_at IS NULL
+           AND (f.expires_at IS NULL OR f.expires_at > ?)`,
+    )
+    .all(nowSec) as Array<{
+    id: string;
+    text: string;
+    importance: number;
+    created_at: number;
+    preserve_until: number | null;
+    preserve_tags: string | null;
+    confidence: number;
+    tags: string | null;
+    is_verified: number;
+  }>;
+
+  const parsePreserveTags = (raw: string | null): string[] => {
+    if (!raw) return [];
+    try {
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed.filter((q): q is string => typeof q === "string") : [];
+    } catch {
+      return [];
+    }
+  };
+
+  const hasTag = (tagsStr: string | null, tag: string): boolean => {
+    return parseTags(tagsStr).includes(tag.toLowerCase().trim());
+  };
+
+  const byTier = { p0: 0, p1: 0, p2: 0, p3: 0 };
+  const factCount = { p0: 0, p1: 0, p2: 0, p3: 0 };
+
+  for (const row of rows) {
+    const preserveTags = parsePreserveTags(row.preserve_tags);
+    const tagsStr = row.tags;
+    const isEdict = hasTag(tagsStr, "edict");
+    const isVerified = row.is_verified === 1;
+    const hasPreserveUntil = row.preserve_until != null && row.preserve_until > nowSec;
+    const hasPreserveTags = preserveTags.length > 0;
+
+    const tokens = tokenEstimate(row.text);
+
+    if (isEdict || isVerified || hasPreserveUntil || hasPreserveTags) {
+      byTier.p0 += tokens;
+      factCount.p0++;
+    } else if (row.importance > 0.8 && row.created_at >= p1Cutoff) {
+      byTier.p1 += tokens;
+      factCount.p1++;
+    } else if (row.importance >= 0.5) {
+      byTier.p2 += tokens;
+      factCount.p2++;
+    } else {
+      byTier.p3 += tokens;
+      factCount.p3++;
+    }
+  }
+
+  const totalTokens = byTier.p0 + byTier.p1 + byTier.p2 + byTier.p3;
+  return {
+    totalTokens,
+    budget,
+    overflow: Math.max(0, totalTokens - budget),
+    byTier,
+    factCount,
+  };
 }
