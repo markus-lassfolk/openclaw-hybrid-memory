@@ -245,8 +245,8 @@ function getContextWindow(model: string): number {
  * (e.g. GPT-5+, GPT-4.1*, o-series). Checks every `/`-segment so `azure-foundry/gpt-5.4-nano` matches.
  */
 export function requiresMaxCompletionTokens(model: string): boolean {
+  if (isReasoningModel(model)) return true;
   for (const seg of modelPathSegments(model)) {
-    if (/^o[0-9]+(?:-[a-z]+)?$/.test(seg)) return true;
     if (/^gpt-5/i.test(seg) || /^gpt-4\.1/i.test(seg)) return true;
   }
   return false;
