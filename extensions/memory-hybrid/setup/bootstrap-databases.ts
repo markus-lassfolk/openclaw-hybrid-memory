@@ -263,7 +263,7 @@ export function initializeDatabases(cfg: HybridMemoryConfig, api: ClawdbotPlugin
   // Shares FactsDB's SQLite connection (same memory.db, avoids a second DB handle).
   // Gated on cfg.costTracking.enabled (default: true).
   const costTracker: CostTracker | null =
-    cfg.costTracking?.enabled !== false ? new CostTracker(factsDb.getRawDb()) : null;
+    cfg.costTracking?.enabled !== false ? new CostTracker(factsDb) : null;
   if (costTracker) {
     api.logger.info("memory-hybrid: LLM cost tracker initialized");
   }
