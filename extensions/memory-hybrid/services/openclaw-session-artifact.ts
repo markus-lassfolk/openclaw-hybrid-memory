@@ -39,17 +39,30 @@ export async function findOpenClawSessionJsonlForKey(
   const key = sessionKey.trim();
   if (!key) return null;
 
-  const baseCandidates = new Set<string>([
+  const baseCandidates: string[] = [
     `${key}.jsonl`,
     `${key.replace(/:/g, "_")}.jsonl`,
     `${key.replace(/:/g, "-")}.jsonl`,
-  ]);
+  ];
   const uuidMatch = key.match(/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i);
   if (uuidMatch) {
-    baseCandidates.add(`${uuidMatch[1]}.jsonl`);
+    baseCandidates.push(`${uuidMatch[1]}.jsonl`);
   }
 
+  /** Fast path: check known basenames without scanning the directory (PR #999 review). */
+  const tryDirectPaths = (sessionsDir: string): string | null => {
+    if (!existsSync(sessionsDir)) return null;
+    for (const name of baseCandidates) {
+      const p = join(sessionsDir, name);
+      if (existsSync(p)) return p;
+    }
+    return null;
+  };
+
   const tryDir = async (sessionsDir: string): Promise<string | null> => {
+    const direct = tryDirectPaths(sessionsDir);
+    if (direct) return direct;
+    if (!uuidMatch) return null;
     if (!existsSync(sessionsDir)) return null;
     let files: string[];
     try {
@@ -57,14 +70,11 @@ export async function findOpenClawSessionJsonlForKey(
     } catch {
       return null;
     }
+    const u = uuidMatch[1];
     for (const f of files) {
       if (!f.endsWith(".jsonl") || f.startsWith(".deleted")) continue;
-      if (baseCandidates.has(f)) return join(sessionsDir, f);
       const base = f.slice(0, -".jsonl".length);
-      if (base === key) return join(sessionsDir, f);
-      if (uuidMatch && (base === uuidMatch[1] || f.includes(uuidMatch[1]))) {
-        return join(sessionsDir, f);
-      }
+      if (base === u || f.includes(u)) return join(sessionsDir, f);
     }
     return null;
   };
