@@ -39,6 +39,18 @@ describe("parseBatchClassifyResponseContent (#1007)", () => {
     expect(parseBatchClassifyResponseContent(raw)).toEqual(inner);
   });
 
+  it("skips a citation-like bracket preamble and parses the real array (Copilot PR#1006)", () => {
+    const inner = JSON.stringify([row, row]);
+    const raw = `See [1] and [2] for details.\n${inner}`;
+    expect(parseBatchClassifyResponseContent(raw)).toEqual([row, row]);
+  });
+
+  it("skips invalid JSON bracket snippets before the real array", () => {
+    const inner = JSON.stringify([row]);
+    const raw = `Note: see [note] in the manual.\n${inner}`;
+    expect(parseBatchClassifyResponseContent(raw)).toEqual([row]);
+  });
+
   it("throws when no array can be recovered", () => {
     expect(() => parseBatchClassifyResponseContent("just prose")).toThrow(/no JSON array/);
   });

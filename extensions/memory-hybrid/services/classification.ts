@@ -219,12 +219,73 @@ function tryParseBatchClassifyAsObjectWithArray(s: string): unknown[] | null {
     const rec = obj as Record<string, unknown>;
     for (const k of BATCH_OBJECT_ARRAY_KEYS) {
       const v = rec[k];
-      if (Array.isArray(v)) return v;
+      if (Array.isArray(v) && isBatchClassifyResultArray(v)) return v;
     }
   } catch {
     return null;
   }
   return null;
+}
+
+/** True if `v` looks like our batch classify payload (objects with `action`), not e.g. `[1]` or `[note]`. */
+function isBatchClassifyResultArray(v: unknown): v is unknown[] {
+  if (!Array.isArray(v)) return false;
+  return v.every(
+    (row) =>
+      row !== null &&
+      typeof row === "object" &&
+      !Array.isArray(row) &&
+      typeof (row as Record<string, unknown>).action === "string",
+  );
+}
+
+/**
+ * Find a JSON array of batch rows; skip bracket preambles that are not JSON or not our shape (#1007, Copilot PR#1006).
+ */
+function parseBalancedBatchArrayFromText(text: string): unknown[] {
+  const t = text.trim();
+  const seen = new Set<string>();
+  const tryCandidate = (candidate: string): unknown[] | undefined => {
+    const normalized = candidate.trim();
+    if (normalized.length === 0 || seen.has(normalized)) return undefined;
+    seen.add(normalized);
+    try {
+      const v = JSON.parse(normalized) as unknown;
+      if (!isBatchClassifyResultArray(v)) return undefined;
+      return v;
+    } catch {
+      return undefined;
+    }
+  };
+
+  const fromBalancedAt = (offset: number): string | null => extractTopLevelJsonArraySubstring(t.slice(offset));
+
+  const firstBalanced = fromBalancedAt(0);
+  if (firstBalanced) {
+    const parsed = tryCandidate(firstBalanced);
+    if (parsed !== undefined) return parsed;
+  }
+
+  if (t.startsWith("[")) {
+    const parsed = tryCandidate(t);
+    if (parsed !== undefined) return parsed;
+  }
+
+  for (let i = 0; i < t.length; i++) {
+    if (t[i] !== "[") continue;
+    const candidate = fromBalancedAt(i);
+    if (!candidate) continue;
+    const parsed = tryCandidate(candidate);
+    if (parsed !== undefined) return parsed;
+  }
+
+  const legacy = t.match(/\[[\s\S]*\]/);
+  if (legacy) {
+    const parsed = tryCandidate(legacy[0]);
+    if (parsed !== undefined) return parsed;
+  }
+
+  throw new Error("no JSON array in batch classify response");
 }
 
 /**
@@ -236,20 +297,10 @@ export function parseBatchClassifyResponseContent(raw: string): unknown {
   s = preferMarkdownJsonFenceContent(s);
   s = s.trim();
 
-  const tryArrayText = (text: string): unknown => {
-    const t = text.trim();
-    const fromBalanced = extractTopLevelJsonArraySubstring(t);
-    if (fromBalanced) return JSON.parse(fromBalanced);
-    if (t.startsWith("[")) return JSON.parse(t);
-    const legacy = t.match(/\[[\s\S]*\]/);
-    if (legacy) return JSON.parse(legacy[0]);
-    throw new Error("no JSON array in batch classify response");
-  };
-
   // Whole string is a JSON array
   if (s.startsWith("[")) {
     try {
-      return tryArrayText(s);
+      return parseBalancedBatchArrayFromText(s);
     } catch {
       /* fall through */
     }
@@ -261,7 +312,7 @@ export function parseBatchClassifyResponseContent(raw: string): unknown {
 
   // Prose or noise before/after — locate balanced array in the remainder
   try {
-    return tryArrayText(s);
+    return parseBalancedBatchArrayFromText(s);
   } catch {
     /* fall through */
   }
