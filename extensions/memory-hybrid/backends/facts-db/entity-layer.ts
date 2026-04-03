@@ -9,7 +9,7 @@ import { createTransaction } from "../../utils/sqlite-transaction.js";
 
 export type EntityMentionLabel = "PERSON" | "ORG";
 
-type FactEntityMentionRow = {
+type _FactEntityMentionRow = {
   id: string;
   factId: string;
   label: EntityMentionLabel;
@@ -304,7 +304,7 @@ export function listContactsForOrg(db: DatabaseSync, orgId: string, limit: numbe
 export function listContactsByNamePrefix(db: DatabaseSync, prefix: string, limit: number): ContactRow[] {
   const p = prefix.trim().toLowerCase();
   if (!p) {
-    const rows = db.prepare(`SELECT * FROM contacts ORDER BY display_name COLLATE NOCASE LIMIT ?`).all(limit) as Array<
+    const rows = db.prepare("SELECT * FROM contacts ORDER BY display_name COLLATE NOCASE LIMIT ?").all(limit) as Array<
       Record<string, unknown>
     >;
     return rows.map(rowToContact);
@@ -339,7 +339,7 @@ function rowToContact(row: Record<string, unknown>): ContactRow {
 
 export function listFactIdsForOrg(db: DatabaseSync, orgId: string, limit: number): string[] {
   const rows = db
-    .prepare(`SELECT DISTINCT fact_id FROM org_fact_links WHERE org_id = ? ORDER BY created_at DESC LIMIT ?`)
+    .prepare("SELECT DISTINCT fact_id FROM org_fact_links WHERE org_id = ? ORDER BY created_at DESC LIMIT ?")
     .all(orgId, limit) as Array<{ fact_id: string }>;
   return rows.map((r) => r.fact_id);
 }
