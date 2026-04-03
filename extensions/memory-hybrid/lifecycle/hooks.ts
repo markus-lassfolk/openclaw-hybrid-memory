@@ -38,13 +38,13 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
     : join(workspaceRoot, ctx.cfg.activeTask.filePath);
 
   const onAgentStart = (api: ClawdbotPluginApi) => {
-    api.on("before_agent_start", async (event: unknown, hookCtx) => {
+    api.on("before_agent_start", async (event: unknown, hookCtx: unknown) => {
       const rApi = withHookResolutionApi(api, hookCtx);
       await runSetupStage(event, rApi, ctx, sessionState);
     });
 
     if (ctx.cfg.autoRecall.enabled) {
-      api.on("before_agent_start", async (event: unknown, hookCtx) => {
+      api.on("before_agent_start", async (event: unknown, hookCtx: unknown) => {
         const rApi = withHookResolutionApi(api, hookCtx);
         try {
           const recallStageResult = await runRecallStage(event, rApi, ctx, sessionState);
@@ -89,7 +89,7 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
   };
 
   const onAgentEnd = (api: ClawdbotPluginApi) => {
-    api.on("agent_end", async (event: unknown, hookCtx) => {
+    api.on("agent_end", async (event: unknown, hookCtx: unknown) => {
       const rApi = withHookResolutionApi(api, hookCtx);
       // Issue #742: extract tool names from messages and record via WorkflowTracker
       // so crystallization can detect patterns from the traces table.

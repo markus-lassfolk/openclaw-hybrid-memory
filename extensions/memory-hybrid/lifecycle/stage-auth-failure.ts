@@ -46,7 +46,7 @@ export function registerAuthFailureRecall(
   const { resolveSessionKey, authFailureRecallsThisSession } = sessionState;
   const currentAgentIdRef = ctx.currentAgentIdRef;
 
-  api.on("before_agent_start", async (event: unknown, hookCtx) => {
+  api.on("before_agent_start", async (event: unknown, hookCtx: unknown) => {
     const rApi = withHookResolutionApi(api, hookCtx);
     const e = event as { prompt?: string; messages?: unknown[] };
     if (!e.prompt && (!e.messages || !Array.isArray(e.messages))) return;
