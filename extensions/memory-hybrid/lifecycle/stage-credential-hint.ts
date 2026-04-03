@@ -23,8 +23,21 @@ export function registerCredentialHint(api: ClawdbotPluginApi, ctx: LifecycleCon
       return;
     }
     try {
-      const raw = await readFile(pendingPath, "utf-8");
-      const data = JSON.parse(raw) as { hints?: string[]; at?: number };
+      const raw = (await readFile(pendingPath, "utf-8")).trim();
+      if (raw.length === 0) {
+        await unlink(pendingPath).catch(() => {});
+        return;
+      }
+      let data: { hints?: string[]; at?: number };
+      try {
+        data = JSON.parse(raw) as { hints?: string[]; at?: number };
+      } catch (parseErr) {
+        api.logger?.warn?.(
+          `memory-hybrid: credentials-pending.json invalid or truncated JSON (${raw.length} chars), removing: ${parseErr instanceof Error ? parseErr.message : String(parseErr)}`,
+        );
+        await unlink(pendingPath).catch(() => {});
+        return;
+      }
       const at = typeof data.at === "number" ? data.at : 0;
       if (Date.now() - at > PENDING_TTL_MS) {
         await unlink(pendingPath).catch(() => {});

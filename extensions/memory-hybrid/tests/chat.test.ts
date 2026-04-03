@@ -1137,6 +1137,36 @@ describe("is500Like (#387)", () => {
   it("does not match connection errors", () => {
     expect(is500Like(new Error("ECONNREFUSED"))).toBe(false);
   });
+
+  it("#1010: matches gateway phrasing '502 error code: 502'", () => {
+    expect(is500Like(new Error("502 error code: 502"))).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// withLLMRetry — non-retryable 400 (#1011, #1016)
+// ---------------------------------------------------------------------------
+
+describe("withLLMRetry — non-retryable 400 (#1011)", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("does not retry 400 with empty body phrasing; enriches message with llmContext", async () => {
+    const err = Object.assign(new Error("400 status code (no body)"), { status: 400 });
+    const fn = vi.fn().mockRejectedValue(err);
+    await expect(
+      withLLMRetry(fn, {
+        maxRetries: 3,
+        llmContext: { model: "azure/test", operation: "unit" },
+      }),
+    ).rejects.toThrow(/400 status code.*\[llm model=azure\/test/);
+    expect(fn).toHaveBeenCalledTimes(1);
+  });
 });
 
 // ---------------------------------------------------------------------------

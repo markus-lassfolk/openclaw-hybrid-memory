@@ -13,7 +13,7 @@
 
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { serializeTags, parseTags } from "../utils/tags.js";
 import { capturePluginError } from "../services/error-reporter.js";
@@ -106,6 +106,11 @@ export class EdictStore {
   /** Set true only after `runMigrations()` completes successfully (issue #964 / #953). */
   private _isReady = false;
 
+  /** Reference-counted access so plugin reload does not close SQLite mid-operation (#1014). */
+  private activeOps = 0;
+  private closeRequested = false;
+  private sqliteClosed = false;
+
   constructor(dbPath: string) {
     mkdirSync(dirname(dbPath), { recursive: true });
     this.dbPath = dbPath;
@@ -156,6 +161,30 @@ export class EdictStore {
     }
   }
 
+  private tryEnter(): boolean {
+    if (this.sqliteClosed) return false;
+    if (this.closeRequested) return false;
+    this.activeOps += 1;
+    return true;
+  }
+
+  private leave(): void {
+    this.activeOps -= 1;
+    if (this.closeRequested && this.activeOps === 0) {
+      this.finalizeClose();
+    }
+  }
+
+  private finalizeClose(): void {
+    if (this.sqliteClosed) return;
+    this.sqliteClosed = true;
+    try {
+      this.db.close();
+    } catch {
+      // ignore
+    }
+  }
+
   /** Check if an edict is currently expired (based on ttl and expires_at) */
   isExpired(edict: EdictEntry): boolean {
     if (edict.ttl === "never") return false;
@@ -170,21 +199,29 @@ export class EdictStore {
 
   /** Add a new edict. Returns the created edict. Throws on duplicate text (normalized). */
   add(input: AddEdictInput): EdictEntry {
+    if (!this.tryEnter()) {
+      throw new Error("EdictStore is closed or closing");
+    }
+    try {
+      return this.addInternal(input);
+    } finally {
+      this.leave();
+    }
+  }
+
+  private addInternal(input: AddEdictInput): EdictEntry {
     const nowSec = Math.floor(Date.now() / 1000);
     const id = `e_${randomUUID().replace(/-/g, "").slice(0, 12)}`;
     const source = input.source ?? null;
     const tagsStr = input.tags && input.tags.length > 0 ? serializeTags(input.tags) : null;
     const ttl: EdictTtl = input.ttl ?? "never";
 
-    // Serialize ttl
     const ttlStr = typeof ttl === "number" ? String(ttl) : ttl;
 
-    // For ttl="event", expiresAt is required
     const expiresAt = input.expiresAt ?? (ttl === "event" ? null : null);
 
-    // Check for duplicate text (case-insensitive, normalized whitespace)
     const normalizedText = input.text.trim().replace(/\s+/g, " ").toLowerCase();
-    const existing = this.findByNormalizedText(normalizedText);
+    const existing = this.findByNormalizedTextInternal(normalizedText);
     if (existing) {
       throw new Error(`Edict with similar text already exists: ${existing.id}`);
     }
@@ -210,7 +247,7 @@ export class EdictStore {
   }
 
   /** Find an edict by normalized text (for duplicate detection) */
-  private findByNormalizedText(normalized: string): EdictEntry | null {
+  private findByNormalizedTextInternal(normalized: string): EdictEntry | null {
     const rows = this.db
       .prepare("SELECT * FROM edicts WHERE LOWER(REPLACE(text, ' ', ' ')) = ?")
       .all(normalized.replace(/\s+/g, " ")) as Array<Record<string, unknown>>;
@@ -219,6 +256,16 @@ export class EdictStore {
 
   /** Get a single edict by id */
   getById(id: string): EdictEntry | null {
+    if (this.sqliteClosed) return null;
+    if (!this.tryEnter()) return null;
+    try {
+      return this.getByIdInternal(id);
+    } finally {
+      this.leave();
+    }
+  }
+
+  private getByIdInternal(id: string): EdictEntry | null {
     const row = this.db.prepare("SELECT * FROM edicts WHERE id = ?").get(id) as Record<string, unknown> | undefined;
     return row ? this.rowToEntry(row) : null;
   }
@@ -226,41 +273,48 @@ export class EdictStore {
   /** List edicts, optionally filtered by tags */
   list(options: ListEdictsOptions = {}): EdictEntry[] {
     if (!this._isReady) return [];
+    if (!this.tryEnter()) return [];
     try {
-      const { tags, includeExpired = false, limit = 100 } = options;
-      const nowSec = Math.floor(Date.now() / 1000);
-      const parts: string[] = [];
-      const params: SQLInputValue[] = [];
-
-      if (!includeExpired) {
-        parts.push(
-          `(ttl = 'never') OR (ttl = 'event' AND (expires_at IS NULL OR expires_at > datetime(?))) OR (CAST(ttl AS INTEGER) > 0 AND created_at + CAST(ttl AS INTEGER) > ?)`,
-        );
-        params.push(new Date().toISOString(), nowSec);
-      }
-
-      if (tags && tags.length > 0) {
-        for (const tag of tags) {
-          parts.push(`(',' || COALESCE(tags, '') || ',') LIKE ?`);
-          params.push(`%,${escapeLikePattern(tag.toLowerCase())},%`);
-        }
-      }
-
-      const where = parts.length > 0 ? `WHERE ${parts.join(" AND ")}` : "";
-      params.push(limit);
-
-      const rows = this.db
-        .prepare(`SELECT * FROM edicts ${where} ORDER BY created_at DESC LIMIT ?`)
-        .all(...params) as Array<Record<string, unknown>>;
-
-      return rows.map((r) => this.rowToEntry(r));
+      return this.listInternal(options);
     } catch (err) {
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
         subsystem: "edict-store",
         operation: "list",
       });
       return [];
+    } finally {
+      this.leave();
     }
+  }
+
+  private listInternal(options: ListEdictsOptions = {}): EdictEntry[] {
+    const { tags, includeExpired = false, limit = 100 } = options;
+    const nowSec = Math.floor(Date.now() / 1000);
+    const parts: string[] = [];
+    const params: SQLInputValue[] = [];
+
+    if (!includeExpired) {
+      parts.push(
+        `(ttl = 'never') OR (ttl = 'event' AND (expires_at IS NULL OR expires_at > datetime(?))) OR (CAST(ttl AS INTEGER) > 0 AND created_at + CAST(ttl AS INTEGER) > ?)`,
+      );
+      params.push(new Date().toISOString(), nowSec);
+    }
+
+    if (tags && tags.length > 0) {
+      for (const tag of tags) {
+        parts.push(`(',' || COALESCE(tags, '') || ',') LIKE ?`);
+        params.push(`%,${escapeLikePattern(tag.toLowerCase())},%`);
+      }
+    }
+
+    const where = parts.length > 0 ? `WHERE ${parts.join(" AND ")}` : "";
+    params.push(limit);
+
+    const rows = this.db
+      .prepare(`SELECT * FROM edicts ${where} ORDER BY created_at DESC LIMIT ?`)
+      .all(...params) as Array<Record<string, unknown>>;
+
+    return rows.map((r) => this.rowToEntry(r));
   }
 
   /** Get all non-expired edicts, optionally filtered by tags */
@@ -268,9 +322,12 @@ export class EdictStore {
     if (!this._isReady) {
       return { edicts: [], renderForPrompt: "" };
     }
+    if (!this.tryEnter()) {
+      return { edicts: [], renderForPrompt: "" };
+    }
     try {
       const { tags, format = "prompt", limit = 100 } = options;
-      const edicts = this.list({ tags, includeExpired: false, limit });
+      const edicts = this.listInternal({ tags, includeExpired: false, limit });
       const renderForPrompt = format === "prompt" ? renderEdictsForPrompt(edicts) : "";
       return { edicts, renderForPrompt };
     } catch (err) {
@@ -279,12 +336,23 @@ export class EdictStore {
         operation: "getEdicts",
       });
       return { edicts: [], renderForPrompt: "" };
+    } finally {
+      this.leave();
     }
   }
 
   /** Update an existing edict. Returns the updated edict or null if not found. */
   update(input: UpdateEdictInput): EdictEntry | null {
-    const existing = this.getById(input.id);
+    if (!this.tryEnter()) return null;
+    try {
+      return this.updateInternal(input);
+    } finally {
+      this.leave();
+    }
+  }
+
+  private updateInternal(input: UpdateEdictInput): EdictEntry | null {
+    const existing = this.getByIdInternal(input.id);
     if (!existing) return null;
 
     const nowSec = Math.floor(Date.now() / 1000);
@@ -313,22 +381,44 @@ export class EdictStore {
 
   /** Remove an edict by id */
   remove(id: string): boolean {
-    const result = this.db.prepare("DELETE FROM edicts WHERE id = ?").run(id);
-    return result.changes > 0;
+    if (!this.tryEnter()) return false;
+    try {
+      const result = this.db.prepare("DELETE FROM edicts WHERE id = ?").run(id);
+      return result.changes > 0;
+    } finally {
+      this.leave();
+    }
   }
 
   /** Count total edicts */
   count(): number {
-    const row = this.db.prepare("SELECT COUNT(*) as cnt FROM edicts").get() as { cnt: number };
-    return row.cnt;
+    if (this.sqliteClosed) return 0;
+    if (!this.tryEnter()) return 0;
+    try {
+      const row = this.db.prepare("SELECT COUNT(*) as cnt FROM edicts").get() as { cnt: number };
+      return row.cnt;
+    } finally {
+      this.leave();
+    }
   }
 
   /** Get statistics about the edict store */
   stats(): EdictStats {
-    const nowSec = Math.floor(Date.now() / 1000);
-    const total = this.count();
+    if (!this.tryEnter()) {
+      return { total: 0, byTag: {}, expired: 0, expiringIn7Days: 0 };
+    }
+    try {
+      return this.statsInternal();
+    } finally {
+      this.leave();
+    }
+  }
 
-    // Count expired (ttl="event" with expires_at in the past, or numeric TTL that's elapsed)
+  private statsInternal(): EdictStats {
+    const nowSec = Math.floor(Date.now() / 1000);
+    const totalRow = this.db.prepare("SELECT COUNT(*) as cnt FROM edicts").get() as { cnt: number };
+    const total = totalRow.cnt;
+
     const expiredRow = this.db
       .prepare(
         `SELECT COUNT(*) as cnt FROM edicts WHERE
@@ -338,7 +428,6 @@ export class EdictStore {
       .get(new Date().toISOString(), nowSec) as { cnt: number };
     const expired = expiredRow.cnt;
 
-    // Count expiring in next 7 days (only ttl="event")
     const sevenDaysFromNow = new Date(Date.now() + 7 * 24 * 3600 * 1000).toISOString();
     const expiringRow = this.db
       .prepare(
@@ -347,7 +436,6 @@ export class EdictStore {
       .get(new Date().toISOString(), sevenDaysFromNow) as { cnt: number };
     const expiringIn7Days = expiringRow.cnt;
 
-    // Count by tag
     const allRows = this.db.prepare("SELECT tags FROM edicts").all() as Array<{ tags: string | null }>;
     const byTag: Record<string, number> = {};
     for (const row of allRows) {
@@ -363,15 +451,20 @@ export class EdictStore {
 
   /** Prune all expired edicts. Returns count of deleted rows. */
   pruneExpired(): number {
-    const nowSec = Math.floor(Date.now() / 1000);
-    const result = this.db
-      .prepare(
-        `DELETE FROM edicts WHERE
+    if (!this.tryEnter()) return 0;
+    try {
+      const nowSec = Math.floor(Date.now() / 1000);
+      const result = this.db
+        .prepare(
+          `DELETE FROM edicts WHERE
          (ttl = 'event' AND expires_at IS NOT NULL AND expires_at <= datetime(?))
          OR (CAST(ttl AS INTEGER) > 0 AND created_at + CAST(ttl AS INTEGER) <= ?)`,
-      )
-      .run(new Date().toISOString(), nowSec);
-    return Number(result.changes ?? 0);
+        )
+        .run(new Date().toISOString(), nowSec);
+      return Number(result.changes ?? 0);
+    } finally {
+      this.leave();
+    }
   }
 
   /** Convert a raw SQLite row to an EdictEntry */
@@ -392,8 +485,14 @@ export class EdictStore {
     };
   }
 
-  /** Close the database connection */
+  /** Request close; SQLite is released after in-flight operations finish (#1014). */
   close(): void {
-    this.db.close();
+    if (this.sqliteClosed) return;
+    if (!this.closeRequested) {
+      this.closeRequested = true;
+      if (this.activeOps === 0) {
+        this.finalizeClose();
+      }
+    }
   }
 }
