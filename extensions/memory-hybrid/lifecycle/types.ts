@@ -81,11 +81,7 @@ export interface SessionState {
   touchSession: (sessionKey: string) => void;
   clearSessionState: (sessionKey: string) => void;
   pruneSessionMaps: () => void;
-  resolveSessionKey: (
-    event: unknown,
-    api?: { context?: { sessionId?: string; sessionKey?: string } },
-    hookAgentCtx?: HookAgentContextSlice,
-  ) => string | null;
+  resolveSessionKey: (event: unknown, api?: { context?: { sessionId?: string; sessionKey?: string } }) => string | null;
   MAX_TRACKED_SESSIONS: number;
   /** Optional: clear all session maps (used by dispose). Set by hooks when creating sessionState. */
   clearAll?: () => void;

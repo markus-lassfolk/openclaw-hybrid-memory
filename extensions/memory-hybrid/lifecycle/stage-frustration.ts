@@ -6,6 +6,7 @@ import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import { capturePluginError } from "../services/error-reporter.js";
 import { buildFrustrationHint, detectFrustration, exportAsImplicitSignals } from "../services/frustration-detector.js";
 import { ToolEffectivenessStore, generateToolHint } from "../services/tool-effectiveness.js";
+import { withHookResolutionApi } from "./hook-resolution-api.js";
 import type { LifecycleContext, SessionState } from "./types.js";
 
 let cachedToolStore: ToolEffectivenessStore | null = null;
@@ -31,13 +32,14 @@ export function registerFrustrationHandlers(
   const currentAgentIdRef = ctx.currentAgentIdRef;
 
   api.on("before_agent_start", async (event: unknown, hookCtx) => {
+    const rApi = withHookResolutionApi(api, hookCtx);
     const e = event as {
       prompt?: string;
       messages?: Array<{ role?: string; content?: unknown }>;
       agentId?: string;
       session?: { agentId?: string };
     };
-    const sessionKey = resolveSessionKey(event, api, hookCtx) ?? currentAgentIdRef.value ?? "default";
+    const sessionKey = resolveSessionKey(event, rApi) ?? currentAgentIdRef.value ?? "default";
 
     try {
       let userContent: string | undefined;

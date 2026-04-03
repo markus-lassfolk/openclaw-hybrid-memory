@@ -1,11 +1,14 @@
 /**
  * Session state for the lifecycle pipeline (Phase 2.3).
  * Creates per-session maps and helpers: touchSession, clearSessionState, pruneSessionMaps, resolveSessionKey.
+ *
+ * Typed-hook identity (`PluginHookAgentContext`) is merged into `api` at the dispatcher via
+ * `withHookResolutionApi` in `hook-resolution-api.ts` (#1005).
  */
 
 import type { SessionSeenFacts } from "../services/ambient-retrieval.js";
 import type { FrustrationConversationTurn } from "../services/frustration-detector.js";
-import type { HookAgentContextSlice, SessionState } from "./types.js";
+import type { SessionState } from "./types.js";
 
 const MAX_TRACKED_SESSIONS = 200;
 
@@ -16,11 +19,7 @@ export type SessionKeyHookApi = { context?: { sessionId?: string; sessionKey?: s
  * Best-effort session key string for lifecycle hooks — same precedence as
  * {@link createSessionState}'s `resolveSessionKey` (exported for agent id parsing and tests).
  */
-export function resolveSessionKeyFromHookEvent(
-  event: unknown,
-  api?: SessionKeyHookApi,
-  hookAgentCtx?: HookAgentContextSlice,
-): string | null {
+export function resolveSessionKeyFromHookEvent(event: unknown, api?: SessionKeyHookApi): string | null {
   const ev = event as {
     session?: Record<string, unknown>;
     sessionKey?: string;
@@ -38,8 +37,6 @@ export function resolveSessionKeyFromHookEvent(
     (payloadCtx?.key as string | undefined) ??
     (payloadCtx?.id as string | undefined) ??
     (payloadCtx?.label as string | undefined) ??
-    hookAgentCtx?.sessionKey ??
-    hookAgentCtx?.sessionId ??
     api?.context?.sessionId ??
     api?.context?.sessionKey ??
     null;
@@ -116,12 +113,8 @@ export function createSessionState(): SessionState {
     }
   }
 
-  function resolveSessionKey(
-    event: unknown,
-    api?: SessionKeyHookApi,
-    hookAgentCtx?: HookAgentContextSlice,
-  ): string | null {
-    return resolveSessionKeyFromHookEvent(event, api, hookAgentCtx);
+  function resolveSessionKey(event: unknown, api?: SessionKeyHookApi): string | null {
+    return resolveSessionKeyFromHookEvent(event, api);
   }
 
   const clearAll = (): void => {

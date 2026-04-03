@@ -9,7 +9,7 @@ import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import { getRestartPendingPath } from "../utils/constants.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { withTimeout } from "../utils/timeout.js";
-import type { HookAgentContextSlice, LifecycleContext, SessionState } from "./types.js";
+import type { LifecycleContext, SessionState } from "./types.js";
 import { pluginLogger } from "../utils/logger.js";
 import { resolveAgentIdFromHookEvent, formatSessionKeyTruncated } from "./resolve-agent-id.js";
 
@@ -20,9 +20,8 @@ export function runSetupStage(
   api: ClawdbotPluginApi,
   ctx: LifecycleContext,
   sessionState: SessionState,
-  hookAgentCtx?: HookAgentContextSlice,
 ): Promise<void> {
-  return withTimeout(SETUP_TIMEOUT_MS, () => runSetup(event, api, ctx, sessionState, hookAgentCtx)).then(() => {});
+  return withTimeout(SETUP_TIMEOUT_MS, () => runSetup(event, api, ctx, sessionState)).then(() => {});
 }
 
 async function runSetup(
@@ -30,12 +29,11 @@ async function runSetup(
   api: ClawdbotPluginApi,
   ctx: LifecycleContext,
   sessionState: SessionState,
-  hookAgentCtx?: HookAgentContextSlice,
 ): Promise<void> {
   const { currentAgentIdRef, restartPendingClearedRef } = ctx;
   const { touchSession, resolveSessionKey } = sessionState;
 
-  const touchKey = resolveSessionKey(event, api, hookAgentCtx) ?? currentAgentIdRef.value ?? "default";
+  const touchKey = resolveSessionKey(event, api) ?? currentAgentIdRef.value ?? "default";
   touchSession(touchKey);
 
   if (!restartPendingClearedRef.value && existsSync(getRestartPendingPath())) {
@@ -53,12 +51,12 @@ async function runSetup(
     }
   }
 
-  const detectedAgentId = resolveAgentIdFromHookEvent(event, api, hookAgentCtx);
+  const detectedAgentId = resolveAgentIdFromHookEvent(event, api);
   if (detectedAgentId) {
     currentAgentIdRef.value = detectedAgentId;
     api.logger.debug?.(`memory-hybrid: Detected agentId: ${detectedAgentId}`);
   } else {
-    const sk = resolveSessionKey(event, api, hookAgentCtx);
+    const sk = resolveSessionKey(event, api);
     api.logger.debug?.(
       sk
         ? `memory-hybrid: Agent detection failed — no structured agentId and session key did not yield one (${formatSessionKeyTruncated(sk)}); falling back to orchestrator`
@@ -73,7 +71,7 @@ async function runSetup(
   }
 
   if (ctx.eventLog) {
-    const sessionId = resolveSessionKey(event, api, hookAgentCtx) ?? currentAgentIdRef.value ?? "default";
+    const sessionId = resolveSessionKey(event, api) ?? currentAgentIdRef.value ?? "default";
     try {
       ctx.eventLog.append({
         sessionId,

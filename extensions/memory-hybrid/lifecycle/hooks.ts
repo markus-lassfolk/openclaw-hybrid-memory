@@ -20,6 +20,7 @@ import { registerAuthFailureRecall } from "./stage-auth-failure.js";
 import { registerCredentialHint } from "./stage-credential-hint.js";
 import { registerFrustrationHandlers } from "./stage-frustration.js";
 import { createSessionState } from "./session-state.js";
+import { withHookResolutionApi } from "./hook-resolution-api.js";
 import type { LifecycleContext, SessionState } from "./types.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { isAbortOrTransientLlmError } from "../services/chat.js";
@@ -38,13 +39,15 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
 
   const onAgentStart = (api: ClawdbotPluginApi) => {
     api.on("before_agent_start", async (event: unknown, hookCtx) => {
-      await runSetupStage(event, api, ctx, sessionState, hookCtx);
+      const rApi = withHookResolutionApi(api, hookCtx);
+      await runSetupStage(event, rApi, ctx, sessionState);
     });
 
     if (ctx.cfg.autoRecall.enabled) {
       api.on("before_agent_start", async (event: unknown, hookCtx) => {
+        const rApi = withHookResolutionApi(api, hookCtx);
         try {
-          const recallStageResult = await runRecallStage(event, api, ctx, sessionState, hookCtx);
+          const recallStageResult = await runRecallStage(event, rApi, ctx, sessionState);
           if (!recallStageResult) return undefined;
           if (recallStageResult.kind === "degraded") {
             return { prependContext: recallStageResult.prependContext };
@@ -52,7 +55,7 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
           if (recallStageResult.kind === "empty") {
             return recallStageResult.prependContext ? { prependContext: recallStageResult.prependContext } : undefined;
           }
-          const inj = await runInjectionStage(recallStageResult.result, api, ctx);
+          const inj = await runInjectionStage(recallStageResult.result, rApi, ctx);
           return inj ?? undefined;
         } catch (err) {
           capturePluginError(err instanceof Error ? err : new Error(String(err)), {
@@ -87,14 +90,14 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
 
   const onAgentEnd = (api: ClawdbotPluginApi) => {
     api.on("agent_end", async (event: unknown, hookCtx) => {
+      const rApi = withHookResolutionApi(api, hookCtx);
       // Issue #742: extract tool names from messages and record via WorkflowTracker
       // so crystallization can detect patterns from the traces table.
       if (ctx.workflowTracker && ctx.cfg.workflowTracking?.enabled) {
         try {
           const ev = event as { messages?: unknown[]; success?: boolean };
           const messages = ev?.messages ?? [];
-          const sessionId =
-            sessionState.resolveSessionKey(event, api, hookCtx) ?? ctx.currentAgentIdRef.value ?? "default";
+          const sessionId = sessionState.resolveSessionKey(event, rApi) ?? ctx.currentAgentIdRef.value ?? "default";
 
           // Extract goal from first user message (used as trace label)
           let goal = "unknown";
@@ -137,14 +140,14 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
           capturePluginError(err instanceof Error ? err : new Error(String(err)), {
             subsystem: "workflow-tracking",
             operation: "agent-end-track-workflow",
-            sessionId: sessionState.resolveSessionKey(event, api, hookCtx) ?? ctx.currentAgentIdRef.value ?? "default",
+            sessionId: sessionState.resolveSessionKey(event, rApi) ?? ctx.currentAgentIdRef.value ?? "default",
           });
           api.logger.warn(`memory-hybrid: workflow tracking failed: ${String(err)}`);
         }
       }
 
-      await runCaptureStage(event, api, ctx, sessionState, hookCtx);
-      const sessionId = sessionState.resolveSessionKey(event, api, hookCtx) ?? ctx.currentAgentIdRef.value ?? "default";
+      await runCaptureStage(event, rApi, ctx, sessionState);
+      const sessionId = sessionState.resolveSessionKey(event, rApi) ?? ctx.currentAgentIdRef.value ?? "default";
       try {
         await buildDailyNarrative({
           sessionId,

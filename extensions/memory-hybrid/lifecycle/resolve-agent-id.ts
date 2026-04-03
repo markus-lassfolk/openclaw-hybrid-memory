@@ -11,7 +11,6 @@
  */
 
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
-import type { HookAgentContextSlice } from "./types.js";
 import { resolveSessionKeyFromHookEvent } from "./session-state.js";
 
 const SESSION_KEY_TRUNCATE_MAX = 120;
@@ -46,17 +45,14 @@ export function tryParseAgentIdFromOpenClawSessionKey(sessionKey: string): strin
 /**
  * @returns Detected agent id, or `null` if nothing usable was found.
  */
-export function resolveAgentIdFromHookEvent(
-  event: unknown,
-  api: ClawdbotPluginApi,
-  hookAgentCtx?: HookAgentContextSlice,
-): string | null {
+export function resolveAgentIdFromHookEvent(event: unknown, api: ClawdbotPluginApi): string | null {
   const ev = event as Record<string, unknown>;
   const session = ev.session as Record<string, unknown> | undefined;
   const run = ev.run as Record<string, unknown> | undefined;
   const payloadCtx = ev.context as Record<string, unknown> | undefined;
   const activeAgent = session?.activeAgent;
 
+  // Event/session payload first; callers may pass `withHookResolutionApi(api, hookCtx)` so context carries hook agentId.
   const explicit =
     nonEmptyString(ev.agentId) ??
     nonEmptyString(session?.agentId) ??
@@ -69,12 +65,11 @@ export function resolveAgentIdFromHookEvent(
       : null) ??
     nonEmptyString(run?.agentId) ??
     nonEmptyString(payloadCtx?.agentId) ??
-    nonEmptyString(hookAgentCtx?.agentId) ??
     nonEmptyString(api.context?.agentId);
 
   if (explicit) return explicit;
 
-  const sessionKey = resolveSessionKeyFromHookEvent(event, api, hookAgentCtx);
+  const sessionKey = resolveSessionKeyFromHookEvent(event, api);
   const fromSessionKey = sessionKey ? tryParseAgentIdFromOpenClawSessionKey(sessionKey) : null;
   if (fromSessionKey && sessionKey) {
     api.logger?.debug?.(

@@ -1,5 +1,6 @@
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import { describe, expect, it, vi } from "vitest";
+import { withHookResolutionApi, sliceHookAgentContext } from "../lifecycle/hook-resolution-api.js";
 import { resolveAgentIdFromHookEvent, tryParseAgentIdFromOpenClawSessionKey } from "../lifecycle/resolve-agent-id.js";
 import { resolveSessionKeyFromHookEvent } from "../lifecycle/session-state.js";
 
@@ -80,6 +81,48 @@ describe("resolveSessionKeyFromHookEvent", () => {
       resolveSessionKeyFromHookEvent({ session: { id: "from-session" }, context: { sessionId: "from-context" } }, {}),
     ).toBe("from-session");
   });
+
+  it("uses typed-hook context merged into api when event is minimal (#1005)", () => {
+    const api = withHookResolutionApi(mockApi(), { sessionKey: "agent:ralph:cron:job-99" });
+    expect(resolveSessionKeyFromHookEvent({ prompt: "hi" }, api)).toBe("agent:ralph:cron:job-99");
+  });
+
+  it("prefers event session id over hook-merged api.context.sessionKey", () => {
+    const api = withHookResolutionApi(mockApi(), { sessionKey: "agent:hook:only" });
+    expect(resolveSessionKeyFromHookEvent({ session: { id: "from-event" } }, api)).toBe("from-event");
+  });
+});
+
+describe("withHookResolutionApi / sliceHookAgentContext", () => {
+  it("returns api unchanged when hookCtx is undefined", () => {
+    const api = mockApi("a1");
+    expect(withHookResolutionApi(api, undefined)).toBe(api);
+  });
+
+  it("returns api unchanged when hookCtx has no session/agent strings", () => {
+    const api = mockApi();
+    expect(withHookResolutionApi(api, { foo: 1 })).toBe(api);
+    expect(withHookResolutionApi(api, { agentId: "  " })).toBe(api);
+  });
+
+  it("hook sessionKey overrides api.context.sessionKey for resolution merge", () => {
+    const base = mockApi(undefined, { sessionKey: "agent:api:only" });
+    const merged = withHookResolutionApi(base, { sessionKey: "agent:hook:wins" });
+    expect(merged.context?.sessionKey).toBe("agent:hook:wins");
+  });
+
+  it("hook agentId overrides api.context.agentId on merged api", () => {
+    const merged = withHookResolutionApi(mockApi("from-api"), { agentId: "from-hook" });
+    expect(merged.context?.agentId).toBe("from-hook");
+  });
+
+  it("sliceHookAgentContext picks non-empty string fields", () => {
+    expect(sliceHookAgentContext({ sessionKey: "sk", sessionId: "sid", agentId: "aid" })).toEqual({
+      sessionKey: "sk",
+      sessionId: "sid",
+      agentId: "aid",
+    });
+  });
 });
 
 describe("resolveAgentIdFromHookEvent", () => {
@@ -136,6 +179,21 @@ describe("resolveAgentIdFromHookEvent", () => {
 
   it("returns null when absent", () => {
     expect(resolveAgentIdFromHookEvent({}, mockApi())).toBeNull();
+  });
+
+  it("derives agent id from hook-only sessionKey via merged api (#1005)", () => {
+    const api = withHookResolutionApi(mockApi(), { sessionKey: "agent:ralph:cron:task-1" });
+    expect(resolveAgentIdFromHookEvent({ prompt: "cron" }, api)).toBe("ralph");
+  });
+
+  it("uses hook agentId on merged api when event has no structured id", () => {
+    const api = withHookResolutionApi(mockApi(), { agentId: "hook-agent" });
+    expect(resolveAgentIdFromHookEvent({ prompt: "x" }, api)).toBe("hook-agent");
+  });
+
+  it("prefers event.agentId over hook merged context", () => {
+    const api = withHookResolutionApi(mockApi("ctx"), { agentId: "hook-agent" });
+    expect(resolveAgentIdFromHookEvent({ agentId: "event-agent" }, api)).toBe("event-agent");
   });
 
   it("logs at debug when resolving from session key", () => {
