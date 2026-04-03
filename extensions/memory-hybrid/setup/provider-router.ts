@@ -102,7 +102,7 @@ export function mergeGatewayProviderCredentialsIntoLlmProvidersMap(
       };
       mergedNames?.push(normalizedName);
       mergedOriginals?.set(normalizedName, name);
-      api.logger.info?.(
+      api.logger?.info?.(
         `memory-hybrid: using gateway provider "${name}" for llm.providers (add ${normalizedName}/<model> to llm.default or llm.heavy to use)`,
       );
     } else {
