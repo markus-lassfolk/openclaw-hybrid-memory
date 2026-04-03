@@ -1,118 +1,40 @@
-import { getEnv } from "../../../utils/env-manager.js";
 /**
  * CLI registration functions for management commands.
  * Extracted from cli/register.ts lines 290-1552.
  */
 
-import { existsSync, mkdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs";
-import { homedir, tmpdir } from "node:os";
+import { existsSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { mergeAgentHealthDashboard } from "../../../backends/agent-health-store.js";
-import type { FactsDB } from "../../../backends/facts-db.js";
-import type { VectorDB } from "../../../backends/vector-db.js";
-import type { HybridMemoryConfig } from "../../../config.js";
-import { getCronModelConfig, getDefaultCronModel, vectorDimsForModel } from "../../../config.js";
 import { collectForgeState } from "../../../routes/dashboard-server.js";
-import { runContextAudit } from "../../../services/context-audit.js";
-import { migrateEmbeddings } from "../../../services/embedding-migration.js";
-import type { EmbeddingProvider } from "../../../services/embeddings.js";
 import { capturePluginError } from "../../../services/error-reporter.js";
-import { getEffectivenessReport, runClosedLoopAnalysis } from "../../../services/feedback-effectiveness.js";
-import { runMemoryDiagnostics } from "../../../services/memory-diagnostics.js";
-import { filterByScope, mergeResults } from "../../../services/merge-results.js";
-import type { SearchResult } from "../../../types/memory.js";
-import type { ScopeFilter } from "../../../types/memory.js";
 import { getLanguageKeywordsFilePath } from "../../../utils/language-keywords.js";
-import { execSync } from "../../../utils/process-runner.js";
-import { buildCouncilSessionKey, buildProvenanceMetadata, generateTraceId } from "../../../utils/provenance.js";
-import type { ManageContext } from "../../context.js";
-import { buildAppliedContent, buildUnifiedDiff } from "../../proposals.js";
-import { type Chainable, relativeTime, withExit } from "../../shared.js";
-import type {
-  AnalyzeFeedbackPhrasesResult,
-  BackfillCliResult,
-  BackfillCliSink,
-  ConfigCliResult,
-  CredentialsAuditResult,
-  CredentialsPruneResult,
-  FindDuplicatesResult,
-  IngestFilesResult,
-  IngestFilesSink,
-  MigrateToVaultResult,
-  SelfCorrectionExtractResult,
-  SelfCorrectionRunResult,
-  StoreCliOpts,
-  StoreCliResult,
-  UninstallCliResult,
-  UpgradeCliResult,
-} from "../../types.js";
-
+import { type Chainable, withExit } from "../../shared.js";
 import type { ManageBindings } from "./bindings.js";
 
 export function registerManageAgentsAuditRunall(mem: Chainable, b: ManageBindings): void {
   const {
     factsDb,
-    vectorDb,
-    aliasDb,
-    versionInfo,
-    embeddings,
-    mergeResults: merge,
-    getMemoryCategories,
-    cfg,
-    runStore,
-    runBackfill,
-    runIngestFiles,
-    runMigrateToVault,
-    runCredentialsList,
-    runCredentialsGet,
-    runCredentialsAudit,
-    runCredentialsPrune,
-    runUpgrade,
-    runUninstall,
-    runConfigView,
-    runConfigMode,
-    runConfigSet,
-    runConfigSetHelp,
-    runFindDuplicates,
-    runConsolidate,
-    runReflection,
-    runReflectionRules,
-    runReflectionMeta,
-    runReflectIdentity,
-    reflectionConfig,
-    runClassify,
-    autoClassifyConfig,
-    runSelfCorrectionExtract,
-    runSelfCorrectionRun,
-    runAnalyzeFeedbackPhrases,
+    auditStore,
+    agentHealthStore,
+    resolvedSqlitePath,
+    BACKFILL_DECAY_MARKER,
     runCompaction,
     runDistill,
-    runExtractProcedures,
-    runBuildLanguageKeywords,
-    runEntityEnrichment,
-    runExport,
-    listCommands,
-    tieringEnabled,
-    resolvedSqlitePath,
     runExtractDaily,
     runExtractDirectives,
     runExtractReinforcement,
     runExtractImplicitFeedback,
+    runExtractProcedures,
     runGenerateAutoSkills,
+    runReflection,
+    reflectionConfig,
+    runReflectionRules,
+    runReflectionMeta,
+    runReflectIdentity,
     runGenerateProposals,
-    runDreamCycle,
-    runContinuousVerification,
-    runCrossAgentLearning,
-    runToolEffectiveness,
-    runCostReport,
-    pruneCostLog,
-    resolvedLancePath,
-    runBackup,
-    runBackupVerify,
-    auditStore,
-    agentHealthStore,
-    ctx,
-    BACKFILL_DECAY_MARKER,
+    runSelfCorrectionRun,
+    runBuildLanguageKeywords,
   } = b;
 
   const agentsCmd = mem.command("agents").description("Multi-agent health (Issue #789)");
