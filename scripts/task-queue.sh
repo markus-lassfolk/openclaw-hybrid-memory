@@ -128,7 +128,7 @@ _archive_and_idle() {
     fs.writeFileSync(path.join(histDir, `${ts}-${suffix}.json`), JSON.stringify(out, null, 2), "utf8");
     fs.unlinkSync(cur);
   '
-  OPENCLAW_HOME="$OPENCLAW_HOME" "$OPENCLAW_CMD" hybrid-mem task-queue-touch --state-dir "$STATE_DIR" >/dev/null
+  OPENCLAW_HOME="$OPENCLAW_HOME" "$OPENCLAW_CMD" hybrid-mem task-queue-touch --state-dir "$STATE_DIR" >/dev/null || true
 }
 
 cmd_run() {
