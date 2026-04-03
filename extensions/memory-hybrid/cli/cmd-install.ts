@@ -13,7 +13,7 @@
  * - runUpgradeForCli
  */
 
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -64,28 +64,34 @@ export function resolveAgentWorkspaceRoot(config: Record<string, unknown>): stri
   return join(homedir(), ".openclaw", "workspace");
 }
 
-function bundledHybridMemorySkillPath(pluginRootDir: string): string {
-  return join(pluginRootDir, "skills", HYBRID_MEMORY_SKILL_DIR, "SKILL.md");
+function bundledHybridMemorySkillDir(pluginRootDir: string): string {
+  return join(pluginRootDir, "skills", HYBRID_MEMORY_SKILL_DIR);
 }
 
-/** @internal Exported for tests — copies bundled `skills/hybrid-memory/SKILL.md` into the agent workspace. */
+function bundledHybridMemorySkillPath(pluginRootDir: string): string {
+  return join(bundledHybridMemorySkillDir(pluginRootDir), "SKILL.md");
+}
+
+/** @internal Exported for tests — copies bundled `skills/hybrid-memory/` (SKILL.md + references/) into the workspace. */
 export function installHybridMemoryWorkspaceSkill(opts: {
   mergedOpenclawConfig: Record<string, unknown>;
   pluginRootDir: string;
   dryRun: boolean;
 }): { path: string; error?: string } {
-  const src = bundledHybridMemorySkillPath(opts.pluginRootDir);
+  const srcDir = bundledHybridMemorySkillDir(opts.pluginRootDir);
+  const skillMd = bundledHybridMemorySkillPath(opts.pluginRootDir);
   const workspaceRoot = resolveAgentWorkspaceRoot(opts.mergedOpenclawConfig);
   const dest = join(workspaceRoot, "skills", HYBRID_MEMORY_SKILL_DIR, "SKILL.md");
-  if (!existsSync(src)) {
-    return { path: dest, error: `Bundled skill missing at ${src}` };
+  if (!existsSync(skillMd)) {
+    return { path: dest, error: `Bundled skill missing at ${skillMd}` };
   }
   if (opts.dryRun) {
     return { path: dest };
   }
   try {
-    mkdirSync(join(workspaceRoot, "skills", HYBRID_MEMORY_SKILL_DIR), { recursive: true });
-    writeFileSync(dest, readFileSync(src, "utf-8"), "utf-8");
+    mkdirSync(join(workspaceRoot, "skills"), { recursive: true });
+    const destDir = join(workspaceRoot, "skills", HYBRID_MEMORY_SKILL_DIR);
+    cpSync(srcDir, destDir, { recursive: true });
     return { path: dest };
   } catch (err) {
     return { path: dest, error: String(err) };

@@ -11,7 +11,7 @@ import { capturePluginError } from "../services/error-reporter.js";
 import { withTimeout } from "../utils/timeout.js";
 import type { LifecycleContext, SessionState } from "./types.js";
 import { pluginLogger } from "../utils/logger.js";
-import { resolveAgentIdFromHookEvent } from "./resolve-agent-id.js";
+import { resolveAgentIdFromHookEvent, formatSessionKeyTruncated } from "./resolve-agent-id.js";
 
 const SETUP_TIMEOUT_MS = 5000;
 
@@ -56,8 +56,11 @@ async function runSetup(
     currentAgentIdRef.value = detectedAgentId;
     api.logger.debug?.(`memory-hybrid: Detected agentId: ${detectedAgentId}`);
   } else {
+    const sk = resolveSessionKey(event, api);
     api.logger.debug?.(
-      "memory-hybrid: Agent detection failed - no agentId in event payload or api.context, falling back to orchestrator",
+      sk
+        ? `memory-hybrid: Agent detection failed — no structured agentId and session key did not yield one (${formatSessionKeyTruncated(sk)}); falling back to orchestrator`
+        : "memory-hybrid: Agent detection failed — no agentId in event payload or api.context and no session key; falling back to orchestrator",
     );
     currentAgentIdRef.value = currentAgentIdRef.value || ctx.cfg.multiAgent.orchestratorId;
     if (ctx.cfg.multiAgent.defaultStoreScope === "agent" || ctx.cfg.multiAgent.defaultStoreScope === "auto") {

@@ -72,6 +72,8 @@ describe("workspace skill install", () => {
     const body = readFileSync(r.path, "utf-8");
     expect(body).toContain("name: openclaw_hybrid_memory");
     expect(body).toContain("memory_store");
+    const refPath = join(destRoot, "skills", "hybrid-memory", "references", "memory-optimization.md");
+    expect(readFileSync(refPath, "utf-8")).toContain("run-all");
   });
 
   it("installHybridMemoryWorkspaceSkill dry-run does not write", () => {

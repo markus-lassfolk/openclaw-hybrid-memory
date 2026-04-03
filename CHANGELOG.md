@@ -8,7 +8,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
-No changes yet.
+### Fixed
+
+- **Agent id for cron / embedded hooks ([#990](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/990)):** When structured `agentId` fields are missing, derive the agent from OpenClaw session keys matching `agent:<id>:…` (e.g. `agent:ralph:cron:…`). Session resolution now considers `api.context.sessionKey` as well as `sessionId`. Clearer debug logs when detection still falls back to the orchestrator.
 
 ---
 

@@ -1,6 +1,6 @@
 ---
 name: openclaw_hybrid_memory
-description: OpenClaw hybrid memory (memory-hybrid plugin)—SQLite+FTS5 facts, LanceDB semantic recall, auto-capture/recall, decay, memorySearch, and memory/ files. Use this skill whenever the user asks about saving or recalling information across sessions, permanent memory, preferences, what the agent remembers, memory_store or memory_recall, hybrid-mem CLI, MEMORY.md, pruning, distillation, embeddings, LanceDB, facts DB, procedures, credential vault, or tuning recall—even if they do not say "hybrid memory" by name. Use it when debugging missing or wrong recall, compaction, or memory maintenance.
+description: OpenClaw hybrid memory (memory-hybrid plugin)—SQLite+FTS5 facts, LanceDB semantic recall, auto-capture/recall, decay, memorySearch, and memory/ files. Use whenever the user asks about saving or recalling information, memory_store or memory_recall, hybrid-mem CLI, MEMORY.md, pruning, distillation, embeddings, tuning recall, which memory settings are enabled, how to optimize or run maintenance (run-all, verify, config, digest pipelines, cron order), or debugging missing recall—even if they do not say "hybrid memory" by name.
 ---
 
 # OpenClaw Hybrid Memory
@@ -44,7 +44,20 @@ If **auto-capture** and **auto-recall** are on, many turns need no tool call—b
 
 - For deep behavior (HyDE, RRF, procedures, crystallization, cron jobs), rely on **this skill for basics**, then read project docs or the plugin README when a task requires a specific subsystem.
 
+## Optimizing memory (inspection, settings, task order)
+
+When the user wants **maximum memory quality**, **which toggles are on**, **what to enable next**, or a **step-by-step maintenance / digest / optimization run**:
+
+1. Tell them to run **`openclaw hybrid-mem verify`** and **`openclaw hybrid-mem config`** first (ground truth for health + flags).
+2. For a **single bundled catch-up**, use **`openclaw hybrid-mem run-all`** (respects feature flags; see repo docs for what it includes vs cron-only tasks).
+3. For **manual ordering** (nightly → weekly → monthly mirrors) and **high-impact settings**, read the bundled reference:
+
+**`references/memory-optimization.md`** (same folder as this `SKILL.md` in the workspace after install)
+
+That file covers: inspection commands, benefit-ranked settings, `run-all` vs one-by-one chains, and how cron maps to CLI—without duplicating the full repo manuals.
+
 ## Reference
 
-- Upstream docs: [openclaw-hybrid-memory repository](https://github.com/markus-lassfolk/openclaw-hybrid-memory) (`docs/QUICKSTART.md`, `docs/CONFIGURATION.md`, `docs/ARCHITECTURE.md`).
+- **Optimization guide (bundled):** `references/memory-optimization.md`
+- Upstream docs: [openclaw-hybrid-memory repository](https://github.com/markus-lassfolk/openclaw-hybrid-memory) (`docs/QUICKSTART.md`, `docs/CONFIGURATION.md`, `docs/ARCHITECTURE.md`, `docs/MAINTENANCE-TASKS-MATRIX.md`).
 - OpenClaw skills layout: [Creating skills](https://docs.openclaw.ai/tools/creating-skills).
