@@ -54,6 +54,30 @@ describe("embedding global inheritance (issue #1002)", () => {
     expect(cfg.llm?.providers?.["azure-foundry"]?.apiKey).toBe(FAKE_OPENAI_KEY);
   });
 
+  it("resolves embedding apiKey from llm.providers.openai when memorySearch provider is openai (gateway inheritance)", () => {
+    const gateway = {
+      models: {
+        providers: {
+          openai: { apiKey: FAKE_OPENAI_KEY },
+        },
+      },
+      agents: {
+        defaults: {
+          memorySearch: {
+            enabled: true,
+            provider: "openai",
+            model: "text-embedding-3-small",
+          },
+        },
+      },
+    };
+    const cfg = parseWithGateway({ mode: "minimal", embedding: {} }, gateway);
+    expect(cfg.embedding.provider).toBe("openai");
+    expect(cfg.embedding.model).toBe("text-embedding-3-small");
+    expect(cfg.embedding.apiKey).toBe(FAKE_OPENAI_KEY);
+    expect(cfg.llm?.providers?.openai?.apiKey).toBe(FAKE_OPENAI_KEY);
+  });
+
   it("does not override plugin embedding fields when already set", () => {
     const gateway = {
       models: {
