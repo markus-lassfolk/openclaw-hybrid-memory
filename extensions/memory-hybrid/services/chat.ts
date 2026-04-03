@@ -580,6 +580,8 @@ export async function withLLMRetry<T>(
         throw lastError;
       }
       if (attempt === maxRetries || opts?.signal?.aborted) {
+        // Capture causeMsg before enrichment to preserve end-anchored regex matching
+        const causeMsg = lastError.message.toLowerCase();
         enrichLlmErrorMessage(lastError, opts?.llmContext);
         const retryError = new LLMRetryError(
           `Failed after ${attempt + 1} attempts: ${lastError.message}`,
@@ -589,7 +591,6 @@ export async function withLLMRetry<T>(
         // Skip reporting when the underlying cause is a transient gateway error (aborted, timeout, 5xx, 429).
         // Note: 404 and 403 errors should never reach this branch (they exit early above),
         // but we include them as defensive safety nets in case they slip past due to future refactors.
-        const causeMsg = lastError.message.toLowerCase();
         const fullMsg = retryError.message.toLowerCase();
         const isTransient =
           is429 ||
