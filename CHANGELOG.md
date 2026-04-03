@@ -8,6 +8,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- **Embedding config inheritance (issue [#1002](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/1002)):** Before `hybridConfigSchema.parse`, merge OpenClaw **`models.providers`** (same paths as LLM bootstrap) into the raw plugin **`llm.providers`**, then overlay **`agents.defaults.memorySearch`** (`provider`, `model`, optional `deployment` from the matching gateway provider entry, and **`dimensions`** when known) onto plugin **`embedding`** only for omitted fields. Plugin values always win.
+
 ---
 
 ## [2026.4.33] - 2026-04-03

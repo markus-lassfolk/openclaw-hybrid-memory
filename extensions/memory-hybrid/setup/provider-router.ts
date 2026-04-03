@@ -3,7 +3,12 @@ import OpenAI from "openai";
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import type { CostTracker } from "../backends/cost-tracker.js";
 import type { HybridMemoryConfig, LLMProviderConfig, ResolvedGatewayAuthConfig } from "../config.js";
-import { normalizeResolvedSecretValue, resolveSecretRef } from "../config/parsers/core.js";
+import {
+  EMBEDDING_DIMENSIONS,
+  OPENAI_MODELS,
+  normalizeResolvedSecretValue,
+  resolveSecretRef,
+} from "../config/parsers/core.js";
 import { UnconfiguredProviderError } from "../services/chat.js";
 import { isAzureOpenAiResourceEndpoint } from "../services/embeddings/shared.js";
 import { createApimGatewayFetch, isAzureApiManagementGatewayUrl } from "../utils/apim-gateway-fetch.js";
@@ -35,15 +40,26 @@ export function readProviderBaseUrl(p: { baseURL?: string; baseUrl?: string } | 
  * `models.providers["azure-foundry"]` entry so requests do not fall through to api.openai.com with
  * an Azure or subscription key (401 "Incorrect API key" from platform.openai.com).
  */
+/** OpenClaw gateway `models.providers` (or legacy `llm.providers` / top-level `providers`). */
+export function getGatewayModelsProviders(
+  gwConfig: Record<string, unknown> | undefined,
+): Record<string, unknown> | undefined {
+  if (!gwConfig) return undefined;
+  const p =
+    (gwConfig.models as Record<string, unknown> | undefined)?.providers ??
+    (gwConfig.llm as Record<string, unknown> | undefined)?.providers ??
+    gwConfig.providers;
+  if (!p || typeof p !== "object" || Array.isArray(p)) return undefined;
+  return p as Record<string, unknown>;
+}
+
 export function patchEmbeddingEndpointFromGatewayProviders(cfg: HybridMemoryConfig, api: ClawdbotPluginApi): void {
   const ep = cfg.embedding?.endpoint;
   if (typeof ep === "string" && ep.trim().length > 0) return;
   // Only inherit Azure Foundry endpoint for OpenAI provider
   if (cfg.embedding?.provider !== "openai") return;
   const gwConfig = api.config as Record<string, unknown> | undefined;
-  const gwProviders = ((gwConfig?.models as Record<string, unknown> | undefined)?.providers ??
-    (gwConfig?.llm as Record<string, unknown> | undefined)?.providers ??
-    (gwConfig?.providers as Record<string, unknown> | undefined)) as Record<string, unknown> | undefined;
+  const gwProviders = getGatewayModelsProviders(gwConfig);
   const af = gwProviders?.["azure-foundry"] as { baseURL?: string; baseUrl?: string } | undefined;
   const base = readProviderBaseUrl(af);
   if (!base) return;
@@ -51,6 +67,217 @@ export function patchEmbeddingEndpointFromGatewayProviders(cfg: HybridMemoryConf
   api.logger?.info?.(
     `memory-hybrid: embedding.endpoint was empty — using models.providers["azure-foundry"] base URL (${base})`,
   );
+}
+
+/**
+ * Merge gateway `models.providers` apiKey/baseURL into plugin `llm.providers` (issues #487, #386).
+ * Optionally records merged provider names for bootstrap tier-list augmentation.
+ */
+export function mergeGatewayProviderCredentialsIntoLlmProvidersMap(
+  prov: Record<string, Record<string, unknown>>,
+  gwProviders: Record<string, unknown> | undefined,
+  api: { logger?: { info?: (s: string) => void } },
+  mergedNames?: string[],
+  mergedOriginals?: Map<string, string>,
+): number {
+  let newApiKeySlots = 0;
+  if (!gwProviders || typeof gwProviders !== "object" || Array.isArray(gwProviders)) return 0;
+  for (const [name, gw] of Object.entries(gwProviders)) {
+    if (!name || !gw || typeof gw !== "object") continue;
+    const rawKey = (gw as Record<string, unknown>).apiKey ?? (gw as Record<string, unknown>).api_key;
+    if (typeof rawKey !== "string" || !rawKey.trim()) continue;
+    const normalizedName = name.toLowerCase();
+    const pluginHasKey =
+      typeof prov[normalizedName]?.apiKey === "string" && (prov[normalizedName].apiKey as string).trim().length > 0;
+    if (!prov[normalizedName] || !pluginHasKey) {
+      newApiKeySlots++;
+      prov[normalizedName] = {
+        ...prov[normalizedName],
+        apiKey: rawKey.trim(),
+        baseURL:
+          prov[normalizedName]?.baseURL ??
+          (gw as Record<string, unknown>).baseURL ??
+          (gw as Record<string, unknown>).base_url ??
+          (gw as Record<string, unknown>).baseUrl,
+      };
+      mergedNames?.push(normalizedName);
+      mergedOriginals?.set(normalizedName, name);
+      api.logger.info?.(
+        `memory-hybrid: using gateway provider "${name}" for llm.providers (add ${normalizedName}/<model> to llm.default or llm.heavy to use)`,
+      );
+    } else {
+      const gwBase =
+        (gw as Record<string, unknown>).baseURL ??
+        (gw as Record<string, unknown>).base_url ??
+        (gw as Record<string, unknown>).baseUrl;
+      if (typeof gwBase === "string" && gwBase.trim() && !prov[normalizedName]?.baseURL) {
+        prov[normalizedName] = { ...prov[normalizedName], baseURL: gwBase.trim() };
+      }
+      mergedNames?.push(normalizedName);
+      mergedOriginals?.set(normalizedName, name);
+    }
+  }
+  return newApiKeySlots;
+}
+
+function stripEmbeddingModelPrefix(model: string): string {
+  const t = model.trim();
+  const slash = t.indexOf("/");
+  if (slash > 0 && slash < t.length - 1) return t.slice(slash + 1).trim();
+  return t;
+}
+
+function mapMemorySearchProviderToEmbeddingProvider(providerRaw: string): "openai" | "google" | "ollama" | null {
+  const x = providerRaw.trim().toLowerCase().replace(/_/g, "-");
+  if (x === "openai" || x === "azure-foundry" || x === "azure" || x === "azureopenai") return "openai";
+  if (x === "google" || x === "gemini" || x === "vertex") return "google";
+  if (x === "ollama") return "ollama";
+  return null;
+}
+
+function inferEmbeddingProviderFromBareModel(modelBare: string): "openai" | "google" | "ollama" | null {
+  if (OPENAI_MODELS.has(modelBare)) return "openai";
+  const m = modelBare.toLowerCase();
+  if (m.includes("gemini") && m.includes("embed")) return "google";
+  if (
+    m.includes("nomic-embed") ||
+    m.includes("mxbai-embed") ||
+    m === "all-minilm" ||
+    m.includes("snowflake-arctic-embed")
+  )
+    return "ollama";
+  if (m.startsWith("text-embedding") || m.startsWith("embedding-")) return "openai";
+  return null;
+}
+
+function findGatewayProviderEntryLoose(
+  gwProviders: Record<string, unknown>,
+  providerHint: string,
+): Record<string, unknown> | undefined {
+  const hint = providerHint.trim().toLowerCase().replace(/_/g, "-");
+  for (const [k, v] of Object.entries(gwProviders)) {
+    if (!v || typeof v !== "object" || Array.isArray(v)) continue;
+    if (k.toLowerCase().replace(/_/g, "-") === hint) return v as Record<string, unknown>;
+  }
+  return undefined;
+}
+
+/**
+ * Shallow-clone plugin config branches that global inheritance mutates (issue #1002).
+ */
+export function shallowClonePluginConfigForGatewayMerge(raw: Record<string, unknown>): Record<string, unknown> {
+  const out = { ...raw };
+  if (out.embedding && typeof out.embedding === "object" && !Array.isArray(out.embedding)) {
+    out.embedding = { ...(out.embedding as Record<string, unknown>) };
+  }
+  if (out.llm && typeof out.llm === "object" && !Array.isArray(out.llm)) {
+    const llm = { ...(out.llm as Record<string, unknown>) };
+    if (llm.providers && typeof llm.providers === "object" && !Array.isArray(llm.providers)) {
+      const p = { ...(llm.providers as Record<string, unknown>) };
+      for (const key of Object.keys(p)) {
+        const v = p[key];
+        if (v && typeof v === "object" && !Array.isArray(v)) {
+          p[key] = { ...(v as Record<string, unknown>) };
+        }
+      }
+      llm.providers = p;
+    }
+    out.llm = llm;
+  }
+  return out;
+}
+
+/**
+ * Before `hybridConfigSchema.parse`: merge gateway credentials into raw `llm.providers`, then
+ * overlay `agents.defaults.memorySearch` onto `embedding` for omitted fields (issue #1002).
+ * Plugin `embedding` / `llm.providers` entries always win when already set.
+ */
+export function applyGatewayEmbeddingInheritanceBeforeParse(
+  raw: Record<string, unknown>,
+  api: ClawdbotPluginApi,
+): void {
+  const gw = api.config as Record<string, unknown> | undefined;
+  const gwProviders = getGatewayModelsProviders(gw);
+  if (gwProviders) {
+    if (!raw.llm || typeof raw.llm !== "object" || Array.isArray(raw.llm)) {
+      raw.llm = { providers: {} };
+    } else {
+      const plm0 = raw.llm as Record<string, unknown>;
+      if (!plm0.providers || typeof plm0.providers !== "object" || Array.isArray(plm0.providers)) {
+        plm0.providers = {};
+      }
+    }
+    const plm = raw.llm as Record<string, unknown>;
+    const prov = plm.providers as Record<string, Record<string, unknown>>;
+    const n = mergeGatewayProviderCredentialsIntoLlmProvidersMap(prov, gwProviders, api);
+    if (n > 0) {
+      api.logger?.info?.(
+        `memory-hybrid: merged ${n} gateway provider credential(s) into plugin llm.providers before config parse (issue #1002)`,
+      );
+    }
+  }
+
+  const agents = gw?.agents as Record<string, unknown> | undefined;
+  const defaults = agents?.defaults as Record<string, unknown> | undefined;
+  const ms = defaults?.memorySearch as Record<string, unknown> | undefined;
+  if (!ms || ms.enabled === false) return;
+
+  const msProvider = typeof ms.provider === "string" ? ms.provider.trim() : "";
+  const msModel = typeof ms.model === "string" ? ms.model.trim() : "";
+  if (!msProvider && !msModel) return;
+
+  let emb = raw.embedding;
+  if (!emb || typeof emb !== "object" || Array.isArray(emb)) {
+    raw.embedding = {};
+    emb = raw.embedding as Record<string, unknown>;
+  } else {
+    raw.embedding = { ...(emb as Record<string, unknown>) };
+    emb = raw.embedding as Record<string, unknown>;
+  }
+
+  const modelBare = msModel ? stripEmbeddingModelPrefix(msModel) : "";
+  let touched = false;
+
+  if (msModel && emb.model === undefined) {
+    emb.model = modelBare;
+    touched = true;
+  }
+
+  let mapped = msProvider ? mapMemorySearchProviderToEmbeddingProvider(msProvider) : null;
+  if (!mapped && modelBare) mapped = inferEmbeddingProviderFromBareModel(modelBare);
+  if (mapped && emb.provider === undefined) {
+    emb.provider = mapped;
+    touched = true;
+  }
+
+  if (modelBare && emb.dimensions === undefined) {
+    const d = EMBEDDING_DIMENSIONS[modelBare];
+    if (typeof d === "number") {
+      emb.dimensions = d;
+      touched = true;
+    }
+  }
+
+  if (gwProviders && msProvider && emb.deployment === undefined) {
+    const gwp = findGatewayProviderEntryLoose(gwProviders, msProvider);
+    if (gwp) {
+      const dep =
+        (typeof gwp.deployment === "string" && gwp.deployment.trim()) ||
+        (typeof gwp.deploymentName === "string" && gwp.deploymentName.trim()) ||
+        (typeof (gwp as { deploymentId?: string }).deploymentId === "string" &&
+          (gwp as { deploymentId: string }).deploymentId.trim());
+      if (dep) {
+        emb.deployment = dep;
+        touched = true;
+      }
+    }
+  }
+
+  if (touched) {
+    api.logger?.info?.(
+      "memory-hybrid: inherited embedding fields from agents.defaults.memorySearch (issue #1002); plugin embedding.* still overrides when set",
+    );
+  }
 }
 
 /**
