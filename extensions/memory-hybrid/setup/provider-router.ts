@@ -129,7 +129,8 @@ function stripEmbeddingModelPrefix(model: string): string {
 
 function mapMemorySearchProviderToEmbeddingProvider(providerRaw: string): "openai" | "google" | "ollama" | null {
   const x = providerRaw.trim().toLowerCase().replace(/_/g, "-");
-  if (x === "openai" || x === "azure-foundry" || x === "azure" || x === "azureopenai" || x === "azure-openai") return "openai";
+  if (x === "openai" || x === "azure-foundry" || x === "azure" || x === "azureopenai" || x === "azure-openai")
+    return "openai";
   if (x === "google" || x === "gemini" || x === "vertex") return "google";
   if (x === "ollama") return "ollama";
   return null;
@@ -226,13 +227,13 @@ export function applyGatewayEmbeddingInheritanceBeforeParse(
   const msModel = typeof ms.model === "string" ? ms.model.trim() : "";
   if (!msProvider && !msModel) return;
 
-  let emb = raw.embedding;
-  if (!emb || typeof emb !== "object" || Array.isArray(emb)) {
-    raw.embedding = {};
-    emb = raw.embedding as Record<string, unknown>;
+  let emb: Record<string, unknown>;
+  if (!raw.embedding || typeof raw.embedding !== "object" || Array.isArray(raw.embedding)) {
+    emb = {};
+    raw.embedding = emb;
   } else {
-    raw.embedding = { ...(emb as Record<string, unknown>) };
-    emb = raw.embedding as Record<string, unknown>;
+    emb = { ...(raw.embedding as Record<string, unknown>) };
+    raw.embedding = emb;
   }
 
   const modelBare = msModel ? stripEmbeddingModelPrefix(msModel) : "";
