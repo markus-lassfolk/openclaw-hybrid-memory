@@ -53,6 +53,26 @@
       "placeholder": "local",
       "help": "local | minimal | enhanced | complete (or legacy: essential | normal | expert | full, mapped to local). See CONFIGURATION-MODES.md."
     },
+    "llm.nano": {
+      "label": "LLM tier: nano (cheapest)",
+      "help": "Ordered model IDs for high-volume, low-stakes calls: HyDE, auto-classify, classify-before-write, summarization. Prefer nano/mini/flash-lite deployments first. If unset, nano reuses llm.default. CLI: openclaw hybrid-mem config-set llm.nano '[\"azure-foundry/gpt-4.1-nano\"]'"
+    },
+    "llm.default": {
+      "label": "LLM tier: default",
+      "help": "General maintenance, reflection, and dream-cycle / MEMORY_INDEX when nightlyCycle.model is not set. Put a small-but-capable model first; reserve bigger models as fallbacks. CLI: openclaw hybrid-mem config-set llm.default '[\"azure-foundry/gpt-4.1-mini\",\"azure-foundry/gpt-5.4\"]'"
+    },
+    "llm.heavy": {
+      "label": "LLM tier: heavy",
+      "help": "Distillation, self-correction, and other quality-critical steps. Safe to list stronger models here; they are not used for every retrieval helper. CLI: openclaw hybrid-mem config-set llm.heavy '[\"azure-foundry/gpt-5.4\"]'"
+    },
+    "nightlyCycle.model": {
+      "label": "Dream cycle model override",
+      "help": "Optional. When set, nightly dream cycle and MEMORY_INDEX LLM use this model instead of llm.default[0]. Leave unset to follow llm.default. CLI: openclaw hybrid-mem config-set nightlyCycle.model azure-foundry/gpt-4.1-mini"
+    },
+    "distill.extractionModelTier": {
+      "label": "Distill extraction tier",
+      "help": "Which LLM tier to use for directive/reinforcement extraction from sessions: nano (cheapest), default, or heavy. Presets minimal/enhanced default to nano. CLI: openclaw hybrid-mem config-set distill.extractionModelTier nano"
+    },
     "lanceDbPath": {
       "label": "LanceDB Path",
       "placeholder": "~/.openclaw/memory/lancedb",
