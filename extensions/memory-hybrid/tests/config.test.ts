@@ -1725,7 +1725,7 @@ describe("hybridConfigSchema.parse", () => {
       expect(result.autoRecall.authFailure.enabled).toBe(false);
     });
 
-    it("mode minimal: enables autoClassify, graph, procedures, ingest paths; disables reflection; distill uses default (flash) tier", () => {
+    it("mode minimal: enables autoClassify, graph, procedures, ingest paths; disables reflection; distill extraction uses nano tier", () => {
       const result = hybridConfigSchema.parse({
         ...validBase,
         mode: "minimal" as ConfigMode,
@@ -1738,7 +1738,7 @@ describe("hybridConfigSchema.parse", () => {
       expect(result.credentials.enabled).toBe(true);
       expect(result.graph.autoLink).toBe(false);
       expect(result.store.classifyBeforeWrite).toBe(false);
-      expect(result.distill?.extractionModelTier).toBe("default");
+      expect(result.distill?.extractionModelTier).toBe("nano");
       expect(result.ingest?.paths).toEqual(["skills/**/*.md", "TOOLS.md", "AGENTS.md"]);
     });
 
@@ -1759,6 +1759,7 @@ describe("hybridConfigSchema.parse", () => {
         expect(result.credentials.enabled).toBe(true);
         expect(result.credentials.autoDetect).toBe(true);
         expect(result.credentials.autoCapture?.toolCalls).toBe(true);
+        expect(result.distill?.extractionModelTier).toBe("nano");
       } finally {
         setEnv("OPENCLAW_CRED_KEY", undefined);
       }
@@ -1774,6 +1775,7 @@ describe("hybridConfigSchema.parse", () => {
       expect(result.search?.hydeEnabled).toBeFalsy();
       expect(result.ingest?.paths).toEqual(["skills/**/*.md", "TOOLS.md", "AGENTS.md"]);
       expect(result.autoRecall.interactiveEnrichment).toBe("fast");
+      expect(result.distill?.extractionModelTier).toBe("default");
     });
 
     it("user overrides win over preset (mode local + graph.enabled true); mode becomes Custom for verify", () => {

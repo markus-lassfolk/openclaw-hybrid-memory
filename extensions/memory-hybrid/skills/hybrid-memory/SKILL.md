@@ -40,6 +40,7 @@ If **auto-capture** and **auto-recall** are on, many turns need no tool call—b
 ## Configuration mindset
 
 - **Embedding provider** must be valid or the plugin fails to load—fix provider, model, and dimensions before debugging "no memories."
+- **LLM tiers** (`llm.nano` → `llm.default` → `llm.heavy`): put **cheapest** models first in each list. Nano is for HyDE/classify/summarize; default covers maintenance and dream cycle (unless `nightlyCycle.model` is set); heavy is for distill and hard quality steps. Run `openclaw hybrid-mem config` to see effective first choices.
 - **Scopes** (global / user / agent / session) matter for who sees a fact; match the user's intent.
 - **Decay / tiering** affect how long items stay hot—do not assume everything is permanent unless configured.
 
