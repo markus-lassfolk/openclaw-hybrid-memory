@@ -15,7 +15,6 @@ import { resolveAgentIdFromHookEvent, formatSessionKeyTruncated } from "./resolv
 
 const SETUP_TIMEOUT_MS = 5000;
 
-
 export function runSetupStage(
   event: unknown,
   api: ClawdbotPluginApi,
