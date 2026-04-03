@@ -9,6 +9,7 @@ import { mergeAgentHealthDashboard } from "../../../backends/agent-health-store.
 import { collectForgeState } from "../../../routes/dashboard-server.js";
 import { capturePluginError } from "../../../services/error-reporter.js";
 import { getLanguageKeywordsFilePath } from "../../../utils/language-keywords.js";
+import { type CommanderOptsParent, readHybridMemVerbose } from "../../global-verbose.js";
 import { type Chainable, withExit } from "../../shared.js";
 import type { ManageBindings } from "./bindings.js";
 
@@ -183,9 +184,9 @@ export function registerManageAgentsAuditRunall(mem: Chainable, b: ManageBinding
     .option("--dry-run", "List steps that would run without executing")
     .option("--verbose", "Show detailed output for each step")
     .action(
-      withExit(async (opts?: { dryRun?: boolean; verbose?: boolean }) => {
+      withExit(async (opts?: { dryRun?: boolean; verbose?: boolean }, cmd?: CommanderOptsParent) => {
         const dryRun = !!opts?.dryRun;
-        const verbose = !!opts?.verbose;
+        const verbose = !!opts?.verbose || readHybridMemVerbose(cmd);
         const log = (s: string) => console.log(s);
         const sink = { log, warn: (s: string) => console.warn(s) };
         const memoryDir = resolvedSqlitePath ? dirname(resolvedSqlitePath) : null;

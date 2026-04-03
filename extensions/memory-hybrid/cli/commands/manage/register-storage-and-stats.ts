@@ -4,6 +4,7 @@
  */
 
 import { vectorDimsForModel } from "../../../config.js";
+import { listDumpTypeAliases, runSqliteTableDump } from "../../../services/cli-sql-dump.js";
 import { runContextAudit } from "../../../services/context-audit.js";
 import { migrateEmbeddings } from "../../../services/embedding-migration.js";
 import { capturePluginError } from "../../../services/error-reporter.js";
@@ -683,5 +684,79 @@ export function registerManageStorageAndStats(mem: Chainable, b: ManageBindings)
         console.log(`Type: ${item.type}`);
         console.log(JSON.stringify(item.data, null, 2));
       }),
+    );
+
+  mem
+    .command("dump")
+    .description(
+      "Inspect SQLite table rows (read-only). Use --type fact_entity (PERSON/ORG mentions), organizations, contacts, facts, etc. See --list-types.",
+    )
+    .option("--type <t>", "Table alias or physical name (required unless --list-types)")
+    .option("--limit <n>", "Max rows (1–5000, default 20)", "20")
+    .option("--order <dir>", "Sort: last = newest first, first = oldest first", "last")
+    .option("--json", "JSON array output (no text truncation)")
+    .option("--list-types", "Print allowed --type values and exit")
+    .action(
+      withExit(
+        async (opts?: {
+          type?: string;
+          limit?: string;
+          order?: string;
+          json?: boolean;
+          listTypes?: boolean;
+        }) => {
+          if (opts?.listTypes) {
+            for (const t of listDumpTypeAliases()) console.log(t);
+            return;
+          }
+          const typeRaw = opts?.type?.trim();
+          if (!typeRaw) {
+            console.error("error: --type is required (or use --list-types for valid names)");
+            process.exitCode = 1;
+            return;
+          }
+          const limitParsed = Number.parseInt(opts?.limit ?? "20", 10);
+          if (!Number.isFinite(limitParsed) || limitParsed < 1 || limitParsed > 5000) {
+            console.error("error: --limit must be an integer from 1 to 5000");
+            process.exitCode = 1;
+            return;
+          }
+          const orderRaw = (opts?.order ?? "last").toLowerCase();
+          if (orderRaw !== "first" && orderRaw !== "last") {
+            console.error('error: --order must be "first" or "last"');
+            process.exitCode = 1;
+            return;
+          }
+          const order = orderRaw as "first" | "last";
+          try {
+            const result = runSqliteTableDump(factsDb.getRawDb(), {
+              type: typeRaw,
+              limit: limitParsed,
+              order,
+              json: !!opts?.json,
+            });
+            if (!result.ok) {
+              console.error(result.error);
+              process.exitCode = 1;
+              return;
+            }
+            if (opts?.json) {
+              console.log(JSON.stringify(result.rows, null, 2));
+              return;
+            }
+            console.log(`Table ${result.table} (${result.rows.length} row(s), order=${order}):`);
+            for (let i = 0; i < result.rows.length; i++) {
+              console.log(`--- ${i + 1} ---`);
+              console.log(JSON.stringify(result.rows[i], null, 2));
+            }
+          } catch (err) {
+            capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+              subsystem: "cli",
+              operation: "dump",
+            });
+            throw err;
+          }
+        },
+      ),
     );
 }

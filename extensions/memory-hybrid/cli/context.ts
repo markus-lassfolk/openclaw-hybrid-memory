@@ -118,11 +118,18 @@ export type ManageContext = {
   }) => Promise<
     { ok: true; path: string; topLanguages: string[]; languagesAdded: number } | { ok: false; error: string }
   >;
-  runEntityEnrichment: (opts: { limit: number; dryRun: boolean; model?: string }) => Promise<{
+  runEntityEnrichment: (opts: {
+    limit: number;
+    dryRun: boolean;
+    model?: string;
+    verbose?: boolean;
+  }) => Promise<{
     pending: number;
     processed: number;
     factsEnriched: number;
     skipped?: boolean;
+    pendingFactIds?: string[];
+    enrichedFacts?: import("../services/entity-enrichment-cli.js").EntityEnrichmentVerboseFact[];
   }>;
   runResolveContradictions: () => Promise<{
     autoResolved: Array<{ contradictionId: string; factIdNew: string; factIdOld: string }>;

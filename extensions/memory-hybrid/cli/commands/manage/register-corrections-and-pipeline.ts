@@ -6,6 +6,7 @@
 import { getCronModelConfig, getDefaultCronModel } from "../../../config.js";
 import { getEffectivenessReport, runClosedLoopAnalysis } from "../../../services/feedback-effectiveness.js";
 import { capturePluginError } from "../../../services/error-reporter.js";
+import { type CommanderOptsParent, readHybridMemVerbose } from "../../global-verbose.js";
 import { type Chainable, withExit } from "../../shared.js";
 import type {
   AnalyzeFeedbackPhrasesResult,
@@ -485,25 +486,30 @@ export function registerManageCorrectionsAndPipeline(mem: Chainable, b: ManageBi
     .option("--model <m>", "LLM model (default from config)", reflectionConfig.model)
     .option("--verbose", "Log each pattern as it is extracted")
     .action(
-      withExit(async (opts?: { window?: string; dryRun?: boolean; model?: string; verbose?: boolean }) => {
-        const window = opts?.window ? Number.parseInt(opts.window, 10) : reflectionConfig.defaultWindow;
-        const dryRun = !!opts?.dryRun;
-        const model = opts?.model ?? reflectionConfig.model;
-        const verbose = !!opts?.verbose;
-        let res;
-        try {
-          res = await runReflection({ window, dryRun, model, verbose });
-        } catch (err) {
-          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-            subsystem: "cli",
-            operation: "reflect",
-          });
-          throw err;
-        }
-        console.log(
-          `Reflection complete: analyzed ${res.factsAnalyzed} facts, extracted ${res.patternsExtracted} patterns, stored ${res.patternsStored} ${dryRun ? "(dry-run)" : ""}`,
-        );
-      }),
+      withExit(
+        async (
+          opts?: { window?: string; dryRun?: boolean; model?: string; verbose?: boolean },
+          cmd?: CommanderOptsParent,
+        ) => {
+          const window = opts?.window ? Number.parseInt(opts.window, 10) : reflectionConfig.defaultWindow;
+          const dryRun = !!opts?.dryRun;
+          const model = opts?.model ?? reflectionConfig.model;
+          const verbose = !!opts?.verbose || readHybridMemVerbose(cmd);
+          let res;
+          try {
+            res = await runReflection({ window, dryRun, model, verbose });
+          } catch (err) {
+            capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+              subsystem: "cli",
+              operation: "reflect",
+            });
+            throw err;
+          }
+          console.log(
+            `Reflection complete: analyzed ${res.factsAnalyzed} facts, extracted ${res.patternsExtracted} patterns, stored ${res.patternsStored} ${dryRun ? "(dry-run)" : ""}`,
+          );
+        },
+      ),
     );
 
   mem
@@ -513,10 +519,10 @@ export function registerManageCorrectionsAndPipeline(mem: Chainable, b: ManageBi
     .option("--model <m>", "LLM model (default from config)", reflectionConfig.model)
     .option("--verbose", "Log each rule as it is extracted")
     .action(
-      withExit(async (opts?: { dryRun?: boolean; model?: string; verbose?: boolean }) => {
+      withExit(async (opts?: { dryRun?: boolean; model?: string; verbose?: boolean }, cmd?: CommanderOptsParent) => {
         const dryRun = !!opts?.dryRun;
         const model = opts?.model ?? reflectionConfig.model;
-        const verbose = !!opts?.verbose;
+        const verbose = !!opts?.verbose || readHybridMemVerbose(cmd);
         let res;
         try {
           res = await runReflectionRules({ dryRun, model, verbose });
@@ -540,10 +546,10 @@ export function registerManageCorrectionsAndPipeline(mem: Chainable, b: ManageBi
     .option("--model <m>", "LLM model (default from config)", reflectionConfig.model)
     .option("--verbose", "Log each meta-pattern as it is extracted")
     .action(
-      withExit(async (opts?: { dryRun?: boolean; model?: string; verbose?: boolean }) => {
+      withExit(async (opts?: { dryRun?: boolean; model?: string; verbose?: boolean }, cmd?: CommanderOptsParent) => {
         const dryRun = !!opts?.dryRun;
         const model = opts?.model ?? reflectionConfig.model;
-        const verbose = !!opts?.verbose;
+        const verbose = !!opts?.verbose || readHybridMemVerbose(cmd);
         let res;
         try {
           res = await runReflectionMeta({ dryRun, model, verbose });
@@ -569,16 +575,21 @@ export function registerManageCorrectionsAndPipeline(mem: Chainable, b: ManageBi
       .option("--model <m>", "LLM model (default from config)", reflectionConfig.model)
       .option("--verbose", "Log each identity insight as it is stored")
       .action(
-        withExit(async (opts?: { window?: string; dryRun?: boolean; model?: string; verbose?: boolean }) => {
-          const window = opts?.window ? Number.parseInt(opts.window, 10) : reflectionConfig.defaultWindow;
-          const dryRun = !!opts?.dryRun;
-          const model = opts?.model ?? reflectionConfig.model;
-          const verbose = !!opts?.verbose;
-          const res = await runReflectIdentity({ dryRun, model, verbose, window });
-          console.log(
-            `Identity reflection complete: extracted ${res.insightsExtracted} insights, stored ${res.insightsStored} ${dryRun ? "(dry-run)" : ""}`,
-          );
-        }),
+        withExit(
+          async (
+            opts?: { window?: string; dryRun?: boolean; model?: string; verbose?: boolean },
+            cmd?: CommanderOptsParent,
+          ) => {
+            const window = opts?.window ? Number.parseInt(opts.window, 10) : reflectionConfig.defaultWindow;
+            const dryRun = !!opts?.dryRun;
+            const model = opts?.model ?? reflectionConfig.model;
+            const verbose = !!opts?.verbose || readHybridMemVerbose(cmd);
+            const res = await runReflectIdentity({ dryRun, model, verbose, window });
+            console.log(
+              `Identity reflection complete: extracted ${res.insightsExtracted} insights, stored ${res.insightsStored} ${dryRun ? "(dry-run)" : ""}`,
+            );
+          },
+        ),
       );
   }
 
@@ -832,39 +843,57 @@ export function registerManageCorrectionsAndPipeline(mem: Chainable, b: ManageBi
     .option("--limit <n>", "Max facts to process (default 200)", "200")
     .option("--model <m>", "LLM model (default: cron nano tier)")
     .option("--dry-run", "Only report how many facts need enrichment")
+    .option("--verbose", "List candidate fact ids (dry-run) or enriched fact ids and mentions (after run)")
     .action(
-      withExit(async (opts?: { limit?: string; model?: string; dryRun?: boolean }) => {
-        const limitRaw = Number.parseInt(opts?.limit ?? "200", 10);
-        if (!Number.isFinite(limitRaw) || limitRaw < 1) {
-          throw new Error("--limit must be a positive integer (>= 1).");
-        }
-        const limit = limitRaw;
-        const dryRun = !!opts?.dryRun;
-        const model = opts?.model;
-        let res;
-        try {
-          res = await runEntityEnrichment({ limit, dryRun, model });
-        } catch (err) {
-          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-            subsystem: "cli",
-            operation: "enrich-entities",
-          });
-          throw err;
-        }
-        if (res.skipped) {
-          console.log(
-            `Entity enrichment skipped: graph.enabled is false (${res.pending} fact${res.pending === 1 ? "" : "s"} would be pending if graph were enabled).`,
-          );
-          return;
-        }
-        if (dryRun) {
-          console.log(`Entity enrichment (dry-run): ${res.pending} facts pending (no API calls).`);
-        } else {
-          console.log(
-            `Entity enrichment: processed ${res.processed} facts, enriched ${res.factsEnriched} (batch had ${res.pending} candidates).`,
-          );
-        }
-      }),
+      withExit(
+        async (
+          opts?: { limit?: string; model?: string; dryRun?: boolean; verbose?: boolean },
+          cmd?: CommanderOptsParent,
+        ) => {
+          const limitRaw = Number.parseInt(opts?.limit ?? "200", 10);
+          if (!Number.isFinite(limitRaw) || limitRaw < 1) {
+            throw new Error("--limit must be a positive integer (>= 1).");
+          }
+          const limit = limitRaw;
+          const dryRun = !!opts?.dryRun;
+          const model = opts?.model;
+          const verbose = !!opts?.verbose || readHybridMemVerbose(cmd);
+          let res;
+          try {
+            res = await runEntityEnrichment({ limit, dryRun, model, verbose });
+          } catch (err) {
+            capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+              subsystem: "cli",
+              operation: "enrich-entities",
+            });
+            throw err;
+          }
+          if (res.skipped) {
+            console.log(
+              `Entity enrichment skipped: graph.enabled is false (${res.pending} fact${res.pending === 1 ? "" : "s"} would be pending if graph were enabled).`,
+            );
+            return;
+          }
+          if (dryRun) {
+            console.log(`Entity enrichment (dry-run): ${res.pending} facts pending (no API calls).`);
+            if (verbose && res.pendingFactIds && res.pendingFactIds.length > 0) {
+              console.log("Candidate fact ids (--verbose):");
+              for (const id of res.pendingFactIds) console.log(`  ${id}`);
+            }
+          } else {
+            console.log(
+              `Entity enrichment: processed ${res.processed} facts, enriched ${res.factsEnriched} (batch had ${res.pending} candidates).`,
+            );
+            if (verbose && res.enrichedFacts && res.enrichedFacts.length > 0) {
+              console.log("Enriched facts (--verbose):");
+              for (const ef of res.enrichedFacts) {
+                const parts = ef.mentions.map((m) => `${m.label}:${JSON.stringify(m.surfaceText)}`).join(", ");
+                console.log(`  ${ef.factId}  ${parts}`);
+              }
+            }
+          }
+        },
+      ),
     );
 
   mem
@@ -982,16 +1011,19 @@ export function registerManageCorrectionsAndPipeline(mem: Chainable, b: ManageBi
       .option("--no-closed-loop", "Skip closed-loop analysis")
       .action(
         withExit(
-          async (opts?: {
-            days?: string;
-            dryRun?: boolean;
-            verbose?: boolean;
-            trajectories?: boolean;
-            closedLoop?: boolean;
-          }) => {
+          async (
+            opts?: {
+              days?: string;
+              dryRun?: boolean;
+              verbose?: boolean;
+              trajectories?: boolean;
+              closedLoop?: boolean;
+            },
+            cmd?: CommanderOptsParent,
+          ) => {
             const days = opts?.days ? Number.parseInt(opts.days, 10) : 3;
             const dryRun = !!opts?.dryRun;
-            const verbose = !!opts?.verbose;
+            const verbose = !!opts?.verbose || readHybridMemVerbose(cmd);
             const includeTrajectories = opts?.trajectories !== false;
             const includeClosedLoop = opts?.closedLoop !== false;
             let res;
@@ -1094,7 +1126,7 @@ export function registerManageCorrectionsAndPipeline(mem: Chainable, b: ManageBi
     .description("Compute and display tool effectiveness scores from workflow traces (Issue #263 — Phase 3)")
     .option("--verbose", "Show detailed per-tool breakdown")
     .action(
-      withExit(async (opts?: { verbose?: boolean }) => {
+      withExit(async (opts?: { verbose?: boolean }, cmd?: CommanderOptsParent) => {
         if (!runToolEffectiveness) {
           console.error("tool-effectiveness is not available in this context.");
           process.exitCode = 1;
@@ -1102,7 +1134,9 @@ export function registerManageCorrectionsAndPipeline(mem: Chainable, b: ManageBi
         }
         let output: string;
         try {
-          output = await runToolEffectiveness({ verbose: !!opts?.verbose });
+          output = await runToolEffectiveness({
+            verbose: !!opts?.verbose || readHybridMemVerbose(cmd),
+          });
         } catch (err) {
           capturePluginError(err instanceof Error ? err : new Error(String(err)), {
             subsystem: "cli",
