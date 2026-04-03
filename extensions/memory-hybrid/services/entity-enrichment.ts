@@ -47,15 +47,36 @@ function parseMentionJson(content: string): LlmMention[] {
   
   let depth = 0;
   let end = -1;
+  let inString = false;
+  let escapeNext = false;
+  
   for (let i = start; i < trimmed.length; i++) {
     const ch = trimmed[i];
-    if (ch === "{") {
-      depth++;
-    } else if (ch === "}") {
-      depth--;
-      if (depth === 0) {
-        end = i;
-        break;
+    
+    if (escapeNext) {
+      escapeNext = false;
+      continue;
+    }
+    
+    if (ch === "\\") {
+      escapeNext = true;
+      continue;
+    }
+    
+    if (ch === '"') {
+      inString = !inString;
+      continue;
+    }
+    
+    if (!inString) {
+      if (ch === "{") {
+        depth++;
+      } else if (ch === "}") {
+        depth--;
+        if (depth === 0) {
+          end = i;
+          break;
+        }
       }
     }
   }
