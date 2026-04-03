@@ -44,6 +44,23 @@ export function parseClassificationResponse(content: string, existingFacts: Memo
   return { action, targetId, reason };
 }
 
+function formatExistingFactsLines(existingFacts: MemoryEntry[]): string {
+  return existingFacts
+    .slice(0, 5)
+    .map(
+      (f, i) =>
+        `${i + 1}. [id=${f.id}] ${f.category}${f.entity ? ` | entity: ${f.entity}` : ""}${f.key ? ` | key: ${f.key}` : ""}: ${f.text.slice(0, 300)}`,
+    )
+    .join("\n");
+}
+
+/** Same rules as prompts/memory-classify.txt — stated once in batch prompts, not repeated per candidate. */
+const CLASSIFY_RULES_LINES = `Classify as one of:
+- ADD: The new fact is genuinely new information not covered by any existing fact.
+- UPDATE <id>: The new fact supersedes or updates an existing fact (e.g., a preference changed, a value was corrected). Specify which existing fact id it replaces.
+- DELETE <id>: The new fact explicitly retracts or negates an existing fact (e.g., "I no longer use X"). Specify which fact to invalidate.
+- NOOP: The new fact is already adequately captured by existing facts. No action needed.`;
+
 /**
  * Classify an incoming fact against existing similar facts.
  * Uses a cheap LLM call to determine ADD/UPDATE/DELETE/NOOP.
@@ -55,13 +72,7 @@ function buildClassifyPromptParts(
   candidateKey: string | null,
   existingFacts: MemoryEntry[],
 ): { prompt: string } {
-  const existingLines = existingFacts
-    .slice(0, 5)
-    .map(
-      (f, i) =>
-        `${i + 1}. [id=${f.id}] ${f.category}${f.entity ? ` | entity: ${f.entity}` : ""}${f.key ? ` | key: ${f.key}` : ""}: ${f.text.slice(0, 300)}`,
-    )
-    .join("\n");
+  const existingLines = formatExistingFactsLines(existingFacts);
 
   const template = loadPrompt("memory-classify");
   const prompt = fillPrompt(template, {
@@ -73,29 +84,21 @@ function buildClassifyPromptParts(
   return { prompt };
 }
 
-/** Prompt body for one candidate inside {@link classifyMemoryOperationsBatch} — omits single-line response rules from memory-classify.txt. */
-function buildClassifyPromptPartsForBatch(
+/** Per-candidate facts only; rules and JSON schema live in the batch message header. */
+function buildBatchCandidateSection(
   candidateText: string,
   candidateEntity: string | null,
   candidateKey: string | null,
   existingFacts: MemoryEntry[],
-): { prompt: string } {
-  const existingLines = existingFacts
-    .slice(0, 5)
-    .map(
-      (f, i) =>
-        `${i + 1}. [id=${f.id}] ${f.category}${f.entity ? ` | entity: ${f.entity}` : ""}${f.key ? ` | key: ${f.key}` : ""}: ${f.text.slice(0, 300)}`,
-    )
-    .join("\n");
-
-  const template = loadPrompt("memory-classify-candidate-block");
-  const prompt = fillPrompt(template, {
+): string {
+  const existingLines = formatExistingFactsLines(existingFacts);
+  const template = loadPrompt("memory-classify-batch-candidate");
+  return fillPrompt(template, {
     NEW_FACT: candidateText.slice(0, 500),
     ENTITY_LINE: candidateEntity ? `\nEntity: ${candidateEntity}` : "",
     KEY_LINE: candidateKey ? `\nKey: ${candidateKey}` : "",
     EXISTING_FACTS: existingLines,
   });
-  return { prompt };
 }
 
 export async function classifyMemoryOperation(
@@ -197,18 +200,13 @@ export async function classifyMemoryOperationsBatch(
   }
 
   const blocks = items.map((it, idx) => {
-    const { prompt } = buildClassifyPromptPartsForBatch(
-      it.candidateText,
-      it.candidateEntity,
-      it.candidateKey,
-      it.existingFacts,
-    );
-    return `### Candidate ${idx}\n${prompt}`;
+    const section = buildBatchCandidateSection(it.candidateText, it.candidateEntity, it.candidateKey, it.existingFacts);
+    return `### Candidate ${idx}\n${section}`;
   });
 
-  const header = `You will classify ${items.length} independent memory store candidates. For EACH candidate, apply the same rules as in the block (ADD / UPDATE id / DELETE id / NOOP).
+  const header = `You are a memory classifier. There are ${items.length} independent candidates below. ${CLASSIFY_RULES_LINES}
 
-Respond with ONLY a JSON array of exactly ${items.length} objects in order (index 0 = first candidate). Each object must be:
+Respond with ONLY a JSON array of exactly ${items.length} objects in order (index 0 = first candidate). Do not use a one-line "ACTION | reason" reply; use JSON only. Each object must be:
 {"action":"ADD"|"UPDATE"|"DELETE"|"NOOP","targetId":string|null,"reason":string}
 For UPDATE or DELETE, targetId must be one of the existing fact ids listed under that candidate. For ADD or NOOP use null for targetId.
 
