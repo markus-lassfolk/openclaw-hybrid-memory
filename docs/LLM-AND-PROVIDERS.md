@@ -265,6 +265,8 @@ To use **both** Azure Foundry and OpenAI (e.g. Azure for embeddings and/or `azur
 
 **Precedence:** For the **openai** provider, the plugin uses `OPENAI_API_KEY` (or explicit `llm.providers.openai.apiKey`) **before** `embedding.apiKey`. So you can set `embedding.apiKey` to your Azure key (or use `llm.providers["azure-foundry"]` for embeddings) and `OPENAI_API_KEY` for OpenAI chat — both work without conflict. For **azure-foundry** and **azure-foundry-responses**, the plugin uses `AZURE_OPENAI_API_KEY` when no key is set in `llm.providers`.
 
+In **OpenClaw host** `models.providers["azure-foundry"].apiKey`, use a **SecretRef** such as `env:AZURE_OPENAI_API_KEY` (not a bare env name string), so the gateway resolves the real key instead of sending a literal wrong value.
+
 Example (env only, no keys in config):
 
 ```bash
