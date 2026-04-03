@@ -43,8 +43,24 @@ type LlmMention = {
 function parseMentionJson(content: string): LlmMention[] {
   const trimmed = content.trim();
   const start = trimmed.indexOf("{");
-  const end = trimmed.lastIndexOf("}");
-  if (start === -1 || end === -1 || end <= start) return [];
+  if (start === -1) return [];
+  
+  let depth = 0;
+  let end = -1;
+  for (let i = start; i < trimmed.length; i++) {
+    const ch = trimmed[i];
+    if (ch === "{") {
+      depth++;
+    } else if (ch === "}") {
+      depth--;
+      if (depth === 0) {
+        end = i;
+        break;
+      }
+    }
+  }
+  
+  if (end === -1 || end <= start) return [];
   try {
     const obj = JSON.parse(trimmed.slice(start, end + 1)) as { mentions?: LlmMention[] };
     return Array.isArray(obj.mentions) ? obj.mentions : [];

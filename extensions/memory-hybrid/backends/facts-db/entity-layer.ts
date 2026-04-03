@@ -9,7 +9,7 @@ import { createTransaction } from "../../utils/sqlite-transaction.js";
 
 export type EntityMentionLabel = "PERSON" | "ORG";
 
-export type FactEntityMentionRow = {
+type FactEntityMentionRow = {
   id: string;
   factId: string;
   label: EntityMentionLabel;
@@ -115,7 +115,7 @@ export function migrateEntityLayerTables(db: DatabaseSync): void {
   `);
 }
 
-export function upsertOrganization(db: DatabaseSync, displayName: string): { id: string; created: boolean } | null {
+function upsertOrganization(db: DatabaseSync, displayName: string): { id: string; created: boolean } | null {
   const canonicalKey = normalizeEntityKey(displayName);
   if (!canonicalKey) {
     return null;
@@ -141,7 +141,7 @@ export function upsertOrganization(db: DatabaseSync, displayName: string): { id:
   return { id, created: true };
 }
 
-export function upsertContact(
+function upsertContact(
   db: DatabaseSync,
   displayName: string,
   primaryOrgId: string | null,
