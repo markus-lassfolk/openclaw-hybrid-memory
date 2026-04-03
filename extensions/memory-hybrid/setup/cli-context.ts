@@ -247,7 +247,7 @@ interface CliContextServices {
     limit: number;
     dryRun: boolean;
     model?: string;
-  }) => Promise<{ pending: number; processed: number; factsEnriched: number }>;
+  }) => Promise<{ pending: number; processed: number; factsEnriched: number; skipped?: boolean }>;
   runExport: (opts: {
     outputPath: string;
     excludeCredentials?: boolean;

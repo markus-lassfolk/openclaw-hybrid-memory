@@ -8,8 +8,8 @@ import type OpenAI from "openai";
 
 import type { EntityMentionLabel } from "../backends/facts-db/entity-layer.js";
 import { normalizeEntityKey } from "../backends/facts-db/entity-layer.js";
-import { capturePluginError } from "./error-reporter.js";
 import { withLLMRetry } from "./chat.js";
+import { capturePluginError } from "./error-reporter.js";
 
 const MIN_CHARS = 24;
 const MAX_CHARS = 8000;
@@ -60,8 +60,10 @@ function clampOffsets(text: string, surface: string, start: number, end: number)
   if (e < s) [s, e] = [e, s];
   const slice = text.slice(s, e);
   if (slice === surface) return { start: s, end: e };
-  const idx = text.indexOf(surface);
-  if (idx >= 0) return { start: idx, end: idx + surface.length };
+  const idxFromStart = text.indexOf(surface, s);
+  if (idxFromStart >= 0) return { start: idxFromStart, end: idxFromStart + surface.length };
+  const idxGlobal = text.indexOf(surface);
+  if (idxGlobal >= 0) return { start: idxGlobal, end: idxGlobal + surface.length };
   return { start: s, end: e };
 }
 

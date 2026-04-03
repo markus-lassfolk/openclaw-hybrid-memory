@@ -11,54 +11,54 @@ import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import { stringEnum } from "../utils/typebox.js";
 
 import type { BuildToolScopeFilterFn, FindSimilarByEmbeddingFn } from "../api/memory-plugin-api.js";
-import type { FactsDB } from "../backends/facts-db.js";
-import type { EdictStore } from "../backends/edict-store.js";
-import type { VectorDB } from "../backends/vector-db.js";
+import type { AuditStore } from "../backends/audit-store.js";
 import type { CredentialsDB } from "../backends/credentials-db.js";
+import type { EdictStore } from "../backends/edict-store.js";
 import type { EventLog } from "../backends/event-log.js";
-import type { NarrativesDB } from "../backends/narratives-db.js";
 import { categoryToEventType } from "../backends/event-log.js";
-import type { EmbeddingProvider } from "../services/embeddings.js";
-import { AllEmbeddingProvidersFailed, shouldSuppressEmbeddingError } from "../services/embeddings.js";
-import type { EmbeddingRegistry } from "../services/embedding-registry.js";
-import { toFloat32Array } from "../services/embedding-registry.js";
-import type { PendingLLMWarnings } from "../services/chat.js";
-import { mergeResults, filterByScope } from "../services/merge-results.js";
-import { classifyMemoryOperation } from "../services/classification.js";
-import { extractStructuredFields } from "../services/fact-extraction.js";
-import type { ProvenanceService } from "../services/provenance.js";
-import { isCredentialLike, tryParseCredentialForVault, VAULT_POINTER_PREFIX } from "../services/auto-capture.js";
-import { capturePluginError, addOperationBreadcrumb } from "../services/error-reporter.js";
-import { buildExplicitSemanticQueryVector, runExplicitDeepRetrieval } from "../services/retrieval-orchestrator.js";
-import { resolveExplicitDeepRetrievalPolicy } from "../services/retrieval-mode-policy.js";
-import { QueryExpander } from "../services/query-expander.js";
-import { storeAliases, type AliasDB } from "../services/retrieval-aliases.js";
-import { expandGraph, formatLinkPath } from "../services/graph-retrieval.js";
+import type { FactsDB } from "../backends/facts-db.js";
+import type { NarrativesDB } from "../backends/narratives-db.js";
+import type { VectorDB } from "../backends/vector-db.js";
 import {
-  getMemoryCategories,
   DECAY_CLASSES,
-  type MemoryCategory,
   type DecayClass,
   type HybridMemoryConfig,
+  type MemoryCategory,
   getCronModelConfig,
   getDefaultCronModel,
   getLLMModelPreference,
+  getMemoryCategories,
   isCompactVerbosity,
 } from "../config.js";
-import type { MemoryEntry, SearchResult, ScopeFilter, Episode, EpisodeOutcome } from "../types/memory.js";
-import { MEMORY_SCOPES } from "../types/memory.js";
-import { truncateForStorage } from "../utils/text.js";
-import { extractTags } from "../utils/tags.js";
-import { parseSourceDate } from "../utils/dates.js";
-import { detectFutureDate } from "../utils/date-detector.js";
-import type { VerificationStore } from "../services/verification-store.js";
-import type { AuditStore } from "../backends/audit-store.js";
-import { shouldAutoVerify } from "../services/verification-store.js";
+import { VAULT_POINTER_PREFIX, isCredentialLike, tryParseCredentialForVault } from "../services/auto-capture.js";
+import type { PendingLLMWarnings } from "../services/chat.js";
+import { classifyMemoryOperation } from "../services/classification.js";
 import type { VariantGenerationQueue } from "../services/contextual-variants.js";
-import { getSessionLogFileSuffix, UUID_REGEX } from "../utils/constants.js";
-import { embedCallWithTimeoutAndRetry } from "../utils/embed-call.js";
-import { formatNarrativeRange, recallNarrativeSummaries } from "../services/narrative-recall.js";
+import type { EmbeddingRegistry } from "../services/embedding-registry.js";
+import { toFloat32Array } from "../services/embedding-registry.js";
+import type { EmbeddingProvider } from "../services/embeddings.js";
+import { AllEmbeddingProvidersFailed, shouldSuppressEmbeddingError } from "../services/embeddings.js";
 import { extractEntityMentionsWithLlm } from "../services/entity-enrichment.js";
+import { addOperationBreadcrumb, capturePluginError } from "../services/error-reporter.js";
+import { extractStructuredFields } from "../services/fact-extraction.js";
+import { expandGraph, formatLinkPath } from "../services/graph-retrieval.js";
+import { filterByScope, mergeResults } from "../services/merge-results.js";
+import { formatNarrativeRange, recallNarrativeSummaries } from "../services/narrative-recall.js";
+import type { ProvenanceService } from "../services/provenance.js";
+import { QueryExpander } from "../services/query-expander.js";
+import { type AliasDB, storeAliases } from "../services/retrieval-aliases.js";
+import { resolveExplicitDeepRetrievalPolicy } from "../services/retrieval-mode-policy.js";
+import { buildExplicitSemanticQueryVector, runExplicitDeepRetrieval } from "../services/retrieval-orchestrator.js";
+import type { VerificationStore } from "../services/verification-store.js";
+import { shouldAutoVerify } from "../services/verification-store.js";
+import type { Episode, EpisodeOutcome, MemoryEntry, ScopeFilter, SearchResult } from "../types/memory.js";
+import { MEMORY_SCOPES } from "../types/memory.js";
+import { UUID_REGEX, getSessionLogFileSuffix } from "../utils/constants.js";
+import { detectFutureDate } from "../utils/date-detector.js";
+import { parseSourceDate } from "../utils/dates.js";
+import { embedCallWithTimeoutAndRetry } from "../utils/embed-call.js";
+import { extractTags } from "../utils/tags.js";
+import { truncateForStorage } from "../utils/text.js";
 
 export type BoundWalWriteFn = (
   operation: "store" | "update",
@@ -1994,7 +1994,8 @@ export function registerMemoryTools(
                 factsDb.applyEntityEnrichment(entry.id, mentions, detectedLang);
               })
               .catch((err) => {
-                api.logger.warn?.(`memory-hybrid: entity enrichment failed: ${err}`);
+                const msg = err instanceof Error ? (err.stack ?? err.message) : String(err);
+                api.logger.warn?.(`memory-hybrid: entity enrichment failed: ${msg}`);
               });
           }
 

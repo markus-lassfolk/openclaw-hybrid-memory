@@ -7,47 +7,47 @@ import { getEnv } from "../utils/env-manager.js";
 import { existsSync, mkdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { execSync } from "../utils/process-runner.js";
-import { generateTraceId, buildCouncilSessionKey, buildProvenanceMetadata } from "../utils/provenance.js";
-import { relativeTime } from "./shared.js";
-import { buildAppliedContent, buildUnifiedDiff } from "./proposals.js";
-import type {
-  FindDuplicatesResult,
-  StoreCliOpts,
-  StoreCliResult,
-  BackfillCliResult,
-  BackfillCliSink,
-  IngestFilesResult,
-  IngestFilesSink,
-  SelfCorrectionExtractResult,
-  SelfCorrectionRunResult,
-  AnalyzeFeedbackPhrasesResult,
-  MigrateToVaultResult,
-  CredentialsAuditResult,
-  CredentialsPruneResult,
-  UpgradeCliResult,
-  UninstallCliResult,
-  ConfigCliResult,
-} from "./types.js";
+import { mergeAgentHealthDashboard } from "../backends/agent-health-store.js";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
-import type { EmbeddingProvider } from "../services/embeddings.js";
-import type { SearchResult } from "../types/memory.js";
-// biome-ignore lint/style/useImportType: mergeResults kept as value import so typeof mergeResults resolves at the type level without confusion
-import { mergeResults, filterByScope } from "../services/merge-results.js";
-import type { ScopeFilter } from "../types/memory.js";
 import type { HybridMemoryConfig } from "../config.js";
 import { getCronModelConfig, getDefaultCronModel, vectorDimsForModel } from "../config.js";
-import { parseSourceDate } from "../utils/dates.js";
-import { capturePluginError } from "../services/error-reporter.js";
-import { mergeAgentHealthDashboard } from "../backends/agent-health-store.js";
 import { collectForgeState } from "../routes/dashboard-server.js";
-import { withExit, type Chainable } from "./shared.js";
-import { getLanguageKeywordsFilePath } from "../utils/language-keywords.js";
-import { runMemoryDiagnostics } from "../services/memory-diagnostics.js";
 import { runContextAudit } from "../services/context-audit.js";
-import { runClosedLoopAnalysis, getEffectivenessReport } from "../services/feedback-effectiveness.js";
 import { migrateEmbeddings } from "../services/embedding-migration.js";
+import type { EmbeddingProvider } from "../services/embeddings.js";
+import { capturePluginError } from "../services/error-reporter.js";
+import { getEffectivenessReport, runClosedLoopAnalysis } from "../services/feedback-effectiveness.js";
+import { runMemoryDiagnostics } from "../services/memory-diagnostics.js";
+// biome-ignore lint/style/useImportType: mergeResults kept as value import so typeof mergeResults resolves at the type level without confusion
+import { filterByScope, mergeResults } from "../services/merge-results.js";
+import type { SearchResult } from "../types/memory.js";
+import type { ScopeFilter } from "../types/memory.js";
+import { parseSourceDate } from "../utils/dates.js";
+import { getLanguageKeywordsFilePath } from "../utils/language-keywords.js";
+import { execSync } from "../utils/process-runner.js";
+import { buildCouncilSessionKey, buildProvenanceMetadata, generateTraceId } from "../utils/provenance.js";
+import { buildAppliedContent, buildUnifiedDiff } from "./proposals.js";
+import { relativeTime } from "./shared.js";
+import { type Chainable, withExit } from "./shared.js";
+import type {
+  AnalyzeFeedbackPhrasesResult,
+  BackfillCliResult,
+  BackfillCliSink,
+  ConfigCliResult,
+  CredentialsAuditResult,
+  CredentialsPruneResult,
+  FindDuplicatesResult,
+  IngestFilesResult,
+  IngestFilesSink,
+  MigrateToVaultResult,
+  SelfCorrectionExtractResult,
+  SelfCorrectionRunResult,
+  StoreCliOpts,
+  StoreCliResult,
+  UninstallCliResult,
+  UpgradeCliResult,
+} from "./types.js";
 
 export type ManageContext = {
   factsDb: FactsDB;
@@ -147,6 +147,7 @@ export type ManageContext = {
     pending: number;
     processed: number;
     factsEnriched: number;
+    skipped?: boolean;
   }>;
   runResolveContradictions: () => Promise<{
     autoResolved: Array<{ contradictionId: string; factIdNew: string; factIdOld: string }>;
@@ -2392,7 +2393,11 @@ Preserved (P0 — never trimmed, ${result.preserved.length} fact(s)):`);
     .option("--dry-run", "Only report how many facts need enrichment")
     .action(
       withExit(async (opts?: { limit?: string; model?: string; dryRun?: boolean }) => {
-        const limit = Number.parseInt(opts?.limit ?? "200", 10);
+        const limitRaw = Number.parseInt(opts?.limit ?? "200", 10);
+        if (!Number.isFinite(limitRaw) || limitRaw < 1) {
+          throw new Error("--limit must be a positive integer (>= 1).");
+        }
+        const limit = limitRaw;
         const dryRun = !!opts?.dryRun;
         const model = opts?.model;
         let res;
@@ -2404,6 +2409,12 @@ Preserved (P0 — never trimmed, ${result.preserved.length} fact(s)):`);
             operation: "enrich-entities",
           });
           throw err;
+        }
+        if (res.skipped) {
+          console.log(
+            `Entity enrichment skipped: graph.enabled is false (${res.pending} fact${res.pending === 1 ? "" : "s"} would be pending if graph were enabled).`,
+          );
+          return;
         }
         if (dryRun) {
           console.log(`Entity enrichment (dry-run): ${res.pending} facts pending (no API calls).`);

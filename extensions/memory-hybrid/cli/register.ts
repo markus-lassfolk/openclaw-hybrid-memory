@@ -196,6 +196,7 @@ export type HybridMemCliContext = {
     pending: number;
     processed: number;
     factsEnriched: number;
+    skipped?: boolean;
   }>;
   runSelfCorrectionExtract: (opts: { days?: number; outputPath?: string }) => Promise<SelfCorrectionExtractResult>;
   runSelfCorrectionRun: (opts: {

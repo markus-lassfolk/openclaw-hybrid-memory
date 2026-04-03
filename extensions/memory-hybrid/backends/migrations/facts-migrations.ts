@@ -1105,6 +1105,24 @@ export function runFactsMigrations(db: DatabaseSync): void {
 
   // Contacts, organizations, NER mentions (#985–#987)
   migrateEntityLayerTables(db);
+  migrateFactsEntityEnrichmentAt(db);
+}
+
+/** Track completion of NER/contact-org enrichment per fact (avoids re-LLM when zero entities). */
+function migrateFactsEntityEnrichmentAt(db: DatabaseSync): void {
+  const cols = db.prepare("PRAGMA table_info(facts)").all() as Array<{ name: string }>;
+  if (!cols.some((c) => c.name === "entity_enrichment_at")) {
+    db.exec("ALTER TABLE facts ADD COLUMN entity_enrichment_at INTEGER");
+  }
+  db.exec(`
+    UPDATE facts
+    SET entity_enrichment_at = COALESCE(
+      (SELECT MIN(created_at) FROM fact_entity_mentions WHERE fact_id = facts.id),
+      created_at
+    )
+    WHERE entity_enrichment_at IS NULL
+      AND EXISTS (SELECT 1 FROM fact_entity_mentions m WHERE m.fact_id = facts.id)
+  `);
 }
 
 /** Supports SQL ORDER BY for trimToBudget without full in-memory sort of all facts (Issue #838). */

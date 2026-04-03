@@ -9,13 +9,24 @@ import type { HybridMemoryConfig } from "../config.js";
 import { getCronModelConfig, getDefaultCronModel } from "../config.js";
 import { extractEntityMentionsWithLlm } from "./entity-enrichment.js";
 
+function sanitizeEnrichmentLimit(n: number): number {
+  const x = Math.floor(Number(n));
+  if (!Number.isFinite(x) || x < 1) return 200;
+  return Math.min(100_000, x);
+}
+
 export async function runEntityEnrichmentForCli(
   factsDb: FactsDB,
   openai: OpenAI,
   cfg: HybridMemoryConfig,
   opts: { limit: number; dryRun: boolean; model?: string },
-): Promise<{ pending: number; processed: number; factsEnriched: number }> {
-  const ids = factsDb.listFactIdsNeedingEntityEnrichment(opts.limit, 24);
+): Promise<{ pending: number; processed: number; factsEnriched: number; skipped?: boolean }> {
+  const limit = sanitizeEnrichmentLimit(opts.limit);
+  if (!cfg.graph?.enabled) {
+    const ids = factsDb.listFactIdsNeedingEntityEnrichment(limit, 24);
+    return { pending: ids.length, processed: 0, factsEnriched: 0, skipped: true };
+  }
+  const ids = factsDb.listFactIdsNeedingEntityEnrichment(limit, 24);
   if (opts.dryRun) {
     return { pending: ids.length, processed: 0, factsEnriched: 0 };
   }

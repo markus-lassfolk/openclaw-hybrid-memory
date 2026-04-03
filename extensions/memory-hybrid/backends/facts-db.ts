@@ -5493,7 +5493,7 @@ export class FactsDB extends BaseSqliteStore {
     return entityLayerListFactIdsForOrg(this.liveDb, orgId, limit);
   }
 
-  /** Facts with no mention rows yet (for batch enrichment). */
+  /** Facts not yet processed by entity enrichment (see `facts.entity_enrichment_at`). */
   listFactIdsNeedingEntityEnrichment(limit: number, minTextLen = 24): string[] {
     return entityLayerListFactsNeedingEnrichment(this.liveDb, limit, minTextLen);
   }

@@ -45,6 +45,11 @@ export function normalizeEntityKey(name: string): string {
   return name.normalize("NFKD").replace(/\p{M}/gu, "").toLowerCase().replace(/\s+/g, " ").trim();
 }
 
+/** Escape `%`, `_`, and `\` for SQLite `LIKE ... ESCAPE '\'` literal matching. */
+export function escapeLikeLiteralForBackslashEscape(s: string): string {
+  return s.replace(/\\/g, "\\\\").replace(/%/g, "\\%").replace(/_/g, "\\_");
+}
+
 export function migrateEntityLayerTables(db: DatabaseSync): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS organizations (
@@ -70,9 +75,10 @@ export function migrateEntityLayerTables(db: DatabaseSync): void {
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL
     );
-    CREATE INDEX IF NOT EXISTS idx_contacts_norm ON contacts(normalized_key);
     CREATE INDEX IF NOT EXISTS idx_contacts_org ON contacts(primary_org_id);
   `);
+  // One row per normalized display key (upsertContact assumes uniqueness).
+  db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_contacts_normalized_key_unique ON contacts(normalized_key)");
 
   db.exec(`
     CREATE TABLE IF NOT EXISTS fact_entity_mentions (
@@ -252,6 +258,8 @@ export function replaceFactEntityMentions(
         );
       }
     }
+
+    db.prepare("UPDATE facts SET entity_enrichment_at = ? WHERE id = ?").run(now, factId);
   });
   tx();
 }
@@ -263,7 +271,7 @@ export function getOrganizationByKeyOrName(db: DatabaseSync, query: string): Org
     | Record<string, unknown>
     | undefined;
   if (byKey) return rowToOrg(byKey);
-  const like = `%${nk.replace(/%/g, "\\%").replace(/_/g, "\\_")}%`;
+  const like = `%${escapeLikeLiteralForBackslashEscape(nk)}%`;
   const byName = db
     .prepare(
       "SELECT * FROM organizations WHERE canonical_key LIKE ? ESCAPE '\\' ORDER BY length(display_name) ASC LIMIT 1",
@@ -301,14 +309,16 @@ export function listContactsByNamePrefix(db: DatabaseSync, prefix: string, limit
     >;
     return rows.map(rowToContact);
   }
+  const esc = escapeLikeLiteralForBackslashEscape(p);
+  const pat = `${esc}%`;
   const rows = db
     .prepare(
       `SELECT * FROM contacts
-       WHERE lower(display_name) LIKE ? OR lower(normalized_key) LIKE ?
+       WHERE lower(display_name) LIKE ? ESCAPE '\\' OR lower(normalized_key) LIKE ? ESCAPE '\\'
        ORDER BY display_name COLLATE NOCASE
        LIMIT ?`,
     )
-    .all(`${p}%`, `${p}%`, limit) as Array<Record<string, unknown>>;
+    .all(pat, pat, limit) as Array<Record<string, unknown>>;
   return rows.map(rowToContact);
 }
 
@@ -337,7 +347,7 @@ export function listFactsNeedingEnrichment(db: DatabaseSync, limit: number, minT
       `SELECT f.id FROM facts f
        WHERE f.superseded_at IS NULL
          AND length(f.text) >= ?
-         AND NOT EXISTS (SELECT 1 FROM fact_entity_mentions m WHERE m.fact_id = f.id)
+         AND f.entity_enrichment_at IS NULL
        ORDER BY f.created_at DESC
        LIMIT ?`,
     )
