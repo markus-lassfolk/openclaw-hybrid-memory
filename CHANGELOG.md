@@ -10,6 +10,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.4.31] - 2026-04-03
+
+### Release summary
+
+Version **2026.4.31** follows **2026.4.30** with structural refactors (**#954**–**#956**: split `init-databases`, manage CLI registration, `facts-db` barrel), **verify** fixes for **Azure OpenAI direct resource** URLs in `openclaw hybrid-mem verify --test-llm` (**#994**), **agent id** resolution from `event.context` session fields when OpenClaw omits top-level session keys, and small doc/comment corrections. Bumps the npm package, `openclaw.plugin.json`, and the standalone installer.
+
+### Changed
+
+- **Init / bootstrap:** `setup/init-databases.ts` split into `provider-router.ts`, `cost-instrumentation.ts`, `bootstrap-databases.ts` (same public API via thin re-exports).
+- **Manage CLI:** `ManageContext` and `registerManageCommands` moved under `cli/` with corrected extension-root imports.
+- **facts-db:** Public barrel `backends/facts-db/index.ts` re-exports `FactsDB`, types, and `ReinforcementEvent`.
+
+### Fixed
+
+- **Verify CLI — Azure direct resource ([#994](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/994)):** Direct `*.openai.azure.com` (and siblings) base URLs use `api-key` auth for the OpenAI SDK test client, not only APIM gateways; `AZURE_OPENAI_API_KEY` fallback extended to `azure-foundry-direct`.
+- **Lifecycle:** `resolveSessionKeyFromHookEvent` reads `event.context` session id/key so `before_agent_start` agent detection works when the host puts identifiers only on payload context.
+
+---
+
 ## [2026.4.30] - 2026-04-30
 
 ### Release summary
@@ -1143,7 +1162,8 @@ Major feature release including procedural memory, directive extraction, reinfor
 
 ---
 
-[Unreleased]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.4.30...HEAD
+[Unreleased]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.4.31...HEAD
+[2026.4.31]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.4.30...v2026.4.31
 [2026.4.30]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.4.21...v2026.4.30
 [2026.4.21]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.4.20...v2026.4.21
 [2026.4.20]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.4.12...v2026.4.20
