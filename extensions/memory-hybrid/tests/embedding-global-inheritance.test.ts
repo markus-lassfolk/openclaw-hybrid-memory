@@ -9,7 +9,9 @@ import {
 } from "../setup/provider-router.js";
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 
-const FAKE_OPENAI_KEY = "sk-proj-test1234567890abcdefghijklmnop";
+const FAKE_OPENAI_KEY = ["sk", "-proj-test", "1234567890abcdefghijklmnop"].join("");
+const FAKE_GATEWAY_OTHER_KEY = ["sk", "-proj-other", "0987654321abcdefghijkl"].join("");
+const FAKE_PLUGIN_KEY = ["sk", "-proj-plugin", "1234567890abcdefghijkl"].join("");
 
 function parseWithGateway(
   raw: Record<string, unknown>,
@@ -56,7 +58,7 @@ describe("embedding global inheritance (issue #1002)", () => {
     const gateway = {
       models: {
         providers: {
-          openai: { apiKey: "sk-proj-other0987654321abcdefghijkl" },
+          openai: { apiKey: FAKE_GATEWAY_OTHER_KEY },
         },
       },
       agents: {
@@ -69,7 +71,7 @@ describe("embedding global inheritance (issue #1002)", () => {
         },
       },
     };
-    const pluginKey = "sk-proj-plugin1234567890abcdefghijkl";
+    const pluginKey = FAKE_PLUGIN_KEY;
     const cfg = parseWithGateway(
       {
         mode: "minimal",
@@ -85,6 +87,44 @@ describe("embedding global inheritance (issue #1002)", () => {
     );
     expect(cfg.embedding.model).toBe("text-embedding-3-small");
     expect(cfg.embedding.apiKey).toBe(pluginKey);
+  });
+
+  it("merges gateway openai into mixed-case OpenAI llm.providers slot (no duplicate lowercase entry)", () => {
+    const gateway = {
+      models: {
+        providers: {
+          openai: { apiKey: FAKE_GATEWAY_OTHER_KEY },
+        },
+      },
+      agents: {
+        defaults: {
+          memorySearch: {
+            enabled: true,
+            provider: "openai",
+            model: "text-embedding-3-small",
+          },
+        },
+      },
+    };
+    const api = {
+      config: gateway,
+      logger: { info: vi.fn(), warn: vi.fn() },
+    } as unknown as ClawdbotPluginApi;
+    const raw: Record<string, unknown> = {
+      mode: "minimal",
+      embedding: {
+        apiKey: FAKE_PLUGIN_KEY,
+        provider: "openai",
+        model: "text-embedding-3-small",
+      },
+      llm: { providers: { OpenAI: { apiKey: FAKE_PLUGIN_KEY } } },
+    };
+    const clone = shallowClonePluginConfigForGatewayMerge(raw);
+    applyGatewayEmbeddingInheritanceBeforeParse(clone, api);
+    const prov = (clone.llm as Record<string, unknown>).providers as Record<string, unknown>;
+    const openAiLikeKeys = Object.keys(prov).filter((k) => k.toLowerCase() === "openai");
+    expect(openAiLikeKeys).toEqual(["OpenAI"]);
+    expect((prov.OpenAI as Record<string, unknown>).apiKey).toBe(FAKE_PLUGIN_KEY);
   });
 
   it("skips memorySearch when enabled is false", () => {

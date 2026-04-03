@@ -69,14 +69,31 @@ export function patchEmbeddingEndpointFromGatewayProviders(cfg: HybridMemoryConf
   );
 }
 
+/** Existing `llm.providers` key whose name matches `normalizedName` case-insensitively (issue #1002 / PR #1003). */
+function findLlmProviderSlotKey(
+  prov: Record<string, Record<string, unknown>>,
+  normalizedName: string,
+): string | undefined {
+  for (const k of Object.keys(prov)) {
+    if (k.toLowerCase() === normalizedName) return k;
+  }
+  return undefined;
+}
+
+function llmProviderEntryAsPlainObject(raw: unknown): Record<string, unknown> {
+  if (raw && typeof raw === "object" && !Array.isArray(raw)) return { ...(raw as Record<string, unknown>) };
+  return {};
+}
+
 /**
  * Merge gateway `models.providers` apiKey/baseURL into plugin `llm.providers` (issues #487, #386).
  * Optionally records merged provider names for bootstrap tier-list augmentation.
+ * Resolves mixed-case plugin keys (e.g. `OpenAI`) so gateway merge does not add a duplicate lowercase entry.
  */
 export function mergeGatewayProviderCredentialsIntoLlmProvidersMap(
   prov: Record<string, Record<string, unknown>>,
   gwProviders: Record<string, unknown> | undefined,
-  api: { logger?: { info?: (s: string) => void } },
+  api: Pick<ClawdbotPluginApi, "logger">,
   mergedNames?: string[],
   mergedOriginals?: Map<string, string>,
 ): number {
@@ -87,15 +104,17 @@ export function mergeGatewayProviderCredentialsIntoLlmProvidersMap(
     const rawKey = (gw as Record<string, unknown>).apiKey ?? (gw as Record<string, unknown>).api_key;
     if (typeof rawKey !== "string" || !rawKey.trim()) continue;
     const normalizedName = name.toLowerCase();
-    const pluginHasKey =
-      typeof prov[normalizedName]?.apiKey === "string" && (prov[normalizedName].apiKey as string).trim().length > 0;
-    if (!prov[normalizedName] || !pluginHasKey) {
+    const slotKey = findLlmProviderSlotKey(prov, normalizedName);
+    const targetKey = slotKey ?? normalizedName;
+    const cur = llmProviderEntryAsPlainObject(prov[targetKey]);
+    const pluginHasKey = typeof cur.apiKey === "string" && (cur.apiKey as string).trim().length > 0;
+    if (!pluginHasKey) {
       newApiKeySlots++;
-      prov[normalizedName] = {
-        ...prov[normalizedName],
+      prov[targetKey] = {
+        ...cur,
         apiKey: rawKey.trim(),
         baseURL:
-          prov[normalizedName]?.baseURL ??
+          (typeof cur.baseURL === "string" && cur.baseURL.trim() ? cur.baseURL : undefined) ??
           (gw as Record<string, unknown>).baseURL ??
           (gw as Record<string, unknown>).base_url ??
           (gw as Record<string, unknown>).baseUrl,
@@ -110,8 +129,9 @@ export function mergeGatewayProviderCredentialsIntoLlmProvidersMap(
         (gw as Record<string, unknown>).baseURL ??
         (gw as Record<string, unknown>).base_url ??
         (gw as Record<string, unknown>).baseUrl;
-      if (typeof gwBase === "string" && gwBase.trim() && !prov[normalizedName]?.baseURL) {
-        prov[normalizedName] = { ...prov[normalizedName], baseURL: gwBase.trim() };
+      const existingBase = typeof cur.baseURL === "string" && cur.baseURL.trim() ? cur.baseURL : undefined;
+      if (typeof gwBase === "string" && gwBase.trim() && !existingBase) {
+        prov[targetKey] = { ...cur, baseURL: gwBase.trim() };
       }
       mergedNames?.push(normalizedName);
       mergedOriginals?.set(normalizedName, name);
