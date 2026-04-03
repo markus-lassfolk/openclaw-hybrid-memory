@@ -129,7 +129,7 @@ function stripEmbeddingModelPrefix(model: string): string {
 
 function mapMemorySearchProviderToEmbeddingProvider(providerRaw: string): "openai" | "google" | "ollama" | null {
   const x = providerRaw.trim().toLowerCase().replace(/_/g, "-");
-  if (x === "openai" || x === "azure-foundry" || x === "azure" || x === "azureopenai") return "openai";
+  if (x === "openai" || x === "azure-foundry" || x === "azure" || x === "azureopenai" || x === "azure-openai") return "openai";
   if (x === "google" || x === "gemini" || x === "vertex") return "google";
   if (x === "ollama") return "ollama";
   return null;
