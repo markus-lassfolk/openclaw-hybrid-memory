@@ -1,0 +1,157 @@
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+
+import {
+  applyHybridMemoryToolsMd,
+  installHybridMemoryWorkspaceSkill,
+  resolveAgentWorkspaceRoot,
+} from "../cli/cmd-install.js";
+
+describe("workspace skill install", () => {
+  const originalEnv = process.env.OPENCLAW_WORKSPACE;
+  let tmp: string;
+
+  beforeEach(() => {
+    tmp = join(tmpdir(), `mh-skill-${Date.now()}`);
+    mkdirSync(tmp, { recursive: true });
+    Reflect.deleteProperty(process.env, "OPENCLAW_WORKSPACE");
+  });
+
+  afterEach(() => {
+    if (originalEnv !== undefined) process.env.OPENCLAW_WORKSPACE = originalEnv;
+    else Reflect.deleteProperty(process.env, "OPENCLAW_WORKSPACE");
+    try {
+      rmSync(tmp, { recursive: true, force: true });
+    } catch {
+      /* ignore */
+    }
+  });
+
+  it("resolveAgentWorkspaceRoot prefers OPENCLAW_WORKSPACE", () => {
+    process.env.OPENCLAW_WORKSPACE = tmp;
+    expect(resolveAgentWorkspaceRoot({})).toBe(tmp);
+  });
+
+  it("resolveAgentWorkspaceRoot reads agents.defaults.workspace", () => {
+    expect(
+      resolveAgentWorkspaceRoot({
+        agents: { defaults: { workspace: tmp } },
+      }),
+    ).toBe(tmp);
+  });
+
+  it("resolveAgentWorkspaceRoot reads agent.workspace (OpenClaw doc shape)", () => {
+    expect(resolveAgentWorkspaceRoot({ agent: { workspace: tmp } })).toBe(tmp);
+  });
+
+  it("resolveAgentWorkspaceRoot ignores invalid OPENCLAW_WORKSPACE and uses agents.defaults", () => {
+    process.env.OPENCLAW_WORKSPACE = "undefined";
+    expect(
+      resolveAgentWorkspaceRoot({
+        agents: { defaults: { workspace: tmp } },
+      }),
+    ).toBe(tmp);
+  });
+
+  it("resolveAgentWorkspaceRoot falls back to ~/.openclaw/workspace when path invalid and no config", () => {
+    process.env.OPENCLAW_WORKSPACE = "null";
+    expect(resolveAgentWorkspaceRoot({})).toBe(join(homedir(), ".openclaw", "workspace"));
+  });
+
+  it("installHybridMemoryWorkspaceSkill copies bundled SKILL.md", () => {
+    const pluginRoot = join(import.meta.dirname, "..");
+    const destRoot = join(tmp, "ws");
+    const r = installHybridMemoryWorkspaceSkill({
+      mergedOpenclawConfig: { agents: { defaults: { workspace: destRoot } } },
+      pluginRootDir: pluginRoot,
+      dryRun: false,
+    });
+    expect(r.error).toBeUndefined();
+    const body = readFileSync(r.path, "utf-8");
+    expect(body).toContain("name: openclaw_hybrid_memory");
+    expect(body).toContain("memory_store");
+  });
+
+  it("installHybridMemoryWorkspaceSkill dry-run does not write", () => {
+    const pluginRoot = join(import.meta.dirname, "..");
+    const destRoot = join(tmp, "ws2");
+    const dest = join(destRoot, "skills", "hybrid-memory", "SKILL.md");
+    installHybridMemoryWorkspaceSkill({
+      mergedOpenclawConfig: { agents: { defaults: { workspace: destRoot } } },
+      pluginRootDir: pluginRoot,
+      dryRun: true,
+    });
+    try {
+      readFileSync(dest, "utf-8");
+      expect.fail("file should not exist");
+    } catch {
+      expect(true).toBe(true);
+    }
+  });
+});
+
+describe("applyHybridMemoryToolsMd", () => {
+  let tmp: string;
+  const pluginRoot = join(import.meta.dirname, "..");
+
+  beforeEach(() => {
+    tmp = join(tmpdir(), `mh-tools-${Date.now()}`);
+    mkdirSync(tmp, { recursive: true });
+  });
+
+  afterEach(() => {
+    try {
+      rmSync(tmp, { recursive: true, force: true });
+    } catch {
+      /* ignore */
+    }
+  });
+
+  it("creates TOOLS.md with managed block when missing", () => {
+    const r = applyHybridMemoryToolsMd({
+      mergedOpenclawConfig: { agents: { defaults: { workspace: tmp } } },
+      pluginRootDir: pluginRoot,
+      dryRun: false,
+    });
+    expect(r.error).toBeUndefined();
+    expect(r.updated).toBe(true);
+    const body = readFileSync(join(tmp, "TOOLS.md"), "utf-8");
+    expect(body).toContain("# TOOLS");
+    expect(body).toContain("<!-- openclaw-hybrid-memory:managed-begin -->");
+    expect(body).toContain("memory_store");
+  });
+
+  it("replaces managed block on second run", () => {
+    const path = join(tmp, "TOOLS.md");
+    writeFileSync(
+      path,
+      "# TOOLS\n\n<!-- openclaw-hybrid-memory:managed-begin -->\n\nold\n\n<!-- openclaw-hybrid-memory:managed-end -->\n",
+      "utf-8",
+    );
+    const r = applyHybridMemoryToolsMd({
+      mergedOpenclawConfig: { agents: { defaults: { workspace: tmp } } },
+      pluginRootDir: pluginRoot,
+      dryRun: false,
+    });
+    expect(r.error).toBeUndefined();
+    expect(r.updated).toBe(true);
+    const body = readFileSync(path, "utf-8");
+    expect(body).not.toContain("\nold\n");
+    expect(body).toContain("memory_store");
+  });
+
+  it("appends managed block when file exists without markers", () => {
+    writeFileSync(join(tmp, "TOOLS.md"), "# TOOLS\n\n## My notes\n\n- custom\n", "utf-8");
+    const r = applyHybridMemoryToolsMd({
+      mergedOpenclawConfig: { agents: { defaults: { workspace: tmp } } },
+      pluginRootDir: pluginRoot,
+      dryRun: false,
+    });
+    expect(r.updated).toBe(true);
+    const body = readFileSync(join(tmp, "TOOLS.md"), "utf-8");
+    expect(body).toContain("## My notes");
+    expect(body).toContain("openclaw-hybrid-memory:managed-begin");
+  });
+});

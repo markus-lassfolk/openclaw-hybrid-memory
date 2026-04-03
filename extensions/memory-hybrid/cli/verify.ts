@@ -93,9 +93,34 @@ export function registerVerifyCommands(mem: Chainable, ctx: VerifyContext): void
         if (result.dryRun) {
           console.log(`Would merge into ${result.configPath}:`);
           console.log(result.configJson ?? "");
+          if (result.workspaceSkillPath) {
+            console.log(
+              `Would write workspace skill (highest precedence): ${result.workspaceSkillPath}${result.workspaceSkillError ? ` (${result.workspaceSkillError})` : ""}`,
+            );
+          }
+          if (result.workspaceToolsMdPath) {
+            console.log(
+              `Would update TOOLS.md managed block: ${result.workspaceToolsMdPath}${result.workspaceToolsMdError ? ` (${result.workspaceToolsMdError})` : ""}`,
+            );
+          }
           return;
         }
         console.log(`Config written: ${result.configPath}`);
+        if (result.workspaceSkillPath) {
+          console.log(
+            `Workspace skill: ${result.workspaceSkillPath}${result.workspaceSkillError ? ` (warning: ${result.workspaceSkillError})` : ""}`,
+          );
+        }
+        if (result.workspaceToolsMdPath) {
+          const toolsSuffix = result.workspaceToolsMdError
+            ? ` (warning: ${result.workspaceToolsMdError})`
+            : result.workspaceToolsMdUpdated === true
+              ? " (updated)"
+              : result.workspaceToolsMdUpdated === false
+                ? " (unchanged)"
+                : "";
+          console.log(`TOOLS.md: ${result.workspaceToolsMdPath}${toolsSuffix}`);
+        }
         console.log(
           `Applied: plugins.slots.memory=${result.pluginId}, ${result.pluginId} config (all features), memorySearch, compaction prompts, bootstrap limits, autoClassify. Add cron jobs via 'openclaw cron add' if needed (see docs/SESSION-DISTILLATION.md).`,
         );

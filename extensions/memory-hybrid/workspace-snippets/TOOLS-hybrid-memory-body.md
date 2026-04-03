@@ -1,0 +1,7 @@
+- **What `TOOLS.md` is:** Guidance for you only—it does **not** turn tools on or off. See OpenClaw [Agent workspace](https://docs.openclaw.ai/concepts/agent-workspace).
+- **Naming:** Memory-hybrid tools use **underscore** names (`memory_store`, `memory_recall`, `memory_forget`, …). Do not use dotted names (they break some providers).
+- **Layers:** Plugin = structured facts (FTS) + vector recall (LanceDB). **memorySearch** searches `memory/**/*.md`. Keep **MEMORY.md** short; put detail in `memory/**`.
+- **When to call tools:** Use `memory_store` when the user asks to remember something durable or when a fact must survive compaction. Use `memory_recall` when you need to search beyond auto-recall.
+- **Verification:** If recall is empty or wrong, check embedding config and run `openclaw hybrid-mem verify` (after gateway restart if you changed config).
+- **Self-correction:** This plugin may add bullets under `## Self-correction rules` (or your configured section). Keep that section; do not strip it when editing `TOOLS.md` manually.
+- **More detail:** Workspace skill `skills/hybrid-memory/SKILL.md` (installed by `hybrid-mem install`) and repo docs: [Memory Protocol](https://github.com/markus-lassfolk/openclaw-hybrid-memory/blob/main/docs/MEMORY-PROTOCOL.md).

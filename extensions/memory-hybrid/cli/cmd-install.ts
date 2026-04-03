@@ -18,6 +18,8 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { expandTilde } from "../utils/path.js";
+
 import type { HybridMemoryConfig } from "../config.js";
 import { type CronModelConfig, getCronModelConfig, getDefaultCronModel } from "../config.js";
 import { buildGuardPrefix } from "../services/cron-guard.js";
@@ -32,6 +34,150 @@ import {
 } from "../utils/openclaw-agent-defaults.js";
 import type { HandlerContext } from "./handlers.js";
 import type { InstallCliResult, UninstallCliResult, UpgradeCliResult } from "./types.js";
+
+/** Subfolder under workspace `skills/` — OpenClaw loads this with highest precedence vs shared/bundled skills. */
+const HYBRID_MEMORY_SKILL_DIR = "hybrid-memory";
+
+/** Reject empty paths and the literal strings "undefined"/"null" (common when env vars are set incorrectly). */
+function isUsableWorkspacePath(p: string): boolean {
+  const t = p.trim();
+  if (t.length === 0) return false;
+  const lower = t.toLowerCase();
+  if (lower === "undefined" || lower === "null") return false;
+  return true;
+}
+
+/**
+ * Resolve the agent workspace root (where `skills/`, `memory/`, MEMORY.md, etc. live).
+ * Order: `OPENCLAW_WORKSPACE` (if valid), `agents.defaults.workspace`, `agent.workspace` (OpenClaw [agent workspace](https://docs.openclaw.ai/concepts/agent-workspace) shape), else `~/.openclaw/workspace`.
+ */
+export function resolveAgentWorkspaceRoot(config: Record<string, unknown>): string {
+  const env = process.env.OPENCLAW_WORKSPACE?.trim();
+  if (env && isUsableWorkspacePath(env)) return expandTilde(env);
+  const agents = config.agents as Record<string, unknown> | undefined;
+  const defaults = agents?.defaults as Record<string, unknown> | undefined;
+  const ws = defaults?.workspace;
+  if (typeof ws === "string" && isUsableWorkspacePath(ws)) return expandTilde(ws.trim());
+  const agentBlock = config.agent as Record<string, unknown> | undefined;
+  const legacyWs = agentBlock?.workspace;
+  if (typeof legacyWs === "string" && isUsableWorkspacePath(legacyWs)) return expandTilde(legacyWs.trim());
+  return join(homedir(), ".openclaw", "workspace");
+}
+
+function bundledHybridMemorySkillPath(pluginRootDir: string): string {
+  return join(pluginRootDir, "skills", HYBRID_MEMORY_SKILL_DIR, "SKILL.md");
+}
+
+/** @internal Exported for tests — copies bundled `skills/hybrid-memory/SKILL.md` into the agent workspace. */
+export function installHybridMemoryWorkspaceSkill(opts: {
+  mergedOpenclawConfig: Record<string, unknown>;
+  pluginRootDir: string;
+  dryRun: boolean;
+}): { path: string; error?: string } {
+  const src = bundledHybridMemorySkillPath(opts.pluginRootDir);
+  const workspaceRoot = resolveAgentWorkspaceRoot(opts.mergedOpenclawConfig);
+  const dest = join(workspaceRoot, "skills", HYBRID_MEMORY_SKILL_DIR, "SKILL.md");
+  if (!existsSync(src)) {
+    return { path: dest, error: `Bundled skill missing at ${src}` };
+  }
+  if (opts.dryRun) {
+    return { path: dest };
+  }
+  try {
+    mkdirSync(join(workspaceRoot, "skills", HYBRID_MEMORY_SKILL_DIR), { recursive: true });
+    writeFileSync(dest, readFileSync(src, "utf-8"), "utf-8");
+    return { path: dest };
+  } catch (err) {
+    return { path: dest, error: String(err) };
+  }
+}
+
+const TOOLS_MD_MANAGED_BEGIN = "<!-- openclaw-hybrid-memory:managed-begin -->";
+const TOOLS_MD_MANAGED_END = "<!-- openclaw-hybrid-memory:managed-end -->";
+
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function getToolsMdManagedBlockRe(): RegExp {
+  return new RegExp(`${escapeRegExp(TOOLS_MD_MANAGED_BEGIN)}[\\s\\S]*?${escapeRegExp(TOOLS_MD_MANAGED_END)}`);
+}
+
+/** True if applying the managed block would modify `existing` (append, replace, or replace with different body). */
+function toolsMdManagedBlockWouldChange(existing: string, newBlock: string): boolean {
+  const re = getToolsMdManagedBlockRe();
+  if (!re.test(existing)) return true;
+  return existing.replace(re, newBlock) !== existing;
+}
+
+function buildHybridMemoryToolsMdManagedBlock(innerBody: string): string {
+  const inner = innerBody.trimEnd();
+  return [
+    TOOLS_MD_MANAGED_BEGIN,
+    "",
+    "## Hybrid memory (`openclaw-hybrid-memory`)",
+    "",
+    "_This section is refreshed by `openclaw hybrid-mem install` / `upgrade`. Add your own tool notes elsewhere in this file._",
+    "",
+    inner,
+    "",
+    TOOLS_MD_MANAGED_END,
+  ].join("\n");
+}
+
+/** @internal Merges or refreshes the managed Hybrid memory block in workspace `TOOLS.md`. */
+export function applyHybridMemoryToolsMd(opts: {
+  mergedOpenclawConfig: Record<string, unknown>;
+  pluginRootDir: string;
+  dryRun: boolean;
+}): { path: string; error?: string; updated: boolean } {
+  const workspaceRoot = resolveAgentWorkspaceRoot(opts.mergedOpenclawConfig);
+  const toolsPath = join(workspaceRoot, "TOOLS.md");
+  const snippetPath = join(opts.pluginRootDir, "workspace-snippets", "TOOLS-hybrid-memory-body.md");
+  if (!existsSync(snippetPath)) {
+    return { path: toolsPath, error: `Bundled TOOLS snippet missing at ${snippetPath}`, updated: false };
+  }
+  let innerBody: string;
+  try {
+    innerBody = readFileSync(snippetPath, "utf-8");
+  } catch (err) {
+    return { path: toolsPath, error: String(err), updated: false };
+  }
+  const block = buildHybridMemoryToolsMdManagedBlock(innerBody);
+  if (opts.dryRun) {
+    let wouldChange = !existsSync(toolsPath);
+    if (!wouldChange && existsSync(toolsPath)) {
+      try {
+        const cur = readFileSync(toolsPath, "utf-8");
+        wouldChange = !cur.includes(TOOLS_MD_MANAGED_BEGIN) || toolsMdManagedBlockWouldChange(cur, block);
+      } catch {
+        wouldChange = true;
+      }
+    }
+    return { path: toolsPath, updated: wouldChange };
+  }
+  const managedRe = getToolsMdManagedBlockRe();
+  try {
+    mkdirSync(workspaceRoot, { recursive: true });
+    if (!existsSync(toolsPath)) {
+      writeFileSync(toolsPath, `# TOOLS\n\n${block}\n`, "utf-8");
+      return { path: toolsPath, updated: true };
+    }
+    const existing = readFileSync(toolsPath, "utf-8");
+    if (managedRe.test(existing)) {
+      const next = existing.replace(managedRe, block);
+      if (next !== existing) {
+        writeFileSync(toolsPath, next, "utf-8");
+        return { path: toolsPath, updated: true };
+      }
+      return { path: toolsPath, updated: false };
+    }
+    writeFileSync(toolsPath, `${existing.trimEnd()}\n\n${block}\n`, "utf-8");
+    return { path: toolsPath, updated: true };
+  } catch (err) {
+    return { path: toolsPath, error: String(err), updated: false };
+  }
+}
 
 /**
  * Build a PreFilterConfig from the plugin config.
@@ -362,7 +508,7 @@ export function ensureMaintenanceCronJobs(
         ) {
           // Issue #977: plugin maintenance jobs must not pin an interactive session.
           // Omit sessionKey so OpenClaw uses isolated default session key: cron:<jobId>.
-          delete existing.sessionKey;
+          existing.sessionKey = undefined;
           jobsChanged = true;
           if (!normalized.includes(name)) normalized.push(name);
         }
@@ -686,14 +832,48 @@ export function runInstallForCli(opts: { dryRun: boolean }): InstallCliResult {
   }
   const after = JSON.stringify(config, null, 2);
 
+  const pluginRootDir = join(dirname(fileURLToPath(import.meta.url)), "..");
+
   if (opts.dryRun) {
-    return { ok: true, configPath, dryRun: true, written: false, configJson: after, pluginId: PLUGIN_ID };
+    const skillPreview = installHybridMemoryWorkspaceSkill({
+      mergedOpenclawConfig: config,
+      pluginRootDir,
+      dryRun: true,
+    });
+    const toolsPreview = applyHybridMemoryToolsMd({
+      mergedOpenclawConfig: config,
+      pluginRootDir,
+      dryRun: true,
+    });
+    return {
+      ok: true,
+      configPath,
+      dryRun: true,
+      written: false,
+      configJson: after,
+      pluginId: PLUGIN_ID,
+      workspaceSkillPath: skillPreview.path,
+      workspaceSkillError: skillPreview.error,
+      workspaceToolsMdPath: toolsPreview.path,
+      workspaceToolsMdError: toolsPreview.error,
+      workspaceToolsMdUpdated: toolsPreview.updated,
+    };
   }
 
   try {
     mkdirSync(openclawDir, { recursive: true });
     mkdirSync(join(openclawDir, "memory"), { recursive: true });
     writeFileSync(configPath, after, "utf-8");
+    const skillInstall = installHybridMemoryWorkspaceSkill({
+      mergedOpenclawConfig: config,
+      pluginRootDir,
+      dryRun: false,
+    });
+    const toolsMdInstall = applyHybridMemoryToolsMd({
+      mergedOpenclawConfig: config,
+      pluginRootDir,
+      dryRun: false,
+    });
     try {
       const pluginCfg = getPluginEntryConfig(config);
       const pluginConfig = pluginCfg as CronModelConfig | undefined;
@@ -724,7 +904,18 @@ export function runInstallForCli(opts: { dryRun: boolean }): InstallCliResult {
       capturePluginError(err as Error, { subsystem: "cli", operation: "runInstallForCli:cron-setup" });
       // non-fatal: cron jobs optional on install
     }
-    return { ok: true, configPath, dryRun: false, written: true, pluginId: PLUGIN_ID };
+    return {
+      ok: true,
+      configPath,
+      dryRun: false,
+      written: true,
+      pluginId: PLUGIN_ID,
+      workspaceSkillPath: skillInstall.path,
+      workspaceSkillError: skillInstall.error,
+      workspaceToolsMdPath: toolsMdInstall.path,
+      workspaceToolsMdError: toolsMdInstall.error,
+      workspaceToolsMdUpdated: toolsMdInstall.updated,
+    };
   } catch (err) {
     capturePluginError(err as Error, { subsystem: "cli", operation: "runInstallForCli:write-config" });
     return { ok: false, error: `Could not write config: ${err}` };
@@ -857,5 +1048,43 @@ export async function runUpgradeForCli(ctx: HandlerContext, requestedVersion?: s
     capturePluginError(err as Error, { subsystem: "cli", operation: "runUpgradeForCli:ensure-cron-jobs" });
     // non-fatal: user can run verify --fix later
   }
-  return { ok: true, version: installedVersion, pluginDir: extDir };
+  let mergedConfig: Record<string, unknown> = {};
+  try {
+    const cfgPath = join(homedir(), ".openclaw", "openclaw.json");
+    if (existsSync(cfgPath)) {
+      mergedConfig = JSON.parse(readFileSync(cfgPath, "utf-8")) as Record<string, unknown>;
+    }
+  } catch (err) {
+    capturePluginError(err as Error, { subsystem: "cli", operation: "runUpgradeForCli:read-config-for-skill" });
+  }
+  const skillAfterUpgrade = installHybridMemoryWorkspaceSkill({
+    mergedOpenclawConfig: mergedConfig,
+    pluginRootDir: extDir,
+    dryRun: false,
+  });
+  if (skillAfterUpgrade.error) {
+    logger?.warn?.(`memory-hybrid: could not refresh workspace skill: ${skillAfterUpgrade.error}`);
+  } else {
+    logger?.info?.(`memory-hybrid: workspace skill updated at ${skillAfterUpgrade.path}`);
+  }
+  const toolsAfterUpgrade = applyHybridMemoryToolsMd({
+    mergedOpenclawConfig: mergedConfig,
+    pluginRootDir: extDir,
+    dryRun: false,
+  });
+  if (toolsAfterUpgrade.error) {
+    logger?.warn?.(`memory-hybrid: could not refresh TOOLS.md block: ${toolsAfterUpgrade.error}`);
+  } else if (toolsAfterUpgrade.updated) {
+    logger?.info?.(`memory-hybrid: TOOLS.md hybrid block updated at ${toolsAfterUpgrade.path}`);
+  }
+  return {
+    ok: true,
+    version: installedVersion,
+    pluginDir: extDir,
+    workspaceSkillPath: skillAfterUpgrade.path,
+    workspaceSkillError: skillAfterUpgrade.error,
+    workspaceToolsMdPath: toolsAfterUpgrade.path,
+    workspaceToolsMdError: toolsAfterUpgrade.error,
+    workspaceToolsMdUpdated: toolsAfterUpgrade.updated,
+  };
 }

@@ -21,6 +21,8 @@
     "benchmark",
     "types",
     "prompts",
+    "skills",
+    "workspace-snippets",
     "scripts",
     "npm-shrinkwrap.json",
     "openclaw.plugin.json",

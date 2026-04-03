@@ -22,6 +22,9 @@ openclaw.json
 # LanceDB data
 lancedb/
 
+# Vendored copies (e.g. Anthropic skill-creator reference tree)
+third-party/
+
 # Internal / maintainer-only docs (npm publish setup, etc.)
 internal/
 
@@ -31,6 +34,9 @@ Thumbs.db
 .claude/settings.json
 .claude/worktrees/
 extensions/memory-hybrid/dist/
+
+# Accidental workspace writes under extension dir (invalid OPENCLAW_WORKSPACE path)
+extensions/memory-hybrid/undefined/
 
 extensions/memory-hybrid/npm-shrinkwrap.json
 

@@ -3145,6 +3145,21 @@ Preserved (P0 — never trimmed, ${result.preserved.length} fact(s)):`);
         const res = await runUpgrade(version);
         if (res.ok) {
           console.log(`Upgraded to version ${res.version}. Plugin installed at: ${res.pluginDir}`);
+          if (res.workspaceSkillPath) {
+            console.log(
+              `Workspace skill: ${res.workspaceSkillPath}${res.workspaceSkillError ? ` (warning: ${res.workspaceSkillError})` : ""}`,
+            );
+          }
+          if (res.workspaceToolsMdPath) {
+            const toolsSuffix = res.workspaceToolsMdError
+              ? ` (warning: ${res.workspaceToolsMdError})`
+              : res.workspaceToolsMdUpdated === true
+                ? " (updated)"
+                : res.workspaceToolsMdUpdated === false
+                  ? " (unchanged)"
+                  : "";
+            console.log(`TOOLS.md: ${res.workspaceToolsMdPath}${toolsSuffix}`);
+          }
         } else {
           console.error(`Error upgrading: ${res.error}`);
           process.exitCode = 1;

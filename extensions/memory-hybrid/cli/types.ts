@@ -37,7 +37,21 @@ export type StoreCliResult =
   | { outcome: "stored"; id: string; textPreview: string; supersededId?: string };
 
 export type InstallCliResult =
-  | { ok: true; configPath: string; dryRun: boolean; written: boolean; configJson?: string; pluginId: string }
+  | {
+      ok: true;
+      configPath: string;
+      dryRun: boolean;
+      written: boolean;
+      configJson?: string;
+      pluginId: string;
+      /** Highest-precedence OpenClaw workspace skill path ({workspace}/skills/hybrid-memory/SKILL.md). */
+      workspaceSkillPath?: string;
+      workspaceSkillError?: string;
+      /** Workspace TOOLS.md path when the Hybrid memory managed block is applied. */
+      workspaceToolsMdPath?: string;
+      workspaceToolsMdError?: string;
+      workspaceToolsMdUpdated?: boolean;
+    }
   | { ok: false; error: string };
 
 export type VerifyCliSink = { log: (s: string) => void; error?: (s: string) => void };
@@ -133,7 +147,18 @@ export type CredentialsPruneResult = {
   dryRun: boolean;
 };
 
-export type UpgradeCliResult = { ok: true; version: string; pluginDir: string } | { ok: false; error: string };
+export type UpgradeCliResult =
+  | {
+      ok: true;
+      version: string;
+      pluginDir: string;
+      workspaceSkillPath?: string;
+      workspaceSkillError?: string;
+      workspaceToolsMdPath?: string;
+      workspaceToolsMdError?: string;
+      workspaceToolsMdUpdated?: boolean;
+    }
+  | { ok: false; error: string };
 
 export type UninstallCliResult =
   | { outcome: "config_updated"; pluginId: string; cleaned: string[] }
