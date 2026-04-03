@@ -122,7 +122,8 @@ export function runSqliteTableDump(
   db: DatabaseSync,
   opts: { type: string; limit: number; order: SqlDumpOrder; json: boolean },
 ): SqlDumpResult {
-  const limit = Math.max(1, Math.min(5_000, Math.floor(opts.limit)));
+  const rawLimit = Number.isFinite(opts.limit) ? opts.limit : 20;
+  const limit = Math.max(1, Math.min(5_000, Math.floor(rawLimit)));
   const table = resolveDumpTableType(opts.type);
   if (!table) {
     return {
