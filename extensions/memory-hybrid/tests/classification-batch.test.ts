@@ -1,4 +1,4 @@
-import OpenAI from "openai";
+import type OpenAI from "openai";
 import { describe, expect, it, vi } from "vitest";
 import type { MemoryEntry } from "../types/memory.js";
 import { classifyMemoryOperationsBatch } from "../services/classification.js";

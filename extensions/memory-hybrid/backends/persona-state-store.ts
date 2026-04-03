@@ -168,7 +168,7 @@ export class PersonaStateStore extends BaseSqliteStore {
         sourceReflectionIds,
         firstSeenAt: entry.firstSeenAt,
         lastSeenAt: entry.lastSeenAt,
-        promotedAt: entry.promotedAt ?? 0,
+        promotedAt: now,
         updatedAt: now,
       };
       return { action: "created", entry: created };

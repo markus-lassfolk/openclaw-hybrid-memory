@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { DatabaseSync } from "node:sqlite";
+import type { DatabaseSync, SQLInputValue } from "node:sqlite";
 
 import { createTransaction } from "../../utils/sqlite-transaction.js";
 
@@ -176,8 +176,8 @@ export function expandGraphWithCTE(
   let factWhereOut = "";
   let factJoinIn = "";
   let factWhereIn = "";
-  const filterParamsOut: unknown[] = [];
-  const filterParamsIn: unknown[] = [];
+  const filterParamsOut: SQLInputValue[] = [];
+  const filterParamsIn: SQLInputValue[] = [];
 
   if (asOf != null || scopeFilter) {
     factJoinOut = "JOIN facts f ON f.id = ml.target_fact_id";

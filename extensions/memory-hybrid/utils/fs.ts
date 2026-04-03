@@ -46,7 +46,7 @@ function _getDirSizeSync(dirPath: string): number {
           // skip unreadable files
         }
       } else if (entry.isDirectory()) {
-        total += getDirSizeSync(fullPath);
+        total += _getDirSizeSync(fullPath);
       }
     }
     return total;
