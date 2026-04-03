@@ -4,7 +4,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { mkdtemp, rm, readFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
@@ -31,6 +31,7 @@ import {
   readActiveTaskFileWithMtime,
   writeActiveTaskFileGuarded,
   writeActiveTaskFileOptimistic,
+  reconcileActiveTaskInProgressSessions,
   type ActiveTaskEntry,
   type TaskSignal,
 } from "../services/active-task.js";
@@ -116,6 +117,19 @@ describe("parseActiveTaskFile", () => {
     expect(task.next).toBe("Write tests and verify TypeScript");
     expect(task.started).toBe("2026-02-24T10:00:00.000Z");
     expect(task.updated).toBe("2026-02-24T15:00:00.000Z");
+  });
+
+  it("maps Session: to subagent when Subagent is absent", () => {
+    const md = `## Active Tasks
+
+### [t1]: Task
+- **Status:** In progress
+- **Session:** agent:main:subagent:u1
+- **Started:** 2026-02-24T10:00:00.000Z
+- **Updated:** 2026-02-24T15:00:00.000Z
+`;
+    const result = parseActiveTaskFile(md);
+    expect(result.active[0].subagent).toBe("agent:main:subagent:u1");
   });
 
   it("parses structured handoff metadata when present", () => {
@@ -1402,5 +1416,74 @@ describe("writeActiveTaskFileOptimistic", () => {
     );
     const result = await readActiveTaskFile(newPath);
     expect(result?.active[0].label).toBe("new");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// reconcileActiveTaskInProgressSessions (#978)
+// ---------------------------------------------------------------------------
+
+describe("reconcileActiveTaskInProgressSessions", () => {
+  let tmpDir: string;
+
+  beforeEach(async () => {
+    tmpDir = await mkdtemp(join(tmpdir(), "reconcile-at-"));
+  });
+
+  afterEach(async () => {
+    await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  it("moves in-progress tasks to completed when session transcript is missing", async () => {
+    const path = join(tmpDir, "ACTIVE-TASK.md");
+    const key = "agent:testagent:subagent:f3d14066-09ea-492f-a3f3-7ae2fe6c9b0a";
+    await writeFile(
+      path,
+      `## Active Tasks
+
+### [orphan]: Ghost task
+- **Status:** In progress
+- **Subagent:** ${key}
+- **Started:** 2026-02-24T10:00:00.000Z
+- **Updated:** 2026-02-24T15:00:00.000Z
+`,
+      "utf-8",
+    );
+    const openclawHome = join(tmpDir, "empty-openclaw");
+    const r = await reconcileActiveTaskInProgressSessions(path, 1440, {
+      openclawHome,
+      dryRun: false,
+    });
+    expect(r.reconciledLabels).toEqual(["orphan"]);
+    expect(r.wrote).toBe(true);
+    const content = await readFile(path, "utf-8");
+    expect(content).toContain("## Completed");
+    expect(content).toContain("orphan");
+  });
+
+  it("does not reconcile when session jsonl exists", async () => {
+    const path = join(tmpDir, "ACTIVE-TASK.md");
+    const key = "agent:x:subagent:f3d14066-09ea-492f-a3f3-7ae2fe6c9b0a";
+    const openclawHome = join(tmpDir, ".openclaw");
+    await mkdir(join(openclawHome, "agents", "x", "sessions"), { recursive: true });
+    await writeFile(join(openclawHome, "agents", "x", "sessions", `${key}.jsonl`), "{}\n", "utf-8");
+    await writeFile(
+      path,
+      `## Active Tasks
+
+### [keep]: Task
+- **Status:** In progress
+- **Subagent:** ${key}
+- **Started:** 2026-02-24T10:00:00.000Z
+- **Updated:** 2026-02-24T15:00:00.000Z
+`,
+      "utf-8",
+    );
+    const r = await reconcileActiveTaskInProgressSessions(path, 1440, {
+      openclawHome,
+      dryRun: false,
+    });
+    expect(r.reconciledLabels).toHaveLength(0);
+    expect(r.wrote).toBe(false);
   });
 });

@@ -16,6 +16,7 @@ import { registerVerifyCommands, type VerifyContext } from "./verify.js";
 import { registerDistillCommands, type DistillContext } from "./distill.js";
 import { registerManageCommands, type ManageContext } from "./manage.js";
 import { registerActiveTaskCommands, type ActiveTaskContext } from "./active-tasks.js";
+import { registerTaskQueueStatusCommands } from "./task-queue-status.js";
 import { registerBenchmarkCommands } from "./benchmark.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import type { HybridMemoryConfig } from "../config.js";
@@ -362,6 +363,16 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
     capturePluginError(err instanceof Error ? err : new Error(String(err)), {
       subsystem: "registration",
       operation: "register-cli:manage",
+    });
+    throw err;
+  }
+
+  try {
+    registerTaskQueueStatusCommands(mem);
+  } catch (err) {
+    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+      subsystem: "registration",
+      operation: "register-cli:task-queue-status",
     });
     throw err;
   }

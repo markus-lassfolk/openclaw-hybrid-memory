@@ -150,11 +150,16 @@ describe("runTaskQueueWatchdog", () => {
     await rm(tmpDir, { recursive: true, force: true });
   });
 
-  // ── No-current ──────────────────────────────────────────────────────────
+  // ── No-current / idle placeholder (#983) ──────────────────────────────
 
-  it("returns no-current when current.json does not exist", async () => {
+  it("writes an idle placeholder and returns ok when current.json was missing", async () => {
     const result = await runTaskQueueWatchdog(makeConfig(), noopLogger);
-    expect(result.action).toBe("no-current");
+    expect(result.action).toBe("ok");
+    expect(result.item?.status).toBe("idle");
+    expect(result.item?.producer).toBe("openclaw-hybrid-memory");
+    const raw = await readFile(join(stateDir, "current.json"), "utf-8");
+    expect(JSON.parse(raw).status).toBe("idle");
+    expect(noopLogger.info).toHaveBeenCalled();
   });
 
   it("returns no-current when current.json is malformed", async () => {

@@ -27,6 +27,7 @@ import { randomUUID, createHash } from "node:crypto";
 import { formatDuration } from "../utils/duration.js";
 import { pluginLogger } from "../utils/logger.js";
 import { stableStringify } from "../utils/stable-stringify.js";
+import { isOpenClawSessionLikelyPresent, looksLikeOpenClawSessionRef } from "./openclaw-session-artifact.js";
 
 /**
  * Unparseable or invalid signal files (and abandoned atomic-write temp files) older than this are
@@ -151,6 +152,11 @@ function parseTaskBlock(header: string, lines: string[]): ActiveTaskEntry | null
         break;
       case "subagent":
         entry.subagent = value || undefined;
+        break;
+      case "session":
+        if (!entry.subagent?.trim()) {
+          entry.subagent = value || undefined;
+        }
         break;
       case "next":
         entry.next = value || undefined;
@@ -989,6 +995,84 @@ export async function writeActiveTaskFileGuarded(
   await writeActiveTaskFile(filePath, active, completed);
   return { skipped: false };
 }
+
+/** Result of reconciling in-progress tasks whose backing session transcript is gone (#978, #981). */
+export interface ActiveTaskSessionReconcileResult {
+  reconciledLabels: string[];
+  /** True when the file was written (skipped when dryRun or nothing to do). */
+  wrote: boolean;
+}
+
+/**
+ * For each "In progress" task with an OpenClaw-shaped session reference, if no session JSONL
+ * exists under ~/.openclaw/agents (per-agent sessions folders), move the task to the Completed
+ * section as Done with a note (unknown outcome / bookkeeping cleanup).
+ */
+export async function reconcileActiveTaskInProgressSessions(
+  filePath: string,
+  staleMinutes: number,
+  opts: {
+    openclawHome?: string;
+    flushOnComplete?: boolean;
+    memoryDir?: string;
+    dryRun?: boolean;
+  } = {},
+): Promise<ActiveTaskSessionReconcileResult> {
+  const taskFile = await readActiveTaskFile(filePath, staleMinutes);
+  if (!taskFile) {
+    return { reconciledLabels: [], wrote: false };
+  }
+
+  const openclawHome = opts.openclawHome;
+  const newActive: ActiveTaskEntry[] = [];
+  const newCompleted = [...taskFile.completed];
+  const reconciledLabels: string[] = [];
+
+  for (const task of taskFile.active) {
+    if (task.status !== "In progress") {
+      newActive.push(task);
+      continue;
+    }
+    const ref = task.subagent?.trim();
+    if (!ref || !looksLikeOpenClawSessionRef(ref)) {
+      newActive.push(task);
+      continue;
+    }
+    const present = await isOpenClawSessionLikelyPresent(ref, openclawHome);
+    if (present) {
+      newActive.push(task);
+      continue;
+    }
+
+    const now = new Date().toISOString();
+    const completedEntry: ActiveTaskEntry = {
+      ...task,
+      status: "Done",
+      updated: now,
+      next: `Auto-reconciled: session transcript not found for ${ref} (subagent bookkeeping cleanup).`,
+    };
+    newCompleted.push(completedEntry);
+    reconciledLabels.push(task.label);
+    if (!opts.dryRun && opts.flushOnComplete && opts.memoryDir) {
+      try {
+        await flushCompletedTaskToMemory(completedEntry, opts.memoryDir);
+      } catch {
+        // Non-fatal
+      }
+    }
+  }
+
+  if (reconciledLabels.length === 0) {
+    return { reconciledLabels, wrote: false };
+  }
+  if (opts.dryRun) {
+    return { reconciledLabels, wrote: false };
+  }
+
+  await writeActiveTaskFile(filePath, newActive, newCompleted);
+  return { reconciledLabels, wrote: true };
+}
+
 // ---------------------------------------------------------------------------
 // Re-exports of types used in other modules
 // ---------------------------------------------------------------------------

@@ -35,6 +35,8 @@ If **auto-capture** and **auto-recall** are on, many turns need no tool call—b
 - **`openclaw hybrid-mem verify [--fix]`** — Confirms SQLite, LanceDB, embedding config, and related jobs. Use when memory seems broken after config or gateway changes.
 - **`openclaw hybrid-mem stats`** — Quick view of store state.
 - **`openclaw hybrid-mem enrich-entities`** — Backfill PERSON/ORG extraction for facts missing mention rows (after upgrades or bulk imports; uses LLM when graph features are on).
+- **`openclaw hybrid-mem active-tasks reconcile`** — Run before strategic or heartbeat jobs that trust `ACTIVE-TASK.md`: moves **In progress** rows to **Completed** when the OpenClaw session transcript no longer exists (fixes stale subagent bookkeeping; issues #978, #981).
+- **`openclaw hybrid-mem task-queue-status`** — Prints `state/task-queue/current.json` as JSON for cron (no bare `cat`); use after **`task-queue-touch`** if the gateway has not yet created the idle placeholder (issues #981, #983).
 - Prefer plugin docs for full command lists (prune, distill, ingest-files, etc.).
 
 ## Configuration mindset
