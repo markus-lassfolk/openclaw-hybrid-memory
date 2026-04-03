@@ -894,9 +894,18 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
       "Reset LanceDB vector index and re-embed all facts from SQLite (use after switching embedding model, e.g. to a larger one).",
     )
     .option("--batch-size <n>", "Facts per embed batch (default: 50)", "50")
+    .option(
+      "--delay-ms-between-batches <n>",
+      "Pause between embedding batches in ms (default: 0). On Azure/APIM with tight RPM, try 2000 — see docs/TROUBLESHOOTING.md and issue #940.",
+      "0",
+    )
     .action(
-      withExit(async (opts?: { batchSize?: string }) => {
+      withExit(async (opts?: { batchSize?: string; delayMsBetweenBatches?: string }) => {
         const batchSize = Math.max(1, Math.min(500, Number.parseInt(String(opts?.batchSize ?? "50"), 10) || 50));
+        const delayMsBetweenBatches = Math.max(
+          0,
+          Math.min(120_000, Number.parseInt(String(opts?.delayMsBetweenBatches ?? "0"), 10) || 0),
+        );
         console.log("Re-index: resetting LanceDB table...");
         await vectorDb.resetTableForReindex();
         console.log("Re-index: re-embedding all facts (this may take a while)...");
@@ -905,6 +914,7 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
           vectorDb,
           embeddings,
           batchSize,
+          delayMsBetweenBatches,
           onProgress: (completed, total) => {
             if (total > 0 && completed % Math.max(1, Math.floor(total / 10)) === 0) {
               process.stdout.write(`  ${completed}/${total} facts embedded...\r`);

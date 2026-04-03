@@ -156,7 +156,7 @@ export async function migrateEmbeddings(opts: MigrateEmbeddingsOptions): Promise
         // Back off before per-fact fallback to avoid amplifying RPM pressure (#940 §3).
         const backoffMs = delayMsBetweenBatches > 0 ? delayMsBetweenBatches * 3 : 5_000;
         log.warn(
-          `memory-hybrid: embedding-migration: batch rate-limited at offset ${offset} — backing off ${backoffMs}ms before per-fact fallback`,
+          `[embedding-quota] memory-hybrid: embedding-migration: batch rate-limited at offset ${offset} — backing off ${backoffMs}ms before per-fact fallback`,
         );
         await new Promise((r) => setTimeout(r, backoffMs));
       } else {
@@ -181,7 +181,7 @@ export async function migrateEmbeddings(opts: MigrateEmbeddingsOptions): Promise
           if (is429OrWrapped(singleAsErr) || is403QuotaOrRateLimitLike(err)) {
             const singleBackoff = delayMsBetweenBatches > 0 ? delayMsBetweenBatches * 2 : 3_000;
             log.warn(
-              `memory-hybrid: embedding-migration: per-fact rate-limited for ${fact.id} — backing off ${singleBackoff}ms`,
+              `[embedding-quota] memory-hybrid: embedding-migration: per-fact rate-limited for ${fact.id} — backing off ${singleBackoff}ms`,
             );
             await new Promise((r) => setTimeout(r, singleBackoff));
           }

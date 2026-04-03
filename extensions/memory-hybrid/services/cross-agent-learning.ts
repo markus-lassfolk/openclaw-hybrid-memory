@@ -19,6 +19,7 @@ import type { MemoryEntry } from "../types/memory.js";
 import { fillPrompt, loadPrompt as loadPromptSync } from "../utils/prompt-loader.js";
 import { parseTags, serializeTags } from "../utils/tags.js";
 import { chatCompleteWithRetry } from "./chat.js";
+import { CostFeature } from "./cost-feature-labels.js";
 import { capturePluginError } from "./error-reporter.js";
 
 // ---------------------------------------------------------------------------
@@ -211,7 +212,7 @@ async function callLLMForGeneralisation(
     content: prompt,
     maxTokens: 2000,
     timeoutMs: 40000,
-    feature: "cross-agent-learning",
+    feature: CostFeature.crossAgentLearning,
   });
 
   if (!text || text.trim().length === 0) return [];

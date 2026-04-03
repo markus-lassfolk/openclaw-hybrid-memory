@@ -1351,6 +1351,15 @@ describe("Embeddings (OpenAI) — context-length truncation (#442)", () => {
     expect(calledBatch[0].length).toBeLessThanOrEqual(32768);
     expect(calledBatch[1]).toBe("short text");
   });
+
+  it("#948: omits optional dimensions param when omitDimensionsInRequest is true (Azure/APIM)", async () => {
+    const vector = [0.1, 0.2, 0.3];
+    const mockCreate = vi.fn().mockResolvedValue({ data: [{ embedding: vector }] });
+    const client = { embeddings: { create: mockCreate } } as unknown as import("openai").default;
+    const provider = new Embeddings(client, "text-embedding-3-small", 3, undefined, undefined, true);
+    await provider.embed("hello");
+    expect(mockCreate.mock.calls[0][0]).not.toHaveProperty("dimensions");
+  });
 });
 // ---------------------------------------------------------------------------
 // #385: Embedding fallback chain error handling

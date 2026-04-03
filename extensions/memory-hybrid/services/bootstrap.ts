@@ -27,6 +27,15 @@ type CoreBootstrapInstaller = BootstrapPhaseConfig & {
   install(context: CoreBootstrapContext): CoreBootstrapServices;
 };
 
+/** Fail fast before LanceDB when the active embedding provider reports invalid width (#944). Exported for tests. */
+export function assertEmbeddingDimensionsForVectorDb(dim: number): void {
+  if (!Number.isFinite(dim) || !Number.isInteger(dim) || dim <= 0) {
+    throw new Error(
+      `Invalid embedding dimensions: ${String(dim)}. Set embedding.dimensions to a positive integer matching your provider output.`,
+    );
+  }
+}
+
 function resolveEmbeddingRegistryModels(
   embedding: HybridMemoryConfig["embedding"],
 ): EmbeddingModelConfig[] | undefined {
@@ -70,6 +79,13 @@ export const coreBootstrapInstaller: CoreBootstrapInstaller = {
     });
 
     const effectiveDimensions = embeddings.dimensions;
+    try {
+      assertEmbeddingDimensionsForVectorDb(effectiveDimensions);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      api.logger.error(`memory-hybrid: ${msg}`);
+      throw err;
+    }
     if (effectiveDimensions !== cfg.embedding.dimensions) {
       api.logger.warn(
         `memory-hybrid: embedding provider dimensions (${effectiveDimensions}) differ from config dimensions (${cfg.embedding.dimensions}). ` +

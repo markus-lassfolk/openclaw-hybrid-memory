@@ -59,6 +59,8 @@ export interface LifecycleContext {
   pendingLLMWarnings: PendingLLMWarnings;
   issueStore: import("../backends/issue-store.js").IssueStore | null;
   recallInFlightRef: { value: number };
+  /** Updated when interactive auto-recall runs; read after compaction to re-inject recall (#957). */
+  lastAutoRecallPromptRef: { value: string | null };
 }
 
 /** Per-session state shared across stages (owned by dispatcher). */

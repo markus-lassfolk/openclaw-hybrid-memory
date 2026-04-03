@@ -52,6 +52,11 @@ export class Embeddings implements EmbeddingProvider {
   readonly dimensions: number;
   modelName: string;
   private readonly batchSize: number;
+  /**
+   * When true, do not send optional `dimensions` on embeddings.create (#948).
+   * Required for some Azure/APIM/Foundry routes that reject the field even for text-embedding-3-*.
+   */
+  private readonly omitDimensionsInRequest: boolean;
   /** Serializes OpenAI embedding API calls (#840); release always runs via try/finally. */
   private readonly apiSemaphore = new AsyncSemaphore(1);
 
@@ -61,6 +66,7 @@ export class Embeddings implements EmbeddingProvider {
     dimensions?: number,
     batchSize?: number,
     logicalModelForEmbedding?: string,
+    omitDimensionsInRequest = false,
   ) {
     this.client = typeof clientOrApiKey === "string" ? new OpenAI({ apiKey: clientOrApiKey }) : clientOrApiKey;
     const maybeClient = this.client as unknown as { baseURL?: string; _options?: { baseURL?: string } };
@@ -71,6 +77,7 @@ export class Embeddings implements EmbeddingProvider {
     this.modelName = this.models[0];
     this.dimensions = dimensions ?? 1536; // default: text-embedding-3-small
     this.batchSize = batchSize || 2048;
+    this.omitDimensionsInRequest = omitDimensionsInRequest;
 
     // Validate dimensions against known model limits and capabilities
     const modelMaxDimensions: Record<string, number> = {
@@ -131,12 +138,13 @@ export class Embeddings implements EmbeddingProvider {
           const supportsDimensions = effective.startsWith("text-embedding-3-");
           // Truncate to stay within the 8192-token OpenAI embedding limit (#442)
           const input = truncateForEmbedding(text);
+          const includeDims = supportsDimensions && !this.omitDimensionsInRequest;
           const resp = await withLLMRetry(
             () =>
               this.client.embeddings.create({
                 model,
                 input,
-                ...(supportsDimensions ? { dimensions: this.dimensions } : {}),
+                ...(includeDims ? { dimensions: this.dimensions } : {}),
               }),
             { maxRetries: 2 },
           );
@@ -219,12 +227,13 @@ export class Embeddings implements EmbeddingProvider {
             const supportsDimensions = effective.startsWith("text-embedding-3-");
             // Truncate each item to stay within the 8192-token OpenAI embedding limit (#442)
             const truncatedBatch = batch.map(truncateForEmbedding);
+            const includeDimsBatch = supportsDimensions && !this.omitDimensionsInRequest;
             resp = await withLLMRetry(
               () =>
                 this.client.embeddings.create({
                   model,
                   input: truncatedBatch,
-                  ...(supportsDimensions ? { dimensions: this.dimensions } : {}),
+                  ...(includeDimsBatch ? { dimensions: this.dimensions } : {}),
                 }),
               { maxRetries: 2 },
             );

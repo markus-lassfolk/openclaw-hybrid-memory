@@ -112,6 +112,10 @@ async function runRecall(
 
     api.logger.debug?.(`memory-hybrid: auto-recall start (prompt length ${e.prompt.length})`);
 
+    if (e.prompt.length >= 5 && ctx.lastAutoRecallPromptRef) {
+      ctx.lastAutoRecallPromptRef.value = e.prompt.trim().slice(0, 12_000);
+    }
+
     // Let pending gateway I/O (health RPCs, WebSocket) run before heavy sync work (#931).
     await yieldEventLoop();
     if (recallAborted(signal)) return completeStage(emptyRecallStage());

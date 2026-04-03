@@ -129,6 +129,11 @@ function azureEmbeddingLogicalModelHint(cfg: EmbeddingConfig): string | undefine
   return cfg.deployment && cfg.deployment.trim().length > 0 ? cfg.model : undefined;
 }
 
+/** Some Azure/APIM hosts reject the optional `dimensions` field on embeddings.create (#948). */
+function omitEmbeddingDimensionsForAzure(cfg: EmbeddingConfig): boolean {
+  return isAzureOpenAiCompatibleEndpoint(cfg.endpoint);
+}
+
 /**
  * Factory: creates the right EmbeddingProvider from plugin config.
  * - When embedding.preferredProviders has length > 1: chain (try in order; aligns with LLM failover, Ollama-as-tier).
@@ -178,7 +183,14 @@ export function createEmbeddingProvider(cfg: EmbeddingConfig, onFallback?: (err:
         try {
           const client = new OpenAI(openaiEmbeddingClientOpts(apiKey, endpoint));
           chain.push(
-            new Embeddings(client, openaiChainModels, chainDimensions, batchSize, azureEmbeddingLogicalModelHint(cfg)),
+            new Embeddings(
+              client,
+              openaiChainModels,
+              chainDimensions,
+              batchSize,
+              azureEmbeddingLogicalModelHint(cfg),
+              omitEmbeddingDimensionsForAzure(cfg),
+            ),
           );
           labels.push("openai");
         } catch (err) {
@@ -223,6 +235,7 @@ export function createEmbeddingProvider(cfg: EmbeddingConfig, onFallback?: (err:
           dimensions,
           batchSize,
           azureEmbeddingLogicalModelHint(cfg),
+          omitEmbeddingDimensionsForAzure(cfg),
         );
         return new FallbackEmbeddingProvider(primary, fallback, onFallback, "ollama", "openai", retryIntervalMs);
       } catch (err) {
@@ -240,7 +253,14 @@ export function createEmbeddingProvider(cfg: EmbeddingConfig, onFallback?: (err:
   if (provider === "openai") {
     if (!apiKey) throw new Error("OpenAI embedding provider requires embedding.apiKey");
     const openaiClient = new OpenAI(openaiEmbeddingClientOpts(apiKey, endpoint));
-    return new Embeddings(openaiClient, openaiApiModels, dimensions, batchSize, azureEmbeddingLogicalModelHint(cfg));
+    return new Embeddings(
+      openaiClient,
+      openaiApiModels,
+      dimensions,
+      batchSize,
+      azureEmbeddingLogicalModelHint(cfg),
+      omitEmbeddingDimensionsForAzure(cfg),
+    );
   }
 
   if (provider === "google") {
@@ -267,6 +287,7 @@ export function createEmbeddingProvider(cfg: EmbeddingConfig, onFallback?: (err:
           dimensions,
           batchSize,
           azureEmbeddingLogicalModelHint(cfg),
+          omitEmbeddingDimensionsForAzure(cfg),
         );
         const onSwitch = (err: unknown) => {
           if (isOnnxRuntimeMissingError(err)) {

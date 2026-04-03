@@ -6,6 +6,7 @@ import {
   extractCronStoreJobModel,
   readAgentsPrimaryModelFromOpenclawJsonPath,
   readAgentsPrimaryModelFromOpenclawJsonRoot,
+  readEffectiveAgentChatPrimaryFromOpenclawJsonRoot,
   setCronStoreJobModelFields,
 } from "../utils/openclaw-agent-defaults.js";
 
@@ -17,6 +18,22 @@ describe("openclaw-agent-defaults", () => {
       }),
     ).toBe("azure-foundry/gpt-5.4");
     expect(readAgentsPrimaryModelFromOpenclawJsonRoot({})).toBeUndefined();
+  });
+
+  it("readEffectiveAgentChatPrimaryFromOpenclawJsonRoot prefers agents.list main (#963)", () => {
+    expect(
+      readEffectiveAgentChatPrimaryFromOpenclawJsonRoot({
+        agents: {
+          defaults: { model: { primary: "minimax/MiniMax-M2" } },
+          list: [{ id: "main", model: { primary: "azure-foundry/gpt-5.4" } }],
+        },
+      }),
+    ).toBe("azure-foundry/gpt-5.4");
+    expect(
+      readEffectiveAgentChatPrimaryFromOpenclawJsonRoot({
+        agents: { defaults: { model: { primary: "google/gemini-2.5-flash" } } },
+      }),
+    ).toBe("google/gemini-2.5-flash");
   });
 
   it("readAgentsPrimaryModelFromOpenclawJsonPath reads file", () => {

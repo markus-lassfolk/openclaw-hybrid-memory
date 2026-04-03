@@ -14,6 +14,9 @@ import {
   isReasoningModel,
   requiresMaxCompletionTokens,
 } from "./model-capabilities.js";
+import { is403QuotaOrRateLimitLike, parseGoDurationToMs, parseRetryAfterMs } from "./llm-rate-limit-headers.js";
+
+export { is403QuotaOrRateLimitLike, parseGoDurationToMs, parseRetryAfterMs } from "./llm-rate-limit-headers.js";
 
 /**
  * Thrown when a model's provider has no API key or base URL configured in llm.providers.
@@ -85,45 +88,6 @@ export function is404Like(err: unknown): boolean {
       /is not found for api version/i.test(err.message)
     );
   }
-  return false;
-}
-
-type HeaderBag = Headers | Record<string, string | undefined>;
-
-function getHeaderCaseInsensitive(headers: HeaderBag, key: string): string | undefined {
-  const asHeaders = headers as Partial<Headers>;
-  if (typeof asHeaders.get === "function") {
-    return asHeaders.get(key) ?? undefined;
-  }
-  const record = headers as Record<string, string | undefined>;
-  const target = key.toLowerCase();
-  for (const existing of Object.keys(record)) {
-    if (existing.toLowerCase() === target) return record[existing];
-  }
-  return undefined;
-}
-
-/**
- * Some gateways (incl. Azure OpenAI / APIM) return **403** with `retry-after` and/or
- * `remaining-tokens: 0` when quota is exhausted — not the same as geo/billing "forbidden".
- * Treat like rate limit for messaging and GlitchTip suppression (#init-verify noise).
- *
- * **Assumption:** A future provider could theoretically send `retry-after` on a 403 for a
- * non-quota reason; today we key off the same signals Azure uses. Revisit if a provider
- * misclassifies geo/credential 403s with these headers.
- */
-export function is403QuotaOrRateLimitLike(err: unknown): boolean {
-  if (err instanceof LLMRetryError) return is403QuotaOrRateLimitLike(err.cause);
-  if (!err || typeof err !== "object") return false;
-  const e = err as { status?: unknown; headers?: unknown };
-  if (e.status !== 403 && e.status !== "403") return false;
-  const h = e.headers;
-  if (!h || typeof h !== "object") return false;
-  const headers = h as HeaderBag;
-  const retryAfter = getHeaderCaseInsensitive(headers, "retry-after");
-  const remaining = getHeaderCaseInsensitive(headers, "remaining-tokens");
-  if (retryAfter != null && String(retryAfter).trim() !== "") return true;
-  if (remaining === "0") return true;
   return false;
 }
 
@@ -355,98 +319,6 @@ export function isOllamaOOM(err: unknown): boolean {
     // Bare OOM signal in error body (e.g. "oom: model 'qwen3:8b' ...")
     /\boom:/i.test(err.message)
   );
-}
-
-/**
- * Parse OpenAI `x-ratelimit-reset-*` values: Go-style durations (`6m0s`, `1s`, `500ms`),
- * not plain integer seconds. See OpenAI rate-limits docs (table: x-ratelimit-reset-tokens sample `6m0s`).
- * https://platform.openai.com/docs/guides/rate-limits — `Number.parseInt` on these strings is wrong (#941 review).
- */
-export function parseGoDurationToMs(input: string): number | undefined {
-  const s = input.trim();
-  if (!s) return undefined;
-  let totalMs = 0;
-  let matched = false;
-  const re = /(\d+(?:\.\d+)?)\s*(ns|us|µs|ms|s|m|h)/gi;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(s)) !== null) {
-    matched = true;
-    const val = Number.parseFloat(m[1]);
-    if (Number.isNaN(val)) continue;
-    const u = m[2].toLowerCase();
-    if (u === "ns") totalMs += val / 1e6;
-    else if (u === "us" || u === "µs") totalMs += val / 1e3;
-    else if (u === "ms") totalMs += val;
-    else if (u === "s") totalMs += val * 1000;
-    else if (u === "m") totalMs += val * 60 * 1000;
-    else if (u === "h") totalMs += val * 60 * 60 * 1000;
-  }
-  if (matched) return Math.max(0, Math.ceil(totalMs));
-  return undefined;
-}
-
-/**
- * If `value` is a Unix time (seconds or ms since epoch), return ms until that instant.
- * Some gateways send reset time as epoch, not delay — do not confuse with delta-seconds.
- */
-function delayMsUntilUnixEpoch(value: string): number | undefined {
-  const trimmed = value.trim();
-  if (!/^\d+$/.test(trimmed)) return undefined;
-  const n = Number.parseInt(trimmed, 10);
-  if (Number.isNaN(n) || n <= 0) return undefined;
-  // 10-digit seconds since epoch (e.g. 1735689600)
-  if (trimmed.length >= 10 && trimmed.length <= 11 && n >= 1_000_000_000 && n < 100_000_000_000) {
-    return Math.max(0, n * 1000 - Date.now());
-  }
-  // 13+ digit milliseconds since epoch
-  if (trimmed.length >= 13 && n >= 1_000_000_000_000) {
-    return Math.max(0, n - Date.now());
-  }
-  return undefined;
-}
-
-/**
- * Try to parse a Retry-After delay (in ms) from an API error.
- * Prefers `Retry-After` (RFC 7231: delta-seconds or HTTP-date), then OpenAI
- * `x-ratelimit-reset-*` (Go durations), then epoch-style reset times some gateways send.
- * Exported for unit tests.
- *
- * **Azure / APIM field report:** Some paths return plain `retry-after` / `remaining-tokens`
- * without `x-ratelimit-*` names; header keys are read case-insensitively (Headers or plain record).
- * Operator context: issue [#940](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/940).
- */
-export function parseRetryAfterMs(err: unknown): number | undefined {
-  if (!err || typeof err !== "object") return undefined;
-  const headers =
-    (err as { response?: { headers?: HeaderBag }; headers?: HeaderBag }).response?.headers ??
-    (err as { headers?: HeaderBag }).headers;
-  if (!headers) return undefined;
-
-  const retryAfter = getHeaderCaseInsensitive(headers, "retry-after");
-  if (retryAfter) {
-    const secs = Number.parseInt(retryAfter, 10);
-    if (!Number.isNaN(secs) && secs > 0 && /^\s*\d+\s*$/.test(retryAfter)) return secs * 1000;
-    const date = Date.parse(retryAfter);
-    if (!Number.isNaN(date)) return Math.max(0, date - Date.now());
-  }
-
-  const resetTokens =
-    getHeaderCaseInsensitive(headers, "x-ratelimit-reset-tokens") ??
-    getHeaderCaseInsensitive(headers, "x-ratelimit-reset-requests");
-  if (resetTokens) {
-    const go = parseGoDurationToMs(resetTokens);
-    if (go !== undefined) return go;
-    const epochDelay = delayMsUntilUnixEpoch(resetTokens);
-    if (epochDelay !== undefined) return epochDelay;
-    const secs = Number.parseInt(resetTokens, 10);
-    if (!Number.isNaN(secs) && secs > 0) return secs * 1000;
-  }
-
-  // Azure quota exhaustion: remaining-tokens=0 with no usable reset hint → default backoff
-  const remaining = getHeaderCaseInsensitive(headers, "remaining-tokens");
-  const hadResetHint = Boolean(retryAfter || resetTokens);
-  if (remaining === "0" && !hadResetHint) return 10_000;
-  return undefined;
 }
 
 export async function chatComplete(opts: {

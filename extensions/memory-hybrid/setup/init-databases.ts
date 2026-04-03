@@ -1430,8 +1430,9 @@ export function initializeDatabases(cfg: HybridMemoryConfig, api: ClawdbotPlugin
             : "Set a valid embedding.apiKey in plugin config and ensure the model is accessible. Run 'openclaw hybrid-mem verify' for details.";
       // Warn only for transient quota/rate-limit; keep error for bad keys, wrong model, geo 403, etc. (#941 review).
       const logEmbFailure = quota403 || is429OrWrapped(asErr) ? api.logger.warn : api.logger.error;
+      const embTag = quota403 || is429OrWrapped(asErr) ? "[embedding-quota]" : "[embedding-init]";
       logEmbFailure(
-        `[embedding-init] memory-hybrid: ⚠️  EMBEDDING CHECK FAILED (provider=${cfg.embedding.provider}) — ${String(e)}. ` +
+        `${embTag} memory-hybrid: ⚠️  EMBEDDING CHECK FAILED (provider=${cfg.embedding.provider}) — ${String(e)}. ` +
           `Plugin will continue but semantic search will not work. ${hint}`,
       );
     }

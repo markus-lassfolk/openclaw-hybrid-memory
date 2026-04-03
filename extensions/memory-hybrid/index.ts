@@ -549,6 +549,7 @@ function runMemoryHybridRegister(api: ClawdbotPluginApi): void {
     currentAgentIdRef: { value: null },
     restartPendingClearedRef: { value: false },
     recallInFlightRef: { value: 0 },
+    lastAutoRecallPromptRef: { value: null },
     lastProgressiveIndexIds: [],
     timers: createTimers(),
   };
@@ -583,6 +584,7 @@ function runMemoryHybridRegister(api: ClawdbotPluginApi): void {
     currentAgentIdRef: runtime.currentAgentIdRef,
     restartPendingClearedRef: runtime.restartPendingClearedRef,
     recallInFlightRef: runtime.recallInFlightRef,
+    lastAutoRecallPromptRef: runtime.lastAutoRecallPromptRef,
     pendingLLMWarnings: runtime.pendingLLMWarnings,
     resolvedSqlitePath: runtime.resolvedSqlitePath,
     timers: { proposalsPruneTimer: runtime.timers.proposalsPruneTimer },

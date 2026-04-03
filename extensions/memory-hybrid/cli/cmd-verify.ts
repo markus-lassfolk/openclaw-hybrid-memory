@@ -44,7 +44,7 @@ import { PLUGIN_ID, getRestartPendingPath } from "../utils/constants.js";
 import { inferModelProviderPrefix } from "../utils/model-provider-family.js";
 import {
   extractCronStoreJobModel,
-  readAgentsPrimaryModelFromOpenclawJsonRoot,
+  readEffectiveAgentChatPrimaryFromOpenclawJsonRoot,
 } from "../utils/openclaw-agent-defaults.js";
 import { ensureMaintenanceCronJobs, getPluginConfigFromFile } from "./cmd-install.js";
 
@@ -541,11 +541,42 @@ export async function runVerifyForCli(
   const gatewayAvailable = Boolean(
     gatewayPort && Number(gatewayPort) >= 1 && Number(gatewayPort) <= 65535 && gatewayToken,
   );
-  const allModelsUnfiltered: string[] = [
-    ...getLLMModelPreferenceUnfiltered(cronCfg, "nano"),
-    ...getLLMModelPreferenceUnfiltered(cronCfg, "default"),
-    ...getLLMModelPreferenceUnfiltered(cronCfg, "heavy"),
-  ];
+  const tierNano = getLLMModelPreferenceUnfiltered(cronCfg, "nano");
+  const tierDefault = getLLMModelPreferenceUnfiltered(cronCfg, "default");
+  const tierHeavy = getLLMModelPreferenceUnfiltered(cronCfg, "heavy");
+  const nanoExplicitConfigured =
+    Array.isArray(cronCfg.llm?.nano) && cronCfg.llm.nano.some((m) => typeof m === "string" && m.trim().length > 0);
+  const allModelsUnfiltered: string[] = [...tierNano, ...tierDefault, ...tierHeavy];
+  function tiersForModel(model: string): string {
+    const tags: string[] = [];
+    if (tierNano.includes(model)) tags.push("nano");
+    if (tierDefault.includes(model)) tags.push("default");
+    if (tierHeavy.includes(model)) tags.push("heavy");
+    if (tags.length === 0) return "—";
+    return tags.join(", ");
+  }
+  const fmtTierList = (arr: string[]) => (arr.length > 0 ? arr.join(", ") : "(none)");
+  tableLog("  Effective tier lists (first model in each tier wins when that tier is selected):");
+  tableLog(
+    `    nano:    ${fmtTierList(tierNano)}${nanoExplicitConfigured ? "" : "  — llm.nano unset; nano tier reuses the default list"}`,
+  );
+  tableLog(`    default: ${fmtTierList(tierDefault)}`);
+  tableLog(`    heavy:   ${fmtTierList(tierHeavy)}`);
+  tableLog(
+    `    First choice per tier: nano=${tierNano[0] ?? "—"} | default=${tierDefault[0] ?? "—"} | heavy=${tierHeavy[0] ?? "—"}`,
+  );
+  const dreamOverride =
+    typeof cfg.nightlyCycle?.model === "string" && cfg.nightlyCycle.model.trim().length > 0
+      ? cfg.nightlyCycle.model.trim()
+      : null;
+  tableLog(
+    dreamOverride
+      ? `    Dream cycle + MEMORY_INDEX.md: nightlyCycle.model="${dreamOverride}" (overrides default tier for that pipeline).`
+      : `    Dream cycle + MEMORY_INDEX.md: uses default tier first choice (${tierDefault[0] ?? "—"}) unless nightlyCycle.model is set.`,
+  );
+  tableLog(
+    "    Embeddings / re-index: embedding.model + embedding.* (not llm tiers). Chat LLM spend is separate from embedding API spend.",
+  );
   const _allModelsFiltered: string[] = [
     ...getLLMModelPreference(cronCfg, "nano"),
     ...getLLMModelPreference(cronCfg, "default"),
@@ -705,6 +736,7 @@ export async function runVerifyForCli(
     enabled: boolean;
     source: string;
     inConfig: boolean;
+    tiersLabel: string;
     oauthResult?: boolean;
     apiResult?: boolean;
     oauthError?: string;
@@ -733,6 +765,7 @@ export async function runVerifyForCli(
     if (!source && gatewayAvailable && (hasOAuth || hasApi)) source = "gateway";
     if (!source) source = "—";
     const inConfig = configModelSet.has(model);
+    const tiersLabel = tiersForModel(model);
     let oauthResult: boolean | undefined = undefined;
     let apiResult: boolean | undefined = undefined;
     let oauthError: string | undefined = undefined;
@@ -793,6 +826,14 @@ export async function runVerifyForCli(
               apiResult = true;
             } catch (e) {
               apiError = shortError(e);
+              if (
+                apiError &&
+                /\b400\b/i.test(apiError) &&
+                (provider === "azure-foundry" || provider === "azure-foundry-responses") &&
+                apiError.length < 160
+              ) {
+                apiError = `${apiError} — HTTP 400 with a minimal body often means the gateway rejected the route or request shape (wrong APIM product path vs resource URL, or policy). See docs/TROUBLESHOOTING.md (#949).`;
+              }
               capturePluginError(e as Error, {
                 subsystem: "cli",
                 operation: "runVerifyForCli:llm-test-api",
@@ -812,6 +853,7 @@ export async function runVerifyForCli(
       enabled,
       source,
       inConfig,
+      tiersLabel,
       oauthResult,
       apiResult,
       oauthError,
@@ -830,7 +872,7 @@ export async function runVerifyForCli(
       "Provider",
       "Auth (OAuth / API key)",
       "Source",
-      "In config",
+      "Tier(s)",
       "Enabled",
       ...(opts.testLlm ? ["OAuth Result", "API Result"] : []),
     ];
@@ -838,7 +880,7 @@ export async function runVerifyForCli(
     const llmW2 = Math.max(6, ...llmRows.map((r) => r.provider.length), 10);
     const llmW3 = Math.max(22, 24);
     const llmW4 = 8;
-    const llmW5 = 9;
+    const llmW5 = Math.max(9, ...llmRows.map((r) => r.tiersLabel.length), 22);
     const llmW6 = 8;
     const llmW7 = opts.testLlm ? 14 : 0;
     const llmW8 = opts.testLlm ? 12 : 0;
@@ -849,7 +891,7 @@ export async function runVerifyForCli(
     tableLog(`  ${"-".repeat(llmSepLen)}`);
     for (const row of llmRows) {
       const credStr = `OAuth:${row.hasOAuth ? "True" : "False"} / API:${row.hasApi ? "True" : "False"}`;
-      const inConfigStr = row.inConfig ? (noEmoji ? "Yes" : "✅ Yes") : noEmoji ? "No" : "No";
+      const tiersStr = row.tiersLabel;
       const enabledStr = row.enabled ? (noEmoji ? "Enabled" : "✅ Enabled") : noEmoji ? "Disabled" : "❌ Disabled";
       // When --test-llm: show Success/Failed if we ran the test; "Skipped" if enabled+inConfig but no creds to test; "—" if not in config
       const oauthStr =
@@ -882,7 +924,7 @@ export async function runVerifyForCli(
                 : "⏭️ Skipped"
               : "—";
       tableLog(
-        `  ${row.model.padEnd(llmW1)}  ${row.provider.padEnd(llmW2)}  ${credStr.padEnd(llmW3)}  ${row.source.padEnd(llmW4)}  ${inConfigStr.padEnd(llmW5)}  ${enabledStr.padEnd(llmW6)}${opts.testLlm ? `  ${oauthStr.padEnd(llmW7)}  ${apiStr}` : ""}`,
+        `  ${row.model.padEnd(llmW1)}  ${row.provider.padEnd(llmW2)}  ${credStr.padEnd(llmW3)}  ${row.source.padEnd(llmW4)}  ${tiersStr.padEnd(llmW5)}  ${enabledStr.padEnd(llmW6)}${opts.testLlm ? `  ${oauthStr.padEnd(llmW7)}  ${apiStr}` : ""}`,
       );
     }
     const failedRows = opts.testLlm ? llmRows.filter((r) => r.oauthError || r.apiError) : [];
@@ -904,7 +946,7 @@ export async function runVerifyForCli(
       tableLog("");
     }
     tableLog(
-      "  (Source = where API key is set: plugin | env | file | gateway. In config = model in llm.nano/default/heavy. Enabled = provider not in llm.disabledProviders. Skipped = not tested (no API key or OAuth for this provider).)",
+      '  (Tier(s) = which tier lists include this model; "—" = reference row only, not in your llm.nano/default/heavy. Source = key origin. Enabled = provider not in llm.disabledProviders. Skipped = not tested.)',
     );
     const llmProvidersWithCreds = new Set(llmRows.filter((r) => r.hasApi || r.hasOAuth).map((r) => r.provider)).size;
     const llmOk = llmProvidersWithCreds >= 1;
@@ -1221,7 +1263,7 @@ export async function runVerifyForCli(
   try {
     if (existsSync(defaultConfigPath) && existsSync(cronStorePath)) {
       const root = JSON.parse(readFileSync(defaultConfigPath, "utf-8")) as Record<string, unknown>;
-      const agentPrimary = readAgentsPrimaryModelFromOpenclawJsonRoot(root);
+      const agentPrimary = readEffectiveAgentChatPrimaryFromOpenclawJsonRoot(root);
       if (agentPrimary) {
         const agentFam = inferModelProviderPrefix(agentPrimary);
         const rawStore = readFileSync(cronStorePath, "utf-8");
@@ -1238,7 +1280,7 @@ export async function runVerifyForCli(
           const jobFam = inferModelProviderPrefix(jobModel);
           if (jobFam && agentFam && jobFam !== agentFam) {
             log(
-              `\n${WARN} Cron vs agent model (issue #965): ${pid} uses "${jobModel}" (${jobFam}) but agents.defaults.model.primary is "${agentPrimary}" (${agentFam}). Isolated jobs can fail with LiveSessionModelSwitchError. Align provider families, or run \`openclaw hybrid-mem verify --fix\` after changing the agent default to refresh job models. See docs/SESSION-DISTILLATION.md (Maintenance cron session isolation and model alignment).`,
+              `\n${WARN} Cron vs agent model (issues #963, #965): ${pid} uses "${jobModel}" (${jobFam}) but effective chat primary (agents.list id=main, else agents.defaults.model.primary) is "${agentPrimary}" (${agentFam}). Isolated jobs can fail with LiveSessionModelSwitchError. Align provider families, or run \`openclaw hybrid-mem verify --fix\` after changing the agent default to refresh job models. See docs/SESSION-DISTILLATION.md (Maintenance cron session isolation and model alignment).`,
             );
           }
         }
@@ -1253,7 +1295,7 @@ export async function runVerifyForCli(
           const first = llm.default[0];
           if (inferModelProviderPrefix(first) !== agentFam) {
             log(
-              `\n${WARN} Plugin llm.default[0] ("${first}") differs from agents.defaults.model.primary ("${agentPrimary}") by provider family. Consider aligning them so maintenance and chat use consistent routing.`,
+              `\n${WARN} Plugin llm.default[0] ("${first}") differs from effective chat primary ("${agentPrimary}") by provider family. Consider aligning them so maintenance and chat use consistent routing.`,
             );
           }
         }

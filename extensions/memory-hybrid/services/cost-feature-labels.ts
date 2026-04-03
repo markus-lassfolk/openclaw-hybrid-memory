@@ -29,6 +29,11 @@ export const CostFeature = {
   backfillIngest: "backfill-ingest",
   verifyCliLlm: "verify-cli-llm",
   trajectoryAnalyze: "trajectory-analyze",
+  reflection: "reflection",
+  reflectionRules: "reflection-rules",
+  reflectionMeta: "reflection-meta",
+  identityReflection: "identity-reflection",
+  crossAgentLearning: "cross-agent-learning",
 } as const;
 
 export type CostFeatureId = (typeof CostFeature)[keyof typeof CostFeature];
