@@ -227,11 +227,30 @@ _cmd_run_inner() {
   OPENCLAW_HOME="$OPENCLAW_HOME" "$OPENCLAW_CMD" hybrid-mem task-queue-touch --state-dir "$STATE_DIR" >/dev/null || true
   if _queue_is_busy; then
     log "run: queue busy (current.json is not an idle placeholder or another worker holds it)"
-    exit 1
+    exit 2
   fi
+  
+  local child=""
+  local current_written=false
+  cleanup_on_signal() {
+    if [[ -n "$child" ]] && kill -0 "$child" 2>/dev/null; then
+      kill "$child" 2>/dev/null || true
+      wait "$child" 2>/dev/null || true
+    fi
+    if [[ "$current_written" == "true" && -n "$child" ]]; then
+      _archive_and_idle 130 "$child"
+    fi
+    exit 130
+  }
+  trap cleanup_on_signal EXIT TERM INT
+  
   "$@" &
-  local child=$!
+  child=$!
   _write_current_running "$TITLE" "$ISSUE" "$child"
+  current_written=true
+  
+  trap - EXIT TERM INT
+  
   local ec=0
   wait "$child" || ec=$?
   _archive_and_idle "$ec" "$child"
