@@ -65,6 +65,11 @@
       "label": "LLM tier: heavy",
       "help": "Distillation, self-correction, and other quality-critical steps. Safe to list stronger models here; they are not used for every retrieval helper. CLI: openclaw hybrid-mem config-set llm.heavy '[\"azure-foundry/gpt-5.4\"]'"
     },
+    "llm.disabledProviders": {
+      "label": "Disabled LLM providers",
+      "placeholder": "[\"anthropic\"]",
+      "help": "JSON array of provider ids to exclude from model resolution (e.g. openai, anthropic, google, ollama). CLI: openclaw hybrid-mem config-set llm.disabledProviders '[\"anthropic\"]'"
+    },
     "nightlyCycle.model": {
       "label": "Dream cycle model override",
       "help": "Optional. When set, nightly dream cycle and MEMORY_INDEX LLM use this model instead of llm.default[0]. Leave unset to follow llm.default. CLI: openclaw hybrid-mem config-set nightlyCycle.model azure-foundry/gpt-4.1-mini"
@@ -1562,6 +1567,13 @@
           },
           "localAutoStart": {
             "type": "boolean"
+          },
+          "disabledProviders": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Provider ids to exclude from automatic LLM selection (e.g. openai, anthropic, google). Same as parseLLMConfig / hybrid-mem config-set."
           }
         },
         "description": "LLM model preference lists per tier (default, heavy, nano)"
