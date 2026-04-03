@@ -3,6 +3,8 @@
  * Extracted from cli/register.ts lines 290-1552.
  */
 
+import { capturePluginError } from "../../../services/error-reporter.js";
+import type { ScopeFilter } from "../../../types/memory.js";
 import { type Chainable, relativeTime, withExit } from "../../shared.js";
 import type { CredentialsAuditResult, CredentialsPruneResult, MigrateToVaultResult } from "../../types.js";
 import type { ManageBindings } from "./bindings.js";

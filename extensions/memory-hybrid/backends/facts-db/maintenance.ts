@@ -7,7 +7,8 @@ import type { DatabaseSync } from "node:sqlite";
 import type { DecayClass, MemoryCategory } from "../../config.js";
 import { capturePluginError } from "../../services/error-reporter.js";
 import type { MemoryEntry, MemoryTier } from "../../types/memory.js";
-import { calculateExpiry } from "../../utils/decay.js";
+import { calculateExpiry, classifyDecay } from "../../utils/decay.js";
+import { createTransaction } from "../../utils/sqlite-transaction.js";
 import { parseTags } from "../../utils/tags.js";
 import type { StoreFactInput } from "./crud.js";
 
@@ -496,4 +497,32 @@ export function restoreCheckpoint(db: DatabaseSync): {
     });
     return null;
   }
+}
+
+export function backfillDecayClasses(db: DatabaseSync): Record<string, number> {
+  const rows = db
+    .prepare(`SELECT rowid, entity, key, value, text FROM facts WHERE decay_class = 'stable'`)
+    .all() as Array<{
+    rowid: number;
+    entity: string;
+    key: string;
+    value: string;
+    text: string;
+  }>;
+
+  const nowSec = Math.floor(Date.now() / 1000);
+  const update = db.prepare("UPDATE facts SET decay_class = ?, expires_at = ? WHERE rowid = ?");
+
+  const counts: Record<string, number> = {};
+  const tx = createTransaction(db, () => {
+    for (const row of rows) {
+      const dc = classifyDecay(row.entity, row.key, row.value, row.text);
+      if (dc === "stable") continue;
+      const exp = calculateExpiry(dc, nowSec);
+      update.run(dc, exp, row.rowid);
+      counts[dc] = (counts[dc] || 0) + 1;
+    }
+  });
+  tx();
+  return counts;
 }

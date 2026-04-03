@@ -9,9 +9,29 @@ import { migrateEmbeddings } from "../../../services/embedding-migration.js";
 import { capturePluginError } from "../../../services/error-reporter.js";
 import { runMemoryDiagnostics } from "../../../services/memory-diagnostics.js";
 import { filterByScope } from "../../../services/merge-results.js";
-import type { ScopeFilter } from "../../../types/memory.js";
+import type { MemoryEntry, ScopeFilter } from "../../../types/memory.js";
 import { type Chainable, withExit } from "../../shared.js";
 import type { ManageBindings } from "./bindings.js";
+
+/** Apply optional CLI filters to merged hybrid search results (category/entity/key/source/tier). */
+function entryMatchesHybridSearchFilters(
+  entry: MemoryEntry,
+  opts?: {
+    category?: string;
+    entity?: string;
+    key?: string;
+    source?: string;
+    tier?: string;
+  },
+): boolean {
+  if (!opts) return true;
+  if (opts.category && entry.category !== opts.category) return false;
+  if (opts.entity != null && opts.entity !== "" && entry.entity !== opts.entity) return false;
+  if (opts.key != null && opts.key !== "" && entry.key !== opts.key) return false;
+  if (opts.source != null && opts.source !== "" && entry.source !== opts.source) return false;
+  if (opts.tier != null && opts.tier !== "" && entry.tier !== opts.tier) return false;
+  return true;
+}
 
 export function registerManageStorageAndStats(mem: Chainable, b: ManageBindings): void {
   const {
@@ -54,8 +74,13 @@ export function registerManageStorageAndStats(mem: Chainable, b: ManageBindings)
     .option("--older-than-days <days>", "Remove versions older than this many days (default: 7)", "7")
     .action(
       withExit(async (opts?: { olderThanDays?: string }) => {
-        const olderThanDays = Number.parseInt(opts?.olderThanDays ?? "7", 10);
-        const olderThanMs = olderThanDays * 24 * 60 * 60 * 1000;
+        const parsedDays = Number.parseInt(opts?.olderThanDays ?? "7", 10);
+        if (!Number.isFinite(parsedDays) || parsedDays < 0) {
+          console.error("error: --older-than-days must be a finite number ≥ 0");
+          process.exitCode = 1;
+          return;
+        }
+        const olderThanMs = parsedDays * 24 * 60 * 60 * 1000;
         try {
           const stats = await vectorDb.optimize(olderThanMs);
           console.log(
@@ -87,7 +112,7 @@ export function registerManageStorageAndStats(mem: Chainable, b: ManageBindings)
         try {
           lanceCount = await vectorDb.count();
         } catch (err) {
-          capturePluginError(err as Error, {
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
             operation: "vector-count",
             severity: "info",
             subsystem: "cli",
@@ -165,7 +190,7 @@ export function registerManageStorageAndStats(mem: Chainable, b: ManageBindings)
           console.log(`Categories in memory: ${uniqueInMemory.length} [${uniqueInMemory.slice(0, 3).join(", ")}...]`);
           console.log("");
           console.log(
-            `Breakdown: hot=${breakdown.hot}, warm=${breakdown.warm}, cold=${breakdown.cold}, structural=${breakdown.structural}`,
+            `Breakdown: hot=${breakdown.hot}, warm=${breakdown.warm}, cold=${breakdown.cold}, structural=${breakdown.structural ?? 0}`,
           );
           console.log("");
           if (timestamps.distill) console.log(`Last distill: ${timestamps.distill}`);
@@ -178,10 +203,10 @@ export function registerManageStorageAndStats(mem: Chainable, b: ManageBindings)
         } else if (efficiency) {
           const byTier = breakdown;
           const bySource = factsDb.statsBySource();
-          const estimatedTokens = factsDb.estimateTokens();
+          const estimatedTokens = factsDb.estimateStoredTokens();
           console.log("=== Memory Efficiency Stats ===");
           console.log(
-            `Breakdown: hot=${byTier.hot}, warm=${byTier.warm}, cold=${byTier.cold}, structural=${byTier.structural}`,
+            `Breakdown: hot=${byTier.hot}, warm=${byTier.warm}, cold=${byTier.cold}, structural=${byTier.structural ?? 0}`,
           );
           console.log(`Sources: ${Object.keys(bySource).length}`);
           for (const [src, count] of Object.entries(bySource).slice(0, 5)) {
@@ -195,7 +220,7 @@ export function registerManageStorageAndStats(mem: Chainable, b: ManageBindings)
           console.log(`Total vectors (LanceDB): ${lanceCount}`);
           console.log(`Expired (prunable): ${expired}`);
           console.log(
-            `Breakdown: hot=${breakdown.hot}, warm=${breakdown.warm}, cold=${breakdown.cold}, structural=${breakdown.structural}`,
+            `Breakdown: hot=${breakdown.hot}, warm=${breakdown.warm}, cold=${breakdown.cold}, structural=${breakdown.structural ?? 0}`,
           );
         }
       }),
@@ -394,7 +419,9 @@ export function registerManageStorageAndStats(mem: Chainable, b: ManageBindings)
 
   mem
     .command("search <query>")
-    .description("Hybrid search (vector + SQL). Returns up to 20 results.")
+    .description(
+      "Hybrid search (vector + SQL). Returns up to 20 results. Optional filters apply to the merged result set.",
+    )
     .option("--category <cat>", "Filter by category")
     .option("--entity <ent>", "Filter by entity")
     .option("--key <k>", "Filter by key")
@@ -449,7 +476,11 @@ export function registerManageStorageAndStats(mem: Chainable, b: ManageBindings)
 
             let combined = merge(filteredVectorResults, sqlResults, 20, factsDb);
 
-            if (tieringEnabled && opts?.tier !== "cold") {
+            if (opts?.category || opts?.entity || opts?.key || opts?.source || opts?.tier) {
+              combined = combined.filter((r) => entryMatchesHybridSearchFilters(r.entry, opts));
+            }
+
+            if (tieringEnabled && opts?.tier == null) {
               combined = combined.filter((r) => r.entry.tier !== "cold");
             }
 
@@ -594,7 +625,13 @@ export function registerManageStorageAndStats(mem: Chainable, b: ManageBindings)
           tier?: string;
         }) => {
           try {
-            const limit = Number.parseInt(opts?.limit ?? "10", 10);
+            const limitParsed = Number.parseInt(opts?.limit ?? "10", 10);
+            if (!Number.isFinite(limitParsed) || limitParsed < 1 || limitParsed > 50_000) {
+              console.error("error: --limit must be an integer from 1 to 50000");
+              process.exitCode = 1;
+              return;
+            }
+            const limit = limitParsed;
             const filters = {
               category: opts?.category,
               entity: opts?.entity,

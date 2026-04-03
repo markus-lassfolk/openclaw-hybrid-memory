@@ -3,11 +3,35 @@
  * Extracted from cli/register.ts lines 290-1552.
  */
 
-import { type Chainable, withExit } from "../../shared.js";
+import { execSync } from "node:child_process";
+import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
+import { join } from "node:path";
+
+import { capturePluginError } from "../../../services/error-reporter.js";
+import { type Chainable, relativeTime, withExit } from "../../shared.js";
 import type { ManageBindings } from "./bindings.js";
 
+/** Quote a path for use in a crontab line so spaces/special chars do not break the shell. */
+function shellQuotePathForCron(path: string): string {
+  if (/^[\w@%+./:-]+$/.test(path)) return path;
+  return `'${path.replace(/'/g, `'\\''`)}'`;
+}
+
 export function registerManageProcedureAndLifecycle(mem: Chainable, b: ManageBindings): void {
-  const { factsDb, runExtractProcedures, runGenerateAutoSkills, ctx } = b;
+  const {
+    factsDb,
+    runExtractProcedures,
+    runGenerateAutoSkills,
+    ctx,
+    cfg,
+    runUpgrade,
+    runUninstall,
+    runBackup,
+    runBackupVerify,
+    resolvedSqlitePath,
+    resolvedLancePath,
+  } = b;
 
   // Procedure feedback loop CLI (#782)
   const procedureCmd = mem
@@ -393,7 +417,7 @@ export function registerManageProcedureAndLifecycle(mem: Chainable, b: ManageBin
         const hybridMemBin = "hybrid-mem"; // resolved by PATH at runtime
         const logDir = join(homedir(), ".openclaw", "logs");
         const logFile = join(logDir, "backup.log");
-        const cronLine = `${cronExpr} ${hybridMemBin} backup >> ${logFile} 2>&1`;
+        const cronLine = `${cronExpr} ${hybridMemBin} backup >> ${shellQuotePathForCron(logFile)} 2>&1`;
 
         if (opts?.dryRun) {
           console.log("Cron line (dry-run — not installed):");

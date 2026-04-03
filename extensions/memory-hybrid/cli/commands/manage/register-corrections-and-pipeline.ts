@@ -3,7 +3,9 @@
  * Extracted from cli/register.ts lines 290-1552.
  */
 
+import { getCronModelConfig, getDefaultCronModel } from "../../../config.js";
 import { getEffectivenessReport, runClosedLoopAnalysis } from "../../../services/feedback-effectiveness.js";
+import { capturePluginError } from "../../../services/error-reporter.js";
 import { type Chainable, withExit } from "../../shared.js";
 import type {
   AnalyzeFeedbackPhrasesResult,
@@ -38,6 +40,15 @@ export function registerManageCorrectionsAndPipeline(mem: Chainable, b: ManageBi
     runCostReport,
     runAnalyzeFeedbackPhrases,
     ctx,
+    runStore,
+    runConfigView,
+    runConfigMode,
+    runConfigSet,
+    runConfigSetHelp,
+    runBackfill,
+    runIngestFiles,
+    runExport,
+    runBuildLanguageKeywords,
   } = b;
 
   const corrections = mem.command("corrections").description("Manage self-correction reports");
@@ -206,7 +217,7 @@ export function registerManageCorrectionsAndPipeline(mem: Chainable, b: ManageBi
     .action(
       withExit(async () => {
         try {
-          runConfigView({ log: (s) => console.log(s), error: (s) => console.error(s) });
+          runConfigView({ log: (s: string) => console.log(s), error: (s: string) => console.error(s) });
         } catch (err) {
           capturePluginError(err instanceof Error ? err : new Error(String(err)), {
             subsystem: "cli",

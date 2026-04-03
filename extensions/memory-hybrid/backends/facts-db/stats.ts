@@ -34,7 +34,7 @@ export function statsBreakdownByTier(db: DatabaseSync): Record<string, number> {
       `SELECT COALESCE(tier, 'warm') as tier, COUNT(*) as cnt FROM facts WHERE superseded_at IS NULL GROUP BY tier`,
     )
     .all() as Array<{ tier: string; cnt: number }>;
-  const stats: Record<string, number> = { hot: 0, warm: 0, cold: 0 };
+  const stats: Record<string, number> = { hot: 0, warm: 0, cold: 0, structural: 0 };
   for (const row of rows) {
     stats[row.tier || "warm"] = row.cnt;
   }

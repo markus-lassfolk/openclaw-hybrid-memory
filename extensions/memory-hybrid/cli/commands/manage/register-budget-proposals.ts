@@ -3,6 +3,12 @@
  * Extracted from cli/register.ts lines 290-1552.
  */
 
+import { existsSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
+
+import { capturePluginError } from "../../../services/error-reporter.js";
+import { getEnv } from "../../../utils/env-manager.js";
 import { buildAppliedContent, buildUnifiedDiff } from "../../proposals.js";
 import { type Chainable, relativeTime, withExit } from "../../shared.js";
 import type { ManageBindings } from "./bindings.js";
