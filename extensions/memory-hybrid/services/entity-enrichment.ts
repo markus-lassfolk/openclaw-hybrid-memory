@@ -159,8 +159,8 @@ ${body}`;
 
       const start = typeof m.start === "number" ? m.start : 0;
       const end = typeof m.end === "number" ? m.end : start + surface.length;
-      const { start: ss, end: ee } = clampOffsets(trimmed, surface, start, end);
-      const slice = trimmed.slice(ss, ee);
+      const { start: ss, end: ee } = clampOffsets(body, surface, start, end);
+      const slice = body.slice(ss, ee);
       const surfaceText = slice === surface ? surface : slice || surface;
       const conf = typeof m.confidence === "number" && m.confidence >= 0 && m.confidence <= 1 ? m.confidence : 0.75;
       const norm = m.normalized?.trim() ? m.normalized.trim() : surfaceText;
