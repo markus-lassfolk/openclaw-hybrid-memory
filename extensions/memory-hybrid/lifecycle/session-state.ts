@@ -9,6 +9,27 @@ import type { SessionState } from "./types.js";
 
 const MAX_TRACKED_SESSIONS = 200;
 
+/** API slice used when resolving the current session key from a hook event (#990). */
+export type SessionKeyHookApi = { context?: { sessionId?: string; sessionKey?: string } };
+
+/**
+ * Best-effort session key string for lifecycle hooks — same precedence as
+ * {@link createSessionState}'s `resolveSessionKey` (exported for agent id parsing and tests).
+ */
+export function resolveSessionKeyFromHookEvent(event: unknown, api?: SessionKeyHookApi): string | null {
+  const ev = event as { session?: Record<string, unknown>; sessionKey?: string };
+  const sessionId =
+    ev?.session?.id ??
+    ev?.session?.sessionId ??
+    ev?.session?.key ??
+    ev?.session?.label ??
+    ev?.sessionKey ??
+    api?.context?.sessionId ??
+    api?.context?.sessionKey ??
+    null;
+  return sessionId ? String(sessionId) : null;
+}
+
 export function createSessionState(): SessionState {
   const authFailureRecallsThisSession = new Map<string, number>();
   const sessionStartSeen = new Set<string>();
@@ -79,17 +100,8 @@ export function createSessionState(): SessionState {
     }
   }
 
-  function resolveSessionKey(event: unknown, api?: { context?: { sessionId?: string } }): string | null {
-    const ev = event as { session?: Record<string, unknown>; sessionKey?: string };
-    const sessionId =
-      ev?.session?.id ??
-      ev?.session?.sessionId ??
-      ev?.session?.key ??
-      ev?.session?.label ??
-      ev?.sessionKey ??
-      api?.context?.sessionId ??
-      null;
-    return sessionId ? String(sessionId) : null;
+  function resolveSessionKey(event: unknown, api?: SessionKeyHookApi): string | null {
+    return resolveSessionKeyFromHookEvent(event, api);
   }
 
   const clearAll = (): void => {
