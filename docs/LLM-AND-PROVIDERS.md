@@ -405,6 +405,17 @@ Embeddings are required. The plugin supports four providers — choose the one t
 
 **What if I have no provider that supports embeddings?** The plugin **requires** at least one valid embedding configuration to load. If you do not set any embedding provider (or the one you set is invalid — e.g. OpenAI with no key, Ollama not running), the plugin will fail at config parse or startup with a clear error (e.g. missing `embedding.apiKey`, or embedding check failed). You cannot run the plugin with zero embedding access. To avoid paid embedding APIs, use **Ollama** or **ONNX** (local only; no API key).
 
+### Inheriting from global OpenClaw (`memorySearch` + `models.providers`)
+
+When the gateway loads the plugin, hybrid-memory runs a **pre-parse merge** ([issue #1002](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/1002)):
+
+1. **Credentials / base URL:** Gateway **`models.providers`** (or legacy **`llm.providers`** / top-level **`providers`**) is merged into the plugin’s raw **`llm.providers`** the same way as at database bootstrap — so keys available for chat (e.g. **`azure-foundry`**, **`openai`**) are visible to the config parser before embedding resolution.
+2. **`agents.defaults.memorySearch`:** If **`enabled` is not `false`** and **`provider`** / **`model`** are set, any plugin **`embedding`** field that is still **omitted** is filled from that object: **`provider`** is mapped to hybrid-memory’s embedding provider (e.g. **`azure-foundry`** → OpenAI-compatible **`openai`** with azure-foundry credentials), **`model`** is taken as-is (with an optional `provider/` prefix stripped). **`dimensions`** are set when the model name matches the plugin’s built-in dimension table. **`deployment`** is copied from the matching gateway provider entry when present (`deployment`, `deploymentName`, or `deploymentId`).
+
+**Precedence:** Anything you set under **`plugins.entries["openclaw-hybrid-memory"].config.embedding`** (or **`llm.providers`**) still **overrides** the inherited values. Inheritance only fills **missing** fields on the raw plugin config before presets and validation run.
+
+**Scope:** Designed for OpenAI-compatible and Google paths that already use **`models.providers`**. Local-only setups (**Ollama** / **ONNX**) are unchanged unless you also set **`memorySearch`** accordingly.
+
 ---
 
 ### OpenAI (default)

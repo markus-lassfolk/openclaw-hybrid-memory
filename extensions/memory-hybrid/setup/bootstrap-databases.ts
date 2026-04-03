@@ -43,6 +43,8 @@ import {
   buildMultiProviderOpenAI,
   clearOllamaHealthCacheEntry,
   extractGatewayConfig,
+  getGatewayModelsProviders,
+  mergeGatewayProviderCredentialsIntoLlmProvidersMap,
   patchEmbeddingEndpointFromGatewayProviders,
   probeOllamaEndpoint,
 } from "./provider-router.js";
@@ -113,10 +115,7 @@ export function initializeDatabases(cfg: HybridMemoryConfig, api: ClawdbotPlugin
   // can see all available providers (issue #487 fix).
   // Check three paths: models.providers (standard), llm.providers (legacy), providers (top-level).
   const gwConfig = api.config as Record<string, unknown> | undefined;
-  const gwProviders =
-    (gwConfig?.models as Record<string, unknown> | undefined)?.providers ??
-    (gwConfig?.llm as Record<string, unknown> | undefined)?.providers ??
-    (gwConfig?.providers as Record<string, unknown> | undefined);
+  const gwProviders = getGatewayModelsProviders(gwConfig);
   const mergedProviderNames: string[] = [];
   const mergedProviderOriginalNames = new Map<string, string>();
   if (!cfg.llm)
@@ -130,47 +129,13 @@ export function initializeDatabases(cfg: HybridMemoryConfig, api: ClawdbotPlugin
   if (!plm.providers || typeof plm.providers !== "object") plm.providers = {};
   const prov = plm.providers as Record<string, Record<string, unknown>>;
 
-  if (gwProviders && typeof gwProviders === "object" && !Array.isArray(gwProviders)) {
-    for (const [name, gw] of Object.entries(gwProviders)) {
-      if (!name || !gw || typeof gw !== "object") continue;
-      const rawKey = (gw as Record<string, unknown>).apiKey ?? (gw as Record<string, unknown>).api_key;
-      if (typeof rawKey !== "string" || !rawKey.trim()) continue;
-      // Normalize provider name to lowercase to match canRoute's case-insensitive lookup (issue #487 fix).
-      const normalizedName = name.toLowerCase();
-      // Merge if: (a) no plugin entry exists, or (b) plugin entry has no apiKey — allows gateway key
-      // to fill in when plugin config has a placeholder/empty key for this provider (issue #386).
-      const pluginHasKey =
-        typeof prov[normalizedName]?.apiKey === "string" && (prov[normalizedName].apiKey as string).trim().length > 0;
-      if (!prov[normalizedName] || !pluginHasKey) {
-        prov[normalizedName] = {
-          ...prov[normalizedName],
-          apiKey: rawKey.trim(),
-          baseURL:
-            prov[normalizedName]?.baseURL ??
-            (gw as Record<string, unknown>).baseURL ??
-            (gw as Record<string, unknown>).base_url ??
-            (gw as Record<string, unknown>).baseUrl,
-        };
-        mergedProviderNames.push(normalizedName);
-        mergedProviderOriginalNames.set(normalizedName, name);
-        api.logger.info?.(
-          `memory-hybrid: using gateway provider "${name}" for llm.providers (add ${normalizedName}/<model> to llm.default or llm.heavy to use)`,
-        );
-      } else {
-        // Plugin already has a key for this provider; still merge baseURL from gateway if plugin has none
-        // (OpenClaw config often uses camelCase baseUrl; plugin expects baseURL).
-        const gwBase =
-          (gw as Record<string, unknown>).baseURL ??
-          (gw as Record<string, unknown>).base_url ??
-          (gw as Record<string, unknown>).baseUrl;
-        if (typeof gwBase === "string" && gwBase.trim() && !prov[normalizedName]?.baseURL) {
-          prov[normalizedName] = { ...prov[normalizedName], baseURL: gwBase.trim() };
-        }
-        mergedProviderNames.push(normalizedName);
-        mergedProviderOriginalNames.set(normalizedName, name);
-      }
-    }
-  }
+  mergeGatewayProviderCredentialsIntoLlmProvidersMap(
+    prov,
+    gwProviders,
+    api,
+    mergedProviderNames,
+    mergedProviderOriginalNames,
+  );
 
   // When llm.default/heavy are not explicitly configured, auto-derive from agents.defaults.model
   // (the same model list shown by `openclaw models list`). This makes the plugin zero-config for

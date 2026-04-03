@@ -224,6 +224,10 @@ import { findSimilarByEmbedding } from "./services/vector-search.js";
 import { migrateCredentialsToVault, CREDENTIAL_REDACTION_MIGRATION_FLAG } from "./services/credential-migration.js";
 import { createPluginService, type PluginServiceContext } from "./setup/plugin-service.js";
 import { initializeDatabases, closeOldDatabases } from "./setup/init-databases.js";
+import {
+  applyGatewayEmbeddingInheritanceBeforeParse,
+  shallowClonePluginConfigForGatewayMerge,
+} from "./setup/provider-router.js";
 import type { MemoryPluginAPI } from "./api/memory-plugin-api.js";
 import { type PluginRuntime, createTimers } from "./api/plugin-runtime.js";
 import { registerTools } from "./setup/register-tools.js";
@@ -325,7 +329,16 @@ function runMemoryHybridRegister(api: ClawdbotPluginApi): void {
 
   let cfg: HybridMemoryConfig;
   try {
-    cfg = hybridConfigSchema.parse(api.pluginConfig);
+    const rawPc = api.pluginConfig;
+    const toParse =
+      rawPc && typeof rawPc === "object" && !Array.isArray(rawPc)
+        ? (() => {
+            const clone = shallowClonePluginConfigForGatewayMerge(rawPc as Record<string, unknown>);
+            applyGatewayEmbeddingInheritanceBeforeParse(clone, api);
+            return clone;
+          })()
+        : rawPc;
+    cfg = hybridConfigSchema.parse(toParse);
   } catch (err) {
     capturePluginError(err instanceof Error ? err : new Error(String(err)), {
       subsystem: "registration",
