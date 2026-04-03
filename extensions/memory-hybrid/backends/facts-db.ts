@@ -70,7 +70,6 @@ import {
   listContactsByNamePrefix as entityLayerListContactsByNamePrefix,
   listFactIdsForOrg as entityLayerListFactIdsForOrg,
   listFactsNeedingEnrichment as entityLayerListFactsNeedingEnrichment,
-  factHasEntityMentions as entityLayerFactHasMentions,
   type ContactRow,
   type OrganizationRow,
 } from "./facts-db/entity-layer.js";
@@ -5497,10 +5496,5 @@ export class FactsDB extends BaseSqliteStore {
   /** Facts with no mention rows yet (for batch enrichment). */
   listFactIdsNeedingEntityEnrichment(limit: number, minTextLen = 24): string[] {
     return entityLayerListFactsNeedingEnrichment(this.liveDb, limit, minTextLen);
-  }
-
-  /** Whether this fact already has at least one stored entity mention. */
-  factHasEntityMentions(factId: string): boolean {
-    return entityLayerFactHasMentions(this.liveDb, factId);
   }
 }

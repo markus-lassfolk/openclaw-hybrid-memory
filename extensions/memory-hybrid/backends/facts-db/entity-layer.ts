@@ -266,7 +266,7 @@ export function getOrganizationByKeyOrName(db: DatabaseSync, query: string): Org
   const like = `%${nk.replace(/%/g, "\\%")}%`;
   const byName = db
     .prepare(
-      "SELECT * FROM organizations WHERE lower(display_name) LIKE ? ESCAPE '\\' ORDER BY length(display_name) ASC LIMIT 1",
+      "SELECT * FROM organizations WHERE canonical_key LIKE ? ESCAPE '\\' ORDER BY length(display_name) ASC LIMIT 1",
     )
     .get(like) as Record<string, unknown> | undefined;
   return byName ? rowToOrg(byName) : null;
@@ -329,13 +329,6 @@ export function listFactIdsForOrg(db: DatabaseSync, orgId: string, limit: number
     .prepare(`SELECT DISTINCT fact_id FROM org_fact_links WHERE org_id = ? ORDER BY created_at DESC LIMIT ?`)
     .all(orgId, limit) as Array<{ fact_id: string }>;
   return rows.map((r) => r.fact_id);
-}
-
-export function factHasEntityMentions(db: DatabaseSync, factId: string): boolean {
-  const row = db.prepare("SELECT 1 AS x FROM fact_entity_mentions WHERE fact_id = ? LIMIT 1").get(factId) as
-    | { x: number }
-    | undefined;
-  return Boolean(row);
 }
 
 export function listFactsNeedingEnrichment(db: DatabaseSync, limit: number, minTextLen: number): string[] {
