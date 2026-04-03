@@ -8,6 +8,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+---
+
+## [2026.4.33] - 2026-04-03
+
+### Release summary
+
+Version **2026.4.33** ships **`scripts/task-queue.sh`** — a cron-friendly task-queue runner (`touch` / `status` via `openclaw hybrid-mem`, optional **`run`** with `flock`, PID in `current.json`, history under `state/task-queue/history/`, idle restore) — addressing **#1000**, with review hardening in **#1001** (unique history files, producer/PID guard before archive, busy semantics aligned with the watchdog). Bumps the npm package, `openclaw.plugin.json`, and the standalone installer.
+
 ### Added
 
 - **`scripts/task-queue.sh`:** Task queue runner for cron/autonomous jobs — `touch` / `status` via `openclaw hybrid-mem`, optional **`run`** with `flock`, PID in `current.json`, history archive, idle restore ([#1000](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/1000)).
@@ -1192,7 +1200,8 @@ Major feature release including procedural memory, directive extraction, reinfor
 
 ---
 
-[Unreleased]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.4.32...HEAD
+[Unreleased]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.4.33...HEAD
+[2026.4.33]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.4.32...v2026.4.33
 [2026.4.32]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.4.31...v2026.4.32
 [2026.4.31]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.4.30...v2026.4.31
 [2026.4.30]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.4.21...v2026.4.30
