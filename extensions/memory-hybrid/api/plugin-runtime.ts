@@ -97,6 +97,8 @@ export interface PluginRuntime {
   restartPendingClearedRef: { value: boolean };
   /** Count of in-flight recall operations (degradation / back-pressure). */
   recallInFlightRef: { value: number };
+  /** Last user prompt used for interactive auto-recall (issue #957 post-compaction reinjection). */
+  lastAutoRecallPromptRef: { value: string | null };
   /** Last progressive index fact IDs (1-based position → fact id). */
   lastProgressiveIndexIds: string[];
 

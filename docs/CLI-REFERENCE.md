@@ -15,7 +15,7 @@ All commands are available via `openclaw hybrid-mem <command>`.
 **Tip: Verbosity level**
 CLI output is controlled by the config `verbosity` setting (`silent`, `quiet`, `normal`, `verbose`). You can change it with `openclaw hybrid-mem config-set verbosity silent`.
 
-**Agent tools (LLM):** Commands below are **CLI** entry points. Tools the agent invokes through the gateway use **underscore** names only (`memory_store`, `memory_recall`, …), with no `.` in the tool id — required by providers such as Anthropic. See [CONFIGURATION.md § Agent tool names](CONFIGURATION.md#agent-tool-names).
+**Agent tools (LLM):** Commands below are **CLI** entry points. Tools the agent invokes through the gateway use **underscore** names only (`memory_store`, `memory_recall`, `memory_directory`, …), with no `.` in the tool id — required by providers such as Anthropic. **`memory_directory`** lists contacts and returns **org-centric** views (people + fact ids for an organization)—stable structured data, not a replacement for ranked `memory_recall` search. See [CONFIGURATION.md § Agent tool names](CONFIGURATION.md#agent-tool-names).
 
 ## Commands by category
 
@@ -26,7 +26,7 @@ CLI output is controlled by the config `verbosity` setting (`silent`, `quiet`, `
 | **Stats & query** | `stats [--efficiency]`, `test`, `context-audit`, `search <query>`, `lookup <id>`, `forget <id> [--yes]`, `list [--limit, --category, --tier]`, `show <id>`, `categories` |
 | **Proposals & corrections** | `proposals list|show|approve|reject <id>`, `corrections list`, `corrections approve-all`, `review` |
 | **Store & ingestion** | `store <text>`, `ingest-files`, `distill`, `distill-window`, `record-distill`, `extract-daily`, `extract-procedures`, `extract-directives`, `extract-reinforcement`, `generate-auto-skills`, `skills-suggest`, `generate-proposals` |
-| **Reflection & classification** | `reflect`, `reflect-rules`, `reflect-meta`, `classify`, `build-languages` |
+| **Reflection & classification** | `reflect`, `reflect-rules`, `reflect-meta`, `classify`, `build-languages`, `enrich-entities` |
 | **Dedup & consolidation** | `find-duplicates`, `consolidate` |
 | **Self-correction** | `self-correction-extract`, `self-correction-run` |
 | **Export & config** | `export`, `config`, `config-mode <mode>`, `config-set <key> <value>` |
@@ -54,6 +54,7 @@ CLI output is controlled by the config `verbosity` setting (`silent`, `quiet`, `
 | `backfill [--dry-run] [--workspace path] [--limit N]` | Ingest facts from MEMORY.md / memory/**/*.md. Progress bar in TTY. |
 | `backfill-decay` | Backfill decay classes for existing rows. |
 | `build-languages [--dry-run] [--model M]` | Detect top 3 languages from fact samples, generate multilingual trigger/category/decay keywords via LLM, write `.language-keywords.json`. See [MULTILINGUAL-SUPPORT.md](MULTILINGUAL-SUPPORT.md). |
+| `enrich-entities [--limit N] [--dry-run] [--model M]` | Backfill **PERSON**/**ORG** extraction for facts that have no stored entity-mention rows yet (same franc + LLM pipeline as store-time enrichment when `graph.enabled`). Use after upgrades or to catch up bulk imports. |
 | `classify [--dry-run] [--limit N] [--model M]` | Auto-classify "other" facts using LLM. Progress bar in TTY. |
 | `categories` | List all configured categories with per-category fact counts. |
 | `list <type> [--limit N] [--status s]` | List items by type: **patterns**, **rules**, **directives**, **procedures**, **proposals**, or **corrections**. `--limit` caps output (default 50). For proposals/corrections, `--status` filters (e.g. pending). See [List, show, and review](#list-show-and-review-issue-56) below. |

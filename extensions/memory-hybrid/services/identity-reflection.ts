@@ -5,6 +5,7 @@ import type { IdentityReflectionStore } from "../backends/identity-reflection-st
 import type { ScopeFilter } from "../types/memory.js";
 import { fillPrompt, loadPrompt } from "../utils/prompt-loader.js";
 import { LLMRetryError, chatCompleteWithRetry } from "./chat.js";
+import { CostFeature } from "./cost-feature-labels.js";
 import { capturePluginError } from "./error-reporter.js";
 
 interface IdentityReflectionQuestion {
@@ -164,7 +165,7 @@ export async function runIdentityReflection(
       openai,
       fallbackModels: opts.fallbackModels ?? [],
       label: "memory-hybrid: reflect-identity",
-      feature: "identity-reflection",
+      feature: CostFeature.identityReflection,
     });
   } catch (err) {
     logger.warn(`memory-hybrid: reflect-identity LLM failed: ${err}`);

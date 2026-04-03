@@ -16,6 +16,10 @@ This document describes how the memory-hybrid extension supports multiple langua
 
 So: multi-language support is **data-driven and derived from your own memory content**. The more diverse your stored facts, the better the detected languages and the better the coverage for capture/category/decay in those languages.
 
+### Person / organization enrichment (NER)
+
+Separate from keyword files: when **graph** features are enabled, new facts can be enriched with **PERSON** and **ORG** mentions. The pipeline uses **franc** on the fact text to obtain a **primary-language hint** (ISO 639-3, e.g. `swe`, `eng`) for the extraction LLM, so names and organizations are extracted in context of Swedish, German, etc., not English-only. Stored spans live in SQLite (`fact_entity_mentions`, `organizations`, `contacts`) and feed **`memory_directory`** (structured org/people views). For facts created before enrichment existed, run **`openclaw hybrid-mem enrich-entities`**; nightly and monthly maintenance job text includes this backfill alongside other steps.
+
 ---
 
 ## How it works (implementation)
@@ -185,6 +189,7 @@ Example to disable auto-build and run only manually:
 | Command | Description |
 |--------|-------------|
 | `openclaw hybrid-mem build-languages [--dry-run] [--model <model>]` | Detect top 3 languages from fact samples, generate intent-based keywords for those languages, and write `.language-keywords.json` next to the SQLite DB. Default model: `gpt-4o-mini` (or your autoClassify model). `--dry-run`: detect and generate but do not write the file. |
+| `openclaw hybrid-mem enrich-entities [--limit N] [--dry-run] [--model M]` | Backfill PERSON/ORG mentions for facts missing enrichment rows (uses **franc** + LLM; same pipeline as store-time when `graph.enabled`). |
 
 See [CLI-REFERENCE.md](CLI-REFERENCE.md) for the full command list.
 

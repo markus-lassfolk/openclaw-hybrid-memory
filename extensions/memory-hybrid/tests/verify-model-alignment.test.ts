@@ -119,7 +119,7 @@ describe("runVerifyForCli - model alignment warnings (issue #965)", () => {
     await runVerifyForCli(buildCtx("minimax/MiniMax-M2.5") as never, { fix: false }, { log: (m) => lines.push(m) });
     const out = lines.join("\n");
 
-    expect(out).toContain("Cron vs agent model (issue #965)");
+    expect(out).toContain("Cron vs agent model (issues #963, #965)");
     expect(out).toContain("LiveSessionModelSwitchError");
     expect(out).toContain('Plugin llm.default[0] ("minimax/MiniMax-M2.5") differs');
   });
@@ -135,7 +135,7 @@ describe("runVerifyForCli - model alignment warnings (issue #965)", () => {
     await runVerifyForCli(buildCtx("azure-foundry/gpt-5.4") as never, { fix: false }, { log: (m) => lines.push(m) });
     const out = lines.join("\n");
 
-    expect(out).not.toContain("Cron vs agent model (issue #965)");
+    expect(out).not.toContain("Cron vs agent model (issues #963, #965)");
     expect(out).not.toContain("Plugin llm.default[0]");
   });
 });

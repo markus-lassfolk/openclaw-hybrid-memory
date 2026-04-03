@@ -103,8 +103,10 @@ Auto-capture. Auto-recall. Background reflection. Memory decay. Cleanup. All aut
 | **Credential Vault** | Encrypted storage for API keys and tokens — auto-injects on auth failures |
 | **Write-Ahead Log** | Crash-resilient memory ops — nothing lost if something breaks |
 | **TTL Decay** | Old facts expire automatically; your memory stays fresh |
+| **Contacts & org layer** | People and organizations as first-class records—`memory_directory` for structured lists, not only ranked search |
+| **Multilingual NER** | **franc** + LLM extract PERSON/ORG from fact text when graph is on; `enrich-entities` CLI backfills older facts |
 
-For the full feature list → [FEATURES.md](docs/FEATURES.md)
+For the full feature list → [FEATURES.md](docs/FEATURES.md) · Contacts/NER detail → [MULTILINGUAL-SUPPORT.md](docs/MULTILINGUAL-SUPPORT.md), [GRAPH-MEMORY.md](docs/GRAPH-MEMORY.md)
 
 ---
 

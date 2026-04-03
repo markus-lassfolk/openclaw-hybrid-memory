@@ -21,6 +21,7 @@ Detailed reference for the memory-hybrid plugin's classification, decay, tagging
 | **Decay & pruning** | [DECAY-AND-PRUNING.md](DECAY-AND-PRUNING.md) | Decay classes, TTLs, refresh-on-access, hard/soft prune, when they run |
 | **Reflection** | [REFLECTION.md](REFLECTION.md) | Pattern synthesis from facts (reflect, reflect-rules, reflect-meta) |
 | **Graph memory** | [GRAPH-MEMORY.md](GRAPH-MEMORY.md) | Typed links between facts, spreading activation |
+| **Contacts, orgs & NER** | [MULTILINGUAL-SUPPORT.md](MULTILINGUAL-SUPPORT.md), [GRAPH-MEMORY.md](GRAPH-MEMORY.md#person-and-organization-enrichment-entity-layer) | `memory_directory` tool; SQLite tables for people/orgs; multilingual PERSON/ORG extraction (franc + LLM) when `graph.enabled`; CLI `enrich-entities` (#985–#987) |
 | **Session distillation** | [SESSION-DISTILLATION.md](SESSION-DISTILLATION.md) | Extracting facts from session logs |
 | **Procedural memory** | [PROCEDURAL-MEMORY.md](PROCEDURAL-MEMORY.md) | Procedure tagging, recall, auto-skills from session tool sequences (issue #23) |
 | **Credentials** | [CREDENTIALS.md](CREDENTIALS.md) | Opt-in encrypted credential vault |

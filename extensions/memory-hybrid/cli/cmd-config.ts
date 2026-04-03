@@ -12,7 +12,13 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
 
-import { hybridConfigSchema, PRESET_OVERRIDES, type ConfigMode } from "../config.js";
+import {
+  getCronModelConfig,
+  getLLMModelPreference,
+  hybridConfigSchema,
+  PRESET_OVERRIDES,
+  type ConfigMode,
+} from "../config.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { PLUGIN_ID, getRestartPendingPath } from "../utils/constants.js";
 import type { HandlerContext } from "./handlers.js";
@@ -73,18 +79,29 @@ function setNested(obj: Record<string, unknown>, path: string, value: unknown): 
   if (last === "__proto__" || last === "constructor" || last === "prototype") {
     return false;
   }
-  const v =
-    value === "true" || value === "enabled"
-      ? true
-      : value === "false" || value === "disabled"
-        ? false
-        : value === "null"
-          ? null
-          : /^-?\d+$/.test(String(value))
-            ? Number.parseInt(String(value), 10)
-            : /^-?\d*\.\d+$/.test(String(value))
-              ? Number.parseFloat(String(value))
-              : value;
+  const rawStr = String(value).trim();
+  let v: unknown = value;
+  if ((rawStr.startsWith("[") && rawStr.endsWith("]")) || (rawStr.startsWith("{") && rawStr.endsWith("}"))) {
+    try {
+      v = JSON.parse(rawStr) as unknown;
+    } catch {
+      v = value;
+    }
+  }
+  if (v === value && typeof v === "string") {
+    v =
+      v === "true" || v === "enabled"
+        ? true
+        : v === "false" || v === "disabled"
+          ? false
+          : v === "null"
+            ? null
+            : /^-?\d+$/.test(v)
+              ? Number.parseInt(v, 10)
+              : /^-?\d*\.\d+$/.test(v)
+                ? Number.parseFloat(v)
+                : v;
+  }
   (cur as any)[last] = v;
   return true;
 }
@@ -173,6 +190,27 @@ export function runConfigViewForCli(ctx: HandlerContext, sink: VerifyCliSink): v
   log(`  Cost tracking: ${on(rawEnabled("costTracking", cfg.costTracking?.enabled ?? false))}`);
   log("");
 
+  log("LLM tiers (keep cheap models first; heavy only for quality-critical steps)");
+  try {
+    const cronCfg = getCronModelConfig(cfg);
+    const nano = getLLMModelPreference(cronCfg, "nano");
+    const def = getLLMModelPreference(cronCfg, "default");
+    const heavy = getLLMModelPreference(cronCfg, "heavy");
+    const fmt = (arr: string[]) =>
+      arr.length === 0 ? "—" : arr.length === 1 ? arr[0] : `${arr[0]} (+${arr.length - 1} more)`;
+    log(`  nano (HyDE, classify, summarize): ${fmt(nano)}`);
+    log(`  default (maintenance, dream cycle if nightlyCycle.model unset): ${fmt(def)}`);
+    log(`  heavy (distill, self-correction, hard tasks): ${fmt(heavy)}`);
+    if (cfg.nightlyCycle?.model?.trim()) {
+      log(`  nightlyCycle.model (overrides dream / MEMORY_INDEX LLM): ${cfg.nightlyCycle.model.trim()}`);
+    }
+    const extTier = cfg.distill?.extractionModelTier ?? "default";
+    log(`  distill.extractionModelTier (session extraction): ${extTier}`);
+  } catch {
+    log("  (could not resolve tiers — check plugin config)");
+  }
+  log("");
+
   log("Advanced");
   log(`  Query expansion: ${on(cfg.queryExpansion.enabled)}`);
   log(`  Retrieval directives: ${on(cfg.autoRecall.retrievalDirectives?.enabled ?? false)}`);
@@ -191,6 +229,7 @@ export function runConfigViewForCli(ctx: HandlerContext, sink: VerifyCliSink): v
 
   log("To change a setting: openclaw hybrid-mem config-set <key> <value>");
   log("Example (toggle): openclaw hybrid-mem config-set nightlyCycle enabled");
+  log("Example (LLM tier lists as JSON): openclaw hybrid-mem config-set llm.nano '[\"azure-foundry/gpt-4.1-nano\"]'");
   log("Help for a key: openclaw hybrid-mem help config-set <key>");
 }
 

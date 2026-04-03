@@ -108,6 +108,8 @@ export interface MemoryPluginAPI {
   // --- Refs (lifecycle / degradation) ---
   restartPendingClearedRef: { value: boolean };
   recallInFlightRef: { value: number };
+  /** Last prompt used for before_agent_start recall; used to re-match memories after compaction (#957). */
+  lastAutoRecallPromptRef: { value: string | null };
 
   // --- WAL & search (raw; caller binds wal where needed) ---
   walWrite: WalWriteFn;

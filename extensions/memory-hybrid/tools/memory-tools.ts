@@ -11,53 +11,54 @@ import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import { stringEnum } from "../utils/typebox.js";
 
 import type { BuildToolScopeFilterFn, FindSimilarByEmbeddingFn } from "../api/memory-plugin-api.js";
-import type { FactsDB } from "../backends/facts-db.js";
-import type { EdictStore } from "../backends/edict-store.js";
-import type { VectorDB } from "../backends/vector-db.js";
+import type { AuditStore } from "../backends/audit-store.js";
 import type { CredentialsDB } from "../backends/credentials-db.js";
+import type { EdictStore } from "../backends/edict-store.js";
 import type { EventLog } from "../backends/event-log.js";
-import type { NarrativesDB } from "../backends/narratives-db.js";
 import { categoryToEventType } from "../backends/event-log.js";
-import type { EmbeddingProvider } from "../services/embeddings.js";
-import { AllEmbeddingProvidersFailed, shouldSuppressEmbeddingError } from "../services/embeddings.js";
-import type { EmbeddingRegistry } from "../services/embedding-registry.js";
-import { toFloat32Array } from "../services/embedding-registry.js";
-import type { PendingLLMWarnings } from "../services/chat.js";
-import { mergeResults, filterByScope } from "../services/merge-results.js";
-import { classifyMemoryOperation } from "../services/classification.js";
-import { extractStructuredFields } from "../services/fact-extraction.js";
-import type { ProvenanceService } from "../services/provenance.js";
-import { isCredentialLike, tryParseCredentialForVault, VAULT_POINTER_PREFIX } from "../services/auto-capture.js";
-import { capturePluginError, addOperationBreadcrumb } from "../services/error-reporter.js";
-import { buildExplicitSemanticQueryVector, runExplicitDeepRetrieval } from "../services/retrieval-orchestrator.js";
-import { resolveExplicitDeepRetrievalPolicy } from "../services/retrieval-mode-policy.js";
-import { QueryExpander } from "../services/query-expander.js";
-import { storeAliases, type AliasDB } from "../services/retrieval-aliases.js";
-import { expandGraph, formatLinkPath } from "../services/graph-retrieval.js";
+import type { FactsDB } from "../backends/facts-db.js";
+import type { NarrativesDB } from "../backends/narratives-db.js";
+import type { VectorDB } from "../backends/vector-db.js";
 import {
-  getMemoryCategories,
   DECAY_CLASSES,
-  type MemoryCategory,
   type DecayClass,
   type HybridMemoryConfig,
+  type MemoryCategory,
   getCronModelConfig,
   getDefaultCronModel,
   getLLMModelPreference,
+  getMemoryCategories,
   isCompactVerbosity,
 } from "../config.js";
-import type { MemoryEntry, SearchResult, ScopeFilter, Episode, EpisodeOutcome } from "../types/memory.js";
-import { MEMORY_SCOPES } from "../types/memory.js";
-import { truncateForStorage } from "../utils/text.js";
-import { extractTags } from "../utils/tags.js";
-import { parseSourceDate } from "../utils/dates.js";
-import { detectFutureDate } from "../utils/date-detector.js";
-import type { VerificationStore } from "../services/verification-store.js";
-import type { AuditStore } from "../backends/audit-store.js";
-import { shouldAutoVerify } from "../services/verification-store.js";
+import { VAULT_POINTER_PREFIX, isCredentialLike, tryParseCredentialForVault } from "../services/auto-capture.js";
+import type { PendingLLMWarnings } from "../services/chat.js";
+import { classifyMemoryOperation } from "../services/classification.js";
 import type { VariantGenerationQueue } from "../services/contextual-variants.js";
-import { getSessionLogFileSuffix, UUID_REGEX } from "../utils/constants.js";
-import { embedCallWithTimeoutAndRetry } from "../utils/embed-call.js";
+import type { EmbeddingRegistry } from "../services/embedding-registry.js";
+import { toFloat32Array } from "../services/embedding-registry.js";
+import type { EmbeddingProvider } from "../services/embeddings.js";
+import { AllEmbeddingProvidersFailed, shouldSuppressEmbeddingError } from "../services/embeddings.js";
+import { extractEntityMentionsWithLlm } from "../services/entity-enrichment.js";
+import { addOperationBreadcrumb, capturePluginError } from "../services/error-reporter.js";
+import { extractStructuredFields } from "../services/fact-extraction.js";
+import { expandGraph, formatLinkPath } from "../services/graph-retrieval.js";
+import { filterByScope, mergeResults } from "../services/merge-results.js";
 import { formatNarrativeRange, recallNarrativeSummaries } from "../services/narrative-recall.js";
+import type { ProvenanceService } from "../services/provenance.js";
+import { QueryExpander } from "../services/query-expander.js";
+import { type AliasDB, storeAliases } from "../services/retrieval-aliases.js";
+import { resolveExplicitDeepRetrievalPolicy } from "../services/retrieval-mode-policy.js";
+import { buildExplicitSemanticQueryVector, runExplicitDeepRetrieval } from "../services/retrieval-orchestrator.js";
+import type { VerificationStore } from "../services/verification-store.js";
+import { shouldAutoVerify } from "../services/verification-store.js";
+import type { Episode, EpisodeOutcome, MemoryEntry, ScopeFilter, SearchResult } from "../types/memory.js";
+import { MEMORY_SCOPES } from "../types/memory.js";
+import { UUID_REGEX, getSessionLogFileSuffix } from "../utils/constants.js";
+import { detectFutureDate } from "../utils/date-detector.js";
+import { parseSourceDate } from "../utils/dates.js";
+import { embedCallWithTimeoutAndRetry } from "../utils/embed-call.js";
+import { extractTags } from "../utils/tags.js";
+import { truncateForStorage } from "../utils/text.js";
 
 export type BoundWalWriteFn = (
   operation: "store" | "update",
@@ -211,7 +212,7 @@ async function storeRegistryEmbeddings({
  * Register all memory-related tools with the plugin API.
  *
  * This includes: memory_recall, memory_recall_procedures, memory_store,
- * memory_promote, and memory_forget.
+ * memory_directory, memory_promote, and memory_forget.
  */
 export function registerMemoryTools(ctx: MemoryToolsContext, api: ClawdbotPluginApi): void;
 export function registerMemoryTools(
@@ -1985,6 +1986,19 @@ export function registerMemoryTools(
             }
           }
 
+          // NER + contact/org layer (#985–#987): async enrichment after graph auto-link; uses franc + LLM.
+          if (cfg.graph.enabled) {
+            const enrichModel = getDefaultCronModel(getCronModelConfig(cfg), "nano");
+            void extractEntityMentionsWithLlm(textToStore, openai, enrichModel)
+              .then(({ mentions, detectedLang }) => {
+                factsDb.applyEntityEnrichment(entry.id, mentions, detectedLang);
+              })
+              .catch((err) => {
+                const msg = err instanceof Error ? (err.stack ?? err.message) : String(err);
+                api.logger.warn?.(`memory-hybrid: entity enrichment failed: ${msg}`);
+              });
+          }
+
           const totalLinked = autoLinked + entityAutoLinked;
           const verbosity = cfg.verbosity ?? "normal";
           let storedMsg: string;
@@ -2068,6 +2082,112 @@ export function registerMemoryTools(
       },
     },
     { name: "memory_store" },
+  );
+
+  api.registerTool(
+    {
+      name: "memory_directory",
+      label: "Memory directory",
+      description:
+        "Structured contacts and organizations (from NER + contact layer). Use list_contacts to browse people; org_view returns fact ids and people for an organization — stable views, not a single ranked memory_recall.",
+      parameters: Type.Object({
+        operation: stringEnum(["list_contacts", "org_view"] as const),
+        name_prefix: Type.Optional(
+          Type.String({ description: "For list_contacts: filter by display name prefix (optional)." }),
+        ),
+        org_name: Type.Optional(
+          Type.String({
+            description: "For org_view: organization name or key (resolves canonical org).",
+          }),
+        ),
+        limit: Type.Optional(
+          Type.Number({
+            description: "Max rows (default 40, max 100).",
+          }),
+        ),
+      }),
+      async execute(_toolCallId: string, params: Record<string, unknown>) {
+        try {
+          const operation = params.operation as string;
+          const limitRaw = params.limit;
+          const cap = Math.min(100, Math.max(1, typeof limitRaw === "number" ? Math.floor(limitRaw) : 40));
+          if (operation === "list_contacts") {
+            const prefix = typeof params.name_prefix === "string" ? params.name_prefix : "";
+            const rows = factsDb.listContactsByNamePrefix(prefix, cap);
+            const lines = rows.map(
+              (c) =>
+                `- ${c.displayName} (id=${c.id})${c.primaryOrgId ? ` [org: ${c.primaryOrgId}]` : ""}${c.email ? ` email=${c.email}` : ""}`,
+            );
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: rows.length === 0 ? "No contacts found." : `Contacts (${rows.length}):\n${lines.join("\n")}`,
+                },
+              ],
+              details: { operation: "list_contacts", count: rows.length, contacts: rows },
+            };
+          }
+          if (operation === "org_view") {
+            const orgName = typeof params.org_name === "string" ? params.org_name.trim() : "";
+            if (!orgName) {
+              return {
+                content: [{ type: "text", text: "org_view requires org_name." }],
+                details: { error: "org_name_required" },
+              };
+            }
+            const org = factsDb.lookupOrganization(orgName);
+            if (!org) {
+              return {
+                content: [
+                  {
+                    type: "text",
+                    text: `No organization matched "${orgName}". Try the exact name from a fact or a shorter key.`,
+                  },
+                ],
+                details: { error: "org_not_found", query: orgName },
+              };
+            }
+            const people = factsDb.listContactsForOrganization(org.id, cap);
+            const factIds = factsDb.listFactIdsLinkedToOrg(org.id, cap);
+            const factSummaries = factIds.map((id) => {
+              const f = factsDb.getById(id);
+              return f
+                ? { id: f.id, text: f.text.slice(0, 240), category: f.category }
+                : { id, text: "(missing)", category: "?" };
+            });
+            const peopleLines = people.map((p) => `- ${p.displayName} (contact id=${p.id})`);
+            const factLines = factSummaries.map((f) => `- [${f.id}] ${f.text}${f.text.length >= 240 ? "…" : ""}`);
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: `Organization: ${org.displayName} (id=${org.id}, key=${org.canonicalKey})\n\nPeople (${people.length}):\n${people.length ? peopleLines.join("\n") : "(none)"}\n\nFacts linked (${factSummaries.length}):\n${factSummaries.length ? factLines.join("\n") : "(none)"}`,
+                },
+              ],
+              details: {
+                operation: "org_view",
+                organization: org,
+                people,
+                facts: factSummaries,
+              },
+            };
+          }
+          return {
+            content: [{ type: "text", text: `Unknown operation: ${operation}` }],
+            details: { error: "bad_operation" },
+          };
+        } catch (err) {
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+            subsystem: "memory",
+            operation: "memory-directory",
+            phase: "runtime",
+          });
+          throw err;
+        }
+      },
+    },
+    { name: "memory_directory" },
   );
 
   api.registerTool(

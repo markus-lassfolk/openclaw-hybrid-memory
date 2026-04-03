@@ -23,6 +23,7 @@ import {
 } from "../utils/constants.js";
 import { fillPrompt, loadPrompt } from "../utils/prompt-loader.js";
 import { LLMRetryError, chatCompleteWithRetry } from "./chat.js";
+import { CostFeature } from "./cost-feature-labels.js";
 import type { EmbeddingProvider } from "./embeddings.js";
 import { shouldSuppressEmbeddingError } from "./embeddings.js";
 import { capturePluginError } from "./error-reporter.js";
@@ -171,7 +172,7 @@ export async function runReflection(
       openai,
       fallbackModels: opts.fallbackModels ?? [],
       label: "memory-hybrid: reflection",
-      feature: "reflection",
+      feature: CostFeature.reflection,
     });
   } catch (err) {
     logger.warn(`memory-hybrid: reflection LLM failed: ${err}`);
@@ -363,7 +364,7 @@ export async function runReflectionRules(
       openai,
       fallbackModels: opts.fallbackModels ?? [],
       label: "memory-hybrid: reflect-rules",
-      feature: "reflection-rules",
+      feature: CostFeature.reflectionRules,
     });
   } catch (err) {
     logger.warn(`memory-hybrid: reflect-rules LLM failed: ${err}`);
@@ -551,7 +552,7 @@ export async function runReflectionMeta(
       openai,
       fallbackModels: opts.fallbackModels ?? [],
       label: "memory-hybrid: reflect-meta",
-      feature: "reflection-meta",
+      feature: CostFeature.reflectionMeta,
     });
   } catch (err) {
     logger.warn(`memory-hybrid: reflect-meta LLM failed: ${err}`);

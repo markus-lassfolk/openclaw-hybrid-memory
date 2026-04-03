@@ -8,9 +8,37 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+---
+
+## [2026.4.30] - 2026-04-30
+
+### Release summary
+
+Version **2026.4.30** brings **entity-aware memory** (contacts, organizations, multilingual NER), **smoother embeddings and verification** (Azure Foundry compatibility, re-index throttling, clearer diagnostics), **context after compaction** so the assistant does not “forget” the last turn, **aligned cron vs main-agent model checks**, **consistent cost-tracking labels** for LLM calls, and **documentation** (plugin help, troubleshooting, hybrid-memory skill). Bumps the npm package, `openclaw.plugin.json`, and the standalone installer.
+
+### Added
+
+- **Contacts, organizations, and multilingual NER ([#985](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/985)–[#987](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/987)):** When `graph.enabled`, store-time **franc** + LLM extraction of **PERSON**/**ORG** spans into SQLite; **`memory_directory`** tool (`list_contacts`, `org_view`); CLI **`openclaw hybrid-mem enrich-entities`** for backfill; nightly/monthly cron steps updated. See [GRAPH-MEMORY.md](docs/GRAPH-MEMORY.md), [MULTILINGUAL-SUPPORT.md](docs/MULTILINGUAL-SUPPORT.md).
+- **`openclaw hybrid-mem re-index --delay-ms-between-batches`:** Optional spacing between embedding batches to reduce rate-limit pressure on large backfills.
+- **Post-compaction recall ([#957](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/957)):** After compaction, re-run recall on the last user prompt and prepend `<recalled-context>` so recently relevant facts stay in context.
+- **Plugin schema help:** `openclaw.plugin.json` entries for LLM tiers and `distill.extractionModelTier` to match the configuration surface.
+- **Tests:** `config-set` JSON array handling (`tests/config-set-json.test.ts`).
+
+### Changed
+
+- **Embeddings / providers:** Azure embedding requests omit optional `dimensions` when not required; bootstrap validates embedding dimensions before opening **VectorDB**; shared **rate-limit header** parsing extracted for reuse.
+- **Verify CLI — cron vs main agent ([#963](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/963)):** `readEffectiveAgentChatPrimaryFromOpenclawJsonRoot()` prefers `agents.list` entry **`id: "main"`** when resolving the primary chat model for verify/cron alignment warnings.
+- **Cost attribution ([#961](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/961)):** Reflection, identity-reflection, cross-agent-learning, and related paths use **`CostFeature`** constants so proxy cost logs group calls predictably.
+
 ### Fixed
 
 - **Agent id for cron / embedded hooks ([#990](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/990)):** When structured `agentId` fields are missing, derive the agent from OpenClaw session keys matching `agent:<id>:…` (e.g. `agent:ralph:cron:…`). Session resolution now considers `api.context.sessionKey` as well as `sessionId`. Clearer debug logs when detection still falls back to the orchestrator.
+
+### Documentation
+
+- **[TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md):** `[embedding-init]` / `[embedding-quota]`, re-index throttling, Azure HTTP 400 (empty body) and short-400 hints on **azure-foundry**; verify guidance cross-referenced.
+- **`skills/hybrid-memory/SKILL.md`:** LLM tier guidance for operators.
+- **Anthropic `/v1` normalization** already applied in verify and init paths (documented in troubleshooting flow where relevant).
 
 ---
 
@@ -1115,7 +1143,8 @@ Major feature release including procedural memory, directive extraction, reinfor
 
 ---
 
-[Unreleased]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.4.21...HEAD
+[Unreleased]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.4.30...HEAD
+[2026.4.30]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.4.21...v2026.4.30
 [2026.4.21]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.4.20...v2026.4.21
 [2026.4.20]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.4.12...v2026.4.20
 [2026.4.12]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.4.11...v2026.4.12

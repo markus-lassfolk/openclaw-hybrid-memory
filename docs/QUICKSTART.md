@@ -163,7 +163,7 @@ Restart the gateway after backfill so memorySearch re-indexes.
 - [FAQ.md](FAQ.md) - Common questions and quick answers
 - [CONFIGURATION.md](CONFIGURATION.md) - Full config reference
 - [FEATURES.md](FEATURES.md) - Categories, decay, tags, auto-classify
-- [CLI-REFERENCE.md](CLI-REFERENCE.md) - All CLI commands
+- [CLI-REFERENCE.md](CLI-REFERENCE.md) - All CLI commands (including `enrich-entities` for contact/org NER backfill)
 - [OPERATIONS.md](OPERATIONS.md) - Background jobs, scripts, upgrades
 - [TROUBLESHOOTING.md](TROUBLESHOOTING.md) - Common issues and fixes
 

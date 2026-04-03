@@ -1,6 +1,6 @@
 {
   "name": "openclaw-hybrid-memory",
-  "version": "2026.4.21",
+  "version": "2026.4.30",
   "type": "module",
   "description": "Give your OpenClaw agent lasting memory: structured facts, semantic search, auto-capture & recall, decay, optional credential vault. Part of Hybrid Memory v3.",
   "files": [
@@ -41,7 +41,8 @@
   },
   "dependencies": {
     "@lancedb/lancedb": "^0.27.1",
-    "@types/node": "^25.2.3"
+    "@types/node": "^25.2.3",
+    "franc": "^6.2.0"
   },
   "optionalDependencies": {
     "onnxruntime-node": "^1.20.0"

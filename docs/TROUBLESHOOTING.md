@@ -18,13 +18,48 @@ openclaw hybrid-mem verify --fix  # apply safe auto-fixes
 openclaw hybrid-mem stats         # show fact/vector counts
 ```
 
+### Embedding logs: `[embedding-init]`, `[embedding-quota]` (#945)
+
+Use these prefixes when grepping gateway or CLI output for embedding quota vs startup failures:
+
+- **`[embedding-init]`** — embedding health check failed during plugin init (non-quota issues: wrong key, model, region, etc.).
+- **`[embedding-quota]`** — 429 or quota-style 403 (e.g. `remaining-tokens: 0`, `Retry-After`) during init, or rate limits during **`openclaw hybrid-mem re-index`** / migration (`embedding-migration`).
+
+Example:
+
+```bash
+rg '\[embedding-(init|quota)\]' ~/.openclaw/logs/
+```
+
+### Bulk re-index throttling (Azure / RPM) (#942)
+
+If **`openclaw hybrid-mem re-index`** hits **429** or quota-style **403**, increase spacing between batches:
+
+```bash
+openclaw hybrid-mem re-index --batch-size 40 --delay-ms-between-batches 2000
+```
+
+Start with **2000** ms when you see quota signals; tune with your provider’s RPM. Related field report: [#940](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/940).
+
+### Azure / APIM: HTTP 400 with empty or minimal body (#949)
+
+**Symptoms:** **`openclaw hybrid-mem verify`**, embedding init, or chat checks return **HTTP 400** with **no useful JSON body** (or a very short message).
+
+**Cause:** Often the **gateway** (API Management product route, policy, or base URL) rejected the request **before** it reached the Azure AI / Foundry resource — not necessarily a wrong model name inside this plugin.
+
+**Checks:**
+
+1. **Product subscription key vs resource key** — APIM product routes (`*.azure-api.net/.../openai/v1`) expect the **product** subscription; a resource-scoped URL expects the **resource** key. Mismatch frequently surfaces as **400** with an empty body.
+2. **Path** — deployment names in the portal must match **`embedding.model`** / **`embedding.deployment`** exactly.
+3. **`verify --test-llm`** — for Azure Foundry models, a minimal **400** line may include a pointer to this section (see [#949](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/949)).
+
 ### Anthropic: `tools.*.custom.name` / pattern validation (400)
 
 **Symptoms:** API error such as `tools.33.custom.name: String should match pattern '^[a-zA-Z0-9_-]{1,128}$'`, or similar for another index.
 
 **Cause:** A tool in the request uses a **name** that is not allowed by the provider schema. Dotted names (for example `memory.record_episode`) are invalid for Anthropic even if they look like a namespace.
 
-**Fix:** Ensure every tool registered for the session uses only **letters, digits, underscores, and hyphens** — matching this plugin’s public names (`memory_store`, `memory_recall`, `memory_record_episode`, …). This plugin does not register dotted tool names. If you see this after a custom fork or merged tool list, search for `name:` values in tool registration that still contain `.`.
+**Fix:** Ensure every tool registered for the session uses only **letters, digits, underscores, and hyphens** — matching this plugin’s public names (`memory_store`, `memory_recall`, `memory_directory`, `memory_record_episode`, …). This plugin does not register dotted tool names. If you see this after a custom fork or merged tool list, search for `name:` values in tool registration that still contain `.`.
 
 **Note:** “Sanitize on retry” in logs refers to **message** / tool-*call* repair (for example pairing `tool_use` with `tool_result`), not to rewriting tool **definitions** in the request.
 

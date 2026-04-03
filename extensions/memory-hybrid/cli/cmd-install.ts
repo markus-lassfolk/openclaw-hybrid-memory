@@ -232,7 +232,7 @@ const MAINTENANCE_CRON_JOBS: Array<
     schedule: { kind: "cron", expr: "0 2 * * *" },
     channel: "system",
     message:
-      "Nightly memory maintenance. Run in order:\n1. openclaw hybrid-mem prune\n2. openclaw hybrid-mem distill --days 3\n3. openclaw hybrid-mem extract-daily\n4. openclaw hybrid-mem resolve-contradictions\nCheck if distill is enabled (config distill.enabled !== false) before steps 2 and 3. If disabled, skip steps 2 and 3 and exit 0. Report counts.",
+      "Nightly memory maintenance. Run in order:\n1. openclaw hybrid-mem prune\n2. openclaw hybrid-mem distill --days 3\n3. openclaw hybrid-mem extract-daily\n4. openclaw hybrid-mem resolve-contradictions\n5. openclaw hybrid-mem enrich-entities --limit 200\nCheck if distill is enabled (config distill.enabled !== false) before steps 2 and 3. If disabled, skip steps 2 and 3. Check if graph is enabled (config graph.enabled === true) before step 5. If graph is disabled, skip step 5. Exit 0 if all steps skipped. Step 5 backfills PERSON/ORG extraction for facts missing mentions (uses LLM). Report counts.",
     isolated: true,
     modelTier: "default",
     enabled: true,
@@ -310,7 +310,7 @@ const MAINTENANCE_CRON_JOBS: Array<
     schedule: { kind: "cron", expr: "0 5 1 * *" },
     channel: "system",
     message:
-      "Run monthly consolidation:\n1. openclaw hybrid-mem consolidate --threshold 0.92\n2. openclaw hybrid-mem build-languages\n3. openclaw hybrid-mem backfill-decay\nReport what was merged, languages detected. Check feature configs. Exit 0 if all disabled.",
+      "Run monthly consolidation:\n1. openclaw hybrid-mem consolidate --threshold 0.92\n2. openclaw hybrid-mem build-languages\n3. openclaw hybrid-mem backfill-decay\n4. openclaw hybrid-mem enrich-entities --limit 500\nCheck if graph is enabled (config graph.enabled === true) before step 4. If graph is disabled, skip step 4. Report what was merged, languages detected, and enrichment counts.",
     isolated: true,
     modelTier: "heavy",
     enabled: true,

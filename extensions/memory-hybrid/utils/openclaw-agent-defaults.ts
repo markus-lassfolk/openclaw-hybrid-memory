@@ -12,6 +12,27 @@ export function readAgentsPrimaryModelFromOpenclawJsonRoot(root: Record<string, 
   return typeof m?.primary === "string" ? m.primary.trim() : undefined;
 }
 
+/**
+ * Prefer `agents.list` entry with `id === "main"` when set; else `agents.defaults.model.primary` (#963).
+ * Isolated cron runs with `agentId` may follow the main agent model rather than defaults only.
+ */
+export function readEffectiveAgentChatPrimaryFromOpenclawJsonRoot(root: Record<string, unknown>): string | undefined {
+  const agents = root.agents as Record<string, unknown> | undefined;
+  const list = agents?.list;
+  if (Array.isArray(list)) {
+    for (const entry of list) {
+      if (entry && typeof entry === "object" && entry !== null) {
+        const o = entry as Record<string, unknown>;
+        if (o.id === "main") {
+          const m = o.model as Record<string, unknown> | undefined;
+          if (typeof m?.primary === "string" && m.primary.trim()) return m.primary.trim();
+        }
+      }
+    }
+  }
+  return readAgentsPrimaryModelFromOpenclawJsonRoot(root);
+}
+
 /** Load `~/.openclaw/openclaw.json` and return `agents.defaults.model.primary` when set. */
 export function readAgentsPrimaryModelFromOpenclawJsonPath(configPath: string): string | undefined {
   if (!existsSync(configPath)) return undefined;

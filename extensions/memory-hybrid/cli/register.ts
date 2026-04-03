@@ -192,6 +192,12 @@ export type HybridMemCliContext = {
   runBuildLanguageKeywords: (opts: { model?: string; dryRun?: boolean }) => Promise<
     { ok: true; path: string; topLanguages: string[]; languagesAdded: number } | { ok: false; error: string }
   >;
+  runEntityEnrichment: (opts: { limit: number; dryRun: boolean; model?: string }) => Promise<{
+    pending: number;
+    processed: number;
+    factsEnriched: number;
+    skipped?: boolean;
+  }>;
   runSelfCorrectionExtract: (opts: { days?: number; outputPath?: string }) => Promise<SelfCorrectionExtractResult>;
   runSelfCorrectionRun: (opts: {
     extractPath?: string;

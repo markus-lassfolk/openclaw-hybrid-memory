@@ -1,6 +1,6 @@
 # OpenClaw memory-hybrid plugin
 
-Your OpenClaw agent forgets after each session. This plugin gives it **lasting memory**: structured facts (SQLite + FTS5) and semantic search (LanceDB), with auto-capture, auto-recall, TTL-based decay, **dynamic memory tiering (hot/warm/cold)**, LLM auto-classification, graph-based spreading activation for zero-LLM recall, and an optional credential vault. **Progressive disclosure** lets you inject a lightweight memory index instead of full texts—the agent uses `memory_recall` to fetch only what it needs, saving tokens. One install, one config—then your agent remembers preferences, decisions, and context across conversations.
+Your OpenClaw agent forgets after each session. This plugin gives it **lasting memory**: structured facts (SQLite + FTS5) and semantic search (LanceDB), with auto-capture, auto-recall, TTL-based decay, **dynamic memory tiering (hot/warm/cold)**, LLM auto-classification, graph-based spreading activation for zero-LLM recall, **contacts and organizations** (multilingual PERSON/ORG extraction with **franc** + LLM when graph is on; agent tool `memory_directory`), and an optional credential vault. **Progressive disclosure** lets you inject a lightweight memory index instead of full texts—the agent uses `memory_recall` to fetch only what it needs, saving tokens. One install, one config—then your agent remembers preferences, decisions, and context across conversations.
 
 Part of the [OpenClaw Hybrid Memory](https://github.com/markus-lassfolk/openclaw-hybrid-memory) v3 deployment.
 
@@ -63,7 +63,11 @@ Or with npm directly: `npm i openclaw-hybrid-memory` in your OpenClaw extensions
 
 ## Agent tool names
 
-Every tool this plugin registers uses **underscore** names (for example `memory_store`, `memory_recall`, `memory_record_episode`). LLM providers that validate tool definitions (notably **Anthropic**) require names to match `^[a-zA-Z0-9_-]{1,128}$` — **periods are not allowed**. Do not document or prompt for dotted aliases such as `memory.store`; they are not valid in those APIs.
+Every tool this plugin registers uses **underscore** names (for example `memory_store`, `memory_recall`, `memory_directory`, `memory_record_episode`). LLM providers that validate tool definitions (notably **Anthropic**) require names to match `^[a-zA-Z0-9_-]{1,128}$` — **periods are not allowed**. Do not document or prompt for dotted aliases such as `memory.store`; they are not valid in those APIs.
+
+## Entity layer (contacts, organizations, NER)
+
+When **`graph.enabled`** is true, new facts are enriched asynchronously with **PERSON** and **ORG** mentions (language hint via **franc**, extraction via LLM). Data lives in SQLite (`organizations`, `contacts`, `fact_entity_mentions`, `org_fact_links`). The **`memory_directory`** tool exposes **`list_contacts`** and **`org_view`** for structured lists—use **`memory_recall`** for ranked semantic search. Backfill older facts with **`openclaw hybrid-mem enrich-entities`**. See [GRAPH-MEMORY.md](../../docs/GRAPH-MEMORY.md#person-and-organization-enrichment-entity-layer) and [MULTILINGUAL-SUPPORT.md](../../docs/MULTILINGUAL-SUPPORT.md).
 
 ## Event Bus
 

@@ -139,6 +139,7 @@ describe("memory tools embedding registry wiring", () => {
     );
 
     const names = api.getToolNames();
+    expect(names).toContain("memory_directory");
     expect(names).toContain("memory_record_episode");
     expect(names).toContain("memory_search_episodes");
     expect(names).toContain("memory_add_edict");
@@ -156,6 +157,96 @@ describe("memory tools embedding registry wiring", () => {
     expect(names).not.toContain("memory.remove_edict");
     expect(names).not.toContain("memory.edict_stats");
     expect(names.every((name) => /^[a-zA-Z0-9_-]{1,64}$/.test(name))).toBe(true);
+  });
+
+  it("memory_directory list_contacts and org_view return structured results", async () => {
+    const api = makeMockApi();
+    const embeddings = makeMockEmbeddings();
+    const embeddingRegistry = buildEmbeddingRegistry(embeddings, embeddings.modelName, []);
+    const cfg = makeCfg();
+    const vectorDb = makeMockVectorDb();
+
+    registerMemoryTools(
+      {
+        factsDb,
+        vectorDb,
+        cfg,
+        embeddings,
+        embeddingRegistry,
+        openai: {} as never,
+        wal: null,
+        credentialsDb: null,
+        eventLog: null,
+        lastProgressiveIndexIds: [],
+        currentAgentIdRef: { value: null },
+        pendingLLMWarnings: createPendingLLMWarnings(),
+      },
+      api as never,
+      noopScopeFilter as never,
+      walWrite,
+      walRemove,
+      findSimilarByEmbedding as never,
+    );
+
+    const fact = factsDb.store({
+      text: "Acme Corp hired Jane Doe for the API project; Acme Corp is based in Oslo.",
+      entity: null,
+      key: null,
+      value: null,
+      category: "other",
+      importance: 0.5,
+      source: "test",
+    });
+    factsDb.applyEntityEnrichment(
+      fact.id,
+      [
+        {
+          label: "ORG",
+          surfaceText: "Acme Corp",
+          normalizedSurface: "acme corp",
+          startOffset: 0,
+          endOffset: 9,
+          confidence: 0.9,
+        },
+        {
+          label: "PERSON",
+          surfaceText: "Jane Doe",
+          normalizedSurface: "jane doe",
+          startOffset: 20,
+          endOffset: 28,
+          confidence: 0.85,
+        },
+      ],
+      "eng",
+    );
+
+    const dirTool = api.getTool("memory_directory");
+    expect(dirTool).toBeDefined();
+    const listRes = (await dirTool?.execute("c1", {
+      operation: "list_contacts",
+      name_prefix: "jane",
+      limit: 10,
+    })) as { details?: { count?: number } };
+    expect(listRes.details?.count).toBeGreaterThan(0);
+
+    const orgRes = (await dirTool?.execute("c2", {
+      operation: "org_view",
+      org_name: "acme",
+      limit: 10,
+    })) as { details?: { operation?: string; error?: string } };
+    expect(orgRes.details?.operation).toBe("org_view");
+    expect(orgRes.details?.error).toBeUndefined();
+
+    const badOp = (await dirTool?.execute("c3", {
+      operation: "unknown_op",
+    })) as { details?: { error?: string } };
+    expect(badOp.details?.error).toBe("bad_operation");
+
+    const orgMissing = (await dirTool?.execute("c4", {
+      operation: "org_view",
+      limit: 5,
+    })) as { details?: { error?: string } };
+    expect(orgMissing.details?.error).toBe("org_name_required");
   });
 
   it("passes embeddingRegistry to runRetrievalPipeline", async () => {

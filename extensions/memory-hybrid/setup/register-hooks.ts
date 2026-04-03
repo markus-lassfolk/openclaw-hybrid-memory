@@ -11,6 +11,7 @@ import { getMemoryCategories } from "../config.js";
 import { type LifecycleContext, createLifecycleHooks } from "../lifecycle/hooks.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { runPreConsolidationFlush } from "../services/pre-consolidation-flush.js";
+import { buildPostCompactionRecallSnippet } from "../services/post-compaction-recall.js";
 import { WorkflowTracker } from "../services/workflow-tracker.js";
 import { type MessageLike, sanitizeMessagesForClaude } from "../utils/sanitize-messages.js";
 
@@ -64,6 +65,7 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
       pendingLLMWarnings: ctx.pendingLLMWarnings,
       issueStore: ctx.issueStore,
       recallInFlightRef: ctx.recallInFlightRef,
+      lastAutoRecallPromptRef: ctx.lastAutoRecallPromptRef,
     };
   } catch (err) {
     capturePluginError(err instanceof Error ? err : new Error(String(err)), {
@@ -297,9 +299,25 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
       // Inject the top-N most recent/important facts so the agent's first post-compaction
       // response references the right state.
       //
+      // Issue #957: When auto-recall is on, re-run the recall pipeline against the last user
+      // prompt (see lastAutoRecallPromptRef) so semantic/FTS matches are not lost after compaction.
+      //
       // NOTE: `after_compaction` may not support prependContext in all OpenClaw versions.
       // The return value is a best-effort injection — older runtimes will silently ignore it.
       try {
+        const blocks: string[] = [];
+
+        if (ctx.cfg.autoRecall.enabled) {
+          const lastPrompt = lifecycleContext.lastAutoRecallPromptRef.value;
+          if (typeof lastPrompt === "string" && lastPrompt.trim().length >= 5) {
+            const recallBlock = await buildPostCompactionRecallSnippet(lifecycleContext, api, lastPrompt);
+            if (recallBlock) {
+              blocks.push(recallBlock);
+              api.logger.debug?.("memory-hybrid: after_compaction — injecting post-compaction recall snippet (#957)");
+            }
+          }
+        }
+
         const summaryFacts = ctx.factsDb.list(8);
         const summaryLines: string[] = [];
 
@@ -334,10 +352,14 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
 
         if (summaryLines.length > 0) {
           summaryLines.push("<!-- /memory-hybrid: post-compaction memory summary -->");
+          blocks.push(summaryLines.join("\n"));
+        }
+
+        if (blocks.length > 0) {
           api.logger.debug?.(
-            `memory-hybrid: after_compaction — injecting memory summary (${summaryFacts.length} facts)`,
+            `memory-hybrid: after_compaction — injecting post-compaction context (${summaryFacts.length} summary facts)`,
           );
-          return { prependContext: summaryLines.join("\n") };
+          return { prependContext: blocks.join("\n\n") };
         }
       } catch {
         // Non-fatal — summary injection failure should not disrupt normal operation
