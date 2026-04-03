@@ -155,7 +155,23 @@ export class PersonaStateStore extends BaseSqliteStore {
           now,
           now,
         );
-      return { action: "created", entry: this.getByStateKey(entry.stateKey)! };
+      const created: PersonaStateEntry = {
+        id,
+        stateKey: entry.stateKey,
+        questionKey: entry.questionKey,
+        targetFile: entry.targetFile,
+        insight: entry.insight,
+        normalizedInsight: entry.normalizedInsight,
+        confidence: entry.confidence,
+        durableCount: entry.durableCount,
+        evidence,
+        sourceReflectionIds,
+        firstSeenAt: entry.firstSeenAt,
+        lastSeenAt: entry.lastSeenAt,
+        promotedAt: now,
+        updatedAt: now,
+      };
+      return { action: "created", entry: created };
     }
 
     const mergedEvidence = uniqueStrings([...existing.evidence, ...evidence]);
@@ -207,7 +223,23 @@ export class PersonaStateStore extends BaseSqliteStore {
         entry.stateKey,
       );
 
-    return { action: "updated", entry: this.getByStateKey(entry.stateKey)! };
+    const updated: PersonaStateEntry = {
+      id: existing.id,
+      stateKey: entry.stateKey,
+      questionKey: entry.questionKey,
+      targetFile: entry.targetFile,
+      insight: entry.insight,
+      normalizedInsight: entry.normalizedInsight,
+      confidence: nextConfidence,
+      durableCount: nextDurableCount,
+      evidence: mergedEvidence,
+      sourceReflectionIds: mergedSourceReflectionIds,
+      firstSeenAt: nextFirstSeenAt,
+      lastSeenAt: nextLastSeenAt,
+      promotedAt: existing.promotedAt,
+      updatedAt: now,
+    };
+    return { action: "updated", entry: updated };
   }
 
   private rowToEntry(row: PersonaStateRow): PersonaStateEntry {

@@ -14,6 +14,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 
 import type { ReinforcementContext } from "../backends/facts-db.js";
+import type { MemoryEntry } from "../types/memory.js";
 import type { HybridMemoryConfig, MemoryCategory } from "../config.js";
 import {
   getCronModelConfig,
@@ -24,7 +25,7 @@ import {
 import { VAULT_POINTER_PREFIX, isCredentialLike, tryParseCredentialForVault } from "../services/auto-capture.js";
 import { chatCompleteWithRetry, distillMaxOutputTokens } from "../services/chat.js";
 import { CostFeature } from "../services/cost-feature-labels.js";
-import { classifyMemoryOperation } from "../services/classification.js";
+import { type MemoryClassification, classifyMemoryOperationsBatch } from "../services/classification.js";
 import { type DirectiveExtractResult, runDirectiveExtract } from "../services/directive-extract.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { extractStructuredFields } from "../services/fact-extraction.js";
@@ -885,6 +886,106 @@ export async function runExtractDailyForCli(
   const daysBack = opts.days;
   let totalExtracted = 0;
   let totalStored = 0;
+  const classifyMicroBatch = Math.max(1, Math.min(10, cfg.autoClassify?.batchSize ?? 10));
+  const classifyModelForExtract = cfg.store.classifyModel ?? getDefaultCronModel(getCronModelConfig(cfg), "nano");
+  type PendingExtractClassify = {
+    trimmed: string;
+    extracted: ReturnType<typeof extractStructuredFields>;
+    category: MemoryCategory;
+    storePayload: {
+      text: string;
+      category: MemoryCategory;
+      importance: number;
+      entity: string | null;
+      key: string | null;
+      value: string | null;
+      source: `daily-scan:${string}`;
+      sourceDate: number;
+      tags: string[];
+    };
+    sourceDateSec: number;
+    vecForStore: number[];
+    similarFacts: MemoryEntry[];
+  };
+  const pendingExtractClassify: PendingExtractClassify[] = [];
+
+  async function flushPendingExtractClassify(): Promise<void> {
+    while (pendingExtractClassify.length > 0) {
+      const chunk = pendingExtractClassify.splice(0, classifyMicroBatch);
+      const inputs = chunk.map((c) => ({
+        candidateText: c.trimmed,
+        candidateEntity: c.extracted.entity,
+        candidateKey: c.extracted.key,
+        existingFacts: c.similarFacts,
+      }));
+      const results = await classifyMemoryOperationsBatch(inputs, openai, classifyModelForExtract, sink);
+      for (let j = 0; j < chunk.length; j++) {
+        const c = chunk[j];
+        const classification: MemoryClassification = results[j];
+        const { trimmed, extracted, category, storePayload, sourceDateSec, vecForStore } = c;
+        if (classification.action === "NOOP") continue;
+        if (classification.action === "DELETE" && classification.targetId) {
+          factsDb.supersede(classification.targetId, null);
+          aliasDb?.deleteByFactId(classification.targetId);
+          continue;
+        }
+        if (classification.action === "UPDATE" && classification.targetId) {
+          const oldFact = factsDb.getById(classification.targetId);
+          if (oldFact) {
+            const newEntry = factsDb.store({
+              ...storePayload,
+              entity: extracted.entity ?? oldFact.entity,
+              key: extracted.key ?? oldFact.key,
+              value: extracted.value ?? oldFact.value,
+              validFrom: sourceDateSec,
+              supersedesId: classification.targetId,
+            });
+            factsDb.supersede(classification.targetId, newEntry.id);
+            aliasDb?.deleteByFactId(classification.targetId);
+            try {
+              factsDb.setEmbeddingModel(newEntry.id, embeddings.modelName);
+              if (!(await vectorDb.hasDuplicate(vecForStore))) {
+                await vectorDb.store({
+                  text: trimmed,
+                  vector: vecForStore,
+                  importance: BATCH_STORE_IMPORTANCE,
+                  category,
+                  id: newEntry.id,
+                });
+              }
+            } catch (err) {
+              sink.warn(`memory-hybrid: extract-daily vector store failed: ${err}`);
+              capturePluginError(err as Error, {
+                subsystem: "cli",
+                operation: "runExtractDailyForCli:vector-store-update",
+              });
+            }
+            totalStored++;
+            continue;
+          }
+        }
+        const entry = factsDb.store(storePayload);
+        try {
+          const vector = vecForStore;
+          factsDb.setEmbeddingModel(entry.id, embeddings.modelName);
+          if (!(await vectorDb.hasDuplicate(vector))) {
+            await vectorDb.store({
+              text: trimmed,
+              vector,
+              importance: BATCH_STORE_IMPORTANCE,
+              category,
+              id: entry.id,
+            });
+          }
+        } catch (err) {
+          sink.warn(`memory-hybrid: extract-daily vector store failed: ${err}`);
+          capturePluginError(err as Error, { subsystem: "cli", operation: "runExtractDailyForCli:vector-store-final" });
+        }
+        totalStored++;
+      }
+    }
+  }
+
   for (let d = 0; d < daysBack; d++) {
     const date = new Date();
     date.setDate(date.getDate() - d);
@@ -1017,64 +1118,21 @@ export async function runExtractDailyForCli(
             similarFacts = factsDb.findSimilarForClassification(trimmed, extracted.entity, extracted.key, 3);
           }
           if (similarFacts.length > 0) {
-            try {
-              const classification = await classifyMemoryOperation(
-                trimmed,
-                extracted.entity,
-                extracted.key,
-                similarFacts,
-                openai,
-                cfg.store.classifyModel ?? getDefaultCronModel(getCronModelConfig(cfg), "nano"),
-                sink,
-              );
-              if (classification.action === "NOOP") continue;
-              if (classification.action === "DELETE" && classification.targetId) {
-                factsDb.supersede(classification.targetId, null);
-                aliasDb?.deleteByFactId(classification.targetId);
-                continue;
-              }
-              if (classification.action === "UPDATE" && classification.targetId) {
-                const oldFact = factsDb.getById(classification.targetId);
-                if (oldFact) {
-                  const newEntry = factsDb.store({
-                    ...storePayload,
-                    entity: extracted.entity ?? oldFact.entity,
-                    key: extracted.key ?? oldFact.key,
-                    value: extracted.value ?? oldFact.value,
-                    validFrom: sourceDateSec,
-                    supersedesId: classification.targetId,
-                  });
-                  factsDb.supersede(classification.targetId, newEntry.id);
-                  aliasDb?.deleteByFactId(classification.targetId);
-                  try {
-                    factsDb.setEmbeddingModel(newEntry.id, embeddings.modelName);
-                    if (!(await vectorDb.hasDuplicate(vecForStore))) {
-                      await vectorDb.store({
-                        text: trimmed,
-                        vector: vecForStore,
-                        importance: BATCH_STORE_IMPORTANCE,
-                        category,
-                        id: newEntry.id,
-                      });
-                    }
-                  } catch (err) {
-                    sink.warn(`memory-hybrid: extract-daily vector store failed: ${err}`);
-                    capturePluginError(err as Error, {
-                      subsystem: "cli",
-                      operation: "runExtractDailyForCli:vector-store-update",
-                    });
-                  }
-                  totalStored++;
-                  continue;
-                }
-              }
-            } catch (err) {
-              sink.warn(`memory-hybrid: extract-daily classification failed: ${err}`);
-              capturePluginError(err as Error, { subsystem: "cli", operation: "runExtractDailyForCli:classify" });
-            }
+            pendingExtractClassify.push({
+              trimmed,
+              extracted,
+              category,
+              storePayload,
+              sourceDateSec,
+              vecForStore,
+              similarFacts,
+            });
+            if (pendingExtractClassify.length >= classifyMicroBatch) await flushPendingExtractClassify();
+            continue;
           }
         }
       }
+      await flushPendingExtractClassify();
       const entry = factsDb.store(storePayload);
       try {
         const vector = vecForStore ?? (await embeddings.embed(trimmed));
@@ -1088,6 +1146,8 @@ export async function runExtractDailyForCli(
       }
       totalStored++;
     }
+    await flushPendingExtractClassify();
   }
+  await flushPendingExtractClassify();
   return { totalExtracted, totalStored, daysBack, dryRun: opts.dryRun };
 }

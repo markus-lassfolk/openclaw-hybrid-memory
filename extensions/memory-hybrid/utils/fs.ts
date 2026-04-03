@@ -9,7 +9,7 @@ import { join } from "node:path";
 /**
  * Returns the byte size of a file, or 0 if it cannot be read.
  */
-function getFileSize(filePath: string): number {
+function _getFileSize(filePath: string): number {
   try {
     return statSync(filePath).size;
   } catch {
@@ -33,7 +33,7 @@ export async function getFileSizeAsync(filePath: string): Promise<number> {
  * @param dirPath - Path to the directory
  * @returns Total size in bytes, or 0 if the directory cannot be read
  */
-function getDirSizeSync(dirPath: string): number {
+function _getDirSizeSync(dirPath: string): number {
   try {
     const entries = readdirSync(dirPath, { withFileTypes: true });
     let total = 0;
@@ -46,7 +46,7 @@ function getDirSizeSync(dirPath: string): number {
           // skip unreadable files
         }
       } else if (entry.isDirectory()) {
-        total += getDirSizeSync(fullPath);
+        total += _getDirSizeSync(fullPath);
       }
     }
     return total;
