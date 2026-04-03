@@ -10,6 +10,7 @@ import type { EntityMentionLabel } from "../backends/facts-db/entity-layer.js";
 import { normalizeEntityKey } from "../backends/facts-db/entity-layer.js";
 import { withLLMRetry } from "./chat.js";
 import { capturePluginError } from "./error-reporter.js";
+import { chatCompletionTokenParams } from "./model-capabilities.js";
 
 const MIN_CHARS = 24;
 const MAX_CHARS = 8000;
@@ -143,7 +144,7 @@ ${body}`;
           model,
           messages: [{ role: "user", content: prompt }],
           temperature: 0,
-          max_tokens: 1200,
+          ...chatCompletionTokenParams(model, 1200),
         }),
       { maxRetries: 2 },
     );

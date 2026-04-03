@@ -13,6 +13,7 @@ import { getMemoryCategories, isValidCategory, setMemoryCategories } from "../co
 import { fillPrompt, loadPrompt } from "../utils/prompt-loader.js";
 import { is404Like, is500Like, isConnectionErrorLike, isOllamaOOM } from "./chat.js";
 import { capturePluginError } from "./error-reporter.js";
+import { chatCompletionTokenParams } from "./model-capabilities.js";
 
 /** Minimum "other" facts before category discovery kicks in. */
 const MIN_OTHER_FOR_DISCOVERY = 15;
@@ -133,7 +134,7 @@ async function discoverCategoriesFromOther(
             model: config.model,
             messages: [{ role: "user", content: prompt }],
             temperature: 0,
-            max_tokens: batch.length * 24,
+            ...chatCompletionTokenParams(config.model, batch.length * 24),
           }),
         { maxRetries: 2 },
       );
@@ -241,7 +242,7 @@ Respond with ONLY a JSON array of category strings, one per fact, in order. Exam
           model,
           messages: [{ role: "user", content: prompt }],
           temperature: 0,
-          max_tokens: facts.length * 20,
+          ...chatCompletionTokenParams(model, facts.length * 20),
         }),
       { maxRetries: 2 },
     );

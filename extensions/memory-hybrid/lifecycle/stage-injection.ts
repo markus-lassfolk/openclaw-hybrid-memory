@@ -8,6 +8,7 @@
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import { getCronModelConfig, getDefaultCronModel } from "../config.js";
 import { capturePluginError } from "../services/error-reporter.js";
+import { chatCompletionTokenParams } from "../services/model-capabilities.js";
 import { createRecallSpan, createRecallTimingLogger } from "../services/recall-timing.js";
 import { estimateTokens, estimateTokensForDisplay, formatProgressiveIndexLine } from "../utils/text.js";
 import { withTimeout } from "../utils/timeout.js";
@@ -328,10 +329,11 @@ async function runInjection(
       .join("\n");
     try {
       const { withLLMRetry } = await import("../services/chat.js");
+      const injectionSummarizeModel = summarizeModel ?? getDefaultCronModel(getCronModelConfig(ctx.cfg), "nano");
       const resp = await withLLMRetry(
         () =>
           ctx.openai.chat.completions.create({
-            model: summarizeModel ?? getDefaultCronModel(getCronModelConfig(ctx.cfg), "nano"),
+            model: injectionSummarizeModel,
             messages: [
               {
                 role: "user",
@@ -339,7 +341,7 @@ async function runInjection(
               },
             ],
             temperature: 0,
-            max_tokens: 200,
+            ...chatCompletionTokenParams(injectionSummarizeModel, 200),
           }),
         { maxRetries: 2 },
       );

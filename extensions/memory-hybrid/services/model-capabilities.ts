@@ -26,6 +26,11 @@ function normalizeModelId(model: string): string {
   return slash >= 0 ? s.slice(slash + 1) : s;
 }
 
+/** Lowercase path segments; any segment may carry the OpenAI model id (e.g. `azure-foundry/gpt-5.4-nano`). */
+function modelPathSegments(model: string): string[] {
+  return model.trim().toLowerCase().split("/").filter(Boolean);
+}
+
 type Matcher = (normalized: string) => boolean;
 
 /**
@@ -237,17 +242,27 @@ function getContextWindow(model: string): number {
 
 /**
  * True for models that require `max_completion_tokens` instead of `max_tokens` in the API request
- * (e.g. GPT-5+, o-series). Used by chatComplete so direct client calls (verify, etc.) work with Azure Foundry and others.
+ * (e.g. GPT-5+, GPT-4.1*, o-series). Checks every `/`-segment so `azure-foundry/gpt-5.4-nano` matches.
  */
 export function requiresMaxCompletionTokens(model: string): boolean {
-  const bare = normalizeModelId(model);
-  return /^gpt-5/i.test(bare) || isReasoningModel(model);
+  for (const seg of modelPathSegments(model)) {
+    if (/^o[0-9]+(?:-[a-z]+)?$/.test(seg)) return true;
+    if (/^gpt-5/i.test(seg) || /^gpt-4\.1/i.test(seg)) return true;
+  }
+  return false;
 }
 
 /**
  * True for o1, o3, o4-mini, etc. — reasoning models that reject temperature/top_p and use max_completion_tokens.
  */
 export function isReasoningModel(model: string): boolean {
-  const bare = normalizeModelId(model);
-  return /^o[0-9]+(?:-[a-z]+)?$/.test(bare);
+  return modelPathSegments(model).some((seg) => /^o[0-9]+(?:-[a-z]+)?$/.test(seg));
+}
+
+/** OpenAI-compatible chat.completions token limit field for the given model id. */
+export function chatCompletionTokenParams(
+  model: string,
+  maxTokens: number,
+): { max_completion_tokens: number } | { max_tokens: number } {
+  return requiresMaxCompletionTokens(model) ? { max_completion_tokens: maxTokens } : { max_tokens: maxTokens };
 }

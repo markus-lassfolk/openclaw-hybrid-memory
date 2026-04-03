@@ -382,7 +382,7 @@ export async function chatComplete(opts: {
   }
 
   try {
-    // Newer models (GPT-5+, o-series) require max_completion_tokens and reject max_tokens; reasoning models also reject temperature/top_p.
+    // Newer models (GPT-5+, GPT-4.1*, o-series) require max_completion_tokens and reject max_tokens; reasoning models also reject temperature/top_p.
     const useMaxCompletionTokens = requiresMaxCompletionTokens(model);
     const body: OpenAI.ChatCompletionCreateParamsNonStreaming = {
       model,

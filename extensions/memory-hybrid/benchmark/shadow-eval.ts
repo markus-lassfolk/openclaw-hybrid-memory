@@ -1,5 +1,6 @@
 // @ts-nocheck
 import { getEnv } from "../utils/env-manager.js";
+import { chatCompletionTokenParams } from "../services/model-capabilities.js";
 /**
  * Shadow Evaluation Benchmark Framework
  *
@@ -241,7 +242,7 @@ Respond with a JSON object and nothing else:
     const res = await client.chat.completions.create({
       model,
       messages: [{ role: "user", content: judgePrompt }],
-      max_tokens: 300,
+      ...chatCompletionTokenParams(judgeModel, 300),
       temperature: 0,
     });
 
