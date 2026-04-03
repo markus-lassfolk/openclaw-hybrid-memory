@@ -1207,7 +1207,7 @@ Preserved (P0 — never trimmed, ${result.preserved.length} fact(s)):`);
     );
 
   mem
-    .command("preserve")
+    .command("preserve <id>")
     .description("Force-preserve a fact from tiered trimming. Run without options to show current preserve status.")
     .option("--until <epoch>", "Preserve until epoch seconds, 'never' to clear, or shorthand like '1y' (default: 1y)")
     .option("-t, --tag <tag>", "Add a preserve tag (can be repeated)")
@@ -2824,10 +2824,10 @@ Preserved (P0 — never trimmed, ${result.preserved.length} fact(s)):`);
         console.log(`  Type:       ${proc.procedureType}`);
         console.log(`  Confidence: ${proc.confidence?.toFixed(3) ?? "n/a"}`);
         console.log(
-          `  Success:    ${totalSuccess} (procedure table) + ${versions.reduce((s, v) => s + v.successCount, 0)} (versions) = ${totalSuccess}`,
+          `  Success:    ${proc.successCount} (procedure table) + ${versions.reduce((s, v) => s + v.successCount, 0)} (versions) = ${totalSuccess}`,
         );
         console.log(
-          `  Failure:   ${totalFailure} (procedure table) + ${versions.reduce((s, v) => s + v.failureCount, 0)} (versions) = ${totalFailure}`,
+          `  Failure:   ${proc.failureCount} (procedure table) + ${versions.reduce((s, v) => s + v.failureCount, 0)} (versions) = ${totalFailure}`,
         );
         console.log(`  Rate:      ${(rate * 100).toFixed(1)}%`);
         console.log(`  Outcome:   ${proc.lastOutcome ?? "unknown"}`);
