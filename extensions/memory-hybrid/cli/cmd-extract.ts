@@ -886,7 +886,7 @@ export async function runExtractDailyForCli(
   const daysBack = opts.days;
   let totalExtracted = 0;
   let totalStored = 0;
-  const classifyMicroBatch = Math.min(10, cfg.autoClassify?.batchSize ?? 10);
+  const classifyMicroBatch = Math.max(1, Math.min(10, cfg.autoClassify?.batchSize ?? 10));
   const classifyModelForExtract = cfg.store.classifyModel ?? getDefaultCronModel(getCronModelConfig(cfg), "nano");
   type PendingExtractClassify = {
     trimmed: string;

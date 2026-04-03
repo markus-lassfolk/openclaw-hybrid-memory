@@ -73,6 +73,31 @@ function buildClassifyPromptParts(
   return { prompt };
 }
 
+/** Prompt body for one candidate inside {@link classifyMemoryOperationsBatch} — omits single-line response rules from memory-classify.txt. */
+function buildClassifyPromptPartsForBatch(
+  candidateText: string,
+  candidateEntity: string | null,
+  candidateKey: string | null,
+  existingFacts: MemoryEntry[],
+): { prompt: string } {
+  const existingLines = existingFacts
+    .slice(0, 5)
+    .map(
+      (f, i) =>
+        `${i + 1}. [id=${f.id}] ${f.category}${f.entity ? ` | entity: ${f.entity}` : ""}${f.key ? ` | key: ${f.key}` : ""}: ${f.text.slice(0, 300)}`,
+    )
+    .join("\n");
+
+  const template = loadPrompt("memory-classify-candidate-block");
+  const prompt = fillPrompt(template, {
+    NEW_FACT: candidateText.slice(0, 500),
+    ENTITY_LINE: candidateEntity ? `\nEntity: ${candidateEntity}` : "",
+    KEY_LINE: candidateKey ? `\nKey: ${candidateKey}` : "",
+    EXISTING_FACTS: existingLines,
+  });
+  return { prompt };
+}
+
 export async function classifyMemoryOperation(
   candidateText: string,
   candidateEntity: string | null,
@@ -172,7 +197,7 @@ export async function classifyMemoryOperationsBatch(
   }
 
   const blocks = items.map((it, idx) => {
-    const { prompt } = buildClassifyPromptParts(
+    const { prompt } = buildClassifyPromptPartsForBatch(
       it.candidateText,
       it.candidateEntity,
       it.candidateKey,

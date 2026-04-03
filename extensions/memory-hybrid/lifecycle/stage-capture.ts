@@ -20,7 +20,11 @@ import {
   getAutoCaptureExtractionMethod,
   resolveCaptureProvenance,
 } from "../services/capture-provenance.js";
-import { type MemoryClassification, classifyMemoryOperationsBatch } from "../services/classification.js";
+import {
+  type MemoryClassification,
+  classifyMemoryOperation,
+  classifyMemoryOperationsBatch,
+} from "../services/classification.js";
 import type { EpisodeOutcome, MemoryEntry } from "../types/memory.js";
 import { extractCredentialsFromToolCalls } from "../services/credential-scanner.js";
 import { capturePluginError } from "../services/error-reporter.js";
@@ -266,7 +270,7 @@ async function runCapture(
       if (toCapture.length > 0) {
         let stored = 0;
         const classifyModel = ctx.cfg.store.classifyModel ?? getDefaultCronModel(getCronModelConfig(ctx.cfg), "nano");
-        const classifyMicroBatch = Math.min(10, ctx.cfg.autoClassify?.batchSize ?? 10);
+        const classifyMicroBatch = Math.max(1, Math.min(10, ctx.cfg.autoClassify?.batchSize ?? 10));
 
         type CapturePrepared = {
           candidate: (typeof toCapture)[number];
@@ -338,10 +342,20 @@ async function runCapture(
           if (ctx.cfg.store.classifyBeforeWrite) {
             if (similarFacts.length > 0) {
               try {
-                const classification = classificationByIndex.get(pi);
+                let classification = classificationByIndex.get(pi);
                 if (!classification) {
-                  api.logger.warn?.(`memory-hybrid: auto-capture missing batch classification for index ${pi}`);
-                  continue;
+                  api.logger.warn?.(
+                    `memory-hybrid: auto-capture missing batch classification for index ${pi}; falling back to single-call classify`,
+                  );
+                  classification = await classifyMemoryOperation(
+                    textToStore,
+                    extracted.entity,
+                    extracted.key,
+                    similarFacts,
+                    ctx.openai,
+                    classifyModel,
+                    api.logger,
+                  );
                 }
                 if (classification.action === "NOOP") continue;
                 if (classification.action === "DELETE" && classification.targetId) {
