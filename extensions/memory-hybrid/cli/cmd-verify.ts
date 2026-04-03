@@ -28,7 +28,6 @@ import { resolveSecretRef } from "../config/parsers/core.js";
 import { chatComplete } from "../services/chat.js";
 import { CostFeature } from "../services/cost-feature-labels.js";
 import {
-  AZURE_OPENAI_API_VERSION,
   type EmbeddingConfig,
   GOOGLE_EMBED_DEFAULT_DIMENSIONS,
   GOOGLE_EMBED_DEFAULT_MODEL,
@@ -38,8 +37,8 @@ import {
 import { capturePluginError } from "../services/error-reporter.js";
 import { hasOAuthProfiles } from "../utils/auth.js";
 import { formatOpenAiEmbeddingDisplayLabel } from "../services/embeddings/shared.js";
+import { applyAzureFoundryVerifyDirectClientAuth } from "./verify-llm-azure-auth.js";
 import { relativeTime } from "./shared.js";
-import { createApimGatewayFetch, isAzureApiManagementGatewayUrl } from "../utils/apim-gateway-fetch.js";
 import { PLUGIN_ID, getRestartPendingPath } from "../utils/constants.js";
 import { inferModelProviderPrefix } from "../utils/model-provider-family.js";
 import {
@@ -672,7 +671,7 @@ export async function runVerifyForCli(
     if (provider === "ollama") return "ollama";
     // Azure Foundry: use AZURE_OPENAI_API_KEY when llm.providers key is not set.
     if (
-      (provider === "azure-foundry" || provider === "azure-foundry-responses") &&
+      (provider === "azure-foundry" || provider === "azure-foundry-responses" || provider === "azure-foundry-direct") &&
       !resolveKey(prov?.[provider]?.apiKey)
     ) {
       const fromEnv = getEnv("AZURE_OPENAI_API_KEY")?.trim();
@@ -709,19 +708,7 @@ export async function runVerifyForCli(
       baseURL,
     };
     if (provider === "anthropic") opts.defaultHeaders = { "anthropic-version": "2023-06-01" };
-    // Azure API Management rejects Bearer auth; apply same api-key + custom fetch as embeddings factory.
-    if (
-      (provider === "azure-foundry" || provider === "azure-foundry-responses") &&
-      isAzureApiManagementGatewayUrl(baseURL)
-    ) {
-      opts.defaultHeaders = { ...(opts.defaultHeaders ?? {}), "api-key": apiKey };
-      opts.fetch = createApimGatewayFetch(apiKey);
-      const openAiV1Compat = /\/openai\/v1(?:\/|$)/i.test(baseURL);
-      // APIM deployment-style paths need api-version (passed through to backend Azure OpenAI)
-      if (!openAiV1Compat) {
-        opts.defaultQuery = { "api-version": AZURE_OPENAI_API_VERSION };
-      }
-    }
+    applyAzureFoundryVerifyDirectClientAuth(opts, provider, apiKey);
     return new OpenAI(opts);
   }
   // One row per model: configured models + reference models (Opus, GPT-5.4, Codex, o3, etc.)
@@ -829,7 +816,9 @@ export async function runVerifyForCli(
               if (
                 apiError &&
                 /\b400\b/i.test(apiError) &&
-                (provider === "azure-foundry" || provider === "azure-foundry-responses") &&
+                (provider === "azure-foundry" ||
+                  provider === "azure-foundry-responses" ||
+                  provider === "azure-foundry-direct") &&
                 apiError.length < 160
               ) {
                 apiError = `${apiError} — HTTP 400 with a minimal body often means the gateway rejected the route or request shape (wrong APIM product path vs resource URL, or policy). See docs/TROUBLESHOOTING.md (#949).`;

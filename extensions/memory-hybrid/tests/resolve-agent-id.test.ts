@@ -68,6 +68,18 @@ describe("resolveSessionKeyFromHookEvent", () => {
   it("prefers api.context.sessionId over api.context.sessionKey", () => {
     expect(resolveSessionKeyFromHookEvent({}, { context: { sessionId: "sid", sessionKey: "sk" } })).toBe("sid");
   });
+
+  it("reads event.context.sessionId when session and api.context are absent (newer OpenClaw payloads)", () => {
+    expect(resolveSessionKeyFromHookEvent({ context: { sessionId: "agent:nova:chan:1" } }, {})).toBe(
+      "agent:nova:chan:1",
+    );
+  });
+
+  it("prefers event.session.id over event.context.sessionId", () => {
+    expect(
+      resolveSessionKeyFromHookEvent({ session: { id: "from-session" }, context: { sessionId: "from-context" } }, {}),
+    ).toBe("from-session");
+  });
 });
 
 describe("resolveAgentIdFromHookEvent", () => {
@@ -102,6 +114,10 @@ describe("resolveAgentIdFromHookEvent", () => {
         mockApi(undefined, { sessionId: undefined }),
       ),
     ).toBe("ralph");
+  });
+
+  it("derives agent id from event.context.sessionId when only payload context carries the key", () => {
+    expect(resolveAgentIdFromHookEvent({ context: { sessionId: "agent:ralph:cron:task-1" } }, mockApi())).toBe("ralph");
   });
 
   it("derives agent id from api.context.sessionKey when that is all we have", () => {

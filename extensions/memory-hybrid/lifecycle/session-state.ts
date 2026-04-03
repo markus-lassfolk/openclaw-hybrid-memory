@@ -17,13 +17,23 @@ export type SessionKeyHookApi = { context?: { sessionId?: string; sessionKey?: s
  * {@link createSessionState}'s `resolveSessionKey` (exported for agent id parsing and tests).
  */
 export function resolveSessionKeyFromHookEvent(event: unknown, api?: SessionKeyHookApi): string | null {
-  const ev = event as { session?: Record<string, unknown>; sessionKey?: string };
+  const ev = event as {
+    session?: Record<string, unknown>;
+    sessionKey?: string;
+    context?: Record<string, unknown>;
+  };
+  const payloadCtx = ev?.context;
   const sessionId =
     ev?.session?.id ??
     ev?.session?.sessionId ??
     ev?.session?.key ??
     ev?.session?.label ??
     ev?.sessionKey ??
+    (payloadCtx?.sessionId as string | undefined) ??
+    (payloadCtx?.sessionKey as string | undefined) ??
+    (payloadCtx?.key as string | undefined) ??
+    (payloadCtx?.id as string | undefined) ??
+    (payloadCtx?.label as string | undefined) ??
     api?.context?.sessionId ??
     api?.context?.sessionKey ??
     null;
