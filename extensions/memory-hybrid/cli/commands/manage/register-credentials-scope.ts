@@ -4,11 +4,7 @@
  */
 
 import { type Chainable, relativeTime, withExit } from "../../shared.js";
-import type {
-  CredentialsAuditResult,
-  CredentialsPruneResult,
-  MigrateToVaultResult,
-} from "../../types.js";
+import type { CredentialsAuditResult, CredentialsPruneResult, MigrateToVaultResult } from "../../types.js";
 import type { ManageBindings } from "./bindings.js";
 
 export function registerManageCredentialsAndScope(mem: Chainable, b: ManageBindings): void {
