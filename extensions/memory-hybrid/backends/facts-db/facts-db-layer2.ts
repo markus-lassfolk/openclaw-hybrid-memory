@@ -2,7 +2,7 @@
  * FactsDB — layer 2: bulk reads, maintenance, stats, procedures.
  */
 
-import { DatabaseSync } from "node:sqlite";
+import type { DatabaseSync } from "node:sqlite";
 
 import type { MemoryEntry, ProcedureEntry, ScopeFilter } from "../../types/memory.js";
 import {

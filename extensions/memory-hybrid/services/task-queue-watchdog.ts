@@ -182,14 +182,20 @@ export async function ensureTaskQueueIdlePlaceholder(
 ): Promise<boolean> {
   await mkdir(stateDir, { recursive: true });
   const currentPath = join(stateDir, "current.json");
-  if (existsSync(currentPath)) return false;
   const payload: TaskQueueItem = {
     status: "idle",
     producer: TASK_QUEUE_IDLE_PRODUCER,
     details:
       "Placeholder: no autonomous queue task is active. The factory overwrites this file when work is dispatched.",
   };
-  await writeJsonFile(currentPath, payload);
+  const body = JSON.stringify(payload, null, 2);
+  try {
+    await writeFile(currentPath, body, { encoding: "utf-8", flag: "wx" });
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code === "EEXIST") return false;
+    throw err;
+  }
   logger?.info?.(`memory-hybrid: wrote task-queue idle placeholder at ${currentPath}`);
   return true;
 }

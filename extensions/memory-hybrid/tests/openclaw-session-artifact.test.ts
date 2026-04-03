@@ -1,5 +1,5 @@
 // @ts-nocheck
-import { mkdir, writeFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -25,7 +25,7 @@ describe("findOpenClawSessionJsonlForKey", () => {
   let openclawHome: string;
 
   beforeEach(async () => {
-    tmpDir = join(tmpdir(), `oc-sess-${Date.now()}`);
+    tmpDir = await mkdtemp(join(tmpdir(), "oc-sess-"));
     openclawHome = join(tmpDir, ".openclaw");
     await mkdir(join(openclawHome, "agents", "forge", "sessions"), { recursive: true });
   });
@@ -34,9 +34,10 @@ describe("findOpenClawSessionJsonlForKey", () => {
     await rm(tmpDir, { recursive: true, force: true });
   });
 
-  it("finds session file by full session key basename", async () => {
+  it("finds session file by colon-sanitized basename (portable filenames)", async () => {
     const key = "agent:forge:subagent:f3d14066-09ea-492f-a3f3-7ae2fe6c9b0a";
-    const path = join(openclawHome, "agents", "forge", "sessions", `${key}.jsonl`);
+    const sanitized = key.replace(/:/g, "_");
+    const path = join(openclawHome, "agents", "forge", "sessions", `${sanitized}.jsonl`);
     await writeFile(path, "{}\n", "utf-8");
     const found = await findOpenClawSessionJsonlForKey(key, openclawHome);
     expect(found).toBe(path);

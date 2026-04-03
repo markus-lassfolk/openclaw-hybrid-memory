@@ -30,6 +30,22 @@ export async function runTaskQueueStatusForCli(stateDir?: string): Promise<void>
     return;
   }
   const current = await readJsonFile<TaskQueueItem>(currentPath);
+  if (current == null) {
+    console.log(
+      JSON.stringify(
+        {
+          ok: true,
+          path: currentPath,
+          available: false,
+          reason: "malformed",
+          hint: "current.json exists but is not valid JSON or is empty — repair or replace the file.",
+        },
+        null,
+        2,
+      ),
+    );
+    return;
+  }
   console.log(
     JSON.stringify(
       {

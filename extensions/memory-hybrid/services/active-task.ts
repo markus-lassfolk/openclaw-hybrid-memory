@@ -1027,6 +1027,7 @@ export async function reconcileActiveTaskInProgressSessions(
   const newActive: ActiveTaskEntry[] = [];
   const newCompleted = [...taskFile.completed];
   const reconciledLabels: string[] = [];
+  const toFlush: ActiveTaskEntry[] = [];
 
   for (const task of taskFile.active) {
     if (task.status !== "In progress") {
@@ -1053,13 +1054,7 @@ export async function reconcileActiveTaskInProgressSessions(
     };
     newCompleted.push(completedEntry);
     reconciledLabels.push(task.label);
-    if (!opts.dryRun && opts.flushOnComplete && opts.memoryDir) {
-      try {
-        await flushCompletedTaskToMemory(completedEntry, opts.memoryDir);
-      } catch {
-        // Non-fatal
-      }
-    }
+    toFlush.push(completedEntry);
   }
 
   if (reconciledLabels.length === 0) {
@@ -1070,6 +1065,17 @@ export async function reconcileActiveTaskInProgressSessions(
   }
 
   await writeActiveTaskFile(filePath, newActive, newCompleted);
+
+  if (opts.flushOnComplete && opts.memoryDir) {
+    for (const entry of toFlush) {
+      try {
+        await flushCompletedTaskToMemory(entry, opts.memoryDir);
+      } catch {
+        // Non-fatal
+      }
+    }
+  }
+
   return { reconciledLabels, wrote: true };
 }
 
