@@ -261,7 +261,7 @@
     "store.classifyModel": {
       "label": "Classification model",
       "placeholder": "e.g. flash, sonnet",
-      "help": "Chat model for memory operation classification (when unset, resolved at runtime)"
+      "help": "Model for ADD/UPDATE/DELETE/NOOP classification when classifyBeforeWrite is on. When unset, uses the nano-tier default; set explicitly if that tier points at a chatty or non-JSON-steady model (e.g. some MiniMax endpoints) to avoid extra latency from batch-parse fallback"
     },
     "credentials.enabled": {
       "label": "Credentials",
@@ -812,7 +812,7 @@
           },
           "classifyModel": {
             "type": "string",
-            "description": "Model for classification (when unset, resolved dynamically at runtime)"
+            "description": "Model for classify-before-write. When unset, uses nano-tier default; set explicitly if that model often wraps JSON in prose or markdown so batch classification stays on the fast path"
           }
         }
       },

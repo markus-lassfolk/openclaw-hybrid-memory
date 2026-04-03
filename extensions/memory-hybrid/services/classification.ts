@@ -149,6 +149,126 @@ export type ClassifyMemoryOperationInput = {
   existingFacts: MemoryEntry[];
 };
 
+/**
+ * Remove common model "thinking" wrappers that appear before JSON (#1007).
+ */
+function stripThinkingWrapperBlocks(s: string): string {
+  return s
+    .replace(/<redacted_thinking>[\s\S]*?<\/redacted_thinking>/gi, "")
+    .replace(/<thinking>[\s\S]*?<\/thinking>/gi, "")
+    .trim();
+}
+
+/**
+ * Prefer JSON-looking content inside ``` / ```json fences when the model wraps output (#1007).
+ */
+function preferMarkdownJsonFenceContent(s: string): string {
+  const re = /```(?:json)?\s*\n?([\s\S]*?)```/gi;
+  const chunks: string[] = [];
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(s)) !== null) {
+    chunks.push(m[1].trim());
+  }
+  if (chunks.length === 0) return s;
+  const arrayChunk = chunks.find((c) => c.startsWith("["));
+  if (arrayChunk) return arrayChunk;
+  const objectChunk = chunks.find((c) => c.startsWith("{"));
+  if (objectChunk) return objectChunk;
+  return chunks[chunks.length - 1] ?? s;
+}
+
+/**
+ * Extract the first top-level JSON array substring with bracket matching (respects strings).
+ * Greedy `\\[[\\s\\S]*\\]` breaks when `]` appears inside string values or reasoning trails.
+ */
+function extractTopLevelJsonArraySubstring(s: string): string | null {
+  const start = s.indexOf("[");
+  if (start < 0) return null;
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let i = start; i < s.length; i++) {
+    const ch = s[i]!;
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (ch === "\\") escaped = true;
+      else if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') {
+      inString = true;
+      continue;
+    }
+    if (ch === "[") depth++;
+    else if (ch === "]") {
+      depth--;
+      if (depth === 0) return s.slice(start, i + 1);
+    }
+  }
+  return null;
+}
+
+const BATCH_OBJECT_ARRAY_KEYS = ["classifications", "results", "items", "data"] as const;
+
+function tryParseBatchClassifyAsObjectWithArray(s: string): unknown[] | null {
+  const t = s.trim();
+  if (!t.startsWith("{")) return null;
+  try {
+    const obj = JSON.parse(t) as unknown;
+    if (!obj || typeof obj !== "object" || Array.isArray(obj)) return null;
+    const rec = obj as Record<string, unknown>;
+    for (const k of BATCH_OBJECT_ARRAY_KEYS) {
+      const v = rec[k];
+      if (Array.isArray(v)) return v;
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+/**
+ * Parse model output for {@link classifyMemoryOperationsBatch}. Exported for tests (#1007).
+ */
+export function parseBatchClassifyResponseContent(raw: string): unknown {
+  let s = raw.trim();
+  s = stripThinkingWrapperBlocks(s);
+  s = preferMarkdownJsonFenceContent(s);
+  s = s.trim();
+
+  const tryArrayText = (text: string): unknown => {
+    const t = text.trim();
+    const fromBalanced = extractTopLevelJsonArraySubstring(t);
+    if (fromBalanced) return JSON.parse(fromBalanced);
+    if (t.startsWith("[")) return JSON.parse(t);
+    const legacy = t.match(/\[[\s\S]*\]/);
+    if (legacy) return JSON.parse(legacy[0]);
+    throw new Error("no JSON array in batch classify response");
+  };
+
+  // Whole string is a JSON array
+  if (s.startsWith("[")) {
+    try {
+      return tryArrayText(s);
+    } catch {
+      /* fall through */
+    }
+  }
+
+  // Whole string is a JSON object wrapping the array (some JSON-mode APIs)
+  const fromObject = tryParseBatchClassifyAsObjectWithArray(s);
+  if (fromObject) return fromObject;
+
+  // Prose or noise before/after — locate balanced array in the remainder
+  try {
+    return tryArrayText(s);
+  } catch {
+    /* fall through */
+  }
+
+  throw new Error("no JSON array in batch classify response");
+}
+
 function parseBatchClassificationRow(row: unknown, existingFacts: MemoryEntry[]): MemoryClassification {
   if (!row || typeof row !== "object") {
     return { action: "ADD", reason: "invalid batch row" };
@@ -227,9 +347,7 @@ For UPDATE or DELETE, targetId must be one of the existing fact ids listed under
       { maxRetries: 2 },
     );
     const raw = (resp.choices[0]?.message?.content ?? "").trim();
-    const jsonMatch = raw.match(/\[[\s\S]*\]/);
-    if (!jsonMatch) throw new Error("no JSON array in batch classify response");
-    const parsed: unknown = JSON.parse(jsonMatch[0]);
+    const parsed: unknown = parseBatchClassifyResponseContent(raw);
     if (!Array.isArray(parsed) || parsed.length !== items.length) {
       throw new Error(
         `batch classify expected ${items.length} results, got ${Array.isArray(parsed) ? parsed.length : "non-array"}`,
