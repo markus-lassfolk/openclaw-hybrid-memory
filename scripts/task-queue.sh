@@ -56,23 +56,36 @@ cmd_status() {
   OPENCLAW_HOME="$OPENCLAW_HOME" "$OPENCLAW_CMD" hybrid-mem task-queue-status --state-dir "$STATE_DIR"
 }
 
-# Exit 0 = busy (live worker), 1 = free to claim current.json
+# Exit 0 = busy (do not claim current.json), 1 = free
+# Mirrors task-queue watchdog semantics: EPERM from kill(pid,0) means the process exists.
+# Non–idle-placeholder entries without a usable PID are treated as busy so we do not clobber factory state.
 _queue_is_busy() {
   # shellcheck disable=SC2016
   STATE_DIR="$STATE_DIR" node -e '
     const fs = require("fs");
-    const dir = process.env.STATE_DIR;
-    const p = require("path").join(dir, "current.json");
-    if (!fs.existsSync(p)) process.exit(1);
+    const path = require("path");
+    const IDLE = "openclaw-hybrid-memory";
+    const p = path.join(process.env.STATE_DIR, "current.json");
+    const free = () => process.exit(1);
+    const busy = () => process.exit(0);
+    if (!fs.existsSync(p)) free();
     let j;
     try { j = JSON.parse(fs.readFileSync(p, "utf8")); }
-    catch { process.exit(1); }
-    if (!j || typeof j !== "object") process.exit(1);
-    if (j.status === "idle" && j.producer === "openclaw-hybrid-memory") process.exit(1);
+    catch { free(); }
+    if (!j || typeof j !== "object") free();
+    if (j.status === "idle" && j.producer === IDLE) free();
     if (j.pid != null && Number.isInteger(j.pid) && j.pid > 0) {
-      try { process.kill(j.pid, 0); process.exit(0); } catch (e) { process.exit(1); }
+      try {
+        process.kill(j.pid, 0);
+        busy();
+      } catch (e) {
+        const code = e && e.code;
+        if (code === "EPERM") busy();
+        if (code === "ESRCH") free();
+        free();
+      }
     }
-    process.exit(1);
+    busy();
   '
 }
 
@@ -101,34 +114,74 @@ _write_current_running() {
   '
 }
 
+# Archives current.json only if it still matches this run (producer + child PID).
+# History filenames include ms + random hex; writes use exclusive create to avoid collisions.
 _archive_and_idle() {
   local exit_code="$1"
+  local expected_pid="$2"
   # shellcheck disable=SC2016
-  STATE_DIR="$STATE_DIR" EXIT_CODE="$exit_code" RUN_PRODUCER="$RUN_PRODUCER" node -e '
+  if ! STATE_DIR="$STATE_DIR" EXIT_CODE="$exit_code" RUN_PRODUCER="$RUN_PRODUCER" EXPECTED_PID="$expected_pid" node -e '
     const fs = require("fs");
     const path = require("path");
+    const crypto = require("crypto");
     const dir = process.env.STATE_DIR;
     const cur = path.join(dir, "current.json");
     const histDir = path.join(dir, "history");
+    const expectedPid = parseInt(process.env.EXPECTED_PID, 10);
+    const producer = process.env.RUN_PRODUCER;
     if (!fs.existsSync(cur)) process.exit(0);
     let prev;
     try { prev = JSON.parse(fs.readFileSync(cur, "utf8")); }
     catch { fs.unlinkSync(cur); process.exit(0); }
+    if (prev.producer !== producer || prev.pid !== expectedPid) {
+      process.stderr.write(
+        "[task-queue.sh] skip archive: current.json was replaced (expected producer " +
+          JSON.stringify(producer) +
+          " pid " +
+          String(expectedPid) +
+          ")\n",
+      );
+      process.exit(0);
+    }
     const code = parseInt(process.env.EXIT_CODE, 10);
     const ok = Number.isFinite(code) && code === 0;
     const suffix = ok ? "completed" : "failed";
-    const ts = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
-    const out = {
-      ...prev,
-      status: ok ? "completed" : "failed",
-      completed: new Date().toISOString(),
-      exit_code: Number.isFinite(code) ? code : 1,
-    };
+    const body = JSON.stringify(
+      {
+        ...prev,
+        status: ok ? "completed" : "failed",
+        completed: new Date().toISOString(),
+        exit_code: Number.isFinite(code) ? code : 1,
+      },
+      null,
+      2,
+    );
     fs.mkdirSync(histDir, { recursive: true });
-    fs.writeFileSync(path.join(histDir, `${ts}-${suffix}.json`), JSON.stringify(out, null, 2), "utf8");
+    let wrote = false;
+    for (let attempt = 0; attempt < 32 && !wrote; attempt++) {
+      const ts = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+      const ms = Date.now();
+      const rand = crypto.randomBytes(4).toString("hex");
+      const name = `${ts}-${ms}-${rand}-${suffix}.json`;
+      const fp = path.join(histDir, name);
+      try {
+        fs.writeFileSync(fp, body, { encoding: "utf8", flag: "wx" });
+        wrote = true;
+      } catch (e) {
+        if ((/** @type {NodeJS.ErrnoException} */ (e)).code !== "EEXIST") throw e;
+      }
+    }
+    if (!wrote) {
+      process.stderr.write("[task-queue.sh] could not write unique history file after 32 attempts\n");
+      process.exit(2);
+    }
     fs.unlinkSync(cur);
-  '
-  OPENCLAW_HOME="$OPENCLAW_HOME" "$OPENCLAW_CMD" hybrid-mem task-queue-touch --state-dir "$STATE_DIR" >/dev/null || true
+  '; then
+    log "run: archive step failed (see stderr above)"
+  fi
+  if ! OPENCLAW_HOME="$OPENCLAW_HOME" "$OPENCLAW_CMD" hybrid-mem task-queue-touch --state-dir "$STATE_DIR" >/dev/null; then
+    log "run: task-queue-touch after archive failed (non-fatal; preserving wrapped command exit code)"
+  fi
 }
 
 cmd_run() {
@@ -136,10 +189,20 @@ cmd_run() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --title)
+        if [[ $# -lt 2 || "$2" == "--" ]]; then
+          log "run: --title requires a value"
+          usage
+          exit 1
+        fi
         TITLE="$2"
         shift 2
         ;;
       --issue)
+        if [[ $# -lt 2 || "$2" == "--" ]]; then
+          log "run: --issue requires a value"
+          usage
+          exit 1
+        fi
         ISSUE="$2"
         shift 2
         ;;
@@ -163,7 +226,7 @@ _cmd_run_inner() {
   shift 2
   OPENCLAW_HOME="$OPENCLAW_HOME" "$OPENCLAW_CMD" hybrid-mem task-queue-touch --state-dir "$STATE_DIR" >/dev/null || true
   if _queue_is_busy; then
-    log "run: queue busy (another task holds current.json with a live PID)"
+    log "run: queue busy (current.json is not an idle placeholder or another worker holds it)"
     exit 1
   fi
   "$@" &
@@ -171,7 +234,7 @@ _cmd_run_inner() {
   _write_current_running "$TITLE" "$ISSUE" "$child"
   local ec=0
   wait "$child" || ec=$?
-  _archive_and_idle "$ec"
+  _archive_and_idle "$ec" "$child"
   exit "$ec"
 }
 

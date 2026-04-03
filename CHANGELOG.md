@@ -12,6 +12,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - **`scripts/task-queue.sh`:** Task queue runner for cron/autonomous jobs — `touch` / `status` via `openclaw hybrid-mem`, optional **`run`** with `flock`, PID in `current.json`, history archive, idle restore ([#1000](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/1000)).
 
+### Fixed
+
+- **`scripts/task-queue.sh`:** Hardening from PR review ([#1001](https://github.com/markus-lassfolk/openclaw-hybrid-memory/pull/1001)): unique history filenames with exclusive create; archive only when `current.json` still matches this run (`producer` + child PID); treat missing PID and `EPERM` on liveness like the watchdog; validate `--title` / `--issue`; do not let post-run `task-queue-touch` override the wrapped command’s exit code.
+
 ---
 
 ## [2026.4.32] - 2026-04-03
