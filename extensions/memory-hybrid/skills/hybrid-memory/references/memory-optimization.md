@@ -36,8 +36,9 @@ These are **general** priorities; exact benefit depends on workload.
 | **`nightlyCycle` / `dream-cycle`** | Prune → consolidate event log → reflect chain | Layer-1 episodic consolidation depends on this being on |
 | **`consolidate` / `compact` / `scope promote`** | Merge duplicates, tier DB, promote scoped facts | Drift, bloat, session facts stuck in session scope |
 | **`ingest.paths`** + **`ingest-files`** | Indexes `skills/**`, `TOOLS.md`, `AGENTS.md` as facts | Lower recall of workspace “how we work” docs |
+| **`graph.enabled`** (NER + contacts) | Store-time PERSON/ORG extraction (**franc** + LLM); **`memory_directory`** for org/people views | No structured contact/org lists without it; use **`enrich-entities`** to backfill old facts |
 
-For deep detail, see the repo: [CONFIGURATION.md](https://github.com/markus-lassfolk/openclaw-hybrid-memory/blob/main/docs/CONFIGURATION.md), [MAINTENANCE-TASKS-MATRIX.md](https://github.com/markus-lassfolk/openclaw-hybrid-memory/blob/main/docs/MAINTENANCE-TASKS-MATRIX.md).
+For deep detail, see the repo: [CONFIGURATION.md](https://github.com/markus-lassfolk/openclaw-hybrid-memory/blob/main/docs/CONFIGURATION.md), [GRAPH-MEMORY.md](https://github.com/markus-lassfolk/openclaw-hybrid-memory/blob/main/docs/GRAPH-MEMORY.md), [MAINTENANCE-TASKS-MATRIX.md](https://github.com/markus-lassfolk/openclaw-hybrid-memory/blob/main/docs/MAINTENANCE-TASKS-MATRIX.md).
 
 ---
 
@@ -59,44 +60,46 @@ If the user prefers **explicit** steps or `run-all` is too heavy, use this **can
 2. `openclaw hybrid-mem distill --days 3` (adjust window as needed; `--all` for big backfill)
 3. `openclaw hybrid-mem extract-daily` (as configured)
 4. `openclaw hybrid-mem resolve-contradictions`
+5. `openclaw hybrid-mem enrich-entities --limit 200` (backfill PERSON/ORG rows for facts still missing them; uses LLM when graph is on)
 
 ### B. Self-correction (after distill if you want fresh incidents)
 
-5. `openclaw hybrid-mem self-correction-run` (when `selfCorrection` is enabled)
+6. `openclaw hybrid-mem self-correction-run` (when `selfCorrection` is enabled)
 
 ### C. Dream cycle (optional; requires `nightlyCycle.enabled`)
 
-6. `openclaw hybrid-mem dream-cycle`
+7. `openclaw hybrid-mem dream-cycle`
 
 ### D. Weekly-style (procedures, directives, reinforcement, auto-skills)
 
-7. `openclaw hybrid-mem extract-procedures --days 7`
-8. `openclaw hybrid-mem extract-directives --days 7`
-9. `openclaw hybrid-mem extract-reinforcement --days 7`
-10. `openclaw hybrid-mem generate-auto-skills`
+8. `openclaw hybrid-mem extract-procedures --days 7`
+9. `openclaw hybrid-mem extract-directives --days 7`
+10. `openclaw hybrid-mem extract-reinforcement --days 7`
+11. `openclaw hybrid-mem generate-auto-skills`
 
 ### E. Reflection + proposals (weekly cron mirrors)
 
-11. `openclaw hybrid-mem reflect --verbose`
-12. `openclaw hybrid-mem reflect-rules --verbose`
-13. `openclaw hybrid-mem reflect-meta --verbose`
-14. `openclaw hybrid-mem generate-proposals` (if persona proposals matter)
+12. `openclaw hybrid-mem reflect --verbose`
+13. `openclaw hybrid-mem reflect-rules --verbose`
+14. `openclaw hybrid-mem reflect-meta --verbose`
+15. `openclaw hybrid-mem generate-proposals` (if persona proposals matter)
 
 ### F. Deep storage maintenance (weekly cron mirror)
 
-15. `openclaw hybrid-mem compact`
-16. `openclaw hybrid-mem vectordb-optimize` (when you use vector DB maintenance)
-17. `openclaw hybrid-mem scope promote` (promote important session-scoped facts)
+16. `openclaw hybrid-mem compact`
+17. `openclaw hybrid-mem vectordb-optimize` (when you use vector DB maintenance)
+18. `openclaw hybrid-mem scope promote` (promote important session-scoped facts)
 
 ### G. Monthly-style consolidation
 
-18. `openclaw hybrid-mem consolidate --threshold 0.92`
-19. `openclaw hybrid-mem build-languages`
-20. `openclaw hybrid-mem backfill-decay`
+19. `openclaw hybrid-mem consolidate --threshold 0.92`
+20. `openclaw hybrid-mem build-languages`
+21. `openclaw hybrid-mem backfill-decay`
+22. `openclaw hybrid-mem enrich-entities --limit 500` (larger backfill pass; optional if nightly already ran)
 
 ### H. Workspace corpus (optional but high value for recall of docs)
 
-21. `openclaw hybrid-mem ingest-files` (uses `ingest.paths`—default includes `skills/**/*.md`, `TOOLS.md`, `AGENTS.md`)
+23. `openclaw hybrid-mem ingest-files` (uses `ingest.paths`—default includes `skills/**/*.md`, `TOOLS.md`, `AGENTS.md`)
 
 **Always end with:** `openclaw hybrid-mem verify` if anything failed or config changed.
 
@@ -108,11 +111,11 @@ If **`openclaw hybrid-mem install`** / **`verify --fix`** has been run, jobs in 
 
 | When | Bundle |
 | --- | --- |
-| Daily 02:00 | prune → distill → extract-daily → resolve-contradictions |
+| Daily 02:00 | prune → distill → extract-daily → resolve-contradictions → enrich-entities |
 | Daily 02:30 | self-correction-run |
 | Daily 02:45 | dream-cycle (gated) |
 | Weekly | reflection, procedure pipeline, compact/scope, proposals |
-| Monthly | consolidate, languages, backfill-decay |
+| Monthly | consolidate, languages, backfill-decay, enrich-entities |
 
 Exact names/schedules: [CLI-REFERENCE.md — Maintenance cron jobs](https://github.com/markus-lassfolk/openclaw-hybrid-memory/blob/main/docs/CLI-REFERENCE.md#maintenance-cron-jobs).
 

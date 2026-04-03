@@ -1148,7 +1148,7 @@
         "properties": {
           "enabled": {
             "type": "boolean",
-            "description": "Enable graph-based spreading activation for zero-LLM recall"
+            "description": "Enable graph-based spreading activation for zero-LLM recall; when true, also runs multilingual PERSON/ORG enrichment (franc + LLM) after memory_store and powers memory_directory contact/org views"
           },
           "autoLink": {
             "type": "boolean",

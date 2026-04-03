@@ -143,6 +143,11 @@ export type ManageContext = {
   }) => Promise<
     { ok: true; path: string; topLanguages: string[]; languagesAdded: number } | { ok: false; error: string }
   >;
+  runEntityEnrichment: (opts: { limit: number; dryRun: boolean; model?: string }) => Promise<{
+    pending: number;
+    processed: number;
+    factsEnriched: number;
+  }>;
   runResolveContradictions: () => Promise<{
     autoResolved: Array<{ contradictionId: string; factIdNew: string; factIdOld: string }>;
     ambiguous: Array<{ contradictionId: string; factIdNew: string; factIdOld: string }>;
@@ -287,6 +292,7 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
     runDistill,
     runExtractProcedures,
     runBuildLanguageKeywords,
+    runEntityEnrichment,
     runExport,
     listCommands,
     tieringEnabled,
@@ -2372,6 +2378,39 @@ Preserved (P0 — never trimmed, ${result.preserved.length} fact(s)):`);
         } else {
           console.error(`Error building language keywords: ${res.error}`);
           process.exitCode = 1;
+        }
+      }),
+    );
+
+  mem
+    .command("enrich-entities")
+    .description(
+      "Backfill PERSON/ORG extraction for facts missing entity mentions (franc language hint + LLM; same pipeline as store-time graph enrichment)",
+    )
+    .option("--limit <n>", "Max facts to process (default 200)", "200")
+    .option("--model <m>", "LLM model (default: cron nano tier)")
+    .option("--dry-run", "Only report how many facts need enrichment")
+    .action(
+      withExit(async (opts?: { limit?: string; model?: string; dryRun?: boolean }) => {
+        const limit = Number.parseInt(opts?.limit ?? "200", 10);
+        const dryRun = !!opts?.dryRun;
+        const model = opts?.model;
+        let res;
+        try {
+          res = await runEntityEnrichment({ limit, dryRun, model });
+        } catch (err) {
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+            subsystem: "cli",
+            operation: "enrich-entities",
+          });
+          throw err;
+        }
+        if (dryRun) {
+          console.log(`Entity enrichment (dry-run): ${res.pending} facts pending (no API calls).`);
+        } else {
+          console.log(
+            `Entity enrichment: processed ${res.processed} facts, enriched ${res.factsEnriched} (batch had ${res.pending} candidates).`,
+          );
         }
       }),
     );

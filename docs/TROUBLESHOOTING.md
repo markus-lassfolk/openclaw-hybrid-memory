@@ -24,7 +24,7 @@ openclaw hybrid-mem stats         # show fact/vector counts
 
 **Cause:** A tool in the request uses a **name** that is not allowed by the provider schema. Dotted names (for example `memory.record_episode`) are invalid for Anthropic even if they look like a namespace.
 
-**Fix:** Ensure every tool registered for the session uses only **letters, digits, underscores, and hyphens** — matching this plugin’s public names (`memory_store`, `memory_recall`, `memory_record_episode`, …). This plugin does not register dotted tool names. If you see this after a custom fork or merged tool list, search for `name:` values in tool registration that still contain `.`.
+**Fix:** Ensure every tool registered for the session uses only **letters, digits, underscores, and hyphens** — matching this plugin’s public names (`memory_store`, `memory_recall`, `memory_directory`, `memory_record_episode`, …). This plugin does not register dotted tool names. If you see this after a custom fork or merged tool list, search for `name:` values in tool registration that still contain `.`.
 
 **Note:** “Sanitize on retry” in logs refers to **message** / tool-*call* repair (for example pairing `tool_use` with `tool_result`), not to rewriting tool **definitions** in the request.
 

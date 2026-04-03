@@ -24,6 +24,7 @@ import { runDreamCycle, type DreamCycleResult } from "../services/dream-cycle.js
 import { runVerificationCycle, type VerificationCycleResult } from "../services/continuous-verifier.js";
 import { runClassifyForCli } from "../services/auto-classifier.js";
 import { runBuildLanguageKeywords } from "../services/language-keywords-build.js";
+import { runEntityEnrichmentForCli } from "../services/entity-enrichment-cli.js";
 import { runExport } from "../services/export-memory.js";
 import { mergeResults } from "../services/merge-results.js";
 import { parseSourceDate } from "../utils/dates.js";
@@ -95,6 +96,7 @@ Commands by category:
     reflect-meta         Extract meta-patterns
     classify             Reclassify facts with LLM
     build-languages      Build language keywords for self-correction
+    enrich-entities      Backfill PERSON/ORG extraction for facts missing NER rows
 
   Dedup & consolidation
     find-duplicates      Find near-duplicate facts (--threshold)
@@ -168,6 +170,7 @@ const HYBRID_MEM_CLI_COMMANDS = [
   "hybrid-mem store",
   "hybrid-mem classify",
   "hybrid-mem build-languages",
+  "hybrid-mem enrich-entities",
   "hybrid-mem self-correction-extract",
   "hybrid-mem self-correction-run",
   "hybrid-mem analyze-feedback-phrases",
@@ -240,6 +243,11 @@ interface CliContextServices {
   }) => Promise<
     { ok: true; path: string; topLanguages: string[]; languagesAdded: number } | { ok: false; error: string }
   >;
+  runEntityEnrichment: (opts: {
+    limit: number;
+    dryRun: boolean;
+    model?: string;
+  }) => Promise<{ pending: number; processed: number; factsEnriched: number }>;
   runExport: (opts: {
     outputPath: string;
     excludeCredentials?: boolean;
@@ -409,6 +417,7 @@ function buildCliContextServices(ctx: HybridMemCliRegistrationContext, api: Claw
         model: opts.model ?? cfg.autoClassify.model ?? resolveReflectionModelAndFallbacks(cfg, "default").defaultModel,
         dryRun: opts.dryRun,
       }),
+    runEntityEnrichment: (opts) => runEntityEnrichmentForCli(factsDb, openai, cfg, opts),
     runExport: (opts) =>
       Promise.resolve(
         runExport(factsDb, opts, {
@@ -840,6 +849,7 @@ function createHybridMemCliContext(
     },
     runCompaction: services.runCompaction,
     runBuildLanguageKeywords: services.runBuildLanguageKeywords,
+    runEntityEnrichment: services.runEntityEnrichment,
     runSelfCorrectionExtract: (opts) => Promise.resolve(handlers.runSelfCorrectionExtractForCli(handlerCtx, opts)),
     runSelfCorrectionRun: (opts) => handlers.runSelfCorrectionRunForCli(handlerCtx, opts),
     runAnalyzeFeedbackPhrases: (opts) => handlers.runAnalyzeFeedbackPhrasesForCli(handlerCtx, opts),

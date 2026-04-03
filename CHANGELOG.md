@@ -8,6 +8,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- **Contacts, organizations, and multilingual NER ([#985](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/985)–[#987](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/987)):** When `graph.enabled`, store-time **franc** + LLM extraction of **PERSON**/**ORG** spans into SQLite; **`memory_directory`** tool (`list_contacts`, `org_view`); CLI **`openclaw hybrid-mem enrich-entities`** for backfill; nightly/monthly cron steps updated. See [GRAPH-MEMORY.md](docs/GRAPH-MEMORY.md), [MULTILINGUAL-SUPPORT.md](docs/MULTILINGUAL-SUPPORT.md).
+
 ### Fixed
 
 - **Agent id for cron / embedded hooks ([#990](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/990)):** When structured `agentId` fields are missing, derive the agent from OpenClaw session keys matching `agent:<id>:…` (e.g. `agent:ralph:cron:…`). Session resolution now considers `api.context.sessionKey` as well as `sessionId`. Clearer debug logs when detection still falls back to the orchestrator.

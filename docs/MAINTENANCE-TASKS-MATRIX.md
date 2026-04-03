@@ -67,14 +67,14 @@ The plugin **ensures** these job definitions exist in `~/.openclaw/cron/jobs.jso
 
 | Job name                      | Schedule           | Steps (what the job message tells the agent to run)                                          |
 | ----------------------------- | ------------------ | -------------------------------------------------------------------------------------------- |
-| **nightly-memory-sweep**      | Daily 02:00        | 1. prune 2. distill --days 3 3. extract-daily 4. resolve-contradictions                      |
+| **nightly-memory-sweep**      | Daily 02:00        | 1. prune 2. distill --days 3 3. extract-daily 4. resolve-contradictions 5. enrich-entities   |
 | **self-correction-analysis**  | Daily 02:30        | self-correction-run. Exit 0 if selfCorrection disabled.                                      |
 | **nightly-dream-cycle**       | Daily 02:45        | dream-cycle (prune → consolidate → reflect). Exit 0 if nightlyCycle.enabled false.           |
 | **weekly-reflection**         | Sun 03:00          | reflect → reflect-rules → reflect-meta. Exit 0 if reflection.enabled false.                  |
 | **weekly-extract-procedures** | Sun 04:00          | extract-procedures → extract-directives → extract-reinforcement → generate-auto-skills       |
 | **weekly-deep-maintenance**   | Sat 04:00          | compact → scope promote                                                                      |
 | **weekly-persona-proposals**  | Sun 10:00          | generate-proposals (and notify if pending). Exit 0 if personaProposals disabled.             |
-| **monthly-consolidation**     | 1st of month 05:00 | consolidate --threshold 0.92 → build-languages → backfill-decay                              |
+| **monthly-consolidation**     | 1st of month 05:00 | consolidate --threshold 0.92 → build-languages → backfill-decay → enrich-entities              |
 | **sensor-sweep**              | Every 4h           | sensor-sweep --tier 1 → sensor-sweep --tier 2 (no LLM). Exit 0 if sensorSweep.enabled false. |
 
 ### In `run-all` (`openclaw hybrid-mem run-all`)

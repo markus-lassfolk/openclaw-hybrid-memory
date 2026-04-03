@@ -1,6 +1,7 @@
 import type { DatabaseSync } from "node:sqlite";
 import { createTransaction } from "../../utils/sqlite-transaction.js";
 import { normalizedHash } from "../../utils/tags.js";
+import { migrateEntityLayerTables } from "../facts-db/entity-layer.js";
 /**
  * Procedure feedback loop — version tracking and failure logging (#782).
  * procedure_versions: per-version success/failure counts and avoidance notes.
@@ -1101,6 +1102,9 @@ export function runFactsMigrations(db: DatabaseSync): void {
 
   // Token budget trim: index-backed ordering (Issue #838)
   migrateTrimBudgetIndex(db);
+
+  // Contacts, organizations, NER mentions (#985–#987)
+  migrateEntityLayerTables(db);
 }
 
 /** Supports SQL ORDER BY for trimToBudget without full in-memory sort of all facts (Issue #838). */

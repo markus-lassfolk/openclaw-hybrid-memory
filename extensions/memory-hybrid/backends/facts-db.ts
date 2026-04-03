@@ -63,6 +63,18 @@ import {
   migrateScanCursorsTable as migrateScanCursorsTableHelper,
   updateScanCursor as updateScanCursorHelper,
 } from "./facts-db/scan-cursors.js";
+import {
+  replaceFactEntityMentions,
+  getOrganizationByKeyOrName as lookupOrganizationByKeyOrName,
+  listContactsForOrg as entityLayerListContactsForOrg,
+  listContactsByNamePrefix as entityLayerListContactsByNamePrefix,
+  listFactIdsForOrg as entityLayerListFactIdsForOrg,
+  listFactsNeedingEnrichment as entityLayerListFactsNeedingEnrichment,
+  factHasEntityMentions as entityLayerFactHasMentions,
+  type ContactRow,
+  type OrganizationRow,
+} from "./facts-db/entity-layer.js";
+import type { ExtractedMention } from "../services/entity-enrichment.js";
 export {
   MEMORY_LINK_TYPES,
   type MemoryLinkType,
@@ -5440,5 +5452,55 @@ export class FactsDB extends BaseSqliteStore {
     } catch {
       return 0;
     }
+  }
+
+  // --- Entity layer: NER mentions, organizations, contacts (#985–#987) ---
+
+  /** Replace stored NER rows for a fact (typically after LLM extraction). */
+  applyEntityEnrichment(factId: string, mentions: ExtractedMention[], detectedLang: string): void {
+    replaceFactEntityMentions(
+      this.liveDb,
+      factId,
+      mentions.map((m) => ({
+        label: m.label,
+        surfaceText: m.surfaceText,
+        normalizedSurface: m.normalizedSurface,
+        startOffset: m.startOffset,
+        endOffset: m.endOffset,
+        confidence: m.confidence,
+        detectedLang,
+        source: "llm",
+      })),
+    );
+  }
+
+  /** Resolve an organization by canonical key or fuzzy display name. */
+  lookupOrganization(query: string): OrganizationRow | null {
+    return lookupOrganizationByKeyOrName(this.liveDb, query);
+  }
+
+  /** Contacts with primary_org_id = org. */
+  listContactsForOrganization(orgId: string, limit: number): ContactRow[] {
+    return entityLayerListContactsForOrg(this.liveDb, orgId, limit);
+  }
+
+  /** List contacts by optional name prefix (empty = recent alphabetical cap). */
+  listContactsByNamePrefix(prefix: string, limit: number): ContactRow[] {
+    return entityLayerListContactsByNamePrefix(this.liveDb, prefix, limit);
+  }
+
+  /** Fact ids linked to an org via NER/org_fact_links. */
+  listFactIdsLinkedToOrg(orgId: string, limit: number): string[] {
+    return entityLayerListFactIdsForOrg(this.liveDb, orgId, limit);
+  }
+
+  /** Facts with no mention rows yet (for batch enrichment). */
+  listFactIdsNeedingEntityEnrichment(limit: number, minTextLen = 24): string[] {
+    return entityLayerListFactsNeedingEnrichment(this.liveDb, limit, minTextLen);
+  }
+
+  /** Whether this fact already has at least one stored entity mention. */
+  factHasEntityMentions(factId: string): boolean {
+    return entityLayerFactHasMentions(this.liveDb, factId);
   }
 }

@@ -58,6 +58,7 @@ import type { VariantGenerationQueue } from "../services/contextual-variants.js"
 import { getSessionLogFileSuffix, UUID_REGEX } from "../utils/constants.js";
 import { embedCallWithTimeoutAndRetry } from "../utils/embed-call.js";
 import { formatNarrativeRange, recallNarrativeSummaries } from "../services/narrative-recall.js";
+import { extractEntityMentionsWithLlm } from "../services/entity-enrichment.js";
 
 export type BoundWalWriteFn = (
   operation: "store" | "update",
@@ -211,7 +212,7 @@ async function storeRegistryEmbeddings({
  * Register all memory-related tools with the plugin API.
  *
  * This includes: memory_recall, memory_recall_procedures, memory_store,
- * memory_promote, and memory_forget.
+ * memory_directory, memory_promote, and memory_forget.
  */
 export function registerMemoryTools(ctx: MemoryToolsContext, api: ClawdbotPluginApi): void;
 export function registerMemoryTools(
@@ -1985,6 +1986,20 @@ export function registerMemoryTools(
             }
           }
 
+          // NER + contact/org layer (#985–#987): async enrichment after graph auto-link; uses franc + LLM.
+          if (cfg.graph.enabled) {
+            const enrichModel = getDefaultCronModel(getCronModelConfig(cfg), "nano");
+            void extractEntityMentionsWithLlm(textToStore, openai, enrichModel)
+              .then(({ mentions, detectedLang }) => {
+                if (mentions.length > 0) {
+                  factsDb.applyEntityEnrichment(entry.id, mentions, detectedLang);
+                }
+              })
+              .catch((err) => {
+                api.logger.warn?.(`memory-hybrid: entity enrichment failed: ${err}`);
+              });
+          }
+
           const totalLinked = autoLinked + entityAutoLinked;
           const verbosity = cfg.verbosity ?? "normal";
           let storedMsg: string;
@@ -2068,6 +2083,112 @@ export function registerMemoryTools(
       },
     },
     { name: "memory_store" },
+  );
+
+  api.registerTool(
+    {
+      name: "memory_directory",
+      label: "Memory directory",
+      description:
+        "Structured contacts and organizations (from NER + contact layer). Use list_contacts to browse people; org_view returns fact ids and people for an organization — stable views, not a single ranked memory_recall.",
+      parameters: Type.Object({
+        operation: stringEnum(["list_contacts", "org_view"] as const),
+        name_prefix: Type.Optional(
+          Type.String({ description: "For list_contacts: filter by display name prefix (optional)." }),
+        ),
+        org_name: Type.Optional(
+          Type.String({
+            description: "For org_view: organization name or key (resolves canonical org).",
+          }),
+        ),
+        limit: Type.Optional(
+          Type.Number({
+            description: "Max rows (default 40, max 100).",
+          }),
+        ),
+      }),
+      async execute(_toolCallId: string, params: Record<string, unknown>) {
+        try {
+          const operation = params.operation as string;
+          const limitRaw = params.limit;
+          const cap = Math.min(100, Math.max(1, typeof limitRaw === "number" ? Math.floor(limitRaw) : 40));
+          if (operation === "list_contacts") {
+            const prefix = typeof params.name_prefix === "string" ? params.name_prefix : "";
+            const rows = factsDb.listContactsByNamePrefix(prefix, cap);
+            const lines = rows.map(
+              (c) =>
+                `- ${c.displayName} (id=${c.id})${c.primaryOrgId ? ` [org: ${c.primaryOrgId}]` : ""}${c.email ? ` email=${c.email}` : ""}`,
+            );
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: rows.length === 0 ? "No contacts found." : `Contacts (${rows.length}):\n${lines.join("\n")}`,
+                },
+              ],
+              details: { operation: "list_contacts", count: rows.length, contacts: rows },
+            };
+          }
+          if (operation === "org_view") {
+            const orgName = typeof params.org_name === "string" ? params.org_name.trim() : "";
+            if (!orgName) {
+              return {
+                content: [{ type: "text", text: "org_view requires org_name." }],
+                details: { error: "org_name_required" },
+              };
+            }
+            const org = factsDb.lookupOrganization(orgName);
+            if (!org) {
+              return {
+                content: [
+                  {
+                    type: "text",
+                    text: `No organization matched "${orgName}". Try the exact name from a fact or a shorter key.`,
+                  },
+                ],
+                details: { error: "org_not_found", query: orgName },
+              };
+            }
+            const people = factsDb.listContactsForOrganization(org.id, cap);
+            const factIds = factsDb.listFactIdsLinkedToOrg(org.id, cap);
+            const factSummaries = factIds.map((id) => {
+              const f = factsDb.getById(id);
+              return f
+                ? { id: f.id, text: f.text.slice(0, 240), category: f.category }
+                : { id, text: "(missing)", category: "?" };
+            });
+            const peopleLines = people.map((p) => `- ${p.displayName} (contact id=${p.id})`);
+            const factLines = factSummaries.map((f) => `- [${f.id}] ${f.text}${f.text.length >= 240 ? "…" : ""}`);
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: `Organization: ${org.displayName} (id=${org.id}, key=${org.canonicalKey})\n\nPeople (${people.length}):\n${people.length ? peopleLines.join("\n") : "(none)"}\n\nFacts linked (${factSummaries.length}):\n${factSummaries.length ? factLines.join("\n") : "(none)"}`,
+                },
+              ],
+              details: {
+                operation: "org_view",
+                organization: org,
+                people,
+                facts: factSummaries,
+              },
+            };
+          }
+          return {
+            content: [{ type: "text", text: `Unknown operation: ${operation}` }],
+            details: { error: "bad_operation" },
+          };
+        } catch (err) {
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+            subsystem: "memory",
+            operation: "memory-directory",
+            phase: "runtime",
+          });
+          throw err;
+        }
+      },
+    },
+    { name: "memory_directory" },
   );
 
   api.registerTool(

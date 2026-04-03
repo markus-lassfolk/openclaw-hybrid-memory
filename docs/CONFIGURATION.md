@@ -81,7 +81,7 @@ openclaw hybrid-mem config set verbosity silent
 
 ## Agent tool names
 
-Plugin tools are registered with **underscore** identifiers (`memory_store`, `memory_recall`, `credential_list`, …). Providers such as **Anthropic** reject tool names that contain `.` or other characters outside `^[a-zA-Z0-9_-]{1,128}$`. When writing prompts, issue reports, or automation, refer to the underscore names only.
+Plugin tools are registered with **underscore** identifiers (`memory_store`, `memory_recall`, `memory_directory`, `credential_list`, …). Providers such as **Anthropic** reject tool names that contain `.` or other characters outside `^[a-zA-Z0-9_-]{1,128}$`. When writing prompts, issue reports, or automation, refer to the underscore names only.
 
 ## Auto-capture and auto-recall
 
