@@ -1,8 +1,9 @@
 /**
  * Public barrel for the SQLite facts backend (Issue #954).
- * Implementation remains in `../facts-db.ts`; extracted helpers live in sibling modules under this folder.
+ * `FactsDB` lives in `../facts-db.ts`; focused helpers live in sibling modules (e.g. `stats.ts`).
  */
 export { FactsDB, type ContradictionRecord } from "../facts-db.js";
+export { DASHBOARD_TIER_FILTER, DECAY_CLASS_FILTER } from "./stats.js";
 export {
   MEMORY_LINK_TYPES,
   type MemoryLinkType,

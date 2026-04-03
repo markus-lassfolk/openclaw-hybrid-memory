@@ -2,53 +2,53 @@
  * SQLite + FTS5 backend for structured facts.
  */
 
-import { DatabaseSync, type SQLInputValue } from "node:sqlite";
+import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
 import { dirname } from "node:path";
-import { randomUUID } from "node:crypto";
+import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 
-import type { MemoryCategory, DecayClass } from "../config.js";
+import type { DecayClass, MemoryCategory } from "../config.js";
 import { DECAY_CLASSES, TTL_DEFAULTS } from "../config.js";
 import { isValidCategory } from "../config.js";
+import type { ExtractedMention } from "../services/entity-enrichment.js";
+import { capturePluginError } from "../services/error-reporter.js";
 import type {
-  MemoryEntry,
-  ProcedureEntry,
-  SearchResult,
-  MemoryTier,
-  ScopeFilter,
   Episode,
   EpisodeOutcome,
+  MemoryEntry,
+  MemoryTier,
+  ProcedureEntry,
+  ScopeFilter,
+  SearchResult,
 } from "../types/memory.js";
-import { normalizedHash, serializeTags, parseTags } from "../utils/tags.js";
-import { calculateExpiry, classifyDecay } from "../utils/decay.js";
 import { applyConsolidationRetrievalControls } from "../utils/consolidation-controls.js";
-import { computeDynamicSalience } from "../utils/salience.js";
-import { estimateTokensForDisplay } from "../utils/text.js";
-import { capturePluginError } from "../services/error-reporter.js";
 import { INTERACTIVE_FTS_MAX_OR_TERMS } from "../utils/constants.js";
+import { calculateExpiry, classifyDecay } from "../utils/decay.js";
 import { getLanguageKeywordsFilePath } from "../utils/language-keywords.js";
-import { createTransaction } from "../utils/sqlite-transaction.js";
+import { computeDynamicSalience } from "../utils/salience.js";
 import { tryRestrictSqliteDbFileMode } from "../utils/sqlite-file-perms.js";
-import { runFactsMigrations } from "./migrations/facts-migrations.js";
-import { searchFts } from "../services/fts-search.js";
+import { createTransaction } from "../utils/sqlite-transaction.js";
+import { normalizedHash, parseTags, serializeTags } from "../utils/tags.js";
+import { estimateTokensForDisplay } from "../utils/text.js";
 import { BaseSqliteStore } from "./base-sqlite-store.js";
 import { SupersededTextsCache } from "./facts-db/cache-manager.js";
 import { verifyFts5Support } from "./facts-db/db-connection.js";
+import {
+  type ContactRow,
+  type OrganizationRow,
+  listContactsByNamePrefix as entityLayerListContactsByNamePrefix,
+  listContactsForOrg as entityLayerListContactsForOrg,
+  listFactIdsForOrg as entityLayerListFactIdsForOrg,
+  listFactsNeedingEnrichment as entityLayerListFactsNeedingEnrichment,
+  getOrganizationByKeyOrName as lookupOrganizationByKeyOrName,
+  replaceFactEntityMentions,
+} from "./facts-db/entity-layer.js";
 import {
   buildClassificationFtsOrClause,
   buildFactsSearchFtsOrClause,
   fetchSupersededFactTextsLower,
 } from "./facts-db/fact-queries.js";
 import { sanitizeFts5QueryForFacts } from "./facts-db/fts-text.js";
-import {
-  batchGetReinforcementEvents as batchGetReinforcementEventsHelper,
-  boostConfidence as boostConfidenceHelper,
-  calculateDiversityScore as calculateDiversityScoreHelper,
-  getReinforcementEvents as getReinforcementEventsHelper,
-  reinforceFact as reinforceFactHelper,
-  reinforceProcedure as reinforceProcedureHelper,
-  computeDiversityFromEvents as computeDiversityFromEventsHelper,
-} from "./facts-db/reinforcement.js";
 import {
   createLink as createLinkHelper,
   createOrStrengthenRelatedLink as createOrStrengthenRelatedLinkHelper,
@@ -59,31 +59,37 @@ import {
   strengthenRelatedLinksBatch as strengthenRelatedLinksBatchHelper,
 } from "./facts-db/links.js";
 import {
+  batchGetReinforcementEvents as batchGetReinforcementEventsHelper,
+  boostConfidence as boostConfidenceHelper,
+  calculateDiversityScore as calculateDiversityScoreHelper,
+  computeDiversityFromEvents as computeDiversityFromEventsHelper,
+  getReinforcementEvents as getReinforcementEventsHelper,
+  reinforceFact as reinforceFactHelper,
+  reinforceProcedure as reinforceProcedureHelper,
+} from "./facts-db/reinforcement.js";
+import {
   getScanCursor as getScanCursorHelper,
   migrateScanCursorsTable as migrateScanCursorsTableHelper,
   updateScanCursor as updateScanCursorHelper,
 } from "./facts-db/scan-cursors.js";
 import {
-  replaceFactEntityMentions,
-  getOrganizationByKeyOrName as lookupOrganizationByKeyOrName,
-  listContactsForOrg as entityLayerListContactsForOrg,
-  listContactsByNamePrefix as entityLayerListContactsByNamePrefix,
-  listFactIdsForOrg as entityLayerListFactIdsForOrg,
-  listFactsNeedingEnrichment as entityLayerListFactsNeedingEnrichment,
-  type ContactRow,
-  type OrganizationRow,
-} from "./facts-db/entity-layer.js";
-import type { ExtractedMention } from "../services/entity-enrichment.js";
+  DASHBOARD_TIER_FILTER,
+  DECAY_CLASS_FILTER,
+  listForDashboard as listForDashboardImpl,
+  statsBreakdownByCategory as statsBreakdownByCategoryImpl,
+  statsBreakdownByDecayClass as statsBreakdownByDecayClassImpl,
+  statsBreakdownBySource as statsBreakdownBySourceImpl,
+  statsBreakdownByTier as statsBreakdownByTierImpl,
+  statsBreakdown as statsBreakdownImpl,
+  uniqueMemoryCategories as uniqueMemoryCategoriesImpl,
+} from "./facts-db/stats.js";
+import { runFactsMigrations } from "./migrations/facts-migrations.js";
 export {
   MEMORY_LINK_TYPES,
   type MemoryLinkType,
   type ReinforcementContext,
 } from "./facts-db/types.js";
 import type { MemoryLinkType, ReinforcementContext, ReinforcementEvent } from "./facts-db/types.js";
-
-/** Allowlisted tier values for dynamic SQL fragments in list()/dashboard filters (#842). */
-const DASHBOARD_TIER_FILTER = new Set<string>(["warm", "hot", "cold"]);
-const DECAY_CLASS_FILTER = new Set<string>(DECAY_CLASSES);
 
 /** A single contradiction record (from the contradictions table). */
 export interface ContradictionRecord {
@@ -2949,67 +2955,27 @@ export class FactsDB extends BaseSqliteStore {
   }
 
   statsBreakdown(): Record<string, number> {
-    const rows = this.liveDb
-      .prepare("SELECT decay_class, COUNT(*) as cnt FROM facts GROUP BY decay_class")
-      .all() as Array<{ decay_class: string; cnt: number }>;
-
-    const stats: Record<string, number> = {};
-    for (const row of rows) {
-      stats[row.decay_class || "unknown"] = row.cnt;
-    }
-    return stats;
+    return statsBreakdownImpl(this.liveDb);
   }
 
   /** Tier breakdown (hot/warm/cold) for non-superseded facts. */
   statsBreakdownByTier(): Record<string, number> {
-    const rows = this.liveDb
-      .prepare(
-        `SELECT COALESCE(tier, 'warm') as tier, COUNT(*) as cnt FROM facts WHERE superseded_at IS NULL GROUP BY tier`,
-      )
-      .all() as Array<{ tier: string; cnt: number }>;
-    const stats: Record<string, number> = { hot: 0, warm: 0, cold: 0 };
-    for (const row of rows) {
-      stats[row.tier || "warm"] = row.cnt;
-    }
-    return stats;
+    return statsBreakdownByTierImpl(this.liveDb);
   }
 
   /** Source breakdown (conversation, cli, distillation, reflection, etc.) for non-superseded facts. */
   statsBreakdownBySource(): Record<string, number> {
-    const rows = this.liveDb
-      .prepare("SELECT source, COUNT(*) as cnt FROM facts WHERE superseded_at IS NULL GROUP BY source")
-      .all() as Array<{ source: string; cnt: number }>;
-    const stats: Record<string, number> = {};
-    for (const row of rows) {
-      stats[row.source || "unknown"] = row.cnt;
-    }
-    return stats;
+    return statsBreakdownBySourceImpl(this.liveDb);
   }
 
   /** Category breakdown for non-superseded facts (for rich stats). */
   statsBreakdownByCategory(): Record<string, number> {
-    const rows = this.liveDb
-      .prepare("SELECT category, COUNT(*) as cnt FROM facts WHERE superseded_at IS NULL GROUP BY category")
-      .all() as Array<{ category: string; cnt: number }>;
-    const stats: Record<string, number> = {};
-    for (const row of rows) {
-      stats[row.category || "other"] = row.cnt;
-    }
-    return stats;
+    return statsBreakdownByCategoryImpl(this.liveDb);
   }
 
   /** Decay class breakdown for non-superseded facts (for dashboard stats). */
   statsBreakdownByDecayClass(): Record<string, number> {
-    const rows = this.liveDb
-      .prepare(
-        `SELECT COALESCE(decay_class, 'stable') as decay_class, COUNT(*) as cnt FROM facts WHERE superseded_at IS NULL GROUP BY decay_class`,
-      )
-      .all() as Array<{ decay_class: string; cnt: number }>;
-    const stats: Record<string, number> = {};
-    for (const row of rows) {
-      stats[row.decay_class || "stable"] = row.cnt;
-    }
-    return stats;
+    return statsBreakdownByDecayClassImpl(this.liveDb);
   }
 
   /**
@@ -3025,120 +2991,12 @@ export class FactsDB extends BaseSqliteStore {
     entity?: string;
     search?: string;
   }): { facts: Array<Record<string, unknown>>; total: number } {
-    const nowSec = Math.floor(Date.now() / 1000);
-    if (
-      (opts.category != null && opts.category !== "" && !isValidCategory(opts.category)) ||
-      (opts.tier != null && opts.tier !== "" && !DASHBOARD_TIER_FILTER.has(opts.tier)) ||
-      (opts.decayClass != null && opts.decayClass !== "" && !DECAY_CLASS_FILTER.has(opts.decayClass))
-    ) {
-      return { facts: [], total: 0 };
-    }
-
-    let where = "superseded_at IS NULL AND (expires_at IS NULL OR expires_at > ?)";
-    const params: SQLInputValue[] = [nowSec];
-
-    if (opts.category && isValidCategory(opts.category)) {
-      where += " AND category = ?";
-      params.push(opts.category);
-    }
-    if (opts.tier && DASHBOARD_TIER_FILTER.has(opts.tier)) {
-      where += " AND COALESCE(tier, 'warm') = ?";
-      params.push(opts.tier);
-    }
-    if (opts.decayClass && DECAY_CLASS_FILTER.has(opts.decayClass)) {
-      where += " AND COALESCE(decay_class, 'stable') = ?";
-      params.push(opts.decayClass);
-    }
-    if (opts.entity) {
-      where += " AND entity = ?";
-      params.push(opts.entity);
-    }
-
-    const toDashboardRow = (row: Record<string, unknown>) => ({
-      id: row.id,
-      text: row.text,
-      category: row.category,
-      importance: row.importance,
-      entity: row.entity ?? null,
-      key: row.key ?? null,
-      value: row.value ?? null,
-      tags:
-        typeof row.tags === "string"
-          ? (row.tags || "")
-              .split(",")
-              .map((t: string) => t.trim())
-              .filter(Boolean)
-              .join(",")
-          : "",
-      tier: (row.tier as string) || "warm",
-      decay_class: (row.decay_class as string) || "stable",
-      scope: (row.scope as string) || "global",
-      confidence: row.confidence ?? 1,
-      created_at: row.created_at,
-      recall_count: row.recall_count ?? 0,
-    });
-
-    if (opts.search?.trim()) {
-      const ftsResults = searchFts(this.liveDb, opts.search.trim(), { limit: 2000 });
-      const allFtsIds = ftsResults.map((r) => r.factId);
-      if (allFtsIds.length === 0) return { facts: [], total: 0 };
-      // Apply category/tier/decayClass/entity filters on top of FTS results to maintain consistency
-      // Chunk IDs to avoid exceeding SQLite's SQLITE_LIMIT_VARIABLE_NUMBER (default 999, often 32766)
-      const CHUNK_SIZE = 500;
-      const filteredIdRows: Array<{ id: string }> = [];
-      for (let i = 0; i < allFtsIds.length; i += CHUNK_SIZE) {
-        const chunk = allFtsIds.slice(i, i + CHUNK_SIZE);
-        const idPlaceholders = chunk.map(() => "?").join(",");
-        const chunkRows = this.liveDb
-          .prepare(`SELECT id FROM facts WHERE id IN (${idPlaceholders}) AND ${where}`)
-          .all(...chunk, ...params) as Array<{ id: string }>;
-        filteredIdRows.push(...chunkRows);
-      }
-      const filteredSet = new Set(filteredIdRows.map((r) => r.id));
-      const filteredIds = allFtsIds.filter((id) => filteredSet.has(id));
-      const searchTotal = filteredIds.length;
-      const pageIds = filteredIds.slice(opts.offset, opts.offset + opts.limit);
-      if (pageIds.length === 0) return { facts: [], total: searchTotal };
-      const placeholders = pageIds.map(() => "?").join(",");
-      const pageRows = this.liveDb
-        .prepare(
-          `SELECT id, text, category, importance, entity, key, value, tags, COALESCE(tier, 'warm') as tier,
-           COALESCE(decay_class, 'stable') as decay_class, COALESCE(scope, 'global') as scope, confidence,
-           created_at, recall_count FROM facts WHERE id IN (${placeholders})`,
-        )
-        .all(...pageIds) as Array<Record<string, unknown>>;
-      const byId = new Map<string, Record<string, unknown>>();
-      for (const r of pageRows) byId.set(r.id as string, r);
-      const facts = pageIds
-        .map((id) => byId.get(id))
-        .filter(Boolean)
-        .map((r) => toDashboardRow(r!));
-      return { facts, total: searchTotal };
-    }
-
-    const countRow = this.liveDb.prepare(`SELECT COUNT(*) as cnt FROM facts WHERE ${where}`).get(...params) as {
-      cnt: number;
-    };
-    const total = countRow?.cnt ?? 0;
-
-    const rows = this.liveDb
-      .prepare(
-        `SELECT id, text, category, importance, entity, key, value, tags, COALESCE(tier, 'warm') as tier,
-         COALESCE(decay_class, 'stable') as decay_class, COALESCE(scope, 'global') as scope, confidence,
-         created_at, recall_count FROM facts WHERE ${where} ORDER BY created_at DESC LIMIT ? OFFSET ?`,
-      )
-      .all(...params, opts.limit, opts.offset) as Array<Record<string, unknown>>;
-
-    const facts = rows.map((r) => toDashboardRow(r));
-    return { facts, total };
+    return listForDashboardImpl(this.liveDb, opts);
   }
 
   /** Distinct memory categories present in non-superseded facts (for CLI stats/categories). */
   uniqueMemoryCategories(): string[] {
-    const rows = this.liveDb
-      .prepare("SELECT DISTINCT category FROM facts WHERE superseded_at IS NULL ORDER BY category")
-      .all() as Array<{ category: string }>;
-    return rows.map((r) => r.category || "other");
+    return uniqueMemoryCategoriesImpl(this.liveDb);
   }
 
   /** Snapshot of top procedures for context-audit (sorted by confidence). */
