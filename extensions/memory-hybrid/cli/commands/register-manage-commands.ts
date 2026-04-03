@@ -1,4 +1,4 @@
-import { getEnv } from "../utils/env-manager.js";
+import { getEnv } from "../../utils/env-manager.js";
 /**
  * CLI registration functions for management commands.
  * Extracted from cli/register.ts lines 290-1552.
@@ -7,22 +7,22 @@ import { getEnv } from "../utils/env-manager.js";
 import { existsSync, mkdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { mergeAgentHealthDashboard } from "../backends/agent-health-store.js";
-import type { FactsDB } from "../backends/facts-db.js";
-import type { VectorDB } from "../backends/vector-db.js";
-import type { HybridMemoryConfig } from "../config.js";
-import { getCronModelConfig, getDefaultCronModel, vectorDimsForModel } from "../config.js";
+import { mergeAgentHealthDashboard } from "../../backends/agent-health-store.js";
+import type { FactsDB } from "../../backends/facts-db.js";
+import type { VectorDB } from "../../backends/vector-db.js";
+import type { HybridMemoryConfig } from "../../config.js";
+import { getCronModelConfig, getDefaultCronModel, vectorDimsForModel } from "../../config.js";
 import type { ManageContext } from "../context.js";
 import { buildAppliedContent, buildUnifiedDiff } from "../proposals.js";
-import { collectForgeState } from "../routes/dashboard-server.js";
-import { runContextAudit } from "../services/context-audit.js";
-import { migrateEmbeddings } from "../services/embedding-migration.js";
-import type { EmbeddingProvider } from "../services/embeddings.js";
-import { capturePluginError } from "../services/error-reporter.js";
-import { getEffectivenessReport, runClosedLoopAnalysis } from "../services/feedback-effectiveness.js";
-import { runMemoryDiagnostics } from "../services/memory-diagnostics.js";
+import { collectForgeState } from "../../routes/dashboard-server.js";
+import { runContextAudit } from "../../services/context-audit.js";
+import { migrateEmbeddings } from "../../services/embedding-migration.js";
+import type { EmbeddingProvider } from "../../services/embeddings.js";
+import { capturePluginError } from "../../services/error-reporter.js";
+import { getEffectivenessReport, runClosedLoopAnalysis } from "../../services/feedback-effectiveness.js";
+import { runMemoryDiagnostics } from "../../services/memory-diagnostics.js";
 // biome-ignore lint/style/useImportType: mergeResults kept as value import so typeof mergeResults resolves at the type level without confusion
-import { filterByScope, mergeResults } from "../services/merge-results.js";
+import { filterByScope, mergeResults } from "../../services/merge-results.js";
 import { relativeTime } from "../shared.js";
 import { type Chainable, withExit } from "../shared.js";
 import type {
@@ -43,12 +43,12 @@ import type {
   UninstallCliResult,
   UpgradeCliResult,
 } from "../types.js";
-import type { SearchResult } from "../types/memory.js";
-import type { ScopeFilter } from "../types/memory.js";
-import { parseSourceDate } from "../utils/dates.js";
-import { getLanguageKeywordsFilePath } from "../utils/language-keywords.js";
-import { execSync } from "../utils/process-runner.js";
-import { buildCouncilSessionKey, buildProvenanceMetadata, generateTraceId } from "../utils/provenance.js";
+import type { SearchResult } from "../../types/memory.js";
+import type { ScopeFilter } from "../../types/memory.js";
+import { parseSourceDate } from "../../utils/dates.js";
+import { getLanguageKeywordsFilePath } from "../../utils/language-keywords.js";
+import { execSync } from "../../utils/process-runner.js";
+import { buildCouncilSessionKey, buildProvenanceMetadata, generateTraceId } from "../../utils/provenance.js";
 
 export function registerManageCommands(mem: Chainable, ctx: ManageContext): void {
   const {
@@ -3495,7 +3495,7 @@ Preserved (P0 — never trimmed, ${result.preserved.length} fact(s)):`);
         }) => {
           const configMode = cfg.maintenance?.council?.provenance ?? "meta+receipt";
           const mode =
-            (opts?.mode as import("../config/types/maintenance.js").CouncilProvenanceMode | undefined) ?? configMode;
+            (opts?.mode as import("../../config/types/maintenance.js").CouncilProvenanceMode | undefined) ?? configMode;
           const sessionKeyPrefix = cfg.maintenance?.council?.sessionKeyPrefix ?? "council-review";
           const sessionKey = opts?.sessionKey?.trim() || buildCouncilSessionKey(sessionKeyPrefix);
 
