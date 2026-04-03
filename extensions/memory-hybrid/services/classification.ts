@@ -8,6 +8,25 @@ import type OpenAI from "openai";
 import type { MemoryEntry } from "../types/memory.js";
 import { fillPrompt, loadPrompt } from "../utils/prompt-loader.js";
 import { capturePluginError } from "./error-reporter.js";
+import { isReasoningModel, requiresMaxCompletionTokens } from "./model-capabilities.js";
+
+/** Chat body for classify completions — mirrors `chatComplete` in `chat.ts` (#1008). */
+function buildClassifyChatBody(
+  model: string,
+  userContent: string,
+  maxOutputTokens: number,
+): OpenAI.ChatCompletionCreateParamsNonStreaming {
+  const useMaxCompletionTokens = requiresMaxCompletionTokens(model);
+  const body: OpenAI.ChatCompletionCreateParamsNonStreaming = {
+    model,
+    messages: [{ role: "user", content: userContent }],
+    ...(useMaxCompletionTokens ? { max_completion_tokens: maxOutputTokens } : { max_tokens: maxOutputTokens }),
+  };
+  if (!isReasoningModel(model)) {
+    body.temperature = 0;
+  }
+  return body;
+}
 
 export type MemoryClassification = {
   action: "ADD" | "UPDATE" | "DELETE" | "NOOP";
@@ -118,16 +137,15 @@ export async function classifyMemoryOperation(
 
   try {
     const { withLLMRetry } = await import("./chat.js");
-    const resp = await withLLMRetry(
+    const resp = (await withLLMRetry(
       () =>
-        openai.chat.completions.create({
-          model,
-          messages: [{ role: "user", content: prompt }],
-          temperature: 0,
-          max_tokens: 100,
-        }),
+        openai.chat.completions.create(
+          buildClassifyChatBody(model, prompt, 100) as unknown as Parameters<
+            OpenAI["chat"]["completions"]["create"]
+          >[0],
+        ),
       { maxRetries: 2 },
-    );
+    )) as OpenAI.Chat.ChatCompletion;
     const content = (resp.choices[0]?.message?.content ?? "").trim();
     return parseClassificationResponse(content, existingFacts);
   } catch (err) {
@@ -387,16 +405,16 @@ For UPDATE or DELETE, targetId must be one of the existing fact ids listed under
 
   try {
     const { withLLMRetry } = await import("./chat.js");
-    const resp = await withLLMRetry(
+    const batchMaxOut = Math.min(800, 80 * items.length);
+    const resp = (await withLLMRetry(
       () =>
-        openai.chat.completions.create({
-          model,
-          messages: [{ role: "user", content: fullPrompt }],
-          temperature: 0,
-          max_tokens: Math.min(800, 80 * items.length),
-        }),
+        openai.chat.completions.create(
+          buildClassifyChatBody(model, fullPrompt, batchMaxOut) as unknown as Parameters<
+            OpenAI["chat"]["completions"]["create"]
+          >[0],
+        ),
       { maxRetries: 2 },
-    );
+    )) as OpenAI.Chat.ChatCompletion;
     const raw = (resp.choices[0]?.message?.content ?? "").trim();
     const parsed: unknown = parseBatchClassifyResponseContent(raw);
     if (!Array.isArray(parsed) || parsed.length !== items.length) {
