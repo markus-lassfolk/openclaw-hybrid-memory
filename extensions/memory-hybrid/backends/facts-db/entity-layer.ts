@@ -311,14 +311,17 @@ export function listContactsByNamePrefix(db: DatabaseSync, prefix: string, limit
   }
   const esc = escapeLikeLiteralForBackslashEscape(p);
   const pat = `${esc}%`;
+  const normalizedPrefix = normalizeEntityKey(prefix);
+  const escNormalized = escapeLikeLiteralForBackslashEscape(normalizedPrefix);
+  const patNormalized = `${escNormalized}%`;
   const rows = db
     .prepare(
       `SELECT * FROM contacts
-       WHERE lower(display_name) LIKE ? ESCAPE '\\' OR lower(normalized_key) LIKE ? ESCAPE '\\'
+       WHERE lower(display_name) LIKE ? ESCAPE '\\' OR normalized_key LIKE ? ESCAPE '\\'
        ORDER BY display_name COLLATE NOCASE
        LIMIT ?`,
     )
-    .all(pat, pat, limit) as Array<Record<string, unknown>>;
+    .all(pat, patNormalized, limit) as Array<Record<string, unknown>>;
   return rows.map(rowToContact);
 }
 
