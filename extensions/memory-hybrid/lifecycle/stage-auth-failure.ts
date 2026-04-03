@@ -16,6 +16,7 @@ import {
 } from "../services/auth-failure-detect.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { shouldSuppressEmbeddingError } from "../services/embeddings.js";
+import { withHookResolutionApi } from "./hook-resolution-api.js";
 import type { LifecycleContext, SessionState } from "./types.js";
 
 export function registerAuthFailureRecall(
@@ -45,10 +46,12 @@ export function registerAuthFailureRecall(
   const { resolveSessionKey, authFailureRecallsThisSession } = sessionState;
   const currentAgentIdRef = ctx.currentAgentIdRef;
 
-  api.on("before_agent_start", async (event: unknown) => {
+  // Two-arg hook: merge PluginHookAgentContext into api before resolveSessionKey (#1005).
+  api.on("before_agent_start", async (event: unknown, hookCtx: unknown) => {
+    const rApi = withHookResolutionApi(api, hookCtx);
     const e = event as { prompt?: string; messages?: unknown[] };
     if (!e.prompt && (!e.messages || !Array.isArray(e.messages))) return;
-    const sessionKey = resolveSessionKey(event, api) ?? currentAgentIdRef.value ?? "default";
+    const sessionKey = resolveSessionKey(event, rApi) ?? currentAgentIdRef.value ?? "default";
 
     try {
       let textToScan = e.prompt || "";

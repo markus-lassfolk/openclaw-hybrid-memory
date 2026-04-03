@@ -199,10 +199,15 @@ export function is500Like(err: unknown): boolean {
     if (typeof status === "number" && status >= 500 && status < 600) return true;
   }
   if (err instanceof Error) {
+    const m = err.message;
     // Only match HTTP 5xx patterns — not generic "internal error" from JS
-    return /\bHTTP\s+5\d{2}\b|\b5\d{2}\s+(internal\s+)?(error|status)|status\s+5\d{2}|internal\s+server\s+error/i.test(
-      err.message,
-    );
+    if (
+      /\bHTTP\s+5\d{2}\b|\b5\d{2}\s+(internal\s+)?(error|status)|status\s+5\d{2}|internal\s+server\s+error/i.test(m)
+    ) {
+      return true;
+    }
+    // Gateway/proxy phrasing seen in production (#1010, #1013): "502 error code: 502"
+    if (/\b5\d{2}\s+error\s+code:\s*5\d{2}\b/i.test(m) || /\berror\s+code:\s*5\d{2}\b/i.test(m)) return true;
   }
   return false;
 }
@@ -299,6 +304,35 @@ export function isContextLengthError(err: unknown): boolean {
 }
 
 /**
+ * Mutates and returns `err` so GlitchTip/async stacks show which model/phase failed (#1010–#1011).
+ */
+function enrichLlmErrorMessage(err: Error, ctx?: { model?: string; operation?: string }): Error {
+  if (!ctx?.model && !ctx?.operation) return err;
+  if (/\[llm\s+/i.test(err.message)) return err;
+  const parts: string[] = [];
+  if (ctx.model) parts.push(`model=${ctx.model}`);
+  if (ctx.operation) parts.push(`op=${ctx.operation}`);
+  err.message = `${err.message} [llm ${parts.join(", ")}]`;
+  return err;
+}
+
+/**
+ * HTTP 400 that is not a context-length violation — retrying will not help (#1011, #1016).
+ */
+function isNonRetryableClient400(err: unknown): boolean {
+  if (isContextLengthError(err)) return false;
+  if (err && typeof err === "object") {
+    const status = (err as { status?: unknown }).status;
+    if (status === 400 || status === "400") return true;
+  }
+  if (err instanceof Error) {
+    const m = err.message;
+    if (/\b400\b.*\b(?:no body|status code)\b/i.test(m)) return true;
+  }
+  return false;
+}
+
+/**
  * Detect Ollama out-of-memory (OOM) errors from the model server.
  * Ollama returns HTTP 500 with a body like:
  *   "model requires more system memory (18.2 GiB) than is available (8.0 GiB)"
@@ -386,7 +420,7 @@ export async function chatComplete(opts: {
     const error = isAbort
       ? new Error(`LLM request timeout after ${timeoutMs}ms (model: ${model})`)
       : err instanceof Error
-        ? err
+        ? enrichLlmErrorMessage(err, { model, operation: "chatComplete" })
         : new Error(String(err));
     // Skip reporting known transient gateway/LLM errors (aborted, timeout, 5xx, OOM, 429) and config errors (missing provider keys) to avoid GlitchTip noise
     const msg = error.message.toLowerCase();
@@ -475,7 +509,12 @@ export function isAbortOrTransientLlmError(err: unknown): boolean {
  */
 export async function withLLMRetry<T>(
   fn: () => Promise<T>,
-  opts?: { maxRetries?: number; signal?: AbortSignal },
+  opts?: {
+    maxRetries?: number;
+    signal?: AbortSignal;
+    /** Tags errors for triage when they surface at async boundaries (#1010, #1011). */
+    llmContext?: { model?: string; operation?: string };
+  },
 ): Promise<T> {
   const maxRetries = opts?.maxRetries ?? 3;
   let lastError: Error | undefined;
@@ -510,7 +549,11 @@ export async function withLLMRetry<T>(
         pluginLogger.warn(
           "memory-hybrid: Input exceeds model context length — retrying will not help; truncate input before calling",
         );
-        throw lastError;
+        throw enrichLlmErrorMessage(lastError, opts?.llmContext);
+      }
+      // Other 400s (e.g. empty body from gateway) — not fixed by retry (#1011, #1016)
+      if (isNonRetryableClient400(lastError)) {
+        throw enrichLlmErrorMessage(lastError, opts?.llmContext);
       }
       const is429 = is429Like(lastError);
       const isQuota403 = is403QuotaOrRateLimitLike(lastError);
@@ -537,6 +580,9 @@ export async function withLLMRetry<T>(
         throw lastError;
       }
       if (attempt === maxRetries || opts?.signal?.aborted) {
+        // Capture causeMsg before enrichment to preserve end-anchored regex matching
+        const causeMsg = lastError.message.toLowerCase();
+        enrichLlmErrorMessage(lastError, opts?.llmContext);
         const retryError = new LLMRetryError(
           `Failed after ${attempt + 1} attempts: ${lastError.message}`,
           lastError,
@@ -545,7 +591,6 @@ export async function withLLMRetry<T>(
         // Skip reporting when the underlying cause is a transient gateway error (aborted, timeout, 5xx, 429).
         // Note: 404 and 403 errors should never reach this branch (they exit early above),
         // but we include them as defensive safety nets in case they slip past due to future refactors.
-        const causeMsg = lastError.message.toLowerCase();
         const fullMsg = retryError.message.toLowerCase();
         const isTransient =
           is429 ||
@@ -572,6 +617,7 @@ export async function withLLMRetry<T>(
             subsystem: "chat",
             operation: "withLLMRetry",
             retryAttempt: attempt + 1,
+            ...(opts?.llmContext?.model ? { configShape: { model: opts.llmContext.model } } : {}),
           });
         }
         throw retryError;
@@ -679,7 +725,11 @@ export async function chatCompleteWithRetry(opts: {
             signal,
             ...(feature != null && { feature }),
           }),
-        { maxRetries: 3, signal },
+        {
+          maxRetries: 3,
+          signal,
+          llmContext: { model: currentModel, operation: label },
+        },
       );
     } catch (err) {
       lastError = err instanceof Error ? err : new Error(String(err));

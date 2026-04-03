@@ -307,6 +307,32 @@ describe("AliasDB.search", () => {
   });
 });
 
+describe("AliasDB close lifecycle (#1009)", () => {
+  it("defers SQLite close until an in-flight Lance-backed search finishes", async () => {
+    const db = makeDb();
+    const fid = randomUUID();
+    db.store(fid, "alias row", unitVec());
+    (db as unknown as { aliasCountCache: number | null }).aliasCountCache = 1000;
+
+    const searchPromise = db.search(unitVec(), 5, 0.01);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    db.close();
+    const results = await searchPromise;
+    expect(Array.isArray(results)).toBe(true);
+    expect(() => db.count()).not.toThrow();
+    expect(db.count()).toBe(0);
+  });
+
+  it("closes immediately when idle and subsequent ops are safe no-ops", () => {
+    const db = makeDb();
+    db.store(randomUUID(), "x", unitVec());
+    db.close();
+    expect(db.count()).toBe(0);
+    expect(db.getByFactId(randomUUID())).toEqual([]);
+    expect(db.store(randomUUID(), "late", unitVec())).toBe("");
+  });
+});
+
 // ---------------------------------------------------------------------------
 // generateAliases
 // ---------------------------------------------------------------------------

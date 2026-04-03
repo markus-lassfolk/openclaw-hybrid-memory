@@ -8,6 +8,25 @@ import type OpenAI from "openai";
 import type { MemoryEntry } from "../types/memory.js";
 import { fillPrompt, loadPrompt } from "../utils/prompt-loader.js";
 import { capturePluginError } from "./error-reporter.js";
+import { isReasoningModel, requiresMaxCompletionTokens } from "./model-capabilities.js";
+
+/** Chat body for classify completions — mirrors `chatComplete` in `chat.ts` (#1008). */
+function buildClassifyChatBody(
+  model: string,
+  userContent: string,
+  maxOutputTokens: number,
+): OpenAI.ChatCompletionCreateParamsNonStreaming {
+  const useMaxCompletionTokens = requiresMaxCompletionTokens(model);
+  const body: OpenAI.ChatCompletionCreateParamsNonStreaming = {
+    model,
+    messages: [{ role: "user", content: userContent }],
+    ...(useMaxCompletionTokens ? { max_completion_tokens: maxOutputTokens } : { max_tokens: maxOutputTokens }),
+  };
+  if (!isReasoningModel(model)) {
+    body.temperature = 0;
+  }
+  return body;
+}
 
 export type MemoryClassification = {
   action: "ADD" | "UPDATE" | "DELETE" | "NOOP";
@@ -118,16 +137,15 @@ export async function classifyMemoryOperation(
 
   try {
     const { withLLMRetry } = await import("./chat.js");
-    const resp = await withLLMRetry(
+    const resp = (await withLLMRetry(
       () =>
-        openai.chat.completions.create({
-          model,
-          messages: [{ role: "user", content: prompt }],
-          temperature: 0,
-          max_tokens: 100,
-        }),
+        openai.chat.completions.create(
+          buildClassifyChatBody(model, prompt, 100) as unknown as Parameters<
+            OpenAI["chat"]["completions"]["create"]
+          >[0],
+        ),
       { maxRetries: 2 },
-    );
+    )) as OpenAI.Chat.ChatCompletion;
     const content = (resp.choices[0]?.message?.content ?? "").trim();
     return parseClassificationResponse(content, existingFacts);
   } catch (err) {
@@ -148,6 +166,177 @@ export type ClassifyMemoryOperationInput = {
   candidateKey: string | null;
   existingFacts: MemoryEntry[];
 };
+
+/**
+ * Remove common model "thinking" wrappers that appear before JSON (#1007).
+ */
+function stripThinkingWrapperBlocks(s: string): string {
+  return s
+    .replace(/<redacted_thinking>[\s\S]*?<\/redacted_thinking>/gi, "")
+    .replace(/<thinking>[\s\S]*?<\/thinking>/gi, "")
+    .trim();
+}
+
+/**
+ * Prefer JSON-looking content inside ``` / ```json fences when the model wraps output (#1007).
+ */
+function preferMarkdownJsonFenceContent(s: string): string {
+  const re = /```(?:json)?\s*\n?([\s\S]*?)```/gi;
+  const chunks: string[] = [];
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(s)) !== null) {
+    chunks.push(m[1].trim());
+  }
+  if (chunks.length === 0) return s;
+  const arrayChunk = chunks.find((c) => c.startsWith("["));
+  if (arrayChunk) return arrayChunk;
+  const objectChunk = chunks.find((c) => c.startsWith("{"));
+  if (objectChunk) return objectChunk;
+  return chunks[chunks.length - 1] ?? s;
+}
+
+/**
+ * Extract the first top-level JSON array substring with bracket matching (respects strings).
+ * Greedy `\\[[\\s\\S]*\\]` breaks when `]` appears inside string values or reasoning trails.
+ */
+function extractTopLevelJsonArraySubstring(s: string): string | null {
+  const start = s.indexOf("[");
+  if (start < 0) return null;
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let i = start; i < s.length; i++) {
+    const ch = s[i]!;
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (ch === "\\") escaped = true;
+      else if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') {
+      inString = true;
+      continue;
+    }
+    if (ch === "[") depth++;
+    else if (ch === "]") {
+      depth--;
+      if (depth === 0) return s.slice(start, i + 1);
+    }
+  }
+  return null;
+}
+
+const BATCH_OBJECT_ARRAY_KEYS = ["classifications", "results", "items", "data"] as const;
+
+function tryParseBatchClassifyAsObjectWithArray(s: string): unknown[] | null {
+  const t = s.trim();
+  if (!t.startsWith("{")) return null;
+  try {
+    const obj = JSON.parse(t) as unknown;
+    if (!obj || typeof obj !== "object" || Array.isArray(obj)) return null;
+    const rec = obj as Record<string, unknown>;
+    for (const k of BATCH_OBJECT_ARRAY_KEYS) {
+      const v = rec[k];
+      if (Array.isArray(v) && isBatchClassifyResultArray(v)) return v;
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+/** True if `v` looks like our batch classify payload (objects with `action`), not e.g. `[1]` or `[note]`. */
+function isBatchClassifyResultArray(v: unknown): v is unknown[] {
+  if (!Array.isArray(v)) return false;
+  return v.every(
+    (row) =>
+      row !== null &&
+      typeof row === "object" &&
+      !Array.isArray(row) &&
+      typeof (row as Record<string, unknown>).action === "string",
+  );
+}
+
+/**
+ * Find a JSON array of batch rows; skip bracket preambles that are not JSON or not our shape (#1007, Copilot PR#1006).
+ */
+function parseBalancedBatchArrayFromText(text: string): unknown[] {
+  const t = text.trim();
+  const seen = new Set<string>();
+  const tryCandidate = (candidate: string): unknown[] | undefined => {
+    const normalized = candidate.trim();
+    if (normalized.length === 0 || seen.has(normalized)) return undefined;
+    seen.add(normalized);
+    try {
+      const v = JSON.parse(normalized) as unknown;
+      if (!isBatchClassifyResultArray(v)) return undefined;
+      return v;
+    } catch {
+      return undefined;
+    }
+  };
+
+  const fromBalancedAt = (offset: number): string | null => extractTopLevelJsonArraySubstring(t.slice(offset));
+
+  const firstBalanced = fromBalancedAt(0);
+  if (firstBalanced) {
+    const parsed = tryCandidate(firstBalanced);
+    if (parsed !== undefined) return parsed;
+  }
+
+  if (t.startsWith("[")) {
+    const parsed = tryCandidate(t);
+    if (parsed !== undefined) return parsed;
+  }
+
+  for (let i = 0; i < t.length; i++) {
+    if (t[i] !== "[") continue;
+    const candidate = fromBalancedAt(i);
+    if (!candidate) continue;
+    const parsed = tryCandidate(candidate);
+    if (parsed !== undefined) return parsed;
+  }
+
+  const legacy = t.match(/\[[\s\S]*\]/);
+  if (legacy) {
+    const parsed = tryCandidate(legacy[0]);
+    if (parsed !== undefined) return parsed;
+  }
+
+  throw new Error("no JSON array in batch classify response");
+}
+
+/**
+ * Parse model output for {@link classifyMemoryOperationsBatch}. Exported for tests (#1007).
+ */
+export function parseBatchClassifyResponseContent(raw: string): unknown {
+  let s = raw.trim();
+  s = stripThinkingWrapperBlocks(s);
+  s = preferMarkdownJsonFenceContent(s);
+  s = s.trim();
+
+  // Whole string is a JSON array
+  if (s.startsWith("[")) {
+    try {
+      return parseBalancedBatchArrayFromText(s);
+    } catch {
+      /* fall through */
+    }
+  }
+
+  // Whole string is a JSON object wrapping the array (some JSON-mode APIs)
+  const fromObject = tryParseBatchClassifyAsObjectWithArray(s);
+  if (fromObject) return fromObject;
+
+  // Prose or noise before/after — locate balanced array in the remainder
+  try {
+    return parseBalancedBatchArrayFromText(s);
+  } catch {
+    /* fall through */
+  }
+
+  throw new Error("no JSON array in batch classify response");
+}
 
 function parseBatchClassificationRow(row: unknown, existingFacts: MemoryEntry[]): MemoryClassification {
   if (!row || typeof row !== "object") {
@@ -216,20 +405,18 @@ For UPDATE or DELETE, targetId must be one of the existing fact ids listed under
 
   try {
     const { withLLMRetry } = await import("./chat.js");
-    const resp = await withLLMRetry(
+    const batchMaxOut = Math.min(800, 80 * items.length);
+    const resp = (await withLLMRetry(
       () =>
-        openai.chat.completions.create({
-          model,
-          messages: [{ role: "user", content: fullPrompt }],
-          temperature: 0,
-          max_tokens: Math.min(800, 80 * items.length),
-        }),
+        openai.chat.completions.create(
+          buildClassifyChatBody(model, fullPrompt, batchMaxOut) as unknown as Parameters<
+            OpenAI["chat"]["completions"]["create"]
+          >[0],
+        ),
       { maxRetries: 2 },
-    );
+    )) as OpenAI.Chat.ChatCompletion;
     const raw = (resp.choices[0]?.message?.content ?? "").trim();
-    const jsonMatch = raw.match(/\[[\s\S]*\]/);
-    if (!jsonMatch) throw new Error("no JSON array in batch classify response");
-    const parsed: unknown = JSON.parse(jsonMatch[0]);
+    const parsed: unknown = parseBatchClassifyResponseContent(raw);
     if (!Array.isArray(parsed) || parsed.length !== items.length) {
       throw new Error(
         `batch classify expected ${items.length} results, got ${Array.isArray(parsed) ? parsed.length : "non-array"}`,

@@ -1,6 +1,9 @@
 /**
  * Session state for the lifecycle pipeline (Phase 2.3).
  * Creates per-session maps and helpers: touchSession, clearSessionState, pruneSessionMaps, resolveSessionKey.
+ *
+ * Typed-hook identity (`PluginHookAgentContext`) is merged into `api` at the dispatcher via
+ * `withHookResolutionApi` in `hook-resolution-api.ts` (#1005).
  */
 
 import type { SessionSeenFacts } from "../services/ambient-retrieval.js";
@@ -15,6 +18,11 @@ export type SessionKeyHookApi = { context?: { sessionId?: string; sessionKey?: s
 /**
  * Best-effort session key string for lifecycle hooks — same precedence as
  * {@link createSessionState}'s `resolveSessionKey` (exported for agent id parsing and tests).
+ *
+ * **Precedence (first hit wins):** `event.session` / top-level session-ish fields /
+ * `event.context`, then `api.context.sessionId`, then `api.context.sessionKey`.
+ * Callers pass `withHookResolutionApi(api, hookCtx)` so hook `sessionId`/`sessionKey` land on
+ * `api.context` and are consulted only after the event payload (#1005).
  */
 export function resolveSessionKeyFromHookEvent(event: unknown, api?: SessionKeyHookApi): string | null {
   const ev = event as {

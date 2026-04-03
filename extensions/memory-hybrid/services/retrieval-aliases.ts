@@ -233,6 +233,17 @@ export class AliasDB {
   /** Cached alias count — invalidated on store/delete to avoid COUNT(*) on every search. */
   private aliasCountCache: number | null = null;
 
+  /**
+   * Reference count for in-flight operations (#1009). Plugin reload calls `close()` while
+   * `search()` (after Lance await) or `void storeAliases()` may still use SQLite — we defer
+   * `DatabaseSync.close()` until `activeOps` hits zero.
+   */
+  private activeOps = 0;
+  /** True after `close()` — new operations are rejected; existing ops drain then DB closes. */
+  private closeRequested = false;
+  /** True after handles are closed — idempotent guard. */
+  private sqliteClosed = false;
+
   constructor(dbPath: string, aliasLancePath: string, vectorDim: number) {
     mkdirSync(dirname(dbPath), { recursive: true });
     this.db = new DatabaseSync(dbPath);
@@ -249,8 +260,43 @@ export class AliasDB {
     this.aliasIndex = new AliasVectorIndex(aliasLancePath, vectorDim);
   }
 
+  private tryEnter(): boolean {
+    if (this.sqliteClosed) return false;
+    if (this.closeRequested) return false;
+    this.activeOps += 1;
+    return true;
+  }
+
+  private leave(): void {
+    this.activeOps -= 1;
+    if (this.closeRequested && this.activeOps === 0) {
+      this.finalizeClose();
+    }
+  }
+
+  private finalizeClose(): void {
+    if (this.sqliteClosed) return;
+    this.sqliteClosed = true;
+    this.aliasIndex.close();
+    try {
+      this.db.close();
+    } catch {
+      // Ignore close errors
+    }
+  }
+
   /** Store a single alias with its embedding. Returns the generated row id. */
   store(factId: string, aliasText: string, embedding: number[]): string {
+    if (this.sqliteClosed) return "";
+    if (!this.tryEnter()) return "";
+    try {
+      return this.storeInternal(factId, aliasText, embedding);
+    } finally {
+      this.leave();
+    }
+  }
+
+  private storeInternal(factId: string, aliasText: string, embedding: number[]): string {
     const id = randomUUID();
     // Normalize factId to lowercase so all stored values are consistent, enabling
     // plain equality queries that benefit from idx_fact_aliases_factId.
@@ -267,6 +313,16 @@ export class AliasDB {
 
   /** Return all alias rows (without embedding) for a given fact. */
   getByFactId(factId: string): AliasRow[] {
+    if (this.sqliteClosed) return [];
+    if (!this.tryEnter()) return [];
+    try {
+      return this.getByFactIdInternal(factId);
+    } finally {
+      this.leave();
+    }
+  }
+
+  private getByFactIdInternal(factId: string): AliasRow[] {
     // factIds are normalized to lowercase on write; pre-lowercase the param so SQLite
     // can use the idx_fact_aliases_factId index (COLLATE NOCASE would bypass it).
     const normalizedFactId = factId.toLowerCase();
@@ -277,6 +333,16 @@ export class AliasDB {
 
   /** Delete all aliases for a fact (e.g., when the fact is superseded). */
   deleteByFactId(factId: string): void {
+    if (this.sqliteClosed) return;
+    if (!this.tryEnter()) return;
+    try {
+      this.deleteByFactIdInternal(factId);
+    } finally {
+      this.leave();
+    }
+  }
+
+  private deleteByFactIdInternal(factId: string): void {
     // Pre-lowercase to match normalized storage; avoids COLLATE NOCASE index bypass.
     const normalizedFactId = factId.toLowerCase();
     const res = this.db.prepare("DELETE FROM fact_aliases WHERE factId = ?").run(normalizedFactId);
@@ -288,6 +354,16 @@ export class AliasDB {
 
   /** Total alias count (cached to avoid COUNT(*) on every search call). */
   count(): number {
+    if (this.sqliteClosed) return 0;
+    if (!this.tryEnter()) return this.aliasCountCache ?? 0;
+    try {
+      return this.countInternal();
+    } finally {
+      this.leave();
+    }
+  }
+
+  private countInternal(): number {
     if (this.aliasCountCache != null) return this.aliasCountCache;
     const row = this.db.prepare("SELECT COUNT(*) as n FROM fact_aliases").get() as { n: number };
     this.aliasCountCache = row.n;
@@ -302,20 +378,26 @@ export class AliasDB {
    * `limit` results above `minScore`, sorted descending by score.
    */
   async search(queryVector: number[], limit: number, minScore: number): Promise<AliasSearchResult[]> {
-    const aliasCount = this.count();
-    if (aliasCount >= 1000) {
-      // Prefer LanceDB vector search for larger datasets; fallback to linear scan on errors.
-      try {
-        const results = await this.aliasIndex.search(queryVector, limit, minScore);
-        return this.aliasIndex.isSchemaValid() ? results : this.linearSearch(queryVector, limit, minScore);
-      } catch {
-        return this.linearSearch(queryVector, limit, minScore);
+    if (this.sqliteClosed) return [];
+    if (!this.tryEnter()) return [];
+    try {
+      const aliasCount = this.countInternal();
+      if (aliasCount >= 1000) {
+        // Prefer LanceDB vector search for larger datasets; fallback to linear scan on errors.
+        try {
+          const results = await this.aliasIndex.search(queryVector, limit, minScore);
+          return this.aliasIndex.isSchemaValid() ? results : this.linearSearchInternal(queryVector, limit, minScore);
+        } catch {
+          return this.linearSearchInternal(queryVector, limit, minScore);
+        }
       }
+      return this.linearSearchInternal(queryVector, limit, minScore);
+    } finally {
+      this.leave();
     }
-    return this.linearSearch(queryVector, limit, minScore);
   }
 
-  private linearSearch(queryVector: number[], limit: number, minScore: number): AliasSearchResult[] {
+  private linearSearchInternal(queryVector: number[], limit: number, minScore: number): AliasSearchResult[] {
     // Track best score per factId to deduplicate across aliases for the same fact
     const bestByFact = new Map<string, number>();
     const queryNormSq = queryVector.reduce((sum, v) => sum + v * v, 0);
@@ -352,9 +434,17 @@ export class AliasDB {
       .slice(0, limit);
   }
 
+  /**
+   * Request close. If operations are in flight, SQLite/Lance handles stay open until they finish (#1009).
+   */
   close(): void {
-    this.aliasIndex.close();
-    this.db.close();
+    if (this.sqliteClosed) return;
+    if (!this.closeRequested) {
+      this.closeRequested = true;
+      if (this.activeOps === 0) {
+        this.finalizeClose();
+      }
+    }
   }
 }
 
