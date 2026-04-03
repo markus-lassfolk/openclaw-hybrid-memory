@@ -738,7 +738,8 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
     .action(
       withExit(async () => {
         const updated = factsDb.backfillDecay();
-        console.log(`Backfilled decayAt for ${updated} facts.`);
+        const total = Object.values(updated).reduce((a, b) => a + b, 0);
+        console.log(`Backfilled decayAt for ${total} facts.`);
       }),
     );
 
@@ -2804,15 +2805,15 @@ Preserved (P0 — never trimmed, ${result.preserved.length} fact(s)):`);
     .command("show <id>")
     .description("Show all versions and failure history for a procedure")
     .action(
-      withExit(async (opts: { id: string }) => {
-        const proc = factsDb.getProcedureById(opts.id);
+      withExit(async (id: string) => {
+        const proc = factsDb.getProcedureById(id);
         if (!proc) {
-          console.log(`Procedure not found: ${opts.id}`);
+          console.log(`Procedure not found: ${id}`);
           return;
         }
 
-        const versions = factsDb.getProcedureVersions(opts.id);
-        const failures = factsDb.getProcedureFailures(opts.id);
+        const versions = factsDb.getProcedureVersions(id);
+        const failures = factsDb.getProcedureFailures(id);
         const totalSuccess = proc.successCount + versions.reduce((s, v) => s + v.successCount, 0);
         const totalFailure = proc.failureCount + versions.reduce((s, v) => s + v.failureCount, 0);
         const total = totalSuccess + totalFailure;
