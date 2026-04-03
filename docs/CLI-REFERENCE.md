@@ -32,7 +32,7 @@ CLI output is controlled by the config `verbosity` setting (`silent`, `quiet`, `
 | **Export & config** | `export`, `config`, `config-mode <mode>`, `config-set <key> <value>` |
 | **Credentials & scope** | `credentials migrate-to-vault`, `scope list|stats|prune|promote` |
 | **Plugin lifecycle** | `upgrade [version]`, `uninstall` |
-| **Working memory** | `active-tasks`, `active-tasks complete <label>`, `active-tasks stale`, `active-tasks add <label> <desc>` |
+| **Working memory** | `active-tasks`, `active-tasks complete <label>`, `active-tasks stale`, `active-tasks reconcile`, `active-tasks add <label> <desc>`, `task-queue-status`, `task-queue-touch` |
 
 ---
 
@@ -103,7 +103,10 @@ CLI output is controlled by the config `verbosity` setting (`silent`, `quiet`, `
 | `active-tasks` | List active tasks from ACTIVE-TASK.md. |
 | `active-tasks complete <label>` | Mark task Done and flush to memory log. |
 | `active-tasks stale` | Show tasks not updated within staleThreshold. |
+| `active-tasks reconcile` | Move in-progress tasks whose OpenClaw session transcript is missing to Completed (issues #978, #981). |
 | `active-tasks add <label> <desc>` | Add or update a task entry. |
+| `task-queue-status` | Print `state/task-queue/current.json` as JSON (or a structured missing-file object for cron). |
+| `task-queue-touch` | Create the task-queue state dir and an idle `current.json` placeholder if missing. |
 | `uninstall [--clean-all] [--force-cleanup] [--leave-config]` | Revert to default OpenClaw memory (memory-core). |
 
 ---

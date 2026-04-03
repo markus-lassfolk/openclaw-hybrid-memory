@@ -19,6 +19,7 @@ import {
   readActiveTaskFile,
   upsertTask,
   writeActiveTaskFile,
+  reconcileActiveTaskInProgressSessions,
 } from "../services/active-task.js";
 import { formatDuration } from "../utils/duration.js";
 import type { Chainable } from "./shared.js";
@@ -202,7 +203,7 @@ export function registerActiveTaskCommands(mem: Chainable, ctx: ActiveTaskContex
   // Parent command: `hybrid-mem active-tasks` — lists tasks by default
   const activeTasks = mem
     .command("active-tasks")
-    .description("Working memory: manage active tasks in ACTIVE-TASK.md. Subcommands: complete, stale, add")
+    .description("Working memory: manage active tasks in ACTIVE-TASK.md. Subcommands: complete, stale, reconcile, add")
     .action(async () => {
       const result = await runActiveTaskList(ctx);
       if (!result.fileExists) {
@@ -261,6 +262,32 @@ export function registerActiveTaskCommands(mem: Chainable, ctx: ActiveTaskContex
         console.log(`    Status: ${t.status}`);
         console.log(`    Last updated: ${t.updated} (${t.hoursStale}h ago)`);
       }
+    });
+
+  // `hybrid-mem active-tasks reconcile` — #978, #981
+  activeTasks
+    .command("reconcile")
+    .description(
+      "Complete in-progress tasks whose OpenClaw session transcript no longer exists (subagent bookkeeping cleanup)",
+    )
+    .option("--dry-run", "List tasks that would be reconciled without writing ACTIVE-TASK.md")
+    .action(async (opts: { dryRun?: boolean }) => {
+      const result = await reconcileActiveTaskInProgressSessions(ctx.activeTaskFilePath, ctx.staleMinutes, {
+        flushOnComplete: ctx.flushOnComplete,
+        memoryDir: ctx.memoryDir,
+        dryRun: opts.dryRun === true,
+      });
+      if (result.reconciledLabels.length === 0) {
+        console.log("✅ No orphan in-progress subagent tasks to reconcile.");
+        return;
+      }
+      if (opts.dryRun) {
+        console.log(`Dry run — would reconcile ${result.reconciledLabels.length} task(s):`);
+        for (const l of result.reconciledLabels) console.log(`  - [${l}]`);
+        return;
+      }
+      console.log(`✅ Reconciled ${result.reconciledLabels.length} task(s) (moved to Completed):`);
+      for (const l of result.reconciledLabels) console.log(`  - [${l}]`);
     });
 
   // `hybrid-mem active-tasks add <label> <description>`

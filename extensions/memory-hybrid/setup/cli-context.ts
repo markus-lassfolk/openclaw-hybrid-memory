@@ -132,7 +132,10 @@ const HYBRID_MEM_HELP_ACTIVE_TASKS = `
     active-tasks                   List active tasks from ACTIVE-TASK.md
     active-tasks complete <label>  Mark task as Done and flush to memory log
     active-tasks stale             Show tasks not updated within staleThreshold
+    active-tasks reconcile         Complete in-progress rows whose session transcript is gone (#978)
     active-tasks add <label> <desc>  Add or update a task entry
+    task-queue-status            Print task-queue current.json as JSON (cron / scripts; #983)
+    task-queue-touch             Create idle state/task-queue/current.json if missing (#983)
 `;
 
 const HYBRID_MEM_CLI_COMMANDS = [
@@ -193,7 +196,10 @@ const HYBRID_MEM_CLI_COMMANDS = [
   "hybrid-mem active-tasks",
   "hybrid-mem active-tasks complete",
   "hybrid-mem active-tasks stale",
+  "hybrid-mem active-tasks reconcile",
   "hybrid-mem active-tasks add",
+  "hybrid-mem task-queue-status",
+  "hybrid-mem task-queue-touch",
   "hybrid-mem cost-report",
   "hybrid-mem tool-effectiveness",
   "hybrid-mem cross-agent-learning",

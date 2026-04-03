@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { FactsDB } from "../backends/facts-db.js";
+import * as factsDbConnection from "../backends/facts-db/db-connection.js";
 import { hybridConfigSchema } from "../config.js";
 import {
   bootstrapInstallers,
@@ -103,7 +104,7 @@ describe("bootstrap installers", () => {
     const api = {
       logger: { info: vi.fn(), warn: vi.fn(), debug: vi.fn(), error: vi.fn() },
     };
-    const verifySpy = vi.spyOn(FactsDB, "verifyFts5Support").mockImplementation(() => {
+    const verifySpy = vi.spyOn(factsDbConnection, "verifyFts5Support").mockImplementation(() => {
       throw new Error(
         "memory-hybrid: SQLite FTS5 capability check failed during startup. " +
           "Hybrid search would silently degrade to vector-only, so plugin initialization is aborted. " +

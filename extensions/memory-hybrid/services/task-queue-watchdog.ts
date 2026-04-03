@@ -71,10 +71,13 @@ export interface TaskQueueItem {
   dispatchToken?: string;
   pid?: number;
   started?: string;
+  /** When set to `idle`, the entry is a placeholder (no factory task yet) — see #983. */
   status?: string;
   completed?: string;
   exit_code?: number;
   details?: string;
+  /** Set on idle placeholders written by hybrid-mem so consumers can distinguish them. */
+  producer?: string;
   /** Retry counter attached by the watchdog on successive clears */
   retryCount?: number;
   /** ISO timestamp when the watchdog last intervened */
@@ -165,6 +168,38 @@ async function writeJsonFile(filePath: string, data: unknown): Promise<void> {
   await writeFile(filePath, JSON.stringify(data, null, 2), "utf-8");
 }
 
+const TASK_QUEUE_IDLE_PRODUCER = "openclaw-hybrid-memory";
+
+/**
+ * When `current.json` is absent, write a minimal idle sentinel so tools and cron jobs can read
+ * JSON from the canonical path without ENOENT (#983). Real factory tasks overwrite this file.
+ *
+ * @returns true when a new file was written.
+ */
+export async function ensureTaskQueueIdlePlaceholder(
+  stateDir: string,
+  logger?: { info?: (msg: string) => void },
+): Promise<boolean> {
+  await mkdir(stateDir, { recursive: true });
+  const currentPath = join(stateDir, "current.json");
+  const payload: TaskQueueItem = {
+    status: "idle",
+    producer: TASK_QUEUE_IDLE_PRODUCER,
+    details:
+      "Placeholder: no autonomous queue task is active. The factory overwrites this file when work is dispatched.",
+  };
+  const body = JSON.stringify(payload, null, 2);
+  try {
+    await writeFile(currentPath, body, { encoding: "utf-8", flag: "wx" });
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code === "EEXIST") return false;
+    throw err;
+  }
+  logger?.info?.(`memory-hybrid: wrote task-queue idle placeholder at ${currentPath}`);
+  return true;
+}
+
 /**
  * Build a timestamped history filename.
  * Format: YYYY-MM-DDTHH-MM-SS-{suffix}.json
@@ -224,6 +259,9 @@ export async function runTaskQueueWatchdog(
   const currentPath = join(stateDir, "current.json");
   const historyDir = join(stateDir, "history");
 
+  await mkdir(stateDir, { recursive: true });
+  await ensureTaskQueueIdlePlaceholder(stateDir, logger);
+
   // Keep lease registry fresh even when there is no active current.json.
   try {
     await expireDispatchLeases(stateDir);
@@ -234,6 +272,11 @@ export async function runTaskQueueWatchdog(
   const item = await readJsonFile<TaskQueueItem>(currentPath);
   if (!item || typeof item !== "object" || Array.isArray(item)) {
     return { action: "no-current" };
+  }
+
+  // Idle placeholder — never treat as a stale factory run (#983).
+  if (item.status === "idle" && item.producer === TASK_QUEUE_IDLE_PRODUCER) {
+    return { action: "ok", item };
   }
 
   // ── Health checks ─────────────────────────────────────────────────────────

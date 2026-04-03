@@ -1,5 +1,5 @@
 import { getEnv } from "../utils/env-manager.js";
-import { dirname, join } from "node:path";
+import { dirname, isAbsolute, join } from "node:path";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
@@ -41,6 +41,8 @@ import {
 import { versionInfo } from "../versionInfo.js";
 import { checkOpenClawVersion } from "../utils/version-check.js";
 import { runTaskQueueWatchdog } from "../services/task-queue-watchdog.js";
+import { reconcileActiveTaskInProgressSessions } from "../services/active-task.js";
+import { parseDuration } from "../utils/duration.js";
 
 export interface PluginServiceContext {
   PLUGIN_ID: string;
@@ -601,6 +603,34 @@ export function createPluginService(ctx: PluginServiceContext) {
           capturePluginError(err instanceof Error ? err : new Error(String(err)), {
             subsystem: "plugin-service",
             operation: "task-queue-watchdog",
+          });
+        }
+        if (!cfg.activeTask.enabled) return;
+        try {
+          const workspaceRoot = getEnv("OPENCLAW_WORKSPACE") ?? join(homedir(), ".openclaw", "workspace");
+          const activeTaskFilePath = isAbsolute(cfg.activeTask.filePath)
+            ? cfg.activeTask.filePath
+            : join(workspaceRoot, cfg.activeTask.filePath);
+          const staleMinutes = parseDuration(cfg.activeTask.staleThreshold);
+          const memoryDir = join(workspaceRoot, "memory");
+          const { reconciledLabels, wrote } = await reconcileActiveTaskInProgressSessions(
+            activeTaskFilePath,
+            staleMinutes,
+            {
+              flushOnComplete: cfg.activeTask.flushOnComplete !== false,
+              memoryDir,
+            },
+          );
+          if (wrote && reconciledLabels.length > 0) {
+            api.logger.info?.(
+              `memory-hybrid: ACTIVE-TASK session reconcile — completed orphan subagent row(s): ${reconciledLabels.join(", ")}`,
+            );
+          }
+        } catch (reconcileErr) {
+          api.logger.warn?.(`memory-hybrid: active-task session reconcile failed (non-fatal): ${reconcileErr}`);
+          capturePluginError(reconcileErr instanceof Error ? reconcileErr : new Error(String(reconcileErr)), {
+            subsystem: "plugin-service",
+            operation: "active-task-session-reconcile",
           });
         }
       };
