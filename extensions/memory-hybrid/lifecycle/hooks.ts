@@ -37,14 +37,14 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
     : join(workspaceRoot, ctx.cfg.activeTask.filePath);
 
   const onAgentStart = (api: ClawdbotPluginApi) => {
-    api.on("before_agent_start", async (event: unknown) => {
-      await runSetupStage(event, api, ctx, sessionState);
+    api.on("before_agent_start", async (event: unknown, hookCtx) => {
+      await runSetupStage(event, api, ctx, sessionState, hookCtx);
     });
 
     if (ctx.cfg.autoRecall.enabled) {
-      api.on("before_agent_start", async (event: unknown) => {
+      api.on("before_agent_start", async (event: unknown, hookCtx) => {
         try {
-          const recallStageResult = await runRecallStage(event, api, ctx, sessionState);
+          const recallStageResult = await runRecallStage(event, api, ctx, sessionState, hookCtx);
           if (!recallStageResult) return undefined;
           if (recallStageResult.kind === "degraded") {
             return { prependContext: recallStageResult.prependContext };
@@ -86,14 +86,15 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
   };
 
   const onAgentEnd = (api: ClawdbotPluginApi) => {
-    api.on("agent_end", async (event: unknown) => {
+    api.on("agent_end", async (event: unknown, hookCtx) => {
       // Issue #742: extract tool names from messages and record via WorkflowTracker
       // so crystallization can detect patterns from the traces table.
       if (ctx.workflowTracker && ctx.cfg.workflowTracking?.enabled) {
         try {
           const ev = event as { messages?: unknown[]; success?: boolean };
           const messages = ev?.messages ?? [];
-          const sessionId = sessionState.resolveSessionKey(event, api) ?? ctx.currentAgentIdRef.value ?? "default";
+          const sessionId =
+            sessionState.resolveSessionKey(event, api, hookCtx) ?? ctx.currentAgentIdRef.value ?? "default";
 
           // Extract goal from first user message (used as trace label)
           let goal = "unknown";
@@ -136,14 +137,16 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
           capturePluginError(err instanceof Error ? err : new Error(String(err)), {
             subsystem: "workflow-tracking",
             operation: "agent-end-track-workflow",
-            sessionId: sessionState.resolveSessionKey(event, api) ?? ctx.currentAgentIdRef.value ?? "default",
+            sessionId:
+              sessionState.resolveSessionKey(event, api, hookCtx) ?? ctx.currentAgentIdRef.value ?? "default",
           });
           api.logger.warn(`memory-hybrid: workflow tracking failed: ${String(err)}`);
         }
       }
 
-      await runCaptureStage(event, api, ctx, sessionState);
-      const sessionId = sessionState.resolveSessionKey(event, api) ?? ctx.currentAgentIdRef.value ?? "default";
+      await runCaptureStage(event, api, ctx, sessionState, hookCtx);
+      const sessionId =
+        sessionState.resolveSessionKey(event, api, hookCtx) ?? ctx.currentAgentIdRef.value ?? "default";
       try {
         await buildDailyNarrative({
           sessionId,

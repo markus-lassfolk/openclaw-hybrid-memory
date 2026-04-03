@@ -45,10 +45,10 @@ export function registerAuthFailureRecall(
   const { resolveSessionKey, authFailureRecallsThisSession } = sessionState;
   const currentAgentIdRef = ctx.currentAgentIdRef;
 
-  api.on("before_agent_start", async (event: unknown) => {
+  api.on("before_agent_start", async (event: unknown, hookCtx) => {
     const e = event as { prompt?: string; messages?: unknown[] };
     if (!e.prompt && (!e.messages || !Array.isArray(e.messages))) return;
-    const sessionKey = resolveSessionKey(event, api) ?? currentAgentIdRef.value ?? "default";
+    const sessionKey = resolveSessionKey(event, api, hookCtx) ?? currentAgentIdRef.value ?? "default";
 
     try {
       let textToScan = e.prompt || "";

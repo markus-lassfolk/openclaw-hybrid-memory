@@ -5,7 +5,7 @@
 
 import type { SessionSeenFacts } from "../services/ambient-retrieval.js";
 import type { FrustrationConversationTurn } from "../services/frustration-detector.js";
-import type { SessionState } from "./types.js";
+import type { HookAgentContextSlice, SessionState } from "./types.js";
 
 const MAX_TRACKED_SESSIONS = 200;
 
@@ -16,7 +16,11 @@ export type SessionKeyHookApi = { context?: { sessionId?: string; sessionKey?: s
  * Best-effort session key string for lifecycle hooks — same precedence as
  * {@link createSessionState}'s `resolveSessionKey` (exported for agent id parsing and tests).
  */
-export function resolveSessionKeyFromHookEvent(event: unknown, api?: SessionKeyHookApi): string | null {
+export function resolveSessionKeyFromHookEvent(
+  event: unknown,
+  api?: SessionKeyHookApi,
+  hookAgentCtx?: HookAgentContextSlice,
+): string | null {
   const ev = event as {
     session?: Record<string, unknown>;
     sessionKey?: string;
@@ -34,6 +38,8 @@ export function resolveSessionKeyFromHookEvent(event: unknown, api?: SessionKeyH
     (payloadCtx?.key as string | undefined) ??
     (payloadCtx?.id as string | undefined) ??
     (payloadCtx?.label as string | undefined) ??
+    hookAgentCtx?.sessionKey ??
+    hookAgentCtx?.sessionId ??
     api?.context?.sessionId ??
     api?.context?.sessionKey ??
     null;
@@ -110,8 +116,12 @@ export function createSessionState(): SessionState {
     }
   }
 
-  function resolveSessionKey(event: unknown, api?: SessionKeyHookApi): string | null {
-    return resolveSessionKeyFromHookEvent(event, api);
+  function resolveSessionKey(
+    event: unknown,
+    api?: SessionKeyHookApi,
+    hookAgentCtx?: HookAgentContextSlice,
+  ): string | null {
+    return resolveSessionKeyFromHookEvent(event, api, hookAgentCtx);
   }
 
   const clearAll = (): void => {

@@ -31,7 +31,7 @@ import { capturePluginError } from "../services/error-reporter.js";
 import { isOllamaCircuitBreakerOpen } from "../services/embeddings.js";
 import { withTimeout } from "../utils/timeout.js";
 import { runHumanizerScore, formatQualityLoopEntry } from "../services/humanizer-score.js";
-import type { LifecycleContext, SessionState } from "./types.js";
+import type { HookAgentContextSlice, LifecycleContext, SessionState } from "./types.js";
 
 const CAPTURE_STAGE_TIMEOUT_MS = 60_000;
 
@@ -114,8 +114,11 @@ export async function runCaptureStage(
   api: ClawdbotPluginApi,
   ctx: LifecycleContext,
   sessionState: SessionState,
+  hookAgentCtx?: HookAgentContextSlice,
 ): Promise<void> {
-  await withTimeout(CAPTURE_STAGE_TIMEOUT_MS, () => runCapture(event, api, ctx, sessionState));
+  await withTimeout(CAPTURE_STAGE_TIMEOUT_MS, () =>
+    runCapture(event, api, ctx, sessionState, hookAgentCtx),
+  );
 }
 
 async function runCapture(
@@ -123,9 +126,10 @@ async function runCapture(
   api: ClawdbotPluginApi,
   ctx: LifecycleContext,
   sessionState: SessionState,
+  hookAgentCtx?: HookAgentContextSlice,
 ): Promise<void> {
   const { resolveSessionKey, clearSessionState, frustrationStateMap } = sessionState;
-  const sessionKey = resolveSessionKey(event, api) ?? ctx.currentAgentIdRef.value ?? "default";
+  const sessionKey = resolveSessionKey(event, api, hookAgentCtx) ?? ctx.currentAgentIdRef.value ?? "default";
   const ev = event as { success?: boolean; messages?: unknown[] };
   const messages = ev?.messages ?? [];
 

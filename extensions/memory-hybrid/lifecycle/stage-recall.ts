@@ -22,7 +22,13 @@ import { yieldEventLoop } from "../utils/event-loop-yield.js";
 import { resolveEntityLookupNames } from "../utils/entity-lookup-resolve.js";
 import { estimateTokens } from "../utils/text.js";
 import { isConsolidatedDerivedFact } from "../utils/consolidation-controls.js";
-import type { LifecycleContext, RecallResult, RecallStageResult, SessionState } from "./types.js";
+import type {
+  HookAgentContextSlice,
+  LifecycleContext,
+  RecallResult,
+  RecallStageResult,
+  SessionState,
+} from "./types.js";
 import { runRecallPipelineQuery, type RecallPipelineDeps } from "../services/recall-pipeline.js";
 import { createRecallSpan, createRecallTimingLogger } from "../services/recall-timing.js";
 import {
@@ -50,13 +56,14 @@ export async function runRecallStage(
   api: ClawdbotPluginApi,
   ctx: LifecycleContext,
   sessionState: SessionState,
+  hookAgentCtx?: HookAgentContextSlice,
 ): Promise<RecallStageResult | null> {
   const ac = new AbortController();
   const { signal } = ac;
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     return await Promise.race([
-      runRecall(event, api, ctx, sessionState, signal),
+      runRecall(event, api, ctx, sessionState, signal, hookAgentCtx),
       new Promise<RecallStageResult | null>((resolve) => {
         timer = setTimeout(() => {
           ac.abort();
@@ -75,6 +82,7 @@ async function runRecall(
   ctx: LifecycleContext,
   sessionState: SessionState,
   signal?: AbortSignal,
+  hookAgentCtx?: HookAgentContextSlice,
 ): Promise<RecallStageResult> {
   const e = event as { prompt?: string };
   if (!e.prompt || e.prompt.length < 5) {
@@ -329,7 +337,7 @@ async function runRecall(
     };
 
     const ambientCfg = ctx.cfg.ambient;
-    const sessionScopeKey = resolveSessionKey(e, api) ?? "default";
+    const sessionScopeKey = resolveSessionKey(e, api, hookAgentCtx) ?? "default";
     if (!ambientSeenFactsMap.has(sessionScopeKey)) {
       ambientSeenFactsMap.set(sessionScopeKey, new SessionSeenFacts());
       ambientLastEmbeddingMap.set(sessionScopeKey, null);
@@ -387,7 +395,7 @@ async function runRecall(
         if (isTopicShift) api.logger.info?.("memory-hybrid: topic shift detected — re-running ambient retrieval");
         if (promptEmbedding !== null) ambientLastEmbeddingMap.set(sessionScopeKey, promptEmbedding);
         const knownEntities = ctx.factsDb.getKnownEntities ? ctx.factsDb.getKnownEntities() : [];
-        const ambientSessionKey = resolveSessionKey(e, api);
+        const ambientSessionKey = resolveSessionKey(e, api, hookAgentCtx);
         const ambientQueries = generateAmbientQueries(
           e.prompt,
           ambientCfg,
@@ -647,7 +655,7 @@ async function runRecall(
           if (recallAborted(signal)) {
             return abortDirectives();
           }
-          const sessionKey = resolveSessionKey(e, api) ?? currentAgentIdRef.value ?? "default";
+          const sessionKey = resolveSessionKey(e, api, hookAgentCtx) ?? currentAgentIdRef.value ?? "default";
           if (!sessionStartSeen.has(sessionKey) && canRunDirective()) {
             const results = await runRecallPipelineQuery("session start", directiveLimit, pipelineDeps, hydeUsedRef, {
               hydeLabel: "HyDE",
