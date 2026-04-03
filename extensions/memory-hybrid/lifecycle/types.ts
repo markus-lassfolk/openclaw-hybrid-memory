@@ -21,7 +21,13 @@ import type { PendingLLMWarnings } from "../services/chat.js";
 import type { SessionSeenFacts } from "../services/ambient-retrieval.js";
 import type { FrustrationConversationTurn } from "../services/frustration-detector.js";
 
-/** OpenClaw typed-hook context slice (`PluginHookAgentContext`) for session/agent resolution. */
+/**
+ * Subset of OpenClaw `PluginHookAgentContext` read at the hook boundary (#1005).
+ * Parsed by `sliceHookAgentContext` in `hook-resolution-api.ts`.
+ *
+ * After `withHookResolutionApi`, values appear on `api.context`. Resolvers still prefer
+ * structured event/session fields over `api.context`, so the event payload wins when both differ.
+ */
 export type HookAgentContextSlice = {
   agentId?: string;
   sessionKey?: string;

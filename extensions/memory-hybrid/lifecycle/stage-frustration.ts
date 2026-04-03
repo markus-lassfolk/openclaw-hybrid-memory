@@ -31,6 +31,7 @@ export function registerFrustrationHandlers(
   const { resolveSessionKey, frustrationStateMap } = sessionState;
   const currentAgentIdRef = ctx.currentAgentIdRef;
 
+  // Must use the two-argument hook signature so cron/embedded identity on hookCtx is visible (#1005).
   api.on("before_agent_start", async (event: unknown, hookCtx: unknown) => {
     const rApi = withHookResolutionApi(api, hookCtx);
     const e = event as {

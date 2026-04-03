@@ -38,6 +38,8 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
     : join(workspaceRoot, ctx.cfg.activeTask.filePath);
 
   const onAgentStart = (api: ClawdbotPluginApi) => {
+    // OpenClaw typed hooks: (event, PluginHookAgentContext). Second arg must be declared so
+    // sessionKey/sessionId/agentId reach resolvers via withHookResolutionApi (#1005).
     api.on("before_agent_start", async (event: unknown, hookCtx: unknown) => {
       const rApi = withHookResolutionApi(api, hookCtx);
       await runSetupStage(event, rApi, ctx, sessionState);
@@ -89,6 +91,7 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
   };
 
   const onAgentEnd = (api: ClawdbotPluginApi) => {
+    // Same typed-hook shape as before_agent_start (#1005).
     api.on("agent_end", async (event: unknown, hookCtx: unknown) => {
       const rApi = withHookResolutionApi(api, hookCtx);
       // Issue #742: extract tool names from messages and record via WorkflowTracker

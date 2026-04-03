@@ -46,6 +46,7 @@ export function registerAuthFailureRecall(
   const { resolveSessionKey, authFailureRecallsThisSession } = sessionState;
   const currentAgentIdRef = ctx.currentAgentIdRef;
 
+  // Two-arg hook: merge PluginHookAgentContext into api before resolveSessionKey (#1005).
   api.on("before_agent_start", async (event: unknown, hookCtx: unknown) => {
     const rApi = withHookResolutionApi(api, hookCtx);
     const e = event as { prompt?: string; messages?: unknown[] };

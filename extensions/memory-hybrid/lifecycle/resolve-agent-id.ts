@@ -8,6 +8,12 @@
  *
  * Cron / embedded runs may omit structured `agentId` while still using session keys
  * like `agent:<id>:cron:<jobId>` — see #990 and `tryParseAgentIdFromOpenClawSessionKey`.
+ *
+ * **Precedence (explicit id, first hit wins):** event/session/run/payload `agentId` fields,
+ * then `api.context.agentId` (include values merged from typed-hook context via
+ * `withHookResolutionApi`). Finally, derive from the session key produced by
+ * `resolveSessionKeyFromHookEvent` (`tryParseAgentIdFromOpenClawSessionKey`). This matches
+ * session-key resolution: structured event beats hook-sourced `api.context`, then fallbacks.
  */
 
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
@@ -52,7 +58,6 @@ export function resolveAgentIdFromHookEvent(event: unknown, api: ClawdbotPluginA
   const payloadCtx = ev.context as Record<string, unknown> | undefined;
   const activeAgent = session?.activeAgent;
 
-  // Event/session payload first; callers may pass `withHookResolutionApi(api, hookCtx)` so context carries hook agentId.
   const explicit =
     nonEmptyString(ev.agentId) ??
     nonEmptyString(session?.agentId) ??

@@ -208,3 +208,28 @@ describe("resolveAgentIdFromHookEvent", () => {
     );
   });
 });
+
+describe("hook identity parity (#1005)", () => {
+  it("prefers sessionId over sessionKey on merged api.context when both are set", () => {
+    const api = withHookResolutionApi(mockApi(), {
+      sessionId: "canonical-session-id",
+      sessionKey: "agent:other:cron:job",
+    });
+    expect(resolveSessionKeyFromHookEvent({ prompt: "x" }, api)).toBe("canonical-session-id");
+  });
+
+  it("resolves the same hook sessionKey to a session string and a matching agent id", () => {
+    const hook = { sessionKey: "agent:forge:cron:task-9" };
+    const api = withHookResolutionApi(mockApi(), hook);
+    const ev = { prompt: "hi" };
+    expect(resolveSessionKeyFromHookEvent(ev, api)).toBe("agent:forge:cron:task-9");
+    expect(resolveAgentIdFromHookEvent(ev, api)).toBe("forge");
+  });
+
+  it("uses hook agentId from merged context when no session key is available", () => {
+    const api = withHookResolutionApi(mockApi(), { agentId: "from-hook" });
+    const ev = { prompt: "hi" };
+    expect(resolveSessionKeyFromHookEvent(ev, api)).toBeNull();
+    expect(resolveAgentIdFromHookEvent(ev, api)).toBe("from-hook");
+  });
+});

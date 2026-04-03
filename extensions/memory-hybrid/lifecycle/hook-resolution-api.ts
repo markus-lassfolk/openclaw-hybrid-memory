@@ -2,8 +2,13 @@
  * Fold OpenClaw typed-hook context (`PluginHookAgentContext`, 2nd callback arg) into
  * `api.context` so session/agent resolvers use `(event, api)` only (#1005).
  *
- * Per-field precedence vs existing `api.context`: hook slice wins (matches
- * `resolveSessionKeyFromHookEvent` ordering before `api.context`).
+ * **Merge vs previous `api.context`:** for each of `sessionId`, `sessionKey`, and
+ * `agentId`, a non-empty hook value replaces the same field on `api.context`. This mirrors
+ * “hook before bare api.context” in the old three-argument resolver.
+ *
+ * **End-to-end identity:** event/session/payload fields still win over merged `api.context`
+ * in `resolveSessionKeyFromHookEvent` and `resolveAgentIdFromHookEvent`, so structured
+ * payloads cannot be overridden by hook context (symmetric for session key and agent id).
  */
 
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
@@ -42,6 +47,7 @@ export function withHookResolutionApi(api: ClawdbotPluginApi, hookCtx: unknown):
     ...api,
     context: {
       ...c,
+      // Order matches resolveSessionKeyFromHookEvent: sessionId before sessionKey on api.context.
       sessionId: slice.sessionId ?? c.sessionId,
       sessionKey: slice.sessionKey ?? c.sessionKey,
       agentId: slice.agentId ?? c.agentId,
