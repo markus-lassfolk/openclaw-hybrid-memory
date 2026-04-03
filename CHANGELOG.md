@@ -14,6 +14,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.4.38] - 2026-04-03
+
+### Release summary
+
+Version bump to **2026.4.38** (npm package, `openclaw.plugin.json`, and standalone installer).
+
+---
+
 ## [2026.4.33] - 2026-04-03
 
 ### Release summary
@@ -1204,7 +1212,8 @@ Major feature release including procedural memory, directive extraction, reinfor
 
 ---
 
-[Unreleased]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.4.33...HEAD
+[Unreleased]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.4.38...HEAD
+[2026.4.38]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.4.36...v2026.4.38
 [2026.4.33]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.4.32...v2026.4.33
 [2026.4.32]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.4.31...v2026.4.32
 [2026.4.31]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.4.30...v2026.4.31
