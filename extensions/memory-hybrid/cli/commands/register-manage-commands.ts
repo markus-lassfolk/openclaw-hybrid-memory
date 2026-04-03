@@ -23,8 +23,7 @@ import { getEffectivenessReport, runClosedLoopAnalysis } from "../../services/fe
 import { runMemoryDiagnostics } from "../../services/memory-diagnostics.js";
 // biome-ignore lint/style/useImportType: mergeResults kept as value import so typeof mergeResults resolves at the type level without confusion
 import { filterByScope, mergeResults } from "../../services/merge-results.js";
-import { relativeTime } from "../shared.js";
-import { type Chainable, withExit } from "../shared.js";
+import { relativeTime, type Chainable, withExit } from "../shared.js";
 import type {
   AnalyzeFeedbackPhrasesResult,
   BackfillCliResult,
@@ -45,7 +44,6 @@ import type {
 } from "../types.js";
 import type { SearchResult } from "../../types/memory.js";
 import type { ScopeFilter } from "../../types/memory.js";
-import { parseSourceDate } from "../../utils/dates.js";
 import { getLanguageKeywordsFilePath } from "../../utils/language-keywords.js";
 import { execSync } from "../../utils/process-runner.js";
 import { buildCouncilSessionKey, buildProvenanceMetadata, generateTraceId } from "../../utils/provenance.js";
@@ -58,7 +56,6 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
     versionInfo,
     embeddings,
     mergeResults: merge,
-    parseSourceDate: parseDate,
     getMemoryCategories,
     cfg,
     runStore,
@@ -102,7 +99,6 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
     runExtractImplicitFeedback,
     runGenerateAutoSkills,
     runGenerateProposals,
-    resolvePath,
     runDreamCycle,
     runContinuousVerification,
     runCrossAgentLearning,
