@@ -161,9 +161,9 @@ export async function upsertProjectTaskKey(
   entity: string,
   key: string,
   value: string,
+  facts: MemoryEntry[],
   log?: { warn?: (m: string) => void },
 ): Promise<void> {
-  const facts = factsDb.listFactsByCategory(TASK_LEDGER_CATEGORY, 8000);
   const same = facts.filter((f) => f.entity === entity && (f.key ?? "") === key);
   same.sort((a, b) => b.createdAt - a.createdAt);
   const previous = same[0];
@@ -207,18 +207,19 @@ export async function syncActiveTaskEntryToFacts(
   log?: { warn?: (m: string) => void },
 ): Promise<void> {
   const entity = entry.label;
-  await upsertProjectTaskKey(factsDb, vectorDb, embeddings, entity, "title", entry.description, log);
-  await upsertProjectTaskKey(factsDb, vectorDb, embeddings, entity, "status", displayStatusToFact(entry.status), log);
+  const facts = factsDb.listFactsByCategory(TASK_LEDGER_CATEGORY, 8000);
+  await upsertProjectTaskKey(factsDb, vectorDb, embeddings, entity, "title", entry.description, facts, log);
+  await upsertProjectTaskKey(factsDb, vectorDb, embeddings, entity, "status", displayStatusToFact(entry.status), facts, log);
   if (entry.next?.trim()) {
-    await upsertProjectTaskKey(factsDb, vectorDb, embeddings, entity, "next", entry.next.trim(), log);
+    await upsertProjectTaskKey(factsDb, vectorDb, embeddings, entity, "next", entry.next.trim(), facts, log);
   }
   if (entry.subagent?.trim()) {
-    await upsertProjectTaskKey(factsDb, vectorDb, embeddings, entity, "related_session", entry.subagent.trim(), log);
+    await upsertProjectTaskKey(factsDb, vectorDb, embeddings, entity, "related_session", entry.subagent.trim(), facts, log);
   }
-  await upsertProjectTaskKey(factsDb, vectorDb, embeddings, entity, "task_updated", entry.updated, log);
-  await upsertProjectTaskKey(factsDb, vectorDb, embeddings, entity, "started", entry.started, log);
+  await upsertProjectTaskKey(factsDb, vectorDb, embeddings, entity, "task_updated", entry.updated, facts, log);
+  await upsertProjectTaskKey(factsDb, vectorDb, embeddings, entity, "started", entry.started, facts, log);
   if (entry.branch?.trim()) {
-    await upsertProjectTaskKey(factsDb, vectorDb, embeddings, entity, "branch", entry.branch.trim(), log);
+    await upsertProjectTaskKey(factsDb, vectorDb, embeddings, entity, "branch", entry.branch.trim(), facts, log);
   }
 }
 
@@ -424,22 +425,18 @@ export async function reconcileActiveTaskInProgressSessionsFacts(
   const { active } = loadTaskLedgerFromFacts(factsDb);
   const reconciledLabels: string[] = [];
   const toFlush: ActiveTaskEntry[] = [];
-  const newActive: ActiveTaskEntry[] = [];
   const openclawHome = opts.openclawHome;
 
   for (const task of active) {
     if (task.status !== "In progress") {
-      newActive.push(task);
       continue;
     }
     const ref = task.subagent?.trim();
     if (!ref || !looksLikeOpenClawSessionRef(ref)) {
-      newActive.push(task);
       continue;
     }
     const present = await isOpenClawSessionLikelyPresent(ref, openclawHome);
     if (present) {
-      newActive.push(task);
       continue;
     }
     const now = new Date().toISOString();
