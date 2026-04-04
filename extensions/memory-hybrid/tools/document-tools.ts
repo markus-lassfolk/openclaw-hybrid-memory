@@ -19,6 +19,7 @@ import type { EmbeddingProvider } from "../services/embeddings.js";
 import type { PythonBridge } from "../services/python-bridge.js";
 import { chunkMarkdown } from "../services/document-chunker.js";
 import { capturePluginError } from "../services/error-reporter.js";
+import { chatCompletionTokenParams } from "../services/model-capabilities.js";
 import {
   getCronModelConfig,
   getLLMModelPreference,
@@ -238,7 +239,7 @@ async function describeImageWithVision(opts: {
           },
         ],
         temperature: 0.2,
-        max_tokens: 800,
+        ...chatCompletionTokenParams(model, 800),
       });
       const text = resp.choices[0]?.message?.content?.trim() ?? "";
       if (!text) {

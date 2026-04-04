@@ -168,7 +168,7 @@ describe("classify completion API params (#1008)", () => {
     expect(arg).not.toHaveProperty("max_tokens");
   });
 
-  it("uses max_tokens for gpt-4 style batch model (multi-candidate path)", async () => {
+  it("uses max_completion_tokens for gpt-4.1 batch model (multi-candidate path)", async () => {
     const create = vi.fn().mockResolvedValue({
       choices: [
         {
@@ -189,7 +189,7 @@ describe("classify completion API params (#1008)", () => {
     ];
     await classifyMemoryOperationsBatch(items, openai, "gpt-4.1-nano", { warn });
     const arg = create.mock.calls[0][0] as Record<string, unknown>;
-    expect(arg.max_tokens).toBe(160);
-    expect(arg).not.toHaveProperty("max_completion_tokens");
+    expect(arg.max_completion_tokens).toBe(160);
+    expect(arg).not.toHaveProperty("max_tokens");
   });
 });

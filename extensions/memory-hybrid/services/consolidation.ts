@@ -19,6 +19,7 @@ import { withCostFeature } from "./cost-context.js";
 import type { EmbeddingProvider } from "./embeddings.js";
 import { shouldSuppressEmbeddingError } from "./embeddings.js";
 import { capturePluginError } from "./error-reporter.js";
+import { chatCompletionTokenParams } from "./model-capabilities.js";
 import type { ProvenanceService } from "./provenance.js";
 import { dotProductSimilarity, normalizeVector } from "./reflection.js";
 
@@ -213,7 +214,7 @@ export async function runConsolidate(
               model: opts.model,
               messages: [{ role: "user", content: prompt }],
               temperature: 0,
-              max_tokens: 300,
+              ...chatCompletionTokenParams(opts.model, 300),
             }),
           { maxRetries: 2 },
         ),

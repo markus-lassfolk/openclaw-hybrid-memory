@@ -18,6 +18,7 @@ import {
   clearKeywordCache,
 } from "../utils/language-keywords.js";
 import { capturePluginError } from "./error-reporter.js";
+import { chatCompletionTokenParams } from "./model-capabilities.js";
 import { EXTRACTION_INTENTS, KEYWORD_GROUP_INTENTS, STRUCTURAL_TRIGGER_INTENTS } from "./intent-template.js";
 
 const LANG_FILE_NAME = ".language-keywords.json";
@@ -80,7 +81,7 @@ ${block}`;
           model,
           messages: [{ role: "user", content: prompt }],
           temperature: 0,
-          max_tokens: 100,
+          ...chatCompletionTokenParams(model, 100),
         }),
       { maxRetries: 2 },
     );
@@ -253,7 +254,7 @@ async function generateIntentBasedLanguages(
           model,
           messages: [{ role: "user", content: prompt }],
           temperature: 0.2,
-          max_tokens: 6000,
+          ...chatCompletionTokenParams(model, 6000),
         }),
       { maxRetries: 2 },
     );
@@ -340,7 +341,7 @@ Each value must be an array of translated strings in the same order as the Engli
           model,
           messages: [{ role: "user", content: prompt }],
           temperature: 0.2,
-          max_tokens: 4000,
+          ...chatCompletionTokenParams(model, 4000),
         }),
       { maxRetries: 2 },
     );

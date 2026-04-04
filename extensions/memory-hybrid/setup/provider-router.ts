@@ -21,6 +21,7 @@ import {
 import { hasOAuthProfiles } from "../utils/auth.js";
 import { getEnv } from "../utils/env-manager.js";
 import { inferFeatureLabel } from "./cost-instrumentation.js";
+import { isReasoningModel, requiresMaxCompletionTokens } from "../services/model-capabilities.js";
 
 /**
  * Normalize baseURL vs baseUrl (OpenClaw config uses camelCase `baseUrl`; SDK uses `baseURL`).
@@ -850,28 +851,26 @@ export function buildMultiProviderOpenAI(
     throw new UnconfiguredProviderError(prefix, trimmed);
   }
 
-  /** o1, o3, o4-mini, o3-pro, etc. — reasoning models that reject temperature/top_p params */
-  const isReasoningModel = (bare: string) => /^o[0-9]+(?:-[a-z]+)?$/.test(bare.toLowerCase());
-  const requiresMaxCompletionTokens = (bare: string) => isReasoningModel(bare) || /^gpt-5/i.test(bare);
-
   /**
-   * Newer OpenAI models (o-series, gpt-5+) use `max_completion_tokens` instead of `max_tokens`.
+   * Newer OpenAI models (o-series, gpt-5+, gpt-4.1*) use `max_completion_tokens` instead of `max_tokens`.
    * Reasoning models (o1, o3, o4-*) also reject temperature/top_p — strip those params.
+   * Applied for every routed provider (Azure Foundry, etc.), not only `openai/` — see model-capabilities.
    */
-  function remapMaxTokensForOpenAI(body: Record<string, unknown>, bareModel: string): Record<string, unknown> {
+  function remapMaxTokensForOpenAI(body: Record<string, unknown>): Record<string, unknown> {
     let result = body;
-    if (requiresMaxCompletionTokens(bareModel) && "max_tokens" in result && !("max_completion_tokens" in result)) {
+    const modelId = String(result.model ?? "");
+    if (requiresMaxCompletionTokens(modelId) && "max_tokens" in result && !("max_completion_tokens" in result)) {
       const { max_tokens, ...rest } = result;
       result = { ...rest, max_completion_tokens: max_tokens };
     }
-    if (isReasoningModel(bareModel)) {
+    if (isReasoningModel(modelId)) {
       // Reasoning models only accept temperature=1 (the default); strip to avoid 400
       const { temperature, top_p, ...rest } = result as Record<string, unknown> & {
         temperature?: unknown;
         top_p?: unknown;
       };
       if (temperature !== undefined || top_p !== undefined) {
-        api.logger.debug?.(`memory-hybrid: stripped temperature/top_p for reasoning model ${bareModel}`);
+        api.logger.debug?.(`memory-hybrid: stripped temperature/top_p for reasoning model ${modelId}`);
       }
       result = rest;
     }
@@ -897,13 +896,11 @@ export function buildMultiProviderOpenAI(
               const model = normalizeModelId(rawModel);
               const { client, bareModel, ollamaBaseUrl, useFullModel, authType } = resolveClient(model);
               const prefix = model.trim().split("/")[0]?.toLowerCase();
-              const isOpenAI = prefix === "openai" || !model.includes("/");
               // When gateway-routed for non-OpenAI providers (auth.order OAuth), send the full "provider/model"
               // name so the gateway can route to the correct provider using the configured auth profile.
               const modelForRequest = useFullModel ? model.trim() : bareModel;
-              const adjustedBody = isOpenAI
-                ? remapMaxTokensForOpenAI({ ...(body as object), model: modelForRequest }, bareModel)
-                : { ...(body as object), model: modelForRequest };
+              const merged = { ...(body as object), model: modelForRequest } as Record<string, unknown>;
+              const adjustedBody = remapMaxTokensForOpenAI(merged);
               const start = Date.now();
               // For Ollama models, probe the local server before attempting the call so we fall
               // through to the next tier model quickly instead of waiting for a TCP timeout.
