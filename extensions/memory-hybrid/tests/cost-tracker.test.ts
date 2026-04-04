@@ -1,10 +1,19 @@
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { CostTracker } from "../backends/cost-tracker.js";
+import type { FactsDB } from "../backends/facts-db.js";
 import { getCurrentCostFeature, withCostFeature } from "../services/cost-context.js";
 
 function createInMemoryDb(): DatabaseSync {
   return new DatabaseSync(":memory:");
+}
+
+/** Minimal FactsDB-shaped stub so unit tests can use a raw :memory: DatabaseSync handle. */
+function factsDbStubForTest(db: DatabaseSync, isOpen: () => boolean): FactsDB {
+  return {
+    isOpen,
+    getRawDb: () => db,
+  } as FactsDB;
 }
 
 describe("CostTracker", () => {
@@ -13,7 +22,7 @@ describe("CostTracker", () => {
 
   beforeEach(() => {
     db = createInMemoryDb();
-    tracker = new CostTracker(db);
+    tracker = new CostTracker(factsDbStubForTest(db, () => true));
   });
 
   afterEach(() => {
@@ -273,8 +282,10 @@ describe("CostTracker", () => {
   describe("record() error isolation", () => {
     it("does not throw when the DB is closed", () => {
       const tmpDb = new DatabaseSync(":memory:");
-      const tmpTracker = new CostTracker(tmpDb);
+      let storeOpen = true;
+      const tmpTracker = new CostTracker(factsDbStubForTest(tmpDb, () => storeOpen));
       tmpDb.close(); // close before recording
+      storeOpen = false; // mirror FactsDB.close() — CostTracker must no-op, not reopen a torn-down store
       // Should silently swallow — never let tracking break callers
       expect(() =>
         tmpTracker.record({
@@ -401,7 +412,7 @@ describe("CostTracker", () => {
     });
 
     it("is idempotent — constructing twice does not throw", () => {
-      expect(() => new CostTracker(db)).not.toThrow();
+      expect(() => new CostTracker(factsDbStubForTest(db, () => true))).not.toThrow();
     });
   });
 

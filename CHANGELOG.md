@@ -12,6 +12,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - **Embedding config inheritance (issue [#1002](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/1002)):** Before `hybridConfigSchema.parse`, merge OpenClaw **`models.providers`** (same paths as LLM bootstrap) into the raw plugin **`llm.providers`**, then overlay **`agents.defaults.memorySearch`** (`provider`, `model`, optional `deployment` from the matching gateway provider entry, and **`dimensions`** when known) onto plugin **`embedding`** only for omitted fields. Plugin values always win.
 
+### Fixed
+
+- **Cost tracker / `memory.db` ([#1021](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/1021)):** `CostTracker` no longer caches a `DatabaseSync` from a one-time `getRawDb()` call. It now holds `FactsDB`, resolves the handle via `getRawDb()` on each operation (same `liveDb` / reopen path as the rest of the store), and skips writes when `!factsDb.isOpen()` so plugin teardown and reload do not log `Failed to record cost entry: database is not open` for a stale handle.
+
 ---
 
 ## [2026.4.38] - 2026-04-03

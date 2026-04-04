@@ -7,6 +7,7 @@
  */
 
 import type { DatabaseSync } from "node:sqlite";
+import type { FactsDB } from "./facts-db.js";
 import { estimateCost } from "../services/model-pricing.js";
 import { pluginLogger } from "../utils/logger.js";
 
@@ -87,17 +88,33 @@ interface CostReport {
 }
 
 export class CostTracker {
-  private readonly db: DatabaseSync;
+  /**
+   * Use FactsDB + getRawDb() per operation so writes go through the same live handle / reopen
+   * path as the rest of the store. A cached DatabaseSync goes stale after close() (reload) or
+   * native "database is not open" races (#968-style).
+   */
+  private readonly factsDb: FactsDB;
   /** Rate-limit: log at most one DB error per session to avoid spamming the console. */
   private _errorLogged = false;
 
-  constructor(db: DatabaseSync) {
-    this.db = db;
+  constructor(factsDb: FactsDB) {
+    this.factsDb = factsDb;
     this.initSchema();
   }
 
+  /** Active SQLite handle; skip only when the store is actually shut down (e.g. plugin teardown). */
+  private db(): DatabaseSync | null {
+    try {
+      return this.factsDb.getRawDb();
+    } catch {
+      return null;
+    }
+  }
+
   private initSchema(): void {
-    this.db.exec(`
+    const db = this.db();
+    if (!db) return;
+    db.exec(`
       CREATE TABLE IF NOT EXISTS llm_cost_log (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         timestamp INTEGER NOT NULL DEFAULT (unixepoch()),
@@ -126,7 +143,7 @@ export class CostTracker {
     `);
     // Correct mis-prefixed model names (e.g. gateway sent openai/gemini-* → store as google/gemini-*)
     try {
-      this.db.exec(`
+      db.exec(`
         UPDATE llm_cost_log SET model = 'google/' || substr(model, 8) WHERE model LIKE 'openai/gemini-%';
         UPDATE llm_cost_log SET model = 'anthropic/' || substr(model, 8) WHERE model LIKE 'openai/claude-%';
       `);
@@ -137,21 +154,21 @@ export class CostTracker {
 
   record(entry: CostEntry): void {
     try {
+      const db = this.db();
+      if (!db) return;
       const cost = estimateCost(entry.model, entry.inputTokens, entry.outputTokens);
-      this.db
-        .prepare(
-          `INSERT INTO llm_cost_log (feature, model, input_tokens, output_tokens, estimated_cost_usd, duration_ms, success)
+      db.prepare(
+        `INSERT INTO llm_cost_log (feature, model, input_tokens, output_tokens, estimated_cost_usd, duration_ms, success)
            VALUES (?, ?, ?, ?, ?, ?, ?)`,
-        )
-        .run(
-          entry.feature,
-          entry.model,
-          entry.inputTokens,
-          entry.outputTokens,
-          cost,
-          entry.durationMs ?? null,
-          (entry.success ?? true) ? 1 : 0,
-        );
+      ).run(
+        entry.feature,
+        entry.model,
+        entry.inputTokens,
+        entry.outputTokens,
+        cost,
+        entry.durationMs ?? null,
+        (entry.success ?? true) ? 1 : 0,
+      );
     } catch (err) {
       // Never let cost tracking break LLM calls — but log the first failure per session for debuggability
       if (!this._errorLogged) {
@@ -166,6 +183,16 @@ export class CostTracker {
   getReport(options: { days?: number; feature?: string } = {}): CostReport {
     const days = options.days ?? 7;
     const cutoff = Math.floor(Date.now() / 1000) - days * 86400;
+    const db = this.db();
+    if (!db) {
+      return {
+        features: [],
+        total: { calls: 0, inputTokens: 0, outputTokens: 0, estimatedCostUsd: 0 },
+        days,
+        unknownModelCalls: 0,
+        unknownModels: [],
+      };
+    }
 
     let query = `SELECT feature,
               COUNT(*) AS calls,
@@ -182,7 +209,7 @@ export class CostTracker {
     }
     query += " GROUP BY feature ORDER BY estimatedCostUsd DESC";
 
-    const rows = this.db.prepare(query).all(...params) as Array<{
+    const rows = db.prepare(query).all(...params) as Array<{
       feature: string;
       calls: number | bigint;
       inputTokens: number | bigint;
@@ -219,7 +246,7 @@ export class CostTracker {
         unknownQuery += " AND feature = ?";
         unknownParams.push(options.feature);
       }
-      const unknownRow = this.db.prepare(unknownQuery).get(...unknownParams) as
+      const unknownRow = db.prepare(unknownQuery).get(...unknownParams) as
         | {
             cnt: number | bigint;
             models: string | null;
@@ -235,8 +262,10 @@ export class CostTracker {
   }
 
   getModelBreakdown(days = 7): ModelBreakdown[] {
+    const db = this.db();
+    if (!db) return [];
     const cutoff = Math.floor(Date.now() / 1000) - days * 86400;
-    const rows = this.db
+    const rows = db
       .prepare(
         `SELECT model,
                 COUNT(*) AS calls,
@@ -271,8 +300,12 @@ export class CostTracker {
     outputTokens: number;
     estimatedCostUsd: number;
   } {
+    const db = this.db();
+    if (!db) {
+      return { calls: 0, inputTokens: 0, outputTokens: 0, estimatedCostUsd: 0 };
+    }
     const cutoff = Math.floor(Date.now() / 1000) - days * 86400;
-    const row = this.db
+    const row = db
       .prepare(
         `SELECT COUNT(*) AS calls,
                 COALESCE(SUM(input_tokens), 0) AS inputTokens,
@@ -302,12 +335,12 @@ export class CostTracker {
    */
   recordSavings(entry: SavingsEntry): void {
     try {
-      this.db
-        .prepare(
-          `INSERT INTO llm_savings_log (feature, action, count_avoided, estimated_saving_usd, note)
+      const db = this.db();
+      if (!db) return;
+      db.prepare(
+        `INSERT INTO llm_savings_log (feature, action, count_avoided, estimated_saving_usd, note)
            VALUES (?, ?, ?, ?, ?)`,
-        )
-        .run(entry.feature, entry.action, entry.countAvoided, entry.estimatedSavingUsd, entry.note ?? null);
+      ).run(entry.feature, entry.action, entry.countAvoided, entry.estimatedSavingUsd, entry.note ?? null);
     } catch (err) {
       if (!this._errorLogged) {
         this._errorLogged = true;
@@ -322,8 +355,16 @@ export class CostTracker {
    * Return a savings report grouped by feature for the last `days` days.
    */
   getSavingsReport(days = 7): SavingsReport {
+    const db = this.db();
+    if (!db) {
+      return {
+        features: [],
+        total: { entries: 0, countAvoided: 0, estimatedSavingUsd: 0 },
+        days,
+      };
+    }
     const cutoff = Math.floor(Date.now() / 1000) - days * 86400;
-    const rows = this.db
+    const rows = db
       .prepare(
         `SELECT feature,
                 COUNT(*) AS entries,
@@ -365,9 +406,11 @@ export class CostTracker {
    * Prunes both llm_cost_log and llm_savings_log.
    */
   pruneOldEntries(retainDays = 90): number {
+    const db = this.db();
+    if (!db) return 0;
     const cutoff = Math.floor(Date.now() / 1000) - retainDays * 86400;
-    const costResult = this.db.prepare("DELETE FROM llm_cost_log WHERE timestamp < ?").run(cutoff);
-    const savingsResult = this.db.prepare("DELETE FROM llm_savings_log WHERE timestamp < ?").run(cutoff);
+    const costResult = db.prepare("DELETE FROM llm_cost_log WHERE timestamp < ?").run(cutoff);
+    const savingsResult = db.prepare("DELETE FROM llm_savings_log WHERE timestamp < ?").run(cutoff);
     return Number(costResult.changes) + Number(savingsResult.changes);
   }
 }
