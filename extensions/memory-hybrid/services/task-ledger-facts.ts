@@ -18,12 +18,11 @@ import {
   deleteSignal,
   detectStaleTasks,
   flushCompletedTaskToMemory,
-  isOpenClawSessionLikelyPresent,
-  looksLikeOpenClawSessionRef,
   readPendingSignals,
   serializeActiveTaskFile,
   upsertTask,
 } from "./active-task.js";
+import { isOpenClawSessionLikelyPresent, looksLikeOpenClawSessionRef } from "./openclaw-session-artifact.js";
 import type { EmbeddingProvider } from "./embeddings.js";
 
 export const TASK_LEDGER_CATEGORY = "project" as MemoryCategory;
@@ -219,11 +218,27 @@ export async function syncActiveTaskEntryToFacts(
   await upsertProjectTaskKey(factsDb, vectorDb, embeddings, entity, "title", entry.description, log);
   await upsertProjectTaskKey(factsDb, vectorDb, embeddings, entity, "status", displayStatusToFact(entry.status), log);
   await upsertProjectTaskKey(factsDb, vectorDb, embeddings, entity, "next", entry.next?.trim() || "", log);
-  await upsertProjectTaskKey(factsDb, vectorDb, embeddings, entity, "related_session", entry.subagent?.trim() || "", log);
+  await upsertProjectTaskKey(
+    factsDb,
+    vectorDb,
+    embeddings,
+    entity,
+    "related_session",
+    entry.subagent?.trim() || "",
+    log,
+  );
   await upsertProjectTaskKey(factsDb, vectorDb, embeddings, entity, "task_updated", entry.updated, log);
   await upsertProjectTaskKey(factsDb, vectorDb, embeddings, entity, "started", entry.started, log);
   await upsertProjectTaskKey(factsDb, vectorDb, embeddings, entity, "branch", entry.branch?.trim() || "", log);
-  await upsertProjectTaskKey(factsDb, vectorDb, embeddings, entity, "handoff", entry.handoff ? JSON.stringify(entry.handoff) : "", log);
+  await upsertProjectTaskKey(
+    factsDb,
+    vectorDb,
+    embeddings,
+    entity,
+    "handoff",
+    entry.handoff ? JSON.stringify(entry.handoff) : "",
+    log,
+  );
 }
 
 export async function renderActiveTaskMarkdownFile(

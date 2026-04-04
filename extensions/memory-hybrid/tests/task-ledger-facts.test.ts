@@ -9,13 +9,8 @@ import {
 
 function fact(partial: Partial<MemoryEntry> & { id: string; entity: string; key: string | null }): MemoryEntry {
   return {
-    id: partial.id,
-    text: partial.text ?? "",
     category: "project",
     importance: 0.7,
-    entity: partial.entity,
-    key: partial.key,
-    value: partial.value ?? null,
     source: "test",
     createdAt: partial.createdAt ?? 1000,
     decayClass: "permanent",
