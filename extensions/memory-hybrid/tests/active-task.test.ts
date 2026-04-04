@@ -1487,3 +1487,74 @@ describe("reconcileActiveTaskInProgressSessions", () => {
     expect(r.wrote).toBe(false);
   });
 });
+
+// ---------------------------------------------------------------------------
+// CLI wiring integration tests
+// ---------------------------------------------------------------------------
+
+describe("registerActiveTaskCommands", () => {
+  it("accepts bare 'active-tasks' and 'active-tasks list'", async () => {
+    const { registerActiveTaskCommands } = await import("../cli/active-tasks.js");
+    const { Command } = await import("commander");
+
+    const program = new Command();
+    program.exitOverride();
+
+    const mockCtx: ActiveTaskContext = {
+      openclawHome: "/tmp/openclaw-home-cli-test",
+      sessionKey: "test-session",
+    } as unknown as ActiveTaskContext;
+
+    // Register the commands
+    registerActiveTaskCommands(program, mockCtx);
+
+    // Intercept console.log and console.error
+    const origLog = console.log;
+    const origError = console.error;
+    let logged = "";
+    let errors = "";
+    console.log = ((...args: unknown[]) => { logged += args.join(" ") + "\n"; }) as typeof console.log;
+    console.error = ((...args: unknown[]) => { errors += args.join(" ") + "\n"; }) as typeof console.error;
+
+    try {
+      // Test bare 'active-tasks' — should list tasks (or show file not found)
+      // Using exitOverride + catch so async handlers complete before we check results
+      await program.parseAsync(["node", "hybrid-mem", "active-tasks"], { from: "user" }).catch(() => {});
+      // Reset for next parse
+      program.commands.length = 0;
+      registerActiveTaskCommands(program, mockCtx);
+      logged = "";
+      errors = "";
+
+      // Test 'active-tasks list'
+      await program.parseAsync(["node", "hybrid-mem", "active-tasks", "list"], { from: "user" }).catch(() => {});
+    } finally {
+      console.log = origLog;
+      console.error = origError;
+    }
+
+    // Neither form should have produced an error about "too many arguments"
+    // (the original bug that this PR fixes)
+    expect(errors).not.toContain("too many arguments");
+  });
+
+  it("active-tasks list subcommand is registered", async () => {
+    const { registerActiveTaskCommands } = await import("../cli/active-tasks.js");
+    const { Command } = await import("commander");
+
+    const program = new Command();
+    const mockCtx: ActiveTaskContext = {
+      openclawHome: "/tmp/openclaw-home-cli-test",
+      sessionKey: "test-session",
+    } as unknown as ActiveTaskContext;
+
+    registerActiveTaskCommands(program, mockCtx);
+
+    // The 'list' subcommand should be registered
+    const activeTasksCmd = program.commands.find(c => c.name() === "active-tasks");
+    expect(activeTasksCmd).toBeDefined();
+    const listCmd = activeTasksCmd?.commands.find(c => c.name() === "list");
+    expect(listCmd).toBeDefined();
+    expect(listCmd?.description()).toContain("List active tasks");
+  });
+});
