@@ -4,12 +4,13 @@
  */
 
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
+import { buildActiveTaskInjection, buildStaleWarningInjection, readActiveTaskFile } from "../services/active-task.js";
 import { capturePluginError } from "../services/error-reporter.js";
+import { matchesHeartbeat } from "../services/goal-stewardship-heartbeat.js";
+import { readActiveTaskRowsFromFacts } from "../services/task-ledger-facts.js";
+import { buildHeartbeatTaskHygieneBlock } from "../services/task-hygiene.js";
 import { parseDuration } from "../utils/duration.js";
 import { extractLastUserMessageText } from "../utils/extract-last-user-message.js";
-import { matchesHeartbeat } from "../services/goal-stewardship-heartbeat.js";
-import { buildHeartbeatTaskHygieneBlock } from "../services/task-hygiene.js";
-import { readActiveTaskFile, buildActiveTaskInjection, buildStaleWarningInjection } from "../services/active-task.js";
 import type { LifecycleContext } from "./types.js";
 
 export function registerActiveTaskInjection(
@@ -22,16 +23,26 @@ export function registerActiveTaskInjection(
   api.on("before_agent_start", async (event: unknown) => {
     try {
       const staleMinutes = parseDuration(ctx.cfg.activeTask.staleThreshold);
-      const taskFile = await readActiveTaskFile(resolvedActiveTaskPath, staleMinutes);
-      if (!taskFile || taskFile.active.length === 0) return undefined;
+      let activeForInjection: import("../services/active-task.js").ActiveTaskEntry[] = [];
 
-      const injection = buildActiveTaskInjection(taskFile.active, ctx.cfg.activeTask.injectionBudget);
+      if (ctx.cfg.activeTask.ledger === "facts") {
+        const { active } = readActiveTaskRowsFromFacts(ctx.factsDb, staleMinutes);
+        activeForInjection = active;
+      } else {
+        const taskFile = await readActiveTaskFile(resolvedActiveTaskPath, staleMinutes);
+        if (!taskFile || taskFile.active.length === 0) return undefined;
+        activeForInjection = taskFile.active;
+      }
+
+      if (activeForInjection.length === 0) return undefined;
+
+      const injection = buildActiveTaskInjection(activeForInjection, ctx.cfg.activeTask.injectionBudget);
       let staleWarningBlock = "";
       if (ctx.cfg.activeTask.staleWarning.enabled) {
         const injectionChars = injection.length;
         const budgetChars = ctx.cfg.activeTask.injectionBudget * 4;
         const remainingChars = Math.max(0, budgetChars - injectionChars);
-        staleWarningBlock = buildStaleWarningInjection(taskFile.active, staleMinutes, remainingChars);
+        staleWarningBlock = buildStaleWarningInjection(activeForInjection, staleMinutes, remainingChars);
       }
 
       const th = ctx.cfg.activeTask.taskHygiene;
@@ -39,12 +50,11 @@ export function registerActiveTaskInjection(
       const userText = extractLastUserMessageText(event);
       if (
         th.heartbeatEscalation &&
-        ctx.cfg.goalStewardship.enabled &&
         userText &&
         matchesHeartbeat(userText, ctx.cfg.goalStewardship) &&
-        taskFile.active.length > 0
+        activeForInjection.length > 0
       ) {
-        hygieneBlock = buildHeartbeatTaskHygieneBlock(taskFile.active, {
+        hygieneBlock = buildHeartbeatTaskHygieneBlock(activeForInjection, {
           maxChars: th.heartbeatNudgeMaxChars,
           suggestGoalAfterTaskAgeDays: th.suggestGoalAfterTaskAgeDays,
         });
@@ -55,9 +65,10 @@ export function registerActiveTaskInjection(
       if (parts.length === 0) return undefined;
 
       const context = parts.join("\n\n");
-      const staleCount = taskFile.active.filter((t) => t.stale).length;
+      const staleCount = activeForInjection.filter((t) => t.stale).length;
+      const src = ctx.cfg.activeTask.ledger === "facts" ? "category:project facts" : "ACTIVE-TASK.md";
       api.logger?.info?.(
-        `memory-hybrid: injecting ${taskFile.active.length} active task(s) from ACTIVE-TASK.md${staleCount > 0 ? ` (${staleCount} stale)` : ""}`,
+        `memory-hybrid: injecting ${activeForInjection.length} active task(s) from ${src}${staleCount > 0 ? ` (${staleCount} stale)` : ""}`,
       );
       return { prependContext: `${context}\n\n` };
     } catch (err) {

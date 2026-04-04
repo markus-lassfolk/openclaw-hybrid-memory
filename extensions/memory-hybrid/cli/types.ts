@@ -185,6 +185,8 @@ export type ActiveTaskListResult = {
   staleCount: number;
   filePath: string;
   fileExists: boolean;
+  /** When `facts`, list comes from category:project in SQLite */
+  ledger?: "markdown" | "facts";
 };
 
 export type ActiveTaskCompleteResult = { ok: true; label: string; flushedTo?: string } | { ok: false; error: string };

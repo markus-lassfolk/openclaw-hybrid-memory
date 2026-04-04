@@ -231,8 +231,11 @@ export function parseActiveTaskConfig(cfg: Record<string, unknown>): ActiveTaskC
     typeof thRaw?.heartbeatNudgeMaxChars === "number" && thRaw.heartbeatNudgeMaxChars >= 200
       ? Math.floor(thRaw.heartbeatNudgeMaxChars)
       : 2500;
+  const ledgerRaw = activeTaskRaw?.ledger;
+  const ledger = ledgerRaw === "facts" ? "facts" : "markdown";
   return {
     enabled: activeTaskRaw?.enabled !== false,
+    ledger,
     filePath:
       typeof activeTaskRaw?.filePath === "string" && activeTaskRaw.filePath.trim().length > 0
         ? activeTaskRaw.filePath.trim()

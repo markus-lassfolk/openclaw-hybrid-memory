@@ -1,33 +1,37 @@
-import { getEnv } from "../utils/env-manager.js";
-import { dirname, isAbsolute, join } from "node:path";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
+import { dirname, isAbsolute, join } from "node:path";
+import type OpenAI from "openai";
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
-import type { FactsDB } from "../backends/facts-db.js";
-import type { EdictStore } from "../backends/edict-store.js";
-import type { VectorDB } from "../backends/vector-db.js";
 import type { CredentialsDB } from "../backends/credentials-db.js";
+import type { EdictStore } from "../backends/edict-store.js";
+import type { FactsDB } from "../backends/facts-db.js";
 import type { ProposalsDB } from "../backends/proposals-db.js";
+import type { VectorDB } from "../backends/vector-db.js";
 import type { WriteAheadLog } from "../backends/wal.js";
 import type { HybridMemoryConfig, MemoryCategory } from "../config.js";
-import { getDefaultCronModel, getCronModelConfig } from "../config.js";
-import type { ProvenanceService } from "../services/provenance.js";
-import type OpenAI from "openai";
-import type { EmbeddingRegistry } from "../services/embedding-registry.js";
-import {
-  initErrorReporter,
-  isErrorReporterActive,
-  flushErrorReporter,
-  capturePluginError,
-  setErrorReporterMuted,
-} from "../services/error-reporter.js";
-import { walRemove } from "../services/wal-helpers.js";
-import { syncCronLastRunFromGuards } from "../services/cron-guard.js";
+import { getCronModelConfig, getDefaultCronModel } from "../config.js";
 import { createDashboardServer } from "../routes/dashboard-server.js";
 import type { DashboardServer } from "../routes/dashboard-server.js";
-import { runPassiveObserver } from "../services/passive-observer.js";
+import { reconcileActiveTaskInProgressSessions } from "../services/active-task.js";
 import { runAutoClassify } from "../services/auto-classifier.js";
+import { syncCronLastRunFromGuards } from "../services/cron-guard.js";
+import type { EmbeddingRegistry } from "../services/embedding-registry.js";
+import {
+  capturePluginError,
+  flushErrorReporter,
+  initErrorReporter,
+  isErrorReporterActive,
+  setErrorReporterMuted,
+} from "../services/error-reporter.js";
 import { runBuildLanguageKeywords } from "../services/language-keywords-build.js";
+import { runPassiveObserver } from "../services/passive-observer.js";
+import type { ProvenanceService } from "../services/provenance.js";
+import { reconcileActiveTaskInProgressSessionsFacts } from "../services/task-ledger-facts.js";
+import { runTaskQueueWatchdog } from "../services/task-queue-watchdog.js";
+import { walRemove } from "../services/wal-helpers.js";
+import { parseDuration } from "../utils/duration.js";
+import { getEnv } from "../utils/env-manager.js";
 import { getLanguageKeywordsFilePath } from "../utils/language-keywords.js";
 import {
   type VersionCheckCacheEntry,
@@ -38,12 +42,13 @@ import {
   readVersionCheckCache,
   writeVersionCheckCache,
 } from "../utils/plugin-update-check.js";
-import { versionInfo } from "../versionInfo.js";
 import { checkOpenClawVersion } from "../utils/version-check.js";
 import { runTaskQueueWatchdog } from "../services/task-queue-watchdog.js";
 import { runGoalHealthCheck, resolveGoalsDir } from "../services/goal-stewardship.js";
 import { reconcileActiveTaskInProgressSessions } from "../services/active-task.js";
+import { reconcileActiveTaskInProgressSessionsFacts } from "../services/task-ledger-facts.js";
 import { parseDuration } from "../utils/duration.js";
+import { versionInfo } from "../versionInfo.js";
 
 export interface PluginServiceContext {
   PLUGIN_ID: string;
@@ -614,17 +619,26 @@ export function createPluginService(ctx: PluginServiceContext) {
               : join(workspaceRoot, cfg.activeTask.filePath);
             const staleMinutes = parseDuration(cfg.activeTask.staleThreshold);
             const memoryDir = join(workspaceRoot, "memory");
-            const { reconciledLabels, wrote } = await reconcileActiveTaskInProgressSessions(
-              activeTaskFilePath,
-              staleMinutes,
-              {
+            let reconciledLabels: string[] = [];
+            let wrote = false;
+            if (cfg.activeTask.ledger === "facts") {
+              const r = await reconcileActiveTaskInProgressSessionsFacts(factsDb, vectorDb, embeddings, staleMinutes, {
                 flushOnComplete: cfg.activeTask.flushOnComplete !== false,
                 memoryDir,
-              },
-            );
+              });
+              reconciledLabels = r.reconciledLabels;
+              wrote = r.wrote;
+            } else {
+              const r = await reconcileActiveTaskInProgressSessions(activeTaskFilePath, staleMinutes, {
+                flushOnComplete: cfg.activeTask.flushOnComplete !== false,
+                memoryDir,
+              });
+              reconciledLabels = r.reconciledLabels;
+              wrote = r.wrote;
+            }
             if (wrote && reconciledLabels.length > 0) {
               api.logger.info?.(
-                `memory-hybrid: ACTIVE-TASK session reconcile — completed orphan subagent row(s): ${reconciledLabels.join(", ")}`,
+                `memory-hybrid: active-task session reconcile — completed orphan subagent row(s): ${reconciledLabels.join(", ")}`,
               );
             }
           } catch (reconcileErr) {
