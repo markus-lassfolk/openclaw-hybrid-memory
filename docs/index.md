@@ -15,6 +15,7 @@ Your OpenClaw agent forgets everything between sessions. Hybrid Memory fixes thi
 {: .fs-5 .fw-300 }
 
 [Get Started](QUICKSTART){: .btn .btn-primary .fs-5 .mb-4 .mb-md-0 .mr-2 }
+[Scenarios & benefits](SCENARIOS){: .btn .fs-5 .mb-4 .mb-md-0 .mr-2 }
 [View on GitHub](https://github.com/markus-lassfolk/openclaw-hybrid-memory){: .btn .fs-5 .mb-4 .mb-md-0 }
 
 ---
@@ -23,13 +24,13 @@ Your OpenClaw agent forgets everything between sessions. Hybrid Memory fixes thi
 
 | Without hybrid memory | With hybrid memory |
 |---|---|
-| Agent forgets everything between sessions | Agent remembers preferences, decisions, facts |
-| You repeat context every time | Auto-recall injects relevant memories each turn |
-| No structured knowledge base | SQLite + FTS5 for instant structured lookups |
-| No semantic search | LanceDB vector search finds contextual matches |
-| Manual note-taking | Auto-capture from conversations + file-based memory |
-| Stale memories never cleaned up | TTL-based decay automatically expires old facts |
-| No crash protection | Write-ahead log ensures nothing is lost |
+| Every new thread starts from zero | Preferences, decisions, and facts carry over |
+| You paste the same context again | Relevant memories can load automatically each turn |
+| Hard to find “that thing we said” | Search by meaning and by structure |
+| Memory becomes a junk drawer | Decay, tiering, and jobs keep storage manageable |
+| Lost work if a process crashes badly | Durable writes designed for safe recovery |
+
+*How the engines work (SQLite, vectors, merge, WAL): [How it works](HOW-IT-WORKS) and [Architecture](ARCHITECTURE). Narrative examples: [Scenarios & benefits](SCENARIOS).*
 
 ---
 
@@ -39,6 +40,7 @@ Your OpenClaw agent forgets everything between sessions. Hybrid Memory fixes thi
 
 | Document | Description |
 |----------|-------------|
+| **[Scenarios & benefits](SCENARIOS)** | Before/after diagrams and real-life stories |
 | **[Quick Start](QUICKSTART)** | Install, configure, verify &mdash; get running in 10 minutes |
 | **[Autonomous Setup](SETUP-AUTONOMOUS)** | Let an OpenClaw agent install it for you |
 | **[Configuration](CONFIGURATION)** | Full `openclaw.json` reference |
@@ -91,6 +93,12 @@ Your OpenClaw agent forgets everything between sessions. Hybrid Memory fixes thi
 |----------|-------------|
 | [Model-Agnostic Analysis](MODEL-AGNOSTIC-ANALYSIS) | Compatibility across LLM providers |
 | [Feedback Roadmap](FEEDBACK-ROADMAP) | Planned improvements and feature requests |
+
+### Project
+
+| Document | Description |
+|----------|-------------|
+| [Credits & attribution](CREDITS-AND-ATTRIBUTION) | Sources, lineage, and what this repository adds |
 
 ---
 

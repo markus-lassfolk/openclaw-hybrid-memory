@@ -2,7 +2,7 @@
 layout: default
 title: Configuration
 parent: Getting Started
-nav_order: 3
+nav_order: 4
 ---
 # Configuration Reference
 

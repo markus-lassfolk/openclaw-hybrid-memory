@@ -2,7 +2,7 @@
 layout: default
 title: Autonomous Setup
 parent: Getting Started
-nav_order: 2
+nav_order: 3
 ---
 # Autonomous Hybrid Memory Setup
 
