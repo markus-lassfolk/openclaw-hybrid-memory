@@ -298,7 +298,7 @@ export function resolveReflectionModelAndFallbacks(
 
   if (!cfg.llm && chain.length === 0) {
     appendUniqueFallbackList(chain, cfg.distill?.fallbackModels, defaultModel);
-  } else if (cfg.llm) {
+  } else if (cfg.llm && chain.length === 0) {
     appendUniqueFallback(chain, cfg.llm.fallbackModel, defaultModel);
     appendUniqueFallbackList(chain, cfg.distill?.fallbackModels, defaultModel);
   }

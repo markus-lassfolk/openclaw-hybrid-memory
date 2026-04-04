@@ -352,7 +352,12 @@ export async function runTaskQueueWatchdog(
     };
     await writeJsonFile(historyPath, archived);
     try {
-      await unlink(currentPath);
+      const recheck = await readJsonFile<TaskQueueItem>(currentPath);
+      const identityMatches = recheck != null && taskQueueItemMatchesStale(recheck, item);
+      if (identityMatches) {
+        await unlink(currentPath);
+        await writeCanonicalIdleTaskQueueFile(stateDir, logger);
+      }
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
         capturePluginError(err instanceof Error ? err : new Error(String(err)), {
@@ -361,7 +366,6 @@ export async function runTaskQueueWatchdog(
         });
       }
     }
-    await writeCanonicalIdleTaskQueueFile(stateDir, logger);
     const logMsg = `memory-hybrid: task-queue-watchdog — cleared degenerate current.json → idle placeholder (${historyFilename})`;
     logger?.info(logMsg);
     return {
