@@ -102,10 +102,13 @@ export class CostTracker {
     this.initSchema();
   }
 
-  /** Active SQLite handle; skip when the store has been closed (e.g. plugin teardown). */
+  /** Active SQLite handle; skip only when the store is actually shut down (e.g. plugin teardown). */
   private db(): DatabaseSync | null {
-    if (!this.factsDb.isOpen()) return null;
-    return this.factsDb.getRawDb();
+    try {
+      return this.factsDb.getRawDb();
+    } catch {
+      return null;
+    }
   }
 
   private initSchema(): void {
