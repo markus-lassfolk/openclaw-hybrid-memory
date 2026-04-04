@@ -20,6 +20,7 @@ import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { readJsonFile } from "../utils/fs.js";
 import { execFile as execFileCb } from "../utils/process-runner.js";
+import { stableStringify } from "../utils/stable-stringify.js";
 import { capturePluginError } from "./error-reporter.js";
 import { expireDispatchLeases, transitionDispatchLease } from "./task-queue-leases.js";
 
@@ -339,6 +340,15 @@ export async function runTaskQueueWatchdog(
   // Metadata-only or unknown shapes (e.g. external tools writing { updatedAt, repo, maxForge })
   // are not valid queue tasks — archive and restore canonical idle so automation sees a real sentinel (#1037).
   if (!taskQueueItemHasRecognizedSemantics(item)) {
+    const recheckBefore = await readJsonFile<TaskQueueItem>(currentPath);
+    if (recheckBefore != null && taskQueueItemHasRecognizedSemantics(recheckBefore)) {
+      return { action: "ok", item: recheckBefore };
+    }
+    // Concurrent writers can replace the file between the initial read and this pass — do not archive/overwrite.
+    if (recheckBefore == null || stableStringify(recheckBefore) !== stableStringify(item)) {
+      return { action: "ok", item: recheckBefore ?? item };
+    }
+
     const now = new Date().toISOString();
     const degenerateReason =
       "current.json has no recognizable task-queue payload (metadata-only shell or unknown shape; issue #1037)";
@@ -352,12 +362,21 @@ export async function runTaskQueueWatchdog(
     };
     await writeJsonFile(historyPath, archived);
     try {
-      const recheck = await readJsonFile<TaskQueueItem>(currentPath);
-      const identityMatches = recheck != null && taskQueueItemMatchesStale(recheck, item);
-      if (identityMatches) {
+      const recheckAfter = await readJsonFile<TaskQueueItem>(currentPath);
+      const stillSameSnapshot = recheckAfter != null && stableStringify(recheckAfter) === stableStringify(item);
+      if (stillSameSnapshot) {
         await unlink(currentPath);
         await writeCanonicalIdleTaskQueueFile(stateDir, logger);
+        const logMsg = `memory-hybrid: task-queue-watchdog — cleared degenerate current.json → idle placeholder (${historyFilename})`;
+        logger?.info(logMsg);
+        return {
+          action: "cleared",
+          reason: degenerateReason,
+          item: archived,
+          historyPath,
+        };
       }
+      return { action: "ok", item: recheckAfter ?? item };
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
         capturePluginError(err instanceof Error ? err : new Error(String(err)), {
@@ -365,15 +384,8 @@ export async function runTaskQueueWatchdog(
           operation: "unlink-degenerate-current",
         });
       }
+      return { action: "ok", item };
     }
-    const logMsg = `memory-hybrid: task-queue-watchdog — cleared degenerate current.json → idle placeholder (${historyFilename})`;
-    logger?.info(logMsg);
-    return {
-      action: "cleared",
-      reason: degenerateReason,
-      item: archived,
-      historyPath,
-    };
   }
 
   // ── Health checks ─────────────────────────────────────────────────────────

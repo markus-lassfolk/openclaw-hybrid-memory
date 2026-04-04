@@ -3,6 +3,7 @@
  * Reads ~/.openclaw/workspace/state/task-queue/current.json (after idle placeholder exists).
  */
 
+import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
@@ -147,14 +148,23 @@ export function registerTaskQueueStatusCommands(mem: Chainable): void {
           const { mkdir, writeFile } = await import("node:fs/promises");
           const histDir = join(dir, "history");
           await mkdir(histDir, { recursive: true });
-          const ts = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
-          const dest = join(histDir, `${ts}-degenerate-cli.json`);
           const archived = {
             ...raw,
             repairedBy: "task-queue-touch",
             repairedAt: new Date().toISOString(),
           };
-          await writeFile(dest, JSON.stringify(archived, null, 2), "utf-8");
+          const body = JSON.stringify(archived, null, 2);
+          let dest = "";
+          for (let attempt = 0; attempt < 16; attempt++) {
+            const ts = new Date().toISOString().replace(/[:.]/g, "-");
+            dest = join(histDir, `${ts}-${randomUUID()}-degenerate-cli.json`);
+            try {
+              await writeFile(dest, body, { encoding: "utf-8", flag: "wx" });
+              break;
+            } catch (e) {
+              if ((e as NodeJS.ErrnoException).code !== "EEXIST" || attempt === 15) throw e;
+            }
+          }
           await writeCanonicalIdleTaskQueueFile(dir, { info: (m) => console.log(m) });
           console.log(`✓ Repaired degenerate current.json — archived to ${dest} and wrote idle placeholder`);
           return;
