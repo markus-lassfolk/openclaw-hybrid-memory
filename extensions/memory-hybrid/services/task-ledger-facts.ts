@@ -209,17 +209,11 @@ export async function syncActiveTaskEntryToFacts(
   const entity = entry.label;
   await upsertProjectTaskKey(factsDb, vectorDb, embeddings, entity, "title", entry.description, log);
   await upsertProjectTaskKey(factsDb, vectorDb, embeddings, entity, "status", displayStatusToFact(entry.status), log);
-  if (entry.next?.trim()) {
-    await upsertProjectTaskKey(factsDb, vectorDb, embeddings, entity, "next", entry.next.trim(), log);
-  }
-  if (entry.subagent?.trim()) {
-    await upsertProjectTaskKey(factsDb, vectorDb, embeddings, entity, "related_session", entry.subagent.trim(), log);
-  }
+  await upsertProjectTaskKey(factsDb, vectorDb, embeddings, entity, "next", entry.next?.trim() || "", log);
+  await upsertProjectTaskKey(factsDb, vectorDb, embeddings, entity, "related_session", entry.subagent?.trim() || "", log);
   await upsertProjectTaskKey(factsDb, vectorDb, embeddings, entity, "task_updated", entry.updated, log);
   await upsertProjectTaskKey(factsDb, vectorDb, embeddings, entity, "started", entry.started, log);
-  if (entry.branch?.trim()) {
-    await upsertProjectTaskKey(factsDb, vectorDb, embeddings, entity, "branch", entry.branch.trim(), log);
-  }
+  await upsertProjectTaskKey(factsDb, vectorDb, embeddings, entity, "branch", entry.branch?.trim() || "", log);
 }
 
 export async function renderActiveTaskMarkdownFile(
