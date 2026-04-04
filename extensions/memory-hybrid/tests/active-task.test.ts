@@ -1513,13 +1513,17 @@ describe("registerActiveTaskCommands", () => {
     const origError = console.error;
     let logged = "";
     let errors = "";
-    console.log = ((...args: unknown[]) => { logged += args.join(" ") + "\n"; }) as typeof console.log;
-    console.error = ((...args: unknown[]) => { errors += args.join(" ") + "\n"; }) as typeof console.error;
+    console.log = ((...args: unknown[]) => {
+      logged += args.join(" ") + "\n";
+    }) as typeof console.log;
+    console.error = ((...args: unknown[]) => {
+      errors += args.join(" ") + "\n";
+    }) as typeof console.error;
 
     try {
       // Test bare 'active-tasks' — should list tasks (or show file not found)
       // Using exitOverride + catch so async handlers complete before we check results
-      await program.parseAsync(["node", "hybrid-mem", "active-tasks"], { from: "user" }).catch(() => {});
+      await program.parseAsync(["active-tasks"], { from: "user" }).catch(() => {});
       // Reset for next parse
       program.commands.length = 0;
       registerActiveTaskCommands(program, mockCtx);
@@ -1527,7 +1531,7 @@ describe("registerActiveTaskCommands", () => {
       errors = "";
 
       // Test 'active-tasks list'
-      await program.parseAsync(["node", "hybrid-mem", "active-tasks", "list"], { from: "user" }).catch(() => {});
+      await program.parseAsync(["active-tasks", "list"], { from: "user" }).catch(() => {});
     } finally {
       console.log = origLog;
       console.error = origError;
@@ -1551,9 +1555,9 @@ describe("registerActiveTaskCommands", () => {
     registerActiveTaskCommands(program, mockCtx);
 
     // The 'list' subcommand should be registered
-    const activeTasksCmd = program.commands.find(c => c.name() === "active-tasks");
+    const activeTasksCmd = program.commands.find((c) => c.name() === "active-tasks");
     expect(activeTasksCmd).toBeDefined();
-    const listCmd = activeTasksCmd?.commands.find(c => c.name() === "list");
+    const listCmd = activeTasksCmd?.commands.find((c) => c.name() === "list");
     expect(listCmd).toBeDefined();
     expect(listCmd?.description()).toContain("List active tasks");
   });
