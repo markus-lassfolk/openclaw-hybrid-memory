@@ -2,6 +2,7 @@
  * CLI commands for distillation and extraction (distill, extract-*, generate-auto-skills, record-distill).
  */
 
+import { type CommanderOptsParent, readHybridMemVerbose } from "./global-verbose.js";
 import { type Chainable, withExit } from "./shared.js";
 import type {
   DistillCliResult,
@@ -109,17 +110,20 @@ export function registerDistillCommands(mem: Chainable, ctx: DistillContext): vo
     .option("--full", "Force full re-scan (ignore watermark, process all sessions in window)")
     .action(
       withExit(
-        async (opts: {
-          dryRun?: boolean;
-          all?: boolean;
-          days?: string;
-          since?: string;
-          model?: string;
-          verbose?: boolean;
-          maxSessions?: string;
-          maxSessionTokens?: string;
-          full?: boolean;
-        }) => {
+        async (
+          opts: {
+            dryRun?: boolean;
+            all?: boolean;
+            days?: string;
+            since?: string;
+            model?: string;
+            verbose?: boolean;
+            maxSessions?: string;
+            maxSessionTokens?: string;
+            full?: boolean;
+          },
+          cmd?: CommanderOptsParent,
+        ) => {
           const sink = { log: (s: string) => console.log(s), warn: (s: string) => console.warn(s) };
           const maxSessions = Math.max(0, Number.parseInt(opts.maxSessions || "0", 10) || 0);
           const maxSessionTokens = Math.max(0, Number.parseInt(opts.maxSessionTokens || "0", 10) || 0);
@@ -131,7 +135,7 @@ export function registerDistillCommands(mem: Chainable, ctx: DistillContext): vo
               days: Number.isFinite(days) ? days : undefined,
               since: opts.since?.trim() || undefined,
               model: opts.model,
-              verbose: !!opts.verbose,
+              verbose: !!opts.verbose || readHybridMemVerbose(cmd),
               maxSessions: maxSessions > 0 ? maxSessions : undefined,
               maxSessionTokens: maxSessionTokens > 0 ? maxSessionTokens : undefined,
               full: !!opts.full,
@@ -190,10 +194,10 @@ export function registerDistillCommands(mem: Chainable, ctx: DistillContext): vo
     .option("--dry-run", "Show extractions without storing")
     .option("--verbose", "Log each extracted fact as it is stored")
     .action(
-      withExit(async (opts: { days: string; dryRun?: boolean; verbose?: boolean }) => {
+      withExit(async (opts: { days: string; dryRun?: boolean; verbose?: boolean }, cmd?: CommanderOptsParent) => {
         const daysBack = Number.parseInt(opts.days, 10);
         const result = await runExtractDaily(
-          { days: daysBack, dryRun: !!opts.dryRun, verbose: !!opts.verbose },
+          { days: daysBack, dryRun: !!opts.dryRun, verbose: !!opts.verbose || readHybridMemVerbose(cmd) },
           { log: (s) => console.log(s), warn: (s) => console.warn(s) },
         );
         if (result.dryRun) {
@@ -217,25 +221,30 @@ export function registerDistillCommands(mem: Chainable, ctx: DistillContext): vo
     .option("--verbose", "Log why each session was skipped (no_task_intent, fewer_than_2_steps)")
     .option("--full", "Force full re-scan (ignore watermark, process all sessions in window)")
     .action(
-      withExit(async (opts: { dir?: string; days?: string; dryRun?: boolean; verbose?: boolean; full?: boolean }) => {
-        const days = opts.days != null ? Number.parseInt(opts.days, 10) : undefined;
-        const result = await runExtractProcedures({
-          sessionDir: opts.dir,
-          days: Number.isFinite(days) ? days : undefined,
-          dryRun: !!opts.dryRun,
-          verbose: !!opts.verbose,
-          full: !!opts.full,
-        });
-        if (result.dryRun) {
-          console.log(
-            `\n[dry-run] Sessions scanned: ${result.sessionsScanned}, procedures that would be stored: ${result.proceduresStored} (${result.positiveCount} positive, ${result.negativeCount} negative)`,
-          );
-        } else {
-          console.log(
-            `\nSessions scanned: ${result.sessionsScanned}; procedures stored/updated: ${result.proceduresStored} (${result.positiveCount} positive, ${result.negativeCount} negative)`,
-          );
-        }
-      }),
+      withExit(
+        async (
+          opts: { dir?: string; days?: string; dryRun?: boolean; verbose?: boolean; full?: boolean },
+          cmd?: CommanderOptsParent,
+        ) => {
+          const days = opts.days != null ? Number.parseInt(opts.days, 10) : undefined;
+          const result = await runExtractProcedures({
+            sessionDir: opts.dir,
+            days: Number.isFinite(days) ? days : undefined,
+            dryRun: !!opts.dryRun,
+            verbose: !!opts.verbose || readHybridMemVerbose(cmd),
+            full: !!opts.full,
+          });
+          if (result.dryRun) {
+            console.log(
+              `\n[dry-run] Sessions scanned: ${result.sessionsScanned}, procedures that would be stored: ${result.proceduresStored} (${result.positiveCount} positive, ${result.negativeCount} negative)`,
+            );
+          } else {
+            console.log(
+              `\nSessions scanned: ${result.sessionsScanned}; procedures stored/updated: ${result.proceduresStored} (${result.positiveCount} positive, ${result.negativeCount} negative)`,
+            );
+          }
+        },
+      ),
     );
 
   mem
@@ -244,8 +253,11 @@ export function registerDistillCommands(mem: Chainable, ctx: DistillContext): vo
     .option("--dry-run", "Show what would be generated without writing")
     .option("--verbose", "Log each generated skill path")
     .action(
-      withExit(async (opts: { dryRun?: boolean; verbose?: boolean }) => {
-        const result = await runGenerateAutoSkills({ dryRun: !!opts.dryRun, verbose: !!opts.verbose });
+      withExit(async (opts: { dryRun?: boolean; verbose?: boolean }, cmd?: CommanderOptsParent) => {
+        const result = await runGenerateAutoSkills({
+          dryRun: !!opts.dryRun,
+          verbose: !!opts.verbose || readHybridMemVerbose(cmd),
+        });
         if (result.dryRun) {
           console.log(`\n[dry-run] Would generate ${result.generated} auto-skills`);
         } else {
@@ -263,12 +275,15 @@ export function registerDistillCommands(mem: Chainable, ctx: DistillContext): vo
     .option("--dry-run", "Show what would be proposed without creating")
     .option("--verbose", "Log each proposal created")
     .action(
-      withExit(async (opts?: { dryRun?: boolean; verbose?: boolean }) => {
+      withExit(async (opts?: { dryRun?: boolean; verbose?: boolean }, cmd?: CommanderOptsParent) => {
         if (!runGenerateProposals) {
           console.log("Generate-proposals not available (personaProposals disabled).");
           return;
         }
-        const result = await runGenerateProposals({ dryRun: !!opts?.dryRun, verbose: !!opts?.verbose });
+        const result = await runGenerateProposals({
+          dryRun: !!opts?.dryRun,
+          verbose: !!opts?.verbose || readHybridMemVerbose(cmd),
+        });
         if (opts?.dryRun) {
           console.log(`\n[dry-run] Would create ${result.created} proposal(s).`);
         } else {
@@ -285,23 +300,30 @@ export function registerDistillCommands(mem: Chainable, ctx: DistillContext): vo
     .option("--dry-run", "Show what would be extracted without storing")
     .option("--full", "Force full re-scan (ignore watermark, process all sessions in window)")
     .action(
-      withExit(async (opts: { days?: string; verbose?: boolean; dryRun?: boolean; full?: boolean }) => {
-        const days = Number.parseInt(opts.days ?? "3", 10);
-        const result = await runExtractDirectives({
-          days,
-          verbose: opts.verbose,
-          dryRun: opts.dryRun,
-          full: opts.full,
-        });
-        console.log(`\nSessions scanned: ${result.sessionsScanned}; directives found: ${result.incidents.length}`);
-        if (opts.dryRun) {
-          console.log(`[dry-run] Would store ${result.incidents.length} directives as facts.`);
-        } else {
-          const stored = result.stored ?? result.incidents.length;
-          const skipped = result.incidents.length - stored;
-          console.log(`Stored ${stored} directives as facts${skipped > 0 ? ` (${skipped} duplicates skipped)` : ""}.`);
-        }
-      }),
+      withExit(
+        async (
+          opts: { days?: string; verbose?: boolean; dryRun?: boolean; full?: boolean },
+          cmd?: CommanderOptsParent,
+        ) => {
+          const days = Number.parseInt(opts.days ?? "3", 10);
+          const result = await runExtractDirectives({
+            days,
+            verbose: !!opts.verbose || readHybridMemVerbose(cmd),
+            dryRun: opts.dryRun,
+            full: opts.full,
+          });
+          console.log(`\nSessions scanned: ${result.sessionsScanned}; directives found: ${result.incidents.length}`);
+          if (opts.dryRun) {
+            console.log(`[dry-run] Would store ${result.incidents.length} directives as facts.`);
+          } else {
+            const stored = result.stored ?? result.incidents.length;
+            const skipped = result.incidents.length - stored;
+            console.log(
+              `Stored ${stored} directives as facts${skipped > 0 ? ` (${skipped} duplicates skipped)` : ""}.`,
+            );
+          }
+        },
+      ),
     );
 
   mem
@@ -312,23 +334,28 @@ export function registerDistillCommands(mem: Chainable, ctx: DistillContext): vo
     .option("--dry-run", "Show what would be annotated without storing")
     .option("--full", "Force full re-scan (ignore watermark, process all sessions in window)")
     .action(
-      withExit(async (opts: { days?: string; verbose?: boolean; dryRun?: boolean; full?: boolean }) => {
-        const days = Number.parseInt(opts.days ?? "3", 10);
-        const result = await runExtractReinforcement({
-          days,
-          verbose: opts.verbose,
-          dryRun: opts.dryRun,
-          full: opts.full,
-        });
-        console.log(
-          `\nSessions scanned: ${result.sessionsScanned}; reinforcement incidents found: ${result.incidents.length}`,
-        );
-        if (opts.dryRun) {
-          console.log("[dry-run] Would annotate facts/procedures with reinforcement data.");
-        } else {
-          const factsReinforced = result.incidents.reduce((sum, i) => sum + i.recalledMemoryIds.length, 0);
-          console.log(`Annotated ${factsReinforced} facts with reinforcement data.`);
-        }
-      }),
+      withExit(
+        async (
+          opts: { days?: string; verbose?: boolean; dryRun?: boolean; full?: boolean },
+          cmd?: CommanderOptsParent,
+        ) => {
+          const days = Number.parseInt(opts.days ?? "3", 10);
+          const result = await runExtractReinforcement({
+            days,
+            verbose: !!opts.verbose || readHybridMemVerbose(cmd),
+            dryRun: opts.dryRun,
+            full: opts.full,
+          });
+          console.log(
+            `\nSessions scanned: ${result.sessionsScanned}; reinforcement incidents found: ${result.incidents.length}`,
+          );
+          if (opts.dryRun) {
+            console.log("[dry-run] Would annotate facts/procedures with reinforcement data.");
+          } else {
+            const factsReinforced = result.incidents.reduce((sum, i) => sum + i.recalledMemoryIds.length, 0);
+            console.log(`Annotated ${factsReinforced} facts with reinforcement data.`);
+          }
+        },
+      ),
     );
 }

@@ -6,40 +6,40 @@ import { getEnv } from "../utils/env-manager.js";
  */
 
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
-import { dirname, isAbsolute, join } from "node:path";
 import { homedir } from "node:os";
-import type { ActiveTaskContext } from "../cli/active-tasks.js";
-import { parseDuration } from "../utils/duration.js";
+import { dirname, isAbsolute, join } from "node:path";
 import type { Command } from "commander";
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
-import { registerHybridMemCli, type HybridMemCliContext } from "../cli/register.js";
+import type { ActiveTaskContext } from "../cli/active-tasks.js";
+import { runBackup as runBackupFn, runBackupVerify as runBackupVerifyFn } from "../cli/backup.js";
 import type { HandlerContext } from "../cli/handlers.js";
 import * as handlers from "../cli/handlers.js";
-import { insertRulesUnderSection } from "../services/tools-md-section.js";
+import { applyApprovedProposal } from "../cli/proposals.js";
+import { type HybridMemCliContext, registerHybridMemCli } from "../cli/register.js";
 import type { FindDuplicatesResult } from "../cli/types.js";
-import { runFindDuplicates } from "../services/find-duplicates.js";
-import { runConsolidate } from "../services/consolidation.js";
-import { runReflection, runReflectionRules, runReflectionMeta } from "../services/reflection.js";
-import { runDreamCycle, type DreamCycleResult } from "../services/dream-cycle.js";
-import { runVerificationCycle, type VerificationCycleResult } from "../services/continuous-verifier.js";
-import { runClassifyForCli } from "../services/auto-classifier.js";
-import { runBuildLanguageKeywords } from "../services/language-keywords-build.js";
-import { runEntityEnrichmentForCli } from "../services/entity-enrichment-cli.js";
-import { runExport } from "../services/export-memory.js";
-import { mergeResults } from "../services/merge-results.js";
-import { parseSourceDate } from "../utils/dates.js";
 import {
-  getMemoryCategories,
-  getDefaultCronModel,
   getCronModelConfig,
+  getDefaultCronModel,
+  getMemoryCategories,
   resolveReflectionModelAndFallbacks,
 } from "../config.js";
-import { versionInfo } from "../versionInfo.js";
+import { runClassifyForCli } from "../services/auto-classifier.js";
+import { runConsolidate } from "../services/consolidation.js";
+import { type VerificationCycleResult, runVerificationCycle } from "../services/continuous-verifier.js";
+import { type DreamCycleResult, runDreamCycle } from "../services/dream-cycle.js";
+import { runEntityEnrichmentForCli } from "../services/entity-enrichment-cli.js";
 import { capturePluginError } from "../services/error-reporter.js";
-import { applyApprovedProposal } from "../cli/proposals.js";
-import { runBackup as runBackupFn, runBackupVerify as runBackupVerifyFn } from "../cli/backup.js";
-import { pluginLogger } from "../utils/logger.js";
+import { runExport } from "../services/export-memory.js";
+import { runFindDuplicates } from "../services/find-duplicates.js";
+import { runBuildLanguageKeywords } from "../services/language-keywords-build.js";
+import { mergeResults } from "../services/merge-results.js";
 import { runPreConsolidationFlush } from "../services/pre-consolidation-flush.js";
+import { runReflection, runReflectionMeta, runReflectionRules } from "../services/reflection.js";
+import { insertRulesUnderSection } from "../services/tools-md-section.js";
+import { parseSourceDate } from "../utils/dates.js";
+import { parseDuration } from "../utils/duration.js";
+import { pluginLogger } from "../utils/logger.js";
+import { versionInfo } from "../versionInfo.js";
 
 /** Help text shown after hybrid-mem commands list */
 const HYBRID_MEM_HELP_GROUPED = `
@@ -67,6 +67,7 @@ Commands by category:
     lookup <id>          Get fact by ID
     list                 List recent facts (--limit, --category, --tier, etc.)
     show <id>            Show fact or proposal by ID
+    dump                 Print rows from a SQLite table (--type, --limit, --order, --json)
     categories           List categories present in memory
 
   Proposals & corrections
@@ -163,6 +164,7 @@ const HYBRID_MEM_CLI_COMMANDS = [
   "hybrid-mem lookup",
   "hybrid-mem list",
   "hybrid-mem show",
+  "hybrid-mem dump",
   "hybrid-mem proposals list",
   "hybrid-mem proposals show",
   "hybrid-mem proposals approve",
@@ -253,7 +255,15 @@ interface CliContextServices {
     limit: number;
     dryRun: boolean;
     model?: string;
-  }) => Promise<{ pending: number; processed: number; factsEnriched: number; skipped?: boolean }>;
+    verbose?: boolean;
+  }) => Promise<{
+    pending: number;
+    processed: number;
+    factsEnriched: number;
+    skipped?: boolean;
+    pendingFactIds?: string[];
+    enrichedFacts?: import("../services/entity-enrichment-cli.js").EntityEnrichmentVerboseFact[];
+  }>;
   runExport: (opts: {
     outputPath: string;
     excludeCredentials?: boolean;
@@ -894,7 +904,12 @@ function registerCliWithHelp(
   program: { command: (name: string) => { description: (d: string) => unknown } },
   ctx: HybridMemCliContext,
 ): void {
-  const mem = program.command("hybrid-mem").description("Hybrid memory plugin commands");
+  const mem = program.command("hybrid-mem").description("Hybrid memory plugin commands") as Command;
+  mem.option(
+    "-v, --verbose",
+    "Verbose output for subcommands that support it (same effect as per-command --verbose where available)",
+    false,
+  );
   try {
     registerHybridMemCli(mem as Parameters<typeof registerHybridMemCli>[0], ctx);
   } catch (err) {
