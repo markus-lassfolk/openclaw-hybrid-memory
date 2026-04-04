@@ -88,6 +88,11 @@ export interface PluginRuntime {
   // --- Lifecycle state ---
   /** Handle returned by registerLifecycleHooks; set after hooks are registered, null until then. */
   lifecycleHooksHandle: LifecycleHooksHandle | null;
+  /**
+   * Resolves when async bootstrap work from `initializeDatabases` finishes (embedding/vault checks, etc.).
+   * Used to sequence CLI teardown so we do not close DBs while init I/O is still running (Issue #1039).
+   */
+  bootstrapAsyncInit: Promise<void>;
   pendingLLMWarnings: PendingLLMWarnings;
 
   // --- Mutable refs (objects so that closures can share mutations) ---

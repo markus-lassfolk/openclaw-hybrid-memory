@@ -486,11 +486,24 @@ function buildCliContextServices(ctx: HybridMemCliRegistrationContext, api: Claw
   };
 }
 
+export type RegisterHybridMemCliWithApiOptions = {
+  /**
+   * Called after a `hybrid-mem` subcommand action completes (Commander `postAction` on the
+   * `hybrid-mem` command). Used to close LanceDB/SQLite and dispose timers so one-shot CLI
+   * processes can exit (Issue #1039).
+   */
+  onHybridMemCliComplete?: () => void | Promise<void>;
+};
+
 /**
  * Register hybrid-mem CLI with the API. Call from index after DB init.
  * Builds handler context and services inside setup so index stays a thin orchestrator.
  */
-export function registerHybridMemCliWithApi(api: ClawdbotPluginApi, ctx: HybridMemCliRegistrationContext): void {
+export function registerHybridMemCliWithApi(
+  api: ClawdbotPluginApi,
+  ctx: HybridMemCliRegistrationContext,
+  options?: RegisterHybridMemCliWithApiOptions,
+): void {
   const handlerCtx: HandlerContext = {
     ...ctx,
     logger: api.logger,
@@ -501,7 +514,7 @@ export function registerHybridMemCliWithApi(api: ClawdbotPluginApi, ctx: HybridM
     ({ program }: { program: Command }) => {
       try {
         const cliCtx = createHybridMemCliContext(handlerCtx, api, services);
-        registerCliWithHelp(program, cliCtx);
+        registerCliWithHelp(program, cliCtx, options);
       } catch (err) {
         capturePluginError(err instanceof Error ? err : new Error(String(err)), {
           subsystem: "registration",
@@ -903,6 +916,7 @@ function createHybridMemCliContext(
 function registerCliWithHelp(
   program: { command: (name: string) => { description: (d: string) => unknown } },
   ctx: HybridMemCliContext,
+  options?: RegisterHybridMemCliWithApiOptions,
 ): void {
   const mem = program.command("hybrid-mem").description("Hybrid memory plugin commands") as Command;
   mem.option(
@@ -910,6 +924,19 @@ function registerCliWithHelp(
     "Verbose output for subcommands that support it (same effect as per-command --verbose where available)",
     false,
   );
+  const onComplete = options?.onHybridMemCliComplete;
+  if (onComplete && typeof mem.hook === "function") {
+    mem.hook("postAction", async () => {
+      try {
+        await onComplete();
+      } catch (err) {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+          subsystem: "cli",
+          operation: "hybrid-mem-post-action-teardown",
+        });
+      }
+    });
+  }
   try {
     registerHybridMemCli(mem as Parameters<typeof registerHybridMemCli>[0], ctx);
   } catch (err) {

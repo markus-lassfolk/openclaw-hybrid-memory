@@ -305,6 +305,63 @@ function detectCategory(text: string): MemoryCategory {
  */
 const runtimeRef: { value: PluginRuntime | null } = { value: null };
 
+/** Release DBs and timers after a `hybrid-mem` CLI command so the Node process can exit (Issue #1039). */
+async function performHybridMemCliTeardown(): Promise<void> {
+  const r = runtimeRef.value;
+  if (!r) return;
+  try {
+    await r.bootstrapAsyncInit;
+  } catch {
+    /* embedding/vault init may fail; still close handles */
+  }
+  try {
+    r.lifecycleHooksHandle?.dispose();
+  } catch (err) {
+    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+      subsystem: "cli",
+      operation: "hybrid-mem-teardown:dispose-hooks",
+    });
+  }
+  try {
+    closeOldDatabases({
+      factsDb: r.factsDb,
+      edictStore: r.edictStore,
+      narrativesDb: r.narrativesDb,
+      vectorDb: r.vectorDb,
+      credentialsDb: r.credentialsDb,
+      proposalsDb: r.proposalsDb,
+      identityReflectionStore: r.identityReflectionStore,
+      personaStateStore: r.personaStateStore,
+      eventLog: r.eventLog,
+      aliasDb: r.aliasDb,
+      eventBus: r.eventBus,
+      issueStore: r.issueStore,
+      workflowStore: r.workflowStore,
+      crystallizationStore: r.crystallizationStore,
+      toolProposalStore: r.toolProposalStore,
+      verificationStore: r.verificationStore,
+      provenanceService: r.provenanceService,
+      learningsDb: r.learningsDb,
+      apitapStore: r.apitapStore,
+      auditStore: r.auditStore,
+      agentHealthStore: r.agentHealthStore,
+    });
+  } catch (err) {
+    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+      subsystem: "cli",
+      operation: "hybrid-mem-teardown:close-databases",
+    });
+  }
+  try {
+    await r.pythonBridge?.shutdown();
+  } catch (err) {
+    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+      subsystem: "cli",
+      operation: "hybrid-mem-teardown:python-bridge",
+    });
+  }
+}
+
 const memoryHybridPlugin = {
   id: PLUGIN_ID,
   name: "Memory (Hybrid: SQLite + LanceDB)",
@@ -558,6 +615,7 @@ function runMemoryHybridRegister(api: ClawdbotPluginApi): void {
     auditStore,
     agentHealthStore,
     lifecycleHooksHandle: null, // set after registerLifecycleHooks below
+    bootstrapAsyncInit: dbContext.initialized,
     pendingLLMWarnings: createPendingLLMWarnings(),
     currentAgentIdRef: { value: null },
     restartPendingClearedRef: { value: false },
@@ -629,32 +687,37 @@ function runMemoryHybridRegister(api: ClawdbotPluginApi): void {
     throw err;
   }
 
-  // CLI Commands
+  // CLI Commands — after a hybrid-mem subcommand finishes, tear down DBs and timers so the
+  // one-shot `openclaw hybrid-mem …` process can exit (Issue #1039; persistent LanceDB + sweep timer).
   try {
-    registerHybridMemCliWithApi(api, {
-      factsDb: runtime.factsDb,
-      vectorDb: runtime.vectorDb,
-      embeddings: runtime.embeddings,
-      openai: runtime.openai,
-      cfg: runtime.cfg,
-      credentialsDb: runtime.credentialsDb,
-      aliasDb: runtime.aliasDb,
-      wal: runtime.wal,
-      proposalsDb: runtime.proposalsDb,
-      identityReflectionStore: runtime.identityReflectionStore,
-      personaStateStore: runtime.personaStateStore,
-      eventLog: runtime.eventLog,
-      verificationStore: runtime.verificationStore,
-      provenanceService: runtime.provenanceService,
-      costTracker: runtime.costTracker,
-      eventBus: runtime.eventBus,
-      resolvedSqlitePath: runtime.resolvedSqlitePath,
-      resolvedLancePath: runtime.resolvedLancePath,
-      pluginId: PLUGIN_ID,
-      detectCategory,
-      auditStore: runtime.auditStore,
-      agentHealthStore: runtime.agentHealthStore ?? null,
-    });
+    registerHybridMemCliWithApi(
+      api,
+      {
+        factsDb: runtime.factsDb,
+        vectorDb: runtime.vectorDb,
+        embeddings: runtime.embeddings,
+        openai: runtime.openai,
+        cfg: runtime.cfg,
+        credentialsDb: runtime.credentialsDb,
+        aliasDb: runtime.aliasDb,
+        wal: runtime.wal,
+        proposalsDb: runtime.proposalsDb,
+        identityReflectionStore: runtime.identityReflectionStore,
+        personaStateStore: runtime.personaStateStore,
+        eventLog: runtime.eventLog,
+        verificationStore: runtime.verificationStore,
+        provenanceService: runtime.provenanceService,
+        costTracker: runtime.costTracker,
+        eventBus: runtime.eventBus,
+        resolvedSqlitePath: runtime.resolvedSqlitePath,
+        resolvedLancePath: runtime.resolvedLancePath,
+        pluginId: PLUGIN_ID,
+        detectCategory,
+        auditStore: runtime.auditStore,
+        agentHealthStore: runtime.agentHealthStore ?? null,
+      },
+      { onHybridMemCliComplete: () => performHybridMemCliTeardown() },
+    );
   } catch (err) {
     capturePluginError(err instanceof Error ? err : new Error(String(err)), {
       subsystem: "registration",
