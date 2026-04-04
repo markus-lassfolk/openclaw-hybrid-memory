@@ -242,7 +242,7 @@ Respond with a JSON object and nothing else:
     const res = await client.chat.completions.create({
       model,
       messages: [{ role: "user", content: judgePrompt }],
-      ...chatCompletionTokenParams(judgeModel, 300),
+      ...chatCompletionTokenParams(model, 300),
       temperature: 0,
     });
 
