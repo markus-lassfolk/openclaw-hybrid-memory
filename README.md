@@ -56,7 +56,7 @@ openclaw gateway stop && openclaw gateway start
 openclaw hybrid-mem verify
 ```
 
-Guide: [docs/quickstart.md](docs/quickstart.md)
+Guide: [docs/QUICKSTART.md](docs/QUICKSTART.md)
 
 ### 2. Trusted production install (serious operator)
 Best for stable upgrades, repeatable verification, backup/restore, and operations playbooks.
@@ -64,10 +64,10 @@ Best for stable upgrades, repeatable verification, backup/restore, and operation
 ```bash
 openclaw hybrid-mem verify --fix
 openclaw hybrid-mem stats
-openclaw hybrid-mem backup --output ./backup
+openclaw hybrid-mem backup --dest ./backup
 ```
 
-Guide: [docs/operations.md](docs/operations.md)
+Guide: [docs/OPERATIONS.md](docs/OPERATIONS.md)
 
 ### 3. Multi-agent / advanced mode (research or governance-heavy teams)
 Best for scoped memory, graph retrieval, workflows, crystallization, and higher automation.
@@ -93,9 +93,9 @@ Guide: [docs/advanced-capabilities.md](docs/advanced-capabilities.md)
 
 ## Fast path docs
 
-- [docs/quickstart.md](docs/quickstart.md): shortest successful path
+- [docs/QUICKSTART.md](docs/QUICKSTART.md): shortest successful path
 - [docs/trust-and-privacy.md](docs/trust-and-privacy.md): local-first, provenance, deletion, export
-- [docs/operations.md](docs/operations.md): maintenance, backup, restore, troubleshooting
+- [docs/OPERATIONS.md](docs/OPERATIONS.md): maintenance, backup, restore, troubleshooting
 - [docs/advanced-capabilities.md](docs/advanced-capabilities.md): graph, workflows, procedures, crystallization
 
 ## Common commands

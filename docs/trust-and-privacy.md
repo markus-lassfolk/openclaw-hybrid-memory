@@ -39,7 +39,7 @@ openclaw hybrid-mem uninstall
 Before deletion, consider backup/export:
 
 ```bash
-openclaw hybrid-mem backup --output ./backup
+openclaw hybrid-mem backup --dest ./backup
 openclaw hybrid-mem export --help
 ```
 

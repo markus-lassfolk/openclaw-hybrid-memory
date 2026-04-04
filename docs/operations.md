@@ -26,7 +26,7 @@ openclaw hybrid-mem verify --fix
 Backup before upgrades, major config changes, and cleanup operations.
 
 ```bash
-openclaw hybrid-mem backup --output ./backup
+openclaw hybrid-mem backup --dest ./backup
 ```
 
 Use restore steps from:
