@@ -1167,6 +1167,43 @@ describe("withLLMRetry — non-retryable 400 (#1011)", () => {
     ).rejects.toThrow(/400 status code.*\[llm model=azure\/test/);
     expect(fn).toHaveBeenCalledTimes(1);
   });
+
+  it("#1034: retries once for Responses API malformed reasoning sequence error", async () => {
+    const err = Object.assign(
+      new Error("400 Item 'rs_x' of type 'reasoning' was provided without its required following item."),
+      { status: 400 },
+    );
+    const fn = vi.fn().mockRejectedValueOnce(err).mockResolvedValueOnce("ok");
+
+    const promise = withLLMRetry(fn, {
+      maxRetries: 3,
+      llmContext: { model: "azure-foundry/o3-pro", operation: "unit" },
+    });
+
+    await vi.advanceTimersByTimeAsync(1);
+    await vi.advanceTimersByTimeAsync(1000);
+    const result = await promise;
+    expect(result).toBe("ok");
+    expect(fn).toHaveBeenCalledTimes(2);
+  });
+
+  it("#1034: stops after one retry when malformed reasoning sequence persists", async () => {
+    const err = Object.assign(
+      new Error("400 Item 'rs_x' of type 'reasoning' was provided without its required following item."),
+      { status: 400 },
+    );
+    const fn = vi.fn().mockRejectedValue(err);
+
+    const promise = withLLMRetry(fn, {
+      maxRetries: 3,
+      llmContext: { model: "azure-foundry/o3-pro", operation: "unit" },
+    });
+    const expectation = expect(promise).rejects.toThrow("required following item");
+    await vi.advanceTimersByTimeAsync(1);
+    await vi.advanceTimersByTimeAsync(1000);
+    await expectation;
+    expect(fn).toHaveBeenCalledTimes(2);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -1270,6 +1307,50 @@ describe("chatCompleteWithRetry — OOM falls through to next model (#387)", () 
     await expectation;
     // OOM is a 500-like transient error — must NOT be reported to GlitchTip
     expect(errorReporter.capturePluginError).not.toHaveBeenCalled();
+  });
+});
+
+describe("chatCompleteWithRetry — Responses reasoning sequence fallback (#1034)", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("falls back after one retry when primary hits malformed reasoning sequence 400", async () => {
+    const err = Object.assign(
+      new Error("400 Item 'rs_x' of type 'reasoning' was provided without its required following item."),
+      { status: 400 },
+    );
+    const mockOpenai = {
+      chat: {
+        completions: {
+          create: vi
+            .fn()
+            .mockRejectedValueOnce(err)
+            .mockRejectedValueOnce(err)
+            .mockResolvedValueOnce({
+              choices: [{ message: { content: "fallback ok" } }],
+            }),
+        },
+      },
+    } as unknown as import("openai").default;
+
+    const promise = chatCompleteWithRetry({
+      model: "azure-foundry/o3-pro",
+      content: "test",
+      openai: mockOpenai,
+      fallbackModels: ["azure-foundry/o3"],
+      label: "test",
+    });
+
+    await vi.advanceTimersByTimeAsync(1100);
+    const result = await promise;
+    expect(result).toBe("fallback ok");
+    expect(mockOpenai.chat.completions.create).toHaveBeenCalledTimes(3);
   });
 });
 

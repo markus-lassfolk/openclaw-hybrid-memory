@@ -333,6 +333,20 @@ function isNonRetryableClient400(err: unknown): boolean {
 }
 
 /**
+ * Detect malformed Responses API reasoning-output sequencing errors, e.g.:
+ * "Item 'rs_...' of type 'reasoning' was provided without its required following item."
+ *
+ * This is an intermittent provider-side 400 seen with some reasoning deployments.
+ * Treat as transient/retryable (limited) instead of permanent bad-request.
+ */
+function isResponsesReasoningSequenceError(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  return /type\s+['"]reasoning['"]\s+was\s+provided\s+without\s+(?:its\s+)?required\s+following\s+item/i.test(
+    err.message,
+  );
+}
+
+/**
  * Detect Ollama out-of-memory (OOM) errors from the model server.
  * Ollama returns HTTP 500 with a body like:
  *   "model requires more system memory (18.2 GiB) than is available (8.0 GiB)"
@@ -551,8 +565,14 @@ export async function withLLMRetry<T>(
         );
         throw enrichLlmErrorMessage(lastError, opts?.llmContext);
       }
+      const isReasoningSequenceError = isResponsesReasoningSequenceError(lastError);
+      // Azure/OpenAI Responses API intermittent malformed reasoning item sequence:
+      // allow one retry, then fail fast so fallback model can run.
+      if (isReasoningSequenceError && attempt >= 1) {
+        throw enrichLlmErrorMessage(lastError, opts?.llmContext);
+      }
       // Other 400s (e.g. empty body from gateway) — not fixed by retry (#1011, #1016)
-      if (isNonRetryableClient400(lastError)) {
+      if (!isReasoningSequenceError && isNonRetryableClient400(lastError)) {
         throw enrichLlmErrorMessage(lastError, opts?.llmContext);
       }
       const is429 = is429Like(lastError);
@@ -748,6 +768,7 @@ export async function chatCompleteWithRetry(opts: {
       const is401 = is401Like(lastError);
       const is500 = is500Like(lastError); // #302
       const isContextLength = isContextLengthError(lastError); // #488
+      const isReasoningSequence = isResponsesReasoningSequenceError(lastError); // #1034
       if (isUnconfigured) unconfiguredCount++;
       if (i < modelsToTry.length - 1 && !signal?.aborted) {
         if (!isUnconfigured) {
@@ -769,7 +790,9 @@ export async function chatCompleteWithRetry(opts: {
                           ? "server error (500)" // #302
                           : isContextLength
                             ? "input too long" // #488
-                            : "failed after retries";
+                            : isReasoningSequence
+                              ? "responses reasoning sequence error (400)"
+                              : "failed after retries";
           pluginLogger.warn(
             `${label}: model ${currentModel} ${reason}, trying fallback model ${modelsToTry[i + 1]}...`,
           );
@@ -787,6 +810,7 @@ export async function chatCompleteWithRetry(opts: {
   const finalIsOOM = isOllamaOOM(finalError); // #387: OOM is expected when model too large for RAM
   const finalIs429 = is429OrWrapped(finalError); // #397
   const finalIsContextLength = isContextLengthError(finalError); // #488: input too long for model context window
+  const finalIsReasoningSequence = isResponsesReasoningSequenceError(finalError); // #1034
   /** Unwraps LLMRetryError so "Request was aborted" in the cause is detected (#935, #936). */
   const finalIsTransientLlm = isAbortOrTransientLlmError(finalError);
 
@@ -874,6 +898,12 @@ export async function chatCompleteWithRetry(opts: {
     pendingWarnings?.add(
       "⚠️ Memory plugin: LLM provider rate limited (429 Too Many Requests). " +
         "Memory features may be degraded. Try again later or upgrade your provider plan.",
+    );
+  } else if (finalIsReasoningSequence) {
+    // #1034: intermittent Responses API reasoning output sequencing failure — usually transient/provider-side
+    pendingWarnings?.add(
+      "⚠️ Memory plugin: LLM provider returned malformed reasoning output (400). " +
+        "This can be transient on reasoning models; a retry or fallback model is recommended.",
     );
   } else {
     // Only report unexpected failures to Sentry — not pure config/key issues
