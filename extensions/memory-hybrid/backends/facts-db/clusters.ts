@@ -35,7 +35,7 @@ export function getAllEdges(
 ): Array<{
   source: string;
   target: string;
-  link_type: string;
+  linkType: string;
   strength: number;
 }> {
   const rows = db
@@ -49,7 +49,7 @@ export function getAllEdges(
   return rows.map((r) => ({
     source: r.source_fact_id,
     target: r.target_fact_id,
-    link_type: r.link_type || "RELATED_TO",
+    linkType: r.link_type || "RELATED_TO",
     strength: r.strength ?? 0.8,
   }));
 }
