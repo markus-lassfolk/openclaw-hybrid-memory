@@ -203,7 +203,36 @@ export function registerActiveTaskCommands(mem: Chainable, ctx: ActiveTaskContex
   // Parent command: `hybrid-mem active-tasks` — lists tasks by default
   const activeTasks = mem
     .command("active-tasks")
-    .description("Working memory: manage active tasks in ACTIVE-TASK.md. Subcommands: complete, stale, reconcile, add")
+    .description("Working memory: manage active tasks in ACTIVE-TASK.md. Subcommands: list, complete, stale, reconcile, add")
+    .action(async () => {
+      const result = await runActiveTaskList(ctx);
+      if (!result.fileExists) {
+        console.log("No ACTIVE-TASK.md found — no active tasks.");
+        return;
+      }
+      if (result.total === 0) {
+        console.log("✅ No active tasks.");
+        return;
+      }
+      console.log(`Active tasks (${result.total}):`);
+      for (const t of result.tasks) {
+        const staleFlag = t.stale ? " ⚠️ STALE" : "";
+        console.log(`  [${t.label}] ${t.description}`);
+        console.log(`    Status: ${t.status}${staleFlag}`);
+        if (t.branch) console.log(`    Branch: ${t.branch}`);
+        if (t.subagent) console.log(`    Subagent: ${t.subagent}`);
+        if (t.next) console.log(`    Next: ${t.next}`);
+        console.log(`    Updated: ${t.updated}`);
+      }
+      if (result.staleCount > 0) {
+        console.log(`\n⚠️  ${result.staleCount} stale task(s) — run 'hybrid-mem active-tasks stale' for details`);
+      }
+    });
+
+  // `hybrid-mem active-tasks list`
+  activeTasks
+    .command("list")
+    .description("List active tasks")
     .action(async () => {
       const result = await runActiveTaskList(ctx);
       if (!result.fileExists) {
