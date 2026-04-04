@@ -842,7 +842,8 @@ export async function chatCompleteWithRetry(opts: {
       !finalIs403 &&
       !finalIsQuota403 &&
       !finalIs401 &&
-      !finalIs429
+      !finalIs429 &&
+      !finalIsReasoningSequence
     ) {
       capturePluginError(finalError, {
         subsystem: "chat",
