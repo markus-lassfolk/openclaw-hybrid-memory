@@ -1,0 +1,66 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720" role="img" aria-labelledby="title desc">
+  <title id="title">Hybrid Memory Dashboard Mock</title>
+  <desc id="desc">Mock screenshot showing memory capture, recall timeline, search, and controls.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#0b1724"/>
+      <stop offset="100%" stop-color="#142b3f"/>
+    </linearGradient>
+    <linearGradient id="card" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#f8fafc"/>
+      <stop offset="100%" stop-color="#edf2f7"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="1280" height="720" fill="url(#bg)"/>
+  <rect x="36" y="36" width="1208" height="648" rx="18" fill="#0f2233" stroke="#26435d"/>
+
+  <text x="72" y="86" fill="#e2e8f0" font-family="ui-sans-serif, system-ui" font-size="30" font-weight="700">Hybrid Memory</text>
+  <text x="72" y="114" fill="#9fb4c9" font-family="ui-sans-serif, system-ui" font-size="16">Capture -> Store -> Recall -> Inspect -> Control</text>
+
+  <rect x="72" y="146" width="740" height="240" rx="12" fill="url(#card)"/>
+  <text x="96" y="184" fill="#0f172a" font-family="ui-sans-serif, system-ui" font-size="20" font-weight="700">Recent Recall Timeline</text>
+  <rect x="96" y="206" width="692" height="1" fill="#d1d9e6"/>
+
+  <rect x="96" y="226" width="692" height="42" rx="8" fill="#ffffff" stroke="#d6dfeb"/>
+  <text x="112" y="252" fill="#1e293b" font-family="ui-monospace, SFMono-Regular, Menlo" font-size="14">[preference] Use concise PR reviews with file+line findings</text>
+
+  <rect x="96" y="276" width="692" height="42" rx="8" fill="#ffffff" stroke="#d6dfeb"/>
+  <text x="112" y="302" fill="#1e293b" font-family="ui-monospace, SFMono-Regular, Menlo" font-size="14">[decision] Nightly maintenance at 03:00 local</text>
+
+  <rect x="96" y="326" width="692" height="42" rx="8" fill="#ffffff" stroke="#d6dfeb"/>
+  <text x="112" y="352" fill="#1e293b" font-family="ui-monospace, SFMono-Regular, Menlo" font-size="14">[workflow] Release checklist with verify -> backup -> deploy</text>
+
+  <rect x="836" y="146" width="372" height="240" rx="12" fill="url(#card)"/>
+  <text x="860" y="184" fill="#0f172a" font-family="ui-sans-serif, system-ui" font-size="20" font-weight="700">Search + Inspect</text>
+  <rect x="860" y="206" width="324" height="36" rx="8" fill="#ffffff" stroke="#d6dfeb"/>
+  <text x="876" y="228" fill="#64748b" font-family="ui-sans-serif, system-ui" font-size="14">search: backup strategy</text>
+  <text x="860" y="272" fill="#1e293b" font-family="ui-sans-serif, system-ui" font-size="15">facts: 2,418</text>
+  <text x="860" y="300" fill="#1e293b" font-family="ui-sans-serif, system-ui" font-size="15">vectors: 2,404</text>
+  <text x="860" y="328" fill="#1e293b" font-family="ui-sans-serif, system-ui" font-size="15">last verify: all checks passed</text>
+  <text x="860" y="356" fill="#1e293b" font-family="ui-sans-serif, system-ui" font-size="15">mode: enhanced</text>
+
+  <rect x="72" y="410" width="1136" height="232" rx="12" fill="url(#card)"/>
+  <text x="96" y="448" fill="#0f172a" font-family="ui-sans-serif, system-ui" font-size="20" font-weight="700">Control Panel</text>
+  <rect x="96" y="470" width="1090" height="1" fill="#d1d9e6"/>
+
+  <rect x="96" y="492" width="250" height="120" rx="10" fill="#ffffff" stroke="#d6dfeb"/>
+  <text x="114" y="524" fill="#0f172a" font-family="ui-sans-serif, system-ui" font-size="16" font-weight="700">Capture</text>
+  <text x="114" y="548" fill="#334155" font-family="ui-sans-serif, system-ui" font-size="13">auto-capture: on</text>
+  <text x="114" y="570" fill="#334155" font-family="ui-sans-serif, system-ui" font-size="13">scope: user+agent</text>
+
+  <rect x="372" y="492" width="250" height="120" rx="10" fill="#ffffff" stroke="#d6dfeb"/>
+  <text x="390" y="524" fill="#0f172a" font-family="ui-sans-serif, system-ui" font-size="16" font-weight="700">Recall</text>
+  <text x="390" y="548" fill="#334155" font-family="ui-sans-serif, system-ui" font-size="13">rrf merge: enabled</text>
+  <text x="390" y="570" fill="#334155" font-family="ui-sans-serif, system-ui" font-size="13">latency p95: 48ms</text>
+
+  <rect x="648" y="492" width="250" height="120" rx="10" fill="#ffffff" stroke="#d6dfeb"/>
+  <text x="666" y="524" fill="#0f172a" font-family="ui-sans-serif, system-ui" font-size="16" font-weight="700">Trust</text>
+  <text x="666" y="548" fill="#334155" font-family="ui-sans-serif, system-ui" font-size="13">provenance: required</text>
+  <text x="666" y="570" fill="#334155" font-family="ui-sans-serif, system-ui" font-size="13">deletion route: ready</text>
+
+  <rect x="924" y="492" width="262" height="120" rx="10" fill="#ffffff" stroke="#d6dfeb"/>
+  <text x="942" y="524" fill="#0f172a" font-family="ui-sans-serif, system-ui" font-size="16" font-weight="700">Ops</text>
+  <text x="942" y="548" fill="#334155" font-family="ui-sans-serif, system-ui" font-size="13">backup age: 2d</text>
+  <text x="942" y="570" fill="#334155" font-family="ui-sans-serif, system-ui" font-size="13">restore test: passing</text>
+</svg>
