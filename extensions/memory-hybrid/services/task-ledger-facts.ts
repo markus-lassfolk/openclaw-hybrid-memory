@@ -161,9 +161,9 @@ export async function upsertProjectTaskKey(
   entity: string,
   key: string,
   value: string,
-  facts: MemoryEntry[],
   log?: { warn?: (m: string) => void },
 ): Promise<void> {
+  const facts = factsDb.listFactsByCategory(TASK_LEDGER_CATEGORY, 8000);
   const same = facts.filter((f) => f.entity === entity && (f.key ?? "") === key);
   same.sort((a, b) => b.createdAt - a.createdAt);
   const previous = same[0];
@@ -207,19 +207,18 @@ export async function syncActiveTaskEntryToFacts(
   log?: { warn?: (m: string) => void },
 ): Promise<void> {
   const entity = entry.label;
-  const facts = factsDb.listFactsByCategory(TASK_LEDGER_CATEGORY, 8000);
-  await upsertProjectTaskKey(factsDb, vectorDb, embeddings, entity, "title", entry.description, facts, log);
-  await upsertProjectTaskKey(factsDb, vectorDb, embeddings, entity, "status", displayStatusToFact(entry.status), facts, log);
+  await upsertProjectTaskKey(factsDb, vectorDb, embeddings, entity, "title", entry.description, log);
+  await upsertProjectTaskKey(factsDb, vectorDb, embeddings, entity, "status", displayStatusToFact(entry.status), log);
   if (entry.next?.trim()) {
-    await upsertProjectTaskKey(factsDb, vectorDb, embeddings, entity, "next", entry.next.trim(), facts, log);
+    await upsertProjectTaskKey(factsDb, vectorDb, embeddings, entity, "next", entry.next.trim(), log);
   }
   if (entry.subagent?.trim()) {
-    await upsertProjectTaskKey(factsDb, vectorDb, embeddings, entity, "related_session", entry.subagent.trim(), facts, log);
+    await upsertProjectTaskKey(factsDb, vectorDb, embeddings, entity, "related_session", entry.subagent.trim(), log);
   }
-  await upsertProjectTaskKey(factsDb, vectorDb, embeddings, entity, "task_updated", entry.updated, facts, log);
-  await upsertProjectTaskKey(factsDb, vectorDb, embeddings, entity, "started", entry.started, facts, log);
+  await upsertProjectTaskKey(factsDb, vectorDb, embeddings, entity, "task_updated", entry.updated, log);
+  await upsertProjectTaskKey(factsDb, vectorDb, embeddings, entity, "started", entry.started, log);
   if (entry.branch?.trim()) {
-    await upsertProjectTaskKey(factsDb, vectorDb, embeddings, entity, "branch", entry.branch.trim(), facts, log);
+    await upsertProjectTaskKey(factsDb, vectorDb, embeddings, entity, "branch", entry.branch.trim(), log);
   }
 }
 
@@ -413,7 +412,7 @@ export async function reconcileActiveTaskInProgressSessionsFacts(
   factsDb: FactsDB,
   vectorDb: VectorDB,
   embeddings: EmbeddingProvider,
-  _staleMinutes: number,
+  staleMinutes: number,
   opts: {
     openclawHome?: string;
     flushOnComplete?: boolean;
@@ -422,7 +421,7 @@ export async function reconcileActiveTaskInProgressSessionsFacts(
     log?: { warn?: (m: string) => void };
   } = {},
 ): Promise<FactsReconcileResult> {
-  const { active } = loadTaskLedgerFromFacts(factsDb);
+  const { active } = readActiveTaskRowsFromFacts(factsDb, staleMinutes);
   const reconciledLabels: string[] = [];
   const toFlush: ActiveTaskEntry[] = [];
   const openclawHome = opts.openclawHome;
