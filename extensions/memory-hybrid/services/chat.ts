@@ -478,7 +478,8 @@ export async function chatComplete(opts: {
       /^\d+\s*internal\s*error$/i.test(msg.trim()) ||
       /^5\d{2}\s/.test(msg.trim()) ||
       is500Like(err) || // #302: OpenAI SDK InternalServerError has no numeric prefix
-      isOllamaOOM(err); // #387: Ollama OOM — model too large for available RAM, not a bug
+      isOllamaOOM(err) || // #387: Ollama OOM — model too large for available RAM, not a bug
+      isResponsesReasoningSequenceError(err); // #1034: malformed reasoning item sequence — retryable
     const isConfigError =
       err instanceof UnconfiguredProviderError ||
       is404Like(err) || // #303: model not found = wrong model name in config, not a bug
@@ -658,7 +659,8 @@ export async function withLLMRetry<T>(
           /^\d+\s*internal\s*error$/i.test(causeMsg.trim()) ||
           /^5\d{2}\s/.test(causeMsg.trim()) ||
           /\b405\s+method\s+not\s+allowed/i.test(causeMsg) ||
-          /\b405\s+method\s+not\s+allowed/i.test(fullMsg);
+          /\b405\s+method\s+not\s+allowed/i.test(fullMsg) ||
+          isResponsesReasoningSequenceError(lastError); // #1034
         if (!isTransient) {
           capturePluginError(retryError, {
             subsystem: "chat",
