@@ -144,7 +144,13 @@ export function registerTaskQueueStatusCommands(mem: Chainable): void {
       if (opts.repair && existsSync(join(dir, "current.json"))) {
         const currentPath = join(dir, "current.json");
         const raw = await readJsonFile<TaskQueueItem>(currentPath);
-        if (raw && !taskQueueItemHasRecognizedSemantics(raw)) {
+        if (raw === null) {
+          console.error(
+            `✗ current.json is malformed (not valid JSON) — delete manually or check task-queue-status for details`,
+          );
+          return;
+        }
+        if (!taskQueueItemHasRecognizedSemantics(raw)) {
           const { mkdir, writeFile } = await import("node:fs/promises");
           const histDir = join(dir, "history");
           await mkdir(histDir, { recursive: true });
