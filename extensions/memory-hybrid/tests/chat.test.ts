@@ -20,6 +20,7 @@ import {
   parseRetryAfterMs,
   withLLMRetry,
 } from "../services/chat.js";
+import { isReasoningModel, requiresMaxCompletionTokens } from "../services/model-capabilities.js";
 
 vi.mock("../services/error-reporter.js", () => ({
   capturePluginError: vi.fn(),
@@ -1325,6 +1326,21 @@ describe("chatCompleteWithRetry — Responses reasoning sequence fallback (#1034
     const inner = new Error("400 Item 'rs_x' of type 'reasoning' was provided without its required following item.");
     const wrapped = new LLMRetryError(`Failed after 2 attempts: ${inner.message}`, inner, 2);
     expect(isResponsesReasoningSequenceError(wrapped)).toBe(true);
+  });
+
+  it("#1034: matches variant phrasing without 'its' before required", () => {
+    const msg = "Item 'rs_abc' of type 'reasoning' was provided without required following item.";
+    expect(isResponsesReasoningSequenceError(new Error(msg))).toBe(true);
+  });
+
+  it("#1034: isResponsesReasoningSequenceError returns false for unrelated errors", () => {
+    expect(isResponsesReasoningSequenceError(new Error("400 invalid_request_error"))).toBe(false);
+    expect(isResponsesReasoningSequenceError(new Error("context length exceeded"))).toBe(false);
+  });
+
+  it("azure-foundry/o3-pro uses reasoning model token params", () => {
+    expect(isReasoningModel("azure-foundry/o3-pro")).toBe(true);
+    expect(requiresMaxCompletionTokens("azure-foundry/o3-pro")).toBe(true);
   });
 
   it("falls back after one retry when primary hits malformed reasoning sequence 400", async () => {
