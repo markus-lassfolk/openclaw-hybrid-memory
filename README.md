@@ -74,6 +74,7 @@ Best for scoped memory, graph retrieval, workflows, crystallization, and higher 
 
 ```bash
 openclaw hybrid-mem config-mode complete
+openclaw gateway restart
 openclaw hybrid-mem verify
 openclaw hybrid-mem search "your query"
 ```
