@@ -262,8 +262,7 @@ export function initializeDatabases(cfg: HybridMemoryConfig, api: ClawdbotPlugin
   // CostTracker — created early so proxy can instrument every chat.completions.create call (Issue #270).
   // Shares FactsDB's SQLite connection (same memory.db, avoids a second DB handle).
   // Gated on cfg.costTracking.enabled (default: true).
-  const costTracker: CostTracker | null =
-    cfg.costTracking?.enabled !== false ? new CostTracker(factsDb) : null;
+  const costTracker: CostTracker | null = cfg.costTracking?.enabled !== false ? new CostTracker(factsDb) : null;
   if (costTracker) {
     api.logger.info("memory-hybrid: LLM cost tracker initialized");
   }
