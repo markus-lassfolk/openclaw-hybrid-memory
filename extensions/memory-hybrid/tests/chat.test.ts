@@ -15,6 +15,7 @@ import {
   isConnectionErrorLike,
   isContextLengthError,
   isOllamaOOM,
+  isResponsesReasoningSequenceError,
   parseGoDurationToMs,
   parseRetryAfterMs,
   withLLMRetry,
@@ -1318,6 +1319,12 @@ describe("chatCompleteWithRetry — Responses reasoning sequence fallback (#1034
 
   afterEach(() => {
     vi.useRealTimers();
+  });
+
+  it("isResponsesReasoningSequenceError matches LLMRetryError wrapping the provider message", () => {
+    const inner = new Error("400 Item 'rs_x' of type 'reasoning' was provided without its required following item.");
+    const wrapped = new LLMRetryError(`Failed after 2 attempts: ${inner.message}`, inner, 2);
+    expect(isResponsesReasoningSequenceError(wrapped)).toBe(true);
   });
 
   it("falls back after one retry when primary hits malformed reasoning sequence 400", async () => {

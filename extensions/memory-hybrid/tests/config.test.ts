@@ -1,4 +1,3 @@
-import { getEnv, setEnv } from "../utils/env-manager.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   CREDENTIAL_TYPES,
@@ -20,6 +19,7 @@ import {
   vectorDimsForModel,
 } from "../config.js";
 import type { ConfigMode } from "../config.js";
+import { getEnv, setEnv } from "../utils/env-manager.js";
 import { pluginLogger } from "../utils/logger.js";
 
 // ---------------------------------------------------------------------------
@@ -1341,7 +1341,7 @@ describe("hybridConfigSchema.parse", () => {
       expect(fallbackModels).toEqual(["gpt-4o-mini"]);
     });
 
-    it("when llm set and single model in tier, fallbackModels is undefined", () => {
+    it("when llm set and single model in tier, fallbackModels is undefined (no global fallbacks configured)", () => {
       const cfg = hybridConfigSchema.parse({
         ...validBase,
         llm: { default: ["gemini-2.0-flash"], heavy: ["gpt-4o"] },
@@ -1352,6 +1352,49 @@ describe("hybridConfigSchema.parse", () => {
       const heavyTier = resolveReflectionModelAndFallbacks(cfg, "heavy");
       expect(heavyTier.defaultModel).toBe("gpt-4o");
       expect(heavyTier.fallbackModels).toBeUndefined();
+    });
+
+    it("#1034: single llm.heavy model merges distill.fallbackModels into chatCompleteWithRetry chain", () => {
+      const cfg = hybridConfigSchema.parse({
+        ...validBase,
+        distill: {
+          apiKey: "GEMINI_KEY_LONG_ENOUGH_12345",
+          defaultModel: "google/gemini-2.5-flash",
+          fallbackModels: ["openai/o3", "openai/gpt-4.1-mini"],
+        },
+        llm: { heavy: ["azure-foundry/o3-pro"] },
+      });
+      const { defaultModel, fallbackModels } = resolveReflectionModelAndFallbacks(cfg, "heavy");
+      expect(defaultModel).toBe("azure-foundry/o3-pro");
+      expect(fallbackModels).toEqual(["openai/o3", "openai/gpt-4.1-mini"]);
+    });
+
+    it("#1034: single tier model merges llm.fallbackModel when set", () => {
+      const cfg = hybridConfigSchema.parse({
+        ...validBase,
+        llm: { heavy: ["azure-foundry/o3-pro"], fallbackModel: "openai/o3" },
+      });
+      const { defaultModel, fallbackModels } = resolveReflectionModelAndFallbacks(cfg, "heavy");
+      expect(defaultModel).toBe("azure-foundry/o3-pro");
+      expect(fallbackModels).toEqual(["openai/o3"]);
+    });
+
+    it("#1034: multi-model tier does not append llm.fallbackModel or distill.fallbackModels (Copilot review)", () => {
+      const cfg = hybridConfigSchema.parse({
+        ...validBase,
+        distill: {
+          apiKey: "GEMINI_KEY_LONG_ENOUGH_12345",
+          defaultModel: "google/gemini-2.5-flash",
+          fallbackModels: ["should-not-append"],
+        },
+        llm: {
+          heavy: ["azure-foundry/o3-pro", "openai/gpt-4.1-mini"],
+          fallbackModel: "openai/o3",
+        },
+      });
+      const { defaultModel, fallbackModels } = resolveReflectionModelAndFallbacks(cfg, "heavy");
+      expect(defaultModel).toBe("azure-foundry/o3-pro");
+      expect(fallbackModels).toEqual(["openai/gpt-4.1-mini"]);
     });
 
     it("when no llm config, uses legacy single model and distill.fallbackModels for fallbacks", () => {
