@@ -154,20 +154,18 @@ export class CostTracker {
       const db = this.db();
       if (!db) return;
       const cost = estimateCost(entry.model, entry.inputTokens, entry.outputTokens);
-      db
-        .prepare(
-          `INSERT INTO llm_cost_log (feature, model, input_tokens, output_tokens, estimated_cost_usd, duration_ms, success)
+      db.prepare(
+        `INSERT INTO llm_cost_log (feature, model, input_tokens, output_tokens, estimated_cost_usd, duration_ms, success)
            VALUES (?, ?, ?, ?, ?, ?, ?)`,
-        )
-        .run(
-          entry.feature,
-          entry.model,
-          entry.inputTokens,
-          entry.outputTokens,
-          cost,
-          entry.durationMs ?? null,
-          (entry.success ?? true) ? 1 : 0,
-        );
+      ).run(
+        entry.feature,
+        entry.model,
+        entry.inputTokens,
+        entry.outputTokens,
+        cost,
+        entry.durationMs ?? null,
+        (entry.success ?? true) ? 1 : 0,
+      );
     } catch (err) {
       // Never let cost tracking break LLM calls — but log the first failure per session for debuggability
       if (!this._errorLogged) {
@@ -336,12 +334,10 @@ export class CostTracker {
     try {
       const db = this.db();
       if (!db) return;
-      db
-        .prepare(
-          `INSERT INTO llm_savings_log (feature, action, count_avoided, estimated_saving_usd, note)
+      db.prepare(
+        `INSERT INTO llm_savings_log (feature, action, count_avoided, estimated_saving_usd, note)
            VALUES (?, ?, ?, ?, ?)`,
-        )
-        .run(entry.feature, entry.action, entry.countAvoided, entry.estimatedSavingUsd, entry.note ?? null);
+      ).run(entry.feature, entry.action, entry.countAvoided, entry.estimatedSavingUsd, entry.note ?? null);
     } catch (err) {
       if (!this._errorLogged) {
         this._errorLogged = true;
