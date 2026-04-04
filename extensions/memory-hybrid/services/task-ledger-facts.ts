@@ -113,6 +113,14 @@ export function buildTaskEntriesFromGroupedFacts(byEntity: Map<string, Map<strin
     const disp = factStatusToDisplay(statusRaw);
     const started = f.started?.trim() || f.created_at?.trim() || new Date().toISOString();
     const updated = f.task_updated?.trim() || f.updated?.trim() || f.updated_at?.trim() || new Date().toISOString();
+    let handoff: ActiveTaskEntry["handoff"] = undefined;
+    if (f.handoff?.trim()) {
+      try {
+        handoff = JSON.parse(f.handoff.trim());
+      } catch {
+        // Ignore parse errors
+      }
+    }
     const entry: ActiveTaskEntry = {
       label: entity,
       description: titleFromFacts(f),
@@ -122,6 +130,7 @@ export function buildTaskEntriesFromGroupedFacts(byEntity: Map<string, Map<strin
       next: f.next?.trim() || undefined,
       started,
       updated,
+      handoff,
     };
     if (isTerminalFactStatus(statusRaw) || disp === "Done") {
       completed.push({ ...entry, status: "Done" });
@@ -214,6 +223,7 @@ export async function syncActiveTaskEntryToFacts(
   await upsertProjectTaskKey(factsDb, vectorDb, embeddings, entity, "task_updated", entry.updated, log);
   await upsertProjectTaskKey(factsDb, vectorDb, embeddings, entity, "started", entry.started, log);
   await upsertProjectTaskKey(factsDb, vectorDb, embeddings, entity, "branch", entry.branch?.trim() || "", log);
+  await upsertProjectTaskKey(factsDb, vectorDb, embeddings, entity, "handoff", entry.handoff ? JSON.stringify(entry.handoff) : "", log);
 }
 
 export async function renderActiveTaskMarkdownFile(
