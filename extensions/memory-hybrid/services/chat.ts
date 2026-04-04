@@ -336,14 +336,41 @@ function isNonRetryableClient400(err: unknown): boolean {
  * Detect malformed Responses API reasoning-output sequencing errors, e.g.:
  * "Item 'rs_...' of type 'reasoning' was provided without its required following item."
  *
- * This is an intermittent provider-side 400 seen with some reasoning deployments.
- * Treat as transient/retryable (limited) instead of permanent bad-request.
+ * This is an intermittent provider-side 400 seen with some reasoning deployments (notably some
+ * Azure Foundry o3-pro paths). Treat as transient/retryable (limited) instead of permanent bad-request.
+ *
+ * Unwraps {@link LLMRetryError} and checks `cause` so detection still works when the message is wrapped.
  */
-function isResponsesReasoningSequenceError(err: unknown): boolean {
-  if (!(err instanceof Error)) return false;
-  return /type\s+['"]reasoning['"]\s+was\s+provided\s+without\s+(?:its\s+)?required\s+following\s+item/i.test(
-    err.message,
+export function isResponsesReasoningSequenceError(err: unknown): boolean {
+  const msg = collectErrorMessageChain(err);
+  return /\btype\s+['"]?reasoning['"]?\s+was\s+provided\s+without\s+(?:its\s+)?required\s+following\s+item\b/i.test(
+    msg,
   );
+}
+
+function collectErrorMessageChain(err: unknown): string {
+  const parts: string[] = [];
+  let cur: unknown = err;
+  const seen = new Set<unknown>();
+  for (let i = 0; i < 8 && cur != null && !seen.has(cur); i++) {
+    seen.add(cur);
+    if (cur instanceof Error) {
+      parts.push(cur.message);
+      cur = cur.cause;
+      continue;
+    }
+    if (
+      typeof cur === "object" &&
+      cur !== null &&
+      "message" in cur &&
+      typeof (cur as { message: unknown }).message === "string"
+    ) {
+      parts.push((cur as { message: string }).message);
+      break;
+    }
+    break;
+  }
+  return parts.join(" ");
 }
 
 /**

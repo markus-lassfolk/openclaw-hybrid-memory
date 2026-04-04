@@ -5,13 +5,28 @@
 
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
+import { readActiveTaskFile } from "../services/active-task.js";
+import {
+  type TaskQueueItem,
+  ensureTaskQueueIdlePlaceholder,
+  taskQueueItemHasRecognizedSemantics,
+  writeCanonicalIdleTaskQueueFile,
+} from "../services/task-queue-watchdog.js";
+import { getEnv } from "../utils/env-manager.js";
 import { readJsonFile } from "../utils/fs.js";
-import { ensureTaskQueueIdlePlaceholder, type TaskQueueItem } from "../services/task-queue-watchdog.js";
 import type { Chainable } from "./shared.js";
 
-export async function runTaskQueueStatusForCli(stateDir?: string): Promise<void> {
-  const dir = stateDir ?? join(homedir(), ".openclaw", "workspace", "state", "task-queue");
+export type TaskQueueStatusCliOptions = {
+  stateDir?: string;
+  /** Include ACTIVE-TASK.md summary when the file exists (default path: workspace/ACTIVE-TASK.md). */
+  withActiveTasks?: boolean;
+  /** Default ACTIVE-TASK path relative to workspace when not absolute. */
+  activeTaskRelativePath?: string;
+};
+
+export async function runTaskQueueStatusForCli(opts: TaskQueueStatusCliOptions = {}): Promise<void> {
+  const dir = opts.stateDir ?? join(homedir(), ".openclaw", "workspace", "state", "task-queue");
   const currentPath = join(dir, "current.json");
   if (!existsSync(currentPath)) {
     console.log(
@@ -46,18 +61,52 @@ export async function runTaskQueueStatusForCli(stateDir?: string): Promise<void>
     );
     return;
   }
-  console.log(
-    JSON.stringify(
-      {
-        ok: true,
-        path: currentPath,
-        available: true,
-        current,
-      },
-      null,
-      2,
-    ),
-  );
+  const recognized = taskQueueItemHasRecognizedSemantics(current);
+  const out: Record<string, unknown> = {
+    ok: true,
+    path: currentPath,
+    available: true,
+    recognized,
+    current,
+  };
+  if (!recognized) {
+    out.hint =
+      "current.json is not a recognized task-queue payload (metadata-only shells are repaired by the watchdog or `task-queue-touch --repair`). See issue #1037.";
+  }
+
+  if (opts.withActiveTasks) {
+    const workspaceRoot = getEnv("OPENCLAW_WORKSPACE") ?? join(homedir(), ".openclaw", "workspace");
+    const rel = opts.activeTaskRelativePath ?? "ACTIVE-TASK.md";
+    const activePath = isAbsolute(rel) ? rel : join(workspaceRoot, rel);
+    if (existsSync(activePath)) {
+      try {
+        const file = await readActiveTaskFile(activePath, 7 * 24 * 60);
+        if (!file) {
+          out.activeTasks = { filePath: activePath, error: "unreadable" };
+        } else {
+          out.activeTasks = {
+            filePath: activePath,
+            active: file.active.map((t) => ({
+              label: t.label,
+              description: t.description,
+              status: t.status,
+              branch: t.branch,
+              subagent: t.subagent,
+              next: t.next,
+              updated: t.updated,
+            })),
+            completedCount: file.completed.length,
+          };
+        }
+      } catch {
+        out.activeTasks = { filePath: activePath, error: "could_not_read" };
+      }
+    } else {
+      out.activeTasks = { filePath: activePath, available: false };
+    }
+  }
+
+  console.log(JSON.stringify(out, null, 2));
 }
 
 /** Register task-queue CLI helpers (status JSON + idle touch). */
@@ -66,16 +115,51 @@ export function registerTaskQueueStatusCommands(mem: Chainable): void {
     .command("task-queue-status")
     .description("Print task-queue current.json as JSON (for cron / scripts; #983)")
     .option("--state-dir <path>", "Override state directory (default: ~/.openclaw/workspace/state/task-queue)")
-    .action(async (opts: { stateDir?: string }) => {
-      await runTaskQueueStatusForCli(opts.stateDir);
+    .option("--with-active-tasks", "Include ACTIVE-TASK.md summary (workspace/ACTIVE-TASK.md by default)")
+    .option(
+      "--active-task-file <path>",
+      "ACTIVE-TASK.md path (absolute or relative to OPENCLAW_WORKSPACE / ~/.openclaw/workspace)",
+    )
+    .action(async (opts: { stateDir?: string; withActiveTasks?: boolean; activeTaskFile?: string }) => {
+      await runTaskQueueStatusForCli({
+        stateDir: opts.stateDir,
+        withActiveTasks: !!opts.withActiveTasks,
+        activeTaskRelativePath: opts.activeTaskFile,
+      });
     });
 
   mem
     .command("task-queue-touch")
-    .description("Create task-queue state dir and idle current.json if missing (#983)")
+    .description(
+      "Create task-queue state dir and idle current.json if missing (#983); use --repair to fix bad snapshots",
+    )
     .option("--state-dir <path>", "Override state directory")
-    .action(async (opts: { stateDir?: string }) => {
+    .option(
+      "--repair",
+      "If current.json exists but is not a recognized queue payload, archive it to history/ and write canonical idle (#1037)",
+    )
+    .action(async (opts: { stateDir?: string; repair?: boolean }) => {
       const dir = opts.stateDir ?? join(homedir(), ".openclaw", "workspace", "state", "task-queue");
+      if (opts.repair && existsSync(join(dir, "current.json"))) {
+        const currentPath = join(dir, "current.json");
+        const raw = await readJsonFile<TaskQueueItem>(currentPath);
+        if (raw && !taskQueueItemHasRecognizedSemantics(raw)) {
+          const { mkdir, writeFile } = await import("node:fs/promises");
+          const histDir = join(dir, "history");
+          await mkdir(histDir, { recursive: true });
+          const ts = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+          const dest = join(histDir, `${ts}-degenerate-cli.json`);
+          const archived = {
+            ...raw,
+            repairedBy: "task-queue-touch",
+            repairedAt: new Date().toISOString(),
+          };
+          await writeFile(dest, JSON.stringify(archived, null, 2), "utf-8");
+          await writeCanonicalIdleTaskQueueFile(dir, { info: (m) => console.log(m) });
+          console.log(`✓ Repaired degenerate current.json — archived to ${dest} and wrote idle placeholder`);
+          return;
+        }
+      }
       const wrote = await ensureTaskQueueIdlePlaceholder(dir, {
         info: (m) => console.log(m),
       });

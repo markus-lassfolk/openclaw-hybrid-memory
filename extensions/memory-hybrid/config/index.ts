@@ -266,9 +266,25 @@ export function getCronModelConfig(cfg: HybridMemoryConfig): CronModelConfig {
   };
 }
 
+function appendUniqueFallback(chain: string[], candidate: string | undefined, primary: string): void {
+  const t = candidate?.trim();
+  if (!t || t === primary || chain.includes(t)) return;
+  chain.push(t);
+}
+
+function appendUniqueFallbackList(chain: string[], candidates: string[] | undefined, primary: string): void {
+  if (!Array.isArray(candidates)) return;
+  for (const c of candidates) appendUniqueFallback(chain, c, primary);
+}
+
 /**
  * Resolve default model and fallback list for reflection/cron (default or heavy tier).
  * Single place for getCronModelConfig + getLLMModelPreference + cfg.llm fallback logic.
+ *
+ * When `llm.*` lists only one model for the tier, fallbacks are also taken from `llm.fallbackModel`
+ * and `distill.fallbackModels` (de-duplicated). That way heavy crons using a single Responses API
+ * model (e.g. azure-foundry/o3-pro) can still fail over without duplicating the whole preference list
+ * (#1034).
  */
 export function resolveReflectionModelAndFallbacks(
   cfg: HybridMemoryConfig,
@@ -277,6 +293,15 @@ export function resolveReflectionModelAndFallbacks(
   const cronCfg = getCronModelConfig(cfg);
   const pref = getLLMModelPreference(cronCfg, tier);
   const defaultModel = pref[0] ?? (tier === "heavy" ? OPENAI_HEAVY_CRON_MODEL : OPENAI_DEFAULT_CRON_MODEL);
-  const fallbackModels = pref.length > 1 ? pref.slice(1) : cfg.llm ? undefined : cfg.distill?.fallbackModels;
-  return { defaultModel, fallbackModels };
+
+  const chain: string[] = pref.length > 1 ? pref.slice(1) : [];
+
+  if (!cfg.llm && chain.length === 0) {
+    appendUniqueFallbackList(chain, cfg.distill?.fallbackModels, defaultModel);
+  } else if (cfg.llm) {
+    appendUniqueFallback(chain, cfg.llm.fallbackModel, defaultModel);
+    appendUniqueFallbackList(chain, cfg.distill?.fallbackModels, defaultModel);
+  }
+
+  return { defaultModel, fallbackModels: chain.length > 0 ? chain : undefined };
 }

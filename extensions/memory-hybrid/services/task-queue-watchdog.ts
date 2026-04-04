@@ -13,13 +13,13 @@
  * Addresses Product Goal 4: Autonomous Maintenance
  */
 
-import { execFile as execFileCb } from "../utils/process-runner.js";
 import { existsSync } from "node:fs";
 import { mkdir, readdir, unlink, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { readJsonFile } from "../utils/fs.js";
+import { execFile as execFileCb } from "../utils/process-runner.js";
 import { capturePluginError } from "./error-reporter.js";
 import { expireDispatchLeases, transitionDispatchLease } from "./task-queue-leases.js";
 
@@ -168,7 +168,70 @@ async function writeJsonFile(filePath: string, data: unknown): Promise<void> {
   await writeFile(filePath, JSON.stringify(data, null, 2), "utf-8");
 }
 
-const TASK_QUEUE_IDLE_PRODUCER = "openclaw-hybrid-memory";
+export const TASK_QUEUE_IDLE_PRODUCER = "openclaw-hybrid-memory";
+
+const IDLE_DETAILS =
+  "Placeholder: no autonomous queue task is active. The factory overwrites this file when work is dispatched.";
+
+/** Status values that imply a real queue entry when combined with producer/title/branch. */
+const TASK_QUEUE_STATUS_WITH_PAYLOAD = new Set([
+  "running",
+  "completed",
+  "failed",
+  "dispatched",
+  "queued",
+  "blocked",
+  "cancelled",
+]);
+
+function buildIdleTaskQueuePayload(): TaskQueueItem {
+  return {
+    status: "idle",
+    producer: TASK_QUEUE_IDLE_PRODUCER,
+    details: IDLE_DETAILS,
+  };
+}
+
+/**
+ * Returns true when `item` looks like a real task-queue snapshot (idle sentinel, running work,
+ * forge issue, shell runner, etc.). Returns false for metadata-only shells such as
+ * `{ updatedAt, repo, maxForge }` written by external tools (#1037).
+ */
+export function taskQueueItemHasRecognizedSemantics(item: TaskQueueItem): boolean {
+  if (item.status === "idle" && item.producer === TASK_QUEUE_IDLE_PRODUCER) return true;
+  if (typeof item.issue === "number" && Number.isFinite(item.issue) && item.issue > 0) return true;
+  if (typeof item.pid === "number" && item.pid > 0) {
+    if (typeof item.started === "string" && item.started.length > 0) return true;
+  }
+  if (item.dispatchToken != null && String(item.dispatchToken).trim().length > 0) return true;
+  const st = item.status != null ? String(item.status).toLowerCase() : "";
+  if (st && TASK_QUEUE_STATUS_WITH_PAYLOAD.has(st)) {
+    if (item.producer != null && String(item.producer).trim().length > 0) return true;
+  }
+  if (item.branch != null && String(item.branch).trim().length > 0) {
+    if (item.title != null && String(item.title).trim().length > 0) return true;
+    if (typeof item.issue === "number" && item.issue > 0) return true;
+  }
+  if (item.title != null && String(item.title).trim().length > 0 && item.producer != null) {
+    return String(item.producer).trim().length > 0;
+  }
+  return false;
+}
+
+/**
+ * Write the canonical idle `current.json` (overwrites). Use after clearing a degenerate snapshot
+ * so cron and prompts always see a valid hybrid-memory placeholder (#983, #1037).
+ */
+export async function writeCanonicalIdleTaskQueueFile(
+  stateDir: string,
+  logger?: { info?: (msg: string) => void },
+): Promise<void> {
+  await mkdir(stateDir, { recursive: true });
+  const currentPath = join(stateDir, "current.json");
+  const body = JSON.stringify(buildIdleTaskQueuePayload(), null, 2);
+  await writeFile(currentPath, body, { encoding: "utf-8" });
+  logger?.info?.(`memory-hybrid: wrote canonical idle task-queue file at ${currentPath}`);
+}
 
 /**
  * When `current.json` is absent, write a minimal idle sentinel so tools and cron jobs can read
@@ -182,13 +245,7 @@ export async function ensureTaskQueueIdlePlaceholder(
 ): Promise<boolean> {
   await mkdir(stateDir, { recursive: true });
   const currentPath = join(stateDir, "current.json");
-  const payload: TaskQueueItem = {
-    status: "idle",
-    producer: TASK_QUEUE_IDLE_PRODUCER,
-    details:
-      "Placeholder: no autonomous queue task is active. The factory overwrites this file when work is dispatched.",
-  };
-  const body = JSON.stringify(payload, null, 2);
+  const body = JSON.stringify(buildIdleTaskQueuePayload(), null, 2);
   try {
     await writeFile(currentPath, body, { encoding: "utf-8", flag: "wx" });
   } catch (err) {
@@ -277,6 +334,42 @@ export async function runTaskQueueWatchdog(
   // Idle placeholder — never treat as a stale factory run (#983).
   if (item.status === "idle" && item.producer === TASK_QUEUE_IDLE_PRODUCER) {
     return { action: "ok", item };
+  }
+
+  // Metadata-only or unknown shapes (e.g. external tools writing { updatedAt, repo, maxForge })
+  // are not valid queue tasks — archive and restore canonical idle so automation sees a real sentinel (#1037).
+  if (!taskQueueItemHasRecognizedSemantics(item)) {
+    const now = new Date().toISOString();
+    const degenerateReason =
+      "current.json has no recognizable task-queue payload (metadata-only shell or unknown shape; issue #1037)";
+    await mkdir(historyDir, { recursive: true });
+    const historyFilename = buildHistoryFilename("degenerate");
+    const historyPath = join(historyDir, historyFilename);
+    const archived: TaskQueueItem = {
+      ...item,
+      watchdogClearedAt: now,
+      watchdogReason: degenerateReason,
+    };
+    await writeJsonFile(historyPath, archived);
+    try {
+      await unlink(currentPath);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+          subsystem: "task-queue-watchdog",
+          operation: "unlink-degenerate-current",
+        });
+      }
+    }
+    await writeCanonicalIdleTaskQueueFile(stateDir, logger);
+    const logMsg = `memory-hybrid: task-queue-watchdog — cleared degenerate current.json → idle placeholder (${historyFilename})`;
+    logger?.info(logMsg);
+    return {
+      action: "cleared",
+      reason: degenerateReason,
+      item: archived,
+      historyPath,
+    };
   }
 
   // ── Health checks ─────────────────────────────────────────────────────────

@@ -105,8 +105,8 @@ CLI output is controlled by the config `verbosity` setting (`silent`, `quiet`, `
 | `active-tasks stale` | Show tasks not updated within staleThreshold. |
 | `active-tasks reconcile` | Move in-progress tasks whose OpenClaw session transcript is missing to Completed (issues #978, #981). |
 | `active-tasks add <label> <desc>` | Add or update a task entry. |
-| `task-queue-status` | Print `state/task-queue/current.json` as JSON (or a structured missing-file object for cron). |
-| `task-queue-touch` | Create the task-queue state dir and an idle `current.json` placeholder if missing. |
+| `task-queue-status` | Print `state/task-queue/current.json` as JSON (or a structured missing-file object for cron). Adds `recognized: true/false` when the file is valid JSON. Use `--with-active-tasks` to merge a summary of `ACTIVE-TASK.md` (same paths as `active-tasks`). |
+| `task-queue-touch` | Create the task-queue state dir and an idle `current.json` placeholder if missing. Use `--repair` to archive a **metadata-only** or unrecognized `current.json` to `history/` and write the canonical idle placeholder ([issue #1037](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/1037)). |
 | `uninstall [--clean-all] [--force-cleanup] [--leave-config]` | Revert to default OpenClaw memory (memory-core). |
 
 ---

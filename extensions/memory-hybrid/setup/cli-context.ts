@@ -135,8 +135,8 @@ const HYBRID_MEM_HELP_ACTIVE_TASKS = `
     active-tasks stale             Show tasks not updated within staleThreshold
     active-tasks reconcile         Complete in-progress rows whose session transcript is gone (#978)
     active-tasks add <label> <desc>  Add or update a task entry
-    task-queue-status            Print task-queue current.json as JSON (cron / scripts; #983)
-    task-queue-touch             Create idle state/task-queue/current.json if missing (#983)
+    task-queue-status            Print task-queue JSON + recognized flag; --with-active-tasks (#1037)
+    task-queue-touch             Create idle current.json if missing; --repair for bad snapshots (#1037)
 `;
 
 const HYBRID_MEM_CLI_COMMANDS = [
