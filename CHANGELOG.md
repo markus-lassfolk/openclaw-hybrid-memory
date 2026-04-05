@@ -10,6 +10,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.4.52] - 2026-04-05
+
+### Release summary
+
+**2026.4.52** improves **operator-facing config** for **goal stewardship** and **active tasks** (`hybrid-mem config`, `config-set goalStewardship`, `goals config`, `active-tasks config`), standardizes the default working-memory filename on **`ACTIVE-TASKS.md`** (with **legacy read** from `ACTIVE-TASK.md` when the new file is absent), and hardens **optimistic writes** and **`task-queue-status --with-active-tasks`** so resolved paths and mtimes stay consistent during migration.
+
+### Added
+
+- **CLI:** `openclaw hybrid-mem config-set goalStewardship enabled|disabled` (object-toggle style); `hybrid-mem config` shows goal stewardship, active-task ledger, and resolved `ACTIVE-TASKS.md` path; **`goals config`** and **`active-tasks config`** subcommands; **`active-tasks`** registered even when `activeTask.enabled` is false (config-only).
+
+### Changed
+
+- **Default active-task file:** `activeTask.filePath` defaults to **`ACTIVE-TASKS.md`** (docs, schema, parsers); singular **`active-task`** CLI alias removed in favor of **`active-tasks`**.
+
+### Fixed
+
+- **ACTIVE-TASKS migration:** `writeActiveTaskFileOptimistic` uses a single **`readActiveTaskFileWithMtime`** snapshot per retry so legacy vs canonical path and **mtime** do not drift; **`readActiveTaskFileWithResolvedPath`** gives **`task-queue-status`** a stable **`readFrom`** without separate resolve/read races.
+
+---
+
 ## [2026.4.51] - 2026-04-05
 
 ### Release summary
@@ -1247,7 +1267,8 @@ Major feature release including procedural memory, directive extraction, reinfor
 
 ---
 
-[Unreleased]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.4.51...HEAD
+[Unreleased]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.4.52...HEAD
+[2026.4.52]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.4.51...v2026.4.52
 [2026.4.51]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.4.40...v2026.4.51
 [2026.4.40]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.4.38...v2026.4.40
 [2026.4.38]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.4.36...v2026.4.38
