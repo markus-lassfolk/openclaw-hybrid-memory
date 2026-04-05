@@ -15,7 +15,7 @@ interface MemoryGraphNode {
 interface MemoryGraphEdge {
   source: string;
   target: string;
-  link_type: string;
+  linkType: string;
   strength: number;
 }
 
@@ -61,7 +61,7 @@ export function collectGraphPayload(factsDb: FactsDB, days: number, maxNodes: nu
     edges: edges.map((e) => ({
       source: e.source,
       target: e.target,
-      link_type: e.link_type,
+      linkType: e.linkType,
       strength: e.strength,
     })),
   };
@@ -102,7 +102,7 @@ export function collectGraphRecallPayload(factsDb: FactsDB, query: string): Grap
     edges: edges.map((e) => ({
       source: e.source,
       target: e.target,
-      link_type: e.link_type,
+      linkType: e.linkType,
       strength: e.strength,
     })),
     activated: seeds,
@@ -176,7 +176,7 @@ function buildGraph(data) {
   const links = data.edges.map(d => ({
     source: nodeById.get(d.source),
     target: nodeById.get(d.target),
-    link_type: d.link_type,
+    linkType: d.linkType,
     strength: d.strength
   })).filter(l => l.source && l.target);
 
@@ -189,7 +189,7 @@ function buildGraph(data) {
   link = g.append('g').attr('stroke', '#555').selectAll('line')
     .data(links).join('line')
     .attr('stroke-width', d => 0.5 + (d.strength || 0.5))
-    .attr('stroke', d => LINK_COLORS[d.link_type] || '#6b7280');
+    .attr('stroke', d => LINK_COLORS[d.linkType] || '#6b7280');
 
   node = g.append('g').selectAll('circle')
     .data(nodes).join('circle')

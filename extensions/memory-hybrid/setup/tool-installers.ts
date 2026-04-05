@@ -16,6 +16,7 @@ import { registerIssueTools } from "../tools/issue-tools.js";
 import { type MemoryToolsContext, registerMemoryTools } from "../tools/memory-tools.js";
 import { resolveGoalsDir } from "../services/goal-stewardship.js";
 import { type PluginContext as PersonaToolsContext, registerPersonaTools } from "../tools/persona-tools.js";
+import { type PublicApiRoutesContext, registerPublicApiRoutes } from "../tools/public-api-routes.js";
 import { registerProvenanceTools } from "../tools/provenance-tools.js";
 import { registerSelfExtensionTools } from "../tools/self-extension-tools.js";
 import { type PluginContext as UtilityToolsContext, registerUtilityTools } from "../tools/utility-tools.js";
@@ -325,6 +326,14 @@ function installDashboardRoutes({ cfg }: DashboardRoutesContext, api: ClawdbotPl
   registerDashboardHttpRoutes({ cfg }, api);
 }
 
+function selectPublicApiRoutesContext({ cfg, factsDb, narrativesDb }: ToolsContext): PublicApiRoutesContext {
+  return { cfg, factsDb, narrativesDb };
+}
+
+function installPublicApiRoutes(ctx: PublicApiRoutesContext, api: ClawdbotPluginApi): void {
+  registerPublicApiRoutes(ctx, api);
+}
+
 function selectGoalToolsContext(ctx: ToolsContext): GoalToolsContext {
   const workspaceRoot = getEnv("OPENCLAW_WORKSPACE") ?? pathJoin(homedir(), ".openclaw", "workspace");
   const goalsDir = resolveGoalsDir(workspaceRoot, ctx.cfg.goalStewardship.goalsDir);
@@ -442,5 +451,11 @@ export const toolInstallers = orderByBootstrapPhase<ToolInstaller>([
     bootstrapPhase: "optional",
     selectContext: (ctx) => selectDashboardRoutesContext(ctx),
     install: installDashboardRoutes,
+  }),
+  defineToolInstaller({
+    id: "publicApi",
+    bootstrapPhase: "optional",
+    selectContext: (ctx) => selectPublicApiRoutesContext(ctx),
+    install: installPublicApiRoutes,
   }),
 ]);
