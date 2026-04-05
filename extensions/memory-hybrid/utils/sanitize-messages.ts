@@ -141,14 +141,15 @@ export function sanitizeMessagesForClaude(messages: MessageLike[]): MessageLike[
 }
 
 /**
- * Strip OpenAI Responses API `reasoning` items from assistant message content before replay.
+ * Strip OpenAI Responses API `reasoning` items from message content arrays before replay.
  *
  * After context trimming, a `reasoning` block (id prefix `rs_*`) can remain without its
  * required following `message` / `function_call` item, causing:
  *   400 Item 'rs_…' of type 'reasoning' was provided without its required following item.
  *
- * Removing all reasoning blocks from history is safe when replaying: the model does not
+ * Removing all reasoning blocks from replayed history is safe: the model does not
  * need prior internal reasoning traces to continue (same class of fix as Claude tool_use).
+ * Applies to all messages with array content, not just assistant role.
  */
 function isOpenAIResponsesReasoningBlock(block: unknown): boolean {
   if (!block || typeof block !== "object") return false;

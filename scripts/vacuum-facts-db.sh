@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Run occasional maintenance on the hybrid-memory facts database (Issue #1049).
-# Stops are not enforced — avoid running while the gateway holds the DB open for writes.
+# This script does not stop the gateway or verify that the DB is unused.
+# Avoid running it while the gateway holds the DB open for writes; maintenance may block or fail if the DB is locked.
 #
 # Usage:
 #   ./scripts/vacuum-facts-db.sh /path/to/facts.db

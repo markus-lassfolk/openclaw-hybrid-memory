@@ -131,6 +131,7 @@ export async function runRecallPipelineQuery(
     span: opts?.timingSpan ?? createRecallSpan("recall"),
     op: opts?.timingOp ?? `${opts?.errorPrefix ?? policy.mode}-pipeline`,
   });
+  const pipelineWallT0 = Date.now();
   const runStartedAt = recallTiming.phaseStarted("pipeline_run", {
     query_chars: trimmed.length,
     limit: limitNum,
@@ -211,8 +212,7 @@ export async function runRecallPipelineQuery(
 
     const vectorStepPromise = (async (): Promise<SearchResult[]> => {
       let textToEmbed = trimmed;
-      const allowHyde =
-        policy.allowHyde && cfg.queryExpansion.enabled && (!opts?.limitHydeOnce || !hydeUsedRef.value);
+      const allowHyde = policy.allowHyde && cfg.queryExpansion.enabled && (!opts?.limitHydeOnce || !hydeUsedRef.value);
 
       let t0 = Date.now();
       if (allowHyde) {
@@ -295,45 +295,43 @@ export async function runRecallPipelineQuery(
       }, policy.vectorStepTimeoutMs);
     });
 
-    const vectorRacePromise = Promise.race([vectorStepPromise, timeoutPromise]);
-
-    try {
-      const [ftsRows, lanceRows] = await Promise.all([
-        ftsPromise,
-        vectorRacePromise.catch((err: unknown) => {
-          const isTimeout = err instanceof Error && err.message.includes("timed out");
-          vectorStepStatus = isTimeout ? "timeout" : "error";
-          if (isTimeout) logger.warn(`memory-hybrid: ${String(err)}, using FTS-only recall`);
-          else {
-            if (!shouldSuppressEmbeddingError(err)) {
-              capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-                operation: `${opts?.errorPrefix ?? ""}vector-recall`,
-                subsystem: "auto-recall",
-                backend: "lancedb",
-              });
-            }
-            logger.warn(`memory-hybrid: ${opts?.errorPrefix ?? ""}vector recall failed: ${err}`);
+    const vectorRacePromise = Promise.race([vectorStepPromise, timeoutPromise])
+      .catch((err: unknown) => {
+        const isTimeout = err instanceof Error && err.message.includes("timed out");
+        vectorStepStatus = isTimeout ? "timeout" : "error";
+        if (isTimeout) logger.warn(`memory-hybrid: ${String(err)}, using FTS-only recall`);
+        else {
+          if (!shouldSuppressEmbeddingError(err)) {
+            capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+              operation: `${opts?.errorPrefix ?? ""}vector-recall`,
+              subsystem: "auto-recall",
+              backend: "lancedb",
+            });
           }
-          return [] as SearchResult[];
-        }),
-      ]);
-      sqliteResults = ftsRows;
-      lanceResults = lanceRows;
-      vectorStepPromise.catch((err) => {
-        if (!directiveAbort.signal.aborted && !shouldSuppressEmbeddingError(err)) {
-          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-            operation: `${opts?.errorPrefix ?? ""}vector-recall-post-timeout`,
-            subsystem: "auto-recall",
-          });
+          logger.warn(`memory-hybrid: ${opts?.errorPrefix ?? ""}vector recall failed: ${err}`);
         }
+        return [] as SearchResult[];
+      })
+      .finally(() => {
+        if (timeoutId !== undefined) clearTimeout(timeoutId);
+        recallTiming.phaseCompleted("vector_step", vectorStepStartedAt, {
+          status: vectorStepStatus,
+          hits: lanceResults.length,
+        });
       });
-    } finally {
-      if (timeoutId !== undefined) clearTimeout(timeoutId);
-      recallTiming.phaseCompleted("vector_step", vectorStepStartedAt, {
-        status: vectorStepStatus,
-        hits: lanceResults.length,
-      });
-    }
+
+    const [ftsRows, lanceRows] = await Promise.all([ftsPromise, vectorRacePromise]);
+    sqliteResults = ftsRows;
+    lanceResults = lanceRows;
+
+    vectorStepPromise.catch((err) => {
+      if (!directiveAbort.signal.aborted && !shouldSuppressEmbeddingError(err)) {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+          operation: `${opts?.errorPrefix ?? ""}vector-recall-post-timeout`,
+          subsystem: "auto-recall",
+        });
+      }
+    });
 
     await yieldEventLoop();
   }
@@ -359,15 +357,16 @@ export async function runRecallPipelineQuery(
       .slice(0, limitNum);
   }
 
+  const wallClockMs = Date.now() - pipelineWallT0;
   logger.debug?.(
-    `memory-hybrid: ${policy.mode} timing (ms) — FTS: ${stageMs.fts}, embed: ${stageMs.embed}, vector: ${stageMs.vector}, merge: ${stageMs.merge}, total: ${stageMs.fts + stageMs.embed + stageMs.vector + stageMs.merge}`,
+    `memory-hybrid: ${policy.mode} timing (ms) — FTS: ${stageMs.fts}, embed: ${stageMs.embed}, vector: ${stageMs.vector}, merge: ${stageMs.merge}, wall: ${wallClockMs}`,
   );
   recallTiming.phaseCompleted("pipeline_run", runStartedAt, {
     fts_ms: stageMs.fts,
     embed_ms: stageMs.embed,
     vector_ms: stageMs.vector,
     merge_ms: stageMs.merge,
-    total_ms: stageMs.fts + stageMs.embed + stageMs.vector + stageMs.merge,
+    wall_ms: wallClockMs,
     fts_rows: ftsRowCount,
     vector_hits: lanceResults.length,
     merged_rows: results.length,
