@@ -188,7 +188,10 @@ export function registerGoalCommands(mem: Chainable, ctx: { cfg: HybridMemoryCon
         assessmentCount: 0,
         consecutiveFailures: 0,
       };
-      if (wasBlocked) patch.status = "active";
+      if (wasBlocked) {
+        patch.status = "active";
+        patch.currentBlockers = [];
+      }
       await updateGoal(dir, goal.id, patch as Parameters<typeof updateGoal>[2], {
         timestamp: new Date().toISOString(),
         action: "budget-reset",

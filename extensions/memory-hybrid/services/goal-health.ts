@@ -132,7 +132,10 @@ export async function runGoalHealthCheck(opts: GoalHealthCheckOptions): Promise<
       continue;
     }
 
-    if (goal.consecutiveFailures >= goal.escalateAfterFailures && goal.status === "active") {
+    if (
+      goal.consecutiveFailures >= goal.escalateAfterFailures &&
+      (goal.status === "active" || goal.status === "stalled")
+    ) {
       await updateGoal(
         goalsDir,
         goal.id,

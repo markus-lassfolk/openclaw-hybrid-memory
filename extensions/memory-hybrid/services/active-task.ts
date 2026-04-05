@@ -20,10 +20,10 @@
  * ```
  */
 
+import { createHash, randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
-import { readFile, writeFile, mkdir, readdir, rename, unlink, stat, realpath } from "node:fs/promises";
-import { dirname, join, resolve, relative, isAbsolute } from "node:path";
-import { randomUUID, createHash } from "node:crypto";
+import { mkdir, readFile, readdir, realpath, rename, stat, unlink, writeFile } from "node:fs/promises";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { formatDuration } from "../utils/duration.js";
 import { pluginLogger } from "../utils/logger.js";
 import { stableStringify } from "../utils/stable-stringify.js";
@@ -410,7 +410,7 @@ export async function writeActiveTaskFile(
   completed: ActiveTaskEntry[],
 ): Promise<void> {
   await mkdir(dirname(filePath), { recursive: true });
-  
+
   // Preserve existing goals mirror section if present
   let goalsMirror: string | undefined;
   if (existsSync(filePath)) {
@@ -421,7 +421,7 @@ export async function writeActiveTaskFile(
       // Ignore read errors; write without goals section
     }
   }
-  
+
   const content = serializeActiveTaskFile(active, completed, goalsMirror);
   await writeFile(filePath, content, "utf-8");
 }
