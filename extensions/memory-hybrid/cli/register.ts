@@ -18,6 +18,7 @@ import { registerManageCommands, type ManageContext } from "./manage.js";
 import { registerActiveTaskCommands, type ActiveTaskContext } from "./active-tasks.js";
 import { registerTaskQueueStatusCommands } from "./task-queue-status.js";
 import { registerBenchmarkCommands } from "./benchmark.js";
+import { registerGoalCommands } from "./goals.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import type { HybridMemoryConfig } from "../config.js";
 import type {
@@ -394,6 +395,16 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
       });
       throw err;
     }
+  }
+
+  try {
+    registerGoalCommands(mem, ctx);
+  } catch (err) {
+    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+      subsystem: "registration",
+      operation: "register-cli:goals",
+    });
+    throw err;
   }
 
   try {

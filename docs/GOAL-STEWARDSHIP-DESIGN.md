@@ -63,6 +63,8 @@ but not **continuation**:
 - Completion is inferred from subagent exit status, not from whether the user's
   goal was actually achieved.
 
+**Task hygiene (optional):** On heartbeat-pattern turns, the plugin can append a short **task-hygiene** nudge for active rows (stale list, optional long-running hint) and expose **`active_task_propose_goal`** to draft **`goal_register`** fields. See [TASK-HYGIENE.md](TASK-HYGIENE.md).
+
 ### 2.3 The default heartbeat prompt conflicts with goal carry-over
 
 Stock heartbeat guidance often includes "do not infer or repeat tasks from prior
@@ -629,6 +631,30 @@ These should be resolved before or during implementation:
    shall I proceed?") before the stewardship loop begins auto-dispatching?
    This adds safety but reduces autonomy.
 
+### 10.1 Resolved product decisions (2026-04-05)
+
+These choices supersede the open questions above for **plugin-side** design. Anything requiring OpenClaw core (e.g. a native heartbeat flag on the event) remains a **future enhancement**, not a blocker.
+
+1. **Heartbeat detection — option B + smart defaults.** Ship **configurable** patterns (e.g. `goalStewardship.heartbeatPatterns`: list of strings or regex sources) with **built-in defaults** so nothing must be configured: include the current `/heartbeat/i` behavior plus any additional “obvious” heartbeat phrasings we document. Operators opt in to stricter custom lists only when needed.
+
+2. **Goal ↔ ACTIVE-TASK — option B, mirror semantics.** Extend ACTIVE-TASK so goals are **visible in one place** with an optional **`goalId`** (or equivalent stable reference) on rows where applicable. **ACTIVE-TASK.md stays a read-only mirror** of authoritative state: the **goal registry / DB** is source of truth; the file is regenerated or overwritten from that state (plus existing task sources) so users see **tasks agents are working on** and **active goals** together without manual duplication.
+
+   **Regeneration cadence:** On **heartbeat** (once heartbeat is detected for that turn), trigger the existing hybrid-memory **active-tasks** pipeline so it **rewrites `ACTIVE-TASK.md`** from current state: **tasks** (as today) **plus** an explicit **Goals** section/block derived from the goal registry. Same entry point conceptually as `openclaw hybrid-mem active-tasks reconcile` (or equivalent internal call), so operators do not need a separate cron for “refresh the file”; heartbeat keeps the mirror fresh alongside stewardship work.
+
+3. **Stewardship models — option B (two-phase, cost-aware).** Do **not** run a **heavy** model on every timer or every heartbeat by default. Use a **nano / default-tier** check first to answer: “Is there an open goal that needs attention, and do we need **heavy** reasoning or dispatch?” Only then trigger **heavy** for substantive stewardship work. Implementation will use **separate** LLM calls (cron or plugin-invoked), not “burn heavy inside every 5‑minute tick.”
+
+4. **Multi-goal — option C + priority-weighted attention.** We must **cover all** active goals over time, not only one per heartbeat. Use a **round-robin–style** schedule with a **priority system**: **Critical, High, Medium, Low** dictating **share of attention** (weights or quotas). **Default priority for new goals is Medium.** In the current schema, **Medium maps to `normal`**; if we expose four labels in UX, align `normal` ↔ Medium and reserve `low` / `high` / `critical` as today.
+
+   **Default attention weights (configurable):** `critical` **4×**, `high` **2×**, `medium` **1×**, `low` **0.5×** — applied when allocating which goals get stewardship context in a given heartbeat and how much combined prompt budget they receive.
+
+   **Token caps for multi-goal prompts:** Enforce a **global ceiling** on total characters/tokens for the combined stewardship block (e.g. configurable `goalStewardship.multiGoalMaxTokens` with a conservative default), then **allocate** sub-budgets across selected goals **in proportion to** their weights so higher-priority goals get more of the cap when multiple goals appear in one turn.
+
+5. **User confirmation — option C (dynamic by priority).** Full autonomy (**A**) is the ideal for **low-risk** goals; **C** is the pragmatic default: **stricter confirmation (or gating) for Critical / High**, lighter or none for **Medium / Low**. Exact thresholds should be **configurable**.
+
+6. **Audit — A, extended with B and a slice of C.** Keep the current **history + episodic + event log** baseline (**A**). Add a real **audit playbook** (**B**): how to trace why something happened or failed (which logs, CLI, goal JSON fields). Add **structured export** (**C**), e.g. `hybrid-mem goals audit` with JSON lines for operators and automation.
+
+**Enough to proceed?** Yes: these decisions are sufficient to **spec** the next implementation phase. Remaining work is mostly **implementation** (weights + caps as above, heartbeat → active-tasks refresh, confirmation UX polish), not undecided product options.
+
 ---
 
 ## 11. Implementation Sequence
@@ -646,3 +672,38 @@ Recommended build order, each step independently testable:
 8. **Audit and observability** — event log, episodic memory, history
 9. **Documentation** — skill, tools snippet, operator guide
 10. **End-to-end testing** — simulated heartbeat + goal lifecycle
+
+## 12. Implementation status
+
+This section tracks what is **fully implemented** in the `memory-hybrid` plugin versus **partial** or **not started**. Last updated: 2026-04-05.
+
+| Area | Status | Notes |
+| --- | --- | --- |
+| Config types + parser (`goalStewardship`) | **Done** | Defaults, `globalLimits`, nested `defaults`. |
+| Goal registry (JSON + `_index.json`) | **Done** | CRUD, `resolveGoalId`, `terminateGoal`, label validation. |
+| Agent tools | **Done** | `goal_register`, `goal_assess`, `goal_update`, `goal_complete`, `goal_abandon` (see `tools/goal-tools.ts`). |
+| Watchdog `runGoalHealthCheck` | **Done** | Wired from plugin 5-minute timer when `enabled && watchdogHealthCheck`; uses optional `eventLog`. |
+| Heartbeat stewardship injection | **Done** | Pattern `/heartbeat/i` on last user message; `lifecycle/stage-goal-stewardship.ts`. |
+| Subagent spawn/end linkage | **Done** | `stage-goal-subagent.ts` + hooks registration. |
+| CLI `hybrid-mem goals` | **Done** | `list`, `status`, `cancel --reason`, `stewardship-run` (`cli/goals.ts`). |
+| `openclaw.plugin.json` schema + uiHints | **Done** | `goalStewardship` object in config schema; UI hints for main toggles. |
+| Unit tests (registry + health) | **Done** | `tests/goal-stewardship-registry.test.ts` (registry + `validateGoalLabel`); `tests/goal-stewardship-health.test.ts` (watchdog gates, budget block, stale, `file_exists`). |
+| Integration harness (no core) | **Done** | `tests/harness/mock-plugin-api.ts` — minimal `on` / `emitFirstResult` / `emitAll`. `tests/goal-stewardship-integration.test.ts` — heartbeat `before_agent_start` injection + `subagent_spawned` / `subagent_ended` flow against real goal JSON + temp workspace (`OPENCLAW_WORKSPACE`). |
+| Agent-tool e2e (full registerGoalTools) | **Optional** | Can extend the same mock API pattern if needed; not required for stewardship lifecycle coverage. |
+| Docs (SKILL, TOOLS snippet, operator) | **Done** | `skills/hybrid-memory/SKILL.md`, `workspace-snippets/TOOLS-hybrid-memory-body.md`, and **`docs/GOAL-STEWARDSHIP-OPERATOR.md`** (CLI, toggles, troubleshooting). |
+| Heartbeat detection | **Done** | Configurable **`heartbeatPatterns`** + built-in defaults (`services/goal-stewardship-heartbeat.ts`). |
+| Dedicated stewardship model mid-turn | **Not done** | Config `model` reserved; injection is still text-only; optional **`llmTriageOnHeartbeat`** uses nano tier separately. |
+| Goal ↔ ACTIVE-TASK.md | **Done (mirror)** | **`## Active Goals`** section regenerated on heartbeat when `heartbeatRefreshActiveTask` + `activeTask.enabled` (`goal-active-task-mirror.ts`). |
+| Multi-goal + weights + cap | **Done** | **`attentionWeights`**, **`multiGoalMaxChars`**, **`multiGoalMaxGoals`**, round-robin **`_stewardship_rr.json`**. |
+| Confirmation on register | **Done** | **`confirmationPolicy.requireRegisterAckForPriorities`** + **`confirmed`** on **`goal_register`**. |
+| Audit / playbook / CLI | **Done** | **`docs/GOAL-STEWARDSHIP-AUDIT-PLAYBOOK.md`**, **`goals audit`**, operator guide updated. |
+
+## 13. Post-epic implementation backlog (per §10.1)
+
+Implemented in plugin (see §12): configurable **heartbeat patterns**, **ACTIVE-TASK.md** mirror (`## Active Goals`) on heartbeat when `activeTask` is enabled, **heuristic + optional nano LLM triage**, **multi-goal weighted** prepends with **round-robin** cursor (`_stewardship_rr.json`), **confirmation** on `goal_register` for configured priorities, **`goals audit`** CLI, and **[GOAL-STEWARDSHIP-AUDIT-PLAYBOOK.md](GOAL-STEWARDSHIP-AUDIT-PLAYBOOK.md)**.
+
+Remaining optional follow-ups: deeper **ACTIVE-TASK** parser for `goalId` on task rows (if you want bidirectional linking beyond the Goals mirror), and **core** heartbeat flags (§10).
+
+**Circuit breaker (stuck assessments):** Config **`goalStewardship.circuitBreaker`** — deterministic trip on repeated **`goal_assess`** with unchanged blocker fingerprint (`services/goal-circuit-breaker.ts`, wired from **`goal_assess`** in **`goal-tools.ts`**). Produces **`humanEscalationSummary`**, optional **`memory/`** line, history entry **`circuit_breaker`**. Does not detect “LLM tier exhausted”; it only compares blocker sets and assessment counts.
+
+---

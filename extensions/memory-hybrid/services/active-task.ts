@@ -285,7 +285,11 @@ export function serializeTaskEntry(entry: ActiveTaskEntry): string {
 }
 
 /** Serialize all tasks back to full ACTIVE-TASK.md content */
-export function serializeActiveTaskFile(active: ActiveTaskEntry[], completed: ActiveTaskEntry[]): string {
+export function serializeActiveTaskFile(
+  active: ActiveTaskEntry[],
+  completed: ActiveTaskEntry[],
+  goalsMirrorMarkdown?: string,
+): string {
   const parts: string[] = ["# ACTIVE-TASK.md — Working Memory\n"];
 
   parts.push("## Active Tasks\n");
@@ -296,6 +300,13 @@ export function serializeActiveTaskFile(active: ActiveTaskEntry[], completed: Ac
       parts.push(serializeTaskEntry(entry));
       parts.push("");
     }
+  }
+
+  if (goalsMirrorMarkdown !== undefined) {
+    parts.push("## Active Goals\n");
+    parts.push("_Mirror from goal registry — do not edit by hand; refreshed on heartbeat._\n\n");
+    parts.push(goalsMirrorMarkdown);
+    if (!goalsMirrorMarkdown.endsWith("\n")) parts.push("\n");
   }
 
   if (completed.length > 0) {

@@ -16,6 +16,8 @@ import { runInjectionStage } from "./stage-injection.js";
 import { runCaptureStage } from "./stage-capture.js";
 import { registerCleanupHandlers, createStaleSweepTimer, getDispose } from "./stage-cleanup.js";
 import { registerActiveTaskInjection } from "./stage-active-task.js";
+import { registerGoalStewardshipInjection, resolvedGoalsDirForLifecycle } from "./stage-goal-stewardship.js";
+import { registerGoalSubagentHandlers } from "./stage-goal-subagent.js";
 import { registerAuthFailureRecall } from "./stage-auth-failure.js";
 import { registerCredentialHint } from "./stage-credential-hint.js";
 import { registerFrustrationHandlers } from "./stage-frustration.js";
@@ -71,6 +73,14 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
     }
 
     registerActiveTaskInjection(api, ctx, resolvedActiveTaskPath);
+    const resolvedGoalsDir = resolvedGoalsDirForLifecycle(ctx.cfg);
+    registerGoalStewardshipInjection(
+      api,
+      ctx,
+      resolvedGoalsDir,
+      ctx.cfg.activeTask.enabled ? resolvedActiveTaskPath : undefined,
+    );
+    registerGoalSubagentHandlers(api, ctx, resolvedGoalsDir);
     registerCleanupHandlers(api, ctx, sessionState, resolvedActiveTaskPath, workspaceRoot);
     // Guard experimental/optional features at the registration point — avoids registering
     // event listeners whose bodies immediately return when disabled (#581).

@@ -503,7 +503,7 @@
     "multiAgent.defaultStoreScope": {
       "label": "Default Store Scope",
       "placeholder": "global",
-      "help": "Default scope for new facts: 'global' (all agents, backward compatible), 'agent' (specialists auto-scope), or 'auto' (orchestrator→global, specialists→agent). Default: 'global'."
+      "help": "Default scope for new facts: 'global' (all agents, backward compatible), 'agent' (specialists auto-scope), or 'auto' (orchestrator\u2192global, specialists\u2192agent). Default: 'global'."
     },
     "trajectoryLLMAnalysis": {
       "label": "Trajectory LLM Analysis",
@@ -516,6 +516,50 @@
     "extractReinforcement": {
       "label": "Extract Reinforcement",
       "help": "Enable reinforcement extraction from sessions. Top-level alias for distill.extractReinforcement."
+    },
+    "activeTask.taskHygiene.heartbeatEscalation": {
+      "label": "Task hygiene on heartbeat",
+      "help": "When the last user message matches a heartbeat pattern, append a short ACTIVE-TASK review nudge (stale rows, optional long-running hint). Uses the same patterns as goal stewardship. Default: true. See docs/TASK-HYGIENE.md."
+    },
+    "activeTask.taskHygiene.suggestGoalAfterTaskAgeDays": {
+      "label": "Suggest goal after N days",
+      "placeholder": "0",
+      "help": "If greater than 0, heartbeat hygiene flags tasks whose **Updated** timestamp is older than N days and suggests active_task_propose_goal + goal_register. 0 = off (default)."
+    },
+    "activeTask.taskHygiene.heartbeatNudgeMaxChars": {
+      "label": "Heartbeat hygiene max chars",
+      "help": "Character cap for the injected task-hygiene block (default 2500; parser minimum 200)."
+    },
+    "goalStewardship.enabled": {
+      "label": "Goal stewardship",
+      "help": "Enable long-running goal registry, agent tools (goal_register, \u2026), heartbeat injection, and optional watchdog health checks. Default: false. See docs/GOAL-STEWARDSHIP-DESIGN.md."
+    },
+    "goalStewardship.goalsDir": {
+      "label": "Goals directory",
+      "placeholder": "state/goals",
+      "help": "Relative to workspace (OPENCLAW_WORKSPACE): JSON goal files and index. Default: state/goals."
+    },
+    "goalStewardship.heartbeatStewardship": {
+      "label": "Heartbeat stewardship",
+      "help": "Inject stewardship context on heartbeat sessions (pattern-detected). Default: true when goal stewardship is enabled."
+    },
+    "goalStewardship.watchdogHealthCheck": {
+      "label": "Watchdog health check",
+      "help": "Run deterministic goal health checks on the plugin 5-minute timer. CLI `hybrid-mem goals stewardship-run` still runs checks when stewardship is enabled. Default: true."
+    },
+    "goalStewardship.circuitBreaker.enabled": {
+      "label": "Goal circuit breaker",
+      "help": "When enabled, repeated goal_assess calls with the same blockers (or too many assessments without blocker change) block the goal and write humanEscalationSummary + optional memory/ log. Default: false. See docs/GOAL-STEWARDSHIP-OPERATOR.md."
+    },
+    "goalStewardship.circuitBreaker.sameBlockerRepeatLimit": {
+      "label": "Circuit breaker: same blockers N times",
+      "placeholder": "0",
+      "help": "Trip after this many consecutive assessments with identical blockers; 0 = off."
+    },
+    "goalStewardship.circuitBreaker.maxAssessmentsWithoutProgress": {
+      "label": "Circuit breaker: max assessments without progress",
+      "placeholder": "0",
+      "help": "Trip when (assessments since last blocker change) reaches this; 0 = off."
     }
   },
   "configSchema": {
@@ -524,7 +568,16 @@
     "properties": {
       "mode": {
         "type": "string",
-        "enum": ["essential", "normal", "expert", "full", "local", "minimal", "enhanced", "complete"],
+        "enum": [
+          "essential",
+          "normal",
+          "expert",
+          "full",
+          "local",
+          "minimal",
+          "enhanced",
+          "complete"
+        ],
         "description": "Configuration preset: local | minimal | enhanced | complete. Legacy values (essential, normal, expert, full) are accepted and mapped to local. See docs/CONFIGURATION-MODES.md."
       },
       "embedding": {
@@ -534,7 +587,12 @@
         "properties": {
           "provider": {
             "type": "string",
-            "enum": ["openai", "ollama", "onnx", "google"],
+            "enum": [
+              "openai",
+              "ollama",
+              "onnx",
+              "google"
+            ],
             "default": "openai",
             "description": "Embedding provider. 'openai'/'google' require apiKey. 'ollama' and 'onnx' run locally without an API key."
           },
@@ -574,7 +632,11 @@
             "type": "array",
             "items": {
               "type": "string",
-              "enum": ["openai", "google", "ollama"]
+              "enum": [
+                "openai",
+                "google",
+                "ollama"
+              ]
             },
             "description": "Explicit ordered list of embedding providers to use. When set, only listed providers are tried (in order); auto-inference from available API keys is skipped. Use [\"openai\"] to pin to Azure/OpenAI only and prevent Google from being auto-added as a fallback when GEMINI_API_KEY is also set. Mixing providers with different vector dimensions is not supported \u2014 ensure all listed providers produce the same dimensions as your stored vectors."
           },
@@ -613,7 +675,13 @@
               },
               "injectionFormat": {
                 "type": "string",
-                "enum": ["full", "short", "minimal", "progressive", "progressive_hybrid"]
+                "enum": [
+                  "full",
+                  "short",
+                  "minimal",
+                  "progressive",
+                  "progressive_hybrid"
+                ]
               },
               "recallTiming": {
                 "oneOf": [
@@ -622,7 +690,11 @@
                   },
                   {
                     "type": "string",
-                    "enum": ["off", "basic", "verbose"]
+                    "enum": [
+                      "off",
+                      "basic",
+                      "verbose"
+                    ]
                   }
                 ],
                 "description": "Structured recall timing logs: false/off=disabled, true/basic=completed events only, verbose=started+completed with timestamps."
@@ -734,7 +806,11 @@
               },
               "interactiveEnrichment": {
                 "type": "string",
-                "enum": ["fast", "balanced", "full"],
+                "enum": [
+                  "fast",
+                  "balanced",
+                  "full"
+                ],
                 "description": "Unified control for interactive auto-recall: fast = lowest latency/cost (no HyDE, no ambient multi-query); balanced = default; full = richer (HyDE + ambient multi when configured)."
               },
               "authFailure": {
@@ -825,7 +901,9 @@
           },
           "store": {
             "type": "string",
-            "enum": ["sqlite"]
+            "enum": [
+              "sqlite"
+            ]
           },
           "encryptionKey": {
             "type": "string",
@@ -877,7 +955,10 @@
           },
           "mode": {
             "type": "string",
-            "enum": ["community", "self-hosted"],
+            "enum": [
+              "community",
+              "self-hosted"
+            ],
             "default": "community",
             "description": "community: anonymous telemetry to developers. self-hosted: your own Sentry/GlitchTip instance."
           },
@@ -930,7 +1011,10 @@
             "description": "Controls user-facing upgrade reminders for the version-aware telemetry mute flow."
           }
         },
-        "required": ["enabled", "consent"],
+        "required": [
+          "enabled",
+          "consent"
+        ],
         "description": "Opt-out error reporting to GlitchTip/Sentry (enabled by default, community DSN). Set enabled: false or consent: false to disable. See docs/ERROR-REPORTING.md."
       },
       "distill": {
@@ -968,7 +1052,11 @@
           },
           "extractionModelTier": {
             "type": "string",
-            "enum": ["nano", "default", "heavy"],
+            "enum": [
+              "nano",
+              "default",
+              "heavy"
+            ],
             "description": "Model tier for extraction pipeline (extract-reinforcement LLM). 'nano' or 'default' saves cost and avoids locking the main model; unset = heavy. Expert/Full presets use 'default'."
           }
         }
@@ -1098,7 +1186,11 @@
             "type": "array",
             "items": {
               "type": "string",
-              "enum": ["SOUL.md", "IDENTITY.md", "USER.md"]
+              "enum": [
+                "SOUL.md",
+                "IDENTITY.md",
+                "USER.md"
+              ]
             },
             "description": "Identity files that can be modified via proposals"
           },
@@ -1160,7 +1252,10 @@
                   "type": "string"
                 }
               },
-              "required": ["key", "prompt"]
+              "required": [
+                "key",
+                "prompt"
+              ]
             },
             "description": "Recurring identity reflection questions"
           }
@@ -1310,7 +1405,11 @@
           },
           "defaultStoreScope": {
             "type": "string",
-            "enum": ["global", "agent", "auto"],
+            "enum": [
+              "global",
+              "agent",
+              "auto"
+            ],
             "description": "Default scope for new facts: 'global' (all agents, backward compatible), 'agent' (specialists auto-scope), or 'auto' (orchestrator\u2192global, specialists\u2192agent). Default: 'global'."
           }
         },
@@ -1395,7 +1494,11 @@
           },
           "pruneMode": {
             "type": "string",
-            "enum": ["expired", "decay", "both"]
+            "enum": [
+              "expired",
+              "decay",
+              "both"
+            ]
           },
           "model": {
             "type": "string"
@@ -1464,7 +1567,11 @@
           },
           "extractionModelTier": {
             "type": "string",
-            "enum": ["nano", "default", "heavy"]
+            "enum": [
+              "nano",
+              "default",
+              "heavy"
+            ]
           },
           "preFilter": {
             "type": "object",
@@ -1626,8 +1733,221 @@
       "extractReinforcement": {
         "type": "boolean",
         "description": "Top-level alias for distill.extractReinforcement. Enable reinforcement extraction from sessions (default: true). The nested key is deprecated."
+      },
+      "activeTask": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "description": "Enable ACTIVE-TASK.md injection and related tooling (default: true)"
+          },
+          "filePath": {
+            "type": "string",
+            "description": "Path to ACTIVE-TASK.md relative to OPENCLAW_WORKSPACE or absolute (default: ACTIVE-TASK.md)"
+          },
+          "injectionBudget": {
+            "type": "number",
+            "description": "Token budget for active-task injection summary (default: 500)"
+          },
+          "staleThreshold": {
+            "type": "string",
+            "description": "Duration string after which a task row is stale (e.g. 24h, 7d)"
+          },
+          "staleWarning": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "enabled": {
+                "type": "boolean",
+                "description": "Inject stale-task warnings alongside the summary (default: true)"
+              }
+            }
+          },
+          "taskHygiene": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "heartbeatEscalation": {
+                "type": "boolean",
+                "description": "On heartbeat-pattern user messages, append a task-hygiene nudge for ACTIVE-TASK rows (default: true)"
+              },
+              "suggestGoalAfterTaskAgeDays": {
+                "type": "number",
+                "description": "If >0, heartbeat hygiene nudges long-running tasks (days since Updated). 0 = off (default: 0)"
+              },
+              "heartbeatNudgeMaxChars": {
+                "type": "number",
+                "description": "Max characters for the heartbeat hygiene block (default: 2500, min 200 in parser)"
+              }
+            },
+            "description": "Heartbeat nudges for tactical tasks; see docs/TASK-HYGIENE.md"
+          }
+        },
+        "description": "Working memory file ACTIVE-TASK.md: injection, stale warnings, optional heartbeat hygiene"
+      },
+      "goalStewardship": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "description": "Enable goal stewardship (default: false)"
+          },
+          "goalsDir": {
+            "type": "string",
+            "description": "Relative to workspace; goal JSON store (default: state/goals)"
+          },
+          "model": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Optional dedicated stewardship model (default: null = cron default)"
+          },
+          "heartbeatStewardship": {
+            "type": "boolean",
+            "description": "Inject stewardship on heartbeat turns (default: true)"
+          },
+          "watchdogHealthCheck": {
+            "type": "boolean",
+            "description": "Run deterministic checks on plugin timer (default: true)"
+          },
+          "defaults": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "maxDispatches": {
+                "type": "number"
+              },
+              "maxAssessments": {
+                "type": "number"
+              },
+              "cooldownMinutes": {
+                "type": "number"
+              },
+              "escalateAfterFailures": {
+                "type": "number"
+              },
+              "priority": {
+                "type": "string",
+                "enum": [
+                  "critical",
+                  "high",
+                  "normal",
+                  "low"
+                ]
+              }
+            },
+            "description": "Per-goal defaults when registering"
+          },
+          "globalLimits": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "maxDispatchesPerHour": {
+                "type": "number"
+              },
+              "maxActiveGoals": {
+                "type": "number"
+              }
+            },
+            "description": "Global caps across all goals"
+          },
+          "heartbeatPatterns": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Heartbeat regex sources; empty = built-in defaults"
+          },
+          "attentionWeights": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "critical": {
+                "type": "number"
+              },
+              "high": {
+                "type": "number"
+              },
+              "normal": {
+                "type": "number"
+              },
+              "low": {
+                "type": "number"
+              }
+            }
+          },
+          "multiGoalMaxChars": {
+            "type": "number",
+            "description": "Combined character cap for multi-goal stewardship prepend"
+          },
+          "multiGoalMaxGoals": {
+            "type": "number"
+          },
+          "heartbeatRefreshActiveTask": {
+            "type": "boolean",
+            "description": "On heartbeat, refresh ACTIVE-TASK.md Goals mirror"
+          },
+          "confirmationPolicy": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "requireRegisterAckForPriorities": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "critical",
+                    "high",
+                    "normal",
+                    "low"
+                  ]
+                }
+              }
+            }
+          },
+          "llmTriageOnHeartbeat": {
+            "type": "boolean",
+            "description": "Optional nano LLM triage (default false)"
+          },
+          "triageSuggestHeavyDirective": {
+            "type": "boolean"
+          },
+          "circuitBreaker": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "enabled": {
+                "type": "boolean",
+                "description": "Trip goals stuck with unchanged blockers across assessments (default: false until tuned)"
+              },
+              "sameBlockerRepeatLimit": {
+                "type": "number",
+                "description": "Consecutive assessments with same blocker fingerprint before blocking; 0 = off"
+              },
+              "maxAssessmentsWithoutProgress": {
+                "type": "number",
+                "description": "Block when assessments since last blocker change reach this; 0 = off"
+              },
+              "composeHumanSummary": {
+                "type": "boolean",
+                "description": "Include full history in humanEscalationSummary (default: true)"
+              },
+              "appendMemoryEscalation": {
+                "type": "boolean",
+                "description": "Append escalation to workspace memory/YYYY-MM-DD.md (default: true)"
+              }
+            },
+            "description": "Stop retry loops; escalate to human with summary (see docs/GOAL-STEWARDSHIP-OPERATOR.md)"
+          }
+        },
+        "description": "Long-running goal registry, stewardship injection, and watchdog (see docs/GOAL-STEWARDSHIP-DESIGN.md)"
       }
     },
-    "required": ["embedding"]
+    "required": [
+      "embedding"
+    ]
   }
 }

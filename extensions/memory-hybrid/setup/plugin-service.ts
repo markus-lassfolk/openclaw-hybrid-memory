@@ -41,6 +41,7 @@ import {
 import { versionInfo } from "../versionInfo.js";
 import { checkOpenClawVersion } from "../utils/version-check.js";
 import { runTaskQueueWatchdog } from "../services/task-queue-watchdog.js";
+import { runGoalHealthCheck, resolveGoalsDir } from "../services/goal-stewardship.js";
 import { reconcileActiveTaskInProgressSessions } from "../services/active-task.js";
 import { parseDuration } from "../utils/duration.js";
 
@@ -632,6 +633,30 @@ export function createPluginService(ctx: PluginServiceContext) {
             subsystem: "plugin-service",
             operation: "active-task-session-reconcile",
           });
+        }
+        if (cfg.goalStewardship.enabled && cfg.goalStewardship.watchdogHealthCheck) {
+          try {
+            const workspaceRootGs = getEnv("OPENCLAW_WORKSPACE") ?? join(homedir(), ".openclaw", "workspace");
+            const goalsDir = resolveGoalsDir(workspaceRootGs, cfg.goalStewardship.goalsDir);
+            const gh = await runGoalHealthCheck({
+              goalsDir,
+              cfg: cfg.goalStewardship,
+              workspaceRoot: workspaceRootGs,
+              logger: api.logger,
+              eventLog: eventLog ?? null,
+            });
+            if (gh.goalsUpdated > 0) {
+              api.logger.info?.(
+                `memory-hybrid: goal health check — ${gh.goalsChecked} checked, ${gh.goalsUpdated} updated`,
+              );
+            }
+          } catch (ghErr) {
+            api.logger.warn?.(`memory-hybrid: goal health check failed (non-fatal): ${ghErr}`);
+            capturePluginError(ghErr instanceof Error ? ghErr : new Error(String(ghErr)), {
+              subsystem: "plugin-service",
+              operation: "goal-health-check",
+            });
+          }
         }
       };
       timers.watchdogTimer.value = setInterval(() => {
