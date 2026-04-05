@@ -23,6 +23,9 @@ export function compileHeartbeatMatchers(patterns: string[]): RegExp[] {
       if (s.startsWith("/") && s.lastIndexOf("/") > 0) {
         const last = s.lastIndexOf("/");
         const body = s.slice(1, last);
+        if (body.length === 0) {
+          continue;
+        }
         let flags = s.slice(last + 1) || "i";
         flags = flags.replace(/[gy]/g, "");
         if (!flags.includes("i")) flags += "i";
@@ -50,6 +53,12 @@ export function getCachedMatchers(patterns: string[]): RegExp[] {
     cachedMatchers = compileHeartbeatMatchers(patterns);
   }
   return cachedMatchers;
+}
+
+/** Clear the module-level regex cache (primarily for test isolation). */
+export function clearMatcherCache(): void {
+  cachedPatternKey = null;
+  cachedMatchers = [];
 }
 
 export function matchesHeartbeat(userText: string, cfg: GoalStewardshipConfig): boolean {
