@@ -427,9 +427,10 @@ export async function writeActiveTaskFile(
 
   // Preserve existing goals mirror section if present
   let goalsMirror: string | undefined;
-  if (existsSync(filePath)) {
+  const pathToRead = resolveActiveTaskReadPath(filePath);
+  if (pathToRead) {
     try {
-      const existing = await readFile(filePath, "utf-8");
+      const existing = await readFile(pathToRead, "utf-8");
       goalsMirror = extractGoalsMirrorSection(existing);
     } catch {
       // Ignore read errors; write without goals section
