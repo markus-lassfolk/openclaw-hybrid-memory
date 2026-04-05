@@ -395,6 +395,24 @@ export function detectStaleTasks(tasks: ActiveTaskEntry[], staleMinutes: number)
 // File I/O
 // ---------------------------------------------------------------------------
 
+/** Same as {@link readActiveTaskFile}, plus the resolved path actually read (canonical or legacy). */
+export async function readActiveTaskFileWithResolvedPath(
+  filePath: string,
+  staleMinutes = 1440,
+): Promise<(ActiveTaskFile & { readFrom: string }) | null> {
+  const pathToRead = resolveActiveTaskReadPath(filePath);
+  if (!pathToRead) return null;
+  try {
+    const content = await readFile(pathToRead, "utf-8");
+    const parsed = parseActiveTaskFile(content);
+    parsed.active = detectStaleTasks(parsed.active, staleMinutes);
+    return { ...parsed, readFrom: pathToRead };
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw err;
+  }
+}
+
 /**
  * Read and parse ACTIVE-TASKS.md from disk. Returns null if file doesn't exist.
  *
@@ -402,19 +420,10 @@ export function detectStaleTasks(tasks: ActiveTaskEntry[], staleMinutes: number)
  * @param staleMinutes - Minutes before a task is considered stale (default: 1440 = 24h)
  */
 export async function readActiveTaskFile(filePath: string, staleMinutes = 1440): Promise<ActiveTaskFile | null> {
-  const pathToRead = resolveActiveTaskReadPath(filePath);
-  if (!pathToRead) return null;
-  try {
-    const content = await readFile(pathToRead, "utf-8");
-    const parsed = parseActiveTaskFile(content);
-    // Apply stale detection to active tasks
-    parsed.active = detectStaleTasks(parsed.active, staleMinutes);
-    return parsed;
-  } catch (err) {
-    // Only swallow "file not found" — rethrow permission errors, malformed reads, etc.
-    if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
-    throw err;
-  }
+  const r = await readActiveTaskFileWithResolvedPath(filePath, staleMinutes);
+  if (!r) return null;
+  const { readFrom: _readFrom, ...file } = r;
+  return file;
 }
 
 /** Write tasks back to ACTIVE-TASKS.md. Creates parent directories as needed. */
@@ -1004,42 +1013,22 @@ export async function writeActiveTaskFileOptimistic(
   let knownMtimeMutable = knownMtime;
 
   for (let attempt = 0; attempt < maxRetries; attempt++) {
-    // Same resolution as readActiveTaskFileWithMtime: mtime may live on legacy ACTIVE-TASK.md
-    // until ACTIVE-TASKS.md exists.
-    const pathForStat = resolveActiveTaskReadPath(filePath);
-    if (pathForStat === null) {
+    // Single read for mtime + content so the resolved path and mtime stay aligned across
+    // legacy ACTIVE-TASK.md → ACTIVE-TASKS.md migration (avoids stat vs read path drift).
+    const snapshot = await readActiveTaskFileWithMtime(filePath, staleMinutes);
+    if (snapshot === null) {
       await writeActiveTaskFile(filePath, currentActive, currentCompleted);
       return true;
     }
-    let currentMtime: number;
-    try {
-      currentMtime = (await stat(pathForStat)).mtimeMs;
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === "ENOENT") {
-        await writeActiveTaskFile(filePath, currentActive, currentCompleted);
-        return true;
-      }
-      throw err;
-    }
 
-    if (currentMtime !== knownMtimeMutable) {
-      // File was modified since we last read it — re-read and merge
-      const fresh = await readActiveTaskFileWithMtime(filePath, staleMinutes);
-      if (!fresh) {
-        // File was deleted between stat and readFile — just write
-        await writeActiveTaskFile(filePath, currentActive, currentCompleted);
-        return true;
-      }
-      const merged = await merge(fresh);
-      if (merged === null) return false; // Caller decided to abort
+    if (snapshot.mtime !== knownMtimeMutable) {
+      const merged = await merge(snapshot);
+      if (merged === null) return false;
       [currentActive, currentCompleted] = merged;
-      // Update knownMtime to fresh state for next iteration
-      knownMtimeMutable = fresh.mtime;
-      // Continue to next iteration to check for conflicts again
+      knownMtimeMutable = snapshot.mtime;
       continue;
     }
 
-    // No conflict detected — write and return
     await writeActiveTaskFile(filePath, currentActive, currentCompleted);
     return true;
   }

@@ -1360,6 +1360,25 @@ describe("writeActiveTaskFileOptimistic", () => {
     expect(result?.active[0].label).toBe("updated");
   });
 
+  it("writes without spurious merge when only legacy ACTIVE-TASK.md exists (migration)", async () => {
+    const legacyPath = join(tmpDir, "ACTIVE-TASK.md");
+    const seed = [makeEntry({ label: "legacy-only" })];
+    await writeFile(legacyPath, serializeActiveTaskFile(seed, []), "utf-8");
+    const read = await readActiveTaskFileWithMtime(filePath);
+    expect(read).not.toBeNull();
+    if (!read) return;
+
+    let mergeCalled = false;
+    await writeActiveTaskFileOptimistic(filePath, [makeEntry({ label: "migrated" })], [], read.mtime, async () => {
+      mergeCalled = true;
+      return null;
+    });
+
+    expect(mergeCalled).toBe(false);
+    const result = await readActiveTaskFile(filePath);
+    expect(result?.active[0].label).toBe("migrated");
+  });
+
   it("calls merge when file was modified concurrently", async () => {
     await writeActiveTaskFile(filePath, [makeEntry({ label: "original" })], []);
     const read = await readActiveTaskFileWithMtime(filePath);

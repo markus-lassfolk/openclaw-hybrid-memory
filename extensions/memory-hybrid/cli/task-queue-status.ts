@@ -7,7 +7,7 @@ import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
-import { readActiveTaskFile, resolveActiveTaskReadPath } from "../services/active-task.js";
+import { readActiveTaskFileWithResolvedPath } from "../services/active-task.js";
 import {
   type TaskQueueItem,
   ensureTaskQueueIdlePlaceholder,
@@ -80,15 +80,15 @@ export async function runTaskQueueStatusForCli(opts: TaskQueueStatusCliOptions =
     const rel = opts.activeTaskRelativePath ?? "ACTIVE-TASKS.md";
     const activePath = isAbsolute(rel) ? rel : join(workspaceRoot, rel);
     try {
-      const resolvedRead = resolveActiveTaskReadPath(activePath);
-      const file = await readActiveTaskFile(activePath, 7 * 24 * 60);
+      const file = await readActiveTaskFileWithResolvedPath(activePath, 7 * 24 * 60);
       if (!file) {
         out.activeTasks = { filePath: activePath, available: false };
       } else {
+        const { readFrom, ...rest } = file;
         out.activeTasks = {
           filePath: activePath,
-          ...(resolvedRead && resolvedRead !== activePath ? { readFrom: resolvedRead } : {}),
-          active: file.active.map((t) => ({
+          ...(readFrom !== activePath ? { readFrom } : {}),
+          active: rest.active.map((t) => ({
             label: t.label,
             description: t.description,
             status: t.status,
@@ -97,7 +97,7 @@ export async function runTaskQueueStatusForCli(opts: TaskQueueStatusCliOptions =
             next: t.next,
             updated: t.updated,
           })),
-          completedCount: file.completed.length,
+          completedCount: rest.completed.length,
         };
       }
     } catch {
