@@ -256,7 +256,7 @@ export function registerManageCorrectionsAndPipeline(mem: Chainable, b: ManageBi
   mem
     .command("config-set <key> <value>")
     .description(
-      'Set a config key in memory/.config. Toggles: config-set <feature> enabled|disabled (e.g. nightlyCycle, extraction). Other keys: errorReporting.botName "MyBot". For help: hybrid-mem help config-set <key>',
+      'Set a config key in plugins.entries[…].config. Toggles: config-set <feature> enabled|disabled (e.g. nightlyCycle, goalStewardship, activeTask, extraction). Other keys: errorReporting.botName "MyBot". For help: hybrid-mem help config-set <key>',
     )
     .action(
       withExit(async (key: string, value: string) => {

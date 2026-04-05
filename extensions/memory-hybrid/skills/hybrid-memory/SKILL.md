@@ -45,7 +45,7 @@ When goal stewardship is enabled, use these tools for long-running, multi-sessio
 | `goal_update` | Goal description, criteria, or priority needs updating as context evolves |
 | `goal_complete` | ALL acceptance criteria are verifiably met — include a clear verification summary |
 | `goal_abandon` | Goal is no longer relevant (user changed their mind) |
-| `active_task_propose_goal` | Draft a `goal_register` payload from an `ACTIVE-TASK.md` row (task hygiene) |
+| `active_task_propose_goal` | Draft a `goal_register` payload from an `ACTIVE-TASKS.md` row (task hygiene) |
 
 **Subagent naming convention for automatic goal linkage:**
 When spawning a subagent to work on a goal, name the subagent with the goal's label as a prefix.
@@ -68,7 +68,7 @@ For example, for goal `deploy-api`, name subagents `deploy-api-run-tests`, `depl
 - **`openclaw hybrid-mem verify [--fix]`** — Confirms SQLite, LanceDB, embedding config, and related jobs. Use when memory seems broken after config or gateway changes.
 - **`openclaw hybrid-mem stats`** — Quick view of store state.
 - **`openclaw hybrid-mem enrich-entities`** — Backfill PERSON/ORG extraction for facts missing mention rows (after upgrades or bulk imports; uses LLM when graph features are on).
-- **`openclaw hybrid-mem active-tasks reconcile`** — Run before strategic or heartbeat jobs that trust `ACTIVE-TASK.md`: moves **In progress** rows to **Completed** when the OpenClaw session transcript no longer exists (fixes stale subagent bookkeeping; issues #978, #981).
+- **`openclaw hybrid-mem active-tasks reconcile`** — Run before strategic or heartbeat jobs that trust `ACTIVE-TASKS.md`: moves **In progress** rows to **Completed** when the OpenClaw session transcript no longer exists (fixes stale subagent bookkeeping; issues #978, #981).
 - **`openclaw hybrid-mem task-queue-status`** — Prints `state/task-queue/current.json` as JSON for cron (no bare `cat`); use after **`task-queue-touch`** if the gateway has not yet created the idle placeholder (issues #981, #983). For shell-only hosts, use repo **`scripts/task-queue.sh`** (`touch`, `status`, `run`) so the file and PID lifecycle stay consistent ([#1000](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/1000)).
 - Prefer plugin docs for full command lists (prune, distill, ingest-files, etc.).
 

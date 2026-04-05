@@ -1,6 +1,6 @@
 /**
  * Locate OpenClaw session transcript files (~/.openclaw/agents/<agent>/sessions/*.jsonl)
- * for a given session key. Used to reconcile ACTIVE-TASK.md when subagent rows drift (#978).
+ * for a given session key. Used to reconcile ACTIVE-TASKS.md when subagent rows drift (#978).
  */
 
 import { existsSync } from "node:fs";

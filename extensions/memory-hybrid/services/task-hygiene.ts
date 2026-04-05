@@ -1,5 +1,5 @@
 /**
- * Task hygiene — stronger nudges for ACTIVE-TASK.md rows (separate from Goals).
+ * Task hygiene — stronger nudges for ACTIVE-TASKS.md rows (separate from Goals).
  * @see docs/TASK-HYGIENE.md
  */
 
@@ -16,7 +16,7 @@ export function buildHeartbeatTaskHygieneBlock(
   const lines: string[] = [
     "<task-hygiene>",
     "**Heartbeat — active task review**",
-    "Reconcile ACTIVE-TASK.md: complete finished work, update **Next**, or verify subagents before replying HEARTBEAT_OK.",
+    "Reconcile ACTIVE-TASKS.md: complete finished work, update **Next**, or verify subagents before replying HEARTBEAT_OK.",
   ];
 
   if (stale.length > 0) {
@@ -59,7 +59,7 @@ export function buildProposeGoalDraftFromTask(task: ActiveTaskEntry): {
 } {
   const criteria: string[] = [];
   if (task.next?.trim()) criteria.push(`Complete next step: ${task.next.trim()}`);
-  criteria.push(`Task was in status "${task.status}" (from ACTIVE-TASK).`);
+  criteria.push(`Task was in status "${task.status}" (from ACTIVE-TASKS.md).`);
   criteria.push("Verify outcome matches user expectations before calling goal_complete.");
   return {
     suggestedLabel: task.label,

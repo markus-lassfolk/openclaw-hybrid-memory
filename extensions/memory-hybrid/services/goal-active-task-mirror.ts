@@ -1,5 +1,5 @@
 /**
- * Regenerate ACTIVE-TASK.md with an ## Active Goals mirror section (read-only view of goal registry).
+ * Regenerate ACTIVE-TASKS.md with an ## Active Goals mirror section (read-only view of goal registry).
  */
 
 import { mkdir, writeFile } from "node:fs/promises";
@@ -44,12 +44,12 @@ export async function refreshActiveTaskMirrorWithGoals(opts: {
     await mkdir(dirname(opts.activeTaskPath), { recursive: true });
     await writeFile(opts.activeTaskPath, content, "utf-8");
     opts.logger?.info?.(
-      `memory-hybrid: ACTIVE-TASK.md mirror refreshed (${opts.goals.length} active goal(s) in Goals section)`,
+      `memory-hybrid: ACTIVE-TASKS.md mirror refreshed (${opts.goals.length} active goal(s) in Goals section)`,
     );
     return { ok: true };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    opts.logger?.warn?.(`memory-hybrid: ACTIVE-TASK mirror refresh failed: ${msg}`);
+    opts.logger?.warn?.(`memory-hybrid: ACTIVE-TASKS.md mirror refresh failed: ${msg}`);
     return { ok: false, error: msg };
   }
 }

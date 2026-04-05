@@ -1,23 +1,22 @@
 /**
  * CLI: hybrid-mem goals — list, status, cancel, stewardship-run
  */
-import { homedir } from "node:os";
 import { join } from "node:path";
 import type { HybridMemoryConfig } from "../config.js";
 import {
-  listGoals,
   listActiveGoals,
+  listGoals,
   resolveGoalId,
   resolveGoalsDir,
   runGoalHealthCheck,
   terminateGoal,
   updateGoal,
 } from "../services/goal-stewardship.js";
-import { getEnv } from "../utils/env-manager.js";
+import { formatGoalStewardshipConfigLines, workspaceRootForCli } from "./config-feature-summaries.js";
 import type { Chainable } from "./shared.js";
 
 function workspaceRoot(): string {
-  return getEnv("OPENCLAW_WORKSPACE") ?? join(homedir(), ".openclaw", "workspace");
+  return workspaceRootForCli();
 }
 
 function goalsDir(cfg: HybridMemoryConfig): string {
@@ -28,6 +27,14 @@ export function registerGoalCommands(mem: Chainable, ctx: { cfg: HybridMemoryCon
   const g = mem
     .command("goals")
     .description("Goal stewardship: list and manage tracked goals (see docs/GOAL-STEWARDSHIP-DESIGN.md)");
+
+  g.command("config")
+    .description("Show goal stewardship settings from plugin config (same keys as openclaw.json)")
+    .action(() => {
+      for (const line of formatGoalStewardshipConfigLines(ctx.cfg.goalStewardship)) {
+        console.log(line);
+      }
+    });
 
   g.command("list")
     .description("List goals")

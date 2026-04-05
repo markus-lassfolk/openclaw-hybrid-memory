@@ -8,22 +8,23 @@ import { getEnv } from "../utils/env-manager.js";
  */
 
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { homedir } from "node:os";
 
 import {
+  type ConfigMode,
+  PRESET_OVERRIDES,
   getCronModelConfig,
   getLLMModelPreference,
   hybridConfigSchema,
-  PRESET_OVERRIDES,
-  type ConfigMode,
 } from "../config.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { PLUGIN_ID, getRestartPendingPath } from "../utils/constants.js";
+import { getPluginConfigFromFile } from "./cmd-install.js";
+import { resolvedActiveTaskFilePath } from "./config-feature-summaries.js";
 import type { HandlerContext } from "./handlers.js";
 import type { ConfigCliResult, VerifyCliSink } from "./types.js";
-import { getPluginConfigFromFile } from "./cmd-install.js";
 
 const MAX_DESC_LEN = 280;
 
@@ -175,7 +176,12 @@ export function runConfigViewForCli(ctx: HandlerContext, sink: VerifyCliSink): v
   log(`  Self-extension (tool proposals): ${on(cfg.selfExtension?.enabled ?? false)}`);
   log(`  Crystallization (skill proposals): ${on(cfg.crystallization?.enabled ?? false)}`);
   log(`  Extraction (multi-pass): ${on(rawEnabled("extraction", !!cfg.extraction?.extractionPasses))}`);
-  log(`  Active task (ACTIVE-TASK.md): ${on(rawEnabled("activeTask", cfg.activeTask.enabled))}`);
+  log(`  Goal stewardship: ${on(rawEnabled("goalStewardship", cfg.goalStewardship?.enabled ?? false))}`);
+  {
+    const at = cfg.activeTask;
+    const atPath = resolvedActiveTaskFilePath(at);
+    log(`  Active task: ${on(rawEnabled("activeTask", at.enabled))} — ledger: ${at.ledger} — file: ${atPath}`);
+  }
   log(`  Frustration detection: ${on(cfg.frustrationDetection.enabled)}`);
   log(`  Cross-agent learning: ${on(cfg.crossAgentLearning.enabled)}`);
   log(`  Tool effectiveness: ${on(rawEnabled("toolEffectiveness", cfg.toolEffectiveness.enabled))}`);
@@ -229,8 +235,10 @@ export function runConfigViewForCli(ctx: HandlerContext, sink: VerifyCliSink): v
 
   log("To change a setting: openclaw hybrid-mem config-set <key> <value>");
   log("Example (toggle): openclaw hybrid-mem config-set nightlyCycle enabled");
+  log("Example (goals): openclaw hybrid-mem config-set goalStewardship enabled");
   log("Example (LLM tier lists as JSON): openclaw hybrid-mem config-set llm.nano '[\"azure-foundry/gpt-4.1-nano\"]'");
   log("Help for a key: openclaw hybrid-mem help config-set <key>");
+  log("Detail: openclaw hybrid-mem goals config   |   openclaw hybrid-mem active-tasks config");
 }
 
 /**
@@ -396,6 +404,7 @@ export function runConfigSetForCli(_ctx: HandlerContext, key: string, value: str
     { key: "futureDateProtection", prop: "enabled" },
     { key: "path", prop: "enabled" },
     { key: "activeTask", prop: "enabled" },
+    { key: "goalStewardship", prop: "enabled" },
   ];
   for (const { key, prop } of objectToggles) {
     if (k === key && !k.includes(".")) {

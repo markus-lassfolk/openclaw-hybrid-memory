@@ -13,7 +13,7 @@
 | `goal_update` | Goal description, criteria, or priority needs updating |
 | `goal_complete` | ALL acceptance criteria are verifiably met |
 | `goal_abandon` | Goal is no longer relevant (user decision) |
-| `active_task_propose_goal` | Draft a `goal_register` payload from an `ACTIVE-TASK.md` row |
+| `active_task_propose_goal` | Draft a `goal_register` payload from an `ACTIVE-TASKS.md` row |
 
 **Subagent naming:** Use the goal label as a prefix for subagents that work toward it. Example: goal `deploy-api` -> subagents `deploy-api-run-tests`, `deploy-api-create-pr`. CLI: `openclaw hybrid-mem goals list|status|cancel|budget|reset-budget|stewardship-run|audit`. See [Goal stewardship design](https://github.com/markus-lassfolk/openclaw-hybrid-memory/blob/main/docs/GOAL-STEWARDSHIP-DESIGN.md), [Operator guide](https://github.com/markus-lassfolk/openclaw-hybrid-memory/blob/main/docs/GOAL-STEWARDSHIP-OPERATOR.md), and [Task hygiene](https://github.com/markus-lassfolk/openclaw-hybrid-memory/blob/main/docs/TASK-HYGIENE.md).
 - **More detail:** Workspace skill `skills/hybrid-memory/` (`SKILL.md` + `references/memory-optimization.md`, installed by `hybrid-mem install`) and repo docs: [Memory Protocol](https://github.com/markus-lassfolk/openclaw-hybrid-memory/blob/main/docs/MEMORY-PROTOCOL.md).

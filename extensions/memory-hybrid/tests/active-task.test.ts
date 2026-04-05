@@ -1,6 +1,6 @@
 // @ts-nocheck
 /**
- * Tests for ACTIVE-TASK.md working memory service and CLI commands.
+ * Tests for ACTIVE-TASKS.md working memory service and CLI commands.
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
@@ -47,11 +47,11 @@ import {
 // Fixtures
 // ---------------------------------------------------------------------------
 
-const SAMPLE_ACTIVE_TASK_MD = `# ACTIVE-TASK.md — Working Memory
+const SAMPLE_ACTIVE_TASK_MD = `# ACTIVE-TASKS.md — Working Memory
 
 ## Active Tasks
 
-### [forge-99]: Implement ACTIVE-TASK.md working memory
+### [forge-99]: Implement ACTIVE-TASKS.md working memory
 - **Branch:** feature/active-task-working-memory-99
 - **Status:** In progress
 - **Subagent:** forge-subagent-abc123
@@ -74,7 +74,7 @@ const SAMPLE_ACTIVE_TASK_MD = `# ACTIVE-TASK.md — Working Memory
 - **Updated:** 2026-02-20T18:00:00.000Z
 `;
 
-const EMPTY_ACTIVE_TASK_MD = `# ACTIVE-TASK.md — Working Memory
+const EMPTY_ACTIVE_TASK_MD = `# ACTIVE-TASKS.md — Working Memory
 
 ## Active Tasks
 
@@ -110,7 +110,7 @@ describe("parseActiveTaskFile", () => {
     const result = parseActiveTaskFile(SAMPLE_ACTIVE_TASK_MD);
     const task = result.active[0];
     expect(task.label).toBe("forge-99");
-    expect(task.description).toBe("Implement ACTIVE-TASK.md working memory");
+    expect(task.description).toBe("Implement ACTIVE-TASKS.md working memory");
     expect(task.branch).toBe("feature/active-task-working-memory-99");
     expect(task.status).toBe("In progress");
     expect(task.subagent).toBe("forge-subagent-abc123");
@@ -638,12 +638,12 @@ describe("readActiveTaskFile / writeActiveTaskFile", () => {
   });
 
   it("returns null when file does not exist", async () => {
-    const result = await readActiveTaskFile(join(tmpDir, "ACTIVE-TASK.md"), 1440);
+    const result = await readActiveTaskFile(join(tmpDir, "ACTIVE-TASKS.md"), 1440);
     expect(result).toBeNull();
   });
 
   it("reads and parses existing file", async () => {
-    const filePath = join(tmpDir, "ACTIVE-TASK.md");
+    const filePath = join(tmpDir, "ACTIVE-TASKS.md");
     await writeActiveTaskFile(filePath, [makeEntry({ label: "test-task" })], []);
     const result = await readActiveTaskFile(filePath, 1440);
     expect(result).not.toBeNull();
@@ -652,7 +652,7 @@ describe("readActiveTaskFile / writeActiveTaskFile", () => {
   });
 
   it("writes and reads back correctly (round-trip)", async () => {
-    const filePath = join(tmpDir, "ACTIVE-TASK.md");
+    const filePath = join(tmpDir, "ACTIVE-TASKS.md");
     const active = [makeEntry({ label: "forge-99", status: "In progress", branch: "feature/test", next: "Run tests" })];
     const completed = [makeEntry({ label: "old-task", status: "Done" })];
     await writeActiveTaskFile(filePath, active, completed);
@@ -665,7 +665,7 @@ describe("readActiveTaskFile / writeActiveTaskFile", () => {
   });
 
   it("creates parent directories as needed", async () => {
-    const filePath = join(tmpDir, "deep", "nested", "ACTIVE-TASK.md");
+    const filePath = join(tmpDir, "deep", "nested", "ACTIVE-TASKS.md");
     await writeActiveTaskFile(filePath, [makeEntry()], []);
     const result = await readActiveTaskFile(filePath, 1440);
     expect(result).not.toBeNull();
@@ -673,7 +673,7 @@ describe("readActiveTaskFile / writeActiveTaskFile", () => {
 
   it("applies stale detection on read", async () => {
     const staleTime = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
-    const filePath = join(tmpDir, "ACTIVE-TASK.md");
+    const filePath = join(tmpDir, "ACTIVE-TASKS.md");
     await writeActiveTaskFile(filePath, [makeEntry({ updated: staleTime })], []);
     const result = await readActiveTaskFile(filePath, 1440);
     expect(result?.active[0].stale).toBe(true);
@@ -747,7 +747,7 @@ describe("runActiveTaskList", () => {
   beforeEach(async () => {
     tmpDir = await mkdtemp(join(tmpdir(), "active-task-cli-"));
     ctx = {
-      activeTaskFilePath: join(tmpDir, "ACTIVE-TASK.md"),
+      activeTaskFilePath: join(tmpDir, "ACTIVE-TASKS.md"),
       staleMinutes: 1440,
       flushOnComplete: false,
       memoryDir: join(tmpDir, "memory"),
@@ -797,7 +797,7 @@ describe("runActiveTaskStale", () => {
   beforeEach(async () => {
     tmpDir = await mkdtemp(join(tmpdir(), "active-task-stale-"));
     ctx = {
-      activeTaskFilePath: join(tmpDir, "ACTIVE-TASK.md"),
+      activeTaskFilePath: join(tmpDir, "ACTIVE-TASKS.md"),
       staleMinutes: 1440,
       flushOnComplete: false,
       memoryDir: join(tmpDir, "memory"),
@@ -839,7 +839,7 @@ describe("runActiveTaskComplete", () => {
   beforeEach(async () => {
     tmpDir = await mkdtemp(join(tmpdir(), "active-task-complete-"));
     ctx = {
-      activeTaskFilePath: join(tmpDir, "ACTIVE-TASK.md"),
+      activeTaskFilePath: join(tmpDir, "ACTIVE-TASKS.md"),
       staleMinutes: 1440,
       flushOnComplete: true,
       memoryDir: join(tmpDir, "memory"),
@@ -907,7 +907,7 @@ describe("runActiveTaskAdd", () => {
   beforeEach(async () => {
     tmpDir = await mkdtemp(join(tmpdir(), "active-task-add-"));
     ctx = {
-      activeTaskFilePath: join(tmpDir, "ACTIVE-TASK.md"),
+      activeTaskFilePath: join(tmpDir, "ACTIVE-TASKS.md"),
       staleMinutes: 1440,
       flushOnComplete: false,
       memoryDir: join(tmpDir, "memory"),
@@ -1237,7 +1237,7 @@ describe("readActiveTaskFileWithMtime", () => {
 
   beforeEach(async () => {
     tmpDir = await mkdtemp(join(tmpdir(), "mtime-test-"));
-    filePath = join(tmpDir, "ACTIVE-TASK.md");
+    filePath = join(tmpDir, "ACTIVE-TASKS.md");
   });
 
   afterEach(async () => {
@@ -1283,7 +1283,7 @@ describe("writeActiveTaskFileGuarded", () => {
 
   beforeEach(async () => {
     tmpDir = await mkdtemp(join(tmpdir(), "guarded-test-"));
-    filePath = join(tmpDir, "ACTIVE-TASK.md");
+    filePath = join(tmpDir, "ACTIVE-TASKS.md");
   });
 
   afterEach(async () => {
@@ -1335,7 +1335,7 @@ describe("writeActiveTaskFileOptimistic", () => {
 
   beforeEach(async () => {
     tmpDir = await mkdtemp(join(tmpdir(), "optimistic-test-"));
-    filePath = join(tmpDir, "ACTIVE-TASK.md");
+    filePath = join(tmpDir, "ACTIVE-TASKS.md");
   });
 
   afterEach(async () => {
@@ -1358,6 +1358,25 @@ describe("writeActiveTaskFileOptimistic", () => {
     expect(mergeCalled).toBe(false);
     const result = await readActiveTaskFile(filePath);
     expect(result?.active[0].label).toBe("updated");
+  });
+
+  it("writes without spurious merge when only legacy ACTIVE-TASK.md exists (migration)", async () => {
+    const legacyPath = join(tmpDir, "ACTIVE-TASK.md");
+    const seed = [makeEntry({ label: "legacy-only" })];
+    await writeFile(legacyPath, serializeActiveTaskFile(seed, []), "utf-8");
+    const read = await readActiveTaskFileWithMtime(filePath);
+    expect(read).not.toBeNull();
+    if (!read) return;
+
+    let mergeCalled = false;
+    await writeActiveTaskFileOptimistic(filePath, [makeEntry({ label: "migrated" })], [], read.mtime, async () => {
+      mergeCalled = true;
+      return null;
+    });
+
+    expect(mergeCalled).toBe(false);
+    const result = await readActiveTaskFile(filePath);
+    expect(result?.active[0].label).toBe("migrated");
   });
 
   it("calls merge when file was modified concurrently", async () => {
@@ -1439,7 +1458,7 @@ describe("reconcileActiveTaskInProgressSessions", () => {
   });
 
   it("moves in-progress tasks to completed when session transcript is missing", async () => {
-    const path = join(tmpDir, "ACTIVE-TASK.md");
+    const path = join(tmpDir, "ACTIVE-TASKS.md");
     const key = "agent:testagent:subagent:f3d14066-09ea-492f-a3f3-7ae2fe6c9b0a";
     await writeFile(
       path,
@@ -1466,7 +1485,7 @@ describe("reconcileActiveTaskInProgressSessions", () => {
   });
 
   it("does not reconcile when session jsonl exists", async () => {
-    const path = join(tmpDir, "ACTIVE-TASK.md");
+    const path = join(tmpDir, "ACTIVE-TASKS.md");
     const key = "agent:x:subagent:f3d14066-09ea-492f-a3f3-7ae2fe6c9b0a";
     const openclawHome = join(tmpDir, ".openclaw");
     await mkdir(join(openclawHome, "agents", "x", "sessions"), { recursive: true });
@@ -1497,6 +1516,24 @@ describe("reconcileActiveTaskInProgressSessions", () => {
 // ---------------------------------------------------------------------------
 
 describe("registerActiveTaskCommands", () => {
+  const mockCfg = {
+    activeTask: {
+      enabled: true,
+      ledger: "markdown" as const,
+      filePath: "ACTIVE-TASKS.md",
+      autoCheckpoint: true,
+      injectionBudget: 500,
+      staleThreshold: "24h",
+      flushOnComplete: true,
+      staleWarning: { enabled: true },
+      taskHygiene: {
+        heartbeatEscalation: true,
+        suggestGoalAfterTaskAgeDays: 0,
+        heartbeatNudgeMaxChars: 2500,
+      },
+    },
+  } as import("../config.js").HybridMemoryConfig;
+
   it("accepts bare 'active-tasks' and 'active-tasks list'", async () => {
     const { registerActiveTaskCommands } = await import("../cli/active-tasks.js");
     const { Command } = await import("commander");
@@ -1510,7 +1547,7 @@ describe("registerActiveTaskCommands", () => {
     } as unknown as ActiveTaskContext;
 
     // Register the commands
-    registerActiveTaskCommands(program, mockCtx);
+    registerActiveTaskCommands(program, mockCfg, mockCtx);
 
     // Intercept console.log and console.error
     const origLog = console.log;
@@ -1530,7 +1567,7 @@ describe("registerActiveTaskCommands", () => {
       await program.parseAsync(["active-tasks"], { from: "user" }).catch(() => {});
       // Reset for next parse
       program.commands.length = 0;
-      registerActiveTaskCommands(program, mockCtx);
+      registerActiveTaskCommands(program, mockCfg, mockCtx);
       logged = "";
       errors = "";
 
@@ -1556,7 +1593,7 @@ describe("registerActiveTaskCommands", () => {
       sessionKey: "test-session",
     } as unknown as ActiveTaskContext;
 
-    registerActiveTaskCommands(program, mockCtx);
+    registerActiveTaskCommands(program, mockCfg, mockCtx);
 
     // The 'list' subcommand should be registered
     const activeTasksCmd = program.commands.find((c) => c.name() === "active-tasks");

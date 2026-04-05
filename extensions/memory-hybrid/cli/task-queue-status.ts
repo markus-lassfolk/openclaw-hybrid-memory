@@ -7,7 +7,7 @@ import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
-import { readActiveTaskFile } from "../services/active-task.js";
+import { readActiveTaskFileWithResolvedPath } from "../services/active-task.js";
 import {
   type TaskQueueItem,
   ensureTaskQueueIdlePlaceholder,
@@ -20,9 +20,9 @@ import type { Chainable } from "./shared.js";
 
 export type TaskQueueStatusCliOptions = {
   stateDir?: string;
-  /** Include ACTIVE-TASK.md summary when the file exists (default path: workspace/ACTIVE-TASK.md). */
+  /** Include ACTIVE-TASKS.md summary when the file exists (default path: workspace/ACTIVE-TASKS.md). */
   withActiveTasks?: boolean;
-  /** Default ACTIVE-TASK path relative to workspace when not absolute. */
+  /** Default ACTIVE-TASKS.md path relative to workspace when not absolute. */
   activeTaskRelativePath?: string;
 };
 
@@ -77,33 +77,31 @@ export async function runTaskQueueStatusForCli(opts: TaskQueueStatusCliOptions =
 
   if (opts.withActiveTasks) {
     const workspaceRoot = getEnv("OPENCLAW_WORKSPACE") ?? join(homedir(), ".openclaw", "workspace");
-    const rel = opts.activeTaskRelativePath ?? "ACTIVE-TASK.md";
+    const rel = opts.activeTaskRelativePath ?? "ACTIVE-TASKS.md";
     const activePath = isAbsolute(rel) ? rel : join(workspaceRoot, rel);
-    if (existsSync(activePath)) {
-      try {
-        const file = await readActiveTaskFile(activePath, 7 * 24 * 60);
-        if (!file) {
-          out.activeTasks = { filePath: activePath, error: "unreadable" };
-        } else {
-          out.activeTasks = {
-            filePath: activePath,
-            active: file.active.map((t) => ({
-              label: t.label,
-              description: t.description,
-              status: t.status,
-              branch: t.branch,
-              subagent: t.subagent,
-              next: t.next,
-              updated: t.updated,
-            })),
-            completedCount: file.completed.length,
-          };
-        }
-      } catch {
-        out.activeTasks = { filePath: activePath, error: "could_not_read" };
+    try {
+      const file = await readActiveTaskFileWithResolvedPath(activePath, 7 * 24 * 60);
+      if (!file) {
+        out.activeTasks = { filePath: activePath, available: false };
+      } else {
+        const { readFrom, ...rest } = file;
+        out.activeTasks = {
+          filePath: activePath,
+          ...(readFrom !== activePath ? { readFrom } : {}),
+          active: rest.active.map((t) => ({
+            label: t.label,
+            description: t.description,
+            status: t.status,
+            branch: t.branch,
+            subagent: t.subagent,
+            next: t.next,
+            updated: t.updated,
+          })),
+          completedCount: rest.completed.length,
+        };
       }
-    } else {
-      out.activeTasks = { filePath: activePath, available: false };
+    } catch {
+      out.activeTasks = { filePath: activePath, error: "could_not_read" };
     }
   }
 
@@ -116,10 +114,10 @@ export function registerTaskQueueStatusCommands(mem: Chainable): void {
     .command("task-queue-status")
     .description("Print task-queue current.json as JSON (for cron / scripts; #983)")
     .option("--state-dir <path>", "Override state directory (default: ~/.openclaw/workspace/state/task-queue)")
-    .option("--with-active-tasks", "Include ACTIVE-TASK.md summary (workspace/ACTIVE-TASK.md by default)")
+    .option("--with-active-tasks", "Include ACTIVE-TASKS.md summary (workspace/ACTIVE-TASKS.md by default)")
     .option(
       "--active-task-file <path>",
-      "ACTIVE-TASK.md path (absolute or relative to OPENCLAW_WORKSPACE / ~/.openclaw/workspace)",
+      "ACTIVE-TASKS.md path (absolute or relative to OPENCLAW_WORKSPACE / ~/.openclaw/workspace)",
     )
     .action(async (opts: { stateDir?: string; withActiveTasks?: boolean; activeTaskFile?: string }) => {
       await runTaskQueueStatusForCli({

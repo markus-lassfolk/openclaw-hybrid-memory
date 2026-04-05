@@ -32,7 +32,7 @@ CLI output is controlled by the config `verbosity` setting (`silent`, `quiet`, `
 | **Export & config** | `export`, `config`, `config-mode <mode>`, `config-set <key> <value>` |
 | **Credentials & scope** | `credentials migrate-to-vault`, `scope list|stats|prune|promote` |
 | **Plugin lifecycle** | `upgrade [version]`, `uninstall` |
-| **Working memory** | `active-tasks`, `active-tasks complete <label>`, `active-tasks stale`, `active-tasks reconcile`, `active-tasks add <label> <desc>`, `active-tasks render`, `task-queue-status`, `task-queue-touch` |
+| **Goals & working memory** | `goals …`, `goals config`, `active-tasks`, `active-tasks config`, `active-tasks complete <label>`, `active-tasks stale`, `active-tasks reconcile`, `active-tasks add <label> <desc>`, `active-tasks render`, `task-queue-status`, `task-queue-touch` |
 
 ---
 
@@ -73,8 +73,8 @@ CLI output is controlled by the config `verbosity` setting (`silent`, `quiet`, `
 | `install [--dry-run]` | Apply full recommended config, compaction prompts, and **maintenance cron jobs** (nightly distill, weekly reflection, weekly extract-procedures, self-correction). Idempotent. See [Maintenance cron jobs](#maintenance-cron-jobs) below. |
 | `config-mode <preset>` | Set preset: **local** \| **minimal** \| **enhanced** \| **complete**. Writes to openclaw.json. Restart gateway after. Presets set defaults for most enable/disable options; Minimal uses nano/flash-tier LLM only. See [CONFIGURATION-MODES.md](CONFIGURATION-MODES.md). Alias: **set-mode** (e.g. `set-mode complete`). |
 | `help config-set <key>` | Show current value and a short description (tweet-length) for a config key. Example: `help config-set autoCapture`. |
-| `config` | Show current configuration and feature toggles (mode, core and optional features on/off). Use **config-set** to change settings. |
-| `config-set <key> [value]` | Set a plugin config key (use **true** / **false** for booleans). **Omit value** to show current value and description (same as `help config-set <key>`). For credentials use `credentials true` or `credentials false`. Writes to openclaw.json. Restart gateway after. **All enable/disable toggles shown in `config` can be set here** (e.g. `autoRecall.retrievalDirectives.enabled true`, `nightlyCycle.enabled true`, `selfExtension.enabled true`). You can also set **verbosity silent** (or quiet/normal/verbose). If you see **credentials: must be object**, run **`npx -y openclaw-hybrid-memory-install fix-config`** or edit `~/.openclaw/openclaw.json`. |
+| `config` | Show current configuration and feature toggles (mode, core and optional features on/off). Includes **goal stewardship** on/off, **active task** on/off, **ledger** (`markdown` or `facts`), and resolved **ACTIVE-TASKS.md** path. Use **config-set** to change settings; use **`goals config`** / **`active-tasks config`** for full detail. |
+| `config-set <key> [value]` | Set a plugin config key (use **true** / **false** for booleans). **Omit value** to show current value and description (same as `help config-set <key>`). For credentials use `credentials true` or `credentials false`. Writes to openclaw.json. Restart gateway after. **All enable/disable toggles shown in `config` can be set here** (e.g. `autoRecall.retrievalDirectives.enabled true`, `nightlyCycle.enabled true`, `selfExtension.enabled true`, **`goalStewardship enabled`** / **`disabled`** (same style as `nightlyCycle`), **`activeTask enabled`** / **`disabled`**). You can also set **verbosity silent** (or quiet/normal/verbose). If you see **credentials: must be object**, run **`npx -y openclaw-hybrid-memory-install fix-config`** or edit `~/.openclaw/openclaw.json`. |
 | `upgrade [version]` | Upgrade from npm. Removes current install, fetches version (or latest), rebuilds native deps. Restart gateway afterward. Optional version e.g. `2026.2.181`. |
 | `verify [--fix] [--log-file <path>] [--test-llm]` | Verify infrastructure and functionality: config (embedding key/model), SQLite, LanceDB, embedding API, credentials vault, scheduled jobs. Use **config** to view or change feature toggles. With `--fix`: create missing maintenance cron jobs (with stable `pluginJobId`), re-enable any previously disabled plugin jobs, and fix config placeholders. `--test-llm` tests each configured LLM model. See [Maintenance cron jobs](#maintenance-cron-jobs) below. |
 \| `distill [--all] [--days N] [--since YYYY-MM-DD] [--dry-run] [--model M] [--verbose] [--max-sessions N] [--max-session-tokens N]` | Index session JSONL into memory (LLM extraction, dedup, store). **Uses local Ollama pre-filtering** if `extraction.preFilter.enabled` is true. Default: last 3 days. **Progress:** when run in a TTY, shows a progress bar. `--model M` overrides the LLM; otherwise uses `llm.heavy` (first model) or legacy `distill.defaultModel`. All LLM calls go through the OpenClaw gateway. Long-context models use larger batches (500k tokens). See [LLM-AND-PROVIDERS.md](LLM-AND-PROVIDERS.md). |
@@ -100,15 +100,23 @@ CLI output is controlled by the config `verbosity` setting (`silent`, `quiet`, `
 | `scope stats` | Show fact counts by scope (global, user, agent, session). |
 | `scope prune --scope <s> [--scope-target <id>]` | Remove all facts in a given scope (destructive). Use `--scope-target` when scope is user/agent/session. |
 | `scope promote [--dry-run] [--threshold-days N] [--min-importance 0.7]` | Promote high-importance session-scoped facts to global. Cron: weekly-deep-maintenance. See [MEMORY-SCOPING.md](MEMORY-SCOPING.md). |
-| `active-tasks` | List active tasks. With `activeTask.ledger: markdown` (default), reads `ACTIVE-TASK.md`. With `activeTask.ledger: facts`, reads `category:project` facts (same store as `memory_store`). |
+| `goals config` | Print **goal stewardship** settings from plugin config (`goalStewardship.*`). For toggling: `config-set goalStewardship enabled` or `disabled`. |
+| `active-tasks` | List active tasks. With `activeTask.enabled: false`, only **`active-tasks config`** runs; enable with `config-set activeTask enabled`. With `activeTask.ledger: markdown` (default), reads `ACTIVE-TASKS.md`. With `activeTask.ledger: facts`, reads `category:project` facts (same store as `memory_store`). |
+| `active-tasks config` | Print **active task** settings from plugin config (`activeTask.*`). |
 | `active-tasks complete <label>` | Mark task Done and flush to memory log. |
 | `active-tasks stale` | Show tasks not updated within staleThreshold. |
 | `active-tasks reconcile` | Move in-progress tasks whose OpenClaw session transcript is missing to Completed (issues #978, #981). |
 | `active-tasks add <label> <desc>` | Add or update a task entry (markdown file or project facts). |
-| `active-tasks render` | Write `ACTIVE-TASK.md` as a projection from the facts ledger (use with `activeTask.ledger: facts`). |
-| `task-queue-status` | Print `state/task-queue/current.json` as JSON (or a structured missing-file object for cron). Adds `recognized: true/false` when the file is valid JSON. Use `--with-active-tasks` to merge a summary of `ACTIVE-TASK.md` (same paths as `active-tasks`). |
+| `active-tasks render` | Write `ACTIVE-TASKS.md` as a projection from the facts ledger (use with `activeTask.ledger: facts`). |
+| `task-queue-status` | Print `state/task-queue/current.json` as JSON (or a structured missing-file object for cron). Adds `recognized: true/false` when the file is valid JSON. Use `--with-active-tasks` to merge a summary of `ACTIVE-TASKS.md` (same paths as `active-tasks`). |
 | `task-queue-touch` | Create the task-queue state dir and an idle `current.json` placeholder if missing. Use `--repair` to archive a **metadata-only** or unrecognized `current.json` to `history/` and write the canonical idle placeholder ([issue #1037](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/1037)). |
 | `uninstall [--clean-all] [--force-cleanup] [--leave-config]` | Revert to default OpenClaw memory (memory-core). |
+
+### Goals & active tasks — names
+
+- **Plugin JSON** uses camelCase: `goalStewardship`, `activeTask` (same as other keys under `plugins.entries[…].config`).
+- **CLI** uses kebab-case with a plural command: **`active-tasks`** (not `active-task` or `ActiveTask`).
+- **Working-memory file** default is **`ACTIVE-TASKS.md`** (`activeTask.filePath`). If you still have the legacy **`ACTIVE-TASK.md`**, rename it or set **`activeTask.filePath`** accordingly.
 
 ---
 

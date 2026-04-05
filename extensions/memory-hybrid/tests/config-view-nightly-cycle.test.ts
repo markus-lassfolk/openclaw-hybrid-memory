@@ -25,7 +25,8 @@ function makeCtx(enabled: boolean): HandlerContext {
     selfExtension: { enabled: true },
     crystallization: { enabled: true },
     extraction: { extractionPasses: true },
-    activeTask: { enabled: true, ledger: "markdown" },
+    goalStewardship: { enabled: false },
+    activeTask: { enabled: true, ledger: "markdown", filePath: "ACTIVE-TASKS.md" },
     frustrationDetection: { enabled: false },
     crossAgentLearning: { enabled: true },
     toolEffectiveness: { enabled: true },
@@ -80,5 +81,13 @@ describe("runConfigViewForCli nightlyCycle output", () => {
     runConfigViewForCli(makeCtx(false), { log: (line) => logs.push(line) });
 
     expect(logs.some((l) => l.includes("Nightly dream cycle: off"))).toBe(true);
+  });
+
+  it("shows goal stewardship and active task ledger line", () => {
+    const logs: string[] = [];
+    runConfigViewForCli(makeCtx(true), { log: (line) => logs.push(line) });
+
+    expect(logs.some((l) => l.includes("Goal stewardship:"))).toBe(true);
+    expect(logs.some((l) => l.includes("ledger: markdown"))).toBe(true);
   });
 });
