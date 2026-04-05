@@ -385,16 +385,14 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
     throw err;
   }
 
-  if (ctx.activeTask) {
-    try {
-      registerActiveTaskCommands(mem, ctx.activeTask);
-    } catch (err) {
-      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-        subsystem: "registration",
-        operation: "register-cli:active-tasks",
-      });
-      throw err;
-    }
+  try {
+    registerActiveTaskCommands(mem, ctx.cfg, ctx.activeTask);
+  } catch (err) {
+    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+      subsystem: "registration",
+      operation: "register-cli:active-tasks",
+    });
+    throw err;
   }
 
   try {

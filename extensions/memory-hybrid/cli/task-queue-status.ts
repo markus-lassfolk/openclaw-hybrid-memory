@@ -20,9 +20,9 @@ import type { Chainable } from "./shared.js";
 
 export type TaskQueueStatusCliOptions = {
   stateDir?: string;
-  /** Include ACTIVE-TASK.md summary when the file exists (default path: workspace/ACTIVE-TASK.md). */
+  /** Include ACTIVE-TASKS.md summary when the file exists (default path: workspace/ACTIVE-TASKS.md). */
   withActiveTasks?: boolean;
-  /** Default ACTIVE-TASK path relative to workspace when not absolute. */
+  /** Default ACTIVE-TASKS.md path relative to workspace when not absolute. */
   activeTaskRelativePath?: string;
 };
 
@@ -77,7 +77,7 @@ export async function runTaskQueueStatusForCli(opts: TaskQueueStatusCliOptions =
 
   if (opts.withActiveTasks) {
     const workspaceRoot = getEnv("OPENCLAW_WORKSPACE") ?? join(homedir(), ".openclaw", "workspace");
-    const rel = opts.activeTaskRelativePath ?? "ACTIVE-TASK.md";
+    const rel = opts.activeTaskRelativePath ?? "ACTIVE-TASKS.md";
     const activePath = isAbsolute(rel) ? rel : join(workspaceRoot, rel);
     if (existsSync(activePath)) {
       try {
@@ -116,10 +116,10 @@ export function registerTaskQueueStatusCommands(mem: Chainable): void {
     .command("task-queue-status")
     .description("Print task-queue current.json as JSON (for cron / scripts; #983)")
     .option("--state-dir <path>", "Override state directory (default: ~/.openclaw/workspace/state/task-queue)")
-    .option("--with-active-tasks", "Include ACTIVE-TASK.md summary (workspace/ACTIVE-TASK.md by default)")
+    .option("--with-active-tasks", "Include ACTIVE-TASKS.md summary (workspace/ACTIVE-TASKS.md by default)")
     .option(
       "--active-task-file <path>",
-      "ACTIVE-TASK.md path (absolute or relative to OPENCLAW_WORKSPACE / ~/.openclaw/workspace)",
+      "ACTIVE-TASKS.md path (absolute or relative to OPENCLAW_WORKSPACE / ~/.openclaw/workspace)",
     )
     .action(async (opts: { stateDir?: string; withActiveTasks?: boolean; activeTaskFile?: string }) => {
       await runTaskQueueStatusForCli({

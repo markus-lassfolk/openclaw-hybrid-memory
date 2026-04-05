@@ -34,7 +34,7 @@ export interface GoalToolsContext {
   cfg: HybridMemoryConfig;
   goalsDir: string;
   workspaceRoot: string;
-  /** Absolute path to ACTIVE-TASK.md (for task hygiene tools). */
+  /** Absolute path to ACTIVE-TASKS.md (for task hygiene tools). */
   resolvedActiveTaskPath: string;
   factsDb: FactsDB | null;
   eventLog: EventLog | null;

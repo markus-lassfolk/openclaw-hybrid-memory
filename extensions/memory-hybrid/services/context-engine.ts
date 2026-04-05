@@ -512,7 +512,7 @@ export class HybridMemoryContextEngine implements MinimalContextEngine {
    * and promote them to the appropriate scope.
    *
    * Guard against double-processing: OpenClaw's typed **`subagent_ended`** hook
-   * (`lifecycle/stage-cleanup.ts`) only performs ACTIVE-TASK.md checkpointing — not fact capture.
+   * (`lifecycle/stage-cleanup.ts`) only performs ACTIVE-TASKS.md checkpointing — not fact capture.
    * This method provides a lightweight ContextEngine callback; primary fact capture is the
    * child session's **agent_end** autoCapture path. If a fact is already in the store it will be
    * skipped by the hasDuplicate check when that pipeline exists.
@@ -555,7 +555,7 @@ export class HybridMemoryContextEngine implements MinimalContextEngine {
       // Until then, all sub-agent fact capture is delegated to:
       //   (a) The child session's own agent_end autoCapture hook (primary path — runs
       //       inside the child's session and writes directly to the shared FactsDB)
-      //   (b) The typed subagent_ended hook in lifecycle/stage-cleanup.ts (ACTIVE-TASK.md only; issue #966)
+      //   (b) The typed subagent_ended hook in lifecycle/stage-cleanup.ts (ACTIVE-TASKS.md only; issue #966)
     } catch (err) {
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
         subsystem: "context-engine",

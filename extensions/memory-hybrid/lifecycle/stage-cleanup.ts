@@ -50,7 +50,7 @@ type SubagentSpawnedEvent = {
 
 /**
  * Read all pending task signals from `memory/task-signals/*.json` and apply
- * their status changes to ACTIVE-TASK.md or the facts ledger. Called after subagent completes.
+ * their status changes to ACTIVE-TASKS.md or the facts ledger. Called after subagent completes.
  */
 async function consumePendingTaskSignals(
   activeTaskPath: string,
@@ -106,7 +106,7 @@ async function consumePendingTaskSignals(
   try {
     taskFile = await readActiveTaskFileWithMtime(activeTaskPath, staleMinutes);
   } catch (err) {
-    logger?.warn?.(`memory-hybrid: failed to read ACTIVE-TASK.md for signal consumption: ${err}`);
+    logger?.warn?.(`memory-hybrid: failed to read ACTIVE-TASKS.md for signal consumption: ${err}`);
     return;
   }
 
@@ -115,10 +115,10 @@ async function consumePendingTaskSignals(
     if (expiredSignals.length > 0) {
       for (const signal of expiredSignals) await deleteSignal(signal._filePath).catch(() => {});
       logger?.info?.(
-        `memory-hybrid: pruned ${expiredSignals.length} expired task signal(s) while ACTIVE-TASK.md is missing`,
+        `memory-hybrid: pruned ${expiredSignals.length} expired task signal(s) while ACTIVE-TASKS.md is missing`,
       );
     }
-    logger?.info?.("memory-hybrid: ACTIVE-TASK.md missing; deferring pending task signals");
+    logger?.info?.("memory-hybrid: ACTIVE-TASKS.md missing; deferring pending task signals");
     return;
   }
 
@@ -259,7 +259,7 @@ async function consumePendingTaskSignals(
       staleMinutes,
     );
   } catch (err) {
-    logger?.warn?.(`memory-hybrid: failed to write ACTIVE-TASK.md after signal consumption: ${err}`);
+    logger?.warn?.(`memory-hybrid: failed to write ACTIVE-TASKS.md after signal consumption: ${err}`);
   }
 
   if (wrote) {
@@ -376,7 +376,7 @@ export function registerCleanupHandlers(
         api.context?.sessionKey,
       );
       if (writeResult.skipped) {
-        api.logger.debug?.(`memory-hybrid: skipped ACTIVE-TASK.md write in subagent_spawned: ${writeResult.reason}`);
+        api.logger.debug?.(`memory-hybrid: skipped ACTIVE-TASKS.md write in subagent_spawned: ${writeResult.reason}`);
       } else {
         api.logger.info?.(`memory-hybrid: auto-checkpoint — created active task [${label}] for subagent spawn`);
       }
@@ -480,7 +480,7 @@ export function registerCleanupHandlers(
             );
             if (writeResult.skipped) {
               api.logger.debug?.(
-                `memory-hybrid: skipped ACTIVE-TASK.md write in subagent_ended (Done): ${writeResult.reason}`,
+                `memory-hybrid: skipped ACTIVE-TASKS.md write in subagent_ended (Done): ${writeResult.reason}`,
               );
             } else {
               if (ctx.cfg.activeTask.flushOnComplete) {
@@ -522,7 +522,7 @@ export function registerCleanupHandlers(
           );
           if (writeResult.skipped) {
             api.logger.debug?.(
-              `memory-hybrid: skipped ACTIVE-TASK.md write in subagent_ended (Failed): ${writeResult.reason}`,
+              `memory-hybrid: skipped ACTIVE-TASKS.md write in subagent_ended (Failed): ${writeResult.reason}`,
             );
           } else {
             api.logger.info?.(

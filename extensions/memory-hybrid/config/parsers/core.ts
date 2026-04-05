@@ -239,7 +239,7 @@ export function parseActiveTaskConfig(cfg: Record<string, unknown>): ActiveTaskC
     filePath:
       typeof activeTaskRaw?.filePath === "string" && activeTaskRaw.filePath.trim().length > 0
         ? activeTaskRaw.filePath.trim()
-        : "ACTIVE-TASK.md",
+        : "ACTIVE-TASKS.md",
     autoCheckpoint: activeTaskRaw?.autoCheckpoint !== false,
     injectionBudget:
       typeof activeTaskRaw?.injectionBudget === "number" && activeTaskRaw.injectionBudget > 0

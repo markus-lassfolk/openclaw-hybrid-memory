@@ -239,7 +239,7 @@ export type VectorConfig = {
   autoRepair: boolean;
 };
 
-/** Optional heartbeat / long-running hints for ACTIVE-TASK rows (not goals). */
+/** Optional heartbeat / long-running hints for ACTIVE-TASKS.md rows (not goals). */
 export type ActiveTaskHygieneConfig = {
   /**
    * When the last user message matches goal stewardship heartbeat patterns,
@@ -255,17 +255,17 @@ export type ActiveTaskHygieneConfig = {
   heartbeatNudgeMaxChars: number;
 };
 
-/** Active task working memory: ACTIVE-TASK.md persistence and session injection */
+/** Active task working memory: ACTIVE-TASKS.md persistence and session injection */
 export type ActiveTaskConfig = {
   /** Enable active task working memory (default: true) */
   enabled: boolean;
   /**
-   * Where the task ledger lives: `markdown` reads/writes ACTIVE-TASK.md (legacy).
+   * Where the task ledger lives: `markdown` reads/writes ACTIVE-TASKS.md.
    * `facts` uses hybrid-memory `category:project` facts (memory_store compatible).
    * Default: markdown.
    */
   ledger: "markdown" | "facts";
-  /** Path to ACTIVE-TASK.md (default: "ACTIVE-TASK.md" in workspace root) */
+  /** Path to ACTIVE-TASKS.md (default: "ACTIVE-TASKS.md" in workspace root) */
   filePath: string;
   /** Auto-write task entries on subagent spawn/complete events (default: true) */
   autoCheckpoint: boolean;
@@ -350,7 +350,7 @@ export type GoalStewardshipConfig = {
   multiGoalMaxChars: number;
   /** Max goals to include in one heartbeat after weighting. */
   multiGoalMaxGoals: number;
-  /** On heartbeat, rewrite ACTIVE-TASK.md with a Goals mirror section (requires activeTask.enabled). */
+  /** On heartbeat, rewrite ACTIVE-TASKS.md with a Goals mirror section (requires activeTask.enabled). */
   heartbeatRefreshActiveTask: boolean;
   confirmationPolicy: GoalStewardshipConfirmationPolicy;
   /**
@@ -601,7 +601,7 @@ export type HybridMemoryConfig = {
   multiAgent: MultiAgentConfig;
   /** Error reporting to GlitchTip/Sentry (opt-out, default: enabled with community DSN). Set enabled: false or consent: false to opt out. */
   errorReporting: ErrorReportingConfig;
-  /** Active task working memory — ACTIVE-TASK.md persistence and session injection (default: enabled) */
+  /** Active task working memory — ACTIVE-TASKS.md persistence and session injection (default: enabled) */
   activeTask: ActiveTaskConfig;
   /** Goal stewardship — autonomous long-running goals (default: disabled). */
   goalStewardship: GoalStewardshipConfig;

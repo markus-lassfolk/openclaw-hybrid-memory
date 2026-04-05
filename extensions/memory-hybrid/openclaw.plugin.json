@@ -519,7 +519,7 @@
     },
     "activeTask.taskHygiene.heartbeatEscalation": {
       "label": "Task hygiene on heartbeat",
-      "help": "When the last user message matches a heartbeat pattern, append a short ACTIVE-TASK review nudge (stale rows, optional long-running hint). Uses the same patterns as goal stewardship. Default: true. See docs/TASK-HYGIENE.md."
+      "help": "When the last user message matches a heartbeat pattern, append a short active-tasks review nudge (stale rows, optional long-running hint). Uses the same patterns as goal stewardship. Default: true. See docs/TASK-HYGIENE.md."
     },
     "activeTask.taskHygiene.suggestGoalAfterTaskAgeDays": {
       "label": "Suggest goal after N days",
@@ -1677,11 +1677,11 @@
         "properties": {
           "enabled": {
             "type": "boolean",
-            "description": "Enable ACTIVE-TASK.md injection and related tooling (default: true)"
+            "description": "Enable ACTIVE-TASKS.md injection and related tooling (default: true)"
           },
           "filePath": {
             "type": "string",
-            "description": "Path to ACTIVE-TASK.md relative to OPENCLAW_WORKSPACE or absolute (default: ACTIVE-TASK.md)"
+            "description": "Path to ACTIVE-TASKS.md relative to OPENCLAW_WORKSPACE or absolute (default: ACTIVE-TASKS.md)"
           },
           "injectionBudget": {
             "type": "number",
@@ -1707,7 +1707,7 @@
             "properties": {
               "heartbeatEscalation": {
                 "type": "boolean",
-                "description": "On heartbeat-pattern user messages, append a task-hygiene nudge for ACTIVE-TASK rows (default: true)"
+                "description": "On heartbeat-pattern user messages, append a task-hygiene nudge for ACTIVE-TASKS.md rows (default: true)"
               },
               "suggestGoalAfterTaskAgeDays": {
                 "type": "number",
@@ -1721,7 +1721,7 @@
             "description": "Heartbeat nudges for tactical tasks; see docs/TASK-HYGIENE.md"
           }
         },
-        "description": "Working memory file ACTIVE-TASK.md: injection, stale warnings, optional heartbeat hygiene"
+        "description": "Working memory file ACTIVE-TASKS.md: injection, stale warnings, optional heartbeat hygiene"
       },
       "goalStewardship": {
         "type": "object",
@@ -1817,7 +1817,7 @@
           },
           "heartbeatRefreshActiveTask": {
             "type": "boolean",
-            "description": "On heartbeat, refresh ACTIVE-TASK.md Goals mirror"
+            "description": "On heartbeat, refresh ACTIVE-TASKS.md Goals mirror"
           },
           "confirmationPolicy": {
             "type": "object",

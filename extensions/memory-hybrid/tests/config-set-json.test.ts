@@ -61,4 +61,43 @@ describe("runConfigSetForCli — JSON values for tier lists", () => {
       "azure-foundry/gpt-4.1-mini",
     ]);
   });
+
+  it("config-set goalStewardship enabled sets goalStewardship.enabled (object toggle)", async () => {
+    home = mkdtempSync(join(tmpdir(), "oc-gs-"));
+    const openclawDir = join(home, ".openclaw");
+    mkdirSync(openclawDir, { recursive: true });
+    const configPath = join(openclawDir, "openclaw.json");
+    writeFileSync(
+      configPath,
+      JSON.stringify(
+        {
+          plugins: {
+            entries: {
+              "openclaw-hybrid-memory": {
+                config: {
+                  embedding: {
+                    apiKey: "sk-test-key-that-is-long-enough-to-pass",
+                    model: "text-embedding-3-small",
+                  },
+                  goalStewardship: { enabled: false },
+                },
+              },
+            },
+          },
+        },
+        null,
+        2,
+      ),
+      "utf-8",
+    );
+    vi.stubEnv("HOME", home);
+
+    const { runConfigSetForCli } = await import("../cli/handlers.js");
+    const result = runConfigSetForCli({} as never, "goalStewardship", "enabled");
+    expect(result.ok).toBe(true);
+    const raw = JSON.parse(readFileSync(configPath, "utf-8")) as {
+      plugins: { entries: { "openclaw-hybrid-memory": { config: { goalStewardship: { enabled: boolean } } } } };
+    };
+    expect(raw.plugins.entries["openclaw-hybrid-memory"].config.goalStewardship.enabled).toBe(true);
+  });
 });

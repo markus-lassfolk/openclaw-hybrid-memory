@@ -129,13 +129,16 @@ Commands by category:
 `;
 
 const HYBRID_MEM_HELP_ACTIVE_TASKS = `
-  Working memory
-    active-tasks                   List active tasks (markdown file or facts ledger — see activeTask.ledger)
+  Goals & working memory
+    goals config                   Show goal stewardship settings (goalStewardship.*); toggle: config-set goalStewardship
+    goals list|status|audit|...    Tracked goals (see: hybrid-mem goals --help)
+    active-tasks config            Show active-task settings (activeTask.*)
+    active-tasks                   List tasks. When activeTask.enabled is false, only config works
     active-tasks complete <label>  Mark task as Done and flush to memory log
     active-tasks stale             Show tasks not updated within staleThreshold
     active-tasks reconcile         Complete in-progress rows whose session transcript is gone (#978)
     active-tasks add <label> <desc>  Add or update a task entry
-    active-tasks render            Write ACTIVE-TASK.md from facts (when activeTask.ledger: facts)
+    active-tasks render            Write ACTIVE-TASKS.md from facts (when activeTask.ledger: facts)
     task-queue-status            Print task-queue JSON + recognized flag; --with-active-tasks (#1037)
     task-queue-touch             Create idle current.json if missing; --repair for bad snapshots (#1037)
 `;
@@ -189,6 +192,8 @@ const HYBRID_MEM_CLI_COMMANDS = [
   "hybrid-mem dream-cycle",
   "hybrid-mem resolve-contradictions",
   "hybrid-mem config",
+  "hybrid-mem goals config",
+  "hybrid-mem active-tasks config",
   "hybrid-mem verify",
   "hybrid-mem credentials migrate-to-vault",
   "hybrid-mem distill-window",
@@ -953,7 +958,7 @@ function registerCliWithHelp(
     throw err;
   }
   if (typeof (mem as { addHelpText?: (loc: string, text: string) => void }).addHelpText === "function") {
-    const helpText = ctx.activeTask ? HYBRID_MEM_HELP_GROUPED + HYBRID_MEM_HELP_ACTIVE_TASKS : HYBRID_MEM_HELP_GROUPED;
+    const helpText = HYBRID_MEM_HELP_GROUPED + HYBRID_MEM_HELP_ACTIVE_TASKS;
     (mem as { addHelpText: (loc: string, text: string) => void }).addHelpText("after", helpText);
   }
 }

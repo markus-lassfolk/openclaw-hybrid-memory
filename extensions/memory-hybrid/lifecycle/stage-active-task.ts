@@ -1,6 +1,6 @@
 /**
  * Lifecycle: active-task injection (Phase 2.3).
- * Registers before_agent_start to inject ACTIVE-TASK.md summary when enabled.
+ * Registers before_agent_start to inject ACTIVE-TASKS.md summary when enabled.
  */
 
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
@@ -66,7 +66,7 @@ export function registerActiveTaskInjection(
 
       const context = parts.join("\n\n");
       const staleCount = activeForInjection.filter((t) => t.stale).length;
-      const src = ctx.cfg.activeTask.ledger === "facts" ? "category:project facts" : "ACTIVE-TASK.md";
+      const src = ctx.cfg.activeTask.ledger === "facts" ? "category:project facts" : "ACTIVE-TASKS.md";
       api.logger?.info?.(
         `memory-hybrid: injecting ${activeForInjection.length} active task(s) from ${src}${staleCount > 0 ? ` (${staleCount} stale)` : ""}`,
       );

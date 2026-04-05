@@ -14,14 +14,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Release summary
 
-**2026.4.51** delivers a **large stewardship and tasks/goals upgrade**: a full **goal stewardship** layer (registry, agent tools, heartbeat injection, watchdog health, CLI), **active task hygiene** that cooperates with heartbeats and can **draft goal payloads** from `ACTIVE-TASK.md`, an optional **circuit breaker** so stuck goals **stop retrying** and **escalate to you** with a clear summary, and an optional **facts-backed active task ledger** with render-to-markdown. Reliability work includes **recall pipeline** timing (parallel FTS + vector, accurate wall-clock totals), **OpenAI Responses API** message sanitization (reasoning blocks, empty assistant placeholders), and **more robust batch classification** parsing. Configuration is easier thanks to **embedding inheritance** from OpenClaw defaults ([#1002](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/1002)), and **cost tracking** survives plugin reload more cleanly ([#1021](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/1021)). The epic and breakdown issues for stewardship are tracked under [#1051](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/1051)–[#1061](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/1061).
+**2026.4.51** delivers a **large stewardship and tasks/goals upgrade**: a full **goal stewardship** layer (registry, agent tools, heartbeat injection, watchdog health, CLI), **active task hygiene** that cooperates with heartbeats and can **draft goal payloads** from `ACTIVE-TASKS.md`, an optional **circuit breaker** so stuck goals **stop retrying** and **escalate to you** with a clear summary, and an optional **facts-backed active task ledger** with render-to-markdown. Reliability work includes **recall pipeline** timing (parallel FTS + vector, accurate wall-clock totals), **OpenAI Responses API** message sanitization (reasoning blocks, empty assistant placeholders), and **more robust batch classification** parsing. Configuration is easier thanks to **embedding inheritance** from OpenClaw defaults ([#1002](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/1002)), and **cost tracking** survives plugin reload more cleanly ([#1021](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/1021)). The epic and breakdown issues for stewardship are tracked under [#1051](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/1051)–[#1061](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/1061).
 
 ### Added
 
 - **Goal stewardship:** JSON-backed goals under the workspace (default `state/goals/`), configurable via `goalStewardship.*`; agent tools `goal_register`, `goal_assess`, `goal_update`, `goal_complete`, `goal_abandon`; heartbeat-driven stewardship prepends when the last user message matches heartbeat patterns; optional multi-goal rotation with caps and attention weights; watchdog health checks (budgets, staleness, mechanical verification, escalation); CLI `openclaw hybrid-mem goals list|status|cancel|stewardship-run|audit`; subagent completion updates goals with improved session-key matching; documentation in `docs/GOAL-STEWARDSHIP-*.md` and skill updates.
-- **Task hygiene:** On heartbeat turns, optional `<task-hygiene>` nudges for `ACTIVE-TASK.md` (reconcile, `HEARTBEAT_OK`), optional “consider promoting to a goal” hints for long-running rows, and agent tool **`active_task_propose_goal`** to draft `goal_register` payloads from a task label. See [TASK-HYGIENE.md](docs/TASK-HYGIENE.md).
+- **Task hygiene:** On heartbeat turns, optional `<task-hygiene>` nudges for `ACTIVE-TASKS.md` (reconcile, `HEARTBEAT_OK`), optional “consider promoting to a goal” hints for long-running rows, and agent tool **`active_task_propose_goal`** to draft `goal_register` payloads from a task label. See [TASK-HYGIENE.md](docs/TASK-HYGIENE.md).
 - **Circuit breaker (goal stewardship):** Optional `goalStewardship.circuitBreaker` — when assessments repeat with the **same blockers** (or without progress) beyond configured thresholds, the goal moves to **`blocked`**, records **`humanEscalationSummary`**, and can append to episodic memory; distinct from failure-count escalation. `goalStewardship.allowCommandVerification` gates risky `command_exit_zero` checks (default off).
-- **Active tasks — facts ledger:** `activeTask.ledger` can be **`facts`** so active tasks live as structured facts in SQLite with **`active-tasks render`** to regenerate `ACTIVE-TASK.md`; integrates with hygiene and lifecycle hooks.
+- **Active tasks — facts ledger:** `activeTask.ledger` can be **`facts`** so active tasks live as structured facts in SQLite with **`active-tasks render`** to regenerate `ACTIVE-TASKS.md`; integrates with hygiene and lifecycle hooks.
 - **Embedding config inheritance ([#1002](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/1002)):** Before schema parse, merge OpenClaw `models.providers` into plugin `llm.providers`, then overlay `agents.defaults.memorySearch` onto `embedding` for omitted fields only; plugin values win.
 
 ### Changed
@@ -77,7 +77,7 @@ Version **2026.4.33** ships **`scripts/task-queue.sh`** — a cron-friendly task
 
 ### Release summary
 
-Version **2026.4.32** adds **ACTIVE-TASK.md** session reconciliation when OpenClaw session transcripts are missing ([#978](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/978), [#981](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/981)), a **task-queue** idle `current.json` placeholder and CLI helpers ([#983](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/983)), and follow-up **CI / review** hardening (Biome `import type`, bootstrap FTS5 test spy, direct path checks before `readdir` for session lookup). Bumps the npm package, `openclaw.plugin.json`, and the standalone installer.
+Version **2026.4.32** adds **ACTIVE-TASKS.md** session reconciliation when OpenClaw session transcripts are missing ([#978](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/978), [#981](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/981)), a **task-queue** idle `current.json` placeholder and CLI helpers ([#983](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/983)), and follow-up **CI / review** hardening (Biome `import type`, bootstrap FTS5 test spy, direct path checks before `readdir` for session lookup). Bumps the npm package, `openclaw.plugin.json`, and the standalone installer.
 
 ### Added
 
@@ -86,7 +86,7 @@ Version **2026.4.32** adds **ACTIVE-TASK.md** session reconciliation when OpenCl
 
 ### Changed
 
-- **`ACTIVE-TASK.md`:** Parse **`Session:`** into subagent when **`Subagent:`** is absent; complete orphan **In progress** rows when no session JSONL is found.
+- **`ACTIVE-TASKS.md`:** Parse **`Session:`** into subagent when **`Subagent:`** is absent; complete orphan **In progress** rows when no session JSONL is found.
 
 ### Fixed
 
@@ -808,7 +808,7 @@ Feature and fix release: LanceDB dimension-mismatch graceful fallback and auto-r
 
 - **VectorDB dimension mismatch:** Graceful fallback when LanceDB table dimension does not match configured embedding model: search/count/hasDuplicate return empty/0/false and log a clear warning instead of crashing. Optional `vector.autoRepair: true` drops and recreates the table with the correct dimension and triggers re-embedding from SQLite (issue #128, #129).
 - **Credentials CLI:** `openclaw hybrid-mem credentials get` and `credentials list --service <filter>` for vault inspection.
-- **Verify:** Active-task (ACTIVE-TASK.md) status shown in `openclaw hybrid-mem verify` output.
+- **Verify:** Active-task (ACTIVE-TASKS.md) status shown in `openclaw hybrid-mem verify` output.
 - **CI:** GitHub Actions labeler workflow for PRs; CodeQL suppressions where applicable.
 
 ### Fixed
@@ -835,7 +835,7 @@ Feature and fix release: active-task working memory for multi-step tasks (#99, #
 
 ### Added
 
-- **Active-task working memory:** ACTIVE-TASK.md doc, heartbeat stale warnings, duration parser, `staleThreshold` config, stashCommit preservation, injection budget checks, file path resolved against workspace root, original task start time in subagent_start; legacy `staleHours` rejects fractional values (closes #99, #104).
+- **Active-task working memory:** ACTIVE-TASKS.md doc, heartbeat stale warnings, duration parser, `staleThreshold` config, stashCommit preservation, injection budget checks, file path resolved against workspace root, original task start time in subagent_start; legacy `staleHours` rejects fractional values (closes #99, #104).
 - **Credentials:** Hardened auto-capture validation; audit, prune, and dedup CLI (#98); duplicate normalized service detection; `storeIfNew` for auto-capture; lowercase URLs and empty-string fallback; list optimization; `runCredentialsList` in CLI context.
 
 ### Fixed

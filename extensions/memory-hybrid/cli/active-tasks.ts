@@ -1,13 +1,14 @@
 /**
  * CLI commands for active task working memory.
  *
- * With activeTask.ledger `markdown` (default): reads/writes ACTIVE-TASK.md.
+ * With activeTask.ledger `markdown` (default): reads/writes ACTIVE-TASKS.md.
  * With activeTask.ledger `facts`: reads/writes hybrid-memory category:project facts
  * (aligned with memory_store). Optional `active-tasks render` writes markdown projection.
  */
 
 import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
+import type { HybridMemoryConfig } from "../config.js";
 import {
   ACTIVE_TASK_STATUSES,
   type ActiveTaskEntry,
@@ -28,6 +29,7 @@ import {
   syncActiveTaskEntryToFacts,
 } from "../services/task-ledger-facts.js";
 import { formatDuration } from "../utils/duration.js";
+import { formatActiveTaskConfigLines } from "./config-feature-summaries.js";
 import type { Chainable } from "./shared.js";
 import type {
   ActiveTaskAddResult,
@@ -38,7 +40,7 @@ import type {
 
 /** Context injected into all active-task CLI commands */
 export type ActiveTaskContext = {
-  /** Absolute path to ACTIVE-TASK.md (markdown ledger or render target) */
+  /** Absolute path to ACTIVE-TASKS.md (markdown ledger or render target) */
   activeTaskFilePath: string;
   /** Minutes before a task is considered stale (parsed from staleThreshold) */
   staleMinutes: number;
@@ -199,7 +201,7 @@ export async function runActiveTaskComplete(ctx: ActiveTaskContext, label: strin
 
   const taskFile = await readActiveTaskFile(ctx.activeTaskFilePath, ctx.staleMinutes);
   if (!taskFile) {
-    return { ok: false, error: `ACTIVE-TASK.md not found at ${ctx.activeTaskFilePath}` };
+    return { ok: false, error: `ACTIVE-TASKS.md not found at ${ctx.activeTaskFilePath}` };
   }
 
   const { updated, completed } = completeTask(taskFile.active, label);
@@ -321,7 +323,7 @@ export async function runActiveTaskAdd(
 /** Print active task list result to console */
 function printActiveTaskList(result: ActiveTaskListResult): void {
   if (!result.fileExists && result.ledger !== "facts") {
-    console.log("No ACTIVE-TASK.md found — no active tasks.");
+    console.log("No ACTIVE-TASKS.md found — no active tasks.");
     return;
   }
   if (result.total === 0) {
@@ -352,18 +354,44 @@ function printActiveTaskList(result: ActiveTaskListResult): void {
 // Commander registration
 // ---------------------------------------------------------------------------
 
-export function registerActiveTaskCommands(mem: Chainable, ctx: ActiveTaskContext): void {
-  const ledgerHint = ctx.ledger === "facts" ? " (facts ledger: category:project)" : "";
+export function registerActiveTaskCommands(
+  mem: Chainable,
+  cfg: HybridMemoryConfig,
+  ctx: ActiveTaskContext | undefined,
+): void {
+  const at = cfg.activeTask;
+  const ledgerHint = ctx?.ledger === "facts" ? " (facts ledger: category:project)" : "";
 
   const activeTasks = mem
     .command("active-tasks")
     .description(
-      `Working memory: active tasks (${ctx.ledger} ledger). Subcommands: list, complete, stale, reconcile, add, render`,
+      ctx
+        ? `Working memory: active tasks (${ctx.ledger} ledger). Subcommands: list, complete, stale, reconcile, add, render, config`
+        : "Active tasks disabled (activeTask.enabled: false). Subcommand: config. Enable: openclaw hybrid-mem config-set activeTask enabled",
     )
     .action(async () => {
+      if (!ctx) {
+        console.log("Active tasks are disabled (activeTask.enabled: false).");
+        console.log("  Enable: openclaw hybrid-mem config-set activeTask enabled");
+        console.log("  Inspect settings: openclaw hybrid-mem active-tasks config");
+        return;
+      }
       const result = await runActiveTaskList(ctx);
       printActiveTaskList(result);
     });
+
+  activeTasks
+    .command("config")
+    .description("Show active-task settings from plugin config (activeTask.* in openclaw.json)")
+    .action(() => {
+      for (const line of formatActiveTaskConfigLines(at)) {
+        console.log(line);
+      }
+    });
+
+  if (!ctx) {
+    return;
+  }
 
   activeTasks
     .command("list")
@@ -463,7 +491,7 @@ export function registerActiveTaskCommands(mem: Chainable, ctx: ActiveTaskContex
     .description(
       ctx.ledger === "facts"
         ? "Add or update a project task in facts (category:project)"
-        : "Add or update a task in ACTIVE-TASK.md",
+        : "Add or update a task in ACTIVE-TASKS.md",
     )
     .option("--branch <branch>", "Git branch")
     .option("--status <status>", "Task status (In progress|Waiting|Stalled|Failed|Done)")
@@ -494,12 +522,12 @@ export function registerActiveTaskCommands(mem: Chainable, ctx: ActiveTaskContex
   activeTasks
     .command("render")
     .description(
-      "Write ACTIVE-TASK.md projection from facts ledger (no-op when ledger is markdown; use with activeTask.ledger: facts)",
+      "Write ACTIVE-TASKS.md projection from facts ledger (no-op when ledger is markdown; use with activeTask.ledger: facts)",
     )
     .action(async () => {
       if (ctx.ledger !== "facts") {
         console.log(
-          "ℹ️  render applies when activeTask.ledger is 'facts'. With markdown ledger, ACTIVE-TASK.md is already the source.",
+          "ℹ️  render applies when activeTask.ledger is 'facts'. With markdown ledger, ACTIVE-TASKS.md is already the source.",
         );
         return;
       }

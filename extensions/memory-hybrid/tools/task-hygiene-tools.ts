@@ -1,5 +1,5 @@
 /**
- * Task hygiene tools — draft goal_register payloads from ACTIVE-TASK.md rows.
+ * Task hygiene tools — draft goal_register payloads from ACTIVE-TASKS.md rows.
  * @see docs/TASK-HYGIENE.md
  */
 import { Type } from "@sinclair/typebox";
@@ -14,7 +14,7 @@ import { stableStringify } from "../utils/stable-stringify.js";
 
 export interface TaskHygieneToolsContext {
   cfg: HybridMemoryConfig;
-  /** Absolute path to ACTIVE-TASK.md */
+  /** Absolute path to ACTIVE-TASKS.md */
   resolvedActiveTaskPath: string;
   workspaceRoot: string;
 }
@@ -33,7 +33,7 @@ export function registerTaskHygieneTools(ctx: TaskHygieneToolsContext, api: Claw
     content: [
       {
         type: "text" as const,
-        text: "Active tasks are disabled. Set activeTask.enabled: true and ensure ACTIVE-TASK.md exists.",
+        text: "Active tasks are disabled. Set activeTask.enabled: true and ensure ACTIVE-TASKS.md exists.",
       },
     ],
     details: { error: "active_task_disabled" },
@@ -44,7 +44,7 @@ export function registerTaskHygieneTools(ctx: TaskHygieneToolsContext, api: Claw
       name: "active_task_propose_goal",
       label: "Propose goal from active task",
       description:
-        "Read ACTIVE-TASK.md and return a draft goal_register payload for a task label (promote tactical work to stewardship goals).",
+        "Read ACTIVE-TASKS.md and return a draft goal_register payload for a task label (promote tactical work to stewardship goals).",
       parameters: Type.Object({
         task_label: Type.String({ minLength: 1 }),
       }),
@@ -55,7 +55,7 @@ export function registerTaskHygieneTools(ctx: TaskHygieneToolsContext, api: Claw
           const file = await readActiveTaskFile(path, staleMinutes);
           if (!file || file.active.length === 0) {
             return {
-              content: [{ type: "text", text: "No active tasks in ACTIVE-TASK.md (or file missing)." }],
+              content: [{ type: "text", text: "No active tasks in ACTIVE-TASKS.md (or file missing)." }],
               details: { error: "no_active_tasks", path },
             };
           }

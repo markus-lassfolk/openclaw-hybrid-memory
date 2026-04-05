@@ -1,7 +1,7 @@
 /**
  * Active Task Working Memory Service
  *
- * Parses, reads, and writes ACTIVE-TASK.md — a structured working memory file
+ * Parses, reads, and writes ACTIVE-TASKS.md — a structured working memory file
  * that persists in-progress task state across session restarts and context compaction.
  *
  * File format:
@@ -23,7 +23,20 @@
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { mkdir, readFile, readdir, realpath, rename, stat, unlink, writeFile } from "node:fs/promises";
-import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
+
+/** Legacy filename before default became ACTIVE-TASKS.md; still read if the new file is missing. */
+const LEGACY_ACTIVE_TASK_BASENAME = "ACTIVE-TASK.md";
+
+/** Prefer `ACTIVE-TASKS.md`; if missing, read legacy `ACTIVE-TASK.md` in the same directory. */
+function resolveActiveTaskReadPath(filePath: string): string | null {
+  if (existsSync(filePath)) return filePath;
+  if (basename(filePath) === "ACTIVE-TASKS.md") {
+    const legacyPath = join(dirname(filePath), LEGACY_ACTIVE_TASK_BASENAME);
+    if (existsSync(legacyPath)) return legacyPath;
+  }
+  return null;
+}
 import { formatDuration } from "../utils/duration.js";
 import { pluginLogger } from "../utils/logger.js";
 import { stableStringify } from "../utils/stable-stringify.js";
@@ -78,7 +91,7 @@ export interface ActiveTaskEntry {
   handoff?: ActiveTaskHandoffRef;
 }
 
-/** Structured handoff reference persisted in ACTIVE-TASK.md */
+/** Structured handoff reference persisted in ACTIVE-TASKS.md */
 export interface ActiveTaskHandoffRef {
   /** OCTAVE schema identifier */
   schema: string;
@@ -94,7 +107,7 @@ export interface ActiveTaskHandoffRef {
   checksum: string;
 }
 
-/** Result of parsing ACTIVE-TASK.md */
+/** Result of parsing ACTIVE-TASKS.md */
 interface ActiveTaskFile {
   /** Active (non-Done) tasks */
   active: ActiveTaskEntry[];
@@ -240,7 +253,7 @@ function extractGoalsMirrorSection(content: string): string | undefined {
   return goalLines.length > 0 ? goalLines.join("\n") : undefined;
 }
 
-/** Parse a full ACTIVE-TASK.md file content */
+/** Parse a full ACTIVE-TASKS.md file content */
 export function parseActiveTaskFile(content: string): ActiveTaskFile {
   const lines = content.split("\n");
   const active: ActiveTaskEntry[] = [];
@@ -324,13 +337,13 @@ export function serializeTaskEntry(entry: ActiveTaskEntry): string {
   return lines.join("\n");
 }
 
-/** Serialize all tasks back to full ACTIVE-TASK.md content */
+/** Serialize all tasks back to full ACTIVE-TASKS.md content */
 export function serializeActiveTaskFile(
   active: ActiveTaskEntry[],
   completed: ActiveTaskEntry[],
   goalsMirrorMarkdown?: string,
 ): string {
-  const parts: string[] = ["# ACTIVE-TASK.md — Working Memory\n"];
+  const parts: string[] = ["# ACTIVE-TASKS.md — Working Memory\n"];
 
   parts.push("## Active Tasks\n");
   if (active.length === 0) {
@@ -383,15 +396,16 @@ export function detectStaleTasks(tasks: ActiveTaskEntry[], staleMinutes: number)
 // ---------------------------------------------------------------------------
 
 /**
- * Read and parse ACTIVE-TASK.md from disk. Returns null if file doesn't exist.
+ * Read and parse ACTIVE-TASKS.md from disk. Returns null if file doesn't exist.
  *
- * @param filePath - Absolute path to ACTIVE-TASK.md
+ * @param filePath - Absolute path to ACTIVE-TASKS.md
  * @param staleMinutes - Minutes before a task is considered stale (default: 1440 = 24h)
  */
 export async function readActiveTaskFile(filePath: string, staleMinutes = 1440): Promise<ActiveTaskFile | null> {
-  if (!existsSync(filePath)) return null;
+  const pathToRead = resolveActiveTaskReadPath(filePath);
+  if (!pathToRead) return null;
   try {
-    const content = await readFile(filePath, "utf-8");
+    const content = await readFile(pathToRead, "utf-8");
     const parsed = parseActiveTaskFile(content);
     // Apply stale detection to active tasks
     parsed.active = detectStaleTasks(parsed.active, staleMinutes);
@@ -403,7 +417,7 @@ export async function readActiveTaskFile(filePath: string, staleMinutes = 1440):
   }
 }
 
-/** Write tasks back to ACTIVE-TASK.md. Creates parent directories as needed. */
+/** Write tasks back to ACTIVE-TASKS.md. Creates parent directories as needed. */
 export async function writeActiveTaskFile(
   filePath: string,
   active: ActiveTaskEntry[],
@@ -483,7 +497,7 @@ export function buildActiveTaskInjection(tasks: ActiveTaskEntry[], maxTokens: nu
   const activeTasks = tasks.filter((t) => ACTIVE_STATUSES.has(t.status));
   if (activeTasks.length === 0) return "";
 
-  const lines: string[] = ["<active-tasks>", "In-progress tasks from ACTIVE-TASK.md:"];
+  const lines: string[] = ["<active-tasks>", "In-progress tasks from ACTIVE-TASKS.md:"];
 
   // Budget: ~4 chars per token, minus header/footer overhead
   const charBudget = maxTokens * 4 - 60;
@@ -906,7 +920,7 @@ export async function readPendingSignals(memoryDir: string): Promise<PendingTask
 
 /**
  * Delete a processed signal file.
- * The orchestrator calls this after applying the signal to ACTIVE-TASK.md.
+ * The orchestrator calls this after applying the signal to ACTIVE-TASKS.md.
  *
  * @param filePath Absolute path of the signal file to delete (from `_filePath` field)
  */
@@ -930,20 +944,21 @@ interface ActiveTaskFileWithMtime extends ActiveTaskFile {
 }
 
 /**
- * Read and parse ACTIVE-TASK.md, also capturing the file's mtime.
+ * Read and parse ACTIVE-TASKS.md, also capturing the file's mtime.
  * Use this when you intend to write the file back and need to detect
  * concurrent modifications (optimistic concurrency).
  *
- * @param filePath    Absolute path to ACTIVE-TASK.md
+ * @param filePath    Absolute path to ACTIVE-TASKS.md
  * @param staleMinutes Minutes before a task is considered stale (default: 1440)
  */
 export async function readActiveTaskFileWithMtime(
   filePath: string,
   staleMinutes = 1440,
 ): Promise<ActiveTaskFileWithMtime | null> {
-  if (!existsSync(filePath)) return null;
+  const pathToRead = resolveActiveTaskReadPath(filePath);
+  if (!pathToRead) return null;
   try {
-    const [content, fileStat] = await Promise.all([readFile(filePath, "utf-8"), stat(filePath)]);
+    const [content, fileStat] = await Promise.all([readFile(pathToRead, "utf-8"), stat(pathToRead)]);
     const parsed = parseActiveTaskFile(content);
     parsed.active = detectStaleTasks(parsed.active, staleMinutes);
     return { ...parsed, mtime: fileStat.mtimeMs };
@@ -954,7 +969,7 @@ export async function readActiveTaskFileWithMtime(
 }
 
 /**
- * Write ACTIVE-TASK.md with optimistic concurrency protection.
+ * Write ACTIVE-TASKS.md with optimistic concurrency protection.
  *
  * Before writing, re-reads the file and checks whether its mtime has changed
  * since `knownMtime` was recorded. If the file was modified concurrently, the
@@ -963,7 +978,7 @@ export async function readActiveTaskFileWithMtime(
  * attempts are made; if conflicts persist, a last-write-wins fallback write is
  * performed to avoid leaving the file untouched.
  *
- * @param filePath      Absolute path to ACTIVE-TASK.md
+ * @param filePath      Absolute path to ACTIVE-TASKS.md
  * @param active        Active task entries to write
  * @param completed     Completed task entries to write
  * @param knownMtime    The mtime observed at the last read (milliseconds)
@@ -1033,11 +1048,11 @@ export async function writeActiveTaskFileOptimistic(
 }
 
 /**
- * Write ACTIVE-TASK.md, but refuse to write if the session is a sub-agent.
+ * Write ACTIVE-TASKS.md, but refuse to write if the session is a sub-agent.
  * Sub-agents should use `writeTaskSignal` to communicate status changes back
- * to the orchestrator instead of writing ACTIVE-TASK.md directly.
+ * to the orchestrator instead of writing ACTIVE-TASKS.md directly.
  *
- * @param filePath   Absolute path to ACTIVE-TASK.md
+ * @param filePath   Absolute path to ACTIVE-TASKS.md
  * @param active     Active task entries to write
  * @param completed  Completed task entries to write
  * @param sessionKey The current session key (used to detect sub-agent mode)
@@ -1052,7 +1067,7 @@ export async function writeActiveTaskFileGuarded(
   if (isSubagentSession(sessionKey)) {
     return {
       skipped: true,
-      reason: "sub-agent sessions are read-only for ACTIVE-TASK.md; use writeTaskSignal instead",
+      reason: "sub-agent sessions are read-only for ACTIVE-TASKS.md; use writeTaskSignal instead",
     };
   }
   await writeActiveTaskFile(filePath, active, completed);

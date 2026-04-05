@@ -5,7 +5,7 @@
 
 ## Summary
 
-**2026.4.32** ships **ACTIVE-TASK** session reconciliation (**#978**, **#981**), **task-queue** idle state and CLI (**#983**), and CI/review follow-ups. Bumps the npm package, `openclaw.plugin.json`, and the standalone installer.
+**2026.4.32** ships **active-tasks** session reconciliation (**#978**, **#981**), **task-queue** idle state and CLI (**#983**), and CI/review follow-ups. Bumps the npm package, `openclaw.plugin.json`, and the standalone installer.
 
 For issue links and the full list, see **[CHANGELOG.md](https://github.com/markus-lassfolk/openclaw-hybrid-memory/blob/main/CHANGELOG.md)** (section **2026.4.32**).
 
