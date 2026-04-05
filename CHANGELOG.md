@@ -8,13 +8,36 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+---
+
+## [2026.4.51] - 2026-04-05
+
+### Release summary
+
+**2026.4.51** delivers a **large stewardship and tasks/goals upgrade**: a full **goal stewardship** layer (registry, agent tools, heartbeat injection, watchdog health, CLI), **active task hygiene** that cooperates with heartbeats and can **draft goal payloads** from `ACTIVE-TASK.md`, an optional **circuit breaker** so stuck goals **stop retrying** and **escalate to you** with a clear summary, and an optional **facts-backed active task ledger** with render-to-markdown. Reliability work includes **recall pipeline** timing (parallel FTS + vector, accurate wall-clock totals), **OpenAI Responses API** message sanitization (reasoning blocks, empty assistant placeholders), and **more robust batch classification** parsing. Configuration is easier thanks to **embedding inheritance** from OpenClaw defaults ([#1002](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/1002)), and **cost tracking** survives plugin reload more cleanly ([#1021](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/1021)). The epic and breakdown issues for stewardship are tracked under [#1051](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/1051)–[#1061](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/1061).
+
 ### Added
 
-- **Embedding config inheritance (issue [#1002](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/1002)):** Before `hybridConfigSchema.parse`, merge OpenClaw **`models.providers`** (same paths as LLM bootstrap) into the raw plugin **`llm.providers`**, then overlay **`agents.defaults.memorySearch`** (`provider`, `model`, optional `deployment` from the matching gateway provider entry, and **`dimensions`** when known) onto plugin **`embedding`** only for omitted fields. Plugin values always win.
+- **Goal stewardship:** JSON-backed goals under the workspace (default `state/goals/`), configurable via `goalStewardship.*`; agent tools `goal_register`, `goal_assess`, `goal_update`, `goal_complete`, `goal_abandon`; heartbeat-driven stewardship prepends when the last user message matches heartbeat patterns; optional multi-goal rotation with caps and attention weights; watchdog health checks (budgets, staleness, mechanical verification, escalation); CLI `openclaw hybrid-mem goals list|status|cancel|stewardship-run|audit`; subagent completion updates goals with improved session-key matching; documentation in `docs/GOAL-STEWARDSHIP-*.md` and skill updates.
+- **Task hygiene:** On heartbeat turns, optional `<task-hygiene>` nudges for `ACTIVE-TASK.md` (reconcile, `HEARTBEAT_OK`), optional “consider promoting to a goal” hints for long-running rows, and agent tool **`active_task_propose_goal`** to draft `goal_register` payloads from a task label. See [TASK-HYGIENE.md](docs/TASK-HYGIENE.md).
+- **Circuit breaker (goal stewardship):** Optional `goalStewardship.circuitBreaker` — when assessments repeat with the **same blockers** (or without progress) beyond configured thresholds, the goal moves to **`blocked`**, records **`humanEscalationSummary`**, and can append to episodic memory; distinct from failure-count escalation. `goalStewardship.allowCommandVerification` gates risky `command_exit_zero` checks (default off).
+- **Active tasks — facts ledger:** `activeTask.ledger` can be **`facts`** so active tasks live as structured facts in SQLite with **`active-tasks render`** to regenerate `ACTIVE-TASK.md`; integrates with hygiene and lifecycle hooks.
+- **Embedding config inheritance ([#1002](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/1002)):** Before schema parse, merge OpenClaw `models.providers` into plugin `llm.providers`, then overlay `agents.defaults.memorySearch` onto `embedding` for omitted fields only; plugin values win.
+
+### Changed
+
+- **Recall pipeline:** FTS and vector phases run in parallel where appropriate; **`vector_step`** timing reflects vector work only; overall pipeline diagnostics use **wall-clock** elapsed time to avoid double-counting.
+- **OpenAI Responses path:** `sanitizeMessagesForOpenAIResponses` strips internal **reasoning** blocks from message content arrays (any role), with a safe placeholder if an assistant message would otherwise be empty after sanitization.
+- **Batch classification:** Lenient parsing accepts additional wrapper keys and noisy output, with guardrails (e.g. action coverage) to reduce false positives.
 
 ### Fixed
 
-- **Cost tracker / `memory.db` ([#1021](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/1021)):** `CostTracker` no longer caches a `DatabaseSync` from a one-time `getRawDb()` call. It now holds `FactsDB`, resolves the handle via `getRawDb()` on each operation (same `liveDb` / reopen path as the rest of the store), and skips writes when `!factsDb.isOpen()` so plugin teardown and reload do not log `Failed to record cost entry: database is not open` for a stale handle.
+- **Cost tracker / `memory.db` ([#1021](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/1021)):** `CostTracker` resolves the DB handle via `getRawDb()` per operation and skips writes when the DB is not open, avoiding stale-handle errors across plugin reload.
+- **Goal health / escalation:** Safer optional command verification; escalation can apply to **`stalled`** goals where appropriate; assorted robustness fixes in registry and heartbeat matching (cached patterns, round-robin offset).
+
+### Documentation
+
+- Added and updated: [TASK-HYGIENE.md](docs/TASK-HYGIENE.md), [GOAL-STEWARDSHIP-OPERATOR.md](docs/GOAL-STEWARDSHIP-OPERATOR.md), [GOAL-STEWARDSHIP-DESIGN.md](docs/GOAL-STEWARDSHIP-DESIGN.md), [ARCHITECTURE.md](docs/ARCHITECTURE.md), hybrid-memory skill and workspace snippets.
 
 ---
 
@@ -1224,7 +1247,8 @@ Major feature release including procedural memory, directive extraction, reinfor
 
 ---
 
-[Unreleased]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.4.40...HEAD
+[Unreleased]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.4.51...HEAD
+[2026.4.51]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.4.40...v2026.4.51
 [2026.4.40]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.4.38...v2026.4.40
 [2026.4.38]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.4.36...v2026.4.38
 [2026.4.33]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.4.32...v2026.4.33

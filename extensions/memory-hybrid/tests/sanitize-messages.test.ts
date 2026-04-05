@@ -38,9 +38,7 @@ describe("sanitizeMessagesForClaude", () => {
     const messages: MessageLike[] = [
       {
         role: "assistant",
-        content: [
-          { type: "tool_use", id: "t1", name: "memory_recall", input: {} },
-        ],
+        content: [{ type: "tool_use", id: "t1", name: "memory_recall", input: {} }],
       },
       {
         role: "tool",
@@ -131,7 +129,10 @@ describe("sanitizeMessagesForOpenAIResponses", () => {
     const messages: MessageLike[] = [
       {
         role: "user",
-        content: [{ type: "reasoning", id: "rs_x" }, { type: "text", text: "weird" }],
+        content: [
+          { type: "reasoning", id: "rs_x" },
+          { type: "text", text: "weird" },
+        ],
       },
     ];
     const out = sanitizeMessagesForOpenAIResponses(messages);
