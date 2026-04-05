@@ -33,7 +33,7 @@ function nowIso(): string {
   return new Date().toISOString();
 }
 
-const SHELL_DENY_RE = /[;&|`$(){}!\n\\]/;
+const SHELL_DENY_RE = /[;&|`$(){}!\n\\<>~#]/;
 
 async function runMechanicalVerification(
   goal: Goal,

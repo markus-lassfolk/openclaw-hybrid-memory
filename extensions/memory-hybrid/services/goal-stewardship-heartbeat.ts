@@ -185,11 +185,12 @@ export async function buildMultiGoalStewardshipPrepend(
   const rr = await readRoundRobin(goalsDir);
   const rot = rr.offset % candidates.length;
   const rotated = [...candidates.slice(rot), ...candidates.slice(0, rot)];
-  const nextOff = (rot + 1) % Math.max(1, candidates.length);
-  await writeRoundRobin(goalsDir, { offset: nextOff });
 
   const maxGoals = Math.min(cfg.multiGoalMaxGoals, rotated.length);
   const selected = rotated.slice(0, maxGoals);
+
+  const nextOff = (rot + selected.length) % Math.max(1, candidates.length);
+  await writeRoundRobin(goalsDir, { offset: nextOff });
 
   const weights = selected.map((g) => priorityWeight(g.priority, cfg.attentionWeights));
   const sumW = weights.reduce((a, b) => a + b, 0) || 1;

@@ -16,19 +16,24 @@ export * from "./goal-circuit-breaker.js";
 
 const globalDispatchTimestamps: number[] = [];
 
-export function recordGoalDispatch(): void {
-  globalDispatchTimestamps.push(Date.now());
+function pruneOldTimestamps(): void {
   const cutoff = Date.now() - 60 * 60 * 1000;
-  while (globalDispatchTimestamps.length > 0 && globalDispatchTimestamps[0]! < cutoff) {
-    globalDispatchTimestamps.shift();
+  let firstValid = 0;
+  while (firstValid < globalDispatchTimestamps.length && globalDispatchTimestamps[firstValid]! < cutoff) {
+    firstValid++;
+  }
+  if (firstValid > 0) {
+    globalDispatchTimestamps.splice(0, firstValid);
   }
 }
 
+export function recordGoalDispatch(): void {
+  pruneOldTimestamps();
+  globalDispatchTimestamps.push(Date.now());
+}
+
 export function isGlobalRateLimited(maxPerHour: number): boolean {
-  const cutoff = Date.now() - 60 * 60 * 1000;
-  while (globalDispatchTimestamps.length > 0 && globalDispatchTimestamps[0]! < cutoff) {
-    globalDispatchTimestamps.shift();
-  }
+  pruneOldTimestamps();
   return globalDispatchTimestamps.length >= maxPerHour;
 }
 
