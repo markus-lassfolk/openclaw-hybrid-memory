@@ -1004,13 +1004,17 @@ export async function writeActiveTaskFileOptimistic(
   let knownMtimeMutable = knownMtime;
 
   for (let attempt = 0; attempt < maxRetries; attempt++) {
-    // Check current mtime before writing
+    // Same resolution as readActiveTaskFileWithMtime: mtime may live on legacy ACTIVE-TASK.md
+    // until ACTIVE-TASKS.md exists.
+    const pathForStat = resolveActiveTaskReadPath(filePath);
+    if (pathForStat === null) {
+      await writeActiveTaskFile(filePath, currentActive, currentCompleted);
+      return true;
+    }
     let currentMtime: number;
     try {
-      const fileStat = await stat(filePath);
-      currentMtime = fileStat.mtimeMs;
+      currentMtime = (await stat(pathForStat)).mtimeMs;
     } catch (err) {
-      // File doesn't exist yet — no conflict possible, write directly
       if ((err as NodeJS.ErrnoException).code === "ENOENT") {
         await writeActiveTaskFile(filePath, currentActive, currentCompleted);
         return true;
