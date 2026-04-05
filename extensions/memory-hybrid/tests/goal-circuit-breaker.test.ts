@@ -31,20 +31,28 @@ describe("goal-circuit-breaker", () => {
   it("trips on same blocker streak", () => {
     const b = ["blocked by api"];
     let g = baseGoal();
-    // assessment 1
+    // assessment 1: first time seeing this fingerprint — streak 0
     let state = computeCircuitBreakerStateAfterAssess(g, b, 1);
-    expect(state.sameBlockerStreak).toBe(1);
+    expect(state.sameBlockerStreak).toBe(0);
     g = { ...g, ...state, currentBlockers: b, assessmentCount: 1 };
     expect(evaluateCircuitBreakerTrip(cbOn, state, 1).trip).toBe(false);
 
+    // assessment 2: same fingerprint — streak 1
     state = computeCircuitBreakerStateAfterAssess(g, b, 2);
     g = { ...g, ...state, assessmentCount: 2 };
-    expect(state.sameBlockerStreak).toBe(2);
+    expect(state.sameBlockerStreak).toBe(1);
     expect(evaluateCircuitBreakerTrip(cbOn, state, 2).trip).toBe(false);
 
+    // assessment 3: same again — streak 2
     state = computeCircuitBreakerStateAfterAssess(g, b, 3);
+    g = { ...g, ...state, assessmentCount: 3 };
+    expect(state.sameBlockerStreak).toBe(2);
+    expect(evaluateCircuitBreakerTrip(cbOn, state, 3).trip).toBe(false);
+
+    // assessment 4: streak 3, trips at limit
+    state = computeCircuitBreakerStateAfterAssess(g, b, 4);
     expect(state.sameBlockerStreak).toBe(3);
-    expect(evaluateCircuitBreakerTrip(cbOn, state, 3).trip).toBe(true);
+    expect(evaluateCircuitBreakerTrip(cbOn, state, 4).trip).toBe(true);
   });
 
   it("resets streak when blockers change", () => {
@@ -56,7 +64,7 @@ describe("goal-circuit-breaker", () => {
       currentBlockers: ["a"],
     });
     const state = computeCircuitBreakerStateAfterAssess(g, ["b"], 3);
-    expect(state.sameBlockerStreak).toBe(1);
+    expect(state.sameBlockerStreak).toBe(0);
     expect(state.circuitBreakerLastProgressAssessmentCount).toBe(3);
   });
 
