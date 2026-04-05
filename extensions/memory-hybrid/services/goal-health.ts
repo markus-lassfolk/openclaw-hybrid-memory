@@ -177,13 +177,16 @@ export async function runGoalHealthCheck(opts: GoalHealthCheckOptions): Promise<
           );
           result.goalsUpdated++;
           result.actions.push({ goalId: g.id, label: g.label, action: "subagent-died", reason: `pid ${pid}` });
-          g = (await readGoal(goalsDir, goal.id))!;
+          const reread = await readGoal(goalsDir, goal.id);
+          if (!reread) continue;
+          g = reread;
         }
       }
     }
 
-    g = (await readGoal(goalsDir, goal.id))!;
-    if (!g || isTerminalStatus(g.status)) continue;
+    const reread2 = await readGoal(goalsDir, goal.id);
+    if (!reread2 || isTerminalStatus(reread2.status)) continue;
+    g = reread2;
 
     const staleThresholdMs = g.cooldownMinutes * 2 * 60 * 1000;
     const lastActivity = g.lastAssessedAt ?? g.lastDispatchedAt ?? g.createdAt;
@@ -225,8 +228,9 @@ export async function runGoalHealthCheck(opts: GoalHealthCheckOptions): Promise<
       result.actions.push({ goalId: g.id, label: g.label, action: "unstalled", reason: "activity" });
     }
 
-    g = (await readGoal(goalsDir, goal.id))!;
-    if (!g || isTerminalStatus(g.status) || g.status === "blocked") continue;
+    const reread3 = await readGoal(goalsDir, goal.id);
+    if (!reread3 || isTerminalStatus(reread3.status) || reread3.status === "blocked") continue;
+    g = reread3;
     if (g.verification && g.verification.type !== "manual" && g.verification.type !== "pr_merged") {
       const mech = await runMechanicalVerification(g, workspaceRoot, cfg);
       if (mech.ok && (g.status === "active" || g.status === "stalled")) {

@@ -155,7 +155,7 @@ export function registerGoalCommands(mem: Chainable, ctx: { cfg: HybridMemoryCon
       const totalDispatches = active.reduce((s, g2) => s + g2.dispatchCount, 0);
       console.log("Goal Budget Status\n");
       console.log(
-        `Global limits: ${gs.globalLimits.maxDispatchesPerHour} dispatches/hour (recent: ${totalDispatches}), max ${gs.globalLimits.maxActiveGoals} active goals (active: ${active.length})\n`,
+        `Global limits: ${gs.globalLimits.maxDispatchesPerHour} dispatches/hour (total: ${totalDispatches}), max ${gs.globalLimits.maxActiveGoals} active goals (active: ${active.length})\n`,
       );
       if (active.length === 0) {
         console.log("  No active goals.");

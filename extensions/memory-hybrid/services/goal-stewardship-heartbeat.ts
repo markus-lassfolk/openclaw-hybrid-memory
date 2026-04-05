@@ -23,7 +23,9 @@ export function compileHeartbeatMatchers(patterns: string[]): RegExp[] {
       if (s.startsWith("/") && s.lastIndexOf("/") > 0) {
         const last = s.lastIndexOf("/");
         const body = s.slice(1, last);
-        const flags = s.slice(last + 1) || "i";
+        let flags = s.slice(last + 1) || "i";
+        flags = flags.replace(/[gy]/g, "");
+        if (!flags.includes("i")) flags += "i";
         out.push(new RegExp(body, flags));
       } else {
         out.push(new RegExp(s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i"));
@@ -183,7 +185,7 @@ export async function buildMultiGoalStewardshipPrepend(
   const rr = await readRoundRobin(goalsDir);
   const rot = rr.offset % candidates.length;
   const rotated = [...candidates.slice(rot), ...candidates.slice(0, rot)];
-  const nextOff = (rr.offset + 1) % Math.max(1, candidates.length);
+  const nextOff = (rot + 1) % Math.max(1, candidates.length);
   await writeRoundRobin(goalsDir, { offset: nextOff });
 
   const maxGoals = Math.min(cfg.multiGoalMaxGoals, rotated.length);
