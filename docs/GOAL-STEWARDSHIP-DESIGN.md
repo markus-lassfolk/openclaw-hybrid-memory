@@ -315,7 +315,7 @@ The full stewardship directive is heartbeat-only.
 
 ### 5.4 Agent Tools
 
-**New file:** `tools/goal-tools.ts`, registered in `setup/register-tools.ts`
+**New file:** `tools/goal-tools.ts`, registered in `setup/tool-installers.ts`
 alongside memory tools.
 
 | Tool | Purpose | Key parameters |
@@ -344,7 +344,9 @@ initial implementation. The LLM must make an explicit tool call.
 
 ### 5.5 Subagent Integration
 
-**Modified file:** `lifecycle/stage-cleanup.ts`
+**New files:** `lifecycle/stage-goal-subagent.ts` (lifecycle hooks) and
+`services/goal-subagent.ts` (core linkage logic). Additionally,
+`lifecycle/stage-cleanup.ts` is extended for OCTAVE task signal integration.
 
 **`subagent_spawned`:** When the spawned subagent references a goal (via label
 convention or explicit metadata), add it to `goal.linkedTasks[]`. The link is

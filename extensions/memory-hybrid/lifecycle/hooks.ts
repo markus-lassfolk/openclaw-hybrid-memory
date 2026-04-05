@@ -161,6 +161,39 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
 
       await runCaptureStage(event, rApi, ctx, sessionState);
       const sessionId = sessionState.resolveSessionKey(event, rApi) ?? ctx.currentAgentIdRef.value ?? "default";
+      if (ctx.cfg.goalStewardship?.enabled) {
+        try {
+          const { listActiveGoals, resolveGoalsDir } = await import("../services/goal-stewardship.js");
+          const gDir = resolveGoalsDir(workspaceRoot, ctx.cfg.goalStewardship.goalsDir);
+          const activeGoals = await listActiveGoals(gDir);
+          if (activeGoals.length > 0) {
+            api.logger.debug?.(
+              `memory-hybrid: active goals at session end: ${activeGoals.map((g) => `${g.label}(${g.status})`).join(", ")}`,
+            );
+            try {
+              ctx.eventLog?.append({
+                sessionId,
+                timestamp: new Date().toISOString(),
+                eventType: "action_taken",
+                content: {
+                  kind: "goal.session_summary",
+                  activeGoals: activeGoals.map((g) => ({
+                    id: g.id,
+                    label: g.label,
+                    status: g.status,
+                    assessments: g.assessmentCount,
+                  })),
+                },
+              });
+            } catch {
+              /* non-fatal */
+            }
+          }
+        } catch (err) {
+          api.logger.debug?.(`memory-hybrid: goal session summary failed (non-fatal): ${String(err)}`);
+        }
+      }
+
       try {
         await buildDailyNarrative({
           sessionId,

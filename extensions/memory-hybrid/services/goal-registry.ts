@@ -121,6 +121,15 @@ export async function listActiveGoals(goalsDir: string): Promise<Goal[]> {
 
 export async function readGoalByLabel(goalsDir: string, label: string): Promise<Goal | null> {
   const norm = label.trim().toLowerCase();
+  try {
+    const raw = await readFile(join(goalsDir, INDEX_FILENAME), "utf-8");
+    const index = JSON.parse(raw) as GoalIndex;
+    const matches = index.goals.filter((g) => g.label.toLowerCase() === norm);
+    const best = matches.find((g) => !isTerminalStatus(g.status)) ?? matches[0];
+    if (best) return readGoal(goalsDir, best.id);
+  } catch {
+    /* index missing or corrupt — fall through to full scan */
+  }
   const all = await listGoals(goalsDir);
   const matches = all.filter((g) => g.label.toLowerCase() === norm);
   return matches.find((g) => !isTerminalStatus(g.status)) ?? matches[0] ?? null;
@@ -277,6 +286,13 @@ export async function terminateGoal(
   }
 
   return next;
+}
+
+export async function appendGoalHistory(goalsDir: string, id: string, entry: GoalHistoryEntry): Promise<void> {
+  const g = await readGoal(goalsDir, id);
+  if (!g) throw new Error(`Goal not found: ${id}`);
+  const next = { ...g, history: [...(g.history ?? []), entry] };
+  await writeGoal(goalsDir, next);
 }
 
 export async function resolveGoalId(goalsDir: string, idOrLabel: string): Promise<Goal | null> {

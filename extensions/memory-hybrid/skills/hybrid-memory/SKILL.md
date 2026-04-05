@@ -30,6 +30,39 @@ All memory-hybrid tools use **underscore** names: `memory_store`, `memory_recall
 
 If **auto-capture** and **auto-recall** are on, many turns need no tool call—but still **store** when the user explicitly asks to remember, or when the information is important and might not be captured automatically.
 
+## Goal Stewardship (when `goalStewardship.enabled: true`)
+
+When goal stewardship is enabled, use these tools for long-running, multi-session objectives:
+
+**When to use:** When the user assigns an outcome-oriented goal ("deploy X", "fix Y and get it merged", "keep Z healthy") that will take multiple sessions, subagents, or heartbeat cycles to complete.
+
+**Tools:**
+
+| Tool | When to call |
+|------|-------------|
+| `goal_register` | User assigns a multi-session, outcome-oriented goal. Provide a short `label` (alphanumeric/hyphens/underscores, e.g. `deploy-api`), a `description`, and explicit `acceptance_criteria`. Use `confirmed: true` when confirmation policy requires it. |
+| `goal_assess` | Every heartbeat stewardship turn — record observations, what was tried, and next action |
+| `goal_update` | Goal description, criteria, or priority needs updating as context evolves |
+| `goal_complete` | ALL acceptance criteria are verifiably met — include a clear verification summary |
+| `goal_abandon` | Goal is no longer relevant (user changed their mind) |
+| `active_task_propose_goal` | Draft a `goal_register` payload from an `ACTIVE-TASK.md` row (task hygiene) |
+
+**Subagent naming convention for automatic goal linkage:**
+When spawning a subagent to work on a goal, name the subagent with the goal's label as a prefix.
+For example, for goal `deploy-api`, name subagents `deploy-api-run-tests`, `deploy-api-create-pr`,
+`deploy-api-deploy`. This creates an automatic link between the subagent and the goal.
+
+**CLI (for inspection):**
+- `openclaw hybrid-mem goals list [--all] [--json]` — see all goals and their status
+- `openclaw hybrid-mem goals status <label> [--json]` — full detail with history
+- `openclaw hybrid-mem goals cancel <label> --reason "..."` — abandon a goal
+- `openclaw hybrid-mem goals budget` — check dispatch/assessment budget usage
+- `openclaw hybrid-mem goals reset-budget <label>` — reset counters after budget exhaustion
+- `openclaw hybrid-mem goals stewardship-run` — manually trigger one watchdog cycle
+- `openclaw hybrid-mem goals audit [--jsonl]` — structured audit snapshot
+
+**Docs:** `docs/GOAL-STEWARDSHIP-OPERATOR.md`, `docs/GOAL-STEWARDSHIP-AUDIT-PLAYBOOK.md`, `docs/GOAL-STEWARDSHIP-DESIGN.md`, `docs/TASK-HYGIENE.md`
+
 ## CLI and health checks
 
 - **`openclaw hybrid-mem verify [--fix]`** — Confirms SQLite, LanceDB, embedding config, and related jobs. Use when memory seems broken after config or gateway changes.
@@ -37,7 +70,6 @@ If **auto-capture** and **auto-recall** are on, many turns need no tool call—b
 - **`openclaw hybrid-mem enrich-entities`** — Backfill PERSON/ORG extraction for facts missing mention rows (after upgrades or bulk imports; uses LLM when graph features are on).
 - **`openclaw hybrid-mem active-tasks reconcile`** — Run before strategic or heartbeat jobs that trust `ACTIVE-TASK.md`: moves **In progress** rows to **Completed** when the OpenClaw session transcript no longer exists (fixes stale subagent bookkeeping; issues #978, #981).
 - **`openclaw hybrid-mem task-queue-status`** — Prints `state/task-queue/current.json` as JSON for cron (no bare `cat`); use after **`task-queue-touch`** if the gateway has not yet created the idle placeholder (issues #981, #983). For shell-only hosts, use repo **`scripts/task-queue.sh`** (`touch`, `status`, `run`) so the file and PID lifecycle stay consistent ([#1000](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/1000)).
-- **`openclaw hybrid-mem goals`** — When **goal stewardship** is enabled: `list`, `status`, `cancel --reason`, `stewardship-run`, **`audit`** (`--jsonl` optional), configurable heartbeat patterns, multi-goal weights, optional **`ACTIVE-TASK.md`** Goals mirror on heartbeat. Agent tools: `goal_register` (use **`confirmed: true`** when policy requires it), `goal_assess`, `goal_update`, `goal_complete`, `goal_abandon`. **`active_task_propose_goal`** drafts a `goal_register` payload from an **`ACTIVE-TASK.md`** row (task hygiene; see **`docs/TASK-HYGIENE.md`**). Docs: **`docs/GOAL-STEWARDSHIP-OPERATOR.md`**, **`docs/GOAL-STEWARDSHIP-AUDIT-PLAYBOOK.md`**, **`docs/GOAL-STEWARDSHIP-DESIGN.md`**, **`docs/TASK-HYGIENE.md`**.
 - Prefer plugin docs for full command lists (prune, distill, ingest-files, etc.).
 
 ## Configuration mindset

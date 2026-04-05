@@ -172,4 +172,188 @@ describe("runGoalHealthCheck", () => {
     });
     expect(r.actions.some((a) => a.action === "verifying")).toBe(true);
   });
+
+  it("escalates after consecutive failures", async () => {
+    goalsDir = await mkdtemp(join(tmpdir(), "gh-"));
+    workspaceRoot = await mkdtemp(join(tmpdir(), "ws-"));
+    const g = await createGoal(
+      goalsDir,
+      {
+        label: "fail_goal",
+        description: "d",
+        acceptanceCriteria: ["a"],
+        escalateAfterFailures: 2,
+      },
+      { ...defaults, escalateAfterFailures: 2 },
+    );
+    await updateGoal(
+      goalsDir,
+      g.id,
+      { consecutiveFailures: 2 },
+      { timestamp: new Date().toISOString(), action: "test", detail: "force", actor: "user" },
+    );
+    const r = await runGoalHealthCheck({ goalsDir, cfg: baseCfg(), workspaceRoot, logger: {} });
+    expect(r.actions.some((a) => a.action === "escalated")).toBe(true);
+    const after = await readGoal(goalsDir, g.id);
+    expect(after?.status).toBe("blocked");
+  });
+
+  it("unstalls goal when activity resumes", async () => {
+    goalsDir = await mkdtemp(join(tmpdir(), "gh-"));
+    workspaceRoot = await mkdtemp(join(tmpdir(), "ws-"));
+    const g = await createGoal(
+      goalsDir,
+      {
+        label: "unstall",
+        description: "d",
+        acceptanceCriteria: ["a"],
+        cooldownMinutes: 5,
+      },
+      { ...defaults, cooldownMinutes: 5 },
+    );
+    await updateGoal(
+      goalsDir,
+      g.id,
+      { status: "stalled", lastAssessedAt: new Date().toISOString() },
+      { timestamp: new Date().toISOString(), action: "test", detail: "stall", actor: "user" },
+    );
+    const r = await runGoalHealthCheck({ goalsDir, cfg: baseCfg(), workspaceRoot, logger: {} });
+    expect(r.actions.some((a) => a.action === "unstalled")).toBe(true);
+    const after = await readGoal(goalsDir, g.id);
+    expect(after?.status).toBe("active");
+  });
+
+  it("blocks goal when assessment budget is exhausted", async () => {
+    goalsDir = await mkdtemp(join(tmpdir(), "gh-"));
+    workspaceRoot = await mkdtemp(join(tmpdir(), "ws-"));
+    const g = await createGoal(
+      goalsDir,
+      {
+        label: "assess_budget",
+        description: "d",
+        acceptanceCriteria: ["a"],
+        maxAssessments: 1,
+      },
+      { ...defaults, maxAssessments: 1 },
+    );
+    await updateGoal(
+      goalsDir,
+      g.id,
+      { assessmentCount: 1 },
+      { timestamp: new Date().toISOString(), action: "test", detail: "fill", actor: "user" },
+    );
+    const r = await runGoalHealthCheck({ goalsDir, cfg: baseCfg(), workspaceRoot, logger: {} });
+    expect(r.actions.some((a) => a.action === "blocked")).toBe(true);
+    const after = await readGoal(goalsDir, g.id);
+    expect(after?.status).toBe("blocked");
+  });
+
+  it("skips command_exit_zero when allowCommandVerification is false", async () => {
+    goalsDir = await mkdtemp(join(tmpdir(), "gh-"));
+    workspaceRoot = await mkdtemp(join(tmpdir(), "ws-"));
+    await createGoal(
+      goalsDir,
+      {
+        label: "cmd_goal",
+        description: "d",
+        acceptanceCriteria: ["a"],
+        verification: { type: "command_exit_zero", target: "true" },
+      },
+      defaults,
+    );
+    const r = await runGoalHealthCheck({
+      goalsDir,
+      cfg: baseCfg({ allowCommandVerification: false }),
+      workspaceRoot,
+      logger: {},
+    });
+    expect(r.actions.every((a) => a.action !== "verifying")).toBe(true);
+  });
+
+  it("runs command_exit_zero when allowCommandVerification is true", async () => {
+    goalsDir = await mkdtemp(join(tmpdir(), "gh-"));
+    workspaceRoot = await mkdtemp(join(tmpdir(), "ws-"));
+    await createGoal(
+      goalsDir,
+      {
+        label: "cmd_ok",
+        description: "d",
+        acceptanceCriteria: ["a"],
+        verification: { type: "command_exit_zero", target: "true" },
+      },
+      defaults,
+    );
+    const r = await runGoalHealthCheck({
+      goalsDir,
+      cfg: baseCfg({ allowCommandVerification: true }),
+      workspaceRoot,
+      logger: {},
+    });
+    expect(r.actions.some((a) => a.action === "verifying")).toBe(true);
+  });
+
+  it("escalates goal after consecutive failures", async () => {
+    goalsDir = await mkdtemp(join(tmpdir(), "gh-"));
+    workspaceRoot = await mkdtemp(join(tmpdir(), "ws-"));
+    const g = await createGoal(
+      goalsDir,
+      {
+        label: "escalate_label",
+        description: "d",
+        acceptanceCriteria: ["a"],
+        escalateAfterFailures: 2,
+      },
+      { ...defaults, escalateAfterFailures: 2 },
+    );
+    await updateGoal(
+      goalsDir,
+      g.id,
+      { consecutiveFailures: 2 },
+      { timestamp: new Date().toISOString(), action: "test", detail: "force", actor: "user" },
+    );
+    const r = await runGoalHealthCheck({ goalsDir, cfg: baseCfg(), workspaceRoot, logger: {} });
+    expect(r.actions.some((a) => a.action === "escalated" && a.reason === "failures")).toBe(true);
+    const after = await readGoal(goalsDir, g.id);
+    expect(after?.status).toBe("blocked");
+    expect(after?.currentBlockers.some((b) => b.includes("Escalated after"))).toBe(true);
+  });
+
+  it("transitions to verifying on command_exit_zero success", async () => {
+    goalsDir = await mkdtemp(join(tmpdir(), "gh-"));
+    workspaceRoot = await mkdtemp(join(tmpdir(), "ws-"));
+    await createGoal(
+      goalsDir,
+      {
+        label: "cmd_echo",
+        description: "d",
+        acceptanceCriteria: ["a"],
+        verification: { type: "command_exit_zero", target: "echo hello" },
+      },
+      defaults,
+    );
+    const r = await runGoalHealthCheck({
+      goalsDir,
+      cfg: baseCfg({ allowCommandVerification: true }),
+      workspaceRoot,
+      logger: {},
+    });
+    const verifying = r.actions.find((a) => a.action === "verifying");
+    expect(verifying).toBeDefined();
+    expect(verifying?.reason).toContain("command ok");
+  });
+
+  it("goalsChecked and goalsUpdated counts are correct", async () => {
+    goalsDir = await mkdtemp(join(tmpdir(), "gh-"));
+    workspaceRoot = await mkdtemp(join(tmpdir(), "ws-"));
+    await createGoal(goalsDir, { label: "count_a", description: "d", acceptanceCriteria: ["a"] }, defaults);
+    await createGoal(goalsDir, { label: "count_b", description: "d", acceptanceCriteria: ["b"] }, defaults);
+    const r = await runGoalHealthCheck({
+      goalsDir,
+      cfg: baseCfg(),
+      workspaceRoot,
+      logger: {},
+    });
+    expect(r.goalsChecked).toBe(2);
+    expect(r.goalsUpdated).toBe(0);
+  });
 });

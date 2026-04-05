@@ -2,40 +2,15 @@ import { describe, expect, it } from "vitest";
 import type { GoalStewardshipCircuitBreakerConfig } from "../config/types/index.js";
 import {
   blockerFingerprint,
+  composeCircuitBreakerHumanSummary,
   computeCircuitBreakerStateAfterAssess,
   evaluateCircuitBreakerTrip,
 } from "../services/goal-circuit-breaker.js";
 import type { Goal } from "../services/goal-stewardship-types.js";
+import { baseGoal as baseGoalHelper } from "./helpers/goal-helpers.js";
 
 function baseGoal(over: Partial<Goal> = {}): Goal {
-  return {
-    id: "id-1",
-    label: "g1",
-    description: "desc",
-    acceptanceCriteria: ["c1"],
-    status: "active",
-    priority: "normal",
-    createdAt: "2026-01-01T00:00:00.000Z",
-    lastAssessedAt: null,
-    lastDispatchedAt: null,
-    assessmentCount: 0,
-    dispatchCount: 0,
-    currentBlockers: [],
-    lastOutcome: null,
-    maxDispatches: 20,
-    maxAssessments: 50,
-    cooldownMinutes: 10,
-    escalateAfterFailures: 3,
-    consecutiveFailures: 0,
-    lastBlockerFingerprint: null,
-    sameBlockerStreak: 0,
-    circuitBreakerLastProgressAssessmentCount: 0,
-    humanEscalationSummary: null,
-    escalationKind: null,
-    linkedTasks: [],
-    history: [],
-    ...over,
-  };
+  return baseGoalHelper(over);
 }
 
 const cbOn: GoalStewardshipCircuitBreakerConfig = {
@@ -124,5 +99,40 @@ describe("goal-circuit-breaker", () => {
     };
     const cfg: GoalStewardshipCircuitBreakerConfig = { ...cbOn, enabled: false };
     expect(evaluateCircuitBreakerTrip(cfg, state, 10).trip).toBe(false);
+  });
+
+  it("composeCircuitBreakerHumanSummary includes blockers, criteria, and history", () => {
+    const g = baseGoal({
+      label: "stuck",
+      description: "stuck goal",
+      currentBlockers: ["api down"],
+      acceptanceCriteria: ["api works"],
+      sameBlockerStreak: 3,
+      assessmentCount: 5,
+      circuitBreakerLastProgressAssessmentCount: 2,
+      history: [
+        { timestamp: "2026-01-01T00:00:00Z", action: "assessed", detail: "tried fix 1", actor: "steward" },
+        { timestamp: "2026-01-02T00:00:00Z", action: "assessed", detail: "tried fix 2", actor: "steward" },
+      ],
+    });
+    const summary = composeCircuitBreakerHumanSummary(g, "same_blocker_streak", cbOn);
+    expect(summary).toContain("stuck");
+    expect(summary).toContain("api down");
+    expect(summary).toContain("api works");
+    expect(summary).toContain("tried fix 1");
+    expect(summary).toContain("tried fix 2");
+    expect(summary).toContain("human should unblock");
+  });
+
+  it("composeCircuitBreakerHumanSummary short mode when composeHumanSummary=false", () => {
+    const g = baseGoal({
+      label: "short",
+      currentBlockers: ["x"],
+      sameBlockerStreak: 3,
+    });
+    const cfg: GoalStewardshipCircuitBreakerConfig = { ...cbOn, composeHumanSummary: false };
+    const summary = composeCircuitBreakerHumanSummary(g, "same_blocker_streak", cfg);
+    expect(summary).not.toContain("## Circuit breaker escalation");
+    expect(summary).toContain("short");
   });
 });

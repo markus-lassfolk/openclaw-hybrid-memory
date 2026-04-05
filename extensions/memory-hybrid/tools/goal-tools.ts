@@ -234,7 +234,7 @@ export function registerGoalTools(ctx: GoalToolsContext, api: ClawdbotPluginApi)
             lastAssessedAt: ts,
             dispatchCount,
             lastDispatchedAt,
-            lastOutcome: p.assessment,
+            lastOutcome: `${p.assessment.slice(0, 400)} | next: ${p.next_action.slice(0, 200)}`,
             currentBlockers: newBlockers,
             ...cbState,
           };
@@ -376,6 +376,12 @@ export function registerGoalTools(ctx: GoalToolsContext, api: ClawdbotPluginApi)
         const p = params as { goal_id: string; reason: string };
         const goal = await resolveGoalId(goalsDir, p.goal_id);
         if (!goal) return { content: [{ type: "text", text: "Goal not found." }], details: { error: "not_found" } };
+        if (isTerminalStatus(goal.status)) {
+          return {
+            content: [{ type: "text", text: `Goal ${goal.label} is already ${goal.status}.` }],
+            details: { error: "terminal" },
+          };
+        }
         const completed = await terminateGoal(goalsDir, goal.id, "completed", p.reason, "agent", eventLog);
         if (cfg.activeTask.flushOnComplete !== false) {
           await flushGoalOutcomeToMemory(memoryDir, `Goal completed: ${completed.label}`, [`**Outcome:** ${p.reason}`]);
@@ -406,9 +412,25 @@ export function registerGoalTools(ctx: GoalToolsContext, api: ClawdbotPluginApi)
         const p = params as { goal_id: string; reason: string };
         const goal = await resolveGoalId(goalsDir, p.goal_id);
         if (!goal) return { content: [{ type: "text", text: "Goal not found." }], details: { error: "not_found" } };
+        if (isTerminalStatus(goal.status)) {
+          return {
+            content: [{ type: "text", text: `Goal ${goal.label} is already ${goal.status}.` }],
+            details: { error: "terminal" },
+          };
+        }
         const abandoned = await terminateGoal(goalsDir, goal.id, "abandoned", p.reason, "agent", eventLog);
         if (cfg.activeTask.flushOnComplete !== false) {
           await flushGoalOutcomeToMemory(memoryDir, `Goal abandoned: ${abandoned.label}`, [`**Reason:** ${p.reason}`]);
+        }
+        try {
+          factsDb?.recordEpisode?.({
+            event: `Goal abandoned: ${abandoned.label}`,
+            outcome: "failure",
+            context: p.reason,
+            importance: 0.5,
+          });
+        } catch {
+          /* */
         }
         return { content: [{ type: "text", text: `Abandoned ${abandoned.label}` }], details: { goal: abandoned } };
       },

@@ -41,7 +41,7 @@ export function compileHeartbeatMatchers(patterns: string[]): RegExp[] {
 let cachedPatternKey: string | null = null;
 let cachedMatchers: RegExp[] = [];
 
-function getCachedMatchers(patterns: string[]): RegExp[] {
+export function getCachedMatchers(patterns: string[]): RegExp[] {
   const key = patterns.join("\0");
   if (key !== cachedPatternKey) {
     cachedPatternKey = key;

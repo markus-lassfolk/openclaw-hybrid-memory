@@ -52,6 +52,7 @@ async function consumePendingTaskSignals(
   staleMinutes: number,
   flushOnComplete: boolean,
   logger?: { info?: (msg: string) => void; warn?: (msg: string) => void },
+  ctx?: LifecycleContext,
 ): Promise<void> {
   const memoryDir = join(workspaceRoot, "memory");
   let signals: PendingTaskSignal[];
@@ -248,6 +249,24 @@ async function consumePendingTaskSignals(
         await flushCompletedTaskToMemory(completed, memoryDir).catch(() => {});
       }
     }
+    if (ctx?.cfg?.goalStewardship?.enabled) {
+      try {
+        const { resolveGoalsDir, updateGoalOnSubagentEnd } = await import("../services/goal-stewardship.js");
+        const gDir = resolveGoalsDir(workspaceRoot, ctx.cfg.goalStewardship.goalsDir);
+        for (const signal of processedSignals) {
+          if (signal.signal === "completed" || signal.signal === "update") {
+            await updateGoalOnSubagentEnd(gDir, {
+              label: signal.taskRef,
+              sessionKey: null,
+              success: signal.signal === "completed",
+              outcome: signal.summary ?? null,
+            }).catch(() => {});
+          }
+        }
+      } catch {
+        /* non-fatal */
+      }
+    }
     logger?.info?.(`memory-hybrid: consumed ${processedSignals.length} pending task signal(s) from sub-agents`);
   } else if (expiredSignals.length > 0) {
     for (const signal of expiredSignals) await deleteSignal(signal._filePath).catch(() => {});
@@ -359,6 +378,7 @@ export function registerCleanupHandlers(
           staleMinutes,
           ctx.cfg.activeTask.flushOnComplete,
           api.logger,
+          ctx,
         );
         return;
       }
@@ -371,6 +391,7 @@ export function registerCleanupHandlers(
           staleMinutes,
           ctx.cfg.activeTask.flushOnComplete,
           api.logger,
+          ctx,
         );
         return;
       }
@@ -383,6 +404,7 @@ export function registerCleanupHandlers(
           staleMinutes,
           ctx.cfg.activeTask.flushOnComplete,
           api.logger,
+          ctx,
         );
         return;
       }
@@ -446,6 +468,7 @@ export function registerCleanupHandlers(
         staleMinutes,
         ctx.cfg.activeTask.flushOnComplete,
         api.logger,
+        ctx,
       );
     } catch (err) {
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
