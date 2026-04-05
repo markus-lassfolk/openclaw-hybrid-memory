@@ -178,10 +178,33 @@ export abstract class BaseSqliteStore {
 
   close(): void {
     if (this.deferClose) {
-      if (this.closePhase !== "open") return;
-      this.closePhase = "closing";
-      if (this.activeOps === 0) {
-        this.finalizeShutdown();
+      // Make close idempotent and non-terminal for deferred stores.
+      // We intentionally close the native handle immediately when idle, but keep
+      // lifecycle in "open" so a subsequent operation can lazily reopen via `liveDb`.
+      // This avoids runtime "The database connection is not open" for tools that
+      // run after background maintenance closed the store (#1079).
+      if (this.closePhase === "closing" && this.activeOps > 0) {
+        return;
+      }
+      if (this.closePhase === "shutdown") {
+        return;
+      }
+      if (this.activeOps > 0) {
+        this.closePhase = "closing";
+        return;
+      }
+
+      this._dbOpen = false;
+      this._closed = false;
+      this.closePhase = "open";
+      try {
+        this.db.close();
+      } catch (err) {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+          operation: "db-close",
+          subsystem: this.getSubsystemName(),
+          severity: "info",
+        });
       }
       return;
     }

@@ -197,16 +197,18 @@ describe("CrystallizationStore.count", () => {
 describe("CrystallizationStore.close / isOpen", () => {
   it("isOpen before close", () => expect(cStore.isOpen()).toBe(true));
 
-  it("isOpen false after close", () => {
+  it("close keeps deferred store reusable and lazy-reopens on next op", () => {
     cStore.close();
+    // Deferred-close stores now remain logically reusable between operations.
     expect(cStore.isOpen()).toBe(false);
-    cStore = new CrystallizationStore(join(tmpDir, "cs2.db"));
+
+    expect(() => cStore.list()).not.toThrow();
+    expect(cStore.isOpen()).toBe(true);
   });
 
   it("double-close does not throw", () => {
     cStore.close();
     expect(() => cStore.close()).not.toThrow();
-    cStore = new CrystallizationStore(join(tmpDir, "cs3.db"));
   });
 });
 
