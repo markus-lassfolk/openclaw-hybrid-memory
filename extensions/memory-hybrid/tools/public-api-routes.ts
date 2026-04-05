@@ -127,7 +127,7 @@ export function registerPublicApiRoutes(ctx: PublicApiRoutesContext, api: Clawdb
     async (req) => {
       const url = parseReqUrl(req.url);
       const limit = parseLimitParam(url.searchParams.get("limit"), 20, 200);
-      const facts = ctx.factsDb.list(limit, { includeSuperseded: false });
+      const facts = ctx.factsDb.list(limit);
 
       return toJson(200, {
         limit,
