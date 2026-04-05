@@ -3,16 +3,7 @@ import type { FactsDB } from "../backends/facts-db.js";
 import type { NarrativesDB } from "../backends/narratives-db.js";
 import { buildPublicExportBundle } from "../services/public-export-bundle.js";
 import { versionInfo } from "../versionInfo.js";
-
-export interface HttpRouteOptions {
-  authenticated: boolean;
-}
-
-export type HttpRequestHandler = (req: {
-  method: string;
-  url: string;
-  headers: Record<string, string>;
-}) => Promise<{ status: number; headers?: Record<string, string>; body: string }>;
+import type { HttpRouteOptions, HttpRequestHandler } from "./http-route-types.js";
 
 export interface PublicApiRoutesContext {
   cfg: {
