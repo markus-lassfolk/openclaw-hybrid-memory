@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { type MessageLike, sanitizeMessagesForClaude } from "../utils/sanitize-messages.js";
+import {
+  type MessageLike,
+  sanitizeMessagesForClaude,
+  sanitizeMessagesForOpenAIResponses,
+} from "../utils/sanitize-messages.js";
 
 describe("sanitizeMessagesForClaude", () => {
   it("returns same array when no assistant message has tool_use", () => {
@@ -93,5 +97,58 @@ describe("sanitizeMessagesForClaude", () => {
     expect(out[0]).toBe(messages[0]);
     expect(out[1]).toBe(messages[1]);
     expect(out[2].role).toBe("tool");
+  });
+});
+
+describe("sanitizeMessagesForOpenAIResponses", () => {
+  it("returns same array when no reasoning blocks present", () => {
+    const messages: MessageLike[] = [
+      { role: "user", content: "Hi" },
+      { role: "assistant", content: [{ type: "text", text: "Hello" }] },
+    ];
+    const out = sanitizeMessagesForOpenAIResponses(messages);
+    expect(out).toBe(messages);
+  });
+
+  it("strips reasoning blocks by type", () => {
+    const messages: MessageLike[] = [
+      {
+        role: "assistant",
+        content: [
+          { type: "reasoning", id: "rs_abc" },
+          { type: "text", text: "answer" },
+        ],
+      },
+    ];
+    const out = sanitizeMessagesForOpenAIResponses(messages);
+    expect(out).not.toBe(messages);
+    const content = (out[0] as { content: unknown[] }).content;
+    expect(content).toHaveLength(1);
+    expect((content[0] as { type: string }).type).toBe("text");
+  });
+
+  it("strips blocks with rs_ id prefix", () => {
+    const messages: MessageLike[] = [
+      {
+        role: "assistant",
+        content: [
+          { id: "rs_xyz", type: "unknown_reasoning" },
+          { type: "text", text: "ok" },
+        ],
+      },
+    ];
+    const out = sanitizeMessagesForOpenAIResponses(messages);
+    const content = (out[0] as { content: unknown[] }).content;
+    expect(content).toHaveLength(1);
+  });
+
+  it("handles empty array", () => {
+    expect(sanitizeMessagesForOpenAIResponses([])).toEqual([]);
+  });
+
+  it("leaves string content untouched", () => {
+    const messages: MessageLike[] = [{ role: "user", content: "plain string" }];
+    const out = sanitizeMessagesForOpenAIResponses(messages);
+    expect(out).toBe(messages);
   });
 });

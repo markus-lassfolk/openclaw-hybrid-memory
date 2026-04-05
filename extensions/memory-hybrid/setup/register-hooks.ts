@@ -13,7 +13,11 @@ import { capturePluginError } from "../services/error-reporter.js";
 import { runPreConsolidationFlush } from "../services/pre-consolidation-flush.js";
 import { buildPostCompactionRecallSnippet } from "../services/post-compaction-recall.js";
 import { WorkflowTracker } from "../services/workflow-tracker.js";
-import { type MessageLike, sanitizeMessagesForClaude } from "../utils/sanitize-messages.js";
+import {
+  type MessageLike,
+  sanitizeMessagesForClaude,
+  sanitizeMessagesForOpenAIResponses,
+} from "../utils/sanitize-messages.js";
 
 /** Lifecycle hooks receive the stable plugin API (Phase 3). */
 type HooksContext = MemoryPluginAPI;
@@ -118,11 +122,13 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
   });
 
   // Temporary fix: ensure every tool_use has a tool_result immediately after (Claude API requirement).
+  // Strip OpenAI Responses `reasoning` blocks (rs_*) so replay does not 400 (openclaw-maeve#23).
   // Mutates event.historyMessages in place so OpenClaw core uses the sanitized array.
   api.on("llm_input", (ev: unknown) => {
     const event = ev as { historyMessages?: unknown[] };
     if (!event?.historyMessages || !Array.isArray(event.historyMessages)) return;
-    const sanitized = sanitizeMessagesForClaude(event.historyMessages as MessageLike[]);
+    let sanitized = sanitizeMessagesForClaude(event.historyMessages as MessageLike[]);
+    sanitized = sanitizeMessagesForOpenAIResponses(sanitized);
     if (sanitized !== event.historyMessages) {
       event.historyMessages.length = 0;
       for (const m of sanitized) event.historyMessages.push(m);
