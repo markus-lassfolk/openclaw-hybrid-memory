@@ -38,10 +38,22 @@ export function compileHeartbeatMatchers(patterns: string[]): RegExp[] {
   return out;
 }
 
+let cachedPatternKey: string | null = null;
+let cachedMatchers: RegExp[] = [];
+
+function getCachedMatchers(patterns: string[]): RegExp[] {
+  const key = patterns.join("\0");
+  if (key !== cachedPatternKey) {
+    cachedPatternKey = key;
+    cachedMatchers = compileHeartbeatMatchers(patterns);
+  }
+  return cachedMatchers;
+}
+
 export function matchesHeartbeat(userText: string, cfg: GoalStewardshipConfig): boolean {
   const t = userText.trim();
   if (!t) return false;
-  const matchers = compileHeartbeatMatchers(cfg.heartbeatPatterns);
+  const matchers = getCachedMatchers(cfg.heartbeatPatterns);
   return matchers.some((re) => re.test(t));
 }
 

@@ -354,6 +354,8 @@ export type GoalStewardshipConfig = {
   /** When triage/heuristic indicates complex work, add a line suggesting heavy-tier reasoning for dispatch. */
   triageSuggestHeavyDirective: boolean;
   circuitBreaker: GoalStewardshipCircuitBreakerConfig;
+  /** Allow command_exit_zero verification in the watchdog (shell execution). Default: false. */
+  allowCommandVerification: boolean;
 };
 
 /** Self-correction pipeline: semantic dedup, TOOLS.md sectioning, auto-rewrite vs approve */

@@ -122,7 +122,8 @@ export async function listActiveGoals(goalsDir: string): Promise<Goal[]> {
 export async function readGoalByLabel(goalsDir: string, label: string): Promise<Goal | null> {
   const norm = label.trim().toLowerCase();
   const all = await listGoals(goalsDir);
-  return all.find((g) => g.label.toLowerCase() === norm) ?? null;
+  const matches = all.filter((g) => g.label.toLowerCase() === norm);
+  return matches.find((g) => !isTerminalStatus(g.status)) ?? matches[0] ?? null;
 }
 
 export async function writeGoal(goalsDir: string, goal: Goal): Promise<void> {

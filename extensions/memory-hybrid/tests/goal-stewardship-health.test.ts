@@ -44,6 +44,7 @@ function baseCfg(over: Partial<GoalStewardshipConfig> = {}): GoalStewardshipConf
       composeHumanSummary: true,
       appendMemoryEscalation: true,
     },
+    allowCommandVerification: false,
     ...over,
   };
 }

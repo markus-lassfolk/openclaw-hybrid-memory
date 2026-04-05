@@ -32,6 +32,7 @@ function gs(partial: Partial<GoalStewardshipConfig>): GoalStewardshipConfig {
       composeHumanSummary: true,
       appendMemoryEscalation: true,
     },
+    allowCommandVerification: false,
     ...partial,
   };
 }

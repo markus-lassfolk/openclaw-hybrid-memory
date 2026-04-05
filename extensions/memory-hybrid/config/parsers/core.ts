@@ -365,6 +365,7 @@ export function parseGoalStewardshipConfig(cfg: Record<string, unknown>): GoalSt
       composeHumanSummary: cbRaw?.composeHumanSummary !== false,
       appendMemoryEscalation: cbRaw?.appendMemoryEscalation !== false,
     },
+    allowCommandVerification: raw?.allowCommandVerification === true,
   };
 }
 

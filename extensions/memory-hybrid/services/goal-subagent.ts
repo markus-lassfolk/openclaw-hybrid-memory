@@ -96,9 +96,10 @@ export async function updateGoalOnSubagentEnd(
 ): Promise<void> {
   const goals = await listActiveGoals(goalsDir);
   for (const g of goals) {
-    const match = g.linkedTasks.find(
-      (t) => t.label === info.label || Boolean(info.sessionKey && t.sessionKey && t.sessionKey === info.sessionKey),
-    );
+    const sessionMatch = info.sessionKey
+      ? g.linkedTasks.find((t) => t.sessionKey && t.sessionKey === info.sessionKey)
+      : undefined;
+    const match = sessionMatch ?? g.linkedTasks.find((t) => t.label === info.label);
     if (!match) continue;
 
     const ts = nowIso();

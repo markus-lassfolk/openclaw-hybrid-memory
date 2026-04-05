@@ -33,7 +33,13 @@ function nowIso(): string {
   return new Date().toISOString();
 }
 
-async function runMechanicalVerification(goal: Goal, workspaceRoot: string): Promise<{ ok: boolean; detail: string }> {
+const SHELL_DENY_RE = /[;&|`$(){}!\n\\]/;
+
+async function runMechanicalVerification(
+  goal: Goal,
+  workspaceRoot: string,
+  cfg: GoalStewardshipConfig,
+): Promise<{ ok: boolean; detail: string }> {
   const v = goal.verification;
   if (!v || v.type === "manual" || v.type === "pr_merged") {
     return { ok: false, detail: "skip" };
@@ -43,10 +49,21 @@ async function runMechanicalVerification(goal: Goal, workspaceRoot: string): Pro
     return { ok: existsSync(p), detail: `file_exists: ${p}` };
   }
   if (v.type === "command_exit_zero") {
+    if (!cfg.allowCommandVerification) {
+      return {
+        ok: false,
+        detail: "command_exit_zero verification disabled (set goalStewardship.allowCommandVerification: true)",
+      };
+    }
+    if (SHELL_DENY_RE.test(v.target)) {
+      return { ok: false, detail: "command_exit_zero target contains disallowed shell metacharacters" };
+    }
     try {
-      await execFileAsync("/bin/sh", ["-c", v.target], {
+      const parts = v.target.split(/\s+/);
+      await execFileAsync(parts[0]!, parts.slice(1), {
         cwd: workspaceRoot,
         timeout: 30_000,
+        shell: false,
       });
       return { ok: true, detail: `command ok: ${v.target.slice(0, 80)}` };
     } catch (e) {
@@ -211,7 +228,7 @@ export async function runGoalHealthCheck(opts: GoalHealthCheckOptions): Promise<
     g = (await readGoal(goalsDir, goal.id))!;
     if (!g || isTerminalStatus(g.status) || g.status === "blocked") continue;
     if (g.verification && g.verification.type !== "manual" && g.verification.type !== "pr_merged") {
-      const mech = await runMechanicalVerification(g, workspaceRoot);
+      const mech = await runMechanicalVerification(g, workspaceRoot, cfg);
       if (mech.ok && (g.status === "active" || g.status === "stalled")) {
         await updateGoal(
           goalsDir,

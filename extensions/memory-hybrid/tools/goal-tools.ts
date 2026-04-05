@@ -48,7 +48,12 @@ async function flushGoalOutcomeToMemory(memoryDir: string, title: string, lines:
   const filePath = join(memoryDir, `${date}.md`);
   await mkdir(memoryDir, { recursive: true });
   const block = ["", `## ${title} — ${date}`, "", ...lines, ""].join("\n");
-  await appendFile(filePath, block, "utf-8").catch(() => {});
+  await appendFile(filePath, block, "utf-8").catch((err) => {
+    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+      subsystem: "goal-tools",
+      operation: "flushGoalOutcomeToMemory",
+    });
+  });
 }
 
 export function registerGoalTools(ctx: GoalToolsContext, api: ClawdbotPluginApi): void {
@@ -212,9 +217,16 @@ export function registerGoalTools(ctx: GoalToolsContext, api: ClawdbotPluginApi)
             dispatchCount += 1;
             lastDispatchedAt = ts;
           }
-          const newBlockers = p.blockers ?? goal.currentBlockers;
+          const blockersExplicitlyProvided = p.blockers !== undefined;
+          const newBlockers = blockersExplicitlyProvided ? p.blockers! : goal.currentBlockers;
           const newAssessmentCount = goal.assessmentCount + 1;
-          const cbState = computeCircuitBreakerStateAfterAssess(goal, newBlockers, newAssessmentCount);
+          const cbState = blockersExplicitlyProvided
+            ? computeCircuitBreakerStateAfterAssess(goal, newBlockers, newAssessmentCount)
+            : {
+                lastBlockerFingerprint: goal.lastBlockerFingerprint,
+                sameBlockerStreak: goal.sameBlockerStreak,
+                circuitBreakerLastProgressAssessmentCount: goal.circuitBreakerLastProgressAssessmentCount,
+              };
           const tripEval = evaluateCircuitBreakerTrip(gs.circuitBreaker, cbState, newAssessmentCount);
 
           const basePatch = {
@@ -230,7 +242,7 @@ export function registerGoalTools(ctx: GoalToolsContext, api: ClawdbotPluginApi)
           const assessEntry: GoalHistoryEntry = {
             timestamp: ts,
             action: "assessed",
-            detail: p.assessment.slice(0, 500),
+            detail: `${p.assessment.slice(0, 400)} | next: ${p.next_action.slice(0, 100)}`,
             actor: "steward",
           };
 
@@ -305,6 +317,10 @@ export function registerGoalTools(ctx: GoalToolsContext, api: ClawdbotPluginApi)
             details: { goal: updated },
           };
         } catch (err) {
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+            subsystem: "goal-tools",
+            operation: "goal_assess",
+          });
           return { content: [{ type: "text", text: String(err) }], details: { error: String(err) } };
         }
       },

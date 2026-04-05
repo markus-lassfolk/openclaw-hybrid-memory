@@ -1915,6 +1915,10 @@
           "triageSuggestHeavyDirective": {
             "type": "boolean"
           },
+          "allowCommandVerification": {
+            "type": "boolean",
+            "description": "Allow command_exit_zero goal verification in the watchdog (shell execution). Default: false — must be explicitly opted in."
+          },
           "circuitBreaker": {
             "type": "object",
             "additionalProperties": false,
