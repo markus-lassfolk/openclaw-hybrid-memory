@@ -59,8 +59,12 @@ function extractFactId(url: URL): string | null {
 
   const routePrefix = `${PUBLIC_API_PREFIX}${PUBLIC_API_PATHS.fact}/`;
   if (url.pathname.startsWith(routePrefix)) {
-    const maybe = decodeURIComponent(url.pathname.slice(routePrefix.length)).trim();
-    return maybe || null;
+    try {
+      const maybe = decodeURIComponent(url.pathname.slice(routePrefix.length)).trim();
+      return maybe || null;
+    } catch {
+      return null;
+    }
   }
 
   return null;
@@ -74,7 +78,14 @@ export function registerPublicApiRoutes(ctx: PublicApiRoutesContext, api: Clawdb
     authenticated: ctx.cfg.health.authenticated,
   };
 
-  (api.registerHttpRoute as (path: string, handler: HttpRequestHandler, opts: HttpRouteOptions) => void)(
+  const makeRoute = (path: string, handler: HttpRequestHandler) =>
+    (api.registerHttpRoute as (route: { path: string; auth: boolean; handler: HttpRequestHandler }) => void)({
+      path,
+      auth: routeOpts.authenticated,
+      handler,
+    });
+
+  makeRoute(
     `${PUBLIC_API_PREFIX}${PUBLIC_API_PATHS.health}`,
     async () =>
       toJson(200, {
@@ -86,10 +97,9 @@ export function registerPublicApiRoutes(ctx: PublicApiRoutesContext, api: Clawdb
         },
         endpoints: Object.values(PUBLIC_API_PATHS).map((path) => `${PUBLIC_API_PREFIX}${path}`),
       }),
-    routeOpts,
   );
 
-  (api.registerHttpRoute as (path: string, handler: HttpRequestHandler, opts: HttpRouteOptions) => void)(
+  makeRoute(
     `${PUBLIC_API_PREFIX}${PUBLIC_API_PATHS.search}`,
     async (req) => {
       const url = parseReqUrl(req.url);
@@ -110,15 +120,14 @@ export function registerPublicApiRoutes(ctx: PublicApiRoutesContext, api: Clawdb
         results,
       });
     },
-    routeOpts,
   );
 
-  (api.registerHttpRoute as (path: string, handler: HttpRequestHandler, opts: HttpRouteOptions) => void)(
+  makeRoute(
     `${PUBLIC_API_PREFIX}${PUBLIC_API_PATHS.timeline}`,
     async (req) => {
       const url = parseReqUrl(req.url);
       const limit = parseLimitParam(url.searchParams.get("limit"), 20, 200);
-      const facts = ctx.factsDb.list(limit);
+      const facts = ctx.factsDb.list(limit, { includeSuperseded: false });
 
       return toJson(200, {
         limit,
@@ -126,10 +135,9 @@ export function registerPublicApiRoutes(ctx: PublicApiRoutesContext, api: Clawdb
         timeline: facts,
       });
     },
-    routeOpts,
   );
 
-  (api.registerHttpRoute as (path: string, handler: HttpRequestHandler, opts: HttpRouteOptions) => void)(
+  makeRoute(
     `${PUBLIC_API_PREFIX}${PUBLIC_API_PATHS.stats}`,
     async () => {
       const recentNarratives = ctx.narrativesDb?.listRecent(10, "all") ?? [];
@@ -158,10 +166,9 @@ export function registerPublicApiRoutes(ctx: PublicApiRoutesContext, api: Clawdb
         },
       });
     },
-    routeOpts,
   );
 
-  (api.registerHttpRoute as (path: string, handler: HttpRequestHandler, opts: HttpRouteOptions) => void)(
+  makeRoute(
     `${PUBLIC_API_PREFIX}${PUBLIC_API_PATHS.export}`,
     async (req) => {
       const url = parseReqUrl(req.url);
@@ -178,10 +185,9 @@ export function registerPublicApiRoutes(ctx: PublicApiRoutesContext, api: Clawdb
 
       return toJson(200, bundle);
     },
-    routeOpts,
   );
 
-  (api.registerHttpRoute as (path: string, handler: HttpRequestHandler, opts: HttpRouteOptions) => void)(
+  makeRoute(
     `${PUBLIC_API_PREFIX}${PUBLIC_API_PATHS.fact}`,
     async (req) => {
       const url = parseReqUrl(req.url);
@@ -223,6 +229,5 @@ export function registerPublicApiRoutes(ctx: PublicApiRoutesContext, api: Clawdb
         },
       });
     },
-    routeOpts,
   );
 }

@@ -85,7 +85,7 @@ function safeLoadNarratives(db: NarrativesDB | null, limit: number): NarrativeEx
       narrativeText: n.narrativeText,
       createdAt: n.createdAt,
     }));
-  } catch {
+  } catch (_err) {
     return [];
   }
 }
@@ -105,7 +105,13 @@ export function buildPublicExportBundle(
   const episodes = factsDb.searchEpisodes({ limit: episodesLimit });
   const procedures = factsDb.listProcedures(proceduresLimit);
   const narratives = safeLoadNarratives(narrativesDb, narrativesLimit);
-  const links = factsDb.getAllEdges(linksLimit);
+  const rawLinks = factsDb.getAllEdges(linksLimit);
+  const links = rawLinks.map((l) => ({
+    source: l.source,
+    target: l.target,
+    linkType: l.linkType,
+    strength: l.strength,
+  }));
 
   return {
     manifest: {
