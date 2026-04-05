@@ -58,11 +58,7 @@ describe("stage-credential-hint", () => {
   });
 
   it("returns prependContext for valid hints and clears file", async () => {
-    writeFileSync(
-      pendingPath,
-      JSON.stringify({ hints: ["token", "password"], at: Date.now() }),
-      "utf8",
-    );
+    writeFileSync(pendingPath, JSON.stringify({ hints: ["token", "password"], at: Date.now() }), "utf8");
 
     const { api, runBeforeAgentStart } = createApi();
     const ctx = {
