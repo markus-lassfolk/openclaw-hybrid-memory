@@ -239,9 +239,9 @@ export async function runActiveTaskAdd(
 
   if (ctx.ledger === "facts") {
     const { factsDb, vectorDb, embeddings } = requireFacts(ctx);
-    const { active } = loadTaskLedgerFromFacts(factsDb);
+    const { active, completed } = loadTaskLedgerFromFacts(factsDb);
     const wasExisting = active.some((t) => t.label === opts.label);
-    const existing = active.find((t) => t.label === opts.label);
+    const existing = active.find((t) => t.label === opts.label) ?? completed.find((t) => t.label === opts.label);
     const status: ActiveTaskStatus = (() => {
       if (opts.status && ACTIVE_TASK_STATUSES.includes(opts.status as ActiveTaskStatus)) {
         return opts.status as ActiveTaskStatus;

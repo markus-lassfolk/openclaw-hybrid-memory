@@ -231,7 +231,15 @@ export async function syncActiveTaskEntryToFacts(
   await upsertProjectTaskKey(factsDb, vectorDb, embeddings, entity, "task_updated", entry.updated, log);
   await upsertProjectTaskKey(factsDb, vectorDb, embeddings, entity, "started", entry.started, log);
   await upsertProjectTaskKey(factsDb, vectorDb, embeddings, entity, "branch", entry.branch?.trim() || "", log);
-  await upsertProjectTaskKey(factsDb, vectorDb, embeddings, entity, "stash_commit", entry.stashCommit?.trim() || "", log);
+  await upsertProjectTaskKey(
+    factsDb,
+    vectorDb,
+    embeddings,
+    entity,
+    "stash_commit",
+    entry.stashCommit?.trim() || "",
+    log,
+  );
   await upsertProjectTaskKey(
     factsDb,
     vectorDb,
