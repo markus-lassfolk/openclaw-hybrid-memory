@@ -43,11 +43,7 @@ import {
   writeVersionCheckCache,
 } from "../utils/plugin-update-check.js";
 import { checkOpenClawVersion } from "../utils/version-check.js";
-import { runTaskQueueWatchdog } from "../services/task-queue-watchdog.js";
 import { runGoalHealthCheck, resolveGoalsDir } from "../services/goal-stewardship.js";
-import { reconcileActiveTaskInProgressSessions } from "../services/active-task.js";
-import { reconcileActiveTaskInProgressSessionsFacts } from "../services/task-ledger-facts.js";
-import { parseDuration } from "../utils/duration.js";
 import { versionInfo } from "../versionInfo.js";
 
 export interface PluginServiceContext {
