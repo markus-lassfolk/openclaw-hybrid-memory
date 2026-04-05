@@ -606,33 +606,34 @@ export function createPluginService(ctx: PluginServiceContext) {
             operation: "task-queue-watchdog",
           });
         }
-        if (!cfg.activeTask.enabled) return;
-        try {
-          const workspaceRoot = getEnv("OPENCLAW_WORKSPACE") ?? join(homedir(), ".openclaw", "workspace");
-          const activeTaskFilePath = isAbsolute(cfg.activeTask.filePath)
-            ? cfg.activeTask.filePath
-            : join(workspaceRoot, cfg.activeTask.filePath);
-          const staleMinutes = parseDuration(cfg.activeTask.staleThreshold);
-          const memoryDir = join(workspaceRoot, "memory");
-          const { reconciledLabels, wrote } = await reconcileActiveTaskInProgressSessions(
-            activeTaskFilePath,
-            staleMinutes,
-            {
-              flushOnComplete: cfg.activeTask.flushOnComplete !== false,
-              memoryDir,
-            },
-          );
-          if (wrote && reconciledLabels.length > 0) {
-            api.logger.info?.(
-              `memory-hybrid: ACTIVE-TASK session reconcile — completed orphan subagent row(s): ${reconciledLabels.join(", ")}`,
+        if (cfg.activeTask.enabled) {
+          try {
+            const workspaceRoot = getEnv("OPENCLAW_WORKSPACE") ?? join(homedir(), ".openclaw", "workspace");
+            const activeTaskFilePath = isAbsolute(cfg.activeTask.filePath)
+              ? cfg.activeTask.filePath
+              : join(workspaceRoot, cfg.activeTask.filePath);
+            const staleMinutes = parseDuration(cfg.activeTask.staleThreshold);
+            const memoryDir = join(workspaceRoot, "memory");
+            const { reconciledLabels, wrote } = await reconcileActiveTaskInProgressSessions(
+              activeTaskFilePath,
+              staleMinutes,
+              {
+                flushOnComplete: cfg.activeTask.flushOnComplete !== false,
+                memoryDir,
+              },
             );
+            if (wrote && reconciledLabels.length > 0) {
+              api.logger.info?.(
+                `memory-hybrid: ACTIVE-TASK session reconcile — completed orphan subagent row(s): ${reconciledLabels.join(", ")}`,
+              );
+            }
+          } catch (reconcileErr) {
+            api.logger.warn?.(`memory-hybrid: active-task session reconcile failed (non-fatal): ${reconcileErr}`);
+            capturePluginError(reconcileErr instanceof Error ? reconcileErr : new Error(String(reconcileErr)), {
+              subsystem: "plugin-service",
+              operation: "active-task-session-reconcile",
+            });
           }
-        } catch (reconcileErr) {
-          api.logger.warn?.(`memory-hybrid: active-task session reconcile failed (non-fatal): ${reconcileErr}`);
-          capturePluginError(reconcileErr instanceof Error ? reconcileErr : new Error(String(reconcileErr)), {
-            subsystem: "plugin-service",
-            operation: "active-task-session-reconcile",
-          });
         }
         if (cfg.goalStewardship.enabled && cfg.goalStewardship.watchdogHealthCheck) {
           try {
