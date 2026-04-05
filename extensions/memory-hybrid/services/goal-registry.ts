@@ -58,7 +58,7 @@ export async function rebuildGoalIndex(goalsDir: string): Promise<void> {
   }
   const goals: GoalIndex["goals"] = [];
   for (const f of files) {
-    if (!f.endsWith(".json") || f === INDEX_FILENAME) continue;
+    if (!f.endsWith(".json") || f === INDEX_FILENAME || f === "_stewardship_rr.json") continue;
     try {
       const raw = await readFile(join(goalsDir, f), "utf-8");
       const g = JSON.parse(raw) as Goal;
@@ -107,7 +107,7 @@ export async function listGoals(goalsDir: string): Promise<Goal[]> {
   const files = await readdir(goalsDir);
   const out: Goal[] = [];
   for (const f of files) {
-    if (!f.endsWith(".json") || f === INDEX_FILENAME) continue;
+    if (!f.endsWith(".json") || f === INDEX_FILENAME || f === "_stewardship_rr.json") continue;
     const g = await readGoal(goalsDir, f.replace(/\.json$/, ""));
     if (g) out.push(g);
   }
