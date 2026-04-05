@@ -53,7 +53,7 @@ export function computeCircuitBreakerStateAfterAssess(
 
   return {
     lastBlockerFingerprint: fp,
-    sameBlockerStreak: 1,
+    sameBlockerStreak: 0,
     circuitBreakerLastProgressAssessmentCount: newAssessmentCount,
   };
 }

@@ -7,7 +7,6 @@ import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import type { GoalStewardshipAttentionWeights, GoalStewardshipConfig } from "../config/types/index.js";
-import { listActiveGoals } from "./goal-registry.js";
 import type { Goal } from "./goal-stewardship-types.js";
 
 const RR_FILE = "_stewardship_rr.json";

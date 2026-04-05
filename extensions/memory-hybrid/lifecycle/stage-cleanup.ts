@@ -52,7 +52,6 @@ async function consumePendingTaskSignals(
   staleMinutes: number,
   flushOnComplete: boolean,
   logger?: { info?: (msg: string) => void; warn?: (msg: string) => void },
-  ctx?: LifecycleContext,
 ): Promise<void> {
   const memoryDir = join(workspaceRoot, "memory");
   let signals: PendingTaskSignal[];
@@ -360,7 +359,6 @@ export function registerCleanupHandlers(
           staleMinutes,
           ctx.cfg.activeTask.flushOnComplete,
           api.logger,
-          ctx,
         );
         return;
       }
@@ -373,7 +371,6 @@ export function registerCleanupHandlers(
           staleMinutes,
           ctx.cfg.activeTask.flushOnComplete,
           api.logger,
-          ctx,
         );
         return;
       }
@@ -386,7 +383,6 @@ export function registerCleanupHandlers(
           staleMinutes,
           ctx.cfg.activeTask.flushOnComplete,
           api.logger,
-          ctx,
         );
         return;
       }
@@ -450,7 +446,6 @@ export function registerCleanupHandlers(
         staleMinutes,
         ctx.cfg.activeTask.flushOnComplete,
         api.logger,
-        ctx,
       );
     } catch (err) {
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
