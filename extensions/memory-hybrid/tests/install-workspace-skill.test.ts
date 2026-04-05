@@ -1,12 +1,16 @@
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+
+const PLUGIN_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 
 import {
   applyHybridMemoryToolsMd,
   ensureHybridMemoryWorkspaceSkillIfMissing,
   installHybridMemoryWorkspaceSkill,
+  resolveOpenclawJsonPathForWorkspace,
   resolveAgentWorkspaceRoot,
 } from "../cli/cmd-install.js";
 
@@ -61,8 +65,24 @@ describe("workspace skill install", () => {
     expect(resolveAgentWorkspaceRoot({})).toBe(join(homedir(), ".openclaw", "workspace"));
   });
 
+  it("resolveOpenclawJsonPathForWorkspace honors OPENCLAW_CONFIG_PATH when OPENCLAW_CONFIG is unset", () => {
+    const p = "/tmp/openclaw-test-config-1085.json";
+    const savedPath = process.env.OPENCLAW_CONFIG_PATH;
+    const savedConfig = process.env.OPENCLAW_CONFIG;
+    try {
+      Reflect.deleteProperty(process.env, "OPENCLAW_CONFIG");
+      process.env.OPENCLAW_CONFIG_PATH = p;
+      expect(resolveOpenclawJsonPathForWorkspace()).toBe(p);
+    } finally {
+      if (savedConfig !== undefined) process.env.OPENCLAW_CONFIG = savedConfig;
+      else Reflect.deleteProperty(process.env, "OPENCLAW_CONFIG");
+      if (savedPath !== undefined) process.env.OPENCLAW_CONFIG_PATH = savedPath;
+      else Reflect.deleteProperty(process.env, "OPENCLAW_CONFIG_PATH");
+    }
+  });
+
   it("installHybridMemoryWorkspaceSkill copies bundled SKILL.md", () => {
-    const pluginRoot = join(import.meta.dirname, "..");
+    const pluginRoot = PLUGIN_ROOT;
     const destRoot = join(tmp, "ws");
     const r = installHybridMemoryWorkspaceSkill({
       mergedOpenclawConfig: { agents: { defaults: { workspace: destRoot } } },
@@ -78,7 +98,7 @@ describe("workspace skill install", () => {
   });
 
   it("ensureHybridMemoryWorkspaceSkillIfMissing copies when SKILL.md is absent", () => {
-    const pluginRoot = join(import.meta.dirname, "..");
+    const pluginRoot = PLUGIN_ROOT;
     const destRoot = join(tmp, "ws-ensure");
     const dest = join(destRoot, "skills", "hybrid-memory", "SKILL.md");
     const r = ensureHybridMemoryWorkspaceSkillIfMissing({
@@ -90,8 +110,23 @@ describe("workspace skill install", () => {
     expect(readFileSync(dest, "utf-8")).toContain("memory_store");
   });
 
+  it("ensureHybridMemoryWorkspaceSkillIfMissing skips when destination dir exists without SKILL.md", () => {
+    const pluginRoot = PLUGIN_ROOT;
+    const destRoot = join(tmp, "ws-ensure-partial");
+    const destDir = join(destRoot, "skills", "hybrid-memory");
+    mkdirSync(destDir, { recursive: true });
+    writeFileSync(join(destDir, "notes.txt"), "keep\n", "utf-8");
+    const r = ensureHybridMemoryWorkspaceSkillIfMissing({
+      mergedOpenclawConfig: { agents: { defaults: { workspace: destRoot } } },
+      pluginRootDir: pluginRoot,
+    });
+    expect(r.deployed).toBe(false);
+    expect(r.skippedReason).toBe("destination_dir_exists");
+    expect(readFileSync(join(destDir, "notes.txt"), "utf-8")).toBe("keep\n");
+  });
+
   it("ensureHybridMemoryWorkspaceSkillIfMissing skips when SKILL.md already exists", () => {
-    const pluginRoot = join(import.meta.dirname, "..");
+    const pluginRoot = PLUGIN_ROOT;
     const destRoot = join(tmp, "ws-ensure2");
     mkdirSync(join(destRoot, "skills", "hybrid-memory"), { recursive: true });
     writeFileSync(join(destRoot, "skills", "hybrid-memory", "SKILL.md"), "# custom\n", "utf-8");
@@ -105,7 +140,7 @@ describe("workspace skill install", () => {
   });
 
   it("installHybridMemoryWorkspaceSkill dry-run does not write", () => {
-    const pluginRoot = join(import.meta.dirname, "..");
+    const pluginRoot = PLUGIN_ROOT;
     const destRoot = join(tmp, "ws2");
     const dest = join(destRoot, "skills", "hybrid-memory", "SKILL.md");
     installHybridMemoryWorkspaceSkill({
@@ -124,7 +159,7 @@ describe("workspace skill install", () => {
 
 describe("applyHybridMemoryToolsMd", () => {
   let tmp: string;
-  const pluginRoot = join(import.meta.dirname, "..");
+  const pluginRoot = PLUGIN_ROOT;
 
   beforeEach(() => {
     tmp = join(tmpdir(), `mh-tools-${Date.now()}`);

@@ -63,7 +63,7 @@ export function registerGoalCommands(mem: Chainable, ctx: { cfg: HybridMemoryCon
     .description(
       "Without a label: overview of goal stewardship and active goals. With <idOrLabel>: full detail for one goal (UUID or label).",
     )
-    .option("--json", "output raw JSON (overview array or single goal)")
+    .option("--json", "output raw JSON (overview object when no label, or single goal)")
     .action(async (idOrLabel: string | undefined, opts: { json?: boolean }) => {
       const dir = goalsDir(ctx.cfg);
       const trimmed = idOrLabel?.trim() ?? "";

@@ -100,11 +100,23 @@ export function installHybridMemoryWorkspaceSkill(opts: {
 }
 
 /**
+ * Path to merged OpenClaw config JSON for workspace resolution and skill bootstrap.
+ * Order: `OPENCLAW_CONFIG`, `OPENCLAW_CONFIG_PATH`, then `{OPENCLAW_HOME}/openclaw.json`, else `~/.openclaw/openclaw.json`.
+ */
+export function resolveOpenclawJsonPathForWorkspace(): string {
+  const explicit = getEnv("OPENCLAW_CONFIG")?.trim() || getEnv("OPENCLAW_CONFIG_PATH")?.trim();
+  if (explicit) return expandTilde(explicit);
+  const owHome = getEnv("OPENCLAW_HOME")?.trim();
+  if (owHome) return join(expandTilde(owHome), "openclaw.json");
+  return join(homedir(), ".openclaw", "openclaw.json");
+}
+
+/**
  * Load `openclaw.json` for workspace resolution (`agents.defaults.workspace`, etc.).
  * Returns `{}` if the file is missing or unreadable (caller still gets `OPENCLAW_WORKSPACE` via env in {@link resolveAgentWorkspaceRoot}).
  */
 export function loadOpenclawRootForWorkspace(): Record<string, unknown> {
-  const configPath = getEnv("OPENCLAW_CONFIG") || join(homedir(), ".openclaw", "openclaw.json");
+  const configPath = resolveOpenclawJsonPathForWorkspace();
   try {
     if (!existsSync(configPath)) return {};
     return JSON.parse(readFileSync(configPath, "utf-8")) as Record<string, unknown>;
@@ -128,16 +140,20 @@ export function ensureHybridMemoryWorkspaceSkillIfMissing(opts: {
 } {
   const skillMd = bundledHybridMemorySkillPath(opts.pluginRootDir);
   const workspaceRoot = resolveAgentWorkspaceRoot(opts.mergedOpenclawConfig);
-  const dest = join(workspaceRoot, "skills", HYBRID_MEMORY_SKILL_DIR, "SKILL.md");
+  const destDir = join(workspaceRoot, "skills", HYBRID_MEMORY_SKILL_DIR);
+  const dest = join(destDir, "SKILL.md");
   if (!existsSync(skillMd)) {
     return { path: dest, deployed: false, skippedReason: "bundled_missing" };
   }
   if (existsSync(dest)) {
     return { path: dest, deployed: false, skippedReason: "already_exists" };
   }
+  // Avoid clobbering a partial or hand-edited tree when SKILL.md alone is missing.
+  if (existsSync(destDir)) {
+    return { path: dest, deployed: false, skippedReason: "destination_dir_exists" };
+  }
   try {
     mkdirSync(join(workspaceRoot, "skills"), { recursive: true });
-    const destDir = join(workspaceRoot, "skills", HYBRID_MEMORY_SKILL_DIR);
     const srcDir = bundledHybridMemorySkillDir(opts.pluginRootDir);
     cpSync(srcDir, destDir, { recursive: true });
     return { path: dest, deployed: true };

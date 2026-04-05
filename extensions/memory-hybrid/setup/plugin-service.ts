@@ -147,10 +147,16 @@ export function createPluginService(ctx: PluginServiceContext) {
         });
         if (skillOutcome.deployed) {
           api.logger.info(`memory-hybrid: deployed bundled Agent Skill to workspace: ${skillOutcome.path}`);
-        } else if (skillOutcome.skippedReason && skillOutcome.skippedReason !== "already_exists") {
-          api.logger.debug?.(
-            `memory-hybrid: workspace skill bootstrap skipped (${skillOutcome.skippedReason}) — ${skillOutcome.path}`,
-          );
+        } else if (skillOutcome.skippedReason) {
+          const benign = new Set(["already_exists", "bundled_missing", "destination_dir_exists"]);
+          if (!benign.has(skillOutcome.skippedReason)) {
+            const msg = `memory-hybrid: workspace skill bootstrap failed (${skillOutcome.skippedReason}) — ${skillOutcome.path}`;
+            api.logger.warn(msg);
+            capturePluginError(new Error(msg), {
+              subsystem: "plugin-service",
+              operation: "ensure-workspace-skill",
+            });
+          }
         }
       } catch (err) {
         capturePluginError(err instanceof Error ? err : new Error(String(err)), {
