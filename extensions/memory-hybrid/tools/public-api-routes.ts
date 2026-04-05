@@ -79,11 +79,11 @@ export function registerPublicApiRoutes(ctx: PublicApiRoutesContext, api: Clawdb
   };
 
   const makeRoute = (path: string, handler: HttpRequestHandler) =>
-    (api.registerHttpRoute as (route: { path: string; auth: boolean; handler: HttpRequestHandler }) => void)({
+    (api.registerHttpRoute as (path: string, handler: HttpRequestHandler, opts: HttpRouteOptions) => void)(
       path,
-      auth: routeOpts.authenticated,
       handler,
-    });
+      routeOpts,
+    );
 
   makeRoute(
     `${PUBLIC_API_PREFIX}${PUBLIC_API_PATHS.health}`,
