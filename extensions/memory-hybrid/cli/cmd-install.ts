@@ -18,6 +18,7 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { getEnv } from "../utils/env-manager.js";
 import { expandTilde } from "../utils/path.js";
 
 import type { HybridMemoryConfig } from "../config.js";
@@ -95,6 +96,53 @@ export function installHybridMemoryWorkspaceSkill(opts: {
     return { path: dest };
   } catch (err) {
     return { path: dest, error: String(err) };
+  }
+}
+
+/**
+ * Load `openclaw.json` for workspace resolution (`agents.defaults.workspace`, etc.).
+ * Returns `{}` if the file is missing or unreadable (caller still gets `OPENCLAW_WORKSPACE` via env in {@link resolveAgentWorkspaceRoot}).
+ */
+export function loadOpenclawRootForWorkspace(): Record<string, unknown> {
+  const configPath = getEnv("OPENCLAW_CONFIG") || join(homedir(), ".openclaw", "openclaw.json");
+  try {
+    if (!existsSync(configPath)) return {};
+    return JSON.parse(readFileSync(configPath, "utf-8")) as Record<string, unknown>;
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * Copy bundled `skills/hybrid-memory/` into the workspace **only when** `{workspace}/skills/hybrid-memory/SKILL.md`
+ * is missing — so the skill appears without a manual `hybrid-mem install`, without overwriting operator edits on every restart.
+ * Full overwrite (including references) remains the job of `installHybridMemoryWorkspaceSkill` from **`hybrid-mem install`**.
+ */
+export function ensureHybridMemoryWorkspaceSkillIfMissing(opts: {
+  pluginRootDir: string;
+  mergedOpenclawConfig: Record<string, unknown>;
+}): {
+  path: string;
+  deployed: boolean;
+  skippedReason?: "already_exists" | "bundled_missing" | string;
+} {
+  const skillMd = bundledHybridMemorySkillPath(opts.pluginRootDir);
+  const workspaceRoot = resolveAgentWorkspaceRoot(opts.mergedOpenclawConfig);
+  const dest = join(workspaceRoot, "skills", HYBRID_MEMORY_SKILL_DIR, "SKILL.md");
+  if (!existsSync(skillMd)) {
+    return { path: dest, deployed: false, skippedReason: "bundled_missing" };
+  }
+  if (existsSync(dest)) {
+    return { path: dest, deployed: false, skippedReason: "already_exists" };
+  }
+  try {
+    mkdirSync(join(workspaceRoot, "skills"), { recursive: true });
+    const destDir = join(workspaceRoot, "skills", HYBRID_MEMORY_SKILL_DIR);
+    const srcDir = bundledHybridMemorySkillDir(opts.pluginRootDir);
+    cpSync(srcDir, destDir, { recursive: true });
+    return { path: dest, deployed: true };
+  } catch (err) {
+    return { path: dest, deployed: false, skippedReason: String(err) };
   }
 }
 

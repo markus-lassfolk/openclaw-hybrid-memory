@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import type OpenAI from "openai";
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import type { CredentialsDB } from "../backends/credentials-db.js";
@@ -42,6 +43,7 @@ import {
   readVersionCheckCache,
   writeVersionCheckCache,
 } from "../utils/plugin-update-check.js";
+import { ensureHybridMemoryWorkspaceSkillIfMissing, loadOpenclawRootForWorkspace } from "../cli/cmd-install.js";
 import { checkOpenClawVersion } from "../utils/version-check.js";
 import { runGoalHealthCheck, resolveGoalsDir } from "../services/goal-stewardship.js";
 import { versionInfo } from "../versionInfo.js";
@@ -136,6 +138,26 @@ export function createPluginService(ctx: PluginServiceContext) {
       );
 
       checkOpenClawVersion(api.version, api.logger);
+
+      try {
+        const pluginRootDir = join(dirname(fileURLToPath(import.meta.url)), "..");
+        const skillOutcome = ensureHybridMemoryWorkspaceSkillIfMissing({
+          pluginRootDir,
+          mergedOpenclawConfig: loadOpenclawRootForWorkspace(),
+        });
+        if (skillOutcome.deployed) {
+          api.logger.info(`memory-hybrid: deployed bundled Agent Skill to workspace: ${skillOutcome.path}`);
+        } else if (skillOutcome.skippedReason && skillOutcome.skippedReason !== "already_exists") {
+          api.logger.debug?.(
+            `memory-hybrid: workspace skill bootstrap skipped (${skillOutcome.skippedReason}) — ${skillOutcome.path}`,
+          );
+        }
+      } catch (err) {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+          subsystem: "plugin-service",
+          operation: "ensure-workspace-skill",
+        });
+      }
 
       if (
         errorReportingActive &&

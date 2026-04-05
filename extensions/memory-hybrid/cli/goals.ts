@@ -59,12 +59,53 @@ export function registerGoalCommands(mem: Chainable, ctx: { cfg: HybridMemoryCon
       }
     });
 
-  g.command("status <idOrLabel>")
-    .description("Show goal detail")
-    .option("--json", "output raw JSON")
-    .action(async (idOrLabel: string, opts: { json?: boolean }) => {
+  g.command("status [idOrLabel]")
+    .description(
+      "Without a label: overview of goal stewardship and active goals. With <idOrLabel>: full detail for one goal (UUID or label).",
+    )
+    .option("--json", "output raw JSON (overview array or single goal)")
+    .action(async (idOrLabel: string | undefined, opts: { json?: boolean }) => {
       const dir = goalsDir(ctx.cfg);
-      const goal = await resolveGoalId(dir, idOrLabel);
+      const trimmed = idOrLabel?.trim() ?? "";
+      if (trimmed.length === 0) {
+        const gs = ctx.cfg.goalStewardship;
+        const goals = await listGoals(dir);
+        const activeRows = goals.filter((x) => !["completed", "failed", "abandoned"].includes(x.status));
+        if (opts.json) {
+          console.log(
+            JSON.stringify(
+              {
+                goalStewardshipEnabled: gs.enabled,
+                goalsDir: dir,
+                workspaceRoot: workspaceRoot(),
+                activeGoals: activeRows,
+              },
+              null,
+              2,
+            ),
+          );
+          return;
+        }
+        console.log(`Goal stewardship: ${gs.enabled ? "enabled" : "disabled"}`);
+        console.log(`Goals directory: ${dir}`);
+        if (!gs.enabled) {
+          console.log("\nTip: enable with `openclaw hybrid-mem config-set goalStewardship enabled` (restart gateway).");
+        }
+        if (activeRows.length === 0) {
+          console.log("\nNo active goals.");
+        } else {
+          console.log("\nActive goals:");
+          for (const x of activeRows) {
+            console.log(
+              `  ${x.label.padEnd(20)} ${x.status.padEnd(12)} ${x.priority}  assessments ${x.assessmentCount}/${x.maxAssessments}  dispatches ${x.dispatchCount}/${x.maxDispatches}`,
+            );
+          }
+        }
+        console.log("\nFor one goal’s full detail: `openclaw hybrid-mem goals status <label-or-uuid>`");
+        return;
+      }
+
+      const goal = await resolveGoalId(dir, trimmed);
       if (!goal) {
         console.error("Goal not found.");
         process.exitCode = 1;

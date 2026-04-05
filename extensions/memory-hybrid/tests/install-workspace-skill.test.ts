@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import {
   applyHybridMemoryToolsMd,
+  ensureHybridMemoryWorkspaceSkillIfMissing,
   installHybridMemoryWorkspaceSkill,
   resolveAgentWorkspaceRoot,
 } from "../cli/cmd-install.js";
@@ -74,6 +75,33 @@ describe("workspace skill install", () => {
     expect(body).toContain("memory_store");
     const refPath = join(destRoot, "skills", "hybrid-memory", "references", "memory-optimization.md");
     expect(readFileSync(refPath, "utf-8")).toContain("run-all");
+  });
+
+  it("ensureHybridMemoryWorkspaceSkillIfMissing copies when SKILL.md is absent", () => {
+    const pluginRoot = join(import.meta.dirname, "..");
+    const destRoot = join(tmp, "ws-ensure");
+    const dest = join(destRoot, "skills", "hybrid-memory", "SKILL.md");
+    const r = ensureHybridMemoryWorkspaceSkillIfMissing({
+      mergedOpenclawConfig: { agents: { defaults: { workspace: destRoot } } },
+      pluginRootDir: pluginRoot,
+    });
+    expect(r.deployed).toBe(true);
+    expect(r.skippedReason).toBeUndefined();
+    expect(readFileSync(dest, "utf-8")).toContain("memory_store");
+  });
+
+  it("ensureHybridMemoryWorkspaceSkillIfMissing skips when SKILL.md already exists", () => {
+    const pluginRoot = join(import.meta.dirname, "..");
+    const destRoot = join(tmp, "ws-ensure2");
+    mkdirSync(join(destRoot, "skills", "hybrid-memory"), { recursive: true });
+    writeFileSync(join(destRoot, "skills", "hybrid-memory", "SKILL.md"), "# custom\n", "utf-8");
+    const r = ensureHybridMemoryWorkspaceSkillIfMissing({
+      mergedOpenclawConfig: { agents: { defaults: { workspace: destRoot } } },
+      pluginRootDir: pluginRoot,
+    });
+    expect(r.deployed).toBe(false);
+    expect(r.skippedReason).toBe("already_exists");
+    expect(readFileSync(join(destRoot, "skills", "hybrid-memory", "SKILL.md"), "utf-8")).toBe("# custom\n");
   });
 
   it("installHybridMemoryWorkspaceSkill dry-run does not write", () => {
