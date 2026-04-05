@@ -139,166 +139,211 @@ export async function runRecallPipelineQuery(
 
   const stageMs = { fts: 0, embed: 0, vector: 0, merge: 0 };
 
-  const ftsStartedAt = recallTiming.phaseStarted("fts_search", { limit: limitNum });
-  let t0 = Date.now();
   let sqliteResults: SearchResult[] = [];
-  let entityLookupRows = 0;
-  if (opts?.entity) {
-    const entityResults = factsDb
-      .lookup(opts.entity, undefined, undefined, { scopeFilter: recallOpts.scopeFilter })
-      .slice(0, limitNum);
-    entityLookupRows = entityResults.length;
-    sqliteResults = entityResults;
-  }
-  const ftsResults = factsDb.search(trimmed, limitNum, recallOpts);
-  stageMs.fts = Date.now() - t0;
-  sqliteResults = [...sqliteResults, ...ftsResults];
-  recallTiming.phaseCompleted("fts_search", ftsStartedAt, {
-    fts_rows: ftsResults.length,
-    entity_lookup_rows: entityLookupRows,
-    sqlite_rows: sqliteResults.length,
-  });
-
-  // FTS + lookup are synchronous SQLite — yield so gateway WebSocket/health can run (#931).
-  await yieldEventLoop();
-
   let lanceResults: SearchResult[] = [];
+  /** FTS row count from `factsDb.search` (for diagnostics). */
+  let ftsRowCount = 0;
 
-  if (useSemantic) {
+  /**
+   * When semantic search is enabled, schedule FTS on the next macrotask so embedding / HyDE
+   * I/O can run concurrently with synchronous SQLite FTS (#1050). Single-threaded CPU time
+   * is unchanged, but wall-clock overlaps FTS with network-bound embed.
+   */
+  const runFtsSearchSync = (): {
+    sqliteResults: SearchResult[];
+    ftsRowCount: number;
+    entityLookupRows: number;
+  } => {
+    let rows: SearchResult[] = [];
+    let entityLookupRows = 0;
+    if (opts?.entity) {
+      const entityResults = factsDb
+        .lookup(opts.entity, undefined, undefined, { scopeFilter: recallOpts.scopeFilter })
+        .slice(0, limitNum);
+      entityLookupRows = entityResults.length;
+      rows = entityResults;
+    }
+    const ftsPart = factsDb.search(trimmed, limitNum, recallOpts);
+    return {
+      sqliteResults: [...rows, ...ftsPart],
+      ftsRowCount: ftsPart.length,
+      entityLookupRows,
+    };
+  };
+
+  if (!useSemantic) {
+    const ftsStartedAt = recallTiming.phaseStarted("fts_search", { limit: limitNum });
+    const t0 = Date.now();
+    const ftsOut = runFtsSearchSync();
+    stageMs.fts = Date.now() - t0;
+    sqliteResults = ftsOut.sqliteResults;
+    ftsRowCount = ftsOut.ftsRowCount;
+    recallTiming.phaseCompleted("fts_search", ftsStartedAt, {
+      fts_rows: ftsOut.ftsRowCount,
+      entity_lookup_rows: ftsOut.entityLookupRows,
+      sqlite_rows: ftsOut.sqliteResults.length,
+    });
+    await yieldEventLoop();
+  } else {
     const vectorStepStartedAt = recallTiming.phaseStarted("vector_step");
     let vectorStepStatus = "ok";
     const directiveAbort = new AbortController();
-    try {
-      const vectorStepPromise = (async (): Promise<SearchResult[]> => {
-        let textToEmbed = trimmed;
-        const allowHyde =
-          policy.allowHyde && cfg.queryExpansion.enabled && (!opts?.limitHydeOnce || !hydeUsedRef.value);
 
-        t0 = Date.now();
-        if (allowHyde) {
-          if (opts?.limitHydeOnce) hydeUsedRef.value = true;
-          if (!directiveAbort.signal.aborted) {
-            const hydeStartedAt = recallTiming.phaseStarted("hyde_generation");
-            textToEmbed = await expandQueryWithHyde({
-              query: trimmed,
-              rawCfg: cfg.rawCfg,
-              model: cfg.queryExpansion.model,
-              timeoutMs: cfg.queryExpansion.timeoutMs,
-              openai,
-              label: opts?.hydeLabel ?? "HyDE",
-              signal: directiveAbort.signal,
-              pendingWarnings: pendingLLMWarnings,
-              logger,
-              subsystem: "auto-recall",
-              operation: `${opts?.errorPrefix ?? ""}hyde-generation`,
-            });
-            recallTiming.phaseCompleted("hyde_generation", hydeStartedAt, {
-              input_chars: trimmed.length,
-              output_chars: textToEmbed.length,
-            });
-          }
+    const ftsPromise = new Promise<SearchResult[]>((resolve, reject) => {
+      setImmediate(() => {
+        try {
+          const ftsStartedAt = recallTiming.phaseStarted("fts_search", { limit: limitNum });
+          const t0 = Date.now();
+          const ftsOut = runFtsSearchSync();
+          stageMs.fts = Date.now() - t0;
+          ftsRowCount = ftsOut.ftsRowCount;
+          recallTiming.phaseCompleted("fts_search", ftsStartedAt, {
+            fts_rows: ftsOut.ftsRowCount,
+            entity_lookup_rows: ftsOut.entityLookupRows,
+            sqlite_rows: ftsOut.sqliteResults.length,
+          });
+          resolve(ftsOut.sqliteResults);
+        } catch (err) {
+          reject(err instanceof Error ? err : new Error(String(err)));
         }
-
-        // Guard: if the vector-step timeout already fired, skip the embed call entirely.
-        // The HyDE call above may have completed just before the abort — we must not
-        // waste an embedding provider call whose result will be discarded.
-        if (directiveAbort.signal.aborted) {
-          const abortError = new Error(`recall pipeline timed out after ${policy.vectorStepTimeoutMs}ms`);
-          abortError.name = "AbortError";
-          throw abortError;
-        }
-
-        const _precomputedVector = opts?.precomputedVector;
-        const usePrecomputedVector = Boolean(_precomputedVector) && textToEmbed === trimmed;
-        const embedStartedAt = recallTiming.phaseStarted("embed_query", {
-          precomputed_vector: usePrecomputedVector,
-        });
-        const vector = usePrecomputedVector
-          ? (_precomputedVector as number[])
-          : await embedWithAbortRace(
-              embeddings.embed(textToEmbed),
-              directiveAbort.signal,
-              `recall pipeline timed out after ${policy.vectorStepTimeoutMs}ms`,
-            );
-        stageMs.embed = Date.now() - t0;
-        recallTiming.phaseCompleted("embed_query", embedStartedAt, {
-          precomputed_vector: usePrecomputedVector,
-          input_chars: textToEmbed.length,
-        });
-
-        const vectorStartedAt = recallTiming.phaseStarted("lancedb_search", {
-          limit: limitNum * 2,
-          min_score: minScore,
-        });
-        t0 = Date.now();
-        const rawResults = await vectorDb.search(vector, limitNum * 2, minScore);
-        stageMs.vector = Date.now() - t0;
-        let results = filterByScope(rawResults, (id, o) => factsDb.getById(id, o), recallOpts.scopeFilter);
-        results = results.map((r) => {
-          const fullEntry = factsDb.getById(r.entry.id);
-          if (fullEntry) {
-            const salienceScore = computeDynamicSalience(r.score, fullEntry);
-            const controlledScore = applyConsolidationRetrievalControls(salienceScore, fullEntry);
-            return { ...r, entry: fullEntry, score: controlledScore };
-          }
-          return r;
-        });
-        recallTiming.phaseCompleted("lancedb_search", vectorStartedAt, {
-          raw_hits: rawResults.length,
-          hits: results.length,
-        });
-        return results;
-      })();
-
-      let timeoutId: NodeJS.Timeout | undefined;
-      const timeoutPromise = new Promise<never>((_, reject) => {
-        timeoutId = setTimeout(() => {
-          directiveAbort.abort();
-          reject(new Error(`${policy.mode} timed out after ${policy.vectorStepTimeoutMs}ms`));
-        }, policy.vectorStepTimeoutMs);
       });
+    });
 
-      try {
-        lanceResults = await Promise.race([vectorStepPromise, timeoutPromise]);
-      } finally {
-        if (timeoutId !== undefined) clearTimeout(timeoutId);
-        vectorStepPromise.catch((err) => {
-          if (!directiveAbort.signal.aborted && !shouldSuppressEmbeddingError(err)) {
-            capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-              operation: `${opts?.errorPrefix ?? ""}vector-recall-post-timeout`,
-              subsystem: "auto-recall",
-            });
-          }
-        });
-      }
-    } catch (err) {
-      const isTimeout = err instanceof Error && err.message.includes("timed out");
-      vectorStepStatus = isTimeout ? "timeout" : "error";
-      if (isTimeout) logger.warn(`memory-hybrid: ${err.message}, using FTS-only recall`);
-      else {
-        if (!shouldSuppressEmbeddingError(err)) {
-          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-            operation: `${opts?.errorPrefix ?? ""}vector-recall`,
+    const vectorStepPromise = (async (): Promise<SearchResult[]> => {
+      let textToEmbed = trimmed;
+      const allowHyde =
+        policy.allowHyde && cfg.queryExpansion.enabled && (!opts?.limitHydeOnce || !hydeUsedRef.value);
+
+      let t0 = Date.now();
+      if (allowHyde) {
+        if (opts?.limitHydeOnce) hydeUsedRef.value = true;
+        if (!directiveAbort.signal.aborted) {
+          const hydeStartedAt = recallTiming.phaseStarted("hyde_generation");
+          textToEmbed = await expandQueryWithHyde({
+            query: trimmed,
+            rawCfg: cfg.rawCfg,
+            model: cfg.queryExpansion.model,
+            timeoutMs: cfg.queryExpansion.timeoutMs,
+            openai,
+            label: opts?.hydeLabel ?? "HyDE",
+            signal: directiveAbort.signal,
+            pendingWarnings: pendingLLMWarnings,
+            logger,
             subsystem: "auto-recall",
-            backend: "lancedb",
+            operation: `${opts?.errorPrefix ?? ""}hyde-generation`,
+          });
+          recallTiming.phaseCompleted("hyde_generation", hydeStartedAt, {
+            input_chars: trimmed.length,
+            output_chars: textToEmbed.length,
           });
         }
-        logger.warn(`memory-hybrid: ${opts?.errorPrefix ?? ""}vector recall failed: ${err}`);
       }
+
+      if (directiveAbort.signal.aborted) {
+        const abortError = new Error(`recall pipeline timed out after ${policy.vectorStepTimeoutMs}ms`);
+        abortError.name = "AbortError";
+        throw abortError;
+      }
+
+      const _precomputedVector = opts?.precomputedVector;
+      const usePrecomputedVector = Boolean(_precomputedVector) && textToEmbed === trimmed;
+      const embedStartedAt = recallTiming.phaseStarted("embed_query", {
+        precomputed_vector: usePrecomputedVector,
+      });
+      const vector = usePrecomputedVector
+        ? (_precomputedVector as number[])
+        : await embedWithAbortRace(
+            embeddings.embed(textToEmbed),
+            directiveAbort.signal,
+            `recall pipeline timed out after ${policy.vectorStepTimeoutMs}ms`,
+          );
+      stageMs.embed = Date.now() - t0;
+      recallTiming.phaseCompleted("embed_query", embedStartedAt, {
+        precomputed_vector: usePrecomputedVector,
+        input_chars: textToEmbed.length,
+      });
+
+      const vectorStartedAt = recallTiming.phaseStarted("lancedb_search", {
+        limit: limitNum * 2,
+        min_score: minScore,
+      });
+      t0 = Date.now();
+      const rawResults = await vectorDb.search(vector, limitNum * 2, minScore);
+      stageMs.vector = Date.now() - t0;
+      let results = filterByScope(rawResults, (id, o) => factsDb.getById(id, o), recallOpts.scopeFilter);
+      results = results.map((r) => {
+        const fullEntry = factsDb.getById(r.entry.id);
+        if (fullEntry) {
+          const salienceScore = computeDynamicSalience(r.score, fullEntry);
+          const controlledScore = applyConsolidationRetrievalControls(salienceScore, fullEntry);
+          return { ...r, entry: fullEntry, score: controlledScore };
+        }
+        return r;
+      });
+      recallTiming.phaseCompleted("lancedb_search", vectorStartedAt, {
+        raw_hits: rawResults.length,
+        hits: results.length,
+      });
+      return results;
+    })();
+
+    let timeoutId: NodeJS.Timeout | undefined;
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      timeoutId = setTimeout(() => {
+        directiveAbort.abort();
+        reject(new Error(`${policy.mode} timed out after ${policy.vectorStepTimeoutMs}ms`));
+      }, policy.vectorStepTimeoutMs);
+    });
+
+    const vectorRacePromise = Promise.race([vectorStepPromise, timeoutPromise]);
+
+    try {
+      const [ftsRows, lanceRows] = await Promise.all([
+        ftsPromise,
+        vectorRacePromise.catch((err: unknown) => {
+          const isTimeout = err instanceof Error && err.message.includes("timed out");
+          vectorStepStatus = isTimeout ? "timeout" : "error";
+          if (isTimeout) logger.warn(`memory-hybrid: ${String(err)}, using FTS-only recall`);
+          else {
+            if (!shouldSuppressEmbeddingError(err)) {
+              capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+                operation: `${opts?.errorPrefix ?? ""}vector-recall`,
+                subsystem: "auto-recall",
+                backend: "lancedb",
+              });
+            }
+            logger.warn(`memory-hybrid: ${opts?.errorPrefix ?? ""}vector recall failed: ${err}`);
+          }
+          return [] as SearchResult[];
+        }),
+      ]);
+      sqliteResults = ftsRows;
+      lanceResults = lanceRows;
+      vectorStepPromise.catch((err) => {
+        if (!directiveAbort.signal.aborted && !shouldSuppressEmbeddingError(err)) {
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+            operation: `${opts?.errorPrefix ?? ""}vector-recall-post-timeout`,
+            subsystem: "auto-recall",
+          });
+        }
+      });
     } finally {
+      if (timeoutId !== undefined) clearTimeout(timeoutId);
       recallTiming.phaseCompleted("vector_step", vectorStepStartedAt, {
         status: vectorStepStatus,
         hits: lanceResults.length,
       });
     }
+
+    await yieldEventLoop();
   }
 
   await yieldEventLoop();
 
   const mergeStartedAt = recallTiming.phaseStarted("merge_results");
-  t0 = Date.now();
+  const mergeT0 = Date.now();
   let results = mergeResults(sqliteResults, lanceResults, limitNum, factsDb);
-  stageMs.merge = Date.now() - t0;
+  stageMs.merge = Date.now() - mergeT0;
   recallTiming.phaseCompleted("merge_results", mergeStartedAt, {
     sqlite_rows: sqliteResults.length,
     vector_hits: lanceResults.length,
@@ -323,7 +368,7 @@ export async function runRecallPipelineQuery(
     vector_ms: stageMs.vector,
     merge_ms: stageMs.merge,
     total_ms: stageMs.fts + stageMs.embed + stageMs.vector + stageMs.merge,
-    fts_rows: ftsResults.length,
+    fts_rows: ftsRowCount,
     vector_hits: lanceResults.length,
     merged_rows: results.length,
   });

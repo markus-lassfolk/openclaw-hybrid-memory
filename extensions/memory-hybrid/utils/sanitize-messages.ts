@@ -139,3 +139,52 @@ export function sanitizeMessagesForClaude(messages: MessageLike[]): MessageLike[
 
   return changed ? out : messages;
 }
+
+/**
+ * Strip OpenAI Responses API `reasoning` items from assistant message content before replay.
+ *
+ * After context trimming, a `reasoning` block (id prefix `rs_*`) can remain without its
+ * required following `message` / `function_call` item, causing:
+ *   400 Item 'rs_…' of type 'reasoning' was provided without its required following item.
+ *
+ * Removing all reasoning blocks from history is safe when replaying: the model does not
+ * need prior internal reasoning traces to continue (same class of fix as Claude tool_use).
+ */
+function isOpenAIResponsesReasoningBlock(block: unknown): boolean {
+  if (!block || typeof block !== "object") return false;
+  const b = block as Record<string, unknown>;
+  if (b.type === "reasoning") return true;
+  if (typeof b.id === "string" && b.id.startsWith("rs_")) return true;
+  return false;
+}
+
+/**
+ * @returns New array if any reasoning blocks were removed; otherwise the original array.
+ */
+export function sanitizeMessagesForOpenAIResponses(messages: MessageLike[]): MessageLike[] {
+  if (!Array.isArray(messages) || messages.length === 0) return messages;
+
+  let changed = false;
+  const out: MessageLike[] = [];
+
+  for (const msg of messages) {
+    if (!msg || typeof msg !== "object") {
+      out.push(msg);
+      continue;
+    }
+    const content = (msg as MessageLike).content;
+    if (!Array.isArray(content)) {
+      out.push(msg);
+      continue;
+    }
+    const filtered = content.filter((block) => !isOpenAIResponsesReasoningBlock(block));
+    if (filtered.length !== content.length) {
+      changed = true;
+      out.push({ ...(msg as object), content: filtered } as MessageLike);
+    } else {
+      out.push(msg);
+    }
+  }
+
+  return changed ? out : messages;
+}
