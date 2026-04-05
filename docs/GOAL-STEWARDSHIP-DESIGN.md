@@ -11,7 +11,7 @@ what users expect from heartbeat + active-task and what the system actually
 delivers, then proposes a concrete architecture that closes that gap within the
 plugin boundary.
 
-Related issues: #1046, #1047, #1048.
+Related issues: epic #1051; breakdown #1052–#1061.
 
 ---
 
