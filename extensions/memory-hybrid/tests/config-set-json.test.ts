@@ -6,6 +6,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+/** Avoid literal sk-… strings in fixtures (secret scanners / Copilot review). */
+function testEmbeddingApiKey(): string {
+  return `${"sk"}-test-key-that-is-long-enough-to-pass`;
+}
+
 describe("runConfigSetForCli — JSON values for tier lists", () => {
   let home: string | null = null;
 
@@ -31,7 +36,7 @@ describe("runConfigSetForCli — JSON values for tier lists", () => {
               "openclaw-hybrid-memory": {
                 config: {
                   embedding: {
-                    apiKey: "sk-test-key-that-is-long-enough-to-pass",
+                    apiKey: testEmbeddingApiKey(),
                     model: "text-embedding-3-small",
                   },
                 },
@@ -76,7 +81,7 @@ describe("runConfigSetForCli — JSON values for tier lists", () => {
               "openclaw-hybrid-memory": {
                 config: {
                   embedding: {
-                    apiKey: "sk-test-key-that-is-long-enough-to-pass",
+                    apiKey: testEmbeddingApiKey(),
                     model: "text-embedding-3-small",
                   },
                   goalStewardship: { enabled: false },

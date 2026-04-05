@@ -24,12 +24,16 @@ import { createHash, randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { mkdir, readFile, readdir, realpath, rename, stat, unlink, writeFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { formatDuration } from "../utils/duration.js";
+import { pluginLogger } from "../utils/logger.js";
+import { stableStringify } from "../utils/stable-stringify.js";
+import { isOpenClawSessionLikelyPresent, looksLikeOpenClawSessionRef } from "./openclaw-session-artifact.js";
 
 /** Legacy filename before default became ACTIVE-TASKS.md; still read if the new file is missing. */
 const LEGACY_ACTIVE_TASK_BASENAME = "ACTIVE-TASK.md";
 
 /** Prefer `ACTIVE-TASKS.md`; if missing, read legacy `ACTIVE-TASK.md` in the same directory. */
-function resolveActiveTaskReadPath(filePath: string): string | null {
+export function resolveActiveTaskReadPath(filePath: string): string | null {
   if (existsSync(filePath)) return filePath;
   if (basename(filePath) === "ACTIVE-TASKS.md") {
     const legacyPath = join(dirname(filePath), LEGACY_ACTIVE_TASK_BASENAME);
@@ -37,10 +41,6 @@ function resolveActiveTaskReadPath(filePath: string): string | null {
   }
   return null;
 }
-import { formatDuration } from "../utils/duration.js";
-import { pluginLogger } from "../utils/logger.js";
-import { stableStringify } from "../utils/stable-stringify.js";
-import { isOpenClawSessionLikelyPresent, looksLikeOpenClawSessionRef } from "./openclaw-session-artifact.js";
 
 /**
  * Unparseable or invalid signal files (and abandoned atomic-write temp files) older than this are

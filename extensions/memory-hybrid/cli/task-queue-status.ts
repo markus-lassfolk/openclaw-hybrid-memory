@@ -7,7 +7,7 @@ import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
-import { readActiveTaskFile } from "../services/active-task.js";
+import { readActiveTaskFile, resolveActiveTaskReadPath } from "../services/active-task.js";
 import {
   type TaskQueueItem,
   ensureTaskQueueIdlePlaceholder,
@@ -79,31 +79,29 @@ export async function runTaskQueueStatusForCli(opts: TaskQueueStatusCliOptions =
     const workspaceRoot = getEnv("OPENCLAW_WORKSPACE") ?? join(homedir(), ".openclaw", "workspace");
     const rel = opts.activeTaskRelativePath ?? "ACTIVE-TASKS.md";
     const activePath = isAbsolute(rel) ? rel : join(workspaceRoot, rel);
-    if (existsSync(activePath)) {
-      try {
-        const file = await readActiveTaskFile(activePath, 7 * 24 * 60);
-        if (!file) {
-          out.activeTasks = { filePath: activePath, error: "unreadable" };
-        } else {
-          out.activeTasks = {
-            filePath: activePath,
-            active: file.active.map((t) => ({
-              label: t.label,
-              description: t.description,
-              status: t.status,
-              branch: t.branch,
-              subagent: t.subagent,
-              next: t.next,
-              updated: t.updated,
-            })),
-            completedCount: file.completed.length,
-          };
-        }
-      } catch {
-        out.activeTasks = { filePath: activePath, error: "could_not_read" };
+    try {
+      const resolvedRead = resolveActiveTaskReadPath(activePath);
+      const file = await readActiveTaskFile(activePath, 7 * 24 * 60);
+      if (!file) {
+        out.activeTasks = { filePath: activePath, available: false };
+      } else {
+        out.activeTasks = {
+          filePath: activePath,
+          ...(resolvedRead && resolvedRead !== activePath ? { readFrom: resolvedRead } : {}),
+          active: file.active.map((t) => ({
+            label: t.label,
+            description: t.description,
+            status: t.status,
+            branch: t.branch,
+            subagent: t.subagent,
+            next: t.next,
+            updated: t.updated,
+          })),
+          completedCount: file.completed.length,
+        };
       }
-    } else {
-      out.activeTasks = { filePath: activePath, available: false };
+    } catch {
+      out.activeTasks = { filePath: activePath, error: "could_not_read" };
     }
   }
 
