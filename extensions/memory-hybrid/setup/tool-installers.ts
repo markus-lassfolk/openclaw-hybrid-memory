@@ -350,15 +350,7 @@ function installGoalTools(ctx: GoalToolsContext, api: ClawdbotPluginApi): void {
       workspaceRoot: ctx.workspaceRoot,
     },
     api,
-  );
-}
-
-function selectPublicApiRoutesContext({ cfg, factsDb, narrativesDb }: ToolsContext): PublicApiRoutesContext {
-  return { cfg, factsDb, narrativesDb };
-}
-
-function installPublicApiRoutes(ctx: PublicApiRoutesContext, api: ClawdbotPluginApi): void {
-  registerPublicApiRoutes(ctx, api);
+);
 }
 
 export const toolInstallers = orderByBootstrapPhase<ToolInstaller>([
