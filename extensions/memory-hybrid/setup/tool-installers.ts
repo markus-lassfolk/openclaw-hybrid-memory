@@ -350,7 +350,7 @@ function installGoalTools(ctx: GoalToolsContext, api: ClawdbotPluginApi): void {
       workspaceRoot: ctx.workspaceRoot,
     },
     api,
-);
+  );
 }
 
 export const toolInstallers = orderByBootstrapPhase<ToolInstaller>([
