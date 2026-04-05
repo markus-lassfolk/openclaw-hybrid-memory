@@ -200,6 +200,46 @@ function isHandoffRef(value: unknown): value is ActiveTaskHandoffRef {
   );
 }
 
+/**
+ * Extract the "## Active Goals" section from the raw file content.
+ * Returns the section content (without the header) or undefined if not present.
+ */
+function extractGoalsMirrorSection(content: string): string | undefined {
+  const lines = content.split("\n");
+  let inGoalsSection = false;
+  const goalLines: string[] = [];
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+
+    if (trimmed === "## Active Goals") {
+      inGoalsSection = true;
+      continue;
+    }
+
+    // Stop at any other h2 header
+    if (inGoalsSection && trimmed.startsWith("## ")) {
+      break;
+    }
+
+    if (inGoalsSection) {
+      goalLines.push(line);
+    }
+  }
+
+  if (goalLines.length === 0) return undefined;
+
+  // Remove leading/trailing empty lines
+  while (goalLines.length > 0 && goalLines[0].trim() === "") {
+    goalLines.shift();
+  }
+  while (goalLines.length > 0 && goalLines[goalLines.length - 1].trim() === "") {
+    goalLines.pop();
+  }
+
+  return goalLines.length > 0 ? goalLines.join("\n") : undefined;
+}
+
 /** Parse a full ACTIVE-TASK.md file content */
 export function parseActiveTaskFile(content: string): ActiveTaskFile {
   const lines = content.split("\n");
@@ -285,7 +325,11 @@ export function serializeTaskEntry(entry: ActiveTaskEntry): string {
 }
 
 /** Serialize all tasks back to full ACTIVE-TASK.md content */
-export function serializeActiveTaskFile(active: ActiveTaskEntry[], completed: ActiveTaskEntry[]): string {
+export function serializeActiveTaskFile(
+  active: ActiveTaskEntry[],
+  completed: ActiveTaskEntry[],
+  goalsMirrorMarkdown?: string,
+): string {
   const parts: string[] = ["# ACTIVE-TASK.md — Working Memory\n"];
 
   parts.push("## Active Tasks\n");
@@ -296,6 +340,13 @@ export function serializeActiveTaskFile(active: ActiveTaskEntry[], completed: Ac
       parts.push(serializeTaskEntry(entry));
       parts.push("");
     }
+  }
+
+  if (goalsMirrorMarkdown !== undefined) {
+    parts.push("## Active Goals\n");
+    parts.push("_Mirror from goal registry — do not edit by hand; refreshed on heartbeat._\n\n");
+    parts.push(goalsMirrorMarkdown);
+    if (!goalsMirrorMarkdown.endsWith("\n")) parts.push("\n");
   }
 
   if (completed.length > 0) {
@@ -359,7 +410,19 @@ export async function writeActiveTaskFile(
   completed: ActiveTaskEntry[],
 ): Promise<void> {
   await mkdir(dirname(filePath), { recursive: true });
-  const content = serializeActiveTaskFile(active, completed);
+  
+  // Preserve existing goals mirror section if present
+  let goalsMirror: string | undefined;
+  if (existsSync(filePath)) {
+    try {
+      const existing = await readFile(filePath, "utf-8");
+      goalsMirror = extractGoalsMirrorSection(existing);
+    } catch {
+      // Ignore read errors; write without goals section
+    }
+  }
+  
+  const content = serializeActiveTaskFile(active, completed, goalsMirror);
   await writeFile(filePath, content, "utf-8");
 }
 

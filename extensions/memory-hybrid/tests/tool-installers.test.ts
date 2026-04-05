@@ -7,6 +7,7 @@ describe("tool installers", () => {
   it("keeps core installers ahead of optional feature installers", () => {
     expect(toolInstallers.map((installer) => `${installer.bootstrapPhase}:${installer.id}`)).toEqual([
       "core:memoryCore",
+      "core:goalStewardship",
       "core:retrievalGraph",
       "core:memoryUtility",
       "optional:provenance",

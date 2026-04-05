@@ -6,6 +6,9 @@
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import { capturePluginError } from "../services/error-reporter.js";
 import { parseDuration } from "../utils/duration.js";
+import { extractLastUserMessageText } from "../utils/extract-last-user-message.js";
+import { matchesHeartbeat } from "../services/goal-stewardship-heartbeat.js";
+import { buildHeartbeatTaskHygieneBlock } from "../services/task-hygiene.js";
 import { readActiveTaskFile, buildActiveTaskInjection, buildStaleWarningInjection } from "../services/active-task.js";
 import type { LifecycleContext } from "./types.js";
 
@@ -16,7 +19,7 @@ export function registerActiveTaskInjection(
 ): void {
   if (!ctx.cfg.activeTask.enabled || ctx.cfg.verbosity === "silent") return;
 
-  api.on("before_agent_start", async () => {
+  api.on("before_agent_start", async (event: unknown) => {
     try {
       const staleMinutes = parseDuration(ctx.cfg.activeTask.staleThreshold);
       const taskFile = await readActiveTaskFile(resolvedActiveTaskPath, staleMinutes);
@@ -31,11 +34,29 @@ export function registerActiveTaskInjection(
         staleWarningBlock = buildStaleWarningInjection(taskFile.active, staleMinutes, remainingChars);
       }
 
-      if (!injection && !staleWarningBlock) return undefined;
+      const th = ctx.cfg.activeTask.taskHygiene;
+      let hygieneBlock = "";
+      const userText = extractLastUserMessageText(event);
+      if (
+        th.heartbeatEscalation &&
+        ctx.cfg.goalStewardship.enabled &&
+        userText &&
+        matchesHeartbeat(userText, ctx.cfg.goalStewardship) &&
+        taskFile.active.length > 0
+      ) {
+        hygieneBlock = buildHeartbeatTaskHygieneBlock(taskFile.active, {
+          maxChars: th.heartbeatNudgeMaxChars,
+          suggestGoalAfterTaskAgeDays: th.suggestGoalAfterTaskAgeDays,
+        });
+        api.logger?.info?.("memory-hybrid: task hygiene block appended (heartbeat match)");
+      }
 
-      const context = [injection, staleWarningBlock].filter(Boolean).join("\n\n");
+      const parts = [injection, staleWarningBlock, hygieneBlock].filter(Boolean);
+      if (parts.length === 0) return undefined;
+
+      const context = parts.join("\n\n");
       const staleCount = taskFile.active.filter((t) => t.stale).length;
-      api.logger.info?.(
+      api.logger?.info?.(
         `memory-hybrid: injecting ${taskFile.active.length} active task(s) from ACTIVE-TASK.md${staleCount > 0 ? ` (${staleCount} stale)` : ""}`,
       );
       return { prependContext: `${context}\n\n` };
@@ -44,7 +65,7 @@ export function registerActiveTaskInjection(
         operation: "active-task-injection",
         subsystem: "active-task",
       });
-      api.logger.warn(`memory-hybrid: active task injection failed: ${err}`);
+      api.logger?.warn?.(`memory-hybrid: active task injection failed: ${err}`);
     }
   });
 }

@@ -6,6 +6,7 @@ import { pluginLogger } from "../../utils/logger.js";
 import type { EventLogConfig, PathConfig, StoreConfig, WALConfig } from "../types/core.js";
 import type {
   ActiveTaskConfig,
+  GoalStewardshipConfig,
   AuthOrderConfig,
   CredentialAutoCaptureConfig,
   CredentialsConfig,
@@ -221,6 +222,15 @@ export function parseActiveTaskConfig(cfg: Record<string, unknown>): ActiveTaskC
   }
 
   const staleWarningRaw = activeTaskRaw?.staleWarning as Record<string, unknown> | undefined;
+  const thRaw = activeTaskRaw?.taskHygiene as Record<string, unknown> | undefined;
+  const suggestDays =
+    typeof thRaw?.suggestGoalAfterTaskAgeDays === "number" && thRaw.suggestGoalAfterTaskAgeDays >= 0
+      ? Math.floor(thRaw.suggestGoalAfterTaskAgeDays)
+      : 0;
+  const heartbeatNudgeMaxChars =
+    typeof thRaw?.heartbeatNudgeMaxChars === "number" && thRaw.heartbeatNudgeMaxChars >= 200
+      ? Math.floor(thRaw.heartbeatNudgeMaxChars)
+      : 2500;
   return {
     enabled: activeTaskRaw?.enabled !== false,
     filePath:
@@ -237,6 +247,125 @@ export function parseActiveTaskConfig(cfg: Record<string, unknown>): ActiveTaskC
     staleWarning: {
       enabled: staleWarningRaw?.enabled !== false, // default: true
     },
+    taskHygiene: {
+      heartbeatEscalation: thRaw?.heartbeatEscalation !== false,
+      suggestGoalAfterTaskAgeDays: suggestDays,
+      heartbeatNudgeMaxChars,
+    },
+  };
+}
+
+export function parseGoalStewardshipConfig(cfg: Record<string, unknown>): GoalStewardshipConfig {
+  const raw = cfg.goalStewardship as Record<string, unknown> | undefined;
+  const defaults = raw?.defaults as Record<string, unknown> | undefined;
+  const limits = raw?.globalLimits as Record<string, unknown> | undefined;
+  const goalsDir =
+    typeof raw?.goalsDir === "string" && raw.goalsDir.trim().length > 0 ? raw.goalsDir.trim() : "state/goals";
+  const priorityRaw = defaults?.priority;
+  const priority =
+    priorityRaw === "critical" || priorityRaw === "high" || priorityRaw === "low" || priorityRaw === "normal"
+      ? priorityRaw
+      : "normal";
+  const patternsRaw = raw?.heartbeatPatterns;
+  const heartbeatPatterns: string[] = [];
+  if (Array.isArray(patternsRaw)) {
+    for (const p of patternsRaw) {
+      if (typeof p === "string" && p.trim().length > 0) heartbeatPatterns.push(p.trim());
+    }
+  }
+
+  const aw = raw?.attentionWeights as Record<string, unknown> | undefined;
+  const attentionWeights = {
+    critical: typeof aw?.critical === "number" && aw.critical > 0 ? aw.critical : 4,
+    high: typeof aw?.high === "number" && aw.high > 0 ? aw.high : 2,
+    normal: typeof aw?.normal === "number" && aw.normal > 0 ? aw.normal : 1,
+    low: typeof aw?.low === "number" && aw.low > 0 ? aw.low : 0.5,
+  };
+
+  const multiGoalMaxChars =
+    typeof raw?.multiGoalMaxChars === "number" && raw.multiGoalMaxChars >= 500
+      ? Math.floor(raw.multiGoalMaxChars)
+      : 12_000;
+  const multiGoalMaxGoals =
+    typeof raw?.multiGoalMaxGoals === "number" && raw.multiGoalMaxGoals >= 1 ? Math.floor(raw.multiGoalMaxGoals) : 8;
+
+  const confRaw = raw?.confirmationPolicy as Record<string, unknown> | undefined;
+  const reqAck = confRaw?.requireRegisterAckForPriorities;
+  const requireRegisterAckForPriorities: Array<"critical" | "high" | "normal" | "low"> = [];
+  if (Array.isArray(reqAck)) {
+    for (const pr of reqAck) {
+      if (pr === "critical" || pr === "high" || pr === "normal" || pr === "low") {
+        requireRegisterAckForPriorities.push(pr);
+      }
+    }
+  }
+  if (requireRegisterAckForPriorities.length === 0) {
+    requireRegisterAckForPriorities.push("critical", "high");
+  }
+
+  const cbRaw = raw?.circuitBreaker as Record<string, unknown> | undefined;
+  const sameBlockerRepeatLimit =
+    typeof cbRaw?.sameBlockerRepeatLimit === "number" && cbRaw.sameBlockerRepeatLimit >= 1
+      ? Math.floor(cbRaw.sameBlockerRepeatLimit)
+      : 0;
+  const maxAssessmentsWithoutProgress =
+    typeof cbRaw?.maxAssessmentsWithoutProgress === "number" && cbRaw.maxAssessmentsWithoutProgress >= 1
+      ? Math.floor(cbRaw.maxAssessmentsWithoutProgress)
+      : 0;
+
+  return {
+    enabled: raw?.enabled === true,
+    goalsDir,
+    model: typeof raw?.model === "string" && raw.model.trim().length > 0 ? raw.model.trim() : null,
+    heartbeatStewardship: raw?.heartbeatStewardship !== false,
+    watchdogHealthCheck: raw?.watchdogHealthCheck !== false,
+    defaults: {
+      maxDispatches:
+        typeof defaults?.maxDispatches === "number" && defaults.maxDispatches >= 1
+          ? Math.floor(defaults.maxDispatches)
+          : 20,
+      maxAssessments:
+        typeof defaults?.maxAssessments === "number" && defaults.maxAssessments >= 1
+          ? Math.floor(defaults.maxAssessments)
+          : 50,
+      cooldownMinutes:
+        typeof defaults?.cooldownMinutes === "number" && defaults.cooldownMinutes >= 1
+          ? Math.floor(defaults.cooldownMinutes)
+          : 10,
+      escalateAfterFailures:
+        typeof defaults?.escalateAfterFailures === "number" && defaults.escalateAfterFailures >= 1
+          ? Math.floor(defaults.escalateAfterFailures)
+          : 3,
+      priority,
+    },
+    globalLimits: {
+      maxDispatchesPerHour:
+        typeof limits?.maxDispatchesPerHour === "number" && limits.maxDispatchesPerHour >= 1
+          ? Math.floor(limits.maxDispatchesPerHour)
+          : 6,
+      maxActiveGoals:
+        typeof limits?.maxActiveGoals === "number" && limits.maxActiveGoals >= 1
+          ? Math.floor(limits.maxActiveGoals)
+          : 5,
+    },
+    heartbeatPatterns,
+    attentionWeights,
+    multiGoalMaxChars,
+    multiGoalMaxGoals,
+    heartbeatRefreshActiveTask: raw?.heartbeatRefreshActiveTask !== false,
+    confirmationPolicy: {
+      requireRegisterAckForPriorities,
+    },
+    llmTriageOnHeartbeat: raw?.llmTriageOnHeartbeat === true,
+    triageSuggestHeavyDirective: raw?.triageSuggestHeavyDirective !== false,
+    circuitBreaker: {
+      enabled: cbRaw?.enabled === true,
+      sameBlockerRepeatLimit,
+      maxAssessmentsWithoutProgress,
+      composeHumanSummary: cbRaw?.composeHumanSummary !== false,
+      appendMemoryEscalation: cbRaw?.appendMemoryEscalation !== false,
+    },
+    allowCommandVerification: raw?.allowCommandVerification === true,
   };
 }
 

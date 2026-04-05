@@ -1,4 +1,7 @@
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
+import { getEnv } from "../utils/env-manager.js";
+import { homedir } from "node:os";
+import { join as pathJoin } from "node:path";
 import type { MemoryPluginAPI } from "../api/memory-plugin-api.js";
 import type { BootstrapPhaseConfig } from "../config.js";
 import { orderByBootstrapPhase } from "../services/bootstrap-priority.js";
@@ -11,12 +14,15 @@ import { registerDocumentTools } from "../tools/document-tools.js";
 import { type PluginContext as GraphToolsContext, registerGraphTools } from "../tools/graph-tools.js";
 import { registerIssueTools } from "../tools/issue-tools.js";
 import { type MemoryToolsContext, registerMemoryTools } from "../tools/memory-tools.js";
+import { resolveGoalsDir } from "../services/goal-stewardship.js";
 import { type PluginContext as PersonaToolsContext, registerPersonaTools } from "../tools/persona-tools.js";
 import { registerProvenanceTools } from "../tools/provenance-tools.js";
 import { registerSelfExtensionTools } from "../tools/self-extension-tools.js";
 import { type PluginContext as UtilityToolsContext, registerUtilityTools } from "../tools/utility-tools.js";
 import { registerVerificationTools } from "../tools/verification-tools.js";
 import { registerWorkflowTools } from "../tools/workflow-tools.js";
+import { registerGoalTools, type GoalToolsContext } from "../tools/goal-tools.js";
+import { registerTaskHygieneTools, resolveActiveTaskPathForTools } from "../tools/task-hygiene-tools.js";
 
 export type ToolsContext = MemoryPluginAPI;
 
@@ -319,12 +325,45 @@ function installDashboardRoutes({ cfg }: DashboardRoutesContext, api: ClawdbotPl
   registerDashboardHttpRoutes({ cfg }, api);
 }
 
+function selectGoalToolsContext(ctx: ToolsContext): GoalToolsContext {
+  const workspaceRoot = getEnv("OPENCLAW_WORKSPACE") ?? pathJoin(homedir(), ".openclaw", "workspace");
+  const goalsDir = resolveGoalsDir(workspaceRoot, ctx.cfg.goalStewardship.goalsDir);
+  const resolvedActiveTaskPath = resolveActiveTaskPathForTools(ctx.cfg, workspaceRoot);
+  return {
+    cfg: ctx.cfg,
+    goalsDir,
+    workspaceRoot,
+    resolvedActiveTaskPath,
+    factsDb: ctx.factsDb,
+    eventLog: ctx.eventLog,
+    memoryDir: pathJoin(workspaceRoot, "memory"),
+  };
+}
+
+function installGoalTools(ctx: GoalToolsContext, api: ClawdbotPluginApi): void {
+  registerGoalTools(ctx, api);
+  registerTaskHygieneTools(
+    {
+      cfg: ctx.cfg,
+      resolvedActiveTaskPath: ctx.resolvedActiveTaskPath,
+      workspaceRoot: ctx.workspaceRoot,
+    },
+    api,
+  );
+}
+
 export const toolInstallers = orderByBootstrapPhase<ToolInstaller>([
   defineToolInstaller({
     id: "memoryCore",
     bootstrapPhase: "core",
     selectContext: (ctx) => selectMemoryCoreToolsContext(ctx),
     install: installMemoryCoreTools,
+  }),
+  defineToolInstaller({
+    id: "goalStewardship",
+    bootstrapPhase: "core",
+    selectContext: (ctx) => selectGoalToolsContext(ctx),
+    install: installGoalTools,
   }),
   defineToolInstaller({
     id: "retrievalGraph",
