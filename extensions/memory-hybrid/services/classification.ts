@@ -174,7 +174,7 @@ function stripThinkingWrapperBlocks(s: string): string {
   return s
     .replace(/<redacted_thinking>[\s\S]*?<\/redacted_thinking>/gi, "")
     .replace(/<thinking>[\s\S]*?<\/thinking>/gi, "")
-    .replace(/<reasoning[\s\S]*?<\/reasoning>/gi, "")
+    .replace(/<reasoning>[\s\S]*?<\/reasoning>/gi, "")
     .trim();
 }
 
@@ -274,11 +274,10 @@ function isBatchClassifyResultArray(v: unknown): v is unknown[] {
  */
 function isLenientBatchClassifyResultArray(v: unknown): v is unknown[] {
   if (!Array.isArray(v) || v.length === 0) return false;
-  const objects = v.every(
-    (row) => row !== null && typeof row === "object" && !Array.isArray(row),
-  );
+  const objects = v.every((row) => row !== null && typeof row === "object" && !Array.isArray(row));
   if (!objects) return false;
-  return v.some((row) => typeof (row as Record<string, unknown>).action === "string");
+  const withAction = v.filter((row) => typeof (row as Record<string, unknown>).action === "string").length;
+  return withAction > 0 && withAction >= v.length / 2;
 }
 
 /**
