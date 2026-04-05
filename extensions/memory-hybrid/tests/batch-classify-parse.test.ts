@@ -54,4 +54,14 @@ describe("parseBatchClassifyResponseContent (#1007)", () => {
   it("throws when no array can be recovered", () => {
     expect(() => parseBatchClassifyResponseContent("just prose")).toThrow(/no JSON array/);
   });
+
+  it("parses lenient array when rows are valid objects with action on each row", () => {
+    const raw = JSON.stringify([
+      { action: "NOOP", targetId: null, reason: "ok" },
+      { action: "ADD", targetId: null, reason: "x" },
+    ]);
+    const out = parseBatchClassifyResponseContent(`Here:\n${raw}`) as Array<Record<string, unknown>>;
+    expect(Array.isArray(out)).toBe(true);
+    expect(out).toHaveLength(2);
+  });
 });

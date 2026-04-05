@@ -174,6 +174,7 @@ function stripThinkingWrapperBlocks(s: string): string {
   return s
     .replace(/<redacted_thinking>[\s\S]*?<\/redacted_thinking>/gi, "")
     .replace(/<thinking>[\s\S]*?<\/thinking>/gi, "")
+    .replace(/<reasoning[\s\S]*?<\/reasoning>/gi, "")
     .trim();
 }
 
@@ -226,7 +227,15 @@ function extractTopLevelJsonArraySubstring(s: string): string | null {
   return null;
 }
 
-const BATCH_OBJECT_ARRAY_KEYS = ["classifications", "results", "items", "data"] as const;
+const BATCH_OBJECT_ARRAY_KEYS = [
+  "classifications",
+  "results",
+  "items",
+  "data",
+  "answers",
+  "operations",
+  "classifyResults",
+] as const;
 
 function tryParseBatchClassifyAsObjectWithArray(s: string): unknown[] | null {
   const t = s.trim();
@@ -237,7 +246,9 @@ function tryParseBatchClassifyAsObjectWithArray(s: string): unknown[] | null {
     const rec = obj as Record<string, unknown>;
     for (const k of BATCH_OBJECT_ARRAY_KEYS) {
       const v = rec[k];
-      if (Array.isArray(v) && isBatchClassifyResultArray(v)) return v;
+      if (!Array.isArray(v)) continue;
+      if (isBatchClassifyResultArray(v)) return v;
+      if (isLenientBatchClassifyResultArray(v)) return v;
     }
   } catch {
     return null;
@@ -258,6 +269,19 @@ function isBatchClassifyResultArray(v: unknown): v is unknown[] {
 }
 
 /**
+ * Models sometimes omit `action` on a row or use extra keys; we still prefer recovering a JSON
+ * array of objects over forcing sequential classify (fewer round-trips).
+ */
+function isLenientBatchClassifyResultArray(v: unknown): v is unknown[] {
+  if (!Array.isArray(v) || v.length === 0) return false;
+  const objects = v.every(
+    (row) => row !== null && typeof row === "object" && !Array.isArray(row),
+  );
+  if (!objects) return false;
+  return v.some((row) => typeof (row as Record<string, unknown>).action === "string");
+}
+
+/**
  * Find a JSON array of batch rows; skip bracket preambles that are not JSON or not our shape (#1007, Copilot PR#1006).
  */
 function parseBalancedBatchArrayFromText(text: string): unknown[] {
@@ -269,8 +293,9 @@ function parseBalancedBatchArrayFromText(text: string): unknown[] {
     seen.add(normalized);
     try {
       const v = JSON.parse(normalized) as unknown;
-      if (!isBatchClassifyResultArray(v)) return undefined;
-      return v;
+      if (isBatchClassifyResultArray(v)) return v;
+      if (isLenientBatchClassifyResultArray(v)) return v;
+      return undefined;
     } catch {
       return undefined;
     }

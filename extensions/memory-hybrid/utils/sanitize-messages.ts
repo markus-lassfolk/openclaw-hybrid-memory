@@ -147,9 +147,8 @@ export function sanitizeMessagesForClaude(messages: MessageLike[]): MessageLike[
  * required following `message` / `function_call` item, causing:
  *   400 Item 'rs_…' of type 'reasoning' was provided without its required following item.
  *
- * Removing all reasoning blocks from replayed history is safe: the model does not
- * need prior internal reasoning traces to continue (same class of fix as Claude tool_use).
- * Applies to all messages with array content, not just assistant role.
+ * We strip from any role that carries array content (defensive). If an assistant turn
+ * would become empty, insert a minimal text block so the request remains valid.
  */
 function isOpenAIResponsesReasoningBlock(block: unknown): boolean {
   if (!block || typeof block !== "object") return false;
@@ -181,7 +180,15 @@ export function sanitizeMessagesForOpenAIResponses(messages: MessageLike[]): Mes
     const filtered = content.filter((block) => !isOpenAIResponsesReasoningBlock(block));
     if (filtered.length !== content.length) {
       changed = true;
-      out.push({ ...(msg as object), content: filtered } as MessageLike);
+      const role = (msg as MessageLike).role;
+      if (role === "assistant" && filtered.length === 0) {
+        out.push({
+          ...(msg as object),
+          content: [{ type: "text", text: "(prior reasoning trace omitted)" }],
+        } as MessageLike);
+      } else {
+        out.push({ ...(msg as object), content: filtered } as MessageLike);
+      }
     } else {
       out.push(msg);
     }
