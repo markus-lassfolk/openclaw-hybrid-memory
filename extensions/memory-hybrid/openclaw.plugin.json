@@ -118,7 +118,7 @@
     },
     "autoRecall.minScore": {
       "label": "Auto-Recall min score",
-      "help": "Vector search minimum score 0\u20131 (default 0.3)"
+      "help": "Vector search minimum score 0–1 (default 0.3)"
     },
     "autoRecall.preferLongTerm": {
       "label": "Auto-Recall prefer long-term",
@@ -244,7 +244,7 @@
     },
     "autoClassify.suggestCategories": {
       "label": "Suggest categories",
-      "help": "Let LLM suggest new categories from 'other' facts; labels with \u2265 minFactsForNewCategory become real categories"
+      "help": "Let LLM suggest new categories from 'other' facts; labels with ≥ minFactsForNewCategory become real categories"
     },
     "autoClassify.minFactsForNewCategory": {
       "label": "Min facts for new category",
@@ -306,7 +306,7 @@
     },
     "errorReporting.sampleRate": {
       "label": "Error reporting sample rate",
-      "help": "Fraction of errors to report 0\u20131 (default: 1.0)"
+      "help": "Fraction of errors to report 0–1 (default: 1.0)"
     },
     "errorReporting.botId": {
       "label": "Error reporting bot ID (UUID)",
@@ -456,7 +456,7 @@
     },
     "languageKeywords.weeklyIntervalDays": {
       "label": "Language keywords interval (days)",
-      "help": "Days between auto-builds (1\u201330, default 7)"
+      "help": "Days between auto-builds (1–30, default 7)"
     },
     "reflection.enabled": {
       "label": "Reflection layer",
@@ -477,7 +477,7 @@
     },
     "nightlyCycle.enabled": {
       "label": "Nightly dream cycle",
-      "help": "Run automated prune \u2192 consolidate \u2192 reflect pipeline (cron job nightly-dream-cycle). Default: false."
+      "help": "Run automated prune → consolidate → reflect pipeline (cron job nightly-dream-cycle). Default: false."
     },
     "passiveObserver.enabled": {
       "label": "Passive observer",
@@ -503,7 +503,7 @@
     "multiAgent.defaultStoreScope": {
       "label": "Default Store Scope",
       "placeholder": "global",
-      "help": "Default scope for new facts: 'global' (all agents, backward compatible), 'agent' (specialists auto-scope), or 'auto' (orchestrator\u2192global, specialists\u2192agent). Default: 'global'."
+      "help": "Default scope for new facts: 'global' (all agents, backward compatible), 'agent' (specialists auto-scope), or 'auto' (orchestrator→global, specialists→agent). Default: 'global'."
     },
     "trajectoryLLMAnalysis": {
       "label": "Trajectory LLM Analysis",
@@ -532,7 +532,7 @@
     },
     "goalStewardship.enabled": {
       "label": "Goal stewardship",
-      "help": "Enable long-running goal registry, agent tools (goal_register, \u2026), heartbeat injection, and optional watchdog health checks. Default: false. See docs/GOAL-STEWARDSHIP-DESIGN.md."
+      "help": "Enable long-running goal registry, agent tools (goal_register, …), heartbeat injection, and optional watchdog health checks. Default: false. See docs/GOAL-STEWARDSHIP-DESIGN.md."
     },
     "goalStewardship.goalsDir": {
       "label": "Goals directory",
@@ -568,7 +568,16 @@
     "properties": {
       "mode": {
         "type": "string",
-        "enum": ["essential", "normal", "expert", "full", "local", "minimal", "enhanced", "complete"],
+        "enum": [
+          "essential",
+          "normal",
+          "expert",
+          "full",
+          "local",
+          "minimal",
+          "enhanced",
+          "complete"
+        ],
         "description": "Configuration preset: local | minimal | enhanced | complete. Legacy values (essential, normal, expert, full) are accepted and mapped to local. See docs/CONFIGURATION-MODES.md."
       },
       "embedding": {
@@ -578,7 +587,12 @@
         "properties": {
           "provider": {
             "type": "string",
-            "enum": ["openai", "ollama", "onnx", "google"],
+            "enum": [
+              "openai",
+              "ollama",
+              "onnx",
+              "google"
+            ],
             "default": "openai",
             "description": "Embedding provider. 'openai'/'google' require apiKey. 'ollama' and 'onnx' run locally without an API key."
           },
@@ -592,11 +606,11 @@
           },
           "ollamaModel": {
             "type": "string",
-            "description": "Ollama model name \u2014 alias for 'model' when provider='ollama'. E.g. 'nomic-embed-text' (768-dim), 'mxbai-embed-large' (1024-dim), 'all-minilm' (384-dim)."
+            "description": "Ollama model name — alias for 'model' when provider='ollama'. E.g. 'nomic-embed-text' (768-dim), 'mxbai-embed-large' (1024-dim), 'all-minilm' (384-dim)."
           },
           "onnxModelPath": {
             "type": "string",
-            "description": "ONNX model path or identifier \u2014 alias for 'model' when provider='onnx'. E.g. 'all-MiniLM-L6-v2' (384-dim), 'bge-small-en-v1.5' (384-dim)."
+            "description": "ONNX model path or identifier — alias for 'model' when provider='onnx'. E.g. 'all-MiniLM-L6-v2' (384-dim), 'bge-small-en-v1.5' (384-dim)."
           },
           "onnxTokenizerPath": {
             "type": "string",
@@ -618,9 +632,13 @@
             "type": "array",
             "items": {
               "type": "string",
-              "enum": ["openai", "google", "ollama"]
+              "enum": [
+                "openai",
+                "google",
+                "ollama"
+              ]
             },
-            "description": "Explicit ordered list of embedding providers to use. When set, only listed providers are tried (in order); auto-inference from available API keys is skipped. Use [\"openai\"] to pin to Azure/OpenAI only and prevent Google from being auto-added as a fallback when GEMINI_API_KEY is also set. Mixing providers with different vector dimensions is not supported \u2014 ensure all listed providers produce the same dimensions as your stored vectors."
+            "description": "Explicit ordered list of embedding providers to use. When set, only listed providers are tried (in order); auto-inference from available API keys is skipped. Use [\"openai\"] to pin to Azure/OpenAI only and prevent Google from being auto-added as a fallback when GEMINI_API_KEY is also set. Mixing providers with different vector dimensions is not supported — ensure all listed providers produce the same dimensions as your stored vectors."
           },
           "batchSize": {
             "type": "number",
@@ -657,7 +675,13 @@
               },
               "injectionFormat": {
                 "type": "string",
-                "enum": ["full", "short", "minimal", "progressive", "progressive_hybrid"]
+                "enum": [
+                  "full",
+                  "short",
+                  "minimal",
+                  "progressive",
+                  "progressive_hybrid"
+                ]
               },
               "recallTiming": {
                 "oneOf": [
@@ -666,7 +690,11 @@
                   },
                   {
                     "type": "string",
-                    "enum": ["off", "basic", "verbose"]
+                    "enum": [
+                      "off",
+                      "basic",
+                      "verbose"
+                    ]
                   }
                 ],
                 "description": "Structured recall timing logs: false/off=disabled, true/basic=completed events only, verbose=started+completed with timestamps."
@@ -778,7 +806,11 @@
               },
               "interactiveEnrichment": {
                 "type": "string",
-                "enum": ["fast", "balanced", "full"],
+                "enum": [
+                  "fast",
+                  "balanced",
+                  "full"
+                ],
                 "description": "Unified control for interactive auto-recall: fast = lowest latency/cost (no HyDE, no ambient multi-query); balanced = default; full = richer (HyDE + ambient multi when configured)."
               },
               "authFailure": {
@@ -869,7 +901,9 @@
           },
           "store": {
             "type": "string",
-            "enum": ["sqlite"]
+            "enum": [
+              "sqlite"
+            ]
           },
           "encryptionKey": {
             "type": "string",
@@ -921,7 +955,10 @@
           },
           "mode": {
             "type": "string",
-            "enum": ["community", "self-hosted"],
+            "enum": [
+              "community",
+              "self-hosted"
+            ],
             "default": "community",
             "description": "community: anonymous telemetry to developers. self-hosted: your own Sentry/GlitchTip instance."
           },
@@ -939,7 +976,7 @@
             "minimum": 0,
             "maximum": 1,
             "default": 1,
-            "description": "Sample rate 0\u20131 (default: 1.0)"
+            "description": "Sample rate 0–1 (default: 1.0)"
           },
           "botId": {
             "type": "string",
@@ -974,7 +1011,10 @@
             "description": "Controls user-facing upgrade reminders for the version-aware telemetry mute flow."
           }
         },
-        "required": ["enabled", "consent"],
+        "required": [
+          "enabled",
+          "consent"
+        ],
         "description": "Opt-out error reporting to GlitchTip/Sentry (enabled by default, community DSN). Set enabled: false or consent: false to disable. See docs/ERROR-REPORTING.md."
       },
       "distill": {
@@ -1012,7 +1052,11 @@
           },
           "extractionModelTier": {
             "type": "string",
-            "enum": ["nano", "default", "heavy"],
+            "enum": [
+              "nano",
+              "default",
+              "heavy"
+            ],
             "description": "Model tier for extraction pipeline (extract-reinforcement LLM). 'nano' or 'default' saves cost and avoids locking the main model; unset = heavy. Expert/Full presets use 'default'."
           }
         }
@@ -1142,7 +1186,11 @@
             "type": "array",
             "items": {
               "type": "string",
-              "enum": ["SOUL.md", "IDENTITY.md", "USER.md"]
+              "enum": [
+                "SOUL.md",
+                "IDENTITY.md",
+                "USER.md"
+              ]
             },
             "description": "Identity files that can be modified via proposals"
           },
@@ -1204,12 +1252,15 @@
                   "type": "string"
                 }
               },
-              "required": ["key", "prompt"]
+              "required": [
+                "key",
+                "prompt"
+              ]
             },
             "description": "Recurring identity reflection questions"
           }
         },
-        "description": "Identity reflection layer \u2014 synthesize persona-level insights from reflection outputs"
+        "description": "Identity reflection layer — synthesize persona-level insights from reflection outputs"
       },
       "graph": {
         "type": "object",
@@ -1354,8 +1405,12 @@
           },
           "defaultStoreScope": {
             "type": "string",
-            "enum": ["global", "agent", "auto"],
-            "description": "Default scope for new facts: 'global' (all agents, backward compatible), 'agent' (specialists auto-scope), or 'auto' (orchestrator\u2192global, specialists\u2192agent). Default: 'global'."
+            "enum": [
+              "global",
+              "agent",
+              "auto"
+            ],
+            "description": "Default scope for new facts: 'global' (all agents, backward compatible), 'agent' (specialists auto-scope), or 'auto' (orchestrator→global, specialists→agent). Default: 'global'."
           }
         },
         "description": "Multi-agent memory scoping: dynamic agent detection and scope defaults"
@@ -1439,7 +1494,11 @@
           },
           "pruneMode": {
             "type": "string",
-            "enum": ["expired", "decay", "both"]
+            "enum": [
+              "expired",
+              "decay",
+              "both"
+            ]
           },
           "model": {
             "type": "string"
@@ -1508,7 +1567,11 @@
           },
           "extractionModelTier": {
             "type": "string",
-            "enum": ["nano", "default", "heavy"]
+            "enum": [
+              "nano",
+              "default",
+              "heavy"
+            ]
           },
           "preFilter": {
             "type": "object",
@@ -1679,6 +1742,14 @@
             "type": "boolean",
             "description": "Enable ACTIVE-TASKS.md injection and related tooling (default: true)"
           },
+          "ledger": {
+            "type": "string",
+            "enum": [
+              "markdown",
+              "facts"
+            ],
+            "description": "Task ledger backend. \"markdown\" = legacy ACTIVE-TASKS.md file ledger (default). \"facts\" = canonical facts DB with optional ACTIVE-TASKS.md projection via hybrid-mem active-tasks render."
+          },
           "filePath": {
             "type": "string",
             "description": "Path to ACTIVE-TASKS.md relative to OPENCLAW_WORKSPACE or absolute (default: ACTIVE-TASKS.md)"
@@ -1736,7 +1807,10 @@
             "description": "Relative to workspace; goal JSON store (default: state/goals)"
           },
           "model": {
-            "type": ["string", "null"],
+            "type": [
+              "string",
+              "null"
+            ],
             "description": "Optional dedicated stewardship model (default: null = cron default)"
           },
           "heartbeatStewardship": {
@@ -1765,7 +1839,12 @@
               },
               "priority": {
                 "type": "string",
-                "enum": ["critical", "high", "normal", "low"]
+                "enum": [
+                  "critical",
+                  "high",
+                  "normal",
+                  "low"
+                ]
               }
             },
             "description": "Per-goal defaults when registering"
@@ -1827,7 +1906,12 @@
                 "type": "array",
                 "items": {
                   "type": "string",
-                  "enum": ["critical", "high", "normal", "low"]
+                  "enum": [
+                    "critical",
+                    "high",
+                    "normal",
+                    "low"
+                  ]
                 }
               }
             }
@@ -1874,6 +1958,8 @@
         "description": "Long-running goal registry, stewardship injection, and watchdog (see docs/GOAL-STEWARDSHIP-DESIGN.md)"
       }
     },
-    "required": ["embedding"]
+    "required": [
+      "embedding"
+    ]
   }
 }
