@@ -355,6 +355,24 @@ describe("withLLMRetry", () => {
     expect(fn).toHaveBeenCalledTimes(1);
     expect(errorReporter.capturePluginError).not.toHaveBeenCalled();
   });
+
+  it("#1077: suppresses GlitchTip report for final 400 status code (no body) LLMRetryError", async () => {
+    vi.clearAllMocks();
+    const fn = vi.fn().mockRejectedValue(new Error("400 status code (no body)"));
+
+    const promise = withLLMRetry(fn, { maxRetries: 2 });
+    const expectation = expect(promise).rejects.toThrow(LLMRetryError);
+
+    await vi.advanceTimersByTimeAsync(1);
+    await vi.advanceTimersByTimeAsync(1000);
+    await vi.advanceTimersByTimeAsync(1);
+    await vi.advanceTimersByTimeAsync(3000);
+    await vi.advanceTimersByTimeAsync(1);
+
+    await expectation;
+    expect(fn).toHaveBeenCalledTimes(3);
+    expect(errorReporter.capturePluginError).not.toHaveBeenCalled();
+  });
 });
 
 describe("is404Like", () => {
