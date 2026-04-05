@@ -21,6 +21,7 @@ describe("tool installers", () => {
       "optional:selfExtension",
       "optional:apitap",
       "optional:dashboard",
+      "optional:publicApi",
     ]);
   });
 
