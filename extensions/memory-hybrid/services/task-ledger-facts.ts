@@ -125,6 +125,7 @@ export function buildTaskEntriesFromGroupedFacts(byEntity: Map<string, Map<strin
       description: titleFromFacts(f),
       status: disp,
       branch: f.branch?.trim() || undefined,
+      stashCommit: f.stash_commit?.trim() || undefined,
       subagent: f.related_session?.trim() || undefined,
       next: f.next?.trim() || undefined,
       started,
@@ -230,6 +231,7 @@ export async function syncActiveTaskEntryToFacts(
   await upsertProjectTaskKey(factsDb, vectorDb, embeddings, entity, "task_updated", entry.updated, log);
   await upsertProjectTaskKey(factsDb, vectorDb, embeddings, entity, "started", entry.started, log);
   await upsertProjectTaskKey(factsDb, vectorDb, embeddings, entity, "branch", entry.branch?.trim() || "", log);
+  await upsertProjectTaskKey(factsDb, vectorDb, embeddings, entity, "stash_commit", entry.stashCommit?.trim() || "", log);
   await upsertProjectTaskKey(
     factsDb,
     vectorDb,
