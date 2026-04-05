@@ -101,10 +101,7 @@ export function buildPublicExportBundle(
   const narrativesLimit = parseLimit(options.narrativesLimit);
   const linksLimit = parseLimit(options.linksLimit);
 
-  const facts = factsDb
-    .getAll({ includeSuperseded: false })
-    .sort((a, b) => (b.sourceDate ?? b.createdAt) - (a.sourceDate ?? a.createdAt))
-    .slice(0, factsLimit);
+  const facts = factsDb.list(factsLimit);
   const episodes = factsDb.searchEpisodes({ limit: episodesLimit });
   const procedures = factsDb.listProcedures(proceduresLimit);
   const narratives = safeLoadNarratives(narrativesDb, narrativesLimit);
