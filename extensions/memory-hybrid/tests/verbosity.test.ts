@@ -725,7 +725,7 @@ function makeMinimalLifecycleContext(verbosity: VerbosityLevel): LifecycleContex
     verbosity,
     autoRecall: { enabled: true, authFailure: { enabled: true } },
     credentials: { enabled: true, autoDetect: true },
-    activeTask: { enabled: true },
+    activeTask: { enabled: true, ledger: "markdown" },
     frustrationDetection: { enabled: true },
   });
 

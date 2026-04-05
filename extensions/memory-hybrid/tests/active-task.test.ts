@@ -751,6 +751,7 @@ describe("runActiveTaskList", () => {
       staleMinutes: 1440,
       flushOnComplete: false,
       memoryDir: join(tmpDir, "memory"),
+      ledger: "markdown",
     };
   });
 
@@ -800,6 +801,7 @@ describe("runActiveTaskStale", () => {
       staleMinutes: 1440,
       flushOnComplete: false,
       memoryDir: join(tmpDir, "memory"),
+      ledger: "markdown",
     };
   });
 
@@ -841,6 +843,7 @@ describe("runActiveTaskComplete", () => {
       staleMinutes: 1440,
       flushOnComplete: true,
       memoryDir: join(tmpDir, "memory"),
+      ledger: "markdown",
     };
   });
 
@@ -908,6 +911,7 @@ describe("runActiveTaskAdd", () => {
       staleMinutes: 1440,
       flushOnComplete: false,
       memoryDir: join(tmpDir, "memory"),
+      ledger: "markdown",
     };
   });
 

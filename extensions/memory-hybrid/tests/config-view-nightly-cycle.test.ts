@@ -25,7 +25,7 @@ function makeCtx(enabled: boolean): HandlerContext {
     selfExtension: { enabled: true },
     crystallization: { enabled: true },
     extraction: { extractionPasses: true },
-    activeTask: { enabled: true },
+    activeTask: { enabled: true, ledger: "markdown" },
     frustrationDetection: { enabled: false },
     crossAgentLearning: { enabled: true },
     toolEffectiveness: { enabled: true },

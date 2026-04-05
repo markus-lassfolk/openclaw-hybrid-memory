@@ -1,13 +1,14 @@
-import { getEnv } from "../utils/env-manager.js";
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { HybridMemoryConfig } from "../config.js";
 import { parseDuration } from "../utils/duration.js";
+import { getEnv } from "../utils/env-manager.js";
 import { estimateTokens } from "../utils/text.js";
 import { buildActiveTaskInjection, buildStaleWarningInjection, readActiveTaskFile } from "./active-task.js";
 import { capturePluginError } from "./error-reporter.js";
+import { readActiveTaskRowsFromFacts } from "./task-ledger-facts.js";
 
 type ContextAuditResult = {
   autoRecall: { enabled: boolean; budgetTokens: number; hotTokens: number; injectionFormat: string };
@@ -51,23 +52,30 @@ export async function runContextAudit(opts: {
   if (cfg.activeTask.enabled) {
     try {
       const staleMinutes = parseDuration(cfg.activeTask.staleThreshold);
-      const taskFile = await readActiveTaskFile(
-        isAbsolute(cfg.activeTask.filePath) ? cfg.activeTask.filePath : join(workspaceRoot, cfg.activeTask.filePath),
-        staleMinutes,
-      );
-      if (taskFile && taskFile.active.length > 0) {
-        const injection = buildActiveTaskInjection(taskFile.active, cfg.activeTask.injectionBudget);
+      let activeRows: import("./active-task.js").ActiveTaskEntry[] = [];
+      if (cfg.activeTask.ledger === "facts") {
+        const { active } = readActiveTaskRowsFromFacts(factsDb, staleMinutes);
+        activeRows = active;
+      } else {
+        const taskFile = await readActiveTaskFile(
+          isAbsolute(cfg.activeTask.filePath) ? cfg.activeTask.filePath : join(workspaceRoot, cfg.activeTask.filePath),
+          staleMinutes,
+        );
+        if (taskFile?.active.length) activeRows = taskFile.active;
+      }
+      if (activeRows.length > 0) {
+        const injection = buildActiveTaskInjection(activeRows, cfg.activeTask.injectionBudget);
         let staleWarningBlock = "";
         if (cfg.activeTask.staleWarning.enabled) {
           const injectionChars = injection.length;
           const budgetChars = cfg.activeTask.injectionBudget * 4;
           const remainingChars = Math.max(0, budgetChars - injectionChars);
-          staleWarningBlock = buildStaleWarningInjection(taskFile.active, staleMinutes, remainingChars);
+          staleWarningBlock = buildStaleWarningInjection(activeRows, staleMinutes, remainingChars);
         }
         const combined = [injection, staleWarningBlock].filter(Boolean).join("\n\n");
         activeTasksTokens = combined ? estimateTokens(combined) : 0;
-        activeTasksCount = taskFile.active.length;
-        activeTasksStale = taskFile.active.filter((t) => t.stale).length;
+        activeTasksCount = activeRows.length;
+        activeTasksStale = activeRows.filter((t) => t.stale).length;
       }
     } catch (err) {
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {

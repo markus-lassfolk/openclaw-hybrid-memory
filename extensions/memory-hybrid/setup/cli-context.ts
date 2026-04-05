@@ -130,11 +130,12 @@ Commands by category:
 
 const HYBRID_MEM_HELP_ACTIVE_TASKS = `
   Working memory
-    active-tasks                   List active tasks from ACTIVE-TASK.md
+    active-tasks                   List active tasks (markdown file or facts ledger — see activeTask.ledger)
     active-tasks complete <label>  Mark task as Done and flush to memory log
     active-tasks stale             Show tasks not updated within staleThreshold
     active-tasks reconcile         Complete in-progress rows whose session transcript is gone (#978)
     active-tasks add <label> <desc>  Add or update a task entry
+    active-tasks render            Write ACTIVE-TASK.md from facts (when activeTask.ledger: facts)
     task-queue-status            Print task-queue JSON + recognized flag; --with-active-tasks (#1037)
     task-queue-touch             Create idle current.json if missing; --repair for bad snapshots (#1037)
 `;
@@ -200,6 +201,7 @@ const HYBRID_MEM_CLI_COMMANDS = [
   "hybrid-mem active-tasks stale",
   "hybrid-mem active-tasks reconcile",
   "hybrid-mem active-tasks add",
+  "hybrid-mem active-tasks render",
   "hybrid-mem task-queue-status",
   "hybrid-mem task-queue-touch",
   "hybrid-mem cost-report",
@@ -813,6 +815,10 @@ function buildActiveTaskCliContext(handlerCtx: HandlerContext): ActiveTaskContex
     staleMinutes: parseDuration(activeTask.staleThreshold),
     flushOnComplete: activeTask.flushOnComplete,
     memoryDir,
+    ledger: activeTask.ledger,
+    factsDb: handlerCtx.factsDb,
+    vectorDb: handlerCtx.vectorDb,
+    embeddings: handlerCtx.embeddings,
   };
 }
 
