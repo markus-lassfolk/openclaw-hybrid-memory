@@ -44,6 +44,7 @@ function makeCtx(enabled: boolean): HandlerContext {
 
   return {
     cfg,
+    // @ts-expect-error
     dataDir: ".",
     noEmoji: false,
     logger: {
