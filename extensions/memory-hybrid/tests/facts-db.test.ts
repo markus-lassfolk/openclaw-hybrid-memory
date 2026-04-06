@@ -1,7 +1,7 @@
+// @ts-nocheck
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-// @ts-nocheck
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { _testing } from "../index.js";
 
@@ -2893,7 +2893,7 @@ describe("FactsDB Episodes", () => {
       // Verify the relation was stored in episode_relations
       const relRows = (db as unknown as { liveDb: { prepare: (sql: string) => { all: () => unknown[] } } }).liveDb
         .prepare("SELECT * FROM episode_relations WHERE episode_id = ?")
-        .all() as Array<{ episode_id: string; target_id: string; relation_type: string }>;
+        .all(episode.id) as Array<{ episode_id: string; target_id: string; relation_type: string }>;
       expect(relRows.some((r) => r.target_id === relatedId.id && r.relation_type === "PART_OF")).toBe(true);
     });
   });
