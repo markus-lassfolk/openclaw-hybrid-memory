@@ -89,12 +89,20 @@ export function findSimilarForClassification(
           const ftsRows = ftsStmt.all(words, fetchLimit) as Array<{ rowid: number }>;
           if (ftsRows.length === 0) break;
 
-          const ph = ftsRows.map(() => "?").join(",");
-          const factRows = db
-            .prepare(
-              `SELECT *, rowid AS _rowid FROM facts WHERE rowid IN (${ph}) AND superseded_at IS NULL AND (expires_at IS NULL OR expires_at > ?)`,
-            )
-            .all(...ftsRows.map((r) => r.rowid), nowSec) as Array<Record<string, unknown>>;
+          const CHUNK_SIZE = 500;
+          const allRows: Array<Record<string, unknown>> = [];
+          for (let i = 0; i < ftsRows.length; i += CHUNK_SIZE) {
+            const chunk = ftsRows.slice(i, i + CHUNK_SIZE);
+            const ph = chunk.map(() => "?").join(",");
+            allRows.push(
+              ...(db
+                .prepare(
+                  `SELECT *, rowid AS _rowid FROM facts WHERE rowid IN (${ph}) AND superseded_at IS NULL AND (expires_at IS NULL OR expires_at > ?)`,
+                )
+                .all(...chunk.map((r) => r.rowid), nowSec) as Array<Record<string, unknown>>),
+            );
+          }
+          const factRows = allRows;
           const byRowid = new Map(factRows.map((r) => [r._rowid as number, r]));
           for (const { rowid } of ftsRows) {
             const row = byRowid.get(rowid);

@@ -269,9 +269,10 @@ export async function runRecallPipelineQuery(
     try {
       ftsRows = await ftsPromise;
     } catch (ftsErr) {
-      // Embed was started before FTS; if FTS fails first, still observe the embed
-      // promise so a fast network rejection cannot surface as an unhandled rejection.
-      await Promise.allSettled([embedPromise]);
+      // Embed was started before FTS; if FTS fails first, fire-and-forget the
+      // embed promise so a fast network rejection cannot surface as an unhandled
+      // rejection, without blocking the error path on embed settling.
+      embedPromise.catch(() => {/* intentionally ignored */});
       throw ftsErr;
     }
 

@@ -205,28 +205,42 @@ export function searchFts(
       if (ftsRows.length === 0) return [];
 
       const candidateRowids = ftsRows.map((r) => r.rowid);
-      const ph = candidateRowids.map(() => "?").join(",");
-      const filterParams: Array<string | number> = [...candidateRowids];
-      let filterSql = `SELECT id, text, entity, rowid AS _rowid FROM facts WHERE rowid IN (${ph})`;
-      if (!includeSuperseded) {
-        const nowSec = asOf ?? Math.floor(Date.now() / 1000);
-        filterSql += " AND superseded_at IS NULL AND (expires_at IS NULL OR expires_at > ?)";
-        filterParams.push(nowSec);
-      }
-      if (entityFilter?.trim()) {
-        filterSql += " AND LOWER(entity) = LOWER(?)";
-        filterParams.push(entityFilter.trim());
-      }
-      if (tagFilter?.trim()) {
-        filterSql += " AND (',' || COALESCE(tags,'') || ',') LIKE ?";
-        filterParams.push(`%,${tagFilter.toLowerCase().trim()},%`);
-      }
-      filteredFacts = db.prepare(filterSql).all(...filterParams) as Array<{
+      // Chunk to respect SQLite's bound-parameter limit (commonly 999/32766).
+      const CHUNK_SIZE = 500;
+      const allFiltered: Array<{
         id: string;
         text: string;
         entity: string | null;
         _rowid: number;
-      }>;
+      }> = [];
+      const nowSec = asOf ?? Math.floor(Date.now() / 1000);
+      for (let i = 0; i < candidateRowids.length; i += CHUNK_SIZE) {
+        const chunk = candidateRowids.slice(i, i + CHUNK_SIZE);
+        const ph = chunk.map(() => "?").join(",");
+        const filterParams: Array<string | number> = [...chunk];
+        let filterSql = `SELECT id, text, entity, rowid AS _rowid FROM facts WHERE rowid IN (${ph})`;
+        if (!includeSuperseded) {
+          filterSql += " AND superseded_at IS NULL AND (expires_at IS NULL OR expires_at > ?)";
+          filterParams.push(nowSec);
+        }
+        if (entityFilter?.trim()) {
+          filterSql += " AND LOWER(entity) = LOWER(?)";
+          filterParams.push(entityFilter.trim());
+        }
+        if (tagFilter?.trim()) {
+          filterSql += " AND (',' || COALESCE(tags,'') || ',') LIKE ?";
+          filterParams.push(`%,${tagFilter.toLowerCase().trim()},%`);
+        }
+        allFiltered.push(
+          ...(db.prepare(filterSql).all(...filterParams) as Array<{
+            id: string;
+            text: string;
+            entity: string | null;
+            _rowid: number;
+          }>),
+        );
+      }
+      filteredFacts = allFiltered;
 
       const ftsExhausted = ftsRows.length < ftsLimit;
       const enough = filteredFacts.length >= limit;
