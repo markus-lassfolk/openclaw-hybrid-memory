@@ -2,16 +2,17 @@
  * Deterministic goal health watchdog (no LLM).
  */
 
-import { existsSync } from "node:fs";
 import { execFile } from "node:child_process";
+import { existsSync } from "node:fs";
+import { isAbsolute, join } from "node:path";
 import { promisify } from "node:util";
-import { join, isAbsolute } from "node:path";
 
 import type { EventLog } from "../backends/event-log.js";
 import type { GoalStewardshipConfig } from "../config/types/index.js";
+import { getEnv } from "../utils/env-manager.js";
+import { isTerminalStatus, listGoals, readGoal, updateGoal } from "./goal-registry.js";
+import type { Goal, GoalHistoryEntry } from "./goal-stewardship-types.js";
 import { isPidAlive } from "./task-queue-watchdog.js";
-import type { Goal } from "./goal-stewardship-types.js";
-import { isTerminalStatus, readGoal, listGoals, updateGoal } from "./goal-registry.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -35,14 +36,82 @@ function nowIso(): string {
 
 const SHELL_DENY_RE = /[;&|`$(){}!\n\\<>~#]/;
 
+/** Parse `owner/repo#N` or a `github.com/owner/repo/pull/N` URL for pr_merged verification. */
+export function parseGithubPrTarget(target: string): { owner: string; repo: string; number: number } | null {
+  const t = target.trim();
+  const m1 = /^([a-zA-Z0-9_.-]+)\/([a-zA-Z0-9_.-]+)#(\d+)$/.exec(t);
+  if (m1) {
+    const n = Number(m1[3]);
+    if (!Number.isFinite(n) || n < 1) return null;
+    return { owner: m1[1], repo: m1[2], number: Math.floor(n) };
+  }
+  const m2 = /github\.com\/([^/]+)\/([^/]+)\/pull\/(\d+)/i.exec(t);
+  if (m2) {
+    const n = Number(m2[3]);
+    if (!Number.isFinite(n) || n < 1) return null;
+    return { owner: m2[1], repo: m2[2], number: Math.floor(n) };
+  }
+  return null;
+}
+
+async function verifyPrMergedApi(target: string): Promise<{ ok: boolean; detail: string }> {
+  const parsed = parseGithubPrTarget(target);
+  if (!parsed) {
+    return {
+      ok: false,
+      detail: "pr_merged: target must be owner/repo#N or a https://github.com/owner/repo/pull/N URL",
+    };
+  }
+  const token = (getEnv("GITHUB_TOKEN") ?? getEnv("GH_TOKEN") ?? "").trim();
+  if (!token) {
+    return { ok: false, detail: "pr_merged: set GITHUB_TOKEN or GH_TOKEN for GitHub API access" };
+  }
+  const url = `https://api.github.com/repos/${parsed.owner}/${parsed.repo}/pulls/${parsed.number}`;
+  try {
+    const ac = new AbortController();
+    const to = setTimeout(() => ac.abort(), 15_000);
+    const res = await fetch(url, {
+      signal: ac.signal,
+      headers: {
+        Accept: "application/vnd.github+json",
+        Authorization: `Bearer ${token}`,
+        "X-GitHub-Api-Version": "2022-11-28",
+      },
+    });
+    clearTimeout(to);
+    if (res.status === 404) {
+      return { ok: false, detail: `pr_merged: PR not found (${parsed.owner}/${parsed.repo}#${parsed.number})` };
+    }
+    if (!res.ok) {
+      return { ok: false, detail: `pr_merged: GitHub API HTTP ${res.status}` };
+    }
+    const body = (await res.json()) as { merged?: boolean };
+    if (body.merged === true) {
+      return { ok: true, detail: `pr_merged: ${parsed.owner}/${parsed.repo}#${parsed.number} merged` };
+    }
+    return { ok: false, detail: `pr_merged: ${parsed.owner}/${parsed.repo}#${parsed.number} not merged yet` };
+  } catch (e) {
+    return { ok: false, detail: e instanceof Error ? e.message : String(e) };
+  }
+}
+
 async function runMechanicalVerification(
   goal: Goal,
   workspaceRoot: string,
   cfg: GoalStewardshipConfig,
 ): Promise<{ ok: boolean; detail: string }> {
   const v = goal.verification;
-  if (!v || v.type === "manual" || v.type === "pr_merged") {
+  if (!v || v.type === "manual") {
     return { ok: false, detail: "skip" };
+  }
+  if (v.type === "pr_merged") {
+    if (!cfg.allowPrVerification) {
+      return {
+        ok: false,
+        detail: "pr_merged verification disabled (set goalStewardship.allowPrVerification: true)",
+      };
+    }
+    return verifyPrMergedApi(v.target);
   }
   if (v.type === "file_exists") {
     const p = isAbsolute(v.target) ? v.target : join(workspaceRoot, v.target);
@@ -234,22 +303,33 @@ export async function runGoalHealthCheck(opts: GoalHealthCheckOptions): Promise<
     const reread3 = await readGoal(goalsDir, goal.id);
     if (!reread3 || isTerminalStatus(reread3.status) || reread3.status === "blocked") continue;
     g = reread3;
-    if (g.verification && g.verification.type !== "manual" && g.verification.type !== "pr_merged") {
+    if (g.verification && g.verification.type !== "manual") {
       const mech = await runMechanicalVerification(g, workspaceRoot, cfg);
+      if (mech.detail === "skip") continue;
+
+      const checkAt = nowIso();
+      const patch: Partial<Pick<Goal, "status" | "lastOutcome" | "lastMechanicalCheck">> = {
+        lastMechanicalCheck: { at: checkAt, ok: mech.ok, detail: mech.detail },
+      };
+      let hist: GoalHistoryEntry;
       if (mech.ok && (g.status === "active" || g.status === "stalled")) {
-        await updateGoal(
-          goalsDir,
-          g.id,
-          { status: "verifying", lastOutcome: mech.detail },
-          {
-            timestamp: nowIso(),
-            action: "verification-passed",
-            detail: mech.detail,
-            actor: "watchdog",
-          },
-        );
-        result.goalsUpdated++;
+        patch.status = "verifying";
+        patch.lastOutcome = mech.detail;
+        hist = { timestamp: checkAt, action: "verification-passed", detail: mech.detail, actor: "watchdog" };
+      } else {
+        hist = {
+          timestamp: checkAt,
+          action: mech.ok ? "mechanical-ok" : "mechanical-fail",
+          detail: mech.detail.slice(0, 500),
+          actor: "watchdog",
+        };
+      }
+      await updateGoal(goalsDir, g.id, patch, hist);
+      result.goalsUpdated++;
+      if (patch.status === "verifying") {
         result.actions.push({ goalId: g.id, label: g.label, action: "verifying", reason: mech.detail });
+      } else {
+        result.actions.push({ goalId: g.id, label: g.label, action: "mechanical-check", reason: mech.detail });
       }
     }
   }

@@ -307,6 +307,7 @@ export function parseGoalStewardshipConfig(cfg: Record<string, unknown>): GoalSt
     requireRegisterAckForPriorities.push("critical", "high");
   }
 
+  const escPolRaw = raw?.escalationPolicy as Record<string, unknown> | undefined;
   const cbRaw = raw?.circuitBreaker as Record<string, unknown> | undefined;
   const sameBlockerRepeatLimit =
     typeof cbRaw?.sameBlockerRepeatLimit === "number" && cbRaw.sameBlockerRepeatLimit >= 1
@@ -362,6 +363,9 @@ export function parseGoalStewardshipConfig(cfg: Record<string, unknown>): GoalSt
     },
     llmTriageOnHeartbeat: raw?.llmTriageOnHeartbeat === true,
     triageSuggestHeavyDirective: raw?.triageSuggestHeavyDirective !== false,
+    escalationPolicy: {
+      taskHygieneOnBlockedGoals: escPolRaw?.taskHygieneOnBlockedGoals !== false,
+    },
     circuitBreaker: {
       enabled: cbRaw?.enabled === true,
       sameBlockerRepeatLimit,
@@ -370,6 +374,7 @@ export function parseGoalStewardshipConfig(cfg: Record<string, unknown>): GoalSt
       appendMemoryEscalation: cbRaw?.appendMemoryEscalation !== false,
     },
     allowCommandVerification: raw?.allowCommandVerification === true,
+    allowPrVerification: raw?.allowPrVerification === true,
   };
 }
 

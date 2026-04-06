@@ -141,6 +141,27 @@ export function registerGoalCommands(mem: Chainable, ctx: { cfg: HybridMemoryCon
         );
       }
       console.log(`\nBlockers: ${goal.currentBlockers.length > 0 ? goal.currentBlockers.join(", ") : "none"}`);
+      if (goal.escalationKind != null) {
+        console.log(`Escalation kind: ${goal.escalationKind}`);
+      }
+      if (goal.humanEscalationSummary?.trim()) {
+        const sum = goal.humanEscalationSummary.trim();
+        const cap = 360;
+        console.log(
+          `Human escalation summary: ${sum.length > cap ? `${sum.slice(0, cap)}…` : sum}${sum.length > cap ? " (full text: use --json)" : ""}`,
+        );
+      }
+      if ((goal.sameBlockerStreak ?? 0) > 0 || (goal.circuitBreakerLastProgressAssessmentCount ?? 0) > 0) {
+        console.log(
+          `Circuit breaker state: sameBlockerStreak=${goal.sameBlockerStreak ?? 0}  lastProgressAtAssessment=${goal.circuitBreakerLastProgressAssessmentCount ?? 0}`,
+        );
+      }
+      if (goal.lastMechanicalCheck) {
+        const m = goal.lastMechanicalCheck;
+        console.log(
+          `Last mechanical check: ${m.ok ? "ok" : "fail"} at ${m.at} — ${m.detail.slice(0, 200)}${m.detail.length > 200 ? "…" : ""}`,
+        );
+      }
       const last10 = goal.history.slice(-10).reverse();
       if (last10.length > 0) {
         console.log(`\nHistory (last ${last10.length}):`);
@@ -182,6 +203,8 @@ export function registerGoalCommands(mem: Chainable, ctx: { cfg: HybridMemoryCon
           attentionWeights: ctx.cfg.goalStewardship.attentionWeights,
           multiGoalMaxChars: ctx.cfg.goalStewardship.multiGoalMaxChars,
           confirmationPolicy: ctx.cfg.goalStewardship.confirmationPolicy,
+          circuitBreaker: ctx.cfg.goalStewardship.circuitBreaker,
+          escalationPolicy: ctx.cfg.goalStewardship.escalationPolicy,
         },
       };
       if (opts.jsonl) {

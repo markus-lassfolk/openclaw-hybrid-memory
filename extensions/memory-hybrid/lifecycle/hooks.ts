@@ -72,7 +72,7 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
       });
     }
 
-    registerActiveTaskInjection(api, ctx, resolvedActiveTaskPath);
+    registerActiveTaskInjection(api, ctx, resolvedActiveTaskPath, workspaceRoot);
     const resolvedGoalsDir = resolvedGoalsDirForLifecycle(ctx.cfg);
     registerGoalStewardshipInjection(
       api,

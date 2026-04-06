@@ -44,8 +44,10 @@ export function baseGoalStewardshipConfig(over: Partial<GoalStewardshipConfig> =
     confirmationPolicy: { requireRegisterAckForPriorities: ["critical", "high"] },
     llmTriageOnHeartbeat: false,
     triageSuggestHeavyDirective: true,
+    escalationPolicy: { taskHygieneOnBlockedGoals: true },
     circuitBreaker: { ...defaultCB },
     allowCommandVerification: false,
+    allowPrVerification: false,
     ...over,
   };
 }

@@ -1,9 +1,9 @@
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { GoalStewardshipConfig } from "../config/types/index.js";
-import { runGoalHealthCheck } from "../services/goal-health.js";
+import { parseGithubPrTarget, runGoalHealthCheck } from "../services/goal-health.js";
 import { createGoal, readGoal, updateGoal } from "../services/goal-registry.js";
 
 const defaults = {
@@ -44,7 +44,9 @@ function baseCfg(over: Partial<GoalStewardshipConfig> = {}): GoalStewardshipConf
       composeHumanSummary: true,
       appendMemoryEscalation: true,
     },
+    escalationPolicy: { taskHygieneOnBlockedGoals: true },
     allowCommandVerification: false,
+    allowPrVerification: false,
     ...over,
   };
 }
@@ -147,6 +149,77 @@ describe("runGoalHealthCheck", () => {
     expect(r.actions.some((a) => a.action === "stalled")).toBe(true);
     const after = await readGoal(goalsDir, g.id);
     expect(after?.status).toBe("stalled");
+  });
+
+  it("parseGithubPrTarget accepts owner/repo#N and github.com pull URLs", () => {
+    expect(parseGithubPrTarget("foo/bar#42")).toEqual({ owner: "foo", repo: "bar", number: 42 });
+    expect(parseGithubPrTarget("https://github.com/a/b/pull/7")).toEqual({ owner: "a", repo: "b", number: 7 });
+    expect(parseGithubPrTarget("not-a-pr")).toBeNull();
+  });
+
+  it("pr_merged: records lastMechanicalCheck and does not verify when allowPrVerification is false", async () => {
+    goalsDir = await mkdtemp(join(tmpdir(), "gh-"));
+    workspaceRoot = await mkdtemp(join(tmpdir(), "ws-"));
+    const created = await createGoal(
+      goalsDir,
+      {
+        label: "pr_goal",
+        description: "d",
+        acceptanceCriteria: ["a"],
+        verification: { type: "pr_merged", target: "x/y#1" },
+      },
+      defaults,
+    );
+    const r = await runGoalHealthCheck({
+      goalsDir,
+      cfg: baseCfg({ allowPrVerification: false }),
+      workspaceRoot,
+      logger: {},
+    });
+    expect(r.actions.some((a) => a.action === "verifying")).toBe(false);
+    const after = await readGoal(goalsDir, created.id);
+    expect(after?.lastMechanicalCheck?.ok).toBe(false);
+    expect(after?.lastMechanicalCheck?.detail).toContain("allowPrVerification");
+  });
+
+  it("pr_merged: transitions to verifying when GitHub API reports merged", async () => {
+    goalsDir = await mkdtemp(join(tmpdir(), "gh-"));
+    workspaceRoot = await mkdtemp(join(tmpdir(), "ws-"));
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ merged: true }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const prev = process.env.GITHUB_TOKEN;
+    process.env.GITHUB_TOKEN = "test-token";
+    try {
+      const created = await createGoal(
+        goalsDir,
+        {
+          label: "pr_merged_ok",
+          description: "d",
+          acceptanceCriteria: ["a"],
+          verification: { type: "pr_merged", target: "o/r#99" },
+        },
+        defaults,
+      );
+      const r = await runGoalHealthCheck({
+        goalsDir,
+        cfg: baseCfg({ allowPrVerification: true }),
+        workspaceRoot,
+        logger: {},
+      });
+      expect(r.actions.some((a) => a.action === "verifying")).toBe(true);
+      expect(fetchMock).toHaveBeenCalled();
+      const after = await readGoal(goalsDir, created.id);
+      expect(after?.lastMechanicalCheck?.ok).toBe(true);
+      expect(after?.status).toBe("verifying");
+    } finally {
+      vi.unstubAllGlobals();
+      if (prev === undefined) delete process.env.GITHUB_TOKEN;
+      else process.env.GITHUB_TOKEN = prev;
+    }
   });
 
   it("sets verifying when file_exists verification passes", async () => {

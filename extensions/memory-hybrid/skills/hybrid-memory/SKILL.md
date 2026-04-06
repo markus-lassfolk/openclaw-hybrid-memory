@@ -1,6 +1,6 @@
 ---
 name: openclaw_hybrid_memory
-description: OpenClaw hybrid memory (memory-hybrid plugin)—SQLite+FTS5 facts, LanceDB semantic recall, auto-capture/recall, decay, contacts/org layer (memory_directory), multilingual NER when graph is on, memorySearch, and memory/ files. Use whenever the user asks about saving or recalling information, memory_store or memory_recall, people or companies in memory, hybrid-mem CLI, MEMORY.md, pruning, distillation, embeddings, tuning recall, which memory settings are enabled, how to optimize or run maintenance (run-all, verify, config, enrich-entities, digest pipelines, cron order), or debugging missing recall—even if they do not say "hybrid memory" by name.
+description: OpenClaw hybrid memory (memory-hybrid plugin)—SQLite+FTS5 facts, LanceDB semantic recall, auto-capture/recall, decay, contacts/org layer (memory_directory), multilingual NER when graph is on, memorySearch, and memory/ files. Goal stewardship (goal_* tools, heartbeat scheduling, OpenClaw cron jobs, verify/troubleshooting). Use whenever the user asks about saving or recalling information, memory_store or memory_recall, people or companies in memory, hybrid-mem CLI, MEMORY.md, goals, goal_assess, scheduled heartbeat pulses, pruning, distillation, embeddings, tuning recall, which memory settings are enabled, how to optimize or run maintenance (run-all, verify, config, enrich-entities, digest pipelines, cron order), or debugging missing recall—even if they do not say "hybrid memory" by name.
 ---
 
 # OpenClaw Hybrid Memory
@@ -36,6 +36,15 @@ When goal stewardship is enabled, use these tools for long-running, multi-sessio
 
 **When to use:** When the user assigns an outcome-oriented goal ("deploy X", "fix Y and get it merged", "keep Z healthy") that will take multiple sessions, subagents, or heartbeat cycles to complete.
 
+**Two layers (do not confuse them):**
+
+| Layer | What it does |
+| --- | --- |
+| **Watchdog** (~every 5 min, no LLM) | Updates goal JSON: budgets, stalled/blocked, mechanical verification, PID links. Does **not** start a chat turn. |
+| **Heartbeat stewardship** | On **`before_agent_start`**, if the **last user message** matches **heartbeat patterns** (defaults include `heartbeat`, `scheduled ping`, `cron heartbeat`), prepends goal context so you can run `goal_assess` etc. **Requires a real agent turn** — the plugin does not schedule LLM runs by itself. |
+
+**Recall ≠ goals:** `memory_recall` does not replace **`goal_*` tools**. Shared goals require the same **`OPENCLAW_WORKSPACE`** / `goalsDir` and stewardship enabled for whichever agent runs the pulse.
+
 **Tools:**
 
 | Tool | When to call |
@@ -52,20 +61,30 @@ When spawning a subagent to work on a goal, name the subagent with the goal's la
 For example, for goal `deploy-api`, name subagents `deploy-api-run-tests`, `deploy-api-create-pr`,
 `deploy-api-deploy`. This creates an automatic link between the subagent and the goal.
 
+**Scheduled “pulse” (OpenClaw cron):** To get recurring **LLM** stewardship, add a job in `~/.openclaw/cron/jobs.json` with `payload.kind: agentTurn` and a **short first line** that matches patterns, e.g. `cron heartbeat` then instructions. You may set **`agentId`** to a dedicated agent (not `main`) and **`sessionTarget: isolated`** so chat stays free. Cadence: often **a few times per day** or **every 4–6 hours** to start; avoid 5-minute pulses unless goals are truly urgent (cost/noise). Full examples and pitfalls: **`docs/GOAL-STEWARDSHIP-OPERATOR.md`** (User guide + verification + logging).
+
 **CLI (for inspection):**
 - `openclaw hybrid-mem goals list [--all] [--json]` — see all goals and their status
 - `openclaw hybrid-mem goals status <label> [--json]` — full detail with history
 - `openclaw hybrid-mem goals cancel <label> --reason "..."` — abandon a goal
 - `openclaw hybrid-mem goals budget` — check dispatch/assessment budget usage
 - `openclaw hybrid-mem goals reset-budget <label>` — reset counters after budget exhaustion
-- `openclaw hybrid-mem goals stewardship-run` — manually trigger one watchdog cycle
+- `openclaw hybrid-mem goals stewardship-run` — **watchdog only** (same deterministic pass as the timer — not a heartbeat turn)
 - `openclaw hybrid-mem goals audit [--jsonl]` — structured audit snapshot
+- `openclaw hybrid-mem goals config` — effective stewardship flags and paths
 
-**Docs:** `docs/GOAL-STEWARDSHIP-OPERATOR.md`, `docs/GOAL-STEWARDSHIP-AUDIT-PLAYBOOK.md`, `docs/GOAL-STEWARDSHIP-DESIGN.md`, `docs/TASK-HYGIENE.md`
+**Verify & troubleshoot (operator + you helping them):**
+
+1. **`openclaw hybrid-mem verify`** — With stewardship enabled, read the **Goal stewardship (heartbeat)** block: matcher count + warnings if no cron job message matches patterns (or file missing). This is **best-effort**; unrelated long prompts that contain the substring `heartbeat` (e.g. a filename) can give misleading “match” — prefer a **dedicated short pulse job** or custom `heartbeatPatterns`.
+2. **`openclaw hybrid-mem goals status`** — Blockers, escalation, `lastMechanicalCheck`, etc.
+3. **Gateway logs** — Search for `memory-hybrid: goal stewardship bundle` (prepend ran), `goal stewardship skipped — global dispatch rate limit`, `goal stewardship injection error`.
+4. If **nothing happens for hours:** often no **scheduled turn** with a matching message, or the pulse runs on an agent/workspace without shared goals. Confirm the job’s **`payload.message`** is what the agent sees as the user message, not only the job name.
+
+**Docs:** `docs/GOAL-STEWARDSHIP-OPERATOR.md` (start here — user guide, cron examples, verify, logging), `docs/GOAL-STEWARDSHIP-AUDIT-PLAYBOOK.md`, `docs/GOAL-STEWARDSHIP-DESIGN.md`, `docs/TASK-HYGIENE.md`
 
 ## CLI and health checks
 
-- **`openclaw hybrid-mem verify [--fix]`** — Confirms SQLite, LanceDB, embedding config, and related jobs. Use when memory seems broken after config or gateway changes.
+- **`openclaw hybrid-mem verify [--fix]`** — Confirms SQLite, LanceDB, embedding config, maintenance jobs, and (when goal stewardship is enabled) **heartbeat vs `~/.openclaw/cron/jobs.json`** (see Goal Stewardship above). Use when memory seems broken after config or gateway changes, or when **scheduled goal pulses** never seem to fire.
 - **`openclaw hybrid-mem stats`** — Quick view of store state.
 - **`openclaw hybrid-mem enrich-entities`** — Backfill PERSON/ORG extraction for facts missing mention rows (after upgrades or bulk imports; uses LLM when graph features are on).
 - **`openclaw hybrid-mem active-tasks reconcile`** — Run before strategic or heartbeat jobs that trust `ACTIVE-TASKS.md`: moves **In progress** rows to **Completed** when the OpenClaw session transcript no longer exists (fixes stale subagent bookkeeping; issues #978, #981).

@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { buildHeartbeatTaskHygieneBlock, buildProposeGoalDraftFromTask } from "../services/task-hygiene.js";
+import {
+  buildGoalEscalationHeartbeatBlock,
+  buildHeartbeatTaskHygieneBlock,
+  buildProposeGoalDraftFromTask,
+} from "../services/task-hygiene.js";
 import type { ActiveTaskEntry } from "../services/active-task.js";
 
 function baseTask(over: Partial<ActiveTaskEntry> = {}): ActiveTaskEntry {
@@ -45,6 +49,27 @@ describe("task-hygiene", () => {
     });
     expect(block.length).toBeLessThanOrEqual(420);
     expect(block).toContain("truncated");
+  });
+
+  it("buildGoalEscalationHeartbeatBlock lists blocked and stalled goals", () => {
+    const block = buildGoalEscalationHeartbeatBlock(
+      [
+        { label: "g1", status: "blocked" },
+        { label: "g2", status: "active" },
+        { label: "g3", status: "stalled" },
+      ],
+      { maxChars: 2500 },
+    );
+    expect(block).toContain("<goal-escalation>");
+    expect(block).toContain("[g1]");
+    expect(block).toContain("[g3]");
+    expect(block).not.toContain("[g2]");
+    expect(block).toContain("HEARTBEAT_OK");
+    expect(block).toContain("</goal-escalation>");
+  });
+
+  it("buildGoalEscalationHeartbeatBlock returns empty when no blocked/stalled", () => {
+    expect(buildGoalEscalationHeartbeatBlock([{ label: "a", status: "active" }], { maxChars: 500 })).toBe("");
   });
 
   it("buildProposeGoalDraftFromTask maps row to draft", () => {

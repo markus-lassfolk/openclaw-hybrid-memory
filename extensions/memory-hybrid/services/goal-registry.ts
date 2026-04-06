@@ -88,6 +88,7 @@ function normalizeGoalJson(g: Goal): Goal {
     circuitBreakerLastProgressAssessmentCount: g.circuitBreakerLastProgressAssessmentCount ?? 0,
     humanEscalationSummary: g.humanEscalationSummary ?? null,
     escalationKind: g.escalationKind ?? null,
+    lastMechanicalCheck: g.lastMechanicalCheck ?? null,
   };
 }
 
@@ -235,6 +236,7 @@ export async function updateGoal(
       | "circuitBreakerLastProgressAssessmentCount"
       | "humanEscalationSummary"
       | "escalationKind"
+      | "lastMechanicalCheck"
     >
   >,
   historyEntry: GoalHistoryEntry | GoalHistoryEntry[],

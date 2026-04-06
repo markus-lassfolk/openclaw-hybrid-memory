@@ -43,7 +43,9 @@ function gs(partial: Partial<GoalStewardshipConfig>): GoalStewardshipConfig {
       composeHumanSummary: true,
       appendMemoryEscalation: true,
     },
+    escalationPolicy: { taskHygieneOnBlockedGoals: true },
     allowCommandVerification: false,
+    allowPrVerification: false,
     ...partial,
   };
 }

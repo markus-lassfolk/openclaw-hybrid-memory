@@ -48,6 +48,11 @@ import {
   readEffectiveAgentChatPrimaryFromOpenclawJsonRoot,
 } from "../utils/openclaw-agent-defaults.js";
 import { ensureMaintenanceCronJobs, getPluginConfigFromFile } from "./cmd-install.js";
+import {
+  analyzeCronJobsAgainstHeartbeatPatterns,
+  extractCronJobMessageEntries,
+  getHeartbeatMatchersForVerify,
+} from "../services/goal-stewardship-verify-cron.js";
 
 import type { HandlerContext } from "./handlers.js";
 import type { VerifyCliSink } from "./types.js";
@@ -1066,6 +1071,52 @@ export async function runVerifyForCli(
   const weeklyDeepMaintenanceRe = /weekly[- ]?deep[- ]?maintenance|deep maintenance/i;
   const weeklyPersonaProposalsRe = /weekly[- ]?persona[- ]?proposals|persona proposals/i;
   const monthlyConsolidationRe = /monthly[- ]?consolidation/i;
+
+  // Goal stewardship — heartbeat patterns vs cron job messages (issue #1094)
+  if (cfg.goalStewardship.enabled) {
+    const WARN = noEmoji ? "[WARN]" : "⚠️";
+    const gs = cfg.goalStewardship;
+    log("\n───── Goal stewardship (heartbeat) ─────");
+    log(
+      `${OK} Enabled — heartbeatStewardship: ${gs.heartbeatStewardship ? "on" : "off"} (plugin does not schedule LLM turns; OpenClaw/cron delivers messages)`,
+    );
+    const matchers = getHeartbeatMatchersForVerify(gs);
+    log(
+      `  Heartbeat patterns compiled: ${matchers.length} matcher(s). See docs/GOAL-STEWARDSHIP-OPERATOR.md (Heartbeat scheduling checklist).`,
+    );
+    try {
+      if (!existsSync(cronStorePath)) {
+        log(
+          `${WARN} Cannot confirm heartbeat cron: ${cronStorePath} not found. Add jobs via OpenClaw or run \`openclaw hybrid-mem verify --fix\` for maintenance jobs; for goal stewardship prepend, ensure a job message matches your heartbeatPatterns.`,
+        );
+      } else {
+        const raw = readFileSync(cronStorePath, "utf-8");
+        const store = JSON.parse(raw) as { jobs?: unknown[] };
+        const entries = extractCronJobMessageEntries(store);
+        const h = analyzeCronJobsAgainstHeartbeatPatterns(matchers, entries);
+        const withText = entries.filter((e) => e.text.length > 0).length;
+        if (entries.length === 0) {
+          log(`${WARN} Cron store has no jobs — cannot confirm a heartbeat-shaped message will be delivered.`);
+        } else if (withText === 0) {
+          log(
+            `${WARN} No job message text found in cron store (payload.message / message empty). Stewardship prepends only run when the agent sees a user message matching heartbeat patterns.`,
+          );
+        } else if (h.matchingJobIds.length === 0) {
+          log(
+            `${WARN} No cron job message matches current heartbeat patterns (${withText} job(s) with text). Update job messages or goalStewardship.heartbeatPatterns.`,
+          );
+        } else {
+          log(`${OK} Cron jobs with heartbeat-matching message: ${h.matchingJobIds.join(", ")}`);
+        }
+      }
+    } catch (e) {
+      log(`${WARN} Cannot read or parse cron store for heartbeat check: ${e instanceof Error ? e.message : String(e)}`);
+      capturePluginError(e instanceof Error ? e : new Error(String(e)), {
+        subsystem: "cli",
+        operation: "runVerifyForCli:goal-stewardship-heartbeat",
+      });
+    }
+  }
 
   const knownJobSlugs = new Set([
     "nightly-memory-sweep",

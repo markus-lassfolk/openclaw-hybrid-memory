@@ -51,6 +51,27 @@ export function buildHeartbeatTaskHygieneBlock(
   return out;
 }
 
+/** Nudge on heartbeat when goals are blocked/stalled but ACTIVE-TASKS may look fine (issue #1096). */
+export function buildGoalEscalationHeartbeatBlock(
+  goals: Array<{ label: string; status: string }>,
+  opts: { maxChars: number },
+): string {
+  const bad = goals.filter((g) => g.status === "blocked" || g.status === "stalled");
+  if (bad.length === 0) return "";
+  const lines: string[] = [
+    "<goal-escalation>",
+    "**Heartbeat — blocked or stalled goals**",
+    "Do not reply HEARTBEAT_OK as if everything is fine until these are triaged or unblocked.",
+    ...bad.map((g) => `- **[${g.label}]** (${g.status})`),
+    "</goal-escalation>",
+  ];
+  let out = lines.join("\n");
+  if (out.length > opts.maxChars) {
+    out = `${out.slice(0, opts.maxChars - 20)}\n…(truncated)\n</goal-escalation>`;
+  }
+  return out;
+}
+
 export function buildProposeGoalDraftFromTask(task: ActiveTaskEntry): {
   suggestedLabel: string;
   suggestedDescription: string;
