@@ -8,6 +8,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Changed
+
+- **Config schema:** `activeTask.injectionBudget` is documented as **`integer`** with **`minimum: 1`** in `openclaw.plugin.json`, matching parse behavior (fractional values floored; non-positive values fall back to the default).
+
+- **CLI:** `openclaw hybrid-mem goals status` with **no arguments** prints an **overview** (stewardship on/off, goals dir, active goals); `goals status <label-or-uuid>` still shows full detail for one goal.
+
+- **Bundled Agent Skill:** On plugin startup, copy `skills/hybrid-memory/` into `{workspace}/skills/hybrid-memory/` **when `SKILL.md` is not already present**, so operators do not need a separate `hybrid-mem install` step just to populate the workspace skill tree. Existing files are left unchanged (use **`hybrid-mem install`** to overwrite from the bundle).
+
+### Fixed
+
+- **Workspace skill bootstrap:** Resolve which `openclaw.json` to read using **`OPENCLAW_CONFIG`**, then **`OPENCLAW_CONFIG_PATH`**, then **`$OPENCLAW_HOME/openclaw.json`**, then the default under `~/.openclaw/`. If `skills/hybrid-memory/` already exists but **`SKILL.md` is missing**, skip copying so a partial tree is not overwritten. Non-benign failures are **warned** and reported via the plugin error path instead of only **debug** logs.
+
 ---
 
 ## [2026.4.52] - 2026-04-05
