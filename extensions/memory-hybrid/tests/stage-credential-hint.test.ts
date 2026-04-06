@@ -1,6 +1,6 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
-import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
-import { readFile, stat } from "node:fs/promises";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { stat } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { registerCredentialHint } from "../lifecycle/stage-credential-hint.js";
@@ -36,6 +36,10 @@ describe("stage-credential-hint", () => {
     pendingPath = join(dbDir, "credentials-pending.json");
   });
 
+  afterEach(() => {
+    rmSync(root, { recursive: true, force: true });
+  });
+
   it("drops invalid/truncated JSON without throwing or reporting", async () => {
     writeFileSync(pendingPath, '{"hints": ["api_key"]', "utf8");
 
@@ -55,6 +59,7 @@ describe("stage-credential-hint", () => {
 
     await expect(stat(pendingPath)).rejects.toMatchObject({ code: "ENOENT" });
     expect(api.logger.warn).toHaveBeenCalledTimes(1);
+    expect(api.logger.warn).toHaveBeenCalledWith(expect.stringContaining("truncated"));
   });
 
   it("returns prependContext for valid hints and clears file", async () => {
