@@ -269,7 +269,10 @@ export type ActiveTaskConfig = {
   filePath: string;
   /** Auto-write task entries on subagent spawn/complete events (default: true) */
   autoCheckpoint: boolean;
-  /** Max tokens for session-start injection (default: 500) */
+  /**
+   * Max tokens for session-start injection (default: 500).
+   * Config must be a positive integer; fractional values are floored; non-positive values are not used (default applies).
+   */
   injectionBudget: number;
   /**
    * Duration before flagging a task as stale. Supports human-friendly strings:
