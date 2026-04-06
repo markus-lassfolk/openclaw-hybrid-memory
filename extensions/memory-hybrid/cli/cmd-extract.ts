@@ -14,7 +14,6 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 
 import type { ReinforcementContext } from "../backends/facts-db.js";
-import type { MemoryEntry } from "../types/memory.js";
 import type { HybridMemoryConfig, MemoryCategory } from "../config.js";
 import {
   getCronModelConfig,
@@ -24,8 +23,8 @@ import {
 } from "../config.js";
 import { VAULT_POINTER_PREFIX, isCredentialLike, tryParseCredentialForVault } from "../services/auto-capture.js";
 import { chatCompleteWithRetry, distillMaxOutputTokens } from "../services/chat.js";
-import { CostFeature } from "../services/cost-feature-labels.js";
 import { type MemoryClassification, classifyMemoryOperationsBatch } from "../services/classification.js";
+import { CostFeature } from "../services/cost-feature-labels.js";
 import { type DirectiveExtractResult, runDirectiveExtract } from "../services/directive-extract.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { extractStructuredFields } from "../services/fact-extraction.js";
@@ -40,6 +39,7 @@ import { type ReinforcementExtractResult, runReinforcementExtract } from "../ser
 import { preFilterSessions } from "../services/session-pre-filter.js";
 import { insertRulesUnderSection } from "../services/tools-md-section.js";
 import { findSimilarByEmbedding } from "../services/vector-search.js";
+import type { MemoryEntry } from "../types/memory.js";
 import { BATCH_STORE_IMPORTANCE, CLI_STORE_IMPORTANCE } from "../utils/constants.js";
 import { getFileSnapshot } from "../utils/file-snapshot.js";
 import { getDirectiveSignalRegex, getReinforcementSignalRegex } from "../utils/language-keywords.js";

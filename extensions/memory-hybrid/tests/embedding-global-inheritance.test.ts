@@ -1,3 +1,4 @@
+import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 /**
  * Issue #1002 — inherit embedding-related fields from OpenClaw gateway before config parse.
  */
@@ -7,7 +8,6 @@ import {
   applyGatewayEmbeddingInheritanceBeforeParse,
   shallowClonePluginConfigForGatewayMerge,
 } from "../setup/provider-router.js";
-import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 
 const FAKE_OPENAI_KEY = ["sk", "-proj-test", "1234567890abcdefghijklmnop"].join("");
 const FAKE_GATEWAY_OTHER_KEY = ["sk", "-proj-other", "0987654321abcdefghijkl"].join("");

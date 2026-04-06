@@ -6,7 +6,7 @@
  */
 
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
-import { toolInstallers, type ToolsContext } from "./tool-installers.js";
+import { type ToolsContext, toolInstallers } from "./tool-installers.js";
 
 /** Tool registration receives the stable plugin API (Phase 3). */
 /**

@@ -18,8 +18,8 @@ import {
   clearKeywordCache,
 } from "../utils/language-keywords.js";
 import { capturePluginError } from "./error-reporter.js";
-import { chatCompletionTokenParams } from "./model-capabilities.js";
 import { EXTRACTION_INTENTS, KEYWORD_GROUP_INTENTS, STRUCTURAL_TRIGGER_INTENTS } from "./intent-template.js";
+import { chatCompletionTokenParams } from "./model-capabilities.js";
 
 const LANG_FILE_NAME = ".language-keywords.json";
 const MAX_SAMPLES = 50;

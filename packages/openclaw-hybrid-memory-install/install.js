@@ -150,7 +150,7 @@ try {
 	}
 
 	console.log("Cleaning up...");
-	fs.rmSync(tmpDir, { recursive: true, force: true });
+	rmPathBestEffort(tmpDir, "npm pack temp directory (.tgz and folder)");
 
 	console.log(
 		"\nDone. Restart the gateway: openclaw gateway stop && openclaw gateway start",

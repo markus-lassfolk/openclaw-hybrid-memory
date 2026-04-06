@@ -10,8 +10,8 @@ import {
   applyHybridMemoryToolsMd,
   ensureHybridMemoryWorkspaceSkillIfMissing,
   installHybridMemoryWorkspaceSkill,
-  resolveOpenclawJsonPathForWorkspace,
   resolveAgentWorkspaceRoot,
+  resolveOpenclawJsonPathForWorkspace,
 } from "../cli/cmd-install.js";
 
 describe("workspace skill install", () => {

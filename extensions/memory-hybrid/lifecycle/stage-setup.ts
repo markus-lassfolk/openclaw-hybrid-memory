@@ -6,12 +6,12 @@
 
 import { existsSync, unlinkSync } from "node:fs";
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
-import { getRestartPendingPath } from "../utils/constants.js";
 import { capturePluginError } from "../services/error-reporter.js";
-import { withTimeout } from "../utils/timeout.js";
-import type { LifecycleContext, SessionState } from "./types.js";
+import { getRestartPendingPath } from "../utils/constants.js";
 import { pluginLogger } from "../utils/logger.js";
-import { resolveAgentIdFromHookEvent, formatSessionKeyTruncated } from "./resolve-agent-id.js";
+import { withTimeout } from "../utils/timeout.js";
+import { formatSessionKeyTruncated, resolveAgentIdFromHookEvent } from "./resolve-agent-id.js";
+import type { LifecycleContext, SessionState } from "./types.js";
 
 const SETUP_TIMEOUT_MS = 5000;
 

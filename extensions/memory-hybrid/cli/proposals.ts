@@ -4,15 +4,15 @@ import { getEnv } from "../utils/env-manager.js";
  */
 
 import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { writeFile, mkdir } from "node:fs/promises";
-import { dirname, join, relative } from "node:path";
+import { mkdir, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
-import { spawnSync } from "../utils/process-runner.js";
-import type { Chainable } from "./shared.js";
+import { dirname, join, relative } from "node:path";
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import type { ProposalsDB } from "../backends/proposals-db.js";
 import type { HybridMemoryConfig, IdentityFileType } from "../config.js";
 import { capturePluginError } from "../services/error-reporter.js";
+import { spawnSync } from "../utils/process-runner.js";
+import type { Chainable } from "./shared.js";
 
 /** Resolve a proposal target file (e.g. SOUL.md) against the workspace directory. */
 function resolveProposalTarget(targetFile: string): string {

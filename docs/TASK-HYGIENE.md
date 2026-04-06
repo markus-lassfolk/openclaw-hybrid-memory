@@ -2,6 +2,8 @@
 
 This document describes **tactical** hygiene for rows in **`ACTIVE-TASKS.md`** — separate from **goal stewardship** (`state/goals/`), which is the strategic layer. See [GOAL-STEWARDSHIP-OPERATOR.md](GOAL-STEWARDSHIP-OPERATOR.md) for goals.
 
+With **`activeTask.ledger: facts`**, the file is a **projection** from SQLite facts; see [ACTIVE-TASKS-PROJECTION.md](ACTIVE-TASKS-PROJECTION.md) for timestamps, sections, filters, and the operator flow (`active-tasks render`, reconcile).
+
 ## What it does
 
 1. **Heartbeat escalation** — When `activeTask.taskHygiene.heartbeatEscalation` is not `false` and the **last user message** matches a **heartbeat pattern** (same sources as goal stewardship: built-in defaults and `goalStewardship.heartbeatPatterns`), the plugin prepends a short **`<task-hygiene>`** block after the usual active-task summary and optional stale warnings. The block reminds the agent to reconcile the file (complete work, update **Next**, verify subagents) before replying with **`HEARTBEAT_OK`** (or equivalent).

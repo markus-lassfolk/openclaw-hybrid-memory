@@ -7,28 +7,28 @@
  */
 
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
-import type { ScopeFilter } from "../types/memory.js";
-import type { SearchResult } from "../types/memory.js";
 import {
-  generateAmbientQueries,
-  detectTopicShift,
-  deduplicateResultsById,
   SessionSeenFacts,
+  deduplicateResultsById,
+  detectTopicShift,
+  generateAmbientQueries,
   searchAmbientIssues,
 } from "../services/ambient-retrieval.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { formatNarrativeRange, recallNarrativeSummaries } from "../services/narrative-recall.js";
-import { yieldEventLoop } from "../utils/event-loop-yield.js";
-import { resolveEntityLookupNames } from "../utils/entity-lookup-resolve.js";
-import { estimateTokens } from "../utils/text.js";
-import { isConsolidatedDerivedFact } from "../utils/consolidation-controls.js";
-import type { LifecycleContext, RecallResult, RecallStageResult, SessionState } from "./types.js";
-import { runRecallPipelineQuery, type RecallPipelineDeps } from "../services/recall-pipeline.js";
+import { type RecallPipelineDeps, runRecallPipelineQuery } from "../services/recall-pipeline.js";
 import { createRecallSpan, createRecallTimingLogger } from "../services/recall-timing.js";
 import {
   INTERACTIVE_RECALL_STAGE_TIMEOUT_MS,
   resolveInteractiveRecallPolicy,
 } from "../services/retrieval-mode-policy.js";
+import type { ScopeFilter } from "../types/memory.js";
+import type { SearchResult } from "../types/memory.js";
+import { isConsolidatedDerivedFact } from "../utils/consolidation-controls.js";
+import { resolveEntityLookupNames } from "../utils/entity-lookup-resolve.js";
+import { yieldEventLoop } from "../utils/event-loop-yield.js";
+import { estimateTokens } from "../utils/text.js";
+import type { LifecycleContext, RecallResult, RecallStageResult, SessionState } from "./types.js";
 
 const RECALL_STAGE_TIMEOUT_MS = INTERACTIVE_RECALL_STAGE_TIMEOUT_MS;
 

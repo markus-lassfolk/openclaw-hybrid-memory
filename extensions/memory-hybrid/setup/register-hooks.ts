@@ -10,8 +10,8 @@ import type { MemoryPluginAPI } from "../api/memory-plugin-api.js";
 import { getMemoryCategories } from "../config.js";
 import { type LifecycleContext, createLifecycleHooks } from "../lifecycle/hooks.js";
 import { capturePluginError } from "../services/error-reporter.js";
-import { runPreConsolidationFlush } from "../services/pre-consolidation-flush.js";
 import { buildPostCompactionRecallSnippet } from "../services/post-compaction-recall.js";
+import { runPreConsolidationFlush } from "../services/pre-consolidation-flush.js";
 import { WorkflowTracker } from "../services/workflow-tracker.js";
 import {
   type MessageLike,

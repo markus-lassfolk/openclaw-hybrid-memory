@@ -13,8 +13,8 @@
  *   "humanizer_score: 0.73, patterns: ['great_question','happy_to_help'], model: sonnet, skill: weather"
  */
 
-import { spawn } from "../utils/process-runner.js";
 import type { HumanizerConfig } from "../config/types/features.js";
+import { spawn } from "../utils/process-runner.js";
 import { capturePluginError } from "./error-reporter.js";
 
 // ---------------------------------------------------------------------------

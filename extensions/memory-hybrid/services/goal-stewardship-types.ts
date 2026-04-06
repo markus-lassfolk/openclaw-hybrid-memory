@@ -13,6 +13,13 @@ export interface GoalVerification {
   target: string;
 }
 
+/** Last deterministic verification attempt by the watchdog (mechanical checks). */
+export interface GoalLastMechanicalCheck {
+  at: string;
+  ok: boolean;
+  detail: string;
+}
+
 export interface GoalLinkedTask {
   label: string;
   sessionKey: string | null;
@@ -48,6 +55,8 @@ export interface Goal {
   dispatchCount: number;
   currentBlockers: string[];
   lastOutcome: string | null;
+  /** Populated when the watchdog runs a non-skipped mechanical verification (`file_exists`, `http_ok`, `command_exit_zero`, `pr_merged`). */
+  lastMechanicalCheck?: GoalLastMechanicalCheck | null;
   maxDispatches: number;
   maxAssessments: number;
   cooldownMinutes: number;

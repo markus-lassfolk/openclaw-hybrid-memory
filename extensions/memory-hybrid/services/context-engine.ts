@@ -15,6 +15,7 @@
  * no-op so callers do not need to guard on their side.
  */
 
+import { access, readFile } from "node:fs/promises";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
 import type { WriteAheadLog } from "../backends/wal.js";
@@ -24,7 +25,6 @@ import type { EmbeddingProvider } from "./embeddings.js";
 import { capturePluginError } from "./error-reporter.js";
 import { runPreConsolidationFlush } from "./pre-consolidation-flush.js";
 import { estimateTokenCount, serializeFactForContext } from "./retrieval-orchestrator.js";
-import { access, readFile } from "node:fs/promises";
 
 // ---------------------------------------------------------------------------
 // Auto-capture: outcome phrase patterns for episodic memory (#781)

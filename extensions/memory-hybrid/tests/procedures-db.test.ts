@@ -1,8 +1,8 @@
-// @ts-nocheck
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
-import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
+// @ts-nocheck
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { FactsDB } from "../backends/facts-db.js";
 
 let tmpDir: string;
@@ -210,7 +210,7 @@ describe("searchProceduresRanked (confidence-weighted ranking)", () => {
     expect(recent).toBeDefined();
     expect(old).toBeDefined();
     // Recent should have higher score due to recency
-    expect(recent?.relevanceScore).toBeGreaterThan(old?.relevanceScore);
+    expect(recent?.relevanceScore ?? 0).toBeGreaterThan(old?.relevanceScore ?? 0);
     // Old procedure should have at least 0.3 recency factor
     expect(old?.relevanceScore).toBeGreaterThan(0);
   });
@@ -240,7 +240,7 @@ describe("searchProceduresRanked (confidence-weighted ranking)", () => {
     expect(high).toBeDefined();
     expect(low).toBeDefined();
     // High success rate should have higher score
-    expect(high?.relevanceScore).toBeGreaterThan(low?.relevanceScore);
+    expect(high?.relevanceScore).toBeGreaterThan(low?.relevanceScore ?? 0);
   });
 
   it("penalizes procedures that failed in last 7 days (0.5 multiplier)", () => {
@@ -271,7 +271,7 @@ describe("searchProceduresRanked (confidence-weighted ranking)", () => {
     expect(recent).toBeDefined();
     expect(old).toBeDefined();
     // Recent failure should have lower score (penalty applied)
-    expect(recent?.relevanceScore).toBeLessThan(old?.relevanceScore);
+    expect(recent?.relevanceScore ?? 0).toBeLessThan(old?.relevanceScore ?? 0);
   });
 
   it("penalizes never-validated procedures (30% penalty)", () => {
@@ -295,9 +295,9 @@ describe("searchProceduresRanked (confidence-weighted ranking)", () => {
     expect(val).toBeDefined();
     expect(never).toBeDefined();
     // Validated should have higher score
-    expect(val?.relevanceScore).toBeGreaterThan(never?.relevanceScore);
+    expect(val?.relevanceScore ?? 0).toBeGreaterThan(never?.relevanceScore ?? 0);
     // Never-validated should have ~70% of validated score (30% penalty)
-    expect(never?.relevanceScore).toBeLessThan(val?.relevanceScore * 0.75);
+    expect(never?.relevanceScore ?? 0).toBeLessThan((val?.relevanceScore ?? 0) * 0.75);
   });
 
   it("returns procedures matching FTS query", () => {

@@ -254,6 +254,8 @@ export class VectorDB {
     if (this.table && this.semanticQueryCacheTable) return;
     if (this.lanceInitFailed) return;
     if (this.initPromise) return this.initPromise;
+    // Note: this handler marks persistent failure (lanceInitFailed). Transient init errors
+    // from hot-reload races are handled via close()+ensureInitialized() or resetTableForReindex().
     this.initPromise = this.doInitialize().catch((err) => {
       capturePluginError(err as Error, {
         operation: "vector-db-init",

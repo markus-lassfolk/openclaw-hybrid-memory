@@ -17,6 +17,7 @@ import {
   listFacts as listFactsImpl,
   updateCategory as updateCategoryImpl,
 } from "./fact-read-queries.js";
+import { FactsDBLayer1 } from "./facts-db-layer1.js";
 import {
   backfillDecayClasses as backfillDecayClassesImpl,
   confirmFact as confirmFactImpl,
@@ -75,7 +76,6 @@ import {
   uniqueMemoryCategories as uniqueMemoryCategoriesImpl,
 } from "./stats.js";
 import type { ReinforcementContext, ReinforcementEvent } from "./types.js";
-import { FactsDBLayer1 } from "./facts-db-layer1.js";
 
 export class FactsDBLayer2 extends FactsDBLayer1 {
   /** Get facts from the last N days (for reflection). Excludes pattern/rule by default. More efficient than getAll+filter. */

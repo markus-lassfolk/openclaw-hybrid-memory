@@ -182,48 +182,94 @@ export function searchFts(
     // 1. Pure FTS query to get candidate rowids (fast, ~5ms)
     // 2. Batch-fetch from facts to apply structured filters
     // 3. Small targeted JOIN on surviving rowids for snippet/bm25 columns
-    const overFetch = Math.max(limit * 4, 80);
-    const ftsRows = db
-      .prepare(`SELECT rowid, rank FROM facts_fts WHERE facts_fts MATCH @query ORDER BY rank LIMIT @limit`)
-      .all({ "@query": matchExpr, "@limit": overFetch }) as Array<{ rowid: number; rank: number }>;
-    if (ftsRows.length === 0) return [];
+    // Expand FTS LIMIT when post-filters reject most candidates (bounded cap).
+    let ftsLimit = Math.max(limit * 10, 100);
+    const maxFtsLimit = Math.min(100_000, Math.max(limit * 500, 2000));
+    const ftsStmt = db.prepare(
+      `SELECT rowid, rank FROM facts_fts WHERE facts_fts MATCH @query ORDER BY rank LIMIT @limit`,
+    );
 
-    // Phase 2: fetch facts and apply filters in SQL (fast — indexed rowid lookup)
-    const candidateRowids = ftsRows.map((r) => r.rowid);
-    const ph = candidateRowids.map(() => "?").join(",");
-    const filterParams: Array<string | number> = [...candidateRowids];
-    let filterSql = `SELECT id, text, entity, rowid AS _rowid FROM facts WHERE rowid IN (${ph})`;
-    if (!includeSuperseded) {
-      const nowSec = asOf ?? Math.floor(Date.now() / 1000);
-      filterSql += " AND superseded_at IS NULL AND (expires_at IS NULL OR expires_at > ?)";
-      filterParams.push(nowSec);
-    }
-    if (entityFilter?.trim()) {
-      filterSql += " AND LOWER(entity) = LOWER(?)";
-      filterParams.push(entityFilter.trim());
-    }
-    if (tagFilter?.trim()) {
-      filterSql += " AND (',' || COALESCE(tags,'') || ',') LIKE ?";
-      filterParams.push(`%,${tagFilter.toLowerCase().trim()},%`);
-    }
-    const filteredFacts = db.prepare(filterSql).all(...filterParams) as Array<{
+    let ftsRows: Array<{ rowid: number; rank: number }> = [];
+    let filteredFacts: Array<{
       id: string;
       text: string;
       entity: string | null;
       _rowid: number;
-    }>;
+    }> = [];
+
+    for (;;) {
+      ftsRows = ftsStmt.all({ "@query": matchExpr, "@limit": ftsLimit }) as Array<{
+        rowid: number;
+        rank: number;
+      }>;
+      if (ftsRows.length === 0) return [];
+
+      const candidateRowids = ftsRows.map((r) => r.rowid);
+      // Chunk to respect SQLite's bound-parameter limit (commonly 999/32766).
+      const CHUNK_SIZE = 500;
+      const allFiltered: Array<{
+        id: string;
+        text: string;
+        entity: string | null;
+        _rowid: number;
+      }> = [];
+      const nowSec = asOf ?? Math.floor(Date.now() / 1000);
+      for (let i = 0; i < candidateRowids.length; i += CHUNK_SIZE) {
+        const chunk = candidateRowids.slice(i, i + CHUNK_SIZE);
+        const ph = chunk.map(() => "?").join(",");
+        const filterParams: Array<string | number> = [...chunk];
+        let filterSql = `SELECT id, text, entity, rowid AS _rowid FROM facts WHERE rowid IN (${ph})`;
+        if (!includeSuperseded) {
+          filterSql += " AND superseded_at IS NULL AND (expires_at IS NULL OR expires_at > ?)";
+          filterParams.push(nowSec);
+        }
+        if (entityFilter?.trim()) {
+          filterSql += " AND LOWER(entity) = LOWER(?)";
+          filterParams.push(entityFilter.trim());
+        }
+        if (tagFilter?.trim()) {
+          filterSql += " AND (',' || COALESCE(tags,'') || ',') LIKE ?";
+          filterParams.push(`%,${tagFilter.toLowerCase().trim()},%`);
+        }
+        allFiltered.push(
+          ...(db.prepare(filterSql).all(...filterParams) as Array<{
+            id: string;
+            text: string;
+            entity: string | null;
+            _rowid: number;
+          }>),
+        );
+      }
+      filteredFacts = allFiltered;
+
+      const ftsExhausted = ftsRows.length < ftsLimit;
+      const enough = filteredFacts.length >= limit;
+      const atCap = ftsLimit >= maxFtsLimit;
+      if (enough || ftsExhausted || atCap) break;
+      ftsLimit = Math.min(ftsLimit * 2, maxFtsLimit);
+    }
+
     if (filteredFacts.length === 0) return [];
 
     // Phase 3: small JOIN for snippet/matchInfo on surviving rowids only
     const survivingRowids = filteredFacts.map((r) => r._rowid);
     const rankByRowid = new Map(ftsRows.map((r) => [r.rowid, r.rank]));
     const factById = new Map(filteredFacts.map((r) => [r._rowid, r]));
-    const ph2 = survivingRowids.map(() => "?").join(",");
 
-    const snippetParams: Array<string | number> = [...survivingRowids, matchExpr, limit];
-    const snippetRows = db
-      .prepare(
-        `SELECT
+    const SNIPPET_CHUNK_SIZE = 500;
+    const allSnippetRows: Array<{
+      _rowid: number;
+      snippet: string | null;
+      matchInfo: string | null;
+    }> = [];
+    for (let i = 0; i < survivingRowids.length; i += SNIPPET_CHUNK_SIZE) {
+      const chunk = survivingRowids.slice(i, i + SNIPPET_CHUNK_SIZE);
+      const ph2 = chunk.map(() => "?").join(",");
+      const snippetParams: Array<string | number> = [...chunk, matchExpr, limit];
+      allSnippetRows.push(
+        ...(db
+          .prepare(
+            `SELECT
            fts.rowid AS _rowid,
            snippet(facts_fts, 0, '[', ']', '...', 16) AS snippet,
            (
@@ -240,14 +286,16 @@ export function searchFts(
            AND facts_fts MATCH ?
          ORDER BY fts.rank
          LIMIT ?`,
-      )
-      .all(...snippetParams) as Array<{
-      _rowid: number;
-      snippet: string | null;
-      matchInfo: string | null;
-    }>;
+          )
+          .all(...snippetParams) as Array<{
+          _rowid: number;
+          snippet: string | null;
+          matchInfo: string | null;
+        }>),
+      );
+    }
 
-    const snippetByRowid = new Map(snippetRows.map((r) => [r._rowid, r]));
+    const snippetByRowid = new Map(allSnippetRows.map((r) => [r._rowid, r]));
     rows = survivingRowids
       .filter((rid) => snippetByRowid.has(rid))
       .sort((a, b) => (rankByRowid.get(a) ?? 0) - (rankByRowid.get(b) ?? 0))

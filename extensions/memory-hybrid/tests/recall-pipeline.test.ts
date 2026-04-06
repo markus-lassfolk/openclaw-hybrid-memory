@@ -526,7 +526,7 @@ describe("runRecallPipelineQuery — limit", () => {
 // Abort signal propagation — Issue #558
 // ---------------------------------------------------------------------------
 
-describe("runRecallPipelineQuery — abort cancels embed after HyDE (#558)", () => {
+describe("runRecallPipelineQuery — HyDE fallback, FTS/embed ordering, vector timeout (#558, #42)", () => {
   afterEach(() => {
     vi.restoreAllMocks();
     vi.useRealTimers();
@@ -561,6 +561,32 @@ describe("runRecallPipelineQuery — abort cancels embed after HyDE (#558)", () 
 
     // HyDE failed; embed should proceed with raw query
     expect(deps.embeddings.embed).toHaveBeenCalledWith("raw query fallback");
+  });
+
+  it("drains embed promise when FTS throws (avoids unhandled rejection while embed is in flight)", async () => {
+    const deps = makeDeps({
+      cfg: {
+        queryExpansion: {
+          enabled: false,
+          maxVariants: 4,
+          cacheSize: 100,
+          timeoutMs: 15_000,
+          skipForInteractiveTurns: true,
+        },
+        retrievalStrategies: ["semantic", "fts5"],
+        memoryTieringEnabled: false,
+        rawCfg: { llm: undefined } as unknown as RecallPipelineDeps["cfg"]["rawCfg"],
+      },
+    });
+
+    (deps.embeddings.embed as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("embed failed"));
+    (deps.factsDb.search as ReturnType<typeof vi.fn>).mockImplementation(() => {
+      throw new Error("FTS boom");
+    });
+    (deps.vectorDb.search as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+
+    await expect(runRecallPipelineQuery("q", 5, deps, { value: false })).rejects.toThrow("FTS boom");
+    expect(deps.embeddings.embed).toHaveBeenCalled();
   });
 
   it("embed call is initiated before FTS blocks the event loop (#42)", async () => {

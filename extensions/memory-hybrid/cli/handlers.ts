@@ -10,6 +10,8 @@
  */
 
 import type OpenAI from "openai";
+import type { AgentHealthStore } from "../backends/agent-health-store.js";
+import type { AuditStore } from "../backends/audit-store.js";
 import type { CostTracker } from "../backends/cost-tracker.js";
 import type { CredentialsDB } from "../backends/credentials-db.js";
 import type { EventBus } from "../backends/event-bus.js";
@@ -21,8 +23,6 @@ import type { VectorDB } from "../backends/vector-db.js";
 import type { WriteAheadLog } from "../backends/wal.js";
 import type { HybridMemoryConfig, MemoryCategory } from "../config.js";
 import type { EmbeddingProvider } from "../services/embeddings.js";
-import type { AuditStore } from "../backends/audit-store.js";
-import type { AgentHealthStore } from "../backends/agent-health-store.js";
 
 /** Shared dependency bag passed to every CLI handler. */
 export interface HandlerContext {

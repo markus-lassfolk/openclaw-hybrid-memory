@@ -6,10 +6,10 @@
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import type { LifecycleContext } from "../lifecycle/types.js";
 import type { ScopeFilter } from "../types/memory.js";
-import { runRecallPipelineQuery, type RecallPipelineDeps } from "./recall-pipeline.js";
-import { DEFAULT_INTERACTIVE_RECALL_POLICY } from "./retrieval-mode-policy.js";
-import { capturePluginError } from "./error-reporter.js";
 import { withTimeout } from "../utils/timeout.js";
+import { capturePluginError } from "./error-reporter.js";
+import { type RecallPipelineDeps, runRecallPipelineQuery } from "./recall-pipeline.js";
+import { DEFAULT_INTERACTIVE_RECALL_POLICY } from "./retrieval-mode-policy.js";
 
 const POST_COMPACTION_RECALL_TIMEOUT_MS = 120_000;
 

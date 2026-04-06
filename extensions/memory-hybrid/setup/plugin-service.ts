@@ -10,6 +10,7 @@ import type { FactsDB } from "../backends/facts-db.js";
 import type { ProposalsDB } from "../backends/proposals-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
 import type { WriteAheadLog } from "../backends/wal.js";
+import { ensureHybridMemoryWorkspaceSkillIfMissing, loadOpenclawRootForWorkspace } from "../cli/cmd-install.js";
 import type { HybridMemoryConfig, MemoryCategory } from "../config.js";
 import { getCronModelConfig, getDefaultCronModel } from "../config.js";
 import { createDashboardServer } from "../routes/dashboard-server.js";
@@ -25,6 +26,7 @@ import {
   isErrorReporterActive,
   setErrorReporterMuted,
 } from "../services/error-reporter.js";
+import { resolveGoalsDir, runGoalHealthCheck } from "../services/goal-stewardship.js";
 import { runBuildLanguageKeywords } from "../services/language-keywords-build.js";
 import { runPassiveObserver } from "../services/passive-observer.js";
 import type { ProvenanceService } from "../services/provenance.js";
@@ -43,9 +45,7 @@ import {
   readVersionCheckCache,
   writeVersionCheckCache,
 } from "../utils/plugin-update-check.js";
-import { ensureHybridMemoryWorkspaceSkillIfMissing, loadOpenclawRootForWorkspace } from "../cli/cmd-install.js";
 import { checkOpenClawVersion } from "../utils/version-check.js";
-import { runGoalHealthCheck, resolveGoalsDir } from "../services/goal-stewardship.js";
 import { versionInfo } from "../versionInfo.js";
 
 export interface PluginServiceContext {

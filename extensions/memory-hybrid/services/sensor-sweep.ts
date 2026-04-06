@@ -9,11 +9,10 @@ import { getEnv } from "../utils/env-manager.js";
  * Issue #236
  */
 
-import { execFile } from "../utils/process-runner.js";
-import { promisify } from "node:util";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { promisify } from "node:util";
 import { type EventBus, computeFingerprint } from "../backends/event-bus.js";
 import type { FactsDB } from "../backends/facts-db.js";
 import type {
@@ -28,6 +27,7 @@ import type {
   WeatherSensorConfig,
   YarboSensorConfig,
 } from "../config/types/sensors.js";
+import { execFile } from "../utils/process-runner.js";
 import { stableStringify } from "../utils/stable-stringify.js";
 import { capturePluginError } from "./error-reporter.js";
 

@@ -6,11 +6,12 @@ import { pluginLogger } from "../../utils/logger.js";
 import type { EventLogConfig, PathConfig, StoreConfig, WALConfig } from "../types/core.js";
 import type {
   ActiveTaskConfig,
-  GoalStewardshipConfig,
+  ActiveTaskProjectionConfig,
   AuthOrderConfig,
   CredentialAutoCaptureConfig,
   CredentialsConfig,
   GatewayConfig,
+  GoalStewardshipConfig,
   LLMConfig,
   LLMProviderConfig,
   ResolvedGatewayAuthConfig,
@@ -233,6 +234,19 @@ export function parseActiveTaskConfig(cfg: Record<string, unknown>): ActiveTaskC
       : 2500;
   const ledgerRaw = activeTaskRaw?.ledger;
   const ledger = ledgerRaw === "facts" ? "facts" : "markdown";
+  const projRaw = activeTaskRaw?.projection as Record<string, unknown> | undefined;
+  const projection: ActiveTaskProjectionConfig = {
+    mode: projRaw?.mode === "full" ? "full" : "readable",
+    excludeGenericTitle: projRaw?.excludeGenericTitle !== false,
+    titleMinChars:
+      typeof projRaw?.titleMinChars === "number" && projRaw.titleMinChars > 0 ? Math.floor(projRaw.titleMinChars) : 0,
+    dedupeBy: projRaw?.dedupeBy === "label" || projRaw?.dedupeBy === "normalizedTitle" ? projRaw.dedupeBy : "none",
+    maxRowsPerSection:
+      typeof projRaw?.maxRowsPerSection === "number" && projRaw.maxRowsPerSection > 0
+        ? Math.floor(projRaw.maxRowsPerSection)
+        : undefined,
+    sectioned: projRaw?.sectioned !== false,
+  };
   return {
     enabled: activeTaskRaw?.enabled !== false,
     ledger,
@@ -256,6 +270,7 @@ export function parseActiveTaskConfig(cfg: Record<string, unknown>): ActiveTaskC
       suggestGoalAfterTaskAgeDays: suggestDays,
       heartbeatNudgeMaxChars,
     },
+    projection,
   };
 }
 
@@ -307,6 +322,7 @@ export function parseGoalStewardshipConfig(cfg: Record<string, unknown>): GoalSt
     requireRegisterAckForPriorities.push("critical", "high");
   }
 
+  const escPolRaw = raw?.escalationPolicy as Record<string, unknown> | undefined;
   const cbRaw = raw?.circuitBreaker as Record<string, unknown> | undefined;
   const sameBlockerRepeatLimit =
     typeof cbRaw?.sameBlockerRepeatLimit === "number" && cbRaw.sameBlockerRepeatLimit >= 1
@@ -362,6 +378,9 @@ export function parseGoalStewardshipConfig(cfg: Record<string, unknown>): GoalSt
     },
     llmTriageOnHeartbeat: raw?.llmTriageOnHeartbeat === true,
     triageSuggestHeavyDirective: raw?.triageSuggestHeavyDirective !== false,
+    escalationPolicy: {
+      taskHygieneOnBlockedGoals: escPolRaw?.taskHygieneOnBlockedGoals !== false,
+    },
     circuitBreaker: {
       enabled: cbRaw?.enabled === true,
       sameBlockerRepeatLimit,
@@ -370,6 +389,7 @@ export function parseGoalStewardshipConfig(cfg: Record<string, unknown>): GoalSt
       appendMemoryEscalation: cbRaw?.appendMemoryEscalation !== false,
     },
     allowCommandVerification: raw?.allowCommandVerification === true,
+    allowPrVerification: raw?.allowPrVerification === true,
   };
 }
 

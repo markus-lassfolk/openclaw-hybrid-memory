@@ -3,16 +3,16 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { FactsDB } from "../backends/facts-db.js";
 import { NarrativesDB } from "../backends/narratives-db.js";
 import {
+  type HttpRequestHandler,
+  type HttpRouteOptions,
   PUBLIC_API_PATHS,
   PUBLIC_API_PREFIX,
   registerPublicApiRoutes,
-  type HttpRequestHandler,
-  type HttpRouteOptions,
 } from "../tools/public-api-routes.js";
 
 interface RouteRegistration {

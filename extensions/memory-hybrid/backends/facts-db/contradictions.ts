@@ -9,8 +9,8 @@ import { capturePluginError } from "../../services/error-reporter.js";
 import type { MemoryEntry } from "../../types/memory.js";
 import { createTransaction } from "../../utils/sqlite-transaction.js";
 import { parseTags, serializeTags } from "../../utils/tags.js";
-import type { MemoryLinkType } from "./types.js";
 import { rowToMemoryEntry } from "./row-mapper.js";
+import type { MemoryLinkType } from "./types.js";
 
 export interface ContradictionRecord {
   id: string;

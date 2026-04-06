@@ -11,17 +11,17 @@ import { getEnv } from "../utils/env-manager.js";
  *   openclaw benchmark run --iterations 100  — custom iteration count
  */
 
-import { join } from "node:path";
 import { existsSync } from "node:fs";
-import type { Chainable } from "./shared.js";
-import type { HybridMemCliContext } from "./register.js";
+import { join } from "node:path";
 import type { BenchmarkResult } from "../benchmark/shadow-eval.js";
 import {
-  runBenchmark,
-  runAllBenchmarks,
   formatBenchmarkResult,
   formatBenchmarkResults,
+  runAllBenchmarks,
+  runBenchmark,
 } from "../benchmark/shadow-eval.js";
+import type { HybridMemCliContext } from "./register.js";
+import type { Chainable } from "./shared.js";
 
 // ---------------------------------------------------------------------------
 // Runner

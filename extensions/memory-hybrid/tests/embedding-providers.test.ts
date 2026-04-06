@@ -23,9 +23,9 @@ import {
   safeEmbed,
   shouldSuppressEmbeddingError,
 } from "../services/embeddings.js";
+import { AsyncSemaphore } from "../services/embeddings/shared.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import * as glitchtip from "../services/error-reporter.js";
-import { AsyncSemaphore } from "../services/embeddings/shared.js";
 
 vi.mock("../services/error-reporter.js", () => ({
   capturePluginError: vi.fn(),

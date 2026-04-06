@@ -8,16 +8,16 @@ import { DEFAULT_CHAT_TIMEOUT_MS } from "../utils/constants.js";
 import { pluginLogger } from "../utils/logger.js";
 import { withCostFeature } from "./cost-context.js";
 import { capturePluginError } from "./error-reporter.js";
+import { is403QuotaOrRateLimitLike, parseGoDurationToMs, parseRetryAfterMs } from "./llm-rate-limit-headers.js";
 import {
+  type WireApi,
   getDistillBatchTokenLimit as getDistillBatchTokenLimitFromCatalog,
   getDistillMaxOutputTokens as getDistillMaxOutputTokensFromCatalog,
   isReasoningModel,
   requiresMaxCompletionTokens,
   resolveWireApi,
-  type WireApi,
 } from "./model-capabilities.js";
 import { callResponsesApi } from "./responses-adapter.js";
-import { is403QuotaOrRateLimitLike, parseGoDurationToMs, parseRetryAfterMs } from "./llm-rate-limit-headers.js";
 
 export { is403QuotaOrRateLimitLike, parseGoDurationToMs, parseRetryAfterMs } from "./llm-rate-limit-headers.js";
 
@@ -210,7 +210,8 @@ export function is500Like(err: unknown): boolean {
       return true;
     }
     // Gateway/proxy phrasing seen in production (#1010, #1013): "502 error code: 502"
-    if (/\b5\d{2}\s+error\s+code:\s*5\d{2}\b/i.test(m) || /\berror\s+code:\s*5\d{2}\b/i.test(m)) return true;
+    // Single pattern: any "error code: 5xx" also covers "5xx error code: 5xx".
+    if (/\berror\s+code:\s*5\d{2}\b/i.test(m)) return true;
   }
   return false;
 }

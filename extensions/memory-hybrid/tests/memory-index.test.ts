@@ -1,10 +1,10 @@
-import { getEnv, setEnv } from "../utils/env-manager.js";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { _testing } from "../index.js";
 import { buildMemoryIndexSnapshot, renderMemoryIndexMarkdown, writeMemoryIndex } from "../services/memory-index.js";
+import { getEnv, setEnv } from "../utils/env-manager.js";
 
 const { FactsDB } = _testing;
 
