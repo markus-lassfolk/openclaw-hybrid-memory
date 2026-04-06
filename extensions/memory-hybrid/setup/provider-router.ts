@@ -1042,7 +1042,8 @@ export function buildMultiProviderOpenAI(
             const { client, bareModel, useFullModel, authType } = resolveClient(model);
             const prefix = model.trim().split("/")[0]?.toLowerCase();
             const modelForRequest = useFullModel ? model.trim() : bareModel;
-            const adjustedBody = { ...body, model: modelForRequest };
+            const merged = { ...body, model: modelForRequest };
+            const adjustedBody = remapMaxTokensForOpenAI(merged);
             const start = Date.now();
 
             const responsesNs = (
