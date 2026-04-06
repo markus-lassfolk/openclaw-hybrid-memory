@@ -68,18 +68,18 @@ function parseIsoFromFactField(value: string | undefined): string | undefined {
   return new Date(ms).toISOString();
 }
 
-function createdBoundsFromKeyMap(keyMap: Map<string, MemoryEntry>): { minMs: number; maxMs: number } | null {
-  let minMs = Number.POSITIVE_INFINITY;
-  let maxMs = Number.NEGATIVE_INFINITY;
+function createdBoundsFromKeyMap(keyMap: Map<string, MemoryEntry>): { minSec: number; maxSec: number } | null {
+  let minSec = Number.POSITIVE_INFINITY;
+  let maxSec = Number.NEGATIVE_INFINITY;
   for (const e of keyMap.values()) {
     const c = e.createdAt;
     if (typeof c === "number" && Number.isFinite(c)) {
-      minMs = Math.min(minMs, c);
-      maxMs = Math.max(maxMs, c);
+      minSec = Math.min(minSec, c);
+      maxSec = Math.max(maxSec, c);
     }
   }
-  if (minMs === Number.POSITIVE_INFINITY) return null;
-  return { minMs, maxMs };
+  if (minSec === Number.POSITIVE_INFINITY) return null;
+  return { minSec, maxSec };
 }
 
 function resolveTaskStarted(f: Record<string, string>, bounds: ReturnType<typeof createdBoundsFromKeyMap>): string {
@@ -87,7 +87,7 @@ function resolveTaskStarted(f: Record<string, string>, bounds: ReturnType<typeof
     parseIsoFromFactField(f.started) ??
     parseIsoFromFactField(f.task_started) ??
     parseIsoFromFactField(f.created_at) ??
-    (bounds ? new Date(bounds.minMs * 1000).toISOString() : undefined) ??
+    (bounds ? new Date(bounds.minSec * 1000).toISOString() : undefined) ??
     UNKNOWN_ACTIVE_TASK_TIME
   );
 }
@@ -97,7 +97,7 @@ function resolveTaskUpdated(f: Record<string, string>, bounds: ReturnType<typeof
     parseIsoFromFactField(f.task_updated) ??
     parseIsoFromFactField(f.updated) ??
     parseIsoFromFactField(f.updated_at) ??
-    (bounds ? new Date(bounds.maxMs * 1000).toISOString() : undefined) ??
+    (bounds ? new Date(bounds.maxSec * 1000).toISOString() : undefined) ??
     UNKNOWN_ACTIVE_TASK_TIME
   );
 }
