@@ -11,7 +11,7 @@
  */
 
 import type OpenAI from "openai";
-import { isReasoningModel, requiresMaxCompletionTokens } from "./model-capabilities.js";
+import { isReasoningModel } from "./model-capabilities.js";
 
 export interface ResponsesCreateParams {
   model: string;

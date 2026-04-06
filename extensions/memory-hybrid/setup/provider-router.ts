@@ -21,12 +21,7 @@ import {
 import { hasOAuthProfiles } from "../utils/auth.js";
 import { getEnv } from "../utils/env-manager.js";
 import { inferFeatureLabel } from "./cost-instrumentation.js";
-import { isReasoningModel, requiresMaxCompletionTokens, resolveWireApi } from "../services/model-capabilities.js";
-import {
-  buildResponsesRequestBody,
-  extractResponsesText,
-  extractResponsesUsage,
-} from "../services/responses-adapter.js";
+import { isReasoningModel, requiresMaxCompletionTokens } from "../services/model-capabilities.js";
 
 /**
  * Normalize baseURL vs baseUrl (OpenClaw config uses camelCase `baseUrl`; SDK uses `baseURL`).
