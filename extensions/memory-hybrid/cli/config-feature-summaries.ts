@@ -69,6 +69,9 @@ export function formatActiveTaskConfigLines(at: ActiveTaskConfig): string[] {
   lines.push(
     `  taskHygiene — suggestGoalAfterTaskAgeDays: ${at.taskHygiene.suggestGoalAfterTaskAgeDays ?? 0} (0 = off)`,
   );
+  lines.push(
+    `  projection — mode: ${at.projection.mode}, sectioned: ${at.projection.sectioned}, dedupeBy: ${at.projection.dedupeBy}, maxRowsPerSection: ${at.projection.maxRowsPerSection ?? "(none)"}`,
+  );
   lines.push("");
   lines.push("Naming: JSON config uses camelCase `activeTask.*`; CLI command is `active-tasks` (plural).");
   lines.push("The working-memory file default is ACTIVE-TASKS.md (see filePath above).");

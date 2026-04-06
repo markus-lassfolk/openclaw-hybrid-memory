@@ -1735,6 +1735,41 @@
             "minimum": 1,
             "description": "Token budget for active-task injection summary (default: 500)"
           },
+          "projection": {
+            "type": "object",
+            "additionalProperties": false,
+            "description": "Facts ledger only: filters and layout for `hybrid-mem active-tasks render` (ACTIVE-TASKS.md projection). See docs/ACTIVE-TASKS-PROJECTION.md.",
+            "properties": {
+              "mode": {
+                "type": "string",
+                "enum": ["readable", "full"],
+                "description": "readable = apply title filters and dedupe (default). full = list all rows (caps still apply when maxRowsPerSection is set)."
+              },
+              "excludeGenericTitle": {
+                "type": "boolean",
+                "description": "In readable mode, drop rows whose title is the generic placeholder (default: true)."
+              },
+              "titleMinChars": {
+                "type": "number",
+                "minimum": 0,
+                "description": "When > 0 (readable mode), drop rows with a shorter trimmed title/description."
+              },
+              "dedupeBy": {
+                "type": "string",
+                "enum": ["none", "label", "normalizedTitle"],
+                "description": "De-duplicate rows after filters (default: none)."
+              },
+              "maxRowsPerSection": {
+                "type": "integer",
+                "minimum": 1,
+                "description": "Optional cap per section (Active, Stale — revisit, Completed); omitted rows summarized in a footer line."
+              },
+              "sectioned": {
+                "type": "boolean",
+                "description": "Use Active / Stale — revisit / Completed sections (default: true). When false, use legacy flat ## Active Tasks layout."
+              }
+            }
+          },
           "staleHours": {
             "type": "integer",
             "minimum": 1,
