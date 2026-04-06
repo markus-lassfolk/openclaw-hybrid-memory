@@ -87,7 +87,7 @@ function resolveTaskStarted(f: Record<string, string>, bounds: ReturnType<typeof
     parseIsoFromFactField(f.started) ??
     parseIsoFromFactField(f.task_started) ??
     parseIsoFromFactField(f.created_at) ??
-    (bounds ? new Date(bounds.minMs).toISOString() : undefined) ??
+    (bounds ? new Date(bounds.minMs * 1000).toISOString() : undefined) ??
     UNKNOWN_ACTIVE_TASK_TIME
   );
 }
@@ -97,7 +97,7 @@ function resolveTaskUpdated(f: Record<string, string>, bounds: ReturnType<typeof
     parseIsoFromFactField(f.task_updated) ??
     parseIsoFromFactField(f.updated) ??
     parseIsoFromFactField(f.updated_at) ??
-    (bounds ? new Date(bounds.maxMs).toISOString() : undefined) ??
+    (bounds ? new Date(bounds.maxMs * 1000).toISOString() : undefined) ??
     UNKNOWN_ACTIVE_TASK_TIME
   );
 }

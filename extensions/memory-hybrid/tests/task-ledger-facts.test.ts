@@ -73,26 +73,23 @@ describe("task-ledger-facts", () => {
     const r1 = new Map<string, MemoryEntry>();
     r1.set(
       "status",
-      fact({ id: "s1", entity: "task-a", key: "status", value: "in_progress", createdAt: 1_700_000_000_000 }),
+      fact({ id: "s1", entity: "task-a", key: "status", value: "in_progress", createdAt: 1_700_000_000 }),
     );
-    r1.set(
-      "title",
-      fact({ id: "t1", entity: "task-a", key: "title", value: "Real title", createdAt: 1_700_000_100_000 }),
-    );
+    r1.set("title", fact({ id: "t1", entity: "task-a", key: "title", value: "Real title", createdAt: 1_700_000_100 }));
     m.set("task-a", r1);
     const r2 = new Map<string, MemoryEntry>();
     r2.set(
       "status",
-      fact({ id: "s2", entity: "task-b", key: "status", value: "in_progress", createdAt: 1_800_000_000_000 }),
+      fact({ id: "s2", entity: "task-b", key: "status", value: "in_progress", createdAt: 1_800_000_000 }),
     );
-    r2.set("title", fact({ id: "t2", entity: "task-b", key: "title", value: "Other", createdAt: 1_800_000_200_000 }));
+    r2.set("title", fact({ id: "t2", entity: "task-b", key: "title", value: "Other", createdAt: 1_800_000_200 }));
     m.set("task-b", r2);
     const { active } = buildTaskEntriesFromGroupedFacts(m);
     expect(active).toHaveLength(2);
     expect(active[0].started).not.toBe(active[1].started);
     expect(active[0].updated).not.toBe(active[1].updated);
-    expect(active[0].started).toBe(new Date(1_700_000_000_000).toISOString());
-    expect(active[0].updated).toBe(new Date(1_700_000_100_000).toISOString());
+    expect(active[0].started).toBe(new Date(1_700_000_000 * 1000).toISOString());
+    expect(active[0].updated).toBe(new Date(1_700_000_100 * 1000).toISOString());
   });
 
   it("readable projection drops generic Project task titles", () => {
