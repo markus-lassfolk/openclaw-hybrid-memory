@@ -64,6 +64,10 @@ async function tryDeleteStaleCorruptSignalFile(filePath: string): Promise<void> 
  */
 export const UNKNOWN_ACTIVE_TASK_TIME = "Unknown";
 
+/** Message shown when rows are omitted due to projection cap. */
+export const OMITTED_CAP_NOTE =
+  "more not shown (projection cap). Adjust `activeTask.projection.maxRowsPerSection`, set `activeTask.projection.mode` to `full`, or query `category:project` facts.";
+
 /** Valid task statuses */
 export const ACTIVE_TASK_STATUSES = ["In progress", "Waiting", "Stalled", "Failed", "Done"] as const;
 export type ActiveTaskStatus = (typeof ACTIVE_TASK_STATUSES)[number];
@@ -366,9 +370,7 @@ export function serializeActiveTaskFile(
   }
 
   if (omitted?.active && omitted.active > 0) {
-    parts.push(
-      `> ${omitted.active} more not shown (projection cap). Adjust \`activeTask.projection.maxRowsPerSection\`, set \`activeTask.projection.mode\` to \`full\`, or query \`category:project\` facts.\n\n`,
-    );
+    parts.push(`> ${omitted.active} ${OMITTED_CAP_NOTE}\n\n`);
   }
 
   if (goalsMirrorMarkdown !== undefined) {
@@ -378,18 +380,15 @@ export function serializeActiveTaskFile(
     if (!goalsMirrorMarkdown.endsWith("\n")) parts.push("\n");
   }
 
-  if (completed.length > 0) {
+  if (completed.length > 0 || (omitted?.completed && omitted.completed > 0)) {
     parts.push("## Completed\n");
     for (const entry of completed) {
       parts.push(serializeTaskEntry(entry));
       parts.push("");
     }
-  }
-
-  if (omitted?.completed && omitted.completed > 0) {
-    parts.push(
-      `> ${omitted.completed} more not shown (projection cap). Adjust \`activeTask.projection.maxRowsPerSection\`, set \`activeTask.projection.mode\` to \`full\`, or query \`category:project\` facts.\n`,
-    );
+    if (omitted?.completed && omitted.completed > 0) {
+      parts.push(`> ${omitted.completed} ${OMITTED_CAP_NOTE}\n`);
+    }
   }
 
   return parts.join("\n");

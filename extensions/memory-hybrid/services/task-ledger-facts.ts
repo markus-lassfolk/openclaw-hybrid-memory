@@ -14,6 +14,7 @@ import {
   type ActiveTaskEntry,
   type ActiveTaskStatus,
   type PendingTaskSignal,
+  OMITTED_CAP_NOTE,
   UNKNOWN_ACTIVE_TASK_TIME,
   completeTask,
   deleteSignal,
@@ -207,9 +208,6 @@ export function readActiveTaskRowsFromFacts(
   const staleActive = detectStaleTasks(active, staleMinutes);
   return { active: staleActive, completed };
 }
-
-const OMITTED_CAP_NOTE =
-  "more not shown (projection cap). Adjust `activeTask.projection.maxRowsPerSection`, set `activeTask.projection.mode` to `full`, or query `category:project` facts.";
 
 /** Normalize description for `dedupeBy: normalizedTitle`. */
 export function normalizeActiveTaskTitleForDedupe(description: string): string {
