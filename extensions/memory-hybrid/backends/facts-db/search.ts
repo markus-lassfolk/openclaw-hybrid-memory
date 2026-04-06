@@ -124,9 +124,18 @@ export function searchFacts(
       if (scopeFilter) {
         const s = row.scope as string | null | undefined;
         const st = row.scope_target as string | null | undefined;
-        if (scopeFilter.userId && s === "user" && st !== scopeFilter.userId) continue;
-        if (scopeFilter.agentId && s === "agent" && st !== scopeFilter.agentId) continue;
-        if (scopeFilter.sessionId && s === "session" && st !== scopeFilter.sessionId) continue;
+        if (s === "global") {
+          // global scope always passes
+        } else if (s === "user") {
+          if (!scopeFilter.userId || st !== scopeFilter.userId) continue;
+        } else if (s === "agent") {
+          if (!scopeFilter.agentId || st !== scopeFilter.agentId) continue;
+        } else if (s === "session") {
+          if (!scopeFilter.sessionId || st !== scopeFilter.sessionId) continue;
+        } else {
+          // unknown scope type, exclude
+          continue;
+        }
       }
       const expiresAt = row.expires_at as number | null | undefined;
       let freshness: number;
