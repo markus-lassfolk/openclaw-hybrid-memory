@@ -1,7 +1,7 @@
 // @ts-nocheck
-import { getEnv, setEnv } from "../utils/env-manager.js";
 import * as fs from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { getEnv, setEnv } from "../utils/env-manager.js";
 
 import { runConfigViewForCli } from "../cli/cmd-config.js";
 import type { HandlerContext } from "../cli/handlers.js";
@@ -44,6 +44,7 @@ function makeCtx(enabled: boolean): HandlerContext {
 
   return {
     cfg,
+    // @ts-expect-error
     dataDir: ".",
     noEmoji: false,
     logger: {

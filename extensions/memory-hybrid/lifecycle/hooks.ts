@@ -6,27 +6,27 @@ import { getEnv } from "../utils/env-manager.js";
  * All stage logic lives in stage-*.ts and session-state.ts; this file stays <200 lines.
  */
 
-import { join, isAbsolute } from "node:path";
 import { homedir } from "node:os";
+import { isAbsolute, join } from "node:path";
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import { getCronModelConfig, getDefaultCronModel } from "../config.js";
-import { runSetupStage } from "./stage-setup.js";
-import { runRecallStage } from "./stage-recall.js";
-import { runInjectionStage } from "./stage-injection.js";
-import { runCaptureStage } from "./stage-capture.js";
-import { registerCleanupHandlers, createStaleSweepTimer, getDispose } from "./stage-cleanup.js";
+import { isAbortOrTransientLlmError } from "../services/chat.js";
+import { capturePluginError } from "../services/error-reporter.js";
+import { buildDailyNarrative } from "../src/worker/narratives.js";
+import { withHookResolutionApi } from "./hook-resolution-api.js";
+import { createSessionState } from "./session-state.js";
 import { registerActiveTaskInjection } from "./stage-active-task.js";
-import { registerGoalStewardshipInjection, resolvedGoalsDirForLifecycle } from "./stage-goal-stewardship.js";
-import { registerGoalSubagentHandlers } from "./stage-goal-subagent.js";
 import { registerAuthFailureRecall } from "./stage-auth-failure.js";
+import { runCaptureStage } from "./stage-capture.js";
+import { createStaleSweepTimer, getDispose, registerCleanupHandlers } from "./stage-cleanup.js";
 import { registerCredentialHint } from "./stage-credential-hint.js";
 import { registerFrustrationHandlers } from "./stage-frustration.js";
-import { createSessionState } from "./session-state.js";
-import { withHookResolutionApi } from "./hook-resolution-api.js";
+import { registerGoalStewardshipInjection, resolvedGoalsDirForLifecycle } from "./stage-goal-stewardship.js";
+import { registerGoalSubagentHandlers } from "./stage-goal-subagent.js";
+import { runInjectionStage } from "./stage-injection.js";
+import { runRecallStage } from "./stage-recall.js";
+import { runSetupStage } from "./stage-setup.js";
 import type { LifecycleContext, SessionState } from "./types.js";
-import { capturePluginError } from "../services/error-reporter.js";
-import { isAbortOrTransientLlmError } from "../services/chat.js";
-import { buildDailyNarrative } from "../src/worker/narratives.js";
 
 export type { LifecycleContext } from "./types.js";
 
@@ -72,7 +72,7 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
       });
     }
 
-    registerActiveTaskInjection(api, ctx, resolvedActiveTaskPath);
+    registerActiveTaskInjection(api, ctx, resolvedActiveTaskPath, workspaceRoot);
     const resolvedGoalsDir = resolvedGoalsDirForLifecycle(ctx.cfg);
     registerGoalStewardshipInjection(
       api,

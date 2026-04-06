@@ -6,8 +6,9 @@
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import { buildActiveTaskInjection, buildStaleWarningInjection, readActiveTaskFile } from "../services/active-task.js";
 import { capturePluginError } from "../services/error-reporter.js";
+import { listGoals, resolveGoalsDir } from "../services/goal-registry.js";
 import { matchesHeartbeat } from "../services/goal-stewardship-heartbeat.js";
-import { buildHeartbeatTaskHygieneBlock } from "../services/task-hygiene.js";
+import { buildGoalEscalationHeartbeatBlock, buildHeartbeatTaskHygieneBlock } from "../services/task-hygiene.js";
 import { readActiveTaskRowsFromFacts } from "../services/task-ledger-facts.js";
 import { parseDuration } from "../utils/duration.js";
 import { extractLastUserMessageText } from "../utils/extract-last-user-message.js";
@@ -17,6 +18,7 @@ export function registerActiveTaskInjection(
   api: ClawdbotPluginApi,
   ctx: LifecycleContext,
   resolvedActiveTaskPath: string,
+  workspaceRoot: string,
 ): void {
   if (!ctx.cfg.activeTask.enabled || ctx.cfg.verbosity === "silent") return;
 
@@ -47,6 +49,7 @@ export function registerActiveTaskInjection(
 
       const th = ctx.cfg.activeTask.taskHygiene;
       let hygieneBlock = "";
+      let goalEscalationBlock = "";
       const userText = extractLastUserMessageText(event);
       if (
         th.heartbeatEscalation &&
@@ -59,10 +62,17 @@ export function registerActiveTaskInjection(
           maxChars: th.heartbeatNudgeMaxChars,
           suggestGoalAfterTaskAgeDays: th.suggestGoalAfterTaskAgeDays,
         });
+        if (ctx.cfg.goalStewardship.enabled && ctx.cfg.goalStewardship.escalationPolicy.taskHygieneOnBlockedGoals) {
+          const goalsDir = resolveGoalsDir(workspaceRoot, ctx.cfg.goalStewardship.goalsDir);
+          const goals = await listGoals(goalsDir);
+          goalEscalationBlock = buildGoalEscalationHeartbeatBlock(goals, {
+            maxChars: Math.min(1200, th.heartbeatNudgeMaxChars),
+          });
+        }
         api.logger?.info?.("memory-hybrid: task hygiene block appended (heartbeat match)");
       }
 
-      const parts = [injection, staleWarningBlock, hygieneBlock].filter(Boolean);
+      const parts = [injection, staleWarningBlock, hygieneBlock, goalEscalationBlock].filter(Boolean);
       if (parts.length === 0) return undefined;
 
       const context = parts.join("\n\n");

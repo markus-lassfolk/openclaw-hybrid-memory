@@ -8,13 +8,13 @@
  * Shadow mode: compare retrieval quality with events stored vs. not stored.
  */
 
-import type { BenchmarkContext, LatencyStats } from "../shadow-eval.js";
-import { measureLatency, shadowMeasure } from "../shadow-eval.js";
-import { EventLog, categoryToEventType } from "../../backends/event-log.js";
 import { randomUUID } from "node:crypto";
-import { join } from "node:path";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { EventLog, categoryToEventType } from "../../backends/event-log.js";
+import type { BenchmarkContext, LatencyStats } from "../shadow-eval.js";
+import { measureLatency, shadowMeasure } from "../shadow-eval.js";
 
 function makeTempDir() {
   return mkdtempSync(join(tmpdir(), "bench-episodes-"));

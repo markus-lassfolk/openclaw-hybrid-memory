@@ -1899,6 +1899,21 @@
             "type": "boolean",
             "description": "Allow command_exit_zero goal verification in the watchdog (shell execution). Default: false — must be explicitly opted in."
           },
+          "allowPrVerification": {
+            "type": "boolean",
+            "description": "Allow pr_merged goal verification via GitHub API (requires GITHUB_TOKEN or GH_TOKEN). Default: false — network access must be explicitly opted in."
+          },
+          "escalationPolicy": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "taskHygieneOnBlockedGoals": {
+                "type": "boolean",
+                "description": "On heartbeat, when task hygiene runs, append a snippet if any goal is blocked or stalled (default: true)"
+              }
+            },
+            "description": "Cross-layer escalation visibility (task hygiene vs goals)"
+          },
           "circuitBreaker": {
             "type": "object",
             "additionalProperties": false,

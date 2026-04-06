@@ -6,13 +6,13 @@
 
 import { createCipheriv, createDecipheriv, createHash, randomBytes, scryptSync } from "node:crypto";
 import { mkdirSync } from "node:fs";
-import { tryRestrictSqliteDbFileMode } from "../utils/sqlite-file-perms.js";
 import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { CredentialType } from "../config.js";
 import { assertValidCredentialRow } from "../services/credential-validation.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { pluginLogger } from "../utils/logger.js";
+import { tryRestrictSqliteDbFileMode } from "../utils/sqlite-file-perms.js";
 import { createTransaction } from "../utils/sqlite-transaction.js";
 import { BaseSqliteStore } from "./base-sqlite-store.js";
 

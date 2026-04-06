@@ -1,29 +1,29 @@
-import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
-import { getEnv } from "../utils/env-manager.js";
 import { homedir } from "node:os";
 import { join as pathJoin } from "node:path";
+import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import type { MemoryPluginAPI } from "../api/memory-plugin-api.js";
 import type { BootstrapPhaseConfig } from "../config.js";
 import { orderByBootstrapPhase } from "../services/bootstrap-priority.js";
 import { capturePluginError } from "../services/error-reporter.js";
+import { resolveGoalsDir } from "../services/goal-stewardship.js";
 import { registerApitapTools } from "../tools/apitap-tools.js";
 import { registerCredentialTools } from "../tools/credential-tools.js";
 import { registerCrystallizationTools } from "../tools/crystallization-tools.js";
 import { type DashboardRoutesContext, registerDashboardHttpRoutes } from "../tools/dashboard-routes.js";
 import { registerDocumentTools } from "../tools/document-tools.js";
+import { type GoalToolsContext, registerGoalTools } from "../tools/goal-tools.js";
 import { type PluginContext as GraphToolsContext, registerGraphTools } from "../tools/graph-tools.js";
 import { registerIssueTools } from "../tools/issue-tools.js";
 import { type MemoryToolsContext, registerMemoryTools } from "../tools/memory-tools.js";
-import { resolveGoalsDir } from "../services/goal-stewardship.js";
 import { type PluginContext as PersonaToolsContext, registerPersonaTools } from "../tools/persona-tools.js";
-import { type PublicApiRoutesContext, registerPublicApiRoutes } from "../tools/public-api-routes.js";
 import { registerProvenanceTools } from "../tools/provenance-tools.js";
+import { type PublicApiRoutesContext, registerPublicApiRoutes } from "../tools/public-api-routes.js";
 import { registerSelfExtensionTools } from "../tools/self-extension-tools.js";
+import { registerTaskHygieneTools, resolveActiveTaskPathForTools } from "../tools/task-hygiene-tools.js";
 import { type PluginContext as UtilityToolsContext, registerUtilityTools } from "../tools/utility-tools.js";
 import { registerVerificationTools } from "../tools/verification-tools.js";
 import { registerWorkflowTools } from "../tools/workflow-tools.js";
-import { registerGoalTools, type GoalToolsContext } from "../tools/goal-tools.js";
-import { registerTaskHygieneTools, resolveActiveTaskPathForTools } from "../tools/task-hygiene-tools.js";
+import { getEnv } from "../utils/env-manager.js";
 
 export type ToolsContext = MemoryPluginAPI;
 

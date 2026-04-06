@@ -1,6 +1,6 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
-import { withErrorTracking, withErrorTrackingAsync } from "../utils/error-tracking.js";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { capturePluginError } from "../services/error-reporter.js";
+import { withErrorTracking, withErrorTrackingAsync } from "../utils/error-tracking.js";
 
 vi.mock("../services/error-reporter.js", () => ({
   capturePluginError: vi.fn(),

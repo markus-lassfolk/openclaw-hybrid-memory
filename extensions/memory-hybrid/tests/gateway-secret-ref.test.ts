@@ -1,9 +1,9 @@
-import { getEnv, setEnv } from "../utils/env-manager.js";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { parseGatewayConfig, resolveSecretRef } from "../config/parsers/core.js";
+import { getEnv, setEnv } from "../utils/env-manager.js";
 
 let tmpDir: string;
 

@@ -10,10 +10,6 @@ import { dirname, join } from "node:path";
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import type { MemoryCategory } from "../config.js";
 import { getCronModelConfig, getDefaultCronModel } from "../config.js";
-import { CLI_STORE_IMPORTANCE } from "../utils/constants.js";
-import { truncateForStorage } from "../utils/text.js";
-import { extractTags } from "../utils/tags.js";
-import { extractStructuredFields } from "../services/fact-extraction.js";
 import { detectCredentialPatterns } from "../services/auto-capture.js";
 import {
   getAutoCaptureExtractionConfidence,
@@ -25,12 +21,16 @@ import {
   classifyMemoryOperation,
   classifyMemoryOperationsBatch,
 } from "../services/classification.js";
-import type { EpisodeOutcome, MemoryEntry } from "../types/memory.js";
 import { extractCredentialsFromToolCalls } from "../services/credential-scanner.js";
-import { capturePluginError } from "../services/error-reporter.js";
 import { isOllamaCircuitBreakerOpen } from "../services/embeddings.js";
+import { capturePluginError } from "../services/error-reporter.js";
+import { extractStructuredFields } from "../services/fact-extraction.js";
+import { formatQualityLoopEntry, runHumanizerScore } from "../services/humanizer-score.js";
+import type { EpisodeOutcome, MemoryEntry } from "../types/memory.js";
+import { CLI_STORE_IMPORTANCE } from "../utils/constants.js";
+import { extractTags } from "../utils/tags.js";
+import { truncateForStorage } from "../utils/text.js";
 import { withTimeout } from "../utils/timeout.js";
-import { runHumanizerScore, formatQualityLoopEntry } from "../services/humanizer-score.js";
 import type { LifecycleContext, SessionState } from "./types.js";
 
 const CAPTURE_STAGE_TIMEOUT_MS = 60_000;

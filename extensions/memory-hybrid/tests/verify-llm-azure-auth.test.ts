@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { AZURE_OPENAI_API_VERSION } from "../services/embeddings.js";
 import {
   type VerifyDirectOpenAIOpts,
   applyAzureFoundryVerifyDirectClientAuth,
   isAzureFoundryFamilyProvider,
 } from "../cli/verify-llm-azure-auth.js";
+import { AZURE_OPENAI_API_VERSION } from "../services/embeddings.js";
 
 describe("isAzureFoundryFamilyProvider", () => {
   it("recognizes azure-foundry, responses, and direct", () => {

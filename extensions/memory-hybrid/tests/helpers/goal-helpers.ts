@@ -4,7 +4,7 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { GoalStewardshipConfig, GoalStewardshipCircuitBreakerConfig } from "../../config/types/index.js";
+import type { GoalStewardshipCircuitBreakerConfig, GoalStewardshipConfig } from "../../config/types/index.js";
 import type { Goal, GoalDefaults, GoalPriority } from "../../services/goal-stewardship-types.js";
 
 export const DEFAULT_GOAL_DEFAULTS: GoalDefaults = {
@@ -44,8 +44,10 @@ export function baseGoalStewardshipConfig(over: Partial<GoalStewardshipConfig> =
     confirmationPolicy: { requireRegisterAckForPriorities: ["critical", "high"] },
     llmTriageOnHeartbeat: false,
     triageSuggestHeavyDirective: true,
+    escalationPolicy: { taskHygieneOnBlockedGoals: true },
     circuitBreaker: { ...defaultCB },
     allowCommandVerification: false,
+    allowPrVerification: false,
     ...over,
   };
 }

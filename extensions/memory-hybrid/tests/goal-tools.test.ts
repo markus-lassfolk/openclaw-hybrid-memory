@@ -14,8 +14,8 @@ import {
   terminateGoal,
   updateGoal,
 } from "../services/goal-registry.js";
-import { setEnv } from "../utils/env-manager.js";
 import { resolveGoalsDir } from "../services/goal-stewardship.js";
+import { setEnv } from "../utils/env-manager.js";
 
 const defaults = {
   maxDispatches: 5,

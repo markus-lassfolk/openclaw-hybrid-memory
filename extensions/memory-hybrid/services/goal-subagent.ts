@@ -2,8 +2,8 @@
  * Link subagent lifecycle to goals.
  */
 
-import type { Goal } from "./goal-stewardship-types.js";
 import { isTerminalStatus, listActiveGoals, readGoal, readGoalByLabel, updateGoal } from "./goal-registry.js";
+import type { Goal } from "./goal-stewardship-types.js";
 
 export type GoalSubagentSpawnEvent = {
   childSessionKey?: string;

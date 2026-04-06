@@ -1,14 +1,14 @@
+import { isAbsolute, join as pathJoin } from "node:path";
 /**
  * Task hygiene tools — draft goal_register payloads from ACTIVE-TASKS.md rows.
  * @see docs/TASK-HYGIENE.md
  */
 import { Type } from "@sinclair/typebox";
-import { isAbsolute, join as pathJoin } from "node:path";
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import type { HybridMemoryConfig } from "../config.js";
 import { readActiveTaskFile } from "../services/active-task.js";
-import { buildProposeGoalDraftFromTask } from "../services/task-hygiene.js";
 import { capturePluginError } from "../services/error-reporter.js";
+import { buildProposeGoalDraftFromTask } from "../services/task-hygiene.js";
 import { parseDuration } from "../utils/duration.js";
 import { stableStringify } from "../utils/stable-stringify.js";
 

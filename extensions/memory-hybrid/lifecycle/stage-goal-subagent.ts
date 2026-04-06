@@ -4,12 +4,12 @@
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import { capturePluginError } from "../services/error-reporter.js";
 import {
+  type GoalSubagentSpawnEvent,
   linkSubagentToGoal,
   resolveGoalForSpawn,
   updateGoalOnSubagentEnd,
-  type GoalSubagentSpawnEvent,
 } from "../services/goal-stewardship.js";
-import { subagentEndedIsSuccess, type SubagentEndedEvent } from "../utils/subagent-ended-utils.js";
+import { type SubagentEndedEvent, subagentEndedIsSuccess } from "../utils/subagent-ended-utils.js";
 import type { LifecycleContext } from "./types.js";
 
 export function registerGoalSubagentHandlers(api: ClawdbotPluginApi, ctx: LifecycleContext, goalsDir: string): void {

@@ -3,7 +3,7 @@ import type { FactsDB } from "../backends/facts-db.js";
 import type { NarrativesDB } from "../backends/narratives-db.js";
 import { buildPublicExportBundle } from "../services/public-export-bundle.js";
 import { versionInfo } from "../versionInfo.js";
-import type { HttpRouteOptions, HttpRequestHandler } from "./http-route-types.js";
+import type { HttpRequestHandler, HttpRouteOptions } from "./http-route-types.js";
 
 export interface PublicApiRoutesContext {
   cfg: {

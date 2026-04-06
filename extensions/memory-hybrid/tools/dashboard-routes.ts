@@ -16,7 +16,7 @@
 
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import type { HealthConfig } from "../config/types/maintenance.js";
-import type { HttpRouteOptions, HttpRequestHandler } from "./http-route-types.js";
+import type { HttpRequestHandler, HttpRouteOptions } from "./http-route-types.js";
 
 export interface DashboardRoutesContext {
   cfg: Pick<{ health: HealthConfig }, "health">;
