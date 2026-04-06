@@ -11,6 +11,12 @@ import {
 } from "../config/parsers/core.js";
 import { UnconfiguredProviderError } from "../services/chat.js";
 import { isAzureOpenAiResourceEndpoint } from "../services/embeddings/shared.js";
+import { isReasoningModel, requiresMaxCompletionTokens, resolveWireApi } from "../services/model-capabilities.js";
+import {
+  type ResponsesApiResponse,
+  buildResponsesRequestFromChatBody,
+  responsesRawToChatCompletion,
+} from "../services/responses-adapter.js";
 import { createApimGatewayFetch, isAzureApiManagementGatewayUrl } from "../utils/apim-gateway-fetch.js";
 import {
   DEFAULT_BACKOFF_MINUTES,
@@ -21,7 +27,6 @@ import {
 import { hasOAuthProfiles } from "../utils/auth.js";
 import { getEnv } from "../utils/env-manager.js";
 import { inferFeatureLabel } from "./cost-instrumentation.js";
-import { isReasoningModel, requiresMaxCompletionTokens } from "../services/model-capabilities.js";
 
 /**
  * Normalize baseURL vs baseUrl (OpenClaw config uses camelCase `baseUrl`; SDK uses `baseURL`).
@@ -956,6 +961,46 @@ export function buildMultiProviderOpenAI(
               const merged = { ...(body as object), model: modelForRequest } as Record<string, unknown>;
               const adjustedBody = remapMaxTokensForOpenAI(merged);
               const start = Date.now();
+
+              // Responses-only models: route chat.completions.create → responses.create so direct SDK
+              // call sites (classification, auto-classifier, etc.) work with azure-foundry-responses/* (#1043, Codex P1).
+              if (resolveWireApi(model) === "responses") {
+                if ((adjustedBody as { stream?: boolean }).stream) {
+                  return Promise.reject(
+                    new Error(
+                      "memory-hybrid: stream=true is not supported for Responses API models (e.g. azure-foundry-responses/*); set stream: false.",
+                    ),
+                  );
+                }
+                const responsesBody = buildResponsesRequestFromChatBody(adjustedBody);
+                const input = responsesBody.input;
+                if (!Array.isArray(input) || input.length === 0) {
+                  return Promise.reject(new Error("memory-hybrid: Responses API request requires non-empty messages"));
+                }
+                const responsesNs = (
+                  client as unknown as { responses?: { create: (b: unknown, o?: unknown) => Promise<unknown> } }
+                ).responses;
+                if (!responsesNs?.create) {
+                  return Promise.reject(
+                    new Error(
+                      `Provider "${prefix}" does not expose responses.create(). Ensure the endpoint supports the OpenAI Responses API and the openai SDK is >=6.16.0.`,
+                    ),
+                  );
+                }
+                const modelLabel = String(adjustedBody.model ?? modelForRequest);
+                let promise: Promise<unknown> = responsesNs
+                  .create(responsesBody, opts ?? {})
+                  .then((raw) => responsesRawToChatCompletion(raw as ResponsesApiResponse, modelLabel));
+                if (authType === "oauth" && failoverOpts) {
+                  promise = promise.catch((err: unknown) => {
+                    recordOAuthFailure(prefix, failoverOpts);
+                    throw err;
+                  });
+                }
+                trackCost(promise, body as unknown as Record<string, unknown>, model, start);
+                return promise as ReturnType<OpenAI["chat"]["completions"]["create"]>;
+              }
+
               // For Ollama models, probe the local server before attempting the call so we fall
               // through to the next tier model quickly instead of waiting for a TCP timeout.
               const makeCall = () =>
@@ -1006,8 +1051,7 @@ export function buildMultiProviderOpenAI(
             if (!responsesNs?.create) {
               return Promise.reject(
                 new Error(
-                  `Provider "${prefix}" does not expose responses.create(). ` +
-                    "Ensure the endpoint supports the OpenAI Responses API and the openai SDK is >=6.16.0.",
+                  `Provider "${prefix}" does not expose responses.create(). Ensure the endpoint supports the OpenAI Responses API and the openai SDK is >=6.16.0.`,
                 ),
               );
             }

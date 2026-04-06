@@ -1,9 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   buildResponsesRequestBody,
+  buildResponsesRequestFromChatBody,
   callResponsesApi,
+  chatMessagesToResponsesInput,
   extractResponsesText,
   extractResponsesUsage,
+  responsesRawToChatCompletion,
 } from "../services/responses-adapter.js";
 
 describe("buildResponsesRequestBody", () => {
@@ -188,5 +191,69 @@ describe("callResponsesApi", () => {
     await callResponsesApi(mockClient as any, { model: "o3-pro", content: "test" }, { signal: controller.signal });
 
     expect(mockClient.responses.create).toHaveBeenCalledWith(expect.any(Object), { signal: controller.signal });
+  });
+});
+
+describe("chatMessagesToResponsesInput", () => {
+  it("maps system and user messages", () => {
+    expect(
+      chatMessagesToResponsesInput([
+        { role: "system", content: "You are helpful" },
+        { role: "user", content: "Hi" },
+      ]),
+    ).toEqual([
+      { role: "system", content: "You are helpful" },
+      { role: "user", content: "Hi" },
+    ]);
+  });
+
+  it("folds tool role into user content", () => {
+    expect(chatMessagesToResponsesInput([{ role: "tool", content: "result" }])).toEqual([
+      { role: "user", content: "[tool result]\nresult" },
+    ]);
+  });
+});
+
+describe("buildResponsesRequestFromChatBody", () => {
+  it("maps max_completion_tokens to max_output_tokens", () => {
+    const body = buildResponsesRequestFromChatBody({
+      model: "azure-foundry-responses/o3-pro",
+      messages: [{ role: "user", content: "x" }],
+      max_completion_tokens: 100,
+      stream: false,
+    });
+    expect(body.max_output_tokens).toBe(100);
+    expect(body.input).toEqual([{ role: "user", content: "x" }]);
+  });
+
+  it("omits temperature for reasoning models", () => {
+    const body = buildResponsesRequestFromChatBody({
+      model: "azure-foundry-responses/o3-pro",
+      messages: [{ role: "user", content: "x" }],
+      temperature: 0.5,
+    });
+    expect(body.temperature).toBeUndefined();
+  });
+});
+
+describe("responsesRawToChatCompletion", () => {
+  it("builds choices[0].message.content for chat completion consumers", () => {
+    const cc = responsesRawToChatCompletion(
+      {
+        id: "resp_1",
+        output: [
+          {
+            type: "message",
+            role: "assistant",
+            content: [{ type: "output_text", text: "classified: ADD" }],
+          },
+        ],
+        usage: { input_tokens: 5, output_tokens: 3 },
+      },
+      "azure-foundry-responses/o3-pro",
+    );
+    expect(cc.choices?.[0]?.message?.content).toBe("classified: ADD");
+    expect(cc.usage?.prompt_tokens).toBe(5);
+    expect(cc.usage?.completion_tokens).toBe(3);
   });
 });

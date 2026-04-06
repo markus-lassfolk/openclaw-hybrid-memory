@@ -366,6 +366,7 @@ Use the `azure-foundry-responses` provider prefix for models that require the Re
 
 **How it works:**
 - Models prefixed with `azure-foundry-responses/` automatically use `client.responses.create()` instead of `client.chat.completions.create()`.
+- The same applies when code calls `openai.chat.completions.create()` directly (e.g. classification, auto-classifier): the provider proxy detects the Responses wire and routes to `responses.create`, then maps the result back to a normal `choices[0].message.content` shape.
 - The adapter translates `messages` to the Responses API `input` format and maps the response back to a plain text string — all existing call sites (`chatComplete`, `chatCompleteWithRetry`, reflection, etc.) work unchanged.
 - Cost tracking, retry logic, and error classification all apply to Responses calls identically.
 - `verify --test-llm` exercises Responses-backed models via `responses.create()` instead of skipping them.

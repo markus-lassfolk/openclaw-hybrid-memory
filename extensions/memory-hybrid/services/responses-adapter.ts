@@ -39,7 +39,7 @@ interface ResponseOutputMessage {
   content: Array<{ type: "output_text"; text: string } | { type: string; [key: string]: unknown }>;
 }
 
-interface ResponsesApiResponse {
+export interface ResponsesApiResponse {
   id: string;
   output: Array<ResponseOutputMessage | { type: string; [key: string]: unknown }>;
   usage?: {
@@ -99,6 +99,111 @@ export function extractResponsesUsage(
     prompt_tokens: response.usage.input_tokens ?? 0,
     completion_tokens: response.usage.output_tokens ?? 0,
   };
+}
+
+/** Normalize OpenAI chat `message.content` to a single string for Responses `input`. */
+export function chatMessageContentToString(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) {
+    const parts: string[] = [];
+    for (const part of content) {
+      if (part && typeof part === "object" && "text" in part && typeof (part as { text: unknown }).text === "string") {
+        parts.push((part as { text: string }).text);
+      }
+    }
+    return parts.join("\n");
+  }
+  return "";
+}
+
+type ResponsesInputItem = { role: "user" | "system" | "assistant" | "developer"; content: string };
+
+/**
+ * Map chat.completions `messages` to Responses API `input` items.
+ * Tool messages are folded into user-shaped input with a prefix (Responses has no tool role in this adapter).
+ */
+export function chatMessagesToResponsesInput(messages: unknown): ResponsesInputItem[] {
+  if (!Array.isArray(messages)) return [];
+  const out: ResponsesInputItem[] = [];
+  for (const m of messages) {
+    if (!m || typeof m !== "object") continue;
+    const msg = m as { role?: string; content?: unknown };
+    const rawRole = (msg.role ?? "user").toLowerCase();
+    const text = chatMessageContentToString(msg.content);
+    if (rawRole === "tool") {
+      out.push({ role: "user", content: `[tool result]\n${text}` });
+      continue;
+    }
+    const role =
+      rawRole === "system"
+        ? "system"
+        : rawRole === "assistant"
+          ? "assistant"
+          : rawRole === "developer"
+            ? "developer"
+            : "user";
+    out.push({ role, content: text });
+  }
+  return out;
+}
+
+/**
+ * Build a `responses.create` body from a non-streaming chat.completions-style payload
+ * (after provider-router token remapping). Used when routing `chat.completions.create` to Responses.
+ */
+export function buildResponsesRequestFromChatBody(merged: Record<string, unknown>): Record<string, unknown> {
+  const model = String(merged.model ?? "");
+  const input = chatMessagesToResponsesInput(merged.messages);
+  const maxTokens =
+    typeof merged.max_completion_tokens === "number"
+      ? merged.max_completion_tokens
+      : typeof merged.max_tokens === "number"
+        ? merged.max_tokens
+        : undefined;
+  const body: Record<string, unknown> = {
+    model,
+    input,
+    stream: false,
+  };
+  if (maxTokens != null) {
+    body.max_output_tokens = maxTokens;
+  }
+  if (!isReasoningModel(model) && typeof merged.temperature === "number") {
+    body.temperature = merged.temperature;
+  }
+  return body;
+}
+
+/**
+ * Map a Responses API JSON object to a minimal {@link OpenAI.Chat.ChatCompletion}-shaped result
+ * so call sites using `openai.chat.completions.create` keep working.
+ */
+export function responsesRawToChatCompletion(
+  raw: ResponsesApiResponse,
+  modelIdForResponse: string,
+): import("openai").OpenAI.Chat.ChatCompletion {
+  const text = extractResponsesText(raw);
+  const u = extractResponsesUsage(raw);
+  return {
+    id: raw.id,
+    object: "chat.completion",
+    created: Math.floor(Date.now() / 1000),
+    model: modelIdForResponse,
+    choices: [
+      {
+        index: 0,
+        message: { role: "assistant", content: text },
+        finish_reason: "stop",
+      },
+    ],
+    usage: u
+      ? {
+          prompt_tokens: u.prompt_tokens,
+          completion_tokens: u.completion_tokens,
+          total_tokens: u.prompt_tokens + u.completion_tokens,
+        }
+      : undefined,
+  } as import("openai").OpenAI.Chat.ChatCompletion;
 }
 
 /**
