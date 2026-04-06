@@ -18,74 +18,54 @@ import {
 import { rowToMemoryEntry } from "./row-mapper.js";
 import { scopeFilterClauseNamed, scopeFilterClausePositional } from "./scope-sql.js";
 
-function applyJsFilters(
-  fullRows: Array<Record<string, unknown>>,
-  rankByRowid: Map<number, number>,
-  options: {
-    includeExpired: boolean;
+/**
+ * Shared JS-side row filter for two-phase FTS search results.
+ * Replicates the SQL WHERE clause semantics (expiry, temporal, tag, tier, scope)
+ * using an allowlist for scope (matching `scopeFilterClauseNamed` behavior).
+ */
+function passesTwoPhaseFilter(
+  row: Record<string, unknown>,
+  opts: {
     nowSec: number;
-    asOf?: number;
+    includeExpired: boolean;
     includeSuperseded: boolean;
-    tag?: string;
+    asOf: number | undefined;
+    tag: string | undefined;
     tierFilter: "warm" | "all";
-    scopeFilter?: ScopeFilter | null;
-    decayWindowSec: number;
+    scopeFilter: ScopeFilter | null | undefined;
   },
-): Array<Record<string, unknown>> {
-  const { includeExpired, nowSec, asOf, includeSuperseded, tag, tierFilter, scopeFilter, decayWindowSec } = options;
-  const rows: Array<Record<string, unknown>> = [];
-
-  for (const row of fullRows) {
-    const rid = row._rowid as number;
-    if (!includeExpired) {
-      const ea = row.expires_at as number | null | undefined;
-      if (ea != null && ea <= nowSec) continue;
-    }
-    if (asOf != null) {
-      const vf = row.valid_from as number | null | undefined;
-      const vu = row.valid_until as number | null | undefined;
-      if (vf != null && vf > asOf) continue;
-      if (vu != null && vu <= asOf) continue;
-    } else if (!includeSuperseded) {
-      if (row.superseded_at != null) continue;
-    }
-    if (tag?.trim()) {
-      const t = `,${((row.tags as string) ?? "").toLowerCase()},`;
-      if (!t.includes(`,${tag.toLowerCase().trim()},`)) continue;
-    }
-    if (tierFilter === "warm") {
-      const tier = row.tier as string | null | undefined;
-      if (tier != null && tier !== "warm" && tier !== "hot") continue;
-    }
-    if (scopeFilter) {
-      const s = row.scope as string | null | undefined;
-      const st = row.scope_target as string | null | undefined;
-      if (s === "global") {
-        // global scope always passes
-      } else if (s === "user") {
-        if (!scopeFilter.userId || st !== scopeFilter.userId) continue;
-      } else if (s === "agent") {
-        if (!scopeFilter.agentId || st !== scopeFilter.agentId) continue;
-      } else if (s === "session") {
-        if (!scopeFilter.sessionId || st !== scopeFilter.sessionId) continue;
-      } else {
-        // unknown scope type, exclude
-        continue;
-      }
-    }
-    const expiresAt = row.expires_at as number | null | undefined;
-    let freshness: number;
-    if (expiresAt == null) freshness = 1.0;
-    else if (expiresAt <= nowSec) freshness = 0.0;
-    else freshness = Math.min(1.0, (expiresAt - nowSec) / decayWindowSec);
-    rows.push({
-      ...row,
-      fts_score: rankByRowid.get(rid) ?? 0,
-      freshness,
-    });
+): boolean {
+  if (!opts.includeExpired) {
+    const ea = row.expires_at as number | null | undefined;
+    if (ea != null && ea <= opts.nowSec) return false;
   }
-
-  return rows;
+  if (opts.asOf != null) {
+    const vf = row.valid_from as number | null | undefined;
+    const vu = row.valid_until as number | null | undefined;
+    if (vf != null && vf > opts.asOf) return false;
+    if (vu != null && vu <= opts.asOf) return false;
+  } else if (!opts.includeSuperseded) {
+    if (row.superseded_at != null) return false;
+  }
+  if (opts.tag?.trim()) {
+    const t = `,${((row.tags as string) ?? "").toLowerCase()},`;
+    if (!t.includes(`,${opts.tag.toLowerCase().trim()},`)) return false;
+  }
+  if (opts.tierFilter === "warm") {
+    const tier = row.tier as string | null | undefined;
+    if (tier != null && tier !== "warm" && tier !== "hot") return false;
+  }
+  const sf = opts.scopeFilter;
+  if (sf && (sf.userId || sf.agentId || sf.sessionId)) {
+    const s = row.scope as string | null | undefined;
+    const st = row.scope_target as string | null | undefined;
+    const matchesGlobal = s === "global" || s == null;
+    const matchesUser = !!sf.userId && s === "user" && st === sf.userId;
+    const matchesAgent = !!sf.agentId && s === "agent" && st === sf.agentId;
+    const matchesSession = !!sf.sessionId && s === "session" && st === sf.sessionId;
+    if (!matchesGlobal && !matchesUser && !matchesAgent && !matchesSession) return false;
+  }
+  return true;
 }
 
 export function searchFacts(
@@ -124,42 +104,25 @@ export function searchFacts(
   if (!safeQuery) return [];
 
   const nowSec = Math.floor(Date.now() / 1000);
-  const expiryFilter = includeExpired ? "" : "AND (f.expires_at IS NULL OR f.expires_at > @now)";
-  const temporalFilter =
-    asOf != null
-      ? "AND f.valid_from <= @asOf AND (f.valid_until IS NULL OR f.valid_until > @asOf)"
-      : includeSuperseded
-        ? ""
-        : "AND f.superseded_at IS NULL";
-  const tagFilter = tag?.trim() ? "AND (',' || COALESCE(f.tags,'') || ',') LIKE @tagPattern" : "";
-  const tagPattern = tag?.trim() ? `%,${tag.toLowerCase().trim()},%` : null;
-  const tierFilterClause = tierFilter === "warm" ? "AND (f.tier IS NULL OR f.tier = 'warm' OR f.tier = 'hot')" : "";
-  const { clause: scopeFilterClauseStr, params: scopeParams } = scopeFilterClauseNamed(scopeFilter);
-
   const decayWindowSec = 7 * 24 * 3600;
-  const paramBag: Record<string, SQLInputValue> = {
-    "@query": safeQuery,
-    "@now": nowSec,
-    ...(asOf != null ? { "@asOf": asOf } : {}),
-    "@limit": limit * 2,
-    "@decay_window": decayWindowSec,
-    ...(tagPattern ? { "@tagPattern": tagPattern } : {}),
-    ...scopeParams,
-  };
+
+  const filterOpts = { nowSec, includeExpired, includeSuperseded, asOf, tag, tierFilter, scopeFilter };
+
+  // Both paths use two-phase search to avoid the node:sqlite FTS5↔facts
+  // rowid JOIN pathology (~1000x slower than separate queries).
+  // Phase 1: pure FTS query for candidate rowids (fast, ~5-18ms).
+  // Phase 2: batch-fetch from facts + filter in JS.
+  // Over-fetch generously so post-filter culling still yields enough rows.
+  // For strict scope/tag filters, 10x over-fetch handles up to 90% rejection.
+  const overFetch = Math.max(limit * 10, 100);
+  const ftsRows = db
+    .prepare(`SELECT rowid, rank FROM facts_fts WHERE facts_fts MATCH @query ORDER BY rank LIMIT @limit`)
+    .all({ "@query": safeQuery, "@limit": overFetch }) as Array<{ rowid: number; rank: number }>;
 
   let rows: Array<Record<string, unknown>>;
-
-  if (interactiveFtsFastPath) {
-    // True two-phase search: query FTS5 directly (no JOIN) then batch-fetch
-    // from facts.  The node:sqlite FTS5↔facts rowid JOIN is ~1000x slower
-    // than separate queries due to an inefficient virtual-table scan path in
-    // the experimental binding.  This approach runs in <20ms vs 30-80s.
-    const overFetch = Math.max(limit * 4, 60);
-    const ftsRows = db
-      .prepare(`SELECT rowid, rank FROM facts_fts WHERE facts_fts MATCH @query ORDER BY rank LIMIT @limit`)
-      .all({ "@query": safeQuery, "@limit": overFetch }) as Array<{ rowid: number; rank: number }>;
-    if (ftsRows.length === 0) return [];
-
+  if (ftsRows.length === 0) {
+    rows = [];
+  } else {
     const rowids = ftsRows.map((r) => r.rowid);
     const rankByRowid = new Map(ftsRows.map((r) => [r.rowid, r.rank]));
     const placeholders = rowids.map(() => "?").join(",");
@@ -167,49 +130,23 @@ export function searchFacts(
       .prepare(`SELECT *, rowid AS _rowid FROM facts WHERE rowid IN (${placeholders})`)
       .all(...rowids) as Array<Record<string, unknown>>;
 
-    rows = applyJsFilters(fullRows, rankByRowid, {
-      includeExpired,
-      nowSec,
-      asOf,
-      includeSuperseded,
-      tag,
-      tierFilter,
-      scopeFilter,
-      decayWindowSec,
-    });
+    rows = [];
+    for (const row of fullRows) {
+      if (!passesTwoPhaseFilter(row, filterOpts)) continue;
+      const rid = row._rowid as number;
+      const expiresAt = row.expires_at as number | null | undefined;
+      let freshness: number;
+      if (expiresAt == null) freshness = 1.0;
+      else if (expiresAt <= nowSec) freshness = 0.0;
+      else freshness = Math.min(1.0, (expiresAt - nowSec) / decayWindowSec);
+      rows.push({
+        ...row,
+        fts_score: rankByRowid.get(rid) ?? 0,
+        freshness,
+      });
+    }
     rows.sort((a, b) => (a.fts_score as number) - (b.fts_score as number));
     rows = rows.slice(0, limit * 2);
-    if (rows.length === 0) return [];
-  } else {
-    // Non-fast-path also uses two-phase to avoid the node:sqlite FTS5 JOIN
-    // pathology.  Over-fetch from FTS, batch-lookup from facts, filter in JS.
-    const overFetch = Math.max((limit * 2) * 3, 80);
-    const ftsOnly = db
-      .prepare(`SELECT rowid, rank FROM facts_fts WHERE facts_fts MATCH @query ORDER BY rank LIMIT @limit`)
-      .all({ "@query": safeQuery, "@limit": overFetch }) as Array<{ rowid: number; rank: number }>;
-    if (ftsOnly.length === 0) {
-      rows = [];
-    } else {
-      const rowids = ftsOnly.map((r) => r.rowid);
-      const rankByRowid = new Map(ftsOnly.map((r) => [r.rowid, r.rank]));
-      const placeholders = rowids.map(() => "?").join(",");
-      const fullRows = db
-        .prepare(`SELECT *, rowid AS _rowid FROM facts WHERE rowid IN (${placeholders})`)
-        .all(...rowids) as Array<Record<string, unknown>>;
-
-      rows = applyJsFilters(fullRows, rankByRowid, {
-        includeExpired,
-        nowSec,
-        asOf,
-        includeSuperseded,
-        tag,
-        tierFilter,
-        scopeFilter,
-        decayWindowSec,
-      });
-      rows.sort((a, b) => (a.fts_score as number) - (b.fts_score as number));
-      rows = rows.slice(0, limit * 2);
-    }
   }
 
   if (rows.length === 0) return [];

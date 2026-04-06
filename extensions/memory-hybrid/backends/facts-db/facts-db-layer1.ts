@@ -90,8 +90,13 @@ export class FactsDBLayer1 extends BaseSqliteStore {
       customPragmas: [
         "PRAGMA synchronous = NORMAL",
         "PRAGMA wal_autocheckpoint = 1000",
-        "PRAGMA cache_size = -64000",
-        "PRAGMA mmap_size = 268435456",
+        // Perf: 64MB page cache (up from 2MB default) — avoids repeated disk reads for
+        // the ~192MB facts DB during FTS two-phase lookups.  Single-connection model so
+        // this is the only consumer.  Env: OPENCLAW_FACTS_CACHE_SIZE_KB to override.
+        `PRAGMA cache_size = -${process.env.OPENCLAW_FACTS_CACHE_SIZE_KB ?? "64000"}`,
+        // Perf: 256MB memory-mapped I/O — lets the OS page cache serve reads without
+        // crossing the user/kernel boundary.  Env: OPENCLAW_FACTS_MMAP_SIZE to override.
+        `PRAGMA mmap_size = ${process.env.OPENCLAW_FACTS_MMAP_SIZE ?? "268435456"}`,
         "PRAGMA temp_store = MEMORY",
       ],
     });
