@@ -687,11 +687,16 @@ describe("FactsDB procedureFeedback", () => {
     expect(failures.length).toBeGreaterThanOrEqual(1);
   });
 
-  it("enrichProcedureWithFeedback computes successRate from procedure table counts", () => {
+  it("enrichProcedureWithFeedback computes successRate from procedure table counts", async () => {
     const proc = db.upsertProcedure({ taskPattern: "Rate test", recipeJson: "[]", procedureType: "positive" });
     // Record 2 successes followed by 1 failure
     db.procedureFeedback({ procedureId: proc.id, success: true, context: "ok1" });
     db.procedureFeedback({ procedureId: proc.id, success: true, context: "ok2" });
+    // procedureFeedback stores last_validated / last_failed as Unix seconds. Without a gap, the
+    // failure can land in the same second as the successes (tie → enrichProcedureWithFeedback
+    // treats lastOutcome as success) or in the next second (lastFailed > lastValidated → failure),
+    // which flakes across CI runners. Sleep so the failure second is strictly after successes.
+    await new Promise((r) => setTimeout(r, 1100));
     db.procedureFeedback({ procedureId: proc.id, success: false, context: "fail1", failedAtStep: 1 });
 
     const result = db.getProcedureById(proc.id);
@@ -699,9 +704,8 @@ describe("FactsDB procedureFeedback", () => {
     // version records: v1(success_count=2), v2(failure_count=1)
     // successRate = (3 + 2) / (3 + 2 + 1 + 1) = 5/7 ≈ 71.4%
     expect(result?.successRate).toBeCloseTo(0.71, 1);
-    // lastValidated is set by the last success call (after lastFailed from failure call)
-    // So lastValidated > lastFailed → lastOutcome = "success"
-    expect(result?.lastOutcome).toBe("success");
+    // Most recent feedback was a failure; last_failed is after last_validated (distinct seconds)
+    expect(result?.lastOutcome).toBe("failure");
   });
 
   it("enrichProcedureWithFeedback sets lastOutcome to failure when lastFailed > lastValidated", () => {
