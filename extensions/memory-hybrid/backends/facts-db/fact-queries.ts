@@ -32,6 +32,15 @@ export function buildFactsSearchFtsOrClause(query: string, options?: { maxOrTerm
   return parts.join(" OR ");
 }
 
+/**
+ * True when `facts.preserve_tags` matches the trim-budget SQL exclusion
+ * (`maintenance.ts` / `stats.ts`): non-null, non-empty after trim, not exactly `[]`.
+ * Aligns token-tier stats with which rows the trim pass will never touch.
+ */
+export function preserveTagsColumnExcludesFromTrimSql(raw: string | null): boolean {
+  return raw != null && String(raw).trim() !== "" && raw !== "[]";
+}
+
 export function buildClassificationFtsOrClause(rawText: string): string | null {
   const sanitized = sanitizeFts5QueryForFacts(rawText);
   const parts = sanitized

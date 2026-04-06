@@ -10,6 +10,7 @@ import { capturePluginError } from "../../services/error-reporter.js";
 import { searchFts } from "../../services/fts-search.js";
 import { parseTags } from "../../utils/tags.js";
 import { estimateTokensForDisplay } from "../../utils/text.js";
+import { preserveTagsColumnExcludesFromTrimSql } from "./fact-queries.js";
 
 /** Allowlisted tier values for dynamic SQL fragments in list()/dashboard filters (#842). */
 export const DASHBOARD_TIER_FILTER = new Set<string>(["warm", "hot", "cold"]);
@@ -350,7 +351,7 @@ export function getTokenBudgetStatus(db: DatabaseSync): {
     const isEdict = hasTag(tagsStr, "edict");
     const isVerified = row.is_verified === 1;
     const hasPreserveUntil = row.preserve_until != null && row.preserve_until > nowSec;
-    const hasPreserveTags = preserveTags.length > 0;
+    const hasPreserveTags = preserveTags.length > 0 || preserveTagsColumnExcludesFromTrimSql(row.preserve_tags);
 
     const tokens = tokenEstimate(row.text);
 

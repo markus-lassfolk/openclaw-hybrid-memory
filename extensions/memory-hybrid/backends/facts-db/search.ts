@@ -112,17 +112,27 @@ export function searchFacts(
   // rowid JOIN pathology (~1000x slower than separate queries).
   // Phase 1: pure FTS query for candidate rowids (fast, ~5-18ms).
   // Phase 2: batch-fetch from facts + filter in JS.
-  // Over-fetch generously so post-filter culling still yields enough rows.
-  // For strict scope/tag filters, 10x over-fetch handles up to 90% rejection.
-  const overFetch = Math.max(limit * 10, 100);
-  const ftsRows = db
-    .prepare(`SELECT rowid, rank FROM facts_fts WHERE facts_fts MATCH @query ORDER BY rank LIMIT @limit`)
-    .all({ "@query": safeQuery, "@limit": overFetch }) as Array<{ rowid: number; rank: number }>;
+  // A fixed FTS LIMIT can truncate after heavy post-filter rejection; expand
+  // the candidate pool (doubling, capped) until we have enough rows or FTS
+  // is exhausted — same semantics as SQL WHERE ... LIMIT on a single query.
+  const needCandidates = limit * 2;
+  let ftsLimit = Math.max(limit * 10, 100);
+  const maxFtsLimit = Math.min(100_000, Math.max(limit * 500, 2000));
+  const ftsStmt = db.prepare(
+    `SELECT rowid, rank FROM facts_fts WHERE facts_fts MATCH @query ORDER BY rank LIMIT @limit`,
+  );
 
-  let rows: Array<Record<string, unknown>>;
-  if (ftsRows.length === 0) {
-    rows = [];
-  } else {
+  let rows: Array<Record<string, unknown>> = [];
+  for (;;) {
+    const ftsRows = ftsStmt.all({ "@query": safeQuery, "@limit": ftsLimit }) as Array<{
+      rowid: number;
+      rank: number;
+    }>;
+    if (ftsRows.length === 0) {
+      rows = [];
+      break;
+    }
+
     const rowids = ftsRows.map((r) => r.rowid);
     const rankByRowid = new Map(ftsRows.map((r) => [r.rowid, r.rank]));
     const placeholders = rowids.map(() => "?").join(",");
@@ -146,7 +156,13 @@ export function searchFacts(
       });
     }
     rows.sort((a, b) => (a.fts_score as number) - (b.fts_score as number));
-    rows = rows.slice(0, limit * 2);
+    rows = rows.slice(0, needCandidates);
+
+    const ftsExhausted = ftsRows.length < ftsLimit;
+    const enoughFiltered = rows.length >= needCandidates;
+    const atCap = ftsLimit >= maxFtsLimit;
+    if (enoughFiltered || ftsExhausted || atCap) break;
+    ftsLimit = Math.min(ftsLimit * 2, maxFtsLimit);
   }
 
   if (rows.length === 0) return [];

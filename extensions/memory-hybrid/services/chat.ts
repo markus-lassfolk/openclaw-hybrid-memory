@@ -210,7 +210,8 @@ export function is500Like(err: unknown): boolean {
       return true;
     }
     // Gateway/proxy phrasing seen in production (#1010, #1013): "502 error code: 502"
-    if (/\b5\d{2}\s+error\s+code:\s*5\d{2}\b/i.test(m) || /\berror\s+code:\s*5\d{2}\b/i.test(m)) return true;
+    // Single pattern: any "error code: 5xx" also covers "5xx error code: 5xx".
+    if (/\berror\s+code:\s*5\d{2}\b/i.test(m)) return true;
   }
   return false;
 }

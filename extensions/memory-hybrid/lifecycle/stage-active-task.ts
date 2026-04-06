@@ -7,8 +7,8 @@ import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import { buildActiveTaskInjection, buildStaleWarningInjection, readActiveTaskFile } from "../services/active-task.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { matchesHeartbeat } from "../services/goal-stewardship-heartbeat.js";
-import { readActiveTaskRowsFromFacts } from "../services/task-ledger-facts.js";
 import { buildHeartbeatTaskHygieneBlock } from "../services/task-hygiene.js";
+import { readActiveTaskRowsFromFacts } from "../services/task-ledger-facts.js";
 import { parseDuration } from "../utils/duration.js";
 import { extractLastUserMessageText } from "../utils/extract-last-user-message.js";
 import type { LifecycleContext } from "./types.js";
@@ -50,6 +50,7 @@ export function registerActiveTaskInjection(
       const userText = extractLastUserMessageText(event);
       if (
         th.heartbeatEscalation &&
+        ctx.cfg.goalStewardship.enabled &&
         userText &&
         matchesHeartbeat(userText, ctx.cfg.goalStewardship) &&
         activeForInjection.length > 0

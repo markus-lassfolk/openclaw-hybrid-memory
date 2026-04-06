@@ -300,6 +300,23 @@ export function applyGatewayEmbeddingInheritanceBeforeParse(
     }
   }
 
+  const inheritedProvId = typeof emb.provider === "string" ? emb.provider.trim() : "";
+  if (inheritedProvId && emb.apiKey === undefined) {
+    const plmMerged = raw.llm && typeof raw.llm === "object" && !Array.isArray(raw.llm) ? raw.llm : null;
+    const provMerged =
+      plmMerged &&
+      typeof (plmMerged as Record<string, unknown>).providers === "object" &&
+      !Array.isArray((plmMerged as Record<string, unknown>).providers)
+        ? ((plmMerged as Record<string, unknown>).providers as Record<string, unknown>)
+        : {};
+    const slot = findGatewayProviderEntryLoose(provMerged, inheritedProvId);
+    const ak = slot && typeof slot.apiKey === "string" ? slot.apiKey.trim() : "";
+    if (ak) {
+      emb.apiKey = ak;
+      touched = true;
+    }
+  }
+
   if (touched) {
     api.logger?.info?.(
       "memory-hybrid: inherited embedding fields from agents.defaults.memorySearch (issue #1002); plugin embedding.* still overrides when set",
@@ -988,15 +1005,14 @@ export function buildMultiProviderOpenAI(
                   );
                 }
                 const modelLabel = String(adjustedBody.model ?? modelForRequest);
-                let promise: Promise<unknown> = responsesNs
-                  .create(responsesBody, opts ?? {})
-                  .then((raw) => responsesRawToChatCompletion(raw as ResponsesApiResponse, modelLabel));
+                let promise: Promise<unknown> = responsesNs.create(responsesBody, opts ?? {});
                 if (authType === "oauth" && failoverOpts) {
                   promise = promise.catch((err: unknown) => {
                     recordOAuthFailure(prefix, failoverOpts);
                     throw err;
                   });
                 }
+                promise = promise.then((raw) => responsesRawToChatCompletion(raw as ResponsesApiResponse, modelLabel));
                 trackCost(promise, body as unknown as Record<string, unknown>, model, start);
                 return promise as ReturnType<OpenAI["chat"]["completions"]["create"]>;
               }

@@ -19,13 +19,13 @@ import { capturePluginError } from "../services/error-reporter.js";
 import { filterByScope, mergeResults } from "../services/merge-results.js";
 import type { ScopeFilter, SearchResult } from "../types/memory.js";
 import { applyConsolidationRetrievalControls } from "../utils/consolidation-controls.js";
+import { yieldEventLoop } from "../utils/event-loop-yield.js";
 import { computeDynamicSalience } from "../utils/salience.js";
 import type { EmbeddingProvider } from "./embeddings.js";
 import { shouldSuppressEmbeddingError } from "./embeddings.js";
 import { expandQueryWithHyde } from "./hyde-helper.js";
 import { createRecallSpan, createRecallTimingLogger } from "./recall-timing.js";
 import { DEFAULT_INTERACTIVE_RECALL_POLICY, type InteractiveRecallPolicy } from "./retrieval-mode-policy.js";
-import { yieldEventLoop } from "../utils/event-loop-yield.js";
 
 async function embedWithAbortRace(
   embedPromise: Promise<number[]>,
@@ -204,7 +204,6 @@ export async function runRecallPipelineQuery(
     let textToEmbed = trimmed;
     const allowHyde = policy.allowHyde && cfg.queryExpansion.enabled && (!opts?.limitHydeOnce || !hydeUsedRef.value);
 
-    let embedT0 = Date.now();
     if (allowHyde) {
       if (opts?.limitHydeOnce) hydeUsedRef.value = true;
       if (!directiveAbort.signal.aborted) {
@@ -235,6 +234,8 @@ export async function runRecallPipelineQuery(
     // Kick off the embed HTTP request NOW (before FTS blocks the loop).
     // The returned promise will resolve once the network response arrives — which
     // can happen while FTS is occupying the CPU on the next macrotask.
+    // Wall-clock for `stageMs.embed` / telemetry: HyDE + FTS must not be counted as "embed" time.
+    const embedT0 = Date.now();
     const embedPromise = usePrecomputedVector
       ? Promise.resolve(_precomputedVector as number[])
       : embeddings.embed(textToEmbed);
@@ -264,7 +265,15 @@ export async function runRecallPipelineQuery(
     // By awaiting ftsPromise here we guarantee the timeout is only armed AFTER FTS
     // has finished and the event loop is free.  This prevents FTS event-loop
     // starvation from eating into the vector-step budget.
-    const ftsRows = await ftsPromise;
+    let ftsRows: SearchResult[];
+    try {
+      ftsRows = await ftsPromise;
+    } catch (ftsErr) {
+      // Embed was started before FTS; if FTS fails first, still observe the embed
+      // promise so a fast network rejection cannot surface as an unhandled rejection.
+      await Promise.allSettled([embedPromise]);
+      throw ftsErr;
+    }
 
     const vectorStepPromise = (async (): Promise<SearchResult[]> => {
       if (directiveAbort.signal.aborted) {
@@ -340,14 +349,14 @@ export async function runRecallPipelineQuery(
       })
       .finally(() => {
         if (timeoutId !== undefined) clearTimeout(timeoutId);
-        recallTiming.phaseCompleted("vector_step", vectorStepStartedAt, {
-          status: vectorStepStatus,
-          hits: lanceResults.length,
-        });
       });
 
     sqliteResults = ftsRows;
     lanceResults = await vectorRacePromise;
+    recallTiming.phaseCompleted("vector_step", vectorStepStartedAt, {
+      status: vectorStepStatus,
+      hits: lanceResults.length,
+    });
 
     vectorStepPromise.catch((err) => {
       if (!directiveAbort.signal.aborted && !shouldSuppressEmbeddingError(err)) {
