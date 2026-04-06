@@ -58,6 +58,16 @@ async function tryDeleteStaleCorruptSignalFile(filePath: string): Promise<void> 
   }
 }
 
+/**
+ * Sentinel for rows with no trustworthy Started/Updated value (facts projection and parsing).
+ * Not an ISO-8601 string — do not parse as a date.
+ */
+export const UNKNOWN_ACTIVE_TASK_TIME = "Unknown";
+
+/** Message shown when rows are omitted due to projection cap. */
+export const OMITTED_CAP_NOTE =
+  "more not shown (projection cap). Adjust `activeTask.projection.maxRowsPerSection`, set `activeTask.projection.mode` to `full`, or query `category:project` facts.";
+
 /** Valid task statuses */
 export const ACTIVE_TASK_STATUSES = ["In progress", "Waiting", "Stalled", "Failed", "Done"] as const;
 export type ActiveTaskStatus = (typeof ACTIVE_TASK_STATUSES)[number];
@@ -81,10 +91,12 @@ export interface ActiveTaskEntry {
   subagent?: string;
   /** What to do next */
   next?: string;
-  /** ISO-8601 timestamp when task was started */
+  /** ISO-8601 when known; {@link UNKNOWN_ACTIVE_TASK_TIME} when missing (facts projection). */
   started: string;
-  /** ISO-8601 timestamp when task was last updated */
+  /** ISO-8601 when known; {@link UNKNOWN_ACTIVE_TASK_TIME} when missing (facts projection). */
   updated: string;
+  /** Optional goal id from project facts (`related_goal` / `goal_id`) for projection hints. */
+  relatedGoal?: string;
   /** Whether task is flagged as stale (not updated within staleThreshold) */
   stale?: boolean;
   /** Structured handoff metadata from latest sub-agent signal */
@@ -331,6 +343,7 @@ export function serializeTaskEntry(entry: ActiveTaskEntry): string {
   if (entry.stashCommit) lines.push(`- **Stash/Commit:** ${entry.stashCommit}`);
   if (entry.subagent) lines.push(`- **Subagent:** ${entry.subagent}`);
   if (entry.next) lines.push(`- **Next:** ${entry.next}`);
+  if (entry.relatedGoal?.trim()) lines.push(`- **Related goal:** ${entry.relatedGoal.trim()}`);
   if (entry.handoff) lines.push(`- **Handoff:** ${stableStringify(entry.handoff)}`);
   lines.push(`- **Started:** ${entry.started}`);
   lines.push(`- **Updated:** ${entry.updated}`);
@@ -342,6 +355,7 @@ export function serializeActiveTaskFile(
   active: ActiveTaskEntry[],
   completed: ActiveTaskEntry[],
   goalsMirrorMarkdown?: string,
+  omitted?: { active: number; completed: number },
 ): string {
   const parts: string[] = ["# ACTIVE-TASKS.md — Working Memory\n"];
 
@@ -355,6 +369,10 @@ export function serializeActiveTaskFile(
     }
   }
 
+  if (omitted?.active && omitted.active > 0) {
+    parts.push(`> ${omitted.active} ${OMITTED_CAP_NOTE}\n\n`);
+  }
+
   if (goalsMirrorMarkdown !== undefined) {
     parts.push("## Active Goals\n");
     parts.push("_Mirror from goal registry — do not edit by hand; refreshed on heartbeat._\n\n");
@@ -362,11 +380,14 @@ export function serializeActiveTaskFile(
     if (!goalsMirrorMarkdown.endsWith("\n")) parts.push("\n");
   }
 
-  if (completed.length > 0) {
+  if (completed.length > 0 || (omitted?.completed && omitted.completed > 0)) {
     parts.push("## Completed\n");
     for (const entry of completed) {
       parts.push(serializeTaskEntry(entry));
       parts.push("");
+    }
+    if (omitted?.completed && omitted.completed > 0) {
+      parts.push(`> ${omitted.completed} ${OMITTED_CAP_NOTE}\n`);
     }
   }
 
@@ -386,7 +407,9 @@ export function detectStaleTasks(tasks: ActiveTaskEntry[], staleMinutes: number)
   const staleMs = staleMinutes * 60 * 1000;
   return tasks.map((t) => {
     const updatedMs = new Date(t.updated).getTime();
-    const isStale = !Number.isNaN(updatedMs) && now - updatedMs > staleMs;
+    const hasValidUpdated =
+      t.updated !== UNKNOWN_ACTIVE_TASK_TIME && Number.isFinite(updatedMs) && !Number.isNaN(updatedMs);
+    const isStale = !hasValidUpdated || now - updatedMs > staleMs;
     return { ...t, stale: isStale };
   });
 }
