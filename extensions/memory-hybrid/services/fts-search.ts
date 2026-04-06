@@ -9,7 +9,6 @@
  */
 
 import type { DatabaseSync } from "node:sqlite";
-import type { SQLInputValue } from "node:sqlite";
 import { pluginLogger } from "../utils/logger.js";
 
 // ---------------------------------------------------------------------------
@@ -170,25 +169,6 @@ export function searchFts(
   // Prefix query with column filter if requested.
   const matchExpr = validColumns.length > 0 ? `{ ${validColumns.join(" ")} } : ( ${ftsQuery} )` : ftsQuery;
 
-  // Build WHERE clauses for structured filters.
-  const extraClauses: string[] = [];
-  const params: Record<string, SQLInputValue> = { "@query": matchExpr, "@limit": limit };
-
-  if (!includeSuperseded) {
-    // Use asOf when provided so point-in-time queries filter against the correct timestamp.
-    const nowSec = asOf ?? Math.floor(Date.now() / 1000);
-    extraClauses.push("AND f.superseded_at IS NULL AND (f.expires_at IS NULL OR f.expires_at > @nowSec)");
-    params["@nowSec"] = nowSec;
-  }
-  if (entityFilter?.trim()) {
-    extraClauses.push("AND LOWER(f.entity) = LOWER(@entityFilter)");
-    params["@entityFilter"] = entityFilter.trim();
-  }
-  if (tagFilter?.trim()) {
-    extraClauses.push("AND (',' || COALESCE(f.tags,'') || ',') LIKE @tagPattern");
-    params["@tagPattern"] = `%,${tagFilter.toLowerCase().trim()},%`;
-  }
-
   let rows: Array<{
     factId: string;
     text: string;
@@ -198,13 +178,53 @@ export function searchFts(
     matchInfo: string | null;
   }>;
   try {
-    rows = db
+    // Two-phase to avoid node:sqlite FTS5↔facts full-table JOIN pathology:
+    // 1. Pure FTS query to get candidate rowids (fast, ~5ms)
+    // 2. Batch-fetch from facts to apply structured filters
+    // 3. Small targeted JOIN on surviving rowids for snippet/bm25 columns
+    const overFetch = Math.max(limit * 4, 80);
+    const ftsRows = db
+      .prepare(`SELECT rowid, rank FROM facts_fts WHERE facts_fts MATCH @query ORDER BY rank LIMIT @limit`)
+      .all({ "@query": matchExpr, "@limit": overFetch }) as Array<{ rowid: number; rank: number }>;
+    if (ftsRows.length === 0) return [];
+
+    // Phase 2: fetch facts and apply filters in SQL (fast — indexed rowid lookup)
+    const candidateRowids = ftsRows.map((r) => r.rowid);
+    const ph = candidateRowids.map(() => "?").join(",");
+    const filterParams: Array<string | number> = [...candidateRowids];
+    let filterSql = `SELECT id, text, entity, rowid AS _rowid FROM facts WHERE rowid IN (${ph})`;
+    if (!includeSuperseded) {
+      const nowSec = asOf ?? Math.floor(Date.now() / 1000);
+      filterSql += " AND superseded_at IS NULL AND (expires_at IS NULL OR expires_at > ?)";
+      filterParams.push(nowSec);
+    }
+    if (entityFilter?.trim()) {
+      filterSql += " AND LOWER(entity) = LOWER(?)";
+      filterParams.push(entityFilter.trim());
+    }
+    if (tagFilter?.trim()) {
+      filterSql += " AND (',' || COALESCE(tags,'') || ',') LIKE ?";
+      filterParams.push(`%,${tagFilter.toLowerCase().trim()},%`);
+    }
+    const filteredFacts = db.prepare(filterSql).all(...filterParams) as Array<{
+      id: string;
+      text: string;
+      entity: string | null;
+      _rowid: number;
+    }>;
+    if (filteredFacts.length === 0) return [];
+
+    // Phase 3: small JOIN for snippet/matchInfo on surviving rowids only
+    const survivingRowids = filteredFacts.map((r) => r._rowid);
+    const rankByRowid = new Map(ftsRows.map((r) => [r.rowid, r.rank]));
+    const factById = new Map(filteredFacts.map((r) => [r._rowid, r]));
+    const ph2 = survivingRowids.map(() => "?").join(",");
+
+    const snippetParams: Array<string | number> = [...survivingRowids, matchExpr, limit];
+    const snippetRows = db
       .prepare(
         `SELECT
-           f.id             AS factId,
-           f.text,
-           f.entity,
-           fts.rank,
+           fts.rowid AS _rowid,
            snippet(facts_fts, 0, '[', ']', '...', 16) AS snippet,
            (
              CASE WHEN bm25(facts_fts, 1, 0, 0, 0, 0, 0, 0) < 0 THEN 'text ' ELSE '' END ||
@@ -216,13 +236,34 @@ export function searchFts(
              CASE WHEN bm25(facts_fts, 0, 0, 0, 0, 0, 0, 1) < 0 THEN 'value' ELSE '' END
            ) AS matchInfo
          FROM facts_fts fts
-         JOIN facts f ON f.rowid = fts.rowid
-         WHERE facts_fts MATCH @query
-           ${extraClauses.join(" ")}
+         WHERE fts.rowid IN (${ph2})
+           AND facts_fts MATCH ?
          ORDER BY fts.rank
-         LIMIT @limit`,
+         LIMIT ?`,
       )
-      .all(params) as typeof rows;
+      .all(...snippetParams) as Array<{
+      _rowid: number;
+      snippet: string | null;
+      matchInfo: string | null;
+    }>;
+
+    const snippetByRowid = new Map(snippetRows.map((r) => [r._rowid, r]));
+    rows = survivingRowids
+      .filter((rid) => snippetByRowid.has(rid))
+      .sort((a, b) => (rankByRowid.get(a) ?? 0) - (rankByRowid.get(b) ?? 0))
+      .slice(0, limit)
+      .map((rid) => {
+        const fact = factById.get(rid)!;
+        const snip = snippetByRowid.get(rid);
+        return {
+          factId: fact.id,
+          text: fact.text,
+          entity: fact.entity,
+          rank: rankByRowid.get(rid) ?? 0,
+          snippet: snip?.snippet ?? null,
+          matchInfo: snip?.matchInfo ?? null,
+        };
+      });
   } catch (err) {
     pluginLogger.warn(`memory-hybrid: FTS query failed: ${err instanceof Error ? err.message : String(err)}`);
     return [];
