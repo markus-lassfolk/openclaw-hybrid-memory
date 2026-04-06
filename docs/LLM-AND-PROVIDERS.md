@@ -342,6 +342,43 @@ For providers not auto-detected, add them to `llm.providers`:
 - Newer models (GPT-5+) require `max_completion_tokens` instead of `max_tokens`. The plugin remaps automatically.
 - Reasoning models (`o1`, `o3`, `o4-mini`, etc.) do not accept `temperature` or `top_p`. The plugin strips these parameters automatically for any model matching `o[0-9]*`.
 
+### Azure Foundry — Responses API models
+
+Some Azure OpenAI / Azure AI Foundry deployments expose reasoning-heavy models (e.g. `o3-pro`) **only** on the OpenAI **Responses API** (`/v1/responses`), not on `/v1/chat/completions`. The plugin supports these deployments natively.
+
+**How to configure:**
+
+Use the `azure-foundry-responses` provider prefix for models that require the Responses API:
+
+```json
+{
+  "llm": {
+    "heavy": ["azure-foundry-responses/o3-pro"],
+    "providers": {
+      "azure-foundry-responses": {
+        "apiKey": "env:AZURE_OPENAI_API_KEY",
+        "baseURL": "https://YOUR_RESOURCE.openai.azure.com/"
+      }
+    }
+  }
+}
+```
+
+**How it works:**
+- Models prefixed with `azure-foundry-responses/` automatically use `client.responses.create()` instead of `client.chat.completions.create()`.
+- The adapter translates `messages` to the Responses API `input` format and maps the response back to a plain text string — all existing call sites (`chatComplete`, `chatCompleteWithRetry`, reflection, etc.) work unchanged.
+- Cost tracking, retry logic, and error classification all apply to Responses calls identically.
+- `verify --test-llm` exercises Responses-backed models via `responses.create()` instead of skipping them.
+
+**When to use `azure-foundry-responses` vs `azure-foundry`:**
+- Use `azure-foundry-responses/MODEL` when your deployment **only** supports the Responses API (HTTP 400 "operation unsupported" on chat completions).
+- Use `azure-foundry/MODEL` for standard chat completions deployments.
+- You can mix both in the same tier list: `"heavy": ["azure-foundry-responses/o3-pro", "azure-foundry/gpt-5.4-nano"]`.
+
+**Troubleshooting:**
+- If you see HTTP 400 "The requested operation is unsupported", your deployment likely requires `azure-foundry-responses` instead of `azure-foundry`.
+- The `wireApi` override on `chatComplete` can force any model to use Responses (`wireApi: "responses"`) or Chat (`wireApi: "chat"`) regardless of prefix.
+
 ### Ollama (local models — e.g. `qwen3:8b`)
 - Configure Ollama as a provider with `baseURL: "http://localhost:11434/v1"` and a dummy `apiKey` (Ollama doesn't require a real key).
 - **Qwen3 thinking mode:** Qwen3 models running via Ollama default to `enable_thinking=true`, which places the actual response in `message.reasoning_content` (May 2025+ standard) or the legacy `message.reasoning` field while leaving `message.content` empty. The plugin automatically falls back to these fields, so agents receive the full response without any configuration change. This is transparent — no special model flag or config is required.

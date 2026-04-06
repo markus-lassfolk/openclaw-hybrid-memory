@@ -26,6 +26,8 @@ import {
 } from "../config.js";
 import { resolveSecretRef } from "../config/parsers/core.js";
 import { chatComplete } from "../services/chat.js";
+import { callResponsesApi } from "../services/responses-adapter.js";
+import { resolveWireApi } from "../services/model-capabilities.js";
 import { CostFeature } from "../services/cost-feature-labels.js";
 import {
   type EmbeddingConfig,
@@ -783,19 +785,52 @@ export async function runVerifyForCli(
         }
       }
       if (hasApi) {
-        // Responses API–only models use responses.create(...), not chat.completions; skip direct test to avoid 400/404.
-        // Azure Foundry: some deployments (e.g. gpt-5.4-pro) return 400 "The requested operation is unsupported" on chat.completions.
+        const wireApi = resolveWireApi(model);
         const isResponsesOnlyModel =
-          provider === "azure-foundry-responses" ||
+          wireApi === "responses" ||
           (provider === "azure-foundry" && bareModel === "gpt-5.4-pro") ||
           (provider === "openai" && (bareModel === "gpt-5-codex" || bareModel === "codex"));
+
         if (isResponsesOnlyModel) {
-          apiResult = undefined;
-          apiError = undefined;
-          apiSkippedReason =
-            provider === "azure-foundry" && bareModel === "gpt-5.4-pro"
-              ? "N/A (unsupported on chat completions)"
-              : "N/A (Responses API)";
+          const directClient = getDirectClient(provider);
+          if (!directClient) {
+            apiResult = false;
+            apiError = "No direct client (missing apiKey or baseURL)";
+          } else {
+            try {
+              await callResponsesApi(directClient, {
+                model: bareModel,
+                content: "Reply with exactly: OK",
+                maxTokens: 10,
+              });
+              apiResult = true;
+              apiSkippedReason = undefined;
+            } catch (e) {
+              const errMsg = shortError(e);
+              if (errMsg.includes("does not expose responses.create") || /\b(404|405)\b/.test(errMsg)) {
+                apiResult = undefined;
+                apiError = undefined;
+                apiSkippedReason = "N/A (Responses API not available on endpoint)";
+              } else {
+                apiError = errMsg;
+                if (
+                  /\b400\b/i.test(errMsg) &&
+                  (provider === "azure-foundry" ||
+                    provider === "azure-foundry-responses" ||
+                    provider === "azure-foundry-direct") &&
+                  errMsg.length < 160
+                ) {
+                  apiError = `${errMsg} — HTTP 400 with a minimal body often means the gateway rejected the route or request shape (wrong APIM product path vs resource URL, or policy). See docs/TROUBLESHOOTING.md (#949).`;
+                }
+                capturePluginError(e as Error, {
+                  subsystem: "cli",
+                  operation: "runVerifyForCli:llm-test-responses-api",
+                  phase: provider,
+                });
+                apiResult = false;
+              }
+            }
+          }
         } else {
           const directClient = getDirectClient(provider);
           if (!directClient) {
