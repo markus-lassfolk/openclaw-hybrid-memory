@@ -2,7 +2,7 @@ import type OpenAI from "openai";
 import type { EventLog } from "../../backends/event-log.js";
 import type { NarrativesDB } from "../../backends/narratives-db.js";
 import type { WorkflowStore } from "../../backends/workflow-store.js";
-import { chatCompleteWithRetry, isAbortOrTransientLlmError } from "../../services/chat.js";
+import { chatCompleteWithRetry, isAbortOrTransientLlmError, is500OrWrapped } from "../../services/chat.js";
 import { CostFeature } from "../../services/cost-feature-labels.js";
 import { capturePluginError } from "../../services/error-reporter.js";
 import { getSessionLogFileSuffix, NARRATIVE_CHAT_TIMEOUT_MS } from "../../utils/constants.js";
@@ -124,7 +124,8 @@ export async function buildDailyNarrative(params: BuildDailyNarrativeParams): Pr
     );
     return true;
   } catch (err) {
-    const transient = isAbortOrTransientLlmError(err);
+    const asError = err instanceof Error ? err : new Error(String(err));
+    const transient = isAbortOrTransientLlmError(err) || is500OrWrapped(asError);
     if (!transient) {
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
         subsystem: "narratives",
