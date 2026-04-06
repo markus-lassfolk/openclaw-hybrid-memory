@@ -272,7 +272,9 @@ export async function runRecallPipelineQuery(
       // Embed was started before FTS; if FTS fails first, fire-and-forget the
       // embed promise so a fast network rejection cannot surface as an unhandled
       // rejection, without blocking the error path on embed settling.
-      embedPromise.catch(() => {/* intentionally ignored */});
+      embedPromise.catch(() => {
+        /* intentionally ignored */
+      });
       throw ftsErr;
     }
 

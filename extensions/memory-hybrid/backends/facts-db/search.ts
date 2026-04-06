@@ -141,9 +141,9 @@ export function searchFacts(
       const chunk = rowids.slice(i, i + CHUNK_SIZE);
       const placeholders = chunk.map(() => "?").join(",");
       allFullRows.push(
-        ...(db
-          .prepare(`SELECT *, rowid AS _rowid FROM facts WHERE rowid IN (${placeholders})`)
-          .all(...chunk) as Array<Record<string, unknown>>),
+        ...(db.prepare(`SELECT *, rowid AS _rowid FROM facts WHERE rowid IN (${placeholders})`).all(...chunk) as Array<
+          Record<string, unknown>
+        >),
       );
     }
 
