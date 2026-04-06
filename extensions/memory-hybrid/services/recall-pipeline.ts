@@ -190,6 +190,56 @@ export async function runRecallPipelineQuery(
     let vectorStepStatus = "ok";
     const directiveAbort = new AbortController();
 
+    // --- Phase 1: Kick off async I/O (HyDE / embed) BEFORE scheduling FTS ---
+    // FTS runs synchronously inside setImmediate and can block the event loop for
+    // tens of seconds on large fact stores (13k+ rows).  If the vector-step timeout
+    // (setTimeout) is registered before FTS, the timer fires after FTS unblocks but
+    // the vector step has not had any CPU time — producing a spurious timeout.
+    //
+    // Fix (#42): initiate the network-bound embed call first so the HTTP request is
+    // in-flight while FTS occupies the CPU, then schedule FTS on the next macrotask.
+    // The timeout is armed only after FTS yields, so it measures actual vector-step
+    // execution time rather than event-loop starvation from FTS.
+
+    let textToEmbed = trimmed;
+    const allowHyde = policy.allowHyde && cfg.queryExpansion.enabled && (!opts?.limitHydeOnce || !hydeUsedRef.value);
+
+    let embedT0 = Date.now();
+    if (allowHyde) {
+      if (opts?.limitHydeOnce) hydeUsedRef.value = true;
+      if (!directiveAbort.signal.aborted) {
+        const hydeStartedAt = recallTiming.phaseStarted("hyde_generation");
+        textToEmbed = await expandQueryWithHyde({
+          query: trimmed,
+          rawCfg: cfg.rawCfg,
+          model: cfg.queryExpansion.model,
+          timeoutMs: cfg.queryExpansion.timeoutMs,
+          openai,
+          label: opts?.hydeLabel ?? "HyDE",
+          signal: directiveAbort.signal,
+          pendingWarnings: pendingLLMWarnings,
+          logger,
+          subsystem: "auto-recall",
+          operation: `${opts?.errorPrefix ?? ""}hyde-generation`,
+        });
+        recallTiming.phaseCompleted("hyde_generation", hydeStartedAt, {
+          input_chars: trimmed.length,
+          output_chars: textToEmbed.length,
+        });
+      }
+    }
+
+    const _precomputedVector = opts?.precomputedVector;
+    const usePrecomputedVector = Boolean(_precomputedVector) && textToEmbed === trimmed;
+
+    // Kick off the embed HTTP request NOW (before FTS blocks the loop).
+    // The returned promise will resolve once the network response arrives — which
+    // can happen while FTS is occupying the CPU on the next macrotask.
+    const embedPromise = usePrecomputedVector
+      ? Promise.resolve(_precomputedVector as number[])
+      : embeddings.embed(textToEmbed);
+
+    // --- Phase 2: Run FTS synchronously on the next macrotask ---
     const ftsPromise = new Promise<SearchResult[]>((resolve, reject) => {
       setImmediate(() => {
         try {
@@ -210,54 +260,30 @@ export async function runRecallPipelineQuery(
       });
     });
 
+    // --- Phase 3: Await FTS first, then arm timeout and run vector step ---
+    // By awaiting ftsPromise here we guarantee the timeout is only armed AFTER FTS
+    // has finished and the event loop is free.  This prevents FTS event-loop
+    // starvation from eating into the vector-step budget.
+    const ftsRows = await ftsPromise;
+
     const vectorStepPromise = (async (): Promise<SearchResult[]> => {
-      let textToEmbed = trimmed;
-      const allowHyde = policy.allowHyde && cfg.queryExpansion.enabled && (!opts?.limitHydeOnce || !hydeUsedRef.value);
-
-      let t0 = Date.now();
-      if (allowHyde) {
-        if (opts?.limitHydeOnce) hydeUsedRef.value = true;
-        if (!directiveAbort.signal.aborted) {
-          const hydeStartedAt = recallTiming.phaseStarted("hyde_generation");
-          textToEmbed = await expandQueryWithHyde({
-            query: trimmed,
-            rawCfg: cfg.rawCfg,
-            model: cfg.queryExpansion.model,
-            timeoutMs: cfg.queryExpansion.timeoutMs,
-            openai,
-            label: opts?.hydeLabel ?? "HyDE",
-            signal: directiveAbort.signal,
-            pendingWarnings: pendingLLMWarnings,
-            logger,
-            subsystem: "auto-recall",
-            operation: `${opts?.errorPrefix ?? ""}hyde-generation`,
-          });
-          recallTiming.phaseCompleted("hyde_generation", hydeStartedAt, {
-            input_chars: trimmed.length,
-            output_chars: textToEmbed.length,
-          });
-        }
-      }
-
       if (directiveAbort.signal.aborted) {
         const abortError = new Error(`recall pipeline timed out after ${policy.vectorStepTimeoutMs}ms`);
         abortError.name = "AbortError";
         throw abortError;
       }
 
-      const _precomputedVector = opts?.precomputedVector;
-      const usePrecomputedVector = Boolean(_precomputedVector) && textToEmbed === trimmed;
       const embedStartedAt = recallTiming.phaseStarted("embed_query", {
         precomputed_vector: usePrecomputedVector,
       });
       const vector = usePrecomputedVector
         ? (_precomputedVector as number[])
         : await embedWithAbortRace(
-            embeddings.embed(textToEmbed),
+            embedPromise,
             directiveAbort.signal,
             `recall pipeline timed out after ${policy.vectorStepTimeoutMs}ms`,
           );
-      stageMs.embed = Date.now() - t0;
+      stageMs.embed = Date.now() - embedT0;
       recallTiming.phaseCompleted("embed_query", embedStartedAt, {
         precomputed_vector: usePrecomputedVector,
         input_chars: textToEmbed.length,
@@ -267,9 +293,9 @@ export async function runRecallPipelineQuery(
         limit: limitNum * 2,
         min_score: minScore,
       });
-      t0 = Date.now();
+      const vecT0 = Date.now();
       const rawResults = await vectorDb.search(vector, limitNum * 2, minScore);
-      stageMs.vector = Date.now() - t0;
+      stageMs.vector = Date.now() - vecT0;
       let results = filterByScope(rawResults, (id, o) => factsDb.getById(id, o), recallOpts.scopeFilter);
       results = results.map((r) => {
         const fullEntry = factsDb.getById(r.entry.id);
@@ -320,9 +346,8 @@ export async function runRecallPipelineQuery(
         });
       });
 
-    const [ftsRows, lanceRows] = await Promise.all([ftsPromise, vectorRacePromise]);
     sqliteResults = ftsRows;
-    lanceResults = lanceRows;
+    lanceResults = await vectorRacePromise;
 
     vectorStepPromise.catch((err) => {
       if (!directiveAbort.signal.aborted && !shouldSuppressEmbeddingError(err)) {
