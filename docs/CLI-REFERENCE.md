@@ -101,6 +101,7 @@ CLI output is controlled by the config `verbosity` setting (`silent`, `quiet`, `
 | `scope prune --scope <s> [--scope-target <id>]` | Remove all facts in a given scope (destructive). Use `--scope-target` when scope is user/agent/session. |
 | `scope promote [--dry-run] [--threshold-days N] [--min-importance 0.7]` | Promote high-importance session-scoped facts to global. Cron: weekly-deep-maintenance. See [MEMORY-SCOPING.md](MEMORY-SCOPING.md). |
 | `goals config` | Print **goal stewardship** settings from plugin config (`goalStewardship.*`). For toggling: `config-set goalStewardship enabled` or `disabled`. |
+| `goals status` | No args: **overview** — stewardship on/off, goals directory, active goals (same columns as `goals list`). `goals status <label-or-uuid>`: full detail for one goal. **`--json`**: overview object or single goal JSON. |
 | `active-tasks` | List active tasks. With `activeTask.enabled: false`, only **`active-tasks config`** runs; enable with `config-set activeTask enabled`. With `activeTask.ledger: markdown` (default), reads `ACTIVE-TASKS.md`. With `activeTask.ledger: facts`, reads `category:project` facts (same store as `memory_store`). |
 | `active-tasks config` | Print **active task** settings from plugin config (`activeTask.*`). |
 | `active-tasks complete <label>` | Mark task Done and flush to memory log. |

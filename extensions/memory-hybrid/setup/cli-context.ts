@@ -131,7 +131,7 @@ Commands by category:
 const HYBRID_MEM_HELP_ACTIVE_TASKS = `
   Goals & working memory
     goals config                   Show goal stewardship settings (goalStewardship.*); toggle: config-set goalStewardship
-    goals list|status|audit|...    Tracked goals (see: hybrid-mem goals --help)
+    goals list | status [label] | audit | …  Tracked goals (status alone = overview; status <label> = detail)
     active-tasks config            Show active-task settings (activeTask.*)
     active-tasks                   List tasks. When activeTask.enabled is false, only config works
     active-tasks complete <label>  Mark task as Done and flush to memory log

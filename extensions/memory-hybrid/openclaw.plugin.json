@@ -1684,8 +1684,9 @@
             "description": "Path to ACTIVE-TASKS.md relative to OPENCLAW_WORKSPACE or absolute (default: ACTIVE-TASKS.md)"
           },
           "injectionBudget": {
-            "type": "number",
-            "description": "Token budget for active-task injection summary (default: 500)"
+            "type": "integer",
+            "minimum": 1,
+            "description": "Token budget for active-task injection summary (default: 500). Positive integer only (`minimum: 1`). Matches runtime: fractional values are floored; missing or non-positive values fall back to the default."
           },
           "staleThreshold": {
             "type": "string",
