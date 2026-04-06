@@ -4,8 +4,8 @@
  */
 
 import { mkdirSync } from "node:fs";
-import { appendFile, open, readFile, rm, writeFile } from "node:fs/promises";
 import { existsSync, statSync } from "node:fs";
+import { appendFile, open, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import type { DecayClass } from "../config.js";
 import { capturePluginError } from "../services/error-reporter.js";

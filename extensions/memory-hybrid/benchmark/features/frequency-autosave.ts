@@ -10,13 +10,13 @@
  * of tracking mention frequency vs not tracking.
  */
 
-import type { BenchmarkContext, LatencyStats } from "../shadow-eval.js";
-import { measureLatency, shadowMeasure } from "../shadow-eval.js";
-import { FactsDB } from "../../backends/facts-db.js";
 import { randomUUID } from "node:crypto";
-import { join } from "node:path";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { FactsDB } from "../../backends/facts-db.js";
+import type { BenchmarkContext, LatencyStats } from "../shadow-eval.js";
+import { measureLatency, shadowMeasure } from "../shadow-eval.js";
 
 function makeTempDir() {
   return mkdtempSync(join(tmpdir(), "bench-freq-"));

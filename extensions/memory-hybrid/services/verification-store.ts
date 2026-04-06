@@ -9,11 +9,11 @@ import { createHash, randomUUID } from "node:crypto";
 import { appendFileSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { SQLITE_BUSY_TIMEOUT_MS } from "../utils/constants.js";
 import { expandTilde } from "../utils/path.js";
 import { createTransaction } from "../utils/sqlite-transaction.js";
 import { VAULT_POINTER_PREFIX } from "./auto-capture.js";
 import { capturePluginError } from "./error-reporter.js";
-import { SQLITE_BUSY_TIMEOUT_MS } from "../utils/constants.js";
 
 // ---------------------------------------------------------------------------
 // Types

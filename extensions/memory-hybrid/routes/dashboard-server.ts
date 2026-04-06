@@ -7,7 +7,6 @@
  *   GET /api/status — JSON data for all dashboard sections
  */
 
-import { execFile as execFileCb } from "../utils/process-runner.js";
 import { existsSync } from "node:fs";
 import { readdir, stat } from "node:fs/promises";
 import { createServer } from "node:http";
@@ -15,13 +14,14 @@ import type { Server } from "node:http";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
+import { type AgentHealthView, mergeAgentHealthDashboard } from "../backends/agent-health-store.js";
+import type { AuditStore } from "../backends/audit-store.js";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
 import { getDirSize, getFileSizeAsync, readJsonFile } from "../utils/fs.js";
 import { isValidGhRepoArg } from "../utils/gh-repo-arg.js";
 import { pluginLogger } from "../utils/logger.js";
-import type { AuditStore } from "../backends/audit-store.js";
-import { mergeAgentHealthDashboard, type AgentHealthView } from "../backends/agent-health-store.js";
+import { execFile as execFileCb } from "../utils/process-runner.js";
 import { collectGraphPayload, collectGraphRecallPayload, getGraphExplorerHtml } from "./dashboard-graph.js";
 
 const execFile = promisify(execFileCb);

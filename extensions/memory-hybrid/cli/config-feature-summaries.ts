@@ -32,6 +32,9 @@ export function formatGoalStewardshipConfigLines(gs: GoalStewardshipConfig): str
   );
   lines.push(`  llmTriageOnHeartbeat: ${gs.llmTriageOnHeartbeat ? "on" : "off"}`);
   lines.push(`  multiGoal: max ${gs.multiGoalMaxGoals} goals, ${gs.multiGoalMaxChars} chars cap`);
+  lines.push(
+    `  escalationPolicy.taskHygieneOnBlockedGoals: ${gs.escalationPolicy.taskHygieneOnBlockedGoals ? "on" : "off"}`,
+  );
   lines.push(`  circuitBreaker: ${gs.circuitBreaker.enabled ? "on" : "off"}`);
   if (gs.circuitBreaker.enabled) {
     lines.push(`    sameBlockerRepeatLimit: ${gs.circuitBreaker.sameBlockerRepeatLimit}`);
@@ -40,6 +43,7 @@ export function formatGoalStewardshipConfigLines(gs: GoalStewardshipConfig): str
   lines.push(
     `  allowCommandVerification: ${gs.allowCommandVerification ? "on" : "off"} (watchdog shell checks; off by default)`,
   );
+  lines.push(`  allowPrVerification: ${gs.allowPrVerification ? "on" : "off"} (GitHub pr_merged; off by default)`);
   lines.push(
     `  globalLimits: max ${gs.globalLimits.maxActiveGoals} active goals, ${gs.globalLimits.maxDispatchesPerHour} dispatches/hour`,
   );

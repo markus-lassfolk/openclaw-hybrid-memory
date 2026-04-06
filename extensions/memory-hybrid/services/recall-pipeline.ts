@@ -19,13 +19,13 @@ import { capturePluginError } from "../services/error-reporter.js";
 import { filterByScope, mergeResults } from "../services/merge-results.js";
 import type { ScopeFilter, SearchResult } from "../types/memory.js";
 import { applyConsolidationRetrievalControls } from "../utils/consolidation-controls.js";
+import { yieldEventLoop } from "../utils/event-loop-yield.js";
 import { computeDynamicSalience } from "../utils/salience.js";
 import type { EmbeddingProvider } from "./embeddings.js";
 import { shouldSuppressEmbeddingError } from "./embeddings.js";
 import { expandQueryWithHyde } from "./hyde-helper.js";
 import { createRecallSpan, createRecallTimingLogger } from "./recall-timing.js";
 import { DEFAULT_INTERACTIVE_RECALL_POLICY, type InteractiveRecallPolicy } from "./retrieval-mode-policy.js";
-import { yieldEventLoop } from "../utils/event-loop-yield.js";
 
 async function embedWithAbortRace(
   embedPromise: Promise<number[]>,
@@ -204,7 +204,7 @@ export async function runRecallPipelineQuery(
     let textToEmbed = trimmed;
     const allowHyde = policy.allowHyde && cfg.queryExpansion.enabled && (!opts?.limitHydeOnce || !hydeUsedRef.value);
 
-    let embedT0 = Date.now();
+    const embedT0 = Date.now();
     if (allowHyde) {
       if (opts?.limitHydeOnce) hydeUsedRef.value = true;
       if (!directiveAbort.signal.aborted) {

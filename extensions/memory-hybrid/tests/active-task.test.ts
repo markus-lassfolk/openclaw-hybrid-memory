@@ -3,45 +3,45 @@
  * Tests for ACTIVE-TASKS.md working memory service and CLI commands.
  */
 
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { mkdir, mkdtemp, rm, readFile, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
-  parseActiveTaskFile,
-  serializeTaskEntry,
-  serializeActiveTaskFile,
-  detectStaleTasks,
+  type ActiveTaskContext,
+  runActiveTaskAdd,
+  runActiveTaskComplete,
+  runActiveTaskList,
+  runActiveTaskStale,
+} from "../cli/active-tasks.js";
+import {
+  ACTIVE_TASK_STATUSES,
+  type ActiveTaskEntry,
+  OCTAVE_TASK_HANDOFF_SCHEMA,
+  STALE_CORRUPT_SIGNAL_MS,
+  type TaskSignal,
   buildActiveTaskInjection,
   buildStaleWarningInjection,
-  upsertTask,
   completeTask,
-  flushCompletedTaskToMemory,
-  readActiveTaskFile,
-  writeActiveTaskFile,
-  ACTIVE_TASK_STATUSES,
-  isSubagentSession,
-  writeTaskSignal,
-  readPendingSignals,
-  deleteSignal,
-  STALE_CORRUPT_SIGNAL_MS,
   createOctaveTaskHandoffArtifact,
-  validateOctaveTaskHandoffArtifact,
-  OCTAVE_TASK_HANDOFF_SCHEMA,
+  deleteSignal,
+  detectStaleTasks,
+  flushCompletedTaskToMemory,
+  isSubagentSession,
+  parseActiveTaskFile,
+  readActiveTaskFile,
   readActiveTaskFileWithMtime,
+  readPendingSignals,
+  reconcileActiveTaskInProgressSessions,
+  serializeActiveTaskFile,
+  serializeTaskEntry,
+  upsertTask,
+  validateOctaveTaskHandoffArtifact,
+  writeActiveTaskFile,
   writeActiveTaskFileGuarded,
   writeActiveTaskFileOptimistic,
-  reconcileActiveTaskInProgressSessions,
-  type ActiveTaskEntry,
-  type TaskSignal,
+  writeTaskSignal,
 } from "../services/active-task.js";
-import {
-  runActiveTaskList,
-  runActiveTaskComplete,
-  runActiveTaskStale,
-  runActiveTaskAdd,
-  type ActiveTaskContext,
-} from "../cli/active-tasks.js";
 
 // ---------------------------------------------------------------------------
 // Fixtures

@@ -332,6 +332,15 @@ export type GoalStewardshipGlobalLimits = {
   maxActiveGoals: number;
 };
 
+/** Optional knobs for cross-feature escalation visibility (defaults preserve prior behavior). */
+export type GoalStewardshipEscalationPolicy = {
+  /**
+   * When heartbeat matches and task hygiene runs, append a **goal-escalation** snippet if any goal is **blocked** or **stalled**.
+   * Default: true.
+   */
+  taskHygieneOnBlockedGoals: boolean;
+};
+
 /** Trip goals stuck with unchanged blockers / no progress; escalate to human with summary (see docs/GOAL-STEWARDSHIP-OPERATOR.md). */
 export type GoalStewardshipCircuitBreakerConfig = {
   enabled: boolean;
@@ -385,8 +394,12 @@ export type GoalStewardshipConfig = {
   /** When triage/heuristic indicates complex work, add a line suggesting heavy-tier reasoning for dispatch. */
   triageSuggestHeavyDirective: boolean;
   circuitBreaker: GoalStewardshipCircuitBreakerConfig;
+  /** Cross-layer nudges and visibility (issue #1096). */
+  escalationPolicy: GoalStewardshipEscalationPolicy;
   /** Allow command_exit_zero verification in the watchdog (shell execution). Default: false. */
   allowCommandVerification: boolean;
+  /** Allow pr_merged verification (GitHub API). Default: false — network + token required. */
+  allowPrVerification: boolean;
 };
 
 /** Self-correction pipeline: semantic dedup, TOOLS.md sectioning, auto-rewrite vs approve */

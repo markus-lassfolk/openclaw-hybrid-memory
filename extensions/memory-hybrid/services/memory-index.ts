@@ -1,9 +1,9 @@
-import { getEnv } from "../utils/env-manager.js";
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type OpenAI from "openai";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { MemoryEntry } from "../types/memory.js";
+import { getEnv } from "../utils/env-manager.js";
 import { fillPrompt, loadPrompt } from "../utils/prompt-loader.js";
 import {
   LLMRetryError,

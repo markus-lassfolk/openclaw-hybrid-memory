@@ -7,9 +7,9 @@
  */
 
 import type { DatabaseSync } from "node:sqlite";
-import type { FactsDB } from "./facts-db.js";
 import { estimateCost } from "../services/model-pricing.js";
 import { pluginLogger } from "../utils/logger.js";
+import type { FactsDB } from "./facts-db.js";
 
 /**
  * A savings entry records work performed automatically that would have

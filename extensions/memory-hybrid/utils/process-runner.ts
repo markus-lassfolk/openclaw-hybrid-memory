@@ -1,6 +1,6 @@
 import {
-  execSync as cpExecSync,
   execFile as cpExecFile,
+  execSync as cpExecSync,
   spawn as cpSpawn,
   spawnSync as cpSpawnSync,
 } from "node:child_process";

@@ -4,17 +4,17 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   appendGoalHistory,
   createGoal,
-  listGoals,
   listActiveGoals,
+  listGoals,
   readGoal,
   readGoalByLabel,
-  resolveGoalId,
-  updateGoal,
-  terminateGoal,
   rebuildGoalIndex,
+  resolveGoalId,
+  terminateGoal,
+  updateGoal,
   validateGoalLabel,
 } from "../services/goal-registry.js";
-import { makeTempDir, cleanDir, goalDefaults } from "./helpers/goal-helpers.js";
+import { cleanDir, goalDefaults, makeTempDir } from "./helpers/goal-helpers.js";
 
 const defaults = goalDefaults({ maxDispatches: 5, maxAssessments: 10, cooldownMinutes: 5 });
 

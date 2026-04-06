@@ -5,15 +5,15 @@
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
-import { join, isAbsolute } from "node:path";
+import { isAbsolute, join } from "node:path";
 
 import type { EventLog } from "../backends/event-log.js";
 import type {
   CreateGoalInput,
   Goal,
   GoalDefaults,
-  GoalHistoryEntry,
   GoalHistoryActor,
+  GoalHistoryEntry,
   GoalIndex,
   GoalStatus,
 } from "./goal-stewardship-types.js";
@@ -88,6 +88,7 @@ function normalizeGoalJson(g: Goal): Goal {
     circuitBreakerLastProgressAssessmentCount: g.circuitBreakerLastProgressAssessmentCount ?? 0,
     humanEscalationSummary: g.humanEscalationSummary ?? null,
     escalationKind: g.escalationKind ?? null,
+    lastMechanicalCheck: g.lastMechanicalCheck ?? null,
   };
 }
 
@@ -235,6 +236,7 @@ export async function updateGoal(
       | "circuitBreakerLastProgressAssessmentCount"
       | "humanEscalationSummary"
       | "escalationKind"
+      | "lastMechanicalCheck"
     >
   >,
   historyEntry: GoalHistoryEntry | GoalHistoryEntry[],

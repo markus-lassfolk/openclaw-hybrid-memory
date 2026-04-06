@@ -6,7 +6,7 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { WAL_ENTRY_SCHEMA_VERSION, type WALEntry, type WriteAheadLog } from "../backends/wal.js";
+import { type WALEntry, WAL_ENTRY_SCHEMA_VERSION, type WriteAheadLog } from "../backends/wal.js";
 import { capturePluginError } from "./error-reporter.js";
 
 const WAL_FAILURE_THRESHOLD = 10;

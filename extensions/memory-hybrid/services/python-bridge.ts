@@ -10,7 +10,6 @@
  *   - Gracefully shut down via shutdown()
  */
 
-import { type ChildProcessWithoutNullStreams, spawn, spawnSync } from "../utils/process-runner.js";
 import { dirname, join } from "node:path";
 import { createInterface } from "node:readline";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -19,6 +18,7 @@ import {
   PYTHON_BRIDGE_PING_TIMEOUT_MS,
   PYTHON_BRIDGE_SHUTDOWN_WAIT_MS,
 } from "../utils/constants.js";
+import { type ChildProcessWithoutNullStreams, spawn, spawnSync } from "../utils/process-runner.js";
 import { capturePluginError } from "./error-reporter.js";
 
 interface ConvertResult {
