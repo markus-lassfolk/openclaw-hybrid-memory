@@ -80,6 +80,17 @@ function ensureRuntimeDependenciesInstalled(rootDir) {
   }
 }
 
+/** Best-effort rm -rf; avoids failing the install if cleanup hits permissions/AV locks. */
+function rmPathBestEffort(absPath, label) {
+  if (!fs.existsSync(absPath)) return;
+  try {
+    fs.rmSync(absPath, { recursive: true, force: true });
+  } catch (e) {
+    const msg = e && typeof e.message === "string" ? e.message : String(e);
+    console.warn(`Warning: could not remove ${label} (${absPath}): ${msg}`);
+  }
+}
+
 const stagingDir = path.join(extDir, `.openclaw-hybrid-memory-staging-${process.pid}`);
 
 try {
@@ -119,7 +130,14 @@ try {
     throw e;
   }
   if (fs.existsSync(backupDir)) {
-    fs.rmSync(backupDir, { recursive: true, force: true });
+    try {
+      fs.rmSync(backupDir, { recursive: true, force: true });
+    } catch (e) {
+      const msg = e && typeof e.message === "string" ? e.message : String(e);
+      console.warn(
+        `Warning: install succeeded, but failed to remove backup directory ${backupDir}: ${msg}`,
+      );
+    }
   }
 
   console.log("Cleaning up...");
@@ -129,13 +147,8 @@ try {
     "\nDone. Restart the gateway: openclaw gateway stop && openclaw gateway start"
   );
 } catch (err) {
-  if (fs.existsSync(stagingDir)) {
-    try {
-      fs.rmSync(stagingDir, { recursive: true, force: true });
-    } catch (_) {
-      /* ignore */
-    }
-  }
+  rmPathBestEffort(stagingDir, "staging directory");
+  rmPathBestEffort(tmpDir, "npm pack temp directory (.tgz and folder)");
   console.error("Install failed:", err.message);
   process.exit(1);
 }
