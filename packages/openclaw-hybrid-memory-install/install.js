@@ -53,40 +53,42 @@ function run(cmd, args = [], opts = {}) {
   return execFileSync(cmd, args, { stdio: "inherit", ...opts });
 }
 
-function packageDependencyDir(pkgName) {
-  return path.join(pluginDir, "node_modules", ...pkgName.split("/"));
+function packageDependencyDir(rootDir, pkgName) {
+  return path.join(rootDir, "node_modules", ...pkgName.split("/"));
 }
 
-function getMissingRuntimeDependencies() {
+function getMissingRuntimeDependencies(rootDir) {
   return requiredRuntimeDependencies.filter((pkgName) => {
-    const pkgJsonPath = path.join(packageDependencyDir(pkgName), "package.json");
+    const pkgJsonPath = path.join(packageDependencyDir(rootDir, pkgName), "package.json");
     return !fs.existsSync(pkgJsonPath);
   });
 }
 
-function ensureRuntimeDependenciesInstalled() {
-  const missing = getMissingRuntimeDependencies();
+function ensureRuntimeDependenciesInstalled(rootDir) {
+  const missing = getMissingRuntimeDependencies(rootDir);
   if (missing.length === 0) {
     return;
   }
 
   console.log(`Missing runtime deps detected: ${missing.join(", ")}`);
   console.log("Installing missing runtime deps explicitly...");
-  run("npm", ["install", "--no-save", "--omit=dev", ...missing], { cwd: pluginDir });
+  run("npm", ["install", "--no-save", "--omit=dev", ...missing], { cwd: rootDir });
 
-  const stillMissing = getMissingRuntimeDependencies();
+  const stillMissing = getMissingRuntimeDependencies(rootDir);
   if (stillMissing.length > 0) {
     throw new Error(`Missing runtime deps after install: ${stillMissing.join(", ")}`);
   }
 }
 
+const stagingDir = path.join(extDir, `.openclaw-hybrid-memory-staging-${process.pid}`);
+
 try {
   console.log(`Installing openclaw-hybrid-memory@${version} to ${pluginDir}\n`);
 
-  console.log("Removing existing plugin...");
-  if (fs.existsSync(pluginDir)) {
-    fs.rmSync(pluginDir, { recursive: true });
+  if (fs.existsSync(stagingDir)) {
+    fs.rmSync(stagingDir, { recursive: true, force: true });
   }
+  fs.mkdirSync(stagingDir, { recursive: true });
 
   console.log("Fetching via npm pack...");
   fs.mkdirSync(tmpDir, { recursive: true });
@@ -95,14 +97,30 @@ try {
   const tgz = fs.readdirSync(tmpDir).find((f) => f.endsWith(".tgz"));
   if (!tgz) throw new Error("npm pack did not produce a .tgz file");
 
-  console.log("Extracting...");
-  fs.mkdirSync(pluginDir, { recursive: true });
+  console.log("Extracting to staging directory (existing plugin left in place until install succeeds)...");
   const tgzPath = path.join(tmpDir, tgz);
-  run("tar", ["-xzf", tgzPath, "-C", pluginDir, "--strip-components=1"]);
+  run("tar", ["-xzf", tgzPath, "-C", stagingDir, "--strip-components=1"]);
 
-  console.log("Installing deps and rebuilding native modules...");
-  run("npm", ["install", "--omit=dev"], { cwd: pluginDir });
-  ensureRuntimeDependenciesInstalled();
+  console.log("Installing deps and rebuilding native modules in staging...");
+  run("npm", ["install", "--omit=dev"], { cwd: stagingDir });
+  ensureRuntimeDependenciesInstalled(stagingDir);
+
+  const backupDir = `${pluginDir}.bak.${Date.now()}`;
+  if (fs.existsSync(pluginDir)) {
+    console.log("Swapping staging into place (backing up previous plugin)...");
+    fs.renameSync(pluginDir, backupDir);
+  }
+  try {
+    fs.renameSync(stagingDir, pluginDir);
+  } catch (e) {
+    if (fs.existsSync(backupDir)) {
+      fs.renameSync(backupDir, pluginDir);
+    }
+    throw e;
+  }
+  if (fs.existsSync(backupDir)) {
+    fs.rmSync(backupDir, { recursive: true, force: true });
+  }
 
   console.log("Cleaning up...");
   fs.rmSync(tmpDir, { recursive: true, force: true });
@@ -111,6 +129,13 @@ try {
     "\nDone. Restart the gateway: openclaw gateway stop && openclaw gateway start"
   );
 } catch (err) {
+  if (fs.existsSync(stagingDir)) {
+    try {
+      fs.rmSync(stagingDir, { recursive: true, force: true });
+    } catch (_) {
+      /* ignore */
+    }
+  }
   console.error("Install failed:", err.message);
   process.exit(1);
 }
