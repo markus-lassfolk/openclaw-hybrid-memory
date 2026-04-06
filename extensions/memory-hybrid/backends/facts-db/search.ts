@@ -18,6 +18,76 @@ import {
 import { rowToMemoryEntry } from "./row-mapper.js";
 import { scopeFilterClauseNamed, scopeFilterClausePositional } from "./scope-sql.js";
 
+function applyJsFilters(
+  fullRows: Array<Record<string, unknown>>,
+  rankByRowid: Map<number, number>,
+  options: {
+    includeExpired: boolean;
+    nowSec: number;
+    asOf?: number;
+    includeSuperseded: boolean;
+    tag?: string;
+    tierFilter: "warm" | "all";
+    scopeFilter?: ScopeFilter | null;
+    decayWindowSec: number;
+  },
+): Array<Record<string, unknown>> {
+  const { includeExpired, nowSec, asOf, includeSuperseded, tag, tierFilter, scopeFilter, decayWindowSec } = options;
+  const rows: Array<Record<string, unknown>> = [];
+
+  for (const row of fullRows) {
+    const rid = row._rowid as number;
+    if (!includeExpired) {
+      const ea = row.expires_at as number | null | undefined;
+      if (ea != null && ea <= nowSec) continue;
+    }
+    if (asOf != null) {
+      const vf = row.valid_from as number | null | undefined;
+      const vu = row.valid_until as number | null | undefined;
+      if (vf != null && vf > asOf) continue;
+      if (vu != null && vu <= asOf) continue;
+    } else if (!includeSuperseded) {
+      if (row.superseded_at != null) continue;
+    }
+    if (tag?.trim()) {
+      const t = `,${((row.tags as string) ?? "").toLowerCase()},`;
+      if (!t.includes(`,${tag.toLowerCase().trim()},`)) continue;
+    }
+    if (tierFilter === "warm") {
+      const tier = row.tier as string | null | undefined;
+      if (tier != null && tier !== "warm" && tier !== "hot") continue;
+    }
+    if (scopeFilter) {
+      const s = row.scope as string | null | undefined;
+      const st = row.scope_target as string | null | undefined;
+      if (s === "global") {
+        // global scope always passes
+      } else if (s === "user") {
+        if (!scopeFilter.userId || st !== scopeFilter.userId) continue;
+      } else if (s === "agent") {
+        if (!scopeFilter.agentId || st !== scopeFilter.agentId) continue;
+      } else if (s === "session") {
+        if (!scopeFilter.sessionId || st !== scopeFilter.sessionId) continue;
+      } else {
+        // unknown scope type, exclude
+        continue;
+      }
+    }
+    const expiresAt = row.expires_at as number | null | undefined;
+    let freshness: number;
+    if (expiresAt == null) freshness = 1.0;
+    else if (expiresAt <= nowSec) freshness = 0.0;
+    else freshness = Math.min(1.0, (expiresAt - nowSec) / decayWindowSec);
+    rows.push({
+      ...row,
+      fts_score: rankByRowid.get(rid) ?? 0,
+      freshness,
+    });
+  }
+
+  return rows;
+}
+
 export function searchFacts(
   db: DatabaseSync,
   query: string,
@@ -97,57 +167,16 @@ export function searchFacts(
       .prepare(`SELECT *, rowid AS _rowid FROM facts WHERE rowid IN (${placeholders})`)
       .all(...rowids) as Array<Record<string, unknown>>;
 
-    const decayWindow = decayWindowSec;
-    rows = [];
-    for (const row of fullRows) {
-      const rid = row._rowid as number;
-      if (!includeExpired) {
-        const ea = row.expires_at as number | null | undefined;
-        if (ea != null && ea <= nowSec) continue;
-      }
-      if (asOf != null) {
-        const vf = row.valid_from as number | null | undefined;
-        const vu = row.valid_until as number | null | undefined;
-        if (vf != null && vf > asOf) continue;
-        if (vu != null && vu <= asOf) continue;
-      } else if (!includeSuperseded) {
-        if (row.superseded_at != null) continue;
-      }
-      if (tag?.trim()) {
-        const t = `,${((row.tags as string) ?? "").toLowerCase()},`;
-        if (!t.includes(`,${tag.toLowerCase().trim()},`)) continue;
-      }
-      if (tierFilter === "warm") {
-        const tier = row.tier as string | null | undefined;
-        if (tier != null && tier !== "warm" && tier !== "hot") continue;
-      }
-      if (scopeFilter) {
-        const s = row.scope as string | null | undefined;
-        const st = row.scope_target as string | null | undefined;
-        if (s === "global") {
-          // global scope always passes
-        } else if (s === "user") {
-          if (!scopeFilter.userId || st !== scopeFilter.userId) continue;
-        } else if (s === "agent") {
-          if (!scopeFilter.agentId || st !== scopeFilter.agentId) continue;
-        } else if (s === "session") {
-          if (!scopeFilter.sessionId || st !== scopeFilter.sessionId) continue;
-        } else {
-          // unknown scope type, exclude
-          continue;
-        }
-      }
-      const expiresAt = row.expires_at as number | null | undefined;
-      let freshness: number;
-      if (expiresAt == null) freshness = 1.0;
-      else if (expiresAt <= nowSec) freshness = 0.0;
-      else freshness = Math.min(1.0, (expiresAt - nowSec) / decayWindow);
-      rows.push({
-        ...row,
-        fts_score: rankByRowid.get(rid) ?? 0,
-        freshness,
-      });
-    }
+    rows = applyJsFilters(fullRows, rankByRowid, {
+      includeExpired,
+      nowSec,
+      asOf,
+      includeSuperseded,
+      tag,
+      tierFilter,
+      scopeFilter,
+      decayWindowSec,
+    });
     rows.sort((a, b) => (a.fts_score as number) - (b.fts_score as number));
     rows = rows.slice(0, limit * 2);
     if (rows.length === 0) return [];
@@ -168,47 +197,16 @@ export function searchFacts(
         .prepare(`SELECT *, rowid AS _rowid FROM facts WHERE rowid IN (${placeholders})`)
         .all(...rowids) as Array<Record<string, unknown>>;
 
-      rows = [];
-      for (const row of fullRows) {
-        const rid = row._rowid as number;
-        if (!includeExpired) {
-          const ea = row.expires_at as number | null | undefined;
-          if (ea != null && ea <= nowSec) continue;
-        }
-        if (asOf != null) {
-          const vf = row.valid_from as number | null | undefined;
-          const vu = row.valid_until as number | null | undefined;
-          if (vf != null && vf > asOf) continue;
-          if (vu != null && vu <= asOf) continue;
-        } else if (!includeSuperseded) {
-          if (row.superseded_at != null) continue;
-        }
-        if (tag?.trim()) {
-          const t = `,${((row.tags as string) ?? "").toLowerCase()},`;
-          if (!t.includes(`,${tag.toLowerCase().trim()},`)) continue;
-        }
-        if (tierFilter === "warm") {
-          const tier = row.tier as string | null | undefined;
-          if (tier != null && tier !== "warm" && tier !== "hot") continue;
-        }
-        if (scopeFilter) {
-          const s = row.scope as string | null | undefined;
-          const st = row.scope_target as string | null | undefined;
-          if (scopeFilter.userId && s === "user" && st !== scopeFilter.userId) continue;
-          if (scopeFilter.agentId && s === "agent" && st !== scopeFilter.agentId) continue;
-          if (scopeFilter.sessionId && s === "session" && st !== scopeFilter.sessionId) continue;
-        }
-        const expiresAt = row.expires_at as number | null | undefined;
-        let freshness: number;
-        if (expiresAt == null) freshness = 1.0;
-        else if (expiresAt <= nowSec) freshness = 0.0;
-        else freshness = Math.min(1.0, (expiresAt - nowSec) / decayWindowSec);
-        rows.push({
-          ...row,
-          fts_score: rankByRowid.get(rid) ?? 0,
-          freshness,
-        });
-      }
+      rows = applyJsFilters(fullRows, rankByRowid, {
+        includeExpired,
+        nowSec,
+        asOf,
+        includeSuperseded,
+        tag,
+        tierFilter,
+        scopeFilter,
+        decayWindowSec,
+      });
       rows.sort((a, b) => (a.fts_score as number) - (b.fts_score as number));
       rows = rows.slice(0, limit * 2);
     }
