@@ -431,7 +431,10 @@ export async function renderActiveTaskMarkdownFile(
         stale: capStale.omitted,
         completed: capDone.omitted,
       })
-    : serializeActiveTaskFile([...capAct.rows, ...capStale.rows], capDone.rows);
+    : serializeActiveTaskFile([...capAct.rows, ...capStale.rows], capDone.rows, undefined, {
+        active: capAct.omitted + capStale.omitted,
+        completed: capDone.omitted,
+      });
 
   const lines = body.split("\n");
   lines.splice(

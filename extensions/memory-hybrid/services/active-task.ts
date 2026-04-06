@@ -351,6 +351,7 @@ export function serializeActiveTaskFile(
   active: ActiveTaskEntry[],
   completed: ActiveTaskEntry[],
   goalsMirrorMarkdown?: string,
+  omitted?: { active: number; completed: number },
 ): string {
   const parts: string[] = ["# ACTIVE-TASKS.md — Working Memory\n"];
 
@@ -362,6 +363,12 @@ export function serializeActiveTaskFile(
       parts.push(serializeTaskEntry(entry));
       parts.push("");
     }
+  }
+
+  if (omitted?.active && omitted.active > 0) {
+    parts.push(
+      `> ${omitted.active} more not shown (projection cap). Adjust \`activeTask.projection.maxRowsPerSection\`, set \`activeTask.projection.mode\` to \`full\`, or query \`category:project\` facts.\n\n`,
+    );
   }
 
   if (goalsMirrorMarkdown !== undefined) {
@@ -377,6 +384,12 @@ export function serializeActiveTaskFile(
       parts.push(serializeTaskEntry(entry));
       parts.push("");
     }
+  }
+
+  if (omitted?.completed && omitted.completed > 0) {
+    parts.push(
+      `> ${omitted.completed} more not shown (projection cap). Adjust \`activeTask.projection.maxRowsPerSection\`, set \`activeTask.projection.mode\` to \`full\`, or query \`category:project\` facts.\n`,
+    );
   }
 
   return parts.join("\n");
