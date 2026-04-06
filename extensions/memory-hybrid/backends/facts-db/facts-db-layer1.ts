@@ -87,7 +87,13 @@ export class FactsDBLayer1 extends BaseSqliteStore {
 
     super(db, {
       foreignKeys: true,
-      customPragmas: ["PRAGMA synchronous = NORMAL", "PRAGMA wal_autocheckpoint = 1000"],
+      customPragmas: [
+        "PRAGMA synchronous = NORMAL",
+        "PRAGMA wal_autocheckpoint = 1000",
+        "PRAGMA cache_size = -64000",
+        "PRAGMA mmap_size = 268435456",
+        "PRAGMA temp_store = MEMORY",
+      ],
     });
     this.dbPath = dbPath;
     tryRestrictSqliteDbFileMode(dbPath);
