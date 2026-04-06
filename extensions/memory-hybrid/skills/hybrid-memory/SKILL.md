@@ -90,8 +90,8 @@ When the user wants **maximum memory quality**, **which toggles are on**, **what
 1. Tell them to run **`openclaw hybrid-mem verify`** and **`openclaw hybrid-mem config`** first (ground truth for health + flags).
 2. For a **single bundled catch-up**, use **`openclaw hybrid-mem run-all`** (respects feature flags; see repo docs for what it includes vs cron-only tasks).
 3. For **manual ordering** (nightly → weekly → monthly mirrors) and **high-impact settings**, read the bundled reference:
-   **`references/memory-optimization.md`** (same folder as this `SKILL.md` under `{workspace}/skills/hybrid-memory/` — copied there on first gateway start if missing, or by `openclaw hybrid-mem install`).
-   That file covers: inspection commands, benefit-ranked settings, `run-all` vs one-by-one chains, and how cron maps to CLI—without duplicating the full repo manuals.
+   **`references/memory-optimization.md`** (same folder as this `SKILL.md` under `{workspace}/skills/hybrid-memory/` — copied there on first gateway start if missing, or by `openclaw hybrid-mem install`)
+   That file covers: inspection commands, benefit-ranked settings, `run-all` vs one-by-one chains, and how cron maps to CLI — without duplicating the full repo manuals.
 
 ## Reference
 
