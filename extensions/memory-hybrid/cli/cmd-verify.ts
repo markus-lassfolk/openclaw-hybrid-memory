@@ -1103,10 +1103,13 @@ export async function runVerifyForCli(
           );
         } else if (h.matchingJobIds.length === 0) {
           log(
-            `${WARN} No cron job message matches current heartbeat patterns (${withText} job(s) with text). Update job messages or goalStewardship.heartbeatPatterns.`,
+            `${WARN} No ENABLED cron job message matches current heartbeat patterns (${withText} job(s) with text, ${h.disabledMatchingJobIds.length} disabled match). Update job messages or goalStewardship.heartbeatPatterns.`,
           );
         } else {
           log(`${OK} Cron jobs with heartbeat-matching message: ${h.matchingJobIds.join(", ")}`);
+          if (h.disabledMatchingJobIds.length > 0) {
+            log(`${INFO} (Disabled jobs also matched — excluded from delivery: ${h.disabledMatchingJobIds.join(", ")})`);
+          }
         }
       }
     } catch (e) {

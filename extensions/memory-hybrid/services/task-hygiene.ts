@@ -65,11 +65,15 @@ export function buildGoalEscalationHeartbeatBlock(
     ...bad.map((g) => `- **[${g.label}]** (${g.status})`),
     "</goal-escalation>",
   ];
-  let out = lines.join("\n");
-  if (out.length > opts.maxChars) {
-    out = `${out.slice(0, opts.maxChars - 20)}\n…(truncated)\n</goal-escalation>`;
+  const closingTag = "</goal-escalation>";
+  const body = lines.join("\n");
+  const full = `${body}\n${closingTag}`;
+  if (full.length <= opts.maxChars) {
+    return full;
   }
-  return out;
+  const truncatedSuffix = `\n…(truncated)\n${closingTag}`;
+  const availableBodyChars = Math.max(0, opts.maxChars - truncatedSuffix.length);
+  return `${body.slice(0, availableBodyChars)}${truncatedSuffix}`;
 }
 
 export function buildProposeGoalDraftFromTask(task: ActiveTaskEntry): {

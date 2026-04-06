@@ -72,6 +72,29 @@ describe("task-hygiene", () => {
     expect(buildGoalEscalationHeartbeatBlock([{ label: "a", status: "active" }], { maxChars: 500 })).toBe("");
   });
 
+  it("buildGoalEscalationHeartbeatBlock truncates correctly and forms well-formed markup", () => {
+    // Very small maxChars to force truncation branch
+    const goals = Array.from({ length: 20 }, (_, i) => ({ label: `goal-${i}`, status: "blocked" as const }));
+    const block = buildGoalEscalationHeartbeatBlock(goals, { maxChars: 80 });
+    // Must end with a single well-formed closing tag (not partial + second tag)
+    expect(block).toMatch(/^<goal-escalation>/);
+    expect(block).toMatch(/<\/goal-escalation>$/);
+    // Must not contain double closing tags
+    expect((block.match(/<\/goal-escalation>/g) || []).length).toBe(1);
+    // Length must respect maxChars (with room for suffix)
+    expect(block.length).toBeLessThanOrEqual(90);
+    expect(block).toContain("truncated");
+  });
+
+  it("buildGoalEscalationHeartbeatBlock never produces negative slice index", () => {
+    const goals = [{ label: "tiny", status: "blocked" as const }];
+    // maxChars smaller than the suffix itself
+    const block = buildGoalEscalationHeartbeatBlock(goals, { maxChars: 5 });
+    expect(block).toContain("<goal-escalation>");
+    // Must not crash and must produce a string (possibly very short, but valid)
+    expect(typeof block).toBe("string");
+  });
+
   it("buildProposeGoalDraftFromTask maps row to draft", () => {
     const draft = buildProposeGoalDraftFromTask(
       baseTask({ label: "my-task", next: "Run tests", description: "Ship feature" }),

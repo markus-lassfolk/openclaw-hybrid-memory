@@ -67,9 +67,9 @@ async function verifyPrMergedApi(target: string): Promise<{ ok: boolean; detail:
     return { ok: false, detail: "pr_merged: set GITHUB_TOKEN or GH_TOKEN for GitHub API access" };
   }
   const url = `https://api.github.com/repos/${parsed.owner}/${parsed.repo}/pulls/${parsed.number}`;
+  const ac = new AbortController();
+  const to = setTimeout(() => ac.abort(), 15_000);
   try {
-    const ac = new AbortController();
-    const to = setTimeout(() => ac.abort(), 15_000);
     const res = await fetch(url, {
       signal: ac.signal,
       headers: {
@@ -78,7 +78,6 @@ async function verifyPrMergedApi(target: string): Promise<{ ok: boolean; detail:
         "X-GitHub-Api-Version": "2022-11-28",
       },
     });
-    clearTimeout(to);
     if (res.status === 404) {
       return { ok: false, detail: `pr_merged: PR not found (${parsed.owner}/${parsed.repo}#${parsed.number})` };
     }
@@ -92,6 +91,8 @@ async function verifyPrMergedApi(target: string): Promise<{ ok: boolean; detail:
     return { ok: false, detail: `pr_merged: ${parsed.owner}/${parsed.repo}#${parsed.number} not merged yet` };
   } catch (e) {
     return { ok: false, detail: e instanceof Error ? e.message : String(e) };
+  } finally {
+    clearTimeout(to);
   }
 }
 
@@ -106,10 +107,7 @@ async function runMechanicalVerification(
   }
   if (v.type === "pr_merged") {
     if (!cfg.allowPrVerification) {
-      return {
-        ok: false,
-        detail: "pr_merged verification disabled (set goalStewardship.allowPrVerification: true)",
-      };
+      return { ok: false, detail: "skip" };
     }
     return verifyPrMergedApi(v.target);
   }
@@ -119,10 +117,7 @@ async function runMechanicalVerification(
   }
   if (v.type === "command_exit_zero") {
     if (!cfg.allowCommandVerification) {
-      return {
-        ok: false,
-        detail: "command_exit_zero verification disabled (set goalStewardship.allowCommandVerification: true)",
-      };
+      return { ok: false, detail: "skip" };
     }
     if (SHELL_DENY_RE.test(v.target)) {
       return { ok: false, detail: "command_exit_zero target contains disallowed shell metacharacters" };
@@ -140,14 +135,15 @@ async function runMechanicalVerification(
     }
   }
   if (v.type === "http_ok") {
+    const ac = new AbortController();
+    const t = setTimeout(() => ac.abort(), 10_000);
     try {
-      const ac = new AbortController();
-      const t = setTimeout(() => ac.abort(), 10_000);
       const res = await fetch(v.target, { signal: ac.signal });
-      clearTimeout(t);
       return { ok: res.ok, detail: `http ${res.status}` };
     } catch (e) {
       return { ok: false, detail: e instanceof Error ? e.message : String(e) };
+    } finally {
+      clearTimeout(t);
     }
   }
   return { ok: false, detail: "unknown verification type" };
