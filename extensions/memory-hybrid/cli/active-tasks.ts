@@ -8,7 +8,7 @@
 
 import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
-import type { HybridMemoryConfig } from "../config.js";
+import type { ActiveTaskProjectionConfig, HybridMemoryConfig } from "../config.js";
 import {
   ACTIVE_TASK_STATUSES,
   type ActiveTaskEntry,
@@ -50,6 +50,8 @@ export type ActiveTaskContext = {
   memoryDir: string;
   /** Task ledger backend */
   ledger: "markdown" | "facts";
+  /** Facts projection settings (`active-tasks render` when ledger is facts). */
+  projection: ActiveTaskProjectionConfig;
   factsDb?: FactsDB;
   vectorDb?: VectorDB;
   embeddings?: EmbeddingProvider;
@@ -532,7 +534,7 @@ export function registerActiveTaskCommands(
         return;
       }
       const { factsDb } = requireFacts(ctx);
-      await renderActiveTaskMarkdownFile(factsDb, ctx.staleMinutes, ctx.activeTaskFilePath);
+      await renderActiveTaskMarkdownFile(factsDb, ctx.staleMinutes, ctx.activeTaskFilePath, ctx.projection);
       console.log(`✅ Wrote ${ctx.activeTaskFilePath}`);
     });
 }
