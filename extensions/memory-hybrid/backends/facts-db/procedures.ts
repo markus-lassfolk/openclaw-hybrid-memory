@@ -4,8 +4,8 @@
 import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 
-import type { ProcedureEntry, ScopeFilter } from "../../types/memory.js";
 import { capturePluginError } from "../../services/error-reporter.js";
+import type { ProcedureEntry, ScopeFilter } from "../../types/memory.js";
 import { recordEpisode } from "./episodes.js";
 import { sanitizeFts5QueryForFacts } from "./fts-text.js";
 import { scopeFilterClausePositional } from "./scope-sql.js";

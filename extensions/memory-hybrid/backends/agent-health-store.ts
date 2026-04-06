@@ -5,8 +5,8 @@
 import { mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { BaseSqliteStore } from "./base-sqlite-store.js";
 import type { ForgeTaskItem } from "../types/dashboard-types.js";
+import { BaseSqliteStore } from "./base-sqlite-store.js";
 
 type AgentHealthOutcome = "success" | "partial" | "failed" | "idle";
 

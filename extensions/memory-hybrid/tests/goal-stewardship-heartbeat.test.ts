@@ -3,14 +3,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { GoalStewardshipConfig } from "../config/types/index.js";
+import { createGoal, listActiveGoals, updateGoal } from "../services/goal-registry.js";
 import {
+  buildMultiGoalStewardshipPrepend,
   compileHeartbeatMatchers,
   getCachedMatchers,
-  matchesHeartbeat,
-  buildMultiGoalStewardshipPrepend,
   heuristicNeedsHeavyAttention,
+  matchesHeartbeat,
 } from "../services/goal-stewardship-heartbeat.js";
-import { createGoal, listActiveGoals, updateGoal } from "../services/goal-registry.js";
 import { goalDefaults } from "./helpers/goal-helpers.js";
 
 function gs(partial: Partial<GoalStewardshipConfig>): GoalStewardshipConfig {

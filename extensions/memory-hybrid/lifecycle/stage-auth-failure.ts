@@ -4,18 +4,18 @@
  */
 
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
-import type { ScopeFilter } from "../types/memory.js";
-import { mergeResults, filterByScope } from "../services/merge-results.js";
-import { VAULT_POINTER_PREFIX } from "../services/auto-capture.js";
 import {
-  detectAuthFailure,
-  buildCredentialQuery,
-  formatCredentialHint,
-  DEFAULT_AUTH_FAILURE_PATTERNS,
   type AuthFailurePattern,
+  DEFAULT_AUTH_FAILURE_PATTERNS,
+  buildCredentialQuery,
+  detectAuthFailure,
+  formatCredentialHint,
 } from "../services/auth-failure-detect.js";
-import { capturePluginError } from "../services/error-reporter.js";
+import { VAULT_POINTER_PREFIX } from "../services/auto-capture.js";
 import { shouldSuppressEmbeddingError } from "../services/embeddings.js";
+import { capturePluginError } from "../services/error-reporter.js";
+import { filterByScope, mergeResults } from "../services/merge-results.js";
+import type { ScopeFilter } from "../types/memory.js";
 import { withHookResolutionApi } from "./hook-resolution-api.js";
 import type { LifecycleContext, SessionState } from "./types.js";
 

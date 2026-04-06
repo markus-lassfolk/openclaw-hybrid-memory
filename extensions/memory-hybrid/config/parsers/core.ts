@@ -6,11 +6,11 @@ import { pluginLogger } from "../../utils/logger.js";
 import type { EventLogConfig, PathConfig, StoreConfig, WALConfig } from "../types/core.js";
 import type {
   ActiveTaskConfig,
-  GoalStewardshipConfig,
   AuthOrderConfig,
   CredentialAutoCaptureConfig,
   CredentialsConfig,
   GatewayConfig,
+  GoalStewardshipConfig,
   LLMConfig,
   LLMProviderConfig,
   ResolvedGatewayAuthConfig,

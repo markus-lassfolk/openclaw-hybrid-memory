@@ -8,9 +8,9 @@
 import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
 import { pluginLogger } from "../utils/logger.js";
+import { is403QuotaOrRateLimitLike, is429OrWrapped } from "./chat.js";
 import type { EmbeddingProvider } from "./embeddings.js";
 import { shouldSuppressEmbeddingError } from "./embeddings.js";
-import { is429OrWrapped, is403QuotaOrRateLimitLike } from "./chat.js";
 import { capturePluginError } from "./error-reporter.js";
 
 // ---------------------------------------------------------------------------

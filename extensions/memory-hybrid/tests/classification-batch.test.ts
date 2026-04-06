@@ -1,7 +1,7 @@
 import type OpenAI from "openai";
 import { describe, expect, it, vi } from "vitest";
-import type { MemoryEntry } from "../types/memory.js";
 import { classifyMemoryOperation, classifyMemoryOperationsBatch } from "../services/classification.js";
+import type { MemoryEntry } from "../types/memory.js";
 
 function makeEntry(id: string, text: string): MemoryEntry {
   return {

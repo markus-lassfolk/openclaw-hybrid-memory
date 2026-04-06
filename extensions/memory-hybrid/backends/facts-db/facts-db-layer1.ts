@@ -7,6 +7,7 @@ import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
 import type { MemoryEntry, MemoryTier, ScopeFilter, SearchResult } from "../../types/memory.js";
+import { tryRestrictSqliteDbFileMode } from "../../utils/sqlite-file-perms.js";
 import { BaseSqliteStore } from "../base-sqlite-store.js";
 import { runFactsMigrations } from "../migrations/facts-migrations.js";
 import { SupersededTextsCache } from "./cache-manager.js";
@@ -51,6 +52,7 @@ import type { MemoryLinkType } from "./types.js";
 import {
   countCanonicalEmbeddings as countCanonicalEmbeddingsImpl,
   deleteEmbeddings as deleteEmbeddingsImpl,
+  deleteVariants as deleteVariantsImpl,
   estimateStorageBytesOnDisk,
   getEmbeddingsByModel as getEmbeddingsByModelImpl,
   getEmbeddings as getEmbeddingsImpl,
@@ -58,9 +60,7 @@ import {
   hasVariants as hasVariantsImpl,
   storeEmbedding as storeEmbeddingImpl,
   storeVariant as storeVariantImpl,
-  deleteVariants as deleteVariantsImpl,
 } from "./variants.js";
-import { tryRestrictSqliteDbFileMode } from "../../utils/sqlite-file-perms.js";
 
 export class FactsDBLayer1 extends BaseSqliteStore {
   // Responsibility note:

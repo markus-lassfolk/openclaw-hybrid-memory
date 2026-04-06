@@ -3,20 +3,20 @@
  * Benchmark shadow-eval tests
  */
 
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, rmSync } from "node:fs";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
-import { DatabaseSync } from "node:sqlite";
 import { randomUUID } from "node:crypto";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import {
-  measureLatency,
-  shadowMeasure,
-  readTokensFromLog,
   formatBenchmarkResult,
   formatBenchmarkResults,
+  measureLatency,
+  readTokensFromLog,
   scoreAccuracy,
+  shadowMeasure,
 } from "../../benchmark/shadow-eval.js";
 
 // ---------------------------------------------------------------------------

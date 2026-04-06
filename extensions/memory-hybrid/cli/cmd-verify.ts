@@ -10,9 +10,9 @@ import { getEnv } from "../utils/env-manager.js";
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import type { DatabaseSync } from "node:sqlite";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import type { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
 import OpenAI from "openai";
 
@@ -26,8 +26,6 @@ import {
 } from "../config.js";
 import { resolveSecretRef } from "../config/parsers/core.js";
 import { chatComplete } from "../services/chat.js";
-import { callResponsesApi } from "../services/responses-adapter.js";
-import { resolveWireApi } from "../services/model-capabilities.js";
 import { CostFeature } from "../services/cost-feature-labels.js";
 import {
   type EmbeddingConfig,
@@ -36,11 +34,16 @@ import {
   OPENAI_ONLY_EMBED_MODELS,
   createEmbeddingProvider,
 } from "../services/embeddings.js";
-import { capturePluginError } from "../services/error-reporter.js";
-import { hasOAuthProfiles } from "../utils/auth.js";
 import { formatOpenAiEmbeddingDisplayLabel } from "../services/embeddings/shared.js";
-import { applyAzureFoundryVerifyDirectClientAuth } from "./verify-llm-azure-auth.js";
-import { relativeTime } from "./shared.js";
+import { capturePluginError } from "../services/error-reporter.js";
+import {
+  analyzeCronJobsAgainstHeartbeatPatterns,
+  extractCronJobMessageEntries,
+  getHeartbeatMatchersForVerify,
+} from "../services/goal-stewardship-verify-cron.js";
+import { resolveWireApi } from "../services/model-capabilities.js";
+import { callResponsesApi } from "../services/responses-adapter.js";
+import { hasOAuthProfiles } from "../utils/auth.js";
 import { PLUGIN_ID, getRestartPendingPath } from "../utils/constants.js";
 import { inferModelProviderPrefix } from "../utils/model-provider-family.js";
 import {
@@ -48,11 +51,8 @@ import {
   readEffectiveAgentChatPrimaryFromOpenclawJsonRoot,
 } from "../utils/openclaw-agent-defaults.js";
 import { ensureMaintenanceCronJobs, getPluginConfigFromFile } from "./cmd-install.js";
-import {
-  analyzeCronJobsAgainstHeartbeatPatterns,
-  extractCronJobMessageEntries,
-  getHeartbeatMatchersForVerify,
-} from "../services/goal-stewardship-verify-cron.js";
+import { relativeTime } from "./shared.js";
+import { applyAzureFoundryVerifyDirectClientAuth } from "./verify-llm-azure-auth.js";
 
 import type { HandlerContext } from "./handlers.js";
 import type { VerifyCliSink } from "./types.js";
@@ -1108,9 +1108,7 @@ export async function runVerifyForCli(
         } else {
           log(`${OK} Cron jobs with heartbeat-matching message: ${h.matchingJobIds.join(", ")}`);
           if (h.disabledMatchingJobIds.length > 0) {
-            log(
-              `ℹ️ (Disabled jobs also matched — excluded from delivery: ${h.disabledMatchingJobIds.join(", ")})`,
-            );
+            log(`ℹ️ (Disabled jobs also matched — excluded from delivery: ${h.disabledMatchingJobIds.join(", ")})`);
           }
         }
       }

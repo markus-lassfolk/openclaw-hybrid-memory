@@ -17,16 +17,16 @@
  *   - DASHBOARD_PATHS: root is / and healthApi is /api/health
  */
 
-import { describe, it, expect } from "vitest";
-import {
-  registerDashboardHttpRoutes,
-  DASHBOARD_PREFIX,
-  DASHBOARD_PATHS,
-  type HttpRouteOptions,
-  type HttpRequestHandler,
-} from "../tools/dashboard-routes.js";
-import { parseHealthConfig } from "../config/parsers/maintenance.js";
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
+import { describe, expect, it } from "vitest";
+import { parseHealthConfig } from "../config/parsers/maintenance.js";
+import {
+  DASHBOARD_PATHS,
+  DASHBOARD_PREFIX,
+  type HttpRequestHandler,
+  type HttpRouteOptions,
+  registerDashboardHttpRoutes,
+} from "../tools/dashboard-routes.js";
 
 // ---------------------------------------------------------------------------
 // Helpers

@@ -22,8 +22,8 @@ import {
   serializeActiveTaskFile,
   upsertTask,
 } from "./active-task.js";
-import { isOpenClawSessionLikelyPresent, looksLikeOpenClawSessionRef } from "./openclaw-session-artifact.js";
 import type { EmbeddingProvider } from "./embeddings.js";
+import { isOpenClawSessionLikelyPresent, looksLikeOpenClawSessionRef } from "./openclaw-session-artifact.js";
 
 export const TASK_LEDGER_CATEGORY = "project" as MemoryCategory;
 

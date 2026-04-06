@@ -3,8 +3,14 @@
  */
 
 import OpenAI from "openai";
+import { createApimGatewayFetch, isAzureApiManagementGatewayUrl } from "../../utils/apim-gateway-fetch.js";
+import { pluginLogger } from "../../utils/logger.js";
 import { capturePluginError } from "../error-reporter.js";
-import type { EmbeddingProvider, EmbeddingConfig } from "./types.js";
+import { ChainEmbeddingProvider } from "./chain-provider.js";
+import { FallbackEmbeddingProvider } from "./fallback-provider.js";
+import { OllamaEmbeddingProvider } from "./ollama-provider.js";
+import { OnnxEmbeddingProvider, isOnnxRuntimeMissingError } from "./onnx-provider.js";
+import { Embeddings } from "./openai-provider.js";
 import {
   GOOGLE_EMBEDDING_BASE_URL,
   GOOGLE_EMBED_DEFAULT_DIMENSIONS,
@@ -14,13 +20,7 @@ import {
   isAzureOpenAiCompatibleEndpoint,
   isAzureOpenAiResourceEndpoint,
 } from "./shared.js";
-import { Embeddings } from "./openai-provider.js";
-import { OllamaEmbeddingProvider } from "./ollama-provider.js";
-import { OnnxEmbeddingProvider, isOnnxRuntimeMissingError } from "./onnx-provider.js";
-import { FallbackEmbeddingProvider } from "./fallback-provider.js";
-import { ChainEmbeddingProvider } from "./chain-provider.js";
-import { pluginLogger } from "../../utils/logger.js";
-import { createApimGatewayFetch, isAzureApiManagementGatewayUrl } from "../../utils/apim-gateway-fetch.js";
+import type { EmbeddingConfig, EmbeddingProvider } from "./types.js";
 
 /** Classic Azure OpenAI REST (e.g. `/openai/deployments/...`) uses this query param. `/openai/v1` compat endpoints reject it (400). */
 export const AZURE_OPENAI_API_VERSION = "2024-10-21";

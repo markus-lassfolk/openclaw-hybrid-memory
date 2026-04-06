@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
-import type { MemoryEntry } from "../types/memory.js";
 import {
-  factStatusToDisplay,
-  displayStatusToFact,
-  groupProjectFactsByEntity,
   buildTaskEntriesFromGroupedFacts,
+  displayStatusToFact,
+  factStatusToDisplay,
+  groupProjectFactsByEntity,
 } from "../services/task-ledger-facts.js";
+import type { MemoryEntry } from "../types/memory.js";
 
 function fact(partial: Partial<MemoryEntry> & { id: string; entity: string; key: string | null }): MemoryEntry {
   return {

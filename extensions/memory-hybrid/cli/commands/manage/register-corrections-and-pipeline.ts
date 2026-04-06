@@ -4,8 +4,8 @@
  */
 
 import { getCronModelConfig, getDefaultCronModel } from "../../../config.js";
-import { getEffectivenessReport, runClosedLoopAnalysis } from "../../../services/feedback-effectiveness.js";
 import { capturePluginError } from "../../../services/error-reporter.js";
+import { getEffectivenessReport, runClosedLoopAnalysis } from "../../../services/feedback-effectiveness.js";
 import { type CommanderOptsParent, readHybridMemVerbose } from "../../global-verbose.js";
 import { type Chainable, withExit } from "../../shared.js";
 import type {

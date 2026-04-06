@@ -8,16 +8,16 @@ import { DEFAULT_CHAT_TIMEOUT_MS } from "../utils/constants.js";
 import { pluginLogger } from "../utils/logger.js";
 import { withCostFeature } from "./cost-context.js";
 import { capturePluginError } from "./error-reporter.js";
+import { is403QuotaOrRateLimitLike, parseGoDurationToMs, parseRetryAfterMs } from "./llm-rate-limit-headers.js";
 import {
+  type WireApi,
   getDistillBatchTokenLimit as getDistillBatchTokenLimitFromCatalog,
   getDistillMaxOutputTokens as getDistillMaxOutputTokensFromCatalog,
   isReasoningModel,
   requiresMaxCompletionTokens,
   resolveWireApi,
-  type WireApi,
 } from "./model-capabilities.js";
 import { callResponsesApi } from "./responses-adapter.js";
-import { is403QuotaOrRateLimitLike, parseGoDurationToMs, parseRetryAfterMs } from "./llm-rate-limit-headers.js";
 
 export { is403QuotaOrRateLimitLike, parseGoDurationToMs, parseRetryAfterMs } from "./llm-rate-limit-headers.js";
 

@@ -1,6 +1,6 @@
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import { describe, expect, it, vi } from "vitest";
-import { withHookResolutionApi, sliceHookAgentContext } from "../lifecycle/hook-resolution-api.js";
+import { sliceHookAgentContext, withHookResolutionApi } from "../lifecycle/hook-resolution-api.js";
 import { resolveAgentIdFromHookEvent, tryParseAgentIdFromOpenClawSessionKey } from "../lifecycle/resolve-agent-id.js";
 import { resolveSessionKeyFromHookEvent } from "../lifecycle/session-state.js";
 

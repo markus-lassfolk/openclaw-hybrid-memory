@@ -8,9 +8,9 @@
 
 import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
-import { tryRestrictSqliteDbFileMode } from "../utils/sqlite-file-perms.js";
 import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { tryRestrictSqliteDbFileMode } from "../utils/sqlite-file-perms.js";
 
 import { BaseSqliteStore } from "./base-sqlite-store.js";
 

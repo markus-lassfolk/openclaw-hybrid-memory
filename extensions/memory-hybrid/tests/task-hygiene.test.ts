@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
+import type { ActiveTaskEntry } from "../services/active-task.js";
 import {
   buildGoalEscalationHeartbeatBlock,
   buildHeartbeatTaskHygieneBlock,
   buildProposeGoalDraftFromTask,
 } from "../services/task-hygiene.js";
-import type { ActiveTaskEntry } from "../services/active-task.js";
 
 function baseTask(over: Partial<ActiveTaskEntry> = {}): ActiveTaskEntry {
   return {

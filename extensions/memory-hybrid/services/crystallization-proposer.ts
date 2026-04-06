@@ -10,8 +10,8 @@ import { getEnv } from "../utils/env-manager.js";
  */
 
 import { mkdirSync, writeFileSync } from "node:fs";
-import { dirname } from "node:path";
 import { homedir } from "node:os";
+import { dirname } from "node:path";
 import type { CrystallizationStore } from "../backends/crystallization-store.js";
 import type { WorkflowStore } from "../backends/workflow-store.js";
 import type { CrystallizationConfig } from "../config/types/features.js";

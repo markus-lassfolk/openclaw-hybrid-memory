@@ -1,26 +1,13 @@
+import { appendFile, mkdir } from "node:fs/promises";
+import { join } from "node:path";
 /**
  * Goal stewardship tools — see docs/GOAL-STEWARDSHIP-DESIGN.md
  */
 import { Type } from "@sinclair/typebox";
-import { appendFile, mkdir } from "node:fs/promises";
-import { join } from "node:path";
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import type { EventLog } from "../backends/event-log.js";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { HybridMemoryConfig } from "../config.js";
-import { stringEnum } from "../utils/typebox.js";
-import {
-  createGoal,
-  goalStewardshipDefaultsFromConfig,
-  isGlobalRateLimited,
-  isTerminalStatus,
-  listActiveGoals,
-  resolveGoalId,
-  terminateGoal,
-  updateGoal,
-  recordGoalDispatch,
-  type GoalVerification,
-} from "../services/goal-stewardship.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import {
   circuitBreakerShortBlocker,
@@ -29,6 +16,19 @@ import {
   evaluateCircuitBreakerTrip,
 } from "../services/goal-circuit-breaker.js";
 import type { GoalHistoryEntry } from "../services/goal-stewardship-types.js";
+import {
+  type GoalVerification,
+  createGoal,
+  goalStewardshipDefaultsFromConfig,
+  isGlobalRateLimited,
+  isTerminalStatus,
+  listActiveGoals,
+  recordGoalDispatch,
+  resolveGoalId,
+  terminateGoal,
+  updateGoal,
+} from "../services/goal-stewardship.js";
+import { stringEnum } from "../utils/typebox.js";
 
 export interface GoalToolsContext {
   cfg: HybridMemoryConfig;

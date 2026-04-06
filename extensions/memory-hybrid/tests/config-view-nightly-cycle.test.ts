@@ -1,7 +1,7 @@
-// @ts-nocheck
-import { getEnv, setEnv } from "../utils/env-manager.js";
 import * as fs from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+// @ts-nocheck
+import { getEnv, setEnv } from "../utils/env-manager.js";
 
 import { runConfigViewForCli } from "../cli/cmd-config.js";
 import type { HandlerContext } from "../cli/handlers.js";

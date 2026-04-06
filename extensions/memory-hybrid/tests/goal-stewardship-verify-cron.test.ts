@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
 
+import { compileHeartbeatMatchers } from "../services/goal-stewardship-heartbeat.js";
 import {
   analyzeCronJobsAgainstHeartbeatPatterns,
   extractCronJobMessageEntries,
   textMatchesAnyHeartbeatPattern,
 } from "../services/goal-stewardship-verify-cron.js";
-import { compileHeartbeatMatchers } from "../services/goal-stewardship-heartbeat.js";
 
 describe("goal-stewardship-verify-cron", () => {
   it("extractCronJobMessageEntries reads payload.message and top-level message", () => {
