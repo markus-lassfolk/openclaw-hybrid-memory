@@ -4,6 +4,13 @@
  * Used by chat.ts for distillBatchTokenLimit and distillMaxOutputTokens; can be used for context-audit or config hints.
  */
 
+/**
+ * Wire format for LLM requests: "chat" = standard chat.completions.create,
+ * "responses" = OpenAI Responses API (responses.create).
+ * Some Azure Foundry deployments expose reasoning-heavy models only on the Responses surface.
+ */
+export type WireApi = "chat" | "responses";
+
 interface ModelCapabilities {
   /** Context window (input + output) in tokens. */
   contextWindow: number;
@@ -265,4 +272,17 @@ export function chatCompletionTokenParams(
   maxTokens: number,
 ): { max_completion_tokens: number } | { max_tokens: number } {
   return requiresMaxCompletionTokens(model) ? { max_completion_tokens: maxTokens } : { max_tokens: maxTokens };
+}
+
+/**
+ * Determine the wire API surface for a given model.
+ * Returns "responses" when the model's provider prefix is `azure-foundry-responses`,
+ * or when an explicit `wireApi` override is provided via config.
+ * All other models default to "chat" (chat.completions.create).
+ */
+export function resolveWireApi(model: string, wireApiOverride?: WireApi): WireApi {
+  if (wireApiOverride) return wireApiOverride;
+  const segments = model.trim().toLowerCase().split("/").filter(Boolean);
+  if (segments[0] === "azure-foundry-responses") return "responses";
+  return "chat";
 }

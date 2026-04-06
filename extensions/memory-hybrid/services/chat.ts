@@ -13,7 +13,10 @@ import {
   getDistillMaxOutputTokens as getDistillMaxOutputTokensFromCatalog,
   isReasoningModel,
   requiresMaxCompletionTokens,
+  resolveWireApi,
+  type WireApi,
 } from "./model-capabilities.js";
+import { callResponsesApi } from "./responses-adapter.js";
 import { is403QuotaOrRateLimitLike, parseGoDurationToMs, parseRetryAfterMs } from "./llm-rate-limit-headers.js";
 
 export { is403QuotaOrRateLimitLike, parseGoDurationToMs, parseRetryAfterMs } from "./llm-rate-limit-headers.js";
@@ -408,8 +411,19 @@ export async function chatComplete(opts: {
   signal?: AbortSignal;
   /** Feature label for cost tracking. When set, the call is wrapped in withCostFeature() so the proxy records the correct label. */
   feature?: string;
+  /** Force a specific wire API surface ("chat" or "responses"). When unset, resolved from the model's provider prefix. */
+  wireApi?: WireApi;
 }): Promise<string> {
-  const { model, content, temperature = 0.2, maxTokens, timeoutMs = DEFAULT_CHAT_TIMEOUT_MS, signal, feature } = opts;
+  const {
+    model,
+    content,
+    temperature = 0.2,
+    maxTokens,
+    timeoutMs = DEFAULT_CHAT_TIMEOUT_MS,
+    signal,
+    feature,
+    wireApi: wireApiOverride,
+  } = opts;
   const effectiveMaxTokens = maxTokens ?? distillMaxOutputTokens(model);
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
@@ -423,7 +437,22 @@ export async function chatComplete(opts: {
   }
 
   try {
-    // Newer models (GPT-5+, GPT-4.1*, o-series) require max_completion_tokens and reject max_tokens; reasoning models also reject temperature/top_p.
+    const wireApi = resolveWireApi(model, wireApiOverride);
+
+    if (wireApi === "responses") {
+      const doCreate = () =>
+        callResponsesApi(
+          opts.openai,
+          { model, content, temperature, maxTokens: effectiveMaxTokens },
+          { signal: controller.signal },
+        );
+      const { text } = await (feature ? withCostFeature(feature, doCreate) : doCreate());
+      clearTimeout(timeoutId);
+      if (signal) signal.removeEventListener("abort", onAbort);
+      return text;
+    }
+
+    // Standard chat.completions.create path
     const useMaxCompletionTokens = requiresMaxCompletionTokens(model);
     const body: OpenAI.ChatCompletionCreateParamsNonStreaming = {
       model,

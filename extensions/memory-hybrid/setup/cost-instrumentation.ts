@@ -13,7 +13,8 @@ export function inferFeatureLabel(body: Record<string, unknown>, _model: string)
 
   // Heuristic: scan message content for known feature fingerprints.
   // Patterns are derived from the ACTUAL prompt templates in prompts/*.txt to ensure matches.
-  const messages = Array.isArray(body.messages) ? body.messages : [];
+  // Support both Chat API (body.messages) and Responses API (body.input) formats.
+  const messages = Array.isArray(body.messages) ? body.messages : Array.isArray(body.input) ? body.input : [];
   const content = messages
     .map((m: unknown) => String((m as Record<string, unknown>)?.content ?? ""))
     .join(" ")

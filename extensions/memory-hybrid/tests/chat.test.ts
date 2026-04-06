@@ -20,7 +20,7 @@ import {
   parseRetryAfterMs,
   withLLMRetry,
 } from "../services/chat.js";
-import { isReasoningModel, requiresMaxCompletionTokens } from "../services/model-capabilities.js";
+import { isReasoningModel, requiresMaxCompletionTokens, resolveWireApi } from "../services/model-capabilities.js";
 
 vi.mock("../services/error-reporter.js", () => ({
   capturePluginError: vi.fn(),
@@ -1871,5 +1871,95 @@ describe("isAbortOrTransientLlmError", () => {
 
   it("returns false for arbitrary model failure", () => {
     expect(isAbortOrTransientLlmError(new Error("model not found"))).toBe(false);
+  });
+});
+
+describe("resolveWireApi", () => {
+  it('returns "responses" for azure-foundry-responses prefix', () => {
+    expect(resolveWireApi("azure-foundry-responses/o3-pro")).toBe("responses");
+    expect(resolveWireApi("azure-foundry-responses/gpt-5.4-pro")).toBe("responses");
+  });
+
+  it('returns "chat" for standard providers', () => {
+    expect(resolveWireApi("openai/gpt-4o")).toBe("chat");
+    expect(resolveWireApi("google/gemini-2.0-flash")).toBe("chat");
+    expect(resolveWireApi("azure-foundry/gpt-5.4-nano")).toBe("chat");
+    expect(resolveWireApi("anthropic/claude-sonnet-4-5")).toBe("chat");
+  });
+
+  it("respects explicit wireApi override", () => {
+    expect(resolveWireApi("openai/gpt-4o", "responses")).toBe("responses");
+    expect(resolveWireApi("azure-foundry-responses/o3-pro", "chat")).toBe("chat");
+  });
+
+  it('defaults to "chat" for bare model names', () => {
+    expect(resolveWireApi("gpt-4o")).toBe("chat");
+    expect(resolveWireApi("o3-pro")).toBe("chat");
+  });
+});
+
+describe("chatComplete with wireApi='responses'", () => {
+  const mockResponsesCreate = vi.fn().mockResolvedValue({
+    id: "resp_123",
+    output: [
+      {
+        type: "message",
+        role: "assistant",
+        content: [{ type: "output_text", text: "Response from Responses API" }],
+      },
+    ],
+    usage: { input_tokens: 10, output_tokens: 5 },
+  });
+
+  const mockOpenaiWithResponses = {
+    chat: {
+      completions: {
+        create: vi.fn(),
+      },
+    },
+    responses: {
+      create: mockResponsesCreate,
+    },
+  } as unknown as import("openai").default;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("uses responses.create when wireApi is 'responses'", async () => {
+    const result = await chatComplete({
+      model: "azure-foundry-responses/o3-pro",
+      content: "test",
+      openai: mockOpenaiWithResponses,
+      wireApi: "responses",
+    });
+    expect(result).toBe("Response from Responses API");
+    expect(mockResponsesCreate).toHaveBeenCalled();
+    expect(mockOpenaiWithResponses.chat.completions.create).not.toHaveBeenCalled();
+  });
+
+  it("auto-detects responses wire for azure-foundry-responses prefix", async () => {
+    const result = await chatComplete({
+      model: "azure-foundry-responses/o3-pro",
+      content: "test",
+      openai: mockOpenaiWithResponses,
+    });
+    expect(result).toBe("Response from Responses API");
+    expect(mockResponsesCreate).toHaveBeenCalled();
+  });
+
+  it("still uses chat.completions.create for standard models", async () => {
+    vi.mocked(mockOpenaiWithResponses.chat.completions.create).mockResolvedValue({
+      choices: [{ message: { content: "Hello from Chat" } }],
+    } as any);
+
+    const result = await chatComplete({
+      model: "openai/gpt-4o",
+      content: "test",
+      openai: mockOpenaiWithResponses,
+    });
+    expect(result).toBe("Hello from Chat");
+    expect(mockOpenaiWithResponses.chat.completions.create).toHaveBeenCalled();
+    expect(mockResponsesCreate).not.toHaveBeenCalled();
   });
 });
