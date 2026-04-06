@@ -47,7 +47,7 @@ All tools use **underscore** names (`memory_store`, `memory_recall`, …). Dotte
 | `backends/` | SQLite, LanceDB, event bus, etc. |
 | `tools/` | Tool implementations and dashboard routes |
 | `cli/` | `hybrid-mem` commands |
-| `skills/hybrid-memory/` | Bundled Agent Skill (`SKILL.md` + references) |
+| `skills/hybrid-memory/` | Bundled Agent Skill (`SKILL.md` + references); copied to `{workspace}/skills/hybrid-memory/` on **first plugin start** if absent (or use `hybrid-mem install` to refresh) |
 
 ---
 

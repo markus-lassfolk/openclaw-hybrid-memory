@@ -1688,6 +1688,7 @@
             "type": "string",
             "description": "Path to ACTIVE-TASKS.md relative to OPENCLAW_WORKSPACE or absolute (default: ACTIVE-TASKS.md)"
           },
+
           "staleThreshold": {
             "type": "string",
             "description": "Duration string after which a task row is stale (e.g. 24h, 7d)"
