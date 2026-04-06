@@ -210,7 +210,7 @@ export function readActiveTaskRowsFromFacts(
 }
 
 /** Normalize description for `dedupeBy: normalizedTitle`. */
-export function normalizeActiveTaskTitleForDedupe(description: string): string {
+function normalizeActiveTaskTitleForDedupe(description: string): string {
   return description.trim().toLowerCase().replace(/\s+/g, " ");
 }
 
@@ -271,7 +271,7 @@ export function buildFactsSectionedMarkdownBody(
 
   if (hot.length > 0 || omitted.active > 0) {
     parts.push("## Active\n");
-    if (hot.length === 0) {
+    if (hot.length === 0 && omitted.active === 0) {
       parts.push("_None._\n");
     } else {
       for (const entry of hot) {
@@ -288,7 +288,7 @@ export function buildFactsSectionedMarkdownBody(
 
   if (stale.length > 0 || omitted.stale > 0) {
     parts.push("## Stale — revisit\n");
-    if (stale.length === 0) {
+    if (stale.length === 0 && omitted.stale === 0) {
       parts.push("_None._\n");
     } else {
       for (const entry of stale) {
