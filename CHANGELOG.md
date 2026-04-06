@@ -22,6 +22,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.4.60] - 2026-04-06
+
+### Release summary
+
+**2026.4.60** adds **first-class OpenAI Responses API** support for plugin LLM calls (`responses.create`), including the **`azure-foundry-responses/`** model prefix, **`WireApi`** / **`resolveWireApi()`**, a **responses adapter**, **`chatComplete`** routing, and **multi-provider OpenAI proxy** handling for both `chat.completions` and `responses` (with **chat → Responses bridging** for direct `chat.completions.create` call sites such as classification). **Cost tracking** and **feature labeling** support Responses request shapes (`body.input` as well as `messages`); **`verify --test-llm`** exercises Responses-backed models. **Documentation** covers Azure Foundry Responses configuration. Also fixes a **procedures DB test** timing flake in CI.
+
+### Added
+
+- **LLM:** OpenAI **Responses API** wire for Azure Foundry Responses-only deployments; shared cost instrumentation and provider-router parity for chat vs responses surfaces.
+
+### Fixed
+
+- **Tests:** Deterministic **`lastOutcome`** assertion in **`procedures-db.test.ts`** (Unix-second timestamp ordering across Node versions).
+
+---
+
 ## [2026.4.52] - 2026-04-05
 
 ### Release summary
@@ -1279,7 +1295,8 @@ Major feature release including procedural memory, directive extraction, reinfor
 
 ---
 
-[Unreleased]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.4.52...HEAD
+[Unreleased]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.4.60...HEAD
+[2026.4.60]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.4.52...v2026.4.60
 [2026.4.52]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.4.51...v2026.4.52
 [2026.4.51]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.4.40...v2026.4.51
 [2026.4.40]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.4.38...v2026.4.40
