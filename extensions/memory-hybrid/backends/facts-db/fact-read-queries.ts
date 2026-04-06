@@ -89,7 +89,9 @@ export function findSimilarForClassification(
         if (ftsRows.length > 0) {
           const ph = ftsRows.map(() => "?").join(",");
           const factRows = db
-            .prepare(`SELECT * FROM facts WHERE rowid IN (${ph}) AND superseded_at IS NULL AND (expires_at IS NULL OR expires_at > ?)`)
+            .prepare(
+              `SELECT * FROM facts WHERE rowid IN (${ph}) AND superseded_at IS NULL AND (expires_at IS NULL OR expires_at > ?)`,
+            )
             .all(...ftsRows.map((r) => r.rowid), nowSec) as Array<Record<string, unknown>>;
           for (const row of factRows) {
             const entry = rowToMemoryEntry(row);

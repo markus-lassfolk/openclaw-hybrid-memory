@@ -9,7 +9,6 @@
  */
 
 import type { DatabaseSync } from "node:sqlite";
-import type { SQLInputValue } from "node:sqlite";
 import { pluginLogger } from "../utils/logger.js";
 
 // ---------------------------------------------------------------------------
@@ -170,25 +169,6 @@ export function searchFts(
   // Prefix query with column filter if requested.
   const matchExpr = validColumns.length > 0 ? `{ ${validColumns.join(" ")} } : ( ${ftsQuery} )` : ftsQuery;
 
-  // Build WHERE clauses for structured filters.
-  const extraClauses: string[] = [];
-  const params: Record<string, SQLInputValue> = { "@query": matchExpr, "@limit": limit };
-
-  if (!includeSuperseded) {
-    // Use asOf when provided so point-in-time queries filter against the correct timestamp.
-    const nowSec = asOf ?? Math.floor(Date.now() / 1000);
-    extraClauses.push("AND f.superseded_at IS NULL AND (f.expires_at IS NULL OR f.expires_at > @nowSec)");
-    params["@nowSec"] = nowSec;
-  }
-  if (entityFilter?.trim()) {
-    extraClauses.push("AND LOWER(f.entity) = LOWER(@entityFilter)");
-    params["@entityFilter"] = entityFilter.trim();
-  }
-  if (tagFilter?.trim()) {
-    extraClauses.push("AND (',' || COALESCE(f.tags,'') || ',') LIKE @tagPattern");
-    params["@tagPattern"] = `%,${tagFilter.toLowerCase().trim()},%`;
-  }
-
   let rows: Array<{
     factId: string;
     text: string;
@@ -227,7 +207,10 @@ export function searchFts(
       filterParams.push(`%,${tagFilter.toLowerCase().trim()},%`);
     }
     const filteredFacts = db.prepare(filterSql).all(...filterParams) as Array<{
-      id: string; text: string; entity: string | null; _rowid: number;
+      id: string;
+      text: string;
+      entity: string | null;
+      _rowid: number;
     }>;
     if (filteredFacts.length === 0) return [];
 
@@ -259,8 +242,10 @@ export function searchFts(
          LIMIT ?`,
       )
       .all(...snippetParams) as Array<{
-        _rowid: number; snippet: string | null; matchInfo: string | null;
-      }>;
+      _rowid: number;
+      snippet: string | null;
+      matchInfo: string | null;
+    }>;
 
     const snippetByRowid = new Map(snippetRows.map((r) => [r._rowid, r]));
     rows = survivingRowids
