@@ -67,12 +67,13 @@ export function buildGoalEscalationHeartbeatBlock(
   ];
   const closingTag = "</goal-escalation>";
   const body = lines.join("\n");
-  const full = `${body}\n${closingTag}`;
-  if (full.length <= opts.maxChars) {
-    return full;
+  if (body.length <= opts.maxChars) {
+    return body;
   }
+  const openingTag = "<goal-escalation>";
   const truncatedSuffix = `\n…(truncated)\n${closingTag}`;
-  const availableBodyChars = Math.max(0, opts.maxChars - truncatedSuffix.length);
+  const minChars = openingTag.length + truncatedSuffix.length;
+  const availableBodyChars = Math.max(openingTag.length, opts.maxChars - truncatedSuffix.length);
   return `${body.slice(0, availableBodyChars)}${truncatedSuffix}`;
 }
 

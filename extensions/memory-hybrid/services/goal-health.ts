@@ -10,7 +10,7 @@ import { promisify } from "node:util";
 import type { EventLog } from "../backends/event-log.js";
 import type { GoalStewardshipConfig } from "../config/types/index.js";
 import { getEnv } from "../utils/env-manager.js";
-import { isTerminalStatus, listGoals, readGoal, updateGoal } from "./goal-registry.js";
+import { isTerminalStatus, listGoals, readGoal, updateGoal, writeGoal } from "./goal-registry.js";
 import type { Goal, GoalHistoryEntry } from "./goal-stewardship-types.js";
 import { isPidAlive } from "./task-queue-watchdog.js";
 
@@ -304,28 +304,21 @@ export async function runGoalHealthCheck(opts: GoalHealthCheckOptions): Promise<
       if (mech.detail === "skip") continue;
 
       const checkAt = nowIso();
-      const patch: Partial<Pick<Goal, "status" | "lastOutcome" | "lastMechanicalCheck">> = {
-        lastMechanicalCheck: { at: checkAt, ok: mech.ok, detail: mech.detail },
-      };
-      let hist: GoalHistoryEntry;
       if (mech.ok && (g.status === "active" || g.status === "stalled")) {
-        patch.status = "verifying";
-        patch.lastOutcome = mech.detail;
-        hist = { timestamp: checkAt, action: "verification-passed", detail: mech.detail, actor: "watchdog" };
-      } else {
-        hist = {
-          timestamp: checkAt,
-          action: mech.ok ? "mechanical-ok" : "mechanical-fail",
-          detail: mech.detail.slice(0, 500),
-          actor: "watchdog",
-        };
-      }
-      await updateGoal(goalsDir, g.id, patch, hist);
-      result.goalsUpdated++;
-      if (patch.status === "verifying") {
+        await updateGoal(
+          goalsDir,
+          g.id,
+          {
+            status: "verifying",
+            lastOutcome: mech.detail,
+            lastMechanicalCheck: { at: checkAt, ok: true, detail: mech.detail },
+          },
+          { timestamp: checkAt, action: "verification-passed", detail: mech.detail, actor: "watchdog" },
+        );
+        result.goalsUpdated++;
         result.actions.push({ goalId: g.id, label: g.label, action: "verifying", reason: mech.detail });
       } else {
-        result.actions.push({ goalId: g.id, label: g.label, action: "mechanical-check", reason: mech.detail });
+        await writeGoal(goalsDir, { ...g, lastMechanicalCheck: { at: checkAt, ok: mech.ok, detail: mech.detail } });
       }
     }
   }

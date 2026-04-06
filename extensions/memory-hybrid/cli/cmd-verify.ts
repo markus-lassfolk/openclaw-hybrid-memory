@@ -1108,7 +1108,9 @@ export async function runVerifyForCli(
         } else {
           log(`${OK} Cron jobs with heartbeat-matching message: ${h.matchingJobIds.join(", ")}`);
           if (h.disabledMatchingJobIds.length > 0) {
-            log(`${INFO} (Disabled jobs also matched — excluded from delivery: ${h.disabledMatchingJobIds.join(", ")})`);
+            log(
+              `${INFO} (Disabled jobs also matched — excluded from delivery: ${h.disabledMatchingJobIds.join(", ")})`,
+            );
           }
         }
       }
