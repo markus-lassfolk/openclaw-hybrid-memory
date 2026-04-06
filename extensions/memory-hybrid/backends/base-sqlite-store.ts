@@ -193,6 +193,7 @@ export abstract class BaseSqliteStore {
         this.closePhase = "closing";
         return;
       }
+      if (!this._dbOpen) return;
 
       this._dbOpen = false;
       this._closed = false;
