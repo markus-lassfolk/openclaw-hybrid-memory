@@ -419,9 +419,23 @@ export async function renderActiveTaskMarkdownFile(
   const hotRaw = active.filter((t) => !t.stale);
   const staleRaw = active.filter((t) => t.stale);
 
-  const capAct = capRows(hotRaw, projection.maxRowsPerSection);
-  const capStale = capRows(staleRaw, projection.maxRowsPerSection);
-  const capDone = capRows(completed, projection.maxRowsPerSection);
+  let capAct: { rows: ActiveTaskEntry[]; omitted: number };
+  let capStale: { rows: ActiveTaskEntry[]; omitted: number };
+  let capDone: { rows: ActiveTaskEntry[]; omitted: number };
+  let combinedActiveOmitted = 0;
+
+  if (projection.sectioned) {
+    capAct = capRows(hotRaw, projection.maxRowsPerSection);
+    capStale = capRows(staleRaw, projection.maxRowsPerSection);
+    capDone = capRows(completed, projection.maxRowsPerSection);
+  } else {
+    const combinedActive = [...hotRaw, ...staleRaw];
+    const cappedCombined = capRows(combinedActive, projection.maxRowsPerSection);
+    capAct = { rows: cappedCombined.rows.filter((t) => !t.stale), omitted: 0 };
+    capStale = { rows: cappedCombined.rows.filter((t) => t.stale), omitted: 0 };
+    combinedActiveOmitted = cappedCombined.omitted;
+    capDone = capRows(completed, projection.maxRowsPerSection);
+  }
 
   const body = projection.sectioned
     ? buildFactsSectionedMarkdownBody(capAct.rows, capStale.rows, capDone.rows, {
@@ -430,7 +444,7 @@ export async function renderActiveTaskMarkdownFile(
         completed: capDone.omitted,
       })
     : serializeActiveTaskFile([...capAct.rows, ...capStale.rows], capDone.rows, undefined, {
-        active: capAct.omitted + capStale.omitted,
+        active: combinedActiveOmitted,
         completed: capDone.omitted,
       });
 
