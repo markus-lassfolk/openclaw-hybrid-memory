@@ -82,17 +82,24 @@ export function findSimilarForClassification(
     const words = buildClassificationFtsOrClause(text);
     if (words) {
       try {
-        const rows = db
-          .prepare(
-            "SELECT f.* FROM facts f JOIN facts_fts fts ON f.rowid = fts.rowid WHERE facts_fts MATCH ? AND f.superseded_at IS NULL AND (f.expires_at IS NULL OR f.expires_at > ?) LIMIT ?",
-          )
-          .all(words, nowSec, remaining + results.length) as Array<Record<string, unknown>>;
-        for (const row of rows) {
-          const entry = rowToMemoryEntry(row);
-          if (!seenIds.has(entry.id)) {
-            results.push(entry);
-            seenIds.add(entry.id);
-            if (results.length >= limit) break;
+        const fetchLimit = (remaining + results.length) * 3;
+        const ftsRows = db
+          .prepare("SELECT rowid FROM facts_fts WHERE facts_fts MATCH ? ORDER BY rank LIMIT ?")
+          .all(words, fetchLimit) as Array<{ rowid: number }>;
+        if (ftsRows.length > 0) {
+          const ph = ftsRows.map(() => "?").join(",");
+          const factRows = db
+            .prepare(
+              `SELECT * FROM facts WHERE rowid IN (${ph}) AND superseded_at IS NULL AND (expires_at IS NULL OR expires_at > ?)`,
+            )
+            .all(...ftsRows.map((r) => r.rowid), nowSec) as Array<Record<string, unknown>>;
+          for (const row of factRows) {
+            const entry = rowToMemoryEntry(row);
+            if (!seenIds.has(entry.id)) {
+              results.push(entry);
+              seenIds.add(entry.id);
+              if (results.length >= limit) break;
+            }
           }
         }
       } catch (err) {
