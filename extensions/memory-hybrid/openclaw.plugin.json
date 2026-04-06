@@ -118,7 +118,7 @@
     },
     "autoRecall.minScore": {
       "label": "Auto-Recall min score",
-      "help": "Vector search minimum score 0\u20131 (default 0.3)"
+      "help": "Vector search minimum score 0–1 (default 0.3)"
     },
     "autoRecall.preferLongTerm": {
       "label": "Auto-Recall prefer long-term",
@@ -244,7 +244,7 @@
     },
     "autoClassify.suggestCategories": {
       "label": "Suggest categories",
-      "help": "Let LLM suggest new categories from 'other' facts; labels with \u2265 minFactsForNewCategory become real categories"
+      "help": "Let LLM suggest new categories from 'other' facts; labels with ≥ minFactsForNewCategory become real categories"
     },
     "autoClassify.minFactsForNewCategory": {
       "label": "Min facts for new category",
@@ -306,7 +306,7 @@
     },
     "errorReporting.sampleRate": {
       "label": "Error reporting sample rate",
-      "help": "Fraction of errors to report 0\u20131 (default: 1.0)"
+      "help": "Fraction of errors to report 0–1 (default: 1.0)"
     },
     "errorReporting.botId": {
       "label": "Error reporting bot ID (UUID)",
@@ -456,7 +456,7 @@
     },
     "languageKeywords.weeklyIntervalDays": {
       "label": "Language keywords interval (days)",
-      "help": "Days between auto-builds (1\u201330, default 7)"
+      "help": "Days between auto-builds (1–30, default 7)"
     },
     "reflection.enabled": {
       "label": "Reflection layer",
@@ -477,7 +477,7 @@
     },
     "nightlyCycle.enabled": {
       "label": "Nightly dream cycle",
-      "help": "Run automated prune \u2192 consolidate \u2192 reflect pipeline (cron job nightly-dream-cycle). Default: false."
+      "help": "Run automated prune → consolidate → reflect pipeline (cron job nightly-dream-cycle). Default: false."
     },
     "passiveObserver.enabled": {
       "label": "Passive observer",
@@ -503,7 +503,7 @@
     "multiAgent.defaultStoreScope": {
       "label": "Default Store Scope",
       "placeholder": "global",
-      "help": "Default scope for new facts: 'global' (all agents, backward compatible), 'agent' (specialists auto-scope), or 'auto' (orchestrator\u2192global, specialists\u2192agent). Default: 'global'."
+      "help": "Default scope for new facts: 'global' (all agents, backward compatible), 'agent' (specialists auto-scope), or 'auto' (orchestrator→global, specialists→agent). Default: 'global'."
     },
     "trajectoryLLMAnalysis": {
       "label": "Trajectory LLM Analysis",
@@ -532,7 +532,7 @@
     },
     "goalStewardship.enabled": {
       "label": "Goal stewardship",
-      "help": "Enable long-running goal registry, agent tools (goal_register, \u2026), heartbeat injection, and optional watchdog health checks. Default: false. See docs/GOAL-STEWARDSHIP-DESIGN.md."
+      "help": "Enable long-running goal registry, agent tools (goal_register, …), heartbeat injection, and optional watchdog health checks. Default: false. See docs/GOAL-STEWARDSHIP-DESIGN.md."
     },
     "goalStewardship.goalsDir": {
       "label": "Goals directory",
@@ -592,11 +592,11 @@
           },
           "ollamaModel": {
             "type": "string",
-            "description": "Ollama model name \u2014 alias for 'model' when provider='ollama'. E.g. 'nomic-embed-text' (768-dim), 'mxbai-embed-large' (1024-dim), 'all-minilm' (384-dim)."
+            "description": "Ollama model name — alias for 'model' when provider='ollama'. E.g. 'nomic-embed-text' (768-dim), 'mxbai-embed-large' (1024-dim), 'all-minilm' (384-dim)."
           },
           "onnxModelPath": {
             "type": "string",
-            "description": "ONNX model path or identifier \u2014 alias for 'model' when provider='onnx'. E.g. 'all-MiniLM-L6-v2' (384-dim), 'bge-small-en-v1.5' (384-dim)."
+            "description": "ONNX model path or identifier — alias for 'model' when provider='onnx'. E.g. 'all-MiniLM-L6-v2' (384-dim), 'bge-small-en-v1.5' (384-dim)."
           },
           "onnxTokenizerPath": {
             "type": "string",
@@ -620,7 +620,7 @@
               "type": "string",
               "enum": ["openai", "google", "ollama"]
             },
-            "description": "Explicit ordered list of embedding providers to use. When set, only listed providers are tried (in order); auto-inference from available API keys is skipped. Use [\"openai\"] to pin to Azure/OpenAI only and prevent Google from being auto-added as a fallback when GEMINI_API_KEY is also set. Mixing providers with different vector dimensions is not supported \u2014 ensure all listed providers produce the same dimensions as your stored vectors."
+            "description": "Explicit ordered list of embedding providers to use. When set, only listed providers are tried (in order); auto-inference from available API keys is skipped. Use [\"openai\"] to pin to Azure/OpenAI only and prevent Google from being auto-added as a fallback when GEMINI_API_KEY is also set. Mixing providers with different vector dimensions is not supported — ensure all listed providers produce the same dimensions as your stored vectors."
           },
           "batchSize": {
             "type": "number",
@@ -939,7 +939,7 @@
             "minimum": 0,
             "maximum": 1,
             "default": 1,
-            "description": "Sample rate 0\u20131 (default: 1.0)"
+            "description": "Sample rate 0–1 (default: 1.0)"
           },
           "botId": {
             "type": "string",
@@ -1209,7 +1209,7 @@
             "description": "Recurring identity reflection questions"
           }
         },
-        "description": "Identity reflection layer \u2014 synthesize persona-level insights from reflection outputs"
+        "description": "Identity reflection layer — synthesize persona-level insights from reflection outputs"
       },
       "graph": {
         "type": "object",
@@ -1355,7 +1355,7 @@
           "defaultStoreScope": {
             "type": "string",
             "enum": ["global", "agent", "auto"],
-            "description": "Default scope for new facts: 'global' (all agents, backward compatible), 'agent' (specialists auto-scope), or 'auto' (orchestrator\u2192global, specialists\u2192agent). Default: 'global'."
+            "description": "Default scope for new facts: 'global' (all agents, backward compatible), 'agent' (specialists auto-scope), or 'auto' (orchestrator→global, specialists→agent). Default: 'global'."
           }
         },
         "description": "Multi-agent memory scoping: dynamic agent detection and scope defaults"
@@ -1679,28 +1679,19 @@
             "type": "boolean",
             "description": "Enable ACTIVE-TASKS.md injection and related tooling (default: true)"
           },
+          "ledger": {
+            "type": "string",
+            "enum": ["markdown", "facts"],
+            "description": "Task ledger backend. \"markdown\" = legacy ACTIVE-TASKS.md file ledger (default). \"facts\" = canonical facts DB with optional ACTIVE-TASKS.md projection via hybrid-mem active-tasks render."
+          },
           "filePath": {
             "type": "string",
             "description": "Path to ACTIVE-TASKS.md relative to OPENCLAW_WORKSPACE or absolute (default: ACTIVE-TASKS.md)"
           },
-          "injectionBudget": {
-            "type": "integer",
-            "minimum": 1,
-            "description": "Token budget for active-task injection summary (default: 500). Positive integer only (`minimum: 1`). Matches runtime: fractional values are floored; missing or non-positive values fall back to the default."
-          },
+
           "staleThreshold": {
             "type": "string",
             "description": "Duration string after which a task row is stale (e.g. 24h, 7d)"
-          },
-          "staleWarning": {
-            "type": "object",
-            "additionalProperties": false,
-            "properties": {
-              "enabled": {
-                "type": "boolean",
-                "description": "Inject stale-task warnings alongside the summary (default: true)"
-              }
-            }
           },
           "taskHygiene": {
             "type": "object",
@@ -1720,6 +1711,35 @@
               }
             },
             "description": "Heartbeat nudges for tactical tasks; see docs/TASK-HYGIENE.md"
+          },
+          "staleWarning": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "enabled": {
+                "type": "boolean",
+                "description": "Inject stale-task warnings alongside the summary (default: true)"
+              }
+            }
+          },
+          "autoCheckpoint": {
+            "type": "boolean",
+            "description": "Auto-checkpoint completed tasks to facts DB (default: true)"
+          },
+          "flushOnComplete": {
+            "type": "boolean",
+            "description": "Flush task state to facts DB on task completion (default: true)"
+          },
+          "injectionBudget": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Token budget for active-task injection summary (default: 500)"
+          },
+          "staleHours": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "[DEPRECATED — use staleThreshold] Legacy stale task threshold in hours (integer > 0). Mapped internally to staleThreshold as \"{N}h\".",
+            "deprecated": true
           }
         },
         "description": "Working memory file ACTIVE-TASKS.md: injection, stale warnings, optional heartbeat hygiene"
