@@ -127,7 +127,7 @@ export async function buildDailyNarrative(params: BuildDailyNarrativeParams): Pr
     const asError = err instanceof Error ? err : new Error(String(err));
     const transient = isAbortOrTransientLlmError(err) || is500OrWrapped(asError);
     if (!transient) {
-      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+      capturePluginError(asError, {
         subsystem: "narratives",
         operation: "build-daily-narrative",
         sessionId,

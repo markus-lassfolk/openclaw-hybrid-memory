@@ -210,7 +210,7 @@ describe("searchProceduresRanked (confidence-weighted ranking)", () => {
     expect(recent).toBeDefined();
     expect(old).toBeDefined();
     // Recent should have higher score due to recency
-expect(recent?.relevanceScore ?? 0).toBeGreaterThan(old?.relevanceScore ?? 0);
+    expect(recent?.relevanceScore ?? 0).toBeGreaterThan(old?.relevanceScore ?? 0);
     // Old procedure should have at least 0.3 recency factor
     expect(old?.relevanceScore).toBeGreaterThan(0);
   });
@@ -271,7 +271,7 @@ expect(recent?.relevanceScore ?? 0).toBeGreaterThan(old?.relevanceScore ?? 0);
     expect(recent).toBeDefined();
     expect(old).toBeDefined();
     // Recent failure should have lower score (penalty applied)
-expect(recent?.relevanceScore ?? 0).toBeLessThan(old?.relevanceScore ?? 0);
+    expect(recent?.relevanceScore ?? 0).toBeLessThan(old?.relevanceScore ?? 0);
   });
 
   it("penalizes never-validated procedures (30% penalty)", () => {
@@ -295,9 +295,9 @@ expect(recent?.relevanceScore ?? 0).toBeLessThan(old?.relevanceScore ?? 0);
     expect(val).toBeDefined();
     expect(never).toBeDefined();
     // Validated should have higher score
-expect(val?.relevanceScore ?? 0).toBeGreaterThan(never?.relevanceScore ?? 0);
+    expect(val?.relevanceScore ?? 0).toBeGreaterThan(never?.relevanceScore ?? 0);
     // Never-validated should have ~70% of validated score (30% penalty)
-expect(never?.relevanceScore ?? 0).toBeLessThan((val?.relevanceScore ?? 0) * 0.75);
+    expect(never?.relevanceScore ?? 0).toBeLessThan((val?.relevanceScore ?? 0) * 0.75);
   });
 
   it("returns procedures matching FTS query", () => {

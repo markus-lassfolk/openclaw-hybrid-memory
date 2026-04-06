@@ -11,6 +11,7 @@ import { calculateExpiry, classifyDecay } from "../../utils/decay.js";
 import { createTransaction } from "../../utils/sqlite-transaction.js";
 import { parseTags } from "../../utils/tags.js";
 import type { StoreFactInput } from "./crud.js";
+import { preserveTagsColumnExcludesFromTrimSql } from "./fact-queries.js";
 
 export function logRecall(db: DatabaseSync, hit: boolean, occurredAtSec?: number): void {
   const id = randomUUID();
@@ -182,7 +183,7 @@ export function trimToBudget(
     const isEdict = hasTag(tagsStr, "edict");
     const isVerified = row.is_verified === 1;
     const hasPreserveUntil = row.preserve_until != null && row.preserve_until > nowSec;
-    const hasPreserveTags = preserveTags.length > 0;
+    const hasPreserveTags = preserveTags.length > 0 || preserveTagsColumnExcludesFromTrimSql(row.preserve_tags);
 
     if (isEdict || isVerified || hasPreserveUntil || hasPreserveTags) {
       p0.push({ id: row.id, text: row.text });

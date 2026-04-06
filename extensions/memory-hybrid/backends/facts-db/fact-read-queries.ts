@@ -82,18 +82,31 @@ export function findSimilarForClassification(
     const words = buildClassificationFtsOrClause(text);
     if (words) {
       try {
-        const fetchLimit = (remaining + results.length) * 3;
-        const ftsRows = db
-          .prepare("SELECT rowid FROM facts_fts WHERE facts_fts MATCH ? ORDER BY rank LIMIT ?")
-          .all(words, fetchLimit) as Array<{ rowid: number }>;
-        if (ftsRows.length > 0) {
-          const ph = ftsRows.map(() => "?").join(",");
-          const factRows = db
-            .prepare(
-              `SELECT * FROM facts WHERE rowid IN (${ph}) AND superseded_at IS NULL AND (expires_at IS NULL OR expires_at > ?)`,
-            )
-            .all(...ftsRows.map((r) => r.rowid), nowSec) as Array<Record<string, unknown>>;
-          for (const row of factRows) {
+        const ftsStmt = db.prepare("SELECT rowid FROM facts_fts WHERE facts_fts MATCH ? ORDER BY rank LIMIT ?");
+        let fetchLimit = Math.max((remaining + results.length) * 3, 50);
+        const maxFetch = Math.min(10_000, Math.max(remaining * 200, 500));
+        for (;;) {
+          const ftsRows = ftsStmt.all(words, fetchLimit) as Array<{ rowid: number }>;
+          if (ftsRows.length === 0) break;
+
+          const CHUNK_SIZE = 500;
+          const allRows: Array<Record<string, unknown>> = [];
+          for (let i = 0; i < ftsRows.length; i += CHUNK_SIZE) {
+            const chunk = ftsRows.slice(i, i + CHUNK_SIZE);
+            const ph = chunk.map(() => "?").join(",");
+            allRows.push(
+              ...(db
+                .prepare(
+                  `SELECT *, rowid AS _rowid FROM facts WHERE rowid IN (${ph}) AND superseded_at IS NULL AND (expires_at IS NULL OR expires_at > ?)`,
+                )
+                .all(...chunk.map((r) => r.rowid), nowSec) as Array<Record<string, unknown>>),
+            );
+          }
+          const factRows = allRows;
+          const byRowid = new Map(factRows.map((r) => [r._rowid as number, r]));
+          for (const { rowid } of ftsRows) {
+            const row = byRowid.get(rowid);
+            if (!row) continue;
             const entry = rowToMemoryEntry(row);
             if (!seenIds.has(entry.id)) {
               results.push(entry);
@@ -101,6 +114,11 @@ export function findSimilarForClassification(
               if (results.length >= limit) break;
             }
           }
+
+          if (results.length >= limit) break;
+          if (ftsRows.length < fetchLimit) break;
+          if (fetchLimit >= maxFetch) break;
+          fetchLimit = Math.min(fetchLimit * 2, maxFetch);
         }
       } catch (err) {
         capturePluginError(err as Error, {

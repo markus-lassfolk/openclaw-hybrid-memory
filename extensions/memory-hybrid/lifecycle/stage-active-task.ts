@@ -53,6 +53,7 @@ export function registerActiveTaskInjection(
       const userText = extractLastUserMessageText(event);
       if (
         th.heartbeatEscalation &&
+        ctx.cfg.goalStewardship.enabled &&
         userText &&
         matchesHeartbeat(userText, ctx.cfg.goalStewardship) &&
         activeForInjection.length > 0
