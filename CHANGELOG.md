@@ -8,6 +8,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+---
+
+## [2026.4.61] - 2026-04-06
+
+### Release summary
+
+**2026.4.61** rolls up **retrieval and recall** work: **two-phase FTS** (true phase split for large stores, bounded expansion when post-filters cull candidates, chunked SQL for SQLite limits), **recall pipeline** fixes (embed telemetry excludes HyDE/FTS wait, drain in-flight embed on FTS failure, vector-step hit logging, higher outer timeouts), **OAuth + Responses** (failover on `responses.create` only; inherit `embedding.apiKey` from merged `llm.providers`), and **lifecycle** (heartbeat task-hygiene gated on `goalStewardship.enabled`). **Active tasks:** **facts-backed projection** and operator docs for `ACTIVE-TASKS.md` / ledger. **Goal stewardship:** **heartbeat** verification vs `~/.openclaw/cron/jobs.json`, optional **`pr_merged`** verification (GitHub API, opt-in), **`lastMechanicalCheck`**, escalation nudges and CLI visibility. **Dependencies:** Vite patch bump. Also ships the **operator UX** and **skill bootstrap** items below.
+
 ### Changed
 
 - **Config schema:** `activeTask.injectionBudget` is documented as **`integer`** with **`minimum: 1`** in `openclaw.plugin.json`, matching parse behavior (fractional values floored; non-positive values fall back to the default).
@@ -1295,7 +1303,8 @@ Major feature release including procedural memory, directive extraction, reinfor
 
 ---
 
-[Unreleased]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.4.60...HEAD
+[Unreleased]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.4.61...HEAD
+[2026.4.61]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.4.60...v2026.4.61
 [2026.4.60]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.4.52...v2026.4.60
 [2026.4.52]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.4.51...v2026.4.52
 [2026.4.51]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.4.40...v2026.4.51
