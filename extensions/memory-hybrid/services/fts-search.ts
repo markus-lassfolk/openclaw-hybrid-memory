@@ -255,12 +255,21 @@ export function searchFts(
     const survivingRowids = filteredFacts.map((r) => r._rowid);
     const rankByRowid = new Map(ftsRows.map((r) => [r.rowid, r.rank]));
     const factById = new Map(filteredFacts.map((r) => [r._rowid, r]));
-    const ph2 = survivingRowids.map(() => "?").join(",");
 
-    const snippetParams: Array<string | number> = [...survivingRowids, matchExpr, limit];
-    const snippetRows = db
-      .prepare(
-        `SELECT
+    const SNIPPET_CHUNK_SIZE = 500;
+    const allSnippetRows: Array<{
+      _rowid: number;
+      snippet: string | null;
+      matchInfo: string | null;
+    }> = [];
+    for (let i = 0; i < survivingRowids.length; i += SNIPPET_CHUNK_SIZE) {
+      const chunk = survivingRowids.slice(i, i + SNIPPET_CHUNK_SIZE);
+      const ph2 = chunk.map(() => "?").join(",");
+      const snippetParams: Array<string | number> = [...chunk, matchExpr, limit];
+      allSnippetRows.push(
+        ...(db
+          .prepare(
+            `SELECT
            fts.rowid AS _rowid,
            snippet(facts_fts, 0, '[', ']', '...', 16) AS snippet,
            (
@@ -277,14 +286,16 @@ export function searchFts(
            AND facts_fts MATCH ?
          ORDER BY fts.rank
          LIMIT ?`,
-      )
-      .all(...snippetParams) as Array<{
-      _rowid: number;
-      snippet: string | null;
-      matchInfo: string | null;
-    }>;
+          )
+          .all(...snippetParams) as Array<{
+          _rowid: number;
+          snippet: string | null;
+          matchInfo: string | null;
+        }>),
+      );
+    }
 
-    const snippetByRowid = new Map(snippetRows.map((r) => [r._rowid, r]));
+    const snippetByRowid = new Map(allSnippetRows.map((r) => [r._rowid, r]));
     rows = survivingRowids
       .filter((rid) => snippetByRowid.has(rid))
       .sort((a, b) => (rankByRowid.get(a) ?? 0) - (rankByRowid.get(b) ?? 0))

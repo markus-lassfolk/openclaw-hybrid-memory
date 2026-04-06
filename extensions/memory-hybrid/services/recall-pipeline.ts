@@ -289,11 +289,16 @@ export async function runRecallPipelineQuery(
       const vector = usePrecomputedVector
         ? (_precomputedVector as number[])
         : await embedWithAbortRace(
-            embedPromise,
+            embedPromise.then((v) => {
+              stageMs.embed = Date.now() - embedT0;
+              return v;
+            }),
             directiveAbort.signal,
             `recall pipeline timed out after ${policy.vectorStepTimeoutMs}ms`,
           );
-      stageMs.embed = Date.now() - embedT0;
+      if (usePrecomputedVector) {
+        stageMs.embed = Date.now() - embedT0;
+      }
       recallTiming.phaseCompleted("embed_query", embedStartedAt, {
         precomputed_vector: usePrecomputedVector,
         input_chars: textToEmbed.length,

@@ -135,13 +135,20 @@ export function searchFacts(
 
     const rowids = ftsRows.map((r) => r.rowid);
     const rankByRowid = new Map(ftsRows.map((r) => [r.rowid, r.rank]));
-    const placeholders = rowids.map(() => "?").join(",");
-    const fullRows = db
-      .prepare(`SELECT *, rowid AS _rowid FROM facts WHERE rowid IN (${placeholders})`)
-      .all(...rowids) as Array<Record<string, unknown>>;
+    const CHUNK_SIZE = 500;
+    const allFullRows: Array<Record<string, unknown>> = [];
+    for (let i = 0; i < rowids.length; i += CHUNK_SIZE) {
+      const chunk = rowids.slice(i, i + CHUNK_SIZE);
+      const placeholders = chunk.map(() => "?").join(",");
+      allFullRows.push(
+        ...(db
+          .prepare(`SELECT *, rowid AS _rowid FROM facts WHERE rowid IN (${placeholders})`)
+          .all(...chunk) as Array<Record<string, unknown>>),
+      );
+    }
 
     rows = [];
-    for (const row of fullRows) {
+    for (const row of allFullRows) {
       if (!passesTwoPhaseFilter(row, filterOpts)) continue;
       const rid = row._rowid as number;
       const expiresAt = row.expires_at as number | null | undefined;
