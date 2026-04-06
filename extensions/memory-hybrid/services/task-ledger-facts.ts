@@ -7,19 +7,22 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
-import type { MemoryCategory } from "../config.js";
+import type { ActiveTaskProjectionConfig, MemoryCategory } from "../config.js";
 import type { MemoryEntry } from "../types/memory.js";
 import { CLI_STORE_IMPORTANCE } from "../utils/constants.js";
 import {
   type ActiveTaskEntry,
   type ActiveTaskStatus,
   type PendingTaskSignal,
+  OMITTED_CAP_NOTE,
+  UNKNOWN_ACTIVE_TASK_TIME,
   completeTask,
   deleteSignal,
   detectStaleTasks,
   flushCompletedTaskToMemory,
   readPendingSignals,
   serializeActiveTaskFile,
+  serializeTaskEntry,
   upsertTask,
 } from "./active-task.js";
 import type { EmbeddingProvider } from "./embeddings.js";
@@ -56,6 +59,47 @@ function rowToRecord(row: Map<string, MemoryEntry>): Record<string, string> {
     o[key] = e.value ?? e.text ?? "";
   }
   return o;
+}
+
+function parseIsoFromFactField(value: string | undefined): string | undefined {
+  if (!value?.trim()) return undefined;
+  const ms = Date.parse(value.trim());
+  if (Number.isNaN(ms)) return undefined;
+  return new Date(ms).toISOString();
+}
+
+function createdBoundsFromKeyMap(keyMap: Map<string, MemoryEntry>): { minSec: number; maxSec: number } | null {
+  let minSec = Number.POSITIVE_INFINITY;
+  let maxSec = Number.NEGATIVE_INFINITY;
+  for (const e of keyMap.values()) {
+    const c = e.createdAt;
+    if (typeof c === "number" && Number.isFinite(c)) {
+      minSec = Math.min(minSec, c);
+      maxSec = Math.max(maxSec, c);
+    }
+  }
+  if (minSec === Number.POSITIVE_INFINITY) return null;
+  return { minSec, maxSec };
+}
+
+function resolveTaskStarted(f: Record<string, string>, bounds: ReturnType<typeof createdBoundsFromKeyMap>): string {
+  return (
+    parseIsoFromFactField(f.started) ??
+    parseIsoFromFactField(f.task_started) ??
+    parseIsoFromFactField(f.created_at) ??
+    (bounds ? new Date(bounds.minSec * 1000).toISOString() : undefined) ??
+    UNKNOWN_ACTIVE_TASK_TIME
+  );
+}
+
+function resolveTaskUpdated(f: Record<string, string>, bounds: ReturnType<typeof createdBoundsFromKeyMap>): string {
+  return (
+    parseIsoFromFactField(f.task_updated) ??
+    parseIsoFromFactField(f.updated) ??
+    parseIsoFromFactField(f.updated_at) ??
+    (bounds ? new Date(bounds.maxSec * 1000).toISOString() : undefined) ??
+    UNKNOWN_ACTIVE_TASK_TIME
+  );
 }
 
 export function factStatusToDisplay(raw: string): ActiveTaskStatus {
@@ -108,10 +152,11 @@ export function buildTaskEntriesFromGroupedFacts(byEntity: Map<string, Map<strin
 
   for (const [entity, keyMap] of sorted) {
     const f = rowToRecord(keyMap);
+    const bounds = createdBoundsFromKeyMap(keyMap);
     const statusRaw = (f.status ?? "open").trim();
     const disp = factStatusToDisplay(statusRaw);
-    const started = f.started?.trim() || f.created_at?.trim() || new Date().toISOString();
-    const updated = f.task_updated?.trim() || f.updated?.trim() || f.updated_at?.trim() || new Date().toISOString();
+    const started = resolveTaskStarted(f, bounds);
+    const updated = resolveTaskUpdated(f, bounds);
     let handoff: ActiveTaskEntry["handoff"] = undefined;
     if (f.handoff?.trim()) {
       try {
@@ -128,6 +173,7 @@ export function buildTaskEntriesFromGroupedFacts(byEntity: Map<string, Map<strin
       stashCommit: f.stash_commit?.trim() || undefined,
       subagent: f.related_session?.trim() || undefined,
       next: f.next?.trim() || undefined,
+      relatedGoal: f.related_goal?.trim() || f.goal_id?.trim() || undefined,
       started,
       updated,
       handoff,
@@ -161,6 +207,114 @@ export function readActiveTaskRowsFromFacts(
   const { active, completed } = loadTaskLedgerFromFacts(factsDb);
   const staleActive = detectStaleTasks(active, staleMinutes);
   return { active: staleActive, completed };
+}
+
+/** Normalize description for `dedupeBy: normalizedTitle`. */
+function normalizeActiveTaskTitleForDedupe(description: string): string {
+  return description.trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+/** Filter/dedupe rows for facts markdown projection (`readable` mode). */
+export function applyActiveTaskProjectionFilters(
+  entries: ActiveTaskEntry[],
+  config: ActiveTaskProjectionConfig,
+): ActiveTaskEntry[] {
+  if (config.mode === "full") {
+    return entries;
+  }
+  let out = entries;
+  if (config.excludeGenericTitle) {
+    out = out.filter((e) => e.description.trim() !== "Project task");
+  }
+  if (config.titleMinChars > 0) {
+    out = out.filter((e) => e.description.trim().length >= config.titleMinChars);
+  }
+  if (config.dedupeBy === "none") {
+    return out;
+  }
+  const seen = new Set<string>();
+  const result: ActiveTaskEntry[] = [];
+  for (const e of out) {
+    const key =
+      config.dedupeBy === "label" ? e.label.trim().toLowerCase() : normalizeActiveTaskTitleForDedupe(e.description);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    result.push(e);
+  }
+  return result;
+}
+
+function capRows<T extends ActiveTaskEntry>(rows: T[], max?: number): { rows: T[]; omitted: number } {
+  if (max === undefined || rows.length <= max) return { rows, omitted: 0 };
+  return { rows: rows.slice(0, max), omitted: rows.length - max };
+}
+
+/** Sectioned markdown for facts projection (## Active / ## Stale — revisit / ## Completed). */
+export function buildFactsSectionedMarkdownBody(
+  hot: ActiveTaskEntry[],
+  stale: ActiveTaskEntry[],
+  completed: ActiveTaskEntry[],
+  omitted: { active: number; stale: number; completed: number },
+): string {
+  if (
+    hot.length === 0 &&
+    stale.length === 0 &&
+    completed.length === 0 &&
+    omitted.active === 0 &&
+    omitted.stale === 0 &&
+    omitted.completed === 0
+  ) {
+    return "# ACTIVE-TASKS.md — Working Memory\n\n## Active\n\n_No active tasks._\n";
+  }
+
+  const parts: string[] = ["# ACTIVE-TASKS.md — Working Memory\n"];
+
+  if (hot.length > 0 || omitted.active > 0) {
+    parts.push("## Active\n");
+    if (hot.length === 0 && omitted.active === 0) {
+      parts.push("_None._\n");
+    } else {
+      for (const entry of hot) {
+        parts.push(serializeTaskEntry(entry));
+        parts.push("");
+      }
+    }
+    if (omitted.active > 0) {
+      parts.push(`> ${omitted.active} ${OMITTED_CAP_NOTE}\n\n`);
+    } else if (hot.length > 0) {
+      parts.push("");
+    }
+  }
+
+  if (stale.length > 0 || omitted.stale > 0) {
+    parts.push("## Stale — revisit\n");
+    if (stale.length === 0 && omitted.stale === 0) {
+      parts.push("_None._\n");
+    } else {
+      for (const entry of stale) {
+        parts.push(serializeTaskEntry(entry));
+        parts.push("");
+      }
+    }
+    if (omitted.stale > 0) {
+      parts.push(`> ${omitted.stale} ${OMITTED_CAP_NOTE}\n\n`);
+    } else if (stale.length > 0) {
+      parts.push("");
+    }
+  }
+
+  if (completed.length > 0 || omitted.completed > 0) {
+    parts.push("## Completed\n");
+    for (const entry of completed) {
+      parts.push(serializeTaskEntry(entry));
+      parts.push("");
+    }
+    if (omitted.completed > 0) {
+      parts.push(`> ${omitted.completed} ${OMITTED_CAP_NOTE}\n`);
+    }
+  }
+
+  return parts.join("\n");
 }
 
 export async function upsertProjectTaskKey(
@@ -255,15 +409,53 @@ export async function renderActiveTaskMarkdownFile(
   factsDb: FactsDB,
   staleMinutes: number,
   filePath: string,
+  projection: ActiveTaskProjectionConfig,
 ): Promise<void> {
-  const { active, completed } = readActiveTaskRowsFromFacts(factsDb, staleMinutes);
-  const body = serializeActiveTaskFile(active, completed);
+  let { active, completed } = loadTaskLedgerFromFacts(factsDb);
+  active = applyActiveTaskProjectionFilters(active, projection);
+  completed = applyActiveTaskProjectionFilters(completed, projection);
+  active = detectStaleTasks(active, staleMinutes);
+
+  const hotRaw = active.filter((t) => !t.stale);
+  const staleRaw = active.filter((t) => t.stale);
+
+  let capAct: { rows: ActiveTaskEntry[]; omitted: number };
+  let capStale: { rows: ActiveTaskEntry[]; omitted: number };
+  let capDone: { rows: ActiveTaskEntry[]; omitted: number };
+  let combinedActiveOmitted = 0;
+
+  if (projection.sectioned) {
+    capAct = capRows(hotRaw, projection.maxRowsPerSection);
+    capStale = capRows(staleRaw, projection.maxRowsPerSection);
+    capDone = capRows(completed, projection.maxRowsPerSection);
+  } else {
+    const combinedActive = [...hotRaw, ...staleRaw];
+    const cappedCombined = capRows(combinedActive, projection.maxRowsPerSection);
+    capAct = { rows: cappedCombined.rows.filter((t) => !t.stale), omitted: 0 };
+    capStale = { rows: cappedCombined.rows.filter((t) => t.stale), omitted: 0 };
+    combinedActiveOmitted = cappedCombined.omitted;
+    capDone = capRows(completed, projection.maxRowsPerSection);
+  }
+
+  const body = projection.sectioned
+    ? buildFactsSectionedMarkdownBody(capAct.rows, capStale.rows, capDone.rows, {
+        active: capAct.omitted,
+        stale: capStale.omitted,
+        completed: capDone.omitted,
+      })
+    : serializeActiveTaskFile([...capAct.rows, ...capStale.rows], capDone.rows, undefined, {
+        active: combinedActiveOmitted,
+        completed: capDone.omitted,
+      });
+
   const lines = body.split("\n");
   lines.splice(
     1,
     0,
     "",
     "> **Projection** of hybrid-memory `category:project` facts (`activeTask.ledger: facts`). Regenerate via `hybrid-mem active-tasks render`.",
+    "> **Timestamps:** **Started** / **Updated** use stored fact fields (`started`, `task_started`, `task_updated`, …) or SQLite row times (min / max `createdAt` per task). The render clock is not used. Missing values show as **Unknown** and count as stale under `staleThreshold`.",
+    "> **Operators:** Update or close tasks via `memory_store` / project facts; run `hybrid-mem active-tasks reconcile` when session rows are obsolete; then `active-tasks render`. See `docs/ACTIVE-TASKS-PROJECTION.md`.",
     "",
   );
   await mkdir(dirname(filePath), { recursive: true });

@@ -255,6 +255,26 @@ export type ActiveTaskHygieneConfig = {
   heartbeatNudgeMaxChars: number;
 };
 
+export type ActiveTaskProjectionDedupeBy = "none" | "label" | "normalizedTitle";
+
+/** Facts-backed `ACTIVE-TASKS.md` projection (`hybrid-mem active-tasks render`). See docs/ACTIVE-TASKS-PROJECTION.md. */
+export type ActiveTaskProjectionConfig = {
+  /**
+   * `readable` applies filters and optional caps (default).
+   * `full` lists all rows (no title/dedupe filters); caps still apply when `maxRowsPerSection` is set.
+   */
+  mode: "readable" | "full";
+  /** Drop rows whose title resolves to the generic placeholder when `mode` is `readable` (default: true). */
+  excludeGenericTitle: boolean;
+  /** Minimum trimmed title length when > 0 (`readable` only). */
+  titleMinChars: number;
+  dedupeBy: ActiveTaskProjectionDedupeBy;
+  /** Cap per section (Active, Stale — revisit, Completed); omitted rows summarized in a footer line. */
+  maxRowsPerSection?: number;
+  /** Use sectioned layout (Active / Stale — revisit) for facts render (default: true). */
+  sectioned: boolean;
+};
+
 /** Active task working memory: ACTIVE-TASKS.md persistence and session injection */
 export type ActiveTaskConfig = {
   /** Enable active task working memory (default: true) */
@@ -294,6 +314,8 @@ export type ActiveTaskConfig = {
    * optional “consider a goal” hints for long-running tasks.
    */
   taskHygiene: ActiveTaskHygieneConfig;
+  /** Markdown projection when `ledger` is `facts` (render path, filters, sectioning). */
+  projection: ActiveTaskProjectionConfig;
 };
 
 /** Goal stewardship — autonomous pursuit of long-running goals (docs/GOAL-STEWARDSHIP-DESIGN.md). */

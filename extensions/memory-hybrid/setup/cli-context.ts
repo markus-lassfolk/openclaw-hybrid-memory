@@ -821,6 +821,7 @@ function buildActiveTaskCliContext(handlerCtx: HandlerContext): ActiveTaskContex
     flushOnComplete: activeTask.flushOnComplete,
     memoryDir,
     ledger: activeTask.ledger,
+    projection: activeTask.projection,
     factsDb: handlerCtx.factsDb,
     vectorDb: handlerCtx.vectorDb,
     embeddings: handlerCtx.embeddings,

@@ -331,10 +331,17 @@ describe("detectStaleTasks", () => {
     expect(result[0].stale).toBe(false);
   });
 
-  it("handles invalid updated timestamp gracefully", () => {
+  it("treats invalid updated timestamp as stale (unknown / untrustworthy)", () => {
     const tasks = [makeEntry({ updated: "not-a-date" })];
     const result = detectStaleTasks(tasks, 1440);
-    expect(result[0].stale).toBe(false);
+    expect(result[0].stale).toBe(true);
+  });
+
+  it("treats UNKNOWN_ACTIVE_TASK_TIME as stale", async () => {
+    const { UNKNOWN_ACTIVE_TASK_TIME } = await import("../services/active-task.js");
+    const tasks = [makeEntry({ updated: UNKNOWN_ACTIVE_TASK_TIME })];
+    const result = detectStaleTasks(tasks, 1440);
+    expect(result[0].stale).toBe(true);
   });
 
   it("returns empty array for empty input", () => {
@@ -752,6 +759,13 @@ describe("runActiveTaskList", () => {
       flushOnComplete: false,
       memoryDir: join(tmpDir, "memory"),
       ledger: "markdown",
+      projection: {
+        mode: "readable",
+        excludeGenericTitle: true,
+        titleMinChars: 0,
+        dedupeBy: "none",
+        sectioned: true,
+      },
     };
   });
 
@@ -802,6 +816,13 @@ describe("runActiveTaskStale", () => {
       flushOnComplete: false,
       memoryDir: join(tmpDir, "memory"),
       ledger: "markdown",
+      projection: {
+        mode: "readable",
+        excludeGenericTitle: true,
+        titleMinChars: 0,
+        dedupeBy: "none",
+        sectioned: true,
+      },
     };
   });
 
@@ -844,6 +865,13 @@ describe("runActiveTaskComplete", () => {
       flushOnComplete: true,
       memoryDir: join(tmpDir, "memory"),
       ledger: "markdown",
+      projection: {
+        mode: "readable",
+        excludeGenericTitle: true,
+        titleMinChars: 0,
+        dedupeBy: "none",
+        sectioned: true,
+      },
     };
   });
 
@@ -912,6 +940,13 @@ describe("runActiveTaskAdd", () => {
       flushOnComplete: false,
       memoryDir: join(tmpDir, "memory"),
       ledger: "markdown",
+      projection: {
+        mode: "readable",
+        excludeGenericTitle: true,
+        titleMinChars: 0,
+        dedupeBy: "none",
+        sectioned: true,
+      },
     };
   });
 
@@ -1530,6 +1565,13 @@ describe("registerActiveTaskCommands", () => {
         heartbeatEscalation: true,
         suggestGoalAfterTaskAgeDays: 0,
         heartbeatNudgeMaxChars: 2500,
+      },
+      projection: {
+        mode: "readable",
+        excludeGenericTitle: true,
+        titleMinChars: 0,
+        dedupeBy: "none",
+        sectioned: true,
       },
     },
   } as import("../config.js").HybridMemoryConfig;

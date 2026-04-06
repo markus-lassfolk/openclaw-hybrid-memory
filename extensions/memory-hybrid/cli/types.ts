@@ -197,7 +197,7 @@ export type ActiveTaskStaleResult = {
     description: string;
     status: string;
     updated: string;
-    hoursStale: number;
+    hoursStale: number | "?";
   }>;
   total: number;
   filePath: string;
