@@ -241,6 +241,7 @@ export function parseActiveTaskConfig(cfg: Record<string, unknown>): ActiveTaskC
         ? activeTaskRaw.filePath.trim()
         : "ACTIVE-TASKS.md",
     autoCheckpoint: activeTaskRaw?.autoCheckpoint !== false,
+    // Positive numbers only; floor fractions. Non-positive or missing → default (align openclaw.plugin.json: integer, minimum 1).
     injectionBudget:
       typeof activeTaskRaw?.injectionBudget === "number" && activeTaskRaw.injectionBudget > 0
         ? Math.floor(activeTaskRaw.injectionBudget)

@@ -23,7 +23,8 @@ All commands are under **`openclaw hybrid-mem goals`**:
 | Command | Purpose |
 | --- | --- |
 | `list` | Active goals (use `--all` to include completed / failed / abandoned). |
-| `status <idOrLabel>` | Full JSON for one goal (UUID or case-insensitive label). |
+| `status` | Overview: stewardship on/off, goals directory, active goals table (same rows as `list`). |
+| `status <idOrLabel>` | Full detail for one goal (UUID or case-insensitive label). Add **`--json`** for raw JSON. |
 | `cancel <idOrLabel> --reason "<text>"` | Mark goal **abandoned** with a reason. |
 | `stewardship-run` | Run one deterministic health pass (requires `goalStewardship.enabled`; forces the same checks as the watchdog for that run). |
 | `audit` | JSON snapshot of goals + config subset; add **`--jsonl`** for NDJSON (one object per goal). |
