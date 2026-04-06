@@ -11,7 +11,7 @@ import { DEFAULT_INTERACTIVE_RECALL_POLICY } from "./retrieval-mode-policy.js";
 import { capturePluginError } from "./error-reporter.js";
 import { withTimeout } from "../utils/timeout.js";
 
-const POST_COMPACTION_RECALL_TIMEOUT_MS = 22_000;
+const POST_COMPACTION_RECALL_TIMEOUT_MS = 120_000;
 
 function buildScopeFilter(ctx: LifecycleContext): ScopeFilter | undefined {
   const { currentAgentIdRef } = ctx;

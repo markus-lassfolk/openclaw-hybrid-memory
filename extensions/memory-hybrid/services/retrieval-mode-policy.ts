@@ -40,7 +40,7 @@ export interface ExplicitDeepRetrievalPolicy {
 }
 
 /** Wall-clock cap for the whole interactive recall stage (abort + return when exceeded). */
-export const INTERACTIVE_RECALL_STAGE_TIMEOUT_MS = 32_000;
+export const INTERACTIVE_RECALL_STAGE_TIMEOUT_MS = 120_000;
 /** Per-vector-step cap (HyDE + embed + Lance) inside `runRecallPipelineQuery`. Kept below stage timeout to leave slack for FTS, ambient, directives. */
 const INTERACTIVE_RECALL_VECTOR_TIMEOUT_MS = 26_000;
 const DEFAULT_INTERACTIVE_RECALL_DEGRADATION_QUEUE_DEPTH = 10;
