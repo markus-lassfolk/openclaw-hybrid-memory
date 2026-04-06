@@ -107,7 +107,7 @@ async function runMechanicalVerification(
   }
   if (v.type === "pr_merged") {
     if (!cfg.allowPrVerification) {
-      return { ok: false, detail: "skip" };
+      return { ok: false, detail: "pr_merged: skipped (allowPrVerification is false)" };
     }
     return verifyPrMergedApi(v.target);
   }
