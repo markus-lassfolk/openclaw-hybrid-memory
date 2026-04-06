@@ -73,7 +73,10 @@ export function buildGoalEscalationHeartbeatBlock(
   const openingTag = "<goal-escalation>";
   const truncatedSuffix = `\n…(truncated)\n${closingTag}`;
   const minChars = openingTag.length + truncatedSuffix.length;
-  const availableBodyChars = Math.max(openingTag.length, opts.maxChars - truncatedSuffix.length);
+  if (opts.maxChars < minChars) {
+    return `${openingTag}${truncatedSuffix}`;
+  }
+  const availableBodyChars = opts.maxChars - truncatedSuffix.length;
   return `${body.slice(0, availableBodyChars)}${truncatedSuffix}`;
 }
 
