@@ -532,71 +532,9 @@ describe("runRecallPipelineQuery — abort cancels embed after HyDE (#558)", () 
     vi.useRealTimers();
   });
 
-  it("does not call embeddings.embed when vector-step timeout fires while HyDE is running", async () => {
-    // Use fake timers so we can fast-forward the 30s VECTOR_STEP_TIMEOUT_MS.
-    vi.useFakeTimers();
-
-    // Make chatCompleteWithRetry hang until the passed abort signal fires (which the
-    // 30s timeout inside recall-pipeline will trigger), then return a result.
-    // The abort guard added by #558 must fire before embeddings.embed is called.
-    vi.spyOn(chatModule, "chatCompleteWithRetry").mockImplementation(async (opts) => {
-      await new Promise<void>((resolve) => {
-        if (opts.signal?.aborted) {
-          resolve();
-          return;
-        }
-        opts.signal?.addEventListener("abort", () => resolve(), { once: true });
-        // Safety valve — resolves when fake-timers advance past this point
-        setTimeout(resolve, 60_000);
-      });
-      // Return a result AFTER the abort — the abort guard must prevent embed from running
-      return "HyDE result that arrived after timeout abort";
-    });
-
-    const deps = makeDeps({
-      cfg: {
-        queryExpansion: {
-          enabled: true,
-          maxVariants: 4,
-          cacheSize: 100,
-          timeoutMs: 60_000,
-          skipForInteractiveTurns: true,
-        },
-        retrievalStrategies: ["semantic"],
-        memoryTieringEnabled: false,
-        rawCfg: { llm: undefined } as unknown as RecallPipelineDeps["cfg"]["rawCfg"],
-      },
-    });
-
-    (deps.factsDb.search as ReturnType<typeof vi.fn>).mockReturnValue([]);
-    (deps.vectorDb.search as ReturnType<typeof vi.fn>).mockResolvedValue([]);
-
-    // Start pipeline — it will hang inside chatCompleteWithRetry mock
-    const pipelinePromise = runRecallPipelineQuery(
-      "test abort query",
-      5,
-      deps,
-      { value: false },
-      {
-        hydeLabel: "HyDE-test",
-        policy: { ...DEFAULT_INTERACTIVE_RECALL_POLICY, allowHyde: true },
-      },
-    );
-
-    // Advance fake timers past the 30s VECTOR_STEP_TIMEOUT_MS.
-    // This fires the internal setTimeout → directiveAbort.abort() → HyDE mock resolves.
-    await vi.advanceTimersByTimeAsync(31_000);
-
-    // Pipeline should now settle (timeout path)
-    await pipelinePromise;
-
-    // Key assertion: embeddings.embed must NOT have been called after abort
-    expect(deps.embeddings.embed).not.toHaveBeenCalled();
-  });
-
-  it("still calls embeddings.embed with raw query when HyDE fails non-abort", async () => {
-    // When HyDE fails for a transient reason (not abort), embed should still be called
-    // with the raw query — verifying the abort guard does not fire for normal HyDE failures.
+  it("still calls embeddings.embed with raw query when HyDE fails (non-abort)", async () => {
+    // When HyDE fails for a transient reason, embed should still be called
+    // with the raw query — the embed promise was kicked off before HyDE.
     vi.spyOn(chatModule, "chatCompleteWithRetry").mockRejectedValue(
       new Error("LLM request timeout after 5000ms (model: test-model)"),
     );
@@ -621,8 +559,74 @@ describe("runRecallPipelineQuery — abort cancels embed after HyDE (#558)", () 
 
     await runRecallPipelineQuery("raw query fallback", 5, deps, { value: false });
 
-    // HyDE failed but the vector-step timeout did NOT fire — embed should proceed with raw query
+    // HyDE failed; embed should proceed with raw query
     expect(deps.embeddings.embed).toHaveBeenCalledWith("raw query fallback");
+  });
+
+  it("embed call is initiated before FTS blocks the event loop (#42)", async () => {
+    // Verify that embeddings.embed is called eagerly (before FTS runs via setImmediate),
+    // so that the HTTP request is in-flight while FTS occupies the CPU.
+    const callOrder: string[] = [];
+
+    const deps = makeDeps({
+      cfg: {
+        queryExpansion: {
+          enabled: false,
+          maxVariants: 4,
+          cacheSize: 100,
+          timeoutMs: 15_000,
+          skipForInteractiveTurns: true,
+        },
+        retrievalStrategies: ["semantic", "fts5"],
+        memoryTieringEnabled: false,
+        rawCfg: { llm: undefined } as unknown as RecallPipelineDeps["cfg"]["rawCfg"],
+      },
+    });
+
+    (deps.embeddings.embed as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+      callOrder.push("embed");
+      return [0.1, 0.2, 0.3];
+    });
+    (deps.factsDb.search as ReturnType<typeof vi.fn>).mockImplementation(() => {
+      callOrder.push("fts");
+      return [];
+    });
+    (deps.vectorDb.search as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+
+    await runRecallPipelineQuery("order test", 5, deps, { value: false });
+
+    // embed must be initiated before FTS runs
+    expect(callOrder.indexOf("embed")).toBeLessThan(callOrder.indexOf("fts"));
+  });
+
+  it("vector-step timeout does not count FTS execution time (#42)", async () => {
+    const deps = makeDeps({
+      cfg: {
+        queryExpansion: {
+          enabled: false,
+          maxVariants: 4,
+          cacheSize: 100,
+          timeoutMs: 15_000,
+          skipForInteractiveTurns: true,
+        },
+        retrievalStrategies: ["semantic", "fts5"],
+        memoryTieringEnabled: false,
+        rawCfg: { llm: undefined } as unknown as RecallPipelineDeps["cfg"]["rawCfg"],
+      },
+    });
+
+    (deps.factsDb.search as ReturnType<typeof vi.fn>).mockReturnValue([]);
+    (deps.embeddings.embed as ReturnType<typeof vi.fn>).mockResolvedValue([0.1, 0.2, 0.3]);
+    (deps.vectorDb.search as ReturnType<typeof vi.fn>).mockResolvedValue([makeSearchResult("vec-1")]);
+    (deps.factsDb.getById as ReturnType<typeof vi.fn>).mockImplementation((id: string) =>
+      id === "vec-1" ? makeEntry("vec-1") : null,
+    );
+
+    const result = await runRecallPipelineQuery("timeout test", 5, deps, { value: false });
+
+    // Vector results should be present (FTS didn't starve the timeout)
+    expect(deps.vectorDb.search).toHaveBeenCalled();
+    expect(result.map((r) => r.entry.id)).toContain("vec-1");
   });
 });
 
