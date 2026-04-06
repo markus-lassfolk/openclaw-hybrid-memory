@@ -165,9 +165,7 @@ export async function runActiveTaskStale(ctx: ActiveTaskContext): Promise<Active
     .filter((t) => t.stale)
     .map((t) => {
       const updatedMs = new Date(t.updated).getTime();
-      const hoursStale: number | "?" = Number.isNaN(updatedMs)
-        ? "?"
-        : Math.floor((now - updatedMs) / (1000 * 60 * 60));
+      const hoursStale: number | "?" = Number.isNaN(updatedMs) ? "?" : Math.floor((now - updatedMs) / (1000 * 60 * 60));
       return {
         label: t.label,
         description: t.description,
