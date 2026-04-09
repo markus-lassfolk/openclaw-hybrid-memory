@@ -125,3 +125,4 @@ Plugin source and manifest: [extensions/memory-hybrid/README.md](extensions/memo
 ## License
 
 MIT ([LICENSE](LICENSE))
+
