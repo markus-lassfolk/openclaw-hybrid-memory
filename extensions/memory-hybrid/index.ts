@@ -377,7 +377,7 @@ const memoryHybridPlugin = {
 
 function runMemoryHybridRegister(api: ClawdbotPluginApi): void {
   // OpenClaw `loadOpenClawPluginCliRegistry` — metadata only; no DBs or native deps (issue #1111).
-  // Check this FIRST, before any logger init or config parsing, so an incomplete config 
+  // Check this FIRST, before any logger init or config parsing, so an incomplete config
   // cannot block lightweight metadata registration.
   if (api.registrationMode === "cli-metadata") {
     registerHybridMemCliMetadataOnly(api);
