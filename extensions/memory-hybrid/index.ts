@@ -376,6 +376,14 @@ const memoryHybridPlugin = {
 };
 
 function runMemoryHybridRegister(api: ClawdbotPluginApi): void {
+  // OpenClaw `loadOpenClawPluginCliRegistry` — metadata only; no DBs or native deps (issue #1111).
+  // Check this FIRST, before any logger init or config parsing, so an incomplete config 
+  // cannot block lightweight metadata registration.
+  if (api.registrationMode === "cli-metadata") {
+    registerHybridMemCliMetadataOnly(api);
+    return;
+  }
+
   // Initialize structured logger early so all runtime code (services/backends/lifecycle)
   // routes through api.logger instead of raw console.*.
   initPluginLogger(api.logger);
@@ -404,13 +412,6 @@ function runMemoryHybridRegister(api: ClawdbotPluginApi): void {
     throw err;
   }
 
-  // OpenClaw `loadOpenClawPluginCliRegistry` — metadata only; no DBs or native deps (issue #1111).
-  if (api.registrationMode === "cli-metadata") {
-    registerHybridMemCliMetadataOnly(api);
-    return;
-  }
-
-  // Clean up old resources before opening new connections to prevent double-opening same paths (Issue #590, #802)
   if (old) {
     // Clear old timer handles to prevent leaks
     if (old.timers.pruneTimer.value) clearInterval(old.timers.pruneTimer.value);

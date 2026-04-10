@@ -28,6 +28,7 @@ const { FactsDB, VectorDB, findSimilarByEmbedding, VerificationStore } = _testin
 const EMBEDDING_DIM = 1536; // text-embedding-3-small
 
 function makeMockApi() {
+  let registeredService: { stop?: () => unknown } | null = null;
   const tools = new Map<string, { execute: (...args: unknown[]) => unknown }>();
   return {
     registerTool(opts: Record<string, unknown>, _options?: unknown) {
@@ -36,7 +37,8 @@ function makeMockApi() {
     getTool(name: string) {
       return tools.get(name);
     },
-    registerService: vi.fn(),
+    registerService: vi.fn((svc) => { registeredService = svc; }),
+    _stopRegisteredService: () => registeredService?.stop?.(),
     registerCli: vi.fn(),
     registerLifecycleHook: vi.fn(),
     registerHttpRoute: vi.fn(),
@@ -138,6 +140,7 @@ describe("Plugin registration e2e", () => {
   });
 
   afterEach(() => {
+    api._stopRegisteredService?.();
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
@@ -234,6 +237,7 @@ describe("Store and recall e2e (real FactsDB + VectorDB, mock embeddings)", () =
   afterEach(() => {
     vectorDb.close();
     factsDb.close();
+    api._stopRegisteredService?.();
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
@@ -357,6 +361,7 @@ describe("Init-databases e2e", () => {
   });
 
   afterEach(() => {
+    api._stopRegisteredService?.();
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
@@ -433,6 +438,7 @@ describe("Core and common flows e2e", () => {
   afterEach(() => {
     vectorDb.close();
     factsDb.close();
+    api._stopRegisteredService?.();
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
@@ -587,6 +593,7 @@ describe("Advanced features e2e", () => {
   afterEach(() => {
     vectorDb.close();
     factsDb.close();
+    api._stopRegisteredService?.();
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
