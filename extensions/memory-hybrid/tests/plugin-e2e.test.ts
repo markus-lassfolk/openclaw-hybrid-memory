@@ -7,7 +7,7 @@
  * - No surprises: expected response shapes and persistence across tool calls
  */
 
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -28,6 +28,7 @@ const { FactsDB, VectorDB, findSimilarByEmbedding, VerificationStore } = _testin
 const EMBEDDING_DIM = 1536; // text-embedding-3-small
 
 function makeMockApi() {
+  let registeredService: { stop?: () => unknown } | null = null;
   const tools = new Map<string, { execute: (...args: unknown[]) => unknown }>();
   return {
     registerTool(opts: Record<string, unknown>, _options?: unknown) {
@@ -36,7 +37,10 @@ function makeMockApi() {
     getTool(name: string) {
       return tools.get(name);
     },
-    registerService: vi.fn(),
+    registerService: vi.fn((svc) => {
+      registeredService = svc;
+    }),
+    _stopRegisteredService: () => registeredService?.stop?.(),
     registerCli: vi.fn(),
     registerLifecycleHook: vi.fn(),
     registerHttpRoute: vi.fn(),
@@ -138,6 +142,7 @@ describe("Plugin registration e2e", () => {
   });
 
   afterEach(() => {
+    api._stopRegisteredService?.();
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
@@ -149,6 +154,7 @@ describe("Plugin registration e2e", () => {
     const mockApi = {
       ...api,
       pluginConfig,
+      registrationMode: "full" as const,
       resolvePath: (p: string) => (p.startsWith("/") || /^[A-Z]:/.test(p) ? p : join(tmpDir, p)),
     };
     expect(() => memoryHybridPlugin.register(mockApi as never)).not.toThrow();
@@ -158,6 +164,50 @@ describe("Plugin registration e2e", () => {
     expect(mockApi.getTool("memory_recall_timeline")).toBeDefined();
     expect(mockApi.getTool("memory_forget")).toBeDefined();
     expect(mockApi.getTool("memory_promote")).toBeDefined();
+  });
+
+  it("full register() creates on-disk database paths (heavy bootstrap)", () => {
+    const sqlitePath = join(tmpDir, "facts.db");
+    const lancePath = join(tmpDir, "lancedb");
+    const pluginConfig = getMinimalConfig({
+      sqlitePath,
+      lanceDbPath: lancePath,
+    });
+    const mockApi = {
+      ...api,
+      pluginConfig,
+      registrationMode: "full" as const,
+      resolvePath: (p: string) => (p.startsWith("/") || /^[A-Z]:/.test(p) ? p : join(tmpDir, p)),
+    };
+    memoryHybridPlugin.register(mockApi as never);
+    expect(existsSync(sqlitePath)).toBe(true);
+  });
+
+  it("cli-metadata register() does not create database files and only registers CLI metadata (issue #1111)", () => {
+    const sqlitePath = join(tmpDir, "facts.db");
+    const lancePath = join(tmpDir, "lancedb");
+    const pluginConfig = getMinimalConfig({
+      sqlitePath,
+      lanceDbPath: lancePath,
+    });
+    const registerCli = vi.fn();
+    const registerTool = vi.fn();
+    const registerService = vi.fn();
+    const mockApi = {
+      ...api,
+      registerCli,
+      registerTool,
+      registerService,
+      pluginConfig,
+      registrationMode: "cli-metadata" as const,
+      resolvePath: (p: string) => (p.startsWith("/") || /^[A-Z]:/.test(p) ? p : join(tmpDir, p)),
+    };
+    memoryHybridPlugin.register(mockApi as never);
+    expect(existsSync(sqlitePath)).toBe(false);
+    expect(existsSync(lancePath)).toBe(false);
+    expect(registerCli).toHaveBeenCalled();
+    expect(registerTool).not.toHaveBeenCalled();
+    expect(registerService).not.toHaveBeenCalled();
   });
 });
 
@@ -189,6 +239,7 @@ describe("Store and recall e2e (real FactsDB + VectorDB, mock embeddings)", () =
   afterEach(() => {
     vectorDb.close();
     factsDb.close();
+    api._stopRegisteredService?.();
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
@@ -312,6 +363,7 @@ describe("Init-databases e2e", () => {
   });
 
   afterEach(() => {
+    api._stopRegisteredService?.();
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
@@ -388,6 +440,7 @@ describe("Core and common flows e2e", () => {
   afterEach(() => {
     vectorDb.close();
     factsDb.close();
+    api._stopRegisteredService?.();
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
@@ -542,6 +595,7 @@ describe("Advanced features e2e", () => {
   afterEach(() => {
     vectorDb.close();
     factsDb.close();
+    api._stopRegisteredService?.();
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
