@@ -37,7 +37,9 @@ function makeMockApi() {
     getTool(name: string) {
       return tools.get(name);
     },
-    registerService: vi.fn((svc) => { registeredService = svc; }),
+    registerService: vi.fn((svc) => {
+      registeredService = svc;
+    }),
     _stopRegisteredService: () => registeredService?.stop?.(),
     registerCli: vi.fn(),
     registerLifecycleHook: vi.fn(),
