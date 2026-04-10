@@ -113,6 +113,7 @@ export function createPluginService(ctx: PluginServiceContext) {
     costTracker,
     auditStore,
     agentHealthStore,
+    pythonBridge,
   } = ctx;
 
   let observerRunning = false;
@@ -127,6 +128,25 @@ export function createPluginService(ctx: PluginServiceContext) {
     id: PLUGIN_ID,
     _getVersionCheckPromise: () => versionCheckPromise,
     start: async () => {
+      // Issue #422: surface missing Python deps early; deferred from register() for lighter CLI (issue #1111).
+      if (pythonBridge) {
+        const { ok, missing, spawnError } = pythonBridge.checkDependencies();
+        if (!ok) {
+          if (spawnError) {
+            api.logger.warn(
+              `memory-hybrid: documents.enabled but Python binary not found or failed to spawn: ${spawnError.message}. ` +
+                `Check documents.pythonPath configuration (currently: ${cfg.documents.pythonPath}).`,
+            );
+          } else {
+            const pkgs = missing.join(", ");
+            api.logger.warn(
+              `memory-hybrid: documents.enabled but required Python package(s) not installed: ${pkgs}. ` +
+                `Run: ${cfg.documents.pythonPath} -m pip install ${missing.join(" ")}  (see extensions/memory-hybrid/scripts/requirements.txt)`,
+            );
+          }
+        }
+      }
+
       const sqlCount = factsDb.count();
       const expired = factsDb.countExpired();
       const versionCheckCachePath =

@@ -143,78 +143,28 @@ const HYBRID_MEM_HELP_ACTIVE_TASKS = `
     task-queue-touch             Create idle current.json if missing; --repair for bad snapshots (#1037)
 `;
 
-const HYBRID_MEM_CLI_COMMANDS = [
-  "hybrid-mem",
-  "hybrid-mem dashboard",
-  "hybrid-mem run-all",
-  "hybrid-mem install",
-  "hybrid-mem stats",
-  "hybrid-mem test",
-  "hybrid-mem context-audit",
-  "hybrid-mem compact",
-  "hybrid-mem prune",
-  "hybrid-mem checkpoint",
-  "hybrid-mem backfill-decay",
-  "hybrid-mem backfill",
-  "hybrid-mem ingest-files",
-  "hybrid-mem distill",
-  "hybrid-mem extract-daily",
-  "hybrid-mem extract-procedures",
-  "hybrid-mem generate-auto-skills",
-  "hybrid-mem generate-proposals",
-  "hybrid-mem extract-directives",
-  "hybrid-mem extract-reinforcement",
-  "hybrid-mem search",
-  "hybrid-mem lookup",
-  "hybrid-mem list",
-  "hybrid-mem show",
-  "hybrid-mem dump",
-  "hybrid-mem proposals list",
-  "hybrid-mem proposals show",
-  "hybrid-mem proposals approve",
-  "hybrid-mem proposals reject",
-  "hybrid-mem corrections list",
-  "hybrid-mem corrections approve",
-  "hybrid-mem review",
-  "hybrid-mem store",
-  "hybrid-mem classify",
-  "hybrid-mem build-languages",
-  "hybrid-mem enrich-entities",
-  "hybrid-mem self-correction-extract",
-  "hybrid-mem self-correction-run",
-  "hybrid-mem analyze-feedback-phrases",
-  "hybrid-mem categories",
-  "hybrid-mem find-duplicates",
-  "hybrid-mem consolidate",
-  "hybrid-mem reflect",
-  "hybrid-mem reflect-rules",
-  "hybrid-mem reflect-meta",
-  "hybrid-mem dream-cycle",
-  "hybrid-mem resolve-contradictions",
-  "hybrid-mem config",
-  "hybrid-mem goals config",
-  "hybrid-mem active-tasks config",
-  "hybrid-mem verify",
-  "hybrid-mem credentials migrate-to-vault",
-  "hybrid-mem distill-window",
-  "hybrid-mem record-distill",
-  "hybrid-mem scope prune-session",
-  "hybrid-mem scope promote",
-  "hybrid-mem uninstall",
-  "hybrid-mem active-tasks",
-  "hybrid-mem active-tasks complete",
-  "hybrid-mem active-tasks stale",
-  "hybrid-mem active-tasks reconcile",
-  "hybrid-mem active-tasks add",
-  "hybrid-mem active-tasks render",
-  "hybrid-mem task-queue-status",
-  "hybrid-mem task-queue-touch",
-  "hybrid-mem cost-report",
-  "hybrid-mem tool-effectiveness",
-  "hybrid-mem cross-agent-learning",
-  "hybrid-mem sensor-sweep",
-  "hybrid-mem sensor-events",
-] as const;
+/**
+ * Root command descriptor for OpenClaw lazy CLI registration (parse-time contract).
+ * Subcommands are registered when the full plugin `register()` runs or when the lazy CLI fires.
+ */
+export const HYBRID_MEM_CLI_ROOT_DESCRIPTOR = {
+  name: "hybrid-mem",
+  description: "Hybrid memory (SQLite + LanceDB): maintenance, verify, search, diagnostics, and ingestion",
+  hasSubcommands: true,
+};
+
+/**
+ * `loadOpenClawPluginCliRegistry` calls `register()` with `registrationMode: "cli-metadata"` only to
+ * collect CLI metadata without activating the full plugin (issue #1111).
+ */
+export function registerHybridMemCliMetadataOnly(api: ClawdbotPluginApi): void {
+  api.registerCli(
+    () => {
+      // Full Commander wiring runs on full registration or when a lazy placeholder loads this plugin.
+    },
+    { descriptors: [HYBRID_MEM_CLI_ROOT_DESCRIPTOR] },
+  );
+}
 
 /** Services that are not in cli/handlers (reflection, consolidate, export, etc.) */
 interface CliContextServices {
@@ -530,7 +480,7 @@ export function registerHybridMemCliWithApi(
         throw err;
       }
     },
-    { commands: [...HYBRID_MEM_CLI_COMMANDS] },
+    { descriptors: [HYBRID_MEM_CLI_ROOT_DESCRIPTOR] },
   );
 }
 

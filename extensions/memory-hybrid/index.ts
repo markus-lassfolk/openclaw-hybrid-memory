@@ -77,7 +77,7 @@ import {
   applyPostRrfAdjustments,
   fuseResults,
 } from "./services/rrf-fusion.js";
-import { registerHybridMemCliWithApi } from "./setup/cli-context.js";
+import { registerHybridMemCliMetadataOnly, registerHybridMemCliWithApi } from "./setup/cli-context.js";
 import { versionInfo } from "./versionInfo.js";
 export type { GraphExpandedResult, LinkPathStep, GraphFactLookup } from "./services/graph-retrieval.js";
 import { findShortestPath, formatPath, resolveInput } from "./services/shortest-path.js";
@@ -404,6 +404,12 @@ function runMemoryHybridRegister(api: ClawdbotPluginApi): void {
     throw err;
   }
 
+  // OpenClaw `loadOpenClawPluginCliRegistry` — metadata only; no DBs or native deps (issue #1111).
+  if (api.registrationMode === "cli-metadata") {
+    registerHybridMemCliMetadataOnly(api);
+    return;
+  }
+
   // Clean up old resources before opening new connections to prevent double-opening same paths (Issue #590, #802)
   if (old) {
     // Clear old timer handles to prevent leaks
@@ -487,28 +493,9 @@ function runMemoryHybridRegister(api: ClawdbotPluginApi): void {
   // Python Bridge (lazy -- only when documents.enabled, spawns on first use)
   // ========================================================================
 
-  // Initialized lazily -- PythonBridge only spawns the subprocess on first convert() call
+  // Initialized lazily -- PythonBridge only spawns the subprocess on first convert() call.
+  // Dependency check runs from plugin service start() so `register()` stays lighter (issue #1111).
   const pythonBridge = cfg.documents.enabled ? new PythonBridge(cfg.documents.pythonPath) : null;
-
-  // Eagerly check Python dependencies at startup so missing packages surface
-  // immediately (in logs) rather than on first document conversion (issue #422).
-  if (pythonBridge) {
-    const { ok, missing, spawnError } = pythonBridge.checkDependencies();
-    if (!ok) {
-      if (spawnError) {
-        api.logger.warn(
-          `memory-hybrid: documents.enabled but Python binary not found or failed to spawn: ${spawnError.message}. ` +
-            `Check documents.pythonPath configuration (currently: ${cfg.documents.pythonPath}).`,
-        );
-      } else {
-        const pkgs = missing.join(", ");
-        api.logger.warn(
-          `memory-hybrid: documents.enabled but required Python package(s) not installed: ${pkgs}. ` +
-            `Run: ${cfg.documents.pythonPath} -m pip install ${missing.join(" ")}  (see extensions/memory-hybrid/scripts/requirements.txt)`,
-        );
-      }
-    }
-  }
 
   // ========================================================================
   // Contextual Variant Generator (Issue #159)

@@ -7,7 +7,7 @@
  * - No surprises: expected response shapes and persistence across tool calls
  */
 
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -149,6 +149,7 @@ describe("Plugin registration e2e", () => {
     const mockApi = {
       ...api,
       pluginConfig,
+      registrationMode: "full" as const,
       resolvePath: (p: string) => (p.startsWith("/") || /^[A-Z]:/.test(p) ? p : join(tmpDir, p)),
     };
     expect(() => memoryHybridPlugin.register(mockApi as never)).not.toThrow();
@@ -158,6 +159,50 @@ describe("Plugin registration e2e", () => {
     expect(mockApi.getTool("memory_recall_timeline")).toBeDefined();
     expect(mockApi.getTool("memory_forget")).toBeDefined();
     expect(mockApi.getTool("memory_promote")).toBeDefined();
+  });
+
+  it("full register() creates on-disk database paths (heavy bootstrap)", () => {
+    const sqlitePath = join(tmpDir, "facts.db");
+    const lancePath = join(tmpDir, "lancedb");
+    const pluginConfig = getMinimalConfig({
+      sqlitePath,
+      lanceDbPath: lancePath,
+    });
+    const mockApi = {
+      ...api,
+      pluginConfig,
+      registrationMode: "full" as const,
+      resolvePath: (p: string) => (p.startsWith("/") || /^[A-Z]:/.test(p) ? p : join(tmpDir, p)),
+    };
+    memoryHybridPlugin.register(mockApi as never);
+    expect(existsSync(sqlitePath)).toBe(true);
+  });
+
+  it("cli-metadata register() does not create database files and only registers CLI metadata (issue #1111)", () => {
+    const sqlitePath = join(tmpDir, "facts.db");
+    const lancePath = join(tmpDir, "lancedb");
+    const pluginConfig = getMinimalConfig({
+      sqlitePath,
+      lanceDbPath: lancePath,
+    });
+    const registerCli = vi.fn();
+    const registerTool = vi.fn();
+    const registerService = vi.fn();
+    const mockApi = {
+      ...api,
+      registerCli,
+      registerTool,
+      registerService,
+      pluginConfig,
+      registrationMode: "cli-metadata" as const,
+      resolvePath: (p: string) => (p.startsWith("/") || /^[A-Z]:/.test(p) ? p : join(tmpDir, p)),
+    };
+    memoryHybridPlugin.register(mockApi as never);
+    expect(existsSync(sqlitePath)).toBe(false);
+    expect(existsSync(lancePath)).toBe(false);
+    expect(registerCli).toHaveBeenCalled();
+    expect(registerTool).not.toHaveBeenCalled();
+    expect(registerService).not.toHaveBeenCalled();
   });
 });
 
