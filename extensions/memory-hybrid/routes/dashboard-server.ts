@@ -1586,7 +1586,7 @@ export async function createDashboardServer(ctx: DashboardContext, port: number)
     }
 
     // GET /api/viewer/facts/:id
-    if (pathname.startsWith("/api/viewer/facts/")) {
+    if (req.method === "GET" && pathname.startsWith("/api/viewer/facts/")) {
       const factId = pathname.replace("/api/viewer/facts/", "");
       if (!factId) {
         res.writeHead(400, { "Content-Type": "application/json" });
