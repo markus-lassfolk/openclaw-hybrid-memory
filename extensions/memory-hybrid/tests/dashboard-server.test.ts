@@ -377,3 +377,247 @@ describeCreateDashboardServer("createDashboardServer", () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// Memory Viewer API tests (Issue #1023)
+// ---------------------------------------------------------------------------
+
+describe("Memory Viewer API (Issue #1023)", () => {
+  const VECTOR_DIM = 4;
+
+  async function makeContextWithStores(tmpDir: string) {
+    const { FactsDB, VectorDB } = await import("../index.js").then((m) => m._testing);
+    const { EdictStore } = await import("../backends/edict-store.js");
+    const { VerificationStore } = await import("../services/verification-store.js");
+    const { IssueStore } = await import("../backends/issue-store.js");
+    const { WorkflowStore } = await import("../backends/workflow-store.js");
+    const { NarrativesDB } = await import("../backends/narratives-db.js");
+    const { ProvenanceService } = await import("../services/provenance.js");
+
+    const factsDb = new FactsDB(join(tmpDir, "facts.db"));
+    const vectorDb = new VectorDB(join(tmpDir, "lance"), VECTOR_DIM);
+    const edictStore = new EdictStore(join(tmpDir, "edicts.db"));
+    const verificationStore = new VerificationStore(join(tmpDir, "verification.db"));
+    const issueStore = new IssueStore(join(tmpDir, "issues.db"));
+    const workflowStore = new WorkflowStore(join(tmpDir, "workflows.db"));
+    const narrativesDb = new NarrativesDB(join(tmpDir, "narratives.db"));
+    const provenanceService = new ProvenanceService(join(tmpDir, "provenance.db"));
+
+    return {
+      factsDb,
+      vectorDb,
+      edictStore,
+      verificationStore,
+      issueStore,
+      workflowStore,
+      narrativesDb,
+      provenanceService,
+      resolvedSqlitePath: join(tmpDir, "facts.db"),
+      resolvedLancePath: join(tmpDir, "lance"),
+    };
+  }
+
+  async function apiGet(port: number, path: string) {
+    return new Promise<{ status: number; body: string }>((resolve) => {
+      const req = request({ hostname: "127.0.0.1", port, path, method: "GET" }, (res) => {
+        let body = "";
+        res.on("data", (c: Buffer) => {
+          body += c.toString();
+        });
+        res.on("end", () => resolve({ status: res.statusCode ?? 0, body }));
+      });
+      req.on("error", () => resolve({ status: 0, body: "" }));
+      req.setTimeout(5000, () => {
+        req.destroy();
+        resolve({ status: 0, body: "" });
+      });
+      req.end();
+    });
+  }
+
+  async function apiPost(port: number, path: string, body: string) {
+    return new Promise<{ status: number; body: string }>((resolve) => {
+      const req = request(
+        { hostname: "127.0.0.1", port, path, method: "POST", headers: { "Content-Type": "application/json" } },
+        (res) => {
+          let data = "";
+          res.on("data", (c: Buffer) => {
+            data += c.toString();
+          });
+          res.on("end", () => resolve({ status: res.statusCode ?? 0, body: data }));
+        },
+      );
+      req.on("error", () => resolve({ status: 0, body: "" }));
+      req.setTimeout(5000, () => {
+        req.destroy();
+        resolve({ status: 0, body: "" });
+      });
+      req.end(body);
+    });
+  }
+
+  function closeAll(ctx: Awaited<ReturnType<typeof makeContextWithStores>>) {
+    try {
+      ctx.factsDb.close();
+    } catch {
+      /* ignore */
+    }
+    try {
+      ctx.vectorDb.close();
+    } catch {
+      /* ignore */
+    }
+    try {
+      ctx.edictStore.close();
+    } catch {
+      /* ignore */
+    }
+    try {
+      ctx.verificationStore.close();
+    } catch {
+      /* ignore */
+    }
+    try {
+      ctx.issueStore.close();
+    } catch {
+      /* ignore */
+    }
+    try {
+      ctx.workflowStore.close();
+    } catch {
+      /* ignore */
+    }
+    try {
+      ctx.narrativesDb.close();
+    } catch {
+      /* ignore */
+    }
+    try {
+      ctx.provenanceService.close();
+    } catch {
+      /* ignore */
+    }
+  }
+
+  async function withServer(
+    fn: (ctx: Awaited<ReturnType<typeof makeContextWithStores>>, port: number) => Promise<void>,
+  ) {
+    const td = mkdtempSync(join(tmpdir(), "mv-test-"));
+    try {
+      const ctx = await makeContextWithStores(td);
+      const srv = await createDashboardServer(ctx, 0);
+      try {
+        await fn(ctx, srv.port);
+      } finally {
+        // Close stores first (before server), then server, then cleanup temp dir
+        closeAll(ctx);
+        srv.close();
+      }
+    } finally {
+      rmSync(td, { recursive: true, force: true });
+    }
+  }
+
+  it("GET /api/viewer/stats returns overview stats", async () => {
+    await withServer(async (ctx, port) => {
+      ctx.factsDb.store({ text: "Test fact", category: "fact", source: "test" });
+      const { status, body } = await apiGet(port, "/api/viewer/stats");
+      expect(status).toBe(200);
+      const d = JSON.parse(body);
+      expect(typeof d.totalFacts).toBe("number");
+      expect(typeof d.byCategory).toBe("object");
+      expect(typeof d.byTier).toBe("object");
+    });
+  });
+
+  it("GET /api/viewer/facts returns a list of facts", async () => {
+    await withServer(async (ctx, port) => {
+      ctx.factsDb.store({ text: "Test fact", category: "fact", source: "test" });
+      const { status, body } = await apiGet(port, "/api/viewer/facts");
+      expect(status).toBe(200);
+      const d = JSON.parse(body);
+      expect(Array.isArray(d.facts)).toBe(true);
+      expect(d.facts.length).toBeGreaterThan(0);
+      expect(typeof d.facts[0].id).toBe("string");
+    });
+  });
+
+  it("GET /api/viewer/facts/:id returns a single fact", async () => {
+    await withServer(async (ctx, port) => {
+      ctx.factsDb.store({ text: "Target fact", category: "fact", source: "test" });
+      const { body: lb } = await apiGet(port, "/api/viewer/facts");
+      const { facts } = JSON.parse(lb);
+      const { status, body } = await apiGet(port, `/api/viewer/facts/${facts[0].id}`);
+      expect(status).toBe(200);
+      const f = JSON.parse(body);
+      expect(f.id).toBe(facts[0].id);
+      expect(typeof f.text).toBe("string");
+    });
+  });
+
+  it("GET /api/viewer/facts/:id returns 404 for unknown id", async () => {
+    await withServer(async (_ctx, port) => {
+      const { status } = await apiGet(port, "/api/viewer/facts/00000000-0000-0000-0000-000000000000");
+      expect(status).toBe(404);
+    });
+  });
+
+  it("GET /api/viewer/issues returns issues array", async () => {
+    await withServer(async (_ctx, port) => {
+      const { status, body } = await apiGet(port, "/api/viewer/issues");
+      expect(status).toBe(200);
+      expect(Array.isArray(JSON.parse(body))).toBe(true);
+    });
+  });
+
+  it("GET /api/viewer/edicts returns edicts array", async () => {
+    await withServer(async (_ctx, port) => {
+      const { status, body } = await apiGet(port, "/api/viewer/edicts");
+      expect(status).toBe(200);
+      expect(Array.isArray(JSON.parse(body))).toBe(true);
+    });
+  });
+
+  it("GET /api/viewer/entities returns entities array", async () => {
+    await withServer(async (ctx, port) => {
+      ctx.factsDb.store({ text: "Entity test", category: "fact", source: "test", entity: "MyEntity" });
+      const { status, body } = await apiGet(port, "/api/viewer/entities");
+      expect(status).toBe(200);
+      expect(Array.isArray(JSON.parse(body))).toBe(true);
+    });
+  });
+
+  it("GET /api/viewer/workflows returns workflows array", async () => {
+    await withServer(async (_ctx, port) => {
+      const { status, body } = await apiGet(port, "/api/viewer/workflows");
+      expect(status).toBe(200);
+      expect(Array.isArray(JSON.parse(body))).toBe(true);
+    });
+  });
+
+  it("POST /api/viewer/facts/:id/verify verifies a fact", async () => {
+    await withServer(async (ctx, port) => {
+      ctx.factsDb.store({ text: "To verify", category: "fact", source: "test" });
+      const { body: lb } = await apiGet(port, "/api/viewer/facts");
+      const { facts } = JSON.parse(lb);
+      const { status, body } = await apiPost(
+        port,
+        `/api/viewer/facts/${facts[0].id}/verify`,
+        JSON.stringify({ verifiedBy: "agent" }),
+      );
+      expect(status).toBe(200);
+      expect(JSON.parse(body).ok).toBe(true);
+    });
+  });
+
+  it("POST /api/viewer/facts/:id/forget forgets a fact", async () => {
+    await withServer(async (ctx, port) => {
+      ctx.factsDb.store({ text: "To forget", category: "fact", source: "test" });
+      const { body: lb } = await apiGet(port, "/api/viewer/facts");
+      const { facts } = JSON.parse(lb);
+      const { status, body } = await apiPost(port, `/api/viewer/facts/${facts[0].id}/forget`, "{}");
+      expect(status).toBe(200);
+      expect(JSON.parse(body).ok).toBe(true);
+    });
+  });
+});

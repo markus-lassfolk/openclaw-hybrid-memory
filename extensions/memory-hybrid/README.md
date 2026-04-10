@@ -112,6 +112,37 @@ Routes are only registered when `health.enabled` is `true` (the default). OpenCl
 
 **Config field:** `health.authenticated` (boolean, default `true`) — controls whether dashboard routes require an authenticated session. Set to `false` only if you intentionally want unauthenticated access.
 
+## Mission Control — Memory Viewer (Issue #1023)
+
+The **Mission Control** local dashboard (`createDashboardServer`) doubles as the **Memory Viewer / Mission Control UI** for hybrid-memory. It serves a rich HTML dashboard at the root and exposes a comprehensive JSON API under `/api/viewer/`.
+
+**Access:** The dashboard runs on `127.0.0.1` only (local-only, no authentication required for local access). The HTTP server port is configured via `dashboard.port` in the plugin config (default `7700`).
+
+> **Important:** The dashboard server is registered separately from the OpenClaw HTTP gateway. It is accessible at `http://127.0.0.1:7700/` (or the configured port) — not through the OpenClaw gateway URL. This is intentional: local-only, no auth overhead, safe for operators on the same machine.
+
+### Memory Viewer API endpoints
+
+All Memory Viewer routes are served by the local Mission Control server on the dashboard port:
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/viewer/stats` | GET | Overview: total facts, verified, edicts, issues, episodes, links, breakdown by category/tier/decay/source |
+| `/api/viewer/facts` | GET | Paginated facts list with optional filters: `?category=&entity=&limit=&offset=` |
+| `/api/viewer/facts/:id` | GET | Single fact detail including verification status, provenance, and decay info |
+| `/api/viewer/facts/:id/verify` | POST | Verify a fact (`{ "verifiedBy": "agent" \| "user" \| "system" }`) |
+| `/api/viewer/facts/:id/forget` | POST | Forget (soft-delete) a fact |
+| `/api/viewer/entities` | GET | Top entities by fact count with categories and tags |
+| `/api/viewer/episodes` | GET | Recent episodic memory events with outcome, duration, and session context |
+| `/api/viewer/narratives` | GET | Recent session narratives/summaries |
+| `/api/viewer/issues` | GET | All tracked issues with status, severity, and symptoms |
+| `/api/viewer/workflows` | GET | Workflow patterns and recent tool-sequence traces |
+| `/api/viewer/edicts` | GET | All edicts (verified ground-truth facts) |
+| `/api/viewer/verified` | GET | All verified facts with verification metadata |
+| `/api/viewer/links` | GET | Memory graph links (source → target with type and strength) |
+| `/api/viewer/provenance/:factId` | GET | Provenance chain for a specific fact |
+
+All responses include `Cache-Control: no-cache`. POST endpoints accept JSON body and return `{ ok: boolean, message: string }`.
+
 ## Public API HTTP Routes
 
 `tools/public-api-routes.ts` registers a compact, beginner-friendly REST surface under `/plugins/memory-public/`:
