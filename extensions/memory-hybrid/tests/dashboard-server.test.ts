@@ -600,9 +600,11 @@ describe("Memory Viewer API (Issue #1023)", () => {
       ctx.factsDb.store({ text: "To verify", category: "fact", source: "test" });
       const { body: lb } = await apiGet(port, "/api/viewer/facts");
       const { facts } = JSON.parse(lb);
+      const target = facts.find((fact: { text: string; id: string }) => fact.text === "To verify");
+      expect(target?.id).toBeTruthy();
       const { status, body } = await apiPost(
         port,
-        `/api/viewer/facts/${facts[0].id}/verify`,
+        `/api/viewer/facts/${target.id}/verify`,
         JSON.stringify({ verifiedBy: "agent" }),
       );
       expect(status).toBe(200);
@@ -615,7 +617,9 @@ describe("Memory Viewer API (Issue #1023)", () => {
       ctx.factsDb.store({ text: "To forget", category: "fact", source: "test" });
       const { body: lb } = await apiGet(port, "/api/viewer/facts");
       const { facts } = JSON.parse(lb);
-      const { status, body } = await apiPost(port, `/api/viewer/facts/${facts[0].id}/forget`, "{}");
+      const target = facts.find((fact: { text: string; id: string }) => fact.text === "To forget");
+      expect(target?.id).toBeTruthy();
+      const { status, body } = await apiPost(port, `/api/viewer/facts/${target.id}/forget`, "{}");
       expect(status).toBe(200);
       expect(JSON.parse(body).ok).toBe(true);
     });
