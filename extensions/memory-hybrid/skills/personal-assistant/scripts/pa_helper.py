@@ -26,28 +26,64 @@ class M365Helper:
         self.mailbox = mailbox
         self.user = user
 
-    def _run_command(self, args: List[str], capture_json: bool = True) -> Dict:
-        """Run m365-agent-cli command and return result"""
-        try:
-            if capture_json:
-                args.append('--output')
-                args.append('json')
+    def _run_command(self, args: List[str], capture_json: bool = True, timeout: int = 30) -> Dict:
+        """Run ``m365-agent-cli`` command and return the parsed result.
 
+        Args:
+            args: List of CLI arguments (excluding the executable itself).
+            capture_json: When ``True``, the helper will request JSON output from the CLI
+                (``--output json``) and return the decoded response. When ``False``, the raw
+                ``stdout``/``stderr`` text is returned.
+            timeout: Maximum number of seconds to allow the subprocess to run. This prevents
+                the PA from hanging indefinitely if the CLI blocks for authentication or
+                network issues.
+        Returns:
+            A ``dict`` describing the result. For JSON‑capturing calls this is the decoded
+            JSON on success, or an ``{"error": str, ...}`` payload on failure. For non‑JSON
+            captures the payload always contains at least ``stdout`` and ``stderr`` keys.
+        """
+        full_cmd = ['m365-agent-cli', *args]
+
+        if capture_json:
+            # Request JSON output so we can parse it deterministically.
+            full_cmd.extend(['--output', 'json'])
+
+        try:
             result = subprocess.run(
-                ['m365-agent-cli'] + args,
+                full_cmd,
                 capture_output=True,
                 text=True,
-                check=True
+                check=True,
+                timeout=timeout,
             )
 
             if capture_json:
-                return json.loads(result.stdout)
+                try:
+                    return json.loads(result.stdout)
+                except json.JSONDecodeError as e:
+                    # Surface the raw output so the caller can decide how to proceed.
+                    return {
+                        "error": f"JSON parse error: {e}",
+                        "raw": result.stdout,
+                        "cmd": " ".join(full_cmd),
+                    }
+            # Not capturing JSON – return raw streams for logging/diagnostics.
             return {"stdout": result.stdout, "stderr": result.stderr}
 
+        except subprocess.TimeoutExpired as e:
+            return {
+                "error": f"Command timed out after {timeout}s",
+                "stdout": e.stdout,
+                "stderr": e.stderr,
+                "cmd": " ".join(full_cmd),
+            }
         except subprocess.CalledProcessError as e:
-            return {"error": str(e), "stderr": e.stderr}
-        except json.JSONDecodeError as e:
-            return {"error": f"JSON parse error: {e}", "raw": result.stdout}
+            return {
+                "error": str(e),
+                "stdout": e.stdout,
+                "stderr": e.stderr,
+                "cmd": " ".join(full_cmd),
+            }
 
     def get_unread_mail(self, limit: int = 50) -> List[Dict]:
         """Get unread emails from inbox"""
@@ -147,8 +183,14 @@ class M365Helper:
 
         commitments = []
         for email in sent_mail:
-            body = email.get('body', {}).get('content', '').lower()
-            subject = email.get('subject', '').lower()
+            body_raw = email.get('body', '')
+            if isinstance(body_raw, dict):
+                body_text = body_raw.get('content', '')
+            else:
+                body_text = str(body_raw)
+            body = body_text.lower()
+
+            subject = str(email.get('subject', '')).lower()
 
             for phrase in commitment_phrases:
                 if phrase.lower() in body or phrase.lower() in subject:

@@ -2,7 +2,7 @@
 name: personal_assistant
 description: |
   Executive Assistant and Chief of Staff workflows for Microsoft 365. Use this skill whenever the user mentions email triage, inbox management, drafting replies, calendar defense, scheduling meetings, meeting preparation, meeting notes, extracting action items from emails or meetings, task management, todo lists, following up on unanswered mail, morning briefings, document collaboration, acting as their personal assistant, or managing their digital life through Microsoft 365. Even if they don't explicitly say "personal assistant" or "M365", use this skill when they ask you to help manage their professional workflow, chase down commitments, prepare for meetings, or proactively organize their work. This skill is essential for anyone asking you to act as their right hand in managing professional communications and commitments.
-metadata: {"clawdbot":{"requires":{"bins":["m365-agent-cli"]}}}
+metadata: {"openclaw":{"requires":{"bins":["m365-agent-cli"]}}}
 ---
 
 # Personal Assistant (PA) Skill
@@ -332,8 +332,8 @@ When things break, surface the problem clearly—don't guess or swallow errors.
 | Scan unread mail | `m365-agent-cli mail inbox --unread [--mailbox <email>]` | EWS—use `--mailbox` for delegated |
 | Flag email | `m365-agent-cli mail --flag <id> [--mailbox <email>]` | EWS |
 | Create draft | `m365-agent-cli drafts --create --to <to> --subject <subj> --body <body> [--mailbox <email>]` | EWS |
-| Reply as draft | `m365-agent-cli mail --reply <id> --draft [--mailbox <email>]` | EWS |
-| Move email | `m365-agent-cli mail --move <id> --to <folder> [--mailbox <email>]` | EWS |
+| Reply as draft | `m365-agent-cli mail reply <id> --draft [--mailbox <email>]` | EWS |
+| Move email | `m365-agent-cli mail move <id> --to <folder> [--mailbox <email>]` | EWS |
 | Today's calendar | `m365-agent-cli calendar today [--mailbox <email>]` | EWS |
 | Find meeting time | `m365-agent-cli findtime [--mailbox <email>]` | EWS (corrected from original) |
 | Create To Do task | `m365-agent-cli todo create --title <title> --due <date> [--user <email>]` | Graph—use `--user` |
