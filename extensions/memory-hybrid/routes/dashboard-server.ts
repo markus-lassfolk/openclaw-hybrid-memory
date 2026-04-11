@@ -692,14 +692,16 @@ async function collectMemoryViewerStats(ctx: DashboardContext): Promise<MemoryVi
       /* non-fatal */
     }
     try {
-      const vr = roDb.prepare("SELECT COUNT(*) as cnt FROM verified_facts").get() as { cnt: number } | undefined;
-      totalVerified = vr?.cnt ?? 0;
+      if (ctx.verificationStore) {
+        totalVerified = ctx.verificationStore.countVerified();
+      }
     } catch {
       /* non-fatal */
     }
     try {
-      const er = roDb.prepare("SELECT COUNT(*) as cnt FROM edicts").get() as { cnt: number } | undefined;
-      totalEdicts = er?.cnt ?? 0;
+      if (ctx.edictStore) {
+        totalEdicts = ctx.edictStore.count();
+      }
     } catch {
       /* non-fatal */
     }
@@ -892,7 +894,7 @@ function collectMemoryViewerEdicts(ctx: DashboardContext): MemoryViewerEdict[] {
 function collectMemoryViewerVerified(ctx: DashboardContext, limit = 100): MemoryViewerVerification[] {
   try {
     if (!ctx.verificationStore) return [];
-    const verified = ctx.verificationStore.listLatestVerified();
+    const verified = ctx.verificationStore.listLatestVerified(limit);
     return verified.map((v) => ({
       factId: v.factId,
       canonicalText: v.canonicalText,
@@ -1538,7 +1540,7 @@ export async function createDashboardServer(ctx: DashboardContext, port: number)
         const verifiedFactIds = new Set<string>();
         try {
           if (ctx.verificationStore) {
-            const verified = ctx.verificationStore.listLatestVerified();
+            const verified = ctx.verificationStore.listLatestVerified(limit);
             verified.forEach((v) => verifiedFactIds.add(v.factId));
           }
         } catch {
@@ -1603,7 +1605,7 @@ export async function createDashboardServer(ctx: DashboardContext, port: number)
         const verifiedFactIds = new Set<string>();
         try {
           if (ctx.verificationStore) {
-            const verified = ctx.verificationStore.listLatestVerified();
+            const verified = ctx.verificationStore.listLatestVerified(limit);
             verified.forEach((v) => verifiedFactIds.add(v.factId));
           }
         } catch {
