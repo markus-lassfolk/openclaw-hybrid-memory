@@ -1,0 +1,284 @@
+#!/usr/bin/env python3
+"""
+PA Helper: Common Personal Assistant operations for m365-agent-cli
+
+This script provides helper functions for common PA workflows to avoid
+repetitive command construction and reduce errors.
+"""
+
+import subprocess
+import json
+import sys
+from datetime import datetime, timedelta
+from typing import List, Dict, Optional
+
+class M365Helper:
+    """Helper class for m365-agent-cli operations"""
+
+    def __init__(self, mailbox: Optional[str] = None, user: Optional[str] = None):
+        """
+        Initialize helper with delegation context.
+
+        Args:
+            mailbox: Email address for EWS delegation (--mailbox flag)
+            user: Email address for Graph API delegation (--user flag)
+        """
+        self.mailbox = mailbox
+        self.user = user
+
+    def _run_command(self, args: List[str], capture_json: bool = True) -> Dict:
+        """Run m365-agent-cli command and return result"""
+        try:
+            if capture_json:
+                args.append('--output')
+                args.append('json')
+
+            result = subprocess.run(
+                ['m365-agent-cli'] + args,
+                capture_output=True,
+                text=True,
+                check=True
+            )
+
+            if capture_json:
+                return json.loads(result.stdout)
+            return {"stdout": result.stdout, "stderr": result.stderr}
+
+        except subprocess.CalledProcessError as e:
+            return {"error": str(e), "stderr": e.stderr}
+        except json.JSONDecodeError as e:
+            return {"error": f"JSON parse error: {e}", "raw": result.stdout}
+
+    def get_unread_mail(self, limit: int = 50) -> List[Dict]:
+        """Get unread emails from inbox"""
+        args = ['mail', 'inbox', '--unread', '--limit', str(limit)]
+        if self.mailbox:
+            args.extend(['--mailbox', self.mailbox])
+
+        result = self._run_command(args)
+        return result.get('value', []) if isinstance(result, dict) else []
+
+    def get_sent_mail_since(self, days_ago: int = 3) -> List[Dict]:
+        """Get sent mail from the last N days for chase-up scanning"""
+        since_date = (datetime.now() - timedelta(days=days_ago)).strftime('%Y-%m-%d')
+        args = ['mail', 'sent', '--since', since_date]
+        if self.mailbox:
+            args.extend(['--mailbox', self.mailbox])
+
+        result = self._run_command(args)
+        return result.get('value', []) if isinstance(result, dict) else []
+
+    def get_todays_calendar(self) -> List[Dict]:
+        """Get today's calendar events"""
+        args = ['calendar', 'today']
+        if self.mailbox:
+            args.extend(['--mailbox', self.mailbox])
+
+        result = self._run_command(args)
+        return result.get('value', []) if isinstance(result, dict) else []
+
+    def flag_email(self, email_id: str) -> Dict:
+        """Flag an email for follow-up"""
+        args = ['mail', '--flag', email_id]
+        if self.mailbox:
+            args.extend(['--mailbox', self.mailbox])
+
+        return self._run_command(args, capture_json=False)
+
+    def move_email(self, email_id: str, folder: str) -> Dict:
+        """Move email to a folder (e.g., Archive, Clutter, Suspicious)"""
+        args = ['mail', '--move', email_id, '--to', folder]
+        if self.mailbox:
+            args.extend(['--mailbox', self.mailbox])
+
+        return self._run_command(args, capture_json=False)
+
+    def create_draft(self, to: str, subject: str, body: str) -> Dict:
+        """Create an email draft"""
+        args = [
+            'drafts', '--create',
+            '--to', to,
+            '--subject', subject,
+            '--body', body
+        ]
+        if self.mailbox:
+            args.extend(['--mailbox', self.mailbox])
+
+        return self._run_command(args)
+
+    def create_todo(self, title: str, due_date: Optional[str] = None) -> Dict:
+        """
+        Create a To Do task.
+
+        Args:
+            title: Task title
+            due_date: Due date in YYYY-MM-DD format (optional)
+        """
+        args = ['todo', 'create', '--title', title]
+        if due_date:
+            args.extend(['--due', due_date])
+        if self.user:
+            args.extend(['--user', self.user])
+
+        return self._run_command(args)
+
+    def find_commitments_in_sent(self, days_ago: int = 3) -> List[Dict]:
+        """
+        Scan sent mail for commitment phrases (3-day chase-up rule).
+
+        Returns emails containing commitment language.
+        """
+        sent_mail = self.get_sent_mail_since(days_ago)
+
+        commitment_phrases = [
+            "I'll send",
+            "I will send",
+            "I'll get back to you",
+            "I'll follow up",
+            "I'll have that to you",
+            "Let me send",
+            "I'll share",
+            "I'll provide",
+            "by end of day",
+            "by tomorrow",
+            "by friday",
+            "by next week"
+        ]
+
+        commitments = []
+        for email in sent_mail:
+            body = email.get('body', {}).get('content', '').lower()
+            subject = email.get('subject', '').lower()
+
+            for phrase in commitment_phrases:
+                if phrase.lower() in body or phrase.lower() in subject:
+                    commitments.append({
+                        'email': email,
+                        'matched_phrase': phrase,
+                        'sent_date': email.get('sentDateTime'),
+                        'recipients': [r.get('emailAddress', {}).get('address')
+                                     for r in email.get('toRecipients', [])]
+                    })
+                    break  # Only match once per email
+
+        return commitments
+
+    def detect_phishing_indicators(self, email: Dict) -> List[str]:
+        """
+        Detect phishing red flags in an email.
+
+        Returns list of detected red flags.
+        """
+        red_flags = []
+
+        # Extract email fields
+        subject = email.get('subject', '').lower()
+        body = email.get('body', {}).get('content', '').lower()
+        from_address = email.get('from', {}).get('emailAddress', {}).get('address', '')
+        from_name = email.get('from', {}).get('emailAddress', {}).get('name', '')
+
+        # 1. Urgency language
+        urgency_keywords = ['urgent', 'immediate', 'asap', 'within 24 hours',
+                           'account suspension', 'verify immediately', 'act now']
+        if any(keyword in subject or keyword in body for keyword in urgency_keywords):
+            red_flags.append("Urgency manipulation detected")
+
+        # 2. Threat language
+        threat_keywords = ['account will be', 'suspended', 'terminated', 'closed',
+                          'locked out', 'unauthorized access']
+        if any(keyword in subject or keyword in body for keyword in threat_keywords):
+            red_flags.append("Threat of consequences detected")
+
+        # 3. Verification requests
+        if 'verify' in subject or 'verify' in body or 'confirm your' in body:
+            red_flags.append("Verification request (common phishing tactic)")
+
+        # 4. Suspicious sender mismatch (basic check)
+        # Note: More sophisticated checks would require knowing the organization's domains
+        if from_name and from_address:
+            if 'support' in from_name.lower() and 'support' not in from_address.lower():
+                red_flags.append("Sender name/address mismatch")
+
+        return red_flags
+
+    def get_morning_briefing_data(self) -> Dict:
+        """
+        Gather all data needed for a morning briefing.
+
+        Returns dict with calendar, unread mail, and flagged items.
+        """
+        return {
+            'calendar': self.get_todays_calendar(),
+            'unread': self.get_unread_mail(limit=20),
+            'timestamp': datetime.now().isoformat()
+        }
+
+
+def main():
+    """CLI interface for helper script"""
+    import argparse
+
+    parser = argparse.ArgumentParser(description='PA Helper for m365-agent-cli')
+    parser.add_argument('--mailbox', help='User email for EWS delegation')
+    parser.add_argument('--user', help='User email for Graph delegation')
+
+    subparsers = parser.add_subparsers(dest='command', help='Command to run')
+
+    # Unread mail
+    subparsers.add_parser('unread', help='Get unread mail')
+
+    # Chase-up scan
+    chase_parser = subparsers.add_parser('chase-up', help='Scan for commitments needing follow-up')
+    chase_parser.add_argument('--days', type=int, default=3, help='Days to look back')
+
+    # Today's calendar
+    subparsers.add_parser('calendar', help="Get today's calendar")
+
+    # Morning briefing
+    subparsers.add_parser('briefing', help='Get morning briefing data')
+
+    # Phishing scan
+    subparsers.add_parser('phishing-scan', help='Scan unread mail for phishing indicators')
+
+    args = parser.parse_args()
+
+    if not args.command:
+        parser.print_help()
+        return
+
+    helper = M365Helper(mailbox=args.mailbox, user=args.user)
+
+    if args.command == 'unread':
+        emails = helper.get_unread_mail()
+        print(json.dumps(emails, indent=2))
+
+    elif args.command == 'chase-up':
+        commitments = helper.find_commitments_in_sent(args.days)
+        print(f"Found {len(commitments)} emails with commitment language:")
+        for c in commitments:
+            print(f"\n- Sent: {c['sent_date']}")
+            print(f"  To: {', '.join(c['recipients'])}")
+            print(f"  Matched: '{c['matched_phrase']}'")
+            print(f"  Subject: {c['email'].get('subject')}")
+
+    elif args.command == 'calendar':
+        events = helper.get_todays_calendar()
+        print(json.dumps(events, indent=2))
+
+    elif args.command == 'briefing':
+        data = helper.get_morning_briefing_data()
+        print(json.dumps(data, indent=2))
+
+    elif args.command == 'phishing-scan':
+        emails = helper.get_unread_mail()
+        for email in emails:
+            red_flags = helper.detect_phishing_indicators(email)
+            if red_flags:
+                print(f"\n🚨 Suspicious email detected:")
+                print(f"From: {email.get('from', {}).get('emailAddress', {}).get('name')}")
+                print(f"Subject: {email.get('subject')}")
+                print(f"Red flags: {', '.join(red_flags)}")
+
+
+if __name__ == '__main__':
+    main()
