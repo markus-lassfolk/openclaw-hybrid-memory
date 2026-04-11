@@ -1605,13 +1605,38 @@ export async function createDashboardServer(ctx: DashboardContext, port: number)
         const verifiedFactIds = new Set<string>();
         try {
           if (ctx.verificationStore) {
-            const verified = ctx.verificationStore.listLatestVerified(limit);
+            const verified = ctx.verificationStore.listLatestVerified(1000);
             verified.forEach((v) => verifiedFactIds.add(v.factId));
           }
         } catch {
           /* non-fatal */
         }
-        const f: MemoryViewerFact = {
+
+        // GET /api/viewer/facts/:id
+        if (req.method === "GET" && pathname.startsWith("/api/viewer/facts/")) {
+          const factId = pathname.replace("/api/viewer/facts/", "");
+          if (!factId) {
+            res.writeHead(400, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ error: "Missing fact id" }));
+            return;
+          }
+          try {
+            const fact = ctx.factsDb.getById(factId);
+            if (!fact) {
+              res.writeHead(404, { "Content-Type": "application/json" });
+              res.end(JSON.stringify({ error: "Fact not found" }));
+              return;
+            }
+            verifiedFactIds.clear();
+            try {
+              if (ctx.verificationStore) {
+                const verified = ctx.verificationStore.listLatestVerified(1000);
+                verified.forEach((v) => verifiedFactIds.add(v.factId));
+              }
+            } catch {
+              /* non-fatal */
+            }
+            const f: MemoryViewerFact = {
           id: fact.id,
           text: fact.text,
           why: fact.why,
@@ -1629,7 +1654,7 @@ export async function createDashboardServer(ctx: DashboardContext, port: number)
           tags: fact.tags ?? [],
           supersededAt: fact.supersededAt ?? null,
           supersededBy: fact.supersededBy ?? null,
-          verified: verifiedFactIds.has(fact.id),
+          verified: ctx.verificationStore?.getVerified(factId) != null,
           scope: fact.scope,
           provenanceSession: fact.provenanceSession ?? null,
           reinforcedCount: fact.reinforcedCount,
