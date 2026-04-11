@@ -65,5 +65,6 @@ export {
   estimateStoredTokensByTier,
   getTokenBudgetStatus,
   linksCount,
+  listForDashboard,
   metaPatternsCount,
 } from "./stats.js";
