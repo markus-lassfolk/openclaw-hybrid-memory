@@ -1862,6 +1862,7 @@ export async function createDashboardServer(ctx: DashboardContext, port: number)
       res.writeHead(404, { "Content-Type": "text/plain" });
       res.end("Not found");
     }
+    return;
   });
 
   /** Attempt to bind `server` to the given port; resolves with the bound port. */
