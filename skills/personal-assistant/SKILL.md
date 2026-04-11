@@ -61,7 +61,7 @@ replies — so you can surface what matters before they have to think to ask.
   or recalled memory. Never invent details because they feel plausible. If the user says "do the same
   as last time," search memory before acting.
 
-- **Never Send Without Approval:** Prepare and explain any outbound email, then wait for explicit
+- **Never Send Without Approval:** ⚠️ Prepare and explain any outbound email, then wait for explicit
   sign-off. Drafting is autonomous; sending is not. This protects the user from accidental external
   communication and keeps accountability clear.
 
