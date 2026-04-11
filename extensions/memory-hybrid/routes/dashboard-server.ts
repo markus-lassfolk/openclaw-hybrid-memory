@@ -692,16 +692,14 @@ async function collectMemoryViewerStats(ctx: DashboardContext): Promise<MemoryVi
       /* non-fatal */
     }
     try {
-      if (ctx.verificationStore) {
-        totalVerified = ctx.verificationStore.countVerified();
-      }
+      const vr = roDb.prepare("SELECT COUNT(*) as cnt FROM verified_facts").get() as { cnt: number } | undefined;
+      totalVerified = vr?.cnt ?? 0;
     } catch {
       /* non-fatal */
     }
     try {
-      if (ctx.edictStore) {
-        totalEdicts = ctx.edictStore.count();
-      }
+      const er = roDb.prepare("SELECT COUNT(*) as cnt FROM edicts").get() as { cnt: number } | undefined;
+      totalEdicts = er?.cnt ?? 0;
     } catch {
       /* non-fatal */
     }
@@ -894,7 +892,7 @@ function collectMemoryViewerEdicts(ctx: DashboardContext): MemoryViewerEdict[] {
 function collectMemoryViewerVerified(ctx: DashboardContext, limit = 100): MemoryViewerVerification[] {
   try {
     if (!ctx.verificationStore) return [];
-    const verified = ctx.verificationStore.listLatestVerified(limit);
+    const verified = ctx.verificationStore.listLatestVerified();
     return verified.map((v) => ({
       factId: v.factId,
       canonicalText: v.canonicalText,
@@ -1540,7 +1538,7 @@ export async function createDashboardServer(ctx: DashboardContext, port: number)
         const verifiedFactIds = new Set<string>();
         try {
           if (ctx.verificationStore) {
-            const verified = ctx.verificationStore.listLatestVerified(limit);
+            const verified = ctx.verificationStore.listLatestVerified();
             verified.forEach((v) => verifiedFactIds.add(v.factId));
           }
         } catch {
@@ -1605,38 +1603,13 @@ export async function createDashboardServer(ctx: DashboardContext, port: number)
         const verifiedFactIds = new Set<string>();
         try {
           if (ctx.verificationStore) {
-            const verified = ctx.verificationStore.listLatestVerified(1000);
+            const verified = ctx.verificationStore.listLatestVerified();
             verified.forEach((v) => verifiedFactIds.add(v.factId));
           }
         } catch {
           /* non-fatal */
         }
-
-        // GET /api/viewer/facts/:id
-        if (req.method === "GET" && pathname.startsWith("/api/viewer/facts/")) {
-          const factId = pathname.replace("/api/viewer/facts/", "");
-          if (!factId) {
-            res.writeHead(400, { "Content-Type": "application/json" });
-            res.end(JSON.stringify({ error: "Missing fact id" }));
-            return;
-          }
-          try {
-            const fact = ctx.factsDb.getById(factId);
-            if (!fact) {
-              res.writeHead(404, { "Content-Type": "application/json" });
-              res.end(JSON.stringify({ error: "Fact not found" }));
-              return;
-            }
-            verifiedFactIds.clear();
-            try {
-              if (ctx.verificationStore) {
-                const verified = ctx.verificationStore.listLatestVerified(1000);
-                verified.forEach((v) => verifiedFactIds.add(v.factId));
-              }
-            } catch {
-              /* non-fatal */
-            }
-            const f: MemoryViewerFact = {
+        const f: MemoryViewerFact = {
           id: fact.id,
           text: fact.text,
           why: fact.why,
@@ -1654,7 +1627,7 @@ export async function createDashboardServer(ctx: DashboardContext, port: number)
           tags: fact.tags ?? [],
           supersededAt: fact.supersededAt ?? null,
           supersededBy: fact.supersededBy ?? null,
-          verified: ctx.verificationStore?.getVerified(factId) != null,
+          verified: verifiedFactIds.has(fact.id),
           scope: fact.scope,
           provenanceSession: fact.provenanceSession ?? null,
           reinforcedCount: fact.reinforcedCount,
@@ -1862,7 +1835,6 @@ export async function createDashboardServer(ctx: DashboardContext, port: number)
       res.writeHead(404, { "Content-Type": "text/plain" });
       res.end("Not found");
     }
-    return;
   });
 
   /** Attempt to bind `server` to the given port; resolves with the bound port. */
