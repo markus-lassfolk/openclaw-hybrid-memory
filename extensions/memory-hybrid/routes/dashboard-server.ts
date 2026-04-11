@@ -18,6 +18,12 @@ import { type AgentHealthView, mergeAgentHealthDashboard } from "../backends/age
 import type { AuditStore } from "../backends/audit-store.js";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
+import type { EdictStore } from "../backends/edict-store.js";
+import type { VerificationStore } from "../services/verification-store.js";
+import type { IssueStore } from "../backends/issue-store.js";
+import type { WorkflowStore } from "../backends/workflow-store.js";
+import type { NarrativesDB } from "../backends/narratives-db.js";
+import type { ProvenanceService } from "../services/provenance.js";
 import { getDirSize, getFileSizeAsync, readJsonFile } from "../utils/fs.js";
 import { isValidGhRepoArg } from "../utils/gh-repo-arg.js";
 import { pluginLogger } from "../utils/logger.js";
@@ -45,6 +51,18 @@ interface DashboardContext {
   auditStore?: AuditStore | null;
   /** Per-agent health store (Issue #789). */
   agentHealthStore?: import("../backends/agent-health-store.js").AgentHealthStore | null;
+  /** Edict store for verified ground-truth facts. */
+  edictStore?: EdictStore | null;
+  /** Verification store for critical facts. */
+  verificationStore?: VerificationStore | null;
+  /** Issue store for tracked problems. */
+  issueStore?: IssueStore | null;
+  /** Workflow store for tool-sequence patterns. */
+  workflowStore?: WorkflowStore | null;
+  /** Narratives store for session summaries. */
+  narrativesDb?: NarrativesDB | null;
+  /** Provenance service for fact-to-source tracing. */
+  provenanceService?: ProvenanceService | null;
 }
 
 interface MemoryStats {
@@ -160,6 +178,154 @@ interface DashboardStatus {
   costs: CostStats;
   audit: AuditSummaryPayload;
   agentHealth: AgentHealthPayload;
+}
+
+// ---------------------------------------------------------------------------
+// Memory Viewer types (Issue #1023)
+// ---------------------------------------------------------------------------
+
+interface MemoryViewerStats {
+  totalFacts: number;
+  totalExpired: number;
+  totalSuperseded: number;
+  totalVerified: number;
+  totalEdicts: number;
+  totalIssues: number;
+  totalProcedures: number;
+  totalEpisodes: number;
+  totalLinks: number;
+  vectorCount: number;
+  byCategory: Record<string, number>;
+  byTier: Record<string, number>;
+  byDecayClass: Record<string, number>;
+  bySource: Record<string, number>;
+  entityCount: number;
+}
+
+interface MemoryViewerEpisode {
+  id: string;
+  event: string;
+  outcome: string;
+  timestamp: number;
+  duration?: number;
+  context?: string;
+  agentId?: string;
+  sessionId?: string;
+  importance: number;
+  tags: string[];
+}
+
+interface MemoryViewerFact {
+  id: string;
+  text: string;
+  why?: string | null;
+  category: string;
+  importance: number;
+  entity: string | null;
+  key: string | null;
+  value: string | null;
+  source: string;
+  createdAt: number;
+  decayClass: string;
+  expiresAt: number | null;
+  confidence: number;
+  summary?: string | null;
+  tags: string[];
+  supersededAt?: number | null;
+  supersededBy?: string | null;
+  verified?: boolean;
+  edict?: boolean;
+  scope?: string;
+  provenanceSession?: string | null;
+  reinforcedCount?: number;
+}
+
+interface MemoryViewerEntity {
+  entity: string;
+  factCount: number;
+  categories: string[];
+  tags: string[];
+  lastUpdated: number;
+}
+
+interface MemoryViewerEdict {
+  id: string;
+  text: string;
+  source?: string | null;
+  tags: string[];
+  verifiedAt: number | null;
+  expiresAt: string | null;
+  ttl: string;
+  createdAt: number;
+}
+
+interface MemoryViewerIssue {
+  id: string;
+  title: string;
+  status: string;
+  severity: string;
+  symptoms: string[];
+  rootCause?: string | null;
+  fix?: string | null;
+  tags: string[];
+  detectedAt: string;
+  resolvedAt?: string | null;
+  verifiedAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface MemoryViewerWorkflow {
+  id: string;
+  goal: string;
+  toolSequence: string[];
+  outcome: string;
+  toolCount: number;
+  durationMs: number;
+  successRate: number;
+  sessionId: string;
+  createdAt: string;
+}
+
+interface MemoryViewerNarrative {
+  id: string;
+  sessionId: string;
+  periodStart: number;
+  periodEnd: number;
+  tag: string;
+  narrativeText: string;
+  createdAt: number;
+}
+
+interface MemoryViewerVerification {
+  factId: string;
+  canonicalText: string;
+  verifiedAt: string;
+  verifiedBy: string;
+  nextVerification: string | null;
+  version: number;
+}
+
+interface MemoryViewerProvenance {
+  factId: string;
+  text: string;
+  confidence: number;
+  provenanceSession?: string | null;
+  sourceTurn?: number | null;
+  edges: Array<{
+    edgeType: string;
+    sourceType: string;
+    sourceId: string;
+    sourceText?: string | null;
+    createdAt: string;
+  }>;
+}
+
+interface MemoryViewerLinks {
+  from: string;
+  to: string;
+  type: string;
+  strength: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -486,6 +652,377 @@ function collectAuditSummary(ctx: DashboardContext): AuditSummaryPayload {
       byAgent: {},
       recentFailures: [],
     };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Memory Viewer collectors (Issue #1023)
+// ---------------------------------------------------------------------------
+
+/** Open a read-only handle to the facts DB for internal dashboard use. */
+function openFactsDbReadonly(path: string): import("node:sqlite").DatabaseSync | null {
+  try {
+    const { DatabaseSync: DBSync } = require("node:sqlite");
+    const db = new DBSync(path, { readOnly: true });
+    return db;
+  } catch {
+    return null;
+  }
+}
+
+/** Collect Memory Viewer overview stats. */
+async function collectMemoryViewerStats(ctx: DashboardContext): Promise<MemoryViewerStats> {
+  const factsDb = ctx.factsDb;
+  const totalFacts = factsDb.count();
+  const totalExpired = factsDb.countExpired();
+
+  // Use a read-only connection to the facts DB for counts not exposed by the public API
+  const roDb = openFactsDbReadonly(ctx.resolvedSqlitePath);
+  let totalSuperseded = 0;
+  let totalVerified = 0;
+  let totalEdicts = 0;
+  let totalEpisodes = 0;
+  if (roDb) {
+    try {
+      const sr = roDb.prepare("SELECT COUNT(*) as cnt FROM facts WHERE superseded_at IS NOT NULL").get() as
+        | { cnt: number }
+        | undefined;
+      totalSuperseded = sr?.cnt ?? 0;
+    } catch {
+      /* non-fatal */
+    }
+    try {
+      if (ctx.verificationStore) {
+        totalVerified = ctx.verificationStore.countVerified();
+      }
+    } catch {
+      /* non-fatal */
+    }
+    try {
+      if (ctx.edictStore) {
+        totalEdicts = ctx.edictStore.count();
+      }
+    } catch {
+      /* non-fatal */
+    }
+    try {
+      const ar = roDb.prepare("SELECT COUNT(*) as cnt FROM episodes").get() as { cnt: number } | undefined;
+      totalEpisodes = ar?.cnt ?? 0;
+    } catch {
+      /* non-fatal */
+    }
+    try {
+      roDb.close();
+    } catch {
+      /* ignore */
+    }
+  }
+
+  const totalIssues = (() => {
+    try {
+      if (!ctx.issueStore) return 0;
+      return ctx.issueStore.list({}).length;
+    } catch {
+      return 0;
+    }
+  })();
+  const totalProcedures = (() => {
+    try {
+      return factsDb.proceduresCount();
+    } catch {
+      return 0;
+    }
+  })();
+  const totalLinks = (() => {
+    try {
+      return factsDb.linksCount();
+    } catch {
+      return 0;
+    }
+  })();
+  let vectorCount = 0;
+  try {
+    vectorCount = await ctx.vectorDb.count();
+  } catch {
+    /* non-fatal */
+  }
+
+  return {
+    totalFacts,
+    totalExpired,
+    totalSuperseded,
+    totalVerified,
+    totalEdicts,
+    totalIssues,
+    totalProcedures,
+    totalEpisodes,
+    totalLinks,
+    vectorCount,
+    byCategory: factsDb.statsBreakdownByCategory(),
+    byTier: factsDb.statsBreakdownByTier(),
+    byDecayClass: factsDb.statsBreakdownByDecayClass(),
+    bySource: factsDb.statsBreakdownBySource(),
+    entityCount: factsDb.entityCount(),
+  };
+}
+
+/** Collect recent episodes — reads from the episodes table within the facts DB. */
+function collectMemoryViewerEpisodes(ctx: DashboardContext, limit = 50): MemoryViewerEpisode[] {
+  try {
+    const roDb = openFactsDbReadonly(ctx.resolvedSqlitePath);
+    if (!roDb) return [];
+    try {
+      const rows = roDb.prepare("SELECT * FROM episodes ORDER BY timestamp DESC LIMIT ?").all(limit) as Array<
+        Record<string, unknown>
+      >;
+      return rows.map((r) => ({
+        id: String(r.id ?? ""),
+        event: String(r.event ?? ""),
+        outcome: String(r.outcome ?? ""),
+        timestamp: Number(r.timestamp ?? 0),
+        duration: r.duration != null ? Number(r.duration) : undefined,
+        context: r.context != null ? String(r.context) : undefined,
+        agentId: r.agent_id != null ? String(r.agent_id) : undefined,
+        sessionId: r.session_id != null ? String(r.session_id) : undefined,
+        importance: Number(r.importance ?? 0.5),
+        tags: (() => {
+          try {
+            return JSON.parse(String(r.tags ?? "[]"));
+          } catch {
+            return [];
+          }
+        })(),
+      }));
+    } finally {
+      try {
+        roDb.close();
+      } catch {
+        /* ignore */
+      }
+    }
+  } catch {
+    return [];
+  }
+}
+
+/** Collect recent narratives. */
+function collectMemoryViewerNarratives(ctx: DashboardContext, limit = 20): MemoryViewerNarrative[] {
+  try {
+    if (!ctx.narrativesDb) return [];
+    return ctx.narrativesDb.listRecent(limit, "all").map((n) => ({
+      id: n.id,
+      sessionId: n.sessionId,
+      periodStart: n.periodStart,
+      periodEnd: n.periodEnd,
+      tag: n.tag,
+      narrativeText: n.narrativeText,
+      createdAt: n.createdAt,
+    }));
+  } catch {
+    return [];
+  }
+}
+
+/** Collect recent issues. */
+function collectMemoryViewerIssues(ctx: DashboardContext): MemoryViewerIssue[] {
+  try {
+    if (!ctx.issueStore) return [];
+    return ctx.issueStore.list({}).map((issue) => ({
+      id: issue.id,
+      title: issue.title,
+      status: issue.status,
+      severity: issue.severity,
+      symptoms: issue.symptoms,
+      rootCause: issue.rootCause,
+      fix: issue.fix,
+      tags: issue.tags,
+      detectedAt: issue.detectedAt,
+      resolvedAt: issue.resolvedAt,
+      verifiedAt: issue.verifiedAt,
+      createdAt: issue.createdAt,
+      updatedAt: issue.updatedAt,
+    }));
+  } catch {
+    return [];
+  }
+}
+
+/** Collect workflow patterns / recent traces. */
+function collectMemoryViewerWorkflows(ctx: DashboardContext, limit = 100): MemoryViewerWorkflow[] {
+  try {
+    if (!ctx.workflowStore) return [];
+    const traces = ctx.workflowStore.list({ limit });
+    const patterns = ctx.workflowStore.getPatterns({ limit: 20 });
+    const result: MemoryViewerWorkflow[] = traces.map((t) => ({
+      id: t.id,
+      goal: t.goal,
+      toolSequence: t.toolSequence,
+      outcome: t.outcome,
+      toolCount: t.toolCount,
+      durationMs: t.durationMs,
+      successRate:
+        patterns.find((p) => JSON.stringify(p.toolSequence) === JSON.stringify(t.toolSequence))?.successRate ?? 0,
+      sessionId: t.sessionId,
+      createdAt: t.createdAt,
+    }));
+    return result;
+  } catch {
+    return [];
+  }
+}
+
+/** Collect recent edicts. */
+function collectMemoryViewerEdicts(ctx: DashboardContext): MemoryViewerEdict[] {
+  try {
+    if (!ctx.edictStore) return [];
+    return ctx.edictStore.list({}).map((e) => ({
+      id: e.id,
+      text: e.text,
+      source: e.source,
+      tags: e.tags,
+      verifiedAt: e.verifiedAt,
+      expiresAt: e.expiresAt,
+      ttl: String(e.ttl),
+      createdAt: e.createdAt,
+    }));
+  } catch {
+    return [];
+  }
+}
+
+/** Collect verified facts using the public listLatestVerified API. */
+function collectMemoryViewerVerified(ctx: DashboardContext, limit = 100): MemoryViewerVerification[] {
+  try {
+    if (!ctx.verificationStore) return [];
+    const verified = ctx.verificationStore.listLatestVerified(limit);
+    return verified.map((v) => ({
+      factId: v.factId,
+      canonicalText: v.canonicalText,
+      verifiedAt: v.verifiedAt ?? "",
+      verifiedBy: v.verifiedBy ?? "",
+      nextVerification: v.nextVerification ?? null,
+      version: v.version,
+    }));
+  } catch {
+    return [];
+  }
+}
+
+/** Collect top entities. */
+function collectMemoryViewerEntities(ctx: DashboardContext, limit = 50): MemoryViewerEntity[] {
+  try {
+    const raw = ctx.factsDb.getRawDb();
+    const rows = raw
+      .prepare(
+        `SELECT entity, COUNT(*) as cnt, GROUP_CONCAT(DISTINCT category) as cats, GROUP_CONCAT(DISTINCT tags) as tgs, MAX(created_at) as last_updated
+         FROM facts WHERE entity IS NOT NULL AND entity != '' AND superseded_at IS NULL
+         GROUP BY entity ORDER BY cnt DESC LIMIT ?`,
+      )
+      .all(limit) as Array<Record<string, unknown>>;
+    return rows.map((r) => {
+      let cats: string[] = [];
+      try {
+        cats = [...new Set(String(r.cats ?? "").split(","))];
+      } catch {}
+      let tgs: string[] = [];
+      try {
+        const allTags = String(r.tgs ?? "").split(",");
+        tgs = [...new Set(allTags.filter(Boolean))];
+      } catch {}
+      return {
+        entity: String(r.entity ?? ""),
+        factCount: Number(r.cnt ?? 0),
+        categories: cats,
+        tags: tgs,
+        lastUpdated: Number(r.last_updated ?? 0),
+      };
+    });
+  } catch {
+    return [];
+  }
+}
+
+/** Collect provenance edges for a fact. */
+function collectMemoryViewerProvenance(ctx: DashboardContext, factId: string): MemoryViewerProvenance | null {
+  try {
+    if (!ctx.provenanceService) return null;
+    // Note: getProvenance accepts an optional factsDb param for fact text enrichment.
+    // We pass the open FactsDB instance directly for this read-only access.
+    const chain = ctx.provenanceService.getProvenance(factId);
+    return {
+      factId: chain.fact.id,
+      text: chain.fact.text,
+      confidence: chain.fact.confidence,
+      provenanceSession: chain.source.sessionId,
+      sourceTurn: chain.source.turn,
+      edges: chain.edges.map((e) => ({
+        edgeType: e.edgeType,
+        sourceType: e.sourceType,
+        sourceId: e.sourceId,
+        sourceText: e.sourceText,
+        createdAt: e.createdAt,
+      })),
+    };
+  } catch {
+    return null;
+  }
+}
+
+/** Collect fact links from the memory_links table. */
+function collectMemoryViewerLinks(ctx: DashboardContext, limit = 5000): MemoryViewerLinks[] {
+  try {
+    const roDb = openFactsDbReadonly(ctx.resolvedSqlitePath);
+    if (!roDb) return [];
+    try {
+      const rows = roDb.prepare("SELECT * FROM memory_links LIMIT ?").all(limit) as Array<Record<string, unknown>>;
+      return rows.map((r) => ({
+        from: String(r.source_fact_id ?? ""),
+        to: String(r.target_fact_id ?? ""),
+        type: String(r.link_type ?? ""),
+        strength: Number(r.strength ?? 1),
+      }));
+    } finally {
+      try {
+        roDb.close();
+      } catch {
+        /* ignore */
+      }
+    }
+  } catch {
+    return [];
+  }
+}
+
+/** Perform a fact action (verify / forget) and return result. */
+function performFactAction(
+  ctx: DashboardContext,
+  action: "verify" | "forget",
+  factId: string,
+  body: Record<string, unknown>,
+): { ok: boolean; message: string } {
+  try {
+    const factsDb = ctx.factsDb;
+    const fact = factsDb.getById(factId);
+    if (!fact) return { ok: false, message: `Fact not found: ${factId}` };
+
+    if (action === "verify") {
+      if (!ctx.verificationStore) return { ok: false, message: "Verification store not available" };
+      const verifiedBy = (body.verifiedBy as "agent" | "user" | "system") ?? "agent";
+      ctx.verificationStore.verify(factId, fact.text, verifiedBy);
+      return { ok: true, message: `Fact ${factId} verified as ${verifiedBy}` };
+    } else {
+      // forget: supersede with null to mark the fact as superseded (soft-delete).
+      // superseded_at IS NOT NULL filters it out of all recall paths.
+      try {
+        const ok = factsDb.supersede(factId, null);
+        if (!ok) return { ok: false, message: `Could not supersede fact ${factId}` };
+      } catch (err) {
+        return { ok: false, message: `Could not forget fact ${factId}: ${String(err)}` };
+      }
+      return { ok: true, message: `Fact ${factId} forgotten` };
+    }
+  } catch (err) {
+    return { ok: false, message: String(err) };
   }
 }
 
@@ -974,6 +1511,305 @@ export async function createDashboardServer(ctx: DashboardContext, port: number)
         pluginLogger.error(`[dashboard-server] /api/audit/events: ${err instanceof Error ? err.message : String(err)}`);
         res.end(JSON.stringify({ error: "InternalServerError" }));
       }
+      return;
+    }
+
+    // Memory Viewer routes (Issue #1023)
+    // GET /api/viewer/stats
+    if (pathname === "/api/viewer/stats") {
+      collectMemoryViewerStats(ctx)
+        .then((stats) => {
+          res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-cache" });
+          res.end(JSON.stringify(stats));
+        })
+        .catch((err: unknown) => {
+          res.writeHead(500, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: String(err) }));
+        });
+      return;
+    }
+
+    // GET /api/viewer/facts?limit=50&offset=0&category=&tier=&entity=&search=
+    if (pathname === "/api/viewer/facts") {
+      try {
+        const limit = Math.min(500, Math.max(1, Number.parseInt(searchParams.get("limit") ?? "50", 10)));
+        // Use the public FactsDB.list() API with filters for the dashboard facts endpoint
+        const categoryFilter = searchParams.get("category") || undefined;
+        const entityFilter = searchParams.get("entity") || undefined;
+        const allFacts = ctx.factsDb.list(limit, { category: categoryFilter, entity: entityFilter });
+        const verifiedFactIds = new Set<string>();
+        try {
+          if (ctx.verificationStore) {
+            const verified = ctx.verificationStore.listLatestVerified(limit);
+            verified.forEach((v) => verifiedFactIds.add(v.factId));
+          }
+        } catch {
+          /* non-fatal */
+        }
+        const facts: MemoryViewerFact[] = allFacts.map((f) => {
+          const record = f as Record<string, unknown>;
+          return {
+            id: String(record.id ?? ""),
+            text: String(record.text ?? ""),
+            why: (record.why as string | null) ?? null,
+            category: String(record.category ?? ""),
+            importance: Number(record.importance ?? 0.5),
+            entity: (record.entity as string | null) ?? null,
+            key: (record.key as string | null) ?? null,
+            value: (record.value as string | null) ?? null,
+            source: String(record.source ?? ""),
+            createdAt: Number(record.created_at ?? 0),
+            decayClass: String(record.decay_class ?? ""),
+            expiresAt: record.expires_at != null ? Number(record.expires_at) : null,
+            confidence: Number(record.confidence ?? 0.5),
+            summary: (record.summary as string | null) ?? null,
+            tags: (() => {
+              try {
+                return JSON.parse(String(record.tags ?? "[]"));
+              } catch {
+                return [];
+              }
+            })(),
+            supersededAt: record.superseded_at != null ? Number(record.superseded_at) : null,
+            supersededBy: (record.superseded_by as string | null) ?? null,
+            verified: verifiedFactIds.has(String(record.id ?? "")),
+            scope: record.scope as string | undefined,
+            provenanceSession: (record.provenance_session as string | null) ?? null,
+            reinforcedCount: record.reinforced_count != null ? Number(record.reinforced_count) : undefined,
+          };
+        });
+        res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-cache" });
+        res.end(JSON.stringify({ facts, total: allFacts.length }));
+      } catch (err: unknown) {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: String(err) }));
+      }
+      return;
+    }
+
+    // GET /api/viewer/facts/:id
+    if (req.method === "GET" && pathname.startsWith("/api/viewer/facts/")) {
+      const factId = pathname.replace("/api/viewer/facts/", "");
+      if (!factId) {
+        res.writeHead(400, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "Missing fact id" }));
+        return;
+      }
+      try {
+        const fact = ctx.factsDb.getById(factId);
+        if (!fact) {
+          res.writeHead(404, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "Fact not found" }));
+          return;
+        }
+        const verifiedFactIds = new Set<string>();
+        try {
+          if (ctx.verificationStore) {
+            const verified = ctx.verificationStore.listLatestVerified(limit);
+            verified.forEach((v) => verifiedFactIds.add(v.factId));
+          }
+        } catch {
+          /* non-fatal */
+        }
+        const f: MemoryViewerFact = {
+          id: fact.id,
+          text: fact.text,
+          why: fact.why,
+          category: fact.category,
+          importance: fact.importance,
+          entity: fact.entity,
+          key: fact.key,
+          value: fact.value,
+          source: fact.source,
+          createdAt: fact.createdAt,
+          decayClass: fact.decayClass,
+          expiresAt: fact.expiresAt,
+          confidence: fact.confidence,
+          summary: fact.summary ?? null,
+          tags: fact.tags ?? [],
+          supersededAt: fact.supersededAt ?? null,
+          supersededBy: fact.supersededBy ?? null,
+          verified: verifiedFactIds.has(fact.id),
+          scope: fact.scope,
+          provenanceSession: fact.provenanceSession ?? null,
+          reinforcedCount: fact.reinforcedCount,
+        };
+        res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-cache" });
+        res.end(JSON.stringify(f));
+      } catch (err: unknown) {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: String(err) }));
+      }
+      return;
+    }
+
+    // GET /api/viewer/entities
+    if (pathname === "/api/viewer/entities") {
+      try {
+        const limit = Math.min(200, Math.max(1, Number.parseInt(searchParams.get("limit") ?? "50", 10)));
+        const entities = collectMemoryViewerEntities(ctx, limit);
+        res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-cache" });
+        res.end(JSON.stringify(entities));
+      } catch (err: unknown) {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: String(err) }));
+      }
+      return;
+    }
+
+    // GET /api/viewer/episodes
+    if (pathname === "/api/viewer/episodes") {
+      try {
+        const limit = Math.min(500, Math.max(1, Number.parseInt(searchParams.get("limit") ?? "50", 10)));
+        const episodes = collectMemoryViewerEpisodes(ctx, limit);
+        res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-cache" });
+        res.end(JSON.stringify(episodes));
+      } catch (err: unknown) {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: String(err) }));
+      }
+      return;
+    }
+
+    // GET /api/viewer/narratives
+    if (pathname === "/api/viewer/narratives") {
+      try {
+        const limit = Math.min(100, Math.max(1, Number.parseInt(searchParams.get("limit") ?? "20", 10)));
+        const narratives = collectMemoryViewerNarratives(ctx, limit);
+        res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-cache" });
+        res.end(JSON.stringify(narratives));
+      } catch (err: unknown) {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: String(err) }));
+      }
+      return;
+    }
+
+    // GET /api/viewer/issues
+    if (pathname === "/api/viewer/issues") {
+      try {
+        const issues = collectMemoryViewerIssues(ctx);
+        res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-cache" });
+        res.end(JSON.stringify(issues));
+      } catch (err: unknown) {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: String(err) }));
+      }
+      return;
+    }
+
+    // GET /api/viewer/workflows
+    if (pathname === "/api/viewer/workflows") {
+      try {
+        const limit = Math.min(500, Math.max(1, Number.parseInt(searchParams.get("limit") ?? "100", 10)));
+        const workflows = collectMemoryViewerWorkflows(ctx, limit);
+        res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-cache" });
+        res.end(JSON.stringify(workflows));
+      } catch (err: unknown) {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: String(err) }));
+      }
+      return;
+    }
+
+    // GET /api/viewer/edicts
+    if (pathname === "/api/viewer/edicts") {
+      try {
+        const edicts = collectMemoryViewerEdicts(ctx);
+        res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-cache" });
+        res.end(JSON.stringify(edicts));
+      } catch (err: unknown) {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: String(err) }));
+      }
+      return;
+    }
+
+    // GET /api/viewer/verified
+    if (pathname === "/api/viewer/verified") {
+      try {
+        const limit = Math.min(500, Math.max(1, Number.parseInt(searchParams.get("limit") ?? "100", 10)));
+        const verified = collectMemoryViewerVerified(ctx, limit);
+        res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-cache" });
+        res.end(JSON.stringify(verified));
+      } catch (err: unknown) {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: String(err) }));
+      }
+      return;
+    }
+
+    // GET /api/viewer/links
+    if (pathname === "/api/viewer/links") {
+      try {
+        const limit = Math.min(10000, Math.max(1, Number.parseInt(searchParams.get("limit") ?? "5000", 10)));
+        const links = collectMemoryViewerLinks(ctx, limit);
+        res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-cache" });
+        res.end(JSON.stringify(links));
+      } catch (err: unknown) {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: String(err) }));
+      }
+      return;
+    }
+
+    // GET /api/viewer/provenance/:factId
+    if (pathname.startsWith("/api/viewer/provenance/")) {
+      const factId = pathname.replace("/api/viewer/provenance/", "");
+      try {
+        const prov = collectMemoryViewerProvenance(ctx, factId);
+        if (!prov) {
+          res.writeHead(404, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "Provenance not available" }));
+          return;
+        }
+        res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-cache" });
+        res.end(JSON.stringify(prov));
+      } catch (err: unknown) {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: String(err) }));
+      }
+      return;
+    }
+
+    // POST /api/viewer/facts/:id/verify
+    if (req.method === "POST" && pathname.match(/^\/api\/viewer\/facts\/[^/]+\/verify$/)) {
+      const factId = pathname.split("/")[4];
+      let body = "";
+      req.on("data", (chunk: Buffer) => {
+        body += chunk.toString();
+      });
+      req.on("end", () => {
+        try {
+          const parsed = body ? JSON.parse(body) : {};
+          const result = performFactAction(ctx, "verify", factId, parsed);
+          res.writeHead(result.ok ? 200 : 400, { "Content-Type": "application/json" });
+          res.end(JSON.stringify(result));
+        } catch (err: unknown) {
+          res.writeHead(500, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: String(err) }));
+        }
+      });
+      return;
+    }
+
+    // POST /api/viewer/facts/:id/forget
+    if (req.method === "POST" && pathname.match(/^\/api\/viewer\/facts\/[^/]+\/forget$/)) {
+      const factId = pathname.split("/")[4];
+      let body = "";
+      req.on("data", (chunk: Buffer) => {
+        body += chunk.toString();
+      });
+      req.on("end", () => {
+        try {
+          const result = performFactAction(ctx, "forget", factId, {});
+          res.writeHead(result.ok ? 200 : 400, { "Content-Type": "application/json" });
+          res.end(JSON.stringify(result));
+        } catch (err: unknown) {
+          res.writeHead(500, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: String(err) }));
+        }
+      });
       return;
     }
 

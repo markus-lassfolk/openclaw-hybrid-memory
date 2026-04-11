@@ -360,7 +360,8 @@ export class VerificationStore {
   // listLatestVerified — latest versions for each fact_id
   // -------------------------------------------------------------------------
 
-  listLatestVerified(): VerifiedFact[] {
+  listLatestVerified(limit?: number): VerifiedFact[] {
+    const limitClause = limit ? `LIMIT ${limit}` : "";
     const rows = this.db
       .prepare(
         `SELECT vf.*
@@ -371,7 +372,7 @@ export class VerificationStore {
            GROUP BY fact_id
          ) latest
          ON vf.fact_id = latest.fact_id AND vf.version = latest.max_version
-         ORDER BY vf.verified_at DESC`,
+         ORDER BY vf.verified_at DESC ${limitClause}`,
       )
       .all() as unknown as VerifiedFactRow[];
 
@@ -437,6 +438,12 @@ export class VerificationStore {
   // -------------------------------------------------------------------------
   // close — close the underlying SQLite connection
   // -------------------------------------------------------------------------
+
+  /** Return the total number of verified fact entries (across all fact_ids). */
+  countVerified(): number {
+    const row = this.db.prepare("SELECT COUNT(*) as cnt FROM verified_facts").get() as { cnt: number };
+    return row.cnt;
+  }
 
   close(): void {
     if (this.ownsConnection && this._dbOpen) {

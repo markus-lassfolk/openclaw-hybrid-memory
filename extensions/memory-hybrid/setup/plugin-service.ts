@@ -7,8 +7,13 @@ import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import type { CredentialsDB } from "../backends/credentials-db.js";
 import type { EdictStore } from "../backends/edict-store.js";
 import type { FactsDB } from "../backends/facts-db.js";
+import type { IssueStore } from "../backends/issue-store.js";
+import type { NarrativesDB } from "../backends/narratives-db.js";
 import type { ProposalsDB } from "../backends/proposals-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
+import type { VerificationStore } from "../services/verification-store.js";
+import type { WorkflowStore } from "../backends/workflow-store.js";
+import type { AuditStore } from "../backends/audit-store.js";
 import type { WriteAheadLog } from "../backends/wal.js";
 import { ensureHybridMemoryWorkspaceSkillIfMissing, loadOpenclawRootForWorkspace } from "../cli/cmd-install.js";
 import type { HybridMemoryConfig, MemoryCategory } from "../config.js";
@@ -69,6 +74,11 @@ export interface PluginServiceContext {
   costTracker?: import("../backends/cost-tracker.js").CostTracker | null;
   auditStore?: import("../backends/audit-store.js").AuditStore | null;
   agentHealthStore?: import("../backends/agent-health-store.js").AgentHealthStore | null;
+  // Memory Viewer stores (Issue #1023)
+  verificationStore?: VerificationStore | null;
+  issueStore?: IssueStore | null;
+  workflowStore?: WorkflowStore | null;
+  narrativesDb?: NarrativesDB | null;
   // Mutable timer refs that will be updated by the start handler
   timers: {
     pruneTimer: { value: ReturnType<typeof setInterval> | null };
@@ -114,6 +124,10 @@ export function createPluginService(ctx: PluginServiceContext) {
     auditStore,
     agentHealthStore,
     pythonBridge,
+    verificationStore,
+    issueStore,
+    workflowStore,
+    narrativesDb,
   } = ctx;
 
   let observerRunning = false;
@@ -445,6 +459,12 @@ export function createPluginService(ctx: PluginServiceContext) {
               logger: api.logger,
               auditStore,
               agentHealthStore,
+              edictStore,
+              verificationStore,
+              issueStore,
+              workflowStore,
+              narrativesDb,
+              provenanceService,
             },
             cfg.dashboard.port,
           );

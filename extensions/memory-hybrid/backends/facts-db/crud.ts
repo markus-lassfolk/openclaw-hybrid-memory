@@ -84,10 +84,15 @@ export function storeFact(ctx: StoreFactContext, entry: StoreFactInput): MemoryE
   const id = randomUUID();
   const nowSec = Math.floor(Date.now() / 1000);
 
-  const decayClass = entry.decayClass || classifyDecay(entry.entity, entry.key, entry.value, entry.text);
+  const decayClass =
+    entry.decayClass || classifyDecay(entry.entity ?? null, entry.key ?? null, entry.value ?? null, entry.text);
   const expiresAt = entry.expiresAt !== undefined ? entry.expiresAt : calculateExpiry(decayClass, nowSec);
   const importance = entry.importance ?? 0.5;
   const why = entry.why ?? null;
+  const entity = entry.entity ?? null;
+  const key = entry.key ?? null;
+  const value = entry.value ?? null;
+  const source = entry.source ?? "conversation";
   const confidence = entry.confidence ?? 1.0;
   const summary = entry.summary ?? null;
   const embeddingModel = entry.embeddingModel ?? null;
@@ -138,10 +143,10 @@ export function storeFact(ctx: StoreFactContext, entry: StoreFactInput): MemoryE
         why,
         entry.category,
         importance,
-        entry.entity,
-        entry.key,
-        entry.value,
-        entry.source,
+        entity,
+        key,
+        value,
+        source,
         nowSec,
         decayClass,
         adjustedExpiresAt,
