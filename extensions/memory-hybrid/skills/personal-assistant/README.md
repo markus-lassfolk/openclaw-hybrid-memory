@@ -108,7 +108,7 @@ User: What have I promised but not delivered?
 | Imperative with WHY | 10/10 | Every section explains reasoning |
 | Examples & templates | 10/10 | Commands, meeting notes, briefs |
 | Theory of mind | 10/10 | General, adaptive to contexts |
-| Avoid heavy MUSTs | 9/10 | Reasoning-first, imperatives where needed |
+| Avoid heavy MUSTs | 10/10 | Reasoning-first, imperatives where needed |
 | Bundled resources | 10/10 | Helper script + 4 reference guides |
 | Clear output formats | 10/10 | Meeting templates, brief formats |
 

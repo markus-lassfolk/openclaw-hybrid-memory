@@ -46,7 +46,7 @@ m365-agent-cli mail inbox --unread --mailbox user@company.com
 
 ### Microsoft Graph API
 
-**Commands:** `todo`, `planner` (verified), `files`, and potentially others
+**Commands:** `todo`, `planner`, `files`, and potentially others
 
 **Delegation flag:** `--user <user_email>` (for commands that support it)
 

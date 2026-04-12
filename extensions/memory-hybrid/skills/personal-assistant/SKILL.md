@@ -184,9 +184,7 @@ m365-agent-cli planner create-task --plan "Project Alpha" --bucket "To Do" --tit
 - After successful lookups, store distilled results
 - Use appropriate decay classes: durable for long-lived facts, normal for working context, ephemeral for tactical notes
 
-**Why memory matters:** Repeatedly asking the user for information you should remember is a core PA failure mode. Memory compound
-
-s over time—the longer you retain context, the more valuable you become.
+**Why memory matters:** Repeatedly asking the user for information you should remember is a core PA failure mode. Memory compounds over time—the longer you retain context, the more valuable you become.
 
 ### 6. Structured Morning Briefing
 
