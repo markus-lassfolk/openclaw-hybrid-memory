@@ -333,7 +333,7 @@ When things break, surface the problem clearly—don't guess or swallow errors.
 | Flag email | `m365-agent-cli mail --flag <id> [--mailbox <email>]` | EWS |
 | Create draft | `m365-agent-cli drafts --create --to <to> --subject <subj> --body <body> [--mailbox <email>]` | EWS |
 | Reply as draft | `m365-agent-cli mail reply <id> --draft [--mailbox <email>]` | EWS |
-| Move email | `m365-agent-cli mail move <id> --to <folder> [--mailbox <email>]` | EWS |
+| Move email | `m365-agent-cli mail --move <id> --to <folder> [--mailbox <email>]` | EWS |
 | Today's calendar | `m365-agent-cli calendar today [--mailbox <email>]` | EWS |
 | Find meeting time | `m365-agent-cli findtime [--mailbox <email>]` | EWS (corrected from original) |
 | Create To Do task | `m365-agent-cli todo create --title <title> --due <date> [--user <email>]` | Graph—use `--user` |

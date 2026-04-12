@@ -8,8 +8,9 @@ repetitive command construction and reduce errors.
 
 import subprocess
 import json
-import sys
+
 from datetime import datetime, timedelta
+import sys
 from typing import List, Dict, Optional
 
 class M365Helper:
@@ -92,7 +93,16 @@ class M365Helper:
             args.extend(['--mailbox', self.mailbox])
 
         result = self._run_command(args)
-        return result.get('value', []) if isinstance(result, dict) else []
+        # Handle list-shaped responses (direct list return)
+        if isinstance(result, list):
+            return result
+        # Handle object-shaped responses
+        if isinstance(result, dict):
+            if 'error' in result:
+                sys.stderr.write(f"get_unread_mail error: {result['error']}\n")
+                return []
+            return result.get('value', [])
+        return []
 
     def get_sent_mail_since(self, days_ago: int = 3, limit: int = 100) -> List[Dict]:
         """Get sent mail from the last N days for chase-up scanning"""
@@ -102,7 +112,16 @@ class M365Helper:
             args.extend(['--mailbox', self.mailbox])
 
         result = self._run_command(args)
-        return result.get('value', []) if isinstance(result, dict) else []
+        # Handle list-shaped responses
+        if isinstance(result, list):
+            return result
+        # Handle object-shaped responses
+        if isinstance(result, dict):
+            if 'error' in result:
+                sys.stderr.write(f"get_sent_mail_since error: {result['error']}\n")
+                return []
+            return result.get('value', [])
+        return []
 
     def get_todays_calendar(self) -> List[Dict]:
         """Get today's calendar events"""
@@ -111,7 +130,16 @@ class M365Helper:
             args.extend(['--mailbox', self.mailbox])
 
         result = self._run_command(args)
-        return result.get('value', []) if isinstance(result, dict) else []
+        # Handle list-shaped responses
+        if isinstance(result, list):
+            return result
+        # Handle object-shaped responses
+        if isinstance(result, dict):
+            if 'error' in result:
+                sys.stderr.write(f"get_todays_calendar error: {result['error']}\n")
+                return []
+            return result.get('value', [])
+        return []
 
     def flag_email(self, email_id: str) -> Dict:
         """Flag an email for follow-up"""
@@ -207,7 +235,8 @@ class M365Helper:
                         'matched_phrase': phrase,
                         'sent_date': email.get('sentDateTime'),
                         'recipients': [r.get('emailAddress', {}).get('address')
-                                     for r in email.get('toRecipients', [])]
+                                     for r in email.get('toRecipients', [])
+                                     if r.get('emailAddress', {}).get('address')]
                     })
                     break  # Only match once per email
 
@@ -223,7 +252,13 @@ class M365Helper:
 
         # Extract email fields
         subject = email.get('subject', '').lower()
-        body = email.get('body', {}).get('content', '').lower()
+        body_raw = email.get('body')
+        if isinstance(body_raw, dict):
+            body = body_raw.get('content', '').lower()
+        elif isinstance(body_raw, str):
+            body = body_raw.lower()
+        else:
+            body = ''
         from_address = email.get('from', {}).get('emailAddress', {}).get('address', '')
         from_name = email.get('from', {}).get('emailAddress', {}).get('name', '')
 
