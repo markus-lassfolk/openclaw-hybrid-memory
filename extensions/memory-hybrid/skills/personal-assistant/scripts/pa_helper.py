@@ -207,7 +207,8 @@ class M365Helper:
                         'matched_phrase': phrase,
                         'sent_date': email.get('sentDateTime'),
                         'recipients': [r.get('emailAddress', {}).get('address')
-                                     for r in email.get('toRecipients', [])]
+                                     for r in email.get('toRecipients', [])
+                                     if r.get('emailAddress', {}).get('address')]
                     })
                     break  # Only match once per email
 
@@ -223,7 +224,13 @@ class M365Helper:
 
         # Extract email fields
         subject = email.get('subject', '').lower()
-        body = email.get('body', {}).get('content', '').lower()
+        body_raw = email.get('body')
+        if isinstance(body_raw, dict):
+            body = body_raw.get('content', '').lower()
+        elif isinstance(body_raw, str):
+            body = body_raw.lower()
+        else:
+            body = ''
         from_address = email.get('from', {}).get('emailAddress', {}).get('address', '')
         from_name = email.get('from', {}).get('emailAddress', {}).get('name', '')
 
