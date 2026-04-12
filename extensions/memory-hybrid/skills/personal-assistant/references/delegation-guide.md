@@ -54,7 +54,8 @@ m365-agent-cli mail inbox --unread --mailbox user@company.com
 
 **Verified delegation support:**
 - `todo` commands: `--user <user_email>` works
-- `planner`, `files`: Verify per subcommand with `--help`
+- `files`: Verify per subcommand with `--help`
+- `planner`: Verify per subcommand with `--help`
 
 **Example:**
 ```bash

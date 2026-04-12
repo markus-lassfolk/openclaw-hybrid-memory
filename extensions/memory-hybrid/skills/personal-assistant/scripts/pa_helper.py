@@ -8,6 +8,7 @@ repetitive command construction and reduce errors.
 
 import subprocess
 import json
+import sys
 from datetime import datetime, timedelta
 from typing import List, Dict, Optional, Union
 
@@ -88,7 +89,6 @@ class M365Helper:
         """Normalize CLI response, handling both dict and list shapes plus error payloads."""
         if isinstance(result, dict):
             if "error" in result:
-                import sys
                 print(f"PA helper warning: {result['error']}", file=sys.stderr)
                 return []
             return result.get("value", [])
@@ -237,7 +237,7 @@ class M365Helper:
         subject = str(email.get('subject') or '').lower()
         body_raw = email.get('body')
         if isinstance(body_raw, dict):
-            body = body_raw.get('content', '').lower()
+            body = (body_raw.get('content') or '').lower()
         elif isinstance(body_raw, str):
             body = body_raw.lower()
         else:
