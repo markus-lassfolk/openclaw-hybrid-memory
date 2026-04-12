@@ -94,10 +94,10 @@ class M365Helper:
         result = self._run_command(args)
         return result.get('value', []) if isinstance(result, dict) else []
 
-    def get_sent_mail_since(self, days_ago: int = 3) -> List[Dict]:
+    def get_sent_mail_since(self, days_ago: int = 3, limit: int = 100) -> List[Dict]:
         """Get sent mail from the last N days for chase-up scanning"""
         since_date = (datetime.now() - timedelta(days=days_ago)).strftime('%Y-%m-%d')
-        args = ['mail', 'sent', '--since', since_date]
+        args = ['mail', 'sent', '--since', since_date, '--limit', str(limit)]
         if self.mailbox:
             args.extend(['--mailbox', self.mailbox])
 
@@ -183,11 +183,19 @@ class M365Helper:
 
         commitments = []
         for email in sent_mail:
-            body_raw = email.get('body', '')
+            # Skip auto-replied messages (Out of Office, auto-generated)
+            headers = email.get('internetMessageHeaders', []) or []
+            header_map = {h.get('name', '').lower(): h.get('value', '').lower() for h in headers}
+            if header_map.get('auto-submitted') == 'auto-generated' or 'oof' in header_map.get('x-auto-response-suppress', ''):
+                continue
+
+            body_raw = email.get('body')
             if isinstance(body_raw, dict):
                 body_text = body_raw.get('content', '')
+            elif isinstance(body_raw, str):
+                body_text = body_raw
             else:
-                body_text = str(body_raw)
+                body_text = ''
             body = body_text.lower()
 
             subject = str(email.get('subject', '')).lower()
@@ -231,8 +239,13 @@ class M365Helper:
         if any(keyword in subject or keyword in body for keyword in threat_keywords):
             red_flags.append("Threat of consequences detected")
 
-        # 3. Verification requests
-        if 'verify' in subject or 'verify' in body or 'confirm your' in body:
+        # 3. Verification requests (scoped to phishing-specific phrasing to reduce false positives)
+        phishing_verify_phrases = [
+            'verify your account', 'verify your identity', 'verify your credentials',
+            'verify your password', 'verify your information', 'verify your payment',
+            'verify your banking', 'confirm your account', 'confirm your identity'
+        ]
+        if any(phrase in body or phrase in subject for phrase in phishing_verify_phrases):
             red_flags.append("Verification request (common phishing tactic)")
 
         # 4. Suspicious sender mismatch (basic check)
