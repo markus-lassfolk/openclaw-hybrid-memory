@@ -57,7 +57,7 @@ This guide covers security patterns for protecting the user from phishing, socia
 **Detection:**
 ```bash
 # Get sender details
-m365-agent-cli mail show <id> --format json | jq '.from.emailAddress'
+m365-agent-cli mail show <id> --output json | jq '.from.emailAddress'
 ```
 
 Compare display name vs actual address. If they don't match expected patterns, flag it.

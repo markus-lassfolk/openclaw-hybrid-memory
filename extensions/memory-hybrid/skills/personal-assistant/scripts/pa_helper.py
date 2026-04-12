@@ -10,7 +10,7 @@ import subprocess
 import json
 import sys
 from datetime import datetime, timedelta
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Union
 
 class M365Helper:
     """Helper class for m365-agent-cli operations"""
@@ -26,7 +26,7 @@ class M365Helper:
         self.mailbox = mailbox
         self.user = user
 
-    def _run_command(self, args: List[str], capture_json: bool = True, timeout: int = 30) -> Dict:
+    def _run_command(self, args: List[str], capture_json: bool = True, timeout: int = 30) -> Union[Dict, List]:
         """Run ``m365-agent-cli`` command and return the parsed result.
 
         Args:
@@ -38,9 +38,9 @@ class M365Helper:
                 the PA from hanging indefinitely if the CLI blocks for authentication or
                 network issues.
         Returns:
-            A ``dict`` describing the result. For JSON‑capturing calls this is the decoded
-            JSON on success, or an ``{"error": str, ...}`` payload on failure. For non‑JSON
-            captures the payload always contains at least ``stdout`` and ``stderr`` keys.
+            A ``dict`` or ``list`` on success (the decoded JSON response), or a ``dict``
+            with an ``"error"`` key on failure. For non‑JSON captures the payload always
+            contains at least ``stdout`` and ``stderr`` keys.
         """
         full_cmd = ['m365-agent-cli', *args]
 
@@ -85,6 +85,17 @@ class M365Helper:
                 "cmd": " ".join(full_cmd),
             }
 
+    def _extract_items(self, result: Union[Dict, List]) -> List[Dict]:
+        """Normalize CLI response, handling both dict and list shapes plus error payloads."""
+        if isinstance(result, dict):
+            if "error" in result:
+                print(f"PA helper warning: {result['error']}", file=sys.stderr)
+                return []
+            return result.get("value", [])
+        if isinstance(result, list):
+            return result
+        return []
+
     def get_unread_mail(self, limit: int = 50) -> List[Dict]:
         """Get unread emails from inbox"""
         args = ['mail', 'inbox', '--unread', '--limit', str(limit)]
@@ -92,7 +103,7 @@ class M365Helper:
             args.extend(['--mailbox', self.mailbox])
 
         result = self._run_command(args)
-        return result.get('value', []) if isinstance(result, dict) else []
+        return self._extract_items(result)
 
     def get_sent_mail_since(self, days_ago: int = 3, limit: int = 100) -> List[Dict]:
         """Get sent mail from the last N days for chase-up scanning"""
@@ -102,7 +113,7 @@ class M365Helper:
             args.extend(['--mailbox', self.mailbox])
 
         result = self._run_command(args)
-        return result.get('value', []) if isinstance(result, dict) else []
+        return self._extract_items(result)
 
     def get_todays_calendar(self) -> List[Dict]:
         """Get today's calendar events"""
@@ -111,7 +122,7 @@ class M365Helper:
             args.extend(['--mailbox', self.mailbox])
 
         result = self._run_command(args)
-        return result.get('value', []) if isinstance(result, dict) else []
+        return self._extract_items(result)
 
     def flag_email(self, email_id: str) -> Dict:
         """Flag an email for follow-up"""
@@ -198,7 +209,7 @@ class M365Helper:
                 body_text = ''
             body = body_text.lower()
 
-            subject = str(email.get('subject', '')).lower()
+            subject = str(email.get('subject') or '').lower()
 
             for phrase in commitment_phrases:
                 if phrase.lower() in body or phrase.lower() in subject:
@@ -207,7 +218,8 @@ class M365Helper:
                         'matched_phrase': phrase,
                         'sent_date': email.get('sentDateTime'),
                         'recipients': [r.get('emailAddress', {}).get('address')
-                                     for r in email.get('toRecipients', [])]
+                                     for r in email.get('toRecipients', [])
+                                     if r.get('emailAddress', {}).get('address')]
                     })
                     break  # Only match once per email
 
@@ -221,11 +233,17 @@ class M365Helper:
         """
         red_flags = []
 
-        # Extract email fields
-        subject = email.get('subject', '').lower()
-        body = email.get('body', {}).get('content', '').lower()
-        from_address = email.get('from', {}).get('emailAddress', {}).get('address', '')
-        from_name = email.get('from', {}).get('emailAddress', {}).get('name', '')
+        # Extract email fields — use str() guard so None subject doesn't crash .lower()
+        subject = str(email.get('subject') or '').lower()
+        body_raw = email.get('body')
+        if isinstance(body_raw, dict):
+            body = (body_raw.get('content') or '').lower()
+        elif isinstance(body_raw, str):
+            body = body_raw.lower()
+        else:
+            body = ''
+        from_address = str(email.get('from', {}).get('emailAddress', {}).get('address') or '').lower()
+        from_name = str(email.get('from', {}).get('emailAddress', {}).get('name') or '').lower()
 
         # 1. Urgency language
         urgency_keywords = ['urgent', 'immediate', 'asap', 'within 24 hours',
@@ -251,7 +269,7 @@ class M365Helper:
         # 4. Suspicious sender mismatch (basic check)
         # Note: More sophisticated checks would require knowing the organization's domains
         if from_name and from_address:
-            if 'support' in from_name.lower() and 'support' not in from_address.lower():
+            if 'support' in from_name and 'support' not in from_address:
                 red_flags.append("Sender name/address mismatch")
 
         return red_flags
