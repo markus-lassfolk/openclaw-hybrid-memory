@@ -5,6 +5,16 @@
 
 import { AZURE_OPENAI_API_VERSION } from "../services/embeddings.js";
 import { isAzureOpenAiResourceEndpoint } from "../services/embeddings/shared.js";
+
+/** True when baseURL is an Azure AI Foundry Services endpoint (e.g. https://services.ai.azure.com). */
+function isAzureAiFoundryServicesUrl(baseURL: string): boolean {
+  try {
+    const u = new URL(baseURL);
+    return u.hostname === "services.ai.azure.com" || u.hostname.endsWith(".services.ai.azure.com");
+  } catch {
+    return false;
+  }
+}
 import { createApimGatewayFetch, isAzureApiManagementGatewayUrl } from "../utils/apim-gateway-fetch.js";
 
 export function isAzureFoundryFamilyProvider(provider: string): boolean {
@@ -37,10 +47,14 @@ export function applyAzureFoundryVerifyDirectClientAuth(
       opts.defaultQuery = { "api-version": AZURE_OPENAI_API_VERSION };
     }
   } else if (isAzureOpenAiResourceEndpoint(baseURL)) {
+    // Legacy Azure OpenAI resource (e.g. *.openai.azure.com without /openai/v1)
     opts.defaultHeaders = { ...(opts.defaultHeaders ?? {}), "api-key": apiKey };
     const openAiV1Compat = /\/openai\/v1(?:\/|$)/i.test(baseURL);
     if (!openAiV1Compat) {
       opts.defaultQuery = { "api-version": AZURE_OPENAI_API_VERSION };
     }
+  } else if (isAzureAiFoundryServicesUrl(baseURL)) {
+    // Azure AI Foundry Services endpoint — requires Bearer token auth (#1125)
+    opts.defaultHeaders = { ...(opts.defaultHeaders ?? {}), Authorization: `Bearer ${apiKey}` };
   }
 }
