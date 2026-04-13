@@ -20,7 +20,7 @@ concurrency:
   group: release-cd-${{ github.ref }}
   cancel-in-progress: true
 
-# softprops/action-gh-release@v2 still declares node20; opt into Node 24 runtime until upstream ships a new major.
+# softprops/action-gh-release@v3 still declares node20; opt into Node 24 runtime until upstream ships a new major.
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
@@ -111,7 +111,7 @@ jobs:
           PY
       - name: Create GitHub Release (combined body)
         if: steps.prep.outputs.has_body == 'true'
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ steps.version.outputs.tag }}
           name: Release ${{ steps.version.outputs.tag }}
@@ -121,7 +121,7 @@ jobs:
           prerelease: false
       - name: Create GitHub Release (GitHub-generated notes)
         if: steps.prep.outputs.has_body != 'true'
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ steps.version.outputs.tag }}
           name: Release ${{ steps.version.outputs.tag }}
