@@ -13,6 +13,14 @@
 # Optional: override project. GlitchTip API uses org_slug and project_slug; if your
 # project ID is 1, try GLITCHTIP_PROJECT=1 (script will try projects/1/issues/ and
 # projects/1/1/issues/). For org/project slugs: GLITCHTIP_ORG=myorg GLITCHTIP_PROJECT=openclaw
+#
+# Optional env vars for retry behaviour:
+#   GLITCHTIP_RETRIES           — number of retry attempts after a transient error (default: 3).
+#                                 A transient error is HTTP 502, 503, or 504 on the primary URL.
+#                                 Total attempts = GLITCHTIP_RETRIES.
+#   GLITCHTIP_RETRY_DELAY_BASE  — base for exponential back-off sleep, in seconds (default: 2).
+#                                 Sleep before retry n is (BASE ** n) seconds.
+#                                 Set to 1 to disable exponential growth (constant delay).
 set -e
 
 BASE="${GLITCHTIP_BASE_URL:-http://192.168.1.99:8000}"
@@ -32,6 +40,22 @@ if [[ "$BASE" =~ ^https?:// && ! "$BASE" =~ ^https:// ]]; then
   echo "Consider using HTTPS: export GLITCHTIP_BASE_URL=https://your-domain.com" >&2
 fi
 
+# Validate retry tunables so we fail fast with a clear message rather than
+# producing a confusing "illegal number" or "division by zero" error under `set -e`.
+RETRIES=${GLITCHTIP_RETRIES:-3}
+DELAY_BASE=${GLITCHTIP_RETRY_DELAY_BASE:-2}
+
+case "$RETRIES" in
+  '' | *[!0-9]*) echo "GLITCHTIP_RETRIES must be a non-negative integer (got: '$RETRIES')" >&2; exit 1 ;;
+esac
+case "$DELAY_BASE" in
+  '' | *[!0-9]*) echo "GLITCHTIP_RETRY_DELAY_BASE must be a non-negative integer (got: '$DELAY_BASE')" >&2; exit 1 ;;
+esac
+if [ "$DELAY_BASE" -eq 0 ]; then
+  echo "GLITCHTIP_RETRY_DELAY_BASE must be >= 1 (got: 0)" >&2
+  exit 1
+fi
+
 # Sentry-style: /api/0/projects/{org}/{project}/issues/
 # Try numeric first (org=1, project=1), then org/1/project/1
 URL1="${BASE}/api/0/projects/${ORG}/${PROJECT}/issues/?query=&statsPeriod=14d"
@@ -40,8 +64,6 @@ URL2="${BASE}/api/0/projects/1/issues/?query=&statsPeriod=14d"
 echo "Fetching issues from GlitchTip (base: $BASE)..." >&2
 
 # ---- Retry wrapper ---------------------------------------------------------
-RETRIES=${GLITCHTIP_RETRIES:-3}
-DELAY_BASE=${GLITCHTIP_RETRY_DELAY_BASE:-2}   # seconds; exponential back-off base
 attempt=0
 
 fetch_once() {
@@ -63,7 +85,7 @@ while [ $attempt -le $RETRIES ]; do
 
   # Fallback to numeric project path on 404 only once
   if [ "$code" = "404" ] && [ "$URL1" != "$URL2" ]; then
-    response=$(fetch_once "$URL2")
+    response=$(fetch_once "$URL2") || true
     code=$(echo "$response" | tail -n1)
     body=$(echo "$response" | sed '$d')
     if [ "$code" = "200" ]; then
