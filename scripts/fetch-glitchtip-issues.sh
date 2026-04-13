@@ -38,15 +38,32 @@ URL1="${BASE}/api/0/projects/${ORG}/${PROJECT}/issues/?query=&statsPeriod=14d"
 URL2="${BASE}/api/0/projects/1/issues/?query=&statsPeriod=14d"
 
 echo "Fetching issues from GlitchTip (base: $BASE)..." >&2
-if response=$(curl -s -w "\n%{http_code}" -H "Accept: application/json" -H "Authorization: Bearer $TOKEN" "$URL1"); then
+
+# ---- Retry wrapper ---------------------------------------------------------
+RETRIES=${GLITCHTIP_RETRIES:-3}
+DELAY_BASE=${GLITCHTIP_RETRY_DELAY_BASE:-2}   # seconds; exponential back-off base
+attempt=0
+
+fetch_once() {
+  local url="$1"
+  curl -s -w "\n%{http_code}" -H "Accept: application/json" -H "Authorization: Bearer $TOKEN" "$url"
+}
+
+while [ $attempt -le $RETRIES ]; do
+  attempt=$((attempt+1))
+  response=$(fetch_once "$URL1") || true
   code=$(echo "$response" | tail -n1)
   body=$(echo "$response" | sed '$d')
+
+  # Success
   if [ "$code" = "200" ]; then
     echo "$body" | jq . 2>/dev/null || echo "$body"
     exit 0
   fi
+
+  # Fallback to numeric project path on 404 only once
   if [ "$code" = "404" ] && [ "$URL1" != "$URL2" ]; then
-    response=$(curl -s -w "\n%{http_code}" -H "Accept: application/json" -H "Authorization: Bearer $TOKEN" "$URL2")
+    response=$(fetch_once "$URL2")
     code=$(echo "$response" | tail -n1)
     body=$(echo "$response" | sed '$d')
     if [ "$code" = "200" ]; then
@@ -54,9 +71,21 @@ if response=$(curl -s -w "\n%{http_code}" -H "Accept: application/json" -H "Auth
       exit 0
     fi
   fi
+
+  # Retry on transient upstream errors (502/503/504)
+  if [[ "$code" =~ ^(502|503|504)$ ]] && [ $attempt -le $RETRIES ]; then
+    sleep_time=$(( DELAY_BASE ** attempt ))
+    echo "Transient error (HTTP $code). Retry $attempt/$RETRIES after ${sleep_time}s..." >&2
+    sleep "$sleep_time"
+    continue
+  fi
+
+  # Non-retriable or retries exhausted
   echo "HTTP $code" >&2
   echo "$body" | head -c 500 >&2
   echo "" >&2
   exit 1
-fi
+
+done
+
 exit 1
