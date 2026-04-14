@@ -14,6 +14,7 @@ import { fillPrompt, loadPrompt } from "../utils/prompt-loader.js";
 import { is404Like, is500Like, isConnectionErrorLike, isOllamaOOM } from "./chat.js";
 import { capturePluginError } from "./error-reporter.js";
 import { chatCompletionTokenParams } from "./model-capabilities.js";
+import { tryParseFirstJsonArray } from "../utils/llm-json-array.js";
 
 /** Minimum "other" facts before category discovery kicks in. */
 const MIN_OTHER_FOR_DISCOVERY = 15;
@@ -139,9 +140,8 @@ async function discoverCategoriesFromOther(
         { maxRetries: 2 },
       );
       const content = resp.choices[0]?.message?.content?.trim() || "[]";
-      const jsonMatch = content.match(/\[[\s\S]*\]/);
-      if (!jsonMatch) continue;
-      const labels: unknown[] = JSON.parse(jsonMatch[0]);
+      const labels = tryParseFirstJsonArray(content);
+      if (!labels) continue;
       anyBatchSucceeded = true;
       for (let j = 0; j < Math.min(labels.length, batch.length); j++) {
         const raw = typeof labels[j] === "string" ? (labels[j] as string) : "";
@@ -248,11 +248,10 @@ Respond with ONLY a JSON array of category strings, one per fact, in order. Exam
     );
 
     const content = resp.choices[0]?.message?.content?.trim() || "[]";
-    // Extract JSON array from response (handle markdown code blocks)
-    const jsonMatch = content.match(/\[[\s\S]*\]/);
-    if (!jsonMatch) return new Map();
+    const parsed = tryParseFirstJsonArray(content);
+    if (!parsed) return new Map();
 
-    const results: string[] = JSON.parse(jsonMatch[0]);
+    const results: string[] = parsed as string[];
     const map = new Map<string, string>();
 
     for (let i = 0; i < Math.min(results.length, facts.length); i++) {

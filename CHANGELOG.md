@@ -8,9 +8,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+---
+
+## [2026.4.141] - 2026-04-14
+
 ### Security
 
 - **npm overrides** for **`axios`**, **`follow-redirects`**, and **`tar`** so transitive dependencies (via **`openclaw`**) resolve to patched versions; **`npm audit --audit-level=moderate`** passes.
+
+### Fixed
+
+- **Auto-classifier / category discovery:** Parsing the LLM reply no longer uses a greedy **`[...]`** regex (which could join the first `[` with the last `]` across prose or multiple spans, causing **`JSON.parse`** errors such as *Expected ',' or ']' after array element*). The plugin now finds a **balanced** JSON array and, if needed, **retries** at later `[` positions until a valid JSON array parses.
+
+- **Maintenance cron jobs (`~/.openclaw/cron/jobs.json`):** New and normalized **`hybrid-mem:*`** entries persist **`id`** (same stable string as **`pluginJobId`**) and **`sessionTarget: "isolated"`** so gateway **`cron.run`** and UIs that bind **`job.id`** stay aligned with on-disk records; **`verify --fix`** backfills these fields on existing jobs.
+
+### Release summary
+
+**2026.4.141** publishes version **2026.4.141** across **`package.json`**, **`openclaw.plugin.json`**, **`openclaw-hybrid-memory-install`**, and the lockfile, with **CHANGELOG** and **release notes** for this tag.
 
 ---
 
@@ -1319,7 +1333,8 @@ Major feature release including procedural memory, directive extraction, reinfor
 
 ---
 
-[Unreleased]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.4.140...HEAD
+[Unreleased]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.4.141...HEAD
+[2026.4.141]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.4.140...v2026.4.141
 [2026.4.140]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.4.61...v2026.4.140
 [2026.4.61]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.4.60...v2026.4.61
 [2026.4.60]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.4.52...v2026.4.60

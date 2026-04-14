@@ -286,12 +286,14 @@ const MIN_INTERVAL_MS: Record<string, number> = {
 
 // buildGuardPrefix is imported from services/cron-guard.ts (issue #305).
 
+// Each entry uses pluginJobId as stable identity; resolveCronJob also sets `id` to that value for gateway `cron.run` / UI parity.
 const MAINTENANCE_CRON_JOBS: Array<
   Record<string, unknown> & { modelTier?: "nano" | "default" | "heavy"; minIntervalMs?: number; featureGate?: string }
 > = [
   // Daily 02:00 | nightly-memory-sweep | prune → distill --days 3 → extract-daily
   {
     pluginJobId: `${PLUGIN_JOB_ID_PREFIX}nightly-distill`,
+    sessionTarget: "isolated",
     name: "nightly-memory-sweep",
     schedule: { kind: "cron", expr: "0 2 * * *" },
     channel: "system",
@@ -305,6 +307,7 @@ const MAINTENANCE_CRON_JOBS: Array<
   // Daily 02:30 | self-correction-analysis | self-correction-run
   {
     pluginJobId: `${PLUGIN_JOB_ID_PREFIX}self-correction-analysis`,
+    sessionTarget: "isolated",
     name: "self-correction-analysis",
     schedule: { kind: "cron", expr: "30 2 * * *" },
     channel: "system",
@@ -318,6 +321,7 @@ const MAINTENANCE_CRON_JOBS: Array<
   // Sunday 03:00 | weekly-reflection | reflect --verbose → reflect-rules → reflect-meta
   {
     pluginJobId: `${PLUGIN_JOB_ID_PREFIX}weekly-reflection`,
+    sessionTarget: "isolated",
     name: "weekly-reflection",
     schedule: { kind: "cron", expr: "0 3 * * 0" },
     channel: "system",
@@ -331,6 +335,7 @@ const MAINTENANCE_CRON_JOBS: Array<
   // Sunday 04:00 | weekly-extract-procedures (nano = background model, avoids locking main AI)
   {
     pluginJobId: `${PLUGIN_JOB_ID_PREFIX}weekly-extract-procedures`,
+    sessionTarget: "isolated",
     name: "weekly-extract-procedures",
     schedule: { kind: "cron", expr: "0 4 * * 0" },
     channel: "system",
@@ -344,6 +349,7 @@ const MAINTENANCE_CRON_JOBS: Array<
   // Saturday 04:00 | weekly-deep-maintenance | compact → vectordb-optimize → scope promote
   {
     pluginJobId: `${PLUGIN_JOB_ID_PREFIX}weekly-deep-maintenance`,
+    sessionTarget: "isolated",
     name: "weekly-deep-maintenance",
     schedule: { kind: "cron", expr: "0 4 * * 6" },
     channel: "system",
@@ -357,6 +363,7 @@ const MAINTENANCE_CRON_JOBS: Array<
   // Sunday 10:00 | weekly-persona-proposals | generate-proposals → notify if pending
   {
     pluginJobId: `${PLUGIN_JOB_ID_PREFIX}weekly-persona-proposals`,
+    sessionTarget: "isolated",
     name: "weekly-persona-proposals",
     schedule: { kind: "cron", expr: "0 10 * * 0" },
     channel: "system",
@@ -370,6 +377,7 @@ const MAINTENANCE_CRON_JOBS: Array<
   // 1st of month 05:00 | monthly-consolidation | consolidate → build-languages → backfill-decay
   {
     pluginJobId: `${PLUGIN_JOB_ID_PREFIX}monthly-consolidation`,
+    sessionTarget: "isolated",
     name: "monthly-consolidation",
     schedule: { kind: "cron", expr: "0 5 1 * *" },
     channel: "system",
@@ -384,6 +392,7 @@ const MAINTENANCE_CRON_JOBS: Array<
   // Phase 2.7: Only install when nightlyCycle.enabled; off by default (Phase 1).
   {
     pluginJobId: `${PLUGIN_JOB_ID_PREFIX}nightly-dream-cycle`,
+    sessionTarget: "isolated",
     name: "nightly-dream-cycle",
     schedule: { kind: "cron", expr: "45 2 * * *" },
     channel: "system",
@@ -399,6 +408,7 @@ const MAINTENANCE_CRON_JOBS: Array<
   // Default schedule; overridden by cfg.sensorSweep.schedule during install/verify/upgrade.
   {
     pluginJobId: `${PLUGIN_JOB_ID_PREFIX}sensor-sweep`,
+    sessionTarget: "isolated",
     name: "sensor-sweep",
     schedule: { kind: "cron", expr: "0 */4 * * *" },
     channel: "system",
@@ -444,7 +454,9 @@ function resolveCronJob(
     const jobName = (typeof rest.name === "string" ? rest.name : "unknown").replace(/\s+/g, "-");
     rest.message = buildGuardPrefix(jobName, minIntervalMs) + rest.message;
   }
-  return { ...rest, model, delivery: { mode: "none" as const } };
+  const pluginJobId = rest.pluginJobId;
+  const stableId = typeof pluginJobId === "string" && pluginJobId.trim().length > 0 ? pluginJobId.trim() : undefined;
+  return { ...rest, ...(stableId ? { id: stableId } : {}), model, delivery: { mode: "none" as const } };
 }
 
 function hasIsolatedCronSessionTarget(job: Record<string, unknown>): boolean {
@@ -568,6 +580,20 @@ export function ensureMaintenanceCronJobs(
         }
         if (!existing.pluginJobId) {
           existing.pluginJobId = id;
+          jobsChanged = true;
+          if (!normalized.includes(name)) normalized.push(name);
+        }
+        if (!existing.id && typeof existing.pluginJobId === "string" && existing.pluginJobId.length > 0) {
+          existing.id = existing.pluginJobId;
+          jobsChanged = true;
+          if (!normalized.includes(name)) normalized.push(name);
+        }
+        if (
+          id.startsWith(PLUGIN_JOB_ID_PREFIX) &&
+          hasIsolatedCronSessionTarget(existing) &&
+          existing.sessionTarget !== "isolated"
+        ) {
+          existing.sessionTarget = "isolated";
           jobsChanged = true;
           if (!normalized.includes(name)) normalized.push(name);
         }
