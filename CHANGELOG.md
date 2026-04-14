@@ -10,6 +10,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.4.140] - 2026-04-14
+
+### Release summary
+
+**2026.4.140** aligns published artifacts and documentation with version **2026.4.140**: **`package.json` / lockfile**, **`openclaw.plugin.json`**, and **`openclaw-hybrid-memory-install`**. **CHANGELOG** and **release notes** are updated for this tag. The **`skills/personal-assistant/`** bundle is **removed** from this package (only **`skills/hybrid-memory/`** remains bundled). **CI** expectations were validated locally (**TypeScript** `tsc --noEmit`, **Biome** lint/format, **Vitest** suite, **`verify-publish`** manifest checks) to match the **`main`** workflow.
+
+### Removed
+
+- **Bundled skill:** `skills/personal-assistant/` (README, SKILL, references, helper script) — not shipped with **openclaw-hybrid-memory** anymore.
+
+---
+
 ## [2026.4.61] - 2026-04-06
 
 ### Release summary
@@ -1303,7 +1315,8 @@ Major feature release including procedural memory, directive extraction, reinfor
 
 ---
 
-[Unreleased]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.4.61...HEAD
+[Unreleased]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.4.140...HEAD
+[2026.4.140]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.4.61...v2026.4.140
 [2026.4.61]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.4.60...v2026.4.61
 [2026.4.60]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.4.52...v2026.4.60
 [2026.4.52]: https://github.com/markus-lassfolk/openclaw-hybrid-memory/compare/v2026.4.51...v2026.4.52
