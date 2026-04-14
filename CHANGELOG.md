@@ -8,6 +8,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Security
+
+- **npm overrides** for **`axios`**, **`follow-redirects`**, and **`tar`** so transitive dependencies (via **`openclaw`**) resolve to patched versions; **`npm audit --audit-level=moderate`** passes.
+
 ---
 
 ## [2026.4.140] - 2026-04-14
