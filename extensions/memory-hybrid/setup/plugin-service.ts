@@ -465,6 +465,7 @@ export function createPluginService(ctx: PluginServiceContext) {
               workflowStore,
               narrativesDb,
               provenanceService,
+              eventLog,
             },
             cfg.dashboard.port,
           );

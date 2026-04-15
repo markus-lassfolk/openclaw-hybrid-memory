@@ -393,6 +393,8 @@ describe("Memory Viewer API (Issue #1023)", () => {
     const { WorkflowStore } = await import("../backends/workflow-store.js");
     const { NarrativesDB } = await import("../backends/narratives-db.js");
     const { ProvenanceService } = await import("../services/provenance.js");
+    const { EventLog } = await import("../backends/event-log.js");
+    const { AuditStore } = await import("../backends/audit-store.js");
 
     const factsDb = new FactsDB(join(tmpDir, "facts.db"));
     const vectorDb = new VectorDB(join(tmpDir, "lance"), VECTOR_DIM);
@@ -402,6 +404,8 @@ describe("Memory Viewer API (Issue #1023)", () => {
     const workflowStore = new WorkflowStore(join(tmpDir, "workflows.db"));
     const narrativesDb = new NarrativesDB(join(tmpDir, "narratives.db"));
     const provenanceService = new ProvenanceService(join(tmpDir, "provenance.db"));
+    const eventLog = new EventLog(join(tmpDir, "event-log.db"));
+    const auditStore = new AuditStore(join(tmpDir, "audit.db"));
 
     return {
       factsDb,
@@ -412,6 +416,8 @@ describe("Memory Viewer API (Issue #1023)", () => {
       workflowStore,
       narrativesDb,
       provenanceService,
+      eventLog,
+      auditStore,
       resolvedSqlitePath: join(tmpDir, "facts.db"),
       resolvedLancePath: join(tmpDir, "lance"),
     };
@@ -494,6 +500,16 @@ describe("Memory Viewer API (Issue #1023)", () => {
     }
     try {
       ctx.provenanceService.close();
+    } catch {
+      /* ignore */
+    }
+    try {
+      ctx.eventLog.close();
+    } catch {
+      /* ignore */
+    }
+    try {
+      ctx.auditStore.close();
     } catch {
       /* ignore */
     }
@@ -622,6 +638,149 @@ describe("Memory Viewer API (Issue #1023)", () => {
       const { status, body } = await apiPost(port, `/api/viewer/facts/${target.id}/forget`, "{}");
       expect(status).toBe(200);
       expect(JSON.parse(body).ok).toBe(true);
+    });
+  });
+
+  // ----------------------------------------------------------------
+  // Issue #1025 — Session Timeline
+  // ----------------------------------------------------------------
+
+  it("GET /api/viewer/timeline/sessions returns sessions array with totals", async () => {
+    await withServer(async (ctx, port) => {
+      const { status, body } = await apiGet(port, "/api/viewer/timeline/sessions");
+      expect(status).toBe(200);
+      const data = JSON.parse(body);
+      expect(data).toHaveProperty("sessions");
+      expect(Array.isArray(data.sessions)).toBe(true);
+      expect(data).toHaveProperty("totals");
+      expect(data).toHaveProperty("allEventTypes");
+      expect(Array.isArray(data.allEventTypes)).toBe(true);
+      expect(typeof data.totals.totalSessions).toBe("number");
+      expect(typeof data.totals.totalEvents).toBe("number");
+    });
+  });
+
+  it("GET /api/viewer/timeline/sessions aggregates event log data", async () => {
+    await withServer(async (ctx, port) => {
+      const sessionId = "test-session-001";
+      ctx.eventLog.append({
+        sessionId,
+        timestamp: new Date().toISOString(),
+        eventType: "fact_learned",
+        content: { text: "Test fact" },
+        entities: ["TestEntity"],
+      });
+      ctx.eventLog.append({
+        sessionId,
+        timestamp: new Date().toISOString(),
+        eventType: "decision_made",
+        content: { text: "We decided to do X" },
+      });
+      ctx.eventLog.append({
+        sessionId,
+        timestamp: new Date().toISOString(),
+        eventType: "preference_expressed",
+        content: { text: "User prefers Y" },
+      });
+
+      const { status, body } = await apiGet(port, "/api/viewer/timeline/sessions");
+      expect(status).toBe(200);
+      const data = JSON.parse(body);
+      const session = data.sessions.find((s: { sessionId: string }) => s.sessionId === sessionId);
+      expect(session).toBeDefined();
+      expect(session.totalEvents).toBe(3);
+      expect(session.capturedFacts).toBe(3); // fact_learned + decision_made + correction = captured
+      expect(session.eventTypeCounts.fact_learned).toBe(1);
+      expect(session.eventTypeCounts.decision_made).toBe(1);
+      expect(session.eventTypeCounts.preference_expressed).toBe(1);
+      expect(data.allEventTypes).toContain("fact_learned");
+      expect(data.allEventTypes).toContain("decision_made");
+      expect(data.allEventTypes).toContain("preference_expressed");
+    });
+  });
+
+  it("GET /api/viewer/timeline/sessions aggregates audit events per session", async () => {
+    await withServer(async (ctx, port) => {
+      const sessionId = "audit-test-session";
+      ctx.auditStore.append({
+        agentId: "forge",
+        action: "memory_recall",
+        outcome: "success",
+        sessionId,
+        durationMs: 150,
+      });
+      ctx.auditStore.append({
+        agentId: "forge",
+        action: "exec",
+        outcome: "failed",
+        error: "Command failed",
+        sessionId,
+        durationMs: 300,
+      });
+
+      const { status, body } = await apiGet(port, "/api/viewer/timeline/sessions");
+      expect(status).toBe(200);
+      const data = JSON.parse(body);
+      const session = data.sessions.find((s: { sessionId: string }) => s.sessionId === sessionId);
+      expect(session).toBeDefined();
+      expect(session.auditEvents).toBe(2);
+      expect(session.auditFailures).toBe(1);
+    });
+  });
+
+  it("GET /api/viewer/timeline/sessions/:id returns detail with events", async () => {
+    await withServer(async (ctx, port) => {
+      const sessionId = "detail-session";
+      ctx.eventLog.append({
+        sessionId,
+        timestamp: new Date().toISOString(),
+        eventType: "entity_mentioned",
+        content: { name: "Villa Polly" },
+        entities: ["Villa Polly"],
+      });
+
+      const { status, body } = await apiGet(port, `/api/viewer/timeline/sessions/${sessionId}`);
+      expect(status).toBe(200);
+      const data = JSON.parse(body);
+      expect(data.sessionId).toBe(sessionId);
+      expect(Array.isArray(data.events)).toBe(true);
+      expect(data.events.length).toBeGreaterThan(0);
+      expect(data.events[0].eventType).toBe("entity_mentioned");
+      expect(data.events[0].entities).toContain("Villa Polly");
+    });
+  });
+
+  it("GET /api/viewer/timeline/sessions/:id returns 404 for unknown session", async () => {
+    await withServer(async (ctx, port) => {
+      const { status } = await apiGet(port, "/api/viewer/timeline/sessions/no-such-session-id");
+      expect(status).toBe(404);
+    });
+  });
+
+  it("GET /api/viewer/timeline/sessions includes injectedFacts count from audit", async () => {
+    await withServer(async (ctx, port) => {
+      const sessionId = "recall-test-session";
+      // Three memory_recall events to simulate injected facts
+      ctx.auditStore.append({ agentId: "maeve", action: "memory_recall", outcome: "success", sessionId });
+      ctx.auditStore.append({ agentId: "maeve", action: "memory_recall", outcome: "success", sessionId });
+      ctx.auditStore.append({ agentId: "maeve", action: "memory_recall", outcome: "success", sessionId });
+
+      const { status, body } = await apiGet(port, "/api/viewer/timeline/sessions");
+      expect(status).toBe(200);
+      const data = JSON.parse(body);
+      const session = data.sessions.find((s: { sessionId: string }) => s.sessionId === sessionId);
+      expect(session?.injectedFacts).toBe(3);
+    });
+  });
+
+  it("GET /api/viewer/timeline/stats returns aggregate totals", async () => {
+    await withServer(async (ctx, port) => {
+      const { status, body } = await apiGet(port, "/api/viewer/timeline/stats");
+      expect(status).toBe(200);
+      const data = JSON.parse(body);
+      expect(data).toHaveProperty("totals");
+      expect(data).toHaveProperty("allEventTypes");
+      expect(Array.isArray(data.allEventTypes)).toBe(true);
     });
   });
 });
