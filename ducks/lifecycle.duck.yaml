@@ -1,0 +1,41 @@
+version: "1"
+inputs:
+  repo:
+    type: string
+  pr_num:
+    type: integer
+  action:
+    type: string
+    default: fetch
+  label_name:
+    type: string
+    default: ""
+  body_text:
+    type: string
+    default: ""
+participants:
+  pr_state:
+    type: exec
+  add_label:
+    type: exec
+  remove_label:
+    type: exec
+  post_comment:
+    type: exec
+  squash_merge:
+    type: exec
+  admin_merge:
+    type: exec
+  dispatch_forge:
+    type: exec
+  dispatch_council:
+    type: exec
+flow:
+  - pr_state
+  - add_label
+  - remove_label
+  - post_comment
+  - squash_merge
+  - admin_merge
+  - dispatch_forge
+  - dispatch_council

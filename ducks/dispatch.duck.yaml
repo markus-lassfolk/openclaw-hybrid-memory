@@ -1,0 +1,25 @@
+version: "1"
+inputs:
+  repo:
+    type: string
+    default: markus-lassfolk/openclaw-hybrid-memory
+participants:
+  check_capacity:
+    type: exec
+  find_eligible_issue:
+    type: exec
+  prepare_worktree:
+    type: exec
+  build_brief:
+    type: exec
+  dispatch_forge:
+    type: exec
+  mark_dispatched:
+    type: exec
+flow:
+  - check_capacity
+  - find_eligible_issue
+  - prepare_worktree
+  - build_brief
+  - dispatch_forge
+  - mark_dispatched
