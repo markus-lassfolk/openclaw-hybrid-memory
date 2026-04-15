@@ -2849,6 +2849,18 @@ export function registerMemoryTools(
     const _updateEdictDesc = "Update the text, tags, source, or expiry of an existing edict.";
     const _execUpdateEdict = async (_toolCallId: string, params: Record<string, unknown>) => {
       try {
+        if (!isEdictWriteToolEnabled()) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: 'memory_update_edict is disabled. Propose edicts via GitHub comment: [EDICT CANDIDATE] text="..." reason="..." tags=[...].',
+              },
+            ],
+            details: { error: "forbidden", reason: "edict_write_disabled" },
+          };
+        }
+
         const { id, text, source, tags, ttl, expiresAt } = params as {
           id: string;
           text?: string;
@@ -2920,6 +2932,18 @@ export function registerMemoryTools(
     const _removeEdictDesc = "Delete an edict from memory by its id.";
     const _execRemoveEdict = async (_toolCallId: string, params: Record<string, unknown>) => {
       try {
+        if (!isEdictWriteToolEnabled()) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: 'memory_remove_edict is disabled. Propose edicts via GitHub comment: [EDICT CANDIDATE] text="..." reason="..." tags=[...].',
+              },
+            ],
+            details: { error: "forbidden", reason: "edict_write_disabled" },
+          };
+        }
+
         const { id } = params as { id: string };
         const removed = edictStore.remove(id);
         return {
