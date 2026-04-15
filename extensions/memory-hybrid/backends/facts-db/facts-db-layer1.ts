@@ -46,7 +46,12 @@ import {
 } from "./maintenance.js";
 import { getScanCursor as getScanCursorHelper, updateScanCursor as updateScanCursorHelper } from "./scan-cursors.js";
 import { bootstrapFactsCoreSchema } from "./schema-bootstrap.js";
-import { findByIdPrefix as findByIdPrefixImpl, lookupFacts, searchFacts } from "./search.js";
+import {
+  findByIdPrefix as findByIdPrefixImpl,
+  findByIdPrefixScoped as findByIdPrefixScopedImpl,
+  lookupFacts,
+  searchFacts,
+} from "./search.js";
 import { getTokenBudgetStatus as getTokenBudgetStatusImpl } from "./stats.js";
 import type { MemoryLinkType } from "./types.js";
 import {
@@ -398,6 +403,16 @@ export class FactsDBLayer1 extends BaseSqliteStore {
    * Requires at least 4 hex chars to prevent full-table scans and reduce ambiguity. */
   findByIdPrefix(prefix: string): { id: string } | { ambiguous: true; count: number } | null {
     return findByIdPrefixImpl(this.liveDb, prefix);
+  }
+
+  /** Find a fact ID by prefix with scope filtering (for public API).
+   * Returns { id } for unique match, { ambiguous, count } for multiple, or { id: null } for no match.
+   * Requires at least 4 hex chars. Applies UUID dash normalization for bare hex strings. */
+  findByIdPrefixScoped(
+    prefix: string,
+    scopeFilter: ScopeFilter | null | undefined,
+  ): { id: string } | { ambiguous: true; count: number } | { id: null } {
+    return findByIdPrefixScopedImpl(this.liveDb, prefix, scopeFilter);
   }
 
   delete(id: string): boolean {

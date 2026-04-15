@@ -214,18 +214,15 @@ export function registerPublicApiRoutes(ctx: PublicApiRoutesContext, api: Clawdb
     let fact = ctx.factsDb.getById(resolvedId, { scopeFilter });
 
     if (!fact && resolvedId.length >= 4) {
-      const prefixMatches = ctx.factsDb
-        .getAll({ scopeFilter })
-        .filter((entry) => entry.id.startsWith(resolvedId))
-        .map((entry) => entry.id);
+      const prefixMatches = ctx.factsDb.findByIdPrefixScoped(resolvedId, scopeFilter);
 
-      if (prefixMatches.length > 1) {
+      if (prefixMatches.ambiguous) {
         return toJson(409, {
-          error: `Fact id prefix is ambiguous (${prefixMatches.length} matches). Use a longer id.`,
+          error: `Fact id prefix is ambiguous (${prefixMatches.count} matches). Use a longer id.`,
         });
       }
-      if (prefixMatches.length === 1) {
-        resolvedId = prefixMatches[0]!;
+      if (prefixMatches.id) {
+        resolvedId = prefixMatches.id;
         fact = ctx.factsDb.getById(resolvedId, { scopeFilter });
       }
     }
@@ -236,12 +233,24 @@ export function registerPublicApiRoutes(ctx: PublicApiRoutesContext, api: Clawdb
       });
     }
 
+    const outgoingLinks = ctx.factsDb.getLinksFrom(resolvedId);
+    const incomingLinks = ctx.factsDb.getLinksTo(resolvedId);
+
+    const linkedFactIds = [
+      ...outgoingLinks.map((link) => link.targetFactId),
+      ...incomingLinks.map((link) => link.sourceFactId),
+    ];
+    const scopedLinkedFacts = ctx.factsDb.getByIds(linkedFactIds, { scopeFilter });
+
+    const filteredOutgoingLinks = outgoingLinks.filter((link) => scopedLinkedFacts.has(link.targetFactId));
+    const filteredIncomingLinks = incomingLinks.filter((link) => scopedLinkedFacts.has(link.sourceFactId));
+
     return toJson(200, {
       id: resolvedId,
       fact,
       links: {
-        outgoing: ctx.factsDb.getLinksFrom(resolvedId),
-        incoming: ctx.factsDb.getLinksTo(resolvedId),
+        outgoing: filteredOutgoingLinks,
+        incoming: filteredIncomingLinks,
       },
     });
   });

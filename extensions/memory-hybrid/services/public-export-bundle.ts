@@ -117,20 +117,22 @@ export function buildPublicExportBundle(
   const episodes = factsDb
     .searchEpisodes({ limit: MAX_LIMIT })
     .filter((e) => {
+      if (!scopeFilter) return true;
       if (e.scope === "global") return true;
-      if (e.scope === "user") return scopeFilter?.userId != null && e.scopeTarget === scopeFilter.userId;
-      if (e.scope === "agent") return scopeFilter?.agentId != null && e.scopeTarget === scopeFilter.agentId;
-      if (e.scope === "session") return scopeFilter?.sessionId != null && e.scopeTarget === scopeFilter.sessionId;
+      if (e.scope === "user") return scopeFilter.userId != null && e.scopeTarget === scopeFilter.userId;
+      if (e.scope === "agent") return scopeFilter.agentId != null && e.scopeTarget === scopeFilter.agentId;
+      if (e.scope === "session") return scopeFilter.sessionId != null && e.scopeTarget === scopeFilter.sessionId;
       return false;
     })
     .slice(0, episodesLimit);
   const procedures = factsDb
     .listProcedures(MAX_LIMIT)
     .filter((p) => {
+      if (!scopeFilter) return true;
       if (p.scope === "global") return true;
-      if (p.scope === "user") return scopeFilter?.userId != null && p.scopeTarget === scopeFilter.userId;
-      if (p.scope === "agent") return scopeFilter?.agentId != null && p.scopeTarget === scopeFilter.agentId;
-      if (p.scope === "session") return scopeFilter?.sessionId != null && p.scopeTarget === scopeFilter.sessionId;
+      if (p.scope === "user") return scopeFilter.userId != null && p.scopeTarget === scopeFilter.userId;
+      if (p.scope === "agent") return scopeFilter.agentId != null && p.scopeTarget === scopeFilter.agentId;
+      if (p.scope === "session") return scopeFilter.sessionId != null && p.scopeTarget === scopeFilter.sessionId;
       return false;
     })
     .slice(0, proceduresLimit);
