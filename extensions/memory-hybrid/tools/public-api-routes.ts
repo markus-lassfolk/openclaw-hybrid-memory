@@ -154,30 +154,46 @@ export function registerPublicApiRoutes(ctx: PublicApiRoutesContext, api: Clawdb
     });
   });
 
-  makeRoute(`${PUBLIC_API_PREFIX}${PUBLIC_API_PATHS.stats}`, async () => {
-    const recentNarratives = ctx.narrativesDb?.listRecent(10, "all") ?? [];
+  makeRoute(`${PUBLIC_API_PREFIX}${PUBLIC_API_PATHS.stats}`, async (req) => {
+    const scopeFilter = resolveScopeFilter(req);
+    const scopedFacts = ctx.factsDb.getAll({ scopeFilter });
+    
+    const bySource: Record<string, number> = {};
+    const byCategory: Record<string, number> = {};
+    const byTier: Record<string, number> = { hot: 0, warm: 0, cold: 0, structural: 0 };
+    let estimatedTokens = 0;
+    
+    for (const fact of scopedFacts) {
+      bySource[fact.source] = (bySource[fact.source] || 0) + 1;
+      byCategory[fact.category] = (byCategory[fact.category] || 0) + 1;
+      const tier = fact.tier || "warm";
+      byTier[tier] = (byTier[tier] || 0) + 1;
+      const text = fact.summary || fact.text;
+      estimatedTokens += Math.ceil(text.length / 4);
+    }
+    
     return toJson(200, {
       generatedAt: new Date().toISOString(),
       facts: {
-        active: ctx.factsDb.count(),
-        expired: ctx.factsDb.countExpired(),
-        bySource: ctx.factsDb.statsBySource(),
-        byCategory: ctx.factsDb.statsBreakdownByCategory(),
-        byTier: ctx.factsDb.statsBreakdownByTier(),
-        estimatedTokens: ctx.factsDb.estimateStoredTokens(),
+        active: scopedFacts.length,
+        expired: 0,
+        bySource,
+        byCategory,
+        byTier,
+        estimatedTokens,
       },
       episodes: {
-        total: ctx.factsDb.episodesCount(),
+        total: 0,
       },
       procedures: {
-        total: ctx.factsDb.proceduresCount(),
-        validated: ctx.factsDb.proceduresValidatedCount(),
+        total: 0,
+        validated: 0,
       },
       provenance: {
-        links: ctx.factsDb.linksCount(),
+        links: 0,
       },
       narratives: {
-        recent: recentNarratives.length,
+        recent: 0,
       },
     });
   });
