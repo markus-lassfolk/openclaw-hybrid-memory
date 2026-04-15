@@ -82,7 +82,7 @@ describe("memory_recall_timeline tool", () => {
   it("returns narrative summaries with chronological metadata", async () => {
     const api = makeMockApi();
     narrativesDb.store({
-      sessionId: "s-timeline",
+      sessionId: "test-session",
       periodStart: Math.floor(Date.parse("2026-03-22T10:00:00.000Z") / 1000),
       periodEnd: Math.floor(Date.parse("2026-03-22T10:30:00.000Z") / 1000),
       tag: "session",
@@ -128,8 +128,39 @@ describe("memory_recall_timeline tool", () => {
     };
 
     expect(result.details?.count).toBe(1);
-    expect(result.details?.narratives[0]?.sessionId).toBe("s-timeline");
+    expect(result.details?.narratives[0]?.sessionId).toBe("test-session");
     expect(result.details?.narratives[0]?.periodStart).toBe("2026-03-22T10:00:00.000Z");
     expect(result.content?.[0]?.text).toContain("queue compaction");
+  });
+
+  it("rejects caller-supplied sessionId that does not match authenticated context", async () => {
+    const api = makeMockApi();
+    registerMemoryTools(
+      {
+        factsDb,
+        vectorDb: makeMockVectorDb(),
+        cfg: makeCfg(),
+        embeddings: makeMockEmbeddings(),
+        embeddingRegistry: null,
+        openai: {} as never,
+        wal: null,
+        credentialsDb: null,
+        eventLog,
+        narrativesDb,
+        lastProgressiveIndexIds: [],
+        currentAgentIdRef: { value: null },
+        pendingLLMWarnings: createPendingLLMWarnings(),
+      },
+      api as never,
+      noopScopeFilter as never,
+      walWrite,
+      walRemove,
+      findSimilarByEmbedding as never,
+    );
+
+    const tool = api.getTool("memory_recall_timeline");
+    await expect(tool?.execute("tool-call", { sessionId: "other-session" })).rejects.toThrow(
+      /must match the authenticated session context/i,
+    );
   });
 });

@@ -434,8 +434,21 @@ export function registerMemoryTools(
         const MIN_SUMMARY_LIMIT = 1;
 
         const query = typeof params.query === "string" && params.query.trim().length > 0 ? params.query.trim() : null;
-        const sessionId =
+        const requestedSessionId =
           typeof params.sessionId === "string" && params.sessionId.trim().length > 0 ? params.sessionId.trim() : null;
+        const contextSessionId =
+          typeof api.context?.sessionId === "string" && api.context.sessionId.trim().length > 0
+            ? api.context.sessionId.trim()
+            : null;
+        if (requestedSessionId && contextSessionId && requestedSessionId !== contextSessionId) {
+          throw new Error("memory_recall_timeline sessionId must match the authenticated session context");
+        }
+        const sessionId = contextSessionId ?? requestedSessionId;
+        if (!sessionId) {
+          throw new Error(
+            "memory_recall_timeline requires an authenticated session context or a trusted server-derived sessionId",
+          );
+        }
 
         let days = typeof params.days === "number" && params.days > 0 ? Math.floor(params.days) : 7;
         days = Math.min(MAX_DAYS_LOOKBACK, Math.max(MIN_DAYS_LOOKBACK, days));
@@ -450,7 +463,7 @@ export function registerMemoryTools(
           sessionId,
           limit,
           nowSec,
-          sinceSec: sessionId ? undefined : nowSec - days * 86_400,
+          sinceSec: undefined,
         });
 
         if (summaries.length === 0) {
