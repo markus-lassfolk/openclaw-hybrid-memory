@@ -1,6 +1,6 @@
 import type { FactsDB } from "../backends/facts-db.js";
 import type { NarrativesDB } from "../backends/narratives-db.js";
-import type { Episode, MemoryEntry, ProcedureEntry } from "../types/memory.js";
+import type { Episode, MemoryEntry, ProcedureEntry, ScopeFilter } from "../types/memory.js";
 import { versionInfo } from "../versionInfo.js";
 
 export interface NarrativeExportEntry {
@@ -59,6 +59,7 @@ export interface BuildPublicExportBundleOptions {
   proceduresLimit?: number;
   narrativesLimit?: number;
   linksLimit?: number;
+  scopeFilter?: ScopeFilter | null;
 }
 
 const DEFAULT_LIMIT = 100;
@@ -73,18 +74,26 @@ function parseLimit(value: number | undefined, fallback = DEFAULT_LIMIT): number
   return floored;
 }
 
-function safeLoadNarratives(db: NarrativesDB | null, limit: number): NarrativeExportEntry[] {
+function safeLoadNarratives(
+  db: NarrativesDB | null,
+  limit: number,
+  scopeFilter: ScopeFilter | null,
+): NarrativeExportEntry[] {
   if (!db) return [];
+  if (!scopeFilter?.sessionId) return [];
   try {
-    return db.listRecent(limit, "all").map((n) => ({
-      id: n.id,
-      sessionId: n.sessionId,
-      periodStart: n.periodStart,
-      periodEnd: n.periodEnd,
-      tag: n.tag,
-      narrativeText: n.narrativeText,
-      createdAt: n.createdAt,
-    }));
+    return db
+      .listRecent(limit, "all")
+      .filter((n) => n.sessionId === scopeFilter.sessionId)
+      .map((n) => ({
+        id: n.id,
+        sessionId: n.sessionId,
+        periodStart: n.periodStart,
+        periodEnd: n.periodEnd,
+        tag: n.tag,
+        narrativeText: n.narrativeText,
+        createdAt: n.createdAt,
+      }));
   } catch (_err) {
     return [];
   }
@@ -100,18 +109,40 @@ export function buildPublicExportBundle(
   const proceduresLimit = parseLimit(options.proceduresLimit);
   const narrativesLimit = parseLimit(options.narrativesLimit);
   const linksLimit = parseLimit(options.linksLimit);
+  const scopeFilter = options.scopeFilter ?? null;
 
-  const facts = factsDb.list(factsLimit);
-  const episodes = factsDb.searchEpisodes({ limit: episodesLimit });
-  const procedures = factsDb.listProcedures(proceduresLimit);
-  const narratives = safeLoadNarratives(narrativesDb, narrativesLimit);
+  const facts = factsDb.getAll({ scopeFilter }).slice(0, factsLimit);
+  const scopedFactIds = new Set(facts.map((f) => f.id));
+  const episodes = factsDb
+    .searchEpisodes({ limit: MAX_LIMIT })
+    .filter((e) => {
+      if (e.scope === "global") return true;
+      if (e.scope === "user") return scopeFilter?.userId != null && e.scopeTarget === scopeFilter.userId;
+      if (e.scope === "agent") return scopeFilter?.agentId != null && e.scopeTarget === scopeFilter.agentId;
+      if (e.scope === "session") return scopeFilter?.sessionId != null && e.scopeTarget === scopeFilter.sessionId;
+      return false;
+    })
+    .slice(0, episodesLimit);
+  const procedures = factsDb
+    .listProcedures(MAX_LIMIT)
+    .filter((p) => {
+      if (p.scope === "global") return true;
+      if (p.scope === "user") return scopeFilter?.userId != null && p.scopeTarget === scopeFilter.userId;
+      if (p.scope === "agent") return scopeFilter?.agentId != null && p.scopeTarget === scopeFilter.agentId;
+      if (p.scope === "session") return scopeFilter?.sessionId != null && p.scopeTarget === scopeFilter.sessionId;
+      return false;
+    })
+    .slice(0, proceduresLimit);
+  const narratives = safeLoadNarratives(narrativesDb, narrativesLimit, scopeFilter);
   const rawLinks = factsDb.getAllEdges(linksLimit);
-  const links = rawLinks.map((l) => ({
-    source: l.source,
-    target: l.target,
-    linkType: l.linkType,
-    strength: l.strength,
-  }));
+  const links = rawLinks
+    .filter((l) => scopedFactIds.has(l.source) && scopedFactIds.has(l.target))
+    .map((l) => ({
+      source: l.source,
+      target: l.target,
+      linkType: l.linkType,
+      strength: l.strength,
+    }));
 
   return {
     manifest: {
@@ -144,7 +175,10 @@ export function buildPublicExportBundle(
     narratives,
     provenance: {
       links,
-      bySource: factsDb.statsBySource(),
+      bySource: facts.reduce<Record<string, number>>((acc, fact) => {
+        acc[fact.source] = (acc[fact.source] ?? 0) + 1;
+        return acc;
+      }, {}),
     },
   };
 }

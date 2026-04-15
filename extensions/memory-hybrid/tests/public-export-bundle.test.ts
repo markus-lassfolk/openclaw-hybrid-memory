@@ -72,6 +72,7 @@ describe("buildPublicExportBundle", () => {
       proceduresLimit: 10,
       narrativesLimit: 10,
       linksLimit: 10,
+      scopeFilter: { sessionId: "session-1" },
     });
 
     expect(bundle.manifest.bundleVersion).toBe(1);
@@ -107,5 +108,62 @@ describe("buildPublicExportBundle", () => {
 
     expect(bundle.facts).toHaveLength(2);
     expect(bundle.manifest.limits.facts).toBe(2);
+  });
+
+  it("filters exported content by scope", () => {
+    const globalFact = factsDb.store({
+      text: "Global policy",
+      category: "fact",
+      importance: 0.7,
+      entity: null,
+      key: null,
+      value: null,
+      source: "conversation",
+      scope: "global",
+      scopeTarget: null,
+    });
+
+    const agentAFact = factsDb.store({
+      text: "Agent A memory",
+      category: "fact",
+      importance: 0.8,
+      entity: null,
+      key: null,
+      value: null,
+      source: "conversation",
+      scope: "agent",
+      scopeTarget: "agent-a",
+    });
+
+    const agentBFact = factsDb.store({
+      text: "Agent B memory",
+      category: "fact",
+      importance: 0.8,
+      entity: null,
+      key: null,
+      value: null,
+      source: "conversation",
+      scope: "agent",
+      scopeTarget: "agent-b",
+    });
+
+    factsDb.createLink(globalFact.id, agentAFact.id, "RELATED_TO", 0.8);
+    factsDb.createLink(globalFact.id, agentBFact.id, "RELATED_TO", 0.8);
+
+    const bundle = buildPublicExportBundle(factsDb, narrativesDb, {
+      factsLimit: 100,
+      episodesLimit: 100,
+      proceduresLimit: 100,
+      narrativesLimit: 100,
+      linksLimit: 100,
+      scopeFilter: { agentId: "agent-a" },
+    });
+
+    const ids = bundle.facts.map((f) => f.id);
+    expect(ids).toContain(globalFact.id);
+    expect(ids).toContain(agentAFact.id);
+    expect(ids).not.toContain(agentBFact.id);
+
+    expect(bundle.provenance.links.every((l) => ids.includes(l.source) && ids.includes(l.target))).toBe(true);
   });
 });

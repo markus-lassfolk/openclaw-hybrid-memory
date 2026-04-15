@@ -2,6 +2,7 @@ import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { NarrativesDB } from "../backends/narratives-db.js";
 import { buildPublicExportBundle } from "../services/public-export-bundle.js";
+import type { ScopeFilter } from "../types/memory.js";
 import { versionInfo } from "../versionInfo.js";
 import type { HttpRequestHandler, HttpRouteOptions } from "./http-route-types.js";
 
@@ -28,6 +29,7 @@ export const PUBLIC_API_PATHS = {
 } as const;
 
 const JSON_HEADERS = { "Content-Type": "application/json" } as const;
+const DEFAULT_PUBLIC_SCOPE_SENTINEL = "__public_api_unscoped__";
 
 function toJson(status: number, body: unknown): { status: number; headers: Record<string, string>; body: string } {
   return { status, headers: { ...JSON_HEADERS }, body: JSON.stringify(body) };
@@ -61,6 +63,29 @@ function extractFactId(url: URL): string | null {
   return null;
 }
 
+function getHeader(req: { headers?: Record<string, string> }, key: string): string | null {
+  const raw = req.headers?.[key] ?? req.headers?.[key.toLowerCase()];
+  if (typeof raw !== "string") return null;
+  const trimmed = raw.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+/**
+ * SECURITY: identity headers must be populated by trusted gateway middleware.
+ * Missing identity defaults to global-only visibility.
+ */
+function resolveScopeFilter(req: { headers?: Record<string, string> }): ScopeFilter {
+  const userId = getHeader(req, "x-openclaw-user-id");
+  const agentId = getHeader(req, "x-openclaw-agent-id");
+  const sessionId = getHeader(req, "x-openclaw-session-id");
+
+  if (!userId && !agentId && !sessionId) {
+    return { agentId: DEFAULT_PUBLIC_SCOPE_SENTINEL };
+  }
+
+  return { userId: userId ?? undefined, agentId: agentId ?? undefined, sessionId: sessionId ?? undefined };
+}
+
 export function registerPublicApiRoutes(ctx: PublicApiRoutesContext, api: ClawdbotPluginApi): void {
   if (!ctx.cfg.health.enabled) return;
   if (typeof api.registerHttpRoute !== "function") return;
@@ -92,6 +117,7 @@ export function registerPublicApiRoutes(ctx: PublicApiRoutesContext, api: Clawdb
     const url = parseReqUrl(req.url);
     const query = (url.searchParams.get("q") ?? "").trim();
     const limit = parseLimitParam(url.searchParams.get("limit"), 10, 100);
+    const scopeFilter = resolveScopeFilter(req);
 
     if (!query) {
       return toJson(400, {
@@ -99,7 +125,7 @@ export function registerPublicApiRoutes(ctx: PublicApiRoutesContext, api: Clawdb
       });
     }
 
-    const results = ctx.factsDb.search(query, limit, { tierFilter: "all" });
+    const results = ctx.factsDb.search(query, limit, { tierFilter: "all", scopeFilter });
     return toJson(200, {
       query,
       limit,
@@ -111,7 +137,8 @@ export function registerPublicApiRoutes(ctx: PublicApiRoutesContext, api: Clawdb
   makeRoute(`${PUBLIC_API_PREFIX}${PUBLIC_API_PATHS.timeline}`, async (req) => {
     const url = parseReqUrl(req.url);
     const limit = parseLimitParam(url.searchParams.get("limit"), 20, 200);
-    const facts = ctx.factsDb.list(limit);
+    const scopeFilter = resolveScopeFilter(req);
+    const facts = ctx.factsDb.getAll({ scopeFilter }).slice(0, limit);
 
     return toJson(200, {
       limit,
@@ -152,6 +179,7 @@ export function registerPublicApiRoutes(ctx: PublicApiRoutesContext, api: Clawdb
     const url = parseReqUrl(req.url);
     const limit = parseLimitParam(url.searchParams.get("limit"), 100, 1000);
     const narrativeLimit = parseLimitParam(url.searchParams.get("narrativeLimit"), 20, 500);
+    const scopeFilter = resolveScopeFilter(req);
 
     const bundle = buildPublicExportBundle(ctx.factsDb, ctx.narrativesDb, {
       factsLimit: limit,
@@ -159,6 +187,7 @@ export function registerPublicApiRoutes(ctx: PublicApiRoutesContext, api: Clawdb
       proceduresLimit: limit,
       narrativesLimit: narrativeLimit,
       linksLimit: limit,
+      scopeFilter,
     });
 
     return toJson(200, bundle);
@@ -167,6 +196,7 @@ export function registerPublicApiRoutes(ctx: PublicApiRoutesContext, api: Clawdb
   makeRoute(`${PUBLIC_API_PREFIX}${PUBLIC_API_PATHS.fact}`, async (req) => {
     const url = parseReqUrl(req.url);
     const factId = extractFactId(url);
+    const scopeFilter = resolveScopeFilter(req);
     if (!factId) {
       return toJson(400, {
         error: "Missing fact id. Use /fact?id=<uuid> (or /fact/<uuid> when supported by your gateway).",
@@ -174,18 +204,22 @@ export function registerPublicApiRoutes(ctx: PublicApiRoutesContext, api: Clawdb
     }
 
     let resolvedId = factId;
-    let fact = ctx.factsDb.getById(resolvedId);
+    let fact = ctx.factsDb.getById(resolvedId, { scopeFilter });
 
     if (!fact && resolvedId.length >= 4) {
-      const match = ctx.factsDb.findByIdPrefix(resolvedId);
-      if (match && "ambiguous" in match) {
+      const prefixMatches = ctx.factsDb
+        .getAll({ scopeFilter })
+        .filter((entry) => entry.id.startsWith(resolvedId))
+        .map((entry) => entry.id);
+
+      if (prefixMatches.length > 1) {
         return toJson(409, {
-          error: `Fact id prefix is ambiguous (${match.count} matches). Use a longer id.`,
+          error: `Fact id prefix is ambiguous (${prefixMatches.length} matches). Use a longer id.`,
         });
       }
-      if (match && "id" in match) {
-        resolvedId = match.id;
-        fact = ctx.factsDb.getById(resolvedId);
+      if (prefixMatches.length === 1) {
+        resolvedId = prefixMatches[0]!;
+        fact = ctx.factsDb.getById(resolvedId, { scopeFilter });
       }
     }
 
