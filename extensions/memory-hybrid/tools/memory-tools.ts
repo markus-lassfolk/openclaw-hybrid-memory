@@ -117,6 +117,11 @@ function hasBoundMemoryToolHelpers(ctx: MemoryToolsContext | LegacyMemoryToolsCo
   return hasAllNewHelpers && !hasLegacyWal;
 }
 
+function isEdictWriteToolEnabled(): boolean {
+  const raw = process.env.OPENCLAW_ENABLE_EDICT_WRITE_TOOL;
+  return raw === "1" || raw?.toLowerCase() === "true";
+}
+
 async function storeRegistryEmbeddings({
   factsDb,
   embeddingRegistry,
@@ -2658,6 +2663,18 @@ export function registerMemoryTools(
       "Only Markus (the human) should use this tool directly.";
     const _execAddEdict = async (_toolCallId: string, params: Record<string, unknown>) => {
       try {
+        if (!isEdictWriteToolEnabled()) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: 'memory_add_edict is disabled. Propose edicts via GitHub comment: [EDICT CANDIDATE] text="..." reason="..." tags=[...].',
+              },
+            ],
+            details: { error: "forbidden", reason: "edict_write_disabled" },
+          };
+        }
+
         const { text, source, tags, ttl, expiresAt } = params as {
           text: string;
           source?: string;
