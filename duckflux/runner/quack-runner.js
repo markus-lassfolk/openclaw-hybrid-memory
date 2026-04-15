@@ -103,6 +103,7 @@ async function main() {
     log(`Running ${workflowPath} inputs=${JSON.stringify(inputs)} dryRun=${dryRun}`);
     const result = await runWorkflowFromFile(workflowPath, inputs, { env, dryRun });
     console.log(JSON.stringify(result, null, 2));
+    clearFailures();
     return;
   }
 
@@ -110,7 +111,6 @@ async function main() {
 }
 
 main()
-  .then(clearFailures)
   .catch((error) => {
     console.error(error.stack || error.message);
     recordFailure();

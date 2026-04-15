@@ -269,8 +269,14 @@ export function createGitHubClient({
         ...issue,
         _labels: Array.isArray(issue.labels) ? issue.labels.map(labelName).filter(Boolean) : [],
       }))
-      .filter((issue) => !issue._labels.includes("stage/dispatched"))
-      .filter((issue) => !issue._labels.includes("declined"))
+      .filter((issue) => {
+        const lowered = issue._labels.map((label) => label.toLowerCase());
+        return !lowered.includes("stage/dispatched");
+      })
+      .filter((issue) => {
+        const lowered = issue._labels.map((label) => label.toLowerCase());
+        return !lowered.includes("declined");
+      })
       .sort((a, b) => {
         const pa = priorityScore(a._labels);
         const pb = priorityScore(b._labels);
