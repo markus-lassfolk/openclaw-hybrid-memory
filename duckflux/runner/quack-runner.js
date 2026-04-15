@@ -46,7 +46,7 @@ function clearFailures() {
 
 function collectInputs(argList) {
   const inputs = {};
-  let dryRun = false;
+  let dryRun = undefined;
 
   for (const arg of argList) {
     if (arg === '--dry-run' || arg === 'dry_run=true' || arg === 'dry-run=true') {
