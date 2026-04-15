@@ -64,10 +64,17 @@ function extractFactId(url: URL): string | null {
 }
 
 function getHeader(req: { headers?: Record<string, string> }, key: string): string | null {
-  const raw = req.headers?.[key] ?? req.headers?.[key.toLowerCase()];
-  if (typeof raw !== "string") return null;
-  const trimmed = raw.trim();
-  return trimmed.length > 0 ? trimmed : null;
+  if (!req.headers) return null;
+  const target = key.toLowerCase();
+  for (const existing of Object.keys(req.headers)) {
+    if (existing.toLowerCase() === target) {
+      const raw = req.headers[existing];
+      if (typeof raw !== "string") return null;
+      const trimmed = raw.trim();
+      return trimmed.length > 0 ? trimmed : null;
+    }
+  }
+  return null;
 }
 
 /**

@@ -83,8 +83,9 @@ function safeLoadNarratives(
   if (!scopeFilter?.sessionId) return [];
   try {
     return db
-      .listRecent(limit, "all")
+      .listRecent(MAX_LIMIT, "all")
       .filter((n) => n.sessionId === scopeFilter.sessionId)
+      .slice(0, limit)
       .map((n) => ({
         id: n.id,
         sessionId: n.sessionId,
@@ -134,9 +135,10 @@ export function buildPublicExportBundle(
     })
     .slice(0, proceduresLimit);
   const narratives = safeLoadNarratives(narrativesDb, narrativesLimit, scopeFilter);
-  const rawLinks = factsDb.getAllEdges(linksLimit);
+  const rawLinks = factsDb.getAllEdges(MAX_LIMIT);
   const links = rawLinks
     .filter((l) => scopedFactIds.has(l.source) && scopedFactIds.has(l.target))
+    .slice(0, linksLimit)
     .map((l) => ({
       source: l.source,
       target: l.target,
