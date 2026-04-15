@@ -412,13 +412,6 @@ export function registerMemoryTools(
               "Optional session id to fetch a specific session narrative or event timeline. In multi-tenant environments, only pass a sessionId derived from the authenticated context; never accept arbitrary end-user input here, to avoid cross-session data exposure.",
           }),
         ),
-        days: Type.Optional(
-          Type.Number({
-            description: "Look back window in days when sessionId is omitted (default: 7).",
-            minimum: 1,
-            maximum: 365,
-          }),
-        ),
         limit: Type.Optional(
           Type.Number({
             description: "Max summaries to return (default: 3).",
@@ -428,8 +421,6 @@ export function registerMemoryTools(
         ),
       }),
       async execute(_toolCallId: string, params: Record<string, unknown>) {
-        const MAX_DAYS_LOOKBACK = 365;
-        const MIN_DAYS_LOOKBACK = 1;
         const MAX_SUMMARY_LIMIT = 50;
         const MIN_SUMMARY_LIMIT = 1;
 
@@ -440,18 +431,15 @@ export function registerMemoryTools(
           typeof api.context?.sessionId === "string" && api.context.sessionId.trim().length > 0
             ? api.context.sessionId.trim()
             : null;
-        if (requestedSessionId && contextSessionId && requestedSessionId !== contextSessionId) {
-          throw new Error("memory_recall_timeline sessionId must match the authenticated session context");
-        }
-        const sessionId = contextSessionId ?? requestedSessionId;
-        if (!sessionId) {
+        if (!contextSessionId) {
           throw new Error(
-            "memory_recall_timeline requires an authenticated session context or a trusted server-derived sessionId",
+            "memory_recall_timeline requires an authenticated session context",
           );
         }
-
-        let days = typeof params.days === "number" && params.days > 0 ? Math.floor(params.days) : 7;
-        days = Math.min(MAX_DAYS_LOOKBACK, Math.max(MIN_DAYS_LOOKBACK, days));
+        if (requestedSessionId && requestedSessionId !== contextSessionId) {
+          throw new Error("memory_recall_timeline sessionId must match the authenticated session context");
+        }
+        const sessionId = contextSessionId;
 
         let limit = typeof params.limit === "number" && params.limit > 0 ? Math.floor(params.limit) : 3;
         limit = Math.min(MAX_SUMMARY_LIMIT, Math.max(MIN_SUMMARY_LIMIT, limit));
@@ -471,9 +459,7 @@ export function registerMemoryTools(
             content: [
               {
                 type: "text" as const,
-                text: sessionId
-                  ? `No narrative summary found for session ${sessionId}.`
-                  : `No narrative summaries found in the last ${days} day(s).`,
+                text: `No narrative summary found for session ${sessionId}.`,
               },
             ],
             details: { count: 0, narratives: [] },
