@@ -432,9 +432,7 @@ export function registerMemoryTools(
             ? api.context.sessionId.trim()
             : null;
         if (!contextSessionId) {
-          throw new Error(
-            "memory_recall_timeline requires an authenticated session context",
-          );
+          throw new Error("memory_recall_timeline requires an authenticated session context");
         }
         if (requestedSessionId && requestedSessionId !== contextSessionId) {
           throw new Error("memory_recall_timeline sessionId must match the authenticated session context");
