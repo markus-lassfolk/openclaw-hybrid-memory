@@ -118,7 +118,6 @@ describe("memory_recall_timeline tool", () => {
     const result = (await tool?.execute("tool-call", {
       query: "queue deadlock lease",
       limit: 1,
-      days: 30,
     })) as {
       content?: { type: string; text: string }[];
       details?: {
