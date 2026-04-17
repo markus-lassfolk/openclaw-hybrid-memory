@@ -126,3 +126,4 @@ Plugin source and manifest: [extensions/memory-hybrid/README.md](extensions/memo
 
 MIT ([LICENSE](LICENSE))
 
+# noop
