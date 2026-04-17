@@ -117,8 +117,10 @@ function hasBoundMemoryToolHelpers(ctx: MemoryToolsContext | LegacyMemoryToolsCo
   return hasAllNewHelpers && !hasLegacyWal;
 }
 
+import { getEnv } from "../utils/env-manager";
+
 function isEdictWriteToolEnabled(): boolean {
-  const raw = process.env.OPENCLAW_ENABLE_EDICT_WRITE_TOOL;
+  const raw = getEnv("OPENCLAW_ENABLE_EDICT_WRITE_TOOL");
   return raw === "1" || raw?.toLowerCase() === "true";
 }
 
