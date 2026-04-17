@@ -172,6 +172,79 @@ export class EventLog extends BaseSqliteStore {
     return rows.map((r) => this.rowToEntry(r));
   }
 
+  /**
+   * Aggregate session statistics by session_id within a time range using SQL GROUP BY.
+   * Returns per-session aggregates without loading full event rows into memory.
+   * This is far more efficient than getByTimeRange() when only aggregates are needed.
+   */
+  getSessionAggregates(
+    from: string,
+    to: string,
+  ): Array<{
+    sessionId: string;
+    startedAt: string;
+    endedAt: string;
+    totalEvents: number;
+    unconsolidatedEvents: number;
+    eventTypeCounts: Record<string, number>;
+  }> {
+    const rows = this.liveDb
+      .prepare(
+        `SELECT
+           session_id,
+           MIN(timestamp) as started_at,
+           MAX(timestamp) as ended_at,
+           COUNT(*) as total_events,
+           SUM(CASE WHEN consolidated_into IS NULL THEN 1 ELSE 0 END) as unconsolidated_events,
+           event_type,
+           COUNT(event_type) as type_count
+         FROM event_log
+         WHERE timestamp >= ? AND timestamp <= ?
+         GROUP BY session_id, event_type
+         ORDER BY session_id, event_type`,
+      )
+      .all(from, to) as Array<{
+      session_id: string;
+      started_at: string;
+      ended_at: string;
+      total_events: number;
+      unconsolidated_events: number;
+      event_type: string;
+      type_count: number;
+    }>;
+
+    const sessions = new Map<
+      string,
+      {
+        sessionId: string;
+        startedAt: string;
+        endedAt: string;
+        totalEvents: number;
+        unconsolidatedEvents: number;
+        eventTypeCounts: Record<string, number>;
+      }
+    >();
+
+    for (const row of rows) {
+      let session = sessions.get(row.session_id);
+      if (!session) {
+        session = {
+          sessionId: row.session_id,
+          startedAt: row.started_at,
+          endedAt: row.ended_at,
+          totalEvents: 0,
+          unconsolidatedEvents: row.unconsolidated_events,
+          eventTypeCounts: {},
+        };
+        sessions.set(row.session_id, session);
+      }
+      session.totalEvents += row.total_events as number;
+      session.eventTypeCounts[row.event_type] = row.type_count;
+    }
+
+    return Array.from(sessions.values());
+  }
+
   /** Return events not yet consolidated into a fact. Optionally only events older than N days. */
   getUnconsolidated(olderThanDays?: number): EventLogEntry[] {
     const params: SQLInputValue[] = [];

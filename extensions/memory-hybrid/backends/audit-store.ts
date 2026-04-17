@@ -167,6 +167,7 @@ export class AuditStore extends BaseSqliteStore {
     agentId?: string;
     action?: string;
     outcome?: AuditOutcome;
+    sessionId?: string;
     targetContains?: string;
     limit?: number;
   }): AuditEventRow[] {
@@ -192,6 +193,10 @@ export class AuditStore extends BaseSqliteStore {
     if (opts.outcome) {
       clauses.push("outcome = ?");
       params.push(opts.outcome);
+    }
+    if (opts.sessionId) {
+      clauses.push("session_id = ?");
+      params.push(opts.sessionId);
     }
     if (opts.targetContains) {
       const escapedTarget = opts.targetContains.replace(/\\/g, "\\\\").replace(/[%_]/g, "\\$&");

@@ -16,6 +16,7 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 import { type AgentHealthView, mergeAgentHealthDashboard } from "../backends/agent-health-store.js";
 import type { AuditStore } from "../backends/audit-store.js";
+import { type EventLogEntry, EventLog } from "../backends/event-log.js";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
 import type { EdictStore } from "../backends/edict-store.js";
@@ -63,6 +64,8 @@ interface DashboardContext {
   narrativesDb?: NarrativesDB | null;
   /** Provenance service for fact-to-source tracing. */
   provenanceService?: ProvenanceService | null;
+  /** Episodic event log (Issue #1025). */
+  eventLog?: EventLog | null;
 }
 
 interface MemoryStats {
@@ -285,6 +288,82 @@ interface MemoryViewerWorkflow {
   successRate: number;
   sessionId: string;
   createdAt: string;
+}
+
+/**
+ * Session Timeline — per-session summary for observability (Issue #1025).
+ * Shows what was captured, recalled, injected, and suppressed during sessions.
+ */
+interface SessionTimelineSummary {
+  sessionId: string;
+  startedAt: string | null;
+  endedAt: string | null;
+  eventTypeCounts: Record<string, number>;
+  totalEvents: number;
+  unconsolidatedEvents: number;
+  capturedFacts: number;
+  injectedFacts: number;
+  auditEvents: number;
+  auditFailures: number;
+  episodesRecorded: number;
+  narrativesStored: number;
+  workflowTraces: number;
+}
+
+interface TimelineSessions {
+  sessions: SessionTimelineSummary[];
+  allEventTypes: string[];
+  totals: {
+    totalSessions: number;
+    totalEvents: number;
+    totalCapturedFacts: number;
+    totalInjectedFacts: number;
+    totalAuditEvents: number;
+    totalAuditFailures: number;
+    totalEpisodes: number;
+    totalNarratives: number;
+    totalWorkflowTraces: number;
+  };
+}
+
+interface SessionTimelineDetail {
+  sessionId: string;
+  events: Array<{
+    id: string;
+    timestamp: string;
+    eventType: string;
+    content: Record<string, unknown>;
+    entities: string[] | null;
+    consolidatedInto: string | null;
+  }>;
+  auditEvents: Array<{
+    id: string;
+    timestamp: number;
+    agentId: string;
+    action: string;
+    target: string | null;
+    outcome: string;
+    durationMs: number | null;
+    error: string | null;
+  }>;
+  episodes: Array<{
+    id: string;
+    event: string;
+    outcome: string;
+    timestamp: number;
+    duration: number | null;
+    context: string | null;
+    importance: number;
+    tags: string[];
+  }>;
+  narratives: Array<{
+    id: string;
+    tag: string;
+    periodStart: number;
+    periodEnd: number;
+    narrativeText: string;
+    createdAt: number;
+  }>;
 }
 
 interface MemoryViewerNarrative {
@@ -762,6 +841,322 @@ async function collectMemoryViewerStats(ctx: DashboardContext): Promise<MemoryVi
     bySource: factsDb.statsBreakdownBySource(),
     entityCount: factsDb.entityCount(),
   };
+}
+
+/**
+ * Collect a summary of session timelines (Issue #1025).
+ * Joins across event_log, audit_log, episodes, narratives, and workflow_traces
+ * to give a single coherent view of what happened in each recent session.
+ */
+function collectSessionTimeline(
+  ctx: DashboardContext,
+  opts: {
+    days?: number;
+    sessionLimit?: number;
+  } = {},
+): TimelineSessions {
+  const days = Math.min(90, Math.max(1, opts.days ?? 30));
+  const sessionLimit = Math.min(500, Math.max(1, opts.sessionLimit ?? 50));
+  const sinceMs = Date.now() - days * 24 * 3600 * 1000;
+
+  const allEventTypes = new Set<string>();
+  const summaries: SessionTimelineSummary[] = [];
+  let totalCapturedFacts = 0;
+  let totalInjectedFacts = 0;
+  let totalAuditEvents = 0;
+  let totalAuditFailures = 0;
+  let totalEpisodes = 0;
+  let totalNarratives = 0;
+  let totalWorkflowTraces = 0;
+
+  // Collect session IDs from event_log
+  const eventLogSessions = new Map<
+    string,
+    {
+      startedAt: string | null;
+      endedAt: string | null;
+      eventTypeCounts: Record<string, number>;
+      totalEvents: number;
+      unconsolidatedEvents: number;
+      capturedFacts: number;
+    }
+  >();
+
+  if (ctx.eventLog) {
+    try {
+      const aggregates = ctx.eventLog.getSessionAggregates(new Date(sinceMs).toISOString(), new Date().toISOString());
+      for (const agg of aggregates) {
+        let capturedFacts = 0;
+        for (const [eventType, count] of Object.entries(agg.eventTypeCounts)) {
+          allEventTypes.add(eventType);
+          if (eventType === "fact_learned" || eventType === "decision_made" || eventType === "correction") {
+            capturedFacts += count;
+          }
+        }
+        eventLogSessions.set(agg.sessionId, {
+          startedAt: agg.startedAt,
+          endedAt: agg.endedAt,
+          eventTypeCounts: agg.eventTypeCounts,
+          totalEvents: agg.totalEvents,
+          unconsolidatedEvents: agg.unconsolidatedEvents,
+          capturedFacts,
+        });
+      }
+    } catch {
+      /* non-fatal */
+    }
+  }
+
+  // Collect audit counts per session
+  const auditSessions = new Map<string, { events: number; failures: number }>();
+  const injectedSessions = new Map<string, number>();
+  if (ctx.auditStore) {
+    try {
+      const auditEvents = ctx.auditStore.query({ sinceMs, limit: 5000 });
+      for (const ev of auditEvents) {
+        if (!ev.sessionId) continue;
+        let s = auditSessions.get(ev.sessionId);
+        if (!s) {
+          s = { events: 0, failures: 0 };
+          auditSessions.set(ev.sessionId, s);
+        }
+        s.events++;
+        if (ev.outcome === "failed") s.failures++;
+        if (ev.action === "memory_recall" && ev.outcome === "success") {
+          injectedSessions.set(ev.sessionId, (injectedSessions.get(ev.sessionId) ?? 0) + 1);
+        }
+      }
+    } catch {
+      /* non-fatal */
+    }
+  }
+
+  // Collect episodes per session (from facts DB directly)
+  const episodeSessions = new Map<string, number>();
+  try {
+    const roDb = openFactsDbReadonly(ctx.resolvedSqlitePath);
+    if (roDb) {
+      try {
+        const sinceSec = Math.floor(sinceMs / 1000);
+        const rows = roDb
+          .prepare("SELECT session_id, COUNT(*) as cnt FROM episodes WHERE timestamp >= ? GROUP BY session_id")
+          .all(sinceSec) as Array<{ session_id: string; cnt: number }>;
+        for (const r of rows) {
+          if (r.session_id) episodeSessions.set(r.session_id, Number(r.cnt));
+        }
+      } finally {
+        try {
+          roDb.close();
+        } catch {
+          /* ignore */
+        }
+      }
+    }
+  } catch {
+    /* non-fatal */
+  }
+
+  // Collect narratives per session
+  const narrativeSessions = new Map<string, number>();
+  if (ctx.narrativesDb) {
+    try {
+      const narratives = ctx.narrativesDb.listRecent(200, "all");
+      for (const n of narratives) {
+        const ms = n.createdAt * 1000;
+        if (ms < sinceMs) continue;
+        narrativeSessions.set(n.sessionId, (narrativeSessions.get(n.sessionId) ?? 0) + 1);
+      }
+    } catch {
+      /* non-fatal */
+    }
+  }
+
+  // Collect workflow traces per session
+  const workflowSessions = new Map<string, number>();
+  if (ctx.workflowStore) {
+    try {
+      const traces = ctx.workflowStore.list({ limit: 500 });
+      for (const t of traces) {
+        const createdMs = new Date(t.createdAt).getTime();
+        if (createdMs < sinceMs) continue;
+        workflowSessions.set(t.sessionId, (workflowSessions.get(t.sessionId) ?? 0) + 1);
+      }
+    } catch {
+      /* non-fatal */
+    }
+  }
+
+  // Merge all session IDs and build summaries
+  const allSessions = new Set([
+    ...eventLogSessions.keys(),
+    ...auditSessions.keys(),
+    ...episodeSessions.keys(),
+    ...narrativeSessions.keys(),
+    ...workflowSessions.keys(),
+  ]);
+
+  // Sort by most recent activity (prefer event log endedAt, fall back to sessionId hash order)
+  const sorted = [...allSessions]
+    .sort((a, b) => {
+      const aEnded = eventLogSessions.get(a)?.endedAt ?? "";
+      const bEnded = eventLogSessions.get(b)?.endedAt ?? "";
+      return bEnded.localeCompare(aEnded) || a.localeCompare(b);
+    })
+    .slice(0, sessionLimit);
+
+  for (const sessionId of sorted) {
+    const ev = eventLogSessions.get(sessionId);
+    const aud = auditSessions.get(sessionId);
+    const eps = episodeSessions.get(sessionId) ?? 0;
+    const nar = narrativeSessions.get(sessionId) ?? 0;
+    const wf = workflowSessions.get(sessionId) ?? 0;
+    const inj = injectedSessions.get(sessionId) ?? 0;
+
+    const capturedFacts = ev?.capturedFacts ?? 0;
+
+    const summary: SessionTimelineSummary = {
+      sessionId,
+      startedAt: ev?.startedAt ?? null,
+      endedAt: ev?.endedAt ?? null,
+      eventTypeCounts: ev?.eventTypeCounts ?? {},
+      totalEvents: ev?.totalEvents ?? 0,
+      unconsolidatedEvents: ev?.unconsolidatedEvents ?? 0,
+      capturedFacts,
+      injectedFacts: inj,
+      auditEvents: aud?.events ?? 0,
+      auditFailures: aud?.failures ?? 0,
+      episodesRecorded: eps,
+      narrativesStored: nar,
+      workflowTraces: wf,
+    };
+    summaries.push(summary);
+
+    totalCapturedFacts += capturedFacts;
+    totalInjectedFacts += inj;
+    totalAuditEvents += aud?.events ?? 0;
+    totalAuditFailures += aud?.failures ?? 0;
+    totalEpisodes += eps;
+    totalNarratives += nar;
+    totalWorkflowTraces += wf;
+  }
+
+  return {
+    sessions: summaries,
+    allEventTypes: [...allEventTypes].sort(),
+    totals: {
+      totalSessions: summaries.length,
+      totalEvents: summaries.reduce((sum, s) => sum + s.totalEvents, 0),
+      totalCapturedFacts,
+      totalInjectedFacts,
+      totalAuditEvents,
+      totalAuditFailures,
+      totalEpisodes,
+      totalNarratives,
+      totalWorkflowTraces,
+    },
+  };
+}
+
+/**
+ * Collect detailed event + audit + episode + narrative data for one session (Issue #1025).
+ */
+function collectSessionTimelineDetail(ctx: DashboardContext, sessionId: string): SessionTimelineDetail | null {
+  const events: SessionTimelineDetail["events"] = [];
+  const auditEvents: SessionTimelineDetail["auditEvents"] = [];
+  const episodes: SessionTimelineDetail["episodes"] = [];
+  const narratives: SessionTimelineDetail["narratives"] = [];
+
+  if (ctx.eventLog) {
+    try {
+      for (const ev of ctx.eventLog.getBySession(sessionId, 500)) {
+        events.push({
+          id: ev.id,
+          timestamp: ev.timestamp,
+          eventType: ev.eventType,
+          content: ev.content,
+          entities: ev.entities ?? null,
+          consolidatedInto: ev.consolidatedInto ?? null,
+        });
+      }
+    } catch {
+      /* non-fatal */
+    }
+  }
+
+  if (ctx.auditStore) {
+    try {
+      for (const ev of ctx.auditStore.query({ sessionId, limit: 500 })) {
+        auditEvents.push({
+          id: ev.id,
+          timestamp: ev.timestamp,
+          agentId: ev.agentId,
+          action: ev.action,
+          target: ev.target,
+          outcome: ev.outcome,
+          durationMs: ev.durationMs,
+          error: ev.error,
+        });
+      }
+    } catch {
+      /* non-fatal */
+    }
+  }
+
+  try {
+    const roDb = openFactsDbReadonly(ctx.resolvedSqlitePath);
+    if (roDb) {
+      try {
+        const sinceSec = Math.floor(Date.now() / 1000) - 90 * 24 * 3600; // wide window for detail view
+        const rows = roDb
+          .prepare("SELECT * FROM episodes WHERE session_id = ? AND timestamp >= ? ORDER BY timestamp ASC LIMIT 200")
+          .all(sessionId, sinceSec) as Array<Record<string, unknown>>;
+        for (const r of rows) {
+          const tagsRaw = r.tags as string | null;
+          episodes.push({
+            id: r.id as string,
+            event: r.event as string,
+            outcome: r.outcome as string,
+            timestamp: r.timestamp as number,
+            duration: r.duration as number | null,
+            context: r.context as string | null,
+            importance: r.importance as number,
+            tags: tagsRaw ? (JSON.parse(tagsRaw) as string[]) : [],
+          });
+        }
+      } finally {
+        try {
+          roDb.close();
+        } catch {
+          /* ignore */
+        }
+      }
+    }
+  } catch {
+    /* non-fatal */
+  }
+
+  if (ctx.narrativesDb) {
+    try {
+      for (const n of ctx.narrativesDb.listBySession(sessionId, 10, "all")) {
+        narratives.push({
+          id: n.id,
+          tag: n.tag,
+          periodStart: n.periodStart,
+          periodEnd: n.periodEnd,
+          narrativeText: n.narrativeText,
+          createdAt: n.createdAt,
+        });
+      }
+    } catch {
+      /* non-fatal */
+    }
+  }
+
+  if (events.length === 0 && auditEvents.length === 0 && episodes.length === 0 && narratives.length === 0) {
+    return null;
+  }
+
+  return { sessionId, events, auditEvents, episodes, narratives };
 }
 
 /** Collect recent episodes — reads from the episodes table within the facts DB. */
@@ -1524,6 +1919,60 @@ export async function createDashboardServer(ctx: DashboardContext, port: number)
           res.writeHead(500, { "Content-Type": "application/json" });
           res.end(JSON.stringify({ error: String(err) }));
         });
+      return;
+    }
+
+    // Session Timeline routes (Issue #1025)
+    // GET /api/viewer/timeline/sessions?days=30&limit=50
+    if (pathname === "/api/viewer/timeline/sessions") {
+      try {
+        const days = Math.min(90, Math.max(1, Number.parseInt(searchParams.get("days") ?? "30", 10) || 30));
+        const limit = Math.min(100, Math.max(1, Number.parseInt(searchParams.get("limit") ?? "50", 10) || 50));
+        const timeline = collectSessionTimeline(ctx, { days, sessionLimit: limit });
+        res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-cache" });
+        res.end(JSON.stringify(timeline));
+      } catch (err: unknown) {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: String(err) }));
+      }
+      return;
+    }
+
+    // GET /api/viewer/timeline/sessions/:sessionId  (detail view)
+    if (req.method === "GET" && pathname.startsWith("/api/viewer/timeline/sessions/")) {
+      const sessionId = decodeURIComponent(pathname.replace("/api/viewer/timeline/sessions/", ""));
+      if (!sessionId) {
+        res.writeHead(400, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "Session ID is required" }));
+        return;
+      }
+      try {
+        const detail = collectSessionTimelineDetail(ctx, sessionId);
+        if (!detail) {
+          res.writeHead(404, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "Session not found or no activity recorded" }));
+          return;
+        }
+        res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-cache" });
+        res.end(JSON.stringify(detail));
+      } catch (err: unknown) {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: String(err) }));
+      }
+      return;
+    }
+
+    // GET /api/viewer/timeline/stats  — high-level timeline stats (no session breakdown)
+    if (pathname === "/api/viewer/timeline/stats") {
+      try {
+        // Get aggregate stats across all sessions in the window
+        const fullTimeline = collectSessionTimeline(ctx, { days: 30, sessionLimit: 500 });
+        res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-cache" });
+        res.end(JSON.stringify({ totals: fullTimeline.totals, allEventTypes: fullTimeline.allEventTypes }));
+      } catch (err: unknown) {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: String(err) }));
+      }
       return;
     }
 
