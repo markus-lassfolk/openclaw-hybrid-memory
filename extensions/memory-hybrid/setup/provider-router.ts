@@ -930,7 +930,7 @@ export function buildMultiProviderOpenAI(
 			// Normalize: ensure Anthropic baseURL ends with /v1 for OpenAI-compatible chat endpoint (issue #950)
 			baseURL = baseURL.replace(/\/+$/, "");
 			if (!baseURL.endsWith("/v1")) {
-				baseURL = baseURL + "/v1";
+				baseURL = `${baseURL}/v1`;
 			}
 			// Anthropic's OpenAI-compatible endpoints require anthropic-version header
 			return {

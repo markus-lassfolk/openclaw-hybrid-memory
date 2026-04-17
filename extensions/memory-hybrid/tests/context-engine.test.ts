@@ -713,7 +713,7 @@ describe("buildContextBlock()", () => {
 		expect(smallTokens).toBeLessThanOrEqual(50);
 
 		// Ensure blockSmall has fewer entries
-		expect(blockSmall!.length).toBeLessThan(blockFull!.length);
+		expect(blockSmall?.length).toBeLessThan(blockFull?.length);
 		expect(blockFull).toContain("Fact 19");
 		expect(blockSmall).not.toContain("Fact 19");
 

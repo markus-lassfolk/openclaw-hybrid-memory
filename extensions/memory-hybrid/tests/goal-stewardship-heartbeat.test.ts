@@ -162,7 +162,7 @@ describe("buildMultiGoalStewardshipPrepend", () => {
 			},
 		);
 		expect(result).not.toBeNull();
-		expect(result!.prepend).toContain("hb-test");
+		expect(result?.prepend).toContain("hb-test");
 	});
 
 	it("skips goals still in cooldown", async () => {
@@ -260,7 +260,7 @@ describe("buildMultiGoalStewardshipPrepend", () => {
 			},
 		);
 		expect(result).not.toBeNull();
-		expect(result!.prepend).toContain("crit-pri");
+		expect(result?.prepend).toContain("crit-pri");
 	});
 });
 

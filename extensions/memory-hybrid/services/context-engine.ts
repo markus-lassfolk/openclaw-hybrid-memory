@@ -307,7 +307,7 @@ export function buildContextBlock(
 	let addedFacts = 0;
 	for (const entry of facts) {
 		const serialized = serializeFactForContext(entry);
-		const entryTokens = estimateTokenCount("\n" + serialized);
+		const entryTokens = estimateTokenCount(`\n${serialized}`);
 		if (tokenBudget !== undefined && currentTokens + entryTokens > tokenBudget)
 			break;
 		lines.push(serialized);

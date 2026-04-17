@@ -205,7 +205,7 @@ export function searchFts(
 		let ftsLimit = Math.max(limit * 10, 100);
 		const maxFtsLimit = Math.min(100_000, Math.max(limit * 500, 2000));
 		const ftsStmt = db.prepare(
-			`SELECT rowid, rank FROM facts_fts WHERE facts_fts MATCH @query ORDER BY rank LIMIT @limit`,
+			"SELECT rowid, rank FROM facts_fts WHERE facts_fts MATCH @query ORDER BY rank LIMIT @limit",
 		);
 
 		let ftsRows: Array<{ rowid: number; rank: number }> = [];

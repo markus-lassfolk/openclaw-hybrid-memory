@@ -168,7 +168,7 @@ export function registerTaskQueueStatusCommands(mem: Chainable): void {
 				const raw = await readJsonFile<TaskQueueItem>(currentPath);
 				if (raw === null) {
 					console.error(
-						`✗ current.json is malformed (not valid JSON) — delete manually or check task-queue-status for details`,
+						"✗ current.json is malformed (not valid JSON) — delete manually or check task-queue-status for details",
 					);
 					return;
 				}

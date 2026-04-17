@@ -6,8 +6,8 @@
  */
 // @security-note Direct child_process use is required here during install-time script execution
 // where our TS wrappers are not yet compiled or guaranteed available.
-const { execSync } = require("child_process");
-const path = require("path");
+const { execSync } = require("node:child_process");
+const path = require("node:path");
 
 const root = path.join(__dirname, "..");
 const REQUIRED_NATIVE_MODULES = ["@lancedb/lancedb"];

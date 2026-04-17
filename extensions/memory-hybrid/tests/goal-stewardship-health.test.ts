@@ -251,7 +251,7 @@ describe("runGoalHealthCheck", () => {
 			expect(after?.status).toBe("verifying");
 		} finally {
 			vi.unstubAllGlobals();
-			if (prev === undefined) delete process.env.GITHUB_TOKEN;
+			if (prev === undefined) process.env.GITHUB_TOKEN = undefined;
 			else process.env.GITHUB_TOKEN = prev;
 		}
 	});

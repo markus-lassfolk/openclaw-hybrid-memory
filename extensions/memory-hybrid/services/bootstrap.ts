@@ -105,10 +105,7 @@ export const coreBootstrapInstaller: CoreBootstrapInstaller = {
 		}
 		if (effectiveDimensions !== cfg.embedding.dimensions) {
 			api.logger.warn(
-				`memory-hybrid: embedding provider dimensions (${effectiveDimensions}) differ from config dimensions (${cfg.embedding.dimensions}). ` +
-					`Using provider dimensions (${effectiveDimensions}) for LanceDB. ` +
-					`To silence this warning, set embedding.dimensions: ${effectiveDimensions} in plugin config, ` +
-					`or set embedding.preferredProviders explicitly to control which providers are used.`,
+				`memory-hybrid: embedding provider dimensions (${effectiveDimensions}) differ from config dimensions (${cfg.embedding.dimensions}). Using provider dimensions (${effectiveDimensions}) for LanceDB. To silence this warning, set embedding.dimensions: ${effectiveDimensions} in plugin config, or set embedding.preferredProviders explicitly to control which providers are used.`,
 			);
 		}
 

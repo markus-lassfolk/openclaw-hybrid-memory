@@ -1766,10 +1766,10 @@ describe("registerActiveTaskCommands", () => {
 		let logged = "";
 		let errors = "";
 		console.log = ((...args: unknown[]) => {
-			logged += args.join(" ") + "\n";
+			logged += `${args.join(" ")}\n`;
 		}) as typeof console.log;
 		console.error = ((...args: unknown[]) => {
-			errors += args.join(" ") + "\n";
+			errors += `${args.join(" ")}\n`;
 		}) as typeof console.error;
 
 		try {

@@ -576,7 +576,7 @@ export async function runVerifyForCli(
 					`${FAIL} Lance memories table: schema not valid for vector search (missing vector column or on-disk dimension mismatch).`,
 				);
 				log(
-					`  Fix: Set embedding.model / embedding.dimensions to match the table you need, enable vector.autoRepair=true to rebuild the empty table, or remove the LanceDB directory and restart. Then run: openclaw hybrid-mem re-index`,
+					"  Fix: Set embedding.model / embedding.dimensions to match the table you need, enable vector.autoRepair=true to rebuild the empty table, or remove the LanceDB directory and restart. Then run: openclaw hybrid-mem re-index",
 				);
 				issues.push(
 					"LanceDB memories table schema invalid for vectors (dimension mismatch or missing column)",
@@ -605,16 +605,16 @@ export async function runVerifyForCli(
 						`${FAIL} Embedding ↔ Lance: MISMATCH — API returned ${probeLen} dimensions but LanceDB expects ${lanceDims}-dim vectors. Semantic search will return no results until fixed.`,
 					);
 					log(
-						`  What to do: (1) Set embedding.model to the model you want as primary (same output size as your index).`,
+						"  What to do: (1) Set embedding.model to the model you want as primary (same output size as your index).",
 					);
 					log(
-						`  (2) Set embedding.dimensions to that size if it differs from the catalog default.`,
+						"  (2) Set embedding.dimensions to that size if it differs from the catalog default.",
 					);
 					log(
 						`  (3) If you use a provider chain, set embedding.preferredProviders so only providers with the same vector size are listed (e.g. ["openai"] only).`,
 					);
 					log(
-						`  (4) Run: openclaw hybrid-mem re-index — rebuilds vectors from SQLite with the current embedding config.`,
+						"  (4) Run: openclaw hybrid-mem re-index — rebuilds vectors from SQLite with the current embedding config.",
 					);
 					issues.push(
 						`Embedding dimension mismatch: API probe ${probeLen} vs Lance index ${lanceDims} (provider.dimensions=${providerDims})`,
@@ -854,7 +854,7 @@ export async function runVerifyForCli(
 		if (provider === "anthropic") {
 			baseURL = baseURL.replace(/\/+$/, "");
 			if (!baseURL.endsWith("/v1")) {
-				baseURL = baseURL + "/v1";
+				baseURL = `${baseURL}/v1`;
 			}
 		}
 		const opts: {
@@ -1757,7 +1757,7 @@ export async function runVerifyForCli(
 							);
 						} else {
 							log(
-								`  → Run with --fix to delete these orphan vectors from LanceDB.`,
+								"  → Run with --fix to delete these orphan vectors from LanceDB.",
 							);
 						}
 						issues.push(
@@ -1773,7 +1773,7 @@ export async function runVerifyForCli(
 						if (sqliteOrphans.length > 10)
 							log(`  … and ${sqliteOrphans.length - 10} more`);
 						log(
-							`  → Re-run the plugin or use the re-index command to rebuild missing vectors.`,
+							"  → Re-run the plugin or use the re-index command to rebuild missing vectors.",
 						);
 						issues.push(
 							`${sqliteOrphans.length} SQLite fact(s) without corresponding vectors in LanceDB`,

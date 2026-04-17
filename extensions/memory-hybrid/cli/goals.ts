@@ -157,12 +157,12 @@ export function registerGoalCommands(
 				`Assessments: ${goal.assessmentCount}/${goal.maxAssessments}  |  Dispatches: ${goal.dispatchCount}/${goal.maxDispatches}  |  Failures: ${goal.consecutiveFailures}`,
 			);
 			console.log(`\nDescription:\n  ${goal.description}`);
-			console.log(`\nAcceptance Criteria:`);
+			console.log("\nAcceptance Criteria:");
 			goal.acceptanceCriteria.forEach((c, i) =>
 				console.log(`  ${i + 1}. ${c}`),
 			);
 			if (goal.linkedTasks.length > 0) {
-				console.log(`\nLinked Tasks:`);
+				console.log("\nLinked Tasks:");
 				goal.linkedTasks.forEach((t) =>
 					console.log(
 						`  ${t.label.padEnd(20)} ${t.status}${t.sessionKey ? `  session: ${t.sessionKey}` : ""}`,
@@ -326,7 +326,7 @@ export function registerGoalCommands(
 			console.log(
 				`  assessments: 0/${goal.maxAssessments} (was ${prevAssess}/${goal.maxAssessments})`,
 			);
-			if (wasBlocked) console.log(`  status: active (was blocked)`);
+			if (wasBlocked) console.log("  status: active (was blocked)");
 		});
 
 	g.command("stewardship-run")
