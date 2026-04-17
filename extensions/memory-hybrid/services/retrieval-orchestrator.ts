@@ -1044,7 +1044,15 @@ export async function runExplicitDeepRetrieval(
             sources: [{ strategy: res.source || "unknown", rank: res.rank }],
           });
         } else {
-          deduped.get(res.factId)?.sources.push({ strategy: res.source || "unknown", rank: res.rank });
+          const existing = deduped.get(res.factId)!;
+          existing.sources.push({ strategy: res.source || "unknown", rank: res.rank });
+          if (res.source === "semantic" || res.source?.startsWith("semantic:")) {
+            const semanticScore = 1 / (k + res.rank);
+            if (semanticScore > existing.finalScore) {
+              existing.finalScore = semanticScore;
+              existing.rrfScore = semanticScore;
+            }
+          }
         }
       }
 
