@@ -1,6 +1,6 @@
 import type { AutoRecallConfig, HybridMemoryConfig, RetrievalConfig } from "../config.js";
 
-export type RetrievalMode = "interactive-recall" | "explicit-deep";
+export type RetrievalMode = "interactive-recall" | "explicit-deep" | "constrained-recall";
 
 /** @deprecated Use string literals directly or InteractiveRecallPolicy / ExplicitDeepRetrievalPolicy types */
 export const RETRIEVAL_MODE = {
@@ -21,6 +21,23 @@ export interface InteractiveRecallPolicy {
   allowAmbientMultiQuery: boolean;
   /** Resolved from `autoRecall.interactiveEnrichment` (default balanced). */
   interactiveEnrichment: "fast" | "balanced" | "full";
+  notes: string[];
+}
+
+export interface ConstrainedRetrievalPolicy {
+  mode: "constrained-recall";
+  ownerModule: "services/retrieval-orchestrator.ts";
+  contract: "structured filter → semantic rank → hydrate for constrained recall scenarios";
+  budgetTokens: number;
+  allowHyde: boolean;
+  allowRrfFusion: boolean;
+  allowQueryExpansion: boolean;
+  allowReranking: boolean;
+  allowGraphExpansion: boolean;
+  allowAliasExpansion: boolean;
+  allowMultiModelSemantic: boolean;
+  /** Apply structured filters BEFORE ranking rather than after. */
+  filterBeforeRank: boolean;
   notes: string[];
 }
 
@@ -45,6 +62,26 @@ export const INTERACTIVE_RECALL_STAGE_TIMEOUT_MS = 120_000;
 const INTERACTIVE_RECALL_VECTOR_TIMEOUT_MS = 26_000;
 const DEFAULT_INTERACTIVE_RECALL_DEGRADATION_QUEUE_DEPTH = 10;
 const DEFAULT_INTERACTIVE_RECALL_DEGRADATION_MAX_LATENCY_MS = 5_000;
+const DEFAULT_CONSTRAINED_RETRIEVAL_POLICY: ConstrainedRetrievalPolicy = {
+  mode: "constrained-recall",
+  ownerModule: "services/retrieval-orchestrator.ts",
+  contract: "structured filter → semantic rank → hydrate for constrained recall scenarios",
+  budgetTokens: 4000,
+  allowHyde: true,
+  allowRrfFusion: false,
+  allowQueryExpansion: true,
+  allowReranking: true,
+  allowGraphExpansion: false,
+  allowAliasExpansion: true,
+  allowMultiModelSemantic: true,
+  filterBeforeRank: true,
+  notes: [
+    "Pre-filters candidate set via structured constraints before semantic ranking.",
+    "Use case: 'show facts about project X from the last 30 days', 'search only verified infra memories'.",
+    "RRF fusion disabled — ranking is purely semantic within the constrained candidate set.",
+    "Hydration includes provenance, graph context, supersession state, and explanation.",
+  ],
+};
 
 /**
  * Resolve the latency-bounded chat-turn policy owned by `lifecycle/stage-recall.ts`.
@@ -133,6 +170,20 @@ export function resolveExplicitDeepRetrievalPolicy(cfg: RetrievalConfig): Explic
 }
 
 /**
+ * Resolve the constrained retrieval policy for filter-before-rank scenarios.
+ * Owned by `services/retrieval-orchestrator.ts`.
+ */
+export function resolveConstrainedRetrievalPolicy(
+  cfg: RetrievalConfig,
+  requestedBudget?: number,
+): ConstrainedRetrievalPolicy {
+  return {
+    ...DEFAULT_CONSTRAINED_RETRIEVAL_POLICY,
+    budgetTokens: requestedBudget ?? cfg.explicitBudgetTokens,
+  };
+}
+
+/**
  * Resolve the interactive recall budget tokens, capping to the minimum of
  * autoRecall.maxTokens and retrieval.ambientBudgetTokens.
  */
@@ -155,7 +206,7 @@ export function resolveOrchestratorBudgetTokens(
       ? Math.min(requestedBudget, retrievalCfg.ambientBudgetTokens)
       : retrievalCfg.ambientBudgetTokens;
   }
-  return requestedBudget !== undefined ? requestedBudget : retrievalCfg.explicitBudgetTokens;
+  return requestedBudget ?? retrievalCfg.explicitBudgetTokens;
 }
 
 /**

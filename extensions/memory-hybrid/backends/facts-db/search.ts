@@ -324,3 +324,129 @@ export function getSupersededTextsSnapshot(cache: SupersededTextsCache, db: Data
   const now = Date.now();
   return cache.getSnapshot(now, () => fetchSupersededFactTextsLower(db));
 }
+
+/**
+ * Retrieve candidate fact IDs using only structured (SQL) filters.
+ * Used by the constrained-recall mode to narrow the candidate set
+ * before semantic/vector ranking (Issue #1026 filter → rank → hydrate pattern).
+ *
+ * Returns up to `limit` fact IDs matching all provided filters.
+ * When no filters are set, returns an empty array (caller should fall back
+ * to unconstrained retrieval).
+ */
+export interface ConstrainedSearchFilters {
+  /** Match facts with this exact entity name. */
+  entity?: string | null;
+  /** Match facts with this tag (SQL LIKE %tag%). */
+  tag?: string | null;
+  /** Match facts with this category. */
+  category?: string | null;
+  /** Match facts with this scope value. */
+  scope?: string | null;
+  /** Match facts with this scope target. */
+  scopeTarget?: string | null;
+  /** Include only facts with this verification tier (e.g. 'critical'). */
+  verificationTier?: string | null;
+  /** Include only facts created/valid from this Unix timestamp onward. */
+  validFromSec?: number | null;
+  /** Include only facts created/valid before this Unix timestamp. */
+  validUntilSec?: number | null;
+  /** Include only facts with this tier (hot/warm/cold). */
+  tier?: string | null;
+  /** Limit to a specific source/session. */
+  sourceSession?: string | null;
+}
+
+/** @deprecated Import from search.ts instead to avoid type divergence. */
+export type { ConstrainedSearchFilters as ConstrainedSearchFiltersFromSearch };
+
+/**
+ * Check if any constrained filter is active.
+ * Extracted helper to avoid duplicating filter-emptiness logic (Issue #1026).
+ */
+export function hasActiveFilters(filters: ConstrainedSearchFilters): boolean {
+  return !!(
+    filters.entity ||
+    filters.tag ||
+    filters.category ||
+    filters.scope ||
+    filters.scopeTarget ||
+    filters.verificationTier ||
+    filters.validFromSec != null ||
+    filters.validUntilSec != null ||
+    filters.tier ||
+    filters.sourceSession
+  );
+}
+
+export function getCandidateIdsByStructuredFilters(
+  db: DatabaseSync,
+  filters: ConstrainedSearchFilters,
+  options: { limit?: number; nowSec?: number } | number = 1000,
+): string[] {
+  const limit = typeof options === "number" ? options : (options.limit ?? 1000);
+  const nowSec =
+    typeof options === "number" ? Math.floor(Date.now() / 1000) : (options.nowSec ?? Math.floor(Date.now() / 1000));
+  if (!hasActiveFilters(filters)) {
+    return [];
+  }
+
+  const params: (string | number | null)[] = [];
+  const conditions: string[] = ["superseded_at IS NULL"];
+
+  if (filters.entity) {
+    conditions.push("lower(entity) = lower(?)");
+    params.push(filters.entity);
+  }
+  if (filters.category) {
+    conditions.push("category = ?");
+    params.push(filters.category);
+  }
+  if (filters.scope) {
+    conditions.push("scope = ?");
+    params.push(filters.scope);
+  }
+  if (filters.scopeTarget) {
+    conditions.push("scope_target = ?");
+    params.push(filters.scopeTarget);
+  }
+  if (filters.tier) {
+    conditions.push("tier = ?");
+    params.push(filters.tier);
+  }
+  if (filters.tag) {
+    conditions.push("(',' || COALESCE(tags, '') || ',') LIKE ?");
+    params.push(`%,${filters.tag.toLowerCase().trim()},%`);
+  }
+  if (filters.validFromSec != null) {
+    conditions.push("valid_from >= ?");
+    params.push(filters.validFromSec);
+  }
+  if (filters.validUntilSec != null) {
+    conditions.push("(valid_until IS NULL OR valid_until > ?)");
+    params.push(filters.validUntilSec);
+  }
+  if (filters.sourceSession) {
+    conditions.push("source_sessions LIKE ?");
+    params.push(`%${filters.sourceSession}%`);
+  }
+
+  // Handle verified_facts JOIN for verificationTier
+  if (filters.verificationTier) {
+    conditions.push(
+      `id IN (SELECT fact_id FROM verified_facts WHERE tier = ? AND (next_verification IS NULL OR next_verification > ?))`,
+    );
+    params.push(filters.verificationTier, nowSec);
+  }
+
+  const sql = `SELECT id FROM facts WHERE ${conditions.join(" AND ")} ORDER BY confidence DESC, COALESCE(source_date, created_at) DESC LIMIT ?`;
+  const finalParams = [...params, limit];
+
+  try {
+    const rows = db.prepare(sql).all(...finalParams) as Array<{ id: string }>;
+    return rows.map((r) => r.id);
+  } catch (err) {
+    // Graceful degradation — malformed filter never blocks retrieval
+    return [];
+  }
+}
